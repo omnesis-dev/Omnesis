@@ -224,6 +224,52 @@ describe("the fingerprint", () => {
 
     expect(after.fingerprint, "a changed profile left the drift alarm quiet").not.toBe(before);
   });
+
+  it("does not move when a source starts declaring how its records can be filtered", async () => {
+    // A filter declaration says how an access filter may match a record. No
+    // node of a watch reads it, so a source that gains one has changed nothing
+    // any approved watch means, and pausing them all for it would be noise.
+    const field = { path: "extra.labelIds", type: "string-array", description: "Label ids." };
+    const publish = (profile: Record<string, unknown>): void => {
+      db.prepare(
+        `INSERT INTO source_document_profiles (source_type, profile_json, published_at)
+         VALUES ('gmail', ?, 1000)
+           ON CONFLICT(source_type) DO UPDATE SET profile_json = excluded.profile_json`,
+      ).run(JSON.stringify(profile));
+    };
+    const profile = { documentTypes: ["email"], personRoles: ["sender"], metadataFields: [field] };
+    publish(profile);
+    const before = await buildOntologySnapshot(DEPS());
+
+    publish({
+      ...profile,
+      metadataFields: [
+        {
+          ...field,
+          filter: {
+            capability: "membership",
+            minVersion: 2,
+            scope: "global",
+            noun: { one: "label", many: "labels" },
+            picker: "search",
+          },
+        },
+      ],
+      personFilter: { minVersion: 0, roles: ["sender"], identifiers: ["email"] },
+    });
+    const after = await buildOntologySnapshot(DEPS());
+
+    expect(after.fingerprint, "a filter declaration moved the drift alarm").toBe(
+      before.fingerprint,
+    );
+    expect(after.sources).toHaveLength(before.sources.length);
+
+    publish({ ...profile, metadataFields: [{ ...field, description: "Ids of labels." }] });
+    expect(
+      (await buildOntologySnapshot(DEPS())).fingerprint,
+      "a field a watch can read changed and the drift alarm stayed quiet",
+    ).not.toBe(before.fingerprint);
+  });
 });
 
 describe("an install with a row it cannot describe", () => {

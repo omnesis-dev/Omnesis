@@ -442,6 +442,12 @@ const WRITE_OP_DEFS: readonly WriteOpDef[] = [
   // small transaction over a table with one row per installed source type.
   { name: "sources.upsertScopes", priority: "background" },
   { name: "sources.upsertDocumentProfiles", priority: "realtime" },
+  // One page of a list a collector publishes for a filterable field. Awaited by
+  // the collector's sync page, so it runs with ingestion; applied in bounded
+  // sub-batches that give the writer back between them.
+  { name: "filterLists.stagePart", priority: "realtime" },
+  { name: "filterLists.delete", priority: "user" },
+  { name: "filterLists.sweep", priority: "background" },
 
   // ── the Brain run queue ───────────────────────────────────────
   // Agent runs are asynchronous background work that must never contend

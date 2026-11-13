@@ -78,6 +78,7 @@
         "@omnesis/provider-imap-synth",
         "@omnesis/provider-local-files-synth",
         "@omnesis/provider-openclaw-synth",
+        "@omnesis/provider-filing-synth",
         "@omnesis/provider-photos-synth",
         "@omnesis/provider-pi-synth",
         "@omnesis/provider-web-synth",

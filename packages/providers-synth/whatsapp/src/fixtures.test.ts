@@ -85,6 +85,9 @@ describe("synthetic conversation identity", () => {
       "David Lin",
     ]);
   });
+  test("a day carries its chat at the path the real source declares for filters", () => {
+    expect(first(mapChat(fixture, ctx)).metadata.extra?.chatJid).toBe("group");
+  });
   test("legacy conversations retain their chat-title speaker and counterpart", () => {
     const doc = first(mapChat(fixture, ctx));
     expect(doc.content).toContain("Weekend plans: Saturday.");

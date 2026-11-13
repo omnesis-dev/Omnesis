@@ -23,7 +23,6 @@ import {
   type ProviderId,
   type SourceId,
 } from "@omnesis/types";
-import type { DriveFolderEntry } from "./drive-source.js";
 
 export interface GmailBinaryAttachment {
   assetPath: string;
@@ -59,7 +58,10 @@ export interface EmailEntry {
   sentAt: string;
   threadId: string;
   labels: string[];
-  /** Explicit source-native IDs, independent from display labels. */
+  /**
+   * Gmail's id for each entry of `labels`, in the same order. A fixture that
+   * leaves it out has ids derived from the label names by the mailbox.
+   */
   labelIds?: string[];
   /** Structurally declared planned time, projected by the Gmail descriptor. */
   scheduledAt?: string;
@@ -75,7 +77,7 @@ export function loadEmails(): EmailEntry[] {
 }
 export function mapEmail(
   e: EmailEntry,
-  ctx: { sourceId: SourceId; providerId: ProviderId; scopeFactsSupported?: boolean },
+  ctx: { sourceId: SourceId; providerId: ProviderId },
 ): DocumentInput | DocumentInput[] {
   const people: PersonMention[] = [
     { ...personMention(e.from, "sender"), emails: [e.fromEmail] },
@@ -112,25 +114,13 @@ export function mapEmail(
       documentType: "email",
       sourceUrl: gmailSourceUrl(e.externalId),
       tags: e.labels,
-      ...(ctx.scopeFactsSupported && e.labelIds
-        ? {
-            scopeFacts: {
-              kinds: ["label" as const],
-              facts: e.labelIds.map((id, index) => ({
-                kind: "label" as const,
-                id,
-                label: e.labels[index] ?? id,
-              })),
-              complete: ["label" as const],
-            },
-          }
-        : {}),
       people,
       ...(e.scheduledAt ? { scheduledAt: e.scheduledAt } : {}),
       ...(e.dueAt ? { dueAt: e.dueAt } : {}),
       extra: {
         threadId: e.threadId,
         labels: e.labels,
+        ...(e.labelIds ? { labelIds: e.labelIds } : {}),
         ...(attachmentInfos.length > 0 ? { attachments: attachmentInfos } : {}),
       },
     },
@@ -266,7 +256,15 @@ export interface DriveFileEntry {
   owner: string;
   createdAt: string;
   modifiedAt: string;
+  /** Ids of the folders the file sits in directly. */
   parentIds?: string[];
+}
+
+export interface DriveFolderEntry {
+  id: string;
+  name: string;
+  /** Ids of the folders this one sits in; empty for a top-level folder. */
+  parentIds: string[];
 }
 let filesCache: DriveFileEntry[] | null = null;
 export function loadFiles(): DriveFileEntry[] {
@@ -278,6 +276,7 @@ export function loadFiles(): DriveFileEntry[] {
   );
   return filesCache;
 }
+/** The universe's Drive folders; a universe that describes none has none. */
 export function loadDriveFolders(): DriveFolderEntry[] {
   const universe = loadActiveUniverse();
   return existsSync(join(universe.dir, "sources", "google-drive", "folders.json"))
@@ -286,12 +285,7 @@ export function loadDriveFolders(): DriveFolderEntry[] {
 }
 export function mapDriveFile(
   e: DriveFileEntry,
-  ctx: {
-    sourceId: SourceId;
-    providerId: ProviderId;
-    scopeHierarchySupported?: boolean;
-    scopeRefreshEpoch?: string;
-  },
+  ctx: { sourceId: SourceId; providerId: ProviderId },
 ): DocumentInput {
   return {
     sourceId: ctx.sourceId,
@@ -303,23 +297,12 @@ export function mapDriveFile(
     // Like the real Drive normalizer, join attachments/files by raw extraction.
     extractedContentHash: computeContentHash(e.content),
     metadata: {
-      ...(ctx.scopeHierarchySupported && e.parentIds
-        ? {
-            scopeHierarchy: [
-              {
-                kind: "folder" as const,
-                parentIds: e.parentIds,
-                complete: true,
-                refreshEpoch: ctx.scopeRefreshEpoch,
-              },
-            ],
-          }
-        : {}),
       documentType: "file",
       sourceUrl: `https://drive.google.com/file/d/${e.externalId}/view`,
       people: [personMention(e.owner, "owner")],
       extra: {
         mimeType: e.mimeType,
+        ...(e.parentIds ? { folderIds: e.parentIds } : {}),
         ownerName: getPerson(e.owner).name,
       },
     },

@@ -7,7 +7,6 @@ import {
   defineSource,
   config as configSchema,
   expandHostPath,
-  hostHomeDir,
   type SourceInstance,
 } from "@omnesis/source-sdk";
 import {
@@ -21,7 +20,6 @@ import {
 } from "@omnesis/source-sdk/local-agent-sessions";
 import { SyncError } from "@omnesis/types";
 import { codexIcon } from "./icon.js";
-import { scopeContracts } from "./scope-contracts.js";
 import { codexStateSpec } from "./state.js";
 
 /**
@@ -130,7 +128,11 @@ async function parseCodexSession(
 ): Promise<ParsedLocalAgentSession> {
   let sessionId: string | undefined;
   let cwd: string | undefined;
-  const directories = new Set<string>();
+  // Codex records the working directory when the session starts and again on
+  // every turn. The session's project folder is the one from the start; a
+  // session whose start recorded none takes the one its first turn recorded,
+  // which is written before any work is done.
+  let startCwd: string | undefined;
   let branch: string | undefined;
   let model: string | undefined;
   let parentSessionId: string | undefined;
@@ -174,7 +176,7 @@ async function parseCodexSession(
             ? payload.session_id
             : threadId;
         cwd = typeof payload.cwd === "string" ? payload.cwd : undefined;
-        if (cwd !== undefined) directories.add(cwd);
+        startCwd = cwd;
         parentSessionId =
           typeof payload.parent_thread_id === "string"
             ? payload.parent_thread_id
@@ -196,8 +198,8 @@ async function parseCodexSession(
           structurallyComplete = false;
         }
         if (typeof payload.cwd === "string") {
+          startCwd ??= payload.cwd;
           cwd = payload.cwd;
-          directories.add(payload.cwd);
         }
         if (typeof payload.model === "string") model = payload.model;
         return;
@@ -290,7 +292,7 @@ async function parseCodexSession(
   return {
     id: sessionId,
     cwd,
-    directories: [...directories],
+    startCwd,
     branch,
     model,
     parentSessionId,
@@ -326,9 +328,9 @@ export default defineSource({
   primaryCount: "documents",
   singleInstance: true,
   multiDevice: { mode: "partitioned" },
-  scopes: scopeContracts["codex"],
   conversational: true,
   contract: {
+    outputRevision: 2,
     // The host resolves the stored cursor against this before `sync` runs,
     // so an unrecognised value is refused as unreadable rather than read as
     // "no sessions yet".
@@ -339,7 +341,10 @@ export default defineSource({
   documentEventProfile: createLocalAgentSessionDocumentEventProfile({
     harnessId: "codex",
     agentName: "Codex",
+    projectFolderSince: 2,
   }),
+  resyncCost:
+    "Your Codex session files are read again on each computer that has them: nothing is downloaded, and it takes a few minutes at most.",
   icon: codexIcon,
   config: configSchema.object({
     codexHome: configSchema.path({
@@ -365,8 +370,6 @@ export default defineSource({
       providerId,
       sourceId,
       dataCutoff,
-      // Sessions record the directory as the machine that ran them names it.
-      folders: { home: hostHomeDir() },
       adapter: {
         harnessId: "codex",
         agentName: "Codex",

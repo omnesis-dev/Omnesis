@@ -24,7 +24,9 @@ import { getDocumentCount, getSourceStats } from "./helpers.js";
  * authors can extend fixtures without breaking this suite.
  */
 
-// Body fixtures only: native hierarchy catalogues do not emit Documents.
+// The fixture files that hold a source's records, where its directory also
+// holds a file that describes something else: Drive's folders are listed for
+// the folder tree and are not documents.
 const DOCUMENT_FIXTURE_FILES: Readonly<Record<string, readonly string[]>> = {
   "google-drive": ["files.json"],
 };

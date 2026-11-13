@@ -1079,6 +1079,25 @@ export class SyntheticE2EHarness {
   }
 
   /**
+   * Change the version `sourceId`'s host sends with its sync pages, from the
+   * next page on: on every host of the source, or on `device` only.
+   *
+   * A source's version is fixed by its definition, so a real host changes it
+   * only by being upgraded. This stands in for that upgrade between two syncs
+   * of one running harness, which is how a test obtains an account whose
+   * documents were written at different versions, or two hosts of one source
+   * on different builds. `undefined` makes the host send no version at all,
+   * as a build that predates versions does; the gateway stores those
+   * documents at 0.
+   */
+  setSourceVersion(sourceId: string, version: number | undefined, device?: HarnessDevice): void {
+    const hosts = device ? [device] : this.devicesForSource(sourceId);
+    const registered = hosts.flatMap((host) => host.engine.getSourcesById(sourceId));
+    if (registered.length === 0) throw new Error(`No roster device syncs ${sourceId}`);
+    for (const source of registered) source.sourceVersion = version;
+  }
+
+  /**
    * Run one concurrent bootstrap across every source registered in this
    * harness. Full synthetic universes deliberately exercise all providers at
    * once, so their long tail shares a larger default budget than a focused

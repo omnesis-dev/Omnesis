@@ -1880,7 +1880,7 @@ export function createServer(
   mountDocumentByIdRoute(app, { db });
 
   // /sync-state/:sourceId GET + POST.
-  mountSyncStateRoutes(app, { documentService, sourceService });
+  mountSyncStateRoutes(app, { db, documentService, sourceService });
 
   // omnesis-notes — the "tell the brain" quick-capture source. Booted here
   // because it writes day documents through DocumentService.ingest (which

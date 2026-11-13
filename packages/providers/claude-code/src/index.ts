@@ -7,7 +7,6 @@ import {
   defineSource,
   config as configSchema,
   expandHostPath,
-  hostHomeDir,
   type SourceInstance,
 } from "@omnesis/source-sdk";
 import {
@@ -20,7 +19,6 @@ import {
   type ParsedLocalAgentSession,
 } from "@omnesis/source-sdk/local-agent-sessions";
 import { claudeCodeIcon } from "./icon.js";
-import { scopeContracts } from "./scope-contracts.js";
 import { claudeCodeStateSpec } from "./state.js";
 
 /**
@@ -447,15 +445,19 @@ async function parseClaudeCodeSession(
   if (id !== null && id !== undefined) structurallyComplete = false;
 
   let cwd: string | undefined;
-  const directories = new Set<string>();
+  // Claude Code records the working directory on every entry. The session's
+  // project folder is the first one on the conversation as it stands: the walk
+  // above runs from the newest entry back across every compaction to the
+  // oldest, so reversed it starts where the session did.
+  let startCwd: string | undefined;
   let branch: string | undefined;
   let model: string | undefined;
   const messages: ParsedLocalAgentSession["messages"] = [];
   let humanTurn = false;
   for (const node of reversed.reverse()) {
     if (node.cwd !== undefined) {
+      startCwd ??= node.cwd;
       cwd = node.cwd;
-      directories.add(node.cwd);
     }
     if (node.branch !== undefined) branch = node.branch;
     if (node.model !== undefined) model = node.model;
@@ -472,7 +474,7 @@ async function parseClaudeCodeSession(
   return {
     id: sessionId,
     cwd,
-    directories: [...directories],
+    startCwd,
     name: customTitle?.trim() || aiTitle?.trim() || undefined,
     branch,
     model,
@@ -507,10 +509,10 @@ export default defineSource({
   primaryCount: "documents",
   singleInstance: true,
   multiDevice: { mode: "partitioned" },
-  scopes: scopeContracts["claude-code"],
   conversational: true,
   contentRetention: "best-effort",
   contract: {
+    outputRevision: 2,
     // The host resolves the stored cursor against this before `sync` runs,
     // so an unrecognised value is refused as unreadable rather than read as
     // "no sessions yet".
@@ -521,7 +523,10 @@ export default defineSource({
   documentEventProfile: createLocalAgentSessionDocumentEventProfile({
     harnessId: "claude-code",
     agentName: "Claude Code",
+    projectFolderSince: 2,
   }),
+  resyncCost:
+    "Your Claude Code session files are read again on each computer that has them: nothing is downloaded, and it takes a few minutes at most.",
   icon: claudeCodeIcon,
   config: configSchema.object({
     sessionsPath: configSchema.path({
@@ -547,8 +552,6 @@ export default defineSource({
       providerId,
       sourceId,
       dataCutoff,
-      // Sessions record the directory as the machine that ran them names it.
-      folders: { home: hostHomeDir() },
       adapter: {
         harnessId: "claude-code",
         agentName: "Claude Code",

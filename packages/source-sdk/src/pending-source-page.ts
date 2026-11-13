@@ -10,6 +10,12 @@ export interface PendingStructuredPage {
   result: StructuredSyncResult;
   meta?: Omit<SourceSyncMeta, "contentRetention">;
   documentTemporalProjections?: DocumentTemporalProjectionSpec[];
+  /**
+   * The output revision of the source build that produced `result`. Stored
+   * with the page so a replay after the host was upgraded still commits the
+   * documents under the revision that wrote them.
+   */
+  sourceVersion?: number;
   cursorCommitted: boolean;
 }
 

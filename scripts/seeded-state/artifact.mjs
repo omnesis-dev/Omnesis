@@ -170,6 +170,9 @@ const SAFE_TABLES = new Set([
   "document_absence_scopes",
   "document_absences",
   "document_extracted_dates",
+  // Derived work: documents whose source version rose with nothing else
+  // changed, waiting for whoever keeps a copy of that version.
+  "document_filter_index_queue",
   "document_links",
   "document_people",
   "document_scope_completeness",
@@ -318,6 +321,11 @@ const SAFE_TABLES = new Set([
   "scope_source_generations",
   "scope_subject_retries",
   "source_document_profiles",
+  // Lists collectors published for filterable fields: names and trees of an
+  // account, kept with the corpus so saved filters keep resolving in a clone.
+  "source_filter_item_members",
+  "source_filter_items",
+  "source_filter_lists",
   "source_devices",
   "source_inventories",
   "source_inventory_documents",
@@ -332,6 +340,10 @@ const SAFE_TABLES = new Set([
   "source_mode_transitions",
   "source_watermarks",
   "source_wipe_epoch",
+  // How many documents each source holds per source version: kept by triggers
+  // on `documents`, which the copy installs after the rows, so the counts
+  // travel with the documents they count.
+  "source_version_counts",
   "source_wire_contracts",
   "source_sync_issues",
   "source_scope_descriptor_conflicts",
@@ -397,6 +409,9 @@ const SAFE_ROW_FILTERS = new Map([
   ["document_absence_observations", "0"],
   ["document_absence_scopes", "0"],
   ["document_absences", "0"],
+  // Pending derived work restarts empty; a clone's copies of a document's
+  // source version are rebuilt from the documents themselves.
+  ["document_filter_index_queue", "0"],
   // Doctor runs are transient observations about one installation's hosts.
   // Preserve the table shape without cloning host-local health details.
   ["device_doctor_runs", "0"],

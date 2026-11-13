@@ -12,15 +12,27 @@
  * the same code the live source runs; the twin only reads fixtures and pages
  * them.
  *
+ * A fixture file holds one repository, or several under `repositories`. Each
+ * names the repository the way GitHub's listing does: its `owner/repo` name,
+ * GitHub's numeric id for it, and the owner that holds it with the owner's
+ * id. Documents are filed under the repository's id, as on the live source,
+ * and a repository given no id is one whose documents sit in no known
+ * repository.
+ *
  * Identities are the universe cast's: each actor's `login` is that person's
  * `extra.githubLogin`, and commit git identities carry their cast email, so
  * the login↔email bridge that merges a GitHub identity with the same person's
  * mail identity is exercised end to end.
  */
 
-import { commitToDocument, discussionToDocument, threadToDocument } from "@omnesis/provider-github";
+import {
+  commitToDocument,
+  discussionToDocument,
+  inRepository,
+  threadToDocument,
+} from "@omnesis/provider-github";
 import { loadActiveUniverse, loadSourceFixtureJson } from "@omnesis/providers-synth-common";
-import type { repoScopeCatalogue } from "@omnesis/provider-github";
+import type { repositoryList } from "@omnesis/provider-github";
 import type { EdgeDeclaration } from "@omnesis/core";
 import type { DocumentInput, ProviderId, SourceId } from "@omnesis/types";
 
@@ -34,10 +46,7 @@ type CommitDetail = Parameters<typeof commitToDocument>[0];
 type RefKinds = NonNullable<Parameters<typeof threadToDocument>[4]>;
 type ThreadKind = RefKinds extends ReadonlyMap<number, infer K> ? K : never;
 
-/**
- * How GitHub identifies a repository and whoever holds it. A repository
- * without these is one a filter cannot name, as on the live source.
- */
+/** How GitHub's listing identifies a repository and whoever holds it. */
 interface RepoIdentity {
   /** `owner/repo`. */
   repo: string;
@@ -56,27 +65,33 @@ interface CommitsFixture extends RepoIdentity {
   commits: CommitDetail[];
 }
 
-/** A fixture file holds one repository, or several under `repositories`. */
 type FixtureFile<T> = T | { repositories: T[] };
 const repositoriesOf = <T>(file: FixtureFile<T>): T[] =>
   "repositories" in (file as object) ? (file as { repositories: T[] }).repositories : [file as T];
 
 /** A repository as the account's listing names it. */
-export type RepoRow = Parameters<typeof repoScopeCatalogue>[0][number];
+export type RepoRow = Parameters<typeof repositoryList>[0][number];
 const repoRow = (fixture: RepoIdentity): RepoRow => ({
   full_name: fixture.repo,
   ...(fixture.id !== undefined ? { id: fixture.id } : {}),
   ...(fixture.owner ? { owner: fixture.owner } : {}),
 });
 
+/** Where an entry sits: the repository's name, and GitHub's id for it when it has one. */
+interface InRepo {
+  repo: string;
+  repositoryId?: number;
+}
+
 /** One materializable unit of the threads source. */
-export type ThreadEntry =
-  | { kind: "thread"; repo: string; node: ThreadNode; refKinds?: RefKinds }
-  | { kind: "discussion"; repo: string; node: DiscussionNode; refKinds?: RefKinds };
+export type ThreadEntry = InRepo &
+  (
+    | { kind: "thread"; node: ThreadNode; refKinds?: RefKinds }
+    | { kind: "discussion"; node: DiscussionNode; refKinds?: RefKinds }
+  );
 
 /** One materializable unit of the commits source. */
-export interface CommitEntry {
-  repo: string;
+export interface CommitEntry extends InRepo {
   detail: CommitDetail;
 }
 
@@ -183,17 +198,17 @@ function loadThreads(): { entries: ThreadEntry[]; repos: RepoRow[] } {
     // each repository resolves its `#N` references against itself.
     entries: fixtures.flatMap((fixture) => {
       const kindIndex = buildKindIndex(fixture);
-      const repo = fixture.repo;
+      const where: InRepo = { repo: fixture.repo, repositoryId: fixture.id };
       return [
         ...fixture.threads.map((node): ThreadEntry => ({
           kind: "thread",
-          repo,
+          ...where,
           node,
           refKinds: refKindsFor(threadRefTexts(node), node.number, kindIndex),
         })),
         ...fixture.discussions.map((node): ThreadEntry => ({
           kind: "discussion",
-          repo,
+          ...where,
           node,
           refKinds: refKindsFor(discussionRefTexts(node), node.number, kindIndex),
         })),
@@ -215,7 +230,11 @@ function loadCommits(): { entries: CommitEntry[]; repos: RepoRow[] } {
   commitCache = {
     repos: fixtures.map(repoRow),
     entries: fixtures.flatMap((fixture) =>
-      fixture.commits.map((detail) => ({ repo: fixture.repo, detail })),
+      fixture.commits.map((detail) => ({
+        repo: fixture.repo,
+        repositoryId: fixture.id,
+        detail,
+      })),
     ),
   };
   return commitCache;
@@ -227,7 +246,7 @@ function loadCommits(): { entries: CommitEntry[]; repos: RepoRow[] } {
  */
 export const loadThreadEntries = (): ThreadEntry[] => loadThreads().entries;
 export const loadCommitEntries = (): CommitEntry[] => loadCommits().entries;
-/** The repositories each source's fixture holds, as the account's listing would name them. */
+/** The repositories each source's fixture holds, as the account's listing names them. */
 export const loadThreadRepos = (): RepoRow[] => loadThreads().repos;
 export const loadCommitRepos = (): RepoRow[] => loadCommits().repos;
 
@@ -242,13 +261,18 @@ export function resetFixtureCache(): void {
 // ---------------------------------------------------------------------------
 
 export function mapThread(entry: ThreadEntry, ctx: DocContext): DocumentInput {
-  return entry.kind === "thread"
-    ? threadToDocument(entry.node, entry.repo, ctx.providerId, ctx.sourceId, entry.refKinds).doc
-    : discussionToDocument(entry.node, entry.repo, ctx.providerId, ctx.sourceId, entry.refKinds);
+  const doc =
+    entry.kind === "thread"
+      ? threadToDocument(entry.node, entry.repo, ctx.providerId, ctx.sourceId, entry.refKinds).doc
+      : discussionToDocument(entry.node, entry.repo, ctx.providerId, ctx.sourceId, entry.refKinds);
+  return inRepository(doc, entry.repositoryId);
 }
 
 export function mapCommit(entry: CommitEntry, ctx: DocContext): DocumentInput {
-  return commitToDocument(entry.detail, entry.repo, ctx.providerId, ctx.sourceId);
+  return inRepository(
+    commitToDocument(entry.detail, entry.repo, ctx.providerId, ctx.sourceId),
+    entry.repositoryId,
+  );
 }
 
 /**

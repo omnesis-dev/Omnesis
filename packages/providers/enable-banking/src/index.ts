@@ -140,6 +140,7 @@ export default defineProvider<EnableBankingContext>({
       description: "Connect Revolut or any EU/UK bank via PSD2 open banking (Enable Banking)",
       unitName: "transactions",
       contract: {
+        outputRevision: 1,
         // The host resolves the stored cursor against this before
         // `syncStructured` runs, so an unrecognised value is refused as
         // unreadable rather than read as "no accounts yet".

@@ -367,6 +367,12 @@ export interface SourceDescriptor {
    */
   experimental?: boolean;
   /**
+   * The revision of this source's output, resolved from its contract
+   * declaration (see `resolveOutputRevision`): the version its host sends with
+   * every sync page and the gateway stores on each document. Omitted means 1.
+   */
+  outputRevision?: number;
+  /**
    * External widget-vendor origins this source's hosted `link-widget` needs the
    * browser to reach (its SDK CDN, iframe host, and API endpoints). The gateway
    * aggregates the union across every registered descriptor into the portal's
@@ -672,6 +678,8 @@ export interface SerializedDescriptor {
    * admin clients render an "experimental" badge from it.
    */
   experimental: boolean;
+  /** See `SourceDescriptor.outputRevision`. Absent from a host that predates it. */
+  outputRevision?: number;
   /**
    * External widget-vendor origins this source's `link-widget` needs. JSON-safe
    * (string arrays only), travels over the wire as-is. The gateway folds the
@@ -766,6 +774,7 @@ export function serializeDescriptor(d: SourceDescriptor): SerializedDescriptor {
     authType: d.authType,
     acceptsAuthCode: d.acceptsAuthCode ?? false,
     experimental: d.experimental ?? false,
+    outputRevision: d.outputRevision ?? 1,
     widgetOrigins: d.widgetOrigins,
     conversational: d.conversational ?? false,
     singleInstance: d.singleInstance ?? false,

@@ -190,6 +190,7 @@ export default defineProvider<NotionContext>({
       },
       icon: notionIcon,
       contract: {
+        outputRevision: 1,
         // The host resolves the stored cursor against this before `sync`
         // runs, so a value from a build that could not read it never reaches
         // `sync`.
@@ -222,6 +223,7 @@ export default defineProvider<NotionContext>({
       unitName: "rows",
       icon: notionDatabaseIcon,
       contract: {
+        outputRevision: 1,
         // The host resolves the stored cursor against this before
         // `syncStructured` runs, so a value from a build that could not read
         // it never reaches the source.

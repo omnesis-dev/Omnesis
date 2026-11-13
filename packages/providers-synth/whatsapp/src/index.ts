@@ -1,16 +1,20 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import realWhatsapp from "@omnesis/provider-whatsapp";
-import { defineSource } from "@omnesis/source-sdk";
+import realWhatsapp, { WHATSAPP_CHAT_FIELD } from "@omnesis/provider-whatsapp";
+import { defineSource, withFilterLists } from "@omnesis/source-sdk";
 import {
+  ChatRoster,
+  loadChatRosterFixtures,
+  registerChatRoster,
+  unregisterChatRoster,
   fakeQrSession,
   preDiscoveredAccounts,
+  syncFromFixture,
   selfAccountId,
   type SynthCursor,
 } from "@omnesis/providers-synth-common";
-import { loadChats } from "./fixtures.js";
-import { createChatFixtureSource } from "./scope-source.js";
+import { loadChats, mapChat } from "./fixtures.js";
 import { universeHasFakeCorpus, createWrapsRealWhatsApp } from "./wraps-real.js";
 
 export {
@@ -56,6 +60,18 @@ export default defineSource<SynthCursor>({
     }
     const { sourceId, providerId } = opts;
     const entries = loadChats();
-    return createChatFixtureSource(entries, { sourceId, providerId });
+    const roster = new ChatRoster(loadChatRosterFixtures("whatsapp-messages", entries), ["phone"]);
+    registerChatRoster(String(sourceId), roster);
+    return withFilterLists(
+      {
+        async sync(cursor) {
+          return syncFromFixture(entries, cursor, (e) => mapChat(e, { sourceId, providerId }), {
+            sourceId,
+          });
+        },
+        dispose: async () => unregisterChatRoster(String(sourceId)),
+      },
+      { [WHATSAPP_CHAT_FIELD]: () => roster.list() },
+    );
   },
 });

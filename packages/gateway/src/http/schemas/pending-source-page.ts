@@ -33,6 +33,7 @@ export const prepareStructuredPageBody = z.object({
   result,
   meta: fields.meta,
   documentTemporalProjections: fields.documentTemporalProjections,
+  sourceVersion: fields.sourceVersion,
 });
 export const acknowledgeStructuredPageBody = prepareStructuredPageBody.pick({
   id: true,

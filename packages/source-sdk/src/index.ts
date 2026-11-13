@@ -65,6 +65,8 @@ export type {
   InferConfig,
 } from "./config-schema.js";
 export * from "./define-source.js";
+export * from "./filter-lists.js";
+export * from "./filter-paths.js";
 export * from "./gateway-client.js";
 export type { PendingStructuredPage, PrepareStructuredPage } from "./pending-source-page.js";
 export * from "./read-access.js";
@@ -77,7 +79,14 @@ export {
   type NativeScopeParticipant,
 } from "./scope-facts.js";
 export { canonicalScopeIdentifier } from "./scope-identifiers.js";
-export * from "./path-scopes.js";
+export {
+  MAX_PATH_SCOPE_DEPTH,
+  pathScopeFolders,
+  pathScopeLayoutKey,
+  sharedWorkingDirectory,
+  type PathScopeLayout,
+  type PathScopeFolder,
+} from "./path-scopes.js";
 export * from "./path-scope-sync.js";
 
 export {

@@ -45,6 +45,7 @@ import {
 } from "../../data/like-prefix-seek.js";
 import { getExtractedDatesForDocument } from "../../enrichment/dates/storage.js";
 import { BadRequestError, NotFoundError } from "../errors.js";
+import { filterListDigestsFor, publishFilterLists } from "../../access/filter-lists.js";
 import { decodePageCursor, encodePageCursor } from "../pagination-cursor.js";
 import { documentsRateLimiter } from "../../rate-limit.js";
 import { clientIp, isLoopbackRequest } from "./admin/internals.js";
@@ -504,6 +505,22 @@ export function mountDocumentCoreRoutes(app: RouteApp, deps: DocumentRoutesDeps)
         replicaVersionPolicy: sourceService.replicaVersionPolicy(body.sourceId),
         body,
       });
+      // Lists ride on the page but are not part of its transaction: they are
+      // stored only once the page was accepted, in bounded writes of their own.
+      if (body.filterLists?.length && !result.rejected && !result.rejectedAsRemoved) {
+        return c.json({
+          ...result,
+          filterLists: await publishFilterLists(
+            { db, writeGate: deps.writeGate },
+            body.sourceId,
+            body.filterLists,
+            {
+              streamId: sourceService.streamFor(body.sourceId, auth),
+              holder: gate.reconcile,
+            },
+          ),
+        });
+      }
       return c.json(result);
     },
   );
@@ -1173,9 +1190,9 @@ export function mountDocumentByIdRoute(app: RouteApp, deps: { db: Db }): void {
  */
 export function mountSyncStateRoutes(
   app: RouteApp,
-  deps: { documentService: DocumentService; sourceService: SourceService },
+  deps: { db: Db; documentService: DocumentService; sourceService: SourceService },
 ): void {
-  const { documentService, sourceService } = deps;
+  const { db, documentService, sourceService } = deps;
 
   app.post("/sync-state/:sourceId/begin", scope.writeAny(), async (c) => {
     const sourceId = requireSourceId(c.req.param("sourceId"));
@@ -1323,6 +1340,14 @@ export function mountSyncStateRoutes(
     const state =
       documentService.getSyncState(sourceId, row) ??
       (row ? documentService.getSyncState(sourceId, "") : null);
+    // The digest of each list this gateway holds for the source's filterable
+    // fields. The collector compares its own against these and sends only the
+    // lists that differ, so a gateway that lost its lists is sent them again.
+    const filterListDigests = filterListDigestsFor(
+      db,
+      sourceId,
+      sourceService.streamFor(sourceId, c.get("auth")),
+    );
     if (!state || state.last_synced_at === null) {
       return c.json({
         cursor: null,
@@ -1330,9 +1355,11 @@ export function mountSyncStateRoutes(
         ...scopeRefresh,
         wipeEpoch,
         initialInventory: documentService.getInitialSourceInventory(sourceId, row),
+        filterListDigests,
       });
     }
     return c.json({
+      filterListDigests,
       initialInventory: documentService.getInitialSourceInventory(sourceId, row),
       cursor: syncStateCursorCodec.parseWithFallback(state.cursor, { rowId: sourceId }),
       lastSyncedAt: state.last_synced_at,

@@ -15,7 +15,6 @@ import {
 } from "@omnesis/core";
 import { SyncError } from "@omnesis/types";
 import { DEFAULT_OCR_REQUEST_TIMEOUT_SECONDS, type OmnesisConfig } from "@omnesis/config";
-import { sourceScopeWireVersion, parseScopeRefreshEpochs } from "./source-scope-wire-version.js";
 import {
   DEFAULT_MAX_BACKPRESSURE_WAITS,
   DEFAULT_OCR_TIMEOUT_COOLDOWN_MS,
@@ -40,8 +39,9 @@ import type {
   ListedDocument,
   GatewaySearchQuery,
   GatewaySearchResponse,
+  AnalyticsTableSchema,
   AnalyticsCatalogEntry,
-  DocumentEventProfile,
+  DocumentEventProfilePublication,
   DocumentTemporalProjectionSpec,
   ReconcileResponse,
   SnapshotAbsenceOutcome,
@@ -58,10 +58,10 @@ import type {
 import type {
   DocumentInput,
   AccountId,
+  FilterListPublication,
   SourceId,
   SourceType,
   ProviderId,
-  SourceScopes,
 } from "@omnesis/types";
 import type {
   TranscriptionResult,
@@ -75,26 +75,6 @@ const log = createLogger("collector:http");
 const MAX_RETRIES = 3;
 const INITIAL_BACKOFF_MS = 1000;
 const MAX_TIMER_MS = 2_147_483_647;
-/** How long a sync may wait on the source filter probe before going on without facts. */
-const SOURCE_SCOPE_PROBE_TIMEOUT_MS = 3_000;
-/** The deadline of the probe made just before a page carrying filter facts is sent. */
-const SOURCE_SCOPE_GUARD_TIMEOUT_MS = 10_000;
-/** How long a "yes" stands in for the next probe, so a rolled-back gateway is noticed soon. */
-const SOURCE_SCOPE_PROBE_TTL_MS = 30_000;
-/**
- * How long a "no" stands when nothing else ends it. A gateway begins to accept
- * filter facts only by restarting, which reconnects the collector, and the
- * declarations republished on that reconnect ask afresh; this bound covers a
- * client that is never told of one.
- */
-const SOURCE_SCOPE_PROBE_NEGATIVE_TTL_MS = 10 * 60_000;
-/** How long a failed probe stands, so the pages of one tick do not each wait on it. */
-const SOURCE_SCOPE_PROBE_FAILURE_TTL_MS = 5_000;
-
-interface SourceScopeRange {
-  min: number;
-  max: number;
-}
 
 function validateTimerMs(name: string, value: number): number {
   if (!Number.isSafeInteger(value) || value <= 0 || value > MAX_TIMER_MS) {
@@ -195,8 +175,6 @@ export class HttpGatewayClient implements GatewayClient {
   /** OCR requests that reached the deadline since one last succeeded. */
   private ocrTimeoutsSinceSuccess = 0;
   private readonly beforeRequest?: () => Promise<void>;
-  /** The gateway's last answer about source filter versions; null range when it has none. */
-  private sourceScopeRange?: { range: SourceScopeRange | null; expiresAt: number };
 
   constructor(
     private baseUrl: string,
@@ -228,11 +206,7 @@ export class HttpGatewayClient implements GatewayClient {
     );
   }
 
-  private async request(
-    path: string,
-    options: RequestInit = {},
-    requireSourceScopes: boolean | 0 | 1 | 2 = false,
-  ) {
+  private async request(path: string, options: RequestInit = {}) {
     let lastError: Error | null = null;
     // Cap backpressure waits separately from retries — at 10 waits
     // of up to 30s each, total cap ≈ 5 min before we give up and
@@ -252,21 +226,6 @@ export class HttpGatewayClient implements GatewayClient {
       // the host.
       try {
         await this.beforeRequest?.();
-        // A page that carries filter facts is checked against the gateway as
-        // it is now, not against a remembered answer: the facts must not reach
-        // a gateway rolled back since the page was built.
-        if (requireSourceScopes) {
-          const required = requireSourceScopes === true ? 1 : requireSourceScopes;
-          const range = (await this.probeSourceScopes(SOURCE_SCOPE_GUARD_TIMEOUT_MS)) ?? null;
-          this.sourceScopeRange = { range, expiresAt: Date.now() + SOURCE_SCOPE_PROBE_TTL_MS };
-          if (range !== null && range.min <= required && range.max >= required) {
-            // Supported: the guarded request goes ahead.
-          } else
-            throw new SyncError(
-              "transient",
-              "Gateway source-scope support changed; retry the source page after negotiation.",
-            );
-        }
       } catch (err) {
         const guardMessage = toErrorMessage(err);
         if (attempt < MAX_RETRIES && (isTransportFailure(guardMessage) || hasTimeoutCause(err))) {
@@ -761,6 +720,17 @@ export class HttpGatewayClient implements GatewayClient {
     return typeof data.wipeEpoch === "number" ? data.wipeEpoch : undefined;
   }
 
+  async getFilterListDigests(sourceId: SourceId): Promise<Record<string, string> | undefined> {
+    const data = await this.request(`/sync-state/${encodeURIComponent(sourceId)}`);
+    const digests: unknown = data.filterListDigests;
+    if (typeof digests !== "object" || digests === null) return undefined;
+    return Object.fromEntries(
+      Object.entries(digests).filter(
+        (entry): entry is [string, string] => typeof entry[1] === "string",
+      ),
+    );
+  }
+
   async beginSyncAttempt(
     sourceId: SourceId,
     options: { signal?: AbortSignal; attemptId?: string } = {},
@@ -849,15 +819,6 @@ export class HttpGatewayClient implements GatewayClient {
       wipeEpoch: data.wipeEpoch,
     };
   }
-  async getScopeRefreshState(
-    sourceId: SourceId,
-  ): Promise<import("@omnesis/types").SourceScopeRefreshState> {
-    const data = await this.request(`/sync-state/${encodeURIComponent(sourceId)}`);
-    return {
-      epochs: parseScopeRefreshEpochs(data.scopeRefreshEpochs),
-      requestIds: parseScopeRefreshEpochs(data.scopeRefreshRequestIds),
-    };
-  }
 
   async getInitialSourceInventory(sourceId: SourceId): Promise<InitialSourceInventory | undefined> {
     const data = await this.request(`/sync-state/${encodeURIComponent(sourceId)}`);
@@ -886,14 +847,10 @@ export class HttpGatewayClient implements GatewayClient {
     sourceId: SourceId,
     page: Omit<PendingStructuredPage, "cursorCommitted"> & { writeEpoch: number },
   ): Promise<PendingStructuredPage> {
-    return this.request(
-      `/sync-state/${encodeURIComponent(sourceId)}/pending-page`,
-      {
-        method: "POST",
-        body: JSON.stringify(page),
-      },
-      sourceScopeWireVersion(page.result.scopeUpdates, page.result.documents),
-    );
+    return this.request(`/sync-state/${encodeURIComponent(sourceId)}/pending-page`, {
+      method: "POST",
+      body: JSON.stringify(page),
+    });
   }
 
   async acknowledgeStructuredPage(
@@ -1046,89 +1003,6 @@ export class HttpGatewayClient implements GatewayClient {
   }
 
   /**
-   * Whether the gateway accepts source filter facts at `minimumVersion`.
-   *
-   * Never fails and never holds a sync for long: a probe that errors, times
-   * out or cannot be read answers false, which means "send no filter facts
-   * with this page", exactly what a collector without them sends. A "yes" is
-   * kept for a short interval, so a paging sync does not probe before every
-   * page and a rolled-back gateway is still noticed on a following page. A
-   * "no" — the answer of every gateway where source filters are not in use —
-   * is kept until the declarations are next published, which happens each
-   * time the collector connects, so such a gateway is not probed again while
-   * the connection lasts.
-   */
-  async supportsSourceScopes(minimumVersion = 1): Promise<boolean> {
-    if (!Number.isSafeInteger(minimumVersion) || minimumVersion < 1) return false;
-    const now = Date.now();
-    if (!this.sourceScopeRange || now >= this.sourceScopeRange.expiresAt) {
-      let range: SourceScopeRange | null | undefined;
-      try {
-        range = await this.probeSourceScopes(SOURCE_SCOPE_PROBE_TIMEOUT_MS);
-      } catch (err) {
-        log.warn(
-          `Gateway source filter probe failed; syncing without filter facts: ${toErrorMessage(err)}`,
-        );
-      }
-      this.sourceScopeRange = {
-        range: range ?? null,
-        expiresAt:
-          now +
-          (range === undefined
-            ? SOURCE_SCOPE_PROBE_FAILURE_TTL_MS
-            : range === null
-              ? SOURCE_SCOPE_PROBE_NEGATIVE_TTL_MS
-              : SOURCE_SCOPE_PROBE_TTL_MS),
-      };
-    }
-    const range = this.sourceScopeRange.range;
-    return range !== null && range.min <= minimumVersion && range.max >= minimumVersion;
-  }
-
-  /**
-   * Ask the gateway now which source filter versions it accepts: null when
-   * it advertises none, undefined when it answered with an error and so said
-   * nothing either way. Throws when the gateway cannot be reached, so a caller
-   * about to send filter facts can tell a blip from a refusal.
-   */
-  private async probeSourceScopes(timeoutMs: number): Promise<SourceScopeRange | null | undefined> {
-    const response = await fetch(`${this.baseUrl}/health`, {
-      signal: AbortSignal.timeout(timeoutMs),
-      cache: "no-store",
-    });
-    if (!response.ok) return undefined;
-    const body: unknown = await response.json();
-    if (typeof body !== "object" || body === null || !("compat" in body)) return null;
-    const compat = body.compat;
-    if (typeof compat !== "object" || compat === null || !("sourceScopes" in compat)) return null;
-    const range = compat.sourceScopes;
-    return typeof range === "object" &&
-      range !== null &&
-      "min" in range &&
-      "max" in range &&
-      typeof range.min === "number" &&
-      Number.isInteger(range.min) &&
-      range.min >= 1 &&
-      typeof range.max === "number" &&
-      Number.isInteger(range.max)
-      ? { min: range.min, max: range.max }
-      : null;
-  }
-
-  async setSourceScopes(
-    entries: Array<{ sourceType: string; scopes: SourceScopes }>,
-  ): Promise<void> {
-    // Published each time the collector connects: ask the gateway afresh
-    // rather than rely on an answer remembered from before it restarted.
-    this.sourceScopeRange = undefined;
-    if (!(await this.supportsSourceScopes())) return;
-    await this.request("/admin/source-scopes", {
-      method: "POST",
-      body: JSON.stringify({ entries }),
-    });
-  }
-
-  /**
    * Push the `documentEventProfile` of every KNOWN source type (every loaded
    * source definition's declaration), not just the added ones. Sent at
    * collector startup; the gateway persists the set so subscription
@@ -1136,9 +1010,7 @@ export class HttpGatewayClient implements GatewayClient {
    * restart the collector has not yet reconnected after. Replaces whatever was
    * previously stored.
    */
-  async setDocumentEventProfiles(
-    entries: Array<{ sourceType: string; profile: DocumentEventProfile }>,
-  ): Promise<void> {
+  async setDocumentEventProfiles(entries: DocumentEventProfilePublication[]): Promise<void> {
     await this.request("/admin/source-document-profiles", {
       method: "POST",
       body: JSON.stringify({ entries }),
@@ -1185,7 +1057,6 @@ export class HttpGatewayClient implements GatewayClient {
   }
 
   async upsertWithCursor(args: {
-    scopeUpdates?: import("@omnesis/types").SourceScopeUpdates;
     initialInventory?: InitialSourceInventory;
     pendingPageId?: string;
     providerId: ProviderId;
@@ -1207,16 +1078,13 @@ export class HttpGatewayClient implements GatewayClient {
     consentExpiresAt?: string | null;
     watermark?: SourceWatermark;
     meta?: Omit<SourceSyncMeta, "contentRetention">;
+    filterLists?: FilterListPublication[];
+    sourceVersion?: number;
   }): Promise<UpsertWithCursorResponse> {
-    const requiresScopes = sourceScopeWireVersion(args.scopeUpdates, args.documents);
-    return (await this.request(
-      "/documents/with-cursor",
-      {
-        method: "POST",
-        body: JSON.stringify(args),
-      },
-      requiresScopes,
-    )) as UpsertWithCursorResponse;
+    return (await this.request("/documents/with-cursor", {
+      method: "POST",
+      body: JSON.stringify(args),
+    })) as UpsertWithCursorResponse;
   }
 
   async listDocuments(

@@ -60,11 +60,11 @@ import { SourceLifecycle } from "./source-lifecycle.js";
 import { ProgressTracker } from "./progress-tracker.js";
 import { FeedProcessSupervisor } from "./feed-process-supervisor.js";
 import { runWithSyncTimeout } from "./source-sync-attempt.js";
+import { FilterListPublisher, newFilterListCycle } from "./filter-list-publisher.js";
 import type {
   DocumentIngestionContext,
   DocumentInput,
   SourceId,
-  SourceScopeUpdates,
   SyncIssue,
   SyncIssueAssessment,
 } from "@omnesis/types";
@@ -88,25 +88,6 @@ export function isGatewayValidationError(err: unknown): boolean {
   } catch {
     return false;
   }
-}
-
-/**
- * Whether a page's scope updates say anything. A source that negotiated scopes
- * may return the envelope on every page, so its presence alone is not progress.
- */
-export function scopeUpdatesCarryFacts(updates: SourceScopeUpdates | undefined): boolean {
-  if (!updates) return false;
-  return (
-    updates.hierarchy !== undefined ||
-    [
-      updates.documents,
-      updates.entities,
-      updates.replaceEntityKinds,
-      updates.readiness,
-      updates.refreshes,
-      updates.conversations,
-    ].some((facts) => facts !== undefined && facts.length > 0)
-  );
 }
 
 /** Replay keeps its key space; only additive account ownership may precede it. */
@@ -227,6 +208,8 @@ export class SourceSyncRunner {
   private readonly heldLeases = new Set<SourceId>();
   /** Renewal timers keeping a held lease alive through a long page fetch. */
   private readonly leaseHeartbeats = new Map<SourceId, ReturnType<typeof setInterval>>();
+  /** Publishes the lists a source produces for its filterable fields. */
+  private readonly filterLists: FilterListPublisher;
 
   constructor(
     private readonly gateway: GatewayClient,
@@ -234,8 +217,9 @@ export class SourceSyncRunner {
     private readonly syncTimeoutMs: number,
     private readonly feedProcess: FeedProcessSupervisor = new FeedProcessSupervisor(),
     private readonly ingestionContext?: DocumentIngestionContext,
-    private readonly scopeRefreshActorId?: string,
-  ) {}
+  ) {
+    this.filterLists = new FilterListPublisher(gateway);
+  }
 
   /**
    * Give up every sync lease this collector holds — on shutdown, so a
@@ -592,7 +576,7 @@ export class SourceSyncRunner {
       start: "resume",
       page: pageCount,
       deadline: runInfo.deadline,
-      ...(mode === "handoff" || mode === "replicated"
+      ...(source.multiDeviceMode
         ? { role: this.heldLeases.has(source.id) ? ("holder" as const) : ("member" as const) }
         : {}),
     });
@@ -723,6 +707,28 @@ export class SourceSyncRunner {
           }
         }
       }
+      // The source's lists are offered after its first page has committed:
+      // the gateway then knows the source, and a long first read does not
+      // keep the lists waiting for its last page. They are offered once more
+      // after the last page, for the lists the first offer left open, such as
+      // one that is only whole once every page has been read.
+      const listCycle = newFilterListCycle();
+      let listsOffered = false;
+      const offerFilterLists = async (committed: { cursor: typeof cursor; hasMore: boolean }) => {
+        if (committed.cursor === null || (listsOffered && committed.hasMore)) return;
+        listsOffered = true;
+        await this.filterLists.publish(
+          source,
+          {
+            cursor: committed.cursor,
+            hasMore: committed.hasMore,
+            wipeEpoch,
+            signal,
+            holder: mode !== "replicated" || this.heldLeases.has(source.id),
+          },
+          listCycle,
+        );
+      };
       let hasMore = true;
       // TODO: End the tick with a log.error when a structured page carries no rows, deletes or
       // documents, leaves the cursor unchanged and still says hasMore; it is refetched at once
@@ -742,57 +748,10 @@ export class SourceSyncRunner {
           return;
         }
 
-        // Only a source that declares scopes negotiates them. The gateway is
-        // asked before each page because it can be rolled back mid-run. A
-        // question that cannot be answered never fails the page: it syncs
-        // without filter facts, as it would from a collector that has none,
-        // and the gateway keeps such documents out of every filter until a
-        // later page brings their facts.
-        const negotiated = async <T>(ask: () => Promise<T>, unanswered: T): Promise<T> => {
-          try {
-            return await ask();
-          } catch (err) {
-            log.warn(
-              `Source filter negotiation failed for ${source.id}; syncing this page without filter facts: ${toErrorMessage(err)}`,
-            );
-            return unanswered;
-          }
-        };
-        const supportsSourceScopes =
-          source.scopes !== undefined ? this.gateway.supportsSourceScopes : undefined;
-        const scopeFactsSupported = supportsSourceScopes
-          ? await negotiated(() => supportsSourceScopes.call(this.gateway), false)
-          : false;
-        const scopeHierarchySupported =
-          scopeFactsSupported && supportsSourceScopes
-            ? await negotiated(() => supportsSourceScopes.call(this.gateway, 2), false)
-            : false;
-        const getScopeRefreshState = this.gateway.getScopeRefreshState;
-        const scopeRefresh =
-          scopeHierarchySupported && getScopeRefreshState
-            ? await negotiated(() => getScopeRefreshState.call(this.gateway, source.id), undefined)
-            : undefined;
-        const scopeRefreshEpochs = scopeRefresh?.epochs;
-        const scopeRefreshRequestIds = scopeRefresh?.requestIds;
         // Route to structured or unstructured sync
         if (isStructuredSource) {
           const syncStructured = () =>
-            source.instance.syncStructured!(cursor, {
-              signal,
-              run: runOf(),
-              ...(scopeFactsSupported ? { scopeFactsSupported: true } : {}),
-              ...(scopeHierarchySupported ? { scopeHierarchySupported: true } : {}),
-              ...(scopeHierarchySupported ? { scopeRefreshEpochsSupported: true } : {}),
-              ...(scopeRefreshEpochs && Object.keys(scopeRefreshEpochs).length
-                ? { scopeRefreshEpochs }
-                : {}),
-              ...(scopeRefreshRequestIds && Object.keys(scopeRefreshRequestIds).length
-                ? { scopeRefreshRequestIds }
-                : {}),
-              ...(scopeHierarchySupported && this.scopeRefreshActorId
-                ? { scopeRefreshActorId: this.scopeRefreshActorId }
-                : {}),
-            });
+            source.instance.syncStructured!(cursor, { signal, run: runOf() });
           let result =
             pendingStructuredPage?.result ??
             (wipeEpoch !== undefined && this.gateway.runWithSourceWriteEpoch
@@ -830,6 +789,7 @@ export class SourceSyncRunner {
               },
               meta: metaForGateway,
               documentTemporalProjections: source.documentTemporalProjections,
+              sourceVersion: source.sourceVersion,
             });
             result = pendingStructuredPage.result;
           }
@@ -941,7 +901,6 @@ export class SourceSyncRunner {
                 pendingPageId: pendingStructuredPage?.id,
                 providerId: source.providerId,
                 sourceId: source.id,
-                scopeUpdates: result.scopeUpdates,
                 documents: pendingStructuredPage
                   ? result.documents
                   : this.documentsWithIngestionContext(result.documents),
@@ -970,6 +929,11 @@ export class SourceSyncRunner {
                 initialInventory,
                 cursor: result.cursor,
                 wipeEpoch,
+                // A stored page commits under the revision that produced it,
+                // which after a host upgrade is not this build's.
+                sourceVersion: pendingStructuredPage
+                  ? pendingStructuredPage.sourceVersion
+                  : source.sourceVersion,
                 // Forward the source's forward-looking consent deadline so the
                 // gateway persists it and can warn ahead of expiry. Pass through
                 // verbatim — `undefined` leaves the stored value untouched, `null`
@@ -1057,6 +1021,7 @@ export class SourceSyncRunner {
           reportSnapshotAbsence(source.id, writeResult.absence);
 
           cursor = result.cursor;
+          await offerFilterLists(result);
 
           if (result.progress) {
             // Per-cycle progress: `total` is the queue size for this sync
@@ -1072,23 +1037,7 @@ export class SourceSyncRunner {
           );
           hasMore = result.hasMore;
         } else {
-          const sync = () =>
-            source.instance.sync(cursor, {
-              signal,
-              run: runOf(),
-              ...(scopeFactsSupported ? { scopeFactsSupported: true } : {}),
-              ...(scopeHierarchySupported ? { scopeHierarchySupported: true } : {}),
-              ...(scopeHierarchySupported ? { scopeRefreshEpochsSupported: true } : {}),
-              ...(scopeRefreshEpochs && Object.keys(scopeRefreshEpochs).length
-                ? { scopeRefreshEpochs }
-                : {}),
-              ...(scopeRefreshRequestIds && Object.keys(scopeRefreshRequestIds).length
-                ? { scopeRefreshRequestIds }
-                : {}),
-              ...(scopeHierarchySupported && this.scopeRefreshActorId
-                ? { scopeRefreshActorId: this.scopeRefreshActorId }
-                : {}),
-            });
+          const sync = () => source.instance.sync(cursor, { signal, run: runOf() });
           const result =
             wipeEpoch !== undefined && this.gateway.runWithSourceWriteEpoch
               ? await this.gateway.runWithSourceWriteEpoch(source.id, wipeEpoch, sync)
@@ -1114,7 +1063,6 @@ export class SourceSyncRunner {
           const writeResult = await this.gateway.upsertWithCursor({
             providerId: source.providerId,
             sourceId: source.id,
-            scopeUpdates: result.scopeUpdates,
             documents: this.documentsWithIngestionContext(result.documents),
             documentTemporalProjections: source.documentTemporalProjections,
             deletedExternalIds:
@@ -1135,6 +1083,7 @@ export class SourceSyncRunner {
               ? undefined
               : (result.watermark ?? { guarantee: "observation" }),
             meta: metaForGateway,
+            sourceVersion: source.sourceVersion,
           });
           if (writeResult.rejectedAsRemoved) {
             log.info(`Sync stopped because ${source.id} was removed at the gateway`);
@@ -1159,6 +1108,7 @@ export class SourceSyncRunner {
           reportSnapshotAbsence(source.id, writeResult.absence);
 
           cursor = result.cursor;
+          await offerFilterLists(result);
 
           // Update progress — per-cycle accounting. `total` = items in this
           // cycle's queue (e.g. notes modified since last cursor); `processed`
@@ -1183,11 +1133,7 @@ export class SourceSyncRunner {
 
           // Avoid hot-looping when a push-based source reports
           // hasMore but has no data yet (waiting for data to arrive)
-          if (
-            hasMore &&
-            result.documents.length === 0 &&
-            !scopeUpdatesCarryFacts(result.scopeUpdates)
-          ) {
+          if (hasMore && result.documents.length === 0) {
             await new Promise((r) => setTimeout(r, 2000));
           }
         }

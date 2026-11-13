@@ -17,6 +17,7 @@ import {
   resolveDeclaredPaths,
   nodePathProbe,
   mergeContractDeclarations,
+  resolveOutputRevision,
   resolveProvider,
   withVersionedState,
 } from "@omnesis/source-sdk";
@@ -700,7 +701,7 @@ async function setupSourceDefinition(
             // icon. The collector's refreshAllSourceMeta pushes this up
             // keyed by the full sourceId.
             icon: instance.icon ?? def.icon,
-            family: { name: def.name, icon: def.icon },
+            family: { name: def.name, icon: def.icon, resyncCost: def.resyncCost },
             attribution: def.attribution,
             urlPatterns: def.urlPatterns,
             urlCanonicalizer: def.urlCanonicalizer,
@@ -716,6 +717,7 @@ async function setupSourceDefinition(
             contentRetention: def.contentRetention,
             documentTemporalProjections: def.documentTemporalProjections,
             multiDeviceMode: ctx.multiDeviceModes?.get(sourceId) ?? def.multiDevice?.mode,
+            sourceVersion: resolveOutputRevision(def.contract),
           },
         ],
       };
@@ -998,7 +1000,11 @@ async function setupProviderDefinition(
             : undefined,
           providerId,
           icon: instance.icon ?? sourceDef.icon,
-          family: { name: sourceDef.name, icon: sourceDef.icon },
+          family: {
+            name: sourceDef.name,
+            icon: sourceDef.icon,
+            resyncCost: sourceDef.resyncCost,
+          },
           attribution: sourceDef.attribution,
           urlPatterns: sourceDef.urlPatterns,
           urlCanonicalizer: sourceDef.urlCanonicalizer,
@@ -1017,6 +1023,9 @@ async function setupProviderDefinition(
             ctx.multiDeviceModes?.get(sourceId) ??
             sourceDef.multiDevice?.mode ??
             def.multiDevice?.mode,
+          sourceVersion: resolveOutputRevision(
+            mergeContractDeclarations(def.contract, sourceDef.contract),
+          ),
         });
       }
 

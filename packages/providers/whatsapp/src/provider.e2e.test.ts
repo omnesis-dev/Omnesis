@@ -1406,6 +1406,7 @@ describe("Group Roster Tracking", () => {
       "222@s.whatsapp.net",
       "333@s.whatsapp.net",
     ]);
+    expect(chat?.rosterComplete).toBe(true);
   });
 
   test("group-participants.update with action=add appends to roster", async () => {
@@ -1425,6 +1426,24 @@ describe("Group Roster Tracking", () => {
       "222@s.whatsapp.net",
       "333@s.whatsapp.net",
     ]);
+  });
+
+  test("group-participants.update keeps the phone a joining LID member arrives with", async () => {
+    const { emitter, store } = await createConnectedProvider();
+    store.updateGroupRoster(GROUP_JID, ["111@s.whatsapp.net"]);
+
+    emitter.emit("group-participants.update", {
+      id: GROUP_JID,
+      participants: [{ id: "200000000000077@lid", phoneNumber: "12025550177@s.whatsapp.net" }],
+      action: "add",
+    });
+
+    expect(store.getChat(GROUP_JID)?.participants).toEqual([
+      "111@s.whatsapp.net",
+      "200000000000077@lid",
+    ]);
+    expect(store.getChat(GROUP_JID)?.rosterComplete).toBe(true);
+    expect(store.lidPhoneMap.get("200000000000077")).toBe("+12025550177");
   });
 
   test("group-participants.update with action=remove filters roster", async () => {

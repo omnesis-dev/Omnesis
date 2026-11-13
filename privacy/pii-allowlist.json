@@ -1046,12 +1046,12 @@
     {
       "value": "marek.vint+news@gmail.com",
       "paths": ["packages/gateway/src/data/repositories/PersonRepository.match-quality.test.ts"],
-      "reason": "invented address; the gmail.com domain is the fixture under test \u2014 dot and +tag stripping is Gmail-specific, so a reserved domain would not exercise the path"
+      "reason": "invented address; the gmail.com domain is the fixture under test — dot and +tag stripping is Gmail-specific, so a reserved domain would not exercise the path"
     },
     {
       "value": "marekvint@gmail.com",
       "paths": ["packages/gateway/src/data/repositories/PersonRepository.match-quality.test.ts"],
-      "reason": "invented address; the gmail.com domain is the fixture under test \u2014 dot and +tag stripping is Gmail-specific, so a reserved domain would not exercise the path"
+      "reason": "invented address; the gmail.com domain is the fixture under test — dot and +tag stripping is Gmail-specific, so a reserved domain would not exercise the path"
     },
     {
       "value": "maria.smith@acme.com",
@@ -1307,7 +1307,7 @@
         "packages/providers/github/src/normalizer.test.ts",
         "packages/providers/github/src/normalizer.ts"
       ],
-      "reason": "GitHub's public squash-merge committer address \u2014 a code constant, not corpus data"
+      "reason": "GitHub's public squash-merge committer address — a code constant, not corpus data"
     },
     {
       "value": "noreply@vendor.com",
@@ -1503,7 +1503,7 @@
     {
       "value": "someone@a-real-looking-domain.co.uk",
       "paths": ["scripts/lib/brain-cassette.test.mjs"],
-      "reason": "invented, deliberately OFF a reserved domain \u2014 the fixture exists to prove the brain-cassette recorder refuses to write a cassette carrying one"
+      "reason": "invented, deliberately OFF a reserved domain — the fixture exists to prove the brain-cassette recorder refuses to write a cassette carrying one"
     },
     {
       "value": "someone@s.whatsapp.net",
@@ -1875,6 +1875,73 @@
       "value": "7@s.whatsapp.net",
       "paths": ["packages/collector/src/e2e/mcp-source-filter-chats.e2e.test.ts"],
       "reason": "Invented native addresses and fictional names for the source-filter end-to-end suites; the product name is a describe title, not a person."
+    },
+    {
+      "value": "0@s.whatsapp.net",
+      "paths": ["evals/universes/chat-filters/sources/whatsapp-messages/fake-corpus.json"],
+      "reason": "Invented WhatsApp JID for the chat-filter fixtures: a 555-01xx number under a real area code or a made-up group id; never corpus data."
+    },
+    {
+      "value": "120000000000000001@g.us",
+      "paths": [
+        "evals/universes/chat-filters/sources/whatsapp-messages/fake-corpus.json",
+        "packages/collector/src/e2e/filter-details-chats.e2e.test.ts",
+        "packages/providers/whatsapp/src/chat-list.test.ts",
+        "packages/providers/whatsapp/src/stored-record-forms.test.ts"
+      ],
+      "reason": "Invented WhatsApp JID for the chat-filter fixtures: a 555-01xx number under a real area code or a made-up group id; never corpus data."
+    },
+    {
+      "value": "120000000000000002@g.us",
+      "paths": [
+        "evals/universes/chat-filters/sources/whatsapp-messages/fake-corpus.json",
+        "packages/collector/src/e2e/filter-details-chats.e2e.test.ts",
+        "packages/providers/whatsapp/src/chat-list.test.ts"
+      ],
+      "reason": "Invented WhatsApp JID for the chat-filter fixtures: a 555-01xx number under a real area code or a made-up group id; never corpus data."
+    },
+    {
+      "value": "12025550101@s.whatsapp.net",
+      "paths": [
+        "evals/universes/chat-filters/sources/whatsapp-messages/fake-corpus.json",
+        "packages/providers/whatsapp/src/chat-list.test.ts",
+        "packages/providers/whatsapp/src/stored-record-forms.test.ts"
+      ],
+      "reason": "Invented WhatsApp JID for the chat-filter fixtures: a 555-01xx number under a real area code or a made-up group id; never corpus data."
+    },
+    {
+      "value": "12025550123@s.whatsapp.net",
+      "paths": [
+        "evals/universes/chat-filters/sources/whatsapp-messages/fake-corpus.json",
+        "packages/collector/src/e2e/filter-details-chats.e2e.test.ts",
+        "packages/providers/whatsapp/src/chat-list.test.ts",
+        "packages/providers/whatsapp/src/stored-record-forms.test.ts"
+      ],
+      "reason": "Invented WhatsApp JID for the chat-filter fixtures: a 555-01xx number under a real area code or a made-up group id; never corpus data."
+    },
+    {
+      "value": "12025550142@s.whatsapp.net",
+      "paths": [
+        "evals/universes/chat-filters/sources/whatsapp-messages/fake-corpus.json",
+        "packages/providers/whatsapp/src/chat-list.test.ts",
+        "packages/providers/whatsapp/src/stored-record-forms.test.ts"
+      ],
+      "reason": "Invented WhatsApp JID for the chat-filter fixtures: a 555-01xx number under a real area code or a made-up group id; never corpus data."
+    },
+    {
+      "value": "12025550177@s.whatsapp.net",
+      "paths": [
+        "evals/universes/chat-filters/sources/whatsapp-messages/fake-corpus.json",
+        "packages/collector/src/e2e/filter-details-chats.e2e.test.ts",
+        "packages/providers/whatsapp/src/chat-list.test.ts",
+        "packages/providers/whatsapp/src/provider.e2e.test.ts"
+      ],
+      "reason": "Invented WhatsApp JID for the chat-filter fixtures: a 555-01xx number under a real area code or a made-up group id; never corpus data."
+    },
+    {
+      "value": "3@s.whatsapp.net",
+      "paths": ["packages/providers/whatsapp/src/chat-list.test.ts"],
+      "reason": "Invented WhatsApp JID for the chat-filter fixtures: a 555-01xx number under a real area code or a made-up group id; never corpus data."
     }
   ],
   "phones": [
@@ -1900,7 +1967,7 @@
         "packages/gateway/src/domain/LinkGraphService.test.ts",
         "packages/providers/apple/src/call-log.test.ts"
       ],
-      "reason": "reviewed invented fixture \u2014 placeholder phone. Prefer the NANP fiction block in a real area code (NPA 555-01xx), which does validate; area-code 555 and the Ofcom +44 7700 900xxx block do not, so they cannot be used where extraction must find the number."
+      "reason": "reviewed invented fixture — placeholder phone. Prefer the NANP fiction block in a real area code (NPA 555-01xx), which does validate; area-code 555 and the Ofcom +44 7700 900xxx block do not, so they cannot be used where extraction must find the number."
     },
     {
       "value": "+1 415 555 7777",
@@ -1941,7 +2008,7 @@
         "packages/gateway/src/domain/LinkGraphService.test.ts",
         "packages/providers/apple/src/call-log.test.ts"
       ],
-      "reason": "reviewed invented fixture \u2014 placeholder phone, not the reserved 555/Ofcom block (fails libphonenumber-js validation)"
+      "reason": "reviewed invented fixture — placeholder phone, not the reserved 555/Ofcom block (fails libphonenumber-js validation)"
     },
     {
       "value": "+15551111111",
@@ -2030,7 +2097,7 @@
         "packages/providers/apple/src/contacts.test.ts",
         "packages/gateway/src/domain/LinkGraphService.test.ts"
       ],
-      "reason": "reviewed invented fixture \u2014 placeholder phone, not the reserved 555/Ofcom block (fails libphonenumber-js validation)"
+      "reason": "reviewed invented fixture — placeholder phone, not the reserved 555/Ofcom block (fails libphonenumber-js validation)"
     },
     {
       "value": "+442071234567",
@@ -2680,27 +2747,25 @@
     {
       "value": "Willow Kiln Studio",
       "paths": [
-        "evals/universes/sacha-bellamy/_build/finance-health.mjs",
-        "evals/universes/sacha-bellamy/sources/lunchflow-accounts/transactions.json"
+        "evals/universes/sacha-bellamy/_build/scenario-commitments.mjs",
+        "evals/universes/sacha-bellamy/_build/scenario-gifts.mjs",
+        "evals/universes/sacha-bellamy/_build/shared.mjs"
       ],
       "reason": "Reviewed original fictional demo cast, invented venue/product, or public title-case prose in the named authoring module/test; no personal-corpus provenance."
     },
     {
       "value": "The Lantern Room",
-      "paths": [
-        "evals/universes/sacha-bellamy/_build/finance-health.mjs",
-        "evals/universes/sacha-bellamy/sources/lunchflow-accounts/transactions.json"
-      ],
+      "paths": ["evals/universes/sacha-bellamy/_build/scenario-gifts.mjs"],
       "reason": "Reviewed original fictional demo cast, invented venue/product, or public title-case prose in the named authoring module/test; no personal-corpus provenance."
     },
     {
       "value": "Example Lane",
-      "paths": ["evals/universes/sacha-bellamy/sources/whatsapp-messages/messages.json"],
+      "paths": ["evals/universes/sacha-bellamy/_build/scenario-homes.mjs"],
       "reason": "Reviewed original fictional demo cast, invented venue/product, or public title-case prose in the named authoring module/test; no personal-corpus provenance."
     },
     {
       "value": "Sample Terrace",
-      "paths": ["evals/universes/sacha-bellamy/sources/whatsapp-messages/messages.json"],
+      "paths": ["evals/universes/sacha-bellamy/_build/scenario-homes.mjs"],
       "reason": "Reviewed original fictional demo cast, invented venue/product, or public title-case prose in the named authoring module/test; no personal-corpus provenance."
     },
     {
@@ -3717,11 +3782,6 @@
       "reason": "Reviewed original fictional demo cast, invented venue/product, or public title-case prose in the named authoring module/test; no personal-corpus provenance."
     },
     {
-      "value": "Example Lane",
-      "paths": ["evals/universes/sacha-bellamy/_build/scenario-homes.mjs"],
-      "reason": "Reviewed original fictional demo cast, invented venue/product, or public title-case prose in the named authoring module/test; no personal-corpus provenance."
-    },
-    {
       "value": "Example Street",
       "paths": [
         "evals/universes/sacha-bellamy/_build/media_test.py",
@@ -4067,11 +4127,6 @@
       "reason": "Reviewed original fictional demo cast, invented venue/product, or public title-case prose in the named authoring module/test; no personal-corpus provenance."
     },
     {
-      "value": "Sample Terrace",
-      "paths": ["evals/universes/sacha-bellamy/_build/scenario-homes.mjs"],
-      "reason": "Reviewed original fictional demo cast, invented venue/product, or public title-case prose in the named authoring module/test; no personal-corpus provenance."
-    },
-    {
       "value": "Sample Walk",
       "paths": ["evals/universes/sacha-bellamy/_build/scenario-commitments.mjs"],
       "reason": "Reviewed original fictional demo cast, invented venue/product, or public title-case prose in the named authoring module/test; no personal-corpus provenance."
@@ -4115,11 +4170,6 @@
       "reason": "Reviewed original fictional demo cast, invented venue/product, or public title-case prose in the named authoring module/test; no personal-corpus provenance."
     },
     {
-      "value": "The Lantern Room",
-      "paths": ["evals/universes/sacha-bellamy/_build/scenario-gifts.mjs"],
-      "reason": "Reviewed original fictional demo cast, invented venue/product, or public title-case prose in the named authoring module/test; no personal-corpus provenance."
-    },
-    {
       "value": "Tuesday October",
       "paths": ["evals/universes/sacha-bellamy/_build/media_test.py"],
       "reason": "Reviewed original fictional demo cast, invented venue/product, or public title-case prose in the named authoring module/test; no personal-corpus provenance."
@@ -4132,15 +4182,6 @@
     {
       "value": "Willow Appliance Cooperative",
       "paths": ["evals/universes/sacha-bellamy/_build/finance-health.mjs"],
-      "reason": "Reviewed original fictional demo cast, invented venue/product, or public title-case prose in the named authoring module/test; no personal-corpus provenance."
-    },
-    {
-      "value": "Willow Kiln Studio",
-      "paths": [
-        "evals/universes/sacha-bellamy/_build/scenario-commitments.mjs",
-        "evals/universes/sacha-bellamy/_build/scenario-gifts.mjs",
-        "evals/universes/sacha-bellamy/_build/shared.mjs"
-      ],
       "reason": "Reviewed original fictional demo cast, invented venue/product, or public title-case prose in the named authoring module/test; no personal-corpus provenance."
     },
     {
@@ -5855,7 +5896,7 @@
     {
       "value": "Alex Cole",
       "paths": ["evals/universes/default/cast.json"],
-      "reason": "invented fixture \u2014 merge-candidate pending demo (Cole cluster)"
+      "reason": "invented fixture — merge-candidate pending demo (Cole cluster)"
     },
     {
       "value": "Alex Doe",
@@ -6184,7 +6225,7 @@
     {
       "value": "Apple Watch",
       "paths": ["evals/universes/wrist/universe.json"],
-      "reason": "invented fixture \u2014 wrist demo universe"
+      "reason": "invented fixture — wrist demo universe"
     },
     {
       "value": "Apple Watch Series",
@@ -6475,7 +6516,7 @@
         "packages/collector/src/e2e/brain-decision-gate.e2e.test.ts",
         "packages/collector/src/e2e/brain-decision-replay.e2e.test.ts"
       ],
-      "reason": "product name \u2014 the brain end-to-end test kit, not a person"
+      "reason": "product name — the brain end-to-end test kit, not a person"
     },
     {
       "value": "Bram Halvorsen",
@@ -6675,7 +6716,7 @@
         "packages/collector/src/e2e/brain-observability.e2e.test.ts",
         "packages/collector/src/e2e/brain-verification.e2e.test.ts"
       ],
-      "reason": "invented fixture \u2014 a two-word window of the invented vendor 'Cedar Grove Supplies'"
+      "reason": "invented fixture — a two-word window of the invented vendor 'Cedar Grove Supplies'"
     },
     {
       "value": "Cedar Grove Billing",
@@ -6800,7 +6841,8 @@
         "packages/providers/claude-code/src/index.test.ts",
         "scripts/release/install-sh-docker.test.mjs",
         "scripts/release/install-sh-first-run.test.mjs",
-        "scripts/release/install-sh-package.test.mjs"
+        "scripts/release/install-sh-package.test.mjs",
+        "packages/providers/claude-code/src/project-folder.test.ts"
       ],
       "reason": "product name, not a person"
     },
@@ -7483,7 +7525,7 @@
     {
       "value": "Eurostar Bookings",
       "paths": ["evals/universes/wrist/cast.json"],
-      "reason": "invented fixture \u2014 wrist demo universe"
+      "reason": "invented fixture — wrist demo universe"
     },
     {
       "value": "Eve Bond",
@@ -7888,7 +7930,7 @@
         "packages/collector/src/e2e/brain-time-index.e2e.test.ts",
         "packages/collector/src/e2e/brain-verification.e2e.test.ts"
       ],
-      "reason": "invented fixture \u2014 a two-word window of the invented vendor 'Cedar Grove Supplies'"
+      "reason": "invented fixture — a two-word window of the invented vendor 'Cedar Grove Supplies'"
     },
     {
       "value": "Guided Kyoto",
@@ -7997,7 +8039,7 @@
     {
       "value": "Hello Alex",
       "paths": ["packages/collector/src/e2e/brain-verification.e2e.test.ts"],
-      "reason": "invented fixture \u2014 a greeting to the synthetic universe's invented self (Alex Rivera)"
+      "reason": "invented fixture — a greeting to the synthetic universe's invented self (Alex Rivera)"
     },
     {
       "value": "Hello John Smith",
@@ -8065,7 +8107,7 @@
         "packages/collector/src/e2e/brain-bench/worth-gate-mail.ts",
         "packages/collector/src/e2e/brain-decision-replay.e2e.test.ts"
       ],
-      "reason": "invented fixture \u2014 a greeting to the synthetic universe's invented self (Alex Rivera)"
+      "reason": "invented fixture — a greeting to the synthetic universe's invented self (Alex Rivera)"
     },
     {
       "value": "Hi Anton",
@@ -8306,7 +8348,7 @@
     {
       "value": "Iris Kelland",
       "paths": ["evals/universes/wrist/cast.json"],
-      "reason": "invented fixture \u2014 wrist demo universe"
+      "reason": "invented fixture — wrist demo universe"
     },
     {
       "value": "JP Bond",
@@ -8609,7 +8651,7 @@
     {
       "value": "Jordan Cole",
       "paths": ["evals/universes/default/cast.json"],
-      "reason": "invented fixture \u2014 merge-candidate pending demo (Cole cluster)"
+      "reason": "invented fixture — merge-candidate pending demo (Cole cluster)"
     },
     {
       "value": "Juniper Workshop",
@@ -8762,7 +8804,7 @@
     {
       "value": "London Paris",
       "paths": ["evals/universes/wrist/agent-demos/eurostar.jsonl"],
-      "reason": "invented fixture \u2014 wrist demo universe"
+      "reason": "invented fixture — wrist demo universe"
     },
     {
       "value": "London St Pancras",
@@ -8771,7 +8813,7 @@
         "evals/universes/wrist/sources/gmail/messages.json",
         "evals/universes/wrist/sources/google-calendar/events.json"
       ],
-      "reason": "invented fixture \u2014 wrist demo universe"
+      "reason": "invented fixture — wrist demo universe"
     },
     {
       "value": "Lucian Farrow",
@@ -9079,7 +9121,6 @@
         "packages/watch/src/compiler/prompt.test.ts",
         "scripts/fixtures/generate-release-upgrade.mjs",
         "scripts/lib/decision-cassette.test.mjs",
-        "packages/gateway/src/privacy/reviewer.test.ts",
         "packages/collector/src/e2e/maildir-lifecycle.e2e.test.ts",
         "packages/providers/maildir/src/index.test.ts",
         "packages/providers/maildir/src/message.test.ts",
@@ -9292,7 +9333,7 @@
     {
       "value": "My Sweep",
       "paths": ["packages/gateway/src/brain/sweeps/service.test.ts"],
-      "reason": "invented fixture \u2014 a deliberately malformed sweep file name"
+      "reason": "invented fixture — a deliberately malformed sweep file name"
     },
     {
       "value": "My Task",
@@ -9464,7 +9505,7 @@
         "evals/universes/wrist/cast.json",
         "evals/universes/wrist/sources/whatsapp-messages/messages.json"
       ],
-      "reason": "invented fixture \u2014 wrist demo universe"
+      "reason": "invented fixture — wrist demo universe"
     },
     {
       "value": "North Quarter",
@@ -9594,7 +9635,7 @@
     {
       "value": "Not An Id",
       "paths": ["packages/gateway/src/brain/sweeps/service.test.ts"],
-      "reason": "invented fixture \u2014 a deliberately malformed sweep file name"
+      "reason": "invented fixture — a deliberately malformed sweep file name"
     },
     {
       "value": "Not Found",
@@ -9737,7 +9778,7 @@
     {
       "value": "Outbound Sunday",
       "paths": ["evals/universes/wrist/agent-demos/eurostar.jsonl"],
-      "reason": "invented fixture \u2014 wrist demo universe"
+      "reason": "invented fixture — wrist demo universe"
     },
     {
       "value": "Outgoing Phone",
@@ -9782,7 +9823,7 @@
         "evals/universes/wrist/agent-demos/eurostar.jsonl",
         "evals/universes/wrist/sources/gmail/messages.json"
       ],
-      "reason": "invented fixture \u2014 wrist demo universe"
+      "reason": "invented fixture — wrist demo universe"
     },
     {
       "value": "Paris Riverside Triathlon",
@@ -9791,7 +9832,7 @@
         "evals/universes/wrist/sources/gmail/messages.json",
         "evals/universes/wrist/sources/google-calendar/events.json"
       ],
-      "reason": "invented fixture \u2014 wrist demo universe"
+      "reason": "invented fixture — wrist demo universe"
     },
     {
       "value": "Parkside Cafe",
@@ -10297,7 +10338,7 @@
       "reason": "reviewed invented fixture"
     },
     {
-      "value": "Ren\u00e9e Vance",
+      "value": "Renée Vance",
       "paths": ["packages/gateway/src/merge-candidates.test.ts"],
       "reason": "reviewed invented fixture"
     },
@@ -10406,7 +10447,7 @@
     {
       "value": "Riverbend Tri Club",
       "paths": ["evals/universes/wrist/cast.json"],
-      "reason": "invented fixture \u2014 wrist demo universe"
+      "reason": "invented fixture — wrist demo universe"
     },
     {
       "value": "Riverside Bank",
@@ -10520,7 +10561,7 @@
         "evals/universes/wrist/sources/gmail/messages.json",
         "evals/universes/wrist/sources/google-calendar/events.json"
       ],
-      "reason": "invented fixture \u2014 wrist demo universe"
+      "reason": "invented fixture — wrist demo universe"
     },
     {
       "value": "Robin Vale",
@@ -10562,12 +10603,12 @@
     {
       "value": "Sam Cole",
       "paths": ["evals/universes/default/cast.json"],
-      "reason": "invented fixture \u2014 merge-candidate pending demo (Cole cluster)"
+      "reason": "invented fixture — merge-candidate pending demo (Cole cluster)"
     },
     {
       "value": "Sam Diaz",
       "paths": ["evals/universes/default/cast.json"],
-      "reason": "invented fixture \u2014 merge-candidate pending demo (Cole cluster)"
+      "reason": "invented fixture — merge-candidate pending demo (Cole cluster)"
     },
     {
       "value": "Sam Quinn",
@@ -10885,7 +10926,7 @@
     {
       "value": "St Pancras",
       "paths": ["evals/universes/wrist/agent-demos/eurostar.jsonl"],
-      "reason": "invented fixture \u2014 wrist demo universe"
+      "reason": "invented fixture — wrist demo universe"
     },
     {
       "value": "St Pancras International",
@@ -10893,7 +10934,7 @@
         "evals/universes/wrist/agent-demos/eurostar.jsonl",
         "evals/universes/wrist/sources/gmail/messages.json"
       ],
-      "reason": "invented fixture \u2014 wrist demo universe"
+      "reason": "invented fixture — wrist demo universe"
     },
     {
       "value": "Stable Child",
@@ -10921,7 +10962,7 @@
         "evals/universes/wrist/agent-demos/eurostar.jsonl",
         "evals/universes/wrist/sources/gmail/messages.json"
       ],
-      "reason": "invented fixture \u2014 wrist demo universe"
+      "reason": "invented fixture — wrist demo universe"
     },
     {
       "value": "Standup Recap",
@@ -11438,17 +11479,17 @@
         "packages/collector/src/e2e/brain-bench/README.md",
         "packages/collector/src/e2e/brain-bench/index.ts"
       ],
-      "reason": "product name \u2014 the brain end-to-end test kit, not a person"
+      "reason": "product name — the brain end-to-end test kit, not a person"
     },
     {
       "value": "The Brambling",
       "paths": ["packages/collector/src/e2e/brain-loops.e2e.test.ts"],
-      "reason": "invented fixture \u2014 an invented venue used for a lighting-quote arc in the bench's loop tests"
+      "reason": "invented fixture — an invented venue used for a lighting-quote arc in the bench's loop tests"
     },
     {
       "value": "The Cedar Grove",
       "paths": ["packages/collector/src/e2e/brain-verification.e2e.test.ts"],
-      "reason": "invented fixture \u2014 a three-word window of the invented vendor 'Cedar Grove Supplies'"
+      "reason": "invented fixture — a three-word window of the invented vendor 'Cedar Grove Supplies'"
     },
     {
       "value": "The Coinbase",
@@ -11554,7 +11595,7 @@
     {
       "value": "The Riverside Estate",
       "paths": ["packages/collector/src/e2e/brain-verification.e2e.test.ts"],
-      "reason": "invented fixture \u2014 a three-word window of the invented venue 'Riverside Estate'"
+      "reason": "invented fixture — a three-word window of the invented venue 'Riverside Estate'"
     },
     {
       "value": "The Studio Northstar",
@@ -11590,7 +11631,7 @@
         "evals/universes/wrist/cast.json",
         "evals/universes/wrist/sources/whatsapp-messages/messages.json"
       ],
-      "reason": "invented fixture \u2014 wrist demo universe"
+      "reason": "invented fixture — wrist demo universe"
     },
     {
       "value": "Theo Marsh",
@@ -11727,7 +11768,7 @@
     {
       "value": "Tri Club",
       "paths": ["evals/universes/wrist/sources/gmail/messages.json"],
-      "reason": "invented fixture \u2014 wrist demo universe"
+      "reason": "invented fixture — wrist demo universe"
     },
     {
       "value": "Tuesday James",
@@ -11889,7 +11930,7 @@
     {
       "value": "Wakes Fictional",
       "paths": ["packages/gateway/portal/js/views/watches.test.ts"],
-      "reason": "invented fixture \u2014 two words of a rendered sentence (\"Wakes <integration>\") over an invented integration name, not a person"
+      "reason": "invented fixture — two words of a rendered sentence (\"Wakes <integration>\") over an invented integration name, not a person"
     },
     {
       "value": "Web Crypto",
@@ -12863,7 +12904,7 @@
     },
     {
       "value": "Rate Limit Exceeded",
-      "paths": ["packages/providers/google/src/drive.test.ts"],
+      "paths": ["packages/providers/google/src/broker.test.ts"],
       "reason": "Google API error message text."
     },
     {
@@ -12893,11 +12934,6 @@
     },
     {
       "value": "Backend Error",
-      "paths": ["packages/providers/google/src/broker.test.ts"],
-      "reason": "Google API error message text."
-    },
-    {
-      "value": "Rate Limit Exceeded",
       "paths": ["packages/providers/google/src/broker.test.ts"],
       "reason": "Google API error message text."
     },
@@ -12996,7 +13032,8 @@
         "evals/universes/loops-test-life/sources/google-drive/folders.json",
         "evals/universes/sacha-bellamy/sources/google-drive/folders.json",
         "packages/providers-synth/google/src/drive-source.test.ts",
-        "packages/providers/google/src/drive-scope-folders.test.ts"
+        "packages/providers/google/src/drive-scope-folders.test.ts",
+        "packages/collector/src/e2e/filter-details-google.e2e.test.ts"
       ],
       "reason": "Invented root-folder display label shared by synthetic folder-tree fixtures; not a person or corpus data."
     },
@@ -13068,6 +13105,131 @@
       "value": "Northstar Labs",
       "paths": ["evals/universes/repository-filters/cast.json"],
       "reason": "Invented organization of the repository-filters universe."
+    },
+    {
+      "value": "Maya Reeves",
+      "paths": ["evals/universes/folder-filters/cast.json"],
+      "reason": "Invented cast of the folder-filters universe."
+    },
+    {
+      "value": "David Lin",
+      "paths": ["evals/universes/filter-lists/cast.json"],
+      "reason": "Invented cast of the filter-lists universe, taken from the AGENTS.md example names; never personal corpus data."
+    },
+    {
+      "value": "Jamie Lopez",
+      "paths": ["evals/universes/filter-lists/cast.json"],
+      "reason": "Invented cast of the filter-lists universe, taken from the AGENTS.md example names; never personal corpus data."
+    },
+    {
+      "value": "Maya Reeves",
+      "paths": ["evals/universes/filter-lists/cast.json"],
+      "reason": "Invented cast of the filter-lists universe, taken from the AGENTS.md example names; never personal corpus data."
+    },
+    {
+      "value": "David Lin",
+      "paths": [
+        "evals/universes/chat-filters/cast.json",
+        "evals/universes/chat-filters/sources/whatsapp-messages/fake-corpus.json",
+        "packages/providers/whatsapp/src/chat-list.test.ts"
+      ],
+      "reason": "Invented name from the AGENTS.md example set, used by the chat-filter fixtures and tests; never corpus data."
+    },
+    {
+      "value": "Jamie Lopez",
+      "paths": [
+        "evals/universes/chat-filters/cast.json",
+        "evals/universes/chat-filters/sources/whatsapp-messages/fake-corpus.json",
+        "packages/providers/whatsapp/src/chat-list.test.ts",
+        "packages/providers/whatsapp/src/stored-record-forms.test.ts"
+      ],
+      "reason": "Invented name from the AGENTS.md example set, used by the chat-filter fixtures and tests; never corpus data."
+    },
+    {
+      "value": "Maya Reeves",
+      "paths": [
+        "evals/universes/chat-filters/cast.json",
+        "evals/universes/chat-filters/sources/apple-imessage/messages.json",
+        "evals/universes/chat-filters/sources/whatsapp-messages/fake-corpus.json",
+        "packages/collector/src/e2e/filter-details-chats.e2e.test.ts",
+        "packages/providers-synth/_common/src/chat-roster.test.ts",
+        "packages/providers/whatsapp/src/chat-list.test.ts",
+        "packages/providers/whatsapp/src/stored-record-forms.test.ts"
+      ],
+      "reason": "Invented name from the AGENTS.md example set, used by the chat-filter fixtures and tests; never corpus data."
+    },
+    {
+      "value": "Northstar Offers",
+      "paths": ["evals/universes/chat-filters/cast.json"],
+      "reason": "Invented name from the AGENTS.md example set, used by the chat-filter fixtures and tests; never corpus data."
+    },
+    {
+      "value": "Riverside Estate",
+      "paths": [
+        "evals/universes/chat-filters/sources/apple-imessage/chats.json",
+        "evals/universes/chat-filters/sources/apple-imessage/messages.json",
+        "packages/collector/src/e2e/filter-details-chats.e2e.test.ts",
+        "packages/providers-synth/_common/src/chat-roster.test.ts"
+      ],
+      "reason": "Invented name from the AGENTS.md example set, used by the chat-filter fixtures and tests; never corpus data."
+    },
+    {
+      "value": "Sam Rivera",
+      "paths": ["evals/universes/chat-filters/cast.json"],
+      "reason": "Invented name from the AGENTS.md example set, used by the chat-filter fixtures and tests; never corpus data."
+    },
+    {
+      "value": "Studio Northstar",
+      "paths": [
+        "evals/universes/chat-filters/sources/whatsapp-messages/fake-corpus.json",
+        "packages/collector/src/e2e/filter-details-chats.e2e.test.ts",
+        "packages/providers/apple/src/imessage-chat-list.test.ts",
+        "packages/providers/whatsapp/src/chat-list.test.ts",
+        "packages/providers/whatsapp/src/stored-record-forms.test.ts"
+      ],
+      "reason": "Invented name from the AGENTS.md example set, used by the chat-filter fixtures and tests; never corpus data."
+    },
+    {
+      "value": "Maya Reeves",
+      "paths": ["evals/universes/label-filters/cast.json"],
+      "reason": "Invented cast of the label-filters universe, taken from the AGENTS.md example names; never personal corpus data."
+    },
+    {
+      "value": "Jamie Lopez",
+      "paths": ["evals/universes/label-filters/cast.json"],
+      "reason": "Invented cast of the label-filters universe, taken from the AGENTS.md example names; never personal corpus data."
+    },
+    {
+      "value": "David Lin",
+      "paths": ["evals/universes/label-filters/cast.json"],
+      "reason": "Invented cast of the label-filters universe, taken from the AGENTS.md example names; never personal corpus data."
+    },
+    {
+      "value": "My Drive",
+      "paths": ["packages/providers/google/src/filter-details.test.ts"],
+      "reason": "The name Google Drive gives every account's root folder; a product label, not a person or corpus data."
+    },
+    {
+      "value": "Maya Reeves",
+      "paths": [
+        "evals/universes/repository-filters/cast.json",
+        "evals/universes/repository-filters/sources/github-commits/commits.json",
+        "evals/universes/repository-filters/sources/github/threads.json"
+      ],
+      "reason": "Invented cast of the repository-filters universe, taken from the AGENTS.md example names; never personal corpus data."
+    },
+    {
+      "value": "Jamie Lopez",
+      "paths": [
+        "evals/universes/repository-filters/cast.json",
+        "evals/universes/repository-filters/sources/github/threads.json"
+      ],
+      "reason": "Invented cast of the repository-filters universe, taken from the AGENTS.md example names; never personal corpus data."
+    },
+    {
+      "value": "David Lin",
+      "paths": ["evals/universes/repository-filters/cast.json"],
+      "reason": "Invented cast of the repository-filters universe, taken from the AGENTS.md example names; never personal corpus data."
     }
   ],
   "secretFixtures": [

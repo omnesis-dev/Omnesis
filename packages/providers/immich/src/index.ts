@@ -141,6 +141,7 @@ export function buildImmichProvider(
         icon: immichIcon,
         defaultSyncInterval: "30m",
         contract: {
+          outputRevision: 1,
           state: immichStateSpec,
           apiVersion: 2,
           requires: ["state-envelope", "typed-config"],

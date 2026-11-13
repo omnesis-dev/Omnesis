@@ -244,9 +244,12 @@ through the registry. Verify:
 - A missing capability refuses creation, reaches setup-failure reporting, and
   leaves supported siblings operational. Provider and entry requirements merge;
   a provider-level state decoder must never migrate a child's bookmark.
-- `outputRevision` describes output meaning, not cursor shape. It does not
-  schedule reprocessing; prove the explicit re-emission/backfill mechanism if
-  output changes must affect already indexed records.
+- `outputRevision` describes output meaning, not cursor shape. Every source
+  declares its own, starting at 1, and a change to what the source writes raises
+  it in the same change; it never goes down. The host sends it with every sync
+  page and the gateway stores it on each document. It does not schedule
+  reprocessing; prove the explicit re-emission/backfill mechanism if output
+  changes must affect already indexed records.
 - `contract.state.decode` accepts every settled, pending, empty-store and legacy
   state the source can produce. Supply a complete major migration chain and
   classify bare installed cursors with `legacyVersion` where needed. Minor
@@ -594,6 +597,27 @@ includeAudioTypes })` and the injected `extractAttachment`; no bespoke
   agent's `count_messages` counts each document as one message.
 - Two sources must be distinguishable by profile alone (the catalog hides
   source names).
+- A field marked `filter`, and a `personFilter`, are optional. When declared:
+  the field holds the source's own ids, never display names; a
+  `string-array` field writes `[]` for "none" and omits the field for "not
+  known", and a `string` field is used only where every record has a value;
+  `minVersion` is the `outputRevision` of the change that started writing
+  the field (0 only if records stored before versions were recorded carry
+  it), and that change raises `outputRevision`; `scope: "device"` is used
+  exactly when an id only means something on the device that produced it.
+  A parity test proves the normalizer writes what is declared.
+- Every field marked `filter` has a list producer attached with
+  `withFilterLists`, keyed by the field's path. A producer lists everything
+  that exists in the account for the field (also what no record belongs to)
+  and nothing about individual records; it returns the whole list or throws,
+  never a part of it, and throws `FilterListNotReadyError` while a list built
+  from the sync's own pages is not whole yet; ids are unique, every `parentId` names an item of the
+  same list, and an item whose parent the source cannot see is a root;
+  `members` appear only where the field declares `listsMembers`, and an item
+  with a member the source cannot name by a declared identifier, or whose
+  roster it does not hold whole, sets `membersIncomplete`. Its cost
+  grows with the number of labels or folders, never with the number of
+  records. A test covers a rename, a move, a deletion and a failed listing.
 - `documentTemporalProjections` use only the closed field set
   (`$semanticTime`, `scheduledAt`, `dueAt`, `endsAt`, `timeZone`, `status`);
   `temporalProjection` on analytics tables anchors on `$semanticTime` and

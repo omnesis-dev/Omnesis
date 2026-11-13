@@ -472,6 +472,7 @@ describe("normalizeDayChat", () => {
     expect(doc.metadata.extra?.isGroup).toBe(true);
     expect(doc.metadata.extra?.messageCount).toBe(2);
     expect(doc.metadata.extra?.chatName).toBe("Trail crew");
+    expect(doc.metadata.extra?.chatIdentifier).toBe("chat-trail-crew");
     // The service the normalizer stamps has to be spelled the way the
     // declaration spells it, or a condition compiled against the vocabulary
     // matches nothing.
@@ -486,6 +487,7 @@ describe("normalizeDayChat", () => {
       "extra.isGroup",
       "extra.messageCount",
       "extra.chatName",
+      "extra.chatIdentifier",
     ]);
   });
 

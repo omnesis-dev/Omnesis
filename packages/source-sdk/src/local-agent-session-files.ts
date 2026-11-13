@@ -134,11 +134,14 @@ export interface LocalAgentSessionFileState {
    */
   rootId?: string;
   /**
-   * The directory the session worked in, null when it has no single one. Absent
-   * on a state written before directories were recorded; such a file is read
-   * again once a folder filter needs to know.
+   * The directory the session in this file started in, normalized. It is what
+   * the source's list of project folders is built from, so that listing them
+   * never reads a session file.
+   *
+   * Absent when the file recorded no usable directory, and on a state written
+   * before sessions carried their project folder.
    */
-  directory?: string | null;
+  projectFolder?: string;
 }
 
 export interface LocalAgentSessionParseOptions {

@@ -19,13 +19,13 @@ import { validateStateSpec, type SourceState, type SourceStateSpec } from "./sou
  *   normalizer starts producing different documents or rows from the same
  *   upstream input. Governs reprocessing.
  *
- * The third is the one that has no equivalent anywhere in the tree today, and
- * it is the one that silently rots a corpus: a normalizer change leaves every
- * previously ingested document as it was, so the store ends up holding two
- * generations of meaning under one schema, with nothing recording which is
- * which. Declaring it does not by itself reprocess anything — it records the
- * fact so that a backfill *can* be targeted later, and so that a document's
- * provenance can say which revision produced it.
+ * The third guards against what silently rots a corpus: a normalizer change
+ * leaves every previously ingested document as it was, so the store ends up
+ * holding two generations of meaning under one schema. The host sends the
+ * revision with every sync page and the gateway stores it on each document, so
+ * the store records which is which. Declaring it does not by itself reprocess
+ * anything — it lets a reader tell the generations apart and a backfill target
+ * the older one.
  */
 
 /**
@@ -119,7 +119,11 @@ export interface SourceContractDeclaration<S extends SourceState = SourceState> 
    * Bumping is a claim that previously stored output is a different generation
    * from what this build would write now. It does not trigger anything on its
    * own; it makes a targeted backfill possible, and keeps the fact from being
-   * lost. Omitted means 1.
+   * lost. Omitted means 1; see {@link resolveOutputRevision}.
+   *
+   * The host sends the resolved revision with every sync page and the gateway
+   * stores it on each document the page carries, so it only ever increases:
+   * a stored document never goes back to a lower revision.
    */
   outputRevision?: number;
 
@@ -159,6 +163,16 @@ export function mergeContractDeclarations(
     state: entry?.state,
     requires: requires.length > 0 ? requires : undefined,
   };
+}
+
+/**
+ * The output revision a source's documents are written at.
+ *
+ * A package that declares none is revision 1: the first revision a source can
+ * have, so 0 stays free to mean a document stored without any revision.
+ */
+export function resolveOutputRevision(declaration: SourceContractDeclaration | undefined): number {
+  return declaration?.outputRevision ?? 1;
 }
 
 /** Why a host refused to load a source package. */

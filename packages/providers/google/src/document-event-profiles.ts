@@ -6,7 +6,7 @@
  * counterpart of the analytics schemas' categorical vocabularies.
  *
  * Every entry below describes the wire contract of the normalizers in
- * `gmail.ts` / `calendar.ts`: the document types they emit, the person roles
+ * `gmail.ts` / `calendar.ts` / `drive.ts`: the document types they emit, the person roles
  * they really assert, and the metadata they really populate. A declaration
  * the normalizer does not honour would let a natural-language condition
  * compile into a predicate that can never match, so the values here are held
@@ -14,7 +14,20 @@
  * to the normalizers' actual output.
  */
 
+import { DRIVE_FOLDERS_FIELD } from "./drive-folders.js";
+import { GMAIL_LABELS_FIELD } from "./gmail-labels.js";
+import { MAX_PEOPLE_PER_MESSAGE } from "./gmail-message.js";
 import type { DocumentEventProfile } from "@omnesis/source-sdk";
+
+/**
+ * The output revision from which a Gmail record carries its label ids and
+ * every recipient of its message, `Bcc` included, in the normalized form a
+ * filter compares.
+ */
+export const GMAIL_OUTPUT_REVISION = 2;
+
+/** The output revision from which a Drive record carries its folder ids. */
+export const GOOGLE_DRIVE_OUTPUT_REVISION = 2;
 
 /**
  * Gmail's built-in labels. Gmail returns these labels with `name` equal to
@@ -69,6 +82,23 @@ export const gmailDocumentEventProfile: DocumentEventProfile = {
       },
     },
     {
+      path: GMAIL_LABELS_FIELD,
+      type: "string-array",
+      description:
+        "Gmail's own ids for the labels on the message: user-created labels as an opaque id such as 'Label_12', and the built-in INBOX, SENT, DRAFT, STARRED, IMPORTANT, CHAT and CATEGORY_ labels as their uppercase identifier. Read state (UNREAD) and other built-in markers are not included. An id stays the same when its label is renamed. Empty when the message has none. Opaque: the names are in `tags`. Attachment documents carry none; an attachment is filed with its message.",
+      // Gmail nests a label inside another by its name, so the list is a
+      // tree; a message carries only the labels put on it, not the ones above.
+      filter: {
+        capability: "tree",
+        minVersion: GMAIL_OUTPUT_REVISION,
+        scope: "global",
+        noun: { one: "label", many: "labels" },
+        levels: [{ one: "label", many: "labels" }],
+        picker: "tree",
+        inside: { one: "label", many: "labels" },
+      },
+    },
+    {
       path: "extra.threadId",
       type: "string",
       description:
@@ -85,6 +115,42 @@ export const gmailDocumentEventProfile: DocumentEventProfile = {
       type: "boolean",
       description:
         "True when the message came from a machine that expects no reply — a no-reply or notifications sender address, or an Auto-Submitted header. Distinct from bulk mail: this is transactional notification traffic. Absent, never false, on the rest.",
+    },
+  ],
+  // A message involves whoever sent it and whoever it was addressed to, each
+  // by address; nothing is read from the rest of its thread. Records written
+  // before this revision left out `Bcc` recipients and stored addresses as
+  // the header spelled them, so they cannot be compared.
+  personFilter: {
+    minVersion: GMAIL_OUTPUT_REVISION,
+    roles: ["sender", "recipient"],
+    identifiers: ["email", "domain"],
+    maxPeople: MAX_PEOPLE_PER_MESSAGE,
+  },
+};
+
+export const googleDriveDocumentEventProfile: DocumentEventProfile = {
+  // One document per file whose text could be read.
+  documentTypes: ["file"],
+  // A file's owner; people with edit access as authors and people with view
+  // or comment access as recipients; and email addresses or phone numbers
+  // found in the text as mentions.
+  personRoles: ["owner", "author", "recipient", "mentioned"],
+  metadataFields: [
+    {
+      path: DRIVE_FOLDERS_FIELD,
+      type: "string-array",
+      description:
+        "Drive's own ids for the folders the file sits in directly, not the folders above them. An id stays the same when its folder is renamed or moved. Empty when the file sits in no folder the account can see, such as a file shared on its own. Opaque: never shown to a person.",
+      filter: {
+        capability: "tree",
+        minVersion: GOOGLE_DRIVE_OUTPUT_REVISION,
+        scope: "global",
+        noun: { one: "folder", many: "folders" },
+        levels: [{ one: "folder", many: "folders" }],
+        picker: "tree",
+        inside: { one: "folder", many: "folders" },
+      },
     },
   ],
 };

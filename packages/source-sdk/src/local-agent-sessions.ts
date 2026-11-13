@@ -2,6 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { createHash } from "node:crypto";
+import { homedir } from "node:os";
 import { basename } from "node:path";
 import {
   AGENT_CONVERSATION_RENDER_VERSION,
@@ -18,20 +19,22 @@ import {
   type LocalAgentSessionParseOptions,
   type LocalAgentSessionRoot,
 } from "./local-agent-session-files.js";
+import { FilterListNotReadyError, withFilterLists } from "./filter-lists.js";
+import { directoryFilterId, directoryFilterList, normalizeDirectoryPath } from "./filter-paths.js";
+import { LOCAL_AGENT_SESSION_PROJECT_FOLDER_FIELD } from "./local-agent-session-profile.js";
 import { SnapshotEnumeration } from "./snapshot.js";
 import { syncPage } from "./source.js";
 import { probeTreeReadAccess } from "./read-access-tree.js";
-import { sharedWorkingDirectory } from "./path-scopes.js";
-import { withPathScopes } from "./path-scope-sync.js";
-import type { PathScopeEntry } from "./path-scope-sync.js";
-import type { PathScopeLayout } from "./path-scopes.js";
 import type { SnapshotClaim } from "./snapshot.js";
 import type { ConversationMessage } from "@omnesis/core";
 import type { DocumentInput, ProviderId, SourceId, SyncIssue } from "@omnesis/types";
 import type { SourceInstance } from "./define-source.js";
 import type { SyncCursor } from "./source.js";
 
-export { createLocalAgentSessionDocumentEventProfile } from "./local-agent-session-profile.js";
+export {
+  createLocalAgentSessionDocumentEventProfile,
+  LOCAL_AGENT_SESSION_PROJECT_FOLDER_FIELD,
+} from "./local-agent-session-profile.js";
 export {
   createLocalAgentSessionRetentionGuard,
   MAX_RETAINED_SESSION_BYTES,
@@ -60,13 +63,14 @@ const MAX_CURSOR_BYTES = 16 * 1024 * 1024;
 
 export interface ParsedLocalAgentSession {
   id: string;
+  /** The working directory the session last recorded. */
   cwd?: string;
   /**
-   * Every working directory the session recorded, in the order it entered
-   * them. Defaults to `cwd` alone. A folder filter files the session under
-   * the one directory holding all of them; see `sharedWorkingDirectory`.
+   * The working directory the tool recorded when the session started. It is
+   * the project folder the session is filed under, and nothing later in the
+   * session changes it. Left out when the file recorded none.
    */
-  directories?: readonly string[];
+  startCwd?: string;
   name?: string;
   branch?: string;
   model?: string;
@@ -109,10 +113,10 @@ export interface CreateLocalAgentSessionSourceOptions {
   sourceId: SourceId;
   dataCutoff?: string;
   /**
-   * Publish each session's working directory as a folder a source filter can
-   * name. The source's definition must declare a hierarchical `folder` scope.
+   * The home directory of this machine, which the list of project folders is
+   * shown from. Defaults to the home directory of the running user.
    */
-  folders?: PathScopeLayout;
+  homeDirectory?: string;
 }
 
 function newestFileKeysBySession(
@@ -232,23 +236,6 @@ function rootEnumeration(
   return enumeration;
 }
 
-/** The working directory of every document the cursor holds. */
-function documentDirectories(
-  cursor: LocalAgentSessionCursor,
-  policy: LocalAgentSessionAdapter["duplicateSessionPolicy"],
-): PathScopeEntry[] {
-  // Oldest first, so a document held by several files takes the newest one's
-  // directory: the file whose rendering of it is the one stored.
-  return livingFiles(cursor.files, policy)
-    .sort(([aKey, a], [bKey, b]) => a.mtimeMs - b.mtimeMs || (aKey < bKey ? -1 : 1))
-    .flatMap(([, state]) =>
-      state.externalIds.map((externalId) => ({
-        externalId,
-        directory: typeof state.directory === "string" ? state.directory : null,
-      })),
-    );
-}
-
 function displayName(session: ParsedLocalAgentSession): { chatName?: string; project?: string } {
   const project = session.cwd ? basename(session.cwd) : undefined;
   const parts = [session.name?.trim(), project, session.branch?.trim()].filter(
@@ -289,6 +276,7 @@ function renderSession(
   }
 
   const { chatName, project } = displayName(session);
+  const projectFolder = directoryFilterId(session.startCwd);
   const documents: DocumentInput[] = [];
   let retainedBytes = 0;
   for (const [dayKey, dayMessages] of byDay) {
@@ -310,6 +298,9 @@ function renderSession(
       branch: session.branch ?? null,
       model: session.model ?? null,
       parentSessionId: session.parentSessionId ?? null,
+      // Written only when known. A session whose file recorded no directory
+      // carries nothing, which a filter reads as "not known" and keeps hidden.
+      ...(projectFolder !== null ? { projectFolder } : {}),
     };
     const renderedBytes =
       Buffer.byteLength(document.title) +
@@ -327,6 +318,13 @@ function renderSession(
   return documents;
 }
 
+/** The project folder a file's documents keep while the file cannot be read. */
+function keptProjectFolder(
+  previous: LocalAgentSessionFileState | undefined,
+): Pick<LocalAgentSessionFileState, "projectFolder"> {
+  return previous?.projectFolder === undefined ? {} : { projectFolder: previous.projectFolder };
+}
+
 /** How long a watched session directory must stay unchanged before it is read. */
 export const AGENT_SESSION_WATCH_QUIET_MS = 60_000;
 
@@ -339,8 +337,14 @@ export function createLocalAgentSessionSource(
   options: CreateLocalAgentSessionSourceOptions,
 ): SourceInstance<LocalAgentSessionCursor> {
   const roots = options.adapter.roots.map((root) => root.path);
+  /**
+   * The project folders of the sessions the last sync page left in the
+   * cursor: `undefined` before any page, `null` while a cycle still has files
+   * to read, since the folders of those are not known yet.
+   */
+  let projectFolders: string[] | null | undefined;
 
-  const source: SourceInstance<LocalAgentSessionCursor> = {
+  const instance: SourceInstance<LocalAgentSessionCursor> = {
     probeReadAccess: ({ signal }) =>
       probeTreeReadAccess({
         signal,
@@ -460,10 +464,6 @@ export function createLocalAgentSessionSource(
       for (const [sessionId, winner] of previousWinners) {
         if (currentWinners.get(sessionId) !== winner) changedSessionIds.add(sessionId);
       }
-      // A file read before directories were recorded is read once more when
-      // the gateway takes folder facts, so its documents can be filed.
-      const recordsMissingDirectory =
-        options.folders !== undefined && syncOptions?.scopeHierarchySupported === true;
       const continuing =
         cursor?.version === 2 && cursor.scanKey === scanKey && cursor.pendingFileKeys !== undefined;
       const mayReuse = cursor?.version === 2 && cursor.scanKey === scanKey;
@@ -529,7 +529,6 @@ export function createLocalAgentSessionSource(
           if (
             mayReuse &&
             previous?.complete &&
-            !(recordsMissingDirectory && previous.directory === undefined) &&
             previous.rootId === file.rootId &&
             sameLocalAgentSessionFileRevision(previous, file) &&
             !previous.externalIds.some((externalId) =>
@@ -591,7 +590,7 @@ export function createLocalAgentSessionSource(
               externalIds: previous?.externalIds ?? [],
               complete: false,
               lastKnownComplete,
-              ...(previous?.directory !== undefined ? { directory: previous.directory } : {}),
+              ...keptProjectFolder(previous),
             };
             continue;
           }
@@ -628,6 +627,7 @@ export function createLocalAgentSessionSource(
           }
           const metadataFields = [
             session.cwd,
+            session.startCwd,
             session.name,
             session.branch,
             session.model,
@@ -642,6 +642,7 @@ export function createLocalAgentSessionSource(
           ) {
             throw new Error("Session metadata exceeds its size limit");
           }
+          const startFolder = normalizeDirectoryPath(session.startCwd);
           const sessionDocuments = renderSession(
             session,
             options,
@@ -689,9 +690,7 @@ export function createLocalAgentSessionSource(
             sessionId: session.ignored ? undefined : session.id,
             externalIds: sessionDocuments.map((document) => document.externalId),
             complete: true,
-            directory: sharedWorkingDirectory(
-              session.directories ?? (session.cwd === undefined ? [] : [session.cwd]),
-            ),
+            ...(startFolder !== null && !session.ignored ? { projectFolder: startFolder } : {}),
           };
         } catch (error) {
           if (syncOptions?.signal?.aborted) throw syncOptions.signal.reason;
@@ -712,7 +711,7 @@ export function createLocalAgentSessionSource(
             externalIds: previous?.externalIds ?? [],
             complete: false,
             lastKnownComplete,
-            ...(previous?.directory !== undefined ? { directory: previous.directory } : {}),
+            ...keptProjectFolder(previous),
           };
         }
       }
@@ -795,6 +794,11 @@ export function createLocalAgentSessionSource(
       if (Buffer.byteLength(JSON.stringify(nextCursor)) > MAX_CURSOR_BYTES) {
         throw new Error(`Session cursor exceeds ${MAX_CURSOR_BYTES} bytes`);
       }
+      projectFolders = hasMore
+        ? null
+        : livingFiles(files, options.adapter.duplicateSessionPolicy).flatMap(
+            ([, state]) => state.projectFolder ?? [],
+          );
       return syncPage(outputDocuments, nextCursor, {
         hasMore,
         presentExternalIds,
@@ -815,14 +819,21 @@ export function createLocalAgentSessionSource(
       });
     },
   };
-  const folders = options.folders;
-  return folders === undefined
-    ? source
-    : withPathScopes(source, {
-        layout: folders,
-        inventory: (cursor) =>
-          cursor.version === 2
-            ? documentDirectories(cursor, options.adapter.duplicateSessionPolicy)
-            : [],
+  return withFilterLists(instance, {
+    // Built from what the cursor already holds: one entry per session file,
+    // no file read, and nothing that grows with the days a session spans.
+    [LOCAL_AGENT_SESSION_PROJECT_FOLDER_FIELD]: () => {
+      if (projectFolders === undefined) {
+        throw new FilterListNotReadyError("no session has been read yet");
+      }
+      // Publishing the folders read so far would drop every folder still to
+      // come from the gateway's list; the list is whole after the last page.
+      if (projectFolders === null) {
+        throw new FilterListNotReadyError("the session files are still being read");
+      }
+      return directoryFilterList(projectFolders, {
+        home: options.homeDirectory ?? homedir(),
       });
+    },
+  });
 }

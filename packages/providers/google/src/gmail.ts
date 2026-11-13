@@ -33,7 +33,6 @@ import {
 } from "@omnesis/types";
 import {
   GMAIL_PAGE_SIZE,
-  GOOGLE_PAGE_SIZE,
   GMAIL_LABEL_CACHE_TTL_MS,
   GOOGLE_FETCH_CONCURRENCY,
   GMAIL_HISTORY_RECOVERY_OVERLAP_MS,
@@ -46,16 +45,9 @@ import {
   GMAIL_QUOTA_INCREASE_UNITS_PER_MINUTE,
   GMAIL_QUOTA_QUIET_PERIOD_MS,
   GMAIL_QUOTA_HOLD_MS,
+  GMAIL_SYNC_BUDGET_MS,
   type GmailRequest,
 } from "./constants.js";
-import {
-  GmailLabelScopes,
-  gmailLabelFacts,
-  gmailLabelScopeBookmark,
-  isGmailLabelScopeCursor,
-  withoutGmailLabelScopeCursor,
-  type GmailLabelScopeCursor,
-} from "./gmail-scope-labels.js";
 import { googleApiStatus, mapGoogleApiError } from "./api-error.js";
 import { QuotaPacer } from "./quota-pacer.js";
 import {
@@ -67,7 +59,7 @@ import {
   partHeader,
   selfAuthoredMailText,
 } from "./gmail-message.js";
-import { prepareGmailScopeEpoch, finalizeGmailScopeEpoch } from "./gmail-scope-epochs.js";
+import { gmailLabelItems, gmailListedLabelIds, gmailRecordLabelIds } from "./gmail-labels.js";
 import type {
   AttachmentInfo,
   AttachmentExtractionConfig,
@@ -80,11 +72,11 @@ import type {
   HistoryCoverage,
   SyncRun,
 } from "@omnesis/source-sdk";
-import type { DocumentInput } from "@omnesis/types";
+import type { DocumentInput, FilterListItem } from "@omnesis/types";
 
 const log = createLogger("source:gmail");
 
-export interface GmailSyncCursor extends SyncCursor, GmailLabelScopeCursor {
+export interface GmailSyncCursor extends SyncCursor {
   historyId?: string;
   pageToken?: string;
   totalMessages?: number;
@@ -244,7 +236,7 @@ function isInvalidPageTokenError(err: unknown): boolean {
 export function isGmailSyncCursor(v: unknown): v is GmailSyncCursor {
   if (!v || typeof v !== "object") return false;
   const c = v as Record<string, unknown>;
-  return (c.phase === "bootstrap" || c.phase === "incremental") && isGmailLabelScopeCursor(c);
+  return c.phase === "bootstrap" || c.phase === "incremental";
 }
 
 const validateGmailSyncCursor = makeCursorValidator(isGmailSyncCursor);
@@ -332,15 +324,6 @@ export function gmailMessageUrl(messageId: string, accountEmail?: string): strin
 // actually opens the specific message rather than the inbox or composer.
 
 /**
- * How long one sync may run before it ends and leaves the rest to the next.
- * A first sync of a large mailbox pages through every message for hours; the
- * host stops a sync that runs too long and reports it as an error, while a
- * sync that ends on its own keeps its pages and reports none. The cursor
- * already records where the walk stands, so the next sync continues it.
- */
-const GMAIL_SYNC_BUDGET_MS = 20 * 60 * 1000;
-
-/**
  * What fetching one message came to: its documents and when it reached the
  * mailbox, or that Gmail no longer has it.
  */
@@ -360,8 +343,10 @@ export class GmailSource {
   private extractAttachment?: AttachmentExtractFn;
   private labelMap: Map<string, string> | null = null;
   private labelMapFetchedAt = 0;
-  private labelScopes?: GmailLabelScopes;
-  private scopeFactsSupported = false;
+  /** The ids of the account's labels a filter can name, as of the last listing. */
+  private listedLabelIds: ReadonlySet<string> = new Set();
+  /** Ids seen on a message that the last listing, made for them, did not contain. */
+  private readonly absentLabelIds = new Set<string>();
   /**
    * When the current sync began, and the host run it belongs to. A page from
    * a different run starts a fresh budget, so a sync the host abandoned
@@ -437,57 +422,72 @@ export class GmailSource {
       return this.labelMap;
     }
     try {
-      const res = await this.request("labelsList", () =>
-        this.gmail.users.labels.list({ userId: "me" }),
-      );
-      const map = new Map<string, string>();
-      for (const label of res.data.labels ?? []) {
-        if (label.id && label.name) map.set(label.id, label.name);
-      }
-      this.labelMap = map;
-      this.labelMapFetchedAt = Date.now();
-      return map;
+      await this.fetchLabels();
+      return this.labelMap!;
     } catch (err) {
       // A rate limit fails the page: the fallback below would tag messages
       // with raw label ids, and the page would land with them.
       if (isRateLimit(err)) throw err;
+      // With no listing at all, a message's label ids could not be told from
+      // "none", so the page fails and is read again.
+      // The same goes for a listing asked for because a message names a
+      // label the last one lacks: its id would be left off the record.
+      if (!this.labelMap || forceRefresh) throw err;
       log.warn(`Failed to fetch Gmail labels: ${err instanceof Error ? err.message : String(err)}`);
-      return this.labelMap ?? new Map();
+      return this.labelMap;
+    }
+  }
+
+  /**
+   * The account's labels, from one `labels.list` request, which Gmail does
+   * not page. Every read also renews the id-to-name map messages are tagged
+   * from, so a renamed label is known by its new name from then on.
+   */
+  private async fetchLabels(): Promise<gmail_v1.Schema$Label[]> {
+    const res = await this.request("labelsList", () =>
+      this.gmail.users.labels.list({ userId: "me" }),
+    );
+    const labels = res.data.labels ?? [];
+    const map = new Map<string, string>();
+    for (const label of labels) {
+      if (label.id && label.name) map.set(label.id, label.name);
+    }
+    this.labelMap = map;
+    this.listedLabelIds = gmailListedLabelIds(labels);
+    this.absentLabelIds.clear();
+    this.labelMapFetchedAt = Date.now();
+    return labels;
+  }
+
+  /**
+   * The labels that exist in the account, for the list a filter picks from.
+   * One paced `labels.list` request however many messages the mailbox holds;
+   * a failure throws, so a list is never published in part.
+   */
+  async listLabels(): Promise<FilterListItem[]> {
+    try {
+      return gmailLabelItems(await this.fetchLabels());
+    } catch (error: unknown) {
+      throw mapGoogleApiError(error);
     }
   }
 
   private async resolveLabels(labelIds: string[]): Promise<string[]> {
     if (labelIds.length === 0) return [];
     let map = await this.getLabelMap();
-    let needsRefresh = false;
-    for (const id of labelIds) {
-      if (id.startsWith("Label_") && !map.has(id)) {
-        needsRefresh = true;
-        break;
-      }
-    }
-    if (needsRefresh) {
+    // A label made since the last listing: list again, once. An id the fresh
+    // listing still lacks belongs to a label deleted meanwhile, and is not
+    // asked about again until the next listing.
+    const unlisted = (id: string) => !map.has(id) && !this.absentLabelIds.has(id);
+    if (labelIds.some(unlisted)) {
       map = await this.getLabelMap(true);
+      for (const id of labelIds) if (!map.has(id)) this.absentLabelIds.add(id);
     }
     return labelIds.map((id) => map.get(id) ?? id);
   }
 
   async sync(cursor: SyncCursor | null, opts?: SyncOptions): Promise<SyncResult> {
-    let state = validateGmailSyncCursor(cursor) ?? { phase: "bootstrap" };
-    this.scopeFactsSupported = opts?.scopeFactsSupported === true;
-    const scopeEpoch = prepareGmailScopeEpoch(state, opts);
-    if (scopeEpoch.handshake) return scopeEpoch.handshake;
-    state = scopeEpoch.state;
-    // Construct lazily so injected upstream clients and reconnects use the same seam.
-    this.labelScopes ??= new GmailLabelScopes(
-      this.gmail,
-      (ids) => this.resolveLabels(ids),
-      (labels, headers) => this.computeRelevanceScore(labels, headers),
-      (labels) => {
-        this.labelMap = new Map(labels.map((label) => [label.id, label.label]));
-        this.labelMapFetchedAt = Date.now();
-      },
-    );
+    const state = validateGmailSyncCursor(cursor) ?? { phase: "bootstrap" };
 
     // One typed boundary for both phases. It is the only thing that
     // classifies a failure from the bootstrap walk, from the history listing,
@@ -499,79 +499,10 @@ export class GmailSource {
     const startedAt = this.budgetStart(opts?.run);
     this.attempt = {};
     try {
-      const refreshActive =
-        this.scopeFactsSupported &&
-        state.phase === "incremental" &&
-        !!state.historyId &&
-        (state.scopeLabelsVersion !== 1 || state.scopeLabelsStage !== undefined);
-      const refreshPage = refreshActive && state.scopeLabelsYieldToContent !== true;
-      const result = refreshPage
-        ? await this.labelScopes.refresh(state, listQuery(this.dataCutoff))
-        : state.phase === "bootstrap" || !state.historyId
+      const result =
+        state.phase === "bootstrap" || !state.historyId
           ? await this.bootstrapSync(state)
           : await this.incrementalSync(state);
-      if (!this.scopeFactsSupported) {
-        result.cursor = withoutGmailLabelScopeCursor(result.cursor as GmailSyncCursor);
-      } else if (refreshPage && result.cursor.scopeLabelsVersion !== 1) {
-        result.cursor = { ...result.cursor, scopeLabelsYieldToContent: true };
-      } else if (!refreshPage && state.scopeLabelsStage !== undefined) {
-        // Content/history checkpoints progress between every metadata page;
-        // the independent pinned label history cut survives those updates.
-        // A quiet history page still yields back to the pending metadata walk.
-        result.cursor = {
-          ...result.cursor,
-          ...gmailLabelScopeBookmark(state),
-          scopeLabelsYieldToContent: false,
-        };
-        result.hasMore = true;
-      }
-      if (this.scopeFactsSupported && (cursor === null || state.scopeLabelsBootstrap === true)) {
-        if (result.cursor.phase === "bootstrap")
-          result.cursor = { ...result.cursor, scopeLabelsBootstrap: true };
-        else {
-          result.cursor = {
-            ...result.cursor,
-            scopeLabelsVersion: 1,
-            scopeLabelsBootstrapCatchup: true,
-          };
-          result.scopeUpdates = {
-            ...result.scopeUpdates,
-            readiness: [{ kind: "label", complete: false }],
-          };
-        }
-      } else if (this.scopeFactsSupported && state.scopeLabelsBootstrapCatchup === true) {
-        if (result.hasMore) result.cursor = { ...result.cursor, scopeLabelsBootstrapCatchup: true };
-        else if (result.cursor.scopeLabelsVersion === 1) {
-          result.scopeUpdates = {
-            ...result.scopeUpdates,
-            readiness: [{ kind: "label", complete: true }],
-          };
-        }
-      }
-      finalizeGmailScopeEpoch(state, result, refreshPage, this.scopeFactsSupported);
-      if (
-        this.scopeFactsSupported &&
-        !refreshActive &&
-        !state.scopeLabelsBootstrapCatchup &&
-        state.phase === "incremental" &&
-        state.scopeLabelsVersion === 1
-      ) {
-        const catalogue = await this.labelScopes.cataloguePage(state);
-        result.cursor = {
-          ...(catalogue.restart
-            ? withoutGmailLabelScopeCursor(result.cursor as GmailSyncCursor)
-            : result.cursor),
-          ...catalogue.cursor,
-        };
-        if (catalogue.updates) {
-          const { refreshes: _refresh, readiness: _ready, ...withoutControls } = catalogue.updates;
-          result.scopeUpdates = {
-            ...result.scopeUpdates,
-            ...(opts?.run?.role === "member" ? withoutControls : catalogue.updates),
-          };
-        }
-        if (catalogue.more) result.hasMore = true;
-      }
       if (result.hasMore && Date.now() - startedAt >= GMAIL_SYNC_BUDGET_MS) {
         log.info(
           `Sync of ${this.id} paused after ${Math.round(GMAIL_SYNC_BUDGET_MS / 60_000)} minutes; the next sync continues it`,
@@ -928,7 +859,6 @@ export class GmailSource {
     const histories = res.data.history ?? [];
 
     const addedIds = new Set<string>();
-    const labelOnlyIds = new Set<string>();
     const trashedIds = new Set<string>();
     for (const history of histories) {
       for (const added of history.messagesAdded ?? []) {
@@ -947,7 +877,7 @@ export class GmailSource {
         if (labels.includes("TRASH") || labels.includes("SPAM")) {
           trashedIds.add(id);
         } else {
-          (this.scopeFactsSupported ? labelOnlyIds : addedIds).add(id);
+          addedIds.add(id);
         }
       }
       for (const labelRemoved of history.labelsRemoved ?? []) {
@@ -958,7 +888,7 @@ export class GmailSource {
           trashedIds.delete(id);
           addedIds.add(id);
         } else {
-          (this.scopeFactsSupported ? labelOnlyIds : addedIds).add(id);
+          addedIds.add(id);
         }
       }
     }
@@ -973,16 +903,6 @@ export class GmailSource {
       addedIds.delete(id);
     }
 
-    for (const id of [...addedIds, ...deletedExternalIds]) labelOnlyIds.delete(id);
-    // One bulk label operation can name thousands of messages in a single
-    // history record. A bounded metadata walk handles that without creating
-    // an unbounded atomic writer page or refetching every message body.
-    const refreshLabels = this.scopeFactsSupported && labelOnlyIds.size > GOOGLE_PAGE_SIZE;
-    const labelMetadata =
-      this.scopeFactsSupported && !refreshLabels
-        ? await this.labelScopes!.updates([...labelOnlyIds])
-        : undefined;
-    if (labelMetadata) deletedExternalIds.push(...labelMetadata.deleted);
     const fetched = await this.fetchAll([...addedIds], false);
     // A message Gmail no longer has was deleted after its history event.
     deletedExternalIds.push(...fetched.gone);
@@ -1000,22 +920,9 @@ export class GmailSource {
     return {
       documents,
       deletedExternalIds,
-      ...(refreshLabels
-        ? {
-            scopeUpdates: {
-              readiness: [{ kind: "label" as const, complete: false }],
-              refreshes: [{ kind: "label" as const, active: true }],
-            },
-          }
-        : labelMetadata
-          ? { scopeUpdates: { documents: labelMetadata.updates } }
-          : {}),
       cursor: {
         historyId: advancedHistoryId,
         phase: "incremental",
-        ...(this.scopeFactsSupported && !refreshLabels && state.scopeLabelsVersion === 1
-          ? { scopeLabelsVersion: 1 as const }
-          : {}),
         historyPageToken: nextHistoryPageToken,
         // Advanced with the historyId: until the last page lands, the corpus
         // is only known to hold the mailbox up to the watermark it had.
@@ -1069,17 +976,6 @@ export class GmailSource {
         coverage: state.coverage,
       } satisfies GmailSyncCursor,
       hasMore: true,
-      // The expired history also held the label changes of the gap, so the
-      // label facts already published can no longer be vouched for. They stay
-      // fenced until the label walk that follows the recovery completes.
-      ...(this.scopeFactsSupported
-        ? {
-            scopeUpdates: {
-              readiness: [{ kind: "label" as const, complete: false }],
-              refreshes: [{ kind: "label" as const, active: true }],
-            },
-          }
-        : {}),
       ...(watermarked
         ? {}
         : {
@@ -1171,7 +1067,10 @@ export class GmailSource {
       content += formatAttachmentMarkers(attachments.infos);
     }
 
-    const labelNames = await this.resolveLabels(labels);
+    // Resolving the names lists the account's labels when a message names one
+    // not seen before, so the ids written below are judged against that listing.
+    const tags = await this.resolveLabels(labels);
+
     const emailDoc: DocumentInput = {
       providerId: this.providerId,
       sourceId: this.id,
@@ -1181,8 +1080,7 @@ export class GmailSource {
       contentHash: computeContentHash(content),
       metadata: {
         sourceUrl: gmailMessageUrl(msg.id, this.accountEmail),
-        tags: labelNames,
-        ...(this.scopeFactsSupported ? { scopeFacts: gmailLabelFacts(labels, labelNames) } : {}),
+        tags,
         documentType: "email",
         ...(this.isTranscriptionVocabularyEnabled() &&
         labels.includes("SENT") &&
@@ -1216,6 +1114,10 @@ export class GmailSource {
         people,
         extra: {
           threadId: msg.threadId,
+          // The ids the account's label list contains, and no other. Always
+          // written, empty for a message with none, so a reader can tell "no
+          // labels" from a record that predates the field.
+          labelIds: gmailRecordLabelIds(labels, this.listedLabelIds),
           ...(attachments.infos.length > 0 ? { attachments: attachments.infos } : {}),
         },
       },

@@ -206,8 +206,7 @@ describe("handoff universe — one device syncs at a time", () => {
       LEASE_TTL_MS + 10_000,
       "the owner's lease lapsed",
     );
-    // Body position and all native/attachment progress transfer together.
-    // Read before ticking so the member cannot reconstruct a missing field.
+    // The member reads the shared cursor, whole, before it syncs.
     expect((await cursorAs(member)).cursor).toEqual(committedCursor);
 
     const stats = await completedTick(member);

@@ -293,6 +293,13 @@
           growing a separate descriptor per variant. See the WhatsApp provider's iPhone/Android
           backup-import fields for a worked example.
         </p>
+        <p>
+          A source whose full re-read is expensive may declare <code>resyncCost</code>: one plain
+          sentence, at most 200 characters, saying what reading the source again from the start
+          costs, such as "This reads about 95,000 messages a day." Only the source knows its rate
+          limits and volumes, so the sentence is its own. It travels to the gateway with the
+          source's name and icon.
+        </p>
 
         <h3 id="accounts-and-discovery">Accounts and discovery</h3>
         <p>
@@ -689,11 +696,16 @@ export default defineSource({
           decode. Test both document and structured sync paths.
         </p>
         <p>
-          <code>outputRevision</code> describes changed output meaning, not cursor shape. It does
-          not trigger reprocessing or a backfill: implement and test any required re-emission
-          separately. Provider contracts contribute their API generation and required capabilities;
-          each child declares its own state. Never migrate one sibling's bookmark using another's
-          decoder.
+          <code>outputRevision</code> describes changed output meaning, not cursor shape. It is the
+          source's own version: an integer that starts at 1, only goes up, and is unrelated to the
+          Omnesis release. Declare it on every source and raise it in the change that makes the
+          source write something new on its records. The host sends it with every sync page and the
+          gateway stores it on each document, keeping the highest revision a document was written or
+          re-read at; a document stored without one counts as revision 0. A source that omits it
+          writes at revision 1, and the conformance checks warn. It does not trigger reprocessing or
+          a backfill: implement and test any required re-emission separately. Provider contracts
+          contribute their API generation and required capabilities; each child declares its own
+          state. Never migrate one sibling's bookmark using another's decoder.
         </p>
 
         <h3 id="authentication">Authentication sessions</h3>
@@ -761,6 +773,145 @@ export default defineSource({
           A phone opens <code>appUrl</code> when an installed app handles it and otherwise falls
           back to <code>sourceUrl</code>, so a deep link that works on only one phone platform is
           fine. Both are optional; omit them when no reliable destination exists.
+        </p>
+
+        <h3 id="describing-records">Describing your records</h3>
+        <p>
+          A source may describe its documents once, in <code>documentEventProfile</code>: the
+          <code>documentTypes</code> it emits, the <code>personRoles</code> its normaliser actually
+          writes, and <code>metadataFields</code>, each with a dotted <code>path</code> under
+          <code>metadata</code>, a <code>type</code> (<code>string</code>, <code>number</code>,
+          <code>boolean</code>, or <code>string-array</code>) and a <code>description</code>.
+          Declare only what the source really writes. The collector publishes the description with
+          the source's <code>outputRevision</code>, and the gateway keeps the one with the highest
+          revision, so a collector on an older build cannot replace a newer description.
+        </p>
+        <p>
+          A field that holds the source's own ID for something a record belongs to (a label, a
+          folder, a chat) can also carry <code>filter</code>, which says how records can be matched
+          on it. The source chooses a <code>capability</code> the gateway already has and brings no
+          matching code of its own:
+        </p>
+        <ul>
+          <li>
+            <code>membership</code>: a record belongs to one or more named things. On a
+            <code>string-array</code> field an empty array means "none" and an absent field means
+            "not known". A <code>string</code> field cannot say "none": a record either carries its
+            one value or, when the field is absent, is "not known". Use one only where a record
+            never belongs to nothing.
+          </li>
+          <li>
+            <code>tree</code>: a record sits somewhere in a tree, and matching a node covers what is
+            beneath it. The record carries only its immediate parent's ID.
+          </li>
+        </ul>
+        <p>The rest of the declaration is checked when the source is defined:</p>
+        <ul>
+          <li>
+            <code>minVersion</code>: the first <code>outputRevision</code> whose records carry the
+            field, or <code>0</code> when records stored before versions existed already do. It
+            cannot exceed the source's <code>outputRevision</code>.
+          </li>
+          <li>
+            <code>scope</code>: <code>global</code> when an ID means the same thing on every device,
+            or <code>device</code> when it only means something on the device that produced the
+            record, such as a path. Only a <code>partitioned</code> source may declare
+            <code>device</code>.
+          </li>
+          <li>
+            <code>noun</code>: what one value is called, as <code>{ one, many }</code>.
+            <code>picker</code> is <code>search</code> for a flat list or <code>tree</code>.
+          </li>
+          <li>
+            For a tree, optional <code>levels</code> names each depth, roots first, and
+            <code>inside</code> names what a node contains.
+          </li>
+          <li>
+            <code>listsMembers</code> marks a field whose values each have members, such as a chat.
+          </li>
+        </ul>
+        <p>
+          <code>filter</code> is valid only on <code>string</code> and
+          <code>string-array</code> fields, and a profile may mark at most eight. Write IDs, never
+          display names, so a rename upstream changes nothing on stored records.
+        </p>
+        <p>
+          People are declared once per profile, in <code>personFilter</code>: the
+          <code>roles</code> that count as involvement (any declared role except
+          <code>mentioned</code>), the <code>identifiers</code> the source writes on them
+          (<code>phone</code>, <code>email</code>, <code>domain</code>), a <code>minVersion</code>,
+          an optional <code>maxPeople</code> when the source stops listing people at some length,
+          and an optional <code>membersOf</code> naming a field declared with
+          <code>listsMembers</code>.
+        </p>
+        <p>
+          A record carries only the ID of what it belongs to. The names, the tree and the members
+          come from a list the source produces for each <code>filter</code> field: everything that
+          exists in the account for that field. Attach one producer per field to the instance
+          <code>create()</code> returns, keyed by the field's path:
+        </p>
+        <div class="term">
+          <div class="term-bar">
+            <span></span><span></span><span></span>
+            <span class="term-title">packages/providers/fieldnotes/src/index.ts</span>
+          </div>
+          <div class="term-body">
+            <pre data-lang="ts">
+create: async ({ config }) =>
+  withFilterLists(
+    { sync: (cursor) => syncNotes(config.dataPath, cursor) },
+    {
+      "extra.notebookIds": async function* ({ signal }) {
+        for await (const notebook of listNotebooks(config.dataPath, { signal })) {
+          yield { id: notebook.id, label: notebook.name, parentId: notebook.parentId };
+        }
+      },
+    },
+  ),</pre>
+          </div>
+        </div>
+        <p>
+          Each item has an <code>id</code> (the value records carry), a <code>label</code> for
+          display, a <code>parentId</code> in a tree, and <code>members</code> (identifiers of type
+          <code>phone</code>, <code>email</code> or <code>domain</code>) when the field declares
+          <code>listsMembers</code>. Set <code>membersIncomplete</code> on an item that has a member
+          the source cannot name by one of those identifiers, or whose members the source does not
+          hold in full; it says that who belongs to the item is not fully known. The rules:
+        </p>
+        <ul>
+          <li>
+            Return the whole list or throw. An item missing from a published list reads as no longer
+            existing, so a producer that cannot finish (a failed page, a rate limit) throws. The
+            sync carries on and the gateway keeps the list it has.
+          </li>
+          <li>
+            A list built from what the sync itself reads may only be whole once the sync's last page
+            is read. Until then its producer throws <code>FilterListNotReadyError</code>, which is
+            not a failure and is not logged as one.
+          </li>
+          <li>
+            List what exists, whether or not any record belongs to it. Say nothing about individual
+            records: the list's cost must grow with the number of labels or folders, never with the
+            number of records.
+          </li>
+          <li>
+            In a tree, every <code>parentId</code> names an item of the same list. An item whose
+            parent the source cannot see is a root: leave <code>parentId</code> out. IDs are unique
+            within a list. A list that breaks these rules is not published.
+          </li>
+          <li>
+            An item may carry up to 10,000 members. A list with a larger item is not published,
+            because dropping members would make the item match fewer people than it involves.
+          </li>
+        </ul>
+        <p>
+          The collector runs the producers in every sync, after the sync's first page is stored, and
+          sends a list only when it differs from the one the gateway holds. After the sync's last
+          page it runs again the producers whose list was not ready, failed or was not stored, so a
+          list that is whole only at the end is published by the same sync. The gateway never asks
+          for a list. It replaces a stored list in one step once it has received all of the new one,
+          and keeps one list per device for a field whose <code>scope</code> is <code>device</code>.
+          A list for a field the profile does not mark with <code>filter</code> is ignored.
         </p>
 
         <h3 id="analytics-rows">Analytics rows</h3>

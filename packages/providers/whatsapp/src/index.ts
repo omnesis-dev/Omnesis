@@ -4,8 +4,8 @@
 import { join } from "node:path";
 import { rmSync } from "node:fs";
 import { DEFAULT_CONFIG_DIR, createLogger, resolveAttachmentConfig } from "@omnesis/core";
-import { defineSource } from "@omnesis/source-sdk";
-import { scopeContracts } from "./scope-contracts.js";
+import { defineSource, withFilterLists } from "@omnesis/source-sdk";
+import { WHATSAPP_CHAT_FIELD, whatsappFilterLists } from "./chat-list.js";
 import { whatsappStateSpec } from "./state.js";
 import { inspectMessageStore } from "./message-store.js";
 import { whatsappIconUrl } from "./icons.js";
@@ -14,6 +14,7 @@ import type { WhatsAppSyncCursor } from "./types.js";
 
 export { WhatsAppProvider, pairFlow as whatsappPairFlow } from "./provider.js";
 export { WhatsAppMessagesSource, type WhatsAppMessagesSourceOptions } from "./messages.js";
+export { WHATSAPP_CHAT_FIELD, whatsappFilterLists } from "./chat-list.js";
 
 const log = createLogger("provider:whatsapp");
 
@@ -24,7 +25,6 @@ export default defineSource<WhatsAppSyncCursor>({
   provider: { id: "whatsapp", name: "WhatsApp" },
   authType: "qr",
   unitName: "messages",
-  scopes: scopeContracts["whatsapp-messages"],
   contentRetention: "best-effort",
   // Voice notes are transcribed inline into the conversation rather than
   // emitted as separate attachment child-docs.
@@ -33,7 +33,10 @@ export default defineSource<WhatsAppSyncCursor>({
   // browser-capture source skips the web client.
   ownedWebDomains: ["web.whatsapp.com"],
   icon: { sfSymbol: "message.fill", color: "#25D366", bgColor: "#12251C", url: whatsappIconUrl },
+  resyncCost:
+    "Rebuilds every conversation from the messages already kept on this computer; nothing is downloaded from WhatsApp again, but voice notes and attachments are processed again.",
   contract: {
+    outputRevision: 1,
     // The host resolves the stored cursor against this before `sync` runs,
     // so a value from a build that could not read it never reaches `sync`.
     state: whatsappStateSpec,
@@ -45,9 +48,22 @@ export default defineSource<WhatsAppSyncCursor>({
   // group roster plus the day's senders, with the account holder as "You" —
   // is a `participant`; email addresses and phone numbers appearing in the
   // day's text that belong to nobody in the chat become `mentioned`.
+  //
+  // Filters read two things every stored conversation already holds, so both
+  // declare version 0: the chat's JID, and the participants' phone numbers in
+  // E.164. A participant known only by a WhatsApp LID has no phone on the
+  // document. A day lists the members known when it was written, so a person
+  // filter also reads the chat's members from the published list; an
+  // attachment carries its parent's people and no chat of its own.
   documentEventProfile: {
     documentTypes: ["conversation", "attachment"],
     personRoles: ["participant", "mentioned"],
+    personFilter: {
+      minVersion: 0,
+      roles: ["participant"],
+      identifiers: ["phone"],
+      membersOf: WHATSAPP_CHAT_FIELD,
+    },
     metadataFields: [
       {
         path: "tags",
@@ -72,13 +88,21 @@ export default defineSource<WhatsAppSyncCursor>({
           "Name WhatsApp reports for the chat — the group subject, or the saved contact name for a one-to-one chat. Absent when WhatsApp never delivered the chat's metadata.",
       },
       {
-        path: "extra.chatJid",
+        path: WHATSAPP_CHAT_FIELD,
         type: "string",
         // Opaque for a group, but a one-to-one chat's JID is built from the
         // other party's phone number, which the source URL parses back out.
         identifiesPeople: true,
         description:
           "Opaque WhatsApp identifier for the chat. Every day of the same conversation repeats it, so it identifies a conversation across documents.",
+        filter: {
+          capability: "membership",
+          minVersion: 0,
+          scope: "global",
+          noun: { one: "chat", many: "chats" },
+          picker: "search",
+          listsMembers: true,
+        },
       },
       {
         path: "extra.participants",
@@ -229,35 +253,38 @@ export default defineSource<WhatsAppSyncCursor>({
       onConnectionError: (handler) => provider.onConnectionError(handler),
       offConnectionError: (handler) => provider.offConnectionError(handler),
       connectionFailure: () => provider.connectionFailure(),
-      refreshScopeGroupRosters: (jids) => provider.refreshScopeGroupRosters(jids),
     });
 
-    return {
-      // Surface the icon at the runtime instance level. The collector
-      // only ships instance-level icons (`SourceInstance.icon`) up to
-      // the gateway's `sync_state.icon` column — descriptor-level icons
-      // are visible only to the source picker. Same fix shape as
-      // `notion-source-icon-missing-in-portal` (commit 0f3849f).
-      icon: {
-        sfSymbol: "message.fill",
-        color: "#25D366",
-        bgColor: "#12251C",
-        url: whatsappIconUrl,
+    return withFilterLists(
+      {
+        // Surface the icon at the runtime instance level. The collector
+        // only ships instance-level icons (`SourceInstance.icon`) up to
+        // the gateway's `sync_state.icon` column — descriptor-level icons
+        // are visible only to the source picker. Same fix shape as
+        // `notion-source-icon-missing-in-portal` (commit 0f3849f).
+        icon: {
+          sfSymbol: "message.fill",
+          color: "#25D366",
+          bgColor: "#12251C",
+          url: whatsappIconUrl,
+        },
+        sync: (cursor, opts) =>
+          source.sync(cursor, opts) as Promise<SyncResult<WhatsAppSyncCursor>>,
+        credentialState: () => provider.credentialState(),
+        probeLocalStores: async () => [
+          inspectMessageStore(join(host?.configDir ?? DEFAULT_CONFIG_DIR, "whatsapp", accountId)),
+        ],
+        onPushEvent: (cb: () => void) => source.onPushEvent(cb),
+        onSourceError: (cb: (error: string) => void) => source.onSourceError(cb),
+        onResync: () => source.onResync(),
+        importHistory: (values, callbacks) => provider.importHistory(values, callbacks),
+        suspend: () => provider.suspend(),
+        resume: () => provider.resume(),
+        async dispose() {
+          await provider.disconnect();
+        },
       },
-      sync: (cursor, opts) => source.sync(cursor, opts) as Promise<SyncResult<WhatsAppSyncCursor>>,
-      credentialState: () => provider.credentialState(),
-      probeLocalStores: async () => [
-        inspectMessageStore(join(host?.configDir ?? DEFAULT_CONFIG_DIR, "whatsapp", accountId)),
-      ],
-      onPushEvent: (cb: () => void) => source.onPushEvent(cb),
-      onSourceError: (cb: (error: string) => void) => source.onSourceError(cb),
-      onResync: () => source.onResync(),
-      importHistory: (values, callbacks) => provider.importHistory(values, callbacks),
-      suspend: () => provider.suspend(),
-      resume: () => provider.resume(),
-      async dispose() {
-        await provider.disconnect();
-      },
-    };
+      whatsappFilterLists(provider.getStore(), source.id),
+    );
   },
 });

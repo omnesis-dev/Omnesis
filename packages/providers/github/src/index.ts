@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { defineProvider, readConnectionState } from "@omnesis/source-sdk";
+import { defineProvider, readConnectionState, withFilterLists } from "@omnesis/source-sdk";
 import { SourceId } from "@omnesis/types";
 import {
   BrokeredCredentials,
@@ -29,8 +29,8 @@ import { githubCommitsDocumentProfile, githubThreadsDocumentProfile } from "./do
 import { githubCommitsIcon, githubThreadsIcon } from "./icons.js";
 import { GithubThreadsSource } from "./threads.js";
 import { GithubCommitsSource } from "./commits.js";
+import { REPOSITORY_FIELD } from "./repositories.js";
 import { githubCommitsStateSpec, githubThreadsStateSpec } from "./state.js";
-import { scopeContracts } from "./scope-contracts.js";
 import { validateGithubCommitsCursor, validateGithubThreadsCursor } from "./types.js";
 import type { GithubContext } from "./types.js";
 
@@ -49,8 +49,7 @@ export {
   COMMITS_RENDER_VERSION,
 } from "./normalizer.js";
 export { parseRepoFilter, resolveRepos } from "./repo-selection.js";
-export { RepoScopes, repoScopeCatalogue } from "./repo-scopes.js";
-export type { RepoScopeCursor } from "./repo-scopes.js";
+export { REPOSITORY_FIELD, inRepository, repositoryList } from "./repositories.js";
 export type { GithubContext, GithubThreadsCursor, GithubCommitsCursor } from "./types.js";
 
 /**
@@ -282,6 +281,8 @@ export default defineProvider<GithubContext>({
       unitName: "threads",
       icon: githubThreadsIcon,
       contract: {
+        // 2: every document carries the id of its repository (`extra.repositoryIds`).
+        outputRevision: 2,
         // The host resolves the stored cursor against this before `sync`
         // runs, so a value from a build that could not read it never
         // reaches `sync`.
@@ -294,11 +295,12 @@ export default defineProvider<GithubContext>({
         apiVersion: 2,
         requires: ["state-envelope", "snapshot-sessions"],
       },
-      scopes: scopeContracts.github,
       urlPatterns: THREAD_URL_PATTERNS,
       urlCanonicalizer: GITHUB_URL_CANONICALIZER,
       selfIdentity: { aliasPrefix: "github", accountPattern: "^([^@]+)" },
       documentEventProfile: githubThreadsDocumentProfile,
+      resyncCost:
+        "This reads every issue, pull request and discussion again from GitHub. When GitHub's hourly limit is reached, the sync waits for the next hour and carries on.",
       defaultSyncInterval: "15m",
       params: REPO_PARAMS,
       async create({ sourceId, providerId, accountId, dataCutoff, sourceConfig }, ctx) {
@@ -311,10 +313,13 @@ export default defineProvider<GithubContext>({
           dataCutoff,
           sourceConfig,
         });
-        return {
-          icon: githubThreadsIcon,
-          sync: (cursor, opts) => source.sync(validateGithubThreadsCursor(cursor), opts),
-        };
+        return withFilterLists(
+          {
+            icon: githubThreadsIcon,
+            sync: (cursor) => source.sync(validateGithubThreadsCursor(cursor)),
+          },
+          { [REPOSITORY_FIELD]: source.repositories.filterList },
+        );
       },
     },
     {
@@ -325,6 +330,8 @@ export default defineProvider<GithubContext>({
       unitName: "commits",
       icon: githubCommitsIcon,
       contract: {
+        // 2: every document carries the id of its repository (`extra.repositoryIds`).
+        outputRevision: 2,
         // The host resolves the stored cursor against this before `sync`
         // runs, so a value from a build that could not read it never
         // reaches `sync`.
@@ -337,11 +344,12 @@ export default defineProvider<GithubContext>({
         apiVersion: 2,
         requires: ["state-envelope", "snapshot-sessions"],
       },
-      scopes: scopeContracts["github-commits"],
       urlPatterns: COMMIT_URL_PATTERNS,
       urlCanonicalizer: GITHUB_URL_CANONICALIZER,
       selfIdentity: { aliasPrefix: "github", accountPattern: "^([^@]+)" },
       documentEventProfile: githubCommitsDocumentProfile,
+      resyncCost:
+        "This reads every commit again, one request to GitHub each. GitHub normally allows 5,000 requests an hour, and the sync waits for the next hour whenever that runs out.",
       defaultSyncInterval: "15m",
       params: REPO_PARAMS,
       async create({ sourceId, providerId, dataCutoff, sourceConfig }, ctx) {
@@ -352,10 +360,13 @@ export default defineProvider<GithubContext>({
           dataCutoff,
           sourceConfig,
         });
-        return {
-          icon: githubCommitsIcon,
-          sync: (cursor, opts) => source.sync(validateGithubCommitsCursor(cursor), opts),
-        };
+        return withFilterLists(
+          {
+            icon: githubCommitsIcon,
+            sync: (cursor) => source.sync(validateGithubCommitsCursor(cursor)),
+          },
+          { [REPOSITORY_FIELD]: source.repositories.filterList },
+        );
       },
     },
   ],

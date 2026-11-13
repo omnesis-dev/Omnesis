@@ -49,6 +49,37 @@ export const GMAIL_QUOTA_UNITS_PER_MINUTE = 4_000;
 export const GMAIL_QUOTA_BURST_UNITS = 300;
 
 /**
+ * How long one sync may run before it ends and leaves the rest to the next.
+ * A first sync of a large mailbox pages through every message for hours; the
+ * host stops a sync that runs too long and reports it as an error, while a
+ * sync that ends on its own keeps its pages and reports none. The cursor
+ * already records where the walk stands, so the next sync continues it.
+ */
+export const GMAIL_SYNC_BUDGET_MS = 20 * 60_000;
+
+/**
+ * How long a host waits between two syncs of a source unless its owner set
+ * another interval. Only used to state what a full read costs.
+ */
+const DEFAULT_SYNC_INTERVAL_MS = 5 * 60_000;
+
+/**
+ * About how many messages a full read of a mailbox gets through in a day,
+ * rounded down to the nearest 5,000. Each message costs one full fetch and its
+ * share of the listing page it came on, spent at the pace above while a sync
+ * runs; a sync runs for its budget and the next starts an interval later.
+ * Attachments and rate limits only lower it.
+ */
+export const GMAIL_MESSAGES_PER_DAY =
+  Math.floor(
+    (((GMAIL_QUOTA_UNITS_PER_MINUTE * 60 * 24) /
+      (GMAIL_QUOTA_UNITS.messagesGetFull + GMAIL_QUOTA_UNITS.messagesList / GMAIL_PAGE_SIZE)) *
+      GMAIL_SYNC_BUDGET_MS) /
+      (GMAIL_SYNC_BUDGET_MS + DEFAULT_SYNC_INTERVAL_MS) /
+      5_000,
+  ) * 5_000;
+
+/**
  * The adaptive pace. Another client of the account can spend the same
  * per-user quota, unseen, so a rate limit cuts the pace by a quarter, down to
  * the floor, and every quiet period after it adds a step back, up to
@@ -98,9 +129,10 @@ export const CALENDAR_MAX_RESULTS = 250;
 
 export const DRIVE_MAX_CONTENT_SIZE = 10 * 1024 * 1024;
 
-// Stable base query for legacy gateways; the negotiated hierarchy path adds parents/driveId.
+// `parents` is what a file record's folder ids are read from; a file Drive
+// returns none for sits in no folder the account can see.
 export const DRIVE_FILE_FIELDS =
-  "id,name,mimeType,createdTime,modifiedTime,size,webViewLink,owners,shared,trashed,permissions(emailAddress,displayName,role,type)";
+  "id,name,mimeType,createdTime,modifiedTime,size,webViewLink,owners,shared,trashed,parents,permissions(emailAddress,displayName,role,type)";
 
 export const DRIVE_EXPORT_MAP: Record<string, string> = {
   "application/vnd.google-apps.document": "text/plain",

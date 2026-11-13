@@ -33,7 +33,7 @@ interface ChatAttachment {
   extractedText: string;
 }
 
-export interface DailyChatEntry {
+interface DailyChatEntry {
   externalId: string;
   chatId: string;
   chatTitle: string;
@@ -103,8 +103,8 @@ export function mapChat(
       people,
       extra: {
         chatId: e.chatId,
-        conversationId: e.chatId,
-        chatName: e.chatTitle,
+        // The path the real source declares for the chat a day belongs to.
+        chatJid: e.chatId,
         date: e.date,
         messageCount: e.messages.length,
         ...(attachmentInfos.length > 0 ? { attachments: attachmentInfos } : {}),

@@ -212,6 +212,7 @@ export default defineProvider<StravaContext>({
       attribution: stravaAttribution,
       analyticsSchemas: allSchemas,
       contract: {
+        outputRevision: 1,
         // The host resolves the stored cursor against this before
         // `syncStructured` runs. See `state.ts` for what a lost cursor costs
         // here and why that cost picks `onUnreadable: "stop"`.

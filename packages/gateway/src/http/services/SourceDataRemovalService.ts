@@ -270,6 +270,22 @@ export class SourceDataRemovalService {
   }
 
   /**
+   * Forget the lists published for a source's filterable fields: all of them
+   * when the source is removed, or one device's when that device stops hosting
+   * it. A resync is not a removal and keeps them: a list describes the
+   * account, not the records being read again, and the collector replaces it
+   * on its next sync if it changed.
+   */
+  async forgetFilterLists(sourceId: string, deviceId?: string): Promise<void> {
+    const dropped = await this.deps.writeGate.deleteFilterLists(sourceId, deviceId);
+    if (dropped > 0) {
+      log.info(
+        `Forgot ${dropped} filter list${dropped === 1 ? "" : "s"} of ${sourceId}${deviceId ? ` for device ${deviceId}` : ""}`,
+      );
+    }
+  }
+
+  /**
    * Detach a member — or, without one, every device — from the row absences
    * its snapshots earned, so none of them becomes its verdict when swept.
    */

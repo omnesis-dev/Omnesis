@@ -3,8 +3,7 @@
 
 import { join } from "node:path";
 import { DEFAULT_CONFIG_DIR, listBrokeredAccountIds, resolveAttachmentConfig } from "@omnesis/core";
-import { defineProvider } from "@omnesis/source-sdk";
-import { scopeContracts } from "./scope-contracts.js";
+import { defineProvider, withFilterLists } from "@omnesis/source-sdk";
 import {
   GoogleProvider,
   discoverAccounts,
@@ -24,9 +23,15 @@ import {
 import { googleCredentialsSpec } from "./credentials-spec.js";
 import { googleBrokerSpec, type GoogleBrokerPurpose } from "./broker.js";
 import {
+  GMAIL_OUTPUT_REVISION,
+  GOOGLE_DRIVE_OUTPUT_REVISION,
   gmailDocumentEventProfile,
   googleCalendarDocumentEventProfile,
+  googleDriveDocumentEventProfile,
 } from "./document-event-profiles.js";
+import { GMAIL_LABELS_FIELD } from "./gmail-labels.js";
+import { DRIVE_FOLDERS_FIELD } from "./drive-folders.js";
+import { GMAIL_MESSAGES_PER_DAY } from "./constants.js";
 import {
   gmailStateSpec,
   googleCalendarStateSpec,
@@ -46,6 +51,18 @@ export { GmailSource } from "./gmail.js";
 export { GoogleCalendarSource } from "./calendar.js";
 export { GoogleDriveSource } from "./drive.js";
 export { GoogleContactsSource } from "./contacts.js";
+export {
+  GMAIL_LABELS_FIELD,
+  gmailLabelItems,
+  gmailListedLabelIds,
+  gmailRecordLabelIds,
+} from "./gmail-labels.js";
+export {
+  DRIVE_FOLDERS_FIELD,
+  driveFolderItems,
+  driveParentIds,
+  type DriveFolderListing,
+} from "./drive-folders.js";
 
 // ── Context ──────────────────────────────────────────────────────────
 
@@ -132,7 +149,6 @@ export default defineProvider<GoogleContext>({
       id: "gmail",
       name: "Gmail",
       description: "Emails from your Gmail account",
-      scopes: scopeContracts["gmail"],
       unitName: "emails",
       urlPatterns: [{ regex: "mail\\.google\\.com/mail/.*#[^/]*/([a-f0-9]+)$" }],
       // Gmail's web app — already ingested here, so the browser-capture
@@ -180,12 +196,14 @@ export default defineProvider<GoogleContext>({
       },
       icon: { sfSymbol: "envelope.fill", color: "#EA4335", bgColor: "#2D1716", url: gmailIconUrl },
       contract: {
+        outputRevision: GMAIL_OUTPUT_REVISION,
         // The host resolves the stored cursor against this before `sync`
         // runs, so a value from a build that could not read it never reaches
         // `sync`.
         state: gmailStateSpec,
       },
       documentEventProfile: gmailDocumentEventProfile,
+      resyncCost: `This reads about ${GMAIL_MESSAGES_PER_DAY.toLocaleString("en-US")} messages a day.`,
       documentTemporalProjections: [
         {
           slot: "scheduled",
@@ -216,7 +234,10 @@ export default defineProvider<GoogleContext>({
           extractAttachment: host?.extractAttachment,
           isTranscriptionVocabularyEnabled: host?.isTranscriptionVocabularyEnabled,
         });
-        return { sync: (cursor, opts) => source.sync(cursor, opts) };
+        return withFilterLists(
+          { sync: (cursor, opts) => source.sync(cursor, opts) },
+          { [GMAIL_LABELS_FIELD]: () => source.listLabels() },
+        );
       },
     },
     {
@@ -235,6 +256,7 @@ export default defineProvider<GoogleContext>({
         url: googleCalendarIconUrl,
       },
       contract: {
+        outputRevision: 1,
         // The host resolves the stored cursor against this before `sync`
         // runs, so a value from a build that could not read it never reaches
         // `sync`.
@@ -265,7 +287,6 @@ export default defineProvider<GoogleContext>({
       id: "google-drive",
       name: "Google Drive",
       description: "Files from your Google Drive",
-      scopes: scopeContracts["google-drive"],
       unitName: "files",
       urlPatterns: [
         { regex: "docs\\.google\\.com/(?:document|spreadsheets|presentation)/d/([^/]+)" },
@@ -302,11 +323,14 @@ export default defineProvider<GoogleContext>({
         url: googleDriveIconUrl,
       },
       contract: {
+        outputRevision: GOOGLE_DRIVE_OUTPUT_REVISION,
         // The host resolves the stored cursor against this before `sync`
         // runs, so a value from a build that could not read it never reaches
         // `sync`.
         state: googleDriveStateSpec,
       },
+      documentEventProfile: googleDriveDocumentEventProfile,
+      resyncCost: "This downloads every file in your Drive again.",
       async create({ accountId, dataCutoff, sourceConfig, host }, ctx) {
         // Drive defaults to extracting binary file content (PDFs, Office,
         // …) so a search for "annual report" hits the PDF in your Drive
@@ -320,7 +344,10 @@ export default defineProvider<GoogleContext>({
           attachmentConfig,
           extractAttachment: host?.extractAttachment,
         });
-        return { sync: (cursor, opts) => source.sync(cursor, opts) };
+        return withFilterLists(
+          { sync: (cursor) => source.sync(cursor) },
+          { [DRIVE_FOLDERS_FIELD]: ({ signal }) => source.listFolders(signal) },
+        );
       },
     },
     {
@@ -335,6 +362,7 @@ export default defineProvider<GoogleContext>({
         url: googleContactsIconUrl,
       },
       contract: {
+        outputRevision: 1,
         // The host resolves the stored cursor against this before `sync`
         // runs, so a value from a build that could not read it never reaches
         // `sync`.

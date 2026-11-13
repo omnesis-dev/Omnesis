@@ -8,6 +8,7 @@ import Database from "better-sqlite3";
 import {
   createSourceDocumentProfilesTable,
   getSourceDocumentProfile,
+  getStoredSourceDocumentProfile,
   listSourceDocumentProfiles,
   upsertSourceDocumentProfiles,
 } from "./SourceDocumentProfileRepository.js";
@@ -15,8 +16,9 @@ import type { SourceDocumentProfileEntry } from "./SourceDocumentProfileReposito
 
 let db: Database.Database;
 
-const mailbox: SourceDocumentProfileEntry = {
+const mailbox: SourceDocumentProfileEntry & { outputRevision: number } = {
   sourceType: "mailbox",
+  outputRevision: 1,
   profile: {
     documentTypes: ["email"],
     personRoles: ["sender", "recipient"],
@@ -32,8 +34,9 @@ const mailbox: SourceDocumentProfileEntry = {
   },
 };
 
-const notebook: SourceDocumentProfileEntry = {
+const notebook: SourceDocumentProfileEntry & { outputRevision: number } = {
   sourceType: "notebook",
+  outputRevision: 1,
   profile: { documentTypes: ["note"], personRoles: ["author"] },
 };
 
@@ -46,7 +49,7 @@ afterEach(() => db.close());
 
 describe("source document profile store", () => {
   it("stores a published profile and reads it back whole", () => {
-    expect(upsertSourceDocumentProfiles(db, [mailbox], 1000)).toEqual({ stored: 1 });
+    expect(upsertSourceDocumentProfiles(db, [mailbox], 1000)).toEqual({ stored: 1, skipped: 0 });
     expect(getSourceDocumentProfile(db, "mailbox")).toEqual(mailbox.profile);
   });
 
@@ -76,6 +79,7 @@ describe("source document profile store", () => {
     upsertSourceDocumentProfiles(db, [mailbox], 1000);
     const revised: SourceDocumentProfileEntry = {
       sourceType: "mailbox",
+      outputRevision: 1,
       profile: { documentTypes: ["email", "attachment"] },
     };
     upsertSourceDocumentProfiles(db, [revised], 2000);
@@ -91,7 +95,7 @@ describe("source document profile store", () => {
     // A collector that loaded no profile-declaring source says nothing about
     // the ones another host published.
     upsertSourceDocumentProfiles(db, [mailbox], 1000);
-    expect(upsertSourceDocumentProfiles(db, [], 2000)).toEqual({ stored: 0 });
+    expect(upsertSourceDocumentProfiles(db, [], 2000)).toEqual({ stored: 0, skipped: 0 });
     expect(listSourceDocumentProfiles(db)).toEqual([mailbox]);
   });
 
@@ -122,5 +126,92 @@ describe("source document profile store", () => {
         if (existsSync(path + suffix)) unlinkSync(path + suffix);
       }
     }
+  });
+});
+
+/**
+ * Collectors on different builds publish different profiles for one source
+ * type, in whatever order they happen to connect. The source version each
+ * publication carries decides which description stays.
+ */
+describe("which publication of a source type is kept", () => {
+  const at = (
+    outputRevision: number | undefined,
+    documentTypes: string[],
+  ): SourceDocumentProfileEntry => ({
+    sourceType: "mailbox",
+    ...(outputRevision === undefined ? {} : { outputRevision }),
+    profile: { documentTypes },
+  });
+
+  function stored(): { documentTypes: string[] | undefined; outputRevision: number } {
+    const row = getStoredSourceDocumentProfile(db, "mailbox")!;
+    return { documentTypes: row.profile.documentTypes, outputRevision: row.outputRevision };
+  }
+
+  it("records the source version beside the profile", () => {
+    upsertSourceDocumentProfiles(db, [at(3, ["email"])], 1000);
+    expect(stored()).toEqual({ documentTypes: ["email"], outputRevision: 3 });
+    expect(listSourceDocumentProfiles(db)).toEqual([at(3, ["email"])]);
+  });
+
+  it("counts a publication without a version as 0", () => {
+    upsertSourceDocumentProfiles(db, [at(undefined, ["email"])], 1000);
+    expect(stored().outputRevision).toBe(0);
+  });
+
+  it("an older collector cannot replace a newer profile", () => {
+    upsertSourceDocumentProfiles(db, [at(2, ["email", "attachment"])], 1000);
+
+    expect(upsertSourceDocumentProfiles(db, [at(undefined, ["email"])], 2000)).toEqual({
+      stored: 0,
+      skipped: 1,
+    });
+    expect(upsertSourceDocumentProfiles(db, [at(1, ["email"])], 3000)).toEqual({
+      stored: 0,
+      skipped: 1,
+    });
+
+    expect(stored()).toEqual({ documentTypes: ["email", "attachment"], outputRevision: 2 });
+    expect(
+      db
+        .prepare<[], { published_at: number }>("SELECT published_at FROM source_document_profiles")
+        .get()!.published_at,
+      "a refused publication moved the stored row's publish time",
+    ).toBe(1000);
+  });
+
+  it("an equal version replaces", () => {
+    upsertSourceDocumentProfiles(db, [at(2, ["email"])], 1000);
+    expect(upsertSourceDocumentProfiles(db, [at(2, ["email", "attachment"])], 2000)).toEqual({
+      stored: 1,
+      skipped: 0,
+    });
+    expect(stored()).toEqual({ documentTypes: ["email", "attachment"], outputRevision: 2 });
+  });
+
+  it("a higher version replaces", () => {
+    upsertSourceDocumentProfiles(db, [at(2, ["email"])], 1000);
+    upsertSourceDocumentProfiles(db, [at(3, ["email", "attachment"])], 2000);
+    expect(stored()).toEqual({ documentTypes: ["email", "attachment"], outputRevision: 3 });
+  });
+
+  it("collectors that publish no version keep replacing each other", () => {
+    upsertSourceDocumentProfiles(db, [at(undefined, ["email"])], 1000);
+    upsertSourceDocumentProfiles(db, [at(undefined, ["email", "attachment"])], 2000);
+    expect(stored()).toEqual({ documentTypes: ["email", "attachment"], outputRevision: 0 });
+  });
+
+  it("decides each source type of one publication on its own", () => {
+    upsertSourceDocumentProfiles(db, [at(2, ["email"])], 1000);
+    const result = upsertSourceDocumentProfiles(
+      db,
+      [at(1, ["stale"]), { ...notebook, outputRevision: 1 }],
+      2000,
+    );
+
+    expect(result).toEqual({ stored: 1, skipped: 1 });
+    expect(stored().documentTypes).toEqual(["email"]);
+    expect(getSourceDocumentProfile(db, "notebook")).toEqual(notebook.profile);
   });
 });

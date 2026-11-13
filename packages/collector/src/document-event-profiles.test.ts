@@ -34,6 +34,18 @@ describe("published document-event profiles", () => {
     expect(bySourceType.size).toBe(published.length);
   });
 
+  test("every profile is published with its source's version", () => {
+    // The gateway keeps the profile of the highest version it is sent. One
+    // published without a version counts as 0 there, and would lose to any
+    // older collector's.
+    for (const entry of published) {
+      expect(
+        Number.isInteger(entry.outputRevision) && entry.outputRevision! >= 1,
+        `${entry.sourceType} is published at version ${String(entry.outputRevision)}`,
+      ).toBe(true);
+    }
+  });
+
   // Transcript ingestion still works when a profile is absent, but Watch
   // compilation then guesses another source shape. Pin every agent transcript
   // source in the published catalog so that failure cannot stay silent.

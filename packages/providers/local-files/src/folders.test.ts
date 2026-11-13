@@ -1,6 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+/**
+ * The folder a local file carries and the list of folders the source
+ * publishes. Every file and folder is invented.
+ */
+
 import {
   mkdirSync,
   mkdtempSync,
@@ -14,269 +19,253 @@ import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import {
-  PATH_SCOPE_CURSOR_KEY,
-  pathScopeFolders,
-  type SyncOptions,
+  collectFilterList,
+  directoryFilterId,
+  type SourceInstance,
   type SyncResult,
 } from "@omnesis/source-sdk";
 import { ProviderId, SourceId } from "@omnesis/types";
-import { scopeContracts } from "./scope-contracts.js";
 import definition from "./index.js";
 import type { LocalFilesSyncCursor } from "./types.js";
 
-const SUPPORTED: SyncOptions = { scopeFactsSupported: true, scopeHierarchySupported: true };
-type Cursor = LocalFilesSyncCursor;
-type Page = SyncResult<Cursor>;
+const sourceId = SourceId("local-files:host");
+const providerId = ProviderId("local-files:host");
+const FIELD = "extra.folder";
 
-describe("local files filed by folder", () => {
-  let tmp: string;
+/** The id the source gives a directory on the platform the test runs on. */
+const id = (path: string): string => directoryFilterId(path)!;
+
+describe("local-files folders", () => {
+  let tmpDir: string;
   let root: string;
 
-  beforeEach(() => {
-    // The scanner names files by real path; on macOS the temp directory is a symlink.
-    tmp = realpathSync(mkdtempSync(join(tmpdir(), "local-files-folders-")));
-    root = join(tmp, "Documents");
-    mkdirSync(root);
-  });
-  afterEach(() => rmSync(tmp, { recursive: true, force: true }));
+  const write = (rel: string, content: string, base = root): void => {
+    mkdirSync(dirname(join(base, rel)), { recursive: true });
+    writeFileSync(join(base, rel), content);
+  };
 
-  function write(rel: string, content = `Invented note ${rel}`, base = root): void {
-    const full = join(base, rel);
-    mkdirSync(dirname(full), { recursive: true });
-    writeFileSync(full, content);
-  }
-  async function run(
-    roots: string[],
-    cursor: Cursor | null,
-    options: SyncOptions = SUPPORTED,
-  ): Promise<{ pages: Page[]; cursor: Cursor }> {
-    const instance = await definition.create!({
-      accountId: "host",
-      sourceId: SourceId("local-files:host"),
-      providerId: ProviderId("local-files:host"),
-      config: { roots, exclude: [] },
+  const create = (roots: string[] = [root], exclude: string[] = []): Promise<SourceInstance> =>
+    definition.create!({ accountId: "host", sourceId, providerId, config: { roots, exclude } });
+
+  /** The published list as `id → parent`. */
+  const list = async (instance: SourceInstance): Promise<Record<string, string | null>> => {
+    const items = await collectFilterList(instance.filterLists![FIELD]!, {
+      signal: new AbortController().signal,
     });
-    const pages: Page[] = [];
-    for (let page = 0; page < 50; page++) {
-      const result = await instance.sync(cursor, options);
-      pages.push(result);
-      cursor = result.cursor;
-      if (!result.hasMore) return { pages, cursor };
-    }
-    throw new Error("The source never finished");
-  }
-  const chain = (directory: string, roots: string[] = [root]) =>
-    pathScopeFolders(directory, { home: homedir(), roots })!;
-  const folder = (directory: string, roots?: string[]) => chain(directory, roots)[0]!.id;
-  const documents = (pages: Page[]) => pages.flatMap((page) => page.documents);
-  const hierarchyOf = (pages: Page[], title: string) =>
-    documents(pages).find((doc) => doc.title === title)!.metadata.scopeHierarchy;
-  const nodes = (pages: Page[]) =>
-    pages.flatMap((page) => page.scopeUpdates?.hierarchy?.nodes ?? []);
-  const edges = (pages: Page[]) =>
-    pages.flatMap((page) => page.scopeUpdates?.hierarchy?.documents ?? []);
+    return Object.fromEntries(items.map((item) => [item.id, item.parentId ?? null]));
+  };
 
-  test("declares a folder filter browsed as a tree", () => {
-    expect(definition.scopes).toBe(scopeContracts["local-files"]);
-    expect(definition.scopes!.items).toEqual([
-      {
-        kind: "folder",
+  const folderOf = (result: SyncResult, title: string): unknown => {
+    const extra = result.documents.find((doc) => doc.title === title)!.metadata.extra!;
+    return "folder" in extra ? extra.folder : "absent";
+  };
+
+  beforeEach(() => {
+    // The scanner works on real paths: on macOS the temp directory is reached through a symlink.
+    tmpDir = realpathSync(mkdtempSync(join(tmpdir(), "local-files-folders-")));
+    root = join(tmpDir, "Documents");
+    mkdirSync(root, { recursive: true });
+  });
+
+  afterEach(() => rmSync(tmpDir, { recursive: true, force: true }));
+
+  test("declares the field from version 2 and says what a resync costs", () => {
+    expect(definition.contract?.outputRevision).toBe(2);
+    expect(definition.multiDevice?.mode).toBe("partitioned");
+    const fields = definition.documentEventProfile?.metadataFields ?? [];
+    expect(fields.find((field) => field.path === FIELD)).toMatchObject({
+      type: "string",
+      filter: {
+        capability: "tree",
+        minVersion: 2,
+        scope: "device",
         noun: { one: "folder", many: "folders" },
+        levels: [{ one: "folder", many: "folders" }],
         picker: "tree",
-        link: "hierarchy",
+        inside: { one: "folder", many: "folders" },
       },
-    ]);
+    });
+    // The fields that were there before are still there, and are not filters.
+    for (const path of ["tags", "extra.path", "extra.directory", "extra.mimeType"]) {
+      const field = fields.find((candidate) => candidate.path === path);
+      expect(field).toBeDefined();
+      expect(field?.filter).toBeUndefined();
+    }
+    expect(definition.resyncCost).toMatch(/read again on the computer that holds it/);
+    expect(definition.resyncCost).toMatch(/nothing is downloaded/);
   });
 
-  test("a file is in its folder and every folder above it, up to the configured folder", async () => {
-    write("work/atlas-api/plan.md");
-    write("work/atlas-api/docs/guide.md");
-    write("personal/garden-notes/log.md");
-    write("workshop/bench.md");
-    write("top.md");
-    const { pages } = await run([root], null);
-    expect(hierarchyOf(pages, "plan.md")).toEqual([
-      { kind: "folder", parentIds: [folder(join(root, "work/atlas-api"))], complete: true },
-    ]);
-    expect(hierarchyOf(pages, "guide.md")).toEqual([
-      { kind: "folder", parentIds: [folder(join(root, "work/atlas-api/docs"))], complete: true },
-    ]);
-    // A file directly in the configured folder is in that folder alone.
-    expect(hierarchyOf(pages, "top.md")).toEqual([
-      { kind: "folder", parentIds: [folder(root)], complete: true },
-    ]);
-    const published = new Map(nodes(pages).map((node) => [node.id, node]));
-    expect([...published.values()].map((node) => node.label).sort()).toEqual(
-      [
-        root,
-        `${root}/personal`,
-        `${root}/personal/garden-notes`,
-        `${root}/work`,
-        `${root}/work/atlas-api`,
-        `${root}/work/atlas-api/docs`,
-        `${root}/workshop`,
-      ].sort(),
-    );
-    // The configured folder is the top of the tree; nothing above it is named.
-    expect(published.get(folder(root))!.parentIds).toEqual([]);
-    expect(published.get(folder(join(root, "work")))!.parentIds).toEqual([folder(root)]);
-    expect(published.get(folder(join(root, "work/atlas-api/docs")))!.parentIds).toEqual([
-      folder(join(root, "work/atlas-api")),
-    ]);
-    // "workshop" is beside "work", not inside it.
-    expect(chain(join(root, "workshop")).map((item) => item.id)).not.toContain(
-      folder(join(root, "work")),
-    );
-    expect(pages.at(-1)!.scopeUpdates!.readiness).toEqual([{ kind: "folder", complete: true }]);
-    expect(pages.at(-1)!.presentExternalIds).toHaveLength(5);
+  test("every file carries its own directory, as an absolute path", async () => {
+    write("zqfilter-inbox.md", "Invented unsorted notes kept at the top of the folder.");
+    write("work/atlas-api/zqfilter-atlas.md", "Invented notes on the Atlas API cursor.");
+    write("work/atlas-api/docs/zqfilter-guide.md", "Invented notes on the changelog page.");
+    const result = await (await create()).sync(null);
+
+    expect(result.documents).toHaveLength(3);
+    expect(folderOf(result, "zqfilter-inbox.md")).toBe(id(root));
+    expect(folderOf(result, "zqfilter-atlas.md")).toBe(id(join(root, "work", "atlas-api")));
+    // Only the file's own directory: the folders above it are in the list.
+    expect(folderOf(result, "zqfilter-guide.md")).toBe(id(join(root, "work/atlas-api/docs")));
+    // The field older records already hold keeps its form, relative to the configured folder.
+    const guide = result.documents.find((doc) => doc.title === "zqfilter-guide.md")!;
+    expect(guide.metadata.extra?.directory).toBe("work/atlas-api/docs");
   });
 
-  test("files indexed before folders were published are filed from the cursor, without being read again", async () => {
-    write("work/plan.md");
-    write("personal/log.md");
-    const before = await run([root], null, {});
-    expect(documents(before.pages).every((doc) => doc.metadata.scopeHierarchy === undefined)).toBe(
-      true,
-    );
-    expect(PATH_SCOPE_CURSOR_KEY in before.cursor).toBe(false);
-    const ids = Object.fromEntries(
-      documents(before.pages).map((doc) => [doc.title, doc.externalId]),
-    );
-    const { pages } = await run([root], before.cursor);
-    expect(documents(pages)).toEqual([]);
-    expect(pages[0]!.hasMore).toBe(true);
-    expect(edges(pages)).toEqual(
-      expect.arrayContaining([
-        { externalId: ids["plan.md"], parentIds: [folder(join(root, "work"))], complete: true },
-        { externalId: ids["log.md"], parentIds: [folder(join(root, "personal"))], complete: true },
-      ]),
-    );
-    expect(edges(pages)).toHaveLength(2);
-    expect(
-      nodes(pages)
-        .map((node) => node.label)
-        .sort(),
-    ).toEqual([root, `${root}/personal`, `${root}/work`]);
-    expect(pages.at(-1)!.presentExternalIds).toHaveLength(2);
+  test("the list holds every folder under the configured folder, empty ones included", async () => {
+    write("work/atlas-api/zqfilter-atlas.md", "Invented notes on the Atlas API cursor.");
+    write("workshop/bench/zqfilter-bench.md", "Invented notes on the workbench drawers.");
+    mkdirSync(join(root, "personal", "someday"), { recursive: true });
+    const instance = await create();
+    await instance.sync(null);
+
+    expect(await list(instance)).toEqual({
+      [id(root)]: null,
+      [id(join(root, "work"))]: id(root),
+      [id(join(root, "work/atlas-api"))]: id(join(root, "work")),
+      // Beside "work", not inside it.
+      [id(join(root, "workshop"))]: id(root),
+      [id(join(root, "workshop/bench"))]: id(join(root, "workshop")),
+      // Folders holding no file yet can be picked before they do.
+      [id(join(root, "personal"))]: id(root),
+      [id(join(root, "personal/someday"))]: id(join(root, "personal")),
+    });
   });
 
-  test("a moved file keeps its identity and is filed under its new folder", async () => {
-    write("work/plan.md", "An invented plan that will move between folders");
-    const first = await run([root], null);
-    const id = documents(first.pages)[0]!.externalId;
-    mkdirSync(join(root, "personal"));
-    renameSync(join(root, "work/plan.md"), join(root, "personal/plan.md"));
-    const second = await run([root], first.cursor);
-    expect(documents(second.pages).map((doc) => doc.externalId)).toEqual([id]);
-    expect(hierarchyOf(second.pages, "plan.md")).toEqual([
-      { kind: "folder", parentIds: [folder(join(root, "personal"))], complete: true },
-    ]);
-    expect(edges(second.pages)).toEqual([
-      { externalId: id, parentIds: [folder(join(root, "personal"))], complete: true },
-    ]);
+  test("labels read from the home directory; ids stay absolute", async () => {
+    write("zqfilter-inbox.md", "Invented unsorted notes kept at the top of the folder.");
+    const instance = await create();
+    await instance.sync(null);
+    const items = await collectFilterList(instance.filterLists![FIELD]!, {
+      signal: new AbortController().signal,
+    });
+    const home = homedir();
+    const expected =
+      root === home || root.startsWith(`${home}/`) ? `~${root.slice(home.length)}` : root;
+    expect(items).toEqual([{ id: id(root), label: expected }]);
   });
 
-  test("a renamed folder is a new folder holding the same files", async () => {
-    write("work/plan.md", "An invented plan inside a folder that will be renamed");
-    const first = await run([root], null);
-    const id = documents(first.pages)[0]!.externalId;
-    renameSync(join(root, "work"), join(root, "clients"));
-    const second = await run([root], first.cursor);
-    expect(edges(second.pages)).toEqual([
-      { externalId: id, parentIds: [folder(join(root, "clients"))], complete: true },
-    ]);
-    expect(folder(join(root, "clients"))).not.toBe(folder(join(root, "work")));
-    expect(nodes(second.pages).every((node) => !node.deleted)).toBe(true);
+  test("folders the source never reads are not listed", async () => {
+    write("kept/zqfilter-kept.md", "Invented notes that are indexed.");
+    write("skipped/zqfilter-skipped.md", "Invented notes the owner excluded.");
+    write("checkout/.git/HEAD", "ref: refs/heads/main");
+    write("checkout/zqfilter-readme.md", "Invented notes inside a repository.");
+    write(".hidden/zqfilter-hidden.md", "Invented notes in a hidden folder.");
+    const instance = await create([root], ["skipped"]);
+    const result = await instance.sync(null);
+
+    expect(result.documents.map((doc) => doc.title)).toEqual(["zqfilter-kept.md"]);
+    expect(await list(instance)).toEqual({
+      [id(root)]: null,
+      [id(join(root, "kept"))]: id(root),
+    });
+  });
+
+  test("each configured folder is the top of its own tree", async () => {
+    const second = join(tmpDir, "Archive");
+    write("2024/zqfilter-archive.md", "Invented archived notes.", second);
+    write("work/zqfilter-work.md", "Invented work notes.");
+    const instance = await create([root, second]);
+    await instance.sync(null);
+
+    expect(await list(instance)).toEqual({
+      [id(root)]: null,
+      [id(join(root, "work"))]: id(root),
+      [id(second)]: null,
+      [id(join(second, "2024"))]: id(second),
+    });
   });
 
   test("a file reached through a symlinked folder is filed where it really is", async () => {
-    write("work/atlas-api/plan.md");
-    symlinkSync(join(root, "work/atlas-api"), join(root, "shortcut"));
-    const { pages } = await run([root], null);
-    expect(documents(pages)).toHaveLength(1);
-    expect(hierarchyOf(pages, "plan.md")).toEqual([
-      { kind: "folder", parentIds: [folder(join(root, "work/atlas-api"))], complete: true },
-    ]);
-    expect(nodes(pages).map((node) => node.label)).not.toContain(`${root}/shortcut`);
-  });
+    write("real/zqfilter-real.md", "Invented notes in the real folder.");
+    symlinkSync(join(root, "real"), join(root, "alias"));
+    const instance = await create();
+    const result = await instance.sync(null);
 
-  test("a configured folder that is a symlink is named by the folder it leads to", async () => {
-    write("work/plan.md");
-    const alias = join(tmp, "Alias");
-    symlinkSync(root, alias);
-    const { pages } = await run([`${alias}/`], null);
-    expect(hierarchyOf(pages, "plan.md")).toEqual([
-      { kind: "folder", parentIds: [folder(join(root, "work"))], complete: true },
-    ]);
-  });
-
-  test("two configured folders are two trees", async () => {
-    const other = join(tmp, "Archive");
-    write("work/plan.md");
-    write("work/old.md", "An invented archived note", other);
-    const roots = [root, other];
-    const { pages } = await run(roots, null);
-    expect(hierarchyOf(pages, "plan.md")![0]!.parentIds).toEqual([
-      folder(join(root, "work"), roots),
-    ]);
-    expect(hierarchyOf(pages, "old.md")![0]!.parentIds).toEqual([
-      folder(join(other, "work"), roots),
-    ]);
-    expect(
-      nodes(pages)
-        .filter((node) => node.parentIds.length === 0)
-        .map((node) => node.label)
-        .sort(),
-    ).toEqual([other, root].sort());
-  });
-
-  test("a configured folder inside another is a folder of the outer one", async () => {
-    write("work/atlas-api/plan.md");
-    const roots = [join(root, "work"), root];
-    const { pages } = await run(roots, null);
-    const published = new Map(nodes(pages).map((node) => [node.id, node]));
-    expect(hierarchyOf(pages, "plan.md")![0]!.parentIds).toEqual([
-      folder(join(root, "work/atlas-api"), roots),
-    ]);
-    expect(published.get(folder(join(root, "work"), roots))!.parentIds).toEqual([
-      folder(root, roots),
-    ]);
-    expect([...published.values()].filter((node) => node.parentIds.length === 0)).toHaveLength(1);
-  });
-
-  test("configuring a folder above the one already indexed files everything again, each folder under the id it had", async () => {
-    write("work/plan.md");
-    const inner = join(root, "work");
-    const first = await run([inner], null);
-    const id = documents(first.pages)[0]!.externalId;
-    expect(edges(first.pages)[0]!.parentIds).toEqual([folder(inner, [inner])]);
-    const roots = [inner, root];
-    const second = await run(roots, first.cursor);
-    expect(edges(second.pages)).toContainEqual({
-      externalId: id,
-      parentIds: [folder(inner, roots)],
-      complete: true,
+    expect(result.documents).toHaveLength(1);
+    expect(folderOf(result, "zqfilter-real.md")).toBe(id(join(root, "real")));
+    expect(await list(instance)).toEqual({
+      [id(root)]: null,
+      [id(join(root, "real"))]: id(root),
     });
-    // A filter saved on the folder before the change still names it.
-    expect(folder(inner, roots)).toBe(folder(inner, [inner]));
-    const published = new Map(nodes(second.pages).map((node) => [node.id, node]));
-    expect(published.get(folder(inner, roots))!.parentIds).toEqual([folder(root, roots)]);
-    expect(nodes(second.pages).map((node) => node.label)).toContain(root);
   });
 
-  test("a gateway refresh files every indexed file again under its epoch and completes it", async () => {
-    write("work/plan.md");
-    write("personal/log.md");
-    const first = await run([root], null);
-    const { pages } = await run([root], first.cursor, {
-      ...SUPPORTED,
-      scopeRefreshEpochs: { folder: "epoch-two" },
-    });
-    expect(documents(pages)).toEqual([]);
-    expect(edges(pages)).toHaveLength(2);
-    expect(edges(pages).every((edge) => edge.refreshEpoch === "epoch-two")).toBe(true);
-    expect(pages.flatMap((page) => page.scopeUpdates?.refreshes ?? [])).toEqual([
-      { kind: "folder", active: false, epoch: "epoch-two" },
-    ]);
+  test("the list depends on the folders, not on how many files they hold", async () => {
+    write("work/zqfilter-0.md", "Invented notes number 0, long enough to be indexed.");
+    const few = await create();
+    await few.sync(null);
+    const listedForFew = await list(few);
+
+    for (let index = 1; index < 120; index++) {
+      write(`work/zqfilter-${index}.md`, `Invented notes number ${index}, long enough to index.`);
+    }
+    const many = await create();
+    const first = await many.sync(null);
+    // Listed in full after the first page, while files are still waiting to be read.
+    expect(first.hasMore).toBe(true);
+    expect(await list(many)).toEqual(listedForFew);
+
+    // Listing reads nothing from the disk: the tree can be gone and the list is the same.
+    rmSync(root, { recursive: true, force: true });
+    expect(await list(many)).toEqual(listedForFew);
+  });
+
+  test("no list before the folders have been read once", async () => {
+    await expect(list(await create())).rejects.toThrow(/have not been read yet/);
+  });
+
+  test("a sync from an empty cursor re-emits every file though none changed", async () => {
+    write("work/zqfilter-atlas.md", "Invented notes on the Atlas API cursor.");
+    write("personal/zqfilter-garden.md", "Invented notes on the garden watering log.");
+    const instance = await create();
+    const first = await instance.sync(null);
+    expect(first.documents).toHaveLength(2);
+
+    const unchanged = await instance.sync(first.cursor as LocalFilesSyncCursor);
+    expect(unchanged.documents).toEqual([]);
+
+    const again = await instance.sync(null);
+    expect(again.documents.map((doc) => doc.externalId).sort()).toEqual(
+      first.documents.map((doc) => doc.externalId).sort(),
+    );
+    expect(again.documents.every((doc) => typeof doc.metadata.extra?.folder === "string")).toBe(
+      true,
+    );
+  });
+
+  test("a new empty folder changes the list and sends no file again", async () => {
+    write("work/zqfilter-atlas.md", "Invented notes on the Atlas API cursor.");
+    const instance = await create();
+    const first = await instance.sync(null);
+    const before = await list(instance);
+
+    mkdirSync(join(root, "someday"));
+    const second = await instance.sync(first.cursor as LocalFilesSyncCursor);
+
+    expect(second.documents).toEqual([]);
+    expect(await list(instance)).toEqual({ ...before, [id(join(root, "someday"))]: id(root) });
+  });
+
+  test("a folder moved on disk is a different folder: its files follow, under the same records", async () => {
+    write("work/billing/zqfilter-billing.md", "Invented notes on rounding in the billing export.");
+    write("work/atlas-api/zqfilter-atlas.md", "Invented notes on the Atlas API cursor.");
+    const instance = await create();
+    const first = await instance.sync(null);
+    const billing = first.documents.find((doc) => doc.title === "zqfilter-billing.md")!;
+    expect(billing.metadata.extra?.folder).toBe(id(join(root, "work/billing")));
+
+    mkdirSync(join(root, "personal"));
+    renameSync(join(root, "work", "billing"), join(root, "personal", "billing"));
+    const second = await instance.sync(first.cursor as LocalFilesSyncCursor);
+
+    // Only the moved file is sent again, as the same record, now in the new folder.
+    expect(second.documents).toHaveLength(1);
+    expect(second.documents[0]!.externalId).toBe(billing.externalId);
+    expect(second.documents[0]!.metadata.extra?.folder).toBe(id(join(root, "personal/billing")));
+    expect(second.presentExternalIds).toHaveLength(2);
+
+    const listed = await list(instance);
+    expect(listed[id(join(root, "personal/billing"))]).toBe(id(join(root, "personal")));
+    // The old path is no longer a folder the source knows.
+    expect(Object.keys(listed)).not.toContain(id(join(root, "work/billing")));
   });
 });

@@ -22,15 +22,15 @@ import {
   TEMPORAL_MODALITIES,
   TEMPORAL_STATUSES,
 } from "@omnesis/core";
-import { DOCUMENT_PROJECTION_FIELDS, type DocumentProjectionField } from "@omnesis/source-sdk";
+import {
+  DOCUMENT_PROJECTION_FIELDS,
+  RESYNC_COST_MAX_LENGTH,
+  type DocumentProjectionField,
+} from "@omnesis/source-sdk";
+import { FILTER_IDENTIFIER_TYPES, FILTER_LIST_LIMITS } from "@omnesis/types";
 import { z } from "zod";
 import { SOURCE_ICON_MAX_INPUT_CHARS } from "../../icon-limits.js";
-import {
-  documentScopeFactsSchema,
-  sourceScopeUpdatesSchema,
-} from "../../access/scope-update-schema.js";
-import { documentHierarchySchema } from "../../access/scope-hierarchy-validation.js";
-import { nonEmptyString, urlPatternSpecSchema } from "./common.js";
+import { nonEmptyString, sourceVersionShape, urlPatternSpecSchema } from "./common.js";
 import { accountDescriptorSchema } from "./account-descriptor.js";
 
 const documentInputShape = z
@@ -43,34 +43,10 @@ const documentInputShape = z
     contentHash: nonEmptyString,
     /** See Document.extractedContentHash — optional. */
     extractedContentHash: z.string().optional(),
-    metadata: z.record(z.string(), z.unknown()).transform((value, ctx) => {
+    metadata: z.record(z.string(), z.unknown()).transform((value) => {
       // Older browser extensions sent this retired producer-detail field.
       // Accept those clients during upgrade, but never persist the field.
       const { captureMethod: _retired, ...metadata } = value;
-      if (metadata.scopeFacts !== undefined) {
-        const facts = documentScopeFactsSchema.safeParse(metadata.scopeFacts);
-        if (!facts.success) {
-          ctx.addIssue({
-            code: "custom",
-            path: ["scopeFacts"],
-            message: "Invalid source scope facts.",
-          });
-          return z.NEVER;
-        }
-        metadata.scopeFacts = facts.data;
-      }
-      if (metadata.scopeHierarchy !== undefined) {
-        const hierarchy = documentHierarchySchema.safeParse(metadata.scopeHierarchy);
-        if (!hierarchy.success) {
-          ctx.addIssue({
-            code: "custom",
-            path: ["scopeHierarchy"],
-            message: "Invalid native hierarchy.",
-          });
-          return z.NEVER;
-        }
-        metadata.scopeHierarchy = hierarchy.data;
-      }
       return metadata;
     }),
     sourceCreatedAt: nonEmptyString,
@@ -326,6 +302,7 @@ const sourceFamilyMetaSchema = z.object({
   label: z.string().optional(),
   bgColor: z.string().optional(),
   accentColor: z.string().optional(),
+  resyncCost: z.string().max(RESYNC_COST_MAX_LENGTH).optional(),
 });
 
 // POST /sync-state/:sourceId
@@ -384,6 +361,44 @@ const edgeDeclarationShape = z.object({
   metadata: z.record(z.string(), z.unknown()).optional(),
 });
 
+// One page of the list a collector publishes for a filterable field. The
+// bounds are the ones the collector splits a list by, so a list cut by a
+// current collector always fits.
+const filterListId = z.string().min(1).max(FILTER_LIST_LIMITS.idLength);
+const filterListItemSchema = z.object({
+  id: filterListId,
+  label: z.string().max(FILTER_LIST_LIMITS.labelLength),
+  parentId: filterListId.optional(),
+  members: z
+    .array(
+      z.object({
+        type: z.enum(FILTER_IDENTIFIER_TYPES),
+        value: z.string().min(1).max(FILTER_LIST_LIMITS.identifierLength),
+      }),
+    )
+    .max(FILTER_LIST_LIMITS.membersPerItem)
+    .optional(),
+  membersIncomplete: z.boolean().optional(),
+});
+const filterListPublicationSchema = z
+  .object({
+    field: filterListId,
+    digest: z.string().regex(/^[0-9a-f]{64}$/),
+    part: z
+      .number()
+      .int()
+      .min(0)
+      .max(FILTER_LIST_LIMITS.parts - 1),
+    final: z.boolean(),
+    items: z.array(filterListItemSchema).max(FILTER_LIST_LIMITS.itemsPerPart),
+  })
+  .refine(
+    (publication) =>
+      publication.items.reduce((total, item) => total + (item.members?.length ?? 0), 0) <=
+      FILTER_LIST_LIMITS.membersPerPart,
+    { message: "A page of a list carries too many members" },
+  );
+
 // POST /documents/with-cursor — atomic per-page sync write.
 // Bundles every SQLite-side write the collector needs to commit at the
 // end of a sync page so they either all land or none do, closing the
@@ -397,7 +412,6 @@ export const upsertWithCursorBody = z
     providerId: nonEmptyString,
     sourceId: nonEmptyString,
     documents: z.array(documentInputShape).optional(),
-    scopeUpdates: sourceScopeUpdatesSchema.optional(),
     documentTemporalProjections: documentTemporalProjectionsShape.optional(),
     deletedExternalIds: z.array(z.string()).optional(),
     /** Source-declared structural edges for this page. */
@@ -439,6 +453,20 @@ export const upsertWithCursorBody = z
       })
       .optional(),
     meta: sourceSyncMetaBody.omit({ contentRetention: true }).optional(),
+    /**
+     * Pages of the lists the source publishes for its filterable fields. They
+     * are stored after the page commits, and say nothing about its documents.
+     */
+    filterLists: z
+      .array(filterListPublicationSchema)
+      .max(FILTER_LIST_LIMITS.publicationsPerPage)
+      .optional(),
+    /**
+     * The version of the source's output, as its host declares it; applies to
+     * every document on the page. A host that predates versions sends none,
+     * which is stored as 0.
+     */
+    sourceVersion: sourceVersionShape.optional(),
   })
   .superRefine((body, ctx) => {
     refuseBothSpellings(body, ctx);

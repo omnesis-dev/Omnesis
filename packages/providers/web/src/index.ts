@@ -54,6 +54,7 @@ export default defineStructuredSource<SyncCursor>({
   gatewayHosted: true,
   singleInstance: true,
   execution: "external",
+  contract: { outputRevision: 1 },
   // The web-page entity is the graph hub: a referential URL bag with no
   // structural story — skip `url` edges through it in subgraph walks.
   urlHub: true,

@@ -23,6 +23,7 @@
 import webDefinition from "@omnesis/provider-web";
 import {
   memberScopedParamNames,
+  resolveOutputRevision,
   serializeDescriptor,
   type SerializedDescriptor,
   type SourceDescriptor,
@@ -56,6 +57,7 @@ export function gatewayHostedDescriptors(): SerializedDescriptor[] {
     const serialized = serializeDescriptor({
       ...(def as unknown as SourceDescriptor),
       memberScopedParamNames: memberScopedParamNames(def),
+      outputRevision: resolveOutputRevision(def.contract),
     });
     if (!serialized.gatewayHosted) {
       log.warn(

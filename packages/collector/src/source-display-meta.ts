@@ -34,6 +34,7 @@ export function sourceDisplayMeta(
       label: source.family.name,
       bgColor: source.family.icon?.bgColor,
       accentColor: source.family.icon?.color,
+      resyncCost: source.family.resyncCost,
     },
   };
 }

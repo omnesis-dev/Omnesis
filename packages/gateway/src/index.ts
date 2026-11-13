@@ -193,6 +193,7 @@ import {
   nearDupInboxFlushTask,
   indexerWakeTask,
   createCleanupTasks,
+  createFilterListSweepTask,
   createBackendReprobeTask,
   createSubscriptionDeliveriesTask,
   type PeriodicTask,
@@ -3632,6 +3633,21 @@ const cleanupBundle = createCleanupTasks(
   },
   scheduler,
 );
+// Published filter lists are replaced by writing a new version beside the old
+// one; this collects the versions nothing reads any more.
+const filterListSweepTask = createFilterListSweepTask({
+  writeGate,
+  log: log.child("filter-lists"),
+});
+scheduler.schedule(filterListSweepTask);
+const filterListSweepJob = periodicJob(filterListSweepTask, {
+  scheduler,
+  displayName: "Filter list cleanup",
+  description:
+    "Deletes replaced versions of the lists sources publish for their filterable fields.",
+  category: "infra",
+  tracker: new StatelessTracker(),
+});
 const pushWakeRetryHandle = scheduler.schedule(pushWakeRetryBundle.task);
 const cleanupHandles = cleanupBundle.tasks.map((t) => scheduler.schedule(t));
 void cleanupHandles;
@@ -3834,6 +3850,7 @@ backgroundJobs.registerAll([
   nearDupInboxFlushBundle.job,
   indexerWakeBundle.job,
   ...cleanupBundle.jobs,
+  filterListSweepJob,
   pushWakeRetryBundle.job,
   activityRetentionBundle.job,
   absenceSweepBundle.job,

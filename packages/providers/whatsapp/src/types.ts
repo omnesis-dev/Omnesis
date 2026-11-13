@@ -207,6 +207,12 @@ export interface StoredChat {
   participants?: string[];
   /** Last time the roster was refreshed (unix seconds). */
   participantsFetchedAt?: number;
+  /**
+   * True once WhatsApp has delivered the group's whole roster, so that
+   * `participants` names every member. Absent while the roster is only what
+   * membership events added to it, which may leave members out.
+   */
+  rosterComplete?: boolean;
 }
 
 /** Contact info */

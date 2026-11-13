@@ -29,26 +29,18 @@ import {
   DRIVE_TEXT_MIME_PREFIXES,
 } from "./constants.js";
 import { googleApiStatus, mapGoogleApiError } from "./api-error.js";
-import {
-  DriveScopeFolders,
-  driveFolderBookmark,
-  withoutDriveFolderScopeCursor,
-  isDriveFolderScopeCursor,
-  driveDirectParents,
-  driveHierarchyDelta,
-} from "./drive-scope-folders.js";
-import type { DriveFolderScopeCursor } from "./drive-scope-folders.js";
+import { driveParentIds, listDriveFolders } from "./drive-folders.js";
 import type {
   AttachmentExtractionConfig,
   AttachmentExtractFn,
   ExtractionResult,
 } from "@omnesis/core";
-import type { SyncCursor, SyncResult, SyncOptions } from "@omnesis/source-sdk";
-import type { DocumentInput, PersonMention } from "@omnesis/types";
+import type { SyncCursor, SyncResult } from "@omnesis/source-sdk";
+import type { DocumentInput, FilterListItem, PersonMention } from "@omnesis/types";
 
 const log = createLogger("source:google-drive");
 
-export interface DriveSyncCursor extends SyncCursor, DriveFolderScopeCursor {
+export interface DriveSyncCursor extends SyncCursor {
   phase: "bootstrap" | "incremental";
   /** Page token for files.list during bootstrap */
   pageToken?: string;
@@ -205,7 +197,6 @@ export class GoogleDriveSource {
   private dataCutoff?: Date;
   private attachmentConfig: AttachmentExtractionConfig;
   private extractAttachment?: AttachmentExtractFn;
-  private scopeFolders?: DriveScopeFolders;
 
   constructor(
     auth: OAuth2Client,
@@ -224,12 +215,10 @@ export class GoogleDriveSource {
     }
   }
 
-  async sync(cursor: SyncCursor | null, opts?: SyncOptions): Promise<SyncResult> {
-    let state: DriveSyncCursor = validateDriveSyncCursor(cursor) ?? {
+  async sync(cursor: SyncCursor | null): Promise<SyncResult> {
+    const state = validateDriveSyncCursor(cursor) ?? {
       phase: "bootstrap",
     };
-    // Unsupported optional metadata bookmarks never discard the content cursor.
-    if (!isDriveFolderScopeCursor(state)) state = withoutDriveFolderScopeCursor(state);
 
     // One typed boundary for every phase. The mapper returns an existing
     // `SyncError` unchanged, so paths that already classify themselves are
@@ -237,102 +226,33 @@ export class GoogleDriveSource {
     // failure above all — reaching the collector as kind `unknown` with a
     // message that names neither the API nor the request.
     try {
-      // Handoff admission normally invokes only the holder; direct callers must
-      // also leave global catalogue and refresh ownership with that holder.
-      if (opts?.run?.role === "member") {
-        const memberState = withoutDriveFolderScopeCursor(state);
-        const result =
-          memberState.phase === "bootstrap" || !memberState.startPageToken
-            ? await this.bootstrapSync(memberState, opts)
-            : await this.incrementalSync(memberState, opts);
-        const { scopeUpdates: _updates, ...memberPage } = result;
-        return {
-          ...memberPage,
-          cursor: withoutDriveFolderScopeCursor(result.cursor as DriveSyncCursor),
-        };
-      }
-      const supported = opts?.scopeHierarchySupported === true;
-      const epoch = opts?.scopeRefreshEpochs?.folder;
-      const actorId = opts?.scopeRefreshActorId;
-      if (!supported) state = withoutDriveFolderScopeCursor(state);
-      if (supported && actorId && state.scopeFoldersActorId !== actorId)
-        state = withoutDriveFolderScopeCursor(state);
-      const refreshing =
-        supported &&
-        (state.scopeFoldersVersion !== 1 || state.scopeFoldersCompletedEpoch !== epoch);
-      if (refreshing) {
-        if (
-          (state.scopeFoldersEpoch !== epoch && state.scopeFoldersStage !== "awaiting") ||
-          (["start", "scan", "changes"].includes(state.scopeFoldersStage ?? "") &&
-            !state.scopeFoldersAnchor)
-        )
-          state = withoutDriveFolderScopeCursor(state);
-        if (!state.scopeFoldersYieldToContent) {
-          this.scopeFolders ??= new DriveScopeFolders(this.drive);
-          const page = await this.scopeFolders.page(
-            state,
-            epoch,
-            opts?.scopeRefreshRequestIds?.folder,
-            actorId,
-          );
-          return {
-            ...page,
-            hasMore:
-              state.scopeFoldersStage === "changes" &&
-              (page.cursor as DriveSyncCursor).scopeFoldersVersion === 1
-                ? true
-                : page.hasMore,
-          };
-        }
-      }
-      let result: SyncResult;
       if (state.phase === "bootstrap" || !state.startPageToken) {
         log.debug("Running bootstrap sync", { pageToken: state.pageToken });
-        result = await this.bootstrapSync(state, opts);
-      } else {
-        log.debug("Running incremental sync", {
-          startPageToken: state.startPageToken,
-        });
-        result = await this.incrementalSync(state, opts);
+        return await this.bootstrapSync(state);
       }
-      if (
-        supported &&
-        result.scopeUpdates?.refreshes?.some((state) => state.kind === "folder" && state.active)
-      )
-        return {
-          ...result,
-          cursor: withoutDriveFolderScopeCursor(result.cursor as DriveSyncCursor),
-          hasMore: true,
-        };
-      if (refreshing)
-        return {
-          ...result,
-          hasMore: true,
-          cursor: {
-            ...result.cursor,
-            ...driveFolderBookmark(state),
-            scopeFoldersYieldToContent: false,
-          },
-        };
-      if (supported)
-        return { ...result, cursor: { ...result.cursor, ...driveFolderBookmark(state) } };
-      return {
-        ...result,
-        ...(opts?.scopeFactsSupported
-          ? {
-              scopeUpdates: {
-                refreshes: [{ kind: "folder" as const, active: true }],
-                readiness: [{ kind: "folder" as const, complete: false }],
-              },
-            }
-          : {}),
-      };
+
+      log.debug("Running incremental sync", {
+        startPageToken: state.startPageToken,
+      });
+      return await this.incrementalSync(state);
     } catch (error: unknown) {
       throw mapGoogleApiError(error);
     }
   }
 
-  private async bootstrapSync(state: DriveSyncCursor, opts?: SyncOptions): Promise<SyncResult> {
+  /**
+   * The folders the account can see and the folder each sits in, for the tree
+   * a filter picks from. See {@link listDriveFolders} for what it costs.
+   */
+  async listFolders(signal: AbortSignal): Promise<FilterListItem[]> {
+    try {
+      return await listDriveFolders(this.drive, signal);
+    } catch (error: unknown) {
+      throw mapGoogleApiError(error);
+    }
+  }
+
+  private async bootstrapSync(state: DriveSyncCursor): Promise<SyncResult> {
     // Capture the current changes token on first page so incremental sync
     // picks up from where bootstrap started. A walk that starts again keeps
     // the token it began with: changes since then are a superset of the ones
@@ -350,12 +270,12 @@ export class GoogleDriveSource {
       // bar with "X files indexed".
     }
 
-    const { res, q } = await this.listFilesPage(state, opts?.scopeHierarchySupported === true);
+    const { res, q } = await this.listFilesPage(state);
 
     const files = res.data.files ?? [];
     // RTT-bound: Workspace exports + binary downloads are one round-trip
     // each. Run in parallel with the same concurrency cap as Gmail.
-    const fetched = await pMap(files, (file) => this.fetchAndNormalize(file, opts), {
+    const fetched = await pMap(files, (file) => this.fetchAndNormalize(file), {
       concurrency: GOOGLE_FETCH_CONCURRENCY,
     });
     const documents: DocumentInput[] = fetched.filter((d): d is DocumentInput => d !== null);
@@ -374,13 +294,6 @@ export class GoogleDriveSource {
     }
 
     return {
-      ...(opts?.scopeHierarchySupported
-        ? {
-            scopeUpdates: {
-              hierarchy: driveHierarchyDelta(files, [], opts.scopeRefreshEpochs?.folder, false),
-            },
-          }
-        : {}),
       documents: filteredDocuments,
       deletedExternalIds: [],
       cursor: {
@@ -432,13 +345,13 @@ export class GoogleDriveSource {
    * cursor from before it was recorded) it starts from the first file. Files
    * listed again land on the documents they already made.
    */
-  private async listFilesPage(state: DriveSyncCursor, scopeHierarchy: boolean) {
+  private async listFilesPage(state: DriveSyncCursor) {
     const list = (q: string, pageToken: string | undefined) =>
       this.drive.files.list({
         q,
         pageSize: GOOGLE_PAGE_SIZE,
         pageToken,
-        fields: `nextPageToken,files(${DRIVE_FILE_FIELDS}${scopeHierarchy ? ",parents,driveId" : ""})`,
+        fields: `nextPageToken,files(${DRIVE_FILE_FIELDS})`,
         spaces: "drive",
         orderBy: "modifiedTime",
         includeItemsFromAllDrives: true,
@@ -461,7 +374,7 @@ export class GoogleDriveSource {
     }
   }
 
-  private async incrementalSync(state: DriveSyncCursor, opts?: SyncOptions): Promise<SyncResult> {
+  private async incrementalSync(state: DriveSyncCursor): Promise<SyncResult> {
     const documents: DocumentInput[] = [];
     const deletedExternalIds: string[] = [];
 
@@ -469,7 +382,7 @@ export class GoogleDriveSource {
       const res = await this.drive.changes.list({
         pageToken: state.startPageToken!,
         pageSize: GOOGLE_PAGE_SIZE,
-        fields: `nextPageToken,newStartPageToken,changes(fileId,removed,file(${DRIVE_FILE_FIELDS}${opts?.scopeHierarchySupported ? ",parents,driveId" : ""}))`,
+        fields: `nextPageToken,newStartPageToken,changes(fileId,removed,file(${DRIVE_FILE_FIELDS}))`,
         spaces: "drive",
         includeItemsFromAllDrives: true,
         supportsAllDrives: true,
@@ -489,7 +402,7 @@ export class GoogleDriveSource {
         if (change.file) updates.push(change.file);
       }
 
-      const fetched = await pMap(updates, (file) => this.fetchAndNormalize(file, opts), {
+      const fetched = await pMap(updates, (file) => this.fetchAndNormalize(file), {
         concurrency: GOOGLE_FETCH_CONCURRENCY,
       });
       for (const doc of fetched) {
@@ -500,34 +413,8 @@ export class GoogleDriveSource {
       const filteredDocuments = applyDataCutoff(documents, this.dataCutoff, log, "changed files");
 
       const hasMore = !!res.data.nextPageToken;
-      // A fresh terminal changes receipt can renew catalogue readiness, but
-      // never the completeness or native witnesses of individual documents.
-      const epoch = opts?.scopeRefreshEpochs?.folder;
-      const actorId = opts?.scopeRefreshActorId;
-      const caughtUp =
-        !hasMore &&
-        typeof res.data.newStartPageToken === "string" &&
-        res.data.newStartPageToken.length > 0 &&
-        state.scopeFoldersVersion === 1 &&
-        epoch !== undefined &&
-        actorId !== undefined &&
-        state.scopeFoldersCompletedEpoch === epoch &&
-        state.scopeFoldersActorId === actorId &&
-        opts?.run?.role !== "member";
 
       return {
-        ...(opts?.scopeHierarchySupported
-          ? {
-              scopeUpdates: {
-                hierarchy: driveHierarchyDelta(
-                  updates,
-                  deletedExternalIds,
-                  opts.scopeRefreshEpochs?.folder,
-                ),
-                ...(caughtUp ? { readiness: [{ kind: "folder" as const, complete: true }] } : {}),
-              },
-            }
-          : {}),
         documents: filteredDocuments,
         deletedExternalIds,
         cursor: {
@@ -540,32 +427,17 @@ export class GoogleDriveSource {
     } catch (error: unknown) {
       // Drive's changes tokens do not expire, but one it cannot use is
       // refused like a files.list token. Nothing then says what changed, so
-      // the files are listed again from a fresh token, and folder facts stay
-      // fenced until that listing has republished them. Anything else — a 403
+      // the files are listed again from a fresh token. Anything else — a 403
       // rate limit above all — surfaces, keeps the token and is retried.
       if (isRejectedPageTokenError(error)) {
         log.warn(`Drive refused the changes token for ${this.id}; listing every file again`);
-        if (opts?.scopeHierarchySupported)
-          return {
-            documents: [],
-            deletedExternalIds: [],
-            cursor: { phase: "bootstrap" },
-            hasMore: true,
-            scopeUpdates: {
-              refreshes: [{ kind: "folder", active: true }],
-              readiness: [{ kind: "folder", complete: false }],
-            },
-          };
-        return this.bootstrapSync({ phase: "bootstrap" }, opts);
+        return this.bootstrapSync({ phase: "bootstrap" });
       }
       throw mapGoogleApiError(error);
     }
   }
 
-  private async fetchAndNormalize(
-    file: drive_v3.Schema$File,
-    opts?: SyncOptions,
-  ): Promise<DocumentInput | null> {
+  private async fetchAndNormalize(file: drive_v3.Schema$File): Promise<DocumentInput | null> {
     if (!file.id || !file.name || !file.mimeType) return null;
     // Recover the real type when Drive stored a generic MIME for a recognizable
     // extension (e.g. a .pkpass uploaded as application/octet-stream).
@@ -666,17 +538,6 @@ export class GoogleDriveSource {
       contentHash,
       extractedContentHash,
       metadata: {
-        ...(opts?.scopeHierarchySupported
-          ? {
-              scopeHierarchy: [
-                {
-                  kind: "folder" as const,
-                  ...driveDirectParents(file),
-                  refreshEpoch: opts.scopeRefreshEpochs?.folder,
-                },
-              ],
-            }
-          : {}),
         sourceUrl: file.webViewLink ?? undefined,
         tags: [],
         documentType: "file",
@@ -688,6 +549,10 @@ export class GoogleDriveSource {
           // below override on collision.
           ...(extracted.extra ?? {}),
           mimeType,
+          // The folders the file sits in directly, by id; the names and the
+          // folders above them are in the account's published folder list.
+          // Always written, empty for a file in no folder the account sees.
+          folderIds: driveParentIds(file),
           shared: file.shared ?? false,
           fileSize: file.size ? parseInt(file.size, 10) : undefined,
           ...(extracted.pages !== undefined ? { pages: extracted.pages } : {}),

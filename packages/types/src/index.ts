@@ -100,3 +100,4 @@ export type {
   SourceScopeOptions,
   SourceScopePreview,
 } from "./source-scope-editor.js";
+export * from "./source-filters.js";
