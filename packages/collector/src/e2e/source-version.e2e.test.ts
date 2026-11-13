@@ -66,18 +66,37 @@ function documentsOf(
 const identity = (documents: StoredDocument[]) =>
   documents.map(({ id, external_id, updated_at }) => ({ id, external_id, updated_at }));
 
-function cursorRow(
-  harness: SyntheticE2EHarness,
-  sourceId: string,
-  deviceId = "",
-): { source_version: number } | undefined {
+/**
+ * The version on each cursor row of the source that has committed a page,
+ * keyed by the row's device (`""` is the row the source's hosts share). Which
+ * row a host writes follows the source's multi-device mode, so a suite about
+ * versions reads whichever rows there are rather than naming one.
+ */
+function cursorVersions(harness: SyntheticE2EHarness, sourceId: string): Record<string, number> {
+  return withStore(harness, (db) =>
+    Object.fromEntries(
+      db
+        .prepare<[string], { device_id: string; source_version: number }>(
+          `SELECT device_id, source_version FROM sync_state
+            WHERE source_id = ? AND last_synced_at IS NOT NULL`,
+        )
+        .all(sourceId)
+        .map((row) => [row.device_id, row.source_version]),
+    ),
+  );
+}
+
+/** The version of the page a single-host source committed last. */
+function lastCommittedVersion(harness: SyntheticE2EHarness, sourceId: string): number | undefined {
   return withStore(harness, (db) =>
     db
-      .prepare<[string, string], { source_version: number }>(
-        "SELECT source_version FROM sync_state WHERE source_id = ? AND device_id = ?",
+      .prepare<[string], { source_version: number }>(
+        `SELECT source_version FROM sync_state
+          WHERE source_id = ? AND last_synced_at IS NOT NULL
+          ORDER BY last_synced_at DESC LIMIT 1`,
       )
-      .get(sourceId, deviceId),
-  );
+      .get(sourceId),
+  )?.source_version;
 }
 
 describe("source version — one account across builds (default universe)", () => {
@@ -132,7 +151,7 @@ describe("source version — one account across builds (default universe)", () =
     const original = documentsOf(harness, NOTES);
     expect(original).toHaveLength(NOTE_COUNT);
     expect(counts(NOTES)).toEqual([{ sourceVersion: 0, count: NOTE_COUNT }]);
-    expect(cursorRow(harness, NOTES)).toEqual({ source_version: 0 });
+    expect(lastCommittedVersion(harness, NOTES)).toBe(0);
 
     // Upgraded to version 1, it re-reads the second half: nothing changed
     // upstream, so every document comes back exactly as stored.
@@ -144,7 +163,7 @@ describe("source version — one account across builds (default universe)", () =
       { sourceVersion: 1, count: NOTE_COUNT - HALF },
     ]);
     expect(identity(documentsOf(harness, NOTES))).toEqual(identity(original));
-    expect(cursorRow(harness, NOTES)).toEqual({ source_version: 1 });
+    expect(lastCommittedVersion(harness, NOTES)).toBe(1);
 
     // A whole re-read at version 1 leaves no document behind at 0.
     await rereadFrom(0);
@@ -166,7 +185,7 @@ describe("source version — one account across builds (default universe)", () =
     await rereadFrom(0);
     await harness.triggerSyncAndWait(NOTES, 60_000);
     expect(counts(NOTES)).toEqual(halfOld);
-    expect(cursorRow(harness, NOTES)).toEqual({ source_version: 1 });
+    expect(lastCommittedVersion(harness, NOTES)).toBe(1);
 
     // Through all of it no document was replaced or touched.
     const final = documentsOf(harness, NOTES);
@@ -192,7 +211,7 @@ describe("source version — one account across builds (default universe)", () =
     expect(tasks).toHaveLength(1);
     expect(tasks[0]?.sourceVersion).toBe(1);
     expect(tasks[0]?.count).toBeGreaterThan(0);
-    expect(cursorRow(harness, TASKS)).toEqual({ source_version: 1 });
+    expect(lastCommittedVersion(harness, TASKS)).toBe(1);
     const inventories = withStore(harness, (db) =>
       db
         .prepare<[string], { min_source_version: number | null; completed: number }>(
@@ -211,7 +230,7 @@ describe("source version — one account across builds (default universe)", () =
     expect(events).toHaveLength(1);
     expect(events[0]?.sourceVersion).toBe(1);
     expect(events[0]?.count).toBeGreaterThan(0);
-    expect(cursorRow(harness, CALENDAR)).toEqual({ source_version: 1 });
+    expect(lastCommittedVersion(harness, CALENDAR)).toBe(1);
   }, 120_000);
 
   test("a pushed document has no version", async () => {
@@ -271,8 +290,10 @@ describe("source version — several hosts of one source (replicated universe)",
 
     expect(counts(TASKS)).toEqual(raised);
     expect(identity(documentsOf(harness, TASKS))).toEqual(identity(written));
-    expect(cursorRow(harness, TASKS, newer.deviceId)).toEqual({ source_version: 2 });
-    expect(cursorRow(harness, TASKS, older.deviceId)).toEqual({ source_version: 1 });
+    expect(cursorVersions(harness, TASKS)).toMatchObject({
+      [newer.deviceId]: 2,
+      [older.deviceId]: 1,
+    });
   }, 300_000);
 
   test("partitioned: each host's stream carries the version of the build that host runs", async () => {
@@ -293,7 +314,9 @@ describe("source version — several hosts of one source (replicated universe)",
       { sourceVersion: 0, count: inSecond },
       { sourceVersion: 2, count: inFirst },
     ]);
-    expect(cursorRow(harness, SCREEN_TIME, first.deviceId)).toEqual({ source_version: 2 });
-    expect(cursorRow(harness, SCREEN_TIME, second.deviceId)).toEqual({ source_version: 0 });
+    expect(cursorVersions(harness, SCREEN_TIME)).toMatchObject({
+      [first.deviceId]: 2,
+      [second.deviceId]: 0,
+    });
   }, 300_000);
 });

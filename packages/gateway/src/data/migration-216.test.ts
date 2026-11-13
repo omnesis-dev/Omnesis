@@ -76,10 +76,10 @@ test("existing rows read as stored before versions were, and it runs twice", () 
   expect(db.prepare("SELECT source_version FROM sync_state").all()).toEqual([
     { source_version: 0 },
   ]);
-  // No page of this inventory was seen with a version, which is not the same
-  // as every page of it having carried version 0.
+  // The pages this enumeration already took carried no version, so whatever
+  // its remaining pages carry, it was not read at one.
   expect(db.prepare("SELECT min_source_version FROM source_inventories").all()).toEqual([
-    { min_source_version: null },
+    { min_source_version: 0 },
   ]);
   expect(counts()).toEqual([
     {

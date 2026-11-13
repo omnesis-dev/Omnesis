@@ -410,7 +410,7 @@ describe("the lowest version of one enumeration", () => {
   };
   const row = (id = inventory.id) =>
     db
-      .prepare<[string], { min_source_version: number | null; completed_at: number | null }>(
+      .prepare<[string], { min_source_version: number; completed_at: number | null }>(
         "SELECT min_source_version, completed_at FROM source_inventories WHERE id = ?",
       )
       .get(id);
@@ -443,6 +443,19 @@ describe("the lowest version of one enumeration", () => {
     upsertWithCursor(db, page([note("b")], undefined, { initialInventory: inventory }));
 
     expect(row()).toMatchObject({ min_source_version: 0 });
+  });
+
+  test("an enumeration under way when versions arrived stays at 0", () => {
+    // Its first pages were stored before the gateway kept versions.
+    db.prepare(
+      `INSERT INTO source_inventories (id, source_id, cursor_row, started_at, first_received_at, observed_at)
+       VALUES (?, ?, '', ?, ?, ?)`,
+    ).run(inventory.id, sourceId, inventory.startedAt, T0, T0);
+
+    upsertWithCursor(db, page([note("a")], 2, { initialInventory: inventory }));
+
+    expect(row()).toMatchObject({ min_source_version: 0 });
+    expect(row()?.completed_at).not.toBeNull();
   });
 
   test("a later enumeration starts from its own first page", () => {

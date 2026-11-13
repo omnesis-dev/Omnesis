@@ -10,7 +10,7 @@ export function createSourceInventoryTables(db: Database.Database): void {
     CREATE TABLE IF NOT EXISTS source_inventories (
       id TEXT PRIMARY KEY, source_id TEXT NOT NULL, cursor_row TEXT NOT NULL,
       started_at TEXT NOT NULL, first_received_at INTEGER NOT NULL, observed_at INTEGER NOT NULL, completed_at INTEGER,
-      min_source_version INTEGER,
+      min_source_version INTEGER NOT NULL DEFAULT 0,
       UNIQUE(source_id,cursor_row,id)
     );
     CREATE INDEX IF NOT EXISTS source_inventories_scope ON source_inventories(source_id,cursor_row,observed_at DESC);
@@ -75,7 +75,7 @@ export function recordSourceInventoryPage(
     `INSERT INTO source_inventories(id,source_id,cursor_row,started_at,first_received_at,observed_at,completed_at,min_source_version)
     VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET observed_at=excluded.observed_at,
       completed_at=COALESCE(source_inventories.completed_at,excluded.completed_at),
-      min_source_version=MIN(COALESCE(source_inventories.min_source_version,excluded.min_source_version),excluded.min_source_version)`,
+      min_source_version=MIN(source_inventories.min_source_version,excluded.min_source_version)`,
   ).run(
     inventory.id,
     sourceId,

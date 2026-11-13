@@ -1027,7 +1027,7 @@ describe("an install several versions behind, upgrading", () => {
         { source_version: 0 },
       ]);
       expect(db.prepare("SELECT min_source_version FROM source_inventories").all()).toEqual([
-        { min_source_version: null },
+        { min_source_version: 0 },
       ]);
       expect(db.prepare("SELECT * FROM source_version_counts").all()).toEqual([
         {

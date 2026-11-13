@@ -92,7 +92,9 @@ export function createDocumentFilterIndexQueue(db: Db): void {
  * that cursor row, and `source_inventories.min_source_version` the lowest
  * version among the pages of one enumeration from an empty cursor, so "this
  * host has read the whole source at version V or later" is a property of a
- * completed inventory rather than a scan of its documents.
+ * completed inventory rather than a scan of its documents. An enumeration
+ * recorded before this ran reads 0, finished or not: none of the pages it
+ * already took carried a version.
  *
  * Nothing here is proportional to the document table except the first fill of
  * the per-version counts, and on an upgrade that reads one existing index: the
@@ -111,7 +113,9 @@ export function addSourceVersion(db: Db): void {
     hasTable(db, "source_inventories") &&
     !hasColumn(db, "source_inventories", "min_source_version")
   ) {
-    db.exec("ALTER TABLE source_inventories ADD COLUMN min_source_version INTEGER");
+    db.exec(
+      "ALTER TABLE source_inventories ADD COLUMN min_source_version INTEGER NOT NULL DEFAULT 0",
+    );
   }
   const hadCounts = hasTable(db, "source_version_counts");
   createSourceVersionCounts(db);
