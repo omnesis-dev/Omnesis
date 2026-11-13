@@ -627,8 +627,9 @@ export class GatewayCloudRelayManagement implements CloudRelayManagement {
     return join(this.directory, "release.json");
   }
   /**
-   * Out of its account and off the relay: remote access off, the account link with its policy and
-   * trusted sign-ins gone, and the relay session, invitation and recovery receipt removed.
+   * Out of its account and off the relay: remote access off, the account link with its trusted
+   * sign-ins gone (the owner's enrollment policy and refused sign-ins are kept for the next link),
+   * and the relay session, invitation and recovery receipt removed.
    *
    * The gateway id, the public certificate and its key stay, and the listener keeps answering
    * for the public name with them. Devices that joined by signing in pinned that key and reach

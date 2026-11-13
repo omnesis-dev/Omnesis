@@ -22,7 +22,12 @@ import {
   AccountGatewayLinkVerifier,
 } from "./account-enrollment-proof.js";
 import { RelayAccounts } from "./accounts.js";
-import { googleProofNonce, passkeyProofChallenge, type SignInProof } from "./device-enrollment.js";
+import {
+  googleProofNonce,
+  passkeyProofChallenge,
+  signInProofNonce,
+  type SignInProof,
+} from "./device-enrollment.js";
 import { gatewayKeyAccount, gatewayKeyIdentity, KEY_BINDING_PREFIX } from "./gateway-key-auth.js";
 import { GatewaySignInVerifier } from "./gateway-sign-in-proof.js";
 import { GATEWAY_SIGNUP_PROTOCOL, gatewaySignupTranscript } from "./gateway-signup-contract.js";
@@ -301,15 +306,21 @@ test("a new gateway connects end to end: passkey account, proof, invitation, reg
   const proof = polled.signInProof as Extract<SignInProof, { type: "passkey-registration" }>;
   expect(proof.type).toBe("passkey-registration");
   expect(options.options.challenge).toBe(
-    passkeyProofChallenge(proof.salt, proof.issuedAt, op.unsigned.nonce),
+    passkeyProofChallenge(
+      proof.salt,
+      proof.issuedAt,
+      signInProofNonce("gateway-link", op.unsigned.nonce),
+    ),
   );
-  const registered = await verifier().verify(proof, op.unsigned.nonce);
+  const registered = await verifier().verify(proof, "gateway-link", op.unsigned.nonce);
   expect(registered).toMatchObject({
     type: "passkey",
     id: authenticator.id,
     trusted: false,
   });
-  expect(await verifier().verify(proof, opaque())).toBeUndefined();
+  expect(await verifier().verify(proof, "gateway-link", opaque())).toBeUndefined();
+  // Made to link a gateway, so it is no sign-in for enrolling a device under the same nonce.
+  expect(await verifier().verify(proof, "device-enrollment", op.unsigned.nonce)).toBeUndefined();
   expect((await f.post("poll", op.redemption)).status).toBe(409);
 
   const headers = await f.registerGateway();
@@ -364,14 +375,21 @@ test("an allowlisted Google subject connects, and its digest is what a gateway c
     salt: expect.stringMatching(/^[A-Za-z0-9_-]{43}$/),
   });
   // The OAuth nonce commits to the gateway's own nonce, which is what lets the gateway trust it.
-  expect(signIn.nonce).toBe(googleProofNonce(polled.signInProof.salt, op.unsigned.nonce));
+  expect(signIn.nonce).toBe(
+    googleProofNonce(polled.signInProof.salt, signInProofNonce("gateway-link", op.unsigned.nonce)),
+  );
   committedNonce = signIn.nonce;
   // Both sides must arrive at the same digest for trusted sign-ins and the allowlist to work.
-  expect(await verifier().verify(polled.signInProof, op.unsigned.nonce)).toMatchObject({
+  expect(
+    await verifier().verify(polled.signInProof, "gateway-link", op.unsigned.nonce),
+  ).toMatchObject({
     type: "google",
     id: subjectDigest(),
   });
-  expect(await verifier().verify(polled.signInProof, opaque())).toBeUndefined();
+  expect(await verifier().verify(polled.signInProof, "gateway-link", opaque())).toBeUndefined();
+  expect(
+    await verifier().verify(polled.signInProof, "device-enrollment", op.unsigned.nonce),
+  ).toBeUndefined();
   const headers = await f.registerGateway();
   await f.post("link", op.redemption, headers);
   const credentials = await (
@@ -684,7 +702,7 @@ test("an existing account signs in with a passkey, subject to the policy", async
   expect(polled.credentialPublicKey).toBe(polled.signInProof.credentialPublicKey);
   expect(polled.signInProof.credential.id).toBe(keyed.authenticator.id);
   expect(
-    await verifier().verify(polled.signInProof, polled.unused ?? op.unsigned.nonce),
+    await verifier().verify(polled.signInProof, "gateway-link", polled.unused ?? op.unsigned.nonce),
   ).toMatchObject({
     type: "passkey",
     id: keyed.authenticator.id,
@@ -1084,7 +1102,9 @@ test("the gateway's own signup client drives start, poll and link against a runn
   const approved = await client.poll(pending, signal);
   if (approved.status !== "approved") throw new Error("Expected approval");
   committedNonce = signIn.nonce;
-  expect(await verifier().verify(approved.signInProof, pending.nonce)).toMatchObject({
+  expect(
+    await verifier().verify(approved.signInProof, "gateway-link", pending.nonce),
+  ).toMatchObject({
     type: "google",
     id: subjectDigest(),
   });

@@ -29,6 +29,7 @@ import {
   PasskeyBrowser,
   browserSuiteAvailable,
   clickFirst,
+  connectThisGateway,
   enterConnectCode,
   expectText,
   signedInAccount,
@@ -104,8 +105,8 @@ describe.skipIf(!browserReady)("invite-only sign-up through a group at google", 
       subject: "fictional-invited-subject",
       email: "Maya.Reeves@Example.com",
     });
-    // Signing in was the decision, so the page goes on by itself.
-    await expectText(session.page, "You're all set");
+    // Signed in, the person presses to connect the gateway.
+    await connectThisGateway(session.page);
     expect((await signedInAccount(world, session)).accountId).toMatch(/^[a-f0-9]{64}$/);
     // The relay asked Google for the address only because this sign-in creates an account.
     expect(google.authorizations.at(-1)!.get("scope")).toBe("openid email");
@@ -169,7 +170,7 @@ describe.skipIf(!browserReady)("invite-only sign-up through a group at google", 
       const first = await EnrollmentGateway.start(world, "first");
       gateways.push(first);
       const creator = await connectWithGoogle(first, "create");
-      await expectText(creator.page, "You're all set");
+      await connectThisGateway(creator.page);
       expect(await finishedConnect(first)).toMatchObject({
         connect: { state: "done" },
         account: { linked: true },
@@ -182,7 +183,7 @@ describe.skipIf(!browserReady)("invite-only sign-up through a group at google", 
       gateways.push(second);
       const asked = google.groupApiRequests().length;
       const returning = await connectWithGoogle(second, "existing");
-      await expectText(returning.page, "You're all set");
+      await connectThisGateway(returning.page);
       expect(await finishedConnect(second)).toMatchObject({
         connect: { state: "done" },
         account: { linked: true },

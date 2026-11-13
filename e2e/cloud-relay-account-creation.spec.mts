@@ -299,12 +299,17 @@ test("an account is created only by an explicit choice while connecting a gatewa
   }
   const heading = (page: Page, name: string) => page.getByRole("heading", { name, exact: true });
   const button = (page: Page, name: string) => page.getByRole("button", { name, exact: true });
-  /** The page went on by itself to the end of connecting; a failure names what the relay refused. */
-  const allSet = (page: Page) =>
-    expect(
+  /**
+   * Signed in, the person presses to connect the gateway and the page reaches the end of
+   * connecting; a failure names what the relay refused.
+   */
+  const allSet = async (page: Page) => {
+    await button(page, "Connect this gateway").click();
+    await expect(
       heading(page, "You're all set"),
       `on ${page.url()}; refused: ${refusals.join(" | ") || "nothing"}`,
     ).toBeVisible();
+  };
   /** Signs in on the plain account page, which never creates an account. */
   async function plainSignIn(page: Page) {
     await page.goto(`${origin}/_relay/account`);
@@ -347,7 +352,7 @@ test("an account is created only by an explicit choice while connecting a gatewa
       fullPage: true,
     });
     expect(await home.poll(creating)).toMatchObject({ status: "pending" });
-    // Creating the account is the decision: the connection goes on without another press.
+    // Creating the account does not connect the gateway; the person presses to connect it.
     await button(first, "Create with Google").click();
     await allSet(first);
     const firstAccount = await home.finish(creating);

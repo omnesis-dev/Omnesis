@@ -10,6 +10,7 @@ import {
   type ProofEvidence,
 } from "./operation-proof.js";
 import { RelayError } from "./tunnels.js";
+import { signInProofNonce } from "./device-enrollment.js";
 import {
   ACCOUNT_BROWSER_PATH,
   ACCOUNT_BROWSER_PROTOCOL,
@@ -118,7 +119,14 @@ export class AccountBrowserBroker implements AccountOperationBroker {
       owner: context,
       request,
       ticketHash: digest(ticket),
-      proof: new OperationProof(request.nonce),
+      // The gateway that starts an operation picks its nonce, so a sign-in for linking it is
+      // committed under its own purpose and never verifies as a device's enrollment.
+      proof: new OperationProof(
+        signInProofNonce(
+          request.purpose === "owner-link" ? "gateway-link" : "device-enrollment",
+          request.nonce,
+        ),
+      ),
       phase: "created",
       intent: "existing",
     });

@@ -163,7 +163,8 @@ creates another.
 
 A removed gateway's session is refused with 401 and its next key registration
 gets `410`. Either way the gateway turns remote access off and drops its account
-link, session and invitation, and keeps its id, certificate and key, so its
+link, session and invitation, and keeps its id, certificate and key (and its
+owner's enrollment policy and refused sign-ins, for the next link), so its
 paired devices keep working on the home network and it can be connected again at
 the same address ([docs/device-enrollment.md](../../docs/device-enrollment.md)).
 
@@ -175,7 +176,10 @@ script computes the WebAuthn challenge and Google nonce, so a compromised relay
 could bind the owner's sign-in to a device key of its own, and at link time could
 have the gateway pin its own Google account or passkey and keep listing it.
 Sign-ins in the iOS and Android apps compute the nonce on the device from its own
-key and are not exposed to that. The gateway records each trusted sign-in's
+key and are not exposed to that. Each sign-in is bound to its purpose: one made
+to link a gateway (signup or the owner link) commits to the gateway's nonce under
+a link label, so the gateway never accepts it as a device's enrollment sign-in,
+nor an enrollment sign-in as a link. The gateway records each trusted sign-in's
 origin and its portal shows "Signed in on the Omnesis account page" or "Signed in in the
 app". A passkey's public key arrives with the request, so the gateway trusts a
 passkey on approval only when the relay's credential list for the linked account

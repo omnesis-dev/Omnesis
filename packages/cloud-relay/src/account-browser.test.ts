@@ -233,8 +233,8 @@ test("a pending operation stays in view through sign-in and offers exactly one c
         (button) => button.textContent === action,
       ),
     ).toHaveLength(1);
-    // Only the desktop waits for the press; the others go on by themselves.
-    if (purpose === "desktop-discovery") signedIn.button(action).click();
+    // Only pairing this browser goes on by itself; the others wait for the press.
+    if (purpose !== "device-enrollment") signedIn.button(action).click();
     await vi.waitFor(() =>
       expect(signedIn.location.assign).toHaveBeenCalledWith(
         "https://gateway.example.test/devices/account/callback?result=fixture",
@@ -421,6 +421,7 @@ test("a refused continuation refreshes the page, so it offers what the operation
     return new Response("", { status: 403 });
   });
   installAccountUI();
+  await press(f, "Connect this gateway");
   await f.wait("no room");
   await vi.waitFor(() =>
     expect(f.document.getElementById("account-error")!.textContent).toContain("did not complete"),
@@ -439,7 +440,8 @@ test("account continuation cannot navigate to an unsafe returned address", async
   const unsafe = () => Response.json({ location: "javascript:alert(1)" });
   f.onContinue(unsafe, unsafe);
   installAccountUI();
-  // Neither the automatic continuation nor the button follows it.
+  // The button never follows it, however often it is pressed.
+  await press(f, "Connect this gateway");
   await vi.waitFor(() =>
     expect(f.document.getElementById("account-error")!.textContent).toContain("did not complete"),
   );
@@ -457,10 +459,33 @@ const settle = () => new Promise((resolve) => setTimeout(resolve, 25));
 const signupOperation = "?signup=b1fba1ce-2398-4c2c-a66b-9044433d1a02";
 const handoffAddress = "https://gateway.example.test/devices/account/callback?result=fixture";
 
-test("after sign-in, connecting a gateway and pairing a browser continue by themselves, exactly once", async () => {
+test("after sign-in, pairing a browser continues by itself, exactly once", async () => {
+  const f = setup();
+  f.location.search = "?operation=b1fba1ce-2398-4c2c-a66b-9044433d1a02";
+  const pending = {
+    purpose: "device-enrollment",
+    hostname: "gateway.example.test",
+    needsProof: true,
+  };
+  f.session({ ...signedOut, pending });
+  f.afterCeremony({ ...authenticated, pending: { ...pending, needsProof: false } });
+  installAccountUI();
+  await f.wait("Sign in with Passkey");
+  await settle();
+  // Nothing continues before the person has signed in on this operation.
+  expect(f.continued()).toBe(0);
+  await press(f, "Sign in with Passkey");
+  await vi.waitFor(() => expect(f.location.assign).toHaveBeenCalledWith(handoffAddress));
+  await settle();
+  expect(f.continued()).toBe(1);
+  expect(f.location.assign).toHaveBeenCalledOnce();
+  // The button stays as the fallback.
+  expect(f.button("Continue pairing")).toBeDefined();
+});
+
+test("after sign-in, a gateway is connected only when the person presses to connect it", async () => {
   for (const [key, purpose, label] of [
     ["operation", "owner-link", { hostname: "gateway.example.test", intent: "existing" }],
-    ["operation", "device-enrollment", { hostname: "gateway.example.test" }],
     ["signup", "gateway-signup", { gatewayName: "Fictional gateway", intent: "existing" }],
   ] as const) {
     const f = setup();
@@ -469,17 +494,15 @@ test("after sign-in, connecting a gateway and pairing a browser continue by them
     f.session({ ...signedOut, pending });
     f.afterCeremony({ ...authenticated, pending: { ...pending, needsProof: false } });
     installAccountUI();
-    await f.wait("Sign in with Passkey");
-    await settle();
-    // Nothing continues before the person has signed in on this operation.
-    expect(f.continued()).toBe(0);
     await press(f, "Sign in with Passkey");
-    await vi.waitFor(() => expect(f.location.assign).toHaveBeenCalledWith(handoffAddress));
+    await f.wait("This adds the gateway to your Omnesis account");
+    // Whoever started the request named the gateway, so the person compares it before going on.
     await settle();
+    expect(f.continued()).toBe(0);
+    expect(f.location.assign).not.toHaveBeenCalled();
+    await press(f, continueLabels[purpose]);
+    await vi.waitFor(() => expect(f.location.assign).toHaveBeenCalledWith(handoffAddress));
     expect(f.continued()).toBe(1);
-    expect(f.location.assign).toHaveBeenCalledOnce();
-    // The button stays as the fallback.
-    expect(f.button(continueLabels[purpose])).toBeDefined();
   }
 });
 
@@ -502,10 +525,10 @@ test("a desktop sign-in never continues by itself", async () => {
 
 test("a failed automatic continuation is not retried: it leaves the error and the button, which still works", async () => {
   const f = setup();
-  f.location.search = signupOperation;
+  f.location.search = "?operation=b1fba1ce-2398-4c2c-a66b-9044433d1a02";
   f.session({
     ...authenticated,
-    pending: { purpose: "gateway-signup", gatewayName: "Fictional gateway", needsProof: false },
+    pending: { purpose: "device-enrollment", hostname: "gateway.example.test", needsProof: false },
   });
   f.onContinue(() => new Response("", { status: 503 }));
   installAccountUI();
@@ -515,7 +538,7 @@ test("a failed automatic continuation is not retried: it leaves the error and th
   expect(f.continued()).toBe(1);
   expect(f.location.assign).not.toHaveBeenCalled();
   expect(f.alert()).toContain("did not complete");
-  await press(f, "Connect this gateway");
+  await press(f, "Continue pairing");
   await vi.waitFor(() => expect(f.location.assign).toHaveBeenCalledWith(handoffAddress));
   expect(f.continued()).toBe(2);
   expect(f.alert()).toBe("");
@@ -650,6 +673,7 @@ test("the create view gives way once the person is signed in or was refused", as
   await ready.wait("This adds the gateway to your Omnesis account");
   expect(ready.document.querySelector("h1")?.textContent).toBe("Sign in to your Omnesis account");
   expect(ready.button("Create with Google")).toBeUndefined();
+  await press(ready, "Connect this gateway");
   await vi.waitFor(() => expect(ready.location.assign).toHaveBeenCalledWith(handoffAddress));
   const refused = setup();
   refused.location.search = signupOperation;
@@ -861,7 +885,8 @@ test("passkey registration encodes the authenticator response and renders escape
   expect(creating.posted("register/options" + signupOperation)).toEqual([
     { createAccount: true, label: "Passkey" },
   ]);
-  // Creating the account was the decision, so the gateway is connected without another press.
+  // Once the account exists, the gateway is connected by the person's own press.
+  await press(creating, "Connect this gateway");
   await vi.waitFor(() => expect(creating.location.assign).toHaveBeenCalledWith(handoffAddress));
   const [request] = creating.request.mock.calls.filter(([url]) =>
     String(url).endsWith("register/complete" + signupOperation),

@@ -235,9 +235,8 @@ test("real browser WebAuthn creates an account, signs in, adds a second passkey 
     );
     expect(refused).toBe(403);
     await page.goto(pending.authorizeUrl);
-    // The page would go on to link the gateway by itself. Cut off here, it keeps the button as
-    // the way to continue, so this account stays without a gateway for the rest of the test.
-    await page.route("**/_relay/account/api/continue**", (route) => route.abort());
+    // The gateway is linked only by pressing to connect it, which this test never does, so this
+    // account stays without a gateway for the rest of the test.
     await page.getByRole("button", { name: "Create an account instead", exact: true }).click();
     await page.getByRole("button", { name: "Create with a passkey", exact: true }).click();
     await expect(
@@ -245,7 +244,6 @@ test("real browser WebAuthn creates an account, signs in, adds a second passkey 
     ).toBeEnabled();
     // Account creation alone does not link or grant access to the gateway.
     expect(accounts.identities.gatewayAccount(owner.ownerAccountId)).toBeUndefined();
-    await page.unroute("**/_relay/account/api/continue**");
     await page.goto(origin + "/_relay/account");
     await expect(page.getByRole("heading", { name: "Sign-in methods", exact: true })).toBeVisible();
     await expect(page.getByRole("button", { name: "Remove", exact: true })).toBeDisabled();
