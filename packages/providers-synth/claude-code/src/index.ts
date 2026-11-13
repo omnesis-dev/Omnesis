@@ -20,6 +20,8 @@ const sessionSchema = z
     prompt: z.string().min(1),
     answer: z.string().min(1),
     project: z.string().optional(),
+    /** A directory the session had moved to by the time it answered. */
+    movedTo: z.string().optional(),
   })
   .strict();
 export type SessionFixture = z.infer<typeof sessionSchema>;
@@ -47,7 +49,7 @@ export function sessionRecords(session: SessionFixture): Record<string, unknown>
       parentUuid: `${session.id}-user`,
       sessionId: session.id,
       timestamp: session.createdAt,
-      cwd: session.project ?? "/fictional-project",
+      cwd: session.movedTo ?? session.project ?? "/fictional-project",
       isSidechain: false,
       message: {
         role: "assistant",

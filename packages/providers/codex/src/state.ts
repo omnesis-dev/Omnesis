@@ -53,6 +53,7 @@ function isFileState(value: unknown): boolean {
   if (value.nlink !== undefined && typeof value.nlink !== "number") return false;
   if (value.sessionId !== undefined && typeof value.sessionId !== "string") return false;
   if (!isStringArray(value.externalIds)) return false;
+  if (value.projectFolder !== undefined && typeof value.projectFolder !== "string") return false;
   if (typeof value.complete !== "boolean") return false;
   return true;
 }

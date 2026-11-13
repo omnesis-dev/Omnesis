@@ -66,6 +66,7 @@ export type {
 } from "./config-schema.js";
 export * from "./define-source.js";
 export * from "./filter-lists.js";
+export * from "./filter-paths.js";
 export * from "./gateway-client.js";
 export type { PendingStructuredPage, PrepareStructuredPage } from "./pending-source-page.js";
 export * from "./read-access.js";
