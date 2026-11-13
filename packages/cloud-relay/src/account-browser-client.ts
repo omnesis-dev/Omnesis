@@ -110,6 +110,8 @@ export interface AccountBrowserPort {
   unlink(signal?: AbortSignal): Promise<void>;
   credentials?(signal?: AbortSignal): Promise<
     | {
+        /** The account the relay says it listed; a gateway checks it against its own link. */
+        accountId?: string;
         google: string[];
         passkeys: Array<{
           id: string;

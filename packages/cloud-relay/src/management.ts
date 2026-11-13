@@ -19,7 +19,9 @@ export type CloudRelayManagementError =
   | "tunnel-disconnected"
   | "certificate-setup-failed"
   | "certificate-renewal-failed"
-  | "public-endpoint-unreachable";
+  | "public-endpoint-unreachable"
+  | "passkey-origin-unavailable"
+  | "passkey-not-confirmed";
 
 export interface CloudRelayNetworkIdentity {
   id: "direct" | "cloud";
@@ -105,7 +107,23 @@ export interface CloudRelayManagementStatus {
   /** Local choices about new devices. These are never sent to the relay. */
   deviceEnrollment?: {
     policy: "automatic" | "ask";
-    trustedSignIns: { type: "google" | "passkey"; id: string; addedAt: number }[];
+    trustedSignIns: {
+      type: "google" | "passkey";
+      id: string;
+      addedAt: number;
+      source: import("./gateway-sign-in-proof.js").TrustedSignInSource;
+      /** Whether the owner also confirmed it on this gateway (`confirmedSignIns`). */
+      confirmed: boolean;
+    }[];
+    /** Sign-ins the owner confirmed on this gateway, and how. */
+    confirmedSignIns: {
+      type: "google" | "passkey";
+      id: string;
+      at: number;
+      via: import("./gateway-sign-in-proof.js").ConfirmedSignInVia;
+    }[];
+    /** The gateway's own origin, where a passkey can be confirmed; absent when it has none. */
+    confirmOrigin?: string;
   };
   /**
    * The relay no longer has this gateway because its Omnesis account was deleted, so the gateway
@@ -156,6 +174,10 @@ export interface CloudRelayManagement {
   /** Lifts an incident hold. Callers must refuse a request that came through the relay. */
   acknowledgeIncidentHold?(): Promise<CloudRelayManagementStatus>;
   removeTrustedSignIn?(id: string): Promise<CloudRelayManagementStatus>;
+  /** Starts confirming a passkey on the gateway's own page (`pin-passkey`). */
+  passkeyConfirmation?(): Promise<import("./gateway-account-link.js").GatewayPasskeyCeremony>;
+  /** Finishes it with the `gateway-passkey` assertion the page made. */
+  confirmPasskey?(proof: unknown): Promise<CloudRelayManagementStatus>;
   accountLink?(input: { requestOrigin: string }): Promise<{ authorizeUrl: string; cookie: string }>;
   accountCallback?(input: {
     url: string;
@@ -182,7 +204,7 @@ export interface CloudRelayManagement {
 /** Only this fixed code/status pair crosses management HTTP error boundaries. */
 export class CloudRelayManagementFailure extends Error {
   constructor(
-    readonly status: 400 | 409 | 503,
+    readonly status: 400 | 403 | 409 | 503,
     readonly code: CloudRelayManagementError,
   ) {
     super(code);
