@@ -5,6 +5,7 @@ import { randomBytes } from "node:crypto";
 import { z } from "zod";
 import {
   passkeyCountersignatureSchema,
+  signInDigest,
   signInProofSchema,
   type PasskeyCountersignature,
   type SignInProof,
@@ -526,9 +527,17 @@ export class OmnesisAccounts {
     expectedVersion?: number,
   ): void {
     this.remove(account, providers, expectedVersion, () => {
+      const key = this.db
+        .prepare("SELECT public_key FROM omnesis_passkeys WHERE account_id=? AND credential_id=?")
+        .get(account, id) as { public_key: Buffer } | undefined;
       const removed = this.db
         .prepare("DELETE FROM omnesis_passkeys WHERE account_id=? AND credential_id=?")
         .run(account, id).changes;
+      if (key)
+        this.forgetCountersignaturesNaming(
+          account,
+          signInDigest({ type: "passkey", id, publicKey: key.public_key.toString("base64url") }),
+        );
       // A removal that matched nothing throws below, which rolls this back too.
       this.db.prepare("DELETE FROM omnesis_passkey_endorsements WHERE credential_id=?").run(id);
       this.db
@@ -545,17 +554,38 @@ export class OmnesisAccounts {
     providers: readonly string[],
     expectedVersion?: number,
   ): void {
-    this.remove(
-      account,
-      providers,
-      expectedVersion,
-      () =>
+    this.remove(account, providers, expectedVersion, () => {
+      if (provider === "google")
+        this.forgetCountersignaturesNaming(
+          account,
+          signInDigest({ type: "google", id: subjectDigest }),
+        );
+      return this.db
+        .prepare(
+          "DELETE FROM omnesis_federated_credentials WHERE account_id=? AND provider=? AND subject_digest=?",
+        )
+        .run(account, provider, subjectDigest).changes;
+    });
+  }
+
+  /**
+   * A countersignature that names a removed sign-in would let a relay compromised later list that
+   * sign-in again and have a gateway that never saw the removal trust it, so it goes with the
+   * sign-in. The passkeys that made it keep their other trust; one signature can't be edited.
+   */
+  private forgetCountersignaturesNaming(account: string, name: string): void {
+    const rows = this.db
+      .prepare(
+        "SELECT c.credential_id AS id, c.countersignature FROM omnesis_passkey_countersignatures AS c JOIN omnesis_passkeys AS p USING(credential_id) WHERE p.account_id=?",
+      )
+      .all(account) as { id: string; countersignature: string }[];
+    for (const row of rows)
+      if (
+        passkeyCountersignatureSchema.parse(JSON.parse(row.countersignature)).signIns.includes(name)
+      )
         this.db
-          .prepare(
-            "DELETE FROM omnesis_federated_credentials WHERE account_id=? AND provider=? AND subject_digest=?",
-          )
-          .run(account, provider, subjectDigest).changes,
-    );
+          .prepare("DELETE FROM omnesis_passkey_countersignatures WHERE credential_id=?")
+          .run(row.id);
   }
 
   private remove(

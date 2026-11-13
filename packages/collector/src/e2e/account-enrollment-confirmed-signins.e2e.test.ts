@@ -26,7 +26,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import Database from "better-sqlite3";
-import { authorizeAccountDesktop, pairAccountDevice } from "@omnesis/cloud-relay";
+import { authorizeAccountDesktop, pairAccountDevice, signInDigest } from "@omnesis/cloud-relay";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import {
   COUNTERSIGN_HEADING,
@@ -36,12 +36,14 @@ import {
   FakeGoogle,
   PASSKEY_ADDED,
   PasskeyBrowser,
+  addSecondPasskey,
   browserSuiteAvailable,
   clickFirst,
   connectGatewayBySignIn,
   enterConnectCode,
   expectText,
   finishedConnect,
+  freshAccountSignIn,
   passkeyIds,
   waitFor,
   type PasskeySession,
@@ -73,8 +75,18 @@ describe.skipIf(!browserReady)("a gateway trusts the sign-ins its passkey confir
    * the client finishes.
    */
   async function pairWithGoogle(gateway: EnrollmentGateway, name: string, subject: string) {
-    await gateway.pace(2);
     world.google!.signInAs(subject);
+    return pairBySignIn(gateway, name, owner, "Google");
+  }
+
+  /** The same with a passkey `session` holds. */
+  async function pairBySignIn(
+    gateway: EnrollmentGateway,
+    name: string,
+    session: PasskeySession,
+    method: "Google" | "Passkey",
+  ) {
+    await gateway.pace(2);
     let launched!: (url: string) => void;
     const launchUrl = new Promise<string>((resolve) => (launched = resolve));
     const comparisons: string[] = [];
@@ -105,9 +117,9 @@ describe.skipIf(!browserReady)("a gateway trusts the sign-ins its passkey confir
       },
     );
     result.catch(() => undefined);
-    const page = owner.page;
+    const page = session.page;
     await page.goto(await launchUrl);
-    await clickFirst(page, ["Sign in with Google", "Verify with Google"]);
+    await clickFirst(page, [`Sign in with ${method}`, `Verify with ${method}`]);
     await clickFirst(page, ["Continue on this device"]);
     await expectText(page, "Sign-in finished");
     return { result, comparisons };
@@ -229,8 +241,8 @@ describe.skipIf(!browserReady)("a gateway trusts the sign-ins its passkey confir
     const linked = await connectGatewayBySignIn(cabin, owner, "existing");
     expect(linked.connect?.state).toBe("done");
     // The passkey is the only sign-in this gateway saw for itself. Whatever else it trusts, it
-    // trusts on evidence (`endorsed`): it may already have fetched it when the link refreshed.
-    expect((await pins(cabin)).filter((pin) => pin.source !== "endorsed")).toEqual([
+    // trusts on the passkey's countersignature: it may already have fetched it at the link.
+    expect((await pins(cabin)).filter((pin) => pin.source !== "countersigned")).toEqual([
       { type: "passkey", id: passkey, source: "link-page" },
     ]);
     expect((await cabin.status()).deviceEnrollment.policy).toBe("automatic");
@@ -252,8 +264,69 @@ describe.skipIf(!browserReady)("a gateway trusts the sign-ins its passkey confir
     // It trusts the Google account on the passkey's own signature.
     expect(await pins(cabin)).toEqual([
       { type: "passkey", id: passkey, source: "link-page" },
-      { type: "google", id: FakeGoogle.digest(OWNER_GOOGLE), source: "endorsed" },
+      { type: "google", id: FakeGoogle.digest(OWNER_GOOGLE), source: "countersigned" },
     ]);
+  }, 300_000);
+
+  test("a passkey removed from the account stays out when a relay compromised later lists it again with its evidence", async () => {
+    // A second passkey, added on the account page and vouched for by the first.
+    const second = await addSecondPasskey(browser, world, owner);
+    const [added] = await passkeyIds(second);
+    await cabin.json("/admin/cloud-relay/reconnect", { method: "POST", body: "{}" });
+    await waitFor(
+      async () => (await pins(cabin)).some((pin) => pin.id === added),
+      "the second gateway to pin the added passkey",
+    );
+    expect((await pins(cabin)).find((pin) => pin.id === added)?.source).toBe("endorsed");
+    // What the relay holds about it, which a compromised relay would keep.
+    const kept = asTheRelay((db) =>
+      ["omnesis_passkeys", "omnesis_passkey_endorsements", "omnesis_passkey_countersignatures"].map(
+        (table) => ({
+          table,
+          rows: db.prepare(`SELECT * FROM ${table} WHERE credential_id = ?`).all(added),
+        }),
+      ),
+    );
+    expect(kept.map(({ rows }) => rows.length)).toEqual([1, 1, 1]);
+    // The owner removes it on the account page, and the gateway sees it gone.
+    await freshAccountSignIn(world, owner);
+    const remove = owner.page.getByRole("button", { name: "Remove", exact: true });
+    expect(await remove.count()).toBe(2);
+    await remove.last().click();
+    await owner.page.getByRole("button", { name: "Sign in with Passkey", exact: true }).waitFor();
+    await cabin.json("/admin/cloud-relay/reconnect", { method: "POST", body: "{}" });
+    await waitFor(
+      async () => !(await pins(cabin)).some((pin) => pin.id === added),
+      "the removed passkey's pin to be dropped",
+      60_000,
+    );
+    const before = await pins(cabin);
+    // The relay turns: it puts the passkey back, with the endorsement and countersignature that
+    // made it trusted, and a device signs in with it.
+    asTheRelay((db) => {
+      for (const { table, rows } of kept)
+        for (const row of rows as Record<string, unknown>[]) {
+          const columns = Object.keys(row);
+          db.prepare(
+            `INSERT INTO ${table} (${columns.join(",")}) VALUES (${columns.map(() => "?").join(",")})`,
+          ).run(...columns.map((column) => row[column]));
+        }
+    });
+    const name = "Fictional restored-passkey CLI";
+    const pairing = await pairBySignIn(cabin, name, second, "Passkey");
+    const held = await heldRequest(cabin, name, pairing);
+    expect(held).toMatchObject({ kind: "cli", signIn: "passkey" });
+    await cabin.decide(held.requestId, false);
+    await expect(pairing.result).rejects.toThrow(/denied/);
+    expect(await pins(cabin)).toEqual(before);
+    expect((await cabin.devices()).some((device) => device.name === name)).toBe(false);
+    // The account itself no longer has it once the relay is put right again.
+    asTheRelay((db) => {
+      for (const { table } of [...kept].reverse())
+        db.prepare(`DELETE FROM ${table} WHERE credential_id = ?`).run(added);
+    });
+    await freshAccountSignIn(world, owner);
+    await second.context.close();
   }, 300_000);
 
   test("a Google account the relay adds to the account is held for approval, listed alone or written into the passkey's signed list", async () => {
@@ -288,9 +361,11 @@ describe.skipIf(!browserReady)("a gateway trusts the sign-ins its passkey confir
           "SELECT countersignature FROM omnesis_passkey_countersignatures WHERE credential_id = ?",
         )
         .get(passkey) as { countersignature: string };
-      const value = JSON.parse(row.countersignature) as { google: string[] };
-      expect(value.google).toEqual([FakeGoogle.digest(OWNER_GOOGLE)]);
-      value.google.push(injected);
+      const value = JSON.parse(row.countersignature) as { signIns: string[] };
+      expect(value.signIns).toEqual([
+        signInDigest({ type: "google", id: FakeGoogle.digest(OWNER_GOOGLE) }),
+      ]);
+      value.signIns.push(signInDigest({ type: "google", id: injected }));
       db.prepare(
         "UPDATE omnesis_passkey_countersignatures SET countersignature = ? WHERE credential_id = ?",
       ).run(JSON.stringify(value), passkey);

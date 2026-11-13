@@ -327,20 +327,25 @@ export class Passkeys {
     response: unknown,
   ): Promise<void> {
     const pending = this.consume(ceremonyId, browser, "countersignature");
+    if (pending.endorse !== endorse)
+      throw new RelayError(400, "This signature was asked for another new passkey");
+    const signing = this.endorsements.countersigning(endorse, cookieHeader);
+    const parsed = authenticationSchema.safeParse(response);
+    if (!parsed.success || parsed.data.id !== parsed.data.rawId)
+      throw new RelayError(400, "Passkey response is malformed");
+    const credential = parsed.data;
+    if (credential.id !== signing.credential.id)
+      throw new RelayError(400, "Use the passkey you are adding, not another one");
+    const expectedHandle = Buffer.from(signing.accountId, "hex").toString("base64url");
+    const actualHandle = credential.response.userHandle;
+    if (
+      actualHandle.length !== expectedHandle.length ||
+      !timingSafeEqual(Buffer.from(actualHandle), Buffer.from(expectedHandle))
+    )
+      throw new RelayError(400, "That passkey belongs to another Omnesis account");
+    let result: Awaited<ReturnType<typeof verifyAuthenticationResponse>>;
     try {
-      if (pending.endorse !== endorse) throw new Error("Countersignature for another passkey");
-      const signing = this.endorsements.countersigning(endorse, cookieHeader);
-      const credential = authenticationSchema.parse(response);
-      if (credential.id !== credential.rawId || credential.id !== signing.credential.id)
-        throw new Error("Only the new passkey countersigns");
-      const expectedHandle = Buffer.from(signing.accountId, "hex").toString("base64url");
-      const actualHandle = credential.response.userHandle;
-      if (
-        actualHandle.length !== expectedHandle.length ||
-        !timingSafeEqual(Buffer.from(actualHandle), Buffer.from(expectedHandle))
-      )
-        throw new Error("Passkey account mismatch");
-      const result = await verifyAuthenticationResponse({
+      result = await verifyAuthenticationResponse({
         response: credential,
         expectedChallenge: pending.challenge,
         expectedOrigin: this.expectedOrigins,
@@ -348,16 +353,16 @@ export class Passkeys {
         credential: signing.credential,
         requireUserVerification: true,
       });
-      if (!result.verified) throw new Error("Countersignature not verified");
-      this.fresh(pending);
-      this.endorsements.recordCountersignature(endorse, cookieHeader, {
-        challenge: pending.challenge,
-        credential,
-        counter: result.authenticationInfo.newCounter,
-      });
     } catch {
-      throw new RelayError(400, "The new passkey did not sign; try again");
+      throw new RelayError(400, "The new passkey's signature did not verify");
     }
+    if (!result.verified) throw new RelayError(400, "The new passkey's signature did not verify");
+    this.fresh(pending);
+    this.endorsements.recordCountersignature(endorse, cookieHeader, {
+      challenge: pending.challenge,
+      credential,
+      counter: result.authenticationInfo.newCounter,
+    });
   }
 
   close(): void {

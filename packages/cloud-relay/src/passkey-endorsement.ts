@@ -5,7 +5,7 @@ import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 import {
   passkeyCountersignatureNonce,
   passkeyEndorsementNonce,
-  type CountersignedSignIns,
+  signInDigest,
   type PasskeyCountersignature,
 } from "./device-enrollment.js";
 import {
@@ -24,7 +24,7 @@ interface Parked {
   browserHash: Buffer;
   proof: OperationProof;
   /** The new passkey's own signature over the account's other sign-ins, as they were when parked. */
-  countersignature: { signIns: CountersignedSignIns; proof: OperationProof };
+  countersignature: { signIns: string[]; proof: OperationProof };
   expiresAt: number;
 }
 
@@ -61,12 +61,14 @@ export class PasskeyEndorsements implements AccountOperationBroker {
       if (value.expiresAt <= this.now()) this.parked.delete(id);
     if (this.parked.size >= this.maxPending) throw new RelayError(429, "Too many passkey requests");
     const id = randomUUID();
-    const signIns: CountersignedSignIns = {
-      google: this.accounts.federatedDigests(accountId, "google"),
-      passkeys: this.accounts
+    const signIns = [
+      ...this.accounts
+        .federatedDigests(accountId, "google")
+        .map((id) => signInDigest({ type: "google", id })),
+      ...this.accounts
         .passkeyKeys(accountId)
-        .map(({ id, publicKey }) => ({ id, publicKey })),
-    };
+        .map(({ id, publicKey }) => signInDigest({ type: "passkey", id, publicKey })),
+    ];
     this.parked.set(id, {
       accountId,
       registration,
@@ -184,8 +186,7 @@ export class PasskeyEndorsements implements AccountOperationBroker {
         issuedAt: signInProof.issuedAt,
         credential: signInProof.credential,
       },
-      google: [...signIns.google],
-      passkeys: signIns.passkeys.map(({ id, publicKey }) => ({ id, publicKey })),
+      signIns: [...signIns],
     };
   }
 

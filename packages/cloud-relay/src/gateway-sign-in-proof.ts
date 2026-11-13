@@ -11,7 +11,6 @@ import {
   passkeyEndorsementNonce,
   passkeyProofChallenge,
   signInProofSchema,
-  type CountersignedSignIns,
   type SignInProof,
 } from "./device-enrollment.js";
 import { bindingOrigin } from "./gateway-binding.js";
@@ -24,16 +23,17 @@ const FUTURE_TOLERANCE_SECONDS = 60;
 /**
  * Where a pin came from. A relay-hosted page (`link-page`, and `approval` of a sign-in made on one)
  * is only as trustworthy as the relay; a sign-in made in a native app (`native-app`) committed to
- * a nonce the device computed itself. An `endorsed` sign-in was confirmed by one this gateway
- * already trusted: a passkey added to the account later that a trusted sign-in vouched for, or a
- * sign-in the account already had when a trusted passkey was added, which that passkey
- * countersigned.
+ * a nonce the device computed itself. An `endorsed` passkey was added to the account later and
+ * vouched for by a sign-in this gateway already trusted. A `countersigned` sign-in is one the
+ * account already had when a passkey trusted here was added, which that passkey signed for on the
+ * account page.
  */
 export const trustedSignInSourceSchema = z.enum([
   "link-page",
   "native-app",
   "approval",
   "endorsed",
+  "countersigned",
 ]);
 export type TrustedSignInSource = z.infer<typeof trustedSignInSourceSchema>;
 
@@ -146,8 +146,30 @@ export class GatewaySignInVerifier {
   }
 
   /**
-   * The sign-ins `signer` countersigned for `accountId` when it was added, provided `signer` is
-   * pinned here with that very key; otherwise nothing. Only the passkey's own signature can say
+   * The sign-in an endorsement claims as its signer, read without checking anything. It only
+   * tells a caller whether verifying could succeed: an endorsement whose claimed signer is not
+   * pinned here can't, so it need not be verified at all.
+   */
+  endorsementSigner(input: unknown): { type: "google" | "passkey"; id: string } | undefined {
+    const parsed = signInProofSchema.safeParse(input);
+    if (!parsed.success || parsed.data.type === "passkey-registration") return undefined;
+    if (parsed.data.type === "passkey") return { type: "passkey", id: parsed.data.credential.id };
+    try {
+      const subject = decodeJwt(parsed.data.idToken).sub;
+      return subject
+        ? {
+            type: "google",
+            id: accountId({ issuer: "https://accounts.google.com", subject, expiresAt: 1 }),
+          }
+        : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
+  /**
+   * The `signInDigest`s `signer` countersigned for `accountId` when it was added, provided
+   * `signer` is pinned here with that very key; otherwise nothing. Only the passkey's own signature can say
    * this: a sign-in that vouched for the passkey (an endorsement) says nothing about itself,
    * because anyone with any Google account or passkey can make one naming a passkey they saw
    * listed. Like an endorsement it is checked as of when it was made: the passkey's key does not
@@ -158,7 +180,7 @@ export class GatewaySignInVerifier {
     signer: { id: string; publicKey: string },
     accountId: string,
     trusted: readonly TrustedSignIn[],
-  ): Promise<CountersignedSignIns | undefined> {
+  ): Promise<readonly string[] | undefined> {
     const parsed = passkeyCountersignatureSchema.safeParse(input);
     if (
       !parsed.success ||
@@ -171,7 +193,7 @@ export class GatewaySignInVerifier {
       )
     )
       return undefined;
-    const { proof, ...signIns } = parsed.data;
+    const { proof, signIns } = parsed.data;
     try {
       const verified = await this.passkey(
         proof,

@@ -9,6 +9,7 @@ import { testAccountAdmission } from "../test/account-admission.js";
 import { listen, closeServer } from "../test/support.js";
 import { passkeyAuthenticator } from "../test/passkey-authenticator.js";
 import { AccountWeb } from "./account-web.js";
+import { signInDigest } from "./device-enrollment.js";
 import { AccountAuthentication } from "./account-authentication.js";
 import { LoginAdmission } from "./admission.js";
 import { OmnesisAccounts } from "./omnesis-accounts.js";
@@ -339,8 +340,7 @@ test("the new passkey countersigns through the page's routes, bound to its name 
   });
   expect(f.accounts.passkeyKeys(accountId)[0]!.countersignature).toMatchObject({
     proof: { type: "passkey", credential: { id: added.authenticator.id } },
-    google: [google],
-    passkeys: [],
+    signIns: [signInDigest({ type: "google", id: google })],
   });
 });
 

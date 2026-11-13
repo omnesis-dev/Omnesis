@@ -30,6 +30,8 @@ export function passkeyAuthenticator(rpID = "relay.example.test") {
     Buffer.from(JSON.stringify({ type, challenge, origin, crossOrigin: false }));
   return {
     id,
+    /** The COSE public key, base64url, as a relay registers it and a gateway pins it. */
+    publicKey: Buffer.from(cose).toString("base64url"),
     registration(
       challenge: string,
       origin = `https://${rpID}`,

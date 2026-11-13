@@ -9,6 +9,7 @@ import Database from "better-sqlite3";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { WebSocket } from "ws";
 import { listen, tlsFiles } from "../test/support.js";
+import { signInDigest } from "./device-enrollment.js";
 import { AccountEnrollmentAuthority } from "./account-enrollment-proof.js";
 import { RelayAccounts } from "./accounts.js";
 import { GatewayUnregistered, registerGatewayKey } from "./gateway-key-client.js";
@@ -134,8 +135,7 @@ test("deleting an account removes every row about it and its gateways, in every 
             },
           },
         },
-        google: [digest],
-        passkeys: [],
+        signIns: [signInDigest({ type: "google", id: digest })],
       },
     );
     identities.registerSession(account, 1, randomUUID(), Math.floor(Date.now() / 1000) + 600);

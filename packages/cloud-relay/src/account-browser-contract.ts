@@ -7,6 +7,14 @@ import { bindingOrigin } from "./gateway-binding.js";
 
 export const ACCOUNT_BROWSER_PROTOCOL = "omnesis-account-browser-v3" as const;
 export const ACCOUNT_BROWSER_PATH = "/_relay/v3/account-browser";
+/**
+ * A gateway that reads passkeys' countersignatures in the credentials listing sends this header
+ * with this value. Without it the relay leaves them out.
+ */
+export const ACCOUNT_CREDENTIALS_EVIDENCE = {
+  header: "omnesis-credential-evidence",
+  countersignatures: "countersignature-v2",
+} as const;
 const opaque = z.string().regex(/^[A-Za-z0-9_-]{43}$/);
 export const accountBrowserPurpose = z.enum(["owner-link", "device-enrollment"]);
 export type AccountBrowserPurpose = z.infer<typeof accountBrowserPurpose>;

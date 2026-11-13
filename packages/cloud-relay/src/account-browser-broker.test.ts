@@ -60,7 +60,14 @@ function fixture(limits: { maxOperations?: number; maxPerOwner?: number } = {}) 
     },
     accountCredentials: () => ({
       google: ["d".repeat(64)],
-      passkeys: [{ id: "fictional-passkey", publicKey: "fictional-key" }],
+      passkeys: [
+        { id: "fictional-passkey", publicKey: "fictional-key" },
+        {
+          id: "fictional-countersigner",
+          publicKey: "fictional-key",
+          countersignature: { fixture: "countersignature" },
+        },
+      ],
     }),
   });
   const make = (purpose: AccountBrowserPurpose = "owner-link") => {
@@ -518,10 +525,19 @@ test("gateway owners read the current credentials of their linked account only",
   const f = fixture();
   expect(() => f.broker.credentials(f.owner)).toThrow("not linked");
   f.linked.set(f.owner.ownerAccountId, f.actor.accountId);
+  // A countersignature is listed only for a gateway that asked for one.
   expect(f.broker.credentials(f.owner)).toEqual({
     accountId: f.actor.accountId,
     google: ["d".repeat(64)],
-    passkeys: [{ id: "fictional-passkey", publicKey: "fictional-key" }],
+    passkeys: [
+      { id: "fictional-passkey", publicKey: "fictional-key" },
+      { id: "fictional-countersigner", publicKey: "fictional-key" },
+    ],
+  });
+  expect(f.broker.credentials(f.owner, { countersignatures: true }).passkeys[1]).toEqual({
+    id: "fictional-countersigner",
+    publicKey: "fictional-key",
+    countersignature: { fixture: "countersignature" },
   });
   expect(() => f.broker.credentials({ ...f.owner, gatewayId: randomUUID() })).toThrow(
     "authorization changed",

@@ -164,12 +164,12 @@ export async function exchangeRelayIdentity(options: {
   return session;
 }
 
-export async function readBoundedJson(response: Response): Promise<unknown> {
+export async function readBoundedJson(response: Response, limit = 65_536): Promise<unknown> {
   const chunks: Uint8Array[] = [];
   let size = 0;
   for await (const chunk of response.body ?? []) {
     size += chunk.length;
-    if (size > 65_536) throw new Error("Relay response is too large");
+    if (size > limit) throw new Error("Relay response is too large");
     chunks.push(chunk);
   }
   return JSON.parse(Buffer.concat(chunks).toString("utf8"));
