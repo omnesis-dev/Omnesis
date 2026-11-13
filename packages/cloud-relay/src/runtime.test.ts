@@ -373,7 +373,10 @@ describe("local daemon and credential files", () => {
     }
   });
   test("runs a loopback daemon, exchanges signed mock identity, and saves private credentials atomically", async () => {
-    const env = { ...(await daemonEnv()), OMNESIS_CLOUD_RELAY_LEGACY_ROUTES: "1" };
+    const env: NodeJS.ProcessEnv = {
+      ...(await daemonEnv()),
+      OMNESIS_CLOUD_RELAY_LEGACY_ROUTES: "1",
+    };
     const relay = await startRelayDaemon(env);
     try {
       expect(await (await fetch(`${relay.url}/healthz`)).json()).toEqual({ ok: true, protocol: 2 });
