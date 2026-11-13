@@ -43,8 +43,8 @@ export function LabView({ onChange } = {}) {
     ${error && html`<div class="lab-error" role="alert">${error} ${!features && html`<button class="btn-secondary" onClick=${() => setRetry((n) => n + 1)}>Try again</button>`}</div>`}
     ${!features && !error && html`<p role="status">Loading experiments…</p>`}
     <div class="lab-features">
-      ${features?.map((feature) => html`<article class=${`lab-feature${feature.enabled ? " is-enabled" : ""}`} key=${feature.id}>
-        <div class="lab-feature-icon" aria-hidden="true"><img src=${`data:image/svg+xml,${encodeURIComponent(feature.iconSvg)}`} alt="" width="48" height="48" /></div>
+      ${features?.map((feature) => html`<article class="lab-feature" key=${feature.id}>
+        <div class="lab-feature-icon" aria-hidden="true"><img src=${`data:image/svg+xml,${encodeURIComponent(feature.iconSvg)}`} alt="" width="32" height="32" /></div>
         <div class="lab-feature-copy"><h3>${feature.name}</h3><p>${feature.description}</p></div>
         <div class="lab-feature-control"><button type="button" role="switch" class="lab-switch" aria-label=${`Enable ${feature.name}`} aria-checked=${feature.enabled} disabled=${saving !== null} onClick=${() => toggle(feature)}><span></span></button><span class="lab-feature-state">${saving === feature.id ? "Saving…" : feature.enabled ? "Enabled" : "Off"}</span></div>
       </article>`)}
