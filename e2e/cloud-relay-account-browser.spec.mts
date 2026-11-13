@@ -27,7 +27,7 @@ import {
 } from "@omnesis/cloud-relay";
 import type { AddressInfo } from "node:net";
 
-test("an owner-signed gateway request creates an account only on the person's explicit choice, and that sign-in links the gateway with no second confirmation", async ({
+test("an owner-signed gateway request creates an account only on the person's explicit choice, and the gateway is linked only when the person presses to connect it", async ({
   playwright,
 }) => {
   const directory = await mkdtemp(join(tmpdir(), "omnesis-account-browser-")),
