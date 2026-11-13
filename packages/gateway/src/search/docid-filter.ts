@@ -33,7 +33,7 @@ export interface DocIdRestriction {
   /** SQL fragment to splice into the WHERE clause: a leading ` AND …`, or `""`. */
   clause: string;
   /** Bound params the clause contributes — empty for the temp-table path. */
-  params: readonly string[];
+  params: readonly (string | number)[];
 }
 
 /**

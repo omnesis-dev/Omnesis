@@ -65,31 +65,6 @@ describe("deviceCapabilitySchema", () => {
       expect(deviceCapabilitySchema.parse({})).toEqual({});
     });
   });
-  test("validates native source scope facts ranges while accepting legacy absence", () => {
-    for (const capabilities of [
-      {},
-      { sourceScopes: { min: 1, max: 1 } },
-      { sourceScopes: { min: 2, max: 3 } },
-    ]) {
-      expect(deviceCapabilitySchema.safeParse(capabilities).success).toBe(true);
-      expect(
-        parseRequestPayload("hello", { protocolVersion: PROTOCOL_VERSION, capabilities }).ok,
-      ).toBe(true);
-    }
-    for (const sourceScopes of [
-      { min: 2, max: 1 },
-      { min: 0, max: 1 },
-      { min: 1.5, max: 2 },
-    ]) {
-      expect(deviceCapabilitySchema.safeParse({ sourceScopes }).success).toBe(false);
-      expect(
-        parseRequestPayload("hello", {
-          protocolVersion: PROTOCOL_VERSION,
-          capabilities: { sourceScopes },
-        }).ok,
-      ).toBe(false);
-    }
-  });
   test("accepts only the affirmative remote-doctor capability", () => {
     expect(deviceCapabilitySchema.safeParse({ deviceDoctor: true }).success).toBe(true);
     expect(deviceCapabilitySchema.safeParse({ deviceDoctor: false }).success).toBe(false);

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { isScopeRefreshBookmark, makeCursorValidator } from "@omnesis/source-sdk";
+import { makeCursorValidator } from "@omnesis/source-sdk";
 import type { TranscriptionPlaceholderState } from "@omnesis/core";
 
 /**
@@ -9,14 +9,8 @@ import type { TranscriptionPlaceholderState } from "@omnesis/core";
  * Uses message ROWID as watermark for incremental sync.
  */
 export interface AppleIMessageSyncCursor extends Record<string, unknown> {
-  scopeParticipantRefresh?: import("@omnesis/source-sdk").ScopeRefreshBookmark;
   /** Highest message.ROWID we have processed */
   lastRowId: number;
-  /** Source-native causal membership generation, preserved across collector restarts. */
-  scopeEpoch?: string;
-  scopeSequence?: number;
-  scopeRosterCursor?: string;
-  scopeRosterComplete?: boolean;
   /**
    * Queue size pinned at the start of the current sync cycle (count of
    * messages with ROWID > cursor at cycle start). Cleared when the cycle
@@ -42,22 +36,8 @@ export function isAppleIMessageSyncCursor(v: unknown): v is AppleIMessageSyncCur
   if (!v || typeof v !== "object") return false;
   const c = v as Record<string, unknown>;
   if (typeof c.lastRowId !== "number") return false;
-  if (c.scopeParticipantRefresh !== undefined && !isScopeRefreshBookmark(c.scopeParticipantRefresh))
-    return false;
   if (c.cycleQueueTotal !== undefined && typeof c.cycleQueueTotal !== "number") return false;
   if (c.lastSnapshotSignature !== undefined && typeof c.lastSnapshotSignature !== "string")
-    return false;
-  if (c.scopeEpoch !== undefined && (typeof c.scopeEpoch !== "string" || !c.scopeEpoch))
-    return false;
-  if (
-    c.scopeSequence !== undefined &&
-    (typeof c.scopeSequence !== "number" ||
-      !Number.isSafeInteger(c.scopeSequence) ||
-      c.scopeSequence < 0)
-  )
-    return false;
-  if (c.scopeRosterCursor !== undefined && typeof c.scopeRosterCursor !== "string") return false;
-  if (c.scopeRosterComplete !== undefined && typeof c.scopeRosterComplete !== "boolean")
     return false;
   if (c.lastDaySignatures !== undefined) {
     if (!c.lastDaySignatures || typeof c.lastDaySignatures !== "object") return false;

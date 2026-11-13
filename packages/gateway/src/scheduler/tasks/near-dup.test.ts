@@ -253,7 +253,6 @@ function buildTasks(
       ioGate: compute,
       cpuGate: cpu,
       log,
-      sourceFiltersInUse: () => false,
       linkBackfillIntervalMs: 1_000_000,
       linkIdleDelayMs: 1_000_000,
       linkReconcileIntervalMs: 1_000_000,

@@ -106,10 +106,6 @@ export interface FakeRepo {
   threads: FakeThread[];
   discussions: FakeDiscussion[];
   commits: FakeCommit[];
-  /** GitHub's id for the repository, as the listing reports it. */
-  id?: number;
-  /** The user or organization holding the repository, as the listing reports it. */
-  owner?: { id?: number; login?: string };
 
   /**
    * Invoked after each discovery page is served, with the number of pages

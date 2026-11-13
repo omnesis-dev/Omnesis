@@ -17,7 +17,6 @@ const result = z
     hasMore: fields.hasMore,
     analytics: z.union([tableWrite, z.array(tableWrite)]).optional(),
     documents: fields.documents,
-    scopeUpdates: fields.scopeUpdates,
     edges: fields.edges,
     deletedExternalIds: fields.deletedExternalIds,
     presentExternalIds: fields.presentExternalIds,

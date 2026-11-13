@@ -186,7 +186,7 @@ import {
   portalCsrfToken,
   sessionCookieName,
 } from "./http/cookies.js";
-import type { SourceScopeEditorReads } from "./access/scope-editor-reads.js";
+import type { SourceFilterReads } from "./http/services/SourceFilterService.js";
 import type { SemanticSearchStatus } from "@omnesis/source-sdk";
 import type { DiskUsageSnapshot } from "@omnesis/core/doctor";
 import type { TlsLifecyclePort } from "./http/routes/admin/internals.js";
@@ -245,7 +245,7 @@ export function createServer(
      * Read worker for the status cache's periodic refresh and for the replica
      * ledger reads of an analytics page. Absent, they read on the main handle.
      */
-    readPorts?: StatusCacheReads & AnalyticsReplicaReads & Partial<SourceScopeEditorReads>;
+    readPorts?: StatusCacheReads & AnalyticsReplicaReads & Partial<SourceFilterReads>;
     /**
      * Optional metrics sink. When provided, every authenticated
      * request is recorded into the registry keyed by

@@ -3,9 +3,9 @@
 
 import { createHash } from "node:crypto";
 
-import { canonicalScopePolicies, scopePolicyV1Schema } from "./scope-policy.js";
+import { canonicalSourceFilters, sourceFilterSchema } from "./scope-policy.js";
 import { encodeStoredScopePolicies, decodeStoredScopePolicies } from "./scope-policy-encoding.js";
-import type { ScopePolicy } from "@omnesis/types";
+import type { SourceFilter } from "@omnesis/types";
 import type { AccessGrantCapability } from "./types.js";
 
 type CorpusReadCapability = "answer" | "direct";
@@ -26,7 +26,7 @@ export interface CorpusAuthorization {
   readonly accessTokenId: string;
   readonly capability: CorpusReadCapability;
   readonly filterRevision: number;
-  readonly scopePolicies: readonly ScopePolicy[];
+  readonly scopePolicies: readonly SourceFilter[];
   readonly sourceMode: AccessGrantCapability["sourceMode"];
   readonly sourceIds: readonly string[];
   readonly releaseMode: AccessGrantCapability["releaseMode"];
@@ -41,7 +41,7 @@ export interface CorpusAuthorization {
 interface SerializedCorpusAuthorization {
   v: 1;
   filterRevision?: number;
-  scopePolicies?: ScopePolicy[];
+  scopePolicies?: SourceFilter[];
   canonicalSources?: { mode: AccessGrantCapability["sourceMode"]; sourceIds: string[] };
   principalId: string;
   grantId: string;
@@ -63,7 +63,7 @@ function normalizedSourceIds(values: readonly string[]): string[] {
 
 export function corpusAuthorizationDigest(input: {
   filterRevision?: number;
-  scopePolicies?: readonly ScopePolicy[];
+  scopePolicies?: readonly SourceFilter[];
   capability: CorpusReadCapability;
   sourceMode: AccessGrantCapability["sourceMode"];
   sourceIds: readonly string[];
@@ -86,7 +86,7 @@ export function corpusAuthorizationDigest(input: {
         ...(input.filterRevision
           ? {
               filterRevision: input.filterRevision,
-              scopePolicies: canonicalScopePolicies(input.scopePolicies ?? []),
+              scopePolicies: canonicalSourceFilters(input.scopePolicies ?? []),
             }
           : {}),
       }),
@@ -118,7 +118,7 @@ export function answerOwnerScopeDigest(authorization: CorpusAuthorization): stri
         ...(authorization.filterRevision
           ? {
               filterRevision: authorization.filterRevision,
-              scopePolicies: canonicalScopePolicies(authorization.scopePolicies),
+              scopePolicies: canonicalSourceFilters(authorization.scopePolicies),
             }
           : {}),
       }),
@@ -135,16 +135,11 @@ function buildAuthorization(input: SerializedCorpusAuthorization): CorpusAuthori
   if (input.capability !== "answer" && input.capability !== "direct") {
     throw new Error("Only Answer and Direct authorize corpus reads.");
   }
-  const scopePolicies = canonicalScopePolicies(
-    (input.scopePolicies ?? []).map((policy) => scopePolicyV1Schema.parse(policy)),
+  const scopePolicies = canonicalSourceFilters(
+    (input.scopePolicies ?? []).map((policy) => sourceFilterSchema.parse(policy)),
   );
   if (scopePolicies.length && filterRevision === 0) throw new Error("Filters require a revision.");
-  if (
-    scopePolicies.some(
-      (policy) =>
-        typeof policy.audience !== "object" || policy.audience.capability !== input.capability,
-    )
-  )
+  if (scopePolicies.some((policy) => policy.audience.capability !== input.capability))
     throw new Error("Invalid filter capability.");
   const freeze = (value: unknown): void => {
     if (value && typeof value === "object") {

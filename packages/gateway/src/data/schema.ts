@@ -1,9 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { createScopeDescriptorsSchema } from "../access/scope-descriptors.js";
-import { reconcileScopeFactState } from "../access/scope-activation.js";
-import { createScopeFactsSchema } from "../access/scope-schema.js";
 import { createLabTable } from "../lab/store.js";
 
 import { createKnowledgeTables } from "../brain/knowledge/schema.js";
@@ -89,17 +86,10 @@ type Db = Database.Database;
  * run after this function via the `PRAGMA user_version` runner.
  */
 export function runSchemaSetup(db: Db): void {
-  db.transaction(() => {
-    runSchemaSetupInTxn(db);
-    // The source filter fact triggers are not part of the schema every
-    // install carries: they exist only while source filters are in use.
-    reconcileScopeFactState(db);
-  })();
+  db.transaction(() => runSchemaSetupInTxn(db))();
 }
 
 function runSchemaSetupInTxn(db: Db): void {
-  createScopeFactsSchema(db);
-  createScopeDescriptorsSchema(db);
   createTranscriptionVocabularyTables(db);
   db.exec(`
     CREATE TABLE IF NOT EXISTS documents (

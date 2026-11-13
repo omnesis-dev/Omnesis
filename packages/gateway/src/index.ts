@@ -38,8 +38,6 @@ import {
 import { type OmnesisConfig } from "@omnesis/config";
 import { Ontology } from "@omnesis/watch";
 import { setActivityMarker } from "@omnesis/agent";
-import { reconcileSourceFilterActivation } from "./access/scope-activation.js";
-import { sourceFiltersInUse } from "./access/source-filters-in-use.js";
 import { cloudPairingIdentitySource } from "./http/services/CloudPairingConfiguration.js";
 import { dotEnvKeysAtBoot } from "./load-env.js";
 import {
@@ -522,7 +520,6 @@ const indexerStatus = new IndexerStatusReporter();
 // only connection with write access from this point on.
 {
   const bootDb = createDatabase(DB_PATH, { encryptionKey: storageEncryption.mainDbKey });
-  reconcileSourceFilterActivation(bootDb);
   const drained = closeDrainingWal(bootDb, (frames) =>
     log.info(`draining ${frames}-frame WAL before start`),
   );
@@ -1116,7 +1113,8 @@ searchPipeline.setGatewayDb(db);
 // search provenance, on the io worker.
 searchPipeline.setKnowledgeReadability(ioGate);
 searchPipeline.setProvenanceReads(ioGate);
-searchPipeline.setScopeAuthorizationReads(ioGate);
+// A filtered search checks its results against the corpus on the io worker.
+searchPipeline.setFilterRecheckReads(ioGate);
 
 // Dedicated search-worker pool (Slice 3B): relocate the heavy
 // candidate-generation block (BM25 + usearch + fusion/boost/diversity + hydrate)
@@ -1747,7 +1745,7 @@ const recordCompleterSpend =
   };
 
 const indexerLifecycle = new IndexerLifecycle({
-  acknowledgeScopeReplay: (completed) => writeGate.acknowledgeScopeReplay(completed),
+  completeFilterIndexQueue: (documentIds) => writeGate.completeFilterIndexQueue(documentIds),
   inferenceRegistry,
   configStore,
   indexerStatus,
@@ -3465,7 +3463,6 @@ const backfillBundle = createBackfillTasks(
     ioGate,
     cpuGate,
     log: log.child("backfill"),
-    sourceFiltersInUse: () => sourceFiltersInUse(db),
     ...backfillOptsFromRuntime(runtime),
     getNearDupConfig: () => resolveNearDupConfig(configStore.get().nearDuplicates),
     // Optional model-based people judgements belong to the Brain. Deterministic

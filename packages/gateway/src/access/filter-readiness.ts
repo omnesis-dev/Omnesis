@@ -271,3 +271,15 @@ export function countUnmatchedRecords(db: Db, sourceId: string, field: string): 
     )
     .get(sourceId, ...verdict.params)!.n;
 }
+
+/** The name a sentence calls an account by: its source's name, else the account's. */
+export function filterSourceName(db: Db, sourceId: string, sourceType: string): string {
+  const row = db
+    .prepare<[string, string], { family: string | null; account: string | null }>(
+      `SELECT (SELECT label FROM source_family_meta WHERE source_type = ?) AS family,
+              (SELECT label FROM sync_state WHERE source_id = ? AND label IS NOT NULL
+                ORDER BY device_id LIMIT 1) AS account`,
+    )
+    .get(sourceType, sourceId);
+  return row?.family?.trim() || row?.account?.trim() || sourceType;
+}

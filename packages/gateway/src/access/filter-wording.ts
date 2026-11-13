@@ -96,3 +96,79 @@ export function unmatchedCountText(records: number, noun: FilterNoun): string {
     ? `1 record can't be matched to ${withArticle(noun.one)} and stays hidden.`
     : `${count(records)} records can't be matched to ${withArticle(noun.one)} and stay hidden.`;
 }
+
+/** "Studio Mac", "Studio Mac and Travel Laptop", "A, B and C". */
+function nameList(names: readonly string[]): string {
+  if (names.length <= 1) return names[0] ?? "";
+  return `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
+}
+
+function capitalized(text: string): string {
+  return text.charAt(0).toUpperCase() + text.slice(1);
+}
+
+/** The sentence a filter editor shows for a field that cannot be used yet. */
+export function filterFieldStateText(
+  state:
+    | { status: "needs-resync"; cost: string | null }
+    | { status: "resyncing"; processed: number; total: number }
+    | { status: "collector-behind"; devices: ReadonlyArray<{ name: string }> }
+    | { status: "gateway-behind" }
+    | { status: "list-pending" },
+  context: { sourceName: string; noun: FilterNoun },
+): string {
+  const kind = `${capitalized(context.noun.one)} filters`;
+  switch (state.status) {
+    case "needs-resync":
+      return [
+        `${kind} need ${context.sourceName} to be resynced.`,
+        `${context.sourceName} stays searchable meanwhile.`,
+        ...(state.cost ? [state.cost] : []),
+      ].join(" ");
+    case "resyncing":
+      return `Resyncing ${context.sourceName}: ${count(state.processed)} of about ${count(state.total)}.`;
+    case "collector-behind":
+      return `Update Omnesis on ${nameList(state.devices.map((device) => device.name))} to use these filters.`;
+    case "gateway-behind":
+      return "Update this Omnesis gateway to use these filters.";
+    case "list-pending":
+      return `Waiting for ${context.sourceName} to send its list of ${context.noun.many}.`;
+  }
+}
+
+/** Why an account offers no filter at all, or `null` when it does. */
+export function filterProfileText(
+  profile: "declared" | "no-profile" | "collector-behind",
+  devices: ReadonlyArray<{ name: string }>,
+): string | null {
+  switch (profile) {
+    case "declared":
+      return null;
+    case "no-profile":
+      return "Filters for this account are available after its first sync.";
+    case "collector-behind":
+      return devices.length
+        ? `Update Omnesis on ${nameList(devices.map((device) => device.name))} to use filters on this account.`
+        : "Update the Omnesis app that syncs this account to use filters on it.";
+  }
+}
+
+/** "Includes the folders inside." */
+export function filterInsideText(inside: FilterNoun): string {
+  return `Includes the ${inside.many} inside.`;
+}
+
+/** What a document's own record says about one filterable field, when it is not simply present. */
+export function documentFilterStateText(
+  state: "present" | "too-old" | "unknown",
+  noun: FilterNoun,
+): string {
+  switch (state) {
+    case "present":
+      return "";
+    case "too-old":
+      return `Written before this source recorded its ${noun.many}. Resync the source to add them.`;
+    case "unknown":
+      return "Not recorded";
+  }
+}

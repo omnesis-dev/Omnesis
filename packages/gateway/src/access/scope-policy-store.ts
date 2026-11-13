@@ -2,13 +2,12 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { experimentalEnabled } from "@omnesis/core";
-import { noteSourceFilterOwnersChanged } from "./source-filters-in-use.js";
 import { isScopeQuarantined } from "./scope-quarantine.js";
 
 import { createScopeStorageFloor, withScopePolicyMutation } from "./scope-storage-floor.js";
 import { createScopePolicySourceIndex } from "./scope-policy-source-index.js";
 import { encodeStoredScopePolicies, decodeStoredScopePolicies } from "./scope-policy-encoding.js";
-import type { ScopePolicy } from "@omnesis/types";
+import type { SourceFilter } from "@omnesis/types";
 import type { Db } from "../data/types.js";
 import type { AccessGrantCapability } from "./types.js";
 
@@ -31,7 +30,7 @@ export interface StoredScopeState {
   sourceMode: AccessGrantCapability["sourceMode"];
   sourceIds: string[];
   filterRevision: number;
-  scopePolicies: ScopePolicy[];
+  scopePolicies: SourceFilter[];
 }
 
 /** Canonical boundaries stay separate from the conservative rows older gateways read. */
@@ -107,7 +106,6 @@ export function writeScopeState(
   capability: ScopeCapability,
   state: StoredScopeState | null,
 ): void {
-  if (owner === "level") noteSourceFilterOwnersChanged();
   withScopePolicyMutation(db, owner, id, () => {
     db.prepare(
       "DELETE FROM access_scope_legacy_denials WHERE owner_kind=? AND owner_id=? AND capability=?",
@@ -183,11 +181,7 @@ export function nextScopeState(
   if (next.capability === "notes" && scopePolicies.length)
     throw new Error("Notes cannot carry source filters.");
   for (const policy of scopePolicies) {
-    if (
-      typeof policy.audience !== "object" ||
-      policy.audience.accessLevel !== levelId ||
-      policy.audience.capability !== next.capability
-    )
+    if (policy.audience.accessLevel !== levelId || policy.audience.capability !== next.capability)
       throw new Error("Invalid filter audience.");
     if (!boundaryAllowsSource(next, policy.sourceId)) {
       throw new Error("A filter must belong to a granted source.");

@@ -261,19 +261,3 @@ test.each(["cursor", "analytics", "unscoped analytics", "documents", "snapshot",
     expect(ingestPage).not.toHaveBeenCalled();
   },
 );
-
-test("exclusive legacy shared-row admission does not invent hosting membership on continuation", async () => {
-  const authority = service.pageWriteAuthority(source.id, { deviceId: older.id })();
-  expect(authority.requiredHostingAuthority).toBe(false);
-  expect(authority.scopeAuthorityId).toBe(older.id);
-  const result = await directWriteGate(db).upsertWithCursor({
-    ...authority,
-    scopeAuthorityId: authority.scopeAuthorityId ?? undefined,
-    sourceId: source.id,
-    providerId: "example",
-    hasMore: false,
-    cursor: { legacySharedRow: true },
-  });
-  expect(result.rejected).not.toBe(true);
-  expect(JSON.parse(getSyncState(db, source.id)!.cursor!)).toEqual({ legacySharedRow: true });
-});

@@ -2,49 +2,88 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import * as z from "zod/v4";
-import { canonicalScopeIdentifier } from "@omnesis/source-sdk";
-import type { ScopeIdentifier, ScopePolicy, ScopeRef, SourceScopes } from "@omnesis/types";
+import { FILTER_IDENTIFIER_ERRORS, canonicalFilterIdentifier } from "@omnesis/core";
+import { compileSourceFilter } from "./filter-sql.js";
+import type { SourceFilterFields } from "./filter-fields.js";
+import type { FilterIdentifier, FilterRef, SourceFilter } from "@omnesis/types";
+
+/** Entries, counting each identifier of a person entry, one filter may hold. */
+export const SOURCE_FILTER_MAX_ENTRIES = 256;
 
 const stableId = z
   .string()
   .min(1)
   .max(512)
   .refine((value) => value.trim().length > 0);
-const IDENTIFIER_HINTS = {
-  phone: "Use an international phone number.",
-  email: "Use an email address such as person@example.org.",
-  domain: "Use a domain such as example.org.",
-} as const;
+
 /**
- * Saved identifiers and source-declared facts take the same canonical
- * spelling, so a filter typed with separators, capitals or a display name
- * still equals the fact it names.
+ * A typed identifier in the one spelling records are compared in, so a filter
+ * typed with separators, capitals or a `tel:` prefix names the same person as
+ * one picked from a list.
  */
-export const scopeIdentifierSchema = z
+export const filterIdentifierSchema = z
   .strictObject({ type: z.enum(["phone", "email", "domain"]), value: z.string().max(512) })
-  .transform((identifier, context): ScopeIdentifier => {
-    const canonical = canonicalScopeIdentifier(identifier.type, identifier.value);
+  .transform((identifier, context): FilterIdentifier => {
+    const canonical = canonicalFilterIdentifier(identifier.type, identifier.value);
     if (canonical) return canonical;
     context.addIssue({
       code: "custom",
       path: ["value"],
-      message: IDENTIFIER_HINTS[identifier.type],
+      message: FILTER_IDENTIFIER_ERRORS[identifier.type],
     });
     return z.NEVER;
   });
-export const scopeRefSchema = z.discriminatedUnion("kind", [
-  z.strictObject({ kind: z.literal("conversation"), id: stableId }),
-  z.strictObject({ kind: z.literal("label"), id: stableId }),
-  z.strictObject({ kind: z.literal("folder"), id: stableId }),
+
+const fieldRef = (capability: "membership" | "tree") =>
+  z
+    .strictObject({
+      capability: z.literal(capability),
+      field: stableId,
+      /** `""` with a device names the whole device. */
+      id: z.string().max(512),
+      device: stableId.optional(),
+    })
+    .refine((ref) => ref.id.trim() !== "" || (ref.id === "" && ref.device !== undefined), {
+      message: "An entry must name an item or a device.",
+    });
+
+export const filterRefSchema = z.union([
+  fieldRef("membership"),
+  fieldRef("tree"),
   z.strictObject({
-    kind: z.literal("participant"),
+    capability: z.literal("person"),
     label: z.string().trim().min(1).max(512),
-    identifiers: z.array(scopeIdentifierSchema).min(1).max(256),
+    identifiers: z.array(filterIdentifierSchema).min(1).max(SOURCE_FILTER_MAX_ENTRIES),
   }),
 ]);
 
-/** Exactly the two V1 list shapes. Unknown fields fail rather than disappear. */
-export const scopePolicyV1Schema = z
+/** What one filter holds, counting each identifier of a person entry. */
+export function sourceFilterEntryCount(
+  filters: ReadonlyArray<{
+    rules: ReadonlyArray<{
+      match: ReadonlyArray<{ capability: string; identifiers?: readonly unknown[] }>;
+    }>;
+  }>,
+): number {
+  return filters.reduce(
+    (total, filter) =>
+      total +
+      filter.rules.reduce(
+        (sum, rule) =>
+          sum +
+          rule.match.reduce(
+            (count, ref) =>
+              count + (ref.capability === "person" ? (ref.identifiers?.length ?? 0) : 1),
+            0,
+          ),
+        0,
+      ),
+    0,
+  );
+}
+
+/** The two filter shapes, share-only and hide. Unknown fields fail rather than disappear. */
+export const sourceFilterSchema = z
   .strictObject({
     sourceId: stableId,
     audience: z.strictObject({
@@ -54,86 +93,71 @@ export const scopePolicyV1Schema = z
     rules: z
       .array(
         z.strictObject({
-          match: z.array(scopeRefSchema).max(256),
+          match: z.array(filterRefSchema).max(SOURCE_FILTER_MAX_ENTRIES),
           action: z.enum(["share", "hide"]),
         }),
       )
       .length(1),
     otherwise: z.enum(["share", "hide"]),
   })
-  .refine(
-    (policy) =>
-      policy.rules.reduce(
-        (total, rule) =>
-          total +
-          rule.match.reduce(
-            (count, ref) => count + (ref.kind === "participant" ? ref.identifiers.length : 1),
-            0,
-          ),
-        0,
-      ) <= 256,
-    { message: "A filter can contain at most 256 identifiers or items." },
-  )
-  .refine((policy) => policy.rules[0]?.action !== policy.otherwise, {
+  .refine((filter) => sourceFilterEntryCount([filter]) <= SOURCE_FILTER_MAX_ENTRIES, {
+    message: `A filter can contain at most ${SOURCE_FILTER_MAX_ENTRIES} identifiers or items.`,
+  })
+  .refine((filter) => filter.rules[0]?.action !== filter.otherwise, {
     message: "Choose only these or everything except these.",
-  });
+  })
+  .transform((filter) => filter as SourceFilter);
 
-/** Enforce the source's declaration as well as the generic wire shape. */
-export function parseScopePolicyV1(input: unknown, scopes: SourceScopes): ScopePolicy {
-  const policy = scopePolicyV1Schema.parse(input);
-  for (const rule of policy.rules) {
-    for (const ref of rule.match) {
-      const declaration = scopes.items.find((item) => item.kind === ref.kind);
-      if (!declaration) throw new Error(`This source does not support ${ref.kind} filters.`);
-      if (ref.kind === "participant" && declaration.kind === "participant") {
-        for (const identifier of ref.identifiers) {
-          if (!declaration.identifiers.includes(identifier.type)) {
-            throw new Error(`This source does not identify people by ${identifier.type}.`);
-          }
-        }
-      }
-    }
-  }
-  return policy;
+/**
+ * Read a filter an owner saves: its shape, then every entry against what the
+ * source declares filterable. A filter this gateway could not apply is
+ * refused here rather than saved to hide the whole account later.
+ */
+export function parseSourceFilter(input: unknown, fields: SourceFilterFields): SourceFilter {
+  const filter = sourceFilterSchema.parse(input);
+  const compiled = compileSourceFilter(filter, fields);
+  if (compiled.unusable !== null)
+    throw new Error(`This filter cannot be applied to this source: ${compiled.unusable}.`);
+  return filter;
 }
 
 function compare(left: string, right: string): number {
   return left < right ? -1 : left > right ? 1 : 0;
 }
 
-/** Canonicalize unordered OR lists, keeping ordered rules and saved identifiers intact. */
-export function canonicalScopePolicies(policies: readonly ScopePolicy[]): ScopePolicy[] {
-  function ref(input: ScopeRef): ScopeRef {
-    if (input.kind !== "participant") return { kind: input.kind, id: input.id };
+function canonicalRef(input: FilterRef): FilterRef {
+  if (input.capability === "person")
     return {
-      kind: "participant",
+      capability: "person",
       label: input.label,
       identifiers: input.identifiers
-        .map((identifier) => ({
-          type: identifier.type,
-          value: identifier.value,
-        }))
+        .map((identifier) => ({ type: identifier.type, value: identifier.value }))
         .sort((left, right) => compare(left.type, right.type) || compare(left.value, right.value)),
     };
-  }
-  return policies
-    .map((policy) => ({
-      sourceId: policy.sourceId,
-      audience:
-        typeof policy.audience === "string"
-          ? policy.audience
-          : {
-              accessLevel: policy.audience.accessLevel,
-              capability: policy.audience.capability,
-            },
-      rules: policy.rules.map((rule) => ({
+  return {
+    capability: input.capability,
+    field: input.field,
+    id: input.id,
+    ...(input.device === undefined ? {} : { device: input.device }),
+  };
+}
+
+/** Canonicalize unordered entry lists and the filters' order, keeping saved identifiers intact. */
+export function canonicalSourceFilters(filters: readonly SourceFilter[]): SourceFilter[] {
+  return filters
+    .map((filter): SourceFilter => ({
+      sourceId: filter.sourceId,
+      audience: {
+        accessLevel: filter.audience.accessLevel,
+        capability: filter.audience.capability,
+      },
+      rules: filter.rules.map((rule) => ({
         match: rule.match
-          .map(ref)
+          .map(canonicalRef)
           .sort((left, right) => compare(JSON.stringify(left), JSON.stringify(right))),
         action: rule.action,
-      })),
-      otherwise: policy.otherwise,
-      ...(policy.maxAge === undefined ? {} : { maxAge: policy.maxAge }),
+      })) as SourceFilter["rules"],
+      otherwise: filter.otherwise,
     }))
     .sort((left, right) => compare(left.sourceId, right.sourceId));
 }

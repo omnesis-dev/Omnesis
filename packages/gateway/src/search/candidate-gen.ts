@@ -28,7 +28,6 @@
  */
 
 import {
-  staleScopeSearchSources,
   withScopeSearchAuthorization,
   type ScopeSearchAuthorization,
 } from "./scope-authorization.js";
@@ -94,8 +93,9 @@ export interface CandidateGenResources {
  * to a worker unchanged.
  */
 export interface CandidateGenRequest {
-  /** `browse` lists documents newest-first; `hybrid` runs bm25 + vector. */
+  /** The source filters of an external agent's search; see `scope-authorization.ts`. */
   scopeAuthorization?: ScopeSearchAuthorization;
+  /** `browse` lists documents newest-first; `hybrid` runs bm25 + vector. */
   mode: "hybrid" | "browse";
   /** MATCH text for BM25. */
   bm25Text: string;
@@ -166,32 +166,15 @@ export interface CandidateGenResult {
   vectorDegraded: boolean;
   /** Feedback lines produced here (v1: none — bm25 dropped tokens ride the stage report). */
   notices: SearchNotice[];
-  /**
-   * Filtered sources whose facts in the index were not at the requested
-   * generation. Nothing was searched: `results` is empty and the caller must
-   * not present it as an answer.
-   */
-  staleScopeSourceIds?: string[];
 }
 
 export function runCandidateGen(
   res: CandidateGenResources,
   req: CandidateGenRequest,
 ): CandidateGenResult {
-  return withScopeSearchAuthorization(res.indexDb, req.scopeAuthorization, () => {
-    const staleScopeSourceIds = staleScopeSearchSources(res.indexDb, req.filters.sourceIds);
-    if (staleScopeSourceIds.length)
-      return {
-        results: [],
-        contentHashByDoc: Object.create(null) as Record<string, string>,
-        stageReports: {},
-        timing: {},
-        vectorDegraded: false,
-        notices: [],
-        staleScopeSourceIds,
-      };
-    return runScopedCandidateGen(res, req);
-  });
+  return withScopeSearchAuthorization(res.indexDb, req.scopeAuthorization, () =>
+    runScopedCandidateGen(res, req),
+  );
 }
 
 function runScopedCandidateGen(

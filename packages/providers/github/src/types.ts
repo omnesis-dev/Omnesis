@@ -4,7 +4,6 @@
 import { isSnapshotLedger, makeCursorValidator } from "@omnesis/source-sdk";
 import type { SnapshotLedger, SyncCursor } from "@omnesis/source-sdk";
 import type { GithubClient } from "./client.js";
-import type { RepoScopeCursor } from "./repo-scopes.js";
 
 /** Shared per-account context handed to both sources. */
 export interface GithubContext {
@@ -125,7 +124,7 @@ export interface LaneState {
   dropped?: boolean;
 }
 
-export interface GithubThreadsCursor extends SyncCursor, RepoScopeCursor {
+export interface GithubThreadsCursor extends SyncCursor {
   /** Cursor schema/render version — a mismatch forces a full re-walk. */
   renderVersion?: number;
   /** Per-repo lane watermarks, keyed by `owner/repo`. */
@@ -179,7 +178,7 @@ export interface RepoCommitState {
   knownShas?: string[];
 }
 
-export interface GithubCommitsCursor extends SyncCursor, RepoScopeCursor {
+export interface GithubCommitsCursor extends SyncCursor {
   renderVersion?: number;
   repos?: Record<string, RepoCommitState>;
   /** The repo listing currently mid-walk. */

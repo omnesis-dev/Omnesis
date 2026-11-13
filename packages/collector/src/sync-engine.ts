@@ -60,7 +60,7 @@ import type {
   RegisteredSource,
   StatusChangeEvent,
 } from "./sync-engine-types.js";
-import type { SyncRemediation, DocumentIngestionContext, SourceScopes } from "@omnesis/types";
+import type { SyncRemediation, DocumentIngestionContext } from "@omnesis/types";
 
 export { looksLikeAuthFailure, classifySyncError } from "./error-classifier.js";
 export type { SyncErrorKind } from "./error-classifier.js";
@@ -104,11 +104,6 @@ export class SyncEngine {
    * from one of their terminal transitions would outlive it.
    */
   private stopping = false;
-  /**
-   * Whether the gateway took filter facts when the filter declarations were
-   * last published; undefined until they have been published once.
-   */
-  private gatewayTakesFilterFacts?: boolean;
   /** Preserve source-snapshot order even when callers intentionally do not await publication. */
   private linkDeclarationPushQueue: Promise<void> = Promise.resolve();
 
@@ -122,7 +117,6 @@ export class SyncEngine {
       filePollIntervalMs?: number;
       syncTimeoutMs?: number;
       ingestionContext?: DocumentIngestionContext;
-      scopeRefreshActorId?: string;
     },
   ) {
     this.pushDebounceMs = opts?.pushDebounceMs ?? DEFAULT_PUSH_DEBOUNCE_MS;
@@ -143,7 +137,6 @@ export class SyncEngine {
       syncTimeoutMs,
       undefined,
       opts?.ingestionContext,
-      opts?.scopeRefreshActorId,
     );
     this.dispatcher = new SyncDispatcher(this.registry, (source, reason) =>
       this.syncSource(source, reason),
@@ -613,46 +606,6 @@ export class SyncEngine {
         `Failed to push source-prior defaults (continuing): ${err instanceof Error ? err.message : String(err)}`,
       );
     }
-  }
-
-  /**
-   * Publish the filter declarations of every known source type; the gateway
-   * client asks the gateway first whether it takes them. Called each time the
-   * collector connects.
-   *
-   * A gateway that took no filter facts at the previous publication and takes
-   * them now has had source filters switched on while this collector kept
-   * running. Everything its sources have stored there lacks the facts a
-   * filter reads, and stays out of reach of every filter until a sync reports
-   * them. Each source that declares filters is therefore synced now instead
-   * of at its next interval, which for some sources is an hour away. The
-   * first publication after the collector starts triggers nothing: the
-   * initial sync is already on its way.
-   */
-  async pushSourceScopes(
-    entries: Array<{ sourceType: string; scopes: SourceScopes }>,
-  ): Promise<void> {
-    if (!this.gateway.setSourceScopes) return;
-    try {
-      await this.gateway.setSourceScopes(entries);
-    } catch (err) {
-      log.warn(`Failed to push source filter declarations (continuing): ${toErrorMessage(err)}`);
-      return;
-    }
-    if (!this.gateway.supportsSourceScopes) return;
-    // Publishing asked the gateway afresh, so this reads that answer.
-    const takes = await this.gateway.supportsSourceScopes().catch(() => false);
-    const began = this.gatewayTakesFilterFacts === false && takes;
-    this.gatewayTakesFilterFacts = takes;
-    if (!began || this.stopping) return;
-    const filterable = [...this.registry.allSources()]
-      .filter(({ source }) => source.scopes !== undefined)
-      .map(({ source }) => source.id);
-    log.info(
-      `The gateway now takes source filter facts; syncing ${filterable.length} filterable source(s) to report them`,
-    );
-    for (const sourceId of filterable)
-      this.dispatcher.triggerSync(sourceId, { reason: "scheduled" });
   }
 
   /**

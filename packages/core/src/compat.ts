@@ -38,9 +38,6 @@ import {
 } from "./push/enrolment.js";
 import type { DeviceKind } from "@omnesis/types";
 
-/** Version 1 carries native facts; version 2 additionally carries native hierarchies. */
-export const SOURCE_SCOPES_PROTOCOL_RANGE = { min: 1, max: 2 } as const;
-
 /**
  * How a persisted store is versioned, and therefore how it is upgraded and
  * recovered. Each value is a contract, not just a label:
@@ -124,8 +121,6 @@ export interface CompatManifest {
       readonly min: number;
       readonly max: number;
     };
-    /** Optional collector scope facts and source declarations. */
-    readonly sourceScopes: { readonly current: number; readonly min: number; readonly max: number };
     /**
      * The wake protocol spoken to an external agent integration.
      *
@@ -192,7 +187,6 @@ export function buildCompatManifest(args: {
         min: PUSH_RELAY_PROTOCOL_MIN_VERSION,
         max: PUSH_RELAY_PROTOCOL_MAX_VERSION,
       },
-      sourceScopes: { current: 2, ...SOURCE_SCOPES_PROTOCOL_RANGE },
       agentDelivery: {
         current: AGENT_DELIVERY_PROTOCOL_VERSION,
         min: AGENT_DELIVERY_PROTOCOL_MIN_VERSION,

@@ -20,7 +20,6 @@
 
 import { IO_READS } from "./io-read-ports.js";
 import { ioReadOpNames, ioReadPort, type ReadPort } from "./read-port.js";
-import type { ScopeSourceGeneration } from "../access/scope-generations.js";
 import type { KnowledgeSelectionReads } from "../brain/knowledge/selection-reads.js";
 import type {
   AutoDetectedRule,
@@ -99,7 +98,6 @@ import type {
 import type { VocabularySettings, VocabularyDocument } from "../transcribe/vocabulary/types.js";
 
 export interface IoGate extends ReadPort<typeof IO_READS>, KnowledgeSelectionReads {
-  scopeSourceGenerations(sourceIds: readonly string[]): Promise<ScopeSourceGeneration[]>;
   fetchTranscriptionVocabularyBatch(settings: VocabularySettings): Promise<VocabularyDocument[]>;
   getTranscriptionVocabulary(
     context: TranscriptionContext,
@@ -490,13 +488,23 @@ interface IoOpDef {
 const DEFAULT_BUDGET_MS = 200;
 const HEAVY_BUDGET_MS = 2_000;
 
+const USER_IO_READS: ReadonlySet<string> = new Set([
+  "io.filterReadableDocumentIds",
+  "io.sourceFilterEditor",
+  "io.sourceFilterOptionsPage",
+  "io.documentFilterDetails",
+  "io.documentAccessAudit",
+]);
+
 const COMPUTE_OP_DEFS: readonly IoOpDef[] = [
   // Every read port in `io-read-ports.ts`: the status cache's refresh, the
   // knowledge engine's planning window, batch recovery and payload capture,
   // and an analytics page's replica ledger reads.
+  // A filtered search's result check and the owner's filter screens are
+  // waited on by a person, so they run ahead of background reads.
   ...ioReadOpNames(IO_READS).map((name): IoOpDef => ({
     name,
-    priority: "background",
+    priority: USER_IO_READS.has(name) ? "user" : "background",
     latencyBudgetMs: HEAVY_BUDGET_MS,
   })),
   { name: "io.fetchTranscriptionVocabularyBatch", priority: "background" },
@@ -563,7 +571,6 @@ const COMPUTE_OP_DEFS: readonly IoOpDef[] = [
   // User by default for search and the interactive agent; background runs
   // enqueue it under their own priority.
   { name: "io.temporalStoreWindow", priority: "user", latencyBudgetMs: HEAVY_BUDGET_MS },
-  { name: "io.scopeSourceGenerations", priority: "user", latencyBudgetMs: HEAVY_BUDGET_MS },
   { name: "io.knowledgeDocumentsReadable", priority: "user", latencyBudgetMs: HEAVY_BUDGET_MS },
   { name: "io.agentSearchProvenance", priority: "user", latencyBudgetMs: HEAVY_BUDGET_MS },
   { name: "io.graphContextProvenance", priority: "user", latencyBudgetMs: HEAVY_BUDGET_MS },
@@ -711,7 +718,6 @@ export function ioGateFromScheduler(scheduler: Scheduler): IoGate {
     mergeCandidateVisibility: (opts) => call("io.mergeCandidateVisibility", [opts]),
     likeSearchDocuments: (args) => call("io.likeSearchDocuments", [args]),
     temporalStoreWindow: (request) => call("io.temporalStoreWindow", [request]),
-    scopeSourceGenerations: (sourceIds) => call("io.scopeSourceGenerations", [[...sourceIds]]),
     knowledgeDocumentsReadable: (refs) => call("io.knowledgeDocumentsReadable", [[...refs]]),
     agentSearchProvenance: (results, options) =>
       call("io.agentSearchProvenance", [[...results], options]),

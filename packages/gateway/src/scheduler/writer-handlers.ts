@@ -21,7 +21,6 @@ import {
   type MultiDeviceMode,
   type SyncRemediation,
 } from "@omnesis/types";
-import { acknowledgeScopeReplay, type ScopeSourceGeneration } from "../access/scope-generations.js";
 import { initializeLabFlags, setLabFlag, type LabFeatureId, type LabFlags } from "../lab/store.js";
 
 import {
@@ -500,8 +499,7 @@ import {
   recordSourceModeTransitionFailure,
   recordSourceModeTransitionPublicationFailure,
 } from "../data/repositories/SourceModeTransitionRepository.js";
-import { backfillDocumentScopes } from "../access/scope-backfill.js";
-import { upsertSourceScopes, type SourceScopesEntry } from "../access/scope-descriptors.js";
+import { completeFilterIndexQueue } from "../indexer/filter-copy.js";
 import {
   upsertSourceDocumentProfiles,
   type SourceDocumentProfileEntry,
@@ -773,8 +771,6 @@ function guardedCanonicalMutation(
 }
 
 export const writerHandlers = {
-  "scopes.acknowledgeReplay": (db: Db, completed: ScopeSourceGeneration) =>
-    acknowledgeScopeReplay(db, completed),
   "knowledge.canonicalMutation": guardedCanonicalMutation,
   ...knowledgeWriterHandlers,
   // ── db.ts ─────────────────────────────────────────────────────────
@@ -1524,8 +1520,8 @@ export const writerHandlers = {
   "sources.clearSourceRemoved": (db: Db, id: string) => clearSourceRemoved(db, SourceId(id)),
   "sources.clearSourceRemovedIfCleanupDone": (db: Db, id: string) =>
     clearSourceRemovedIfCleanupDone(db, SourceId(id)),
-  "sources.upsertScopes": (db: Db, entries: readonly SourceScopesEntry[], publishedAt: number) =>
-    upsertSourceScopes(db, entries, publishedAt),
+  "documents.completeFilterIndexQueue": (db: Db, documentIds: string[]) =>
+    completeFilterIndexQueue(db, documentIds),
   "sources.upsertDocumentProfiles": (
     db: Db,
     entries: readonly SourceDocumentProfileEntry[],
@@ -2119,8 +2115,6 @@ export const writerYieldableHandlers = {
     advanceKnowledgeCascade(db, limit, now, undefined, {
       requested: sliceDeadline(token, BACKGROUND_BATCH_SLICE_MS),
     }),
-  "scopes.backfill": (db: Db, token: PreemptToken, batchSize: number) =>
-    backfillDocumentScopes(db, batchSize, { token }),
   "vocabulary.advanceRebuild": (db: Db, token: PreemptToken, settings: VocabularySettings) =>
     advanceTranscriptionVocabularyRebuild(db, settings, token),
   "vocabulary.applyBatch": (db: Db, token: PreemptToken, docs: ExtractedVocabularyDocument[]) => {
@@ -2144,7 +2138,6 @@ export const writerYieldableHandlers = {
     cursorRows?: Readonly<Record<string, string>>,
     streams?: Readonly<Record<string, string>>,
     replicaVersionPolicies?: Readonly<Record<string, "source-updated-at">>,
-    scopeRefreshActorId?: string,
     priorIgnoredReplicaDocuments: Array<{ sourceId: string; externalId: string }> = [],
     priorSuppressedDocuments: Array<{ sourceId: string; externalId: string }> = [],
   ) => {
@@ -2154,7 +2147,6 @@ export const writerYieldableHandlers = {
       cursorRows,
       streams,
       replicaVersionPolicies,
-      scopeRefreshActorId,
     });
     if (result.remaining.length > 0) {
       // Carry the specs into the continuation so yielded chunks
@@ -2167,7 +2159,6 @@ export const writerYieldableHandlers = {
           cursorRows,
           streams,
           replicaVersionPolicies,
-          scopeRefreshActorId,
           [...priorIgnoredReplicaDocuments, ...result.ignoredReplicaDocuments],
           [...priorSuppressedDocuments, ...result.suppressedDocuments],
         ],

@@ -37,7 +37,6 @@ import {
 } from "../json-columns.js";
 import { markPeopleGraphDirty } from "../DirtyMarks.js";
 import { putPairedIntegrationOnLevel } from "../../access/store-levels.js";
-import { requireScopeRefreshForHost } from "../../access/scope-refresh-requirements.js";
 import { extendUnanimousMemberConfigContracts } from "./SourceMemberConfigContractRepository.js";
 import { aliasWriter } from "./PersonAliasRepository.js";
 import {
@@ -557,7 +556,6 @@ export function updateDeviceCapabilities(
       sourceCommit,
       id,
     );
-    requireScopeRefreshForHost(db, id);
     return extendUnanimousMemberConfigContracts(db, id);
   })();
 }

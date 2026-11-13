@@ -1,8 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { sourceFiltersActive } from "./scope-activation.js";
-import { noteSourceFilterOwnersChanged } from "./source-filters-in-use.js";
 import { withScopePolicyMutation } from "./scope-storage-floor.js";
 import {
   ScopePolicyEditError,
@@ -152,7 +150,7 @@ export function deleteAccessLevel(
   input: AccessLevelDeleteInput,
   now = Date.now(),
 ): AccessMutationResult<null> {
-  const result = db.transaction((): AccessMutationResult<null> => {
+  return db.transaction((): AccessMutationResult<null> => {
     const level = getLiveLevelRow(db, input.levelId);
     if (!level) return { ok: false, error: "not-found" };
     if (
@@ -174,13 +172,6 @@ export function deleteAccessLevel(
     });
     return { ok: true, value: null };
   })();
-  if (result.ok) {
-    // The level may have held the last filter in use. Its filter rows stay
-    // with it, as its rules do; what stops is the work filters cost.
-    noteSourceFilterOwnersChanged();
-    sourceFiltersActive(db);
-  }
-  return result;
 }
 
 /**
@@ -430,7 +421,6 @@ function applyLevelRules(
   ) {
     throw new LevelChangeRefusedError("level-in-use");
   }
-  noteSourceFilterOwnersChanged();
   return withScopePolicyMutation(db, "level", level.id, () => {
     db.prepare(
       "DELETE FROM access_scope_capabilities WHERE owner_kind = 'level' AND owner_id = ?",

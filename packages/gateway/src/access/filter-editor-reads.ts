@@ -287,10 +287,15 @@ interface ItemRow {
   children: number;
 }
 
-/** A page of the entries a field offers, with the count of each. */
+/**
+ * A page of the entries a field offers, with the count of each. Without
+ * `withCounts` every count is 0 and the page reads only the account's list,
+ * so it is quick on any account; {@link countFilterEntries} fills them in.
+ */
 export function readFilterOptions(
   db: Db,
   request: FilterOptionsRequest,
+  options: { withCounts?: boolean } = {},
 ): FilterEditorResult<FilterOptions> {
   return db.transaction((): FilterEditorResult<FilterOptions> => {
     const fields = sourceFields(db, request.sourceId);
@@ -307,15 +312,17 @@ export function readFilterOptions(
         ? personOptions(db, request, fields, after)
         : fieldOptions(db, request, fields, after);
     if (!page) return { ok: false, error: "unsupported-field" };
-    const counts = countFilterEntries(
-      db,
-      request.sourceId,
-      fields,
-      page.items.map((item) => item.ref),
-    );
-    page.items.forEach((item, index) => {
-      item.count = counts[index]!;
-    });
+    if (options.withCounts !== false) {
+      const counts = countFilterEntries(
+        db,
+        request.sourceId,
+        fields,
+        page.items.map((item) => item.ref),
+      );
+      page.items.forEach((item, index) => {
+        item.count = counts[index]!;
+      });
+    }
     return {
       ok: true,
       value: {

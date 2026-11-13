@@ -1,9 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { isScopeQuarantined, quarantineScopeAuthority } from "./scope-quarantine.js";
-import { conservativeSources } from "./scope-legacy-boundary.js";
-import { decodeStoredScopePolicies, encodeStoredScopePolicies } from "./scope-policy-encoding.js";
+import { SCOPE_POLICY_STORAGE_PROTOCOL } from "./scope-policy-encoding.js";
 import type { Db } from "../data/types.js";
 type Owner = "level" | "grant";
 
@@ -42,7 +40,7 @@ export function createScopeStorageFloor(db: Db): void {
     `CASE WHEN json_valid(${row}.policies) THEN ${row}.policies ELSE 'null' END`;
   const invalid = `json_type(${array("NEW")}) IS NOT 'array' OR EXISTS(
    SELECT 1 FROM json_each(${array("NEW")}) p
-   WHERE p.type<>'object' OR json_extract(CASE WHEN p.type='object' THEN p.value ELSE '{}' END,'$.minimumProtocol') IS NOT 2)`;
+   WHERE p.type<>'object' OR json_extract(CASE WHEN p.type='object' THEN p.value ELSE '{}' END,'$.minimumProtocol') IS NOT ${SCOPE_POLICY_STORAGE_PROTOCOL})`;
   const protectedOld = `(EXISTS(SELECT 1 FROM access_scope_policy_sources s WHERE s.owner_kind=OLD.owner_kind AND s.owner_id=OLD.owner_id AND s.capability=OLD.capability) OR EXISTS(SELECT 1 FROM access_scope_legacy_denials q WHERE q.owner_kind=OLD.owner_kind AND q.owner_id=OLD.owner_id AND q.capability=OLD.capability))`;
   const context = `EXISTS(SELECT 1 FROM scope_policy_mutation_context m WHERE m.owner_kind=OLD.owner_kind AND m.owner_id=OLD.owner_id)`;
   db.exec(`CREATE TRIGGER IF NOT EXISTS scope_policy_protocol_insert BEFORE INSERT ON access_scope_capabilities BEGIN
@@ -92,148 +90,6 @@ export function createScopeStorageFloor(db: Db): void {
     SELECT 1 FROM access_scope_legacy_denials q WHERE q.owner_kind='${owner}' AND q.owner_id=NEW.${key} AND q.capability=NEW.capability)
     AND NOT (NEW.source_mode='allowlist' AND json_valid(NEW.source_ids) AND json_array_length(CASE WHEN json_valid(NEW.source_ids) THEN NEW.source_ids ELSE '[null]' END)=0);
   END;`);
-    }
-  }
-}
-
-/** Repair only configuration rows; unreadable authority gets a legacy deny-all projection. */
-export function reconcileLegacyScopeBoundaries(db: Db): void {
-  let cursor = 0;
-  const bumped = new Set<string>();
-  for (;;) {
-    const rows = db
-      .prepare<
-        [number],
-        {
-          rowid: number;
-          owner_kind: Owner;
-          owner_id: string;
-          capability: string;
-          source_mode: "all" | "allowlist" | "denylist";
-          source_ids: string;
-          filter_revision: number;
-          policies: string;
-        }
-      >(
-        "SELECT rowid,owner_kind,owner_id,capability,source_mode,source_ids,filter_revision,policies FROM access_scope_capabilities WHERE rowid>? ORDER BY rowid LIMIT 100",
-      )
-      .all(cursor);
-    if (!rows.length) break;
-    for (const row of rows) {
-      let marked: string | undefined;
-      let empty = false;
-      let legacy: { sourceMode: "all" | "allowlist" | "denylist"; sourceIds: string[] } = {
-        sourceMode: "allowlist",
-        sourceIds: [],
-      };
-      try {
-        const ids: unknown = JSON.parse(row.source_ids);
-        if (
-          !["all", "allowlist", "denylist"].includes(row.source_mode) ||
-          !Array.isArray(ids) ||
-          !ids.every((id) => typeof id === "string" && id.length > 0 && id.length <= 512) ||
-          ids.length > 256 ||
-          (row.source_mode === "all" && ids.length > 0) ||
-          !Number.isSafeInteger(row.filter_revision) ||
-          row.filter_revision <= 0
-        )
-          throw new Error("Invalid stored boundary.");
-        const raw: unknown = JSON.parse(row.policies);
-        if (!Array.isArray(raw) || raw.length > 256) throw new Error("Invalid stored policies.");
-        const policies = decodeStoredScopePolicies(raw);
-        if (
-          policies.some(
-            (policy) =>
-              typeof policy.audience !== "object" || policy.audience.capability !== row.capability,
-          ) ||
-          policies.reduce(
-            (sum, policy) =>
-              sum +
-              policy.rules.reduce(
-                (n, rule) =>
-                  n +
-                  rule.match.reduce(
-                    (count, ref) =>
-                      count + (ref.kind === "participant" ? ref.identifiers.length : 1),
-                    0,
-                  ),
-                0,
-              ),
-            0,
-          ) > 256
-        )
-          throw new Error("Invalid stored policies.");
-        empty = policies.length === 0;
-        legacy = conservativeSources({
-          sourceMode: row.source_mode,
-          sourceIds: ids,
-          scopePolicies: policies,
-        });
-        // Mark only understood policy data, never reinterpret an unsupported future contract.
-        marked = JSON.stringify(encodeStoredScopePolicies(policies));
-      } catch {
-        // The current reader also refuses this overlay. Older readers must deny its entire capability.
-      }
-      if (marked !== undefined && marked !== row.policies)
-        db.prepare("UPDATE access_scope_capabilities SET policies=? WHERE rowid=?").run(
-          marked,
-          row.rowid,
-        );
-      const table =
-        row.owner_kind === "level" ? "access_level_capabilities" : "access_grant_capabilities";
-      const key = row.owner_kind === "level" ? "level_id" : "grant_id";
-      const quarantined = isScopeQuarantined(db, row.owner_kind, row.owner_id, row.capability);
-      if (empty && !quarantined) {
-        cursor = row.rowid;
-        continue;
-      }
-      const actual = db
-        .prepare<[string, string], { source_mode: string; source_ids: string }>(
-          `SELECT source_mode,source_ids FROM ${table} WHERE ${key}=? AND capability=?`,
-        )
-        .get(row.owner_id, row.capability);
-      let narrowed = !actual;
-      if (actual) {
-        try {
-          const ids: unknown = JSON.parse(actual.source_ids);
-          if (
-            !Array.isArray(ids) ||
-            !ids.every((id) => typeof id === "string") ||
-            !["all", "allowlist", "denylist"].includes(actual.source_mode)
-          )
-            throw new Error("Invalid legacy boundary");
-          const allows = (id: string) =>
-            actual.source_mode === "all" ||
-            (actual.source_mode === "allowlist" ? ids.includes(id) : !ids.includes(id));
-          narrowed =
-            legacy.sourceMode === "allowlist"
-              ? legacy.sourceIds.some((id) => !allows(id))
-              : actual.source_mode === "allowlist" ||
-                (actual.source_mode === "denylist" &&
-                  ids.some((id) => !legacy.sourceIds.includes(id)));
-        } catch {
-          narrowed = true;
-        }
-      }
-      if (marked === undefined || quarantined || narrowed) {
-        quarantineScopeAuthority(
-          db,
-          row.owner_kind,
-          row.owner_id,
-          row.capability,
-          bumped,
-          (owner, id, work) => withScopePolicyMutation(db, owner, id, work),
-        );
-      } else {
-        withScopePolicyMutation(db, row.owner_kind, row.owner_id, () =>
-          db
-            .prepare(
-              `UPDATE ${table} SET source_mode=?,source_ids=? WHERE ${key}=? AND capability=?`,
-            )
-            .run(legacy.sourceMode, JSON.stringify(legacy.sourceIds), row.owner_id, row.capability),
-        );
-      }
-      cursor = row.rowid;
     }
   }
 }

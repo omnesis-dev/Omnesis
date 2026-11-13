@@ -8,7 +8,6 @@ import {
   defineSource,
   config as configSchema,
   expandHostPath,
-  hostHomeDir,
   type SourceInstance,
 } from "@omnesis/source-sdk";
 import {
@@ -22,7 +21,6 @@ import {
 } from "@omnesis/source-sdk/local-agent-sessions";
 import { SyncError } from "@omnesis/types";
 import { piIcon } from "./icon.js";
-import { scopeContracts } from "./scope-contracts.js";
 import { piStateSpec } from "./state.js";
 
 /**
@@ -318,7 +316,6 @@ export default defineSource({
   primaryCount: "documents",
   singleInstance: true,
   multiDevice: { mode: "partitioned" },
-  scopes: scopeContracts["pi"],
   conversational: true,
   contract: {
     outputRevision: 2,
@@ -361,8 +358,6 @@ export default defineSource({
       providerId,
       sourceId,
       dataCutoff,
-      // Sessions record the directory as the machine that ran them names it.
-      folders: { home: hostHomeDir() },
       adapter: {
         harnessId: "pi",
         agentName: "Pi",

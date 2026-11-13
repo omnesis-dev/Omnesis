@@ -6,7 +6,6 @@
  * Single SQLite file at ~/.config/omnesis/index.db.
  */
 
-import { createScopeMirrorSchema } from "./scope-mirror.js";
 import { readdirSync, rmSync, unlinkSync, type Dirent } from "node:fs";
 import { dirname, join } from "node:path";
 import Database from "better-sqlite3";
@@ -15,7 +14,11 @@ import { DERIVED_INDEX_FILE_PATTERN, createLogger } from "@omnesis/core";
 import { openEncryptedSqlite } from "../sqlite-encryption.js";
 import { useImmediateTransactions } from "../sqlite-transactions.js";
 import { buildEmbeddingPreamble } from "./embedding-input.js";
-import { createFilterCopyTables } from "./filter-copy.js";
+import {
+  createFilterCopyTables,
+  deleteFilterCopyDocuments,
+  deleteFilterCopySource,
+} from "./filter-copy.js";
 import { withScanPageCache } from "./scan-page-cache.js";
 
 const log = createLogger("indexer:db");
@@ -138,7 +141,6 @@ function ensureChunkStatsIndex(db: Db): void {
 
 export function createIndexDatabase(path: string, opts: OpenIndexDbOptions = {}): Db {
   const db = openIndexDb(path, opts);
-  createScopeMirrorSchema(db);
 
   const hadChunksFts =
     db
@@ -1629,8 +1631,10 @@ export function setIndexedDocument(
   ).run(documentId, contentHash, chunkCount, indexedAt, eventAt, eventIndexedAt);
 }
 
+/** Forget a document that left the corpus, with its copy of filter details. */
 export function removeIndexedDocument(db: Db, documentId: string): void {
   db.prepare("DELETE FROM indexed_documents WHERE document_id = ?").run(documentId);
+  deleteFilterCopyDocuments(db, [documentId]);
 }
 
 export function getAllIndexedDocumentIds(db: Db): Set<string> {
@@ -2132,6 +2136,7 @@ export function deleteChunksByDocumentBatch(
         .get(documentId) !== undefined;
     complete = sourceDeleted && !remaining;
     if (complete) {
+      deleteFilterCopyDocuments(db, [documentId]);
       const indexed = db
         .prepare("DELETE FROM indexed_documents WHERE document_id = ?")
         .run(documentId).changes;
@@ -2422,6 +2427,8 @@ function deleteIndexBySourceInner(db: Db, sourceId: string, options?: IndexWrite
   // previous run, or had only failed docs).
   db.prepare("DELETE FROM source_index_stats WHERE source_id = ?").run(sourceId);
   db.prepare("DELETE FROM indexing_errors WHERE source_id = ?").run(sourceId);
+  // The purge is one transaction already; its copy rows go with it.
+  for (let done = false; !done;) done = deleteFilterCopySource(db, sourceId);
 
   if (docIds.length === 0) return 0;
 

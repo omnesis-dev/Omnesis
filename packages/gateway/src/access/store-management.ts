@@ -4,8 +4,7 @@
 import { experimentalEnabled } from "@omnesis/core";
 import { DEFAULT_PRIVACY_POLICY_FAMILY_ID } from "@omnesis/types/privacy";
 import { privacyPolicyDeletionBlockedReason } from "../privacy/policy-history.js";
-import { getSourceScopes } from "./scope-descriptors.js";
-import { sourceScopeReadiness } from "./scope-editor-readiness.js";
+import { filterFieldsFor } from "./filter-fields.js";
 
 import { oauthClientAuthenticates } from "./store-clients.js";
 import { appendAudit, getActiveCredential, hashSecret } from "./store-helpers.js";
@@ -375,8 +374,7 @@ export function listAccessOverview(
       ...(includeFilters
         ? {
             sourceType: source.type,
-            scopes: getSourceScopes(db, source.type) ?? undefined,
-            scopeReadiness: sourceScopeReadiness(db, source.id),
+            filterable: sourceTypeIsFilterable(db, source.type),
           }
         : {}),
     }));
@@ -507,4 +505,13 @@ function credentialFromRow(row: CredentialRow): PrincipalCredential {
     expiresAt: row.expires_at,
     revokedAt: row.revoked_at,
   };
+}
+
+/** Whether a source type declares a field, or a person filter, this gateway can apply. */
+function sourceTypeIsFilterable(db: Db, sourceType: string): boolean {
+  const fields = filterFieldsFor(db, sourceType);
+  return (
+    fields.state === "declared" &&
+    (fields.fields.some((field) => field.state === "ready") || fields.person?.state === "ready")
+  );
 }

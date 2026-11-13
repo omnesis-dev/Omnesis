@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { SOURCE_SCOPE_EDITOR_READS } from "../access/scope-editor-reads.js";
+import { SOURCE_FILTER_READS } from "../access/source-filter-editor.js";
 import { ANSWER_HISTORY_READS } from "../privacy/context-reads.js";
 import { STATUS_CACHE_READS } from "../http/services/status-cache-reads.js";
 import { ANALYTICS_REPLICA_READS } from "../http/services/analytics-replica-reads.js";
@@ -15,7 +15,7 @@ import { mergeReadPorts } from "./read-port.js";
  */
 export const IO_READS = mergeReadPorts(
   STATUS_CACHE_READS,
-  SOURCE_SCOPE_EDITOR_READS,
+  SOURCE_FILTER_READS,
   ANSWER_HISTORY_READS,
   KNOWLEDGE_ENGINE_READS,
   ANALYTICS_REPLICA_READS,

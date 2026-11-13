@@ -3,26 +3,40 @@
 
 import { KNOWLEDGE_READ_SOURCE_IDS } from "../agent/knowledge-read-policy.js";
 import { permittedSourceIds } from "./permitted-sources.js";
-import { sourceScopeInclusionSql, type ScopeSql } from "./scope-sql.js";
+import { documentAccessInclusionSql, type DocumentAccessGrant } from "./filter-decision.js";
+import type { FilterSql } from "./filter-sql.js";
 import type { CorpusAuthorization } from "./corpus-authorization.js";
 import type { Db } from "../data/types.js";
+
+/**
+ * What an external agent's authorization lets it read, in the form the
+ * filter decision takes: the accounts it shares and its filters. Sources the
+ * gateway writes itself are out of every filtered grant, since they can quote
+ * what a filter withholds.
+ */
+export function documentAccessGrant(
+  db: Db,
+  authorization: CorpusAuthorization,
+): DocumentAccessGrant {
+  return {
+    capabilityGranted: true,
+    permittedSourceIds: permittedSourceIds(db, authorization),
+    filters: authorization.scopePolicies,
+    internalSourceIds: KNOWLEDGE_READ_SOURCE_IDS,
+  };
+}
 
 /** A trusted SQL predicate on a document query using the outer alias `d`. */
 export function authorizedDocumentInclusionSql(
   db: Db,
   authorization: CorpusAuthorization,
-): ScopeSql {
-  const sources = permittedSourceIds(db, authorization);
-  let scope = sourceScopeInclusionSql(authorization.scopePolicies, "d.id", "d.source_id");
-  if (authorization.scopePolicies.length)
-    scope = {
-      sql: `(d.source_id NOT IN (SELECT value FROM json_each(?)) AND (${scope.sql}))`,
-      params: [JSON.stringify(KNOWLEDGE_READ_SOURCE_IDS), ...scope.params],
-    };
-  return sources === null
-    ? scope
-    : {
-        sql: `(d.source_id IN (SELECT value FROM json_each(?)) AND (${scope.sql}))`,
-        params: [JSON.stringify([...sources]), ...scope.params],
-      };
+  options: { fewRecords?: boolean } = {},
+): FilterSql {
+  return documentAccessInclusionSql(
+    db,
+    documentAccessGrant(db, authorization),
+    "d.id",
+    "d.source_id",
+    { row: "d", ...options },
+  );
 }

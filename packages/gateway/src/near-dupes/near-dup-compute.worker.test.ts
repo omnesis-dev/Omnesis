@@ -328,7 +328,6 @@ it("hands the writer the batch a direct run assembles, byte for byte", async () 
       ioGate: io,
       cpuGate: countingCpu,
       log: createLogger("test:near-dup-worker"),
-      sourceFiltersInUse: () => false,
       linkBackfillIntervalMs: 1_000_000,
       linkIdleDelayMs: 1_000_000,
       linkReconcileIntervalMs: 1_000_000,

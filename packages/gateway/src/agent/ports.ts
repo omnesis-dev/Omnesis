@@ -53,7 +53,8 @@ import {
   lookupDocumentIdsBySourceUrl,
 } from "../data/repositories/DocumentRepository.js";
 import { permittedSourceIds } from "../access/permitted-sources.js";
-import { sourceScopeInclusionSql } from "../access/scope-sql.js";
+import { documentAccessGrant } from "../access/document-inclusion.js";
+import { decideDocumentAccess } from "../access/filter-decision.js";
 import { matchDocumentIdPrefix } from "../data/like-prefix-seek.js";
 import {
   reconstructBoundDocumentRef,
@@ -507,19 +508,13 @@ export function createGatewayDocumentPort(
         if (options?.knowledgeReads === false && isKnowledgeReadDocument(db, documentId))
           return null;
         const permitted = authorization ? permittedSourceIds(db, authorization) : null;
-        if (authorization?.scopePolicies.length) {
-          const scopeFilter = sourceScopeInclusionSql(
-            authorization.scopePolicies,
-            "d.id",
-            "d.source_id",
-          );
-          if (
-            !db
-              .prepare(`SELECT 1 FROM documents d WHERE d.id = ? AND (${scopeFilter.sql})`)
-              .get(documentId, ...scopeFilter.params)
-          )
-            return null;
-        }
+        // A filtered grant reads one document only when the same decision
+        // the owner's "who can read this" page shows says it may.
+        if (
+          authorization?.scopePolicies.length &&
+          !decideDocumentAccess(db, documentAccessGrant(db, authorization), documentId).readable
+        )
+          return null;
         const rows =
           options?.maxStoredDocumentBytes === undefined && !permitted
             ? listDocumentsByIds(db, [documentId])
@@ -707,16 +702,15 @@ export function createGatewayDocumentByUrlPort(
       const rows =
         permitted || authorization?.scopePolicies.length
           ? db.transaction((candidateIds: readonly string[]) => {
-              const scopeFilter = sourceScopeInclusionSql(
-                authorization?.scopePolicies ?? [],
-                "d.id",
-                "d.source_id",
-              );
-              const sourceLookup = db.prepare<unknown[], { source_id: string }>(
-                `SELECT d.source_id FROM documents d WHERE d.id = ? AND (${scopeFilter.sql})`,
+              const grant = authorization?.scopePolicies.length
+                ? documentAccessGrant(db, authorization)
+                : null;
+              const sourceLookup = db.prepare<[string], { source_id: string }>(
+                "SELECT source_id FROM documents WHERE id = ?",
               );
               const allowedIds = candidateIds.filter((id) => {
-                const row = sourceLookup.get(id, ...scopeFilter.params);
+                if (grant) return decideDocumentAccess(db, grant, id).readable;
+                const row = sourceLookup.get(id);
                 return row ? permitted === null || permitted.has(row.source_id) : false;
               });
               // Authorization and materialization share one reader snapshot, and

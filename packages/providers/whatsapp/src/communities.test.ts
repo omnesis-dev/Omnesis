@@ -49,62 +49,6 @@ describe("WhatsApp communities — provider + fake integration", () => {
     return p;
   }
 
-  it("scope refresh fetches current upstream membership instead of trusting a cached roster", async () => {
-    const corpus: FakeCorpus = {
-      meJid: ME_JID,
-      chats: [
-        {
-          jid: "100@g.us",
-          name: "scope group",
-          isGroup: true,
-          participants: [ME_JID],
-          messages: [],
-        },
-      ],
-    };
-    const fake = new FakeWhatsAppServer(corpus);
-    const p = await connect(corpus, fake);
-    p.getStore().updateGroupRoster("100@g.us", [CHAT]);
-    const fresh = await p.refreshScopeGroupRosters(["100@g.us"]);
-    expect([...fresh]).toEqual(["100@g.us"]);
-    expect(p.getStore().getChat("100@g.us")?.participants).toEqual([ME_JID]);
-  });
-
-  it("scope refresh gives no witness for malformed or stale-generation upstream replies", async () => {
-    const fake = new FakeWhatsAppServer({ meJid: ME_JID, chats: [] });
-    const base = fake.factory;
-    let resolve: (value: unknown) => void = () => {};
-    let malformed = true;
-    const p = new WhatsAppProvider(ACCOUNT, dir, {
-      createSocket: async (authDir) => {
-        const result = await base.createSocket(authDir);
-        result.sock.groupMetadata = async () =>
-          malformed
-            ? { subject: "scope group" }
-            : new Promise((done) => {
-                resolve = done;
-              });
-        return result;
-      },
-    });
-    await p.initialize();
-    const authentication = p.authenticate();
-    await vi.advanceTimersByTimeAsync(1);
-    fake.connect();
-    await authentication;
-    provider = p;
-    p.getStore().addChats([{ jid: "100@g.us", name: "scope group", isGroup: true }]);
-    p.getStore().updateGroupRoster("100@g.us", [CHAT]);
-    expect(await p.refreshScopeGroupRosters(["100@g.us"])).toEqual(new Set());
-    malformed = false;
-    const pending = p.refreshScopeGroupRosters(["100@g.us"]);
-    await Promise.resolve();
-    await p.suspend();
-    resolve({ participants: [{ id: ME_JID }] });
-    expect(await pending).toEqual(new Set());
-    expect(p.getStore().getChat("100@g.us")?.participants).toEqual([CHAT]);
-  });
-
   it("tags communities from group metadata (linkedParent), even when the community API returns nothing", async () => {
     // Reproduces the live case: communityFetchAllParticipating() returns {},
     // but the groups' own metadata carries isCommunity / linkedParent, picked up

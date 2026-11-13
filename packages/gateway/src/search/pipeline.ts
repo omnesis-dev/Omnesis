@@ -24,11 +24,10 @@
  * restriction in their candidate SQL directly.
  */
 
-import type { ScopePolicy } from "@omnesis/types";
-import {
-  readScopeSourceGenerations,
-  type ScopeSourceGeneration,
-} from "../access/scope-generations.js";
+import { sourceTypeOf, type SourceFilter } from "@omnesis/types";
+import { filterFieldsFor } from "../access/filter-fields.js";
+import { compileSourceFilter } from "../access/filter-sql.js";
+import { filterReadableDocumentIds, type DocumentAccessGrant } from "../access/filter-decision.js";
 import {
   knowledgeDocumentsReadable,
   type KnowledgeReadabilityReads,
@@ -105,18 +104,18 @@ import type {
   SearchResponse,
 } from "./types.js";
 
-const SCOPE_SEARCH_UNAVAILABLE_MESSAGES = {
-  changed: "Source permissions changed while searching. Retry the search.",
-  catchingUp:
-    "Search is still catching up with a source that has a filter. Retry the search shortly.",
-  worker:
-    "Search with source filters needs an available search worker. Set gateway.searchWorker.concurrency above 0, or retry when search workers are ready.",
-} as const;
-
-export class ScopeSearchUnavailableError extends Error {
-  constructor(reason: keyof typeof SCOPE_SEARCH_UNAVAILABLE_MESSAGES = "worker") {
-    super(SCOPE_SEARCH_UNAVAILABLE_MESSAGES[reason]);
+/** A search under source filters runs only on a search worker; none could take it. */
+export class FilteredSearchUnavailableError extends Error {
+  constructor() {
+    super(
+      "Search with source filters needs an available search worker. Set gateway.searchWorker.concurrency above 0, or retry when search workers are ready.",
+    );
   }
+}
+
+/** Where the results of a filtered search are checked against the corpus. */
+export interface FilterRecheckReads {
+  filterReadableDocumentIds(grant: DocumentAccessGrant, documentIds: string[]): Promise<string[]>;
 }
 
 const log = createLogger("gateway:search");
@@ -186,24 +185,43 @@ export class SearchPipeline {
   private vectorUnavailableReason: string | null = null;
   private searchConfig?: SearchConfig;
   private gatewayDb?: Db;
-  private scopeAuthorizationReads?: {
-    scopeSourceGenerations(sourceIds: readonly string[]): Promise<ScopeSourceGeneration[]>;
-  };
-  setScopeAuthorizationReads(reads: {
-    scopeSourceGenerations(sourceIds: readonly string[]): Promise<ScopeSourceGeneration[]>;
-  }): void {
-    this.scopeAuthorizationReads = reads;
+  /** Where filtered results are checked; without it, on {@link gatewayDb} on this thread. */
+  private filterRecheckReads?: FilterRecheckReads;
+  setFilterRecheckReads(reads: FilterRecheckReads): void {
+    this.filterRecheckReads = reads;
   }
-  private async scopeGenerations(sourceIds: readonly string[]): Promise<ScopeSourceGeneration[]> {
+
+  /**
+   * The hits the corpus lets the grant read. The index offers candidates from
+   * its own copy of each record's filter details, which can be a moment
+   * behind; whatever the corpus refuses here is dropped before anything is
+   * ranked, counted or returned.
+   */
+  private async filterReadableHits<T extends { documentId: string }>(
+    grant: DocumentAccessGrant,
+    hits: readonly T[],
+  ): Promise<T[]> {
+    if (hits.length === 0) return [];
+    const ids = [...new Set(hits.map((hit) => hit.documentId))];
+    let readable: ReadonlySet<string>;
     try {
-      return this.scopeAuthorizationReads
-        ? await this.scopeAuthorizationReads.scopeSourceGenerations(sourceIds)
-        : this.gatewayDb
-          ? readScopeSourceGenerations(this.gatewayDb, sourceIds)
-          : [];
-    } catch {
-      return [];
+      if (this.filterRecheckReads) {
+        readable = new Set(await this.filterRecheckReads.filterReadableDocumentIds(grant, ids));
+      } else if (this.gatewayDb) {
+        readable = filterReadableDocumentIds(this.gatewayDb, grant, ids);
+      } else {
+        throw new Error("No corpus handle to check filtered results against.");
+      }
+    } catch (err) {
+      if (!this.filterRecheckReads || !this.gatewayDb) throw err;
+      log.warn(
+        `Filtered result check failed on the read worker, checking on main: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+      readable = filterReadableDocumentIds(this.gatewayDb, grant, ids);
     }
+    return hits.filter((hit) => readable.has(hit.documentId));
   }
   /** Where hits are fenced; without it, on {@link gatewayDb} on this thread. */
   private knowledgeReadability?: KnowledgeReadabilityReads;
@@ -466,7 +484,7 @@ export class SearchPipeline {
         // Worker crashed / exited / init-failed / call rejected. Never fail the
         // unfiltered search on a dead worker — retain the main-thread fallback.
         this.searchWorkerFallbacks.error += 1;
-        if (scoped) throw new ScopeSearchUnavailableError();
+        if (scoped) throw new FilteredSearchUnavailableError();
         log.warn(
           `search-worker candidate-gen failed, running on main: ${
             err instanceof Error ? err.message : String(err)
@@ -477,7 +495,7 @@ export class SearchPipeline {
     }
     // Saturated (or not-yet-ready / disposed) pool, or no pool at all.
     this.searchWorkerFallbacks[pool ? "saturated" : "unconfigured"] += 1;
-    if (scoped) throw new ScopeSearchUnavailableError();
+    if (scoped) throw new FilteredSearchUnavailableError();
     return runCandidateGen(this.mainResources(), req);
   }
 
@@ -539,7 +557,7 @@ export class SearchPipeline {
     query: SearchQuery,
     authorization?: {
       readonly sourceIds?: readonly string[];
-      readonly scopePolicies?: readonly ScopePolicy[];
+      readonly scopePolicies?: readonly SourceFilter[];
       /** Sources a filtered search must not read; honoured only beside `scopePolicies`. */
       readonly excludedSourceIds?: readonly string[];
       /** Server-derived all-sources grant; never supplied by a search body. */
@@ -553,7 +571,6 @@ export class SearchPipeline {
       /** Resolved in the provenance read's snapshot; see `AgentSearchProvenanceOptions`. */
       excludeExternalDocuments?: readonly ExternalDocumentKey[];
     },
-    scopeAttempt = 0,
   ): Promise<SearchResponse> {
     const scopePolicies = authorization?.scopePolicies ?? [];
     // Exclusion by name exists only on the filtered path. A search without
@@ -562,7 +579,23 @@ export class SearchPipeline {
     if (!scopePolicies.length && authorization?.excludedSourceIds?.length) {
       throw new Error("Source exclusion requires source filter policies.");
     }
-    const filteredSources = [...new Set(scopePolicies.map((policy) => policy.sourceId))];
+    let filterGrant: DocumentAccessGrant | null = null;
+    let compiledFilters: ReturnType<typeof compileSourceFilter>[] = [];
+    if (scopePolicies.length) {
+      const db = this.gatewayDb;
+      if (!db) throw new Error("A filtered search needs the gateway database.");
+      compiledFilters = scopePolicies.map((filter) =>
+        compileSourceFilter(filter, filterFieldsFor(db, sourceTypeOf(filter.sourceId))),
+      );
+      filterGrant = {
+        capabilityGranted: true,
+        permittedSourceIds: authorization?.sourceIds ? new Set(authorization.sourceIds) : null,
+        filters: scopePolicies,
+        ...(authorization?.excludedSourceIds
+          ? { internalSourceIds: authorization.excludedSourceIds }
+          : {}),
+      };
+    }
     const startMs = Date.now();
     // Capture the scheduler's inflight state at search start so we can
     // attribute a slow search to whatever writer / background work was
@@ -782,15 +815,11 @@ export class SearchPipeline {
           }
         : undefined;
 
-    const scopeGenerations = filteredSources.length
-      ? await this.scopeGenerations(filteredSources)
-      : [];
     const cg = await this.candidateGen({
-      ...(scopePolicies.length
+      ...(compiledFilters.length
         ? {
             scopeAuthorization: {
-              policies: scopePolicies,
-              generations: scopeGenerations,
+              filters: compiledFilters,
               excludedSourceIds: authorization?.excludedSourceIds,
             },
           }
@@ -827,20 +856,14 @@ export class SearchPipeline {
       commonTokenThreshold: ctx.commonTokenThreshold,
       ...(temporal ? { temporal } : {}),
     });
-    if (cg.staleScopeSourceIds?.length) {
-      // The generations were read before the index was, so one mismatch can be
-      // the index having moved ahead of them; a second is the index behind.
-      if (scopeAttempt < 1) return this.search(query, authorization, options, scopeAttempt + 1);
-      log.info(
-        `Search refused: scope facts for ${cg.staleScopeSourceIds.length} filtered source(s) are not current in the index`,
-      );
-      throw new ScopeSearchUnavailableError("catchingUp");
-    }
 
     // Merge the core's outputs back onto the shared context so the downstream
     // main-thread stages and the response mapping see them as if the stages had
     // run inline.
-    ctx.results = this.gatewayDb ? await this.readableHits(this.gatewayDb, cg.results) : cg.results;
+    const candidates = filterGrant
+      ? await this.filterReadableHits(filterGrant, cg.results)
+      : cg.results;
+    ctx.results = this.gatewayDb ? await this.readableHits(this.gatewayDb, candidates) : candidates;
     Object.assign(ctx.stageReports, cg.stageReports);
     if (ctx.stageReports.temporal) ctx.stageReports.temporal.eventMs = eventMs;
     if (cg.timing.bm25Ms !== undefined) ctx.timing.bm25Ms = cg.timing.bm25Ms;
@@ -939,26 +962,6 @@ export class SearchPipeline {
       await finalizeVisibleResults();
     }
 
-    if (filteredSources.length) {
-      const current = await this.scopeGenerations(filteredSources);
-      const changed = new Set(
-        filteredSources.filter((sourceId) => {
-          const before = scopeGenerations.find((entry) => entry.sourceId === sourceId);
-          const after = current.find((entry) => entry.sourceId === sourceId);
-          return (
-            !before ||
-            !after ||
-            before.generation < 0 ||
-            before.epoch !== after.epoch ||
-            before.generation !== after.generation
-          );
-        }),
-      );
-      if (changed.size) {
-        if (scopeAttempt < 1) return this.search(query, authorization, options, scopeAttempt + 1);
-        throw new ScopeSearchUnavailableError("changed");
-      }
-    }
     const facets = buildFacets(ctx.results);
     ctx.timing.totalMs = Date.now() - startMs;
 

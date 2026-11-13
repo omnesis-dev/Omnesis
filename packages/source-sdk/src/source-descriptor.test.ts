@@ -4,7 +4,6 @@
 import { describe, expect, it } from "vitest";
 import { SourceType, ProviderType } from "@omnesis/types";
 import { isPushOrAnalyticsOnly, serializeDescriptor } from "./source-descriptor.js";
-import type { SourceScopes } from "@omnesis/types";
 import type { SourceDescriptor } from "./source-descriptor.js";
 import type { AnalyticsTableSchema, DocumentEventProfile } from "./structured-source.js";
 
@@ -64,39 +63,6 @@ function descriptor(overrides: Partial<SourceDescriptor> = {}): SourceDescriptor
 }
 
 describe("serializeDescriptor", () => {
-  it("preserves scope item declarations, including reserved V2 capabilities, over JSON", () => {
-    const scopes: SourceScopes = {
-      items: [
-        {
-          kind: "conversation",
-          noun: { one: "conversation", many: "conversations" },
-          picker: "search",
-          link: "fixed",
-          liveSearch: true,
-          keep: "before-cache",
-        },
-        { kind: "participant", identifiers: ["phone", "email"], link: "changes" },
-        {
-          kind: "folder",
-          noun: { one: "folder", many: "folders" },
-          picker: "tree",
-          link: "hierarchy",
-        },
-      ],
-    };
-    scopes.legacyProjection = {
-      conversationIdPath: ["extra", "conversationId"],
-      participants: { roles: ["participant"], membership: "conversation" },
-    };
-    const wire = JSON.parse(JSON.stringify(serializeDescriptor(descriptor({ scopes }))));
-    expect(wire.scopes).toEqual(scopes);
-  });
-
-  it("leaves filtering unsupported when a source declares no scope items", () => {
-    const wire = JSON.parse(JSON.stringify(serializeDescriptor(descriptor())));
-    expect(wire).not.toHaveProperty("scopes");
-  });
-
   it("carries the document-event profile onto the wire shape unchanged", () => {
     const serialized = serializeDescriptor(descriptor({ documentEventProfile }));
     expect(serialized.documentEventProfile).toEqual(documentEventProfile);

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import type { ScopePolicy, SourceScopes, SourceScopeKindReadiness } from "@omnesis/types";
+import type { SourceFilter } from "@omnesis/types";
 
 export const MCP_ACCESS_SCOPE = "omnesis:access";
 
@@ -14,9 +14,9 @@ export type PrincipalCredentialKind = "interactive";
 export type PrincipalCredentialStatus = "pending" | "active";
 
 export interface AccessGrantCapability {
-  /** Scope-policy revision; absent on legacy whole-source capabilities. */
+  /** Source-filter revision; absent on whole-source capabilities. */
   filterRevision?: number;
-  scopePolicies?: ScopePolicy[];
+  scopePolicies?: SourceFilter[];
   capability: AccessCapability;
   sourceMode: AccessSourceMode;
   sourceIds: string[];
@@ -29,7 +29,7 @@ export interface AccessGrantCapability {
 
 export type AccessGrantRuleInput = {
   filterRevision?: number;
-  scopePolicies?: ScopePolicy[];
+  scopePolicies?: SourceFilter[];
 } & (
   | {
       capability: "direct" | "notes";
@@ -497,8 +497,8 @@ export interface AccessOverview {
     icon: string | null;
     available: boolean;
     sourceType?: string;
-    scopes?: SourceScopes;
-    scopeReadiness?: SourceScopeKindReadiness[];
+    /** The account's source declares a field a filter can match on. */
+    filterable?: boolean;
   }>;
   policyFamilies: Array<{
     id: string;

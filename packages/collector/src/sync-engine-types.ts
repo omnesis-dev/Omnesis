@@ -20,7 +20,7 @@ import type {
   ConnectionState,
   AccountDescriptor,
 } from "@omnesis/source-sdk";
-import type { ProviderId, SourceId, MultiDeviceMode, SourceScopes } from "@omnesis/types";
+import type { ProviderId, SourceId, MultiDeviceMode } from "@omnesis/types";
 import type { SourceStatus } from "./source-lifecycle.js";
 
 /**
@@ -175,11 +175,6 @@ export interface RegisteredSource {
    */
   selfIdentity?: SelfIdentitySpec;
   unitName?: string;
-  /**
-   * Scope declaration copied from the source's `defineSource`. Only a source
-   * that declares scopes negotiates scope facts with the gateway before a page.
-   */
-  scopes?: SourceScopes;
   instance: SourceInstance;
   /**
    * Push-based sources are driven by an external collector (e.g. the iOS app

@@ -91,14 +91,7 @@ import { createTranscriptionVocabularyState } from "../transcribe/vocabulary/reb
 import { installTranscriptionVocabulary } from "../transcribe/vocabulary/storage.js";
 import { createNoteAgentTables } from "../brain/note-agent/storage.js";
 import { createNoteHandoffTables } from "../brain/note-agent/handoffs.js";
-import { createScopeDescriptorsSchema } from "../access/scope-descriptors.js";
 import { createScopePolicyStore } from "../access/scope-policy-store.js";
-import {
-  createScopeStorageFloor,
-  reconcileLegacyScopeBoundaries,
-} from "../access/scope-storage-floor.js";
-import { backfillScopePolicySourceIndex } from "../access/scope-policy-source-index.js";
-import { createScopeFactsSchema } from "../access/scope-schema.js";
 import { createAnswerScopeSchema } from "../privacy/answer-scope-schema.js";
 import { migrateV152AccessGrants } from "./migration-152-access-grants.js";
 import { migrateV153AccessPolicyFamilies } from "./migration-153-access-policy-families.js";
@@ -5027,22 +5020,14 @@ export const MIGRATIONS: readonly Migration[] = [
     up: addInventoryFullRead,
   },
   {
-    // One step for everything a source filter keeps: saved policies and their
-    // source index, document facts with their publication and refresh state,
-    // source scope declarations, Answer source proofs, and the guards that
-    // keep a filtered capability narrow under a gateway that predates them.
-    // Every creator is idempotent and the two passes visit capability
-    // settings only, so the step costs nothing on an install with no filter.
+    // Saved source filters, with the triggers that keep a gateway built
+    // before them from widening a filtered level, and what a filtered Answer
+    // read, checked again before the answer is released. New tables only.
     version: 220,
-    description: "add source filters: policies, document facts and Answer source proofs",
+    description: "store saved source filters and what a filtered Answer read",
     up(db) {
       createScopePolicyStore(db);
-      createScopeFactsSchema(db);
-      createScopeDescriptorsSchema(db);
       createAnswerScopeSchema(db);
-      backfillScopePolicySourceIndex(db);
-      createScopeStorageFloor(db);
-      reconcileLegacyScopeBoundaries(db);
     },
   },
 ];

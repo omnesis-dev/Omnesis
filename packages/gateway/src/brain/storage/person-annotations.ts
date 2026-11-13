@@ -530,7 +530,7 @@ export function listLivePersonAnnotationsForPerson(
         limit?: number;
         before?: { sortAt: number; id: string };
         /** Trusted predicate on evidence-document alias d, applied before LIMIT. */
-        evidenceInclusion?: { sql: string; params: readonly string[] };
+        evidenceInclusion?: { sql: string; params: readonly (string | number)[] };
       } = 20,
 ): PersonAnnotationRow[] {
   const options = typeof limitOrOptions === "number" ? { limit: limitOrOptions } : limitOrOptions;

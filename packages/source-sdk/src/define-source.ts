@@ -55,7 +55,6 @@ import type {
   ProviderId,
   DocumentIngestionContext,
   SyncRemediation,
-  SourceScopes,
 } from "@omnesis/types";
 import type {
   SyncCursor,
@@ -181,17 +180,6 @@ export interface SyncRun {
 }
 
 export interface SyncOptions {
-  /** Fresh gateway negotiation for optional source-native scope metadata. */
-  scopeFactsSupported?: boolean;
-  /** Version 2 native direct-parent and catalogue transport is freshly supported. */
-  scopeHierarchySupported?: boolean;
-  /** Refresh witnesses and completion acknowledgements require source scope protocol 2. */
-  scopeRefreshEpochsSupported?: boolean;
-  /** Gateway-issued native metadata refresh epochs, independent of a provider's persisted cursor. */
-  scopeRefreshEpochs?: import("@omnesis/types").ScopeRefreshEpochs;
-  scopeRefreshRequestIds?: import("@omnesis/types").ScopeRefreshRequestIds;
-  /** Actual authenticated collector device, supplied by the host rather than the account. */
-  scopeRefreshActorId?: string;
   /**
    * Aborts when the source stops mid-sync or its wall-clock timeout expires.
    *
@@ -657,8 +645,6 @@ export interface SourceDefinition<
    * Shared clients load it by opaque `kind` and do not know the vendor SDK.
    */
   widgetRenderer?: WidgetRendererSpec;
-  /** Items external-agent filters can name within one source account. */
-  scopes?: SourceScopes;
   /** Unit label for UI (e.g. "emails", "tasks") */
   unitName?: string;
   /** See `SourceDescriptor.primaryCount`. */
@@ -992,8 +978,6 @@ export interface ProviderSourceEntry<
    * nothing to say to each other.
    */
   contract?: SourceContractDeclaration<TState>;
-  /** See `SourceDefinition.scopes`. Declared per source, never per provider. */
-  scopes?: SourceScopes;
   unitName?: string;
   /** See `SourceDescriptor.primaryCount`. */
   primaryCount?: "documents" | "analytics";

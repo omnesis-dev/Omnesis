@@ -18,7 +18,6 @@ import {
   extractDescriptors,
   providerPackageNames,
 } from "./source-descriptors.js";
-import type { SourceScopes } from "@omnesis/types";
 import type { SourceDescriptor } from "@omnesis/source-sdk";
 
 describe("providerPackageNames", () => {
@@ -1087,63 +1086,5 @@ describe("extractDescriptors — the per-machine contract a device advertises", 
       }),
     );
     expect(descriptor?.memberScopedParamNames).toEqual([]);
-  });
-});
-
-describe("extractDescriptors — per-source scope declarations", () => {
-  const scopes: SourceScopes = {
-    items: [
-      {
-        kind: "conversation",
-        noun: { one: "conversation", many: "conversations" },
-        picker: "search",
-        link: "fixed",
-      },
-      { kind: "participant", identifiers: ["phone"], link: "changes" },
-    ],
-  };
-  const create = async () => ({
-    sync: async () => ({ documents: [], deletedExternalIds: [], cursor: {}, hasMore: false }),
-  });
-
-  it("carries a single-source declaration through extraction and serialization", () => {
-    const definition = defineSource({
-      id: "scope-chat",
-      name: "Scope chat",
-      description: "Fictional conversation source",
-      authType: "none",
-      scopes,
-      create,
-    });
-    const [descriptor] = extractDescriptors(definition);
-    expect(descriptor.scopes).toEqual(scopes);
-    expect(JSON.parse(JSON.stringify(serializeDescriptor(descriptor))).scopes).toEqual(scopes);
-  });
-
-  it("keeps scope support local to the declaring source within a provider", () => {
-    const definition = defineProvider({
-      provider: { id: "scope-provider", name: "Scope provider" },
-      authType: "none",
-      sources: [
-        {
-          id: "scope-chat",
-          name: "Scope chat",
-          description: "Fictional conversation source",
-          scopes,
-          create,
-        },
-        {
-          id: "scope-documents",
-          name: "Scope documents",
-          description: "Fictional document source without filters",
-          create,
-        },
-      ],
-    });
-    const wire = extractDescriptors(definition).map((descriptor) =>
-      JSON.parse(JSON.stringify(serializeDescriptor(descriptor))),
-    );
-    expect(wire[0].scopes).toEqual(scopes);
-    expect(wire[1]).not.toHaveProperty("scopes");
   });
 });

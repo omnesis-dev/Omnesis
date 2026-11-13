@@ -2065,8 +2065,6 @@ export function deriveRecordCitationFields(
  * correspond to one table — see `TableWrite`.
  */
 export interface StructuredSyncResult<TCursor extends SyncCursor = SyncCursor> {
-  /** Optional source-native metadata updates checkpointed with the page. */
-  scopeUpdates?: import("@omnesis/types").SourceScopeUpdates;
   /**
    * The analytics tables this page writes: one, several, or none.
    *

@@ -68,36 +68,4 @@ export * from "./subscriptions.js";
 export * from "./oauth.js";
 export * from "./mobile-permission-health.js";
 export type * from "./source-notice.js";
-
-export type {
-  ScopeIdentifier,
-  ScopeRef,
-  ScopeAction,
-  ScopeRule,
-  ScopePolicy,
-  SourceScopeItem,
-  SourceScopes,
-  ScopeFact,
-  DocumentScopeFacts,
-  LegacyScopeProjection,
-  SourceScopeConversationUpdate,
-} from "./source-scopes.js";
-
-export type {
-  SourceScopeDocumentUpdate,
-  SourceScopeEntity,
-  SourceScopeUpdates,
-  SourceScopeHierarchyParents,
-  SourceScopeHierarchyUpdate,
-  ScopeRefreshEpochs,
-  ScopeRefreshRequestIds,
-  SourceScopeRefreshState,
-} from "./source-scope-updates.js";
-
-export type {
-  SourceScopeKindReadiness,
-  SourceScopeOption,
-  SourceScopeOptions,
-  SourceScopePreview,
-} from "./source-scope-editor.js";
 export * from "./source-filters.js";

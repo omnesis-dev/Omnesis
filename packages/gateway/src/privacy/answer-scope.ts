@@ -8,18 +8,14 @@ import {
   type CorpusAuthorizationIdentity,
   type CorpusAuthorization,
 } from "../access/corpus-authorization.js";
-import { authorizedDocumentInclusionSql } from "../access/document-inclusion.js";
+import { documentAccessGrant } from "../access/document-inclusion.js";
+import { filterReadableDocumentIds } from "../access/filter-decision.js";
 import { getGrantCapabilities } from "../access/store-rules.js";
 import { resolveDeviceAnswerScope } from "../access/device-answer-scope.js";
 import {
   corpusAuthorizationIsLive,
   corpusAuthorizationBindingIsLive,
 } from "../access/authorization-live.js";
-import {
-  changedScopeSources,
-  readScopeSourceGenerations,
-  type ScopeSourceGeneration,
-} from "../access/scope-generations.js";
 import { tokenAnswerOwnerId, tokenIdOfAnswerOwner } from "./token-answer-owner.js";
 import { AnswerStoreError, type PrivacyDb } from "./store-types.js";
 
@@ -130,17 +126,9 @@ export function beginAnswerTaskScope(db: PrivacyDb, taskId: string, serialized?:
   const authorization = parseCorpusAuthorization(serialized);
   if (authorization.capability !== "answer" || !authorization.scopePolicies.length)
     throw new Error("Invalid filtered Answer task authority.");
-  db.prepare(
-    "INSERT INTO answer_task_scope(task_id,authorization,fallback_generations) VALUES(?,?,?)",
-  ).run(
+  db.prepare("INSERT INTO answer_task_scope(task_id,authorization) VALUES(?,?)").run(
     taskId,
     serialized,
-    JSON.stringify(
-      readScopeSourceGenerations(
-        db,
-        authorization.scopePolicies.map((p) => p.sourceId),
-      ),
-    ),
   );
 }
 
@@ -174,15 +162,9 @@ export function assertScopeDocumentsCurrent(
   documentIds: readonly string[],
 ): void {
   if (!authorization.scopePolicies.length || !documentIds.length) return;
-  const inclusion = authorizedDocumentInclusionSql(db, authorization);
-  const count =
-    db
-      .prepare<unknown[], { count: number }>(
-        `SELECT COUNT(*) AS count FROM documents d
-    WHERE d.id IN (SELECT value FROM json_each(?)) AND (${inclusion.sql})`,
-      )
-      .get(JSON.stringify([...new Set(documentIds)]), ...inclusion.params)?.count ?? 0;
-  if (count !== new Set(documentIds).size) throw scopeChanged();
+  const unique = [...new Set(documentIds)];
+  const readable = filterReadableDocumentIds(db, documentAccessGrant(db, authorization), unique);
+  if (readable.size !== unique.length) throw scopeChanged();
 }
 
 export interface ScopeReleaseCapture {
@@ -190,33 +172,21 @@ export interface ScopeReleaseCapture {
   assertCurrent(): void;
 }
 
-/** A final synchronous snapshot is the release decision after asynchronous audit work settles. */
+/**
+ * A final synchronous snapshot is the release decision after asynchronous
+ * audit work settles: every document the run read must still be readable
+ * under the authorization's filters.
+ */
 export function createScopeReleaseCapture(
   db: PrivacyDb,
   authorization: CorpusAuthorization,
 ): ScopeReleaseCapture {
   const observer = createAnswerScopeReadObserver();
-  const expected = readScopeSourceGenerations(
-    db,
-    authorization.scopePolicies.map((p) => p.sourceId),
-  );
   return {
     observer,
     assertCurrent() {
       db.transaction(() => {
-        const reads = observer.snapshot();
-        assertScopeDocumentsCurrent(db, authorization, reads.documentIds);
-        if (
-          !reads.complete &&
-          changedScopeSources(
-            expected,
-            readScopeSourceGenerations(
-              db,
-              authorization.scopePolicies.map((p) => p.sourceId),
-            ),
-          ).length
-        )
-          throw scopeChanged();
+        assertScopeDocumentsCurrent(db, authorization, observer.snapshot().documentIds);
       })();
     },
   };
@@ -224,7 +194,7 @@ export function createScopeReleaseCapture(
 
 export function answerTaskScopeReads(db: PrivacyDb, taskId: string): AnswerScopeReadSet | null {
   const state = db
-    .prepare<[string], { authorization: string; fallback_generations: string; complete: number }>(
+    .prepare<[string], { authorization: string; complete: number }>(
       "SELECT * FROM answer_task_scope WHERE task_id=?",
     )
     .get(taskId);
@@ -240,19 +210,6 @@ export function answerTaskScopeReads(db: PrivacyDb, taskId: string): AnswerScope
     .all(taskId)
     .map((r) => r.document_id);
   assertScopeDocumentsCurrent(db, authorization, documentIds);
-  if (!state.complete) {
-    const expected = JSON.parse(state.fallback_generations) as ScopeSourceGeneration[];
-    if (
-      changedScopeSources(
-        expected,
-        readScopeSourceGenerations(
-          db,
-          authorization.scopePolicies.map((p) => p.sourceId),
-        ),
-      ).length
-    )
-      throw scopeChanged();
-  }
   return { documentIds, complete: state.complete === 1 };
 }
 

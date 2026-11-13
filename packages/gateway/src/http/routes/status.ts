@@ -21,7 +21,6 @@ import {
 } from "@omnesis/core";
 import { applyMergePatch, describeConfigSchema, type OmnesisConfig } from "@omnesis/config";
 import { resolveViewingTtlMs } from "../../agent/conversation-read-state-service.js";
-import { sourceFiltersInUse } from "../../access/source-filters-in-use.js";
 import { type LatestActivity } from "../../db.js";
 import {
   getIndexedDocumentCount,
@@ -218,10 +217,6 @@ export function mountStatusRoutes(app: RouteApp, deps: StatusRoutesDeps): void {
         ws: GATEWAY_COMPAT.protocols.ws,
         pairing: GATEWAY_COMPAT.protocols.pairing,
         watchPrivacyPolicy: 1,
-        // Advertised only while source filters are in use. A collector that
-        // does not see it sends no filter facts, so its pages are stored as
-        // they are on an install without filters.
-        ...(sourceFiltersInUse(db) ? { sourceScopes: GATEWAY_COMPAT.protocols.sourceScopes } : {}),
       },
     });
   });

@@ -171,9 +171,6 @@ interface CursorUpsertRequest {
   reconcileAuthority?: boolean;
   /** Whether this member may apply explicit tombstones for a shared replica. */
   deletionAuthority?: boolean;
-  /** Verified writer identity captured within the source write fence. */
-  scopeAuthorityId?: string | null;
-  requiredHostingAuthority?: boolean;
   /** Resolve and invalidate sibling cursors atomically after authoritative tombstones. */
   resetReplicaCursors?: true;
   /**
@@ -191,7 +188,6 @@ interface CursorUpsertRequest {
     /** Wire-shape documents; validated by the route before this service boundary. */
     documents?: unknown[];
     documentTemporalProjections?: UpsertWithCursorArgs["documentTemporalProjections"];
-    scopeUpdates?: UpsertWithCursorArgs["scopeUpdates"];
     deletedExternalIds?: string[];
     presentExternalIds?: string[];
     /** See `SyncResult.presentClaims`. Mutually exclusive with the above. */
@@ -395,7 +391,6 @@ export class DocumentService {
     streams?: Readonly<Record<string, string>>,
     replicaVersionPolicies?: Readonly<Record<string, "source-updated-at">>,
     assertSourceWireAuthority?: () => void,
-    scopeRefreshActorId?: string,
   ): Promise<IngestResult> {
     const ingest = () => {
       assertSourceWireAuthority?.();
@@ -406,7 +401,6 @@ export class DocumentService {
         cursorRows,
         streams,
         replicaVersionPolicies,
-        scopeRefreshActorId,
       );
     };
     if (!this.deps.sourceWriteEpochFence) return ingest();
@@ -423,7 +417,6 @@ export class DocumentService {
     cursorRows?: Readonly<Record<string, string>>,
     streams?: Readonly<Record<string, string>>,
     replicaVersionPolicies?: Readonly<Record<string, "source-updated-at">>,
-    scopeRefreshActorId?: string,
   ): Promise<IngestResult> {
     const { db, writeGate: w, events } = this.deps;
 
@@ -503,7 +496,6 @@ export class DocumentService {
       cursorRows,
       streams,
       replicaVersionPolicies,
-      scopeRefreshActorId,
     );
     if (writeResult.rejectedSourceIds.length > 0) {
       return { ingested: 0, rejectedSourceIds: writeResult.rejectedSourceIds };
@@ -993,13 +985,10 @@ export class DocumentService {
         sourceId: body.sourceId,
         documents,
         documentTemporalProjections: body.documentTemporalProjections,
-        scopeUpdates: body.scopeUpdates,
         deletedExternalIds: body.deletedExternalIds,
         resetSiblingCursorRows: args.resetReplicaCursors,
         replicaClaimDeviceId: args.replicaClaimDeviceId,
         deletionAuthority: args.deletionAuthority,
-        scopeAuthorityId: args.scopeAuthorityId ?? undefined,
-        requiredHostingAuthority: args.requiredHostingAuthority,
         restorerSnapshot,
         absencePolicy,
         absencePlan,
@@ -1663,9 +1652,6 @@ export class DocumentService {
   /** One row of a source's sync state: `""` (shared) or a member device's own. */
   getSyncState(sourceId: string, deviceId = "") {
     return this.sourceSyncState.getState(sourceId, deviceId);
-  }
-  getScopeRefreshState(sourceId: string) {
-    return this.sourceSyncState.getScopeRefreshState(sourceId);
   }
 
   getInitialSourceInventory(sourceId: string, cursorRow = "") {

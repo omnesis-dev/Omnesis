@@ -10,7 +10,6 @@ import type { RouteApp } from "../types.js";
 import type { AdminRoutesDeps } from "./internals.js";
 
 const SYNTHETIC_PERIODIC_TASKS = new Set([
-  "backfill.scopeFacts",
   "backfill.autoDetect",
   "backfill.mergeRulesEval",
   "backfill.interactionScoresRefresh",

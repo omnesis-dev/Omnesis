@@ -39,7 +39,7 @@ export function hasBinaryAttachments(entry: EmailEntry): boolean {
 /** Binary fixtures use the same injected byte extractor as the production Gmail source. */
 export async function mapEmailWithAssets(
   entry: EmailEntry,
-  context: { sourceId: SourceId; providerId: ProviderId; scopeFactsSupported?: boolean },
+  context: { sourceId: SourceId; providerId: ProviderId },
   options: GmailFixtureExtraction,
 ): Promise<DocumentInput | DocumentInput[]> {
   if (!hasBinaryAttachments(entry)) return mapEmail(entry, context);

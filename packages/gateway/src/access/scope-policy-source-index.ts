@@ -25,29 +25,6 @@ export function createScopePolicySourceIndex(db: Db): void {
  END;`);
 }
 
-/** Configuration-only upgrade; no document, fact or Answer history traversal. */
-export function backfillScopePolicySourceIndex(db: Db): void {
-  createScopePolicySourceIndex(db);
-  let cursor = 0;
-  for (;;) {
-    const rows = db
-      .prepare<[number], { rowid: number }>(
-        "SELECT rowid FROM access_scope_capabilities WHERE rowid>? ORDER BY rowid LIMIT 100",
-      )
-      .all(cursor);
-    if (!rows.length) break;
-    for (const row of rows) {
-      db.prepare(
-        `INSERT OR IGNORE INTO access_scope_policy_sources(owner_kind,owner_id,capability,source_id)
-    SELECT c.owner_kind,c.owner_id,c.capability,json_extract(CASE WHEN p.type='object' THEN p.value ELSE '{}' END,'$.sourceId')
-    FROM access_scope_capabilities c,json_each(CASE WHEN json_valid(c.policies) THEN c.policies ELSE '[]' END) p
-    WHERE c.rowid=? AND json_type(CASE WHEN p.type='object' THEN p.value ELSE '{}' END,'$.sourceId')='text'`,
-      ).run(row.rowid);
-      cursor = row.rowid;
-    }
-  }
-}
-
 /** Saved-source discovery is indexed and never parses policy JSON on the main reader. */
 export function hasSavedScopePolicySource(db: Db, sourceId: string): boolean {
   return !!db

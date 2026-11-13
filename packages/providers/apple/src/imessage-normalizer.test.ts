@@ -2,7 +2,6 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { describe, test, expect } from "vitest";
-import { projectDocumentScopeFacts } from "@omnesis/source-sdk";
 import { ProviderId, SourceId } from "@omnesis/types";
 import {
   imessageDateToDate,
@@ -15,7 +14,6 @@ import {
   normalizeDayChat,
 } from "./imessage-normalizer.js";
 import { appleIMessageDocumentProfile } from "./document-profiles.js";
-import definition from "./index.js";
 import type { ParsedIMessage, IMessageChatInfo } from "./imessage-types.js";
 
 function makeMsg(overrides: Partial<ParsedIMessage> = {}): ParsedIMessage {
@@ -876,36 +874,5 @@ describe("self-authored vocabulary evidence", () => {
     expect(enabled.metadata.selfAuthoredText).toEqual([
       { text: "Lanternshift", recordedAt: "2024-03-08T10:30:00.000Z", origin: "written" },
     ]);
-  });
-});
-
-describe("iMessage source scope facts", () => {
-  test("projects native handles for a silent member and stable conversation ID", () => {
-    const chat: IMessageChatInfo = {
-      chatIdentifier: "fictional-scope-group",
-      displayName: "Cedar planning",
-      isGroup: true,
-      service: "iMessage",
-      participantHandles: ["maya@example.org", "+12025550123"],
-    };
-    const doc = normalizeDayChat(
-      "2026-01-12",
-      [makeMsg({ sender: "maya@example.org" })],
-      chat,
-      ProviderId("apple"),
-      SourceId("apple-imessage:owner@example.org"),
-    );
-    const scopes = definition.sources.find((source) => source.id === "apple-imessage")!.scopes!;
-    const projected = projectDocumentScopeFacts(doc.metadata, scopes);
-    expect(projected.facts).toContainEqual({ kind: "conversation", id: "fictional-scope-group" });
-    expect(projected.facts).toContainEqual({
-      kind: "participant",
-      identifier: { type: "phone", value: "+12025550123" },
-    });
-    expect(projected.facts).toContainEqual({
-      kind: "participant",
-      identifier: { type: "email", value: "maya@example.org" },
-    });
-    expect(projected.complete).toEqual(["conversation"]);
   });
 });

@@ -40,8 +40,7 @@ describe("writer URL preparation boundary", () => {
 
     const [op, args] = call.mock.calls[0]!;
     expect(op).toBe("db.upsertDocuments");
-    // Canonicalizer specifications are consumed before crossing the writer boundary.
-    for (const argument of args.slice(1)) expect(argument).toBeUndefined();
+    expect(args).toHaveLength(5);
     expect(args[0]).toEqual([
       expect.objectContaining({
         preparedSourceUrl: "https://code.example.org/acme/widget/pull/42",

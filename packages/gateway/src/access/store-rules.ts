@@ -3,10 +3,20 @@
 
 import * as z from "zod/v4";
 import { DEFAULT_PRIVACY_POLICY_FAMILY_ID } from "@omnesis/types/privacy";
+import type { SourceFilter                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                } from "@omnesis/types";
+import { sourceTypeOf, type FilterRef                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                } from "@omnesis/types";
 import { isScopeQuarantined } from "./scope-quarantine.js";
 
-import { getSourceScopes } from "./scope-descriptors.js";
-import { canonicalScopePolicies, parseScopePolicyV1, scopePolicyV1Schema } from "./scope-policy.js";
+import { filterFieldsFor } from "./filter-fields.js";
+import { filterSourceName, readSourceFilterReadiness } from "./filter-readiness.js";
+import { FILTER_PEOPLE_FIELD } from "./filter-sql.js";
+import { filterFieldStateText } from "./filter-wording.js";
+import {
+  SOURCE_FILTER_MAX_ENTRIES,
+  canonicalSourceFilters,
+  parseSourceFilter,
+  sourceFilterSchema,
+} from "./scope-policy.js";
 import { readScopeState } from "./scope-policy-store.js";
 import { conservativeSources } from "./scope-legacy-boundary.js";
 import type { Db } from "../data/types.js";
@@ -16,7 +26,6 @@ import type {
   AccessGrantRule,
   AccessGrantRuleInput,
 } from "./types.js";
-import type { ScopePolicy } from "@omnesis/types";
 
 /**
  * Access rules: the shape grants and levels store, how supplied rules are
@@ -42,7 +51,7 @@ const notesSourcesSchema = z.strictObject({
 });
 const scopeFields = {
   filterRevision: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional(),
-  scopePolicies: z.array(scopePolicyV1Schema).max(256).optional(),
+  scopePolicies: z.array(sourceFilterSchema).max(SOURCE_FILTER_MAX_ENTRIES).optional(),
 };
 const grantRuleSchema = z.discriminatedUnion("capability", [
   z.strictObject({ capability: z.literal("direct"), sources: sourcesSchema, ...scopeFields }),
@@ -262,7 +271,7 @@ export function normalizeGrantRules(
         ? { filterRevision: rule.filterRevision }
         : {}),
       ...("scopePolicies" in rule && rule.scopePolicies !== undefined
-        ? { scopePolicies: canonicalScopePolicies(rule.scopePolicies) }
+        ? { scopePolicies: canonicalSourceFilters(rule.scopePolicies) }
         : {}),
       sourceMode:
         rule.sources.mode === "denylist" && sourceIds.length === 0
@@ -328,7 +337,7 @@ export function validateGrantRuleReferences(
   db: Db,
   rules: Readonly<StoredGrantRules>,
   retainedSourceIds: ReadonlySet<string> = new Set(),
-  retainedPolicies: readonly ScopePolicy[] = [],
+  retainedPolicies: readonly SourceFilter[] = [],
 ): void {
   const retained = new Set(retainedPolicies.map((policy) => JSON.stringify(policy)));
   for (const rule of rules) {
@@ -344,7 +353,7 @@ export function validateGrantRuleReferences(
       ) {
         throw new Error("A filter must belong to a granted source.");
       }
-      if (typeof policy.audience !== "object" || policy.audience.capability !== rule.capability) {
+      if (policy.audience.capability !== rule.capability) {
         throw new Error("Invalid filter capability.");
       }
       if (retained.has(JSON.stringify(policy))) continue;
@@ -352,29 +361,8 @@ export function validateGrantRuleReferences(
         .prepare<[string], { type: string }>("SELECT type FROM sources WHERE id = ?")
         .get(policy.sourceId);
       if (!source) throw new Error("Invalid filter source.");
-      const scopes = getSourceScopes(db, source.type);
-      if (!scopes) throw new Error("Source filtering is not available for this source.");
-      parseScopePolicyV1(policy, scopes);
-      if (
-        !db
-          .prepare<[string], { ready: number }>(
-            "SELECT ready FROM scope_fact_backfill WHERE source_id = ? AND ready = 1",
-          )
-          .get(policy.sourceId)
-      )
-        throw new Error("Source filter facts are still being prepared.");
-      const kinds = new Set(policy.rules.flatMap((entry) => entry.match.map((ref) => ref.kind)));
-      for (const kind of kinds) {
-        if (kind !== "label" && kind !== "folder") continue;
-        if (
-          !db
-            .prepare<[string, string], { ready: number }>(
-              "SELECT ready FROM source_scope_kind_readiness WHERE source_id = ? AND kind = ? AND ready = 1",
-            )
-            .get(policy.sourceId, kind)
-        )
-          throw new Error("This filter needs a complete source metadata refresh.");
-      }
+      parseSourceFilter(policy, filterFieldsFor(db, source.type));
+      assertFilterEntriesReady(db, policy.sourceId, policy.rules[0].match, retainedPolicies);
     }
     if (rule.policyFamilyId) {
       const family = db
@@ -452,5 +440,41 @@ export function parseStringArray(json: string): string[] | null {
       : null;
   } catch {
     return null;
+  }
+}
+
+/**
+ * Refuse a new filter entry on a field the account cannot filter on yet: its
+ * records were not all read by a build that writes the field, a host must be
+ * updated, or the field's list has not arrived. An entry the owner already
+ * holds stays, whatever the field's state; records it cannot decide are
+ * hidden by the check itself.
+ */
+function assertFilterEntriesReady(
+  db: Db,
+  sourceId: string,
+  refs: readonly FilterRef[],
+  retainedPolicies: readonly SourceFilter[],
+): void {
+  const held = new Set(
+    retainedPolicies
+      .filter((policy) => policy.sourceId === sourceId)
+      .flatMap((policy) => policy.rules.flatMap((rule) => rule.match))
+      .map((ref) => JSON.stringify(ref)),
+  );
+  const fresh = refs.filter((ref) => !held.has(JSON.stringify(ref)));
+  if (!fresh.length) return;
+  const readiness = readSourceFilterReadiness(db, sourceId);
+  for (const ref of fresh) {
+    const path = ref.capability === "person" ? FILTER_PEOPLE_FIELD : ref.field;
+    const field = readiness?.fields.find((candidate) => candidate.field === path);
+    if (!field) throw new Error("This source does not support that filter.");
+    if (field.state.status === "ready") continue;
+    throw new Error(
+      filterFieldStateText(field.state, {
+        sourceName: filterSourceName(db, sourceId, sourceTypeOf(sourceId)),
+        noun: field.noun,
+      }),
+    );
   }
 }

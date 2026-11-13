@@ -6,8 +6,7 @@
   "main": "src/index.ts",
   "exports": {
     ".": "./src/index.ts",
-    "./testing": "./src/testing/fake-server.ts",
-    "./scope-contracts": "./src/scope-contracts.ts"
+    "./testing": "./src/testing/fake-server.ts"
   },
   "dependencies": {
     "@hapi/boom": "^9.1.3",

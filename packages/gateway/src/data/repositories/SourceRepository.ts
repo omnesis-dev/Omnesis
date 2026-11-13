@@ -11,7 +11,6 @@ import {
   hasPerDeviceCursor,
   type MultiDeviceMode,
 } from "@omnesis/types";
-import { requireScopeRefreshForHost } from "../../access/scope-refresh-requirements.js";
 import { sourceDeviceConfigOverrideCodec, sourcesConfigCodec } from "../json-columns.js";
 import { pruneSourceFamilyMeta } from "./SourceFamilyMetaRepository.js";
 import { setSourceAccount } from "./SourceAccountRepository.js";
@@ -664,7 +663,6 @@ export function addSourceMember(
          ON CONFLICT(source_id, device_id) DO UPDATE SET config_override = excluded.config_override`,
       ).run(sourceId, deviceId, addedAt, sourceDeviceConfigOverrideCodec.serialize(configOverride));
     }
-    requireScopeRefreshForHost(db, deviceId, sourceId);
     return true;
   })();
 }
