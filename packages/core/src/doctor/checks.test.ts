@@ -1544,6 +1544,49 @@ describe("evaluateDoctor — graceful degradation when endpoints are missing", (
 });
 
 describe("evaluateDoctor — local security posture", () => {
+  test("legacy Windows mode evidence cannot pass a native access-control check", () => {
+    const data = healthyData();
+    data.security = securityData({
+      diskEncryption: { platform: "win32", status: "unsupported", detail: "No disk probe" },
+      permissionEntries: [
+        {
+          path: "C:\\Example\\config",
+          relativePath: ".",
+          kind: "directory",
+          expectedMode: 0o700,
+          actualMode: 0o700,
+          ok: true,
+          fixed: true,
+        },
+      ],
+    });
+    const check = findCheck(evaluateDoctor(data).checks, "security.permissions");
+    expect(check?.status).toBe("fail");
+    expect(check?.message).toContain("were not verified");
+  });
+
+  test("Windows permission remedies name access controls rather than POSIX modes", () => {
+    const data = healthyData();
+    data.security = securityData({
+      permissionModel: "windows-acl",
+      diskEncryption: { platform: "win32", status: "unsupported", detail: "No disk probe" },
+      permissionEntries: [
+        {
+          path: "C:\\Example\\config",
+          relativePath: ".",
+          kind: "directory",
+          expectedMode: null,
+          actualMode: null,
+          ok: false,
+          fixed: false,
+        },
+      ],
+    });
+    const check = findCheck(evaluateDoctor(data).checks, "security.permissions");
+    expect(check?.status).toBe("fail");
+    expect(check?.hint).toContain("repair safe local access controls");
+    expect(check?.hint).not.toContain("local modes");
+  });
   test("Windows permissions need positive ACL evidence", () => {
     const data = healthyData();
     data.security = securityData({ permissionModel: "windows-acl", permissionEntries: [] });

@@ -4,6 +4,8 @@
 import { spawn } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { createRequire } from "node:module";
+import { pathToFileURL } from "node:url";
 import { join } from "node:path";
 import { Readable } from "node:stream";
 import { describe, expect, it } from "vitest";
@@ -229,16 +231,32 @@ child.once('spawn',()=>{fs.writeFileSync(process.argv[1],String(child.pid));chil
       import {runWindowsJob} from ${JSON.stringify(moduleUrl)};
       await runWindowsJob(process.execPath,['-e',${JSON.stringify(treeProgram)},${JSON.stringify(marker)}],{timeoutMs:60000});
     `;
-    const parent = spawn(process.execPath, ["--input-type=module", "-e", script], {
-      stdio: "ignore",
-      windowsHide: true,
+    const loader = pathToFileURL(createRequire(import.meta.url).resolve("tsx")).href;
+    const parent = spawn(
+      process.execPath,
+      ["--import", loader, "--input-type=module", "-e", script],
+      {
+        stdio: ["ignore", "ignore", "pipe"],
+        windowsHide: true,
+      },
+    );
+    let stderr = "";
+    parent.stderr!.on("data", (bytes: Buffer) => {
+      stderr += bytes.toString("utf8");
     });
     const exited = new Promise<void>((resolve, reject) => {
-      parent.once("exit", () => resolve());
+      parent.once("close", () => resolve());
       parent.once("error", reject);
     });
     try {
-      expect(await eventually(() => existsSync(marker))).toBe(true);
+      expect(
+        await Promise.race([
+          eventually(() => existsSync(marker)),
+          exited.then(() => {
+            throw new Error("Fixture parent exited before starting its program: " + stderr);
+          }),
+        ]),
+      ).toBe(true);
       const pids: number[] = JSON.parse(readFileSync(marker, "utf8"));
       parent.kill("SIGKILL");
       await exited;

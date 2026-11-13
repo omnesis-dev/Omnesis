@@ -16,9 +16,16 @@ import { join } from "node:path";
 import { DEFAULT_CONFIG_DIR } from "./utils.js";
 import {
   readSecretTextFileSync,
+  decodeSecretTextFileValueSync,
   writeSecretTextFileSync,
   type SecretFileOptions,
 } from "./secret-file.js";
+import { namedSecretEntryPaths } from "./secret-store-paths.js";
+import {
+  deleteSecretEntrySync,
+  readSecretEntryTextSync,
+  retireLegacySecretEntrySync,
+} from "./secret-store-entry.js";
 
 export const CONFIG_SECRET_REF_PREFIX = "config-secret:";
 
@@ -36,25 +43,32 @@ export function parseConfigSecretRef(ref: string): string | null {
 }
 
 export function configSecretPath(refOrName: string, configDir?: string): string {
+  return configSecretEntryPaths(refOrName, configDir).path;
+}
+
+function configSecretEntryPaths(refOrName: string, configDir?: string) {
   const name = refOrName.startsWith(CONFIG_SECRET_REF_PREFIX)
     ? parseConfigSecretRef(refOrName)
     : refOrName;
   if (!name) throw new Error(`Invalid Omnesis config secret reference: ${refOrName}`);
   assertConfigSecretName(name);
-  return join(
-    configDir ?? DEFAULT_CONFIG_DIR,
-    "config-secrets",
-    `${Buffer.from(name, "utf8").toString("base64url")}.secret`,
+  return namedSecretEntryPaths(
+    join(configDir ?? DEFAULT_CONFIG_DIR, "config-secrets"),
+    name,
+    ".secret",
   );
 }
 
 export function readConfigSecretRefSync(ref: string, opts: SecretFileOptions = {}): string | null {
   const name = parseConfigSecretRef(ref);
   if (!name) return null;
-  return readSecretTextFileSync(configSecretPath(name, opts.configDir), {
-    ...opts,
-    scope: configSecretScope(name),
-  });
+  const paths = configSecretEntryPaths(name, opts.configDir);
+  const scopedOptions = { ...opts, scope: configSecretScope(name) };
+  if (process.platform === "win32") {
+    const raw = readSecretEntryTextSync(paths);
+    return raw === null ? null : decodeSecretTextFileValueSync(paths.path, raw, scopedOptions);
+  }
+  return readSecretTextFileSync(paths.path, scopedOptions);
 }
 
 export function writeConfigSecretSync(
@@ -63,16 +77,20 @@ export function writeConfigSecretSync(
   opts: SecretFileOptions = {},
 ): string {
   assertConfigSecretName(name);
-  writeSecretTextFileSync(configSecretPath(name, opts.configDir), value, {
-    ...opts,
-    scope: configSecretScope(name),
-  });
+  const paths = configSecretEntryPaths(name, opts.configDir);
+  // Relocation must not let an encrypted legacy value become plaintext when
+  // the install root key is unavailable, even if its new filename is absent.
+  const prior = process.platform === "win32" ? readSecretEntryTextSync(paths) : undefined;
+  writeSecretTextFileSync(paths.path, value, { ...opts, scope: configSecretScope(name) }, prior);
+  retireLegacySecretEntrySync(paths);
   return makeConfigSecretRef(name);
 }
 
 export function clearConfigSecretRefSync(ref: string, configDir?: string): void {
   if (!parseConfigSecretRef(ref)) return;
-  rmSync(configSecretPath(ref, configDir), { force: true });
+  const paths = configSecretEntryPaths(ref, configDir);
+  if (process.platform === "win32") deleteSecretEntrySync(paths);
+  else rmSync(paths.path, { force: true });
 }
 
 function configSecretScope(name: string): string {

@@ -17,6 +17,18 @@ import {
 
 let dir: string;
 let sleeper: ChildProcess | null;
+let ownedRacers: Map<ChildProcess, Promise<void>>;
+let stoppingRacers: boolean;
+function trackRacer(racer: ChildProcess): ChildProcess {
+  ownedRacers.set(racer, new Promise<void>((resolve) => racer.once("close", () => resolve())));
+  return racer;
+}
+async function stopRacers(racers: readonly ChildProcess[]): Promise<void> {
+  for (const racer of racers) {
+    if (racer.exitCode === null && racer.signalCode === null) racer.kill("SIGKILL");
+  }
+  await Promise.all(racers.map((racer) => ownedRacers.get(racer)));
+}
 
 /** A live process that is not this one, so liveness is tested for real. */
 async function spawnSleeper(): Promise<number> {
@@ -28,6 +40,8 @@ async function spawnSleeper(): Promise<number> {
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), "omnesis-gateway-lock-"));
   sleeper = null;
+  ownedRacers = new Map();
+  stoppingRacers = false;
 });
 
 describe.skipIf(process.platform === "win32")("macOS process identity across locales", () => {
@@ -307,6 +321,8 @@ describe.skipIf(process.platform !== "win32")("Windows gateway claim guard", () 
 });
 
 afterEach(async () => {
+  stoppingRacers = true;
+  await stopRacers([...ownedRacers.keys()]);
   vi.unstubAllEnvs();
   if (sleeper && sleeper.exitCode === null && sleeper.signalCode === null) {
     sleeper.kill("SIGKILL");
@@ -398,7 +414,7 @@ describe("acquireGatewayLock", () => {
         (error) => { process.stdout.write("held:" + error.name); process.exit(0); },
       );
     `;
-    for (let round = 0; round < 5; round++) {
+    for (let round = 0; round < 5 && !stoppingRacers; round++) {
       writeFileSync(
         join(dir, GATEWAY_LOCK_FILE),
         JSON.stringify({
@@ -409,10 +425,12 @@ describe("acquireGatewayLock", () => {
         }),
       );
       const racers = Array.from({ length: 6 }, () =>
-        spawn(process.execPath, ["--import", "tsx", "--input-type=module", "-e", script], {
-          cwd: join(import.meta.dirname, "../../.."),
-          stdio: ["ignore", "pipe", "ignore"],
-        }),
+        trackRacer(
+          spawn(process.execPath, ["--import", "tsx", "--input-type=module", "-e", script], {
+            cwd: join(import.meta.dirname, "../../.."),
+            stdio: ["ignore", "pipe", "ignore"],
+          }),
+        ),
       );
       const outcomes = await Promise.all(
         racers.map(
@@ -433,18 +451,7 @@ describe("acquireGatewayLock", () => {
         const winner = racers[outcomes.indexOf("won")]!;
         expect(readGatewayLockHolder(dir)?.pid).toBe(winner.pid);
       } finally {
-        for (const racer of racers) {
-          if (racer.exitCode === null && racer.signalCode === null) racer.kill("SIGKILL");
-        }
-        await Promise.all(
-          racers.map(
-            (racer) =>
-              new Promise<void>((resolve) => {
-                if (racer.exitCode !== null || racer.signalCode !== null) resolve();
-                else racer.once("exit", () => resolve());
-              }),
-          ),
-        );
+        await stopRacers(racers);
       }
     }
   });

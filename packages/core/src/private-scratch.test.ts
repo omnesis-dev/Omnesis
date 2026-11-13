@@ -12,18 +12,20 @@ import {
   writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createPrivateScratch } from "./private-scratch.js";
 import { openSqliteSnapshot } from "./sqlite-snapshot.js";
 
-const state = vi.hoisted(() => ({ base: "" }));
+const state = vi.hoisted(() => ({ base: "", originalTmpdir: "" }));
 vi.mock("node:os", async (original) => {
   const actual = await original<typeof import("node:os")>();
+  state.originalTmpdir = actual.tmpdir();
   return { ...actual, tmpdir: () => state.base || actual.tmpdir() };
 });
 
 function setup(): string {
-  state.base = mkdtempSync("/tmp/omnesis-scratch-test-");
+  state.base = mkdtempSync(join(state.originalTmpdir || tmpdir(), "omnesis-scratch-test-"));
   return join(state.base, `omnesis-owned-scratch-${process.getuid?.() ?? "user"}`);
 }
 afterEach(() => {
@@ -37,8 +39,10 @@ describe("private scratch", () => {
     const root = setup();
     const first = createPrivateScratch("snapshot");
     const second = createPrivateScratch("snapshot");
-    expect(statSync(root).mode & 0o777).toBe(0o700);
-    expect(statSync(first.path).mode & 0o777).toBe(0o700);
+    if (process.platform !== "win32") {
+      expect(statSync(root).mode & 0o777).toBe(0o700);
+      expect(statSync(first.path).mode & 0o777).toBe(0o700);
+    }
     first.cleanup();
     first.cleanup();
     expect(existsSync(second.path)).toBe(true);
@@ -54,7 +58,7 @@ describe("private scratch", () => {
     writeFileSync(join(abandoned, "plaintext"), "fixture");
     const outside = join(state.base, "outside");
     mkdirSync(outside);
-    symlinkSync(outside, join(root, "2147483647-link"));
+    symlinkSync(outside, join(root, "2147483647-link"), "junction");
     const realKill = process.kill.bind(process);
     vi.spyOn(process, "kill").mockImplementation((pid, signal) => {
       if (pid === 2147483647) throw Object.assign(new Error("gone"), { code: "ESRCH" });
@@ -80,7 +84,7 @@ describe("private scratch", () => {
 
   it("refuses a symlinked scratch root before writing plaintext", () => {
     const root = setup();
-    symlinkSync(state.base, root);
+    symlinkSync(state.base, root, "junction");
     expect(() => createPrivateScratch("snapshot")).toThrow("Unsafe private scratch");
   });
 
@@ -92,8 +96,9 @@ describe("private scratch", () => {
     for (const suffix of ["", "-wal", "-shm", "-journal"])
       writeFileSync(source + suffix, "fixture", { mode: 0o644 });
     const snapshot = openSqliteSnapshot(source);
-    for (const suffix of ["", "-wal", "-shm", "-journal"])
-      expect(statSync(snapshot.path + suffix).mode & 0o777).toBe(0o600);
+    if (process.platform !== "win32")
+      for (const suffix of ["", "-wal", "-shm", "-journal"])
+        expect(statSync(snapshot.path + suffix).mode & 0o777).toBe(0o600);
     snapshot.cleanup();
     expect(readdirSync(root)).toEqual([]);
   });

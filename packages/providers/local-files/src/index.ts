@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { existsSync, readdirSync, realpathSync, statSync } from "node:fs";
-import { dirname, isAbsolute, join, normalize, relative, resolve, sep } from "node:path";
+import { join, relative, resolve, sep } from "node:path";
 import picomatch from "picomatch";
 import {
   createLogger,
@@ -38,6 +38,8 @@ import {
 import { normalizeFile } from "./normalizer.js";
 import { readLocalFileBytes } from "./file-read.js";
 import { exactFileIdentity, fileIdentityKey } from "./identity.js";
+import { createUnsafePathMatcher } from "./unsafe-paths.js";
+import { containsLocalPath, sameLocalPath } from "./path-boundary.js";
 import { displayLocalFilePath as displayPath } from "./paths.js";
 import { localFilesIconDataUri } from "./icons.js";
 import { localFilesDocumentEventProfile } from "./document-event-profile.js";
@@ -366,8 +368,7 @@ function walkDir(
 function createContainmentChecker(roots: string[]): (path: string) => string | null {
   return (path: string): string | null => {
     for (const root of roots) {
-      const rel = relative(root, path);
-      if (rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel)) return root;
+      if (containsLocalPath(root, path)) return root;
     }
     return null;
   };
@@ -555,7 +556,9 @@ export default defineSource({
     const rootOf = (absolutePath: string): string | null => {
       let best: string | null = null;
       for (const root of roots) {
-        if (absolutePath !== root && !absolutePath.startsWith(root + sep)) continue;
+        const exact = absolutePath === root || absolutePath.startsWith(root + sep);
+        if (!exact && (process.platform !== "win32" || !containsLocalPath(root, absolutePath)))
+          continue;
         if (best === null || root.length > best.length) best = root;
       }
       return best;
@@ -593,7 +596,7 @@ export default defineSource({
         state.rootFailure = undefined;
         try {
           const canonicalRoot = realpathSync(root);
-          if (relative(root, canonicalRoot) !== "") {
+          if (!sameLocalPath(root, canonicalRoot, "directory")) {
             gaps.set(root, "Configured folder resolves to a different location");
             continue;
           }
@@ -695,20 +698,7 @@ export default defineSource({
         const placeholderSet = new Set(scan.placeholders);
         // A refused alias does not make unrelated paths uncertain. Preserve
         // only known records under the exact file or directory it replaced.
-        const pathKey = (path: string): string =>
-          process.platform === "win32" ? normalize(path).toLowerCase() : normalize(path);
-        const unsafePaths = new Set(scan.unsafePaths.map(pathKey));
-        const hasUnsafeAncestor = (path: string): boolean => {
-          let current = pathKey(path);
-          // Walk the known file's parents rather than comparing every prior
-          // file with every refused alias in a large tree.
-          while (true) {
-            if (unsafePaths.has(current)) return true;
-            const parent = dirname(current);
-            if (parent === current) return false;
-            current = parent;
-          }
-        };
+        const hasUnsafeAncestor = createUnsafePathMatcher(scan.unsafePaths);
         // Untracked placeholders stay unknown until the bytes are local.
 
         // A folder the scan could not read in full holds no information about

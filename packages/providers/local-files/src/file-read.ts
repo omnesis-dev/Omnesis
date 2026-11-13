@@ -14,6 +14,7 @@ import {
 import { win32 } from "node:path";
 import { isProtectedAbsolutePath } from "./policy.js";
 import { exactFileIdentity, isExactFileIdentity } from "./identity.js";
+import { containsLocalPath, sameLocalPath } from "./path-boundary.js";
 import type { LocalFileEntry } from "./types.js";
 
 interface ReadOptions {
@@ -43,15 +44,14 @@ function verifyWindowsPath(file: LocalFileEntry, options: ReadOptions): void {
   }
   const canonical = realpathSync(file.absolutePath);
   if (
-    win32.relative(file.absolutePath, canonical) !== "" ||
+    !sameLocalPath(file.absolutePath, canonical, "file", { platform: "win32" }) ||
     isProtectedAbsolutePath(canonical, { platform: "win32", env: options.env })
   ) {
     throw new Error("Local file path changed or is protected");
   }
-  const inside = options.roots.some((root) => {
-    const rel = win32.relative(root, canonical);
-    return rel !== ".." && !rel.startsWith("..\\") && !win32.isAbsolute(rel);
-  });
+  const inside = options.roots.some((root) =>
+    containsLocalPath(root, canonical, { platform: "win32" }),
+  );
   if (!inside) throw new Error("Local file is outside the declared folders");
   const observed = lstatSync(file.absolutePath);
   if (

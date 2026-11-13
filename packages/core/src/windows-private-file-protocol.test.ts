@@ -10,6 +10,8 @@ vi.mock("node:child_process", async (original) => ({
 }));
 import {
   createWindowsPrivateFileSync,
+  readWindowsPrivateFileContentsSync,
+  deleteWindowsPrivateFileExactSync,
   inspectWindowsPrivatePathSync,
   secureWindowsPrivatePathSync,
   writeWindowsPrivateFileAtomicSync,
@@ -47,7 +49,10 @@ describe("Windows private native protocol", () => {
     createWindowsPrivateFileSync(path, bytes);
     const run = frame();
     expect(run.metadata).toEqual({ action: "create", path, length: bytes.length, readOnly: false });
-    expect(run.bytes).toEqual(bytes);
+    expect(run.bytes.subarray(0, bytes.length)).toEqual(bytes);
+    expect(run.bytes.subarray(bytes.length).toString("ascii")).toBe(
+      "\0OMNESIS_PRIVATE_COMMIT_V1\0",
+    );
     expect(run.args).not.toContain(path);
     expect(
       run.command.length + 3 + run.args.reduce((size, arg) => size + arg.length + 3, 0),
@@ -84,6 +89,12 @@ describe("Windows private native protocol", () => {
     expect(() => secureWindowsPrivatePathSync("C:\\Example\\private", "directory")).toThrow(
       "trusted Windows owner",
     );
+    expect(frame().metadata).toEqual({
+      action: "inspect",
+      paths: [{ path: "C:\\Example\\private", kind: "directory" }],
+      repair: true,
+      protect: true,
+    });
     mocks.spawnSync.mockReturnValue({
       status: 0,
       signal: null,
@@ -93,6 +104,45 @@ describe("Windows private native protocol", () => {
     expect(() => inspectWindowsPrivatePathSync("C:\\Example\\private", "file")).toThrow(
       "Invalid private file inspection",
     );
+  });
+  it("frames exact legacy key and service names for whole reads and held-handle deletes", () => {
+    readWindowsPrivateFileContentsSync("C:\\example\\QSIg", {
+      exactBasename: "QSIg",
+      exactParentBasename: "example",
+    });
+    expect(frame().metadata).toEqual({
+      action: "read",
+      path: "C:\\example\\QSIg",
+      limit: -1,
+      exactBasename: "QSIg",
+      exactParentBasename: "example",
+    });
+    deleteWindowsPrivateFileExactSync("C:\\example\\QSIg", {
+      exactBasename: "QSIg",
+      exactParentBasename: "example",
+    });
+    expect(frame().metadata).toEqual({
+      action: "delete",
+      path: "C:\\example\\QSIg",
+      exactBasename: "QSIg",
+      exactParentBasename: "example",
+    });
+  });
+  it("exposes only fixed native stage and numeric error diagnostics", () => {
+    mocks.spawnSync.mockReturnValue({
+      status: 1,
+      signal: null,
+      stdout: Buffer.alloc(0),
+      stderr: Buffer.from("OMNESIS_JOB:0\nEPRIVATE:rename:87"),
+    });
+    expect(() =>
+      writeWindowsPrivateFileAtomicSync("C:\\example\\key", Buffer.from("invented secret")),
+    ).toThrow("rename; native error 87");
+    try {
+      writeWindowsPrivateFileAtomicSync("C:\\example\\key", Buffer.from("invented secret"));
+    } catch (error) {
+      expect(error).toMatchObject({ code: "EPRIVATE", stage: "rename", nativeCode: 87 });
+    }
   });
   it("returns generic errors without secret material or private path content", () => {
     mocks.spawnSync.mockReturnValue({

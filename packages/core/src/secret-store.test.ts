@@ -36,6 +36,8 @@ import {
   openRecoveryEnvelope,
 } from "./recovery-envelope.js";
 
+import { inspectWindowsPrivatePaths } from "./windows-private-file.js";
+
 const dirs: string[] = [];
 
 function tmp(prefix: string): string {
@@ -119,10 +121,26 @@ describe("file secret store", () => {
     await store.write("demo", "secret-value");
     expect(await store.read("demo")).toBe("secret-value");
 
-    const secretPath = join(configDir, "keyring", "dev.omnesis", "ZGVtbw.secret");
-    expect(statSync(join(configDir, "keyring")).mode & 0o777).toBe(0o700);
-    expect(statSync(join(configDir, "keyring", "dev.omnesis")).mode & 0o777).toBe(0o700);
-    expect(statSync(secretPath).mode & 0o777).toBe(0o600);
+    const secretDirectory = join(configDir, "keyring", "dev.omnesis");
+    const secretPath =
+      process.platform === "win32"
+        ? join(
+            secretDirectory,
+            readdirSync(secretDirectory).find((name) => name.endsWith(".secret"))!,
+          )
+        : join(secretDirectory, "ZGVtbw.secret");
+    if (process.platform === "win32") {
+      const results = await inspectWindowsPrivatePaths([
+        { path: join(configDir, "keyring"), kind: "directory" },
+        { path: join(configDir, "keyring", "dev.omnesis"), kind: "directory" },
+        { path: secretPath, kind: "file" },
+      ]);
+      expect(results.every((entry) => entry.private)).toBe(true);
+    } else {
+      expect(statSync(join(configDir, "keyring")).mode & 0o777).toBe(0o700);
+      expect(statSync(join(configDir, "keyring", "dev.omnesis")).mode & 0o777).toBe(0o700);
+      expect(statSync(secretPath).mode & 0o777).toBe(0o600);
+    }
 
     await store.delete("demo");
     expect(await store.read("demo")).toBeNull();

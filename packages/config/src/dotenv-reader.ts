@@ -36,6 +36,8 @@ export interface LoadDotEnvOptions {
   dir?: string;
   /** Environment object to mutate. Defaults to `process.env`. */
   env?: NodeJS.ProcessEnv;
+  /** Optional trusted reader; only ENOENT is treated as absent when supplied. */
+  readFile?: (path: string) => string;
 }
 
 export interface LoadDotEnvResult {
@@ -101,8 +103,9 @@ export function loadDotEnv(opts: LoadDotEnvOptions = {}): LoadDotEnvResult | nul
 
   let raw: string;
   try {
-    raw = readFileSync(path, "utf8");
-  } catch {
+    raw = opts.readFile ? opts.readFile(path) : readFileSync(path, "utf8");
+  } catch (error) {
+    if (opts.readFile && (error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
     return null; // no file → nothing to do
   }
 

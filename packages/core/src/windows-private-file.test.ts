@@ -8,6 +8,9 @@ import { describe, expect, it } from "vitest";
 import { execWindowsJob } from "./windows-job-exec.js";
 import {
   createWindowsPrivateFile,
+  readWindowsPrivateFileContents,
+  readWindowsPrivateFileContentsSync,
+  deleteWindowsPrivateFileExact,
   readWindowsPrivateFile,
   writeWindowsPrivateFileAtomic,
 } from "./windows-private-file.js";
@@ -29,6 +32,63 @@ describe.skipIf(process.platform !== "win32")("Windows private file handle and A
       await rm(dir, { recursive: true, force: true });
     }
   }, 60_000);
+
+  it("requires exact stored key and service spellings before reading or deleting legacy values", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "windows-private-exact-"));
+    const service = join(dir, "Exact-service"),
+      path = join(service, "QSIg");
+    try {
+      await mkdir(service);
+      await createWindowsPrivateFile(path, Buffer.from("invented first key"));
+      await expect(
+        readWindowsPrivateFileContents(join(service, "QsiG"), {
+          exactBasename: "QsiG",
+          exactParentBasename: "Exact-service",
+        }),
+      ).rejects.toMatchObject({ code: "ENOENT" });
+      await expect(
+        readWindowsPrivateFileContents(path, {
+          exactBasename: "QSIg",
+          exactParentBasename: "exact-service",
+        }),
+      ).rejects.toMatchObject({ code: "ENOENT" });
+      await expect(
+        deleteWindowsPrivateFileExact(join(service, "QsiG"), {
+          exactBasename: "QsiG",
+          exactParentBasename: "Exact-service",
+        }),
+      ).rejects.toMatchObject({ code: "ENOENT" });
+      expect(
+        readWindowsPrivateFileContentsSync(path, {
+          exactBasename: "QSIg",
+          exactParentBasename: "Exact-service",
+        }).toString("utf8"),
+      ).toBe("invented first key");
+      await deleteWindowsPrivateFileExact(path, {
+        exactBasename: "QSIg",
+        exactParentBasename: "Exact-service",
+      });
+      await expect(readFile(path)).rejects.toMatchObject({ code: "ENOENT" });
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  }, 60_000);
+
+  it.each(["a", "雪"])(
+    "atomically publishes a single-character destination %s",
+    async (name) => {
+      const dir = await mkdtemp(join(tmpdir(), "windows-private-short-")),
+        path = join(dir, name);
+      try {
+        await writeWindowsPrivateFileAtomic(path, Buffer.from("first"));
+        await writeWindowsPrivateFileAtomic(path, Buffer.from("replacement"));
+        expect((await readWindowsPrivateFile(path)).toString("utf8")).toBe("replacement");
+      } finally {
+        await rm(dir, { recursive: true, force: true });
+      }
+    },
+    60_000,
+  );
 
   it("creates a private ACL before writing and accepts literal special-character paths", async () => {
     const dir = await mkdtemp(join(tmpdir(), "windows-private-file-"));

@@ -71,3 +71,24 @@ inference on Windows. Its Linux sanity check also produced two finite
 1,024-dimensional vectors. The initial broad Windows sweep was stopped after
 the common atomic-write startup failure was established, to avoid spending
 runner time on the same failure across the remaining gateway suites.
+
+Subsequent focused Windows runs completed their unit files and reached 822
+passing tests, with 15 failures and 20 skips. Native private-file creation and
+read checks pass, but protected atomic replacement still fails at the rename
+operation. The audit is investigating that native API failure before accepting
+gateway persistence or encrypted-artifact publication. Lock contention and
+parent-crash fixtures also require a passing rerun after their fixes.
+
+An actual Windows ARM64 guest has exercised binary-safe process ownership and
+NTFS directories with case sensitivity enabled. The Local Files boundary
+refused a distinct sibling whose name differed only in case, before reading
+its bytes, while accepting an alias referring to the same directory. This is
+narrow evidence; the provider remains gated until its full Windows validation
+passes.
+
+The first complete Linux unit baseline finished with 2,573 passing files,
+five failures and eight skipped files. The failures include a stale platform
+expectation, a missing test binary, and tests that overlapped active source
+changes. Focused reruns of the corrected areas pass; this baseline does not
+replace a final frozen-source regression run. Windows portal and complete
+spawned-gateway validation remain in progress.

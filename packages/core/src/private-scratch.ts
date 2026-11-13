@@ -4,6 +4,7 @@
 import { lstatSync, mkdirSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { ensurePrivateDirSync } from "./security-files.js";
 
 export interface PrivateScratch {
   path: string;
@@ -29,6 +30,10 @@ export function createPrivateScratch(namespace: string): PrivateScratch {
     (process.platform !== "win32" && (info.mode & 0o777) !== 0o700)
   )
     throw new Error("Unsafe private scratch directory");
+
+  // Windows ignores POSIX modes. Secure the parent before any scratch child
+  // can inherit access controls or receive plaintext snapshots.
+  if (process.platform === "win32") ensurePrivateDirSync(root);
 
   for (const name of readdirSync(root)) {
     const match = /^([1-9][0-9]*)-[a-zA-Z0-9_-]+$/.exec(name);

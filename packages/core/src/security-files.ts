@@ -12,7 +12,11 @@
  */
 
 import { chmodSync, existsSync, mkdirSync, statSync } from "node:fs";
-import { secureWindowsPrivatePathSync } from "./windows-private-file.js";
+import { mkdir, chmod } from "node:fs/promises";
+import {
+  secureWindowsPrivatePathSync,
+  inspectWindowsPrivatePaths,
+} from "./windows-private-file.js";
 
 export const PRIVATE_DIR_MODE = 0o700;
 export const PRIVATE_FILE_MODE = 0o600;
@@ -79,4 +83,24 @@ export function ensurePrivateFileSync(path: string): void {
   if (!st.isFile()) return;
   if (process.platform === "win32") secureWindowsPrivatePathSync(path, "file");
   else chmodSync(path, PRIVATE_FILE_MODE);
+}
+
+/** Prepare related private directories without blocking async secret writes. */
+export async function ensurePrivateDirs(paths: readonly string[]): Promise<void> {
+  for (const path of paths) {
+    await mkdir(path, { recursive: true, mode: PRIVATE_DIR_MODE });
+    if (process.platform !== "win32") await chmod(path, PRIVATE_DIR_MODE);
+  }
+  if (process.platform === "win32") {
+    const results = await inspectWindowsPrivatePaths(
+      paths.map((path) => ({ path, kind: "directory" })),
+      { repair: true, protect: true },
+    );
+    const unsafe = results.findIndex((entry) => !entry.private);
+    if (unsafe >= 0)
+      throw new SecretPathUnreadableError(
+        paths[unsafe]!,
+        new Error("Windows directory access controls are not private"),
+      );
+  }
 }

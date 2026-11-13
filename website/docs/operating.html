@@ -368,7 +368,16 @@ Gateway 1.4.0  <span class="t-dim">·</span>  <span class="t-dim">devices: 3 cur
           show N/A. On macOS the permission belongs to the collector's executable, so a file your
           terminal can read may still be refused to the collector. The portal's checks only read;
           <code>omnesis doctor --fix-permissions</code>, run on the affected host, is what restores
-          owner-only file modes under its configuration directory.
+          private file access under its configuration directory.
+        </p>
+
+        <p>
+          On Windows, startup stops before loading <code>.env</code> when its access controls cannot
+          be verified. Run exactly <code>omnesis doctor --fix-permissions</code> on that host for an
+          early repair of the configuration directory and file access controls. This repair touches
+          metadata only and exits with status <code>2</code>. Review <code>.env</code>, then rerun
+          the command. Additional flags and remote or fleet selections are refused during this early
+          repair.
         </p>
 
         <h3 id="stalls">Event-loop stalls</h3>

@@ -13,7 +13,7 @@ import {
   utimesSync,
   writeFileSync,
 } from "node:fs";
-import { join } from "node:path";
+import { dirname, join, normalize } from "node:path";
 import { homedir, tmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { ProviderId, SourceId } from "@omnesis/types";
@@ -73,6 +73,23 @@ describe("Windows guarded local file reads", () => {
       "Allowed fictional note",
     );
     expect(close).toHaveBeenCalledOnce();
+  });
+
+  test("valid same-entry case variants still pass all guarded-read checks", () => {
+    const file = original();
+    const alternate = join(dirname(root), "dOCS");
+    const nativeLstat = fs.lstatSync;
+    vi.spyOn(fs, "lstatSync").mockImplementation(((path, opts) =>
+      nativeLstat(String(path) === alternate ? root : path, opts)) as typeof fs.lstatSync);
+    expect(
+      new TextDecoder().decode(
+        readLocalFileBytes(file, {
+          roots: [alternate],
+          platform: "win32",
+          env: {},
+        }),
+      ),
+    ).toBe("Allowed fictional note");
   });
 
   test.each([undefined, "", "1:0", "not-an-identity"])(
@@ -412,3 +429,66 @@ test("Windows exact identities distinguish rounded IDs and upgrade legacy cursor
     Object.defineProperty(process, "platform", platform);
   }
 });
+
+test.each([true, false])(
+  "Windows case-sensitive=%s aliases preserve only the matching previously indexed entry",
+  async (caseSensitive) => {
+    original();
+    const previousFolder = join(root, "Foo");
+    mkdirSync(previousFolder);
+    const historical = join(previousFolder, "historical.txt");
+    writeFileSync(historical, "Fictional case-sensitive folder note");
+    const platform = Object.getOwnPropertyDescriptor(process, "platform")!;
+    Object.defineProperty(process, "platform", { value: "win32" });
+    try {
+      const source = await definition.create!({
+        accountId: "host",
+        sourceId: SourceId("local-files:host"),
+        providerId: ProviderId("local-files:host"),
+        config: { roots: [root], exclude: [] },
+      });
+      const first = await source.sync(null);
+      const keptId = first.documents.find((doc) => doc.title === "note.txt")!.externalId;
+      const historicalId = first.documents.find(
+        (doc) => doc.title === "historical.txt",
+      )!.externalId;
+      const oldPath = Object.entries((first.cursor as LocalFilesSyncCursor).fileMap).find(
+        ([, state]) => state.stableId === historicalId,
+      )![0];
+      rmSync(previousFolder, { recursive: true });
+      const outside = join(directory, "different-folder");
+      mkdirSync(outside);
+      writeFileSync(join(outside, "private.txt"), "Fictional outside text");
+      const refused = join(root, "foo");
+      symlinkSync(outside, refused, "junction");
+      const nativeLstat = fs.lstatSync;
+      // Model either NTFS per-directory case setting on every test host.
+      // Both cases exercise real sync and real no-follow alias identities.
+      vi.spyOn(fs, "lstatSync").mockImplementation(((path, options) => {
+        if (normalize(String(path)) === normalize(dirname(oldPath))) {
+          if (caseSensitive)
+            throw Object.assign(new Error("Fictional absent prefix"), { code: "ENOENT" });
+          return nativeLstat(refused, options);
+        }
+        return nativeLstat(path, options);
+      }) as typeof fs.lstatSync);
+      const read = vi.spyOn(fs, "readFileSync");
+      let cursor = first.cursor;
+      for (let cycle = 0; cycle < 3; cycle++) {
+        const page = await source.sync(cursor);
+        expect(page.documents).toEqual([]);
+        expect(page.presentExternalIds?.slice().sort()).toEqual(
+          (caseSensitive ? [keptId] : [keptId, historicalId]).sort(),
+        );
+        expect((page.cursor as LocalFilesSyncCursor).fileMap[oldPath] !== undefined).toBe(
+          !caseSensitive,
+        );
+        expect(page.issues).toEqual([]);
+        cursor = page.cursor;
+      }
+      expect(read).not.toHaveBeenCalled();
+    } finally {
+      Object.defineProperty(process, "platform", platform);
+    }
+  },
+);

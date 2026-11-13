@@ -346,6 +346,12 @@
           <code>omnesis keyring decrypt-artifact &lt;export-dir&gt;</code> on a machine with the
           same root key before using it outside Omnesis.
         </p>
+        <p>
+          Decryption refuses to replace an output file unless <code>--force</code> is given,
+          including a file created while decryption is running. On Linux and macOS this safeguard
+          requires a destination filesystem that supports hard links. If it does not, choose a
+          supported destination or explicitly allow replacement with <code>--force</code>.
+        </p>
 
         <h2 id="updating">Updating</h2>
         <p>

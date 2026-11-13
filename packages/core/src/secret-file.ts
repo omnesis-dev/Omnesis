@@ -24,6 +24,7 @@ import {
 } from "./secret-store.js";
 import { secureMarkerPath, writeSecureMarker, writeSecureMarkerSync } from "./secure-marker.js";
 import { DEFAULT_CONFIG_DIR } from "./utils.js";
+import { readPrivateSecretText, readPrivateSecretTextSync } from "./secret-store-files.js";
 
 const ENVELOPE_MARKER = "omnesis.secret-file";
 const ENVELOPE_VERSION = 1;
@@ -142,8 +143,17 @@ export async function readSecretTextFile(
   path: string,
   opts: SecretFileOptions = {},
 ): Promise<string | null> {
-  if (!existsSync(path)) return null;
-  const raw = await readFile(path, "utf8");
+  const raw = await readSerializedSecretFile(path);
+  if (raw === null) return null;
+  return decodeSecretTextFileValue(path, raw, opts);
+}
+
+/** Decode a value already read through its filesystem security boundary, without reopening it. */
+export async function decodeSecretTextFileValue(
+  path: string,
+  raw: string,
+  opts: SecretFileOptions = {},
+): Promise<string> {
   const envelope = parseEnvelope(raw);
   if (!envelope) return raw;
 
@@ -153,8 +163,17 @@ export async function readSecretTextFile(
 }
 
 export function readSecretTextFileSync(path: string, opts: SecretFileOptions = {}): string | null {
-  if (!existsSync(path)) return null;
-  const raw = readFileSync(path, "utf8");
+  const raw = readSerializedSecretFileSync(path);
+  if (raw === null) return null;
+  return decodeSecretTextFileValueSync(path, raw, opts);
+}
+
+/** Decode a verified serialized value without replacing a pinned read with a second path lookup. */
+export function decodeSecretTextFileValueSync(
+  path: string,
+  raw: string,
+  opts: SecretFileOptions = {},
+): string {
   const envelope = parseEnvelope(raw);
   if (!envelope) return raw;
 
@@ -178,22 +197,26 @@ export function readSecretJsonFileSync<T>(path: string, opts: SecretFileOptions 
   return JSON.parse(raw) as T;
 }
 
+/** A verified prior value preserves the encryption requirement when relocating a logical secret. */
 export async function writeSecretTextFile(
   path: string,
   value: string,
   opts: SecretFileOptions = {},
+  previousSerializedValue?: string | null,
 ): Promise<SecretFileWriteResult> {
-  const serialized = await serializeSecretValue(path, value, opts);
+  const serialized = await serializeSecretValue(path, value, opts, previousSerializedValue);
   await atomicWriteFile(path, serialized.value, { mode: 0o600, ensureDir: true });
   return { encrypted: serialized.encrypted };
 }
 
+/** A verified prior value preserves the encryption requirement when relocating a logical secret. */
 export function writeSecretTextFileSync(
   path: string,
   value: string,
   opts: SecretFileOptions = {},
+  previousSerializedValue?: string | null,
 ): SecretFileWriteResult {
-  const serialized = serializeSecretValueSync(path, value, opts);
+  const serialized = serializeSecretValueSync(path, value, opts, previousSerializedValue);
   atomicWriteFileSync(path, serialized.value, { mode: 0o600, ensureDir: true });
   return { encrypted: serialized.encrypted };
 }
@@ -218,8 +241,8 @@ export async function migrateSecretTextFile(
   path: string,
   opts: SecretFileOptions = {},
 ): Promise<SecretFileMigrationResult> {
-  if (!existsSync(path)) return { present: false, changed: false, encrypted: false };
-  const raw = await readFile(path, "utf8");
+  const raw = await readSerializedSecretFile(path);
+  if (raw === null) return { present: false, changed: false, encrypted: false };
   if (parseEnvelope(raw)) return { present: true, changed: false, encrypted: true };
 
   const key = await installRootKey(opts);
@@ -237,10 +260,16 @@ async function serializeSecretValue(
   path: string,
   value: string,
   opts: SecretFileOptions,
+  previousSerializedValue?: string | null,
 ): Promise<{ value: string; encrypted: boolean }> {
   const key = await installRootKey(opts);
   if (!key) {
-    if (secretFileEncryptionRequired(opts.configDir) || (await existingFileIsEncrypted(path))) {
+    if (
+      secretFileEncryptionRequired(opts.configDir) ||
+      (typeof previousSerializedValue === "string" &&
+        isEncryptedSecretFile(previousSerializedValue)) ||
+      (await existingFileIsEncrypted(path))
+    ) {
       throw encryptedRewriteWithoutKeyError(path);
     }
     return { value, encrypted: false };
@@ -253,10 +282,16 @@ function serializeSecretValueSync(
   path: string,
   value: string,
   opts: SecretFileOptions,
+  previousSerializedValue?: string | null,
 ): { value: string; encrypted: boolean } {
   const key = installRootKeySync(opts);
   if (!key) {
-    if (secretFileEncryptionRequired(opts.configDir) || existingFileIsEncryptedSync(path)) {
+    if (
+      secretFileEncryptionRequired(opts.configDir) ||
+      (typeof previousSerializedValue === "string" &&
+        isEncryptedSecretFile(previousSerializedValue)) ||
+      existingFileIsEncryptedSync(path)
+    ) {
       throw encryptedRewriteWithoutKeyError(path);
     }
     return { value, encrypted: false };
@@ -331,6 +366,10 @@ function secretFileEncryptionMarkerPath(configDir?: string): string {
 }
 
 async function existingFileIsEncrypted(path: string): Promise<boolean> {
+  if (process.platform === "win32") {
+    const raw = await readPrivateSecretText(path);
+    return raw !== null && isEncryptedSecretFile(raw);
+  }
   if (!secretPathExists(path)) return false;
   try {
     return parseEnvelope(await readFile(path, "utf8")) !== null;
@@ -340,12 +379,28 @@ async function existingFileIsEncrypted(path: string): Promise<boolean> {
 }
 
 function existingFileIsEncryptedSync(path: string): boolean {
+  if (process.platform === "win32") {
+    const raw = readPrivateSecretTextSync(path);
+    return raw !== null && isEncryptedSecretFile(raw);
+  }
   if (!secretPathExists(path)) return false;
   try {
     return parseEnvelope(readFileSync(path, "utf8")) !== null;
   } catch {
     return false;
   }
+}
+
+async function readSerializedSecretFile(path: string): Promise<string | null> {
+  if (process.platform === "win32") return readPrivateSecretText(path);
+  if (!existsSync(path)) return null;
+  return readFile(path, "utf8");
+}
+
+function readSerializedSecretFileSync(path: string): string | null {
+  if (process.platform === "win32") return readPrivateSecretTextSync(path);
+  if (!existsSync(path)) return null;
+  return readFileSync(path, "utf8");
 }
 
 function encryptedRewriteWithoutKeyError(path: string): Error {

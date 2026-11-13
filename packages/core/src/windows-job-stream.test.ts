@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { EventEmitter } from "node:events";
-import { PassThrough } from "node:stream";
+import { PassThrough, Readable } from "node:stream";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({ spawn: vi.fn(), spawnSync: vi.fn() }));
@@ -14,6 +14,7 @@ import {
   spawnWindowsJob,
 } from "./windows-job.js";
 import { execWindowsJob } from "./windows-job-exec.js";
+import { writeWindowsPrivateFileAtomicStream } from "./windows-private-file.js";
 
 class Helper extends EventEmitter {
   pid = 12345;
@@ -211,5 +212,109 @@ describe("synchronous Windows job framing", () => {
       error: Object.assign(new Error("timeout"), { code: "ETIMEDOUT" }),
     });
     expect(runWindowsJobSync("fixture", [])).toMatchObject({ failure: "timeout", exitCode: null });
+  });
+});
+
+describe("private streaming commit gate", () => {
+  function privateBody(): { metadata: Record<string, unknown>; body: Buffer } {
+    const frame = Buffer.concat(helper.input),
+      outer = frame.readUInt32LE();
+    const input = frame.subarray(outer + 4),
+      size = input.readUInt32LE();
+    return {
+      metadata: JSON.parse(input.subarray(4, size + 4).toString("utf8")) as Record<string, unknown>,
+      body: input.subarray(size + 4),
+    };
+  }
+  it("does not send commit when authentication fails after every plaintext byte", async () => {
+    const failure = new Error("invented late authentication failure");
+    const source = Readable.from(
+      (async function* () {
+        yield Buffer.from("plaintext");
+        throw failure;
+      })(),
+    );
+    const pending = writeWindowsPrivateFileAtomicStream("C:\\example\\plain.bin", source, 9);
+    let settled = false;
+    const rejected = pending.catch((error: unknown) => {
+      settled = true;
+      return error;
+    });
+    helper.rawStderr.write("OMNESIS_JOB:0\n");
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(privateBody().body).toEqual(Buffer.from("plaintext"));
+    expect(settled).toBe(false);
+    await helper.close(1);
+    expect(await rejected).toBe(failure);
+    expect(mocks.spawn).toHaveBeenCalledOnce();
+  });
+  it.each([new Error("invented authentication failure"), undefined])(
+    "preserves source failure %s when receipted cleanup also fails",
+    async (failure) => {
+      let sent = false;
+      const source = new Readable({
+        read() {
+          if (!sent) {
+            sent = true;
+            this.push(Buffer.from("x"));
+          }
+        },
+      });
+      const pending = writeWindowsPrivateFileAtomicStream("C:\\example\\plain.bin", source, 1);
+      const observed = pending.catch((error: unknown) => error);
+      helper.rawStderr.write("OMNESIS_JOB:0\nOMNESIS_PRIVATE_CREATED:1:2:3\n");
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      source.emit("error", failure);
+      source.destroy();
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      const cleanup = new Helper();
+      cleanup.pid = 23456;
+      mocks.spawn.mockReturnValueOnce(cleanup);
+      await helper.close(1);
+      cleanup.rawStderr.write("OMNESIS_JOB:0\nEPRIVATE");
+      await cleanup.close(1);
+      const error = await observed;
+      expect(error).toBeInstanceOf(AggregateError);
+      const aggregate = error as AggregateError;
+      expect(aggregate.message).toBe("Private write failed and staging cleanup failed");
+      expect(aggregate.errors[0]).toBe(failure);
+      expect(aggregate.errors[1]).toMatchObject({ code: "EPRIVATE" });
+    },
+  );
+  it("observes source destruction errors when the helper fails before consuming input", async () => {
+    const source = new Readable({
+      read() {},
+      destroy(_error, callback) {
+        setImmediate(() => callback(new Error("invented stream destruction failure")));
+      },
+    });
+    const pending = writeWindowsPrivateFileAtomicStream("C:\\example\\plain.bin", source, 1);
+    const observed = pending.catch((error: unknown) => error);
+    await helper.close(1);
+    expect(await observed).toMatchObject({ code: "EPRIVATE" });
+    await new Promise<void>((resolve) => source.once("close", resolve));
+    expect(source.destroyed).toBe(true);
+  });
+  it("sends commit only after successful exact-length completion", async () => {
+    const pending = writeWindowsPrivateFileAtomicStream(
+      "C:\\example\\plain.bin",
+      Readable.from([Buffer.from([0, 255])]),
+      2,
+      { replaceExisting: false },
+    );
+    helper.rawStderr.write("OMNESIS_JOB:0\n");
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    const frame = privateBody();
+    expect(frame.metadata).toMatchObject({
+      action: "atomic",
+      length: 2,
+      receipt: true,
+      replaceExisting: false,
+    });
+    expect(frame.body).toEqual(
+      Buffer.concat([Buffer.from([0, 255]), Buffer.from("\0OMNESIS_PRIVATE_COMMIT_V1\0")]),
+    );
+    await helper.close(0);
+    await pending;
   });
 });

@@ -1663,7 +1663,17 @@ function checkDatabaseEncryption(d: DoctorData, security: SecurityData, ck: Chec
 function checkSecurityPermissions(d: DoctorData, security: SecurityData, ck: Checks): void {
   const bad = security.permissionEntries.filter((entry) => !entry.ok);
   const fixed = security.permissionEntries.filter((entry) => entry.fixed);
+  const windowsHost = security.diskEncryption.platform === "win32";
   const windowsAcl = security.permissionModel === "windows-acl";
+  if (windowsHost && !windowsAcl) {
+    ck.fail(
+      "Security",
+      "security.permissions",
+      "Windows access controls were not verified by this host",
+      "Update Omnesis on this host and rerun the doctor to inspect native access controls.",
+    );
+    return;
+  }
   if (
     windowsAcl &&
     security.permissionEntries.length === 0 &&
@@ -1710,7 +1720,7 @@ function checkSecurityPermissions(d: DoctorData, security: SecurityData, ck: Che
       `${bad.length} Omnesis config entr${bad.length === 1 ? "y is" : "ies are"} not owner-only: ${shown}`,
       security.fixPermissions
         ? "Some permission repairs failed. Inspect the listed paths and rerun with sufficient privileges."
-        : `Run \`${operatorCommand()} doctor --fix-permissions\`${hostSuffix(d)} to repair safe local modes.`,
+        : `Run \`${operatorCommand()} doctor --fix-permissions\`${hostSuffix(d)} to repair safe local ${windowsAcl ? "access controls" : "modes"}.`,
     );
   }
 

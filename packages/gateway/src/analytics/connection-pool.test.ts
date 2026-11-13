@@ -604,6 +604,7 @@ describe("AnalyticsConnectionPool shipped DuckDB extensions", () => {
       "linux_arm64",
       "osx_amd64",
       "osx_arm64",
+      "windows_amd64",
     ]);
     const pin = manifest.extensions.httpfs![host.platform];
     expect(pin, `no httpfs pin for ${host.platform}`).toBeDefined();
