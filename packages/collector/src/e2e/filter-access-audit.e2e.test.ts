@@ -11,31 +11,37 @@
  * read again: that thread stays at version 0, too old for the repository
  * field, and every other record carries its repository's id at version 2,
  * except the `sketches` records, whose repository GitHub gave no id for.
- * Five levels cover every reason a verdict can give:
+ * Five levels cover every reason a verdict can give, for Answer and for
+ * Direct:
  *
- *  - "Hide personal": Direct, hiding the owner maya-reeves on both accounts;
- *  - "Work only": Direct, sharing only the owner northstar-labs;
- *  - "Commits only": Direct, sharing the commits account alone;
- *  - "Answers only": Answer, every account, no filter;
+ *  - "Hide personal": Answer and Direct, each hiding the owner maya-reeves on
+ *    both accounts;
+ *  - "Work only": Direct only, sharing only the owner northstar-labs;
+ *  - "Commits only": Answer and Direct, each sharing the commits account alone;
+ *  - "Answers only": Answer only, sharing only the owner northstar-labs;
  *  - "Spare level": no agent; Direct hiding one repository, and Answer.
  *
  * Asserted: the audit lists every level, the one with no agent included,
  * with its agents and an Answer and a Direct verdict, and its two fixed
  * notes; each verdict has the reason the level's rules give; and for every
- * level an agent is connected to, `readable` is exactly what that agent's
- * Direct fetch and search return. The filter details route reports a
- * present, a too old and an unknown repository, and neither route answers
- * an external agent's credential.
+ * level an agent is connected to, `readable` is exactly what that agent
+ * reads: a Direct verdict against the agent's own fetch and search, an
+ * Answer verdict against what the Omnesis agent answering it fetched and
+ * found by search, its model a scripted one that asks for every record by id. An agent whose level does
+ * not grant a permission cannot use it at all. The filter details route
+ * reports a present, a too old and an unknown repository, and neither route
+ * answers an external agent's credential.
  */
 
 import "./synth-env.js";
+import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import {
+  answerReads,
   closeAgents,
   connectAgent,
   createLevel,
   declaredVersion,
-  directFetched,
   documentAudit,
   expectDirectReads,
   grantRule,
@@ -50,6 +56,7 @@ import {
   type RecordSet,
   type StoredRecord,
 } from "./filter-e2e-reads.js";
+import { startScopeScriptedAgent, type ScopeScriptedAgent } from "./scope-scripted-agent.js";
 import { SyntheticE2EHarness } from "./synth-harness.js";
 import type { AuthorizedMcpClient, PortalSession } from "./mcp-oauth-helper.js";
 import type { FilterRef, SourceFilter } from "@omnesis/types";
@@ -78,68 +85,102 @@ type Code =
   | "record-too-old"
   | "detail-unknown";
 
-/** What a level grants, as the suite set it up: enough to say what each verdict must be. */
-interface LevelPlan {
-  name: string;
-  answer: boolean;
-  direct: boolean;
-  /** Accounts Direct shares; `null` is every account. */
+/** What a level grants for one permission, as the suite set it up. */
+interface Grant {
+  /** Accounts the permission shares; `null` is every account. */
   shared: string[] | null;
-  /** The Direct filter on every shared account. */
+  /** The filter on each of `sourceIds`. */
   filter?: { action: "share" | "hide"; ids: string[]; sourceIds: string[] };
 }
 
+/** A level: enough to say what each of its verdicts must be. */
+interface LevelPlan {
+  name: string;
+  /** Whether an agent is connected to it. */
+  agent: boolean;
+  answer?: Grant;
+  direct?: Grant;
+}
+
+const HIDE_PERSONAL: Grant = {
+  shared: null,
+  filter: { action: "hide", ids: ["owner:7001"], sourceIds: [THREADS, COMMITS] },
+};
+const WORK_ONLY: Grant = {
+  shared: null,
+  filter: { action: "share", ids: ["owner:9001"], sourceIds: [THREADS, COMMITS] },
+};
+
 const PLANS: LevelPlan[] = [
+  { name: "Hide personal", agent: true, answer: HIDE_PERSONAL, direct: HIDE_PERSONAL },
+  { name: "Work only", agent: true, direct: WORK_ONLY },
   {
-    name: "Hide personal",
-    answer: false,
-    direct: true,
-    shared: null,
-    filter: { action: "hide", ids: ["owner:7001"], sourceIds: [THREADS, COMMITS] },
+    name: "Commits only",
+    agent: true,
+    answer: { shared: [COMMITS] },
+    direct: { shared: [COMMITS] },
   },
-  {
-    name: "Work only",
-    answer: false,
-    direct: true,
-    shared: null,
-    filter: { action: "share", ids: ["owner:9001"], sourceIds: [THREADS, COMMITS] },
-  },
-  { name: "Commits only", answer: false, direct: true, shared: [COMMITS] },
-  { name: "Answers only", answer: true, direct: false, shared: null },
+  { name: "Answers only", agent: true, answer: WORK_ONLY },
   {
     name: "Spare level",
-    answer: true,
-    direct: true,
-    shared: null,
-    filter: { action: "hide", ids: ["4101"], sourceIds: [THREADS] },
+    agent: false,
+    answer: { shared: null },
+    direct: {
+      shared: null,
+      filter: { action: "hide", ids: ["4101"], sourceIds: [THREADS] },
+    },
   },
 ];
 
-/** The Direct verdict a level's rules give a record. */
-function expectedDirect(plan: LevelPlan, record: StoredRecord): Code {
-  if (!plan.direct) return "permission-not-granted";
-  if (plan.shared && !plan.shared.includes(record.sourceId)) return "account-not-shared";
-  if (!plan.filter?.sourceIds.includes(record.sourceId)) return "readable";
+/** The verdict a level's grant for one permission gives a record. */
+function expectedCode(grant: Grant | undefined, record: StoredRecord): Code {
+  if (!grant) return "permission-not-granted";
+  if (grant.shared && !grant.shared.includes(record.sourceId)) return "account-not-shared";
+  if (!grant.filter?.sourceIds.includes(record.sourceId)) return "readable";
   if (record.version < 2) return "record-too-old";
   const repository = REPOSITORIES[record.key.split("-")[0]!];
   if (repository === undefined) throw new Error(`No repository for ${record.key}`);
   if (repository === null) return "detail-unknown";
-  const matched = plan.filter.ids.some(
+  const matched = grant.filter.ids.some(
     (id) => id === repository.repository || id === repository.owner,
   );
-  if (plan.filter.action === "hide") return matched ? "hidden-by-item" : "readable";
+  if (grant.filter.action === "hide") return matched ? "hidden-by-item" : "readable";
   return matched ? "readable" : "not-included";
 }
 
-const filterOf = (plan: LevelPlan, sourceId: string): SourceFilter =>
-  sourceFilter(
-    sourceId,
-    plan.filter!.action,
-    plan.filter!.ids.map((id): FilterRef => ({ capability: "tree", field: FIELD, id })),
+const filtersOf = (grant: Grant | undefined): SourceFilter[] =>
+  (grant?.filter?.sourceIds ?? []).map((sourceId) =>
+    sourceFilter(
+      sourceId,
+      grant!.filter!.action,
+      grant!.filter!.ids.map((id): FilterRef => ({ capability: "tree", field: FIELD, id })),
+    ),
   );
+
+const rulesOf = (plan: LevelPlan) =>
+  (["answer", "direct"] as const).flatMap((capability) => {
+    const grant = plan[capability];
+    if (!grant) return [];
+    return [
+      grantRule(
+        capability,
+        grant.shared ? { mode: "allowlist", sourceIds: grant.shared } : undefined,
+      ),
+    ];
+  });
+
+/** Whether an agent is refused a tool outright. */
+async function refused(call: () => Promise<{ isError?: unknown }>): Promise<boolean> {
+  try {
+    return (await call()).isError === true;
+  } catch {
+    return true;
+  }
+}
 
 describe("who can read a document, against what agents really read", () => {
   let harness: SyntheticE2EHarness;
+  let model: ScopeScriptedAgent;
   let portal: PortalSession;
   let records: RecordSet;
   let tooOld: StoredRecord;
@@ -154,9 +195,17 @@ describe("who can read a document, against what agents really read", () => {
   };
 
   beforeAll(async () => {
+    model = await startScopeScriptedAgent();
     harness = new SyntheticE2EHarness({
       gatewayMode: "synthetic-experimental",
       universe: "repository-filters",
+      extraInference: {
+        backends: { auditAnswers: { type: "http", url: model.url } },
+        assignments: {
+          agent: `auditAnswers/${model.modelId}`,
+          "privacy-reviewer": `auditAnswers/${model.modelId}`,
+        },
+      },
     });
     await harness.start();
     // Read first by a build before versions, then resynced in place by the
@@ -184,27 +233,14 @@ describe("who can read a document, against what agents really read", () => {
 
     portal = await ownerPortal(harness);
     for (const plan of PLANS) {
-      const rules = [
-        ...(plan.answer ? [grantRule("answer")] : []),
-        ...(plan.direct
-          ? [
-              grantRule(
-                "direct",
-                plan.shared ? { mode: "allowlist", sourceIds: plan.shared } : undefined,
-              ),
-            ]
-          : []),
-      ];
-      const filters = plan.filter
-        ? { direct: plan.filter.sourceIds.map((sourceId) => filterOf(plan, sourceId)) }
-        : {};
-      if (plan.name === "Spare level") {
-        const id = await createLevel(harness, portal, plan.name, rules);
+      const filters = { answer: filtersOf(plan.answer), direct: filtersOf(plan.direct) };
+      if (!plan.agent) {
+        const id = await createLevel(harness, portal, plan.name, rulesOf(plan));
         await saveLevelFilters(harness, portal, id, filters);
         levelIds.set(plan.name, id);
         continue;
       }
-      const agent = await connectAgent(harness, plan.name, rules);
+      const agent = await connectAgent(harness, plan.name, rulesOf(plan));
       await saveFilters(harness, agent, filters);
       agents.set(plan.name, agent);
     }
@@ -213,6 +249,7 @@ describe("who can read a document, against what agents really read", () => {
   afterAll(async () => {
     await closeAgents([...agents.values()]);
     await harness?.destroy();
+    await model?.close();
   }, 30_000);
 
   test("every level is listed with its agents, two verdicts and the page's two notes", async () => {
@@ -243,65 +280,94 @@ describe("who can read a document, against what agents really read", () => {
     }
   }, 120_000);
 
-  test("each verdict gives the reason the level's rules give, and Direct's is what its agent reads", async () => {
+  test("each verdict gives the reason the level's rules give, and is what its agent reads", async () => {
     const all = [...records.values()];
     const audits = new Map<string, DocumentAudit>();
     for (const candidate of all) audits.set(candidate.key, await audit(candidate));
-    const seen = new Set<Code>();
+    const seen = { answer: new Set<string>(), direct: new Set<string>() };
 
     for (const plan of PLANS) {
-      const verdicts = all.map((candidate) => {
+      const readable = { answer: [] as string[], direct: [] as string[] };
+      for (const candidate of all) {
         const level = audits.get(candidate.key)!.levels.find((entry) => entry.name === plan.name)!;
-        seen.add(level.direct.code as Code);
-        seen.add(level.answer.code as Code);
-        expect(level.direct.code, `${plan.name}: Direct on ${candidate.key}`).toBe(
-          expectedDirect(plan, candidate),
-        );
-        expect(level.direct.readable, `${plan.name}: Direct on ${candidate.key}`).toBe(
-          level.direct.code === "readable",
-        );
-        expect(level.answer, `${plan.name}: Answer on ${candidate.key}`).toEqual(
-          plan.answer
-            ? { readable: true, code: "readable", text: "Readable" }
-            : {
-                readable: false,
-                code: "permission-not-granted",
-                text: "Answer is not granted on this level",
-              },
-        );
-        return { key: candidate.key, verdict: level.direct };
-      });
+        for (const capability of ["answer", "direct"] as const) {
+          const verdict = level[capability];
+          const label = `${plan.name}: ${capability} on ${candidate.key}`;
+          seen[capability].add(verdict.code);
+          expect(verdict.code, label).toBe(expectedCode(plan[capability], candidate));
+          expect(verdict.readable, label).toBe(verdict.code === "readable");
+          if (verdict.readable) readable[capability].push(candidate.key);
+        }
+      }
 
       const agent = agents.get(plan.name);
       if (!agent) continue;
-      const readable = verdicts.filter((entry) => entry.verdict.readable).map((entry) => entry.key);
-      if (plan.direct) {
-        await expectDirectReads(harness, agent, records, readable, QUERY);
-        continue;
+      if (plan.direct) await expectDirectReads(harness, agent, records, readable.direct, QUERY);
+      else {
+        // A level without Direct gives its agent no Direct tool at all.
+        expect(readable.direct).toEqual([]);
+        expect(
+          await refused(() =>
+            agent.client.callTool({
+              name: "fetch_many",
+              arguments: { documents: [{ documentId: record("atlas-issue").id }] },
+            }),
+          ),
+          `${plan.name} fetched through Direct`,
+        ).toBe(true);
       }
-      // A level without Direct gives its agent no Direct tool at all.
-      expect(readable).toEqual([]);
-      let refused = false;
-      try {
-        await directFetched(agent, [record("atlas-issue")]);
-      } catch {
-        refused = true;
+      if (plan.answer) {
+        for (const sourceId of [THREADS, COMMITS]) {
+          const account: RecordSet = new Map(
+            [...records].filter(([, candidate]) => candidate.sourceId === sourceId),
+          );
+          const want = readable.answer.filter((key) => account.has(key)).sort();
+          const found = want.filter((key) =>
+            account.get(key)!.content.toLowerCase().includes(QUERY),
+          );
+          let reads = await answerReads(model, agent, account, QUERY);
+          // The agent's search reads the index, which may still be catching up.
+          for (let attempt = 0; attempt < 10; attempt++) {
+            if (JSON.stringify(reads.searched) === JSON.stringify(found)) break;
+            await harness.reindexMissing();
+            await harness.refreshSearchSnapshot();
+            reads = await answerReads(model, agent, account, QUERY);
+          }
+          expect(reads.fetched, `${plan.name}: Answer fetch of ${sourceId}`).toEqual(want);
+          expect(reads.searched, `${plan.name}: Answer search of ${sourceId}`).toEqual(found);
+        }
+      } else {
+        // A level without Answer gives its agent nothing to ask.
+        expect(readable.answer).toEqual([]);
+        expect(
+          await refused(() =>
+            agent.client.callTool({
+              name: "ask_omnesis",
+              arguments: {
+                question: "Read the invented records.",
+                requestId: randomUUID(),
+                workflowName: "Invented filter check",
+                workflowPurpose: "Read invented authorized evidence.",
+              },
+            }),
+          ),
+          `${plan.name} asked through Answer`,
+        ).toBe(true);
       }
-      expect(refused, `${plan.name} fetched through Direct`).toBe(true);
     }
-    // Every reason a verdict can give was met.
-    expect([...seen].sort()).toEqual(
-      [
-        "account-not-shared",
-        "detail-unknown",
-        "hidden-by-item",
-        "not-included",
-        "permission-not-granted",
-        "readable",
-        "record-too-old",
-      ].sort(),
-    );
-  }, 600_000);
+    // Every reason a verdict can give was met, for each permission.
+    const reasons = [
+      "account-not-shared",
+      "detail-unknown",
+      "hidden-by-item",
+      "not-included",
+      "permission-not-granted",
+      "readable",
+      "record-too-old",
+    ];
+    expect([...seen.answer].sort()).toEqual(reasons);
+    expect([...seen.direct].sort()).toEqual(reasons);
+  }, 900_000);
 
   test("each verdict says why, naming the entry that decided it", async () => {
     const level = async (key: string, name: string) =>
@@ -350,6 +416,28 @@ describe("who can read a document, against what agents really read", () => {
       readable: false,
       code: "permission-not-granted",
       text: "Direct is not granted on this level",
+    });
+    const answer = async (key: string, name: string) =>
+      (await audit(record(key))).levels.find((entry) => entry.name === name)!.answer;
+    expect(await answer("atlas-issue", "Answers only")).toEqual({
+      readable: true,
+      code: "readable",
+      text: "Readable: owner northstar-labs lets it through",
+    });
+    expect(await answer("garden-issue", "Hide personal")).toEqual({
+      readable: false,
+      code: "hidden-by-item",
+      text: "Hidden by: owner maya-reeves",
+    });
+    expect(await answer("atlas-issue", "Commits only")).toEqual({
+      readable: false,
+      code: "account-not-shared",
+      text: "This account is not shared",
+    });
+    expect(await answer("atlas-issue", "Work only")).toEqual({
+      readable: false,
+      code: "permission-not-granted",
+      text: "Answer is not granted on this level",
     });
   }, 120_000);
 

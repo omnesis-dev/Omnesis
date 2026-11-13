@@ -450,16 +450,18 @@ export async function expectDirectReads(
 }
 
 /**
- * The keys the Omnesis agent answering for `agent` could read: it searches
- * the accounts for `query` and fetches every record by id, and the scripted
- * model records what its tools returned.
+ * What the Omnesis agent answering for `agent` read of one account: it
+ * searches the account for `query` and fetches every record by id, and the
+ * scripted model records what its tools returned. `fetched` are the keys
+ * that came back as documents, `searched` the keys whose id the search
+ * returned. The model is never shown a withheld record.
  */
-export async function answerReadable(
+export async function answerReads(
   model: ScopeScriptedAgent,
   agent: AuthorizedMcpClient,
   records: RecordSet,
   query: string,
-): Promise<string[]> {
+): Promise<{ fetched: string[]; searched: string[] }> {
   const all = [...records.values()];
   const sourceIds = [...new Set(all.map((record) => record.sourceId))];
   if (sourceIds.length !== 1) throw new Error("An Answer probe reads one account");
@@ -492,13 +494,29 @@ export async function answerReadable(
   const fetched = documentIdsIn(probe.observed.fetched);
   const readable = all.filter((record) => fetched.has(record.id));
   const withheld = all.filter((record) => !fetched.has(record.id));
-  // The model was never shown a withheld record, whatever it asked for.
   const inputs = probe.observed.modelInputs.join("\n");
   for (const record of withheld)
     if (ownMarker(record, readable))
       expect(inputs, `model input ${record.key}`).not.toContain(record.marker);
-  expectNoTrace(JSON.stringify(probe.observed.search ?? null), withheld, readable);
-  return readable.map((record) => record.key).sort();
+  const search = JSON.stringify(probe.observed.search ?? null);
+  expectNoTrace(search, withheld, readable);
+  return {
+    fetched: readable.map((record) => record.key).sort(),
+    searched: all
+      .filter((record) => search.includes(record.id))
+      .map((record) => record.key)
+      .sort(),
+  };
+}
+
+/** The keys the Omnesis agent answering for `agent` could fetch; see {@link answerReads}. */
+export async function answerReadable(
+  model: ScopeScriptedAgent,
+  agent: AuthorizedMcpClient,
+  records: RecordSet,
+  query: string,
+): Promise<string[]> {
+  return (await answerReads(model, agent, records, query)).fetched;
 }
 
 /** Ids of the documents (not errors) in a fetch result. */
