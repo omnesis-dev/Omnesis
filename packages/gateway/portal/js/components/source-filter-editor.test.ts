@@ -5,7 +5,13 @@ import { h, render } from "preact";
 import { act } from "preact/test-utils";
 import { parseHTML } from "linkedom";
 import { beforeEach, afterEach, expect, test, vi } from "vitest";
-const api = vi.hoisted(() => ({ getSourceFilterOptions: vi.fn(), previewSourceFilter: vi.fn() }));
+const api = vi.hoisted(() => ({
+  getSourceFilterEditor: vi.fn(),
+  getSourceFilterOptions: vi.fn(),
+  previewSourceFilter: vi.fn(),
+  checkFilterIdentifier: vi.fn(),
+  resyncSource: vi.fn(),
+}));
 vi.mock("../api.js", () => api);
 // @ts-expect-error — portal modules are plain JavaScript.
 import { SourceFilterEditor } from "./source-filter-editor.js";
@@ -15,35 +21,85 @@ import { SourceFilterPicker } from "./source-filter-picker.js";
 import { LevelDecisionSummary } from "../views/access/level-review.js";
 // @ts-expect-error — portal modules are plain JavaScript.
 import { CapabilityPicker } from "./grant-builder.js";
+// @ts-expect-error — portal modules are plain JavaScript.
+import { clearScopeLabels } from "./source-filter-labels.js";
 
 const source = {
   id: "fictional:one",
   displayName: "Fictional account",
   sourceType: "fictional-chat",
-  scopes: {
-    items: [
-      {
-        kind: "conversation",
-        noun: { one: "room", many: "rooms" },
-        picker: "search",
-        link: "fixed",
-      },
-      { kind: "participant", identifiers: ["email", "phone"], link: "changes" },
-      { kind: "label", noun: { one: "label", many: "labels" }, picker: "search", link: "changes" },
-      { kind: "folder", noun: { one: "folder", many: "folders" }, picker: "tree", link: "changes" },
-    ],
-  },
-  scopeReadiness: ["conversation", "participant", "label", "folder"].map((kind) => ({
-    kind,
-    ready: true,
-  })),
+  available: true,
+  filterable: true,
 };
+const noun = (one: string, many: string) => ({ one, many });
+const zero = { status: "ready", tooOld: 0, unmatched: 0, tooOldText: null, unmatchedText: null };
+const ready = { status: "ready" };
+const roomField = {
+  field: "extra.roomId",
+  capability: "membership",
+  noun: noun("room", "rooms"),
+  picker: "search",
+  scope: "global",
+  state: ready,
+  counts: zero,
+};
+const peopleField = {
+  field: "$people",
+  capability: "person",
+  noun: noun("person", "people"),
+  picker: "search",
+  scope: "global",
+  identifiers: ["email", "phone"],
+  state: ready,
+  counts: zero,
+};
+const folderField = {
+  field: "extra.folder",
+  capability: "tree",
+  noun: noun("folder", "folders"),
+  picker: "tree",
+  scope: "global",
+  levels: [noun("folder", "folders")],
+  inside: noun("folder", "folders"),
+  insideText: "Includes the folders inside.",
+  state: ready,
+  counts: zero,
+};
+const editorWith = (fields: unknown[], extra: Record<string, unknown> = {}) => ({
+  sourceId: source.id,
+  sourceType: source.sourceType,
+  devices: [{ id: "dev-one", name: "Studio Mac" }],
+  showDeviceLevel: false,
+  fields,
+  ...extra,
+});
+const room = (id: string) => ({ capability: "membership", field: "extra.roomId", id });
 const policy = {
   sourceId: source.id,
   audience: { accessLevel: "saved-level", capability: "answer" },
-  rules: [{ action: "share", match: [{ kind: "conversation", id: "stable-room" }] }],
+  rules: [{ action: "share", match: [room("stable-room")] }],
   otherwise: "hide",
 };
+const readyPreview = (id: string, p: typeof policy, extra: Record<string, unknown> = {}) => ({
+  status: "ready",
+  sourceId: id,
+  total: 20,
+  visible: 12,
+  hidden: 8,
+  tooOld: 0,
+  unmatched: 3,
+  tooOldText: null,
+  unmatchedText: "3 records can't be matched to a room and stay hidden.",
+  items: p.rules.flatMap((rule) =>
+    rule.match.map((ref) => ({
+      ref,
+      label: (ref as { id?: string }).id === "missing-room" ? "Retired room" : "Fictional room",
+      missing: (ref as { id?: string }).id === "missing-room",
+      count: (ref as { id?: string }).id === "missing-room" ? 0 : 4,
+    })),
+  ),
+  ...extra,
+});
 /** The review's summary of an Answer that shares the account under `saved`. */
 const answerSummary = (saved: unknown) =>
   h(LevelDecisionSummary, {
@@ -65,41 +121,33 @@ beforeEach(() => {
   vi.stubGlobal("document", parsed.document);
   vi.stubGlobal("window", parsed.window);
   host = parsed.document.querySelector("#root") as unknown as HTMLElement;
+  clearScopeLabels();
+  api.getSourceFilterEditor
+    .mockReset()
+    .mockResolvedValue(editorWith([roomField, peopleField, folderField]));
   api.getSourceFilterOptions
     .mockReset()
-    .mockImplementation(async (id: string, query: { kind: string }) => ({
+    .mockImplementation(async (id: string, query: { field: string }) => ({
       sourceId: id,
-      scopes: source.scopes,
-      readiness: source.scopeReadiness,
-      items: [{ ref: { kind: query.kind, id: "stable-room" }, label: "Fictional room", count: 4 }],
+      field: query.field,
+      items: [
+        {
+          ref: room("stable-room"),
+          label: "Fictional room",
+          shortLabel: "Fictional room",
+          count: 4,
+        },
+      ],
     }));
-  api.previewSourceFilter.mockReset().mockImplementation(async (id: string, p: typeof policy) => ({
-    sourceId: id,
-    total: 20,
-    visible: 12,
-    hidden: 8,
-    unknown: 3,
-    readiness: source.scopeReadiness,
-    items: p.rules.flatMap((rule) =>
-      rule.match.map((ref) => ({
-        ref,
-        label: ref.id === "missing-room" ? "Retired room" : "Fictional room",
-        missing: ref.id === "missing-room",
-        count: ref.id === "missing-room" ? 0 : 4,
-      })),
-    ),
-    samples: [
-      {
-        documentId: "fictional-document",
-        title: "Fictional sample",
-        visible: true,
-        unknown: false,
-      },
-    ],
-  }));
+  api.previewSourceFilter
+    .mockReset()
+    .mockImplementation(async (id: string, p: typeof policy) => readyPreview(id, p));
+  api.checkFilterIdentifier.mockReset();
+  api.resyncSource.mockReset().mockResolvedValue({ ok: true, mode: "in-place" });
 });
 afterEach(() => {
   act(() => render(null, host));
+  vi.useRealTimers();
   vi.unstubAllGlobals();
 });
 function button(text: string): HTMLButtonElement {
@@ -108,6 +156,17 @@ function button(text: string): HTMLButtonElement {
   );
   if (!found) throw new Error(`Missing button ${text}`);
   return found;
+}
+async function flushUI() {
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
+}
+/** Effects of renders that settled outside act run after the next paint; option loads wait 150 ms. */
+async function waitOptions() {
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 175));
+  });
 }
 async function mount(props: Record<string, unknown> = {}) {
   await act(async () => {
@@ -132,18 +191,9 @@ async function mount(props: Record<string, unknown> = {}) {
     host.textContent?.includes("What should be shared?")
   ) {
     await act(async () => button("Continue").click());
-    await flushUI();
   }
-}
-async function flushUI() {
-  await act(async () => {
-    await new Promise((resolve) => setTimeout(resolve, 0));
-  });
-}
-async function waitOptions() {
-  await act(async () => {
-    await new Promise((resolve) => setTimeout(resolve, 175));
-  });
+  await flushUI();
+  await waitOptions();
 }
 /** Any control that asks the owner to refresh something by hand. */
 function refreshControls() {
@@ -158,36 +208,96 @@ function deferred<T>() {
   });
   return { promise, resolve };
 }
+async function type(input: HTMLInputElement, value: string) {
+  await act(async () => {
+    input.value = value;
+    input.dispatchEvent(new window.Event("input", { bubbles: true }));
+  });
+}
+const searchOf = (many: string) =>
+  host.querySelector<HTMLInputElement>(
+    `.source-filter-picker[aria-label="Choose ${many}"] input[type=search]`,
+  )!;
 
-test("shows compact exact counts and missing selected rows without adding a filter review page", async () => {
-  const saved = {
-    ...policy,
-    rules: [{ action: "share", match: [{ kind: "conversation", id: "missing-room" }] }],
-  };
+test("the selected table, counts and the gateway's hidden-record sentence, with no separate review page", async () => {
+  const saved = { ...policy, rules: [{ action: "share", match: [room("missing-room")] }] };
   await mount({ savedPolicy: saved });
   expect(host.textContent).toContain("Retired room");
   expect(host.textContent).toContain("Unavailable · selection retained");
   expect(host.querySelector(".source-filter-counts")?.textContent).toContain("12 shared8 hidden");
-  expect([...host.querySelectorAll(".source-filter-unchecked p")].map((line) => line.textContent)).toEqual([
-    "3 records stay hidden until their details finish syncing.",
-    "Omnesis doesn’t have the details it needs to check them yet. Nothing is shared by mistake while they sync.",
-  ]);
-  expect(host.textContent).not.toContain("Fictional sample");
+  expect(
+    [...host.querySelectorAll(".source-filter-unchecked p")].map((line) => line.textContent),
+  ).toEqual(["3 records can't be matched to a room and stay hidden."]);
   expect(host.textContent).not.toContain("Review this filter");
+  expect(host.textContent).not.toMatch(/finish syncing|couldn.t be checked|Preparing/u);
   expect(host.querySelectorAll("details")).toHaveLength(0);
-  expect(host.querySelector(".compact-filter-table")).not.toBeNull();
-  expect(saved.rules[0]!.match[0]!.id).toBe("missing-room");
+});
+
+test("both hidden-record sentences show when both counts are not zero, and neither when both are", async () => {
+  api.previewSourceFilter.mockImplementation(async (id: string, p: typeof policy) =>
+    readyPreview(id, p, {
+      tooOld: 312,
+      tooOldText: "312 older items could not be resynced and stay hidden from agents using this filter.",
+    }),
+  );
+  await mount();
+  expect(
+    [...host.querySelectorAll(".source-filter-unchecked p")].map((line) => line.textContent),
+  ).toEqual([
+    "312 older items could not be resynced and stay hidden from agents using this filter.",
+    "3 records can't be matched to a room and stay hidden.",
+  ]);
+  act(() => render(null, host));
+  api.previewSourceFilter.mockImplementation(async (id: string, p: typeof policy) =>
+    readyPreview(id, p, { unmatched: 0, unmatchedText: null }),
+  );
+  clearScopeLabels();
+  await mount();
+  expect(host.querySelector(".source-filter-unchecked")).toBeNull();
+});
+
+test("counts the gateway is still working out show Counting… and are asked for again; Apply never waits", async () => {
+  const onApply = vi.fn();
+  api.previewSourceFilter
+    .mockReset()
+    .mockResolvedValueOnce({ status: "pending", retryAfterMs: 300 })
+    .mockImplementation(async (id: string, p: typeof policy) => readyPreview(id, p));
+  await mount({ onApply });
+  expect(host.querySelector(".source-filter-pending")?.textContent).toBe("Counting…");
+  expect(host.querySelector(".source-filter-pending .source-filter-spinner")).not.toBeNull();
+  expect(refreshControls()).toEqual([]);
+  expect(button("Apply filter").disabled).toBe(false);
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 350));
+  });
+  await flushUI();
+  expect(api.previewSourceFilter).toHaveBeenCalledTimes(2);
+  expect(api.previewSourceFilter.mock.calls[1]![1]).toEqual(api.previewSourceFilter.mock.calls[0]![1]);
+  expect(host.querySelector(".source-filter-counts")?.textContent).toContain("12 shared");
+  await act(async () => button("Apply filter").click());
+  expect(onApply).toHaveBeenCalledWith(policy);
+});
+
+test("counts that cannot be loaded say so in one sentence with one way to try again", async () => {
+  api.previewSourceFilter.mockReset().mockRejectedValueOnce(new Error("offline"));
+  await mount();
+  expect(host.querySelector(".source-filter-count-error")?.textContent).toBe(
+    "Counts could not be loaded.Try again",
+  );
+  expect(button("Apply filter").disabled).toBe(false);
+  api.previewSourceFilter.mockImplementation(async (id: string, p: typeof policy) => readyPreview(id, p));
+  await act(async () => button("Try again").click());
+  await flushUI();
+  expect(host.querySelector(".source-filter-counts")?.textContent).toContain("12 shared");
 });
 
 test("saved filters remain inspectable and immutable when the authoring gate is off", async () => {
   const onApply = vi.fn(),
     onRemove = vi.fn();
   await mount({ enabled: false, onApply, onRemove });
-  await waitOptions();
   expect(host.textContent).toContain("saved filter remains enforced");
   expect(host.textContent).not.toContain("Apply filter");
-  expect(host.textContent).not.toContain("Remove this source filter");
-  expect(host.querySelector(".source-filter-options input")).toBeNull();
+  expect(host.querySelector("input[type=search]")).toBeNull();
   expect(onApply).not.toHaveBeenCalled();
   expect(onRemove).not.toHaveBeenCalled();
 });
@@ -217,18 +327,8 @@ test("late preview responses cannot replace the decision the owner is reviewing"
     except.dispatchEvent(new window.Event("change", { bubbles: true }));
   });
   await act(async () => button("Continue").click());
-  const preview = (visible: number) => ({
-    sourceId: source.id,
-    total: 100,
-    visible,
-    hidden: 100 - visible,
-    unknown: 0,
-    items: [],
-    samples: [],
-    readiness: source.scopeReadiness,
-  });
-  await act(async () => fresh.resolve(preview(7)));
-  await act(async () => old.resolve(preview(99)));
+  await act(async () => fresh.resolve(readyPreview(source.id, policy, { visible: 7, hidden: 13 })));
+  await act(async () => old.resolve(readyPreview(source.id, policy, { visible: 99, hidden: 1 })));
   await flushUI();
   expect(host.querySelector(".source-filter-counts")?.textContent).toContain("7 shared");
   expect(host.querySelector(".source-filter-counts")?.textContent).not.toContain("99");
@@ -249,58 +349,110 @@ test("the header names the filter mode with what it means and the capability as 
   expect(mode.getAttribute("title")).toBe(
     "Only content that matches the criteria in the table below will be shared.",
   );
-  expect(context.querySelector(".capability-pill")?.className).toBe(
-    "capability-pill capability-pill-answer",
-  );
   expect(context.querySelector(".capability-pill")?.textContent).toBe("Answer");
 });
 
-test("one record waiting for its details reads in the singular", async () => {
-  api.previewSourceFilter.mockImplementation(async (id: string) => ({
-    sourceId: id,
-    total: 20,
-    visible: 12,
-    hidden: 8,
-    unknown: 1,
-    readiness: source.scopeReadiness,
-    items: [],
-    samples: [],
-  }));
+test("each ready field gets its own search, named in the field's words, and people get the typed-address row", async () => {
   await mount();
-  expect(host.querySelector(".source-filter-unchecked p")?.textContent).toBe(
-    "1 record stays hidden until its details finish syncing.",
+  expect(
+    [...host.querySelectorAll(".filter-builder-searches .source-filter-search")].map(
+      (label) => label.textContent,
+    ),
+  ).toEqual(["Search rooms", "Search people", "Search folders"]);
+  expect(host.querySelector(".source-filter-typed > span")?.textContent).toBe(
+    "Add an email or phone number",
   );
+  expect(api.getSourceFilterOptions).not.toHaveBeenCalled();
 });
 
-test("readiness returned by the preview fences Use even if the overview was ready", async () => {
-  api.previewSourceFilter.mockResolvedValue({
-    sourceId: source.id,
-    total: 20,
-    visible: 0,
-    hidden: 20,
-    unknown: 20,
-    items: [],
-    samples: [],
-    readiness: [
-      {
-        kind: "conversation",
-        ready: false,
-        message: "Refresh required",
-        behindCollectors: [{ deviceId: "fictional-device", name: "Fictional collector" }],
-      },
-    ],
-  });
+test.each([
+  [
+    { status: "needs-resync", cost: "This reads about 900 messages a day.", text: "Room filters need Fictional to be resynced. Your rooms stay searchable meanwhile. This reads about 900 messages a day." },
+    "Room filters need Fictional to be resynced. Your rooms stay searchable meanwhile. This reads about 900 messages a day.",
+    true,
+  ],
+  [
+    { status: "collector-behind", devices: [{ id: "dev-one", name: "Studio Mac" }], text: "Update Omnesis on Studio Mac to use these filters." },
+    "Update Omnesis on Studio Mac to use these filters.",
+    false,
+  ],
+  [{ status: "gateway-behind", text: "Update this Omnesis gateway to use these filters." }, "Update this Omnesis gateway to use these filters.", false],
+  [{ status: "list-pending", text: "Waiting for Fictional to send its list of rooms." }, "Waiting for Fictional to send its list of rooms.", false],
+])("a field in state %o shows the gateway's sentence in place of its search", async (state, text, resync) => {
+  api.getSourceFilterEditor.mockResolvedValue(editorWith([{ ...roomField, state }, peopleField]));
   await mount();
-  expect(button("Apply filter").disabled).toBe(true);
-  // Counting is the whole story: no reason from the gateway, no device to update, nothing to press.
-  expect(host.querySelector(".source-filter-pending")?.textContent).toContain(
-    "Counting matching records…",
-  );
-  expect(host.querySelector(".source-filter-pending .source-filter-spinner")).not.toBeNull();
-  expect(host.textContent).not.toContain("Refresh required");
-  expect(host.textContent).not.toContain("Fictional collector");
+  const block = host.querySelector<HTMLElement>('.source-filter-field-state[aria-label="Rooms"]')!;
+  expect(block.querySelector("strong")?.textContent).toBe("Rooms");
+  expect(block.querySelector(".source-filter-state p")?.textContent).toBe(text);
+  expect(block.querySelector("button")?.textContent).toBe(resync ? "Resync Fictional account" : undefined);
+  expect(searchOf("rooms")).toBeNull();
+  // The other field stays usable, and the saved entry on the waiting field stays saved.
+  expect(searchOf("people")).not.toBeNull();
+  expect(host.querySelector(".compact-filter-table")?.textContent).toContain("Fictional room");
+  expect(button("Apply filter").disabled).toBe(false);
   expect(refreshControls()).toEqual([]);
-  expect(host.querySelector(".source-filter-counts")).toBeNull();
+});
+
+test("Resync starts an in-place resync, shows it starting, then the gateway's progress, read again by itself", async () => {
+  const needs = {
+    status: "needs-resync",
+    cost: null,
+    text: "Room filters need Fictional to be resynced. Your rooms stay searchable meanwhile.",
+  };
+  const resyncing = { status: "resyncing", processed: 212, total: 900, text: "Resyncing Fictional: 212 of about 900." };
+  const started = deferred<unknown>();
+  api.resyncSource.mockReturnValue(started.promise);
+  api.getSourceFilterEditor
+    .mockReset()
+    .mockResolvedValueOnce(editorWith([{ ...roomField, state: needs }]))
+    .mockResolvedValueOnce(editorWith([{ ...roomField, state: needs }]))
+    .mockResolvedValue(editorWith([{ ...roomField, state: resyncing }], { retryAfterMs: 200 }));
+  await mount();
+  await act(async () => button("Resync Fictional account").click());
+  expect(api.resyncSource).toHaveBeenCalledWith(source.id, { mode: "in-place" });
+  expect(host.querySelector(".source-filter-state p")?.textContent).toBe("Resyncing Fictional account…");
+  expect(host.querySelector(".source-filter-state button")).toBeNull();
+  await act(async () => started.resolve({ ok: true, mode: "in-place" }));
+  await flushUI();
+  // The gateway may still say it needs a resync for a moment; the owner's request stays shown.
+  expect(host.querySelector(".source-filter-state p")?.textContent).toBe("Resyncing Fictional account…");
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 5100));
+  });
+  await flushUI();
+  expect(host.querySelector(".source-filter-state p")?.textContent).toBe("Resyncing Fictional: 212 of about 900.");
+  const bar = host.querySelector("progress.source-filter-progress")!;
+  expect([bar.getAttribute("value"), bar.getAttribute("max")]).toEqual(["212", "900"]);
+  const reads = api.getSourceFilterEditor.mock.calls.length;
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  });
+  await flushUI();
+  expect(api.getSourceFilterEditor.mock.calls.length).toBeGreaterThan(reads);
+}, 10_000);
+
+test("a resync that cannot start says so and offers the button again", async () => {
+  const needs = { status: "needs-resync", cost: null, text: "Room filters need Fictional to be resynced." };
+  api.getSourceFilterEditor.mockResolvedValue(editorWith([{ ...roomField, state: needs }]));
+  api.resyncSource.mockRejectedValue(Object.assign(new Error("x"), { serverMessage: "Fictional is not connected." }));
+  await mount();
+  await act(async () => button("Resync Fictional account").click());
+  await flushUI();
+  expect(host.querySelector(".source-filter-state [role='alert']")?.textContent).toBe(
+    "Fictional is not connected.",
+  );
+  expect(button("Resync Fictional account")).not.toBeNull();
+});
+
+test("an editor that cannot be loaded says so, keeps the saved entries and can be asked again", async () => {
+  api.getSourceFilterEditor.mockReset().mockRejectedValueOnce(new Error("offline"));
+  await mount();
+  expect(host.textContent).toContain("This account’s filters could not be loaded.");
+  expect(host.querySelector(".compact-filter-table")?.textContent).toContain("Fictional room");
+  api.getSourceFilterEditor.mockResolvedValue(editorWith([roomField]));
+  await act(async () => button("Try again").click());
+  await flushUI();
+  expect(searchOf("rooms")).not.toBeNull();
 });
 
 test("a late picker response from another account is aborted and never displayed", async () => {
@@ -310,116 +462,324 @@ test("a late picker response from another account is aborted and never displayed
     .mockReset()
     .mockReturnValueOnce(old.promise)
     .mockReturnValueOnce(fresh.promise);
+  const editor = editorWith([roomField]);
   await act(async () =>
-    render(
-      h(SourceFilterPicker, { source, kind: "conversation", selected: [], onToggle: vi.fn() }),
-      host,
-    ),
+    render(h(SourceFilterPicker, { source, editor, field: roomField, selected: [], onToggle: vi.fn() }), host),
   );
   await waitOptions();
-  const oldSignal = api.getSourceFilterOptions.mock.calls[0]![2] as AbortSignal;
   const other = { ...source, id: "fictional:two" };
   await act(async () =>
-    render(
-      h(SourceFilterPicker, {
-        source: other,
-        kind: "conversation",
-        selected: [],
-        onToggle: vi.fn(),
-      }),
-      host,
-    ),
+    render(h(SourceFilterPicker, { source: other, editor, field: roomField, selected: [], onToggle: vi.fn() }), host),
   );
   await waitOptions();
-  await act(async () =>
-    fresh.resolve({
-      sourceId: other.id,
-      items: [
-        {
-          ref: { kind: "conversation", id: "shared-native-id" },
-          label: "Second account room",
-          count: 2,
-        },
-      ],
-    }),
-  );
-  await act(async () =>
-    old.resolve({
-      sourceId: source.id,
-      items: [
-        {
-          ref: { kind: "conversation", id: "shared-native-id" },
-          label: "First account room",
-          count: 99,
-        },
-      ],
-    }),
-  );
+  const row = (label: string, count: number) => ({ ref: room("shared-native-id"), label, shortLabel: label, count });
+  await act(async () => fresh.resolve({ sourceId: other.id, items: [row("Second account room", 2)] }));
+  await act(async () => old.resolve({ sourceId: source.id, items: [row("First account room", 99)] }));
   await flushUI();
-  expect(oldSignal.aborted).toBe(false); // Consumer cancellation retains the server admission slot until its response settles.
   expect(host.textContent).toContain("Second account room");
   expect(host.textContent).not.toContain("First account room");
 });
 
-test("participant additions require an explicit accepted typed identifier and expose no mutable person pointer", async () => {
+test("a typed address is read by the gateway and added in its spelling; a refusal shows the gateway's sentence", async () => {
   const onToggle = vi.fn();
-  await act(async () =>
-    render(h(SourceFilterPicker, { source, kind: "participant", selected: [], onToggle }), host),
-  );
-  expect(
-    [...host.querySelectorAll("option")].map((option) => option.getAttribute("value")),
-  ).toEqual(["email", "phone"]);
-  expect(host.querySelector("details")).toBeNull();
-  // The prompt names only what this source accepts.
-  expect(host.querySelector(".source-filter-typed > span")?.textContent).toBe(
-    "Add an email or phone number",
-  );
-  const input = host.querySelector<HTMLInputElement>("input[aria-label='Value']")!;
-  await act(async () => {
-    input.value = "person@example.com";
-    input.dispatchEvent(new window.Event("input", { bubbles: true }));
-  });
-  await act(async () => button("Add").click());
-  expect(onToggle).toHaveBeenCalledWith({
-    kind: "participant",
-    label: "person@example.com",
-    identifiers: [{ type: "email", value: "person@example.com" }],
-  });
-});
-
-test("a typed address that is not one is refused in the words for its type", async () => {
-  const onToggle = vi.fn();
-  const everyType = {
-    ...source,
-    scopes: { items: [{ kind: "participant", identifiers: ["email", "phone", "domain"] }] },
-  };
   await act(async () =>
     render(
-      h(SourceFilterPicker, { source: everyType, kind: "participant", selected: [], onToggle }),
+      h(SourceFilterEditor, {
+        source,
+        capability: "answer",
+        accessLevel: "saved-level",
+        savedPolicy: policy,
+        enabled: true,
+        onApply: vi.fn(),
+        onRemove: vi.fn(),
+        onClose: vi.fn(),
+      }),
       host,
     ),
   );
+  await act(async () => button("Continue").click());
+  await flushUI();
   const input = host.querySelector<HTMLInputElement>("input[aria-label='Value']")!;
   const select = host.querySelector<HTMLSelectElement>("select[aria-label='Type']")!;
-  const refusal = async (type: string) => {
-    await act(async () => {
-      for (const option of select.querySelectorAll("option"))
-        option.toggleAttribute("selected", option.getAttribute("value") === type);
-      select.dispatchEvent(new window.Event("change", { bubbles: true }));
-    });
-    await act(async () => {
-      input.value = "not an address";
-      input.dispatchEvent(new window.Event("input", { bubbles: true }));
-    });
-    await act(async () => button("Add").click());
-    return host.querySelector(".source-filter-exact [role='alert']")?.textContent;
-  };
-  expect(await refusal("email")).toBe("Enter a valid email address.");
-  expect(await refusal("phone")).toBe(
+  expect([...select.querySelectorAll("option")].map((option) => option.getAttribute("value"))).toEqual([
+    "email",
+    "phone",
+  ]);
+  await act(async () => {
+    for (const option of select.querySelectorAll("option"))
+      option.toggleAttribute("selected", option.getAttribute("value") === "phone");
+    select.dispatchEvent(new window.Event("change", { bubbles: true }));
+  });
+  api.checkFilterIdentifier.mockResolvedValueOnce({
+    error: "Enter a valid phone number. Include the international country code.",
+  });
+  await type(input, "+44 (0)7700 900123");
+  await act(async () => button("Add").click());
+  await flushUI();
+  expect(api.checkFilterIdentifier).toHaveBeenLastCalledWith("phone", "+44 (0)7700 900123");
+  expect(host.querySelector(".source-filter-exact [role='alert']")?.textContent).toBe(
     "Enter a valid phone number. Include the international country code.",
   );
-  expect(await refusal("domain")).toBe("Enter a valid domain.");
+  api.checkFilterIdentifier.mockResolvedValueOnce({ identifier: { type: "phone", value: "+15550100142" } });
+  await type(input, "00 1 (555) 010-0142");
+  await act(async () => button("Add").click());
+  await flushUI();
+  expect(host.querySelector(".source-filter-exact [role='alert']")).toBeNull();
+  expect(input.value).toBe("");
+  const rows = [...host.querySelectorAll(".compact-filter-table tbody tr")].map((row) => row.textContent);
+  expect(rows.some((text) => text?.startsWith("Phone+15550100142"))).toBe(true);
   expect(onToggle).not.toHaveBeenCalled();
+});
+
+test("the picker of a tree browses level by level, short names inside, full names in search, empty folders included", async () => {
+  const folder = (id: string) => ({ capability: "tree", field: "extra.folder", id });
+  api.getSourceFilterOptions.mockImplementation(
+    async (id: string, query: { field: string; q?: string; parentId?: string }) => ({
+      sourceId: id,
+      field: query.field,
+      items: query.q
+        ? [{ ref: folder("~/work/atlas-api"), label: "~/work/atlas-api", shortLabel: "atlas-api", count: 4 }]
+        : query.parentId
+          ? [
+              { ref: folder("~/work/atlas-api"), label: "~/work/atlas-api", shortLabel: "atlas-api", count: 4, parentId: "~/work", depth: 1 },
+              { ref: folder("~/work/empty-drafts"), label: "~/work/empty-drafts", shortLabel: "empty-drafts", count: 0, parentId: "~/work", depth: 1 },
+            ]
+          : [{ ref: folder("~/work"), label: "~/work", shortLabel: "work", count: 4, hasChildren: true, depth: 0 }],
+    }),
+  );
+  await mount();
+  const search = searchOf("folders");
+  await act(async () => search.dispatchEvent(new window.Event("input", { bubbles: true })));
+  await waitOptions();
+  const picker = search.closest(".source-filter-picker")!;
+  expect(picker.querySelector(".source-filter-breadcrumbs")?.textContent).toContain("All folders");
+  expect(picker.querySelector(".filter-option-hint")?.textContent).toBe("Includes the folders inside.");
+  await act(async () => picker.querySelector<HTMLButtonElement>('button[aria-label="Open work"]')!.click());
+  await waitOptions();
+  expect(api.getSourceFilterOptions).toHaveBeenLastCalledWith(
+    source.id,
+    { field: "extra.folder", parentId: "~/work" },
+    expect.any(AbortSignal),
+  );
+  expect([...picker.querySelectorAll(".source-filter-options li label")].map((row) => row.textContent)).toEqual([
+    "atlas-api4 matching",
+    "empty-drafts0 matching",
+  ]);
+  expect(picker.querySelector(".source-filter-select-location")?.textContent).toBe("Select this folder");
+  await type(search, "atlas");
+  await waitOptions();
+  expect(picker.querySelector(".source-filter-options li label")?.textContent).toBe("~/work/atlas-api4 matching");
+  expect(picker.querySelector(".source-filter-breadcrumbs")).toBeNull();
+});
+
+test("a field whose items belong to a device starts at the devices when the account has several", async () => {
+  const project = { ...folderField, field: "extra.project", noun: noun("project folder", "project folders"), scope: "device", levels: [noun("project folder", "project folders")], insideText: "Includes the project folders inside." };
+  const device = (id: string) => ({ capability: "tree", field: "extra.project", id: "", device: id });
+  api.getSourceFilterEditor.mockResolvedValue(
+    editorWith([project], { showDeviceLevel: true, devices: [{ id: "dev-one", name: "Studio Mac" }, { id: "dev-two", name: "Travel laptop" }] }),
+  );
+  api.getSourceFilterOptions.mockImplementation(
+    async (id: string, query: { field: string; device?: string; parentId?: string }) => ({
+      sourceId: id,
+      field: query.field,
+      items: query.device
+        ? [{ ref: { capability: "tree", field: "extra.project", id: "~", device: query.device }, label: "~", shortLabel: "~", count: 3, depth: 0 }]
+        : [
+            { ref: device("dev-one"), label: "Studio Mac", shortLabel: "Studio Mac", count: 3, hasChildren: true },
+            { ref: device("dev-two"), label: "Travel laptop", shortLabel: "Travel laptop", count: 1, hasChildren: true },
+          ],
+    }),
+  );
+  const onApply = vi.fn();
+  await mount({ savedPolicy: null, onApply });
+  const only = [...host.querySelectorAll<HTMLInputElement>(".source-filter-mode input")][1]!;
+  await act(async () => only.dispatchEvent(new window.Event("change", { bubbles: true })));
+  await act(async () => button("Continue").click());
+  await flushUI();
+  await waitOptions();
+  const search = searchOf("project folders");
+  await act(async () => search.dispatchEvent(new window.Event("input", { bubbles: true })));
+  await waitOptions();
+  const picker = search.closest(".source-filter-picker")!;
+  expect(api.getSourceFilterOptions).toHaveBeenLastCalledWith(source.id, { field: "extra.project" }, expect.any(AbortSignal));
+  expect(picker.querySelector(".source-filter-breadcrumbs")?.textContent).toContain("All devices");
+  const travel = [...picker.querySelectorAll<HTMLInputElement>(".source-filter-options input")][1]!;
+  await act(async () => travel.dispatchEvent(new window.Event("change", { bubbles: true })));
+  await act(async () => picker.querySelector<HTMLButtonElement>('button[aria-label="Open Studio Mac"]')!.click());
+  await waitOptions();
+  expect(api.getSourceFilterOptions).toHaveBeenLastCalledWith(
+    source.id,
+    { field: "extra.project", device: "dev-one" },
+    expect.any(AbortSignal),
+  );
+  expect(picker.querySelector(".source-filter-select-location")?.textContent).toBe("Select this device");
+  await flushUI();
+  await act(async () => button("Apply filter").click());
+  expect(onApply.mock.calls[0]![0].rules[0].match).toEqual([device("dev-two")]);
+  expect([...host.querySelectorAll(".compact-filter-kind")].map((cell) => cell.textContent)).toEqual(["Device"]);
+});
+
+test("a tree whose levels have their own names says which level each row and location is at", async () => {
+  const repoField = {
+    ...folderField,
+    field: "extra.repository",
+    noun: noun("repository", "repositories"),
+    levels: [noun("owner", "owners"), noun("repository", "repositories")],
+    insideText: "Includes the repositories inside.",
+  };
+  const repo = (id: string) => ({ capability: "tree", field: "extra.repository", id });
+  api.getSourceFilterEditor.mockResolvedValue(editorWith([repoField]));
+  api.getSourceFilterOptions.mockImplementation(
+    async (id: string, query: { field: string; parentId?: string }) => ({
+      sourceId: id,
+      field: query.field,
+      items: query.parentId
+        ? [{ ref: repo("repo:1"), label: "northstar-labs/atlas-api", shortLabel: "atlas-api", count: 2, parentId: "owner:1", depth: 1 }]
+        : [{ ref: repo("owner:1"), label: "northstar-labs", shortLabel: "northstar-labs", count: 5, hasChildren: true, depth: 0 }],
+    }),
+  );
+  await mount({ savedPolicy: { ...policy, rules: [{ action: "share", match: [repo("owner:1")] }] } });
+  await waitOptions();
+  // The saved owner is named as an owner although the preview gave no depth.
+  expect([...host.querySelectorAll(".compact-filter-kind")].map((cell) => cell.textContent)).toEqual(["Owner"]);
+  const search = searchOf("repositories");
+  await act(async () => search.dispatchEvent(new window.Event("input", { bubbles: true })));
+  await waitOptions();
+  const picker = search.closest(".source-filter-picker")!;
+  expect(picker.querySelector(".source-filter-breadcrumbs")?.textContent).toContain("All owners");
+  expect(picker.querySelector(".source-filter-options small")?.textContent).toBe("Owner · 5 matching");
+  await act(async () => picker.querySelector<HTMLButtonElement>('button[aria-label="Open northstar-labs"]')!.click());
+  await waitOptions();
+  expect(picker.querySelector(".source-filter-select-location")?.textContent).toBe("Select this owner");
+  expect(picker.querySelector(".source-filter-options small")?.textContent).toBe("Repository · 2 matching");
+  expect(picker.querySelector(".source-filter-options li label span")?.textContent).toBe("atlas-api");
+});
+
+test("search results overlay the selected table and Escape dismisses search before the modal", async () => {
+  const onClose = vi.fn();
+  await mount({ onClose });
+  const [first, second] = [
+    ...host.querySelectorAll<HTMLInputElement>(".filter-builder-searches input[type=search]"),
+  ];
+  await type(first!, "room");
+  await waitOptions();
+  expect(first!.getAttribute("aria-expanded")).toBe("true");
+  expect(host.querySelectorAll(".source-filter-results:not([hidden])")).toHaveLength(1);
+  const escape = new window.Event("keydown", { bubbles: true, cancelable: true });
+  Object.defineProperty(escape, "key", { value: "Escape" });
+  await act(async () => {
+    first!.closest(".source-filter-picker")!.dispatchEvent(escape);
+  });
+  expect(first!.getAttribute("aria-expanded")).toBe("false");
+  expect(onClose).not.toHaveBeenCalled();
+  await type(second!, "person");
+  expect(second!.getAttribute("aria-expanded")).toBe("true");
+  await act(async () => {
+    document.body.dispatchEvent(new window.Event("pointerdown", { bubbles: true }));
+  });
+  expect(second!.getAttribute("aria-expanded")).toBe("false");
+  expect(onClose).not.toHaveBeenCalled();
+});
+
+test("changing the source closes the child draft without previewing the old policy for the new account", async () => {
+  const onClose = vi.fn(),
+    onApply = vi.fn();
+  await mount({ onClose, onApply });
+  api.previewSourceFilter.mockClear();
+  await act(async () =>
+    render(
+      h(SourceFilterEditor, {
+        source: { ...source, id: "fictional:other" },
+        capability: "answer",
+        accessLevel: "saved-level",
+        savedPolicy: policy,
+        enabled: true,
+        onApply,
+        onRemove: vi.fn(),
+        onClose,
+      }),
+      host,
+    ),
+  );
+  expect(onClose).toHaveBeenCalledTimes(1);
+  expect(host.querySelector('[role="dialog"]')).toBeNull();
+  expect(api.previewSourceFilter).not.toHaveBeenCalled();
+  expect(onApply).not.toHaveBeenCalled();
+});
+
+test("a saved name not yet resolved reads as loading until the preview names it", async () => {
+  const response = deferred<unknown>();
+  const ref = { capability: "membership", field: "extra.labelIds", id: "unresolved-label-47" };
+  api.getSourceFilterEditor.mockResolvedValue(
+    editorWith([{ ...roomField, field: "extra.labelIds", noun: noun("label", "labels") }]),
+  );
+  api.previewSourceFilter.mockReturnValue(response.promise);
+  await mount({ savedPolicy: { ...policy, rules: [{ action: "share", match: [ref] }] } });
+  expect(host.textContent).toContain("Counting…");
+  expect(host.textContent).toContain("Saved label selection");
+  expect(host.textContent).toContain("Loading name");
+  await act(async () =>
+    response.resolve({ ...readyPreview(source.id, policy), items: [{ ref, label: "Resolved label", count: 4 }] }),
+  );
+  await flushUI();
+  expect(host.textContent).toContain("Resolved label");
+});
+
+test("saved rule summaries keep missing entries without showing their opaque ids", async () => {
+  const ref = room("opaque-summary-room-88");
+  const saved = { ...policy, rules: [{ action: "share", match: [ref] }] };
+  api.previewSourceFilter.mockResolvedValue({
+    ...readyPreview(source.id, saved),
+    items: [{ ref, label: ref.id, missing: true, count: 0 }],
+  });
+  await act(async () => render(answerSummary(saved), host));
+  await flushUI();
+  await waitOptions();
+  expect(host.textContent).toContain("Saved selection");
+  expect(host.textContent).toContain("Unavailable · selection retained");
+  expect(host.textContent).not.toContain(ref.id);
+});
+
+test("an unfiltered account opens as All content and continuing cannot imply a new restriction", async () => {
+  const onApply = vi.fn(),
+    onRemove = vi.fn(),
+    onClose = vi.fn();
+  await mount({ savedPolicy: null, onApply, onRemove, onClose });
+  const all = [...host.querySelectorAll<HTMLLabelElement>(".source-filter-mode label")].find((row) =>
+    row.textContent?.includes("All content"),
+  )!;
+  expect(all.querySelector<HTMLInputElement>("input")!.hasAttribute("checked")).toBe(true);
+  expect(api.previewSourceFilter).not.toHaveBeenCalled();
+  await act(async () => button("Done").click());
+  expect(onClose).toHaveBeenCalled();
+  expect(onApply).not.toHaveBeenCalled();
+  expect(onRemove).not.toHaveBeenCalled();
+});
+
+test("an account that is no longer connected lists its saved filters, counts nothing, and applies a removal", async () => {
+  const kept = room("kept-room");
+  const saved = { ...policy, rules: [{ action: "share", match: [...policy.rules[0]!.match, kept] }] };
+  const onApply = vi.fn();
+  await mount({ source: { id: source.id, displayName: "Fictional", available: false }, savedPolicy: saved, onApply });
+  expect(host.querySelector(".source-filter-notice")?.textContent).toBe(
+    "This account is no longer connected. Saved filters can be removed but not added.",
+  );
+  expect(host.querySelector("input[type=search]")).toBeNull();
+  const removals = () => [...host.querySelectorAll<HTMLButtonElement>(".compact-filter-remove")];
+  expect(removals()).toHaveLength(2);
+  expect(host.textContent).not.toContain("Counts could not be loaded");
+  expect(button("Apply filter").disabled).toBe(true);
+  await act(async () => removals()[0]!.click());
+  expect(button("Apply filter").disabled).toBe(false);
+  await act(async () => button("Apply filter").click());
+  expect(onApply).toHaveBeenCalledWith({ ...saved, rules: [{ action: "share", match: [kept] }] });
+  expect(api.previewSourceFilter).not.toHaveBeenCalled();
+});
+
+test("removing every saved filter of an account that is no longer connected leaves nothing to apply", async () => {
+  await mount({ source: { id: source.id, displayName: "Fictional", available: false } });
+  await act(async () => host.querySelector<HTMLButtonElement>(".compact-filter-remove")!.click());
+  expect(button("Apply filter").disabled).toBe(true);
 });
 
 test("a new Direct capability starts with Answer filters rebound to its own draft audience and zero revision", async () => {
@@ -547,541 +907,3 @@ test("removing and restoring a capability preserves its own filtered draft witho
   expect(onChange.mock.lastCall![0].direct).toBe(direct);
 });
 
-test("an unfiltered account opens as All content and continuing cannot imply a new restriction", async () => {
-  const onApply = vi.fn(),
-    onRemove = vi.fn(),
-    onClose = vi.fn();
-  await mount({ savedPolicy: null, onApply, onRemove, onClose });
-  expect(onClose).not.toHaveBeenCalled();
-  const all = [...host.querySelectorAll<HTMLLabelElement>(".source-filter-mode label")].find(
-    (row) => row.textContent?.includes("All content"),
-  )!;
-  expect(all.querySelector<HTMLInputElement>("input")!.hasAttribute("checked")).toBe(true);
-  expect(api.previewSourceFilter).not.toHaveBeenCalled();
-  expect(onClose).not.toHaveBeenCalled();
-  await act(async () => button("Done").click());
-  expect(onClose).toHaveBeenCalled();
-  expect(onApply).not.toHaveBeenCalled();
-  expect(onRemove).not.toHaveBeenCalled();
-});
-
-test("a missing catalogue item with no resolved name hides its opaque ID and preserves the saved reference", async () => {
-  const ref = { kind: "conversation", id: "opaque-missing-room-73" };
-  const saved = { ...policy, rules: [{ action: "share", match: [ref] }] };
-  const onApply = vi.fn();
-  api.previewSourceFilter.mockResolvedValue({
-    sourceId: source.id,
-    readiness: source.scopeReadiness,
-    items: [{ ref, label: ref.id, missing: true, count: 0 }],
-    visible: 0,
-    hidden: 20,
-    unknown: 0,
-    samples: [],
-  });
-  await mount({ savedPolicy: saved, onApply });
-  expect(host.textContent).toContain("Saved selection");
-  expect(host.textContent).toContain("Unavailable · selection retained");
-  expect(host.textContent).not.toContain(ref.id);
-  await act(async () => button("Apply filter").click());
-  expect(onApply).toHaveBeenCalledWith(saved);
-});
-
-test("saved rule summaries retain missing decisions without exposing catalogue fallback IDs", async () => {
-  const ref = { kind: "conversation", id: "opaque-summary-room-88" };
-  const saved = { ...policy, rules: [{ action: "share", match: [ref] }] };
-  api.previewSourceFilter.mockResolvedValue({
-    sourceId: source.id,
-    readiness: source.scopeReadiness,
-    items: [{ ref, label: ref.id, missing: true, count: 0 }],
-    visible: 0,
-    hidden: 20,
-    unknown: 0,
-    samples: [],
-  });
-  await act(async () =>
-    render(answerSummary(saved), host),
-  );
-  await flushUI();
-  expect(host.textContent).toContain("Saved selection");
-  expect(host.textContent).toContain("Unavailable · selection retained");
-  expect(host.textContent).not.toContain(ref.id);
-});
-
-test("loaded option pages survive query returns and kind remounts within a child draft", async () => {
-  const memory = new Map();
-  const scroll = { current: host };
-  api.getSourceFilterOptions.mockImplementation(
-    async (id: string, query: { kind: string; cursor?: string }) => ({
-      sourceId: id,
-      readiness: source.scopeReadiness,
-      items: Array.from(
-        { length: query.kind === "label" ? (query.cursor ? 15 : 50) : 1 },
-        (_, index) => ({
-          ref: { kind: query.kind, id: `${query.kind}-${(query.cursor ? 50 : 0) + index}` },
-          label: `Invented option ${index}`,
-          count: 1,
-        }),
-      ),
-      nextCursor: query.kind === "label" && !query.cursor ? "next-page" : undefined,
-    }),
-  );
-  const renderKind = async (kind: string) =>
-    act(async () =>
-      render(
-        h(SourceFilterPicker, {
-          key: kind,
-          source,
-          kind,
-          selected: [],
-          onToggle: vi.fn(),
-          memory,
-          scrollContainer: scroll,
-        }),
-        host,
-      ),
-    );
-  await renderKind("label");
-  await waitOptions();
-  await act(async () => button("Load more").click());
-  await vi.waitFor(() =>
-    expect(host.querySelectorAll(".source-filter-options li")).toHaveLength(65),
-  );
-  const input = host.querySelector<HTMLInputElement>("input[type=search]")!;
-  await act(async () => {
-    input.value = "another";
-    input.dispatchEvent(new window.Event("input", { bubbles: true }));
-  });
-  await waitOptions();
-  expect(host.querySelectorAll(".source-filter-options li")).toHaveLength(50);
-  await act(async () => {
-    input.value = "";
-    input.dispatchEvent(new window.Event("input", { bubbles: true }));
-  });
-  expect(host.querySelectorAll(".source-filter-options li")).toHaveLength(65);
-  await renderKind("conversation");
-  await waitOptions();
-  const reads = api.getSourceFilterOptions.mock.calls.length;
-  await renderKind("label");
-  expect(host.querySelectorAll(".source-filter-options li")).toHaveLength(65);
-  expect(api.getSourceFilterOptions).toHaveBeenCalledTimes(reads);
-  expect(refreshControls()).toEqual([]);
-});
-
-test("counts that are still being worked out are read again until they arrive, and Apply enables itself", async () => {
-  const waiting = {
-    ...source,
-    scopeReadiness: source.scopeReadiness.map((item) => ({ ...item, ready: false })),
-  };
-  const fresh = deferred<unknown>();
-  api.getSourceFilterOptions.mockResolvedValue({
-    sourceId: source.id,
-    items: [],
-    readiness: waiting.scopeReadiness,
-  });
-  api.previewSourceFilter
-    .mockReset()
-    .mockResolvedValueOnce({
-      sourceId: source.id,
-      visible: 0,
-      hidden: 20,
-      unknown: 20,
-      items: [],
-      readiness: waiting.scopeReadiness,
-    })
-    .mockReturnValue(fresh.promise);
-  await mount({ source: waiting });
-  expect(button("Apply filter").disabled).toBe(true);
-  expect(host.textContent).toContain("Counting matching records…");
-  expect(refreshControls()).toEqual([]);
-  expect(api.previewSourceFilter).toHaveBeenCalledTimes(1);
-
-  // The picker says the same while its own list is being counted.
-  const search = host.querySelector<HTMLInputElement>("input[type=search]")!;
-  await act(async () => {
-    search.dispatchEvent(new window.Event("focus"));
-  });
-  await waitOptions();
-  expect(host.querySelector(".source-filter-results")?.textContent).toContain(
-    "Counting matching records…",
-  );
-  expect(host.querySelector(".source-filter-results")?.textContent).not.toContain(
-    "No matching options.",
-  );
-
-  await vi.waitFor(() => expect(api.previewSourceFilter).toHaveBeenCalledTimes(2), {
-    timeout: 4000,
-  });
-  expect(button("Apply filter").disabled).toBe(true);
-  expect(host.querySelector(".source-filter-counts")).toBeNull();
-  await act(async () =>
-    fresh.resolve({
-      sourceId: source.id,
-      visible: 4,
-      hidden: 16,
-      unknown: 0,
-      items: [],
-      readiness: source.scopeReadiness,
-    }),
-  );
-  await flushUI();
-  expect(host.querySelector(".source-filter-counts")?.textContent).toContain("4 shared16 hidden");
-  expect(button("Apply filter").disabled).toBe(false);
-});
-
-test("an unresolved saved name is loading until the exact preview resolves, never declared missing", async () => {
-  const response = deferred<unknown>();
-  const ref = { kind: "label", id: "unresolved-label-47" };
-  api.previewSourceFilter.mockReturnValue(response.promise);
-  await mount({ savedPolicy: { ...policy, rules: [{ action: "share", match: [ref] }] } });
-  expect(host.textContent).toContain("Counting matching records…");
-  expect(host.textContent).toContain("Saved label selection");
-  expect(host.textContent).toContain("Loading name");
-  expect(host.textContent).not.toContain("Name unavailable");
-  expect(host.textContent).not.toContain("Unavailable · selection retained");
-  expect(button("Apply filter").disabled).toBe(true);
-  await act(async () =>
-    response.resolve({
-      sourceId: source.id,
-      visible: 4,
-      hidden: 16,
-      unknown: 0,
-      items: [{ ref, label: "Resolved label", count: 4 }],
-      readiness: source.scopeReadiness,
-    }),
-  );
-  await flushUI();
-  expect(host.textContent).toContain("Resolved label");
-  expect(button("Apply filter").disabled).toBe(false);
-});
-
-test.each([false, true])(
-  "readiness presentation considers only selected kinds (selected kind pending: %s)",
-  async (selectedPending) => {
-    const saved = {
-      ...policy,
-      rules: [
-        {
-          action: "share",
-          match: [
-            {
-              kind: "participant",
-              label: "reader@example.org",
-              identifiers: [{ type: "email", value: "reader@example.org" }],
-            },
-          ],
-        },
-      ],
-    };
-    api.previewSourceFilter.mockResolvedValue({
-      sourceId: source.id,
-      visible: 6,
-      hidden: 14,
-      unknown: 2,
-      items: [],
-      samples: [],
-      readiness: [
-        { kind: "participant", ready: !selectedPending, message: "Participant metadata preparing" },
-        { kind: "label", ready: false, message: "Unrelated labels preparing" },
-      ],
-    });
-    await mount({ savedPolicy: saved });
-    expect(button("Apply filter").disabled).toBe(selectedPending);
-    expect(host.textContent).not.toContain("Unrelated labels preparing");
-    expect(host.textContent!.includes("Counting matching records…")).toBe(selectedPending);
-    expect(host.textContent!.includes("Counting matching records…")).toBe(selectedPending);
-    await act(async () =>
-      render(answerSummary(saved), host),
-    );
-    await flushUI();
-    expect(host.textContent).not.toContain("Unrelated labels preparing");
-    expect(host.textContent!.includes("Counting matching records…")).toBe(selectedPending);
-  },
-);
-
-test("the selected table is edited directly and every changed selection needs its own preview", async () => {
-  const nextPreview = deferred<unknown>();
-  const initial = api.previewSourceFilter.getMockImplementation()!;
-  api.previewSourceFilter
-    .mockReset()
-    .mockImplementationOnce(initial)
-    .mockReturnValueOnce(nextPreview.promise);
-  const onApply = vi.fn();
-  await mount({ onApply });
-  expect(host.querySelectorAll(".filter-builder-searches input[type=search]")).toHaveLength(4);
-  expect(api.getSourceFilterOptions).not.toHaveBeenCalled();
-  expect(button("Apply filter").disabled).toBe(false);
-  const input = host.querySelector<HTMLInputElement>("input[aria-label='Value']")!;
-  await act(async () => {
-    input.value = "reviewer@example.org";
-    input.dispatchEvent(new window.Event("input", { bubbles: true }));
-  });
-  await act(async () => button("Add").click());
-  expect(button("Apply filter").disabled).toBe(true);
-  expect(host.textContent).toContain("reviewer@example.org");
-  expect(host.textContent).toContain("Counting matching records…");
-  expect(policy.rules[0]!.match).toEqual([{ kind: "conversation", id: "stable-room" }]);
-  const changed = api.previewSourceFilter.mock.calls[1]![1];
-  await act(async () =>
-    nextPreview.resolve({
-      sourceId: source.id,
-      visible: 7,
-      hidden: 13,
-      unknown: 0,
-      items: changed.rules[0].match.map((ref: { label?: string }) => ({
-        ref,
-        label: ref.label || "Fictional room",
-        count: 3,
-      })),
-      readiness: source.scopeReadiness,
-    }),
-  );
-  await flushUI();
-  expect(button("Apply filter").disabled).toBe(false);
-  await act(async () => button("Apply filter").click());
-  expect(onApply).toHaveBeenCalledWith(changed);
-  expect(onApply.mock.calls[0]![0].rules[0].match).toContainEqual({
-    kind: "participant",
-    label: "reviewer@example.org",
-    identifiers: [{ type: "email", value: "reviewer@example.org" }],
-  });
-  const remove = host.querySelector<HTMLButtonElement>(
-    ".compact-filter-table button[aria-label='Remove reviewer@example.org']",
-  )!;
-  expect(remove).not.toBeNull();
-  await act(async () => remove.click());
-  expect(button("Apply filter").disabled).toBe(true);
-});
-
-test("search results overlay the selected table and Escape dismisses search before the modal", async () => {
-  const onClose = vi.fn();
-  await mount({ onClose });
-  const searches = [
-    ...host.querySelectorAll<HTMLInputElement>(".filter-builder-searches input[type=search]"),
-  ];
-  const first = searches[0]!;
-  await act(async () => {
-    first.value = "room";
-    first.dispatchEvent(new window.Event("input", { bubbles: true }));
-  });
-  await waitOptions();
-  expect(first.getAttribute("aria-expanded")).toBe("true");
-  expect(host.querySelectorAll(".source-filter-results:not([hidden])")).toHaveLength(1);
-  expect(host.querySelector(".compact-filter-table")).not.toBeNull();
-  const escape = new window.Event("keydown", { bubbles: true, cancelable: true });
-  Object.defineProperty(escape, "key", { value: "Escape" });
-  // Linkedom binds bubbling listeners to their original target, so exercise
-  // this keyboard handler at its widget boundary; browser tests cover the input.
-  await act(async () => {
-    first.closest(".source-filter-picker")!.dispatchEvent(escape);
-  });
-  expect(first.getAttribute("aria-expanded")).toBe("false");
-  expect(onClose).not.toHaveBeenCalled();
-  const second = searches[1]!;
-  await act(async () => {
-    second.value = "person";
-    second.dispatchEvent(new window.Event("input", { bubbles: true }));
-  });
-  expect(second.getAttribute("aria-expanded")).toBe("true");
-  expect(first.getAttribute("aria-expanded")).toBe("false");
-  await act(async () => {
-    document.body.dispatchEvent(new window.Event("pointerdown", { bubbles: true }));
-  });
-  expect(second.getAttribute("aria-expanded")).toBe("false");
-  expect(onClose).not.toHaveBeenCalled();
-});
-
-test("changing the source closes the child draft without previewing the old policy for the new account", async () => {
-  const onClose = vi.fn(),
-    onApply = vi.fn();
-  await mount({ onClose, onApply });
-  api.previewSourceFilter.mockClear();
-  await act(async () =>
-    render(
-      h(SourceFilterEditor, {
-        source: { ...source, id: "fictional:other" },
-        capability: "answer",
-        accessLevel: "saved-level",
-        savedPolicy: policy,
-        enabled: true,
-        onApply,
-        onRemove: vi.fn(),
-        onClose,
-      }),
-      host,
-    ),
-  );
-  expect(onClose).toHaveBeenCalledTimes(1);
-  expect(host.querySelector('[role="dialog"]')).toBeNull();
-  expect(api.previewSourceFilter).not.toHaveBeenCalled();
-  expect(onApply).not.toHaveBeenCalled();
-});
-
-test("folder navigation keeps its overlay open when a result button disappears", async () => {
-  api.getSourceFilterOptions.mockImplementation(
-    async (id: string, query: { kind: string; parentId?: string }) => ({
-      sourceId: id,
-      readiness: source.scopeReadiness,
-      items: query.parentId
-        ? [{ ref: { kind: "folder", id: "child-folder" }, label: "fictional child", count: 2 }]
-        : [
-            {
-              ref: { kind: "folder", id: "parent-folder" },
-              label: "fictional parent",
-              count: 5,
-              hasChildren: true,
-            },
-          ],
-    }),
-  );
-  const onClose = vi.fn();
-  await mount({ onClose });
-  const search = host.querySelector<HTMLInputElement>(
-    '.source-filter-picker[aria-label="Choose folders"] input[type=search]',
-  )!;
-  await act(async () => {
-    search.dispatchEvent(new window.Event("input", { bubbles: true }));
-  });
-  await waitOptions();
-  const focus = vi.spyOn(search, "focus");
-  const open = host.querySelector<HTMLButtonElement>('button[aria-label="Open fictional parent"]')!;
-  await act(async () => open.click());
-  expect(focus).toHaveBeenCalledWith({ preventScroll: true });
-  const blur = new window.Event("focusout", { bubbles: true });
-  Object.defineProperty(blur, "relatedTarget", { value: null });
-  await act(async () => {
-    search.closest(".source-filter-picker")!.dispatchEvent(blur);
-  });
-  await waitOptions();
-  expect(search.getAttribute("aria-expanded")).toBe("true");
-  expect(host.textContent).toContain("fictional child");
-  expect(api.getSourceFilterOptions).toHaveBeenLastCalledWith(
-    source.id,
-    expect.objectContaining({ parentId: "parent-folder" }),
-    expect.any(AbortSignal),
-  );
-  expect(onClose).not.toHaveBeenCalled();
-  focus.mockRestore();
-});
-
-test("a tree whose source names its levels is browsed and listed in the source's words, never as folders", async () => {
-  const shelves = {
-    ...source,
-    scopes: {
-      items: [
-        {
-          kind: "folder",
-          noun: { one: "shelf or binder", many: "shelves and binders" },
-          levels: [
-            { one: "shelf", many: "shelves" },
-            { one: "binder", many: "binders" },
-          ],
-          picker: "tree",
-          link: "hierarchy",
-        },
-      ],
-    },
-    scopeReadiness: [{ kind: "folder", ready: true }],
-  };
-  const shelf = { kind: "folder", id: "shelf-one" };
-  const binder = { kind: "folder", id: "binder-one" };
-  api.getSourceFilterOptions.mockImplementation(
-    async (id: string, query: { parentId?: string }) => ({
-      sourceId: id,
-      readiness: shelves.scopeReadiness,
-      items: query.parentId
-        ? [{ ref: binder, label: "fictional binder", count: 2, parentId: shelf.id, depth: 1 }]
-        : [{ ref: shelf, label: "fictional shelf", count: 5, hasChildren: true, depth: 0 }],
-    }),
-  );
-  api.previewSourceFilter.mockImplementation(async (id: string, p: typeof policy) => ({
-    sourceId: id,
-    total: 5,
-    visible: 5,
-    hidden: 0,
-    unknown: 0,
-    readiness: shelves.scopeReadiness,
-    items: p.rules.flatMap((rule) =>
-      rule.match.map((ref) => ({
-        ref,
-        label: ref.id === shelf.id ? "fictional shelf" : "fictional binder",
-        count: ref.id === shelf.id ? 5 : 2,
-        depth: ref.id === shelf.id ? 0 : 1,
-      })),
-    ),
-    samples: [],
-  }));
-  await mount({
-    source: shelves,
-    savedPolicy: { ...policy, rules: [{ action: "share", match: [shelf, binder] }] },
-  });
-  await waitOptions();
-  const picker = host.querySelector('.source-filter-picker[aria-label="Choose shelves and binders"]')!;
-  const search = picker.querySelector<HTMLInputElement>("input[type=search]")!;
-  await act(async () => {
-    search.dispatchEvent(new window.Event("input", { bubbles: true }));
-  });
-  await waitOptions();
-  expect(picker.querySelector(".source-filter-breadcrumbs")!.textContent).toContain("All shelves");
-  expect(picker.querySelector(".filter-option-hint")!.textContent).toBe(
-    "Selecting shelves includes their binders.",
-  );
-  expect(picker.querySelector(".source-filter-options small")!.textContent).toBe(
-    "Shelf · 5 matching",
-  );
-  await act(async () =>
-    picker.querySelector<HTMLButtonElement>('button[aria-label="Open fictional shelf"]')!.click(),
-  );
-  await waitOptions();
-  expect(picker.querySelector(".source-filter-select-location")!.textContent).toBe(
-    "Select this shelf",
-  );
-  // Nothing lies beneath the last level a source names, so nothing is promised there.
-  expect(picker.querySelector(".filter-option-hint")).toBeNull();
-  expect(picker.querySelector(".source-filter-options small")!.textContent).toBe(
-    "Binder · 2 matching",
-  );
-  expect(
-    [...host.querySelectorAll(".compact-filter-kind")].map((cell) => cell.textContent),
-  ).toEqual(["Shelf", "Binder"]);
-  expect(host.textContent).not.toMatch(/folder/iu);
-});
-
-test("an account that is no longer connected lists its saved filters, counts nothing, and applies a removal", async () => {
-  api.previewSourceFilter.mockClear();
-  const kept = { kind: "conversation", id: "kept-room" };
-  const saved = { ...policy, rules: [{ action: "share", match: [...policy.rules[0]!.match, kept] }] };
-  const onApply = vi.fn();
-  await mount({
-    source: { id: source.id, displayName: "Fictional", available: false },
-    savedPolicy: saved,
-    onApply,
-  });
-  expect(host.querySelector(".compact-source-account")?.textContent).toContain(
-    "no longer connected",
-  );
-  expect(host.querySelector(".source-filter-notice")?.textContent).toBe(
-    "This account is no longer connected. Saved filters can be removed but not added.",
-  );
-  // Nothing to search or add; each saved row can still be removed.
-  expect(host.querySelector("input[type=search]")).toBeNull();
-  const removals = () => [...host.querySelectorAll<HTMLButtonElement>(".compact-filter-remove")];
-  expect(removals()).toHaveLength(2);
-  expect(host.textContent).not.toContain("Counts are unavailable");
-  expect(host.querySelector("[role='alert']")).toBeNull();
-  // Unchanged, there is nothing to apply; one removal is enough, with no counts to wait for.
-  expect(button("Apply filter").disabled).toBe(true);
-  await act(async () => removals()[0]!.click());
-  expect(button("Apply filter").disabled).toBe(false);
-  await act(async () => button("Apply filter").click());
-  expect(onApply).toHaveBeenCalledWith({ ...saved, rules: [{ action: "share", match: [kept] }] });
-  expect(api.previewSourceFilter).not.toHaveBeenCalled();
-});
-
-test("removing every saved filter of an account that is no longer connected leaves nothing to apply", async () => {
-  await mount({ source: { id: source.id, displayName: "Fictional", available: false } });
-  await act(async () =>
-    host.querySelector<HTMLButtonElement>(".compact-filter-remove")!.click(),
-  );
-  // An empty filter is not a filter: "All content" on the first step removes it.
-  expect(button("Apply filter").disabled).toBe(true);
-});

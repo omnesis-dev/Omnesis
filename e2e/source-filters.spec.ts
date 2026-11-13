@@ -7,36 +7,72 @@ import { test, expect } from "@playwright/test";
 
 const levelId = "00000000-0000-4000-8000-000000000081";
 const sourceId = "fictional-chat:one";
+const room = { capability: "membership", field: "extra.roomId", id: "fictional-room" };
 const policy = {
   sourceId,
   audience: { accessLevel: levelId, capability: "answer" },
-  rules: [{ action: "share", match: [{ kind: "conversation", id: "fictional-room" }] }],
+  rules: [{ action: "share", match: [room] }],
   otherwise: "hide",
 };
-const readiness = ["conversation", "participant", "label", "folder"].map((kind) => ({
-  kind,
-  ready: true,
-}));
 const source = {
   id: sourceId,
   sourceType: "fictional-chat",
   displayName: "Fictional project account",
   available: true,
-  scopes: {
-    items: [
-      {
-        kind: "conversation",
-        noun: { one: "room", many: "Rooms" },
-        picker: "search",
-        link: "fixed",
-      },
-      { kind: "participant", identifiers: ["email", "phone"], link: "changes" },
-      { kind: "label", noun: { one: "label", many: "Labels" }, picker: "search", link: "changes" },
-      { kind: "folder", noun: { one: "folder", many: "Folders" }, picker: "tree", link: "changes" },
-    ],
-  },
-  scopeReadiness: readiness,
+  filterable: true,
 };
+const noun = (one: string, many: string) => ({ one, many });
+const counted = { status: "ready", tooOld: 0, unmatched: 0, tooOldText: null, unmatchedText: null };
+/** The account's fields; the label field waits for a resync until the owner starts one. */
+const editor = (labels: Record<string, unknown>) => ({
+  sourceId,
+  sourceType: source.sourceType,
+  devices: [{ id: "dev-one", name: "Fictional laptop" }],
+  showDeviceLevel: false,
+  fields: [
+    {
+      field: "extra.roomId",
+      capability: "membership",
+      noun: noun("room", "rooms"),
+      picker: "search",
+      scope: "global",
+      state: { status: "ready" },
+      counts: counted,
+    },
+    {
+      field: "$people",
+      capability: "person",
+      noun: noun("person", "people"),
+      picker: "search",
+      scope: "global",
+      identifiers: ["email", "phone"],
+      state: { status: "ready" },
+      counts: counted,
+    },
+    {
+      field: "extra.labelIds",
+      capability: "membership",
+      noun: noun("label", "labels"),
+      picker: "tree",
+      scope: "global",
+      levels: [noun("label", "labels")],
+      insideText: "Includes the labels inside.",
+      state: labels,
+      counts: { status: "pending" },
+    },
+    {
+      field: "extra.folder",
+      capability: "tree",
+      noun: noun("folder", "folders"),
+      picker: "tree",
+      scope: "global",
+      levels: [noun("folder", "folders")],
+      insideText: "Includes the folders inside.",
+      state: { status: "ready" },
+      counts: counted,
+    },
+  ],
+});
 
 test("owner reviews mixed source filters, copies independently and keeps a stale draft", async ({
   page,
@@ -86,78 +122,119 @@ test("owner reviews mixed source filters, copies independently and keeps a stale
     ],
   });
   await page.route("**/admin/access", (route) => route.fulfill({ json: overview() }));
-  await page.route("**/admin/access/source-filters/*/options?*", async (route) => {
-    const url = new URL(route.request().url()),
-      kind = url.searchParams.get("kind"),
-      parent = url.searchParams.get("parentId");
-    const ref =
-      kind === "participant"
-        ? {
-            kind,
-            label: "Fictional person",
-            identifiers: [{ type: "email", value: "person@example.com" }],
-          }
-        : {
-            kind,
-            id: kind === "folder" ? (parent ? "folder-child" : "folder-root") : "fictional-room",
-          };
-    await route.fulfill({
-      json: {
-        sourceId,
-        sourceType: source.sourceType,
-        scopes: source.scopes,
-        readiness,
-        items: [
-          {
-            ref,
-            label:
-              kind === "folder"
-                ? parent
-                  ? "Fictional leaf"
-                  : "Fictional root"
-                : "Fictional project room",
-            count: 4,
-            hasChildren: kind === "folder" && !parent,
-          },
-        ],
-      },
-    });
+  const resyncs: unknown[] = [];
+  let labels: Record<string, unknown> = {
+    status: "needs-resync",
+    cost: "This reads about 900 messages a day.",
+    text: "Label filters need Fictional project account to be resynced. Your rooms stay searchable meanwhile. This reads about 900 messages a day.",
+  };
+  await page.route(`**/admin/sources/${encodeURIComponent(sourceId)}/resync`, async (route) => {
+    resyncs.push(route.request().postDataJSON());
+    labels = {
+      status: "resyncing",
+      processed: 212,
+      total: 900,
+      text: "Resyncing Fictional project account: 212 of about 900.",
+    };
+    await route.fulfill({ json: { ok: true, mode: "in-place", scope: "source", deviceIds: [] } });
   });
-  await page.route("**/admin/access/source-filters/*/preview", async (route) => {
-    const body = route.request().postDataJSON();
-    await route.fulfill({
-      json: {
-        sourceId,
-        total: 10,
-        visible: 6,
-        hidden: 4,
-        unknown: 1,
-        readiness,
-        items: body.policy.rules.flatMap(
-          (rule: { match: Array<{ kind: string; id?: string; label?: string }> }) =>
-            rule.match.map((ref) => ({
-              ref,
-              label:
-                ref.label || (ref.kind === "folder" ? "Fictional leaf" : "Fictional project room"),
-              count: 4,
-            })),
-        ),
-        samples: [
-          {
-            documentId: "fictional-visible",
-            title: "Fictional visible sample",
-            visible: true,
-            unknown: false,
-          },
-          {
-            documentId: "fictional-unknown",
-            title: "Fictional unknown sample",
-            visible: false,
-            unknown: true,
-          },
-        ],
-      },
-    });
+  await page.route(/\/admin\/access\/source-filters\//, async (route) => {
+    const url = new URL(route.request().url());
+    const tail = url.pathname.split("/").at(-1);
+    if (tail === "identifiers") {
+      const { type, value } = route.request().postDataJSON();
+      await route.fulfill({
+        json: value.includes("@")
+          ? { identifier: { type, value: value.trim().toLowerCase() } }
+          : { error: "Enter a valid email address." },
+      });
+      return;
+    }
+    if (tail === "preview") {
+      const body = route.request().postDataJSON();
+      await route.fulfill({
+        json: {
+          status: "ready",
+          sourceId,
+          total: 10,
+          visible: 6,
+          hidden: 4,
+          tooOld: 2,
+          unmatched: 1,
+          tooOldText:
+            "2 older items could not be resynced and stay hidden from agents using this filter.",
+          unmatchedText: "1 record can't be matched to a room and stays hidden.",
+          items: body.policy.rules.flatMap(
+            (rule: { match: Array<{ field?: string; label?: string }> }) =>
+              rule.match.map((ref) => ({
+                ref,
+                label:
+                  ref.label ||
+                  (ref.field === "extra.folder"
+                    ? "Fictional root/Fictional leaf"
+                    : "Fictional project room"),
+                count: 4,
+              })),
+          ),
+        },
+      });
+      return;
+    }
+    if (tail === "options") {
+      const field = url.searchParams.get("field"),
+        parent = url.searchParams.get("parentId");
+      const folder = (id: string, label: string, extra = {}) => ({
+        ref: { capability: "tree", field: "extra.folder", id },
+        label,
+        shortLabel: label.split("/").at(-1),
+        count: 4,
+        ...extra,
+      });
+      await route.fulfill({
+        json: {
+          sourceId,
+          field,
+          items:
+            field === "extra.folder"
+              ? parent
+                ? [
+                    folder("folder-child", "Fictional root/Fictional leaf", {
+                      parentId: "folder-root",
+                      depth: 1,
+                    }),
+                    folder("folder-empty", "Fictional root/Empty", {
+                      parentId: "folder-root",
+                      depth: 1,
+                      count: 0,
+                    }),
+                  ]
+                : [folder("folder-root", "Fictional root", { hasChildren: true, depth: 0 })]
+              : field === "$people"
+                ? [
+                    {
+                      ref: {
+                        capability: "person",
+                        label: "Fictional person",
+                        identifiers: [{ type: "email", value: "person@example.com" }],
+                      },
+                      label: "Fictional person",
+                      shortLabel: "Fictional person",
+                      count: 4,
+                    },
+                  ]
+                : [
+                    {
+                      ref: room,
+                      label: "Fictional project room",
+                      shortLabel: "Fictional project room",
+                      count: 4,
+                    },
+                  ],
+        },
+      });
+      return;
+    }
+    await route.fulfill({ json: editor(labels) });
   });
   await page.route(`**/admin/access/levels/${levelId}`, async (route) => {
     submitted = route.request().postDataJSON();
@@ -171,24 +248,57 @@ test("owner reviews mixed source filters, copies independently and keeps a stale
     .filter({ has: page.getByRole("heading", { name: "Answer data", exact: true }) })
     .getByRole("button", { name: "Change", exact: true })
     .click();
+  await expect(page.locator(".guided-source-row")).toContainText("Share matching content · 1 item");
   await page
     .getByRole("button", { name: "Change Fictional project account content", exact: true })
     .click();
   const dialog = page.getByRole("dialog");
   await dialog.getByLabel("Everything except matching content", { exact: false }).check();
   await dialog.getByRole("button", { name: "Continue", exact: true }).click();
-  await dialog.getByLabel("Value", { exact: true }).fill("person@example.com");
+  // Labels wait for a resync; the owner starts it from here and watches it run.
+  const labelState = dialog.locator('.source-filter-field-state[aria-label="Labels"]');
+  await expect(labelState).toContainText(
+    "Label filters need Fictional project account to be resynced.",
+  );
+  await expect(dialog.getByRole("searchbox", { name: "Search labels", exact: true })).toHaveCount(
+    0,
+  );
+  await labelState
+    .getByRole("button", { name: "Resync Fictional project account", exact: true })
+    .click();
+  await expect(labelState).toContainText("Resyncing Fictional project account: 212 of about 900.", {
+    timeout: 15_000,
+  });
+  await expect(labelState.locator("progress")).toHaveAttribute("value", "212");
+  expect(resyncs).toEqual([{ mode: "in-place" }]);
+  // A typed address goes through the gateway: refused with its sentence, then added in its spelling.
+  await dialog.getByLabel("Value", { exact: true }).fill("not an address");
   await dialog.getByRole("button", { name: "Add", exact: true }).click();
-  await dialog.getByRole("searchbox", { name: "Search folder", exact: true }).focus();
+  await expect(dialog.locator(".source-filter-exact [role=alert]")).toHaveText(
+    "Enter a valid email address.",
+  );
+  await dialog.getByLabel("Value", { exact: true }).fill(" Person@Example.com ");
+  await dialog.getByRole("button", { name: "Add", exact: true }).click();
+  await expect(dialog.locator(".compact-filter-table")).toContainText("person@example.com");
+  await dialog.getByRole("searchbox", { name: "Search folders", exact: true }).focus();
   await expect(dialog).toContainText("Includes the folders inside.");
   await dialog.getByRole("button", { name: "Open Fictional root", exact: true }).click();
+  // Inside a folder rows show their own name; an empty folder is listed with 0.
+  await expect(dialog.locator(".source-filter-options li label")).toHaveText([
+    "Fictional leaf4 matching",
+    "Empty0 matching",
+  ]);
   await dialog.getByRole("checkbox", { name: /Fictional leaf/ }).check();
   await dialog.locator(".modal-title").click();
   await expect(dialog.locator(".filter-selection-heading")).toContainText("3 selected");
+  // The table shows the full name.
+  await expect(dialog.locator(".compact-filter-table")).toContainText(
+    "Fictional root/Fictional leaf",
+  );
   await expect(dialog.locator(".source-filter-counts")).toContainText("6 shared");
   await expect(dialog.locator(".source-filter-unchecked p")).toHaveText([
-    "1 record stays hidden until its details finish syncing.",
-    "Omnesis doesn’t have the details it needs to check them yet. Nothing is shared by mistake while they sync.",
+    "2 older items could not be resynced and stay hidden from agents using this filter.",
+    "1 record can't be matched to a room and stays hidden.",
   ]);
   const mode = dialog.locator(".filter-task-context .access-pill");
   await expect(mode).toHaveText("Hide matching content");

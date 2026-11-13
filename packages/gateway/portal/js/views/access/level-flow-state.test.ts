@@ -52,12 +52,12 @@ test("retained and advanced restrictions are never described as all-content acce
       {
         sourceId: "fictional:one",
         audience: { accessLevel: "new", capability: "answer" },
-        rules: [{ action: "share", match: [{ kind: "label", id: "invented" }] }],
+        rules: [{ action: "share", match: [{ capability: "membership", field: "extra.labelIds", id: "invented" }] }],
         otherwise: "hide",
       },
     ],
   };
-  expect(sourceBoundarySummary(filtered, sources[0])).toBe("Only 1 selected match");
+  expect(sourceBoundarySummary(filtered, sources[0])).toBe("Share matching content · 1 item");
   expect(
     sourceBoundarySummary(
       {
@@ -85,7 +85,7 @@ test("the same number of selected matches with different identities is a data ch
   const policy = (id: string) => ({
     sourceId: "fictional:one",
     audience: { accessLevel: "new", capability: "answer" },
-    rules: [{ action: "share", match: [{ kind: "label", id }] }],
+    rules: [{ action: "share", match: [{ capability: "membership", field: "extra.labelIds", id }] }],
     otherwise: "hide",
   });
   expect(
@@ -99,7 +99,7 @@ test("the same number of selected matches with different identities is a data ch
 
 test("renamed participant snapshots and reordered selections do not appear as changed access decisions", () => {
   const ref = {
-    kind: "participant",
+    capability: "person",
     label: "Old snapshot",
     identifiers: [
       { type: "email", value: "one@example.org" },
@@ -109,7 +109,7 @@ test("renamed participant snapshots and reordered selections do not appear as ch
   const policy = {
     sourceId: sources[0]!.id,
     audience: { accessLevel: "invented-level", capability: "answer" },
-    rules: [{ action: "share", match: [ref, { kind: "label", id: "invented-label" }] }],
+    rules: [{ action: "share", match: [ref, { capability: "membership", field: "extra.labelIds", id: "invented-label" }] }],
     otherwise: "hide",
   };
   const before = { answer: { ...answer, scopePolicies: [policy] } };
@@ -123,7 +123,7 @@ test("renamed participant snapshots and reordered selections do not appear as ch
             {
               ...policy.rules[0]!,
               match: [
-                { kind: "label", id: "invented-label" },
+                { capability: "membership", field: "extra.labelIds", id: "invented-label" },
                 { ...ref, label: "New snapshot", identifiers: [...ref.identifiers].reverse() },
               ],
             },

@@ -20,7 +20,7 @@ function sorted(values, unique = false) {
 }
 function referenceIntent(ref) {
   const value = canonical(ref);
-  if (ref?.kind === "participant") {
+  if (ref?.capability === "person") {
     // The snapshot name describes the selection; identifiers determine access.
     delete value.label;
     if (Array.isArray(ref.identifiers))

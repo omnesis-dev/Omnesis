@@ -1,0 +1,166 @@
+/* SPDX-License-Identifier: AGPL-3.0-or-later */
+/* Copyright (c) 2026 Adrien Conrath */
+
+/* A document's filter details, in its metadata panel. */
+.meta-filter-details {
+  margin: 8px 0 4px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border-light);
+}
+.meta-filter-title {
+  margin-bottom: 4px;
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 600;
+}
+.meta-value-muted {
+  color: var(--text-secondary);
+}
+
+/* "Who can read this?": one card per access level, two verdict rows each. */
+.doc-access-page {
+  max-width: 820px;
+  display: grid;
+  gap: 16px;
+}
+.doc-access-title {
+  margin: 0;
+  font-size: 24px;
+  font-weight: 600;
+  line-height: 1.25;
+}
+.doc-access-subject {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: -8px 0 0;
+  color: var(--text-secondary);
+  font-size: 14px;
+}
+.doc-access-subject a {
+  color: var(--text-primary);
+  font-weight: 500;
+}
+.doc-access-source-icon {
+  display: inline-flex;
+}
+.doc-access-notes {
+  display: grid;
+  gap: 4px;
+}
+.doc-access-notes p,
+.doc-access-empty {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.doc-access-levels {
+  display: grid;
+  gap: 12px;
+}
+.doc-access-level {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-secondary);
+}
+.doc-access-level > header {
+  display: grid;
+  gap: 6px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+}
+.doc-access-level h2 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+}
+.doc-access-level .access-level-empty {
+  margin: 0;
+  font-size: 13px;
+}
+.doc-access-agents {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 16px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.doc-access-agent {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-primary);
+  font-size: 13px;
+}
+.doc-access-agent svg {
+  width: 13px;
+  height: 13px;
+  color: var(--text-secondary);
+  flex-shrink: 0;
+}
+.doc-access-verdicts {
+  margin: 0;
+}
+.doc-access-verdict {
+  display: grid;
+  grid-template-columns: 84px minmax(0, 1fr);
+  align-items: start;
+  gap: 12px;
+  padding: 10px 16px;
+}
+.doc-access-verdict + .doc-access-verdict {
+  border-top: 1px solid var(--border);
+}
+.doc-access-verdict dt {
+  padding-top: 1px;
+}
+.doc-access-verdict dd {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+  min-width: 0;
+}
+.doc-access-verdict dd p {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+.doc-access-mark {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-primary);
+  font-size: 13px;
+  font-weight: 600;
+}
+.doc-access-mark svg {
+  color: var(--text-secondary);
+}
+.doc-access-mark.is-readable,
+.doc-access-mark.is-readable svg {
+  color: var(--success);
+}
+@media (max-width: 560px) {
+  .doc-access-verdict {
+    grid-template-columns: 1fr;
+    gap: 6px;
+  }
+}
+.doc-access-loading,
+.doc-access-error {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+.doc-access-error p {
+  margin: 0;
+}

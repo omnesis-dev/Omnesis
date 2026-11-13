@@ -7,7 +7,7 @@ import { sameGrantIntent, sameScopePolicyIntent } from "./grant-intent.js";
 // @ts-expect-error — Portal modules are JavaScript.
 import { setSourcePolicy, scopeRefKey } from "./source-filter-state.js";
 const participant = {
-  kind: "participant",
+  capability: "person",
   label: "Original snapshot",
   identifiers: [
     { type: "email", value: "one@example.org" },
@@ -17,7 +17,7 @@ const participant = {
 const policy = {
   sourceId: "fictional:one",
   audience: { accessLevel: "invented-level", capability: "answer" },
-  rules: [{ action: "share", match: [participant, { kind: "label", id: "invented-label" }] }],
+  rules: [{ action: "share", match: [participant, { capability: "membership", field: "extra.labelIds", id: "invented-label" }] }],
   otherwise: "hide",
 };
 const other = { ...policy, sourceId: "fictional:two" };
@@ -37,7 +37,7 @@ test("boundary and reference selections compare as sets while display-only snaps
   };
   const changed = {
     ...policy,
-    rules: [{ ...policy.rules[0]!, match: [{ kind: "label", id: "invented-label" }, renamed] }],
+    rules: [{ ...policy.rules[0]!, match: [{ capability: "membership", field: "extra.labelIds", id: "invented-label" }, renamed] }],
   };
   expect(sameScopePolicyIntent(policy, changed)).toBe(true);
   expect(
@@ -60,7 +60,7 @@ test("a no-op Apply on the first of two accounts retains the original wire polic
       {
         ...policy.rules[0]!,
         match: [
-          { kind: "label", id: "invented-label" },
+          { capability: "membership", field: "extra.labelIds", id: "invented-label" },
           {
             ...participant,
             label: "Renamed snapshot",
@@ -80,7 +80,7 @@ test("different references, added identifiers and new source authority remain re
   const different = {
     ...policy,
     rules: [
-      { ...policy.rules[0]!, match: [{ kind: "label", id: "different-label" }, participant] },
+      { ...policy.rules[0]!, match: [{ capability: "membership", field: "extra.labelIds", id: "different-label" }, participant] },
     ],
   };
   const wider = {
@@ -122,7 +122,7 @@ test("ordered advanced rules and unsupported clause fields remain authoritative"
     ...policy,
     rules: [
       ...policy.rules,
-      { action: "hide", match: [{ kind: "folder", id: "invented-folder" }] },
+      { action: "hide", match: [{ capability: "tree", field: "extra.folder", id: "invented-folder" }] },
     ],
     extraCondition: { label: "first", sequence: [1, 2] },
   };
@@ -149,9 +149,9 @@ test("exact participant identity deduplicates tuples without delimiter collision
     identifiers: [...participant.identifiers].reverse().concat(participant.identifiers[0]!),
   };
   expect(scopeRefKey(duplicates)).toBe(scopeRefKey(participant));
-  const one = { kind: "participant", identifiers: [{ type: "email", value: "left|email:right" }] };
+  const one = { capability: "person", identifiers: [{ type: "email", value: "left|email:right" }] };
   const two = {
-    kind: "participant",
+    capability: "person",
     identifiers: [
       { type: "email", value: "left" },
       { type: "email", value: "right" },

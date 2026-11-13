@@ -44,6 +44,7 @@ import { CloudPairingLogin } from "./components/cloud-pairing-login.js";
 import { CloudPairingBanner } from "./components/cloud-pairing-banner.js";
 
 const DocumentView = lazy(() => import("./views/document.js").then((m) => m.DocumentView));
+const DocumentAccessView = lazy(() => import("./views/document-access.js").then((m) => m.DocumentAccessView));
 const PeopleView = lazy(() => import("./views/people.js").then((m) => m.PeopleView));
 const SourcesView = lazy(() => import("./views/sources.js").then((m) => m.SourcesView));
 const SourceRecentView = lazy(() => import("./views/source-recent.js").then((m) => m.SourceRecentView));
@@ -799,6 +800,8 @@ function App() {
         />`}
         ${route.view === "document"
           ? html`<${DocumentView} id=${route.id} />`
+          : route.view === "document-access"
+          ? html`<${DocumentAccessView} id=${route.id} />`
           : route.view === "people"
           ? html`<${PeopleView} personId=${route.personId} tab=${route.tab} initialQuery=${route.query} experimental=${experimental} />`
           : route.view === "sources"

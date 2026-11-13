@@ -877,7 +877,7 @@ export function SourcesView({ demo = false } = {}) {
 
   function runResync(sourceId, deviceId) {
     return withBusy(sourceId, "resyncing", async () => {
-      const response = await resyncSource(sourceId, deviceId);
+      const response = await resyncSource(sourceId, { deviceId, mode: "from-scratch" });
       showSyncNote(sourceId, resyncNote(response, deviceById));
     });
   }

@@ -652,7 +652,7 @@ describe("AccessView", () => {
     expect(rows.map((row) => row.querySelector(".access-term-permission")?.textContent))
       .toEqual(["Allowed", "Not granted", "Not granted"]);
     expect(rows.map((row) => row.classList.contains("access-term-off"))).toEqual([false, true, true]);
-    expect(rows[0].querySelector(".access-term-details")?.textContent).toContain("Household policy");
+    expect(rows[0].querySelector(".access-term-details")?.textContent).toContain("Privacy review: Household · New sources: Automatic");
     expect(rows[1].querySelector(".access-term-details")?.textContent).toBe("—");
     expect(table.querySelector("th svg")).toBeNull();
 
@@ -839,13 +839,16 @@ describe("AccessView", () => {
     const answer = raw.querySelector(".access-level-terms .access-term-answer .access-permission")!;
     expect(answer.getAttribute("class")).toContain("is-unreviewed");
     expect(answer.getAttribute("title")).toBe("Answers are released without privacy review");
-    expect(raw.querySelector(".access-level-terms")?.textContent).toContain("Raw access");
+    // Direct is described by its reach and new sources alone, in the editor's words.
+    const directTerms = raw.querySelector(".access-term-direct .access-term-details")?.textContent ?? "";
+    expect(directTerms).not.toContain("Raw access");
+    expect(directTerms).toMatch(/New sources: (Blocked|Automatic)$/);
     expect(raw.querySelector(".access-level-terms a")).toBeNull();
 
     // A policy the overview no longer carries is not invented behind a link.
     const lost = levelGroup("Fictional lost policy");
     expect(lost.querySelector(".access-level-terms a")).toBeNull();
-    expect(lost.querySelector(".access-level-terms")?.textContent).toContain("Policy unavailable");
+    expect(lost.querySelector(".access-level-terms")?.textContent).toContain("Unnamed policy");
   });
 
   test("edits a level from its Edit button, and creates one from the header", async () => {

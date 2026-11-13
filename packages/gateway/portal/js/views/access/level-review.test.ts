@@ -5,7 +5,12 @@ import { h, render } from "preact";
 import { act } from "preact/test-utils";
 import { parseHTML } from "linkedom";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
-const api = vi.hoisted(() => ({ getSourceFilterOptions: vi.fn(), previewSourceFilter: vi.fn() }));
+const api = vi.hoisted(() => ({
+  getSourceFilterEditor: vi.fn(),
+  getSourceFilterOptions: vi.fn(),
+  previewSourceFilter: vi.fn(),
+  resyncSource: vi.fn(),
+}));
 vi.mock("../../api.js", () => api);
 // @ts-expect-error — Portal modules are JavaScript.
 import { LevelDecisionSummary, LevelReview, LevelTopicSummary } from "./level-review.js";
@@ -18,9 +23,26 @@ const source = {
   id: "invented:maya@example.com",
   displayName: "Invented provider",
   icon: "/icons/invented.svg",
-  scopes: { items: [{ kind: "label", noun: { one: "label" } }] },
+  filterable: true,
 };
-const ref = { kind: "label", id: "invented-design-label" };
+const editor = {
+  sourceId: source.id,
+  sourceType: "invented",
+  devices: [],
+  showDeviceLevel: false,
+  fields: [
+    {
+      field: "extra.labelIds",
+      capability: "membership",
+      noun: { one: "label", many: "labels" },
+      picker: "search",
+      scope: "global",
+      state: { status: "ready" },
+      counts: { status: "ready", tooOld: 0, unmatched: 0, tooOldText: null, unmatchedText: null },
+    },
+  ],
+};
+const ref = { capability: "membership", field: "extra.labelIds", id: "invented-design-label" };
 const policy = {
   sourceId: source.id,
   audience: { accessLevel: "invented-level", capability: "answer" },
@@ -40,12 +62,16 @@ beforeEach(() => {
   vi.stubGlobal("document", dom.document);
   host = dom.document.querySelector("#root") as unknown as HTMLElement;
   api.previewSourceFilter.mockReset();
+  api.getSourceFilterEditor.mockReset().mockResolvedValue(editor);
   api.previewSourceFilter.mockResolvedValue({
     sourceId: source.id,
     visible: 7,
     hidden: 4,
-    unknown: 1,
-    readiness: [{ kind: "label", ready: true }],
+    status: "ready",
+    tooOld: 0,
+    unmatched: 1,
+    tooOldText: null,
+    unmatchedText: null,
     items: [{ ref, label: "Design", count: 7 }],
   });
 });
@@ -199,7 +225,7 @@ test("overview counts filters only on selected accounts while preserving blocked
 });
 
 test("before and after distinguish different selections with the same display name", async () => {
-  const replacement = { kind: "label", id: "invented-replacement-label" };
+  const replacement = { capability: "membership", field: "extra.labelIds", id: "invented-replacement-label" };
   const before = { answer };
   const after = {
     answer: {
@@ -211,8 +237,11 @@ test("before and after distinguish different selections with the same display na
     sourceId: source.id,
     visible: 7,
     hidden: 4,
-    unknown: 1,
-    readiness: [{ kind: "label", ready: true }],
+    status: "ready",
+    tooOld: 0,
+    unmatched: 1,
+    tooOldText: null,
+    unmatchedText: null,
     items: draft.rules.flatMap((rule) =>
       rule.match.map((item) => ({ ref: item, label: "Design", count: 7 })),
     ),
@@ -248,8 +277,8 @@ test("before and after distinguish different selections with the same display na
 
 describe("a filter's items show under the side that holds them", () => {
   const second = { ...source, id: "invented:jamie@example.org" };
-  const travel = { kind: "label", id: "invented-travel-label" };
-  const budget = { kind: "label", id: "invented-budget-label" };
+  const travel = { capability: "membership", field: "extra.labelIds", id: "invented-travel-label" };
+  const budget = { capability: "membership", field: "extra.labelIds", id: "invented-budget-label" };
   const labels: Record<string, string> = {
     [ref.id]: "Design",
     [travel.id]: "Travel",
@@ -280,8 +309,11 @@ describe("a filter's items show under the side that holds them", () => {
         sourceId,
         visible: draft.rules[0]!.action === "share" ? 7 : 20,
         hidden: draft.rules[0]!.action === "share" ? 20 : 7,
-        unknown: 0,
-        readiness: [{ kind: "label", ready: true }],
+        status: "ready",
+        tooOld: 0,
+        unmatched: 0,
+        tooOldText: null,
+        unmatchedText: null,
         items: draft.rules[0]!.match.map((item) => ({
           ref: item,
           label: labels[item.id],

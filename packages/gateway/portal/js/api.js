@@ -958,8 +958,28 @@ export const revokeTokenById = (id) =>
 export const getAccessOverview = (signal) =>
   request("GET", "/admin/access", { cache: "no-store", signal });
 
+/**
+ * One account's filter editor: its devices, and per filterable field the
+ * nouns, the picker, whether a filter can use it yet and its counts.
+ */
+export const getSourceFilterEditor = (sourceId, signal) =>
+  request("GET", `/admin/access/source-filters/${encodeURIComponent(sourceId)}`, { signal, cache: "no-store" });
+
+/** One page of a field's items: `{ field, q?, parentId?, device?, cursor? }`. */
 export const getSourceFilterOptions = (sourceId, query, signal) =>
   request("GET", `/admin/access/source-filters/${encodeURIComponent(sourceId)}/options`, { query, signal, cache: "no-store" });
+
+/** A typed phone number, email or domain: `{ identifier }` in the gateway's spelling, or the `{ error }` sentence to show. */
+export const checkFilterIdentifier = (type, value, signal) =>
+  request("POST", "/admin/access/source-filters/identifiers", { body: { type, value }, signal });
+
+/** The labels, folders, chats and people a filter would decide this document by, and the source version that wrote it. */
+export const getDocumentFilterDetails = (id, signal) =>
+  request("GET", `/admin/documents/${encodeURIComponent(id)}/filter-details`, { signal, cache: "no-store" });
+
+/** Every access level, its agents, and whether each can read this document through Answer and Direct, and why. */
+export const getDocumentAccess = (id, signal) =>
+  request("GET", `/admin/documents/${encodeURIComponent(id)}/access`, { signal, cache: "no-store" });
 
 export const previewSourceFilter = (sourceId, policy, signal) =>
   request("POST", `/admin/access/source-filters/${encodeURIComponent(sourceId)}/preview`, { body: { policy }, signal });
@@ -1129,19 +1149,22 @@ export const getSourceWatermark = (sourceId) =>
   request("GET", "/admin/watermarks", { query: { sourceId } });
 
 /**
- * Wipe a source's data and sync it again from scratch. Without `deviceId`
- * every document of the source goes; with one, only what that device holds —
- * its documents, analytics rows and cursor on a partitioned source, just its
- * cursor on a replicated one (siblings are untouched either way). Answers
- * `{ ok, scope: "source" | "stream" | "cursor", deviceIds }` — `scope` is what
- * was wiped, `deviceIds` the devices the sync command reached (empty when
- * none is online; the sync then waits for one). A refusal's `code` is
- * DEVICE_NOT_MEMBER or RESYNC_NOT_PER_DEVICE (a per-device resync on a
- * source whose mode has no per-device cursor).
+ * Resync a source. `mode` is "in-place" — nothing is deleted, the source is
+ * read again and each item updates the record it already has — or
+ * "from-scratch", which deletes what the source ingested first. With
+ * `deviceId`, only that device is resynced: its own stream on a partitioned
+ * source, its cursor on a replicated one (always in place — its records are
+ * shared; siblings are untouched either way). Answers
+ * `{ ok, mode, scope: "source" | "stream" | "cursor", deviceIds, … }` —
+ * `mode` is what was applied, `scope` the slice it applied to, `deviceIds`
+ * the devices the sync command reached (empty when none is online; the sync
+ * then waits for one). A refusal's `code` is DEVICE_NOT_MEMBER,
+ * RESYNC_NOT_PER_DEVICE (a per-device resync on a source whose mode has no
+ * per-device cursor) or RESYNC_PUSH_ONLY.
  */
-export const resyncSource = (sourceId, deviceId) =>
+export const resyncSource = (sourceId, { deviceId, mode }) =>
   request("POST", `/admin/sources/${encodeURIComponent(sourceId)}/resync`, {
-    body: deviceId ? { deviceId } : {},
+    body: deviceId ? { deviceId, mode } : { mode },
   });
 
 export const removeAdminSource = (sourceId) =>

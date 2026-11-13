@@ -5,12 +5,14 @@ import { html } from "htm/preact";
 import { timeAgo } from "../lib/format.js";
 import { AnnotationList, OmnesisSparkle } from "./annotation-list.js";
 import { cursorPageBoundaryState, LoadMore } from "./load-more.js";
+import { DocumentFilterDetails } from "./document-filter-details.js";
 
 export function MetadataPanel({
   document: doc,
   extractedDates = [],
   annotations = [],
   annotationPage = null,
+  filterDetails = null,
 }) {
   if (!doc) return null;
 
@@ -115,6 +117,8 @@ export function MetadataPanel({
           </div>
         </div>
       `}
+
+      <${DocumentFilterDetails} details=${filterDetails} />
 
       ${extraFields.map(([k, v]) => html`
         <div class="meta-row meta-row-block">

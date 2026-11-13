@@ -9,8 +9,17 @@ import { SourceFilterPicker, ExactIdentifierInput } from "./source-filter-picker
 import { SourceFilterTable } from "./source-filter-table.js";
 import { SourceAccountHeader } from "./source-account-header.js";
 import { CapabilityPill, FilterModePill } from "./access-pills.js";
-import { FilterPreview, useSourceFilterPreview } from "./source-filter-preview.js";
+import { FilterPreview, RETRY_COUNTS_LABEL, useSourceFilterPreview } from "./source-filter-preview.js";
 import { rememberScopeLabels, useScopeLabelGeneration } from "./source-filter-labels.js";
+import {
+  FilterFieldState,
+  capitalized,
+  fieldNoun,
+  fieldReady,
+  filterApiError,
+  resyncForFilters,
+  useSourceFilterEditor,
+} from "./source-filter-fields.js";
 import {
   cloneFilter,
   newSourcePolicy,
@@ -20,8 +29,6 @@ import {
   policyFilterMode,
   setFilterMode,
   toggleScopeRef,
-  unreadyKinds,
-  addProposedIdentifiers,
 } from "./source-filter-state.js";
 import { capabilityName, sourceId as accountIdOf, sourceLabel } from "./grant-builder-state.js";
 
@@ -42,8 +49,8 @@ export function SourceFilterEditor({
   );
   const [step, setStep] = useState("mode");
   const [mode, setMode] = useState(savedPolicy ? policyFilterMode(savedPolicy) : "all");
-  const [openKind, setOpenKind] = useState(null);
-  const [pickerReadiness, setPickerReadiness] = useState(null);
+  const [openField, setOpenField] = useState(null);
+  const [resync, setResync] = useState({ starting: false, error: "" });
   const heading = useRef(null);
   const pickerMemory = useRef(new Map());
   const initialSource = useRef(sourceId);
@@ -56,26 +63,40 @@ export function SourceFilterEditor({
   const selected = editable
     ? draft.rules[0].match
     : (draft.rules ?? []).flatMap((rule) => rule.match ?? []);
-  // An account that is no longer connected has nothing to count.
+  // An account that is no longer connected has nothing to count and no fields to pick from.
   const connected = source.available !== false;
+  const fields = useSourceFilterEditor(connected ? sourceId : null, {
+    watch: true,
+    expectChange: resync.starting,
+  });
+  const editor = fields.data;
   const preview = useSourceFilterPreview(
     sourceId,
     connected && currentSource && mode !== "all" && selected.length && (step === "builder" || readOnly)
       ? draft
       : null,
   );
-  // The selected kinds whose counts the account is still working out.
-  const counting =
-    unreadyKinds(draft, preview.data?.readiness ?? source.scopeReadiness).length > 0;
-  const error =
-    mode === "all"
-      ? null
-      : filterDraftError(draft, {
-          ...source,
-          scopeReadiness: preview.data?.readiness ?? pickerReadiness ?? source.scopeReadiness,
-        });
-  const kinds = source.scopes?.items ?? [];
-  const identifiers = kinds.find((item) => item.kind === "participant")?.identifiers ?? [];
+  const error = mode === "all" ? null : filterDraftError(draft);
+  const ready = (editor?.fields ?? []).filter(fieldReady);
+  const waiting = (editor?.fields ?? []).filter((field) => !fieldReady(field));
+  const identifiers = ready.find((field) => field.capability === "person")?.identifiers ?? [];
+  // A resync the owner started shows as starting until the gateway reports it.
+  useEffect(() => {
+    if (resync.starting && !waiting.some((field) => field.state?.status === "needs-resync"))
+      setResync({ starting: false, error: "" });
+  }, [editor]);
+  const startResync = async () => {
+    setResync({ starting: true, error: "" });
+    try {
+      await resyncForFilters(source);
+      fields.reload();
+    } catch (failure) {
+      setResync({
+        starting: false,
+        error: filterApiError(failure, "The resync could not start. Try again."),
+      });
+    }
+  };
   // A filter of an account that is gone can only lose items: there is nothing
   // to count, so removing some of what was saved is all that Apply needs.
   const narrowed =
@@ -84,18 +105,14 @@ export function SourceFilterEditor({
     draft.rules[0].action === savedPolicy.rules?.[0]?.action &&
     selected.length > 0 &&
     selected.length < (savedPolicy.rules?.[0]?.match?.length ?? 0);
-  const applyBlocked = connected
-    ? Boolean(error) || preview.pending || !preview.data || Boolean(preview.error)
-    : !narrowed;
+  // Counts never hold back Apply: the gateway checks the filter when the level is saved.
+  const applyBlocked = connected ? Boolean(error) : !narrowed;
   const title = readOnly
     ? "Saved source filter"
     : step === "mode"
       ? "What should be shared?"
       : "Choose matching content";
-  const freshItems =
-    !preview.pending && !preview.error && !error && !counting
-      ? (preview.data?.items ?? [])
-      : [];
+  const freshItems = !preview.pending && !preview.error ? (preview.data?.items ?? []) : [];
   useEffect(() => {
     heading.current?.focus?.();
   }, [step]);
@@ -152,34 +169,53 @@ export function SourceFilterEditor({
         ${
           step === "builder" || readOnly
             ? html`<div class="filter-builder-stage">
-                ${
-                  !readOnly
-                    ? html`<div class="filter-builder-inputs">
-                        <div class="filter-builder-searches">
-                          ${kinds.map(
-                            (item) =>
-                              html`<${SourceFilterPicker}
-                                key=${`${sourceId}:${item.kind}`}
-                                source=${source}
-                                kind=${item.kind}
-                                selected=${selected}
-                                onToggle=${toggle}
-                                overlay
-                                open=${openKind === item.kind}
-                                onOpen=${() => setOpenKind(item.kind)}
-                                onClose=${() => setOpenKind(null)}
-                                showExact=${false}
-                                memory=${pickerMemory.current}
-                                readiness=${pickerReadiness}
-                                onReadiness=${setPickerReadiness}
-                              />`,
-                          )}
-                        </div>
-                        ${identifiers.length ? html`<${ExactIdentifierInput} types=${identifiers} selected=${selected} onToggle=${toggle} />` : null}
-                        ${!kinds.length ? html`<p class="source-filter-notice" role="status">This account is no longer connected. Saved filters can be removed but not added.</p>` : null}
-                      </div>`
-                    : null
-                }
+                ${!readOnly ? html`<div class="filter-builder-inputs">
+                      ${
+                        !connected
+                          ? html`<p class="source-filter-notice" role="status">This account is no longer connected. Saved filters can be removed but not added.</p>`
+                          : fields.error
+                            ? html`<div class="source-filter-count-error" role="status"><p>${fields.error}</p><button type="button" class="btn-secondary" onClick=${fields.reload}>${RETRY_COUNTS_LABEL}</button></div>`
+                            : !editor
+                              ? html`<p role="status">Loading…</p>`
+                              : null
+                      }
+                      ${
+                        ready.length
+                          ? html`<div class="filter-builder-searches">
+                              ${ready.map(
+                                (field) =>
+                                  html`<${SourceFilterPicker}
+                                    key=${`${sourceId}:${field.field}`}
+                                    source=${source}
+                                    editor=${editor}
+                                    field=${field}
+                                    selected=${selected}
+                                    onToggle=${toggle}
+                                    overlay
+                                    open=${openField === field.field}
+                                    onOpen=${() => setOpenField(field.field)}
+                                    onClose=${() => setOpenField(null)}
+                                    memory=${pickerMemory.current}
+                                  />`,
+                              )}
+                            </div>`
+                          : null
+                      }
+                      ${identifiers.length ? html`<${ExactIdentifierInput} types=${identifiers} selected=${selected} onToggle=${toggle} />` : null}
+                      ${waiting.map(
+                        (field) =>
+                          html`<section class="source-filter-field-state" key=${field.field} aria-label=${capitalized(fieldNoun(field, true))}>
+                            <strong>${capitalized(fieldNoun(field, true))}</strong>
+                            <${FilterFieldState}
+                              source=${source}
+                              field=${field}
+                              starting=${resync.starting}
+                              error=${resync.error}
+                              onResync=${startResync}
+                            />
+                          </section>`,
+                      )}
+                    </div>` : null}
                 <div class="filter-selection-heading">
                   <strong>Selected filters</strong><span>${selected.length} selected</span>
                 </div>
@@ -187,13 +223,12 @@ export function SourceFilterEditor({
                   source=${source}
                   refs=${selected}
                   items=${freshItems}
-                  pending=${preview.pending || counting}
+                  pending=${preview.pending}
                   onRemove=${readOnly ? undefined : (ref) => toggle(ref)}
                 />
                 ${!selected.length ? html`<p class="filter-selection-empty">Search above to choose matching content.</p>` : null}
-                ${selected.length && connected ? html`<${FilterPreview} preview=${preview} policy=${draft} />` : null}
-                ${!readOnly && preview.data?.identifierProposals?.length ? html`<div class="source-filter-proposals">${preview.data.identifierProposals.map((proposal) => html`<div><span>Other addresses for ${proposal.label}: ${proposal.identifiers.map((id) => id.value).join(", ")}</span><button type="button" class="btn-secondary" aria-label=${`Add other addresses for ${proposal.label}`} onClick=${() => setDraft(addProposedIdentifiers(draft, proposal))}>Add</button></div>`)}</div>` : null}
-                ${!readOnly && connected && error && selected.length && !counting ? html`<p class="access-field-error" role="alert">${error}</p>` : null}
+                ${selected.length && connected ? html`<${FilterPreview} preview=${preview} />` : null}
+                ${!readOnly && connected && error && selected.length ? html`<p class="access-field-error" role="alert">${error}</p>` : null}
               </div>`
             : null
         }
@@ -211,7 +246,7 @@ export function SourceFilterEditor({
                         type="button"
                         class="btn-secondary"
                         onClick=${() => {
-                          setOpenKind(null);
+                          setOpenField(null);
                           setStep("mode");
                         }}
                       >

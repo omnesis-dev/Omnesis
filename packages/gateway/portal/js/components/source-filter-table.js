@@ -2,8 +2,15 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { html } from "htm/preact";
-import { scopeDisplayLabel, scopeLevelNoun, useScopeLabelVersion } from "./source-filter-labels.js";
-import { scopeRefKey } from "./source-filter-state.js";
+import { scopeDisplayLabel, useScopeLabelVersion } from "./source-filter-labels.js";
+import { isDeviceRef, refField, scopeRefKey } from "./source-filter-state.js";
+import {
+  exactIdentifier,
+  fieldNoun,
+  refTypeLabel,
+  useSourceFilterEditor,
+  useTreeRootDepth,
+} from "./source-filter-fields.js";
 import { sourceId } from "./grant-builder-state.js";
 
 /** Stands where a count will appear. */
@@ -13,22 +20,18 @@ export function CountSpinner() {
 
 /** What stands for a filter's counts while they are worked out. */
 export function CountingRecords() {
-  return html`<${CountSpinner} />Counting matching records…`;
+  return html`<${CountSpinner} />Counting…`;
 }
 
-/** The button that asks again for counts that could not be read. */
-export const RETRY_COUNTS_LABEL = "Retry counts";
-
-function exactIdentifier(ref) {
-  const identifier =
-    ref.kind === "participant" && ref.identifiers?.length === 1 ? ref.identifiers[0] : null;
-  return identifier && ref.label === identifier.value ? identifier : null;
-}
-/** A row's type: the source's word for the item, by its level when the source names the levels of a tree. */
-export function sourceFilterKindLabel(source, ref, depth) {
-  const identifier = exactIdentifier(ref);
-  const name = identifier ? identifier.type : scopeLevelNoun(source, ref.kind, depth);
-  return name ? name.charAt(0).toLocaleUpperCase() + name.slice(1) : "Filter";
+/** The name a saved entry is shown by when no list has named it yet. */
+function entryDisplay(id, ref, editor) {
+  const field = refField(editor, ref);
+  const display = scopeDisplayLabel(id, ref, field ? fieldNoun(field) : null);
+  if (display.unavailable && isDeviceRef(ref)) {
+    const device = editor?.devices?.find((item) => item.id === ref.device);
+    if (device) return { ...display, label: device.name, unavailable: false };
+  }
+  return display;
 }
 
 /**
@@ -47,11 +50,17 @@ export function SourceFilterTable({
 }) {
   useScopeLabelVersion();
   const id = sourceId(source);
+  const { data: editor } = useSourceFilterEditor(id);
   const byRef = new Map(items.map((item) => [scopeRefKey(item.ref), item]));
+  const knownDepth = (ref) => {
+    const depth = byRef.get(scopeRefKey(ref))?.depth ?? entryDisplay(id, ref, editor).depth;
+    return Number.isInteger(depth) ? depth : undefined;
+  };
+  const rootDepth = useTreeRootDepth(id, editor, refs, knownDepth);
   const identitiesByName = new Map();
   for (const ref of [...refs, ...comparisonRefs]) {
     if (typeof ref.id !== "string") continue;
-    const display = scopeDisplayLabel(id, ref, source);
+    const display = entryDisplay(id, ref, editor);
     const item = byRef.get(scopeRefKey(ref));
     const name =
       item?.label && !(item.missing && item.label === ref.id)
@@ -60,7 +69,7 @@ export function SourceFilterTable({
           ? null
           : display.label;
     if (!name) continue;
-    const key = JSON.stringify([ref.kind, name]);
+    const key = JSON.stringify([ref.field, name]);
     if (!identitiesByName.has(key)) identitiesByName.set(key, new Set());
     identitiesByName.get(key).add(ref.id);
   }
@@ -77,24 +86,24 @@ export function SourceFilterTable({
       <tbody>
         ${refs.map((ref) => {
           const item = byRef.get(scopeRefKey(ref));
-          const display = scopeDisplayLabel(id, ref, source);
+          const display = entryDisplay(id, ref, editor);
           const exact = exactIdentifier(ref);
           const label =
             exact?.value ||
             (item?.label && !(item.missing && item.label === ref.id) ? item.label : display.label);
           const identifiers =
-            ref.kind === "participant" && !exact
+            ref.capability === "person" && !exact
               ? (ref.identifiers ?? [])
                   .map((identifier) => identifier.value)
                   .filter((value) => value !== label)
               : [];
           const ambiguous =
             typeof ref.id === "string" &&
-            identitiesByName.get(JSON.stringify([ref.kind, label]))?.size > 1;
+            identitiesByName.get(JSON.stringify([ref.field, label]))?.size > 1;
           const count = Number.isFinite(item?.count) && item.count >= 0 ? item.count : null;
           const mark = marks?.get(scopeRefKey(ref));
           return html`<tr key=${scopeRefKey(ref)} class=${mark ? `is-${mark}` : undefined}>
-            <td class="compact-filter-kind">${sourceFilterKindLabel(source, ref, Number.isInteger(item?.depth) ? item.depth : display.depth)}</td>
+            <td class="compact-filter-kind">${refTypeLabel(refField(editor, ref), ref, knownDepth(ref) ?? rootDepth(ref))}</td>
             <td class="compact-filter-value">
               <span class="compact-filter-name">${label}</span>${mark ? html`<span class="compact-filter-diff">${mark === "added" ? "Added" : "Removed"}</span>` : null}${ambiguous ? html`<small class="compact-filter-ref">Selection ID: ${ref.id}</small>` : null}${identifiers.length ? html`<span class="compact-filter-identifiers">${identifiers.join(" · ")}</span>` : null}${item?.missing ? html`<small>Unavailable · selection retained</small>` : display.unavailable ? html`<small>${pending ? "Loading name…" : "Name unavailable · saved selection"}</small>` : null}
             </td>

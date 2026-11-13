@@ -9,8 +9,11 @@ const api = vi.hoisted(() => ({
   createAccessLevel: vi.fn(),
   updateAccessLevel: vi.fn(),
   getAccessOverview: vi.fn(),
+  getSourceFilterEditor: vi.fn(),
   getSourceFilterOptions: vi.fn(),
   previewSourceFilter: vi.fn(),
+  checkFilterIdentifier: vi.fn(),
+  resyncSource: vi.fn(),
 }));
 vi.mock("../../api.js", () => api);
 // @ts-expect-error — Portal modules are JavaScript.
@@ -21,8 +24,24 @@ const source = {
   id: "fictional:one",
   displayName: "Invented source",
   available: true,
-  scopes: { items: [{ kind: "label", noun: { one: "label", many: "Labels" }, picker: "search" }] },
-  scopeReadiness: [{ kind: "label", ready: true }],
+  filterable: true,
+};
+const editor = {
+  sourceId: source.id,
+  sourceType: "fictional",
+  devices: [],
+  showDeviceLevel: false,
+  fields: [
+    {
+      field: "extra.labelIds",
+      capability: "membership",
+      noun: { one: "label", many: "labels" },
+      picker: "search",
+      scope: "global",
+      state: { status: "ready" },
+      counts: { status: "ready", tooOld: 0, unmatched: 0, tooOldText: null, unmatchedText: null },
+    },
+  ],
 };
 const overview = {
   sources: [source],
@@ -48,14 +67,18 @@ beforeEach(() => {
   for (const fn of Object.values(api)) fn.mockReset();
   api.createAccessLevel.mockResolvedValue({ level: { name: "Project assistant" } });
   api.updateAccessLevel.mockResolvedValue({});
+  api.getSourceFilterEditor.mockResolvedValue(editor);
   api.previewSourceFilter.mockImplementation(async (sourceId: string) => ({
+    status: "ready",
     sourceId,
     items: [],
-    readiness: source.scopeReadiness,
+    total: 6,
     visible: 4,
     hidden: 2,
-    unknown: 0,
-    samples: [],
+    tooOld: 0,
+    unmatched: 0,
+    tooOldText: null,
+    unmatchedText: null,
   }));
 });
 afterEach(() => {
@@ -208,7 +231,7 @@ test("a targeted release edit shows only its before/after delta and preserves so
   const filter = {
     sourceId: source.id,
     audience: { accessLevel: "invented-level", capability: "answer" },
-    rules: [{ action: "share", match: [{ kind: "label", id: "invented-label" }] }],
+    rules: [{ action: "share", match: [{ capability: "membership", field: "extra.labelIds", id: "invented-label" }] }],
     otherwise: "hide",
   };
   const answer = {
@@ -272,7 +295,7 @@ test("a release edit on a level whose Direct is linked to Answer changes nothing
   const filter = (capability: string) => ({
     sourceId: source.id,
     audience: { accessLevel: "invented-level", capability },
-    rules: [{ action: "hide", match: [{ kind: "label", id: "invented-label" }] }],
+    rules: [{ action: "hide", match: [{ capability: "membership", field: "extra.labelIds", id: "invented-label" }] }],
     otherwise: "share",
   });
   const sources = { mode: "allowlist", sourceIds: [source.id] };
@@ -502,8 +525,7 @@ test("a delayed save keeps all review controls frozen and closes only the submit
 test("linked Direct correction opens its reuse choice and saves independent refs without changing Answer", async () => {
   api.getSourceFilterOptions.mockResolvedValue({
     sourceId: source.id,
-    readiness: source.scopeReadiness,
-    items: [{ ref: { kind: "label", id: "direct-only" }, label: "Independent label", count: 1 }],
+    items: [{ ref: { capability: "membership", field: "extra.labelIds", id: "direct-only" }, label: "Independent label", count: 1 }],
   });
   await act(async () =>
     render(h(NewLevelPage, { overview, onCreated: vi.fn(), onClose: vi.fn() }), host),
@@ -549,7 +571,7 @@ test("linked Direct correction opens its reuse choice and saves independent refs
   expect(
     rules.find((rule: { capability: string }) => rule.capability === "direct").scopePolicies[0]
       .rules[0].match,
-  ).toEqual([{ kind: "label", id: "direct-only" }]);
+  ).toEqual([{ capability: "membership", field: "extra.labelIds", id: "direct-only" }]);
 });
 
 test("an unavailable unfiltered account remains visible in the overview, data decision and review", async () => {
@@ -612,7 +634,7 @@ test("applying an unchanged filter on the first of two accounts keeps review dis
   const policies = [source, second].map((item, index) => ({
     sourceId: item.id,
     audience: { accessLevel: "invented-level", capability: "answer" },
-    rules: [{ action: "share", match: [{ kind: "label", id: `invented-label-${index}` }] }],
+    rules: [{ action: "share", match: [{ capability: "membership", field: "extra.labelIds", id: `invented-label-${index}` }] }],
     otherwise: "hide",
   }));
   const answer = {
@@ -905,7 +927,7 @@ test("switching Direct on while editing goes on to the Direct data screen", asyn
 });
 
 test("Direct switched on while editing starts linked to Answer, filters included", async () => {
-  const label = { kind: "label", id: "invented-design-label" };
+  const label = { capability: "membership", field: "extra.labelIds", id: "invented-design-label" };
   const filter = {
     sourceId: source.id,
     audience: { accessLevel: "invented-level", capability: "answer" },

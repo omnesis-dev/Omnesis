@@ -12992,9 +12992,60 @@
       "reason": "Invented root-folder display label shared by synthetic folder-tree fixtures; not a person or corpus data."
     },
     {
-      "value": "Fictional Person",
-      "paths": ["packages/gateway/portal/js/components/source-filter-state.test.ts"],
-      "reason": "Invented invalid identifier input proving that a display name is not an accepted typed address."
+      "value": "Studio Mac",
+      "paths": [
+        "packages/gateway/portal/js/components/source-filter-editor.test.ts",
+        "packages/gateway/portal/js/components/source-filter-table.test.ts"
+      ],
+      "reason": "Invented device, person and source names in portal source-filter tests and the gateway's sentences about them; not corpus data."
+    },
+    {
+      "value": "Open Studio Mac",
+      "paths": ["packages/gateway/portal/js/components/source-filter-editor.test.ts"],
+      "reason": "Invented device, person and source names in portal source-filter tests and the gateway's sentences about them; not corpus data."
+    },
+    {
+      "value": "Update Omnesis",
+      "paths": ["packages/gateway/portal/js/components/source-filter-editor.test.ts"],
+      "reason": "Invented device, person and source names in portal source-filter tests and the gateway's sentences about them; not corpus data."
+    },
+    {
+      "value": "Resync Fictional",
+      "paths": ["packages/gateway/portal/js/components/source-filter-editor.test.ts"],
+      "reason": "Invented device, person and source names in portal source-filter tests and the gateway's sentences about them; not corpus data."
+    },
+    {
+      "value": "Resyncing Fictional",
+      "paths": ["packages/gateway/portal/js/components/source-filter-editor.test.ts"],
+      "reason": "Invented device, person and source names in portal source-filter tests and the gateway's sentences about them; not corpus data."
+    },
+    {
+      "value": "Maya Reeves",
+      "paths": [
+        "packages/gateway/portal/js/components/source-filter-state.test.ts",
+        "packages/gateway/portal/js/views/document-access.test.ts"
+      ],
+      "reason": "Invented device, person and source names in portal source-filter tests and the gateway's sentences about them; not corpus data."
+    },
+    {
+      "value": "Jamie Lopez",
+      "paths": ["packages/gateway/portal/js/views/document-access.test.ts"],
+      "reason": "Invented device, person and source names in portal source-filter tests and the gateway's sentences about them; not corpus data."
+    },
+    {
+      "value": "Aurora Planner",
+      "paths": ["packages/gateway/portal/js/views/document-access.test.ts"],
+      "reason": "Invented device, person and source names in portal source-filter tests and the gateway's sentences about them; not corpus data."
+    },
+    {
+      "value": "For Answer",
+      "paths": ["packages/gateway/portal/js/views/document-access.test.ts"],
+      "reason": "Invented device, person and source names in portal source-filter tests and the gateway's sentences about them; not corpus data."
+    },
+    {
+      "value": "Resync Google Drive",
+      "paths": ["packages/gateway/portal/js/views/document-access.test.ts"],
+      "reason": "Invented device, person and source names in portal source-filter tests and the gateway's sentences about them; not corpus data."
     },
     {
       "value": "Maya Reeves",

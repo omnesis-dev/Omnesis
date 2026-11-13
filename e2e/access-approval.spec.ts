@@ -14,12 +14,25 @@ const mail = {
   name: "Fictional mail",
   icon: null,
   available: true,
-  scopes: {
-    items: [
-      { kind: "label", noun: { one: "label", many: "Labels" }, picker: "search", link: "changes" },
-    ],
-  },
-  scopeReadiness: [{ kind: "label", ready: true }],
+  filterable: true,
+};
+const counted = { status: "ready", tooOld: 0, unmatched: 0, tooOldText: null, unmatchedText: null };
+const mailEditor = {
+  sourceId: mail.id,
+  sourceType: mail.sourceType,
+  devices: [{ id: "dev-one", name: "Fictional laptop" }],
+  showDeviceLevel: false,
+  fields: [
+    {
+      field: "extra.labelIds",
+      capability: "membership",
+      noun: { one: "label", many: "labels" },
+      picker: "search",
+      scope: "global",
+      state: { status: "ready" },
+      counts: counted,
+    },
+  ],
 };
 const files = {
   id: "fictional-files:reader@example.org",
@@ -28,7 +41,7 @@ const files = {
   icon: null,
   available: true,
 };
-const label = { kind: "label", id: "fictional-planning" };
+const label = { capability: "membership", field: "extra.labelIds", id: "fictional-planning" };
 
 test("approving a request onto a new access level uses the access-level page's decisions and filter dialog", async ({
   page,
@@ -87,30 +100,36 @@ test("approving a request onto a new access level uses the access-level page's d
     decision = route.request().postDataJSON();
     await route.fulfill({ json: { request: { ...request, status: "approved" } } });
   });
-  await page.route("**/admin/access/source-filters/*/options?*", (route) =>
-    route.fulfill({
-      json: {
-        sourceId: mail.id,
-        scopes: mail.scopes,
-        readiness: mail.scopeReadiness,
-        items: [{ ref: label, label: "Fictional planning", count: 6 }],
-      },
-    }),
-  );
-  await page.route("**/admin/access/source-filters/*/preview", (route) =>
-    route.fulfill({
-      json: {
-        sourceId: mail.id,
-        total: 20,
-        visible: 6,
-        hidden: 14,
-        unknown: 0,
-        readiness: mail.scopeReadiness,
-        items: [{ ref: label, label: "Fictional planning", count: 6 }],
-        samples: [],
-      },
-    }),
-  );
+  await page.route(/\/admin\/access\/source-filters\//, (route) => {
+    const tail = new URL(route.request().url()).pathname.split("/").at(-1);
+    return route.fulfill({
+      json:
+        tail === "options"
+          ? {
+              sourceId: mail.id,
+              field: "extra.labelIds",
+              items: [
+                {
+                  ref: label,
+                  label: "Fictional planning",
+                  shortLabel: "Fictional planning",
+                  count: 6,
+                },
+              ],
+            }
+          : tail === "preview"
+            ? {
+                status: "ready",
+                sourceId: mail.id,
+                total: 20,
+                visible: 6,
+                hidden: 14,
+                ...counted,
+                items: [{ ref: label, label: "Fictional planning", count: 6 }],
+              }
+            : mailEditor,
+    });
+  });
 
   const step = () => page.locator(".access-wizard-steps [aria-current='step']");
   const question = (name: string) => page.getByRole("heading", { name, exact: true });
@@ -155,12 +174,12 @@ test("approving a request onto a new access level uses the access-level page's d
   ).toBeVisible();
   await dialog.getByLabel("Only matching content", { exact: false }).check();
   await dialog.getByRole("button", { name: "Continue", exact: true }).click();
-  await dialog.getByRole("searchbox", { name: "Search label", exact: true }).focus();
+  await dialog.getByRole("searchbox", { name: "Search labels", exact: true }).focus();
   await dialog.getByRole("checkbox", { name: /Fictional planning/ }).check();
   await dialog.locator(".modal-title").click();
   await expect(dialog.locator(".source-filter-counts")).toContainText("6 shared");
   await dialog.getByRole("button", { name: "Apply filter", exact: true }).click();
-  await expect(mailRow).toContainText("Only 1 selected match");
+  await expect(mailRow).toContainText("Share matching content · 1 item");
   await forward();
 
   await expect(step()).toContainText("Data");

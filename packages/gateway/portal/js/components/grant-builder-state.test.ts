@@ -154,7 +154,7 @@ describe("Grant Builder state", () => {
     const policy = {
       sourceId: "mail:personal",
       audience: { accessLevel: "level-1", capability: "answer" },
-      rules: [{ action: "share", match: [{ kind: "label", id: "invented-label" }] }],
+      rules: [{ action: "share", match: [{ capability: "membership", field: "extra.labelIds", id: "invented-label" }] }],
       otherwise: "hide",
     };
     const release = { mode: "reviewed", policyFamilyId: "policy-1" };

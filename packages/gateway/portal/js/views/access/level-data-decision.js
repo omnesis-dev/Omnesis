@@ -116,7 +116,7 @@ export function LevelDataDecision({
             <${ReadableBoundary}
               rule=${rule}
               source=${source}
-            />${!frozen && ((allowed && enabled && source.scopes?.items?.length) || policy) ? html`<button type="button" class="btn-secondary" disabled=${disabled} aria-label=${`${enabled ? "Change" : "View"} ${sourceLabel(source)} content`} onClick=${() => setEditing(source)}>${enabled ? "Change" : "View"}</button>` : null}
+            />${!frozen && ((allowed && enabled && source.filterable) || policy) ? html`<button type="button" class="btn-secondary" disabled=${disabled} aria-label=${`${enabled ? "Change" : "View"} ${sourceLabel(source)} content`} onClick=${() => setEditing(source)}>${enabled ? "Change" : "View"}</button>` : null}
           </div>
           ${locked && !frozen ? html`<p class="source-filter-notice">${SAVED_FILTER_SOURCE_MESSAGE}</p>` : null}
         </article>`;

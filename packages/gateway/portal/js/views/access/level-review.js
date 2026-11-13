@@ -7,12 +7,11 @@ import {
   FilterModePill,
   filterModeLabel,
 } from "../../components/access-pills.js";
-import { useSourceFilterPreview } from "../../components/source-filter-preview.js";
 import {
-  CountingRecords,
-  RETRY_COUNTS_LABEL,
-  SourceFilterTable,
-} from "../../components/source-filter-table.js";
+  CountsUnavailable,
+  useSourceFilterPreview,
+} from "../../components/source-filter-preview.js";
+import { CountingRecords, SourceFilterTable } from "../../components/source-filter-table.js";
 import { SourceAccountHeader } from "../../components/source-account-header.js";
 import {
   blocksNewSources,
@@ -28,7 +27,6 @@ import {
   editableSourcePolicy,
   scopeRefKey,
   sourcePolicy,
-  unreadyKinds,
 } from "../../components/source-filter-state.js";
 import {
   changedLevelDecisions,
@@ -80,28 +78,26 @@ function useAccountPolicy(rule, source) {
   const policy = active ? sourcePolicy(rule, id) : null;
   // An account that is no longer connected has nothing to count.
   const preview = useSourceFilterPreview(id, source.available === false ? null : policy);
-  const ready = unreadyKinds(policy, preview.data?.readiness).length === 0;
   return {
     policy,
     preview,
     active,
     editable: Boolean(policy && editableSourcePolicy(policy)),
     refs: (policy?.rules ?? []).flatMap((item) => item.match ?? []),
-    items: ready ? (preview.data?.items ?? []) : [],
-    ready,
+    items: preview.data?.items ?? [],
   };
 }
 
 /** The status line of a boundary: its counts when filtered, then its pill. */
 function BoundaryLine({ rule, source, state, header = null }) {
-  const { policy, preview, active, ready, editable } = state;
+  const { policy, preview, active, editable } = state;
   return html`<div class="compact-account-line">
     ${header}
     <span class="compact-account-state">
       ${
         policy
           ? html`<span class="compact-policy-impact" role="status">
-              ${preview.pending || (!preview.error && !ready) ? html`<${CountingRecords} />` : preview.error ? html`<span>Counts unavailable</span><button type="button" class="btn-secondary" onClick=${preview.retry}>${RETRY_COUNTS_LABEL}</button>` : Number.isFinite(preview.data?.visible) && Number.isFinite(preview.data?.hidden) ? html`<span><strong>${preview.data.visible.toLocaleString()}</strong> shared</span><span><strong>${preview.data.hidden.toLocaleString()}</strong> hidden</span>` : null}
+              ${preview.pending ? html`<${CountingRecords} />` : preview.error ? html`<${CountsUnavailable} onRetry=${preview.retry} />` : Number.isFinite(preview.data?.visible) && Number.isFinite(preview.data?.hidden) ? html`<span><strong>${preview.data.visible.toLocaleString()}</strong> shared</span><span><strong>${preview.data.hidden.toLocaleString()}</strong> hidden</span>` : null}
               ${!editable ? html`<span>Other content: ${policy.otherwise === "share" ? "shared" : "hidden"}</span>` : null}
             </span>`
           : null

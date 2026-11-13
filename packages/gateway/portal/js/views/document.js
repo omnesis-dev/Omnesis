@@ -12,6 +12,7 @@ import {
   getDocumentNearDupes,
   getDocumentDates,
   getDocumentAnnotations,
+  getDocumentFilterDetails,
   deleteDocument,
 } from "../api.js";
 import { deleteConfirmCopy } from "../lib/document-delete.js";
@@ -26,6 +27,9 @@ import { navigate } from "../lib/router.js";
 import { useCursorPage } from "../lib/use-cursor-page.js";
 
 const FILE_LIKE_DOC_TYPES = new Set(["attachment", "file"]);
+
+/** The page that says which access levels can read a document. */
+export const documentAccessPath = (id) => `/portal/doc/${encodeURIComponent(id)}/access`;
 
 function CopyButton({ value, label }) {
   const [copied, setCopied] = useState(false);
@@ -84,6 +88,7 @@ export function DocumentView({ id }) {
   const [resolvedPeople, setResolvedPeople] = useState(null);
   const [attachmentChildren, setAttachmentChildren] = useState([]);
   const [extractedDates, setExtractedDates] = useState([]);
+  const [filterDetails, setFilterDetails] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [showDelete, setShowDelete] = useState(false);
@@ -139,6 +144,19 @@ export function DocumentView({ id }) {
         setError(`${err.message}${reqId}`);
       })
       .finally(() => setLoading(false));
+  }, [id]);
+
+  // Owner-only details a filter decides this record by. A gateway without
+  // them answers an error, and the document shows without them.
+  useEffect(() => {
+    const controller = new AbortController();
+    setFilterDetails(null);
+    getDocumentFilterDetails(id, controller.signal)
+      .then((details) => {
+        if (!controller.signal.aborted) setFilterDetails(details);
+      })
+      .catch(() => {});
+    return () => controller.abort();
   }, [id]);
 
   if (loading) return html`<div class="loading"><span class="spinner"></span> Loading document...</div>`;
@@ -198,6 +216,18 @@ export function DocumentView({ id }) {
         <a class="doc-back" href="/portal/" onClick=${goBack}>\u2190 Back</a>
         <div class="doc-toolbar-actions">
           ${isOpenableExternalUrl(meta.sourceUrl) && html`<${OpenInSourceButton} url=${meta.sourceUrl} />`}
+          ${filterDetails && html`<a
+            class="doc-toolbar-btn"
+            href=${documentAccessPath(doc.id)}
+            title="Which access levels can read this document, and why"
+            onClick=${(e) => { e.preventDefault(); navigate(documentAccessPath(doc.id)); }}
+          >
+            <svg aria-hidden="true" viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M1.5 8s2.4-4.5 6.5-4.5S14.5 8 14.5 8 12.1 12.5 8 12.5 1.5 8 1.5 8z"/>
+              <circle cx="8" cy="8" r="2"/>
+            </svg>
+            Who can read this?
+          </a>`}
           <${CopyButton} value=${doc.id} label="ID" />
           ${manageHref
             ? html`<a
@@ -241,6 +271,7 @@ export function DocumentView({ id }) {
             extractedDates=${extractedDates}
             annotations=${annotationPage.items}
             annotationPage=${annotationPage}
+            filterDetails=${filterDetails}
           />
           <${GraphTimelinePanel}
             key=${id}

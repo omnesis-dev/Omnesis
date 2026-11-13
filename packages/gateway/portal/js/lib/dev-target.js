@@ -27,6 +27,7 @@ export function deriveDevTarget(route, pathname, activeConvoId = null) {
   const deepLink = pathname || "";
   switch (route?.view) {
     case "document":
+    case "document-access":
       return {
         targetType: "document",
         targetId: route.id ?? null,
