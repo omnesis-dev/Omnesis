@@ -5,15 +5,21 @@ import Database from "better-sqlite3";
 import { afterEach, beforeEach, test, expect } from "vitest";
 import { createScopePolicyStore, writeScopeState } from "./scope-policy-store.js";
 import {
-  backfillScopePolicySourceIndex,
+  createScopePolicySourceIndex,
   hasSavedScopePolicySource,
 } from "./scope-policy-source-index.js";
-import type { ScopePolicy } from "@omnesis/types";
+import { SCOPE_POLICY_STORAGE_PROTOCOL } from "./scope-policy-encoding.js";
+import type { SourceFilter } from "@omnesis/types";
 let db: Database.Database;
-const policy = (sourceId: string): ScopePolicy => ({
+const policy = (sourceId: string): SourceFilter => ({
   sourceId,
   audience: { accessLevel: "level", capability: "answer" },
-  rules: [{ action: "share", match: [{ kind: "label", id: "stable" }] }],
+  rules: [
+    {
+      action: "share",
+      match: [{ capability: "membership", field: "extra.labelIds", id: "stable" }],
+    },
+  ],
   otherwise: "hide",
 });
 function write(sourceId: string) {
@@ -33,12 +39,11 @@ beforeEach(() => {
 });
 afterEach(() => db.close());
 
-test("configuration-only upgrade indexes existing overlays and is idempotent", () => {
-  write("fictional:one");
-  db.prepare("DELETE FROM access_scope_policy_sources").run();
+test("a saved filter is indexed by its source as it is written, and creating the index again changes nothing", () => {
   expect(hasSavedScopePolicySource(db, "fictional:one")).toBe(false);
-  backfillScopePolicySourceIndex(db);
-  backfillScopePolicySourceIndex(db);
+  write("fictional:one");
+  createScopePolicySourceIndex(db);
+  createScopePolicySourceIndex(db);
   expect(hasSavedScopePolicySource(db, "fictional:one")).toBe(true);
   expect(db.prepare("SELECT count(*) AS n FROM access_scope_policy_sources").get()).toEqual({
     n: 1,
@@ -47,7 +52,9 @@ test("configuration-only upgrade indexes existing overlays and is idempotent", (
 test("raw older writers update and clear source entries through persistent overlay triggers", () => {
   write("fictional:one");
   db.prepare("UPDATE access_scope_capabilities SET policies=? WHERE owner_id='level'").run(
-    JSON.stringify([{ ...policy("fictional:two"), minimumProtocol: 2 }]),
+    JSON.stringify([
+      { ...policy("fictional:two"), minimumProtocol: SCOPE_POLICY_STORAGE_PROTOCOL },
+    ]),
   );
   expect(hasSavedScopePolicySource(db, "fictional:one")).toBe(false);
   expect(hasSavedScopePolicySource(db, "fictional:two")).toBe(true);

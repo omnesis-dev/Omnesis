@@ -12,6 +12,7 @@ import {
   parseCorpusAuthorization,
   serializeCorpusAuthorization,
 } from "./corpus-authorization.js";
+import type { SourceFilter } from "@omnesis/types";
 
 const identity = {
   principalId: "principal-example",
@@ -310,8 +311,8 @@ describe("corpus filter revisions", () => {
         {
           action: "share" as const,
           match: [
-            { kind: "conversation" as const, id: "chat-z" },
-            { kind: "conversation" as const, id: "chat-a" },
+            { capability: "membership" as const, field: "extra.chatId", id: "chat-z" },
+            { capability: "membership" as const, field: "extra.chatId", id: "chat-a" },
           ],
         },
       ],
@@ -320,7 +321,7 @@ describe("corpus filter revisions", () => {
     const scoped = (scopePolicies: (typeof policy)[]) =>
       createCorpusAuthorization(
         identity,
-        [{ ...rule, filterRevision: 1, scopePolicies }],
+        [{ ...rule, filterRevision: 1, scopePolicies: scopePolicies as SourceFilter[] }],
         "answer",
       )!;
     const first = scoped([policy]);
@@ -332,7 +333,12 @@ describe("corpus filter revisions", () => {
     const changed = scoped([
       {
         ...policy,
-        rules: [{ action: "share", match: [{ kind: "conversation", id: "another-chat" }] }],
+        rules: [
+          {
+            action: "share",
+            match: [{ capability: "membership", field: "extra.chatId", id: "another-chat" }],
+          },
+        ],
       },
     ]);
     expect(first.digest).not.toBe(changed.digest);
@@ -342,8 +348,8 @@ describe("corpus filter revisions", () => {
     expect(Object.isFrozen(first.scopePolicies[0]!.rules[0]!.match)).toBe(true);
     policy.rules[0]!.match[0]!.id = "mutated-caller-input";
     expect(first.scopePolicies[0]!.rules[0]!.match).toEqual([
-      { kind: "conversation", id: "chat-a" },
-      { kind: "conversation", id: "chat-z" },
+      { capability: "membership", field: "extra.chatId", id: "chat-a" },
+      { capability: "membership", field: "extra.chatId", id: "chat-z" },
     ]);
   });
   test.each([
@@ -352,12 +358,15 @@ describe("corpus filter revisions", () => {
     { sourceMode: "allowlist" as const, sourceIds: ["chat:filtered"] },
     { sourceMode: "denylist" as const, sourceIds: ["chat:excluded"] },
   ])("serialized %j scope denies filtered sources to an older parser", (boundary) => {
-    const scopePolicies = [
+    const scopePolicies: SourceFilter[] = [
       {
         sourceId: "chat:filtered",
         audience: { accessLevel: "level-example", capability: "answer" as const },
         rules: [
-          { action: "share" as const, match: [{ kind: "conversation" as const, id: "allowed" }] },
+          {
+            action: "share" as const,
+            match: [{ capability: "membership" as const, field: "extra.chatId", id: "allowed" }],
+          },
         ],
         otherwise: "hide" as const,
       },
@@ -391,12 +400,15 @@ describe("corpus filter revisions", () => {
   });
 
   test("filtered snapshots cannot restore canonical access without a matching conservative boundary", () => {
-    const scopePolicies = [
+    const scopePolicies: SourceFilter[] = [
       {
         sourceId: "chat:filtered",
         audience: { accessLevel: "level-example", capability: "answer" as const },
         rules: [
-          { action: "share" as const, match: [{ kind: "conversation" as const, id: "allowed" }] },
+          {
+            action: "share" as const,
+            match: [{ capability: "membership" as const, field: "extra.chatId", id: "allowed" }],
+          },
         ],
         otherwise: "hide" as const,
       },

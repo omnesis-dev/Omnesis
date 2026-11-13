@@ -300,7 +300,7 @@ describe("migration-idempotency standing fixture", () => {
       expect(
         raw
           .prepare(
-            "SELECT name FROM sqlite_master WHERE name IN ('access_levels','access_scope_capabilities','source_scope_descriptors','scope_generation_clock','answer_task_scope')",
+            "SELECT name FROM sqlite_master WHERE name IN ('access_levels','access_scope_capabilities','answer_task_scope')",
           )
           .all(),
       ).toEqual([]);

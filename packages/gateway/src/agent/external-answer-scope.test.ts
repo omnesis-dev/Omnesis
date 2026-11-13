@@ -88,7 +88,13 @@ describe("external Answer context", () => {
                     rules: [
                       {
                         action: "hide" as const,
-                        match: [{ kind: "conversation" as const, id: "private" }],
+                        match: [
+                          {
+                            capability: "membership" as const,
+                            field: "extra.chatId",
+                            id: "private",
+                          },
+                        ],
                       },
                     ],
                     otherwise: "share" as const,

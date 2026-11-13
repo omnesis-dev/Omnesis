@@ -9,18 +9,21 @@ import {
   writeScopeState,
   conservativeSources,
 } from "./scope-policy-store.js";
-import {
-  withScopePolicyMutation,
-  createScopeStorageFloor,
-  reconcileLegacyScopeBoundaries,
-} from "./scope-storage-floor.js";
-import type { ScopePolicy } from "@omnesis/types";
+import { withScopePolicyMutation, createScopeStorageFloor } from "./scope-storage-floor.js";
+import { isScopeQuarantined } from "./scope-quarantine.js";
+import { SCOPE_POLICY_STORAGE_PROTOCOL } from "./scope-policy-encoding.js";
+import type { SourceFilter } from "@omnesis/types";
 let db: Database.Database;
 const source = "fictional:one";
-const policy: ScopePolicy = {
+const policy: SourceFilter = {
   sourceId: source,
   audience: { accessLevel: "level", capability: "direct" },
-  rules: [{ action: "share", match: [{ kind: "label", id: "selected" }] }],
+  rules: [
+    {
+      action: "share",
+      match: [{ capability: "membership", field: "extra.labelIds", id: "selected" }],
+    },
+  ],
   otherwise: "hide",
 };
 beforeEach(() => {
@@ -53,15 +56,18 @@ function rawPolicies(value: unknown) {
       .run(JSON.stringify(value));
 }
 
-test.each([undefined, 1, 3, "2", null])(
-  "old or invalid protocol %j cannot create a new native-scoped overlay",
-  (minimumProtocol) => {
-    expect(
-      rawPolicies([{ ...policy, ...(minimumProtocol === undefined ? {} : { minimumProtocol }) }]),
-    ).toThrow(/storage protocol/);
-    expect(db.prepare("SELECT * FROM access_scope_capabilities").all()).toEqual([]);
-  },
-);
+test.each([
+  undefined,
+  0,
+  SCOPE_POLICY_STORAGE_PROTOCOL + 1,
+  String(SCOPE_POLICY_STORAGE_PROTOCOL),
+  null,
+])("old or invalid protocol %j cannot create a new native-scoped overlay", (minimumProtocol) => {
+  expect(
+    rawPolicies([{ ...policy, ...(minimumProtocol === undefined ? {} : { minimumProtocol }) }]),
+  ).toThrow(/storage protocol/);
+  expect(db.prepare("SELECT * FROM access_scope_capabilities").all()).toEqual([]);
+});
 test("current protocol is accepted, while an old writer cannot strip it or clear/delete a protected overlay", () => {
   write();
   expect(() =>
@@ -143,81 +149,6 @@ test("owner deletion still cleans its overlay instead of retaining an orphan", (
   expect(db.prepare("SELECT * FROM access_scope_capabilities").all()).toEqual([]);
 });
 
-for (const owner of ["level", "grant"] as const)
-  for (const mode of ["all", "allowlist", "denylist"] as const)
-    test(`upgrade repairs preexisting widened ${owner} ${mode} rows without changing canonical authority`, () => {
-      const ids =
-        mode === "allowlist"
-          ? [source, "fictional:two"]
-          : mode === "denylist"
-            ? ["fictional:blocked"]
-            : [];
-      write(owner, mode, ids);
-      const before = db.prepare("SELECT * FROM access_scope_capabilities").get();
-      const table = `access_${owner}_capabilities`;
-      db.exec(
-        `DROP TRIGGER scope_legacy_${owner}_insert; DROP TRIGGER scope_legacy_${owner}_update;`,
-      );
-      db.prepare(`INSERT INTO ${table} VALUES(?,'direct','all','[]')`).run(owner);
-      createScopeStorageFloor(db);
-      reconcileLegacyScopeBoundaries(db);
-      const expected = conservativeSources({
-        sourceMode: mode,
-        sourceIds: ids,
-        scopePolicies: [policy],
-      });
-      expect(db.prepare(`SELECT source_mode,source_ids FROM ${table}`).get()).toEqual({
-        source_mode: expected.sourceMode,
-        source_ids: JSON.stringify(expected.sourceIds),
-      });
-      expect(db.prepare("SELECT * FROM access_scope_capabilities").get()).toEqual(before);
-      reconcileLegacyScopeBoundaries(db);
-      expect(() =>
-        db.prepare(`UPDATE ${table} SET source_mode='all',source_ids='[]'`).run(),
-      ).toThrow(/conservative legacy/);
-    });
-
-test.each(['[{"minimumProtocol":3,"sourceId":"fictional:one"}]', "not-json", "[]"])(
-  "unreadable old overlays %s fail narrow during rollback reconciliation",
-  (raw) => {
-    write();
-    db.exec("DROP TRIGGER scope_policy_protocol_update; DROP TRIGGER scope_legacy_level_insert;");
-    // Empty canonical policies are valid only if the canonical boundary itself is valid.
-    db.prepare("UPDATE access_scope_capabilities SET policies=?,source_ids='corrupt-json'").run(
-      raw,
-    );
-    db.prepare("INSERT INTO access_level_capabilities VALUES('level','direct','all','[]')").run();
-    createScopeStorageFloor(db);
-    reconcileLegacyScopeBoundaries(db);
-    expect(
-      db.prepare("SELECT source_mode,source_ids FROM access_level_capabilities").get(),
-    ).toEqual({ source_mode: "allowlist", source_ids: "[]" });
-    expect(db.prepare("SELECT policies FROM access_scope_capabilities").get()).toEqual({
-      policies: raw,
-    });
-    expect(db.prepare("SELECT count(*) AS n FROM access_scope_legacy_denials").get()).toEqual({
-      n: 1,
-    });
-    expect(() =>
-      db.prepare("UPDATE access_level_capabilities SET source_mode='all',source_ids='[]'").run(),
-    ).toThrow(/legacy/);
-    expect(() => db.prepare("DELETE FROM access_scope_capabilities").run()).toThrow(
-      /current editor/,
-    );
-    expect(() => db.prepare("UPDATE access_scope_capabilities SET policies='[]'").run()).toThrow(
-      /current editor/,
-    );
-    writeScopeState(db, "level", "level", "direct", {
-      sourceMode: "all",
-      sourceIds: [],
-      filterRevision: 2,
-      scopePolicies: [],
-    });
-    expect(db.prepare("SELECT * FROM access_scope_legacy_denials").all()).toEqual([]);
-    db.prepare("UPDATE access_level_capabilities SET source_mode='all',source_ids='[]'").run();
-  },
-);
-
 for (const owner of ["level", "grant"] as const) {
   for (const mode of ["all", "allowlist", "denylist"] as const) {
     test(`protected ${owner} ${mode} rejects additional legacy revocations and permits set-equivalent order`, () => {
@@ -256,41 +187,64 @@ for (const owner of ["level", "grant"] as const) {
           .run(owner, legacy.sourceMode, JSON.stringify(narrowed)),
       ).toThrow(/conservative legacy/);
     });
-    test(`pre-floor extra narrowing quarantines ${owner} ${mode} without rewriting policies`, () => {
-      const ids =
-        mode === "allowlist"
-          ? [source, "fictional:two"]
-          : mode === "denylist"
-            ? ["fictional:blocked"]
-            : [];
-      write(owner, mode, ids);
-      const before = db.prepare("SELECT * FROM access_scope_capabilities").get();
-      const table = `access_${owner}_capabilities`;
-      db.exec(`DROP TRIGGER scope_legacy_${owner}_insert`);
-      db.prepare(`INSERT INTO ${table} VALUES(?,'direct',?,?)`).run(
-        owner,
-        mode === "allowlist" ? "allowlist" : "denylist",
-        JSON.stringify(mode === "allowlist" ? [] : [...ids, source, "fictional:revoked"]),
-      );
-      createScopeStorageFloor(db);
-      reconcileLegacyScopeBoundaries(db);
-      expect(db.prepare(`SELECT source_mode,source_ids FROM ${table}`).get()).toEqual({
-        source_mode: "allowlist",
-        source_ids: "[]",
-      });
-      expect(db.prepare("SELECT * FROM access_scope_capabilities").get()).toEqual(before);
-      expect(readScopeState(db, owner, owner, "direct")).toMatchObject({
-        sourceMode: "allowlist",
-        sourceIds: [],
-        scopePolicies: [policy],
-      });
-      reconcileLegacyScopeBoundaries(db);
-      expect(db.prepare("SELECT count(*) AS n FROM access_scope_legacy_denials").get()).toEqual({
-        n: 1,
-      });
-      expect(() =>
-        db.prepare(`UPDATE ${table} SET source_mode='all',source_ids='[]'`).run(),
-      ).toThrow(/legacy/);
-    });
   }
 }
+
+test("a denial left on a level reads as deny-all, holds the legacy rows at deny-all, and the next owner save lifts it", () => {
+  write("level", "allowlist", [source, "fictional:two"]);
+  const legacy = conservativeSources({
+    sourceMode: "allowlist",
+    sourceIds: [source, "fictional:two"],
+    scopePolicies: [policy],
+  });
+  db.prepare("INSERT INTO access_level_capabilities VALUES('level','direct',?,?)").run(
+    legacy.sourceMode,
+    JSON.stringify(legacy.sourceIds),
+  );
+  db.prepare("INSERT INTO access_scope_legacy_denials VALUES('level','level','direct')").run();
+  expect(isScopeQuarantined(db, "level", "level", "direct")).toBe(true);
+  expect(isScopeQuarantined(db, "level", "level", "answer")).toBe(false);
+  expect(readScopeState(db, "level", "level", "direct")).toMatchObject({
+    sourceMode: "allowlist",
+    sourceIds: [],
+    scopePolicies: [policy],
+  });
+  expect(() =>
+    db.prepare("UPDATE access_level_capabilities SET source_ids=?").run(JSON.stringify([source])),
+  ).toThrow(/deny-all/);
+  db.prepare("UPDATE access_level_capabilities SET source_mode='allowlist',source_ids='[]'").run();
+  expect(() => db.prepare("DELETE FROM access_scope_capabilities").run()).toThrow(/current editor/);
+  writeScopeState(db, "level", "level", "direct", {
+    sourceMode: "allowlist",
+    sourceIds: [source, "fictional:two"],
+    filterRevision: 2,
+    scopePolicies: [policy],
+  });
+  expect(isScopeQuarantined(db, "level", "level", "direct")).toBe(false);
+  expect(readScopeState(db, "level", "level", "direct")?.sourceIds).toEqual([
+    source,
+    "fictional:two",
+  ]);
+});
+
+test("a grant inherits the denial of the level it belongs to", () => {
+  db.exec("ALTER TABLE access_grants ADD COLUMN level_id TEXT");
+  db.prepare("UPDATE access_grants SET level_id='level' WHERE id='grant'").run();
+  write("grant");
+  expect(isScopeQuarantined(db, "grant", "grant", "direct")).toBe(false);
+  db.prepare("INSERT INTO access_scope_legacy_denials VALUES('level','level','direct')").run();
+  expect(isScopeQuarantined(db, "grant", "grant", "direct")).toBe(true);
+  expect(readScopeState(db, "grant", "grant", "direct")).toMatchObject({
+    sourceMode: "allowlist",
+    sourceIds: [],
+  });
+  db.prepare("DELETE FROM access_levels WHERE id='level'").run();
+  expect(db.prepare("SELECT * FROM access_scope_legacy_denials").all()).toEqual([]);
+});
+
+test("creating the floor again keeps every trigger in force", () => {
+  write();
+  createScopeStorageFloor(db);
+  createScopeStorageFloor(db);
+  expect(() => db.prepare("DELETE FROM access_scope_capabilities").run()).toThrow(/current editor/);
+});

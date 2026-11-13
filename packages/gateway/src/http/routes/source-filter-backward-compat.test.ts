@@ -5,15 +5,14 @@ import { createHash } from "node:crypto";
 
 import Database from "better-sqlite3";
 import { Hono } from "hono";
-import { DeviceId, Scope, TokenId, type ScopePolicy } from "@omnesis/types";
+import { DeviceId, Scope, TokenId, type SourceFilter } from "@omnesis/types";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
 import {
   createCorpusAuthorization,
   serializeCorpusAuthorization,
 } from "../../access/corpus-authorization.js";
-import { backfillDocumentScopes } from "../../access/scope-backfill.js";
-import { upsertSourceScopes } from "../../access/scope-descriptors.js";
+import { PARLEY_PROFILE, publishList, publishProfile } from "../../access/filter-test-utils.js";
 import { permittedAnalyticsSourceIds, permittedSourceIds } from "../../access/permitted-sources.js";
 import { AccessService } from "../../access/service.js";
 import { getGrantCapabilities, getLevelCapabilities } from "../../access/store-rules.js";
@@ -84,6 +83,7 @@ beforeEach(() => {
   db = new Database(":memory:") as unknown as Db;
   db.pragma("foreign_keys = ON");
   runSchemaSetup(db);
+  runMigrations(db as unknown as Database.Database);
   commitPrivacyPolicy(db, {
     policy: "# Test policy\n\nAllow fictional summaries.\n",
     digest: "a".repeat(64),
@@ -327,8 +327,8 @@ describe("an install that never saved a source filter", () => {
     // The previous schema: none of the filter tables or their triggers.
     const raw = db as unknown as Database.Database;
     const rewind = () => {
-      raw.exec("DELETE FROM schema_migrations WHERE version = 216");
-      raw.pragma("user_version = 215");
+      raw.exec("DELETE FROM schema_migrations WHERE version = 220");
+      raw.pragma("user_version = 219");
     };
     for (const row of raw
       .prepare<[], { name: string }>(
@@ -435,38 +435,27 @@ describe("an install that never saved a source filter", () => {
   });
 });
 
+/** The mail account declares a chat field, and its list holds one chat, so a filter on it can be saved. */
+function declareChats() {
+  publishProfile(db, "fictional-mail", 1, PARLEY_PROFILE);
+  publishList(db, { sourceId: MAIL, field: "extra.chatId" }, [
+    { id: "invented", label: "Invented group" },
+  ]);
+}
+
+const CHAT_ENTRY = { capability: "membership", field: "extra.chatId", id: "invented" } as const;
+
 describe("a level that has a filter, edited by a client that predates filters", () => {
-  const policy: ScopePolicy = {
+  const policy: SourceFilter = {
     sourceId: MAIL,
     audience: { accessLevel: "new", capability: "direct" },
-    rules: [{ match: [{ kind: "conversation", id: "invented" }], action: "share" }],
+    rules: [{ match: [CHAT_ENTRY], action: "share" }],
     otherwise: "hide",
   };
 
   async function filteredLevel() {
     vi.stubEnv("OMNESIS_EXPERIMENTAL", "1");
-    upsertSourceScopes(
-      db,
-      [
-        {
-          sourceType: "fictional-mail",
-          scopes: {
-            items: [
-              {
-                kind: "conversation",
-                noun: { one: "conversation", many: "conversations" },
-                picker: "search",
-                link: "fixed",
-              },
-            ],
-          },
-        },
-      ],
-      1,
-    );
-    db.prepare(
-      "INSERT INTO scope_fact_backfill(source_id,source_type,descriptor_json,ready) VALUES(?,'fictional-mail','{}',1)",
-    ).run(MAIL);
+    declareChats();
     const created = await send("POST", "/admin/access/levels", {
       name: "One conversation",
       rules: [
@@ -501,6 +490,47 @@ describe("a level that has a filter, edited by a client that predates filters", 
     });
     expect(edited).toEqual({ status: 409, body: { error: "stale-revision" } });
     expect(getLevelCapabilities(db, level.id)[0]!.scopePolicies).toHaveLength(1);
+  });
+
+  test("it can rename or remove the level, but every edit of its rules that would widen it is refused", async () => {
+    const level = await filteredLevel();
+    const widen = [
+      // The filtered account read whole.
+      [{ capability: "direct", sources: { mode: "allowlist", sourceIds: [MAIL, NOTES] } }],
+      [{ capability: "direct", sources: { mode: "all", sourceIds: [] } }],
+      // Answer added beside the filtered Direct rule.
+      [
+        { capability: "direct", sources: { mode: "allowlist", sourceIds: [NOTES] } },
+        {
+          capability: "answer",
+          sources: { mode: "allowlist", sourceIds: [MAIL] },
+          release: { mode: "unreviewed" },
+        },
+      ],
+    ];
+    for (const rules of widen) {
+      const edited = await send("PATCH", `/admin/access/levels/${level.id}`, {
+        expectedRevision: level.revision,
+        rules,
+      });
+      expect(edited.status).toBe(409);
+    }
+    expect(getLevelCapabilities(db, level.id)).toMatchObject([
+      { capability: "direct", sourceIds: [MAIL, NOTES], scopePolicies: [{ sourceId: MAIL }] },
+    ]);
+
+    const renamed = await send("PATCH", `/admin/access/levels/${level.id}`, {
+      expectedRevision: level.revision,
+      name: "Renamed by an older phone",
+    });
+    expect(renamed.status).toBe(200);
+    expect(renamed.body.level.name).toBe("Renamed by an older phone");
+    expect(getLevelCapabilities(db, level.id)[0]!.scopePolicies).toHaveLength(1);
+
+    const removed = await send("DELETE", `/admin/access/levels/${level.id}`);
+    expect(removed.status).toBe(200);
+    const levels = (await send("GET", "/admin/access")).body.levels as Array<{ id: string }>;
+    expect(levels.some((candidate) => candidate.id === level.id)).toBe(false);
   });
 
   test("a connection joining the level, and one replacing it, keep the filter without sending it", async () => {
@@ -538,28 +568,7 @@ describe("a level that has a filter, edited by a client that predates filters", 
 describe("a filtered connection, read back by a client", () => {
   async function filteredConnection() {
     vi.stubEnv("OMNESIS_EXPERIMENTAL", "1");
-    upsertSourceScopes(
-      db,
-      [
-        {
-          sourceType: "fictional-mail",
-          scopes: {
-            items: [
-              {
-                kind: "conversation",
-                noun: { one: "conversation", many: "conversations" },
-                picker: "search",
-                link: "fixed",
-              },
-            ],
-          },
-        },
-      ],
-      1,
-    );
-    db.prepare(
-      "INSERT INTO scope_fact_backfill(source_id,source_type,descriptor_json,ready) VALUES(?,'fictional-mail','{}',1)",
-    ).run(MAIL);
+    declareChats();
     const created = await send("POST", "/admin/access/levels", {
       name: "One conversation",
       rules: [
@@ -570,7 +579,7 @@ describe("a filtered connection, read back by a client", () => {
             {
               sourceId: MAIL,
               audience: { accessLevel: "new", capability: "direct" },
-              rules: [{ match: [{ kind: "conversation", id: "invented" }], action: "share" }],
+              rules: [{ match: [CHAT_ENTRY], action: "share" }],
               otherwise: "hide",
             },
           ],
@@ -701,19 +710,5 @@ describe("work that runs whether or not a filter was ever saved", () => {
     // marks it as a filtered search, which would need a search worker, scan vectors
     // exactly instead of through the ANN index, and drop the lexical ranker.
     expect(authorization).toEqual({ sourceIds: [NOTES], graphContext: "unrestricted" });
-  });
-
-  test("documents of a source that declares no filter kinds leave no reprojection work behind", () => {
-    const insert = db.prepare(
-      `INSERT INTO documents(id,provider_id,source_id,external_id,title,content,content_hash,source_created_at,source_updated_at,ingested_at,updated_at)
-       VALUES(?,'fictional',?,?,'Invented note','Invented body','hash','2026-01-01','2026-01-01','2026-01-01','2026-01-01')`,
-    );
-    for (let i = 0; i < 20; i++) insert.run(`doc-${i}`, NOTES, `external-${i}`);
-    // The queue is empty as soon as the documents are written, not only after a pass over it.
-    expect(count("scope_native_reprojection")).toBe(0);
-    db.prepare('UPDATE documents SET metadata = \'{"tags":["invented"]}\'').run();
-    expect(count("scope_native_reprojection")).toBe(0);
-    for (let pass = 0; pass < 5; pass++) backfillDocumentScopes(db, 100);
-    expect(count("scope_native_reprojection")).toBe(0);
   });
 });

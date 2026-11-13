@@ -7,13 +7,34 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createDatabase } from "../db.js";
 import { createCorpusAuthorization } from "../access/corpus-authorization.js";
-import { replaceDocumentScopeFacts } from "../access/scope-facts.js";
+import { CHAT_NOUN, publishProfile } from "../access/filter-test-utils.js";
 import {
   createPersonAnnotation,
   DEFAULT_SELF_MEMORY_MAX_ANNOTATIONS,
 } from "./storage/person-annotations.js";
 import { resolveSelfMemory } from "./self-memory.js";
+import type { DocumentEventProfile } from "@omnesis/source-sdk";
 import type Database from "better-sqlite3";
+
+/** Every record names the chat it belongs to. */
+const CHAT_PROFILE = {
+  documentTypes: ["day"],
+  personRoles: ["participant"],
+  metadataFields: [
+    {
+      path: "extra.chatId",
+      type: "string",
+      description: "Chat id.",
+      filter: {
+        capability: "membership",
+        minVersion: 0,
+        scope: "global",
+        noun: CHAT_NOUN,
+        picker: "search",
+      },
+    },
+  ],
+} as unknown as DocumentEventProfile;
 
 describe("external self memory evidence boundaries", () => {
   let db: Database.Database;
@@ -24,25 +45,22 @@ describe("external self memory evidence boundaries", () => {
     db.exec(`INSERT INTO devices (id,name,kind,paired_at) VALUES ('00000000-0000-4000-8000-000000000001','Synthetic collector','collector',1);
       INSERT INTO sources (id,type,account_id,device_id,created_at,updated_at)
         VALUES ('fictional:one','fictional','one','00000000-0000-4000-8000-000000000001',1,1);
-      INSERT INTO scope_fact_backfill (source_id,source_type,descriptor_json,ready) VALUES ('fictional:one','fictional','{}',1);
       INSERT INTO people (id,canonical_name,source,is_self,first_seen,last_seen,created_at,updated_at)
         VALUES ('self','Synthetic owner','test',1,'2026-01-01','2026-01-01','2026-01-01','2026-01-01');`);
+    publishProfile(db, "fictional", 1, CHAT_PROFILE);
   });
   afterEach(() => {
     db.close();
     rmSync(directory, { recursive: true, force: true });
   });
 
-  function document(id: string, conversation?: string) {
+  /** A record of a chat, or of no known chat when `chat` is left out. */
+  function document(id: string, chat?: string) {
+    const metadata = { documentType: "day", ...(chat ? { extra: { chatId: chat } } : {}) };
     db.prepare(
       `INSERT INTO documents (id,provider_id,source_id,external_id,title,content,content_hash,metadata,
-      source_created_at,source_updated_at,ingested_at,updated_at) VALUES (?, 'fictional','fictional:one',?,?,'Fictional evidence.','hash','{}','2026-01-01','2026-01-01','2026-01-01','2026-01-01')`,
-    ).run(id, id, id);
-    if (conversation)
-      replaceDocumentScopeFacts(db, id, {
-        facts: [{ kind: "conversation", id: conversation }],
-        complete: ["conversation"],
-      });
+      source_created_at,source_updated_at,ingested_at,updated_at) VALUES (?, 'fictional','fictional:one',?,?,'Fictional evidence.','hash',?,'2026-01-01','2026-01-01','2026-01-01','2026-01-01')`,
+    ).run(id, id, id, JSON.stringify(metadata));
   }
   function fact(id: string, evidenceDocId: string, now: number, extra?: string) {
     createPersonAnnotation(
@@ -89,7 +107,12 @@ describe("external self memory evidence boundaries", () => {
             {
               sourceId: "fictional:one",
               audience: { accessLevel: "level", capability: "answer" },
-              rules: [{ action, match: [{ kind: "conversation", id: "selected" }] }],
+              rules: [
+                {
+                  action,
+                  match: [{ capability: "membership", field: "extra.chatId", id: "selected" }],
+                },
+              ],
               otherwise: action === "share" ? "hide" : "share",
             },
           ],

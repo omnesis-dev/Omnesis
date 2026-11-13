@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { describe, test, expect, beforeEach, afterEach, vi } from "vitest";
 import { UnsupportedSearchFilterError } from "@omnesis/agent";
 import { setLabFlag } from "../lab/store.js";
-import { replaceDocumentScopeFacts } from "../access/scope-facts.js";
+import { LEDGER_PROFILE, publishProfile } from "../access/filter-test-utils.js";
 import { createCorpusAuthorization } from "../access/corpus-authorization.js";
 
 type Db = Database.Database;
@@ -260,17 +260,13 @@ describe("createGatewayDocumentPort.fetch", () => {
           id,
         );
       }
-      db.prepare(
-        "INSERT OR REPLACE INTO scope_fact_backfill (source_id, source_type, descriptor_json, ready) VALUES ('files:test','files','{}',1)",
-      ).run();
-      replaceDocumentScopeFacts(db, "selected", {
-        facts: [{ kind: "conversation", id: "chat" }],
-        complete: ["conversation"],
-      });
-      replaceDocumentScopeFacts(db, "other", {
-        facts: [{ kind: "conversation", id: "other" }],
-        complete: ["conversation"],
-      });
+      publishProfile(db, "files", 5, LEDGER_PROFILE);
+      // "unknown" was written before its source recorded labels, so no filter can place it.
+      const labelled = db.prepare(
+        "UPDATE documents SET metadata = json_set(metadata, '$.extra.labelIds', json(?)), source_version = 3 WHERE id = ?",
+      );
+      labelled.run(JSON.stringify(["L-chat"]), "selected");
+      labelled.run(JSON.stringify(["L-other"]), "other");
       const authorization = createCorpusAuthorization(
         {
           principalId: "principal-example",
@@ -293,7 +289,12 @@ describe("createGatewayDocumentPort.fetch", () => {
               {
                 sourceId: "files:test",
                 audience: { accessLevel: "level-example", capability: "direct" },
-                rules: [{ action, match: [{ kind: "conversation", id: "chat" }] }],
+                rules: [
+                  {
+                    action,
+                    match: [{ capability: "membership", field: "extra.labelIds", id: "L-chat" }],
+                  },
+                ],
                 otherwise: action === "share" ? "hide" : "share",
               },
             ],

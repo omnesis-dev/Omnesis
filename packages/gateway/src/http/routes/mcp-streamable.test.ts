@@ -102,7 +102,12 @@ const PRINCIPAL_AUTH: Record<string, PrincipalOAuthAuthContext> = {
         {
           sourceId: "fictional-mail:alpha",
           audience: { accessLevel: "fictional-level", capability: "direct" },
-          rules: [{ match: [{ kind: "label", id: "chosen" }], action: "share" }],
+          rules: [
+            {
+              match: [{ capability: "membership", field: "extra.labelIds", id: "chosen" }],
+              action: "share",
+            },
+          ],
           otherwise: "hide",
         },
       ],

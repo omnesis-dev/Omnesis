@@ -6,13 +6,13 @@ import { beforeEach, afterEach, expect, test, vi } from "vitest";
 import { encodeStoredScopePolicies } from "../access/scope-policy-encoding.js";
 import { directWriteGate } from "../write-gate.js";
 import { runSchemaSetup } from "../data/schema.js";
+import { runMigrations } from "../data/migrations.js";
+import { LEDGER_PROFILE, publishProfile } from "../access/filter-test-utils.js";
 import {
   createCorpusAuthorization,
   serializeCorpusAuthorization,
   externalAnswerOwnerId,
 } from "../access/corpus-authorization.js";
-import { replaceDocumentScopeFacts } from "../access/scope-facts.js";
-import { initializeScopeGenerationEpoch } from "../access/scope-generations.js";
 import { createDevice } from "../data/repositories/DeviceRepository.js";
 import { directReadPort } from "../scheduler/read-port.js";
 import {
@@ -73,7 +73,12 @@ const authorization = createCorpusAuthorization(
         {
           sourceId: source,
           audience: { accessLevel: "fictional-level", capability: "answer" },
-          rules: [{ action: "share", match: [{ kind: "label", id: "visible" }] }],
+          rules: [
+            {
+              action: "share",
+              match: [{ capability: "membership", field: "extra.labelIds", id: "visible" }],
+            },
+          ],
           otherwise: "hide",
         },
       ],
@@ -91,20 +96,17 @@ const review: PrivacyReviewRecord = {
   rationale: "Fictional review.",
 };
 beforeEach(() => {
-  // Source generations are kept only while source filters are in use.
   vi.stubEnv("OMNESIS_EXPERIMENTAL", "1");
   db = new Database(":memory:");
   db.pragma("foreign_keys=ON");
   runSchemaSetup(db);
+  runMigrations(db);
+  publishProfile(db, "fictional", 5, LEDGER_PROFILE);
   db.exec(`INSERT INTO devices (id,name,kind,paired_at)
       VALUES ('00000000-0000-4000-8000-000000000001','Fictional collector','collector',1);
     INSERT INTO sources (id,type,account_id,device_id,created_at,updated_at)
       VALUES ('${source}','fictional','scope','00000000-0000-4000-8000-000000000001',1,1)`);
-  db.prepare(
-    "INSERT INTO scope_fact_backfill(source_id,source_type,descriptor_json,ready) VALUES(?,'fictional','{}',1)",
-  ).run(source);
   addDocument("input");
-  initializeScopeGenerationEpoch(db);
   seedLiveIdentity();
 });
 afterEach(() => {
@@ -113,13 +115,17 @@ afterEach(() => {
 });
 function addDocument(id: string) {
   db.prepare(
-    `INSERT INTO documents(id,provider_id,source_id,external_id,title,content,content_hash,source_created_at,source_updated_at,ingested_at,updated_at)
-    VALUES(?,'fictional-provider',?,?,'Fictional title','Fictional body','fictional-hash','2026-01-01','2026-01-01','2026-01-01','2026-01-01')`,
+    `INSERT INTO documents(id,provider_id,source_id,external_id,title,content,content_hash,source_created_at,source_updated_at,ingested_at,updated_at,source_version)
+    VALUES(?,'fictional-provider',?,?,'Fictional title','Fictional body','fictional-hash','2026-01-01','2026-01-01','2026-01-01','2026-01-01',3)`,
   ).run(id, source, id);
   facts(id, "visible");
 }
+/** Give a record one label: "visible" is the one the filter shares, any other hides it. */
 function facts(id: string, label: string) {
-  replaceDocumentScopeFacts(db, id, { facts: [{ kind: "label", id: label }], complete: ["label"] });
+  db.prepare("UPDATE documents SET metadata=? WHERE id=?").run(
+    JSON.stringify({ documentType: "entry", extra: { labelIds: [label] } }),
+    id,
+  );
 }
 function begin(id = "task", conversationId?: string) {
   return beginAnswerTask(db, {
@@ -187,16 +193,12 @@ test("hidden uncited snippets prevent candidate release and transcript pollution
   expect(db.prepare("SELECT * FROM answer_messages").all()).toEqual([]);
 });
 
-test("incomplete generators use the original generation fence", () => {
+test("an incomplete read set is checked for every document it does name", () => {
   begin();
   addDocument("unrelated");
-  expect(() => complete("task", false, [])).toThrow(/Source access changed/);
-});
-
-test("missing generation clock state cannot bless an incomplete provenance snapshot", () => {
-  db.prepare("DELETE FROM scope_generation_clock").run();
-  begin();
-  expect(() => complete("task", false, [])).toThrow(/Source access changed/);
+  expect(() => complete("task", false, ["input"])).not.toThrow();
+  facts("input", "hidden");
+  expect(() => assertAnswerTaskScopeCurrent(db, "task")).toThrow(/Source access changed/);
 });
 
 test("held candidates cannot be approved after a fact change and free the conversation", () => {

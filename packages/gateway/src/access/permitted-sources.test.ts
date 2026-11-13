@@ -9,7 +9,7 @@ import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { createDatabase } from "../db.js";
 import { createCorpusAuthorization } from "./corpus-authorization.js";
 import { permittedSourceIds, permittedAnalyticsSourceIds } from "./permitted-sources.js";
-import type { ScopePolicy } from "@omnesis/types";
+import type { SourceFilter } from "@omnesis/types";
 import type Database from "better-sqlite3";
 
 let tmpDir: string;
@@ -37,7 +37,7 @@ afterEach(() => {
 function authorization(
   mode: "all" | "allowlist" | "denylist",
   sourceIds: string[],
-  scopePolicies: ScopePolicy[] = [],
+  scopePolicies: SourceFilter[] = [],
 ) {
   return createCorpusAuthorization(
     {
@@ -91,7 +91,12 @@ describe("permittedSourceIds", () => {
           {
             sourceId: "mail:alpha",
             audience: { accessLevel: "fictional-level", capability: "direct" },
-            rules: [{ action: "hide", match: [{ kind: "label", id: "private" }] }],
+            rules: [
+              {
+                action: "hide",
+                match: [{ capability: "membership", field: "extra.labelIds", id: "private" }],
+              },
+            ],
             otherwise: "share",
           },
         ],
@@ -119,7 +124,12 @@ describe("permittedAnalyticsSourceIds", () => {
         {
           sourceId: "mail:alpha",
           audience: { accessLevel: "fictional-level", capability: "direct" },
-          rules: [{ action: "hide", match: [{ kind: "label", id: "private" }] }],
+          rules: [
+            {
+              action: "hide",
+              match: [{ capability: "membership", field: "extra.labelIds", id: "private" }],
+            },
+          ],
           otherwise: "share",
         },
       ],
@@ -133,10 +143,15 @@ describe("permittedAnalyticsSourceIds", () => {
 });
 
 test("shared catalog owners survive only an all-source boundary with no filtered account of their type", () => {
-  const policy: ScopePolicy = {
+  const policy: SourceFilter = {
     sourceId: "mail:alpha",
     audience: { accessLevel: "fictional-level", capability: "direct" },
-    rules: [{ action: "hide", match: [{ kind: "label", id: "private" }] }],
+    rules: [
+      {
+        action: "hide",
+        match: [{ capability: "membership", field: "extra.labelIds", id: "private" }],
+      },
+    ],
     otherwise: "share",
   };
   db.prepare(

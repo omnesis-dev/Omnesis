@@ -10,11 +10,12 @@ import { Scheduler } from "../scheduler/scheduler.js";
 import { IoTaskRunner } from "../scheduler/runners/io.js";
 import { ioGateFromScheduler } from "../scheduler/io-ops.js";
 import { runSchemaSetup } from "../data/schema.js";
+import { runMigrations } from "../data/migrations.js";
+import { LEDGER_PROFILE, publishProfile } from "../access/filter-test-utils.js";
 import {
   createCorpusAuthorization,
   serializeCorpusAuthorization,
 } from "../access/corpus-authorization.js";
-import { replaceDocumentScopeFacts } from "../access/scope-facts.js";
 import { directReadPort } from "../scheduler/read-port.js";
 import { beginAnswerTask, completeAnswerTask } from "./store-mutations.js";
 import {
@@ -54,7 +55,12 @@ const authorization = createCorpusAuthorization(
         {
           sourceId: source,
           audience: { accessLevel: "level", capability: "answer" },
-          rules: [{ action: "share", match: [{ kind: "label", id: "visible" }] }],
+          rules: [
+            {
+              action: "share",
+              match: [{ capability: "membership", field: "extra.labelIds", id: "visible" }],
+            },
+          ],
           otherwise: "hide",
         },
       ],
@@ -62,8 +68,12 @@ const authorization = createCorpusAuthorization(
   ],
   "answer",
 )!;
+/** Give a record one label: "visible" is the one the filter shares, any other hides it. */
 function facts(id: string, label: string) {
-  replaceDocumentScopeFacts(db, id, { facts: [{ kind: "label", id: label }], complete: ["label"] });
+  db.prepare("UPDATE documents SET metadata=? WHERE id=?").run(
+    JSON.stringify({ documentType: "entry", extra: { labelIds: [label] } }),
+    id,
+  );
 }
 function begin(id: string, conversationId?: string) {
   return beginAnswerTask(db, {
@@ -108,16 +118,15 @@ function release(id: string, doc: string) {
 beforeEach(() => {
   db = new Database(":memory:");
   runSchemaSetup(db);
+  runMigrations(db);
+  publishProfile(db, "fictional", 5, LEDGER_PROFILE);
   db.exec(`INSERT INTO devices (id,name,kind,paired_at)
       VALUES ('00000000-0000-4000-8000-000000000001','Fictional collector','collector',1);
     INSERT INTO sources (id,type,account_id,device_id,created_at,updated_at)
       VALUES ('${source}','fictional','scope','00000000-0000-4000-8000-000000000001',1,1)`);
-  db.prepare(
-    "INSERT INTO scope_fact_backfill(source_id,source_type,descriptor_json,ready) VALUES(?,'fictional','{}',1)",
-  ).run(source);
   for (const id of ["allowed", "later"]) {
     db.prepare(
-      "INSERT INTO documents(id,provider_id,source_id,external_id,title,content,content_hash,source_created_at,source_updated_at,ingested_at,updated_at) VALUES(?,'fictional',?,?,'Fictional history','Fictional content','hash','2026-01-01','2026-01-01','2026-01-01','2026-01-01')",
+      "INSERT INTO documents(id,provider_id,source_id,external_id,title,content,content_hash,source_created_at,source_updated_at,ingested_at,updated_at,source_version) VALUES(?,'fictional',?,?,'Fictional history','Fictional content','hash','2026-01-01','2026-01-01','2026-01-01','2026-01-01',3)",
     ).run(id, source, id);
     facts(id, "visible");
   }
