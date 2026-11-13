@@ -22,6 +22,8 @@ export interface VoiceRequestHeader {
   count?: number;
   /** `group`: the similarity at which two groups are one speaker. */
   threshold?: number;
+  /** `group`: how long each vector's window lasts, in ms. */
+  durationsMs?: number[];
 }
 
 export type VoiceWorkerMessage =

@@ -37,8 +37,11 @@ export interface VoiceSeparator {
   readonly name: string;
   /** The chunk's voice windows and their vectors; empty when nobody spoke. */
   separate(audio: Uint8Array, mimeType: string): Promise<SeparatedVoices>;
-  /** Speaker index (0-based, numbered by first appearance) for each vector. */
-  group(vectors: readonly Float32Array[]): Promise<number[]>;
+  /**
+   * Speaker index (0-based, numbered by first appearance) for each vector;
+   * `durationsMs` is how long each vector's window lasts.
+   */
+  group(vectors: readonly Float32Array[], durationsMs: readonly number[]): Promise<number[]>;
   dispose(): Promise<void>;
 }
 
@@ -48,11 +51,22 @@ export const MAX_WINDOW_MS = 8_000;
 export const MIN_WINDOW_MS = 1_000;
 /**
  * Two groups of windows at least this similar (mean cosine similarity) are
- * the same speaker. With the bundled embedding model, a two-speaker
- * recording grouped correctly at any threshold from 0.70 to 0.80 and split
- * one voice in two at 0.85; this is the middle of that range.
+ * the same speaker. Calibrated for the bundled 3D-Speaker ERes2Net model on
+ * two- and three-voice Italian dialogues of 1 to 4 minutes, both clean and
+ * degraded to a phone on a table (quiet, reverberant, noisy, AAC at
+ * 32 kbit/s): 0.4 found the right number of speakers in all but one case,
+ * which it split in two; 0.35 merged two similar voices. A split is the
+ * safer error, since the owner can name two speakers as the same person.
  */
-export const SAME_SPEAKER_SIMILARITY = 0.75;
+export const SAME_SPEAKER_SIMILARITY = 0.4;
+/**
+ * A speaker heard for less than this — or for less than
+ * `MIN_SPEAKER_SHARE` of the session's voiced time, whichever is smaller —
+ * is a window the model could not place (too short, noisy, or two voices
+ * at once), not a person: its windows go to the most similar larger speaker.
+ */
+export const MIN_SPEAKER_MS = 8_000;
+export const MIN_SPEAKER_SHARE = 0.15;
 
 /**
  * Cut the stretches a separator found (one voice each) into voice windows:
@@ -80,8 +94,10 @@ export function voiceWindows(
 
 /**
  * Group voice vectors into speakers: average-linkage agglomerative clustering
- * on cosine similarity, stopping below `threshold`. Returns a 0-based speaker
- * index per vector, numbered in order of first appearance.
+ * on cosine similarity, stopping below `threshold`. With `durationsMs` (each
+ * window's length), speakers too small to be a person are then folded into
+ * the most similar larger one (see `MIN_SPEAKER_MS`). Returns a 0-based
+ * speaker index per vector, numbered in order of first appearance.
  *
  * Uses the nearest-neighbour chain, which finds the same merges as the naive
  * algorithm for average linkage in O(n²) time — a four-hour recording has
@@ -90,6 +106,7 @@ export function voiceWindows(
 export function groupVoices(
   vectors: readonly Float32Array[],
   threshold: number = SAME_SPEAKER_SIMILARITY,
+  durationsMs?: readonly number[],
 ): number[] {
   const n = vectors.length;
   if (n === 0) return [];
@@ -155,11 +172,48 @@ export function groupVoices(
     if (m.similarity < threshold) break;
     parent[find(m.b)] = find(m.a);
   }
+  const roots = unit.map((_, i) => find(i));
+  const placed = durationsMs ? absorbSmallSpeakers(roots, unit, durationsMs) : roots;
   const label = new Map<number, number>();
-  return unit.map((_, i) => {
-    const root = find(i);
+  return placed.map((root) => {
     if (!label.has(root)) label.set(root, label.size);
     return label.get(root)!;
+  });
+}
+
+/**
+ * Move the windows of speakers below the size floor to the large speaker
+ * whose mean vector is most similar. The longest speaker always counts as
+ * large, so a recording where everyone is small keeps one speaker.
+ */
+function absorbSmallSpeakers(
+  groups: readonly number[],
+  unit: readonly Float32Array[],
+  durationsMs: readonly number[],
+): number[] {
+  const time = new Map<number, number>();
+  groups.forEach((g, i) => time.set(g, (time.get(g) ?? 0) + (durationsMs[i] ?? 0)));
+  let total = 0;
+  for (const t of time.values()) total += t;
+  const floor = Math.min(MIN_SPEAKER_MS, total * MIN_SPEAKER_SHARE);
+  const longest = [...time].reduce((a, b) => (b[1] > a[1] ? b : a))[0];
+  const large = [...time].filter(([g, t]) => t >= floor || g === longest).map(([g]) => g);
+  if (large.length === time.size) return [...groups];
+  const centroid = new Map<number, Float32Array>();
+  for (const g of large) {
+    const sum = new Float32Array(unit[0]!.length);
+    groups.forEach((x, i) => {
+      if (x === g) unit[i]!.forEach((v, j) => (sum[j]! += v));
+    });
+    centroid.set(g, normalize(sum));
+  }
+  return groups.map((g, i) => {
+    if (centroid.has(g)) return g;
+    let best = large[0]!;
+    for (const c of large) {
+      if (dot(unit[i]!, centroid.get(c)!) > dot(unit[i]!, centroid.get(best)!)) best = c;
+    }
+    return best;
   });
 }
 

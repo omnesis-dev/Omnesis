@@ -94,7 +94,11 @@ function handle(header: VoiceRequestHeader, tail: Float32Array): void {
       send({ ...separate(tail), id: header.id });
     } else {
       const vectors = unpackVectors(new Uint8Array(tail.buffer), header.count ?? 0);
-      send({ type: "result", id: header.id, labels: groupVoices(vectors, header.threshold) });
+      send({
+        type: "result",
+        id: header.id,
+        labels: groupVoices(vectors, header.threshold, header.durationsMs),
+      });
     }
   } catch (err) {
     send({ type: "error", id: header.id, error: err instanceof Error ? err.message : String(err) });

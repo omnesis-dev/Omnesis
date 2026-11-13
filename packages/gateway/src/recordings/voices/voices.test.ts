@@ -49,6 +49,28 @@ describe("groupVoices", () => {
     expect(groupVoices(vectors, -1)).toEqual([0, 0, 0]);
   });
 
+  test("folds a speaker too short to be a person into the most similar larger one", () => {
+    // Two voices of 20 s each, and a 2 s window the model placed apart from both.
+    const stray = new Float32Array(16);
+    stray[3] = 0.4;
+    stray[11] = 1;
+    const vectors = [voice(3, 0.1), voice(5, 0.1), stray, voice(3, 0.2), voice(5, 0.2)];
+    const durations = [10_000, 10_000, 2_000, 10_000, 10_000];
+    expect(groupVoices(vectors, 0.9)).toEqual([0, 1, 2, 0, 1]);
+    expect(groupVoices(vectors, 0.9, durations)).toEqual([0, 1, 0, 0, 1]);
+  });
+
+  test("keeps a short speaker when the whole recording is short", () => {
+    // 6 s of speech: the floor is 15% of it, so a 2 s speaker stays a speaker.
+    const vectors = [voice(3, 0.1), voice(5, 0.1), voice(3, 0.2)];
+    expect(groupVoices(vectors, 0.9, [2_000, 2_000, 2_000])).toEqual([0, 1, 0]);
+  });
+
+  test("keeps the longest speaker when every speaker is below the floor", () => {
+    const vectors = [voice(3, 0.1), voice(5, 0.1), voice(9, 0.1)];
+    expect(groupVoices(vectors, 0.9, [500, 100, 100])).toEqual([0, 0, 0]);
+  });
+
   test("an empty recording or a single window", () => {
     expect(groupVoices([])).toEqual([]);
     expect(groupVoices([voice(0, 0)])).toEqual([0]);

@@ -516,7 +516,10 @@ export class RecordingTranscriptionService {
     let labels: number[] | null = null;
     if (separator) {
       try {
-        labels = await separator.group(ungrouped.flatMap((c) => c.vectors));
+        labels = await separator.group(
+          ungrouped.flatMap((c) => c.vectors),
+          ungrouped.flatMap((c) => c.windows.map((w) => w.endMs - w.startMs)),
+        );
       } catch (err) {
         log.warn(
           `Recording ${sessionId}: voices not grouped: ${err instanceof Error ? err.message : String(err)}`,

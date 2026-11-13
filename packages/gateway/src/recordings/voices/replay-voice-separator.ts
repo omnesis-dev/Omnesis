@@ -37,8 +37,8 @@ export class ReplayVoiceSeparator implements VoiceSeparator {
     return Promise.resolve(out);
   }
 
-  group(vectors: readonly Float32Array[]): Promise<number[]> {
-    return Promise.resolve(groupVoices(vectors));
+  group(vectors: readonly Float32Array[], durationsMs: readonly number[]): Promise<number[]> {
+    return Promise.resolve(groupVoices(vectors, undefined, durationsMs));
   }
 
   async dispose(): Promise<void> {}
