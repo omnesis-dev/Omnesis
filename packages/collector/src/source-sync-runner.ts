@@ -611,10 +611,15 @@ export class SourceSyncRunner {
         return;
       }
       let cursor = state?.cursor ?? null;
-      // Provider-independent provenance survives a partial page and collector restart.
+      // A sync that starts with no cursor reads the whole source: the first
+      // one, and the first after a resync, in place or from scratch, reset
+      // the cursor. Each such pass is an enumeration of its own, so the
+      // gateway learns when the source was last read whole and at which
+      // version. The gateway hands back the one still open, which survives a
+      // partial page and a collector restart.
       const initialInventory =
         state?.initialInventory ??
-        (!state
+        (cursor === null
           ? ((await this.gateway.getInitialSourceInventory?.(source.id)) ?? {
               id: randomUUID(),
               startedAt: new Date().toISOString(),
