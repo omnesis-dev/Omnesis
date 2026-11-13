@@ -93,6 +93,7 @@ describe("decision role — an OpenAI-compatible server read through its logprob
     });
     harness = new SyntheticE2EHarness({
       gatewayMode: "experimental",
+      labFeatures: { brain: true, tasks: true, watches: true },
       universe: "default",
       extraInference: {
         backends: { decider: { type: "http", url: server.url } },

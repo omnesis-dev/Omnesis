@@ -26,6 +26,7 @@ import { observationEvidenceContext } from "../observation-evidence-context.js";
 import { containsNormalizedForContent } from "../quote-match.js";
 import { listOpenObservations } from "../storage/observations.js";
 import { cognitionSpendDay } from "../storage/spend.js";
+import { VERIFIER_FOREGROUND_DEADLINE_MS } from "../../inference/verifier-limits.js";
 import {
   compareSalience,
   judgeSalience,
@@ -73,6 +74,7 @@ export interface ObservationRecheckWrites {
 }
 
 export interface ObservationRecheckDeps {
+  tasksEnabled?: () => boolean;
   db: Db;
   writes: ObservationRecheckWrites;
   getDecision: () => DecisionCapability | null;
@@ -94,8 +96,6 @@ export interface RecheckResult {
   held: string[];
   dropped: Array<{ id: string; reason: ObservationCloseReason }>;
 }
-
-const VERIFIER_TIMEOUT_MS = 45_000;
 
 /** Titles, sources and dates of the cited documents, for the decision state. */
 export function observationSources(
@@ -209,7 +209,7 @@ async function verifyClaims(
     return null;
   }
   if (!input) return null;
-  const timeout = AbortSignal.timeout(VERIFIER_TIMEOUT_MS);
+  const timeout = AbortSignal.timeout(VERIFIER_FOREGROUND_DEADLINE_MS);
   const bounded = signal ? AbortSignal.any([signal, timeout]) : timeout;
   try {
     const verifier = await raceAbort(deps.getEntailmentVerifier(bounded), bounded);
@@ -257,6 +257,10 @@ export async function recheckObservations(
   const held: string[] = [];
   for (const observation of listOpenObservations(deps.db)) {
     input.signal?.throwIfAborted();
+    if (deps.tasksEnabled?.() === false && observation.relatedLoopIds.length > 0) {
+      held.push(observation.id);
+      continue;
+    }
     if (
       evidenceGone(deps.db, observation) ||
       claimQuoteGone(deps.db, observation) ||

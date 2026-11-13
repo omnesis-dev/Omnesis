@@ -8,6 +8,7 @@ import {
   buildResultUrl,
   defaultGatewayUrl,
   GATEWAY_URL,
+  targetsLocalGateway,
 } from "./utils.js";
 
 const entries = [
@@ -181,4 +182,27 @@ describe("defaultGatewayUrl", () => {
       "https://localhost:7600",
     );
   });
+});
+
+test("a remote gateway's private loopback adapter is not mistaken for a gateway installed on this host", () => {
+  const priorRequest = process.env.OMNESIS_GATEWAY_REQUEST_URL,
+    priorOrigin = process.env.OMNESIS_GATEWAY_URL,
+    priorFlag = process.env.OMNESIS_CLOUD_RELAY_ENABLED;
+  try {
+    process.env.OMNESIS_CLOUD_RELAY_ENABLED = "1";
+    process.env.OMNESIS_GATEWAY_REQUEST_URL = "http://127.0.0.1:12345";
+    process.env.OMNESIS_GATEWAY_URL = "https://canonical.example.com";
+    expect(targetsLocalGateway("http://127.0.0.1:12345")).toBe(false);
+    expect(targetsLocalGateway("https://localhost:7600")).toBe(true);
+    // Without the opt-in the variable is not read: loopback is this machine.
+    delete process.env.OMNESIS_CLOUD_RELAY_ENABLED;
+    expect(targetsLocalGateway("http://127.0.0.1:12345")).toBe(true);
+  } finally {
+    if (priorFlag === undefined) delete process.env.OMNESIS_CLOUD_RELAY_ENABLED;
+    else process.env.OMNESIS_CLOUD_RELAY_ENABLED = priorFlag;
+    if (priorRequest === undefined) delete process.env.OMNESIS_GATEWAY_REQUEST_URL;
+    else process.env.OMNESIS_GATEWAY_REQUEST_URL = priorRequest;
+    if (priorOrigin === undefined) delete process.env.OMNESIS_GATEWAY_URL;
+    else process.env.OMNESIS_GATEWAY_URL = priorOrigin;
+  }
 });

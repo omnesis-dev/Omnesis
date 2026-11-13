@@ -323,8 +323,12 @@
                   is retried on a schedule; the source's notice on the Sources page counts the clips
                   still waiting. Transcription failures are retried without reporting a missing
                   model; an unavailable transcriber notice can also mean the assigned backend is
-                  unreachable. A clip whose audio cannot be decoded is counted apart and not retried
-                  until its file changes or the source is resynced.
+                  unreachable. A clip whose audio cannot be decoded, or that is larger than the 25
+                  MB the transcriber accepts, is counted apart and not retried until its file
+                  changes or the source is resynced. A clip whose file is empty because Messages has
+                  not downloaded it to this Mac reads
+                  <code>audio not downloaded on this device</code>
+                  and is transcribed once its audio arrives.
                 </td>
               </tr>
               <tr>
@@ -1418,7 +1422,9 @@
                 </td>
                 <td>
                   Accounts, balances, and transactions from European banks as analytics tables, plus
-                  transaction documents; one instance per connected bank.
+                  transaction documents; one instance per connected bank. When the bank fails to
+                  return an account's balance, its transactions still sync and the source shows a
+                  notice until a later sync fetches the balance.
                 </td>
               </tr>
               <tr>

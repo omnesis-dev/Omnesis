@@ -14,7 +14,7 @@ import {
   buildDueSoonDeltaPrime,
   buildSourceDeltaPrime,
   buildSynthesisDeltaPrime,
-} from "../steward/delta-prime.js";
+} from "../runtime/delta-prime.js";
 import {
   appendOpenLoopLedger,
   createOpenLoop,

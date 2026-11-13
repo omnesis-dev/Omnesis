@@ -1,14 +1,17 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { describe, expect, test } from "vitest";
-import {
-  HIDDEN_COMMAND_ALIASES,
-  HIDDEN_INTERNAL_COMMANDS,
-  SUB_COMMANDS,
-  visibleSubCommands,
-} from "./subcommands.js";
+import { afterEach, describe, expect, test, vi } from "vitest";
+import { HIDDEN_COMMAND_ALIASES, SUB_COMMANDS } from "./subcommands.js";
 import type { CommandDef } from "citty";
+
+afterEach(() => vi.unstubAllEnvs());
+
+/** The command tree as a CLI run started with the current environment builds it. */
+async function freshTree(): Promise<typeof import("./subcommands.js")> {
+  vi.resetModules();
+  return import("./subcommands.js");
+}
 
 async function resolve(name: string): Promise<CommandDef> {
   const entry = SUB_COMMANDS[name];
@@ -38,19 +41,34 @@ describe("the omnesis command tree", () => {
     expect(Object.keys(alias.subCommands ?? {})).toEqual(Object.keys(brain.subCommands ?? {}));
   });
 
-  test("only declared aliases and internal commands are missing from help", () => {
-    const visible = new Set(Object.keys(visibleSubCommands()));
-    const registered = Object.keys(SUB_COMMANDS);
+  test.each(["0", "1"])("the cloud command exists only with the cloud opt-in %s", async (flag) => {
+    vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", flag);
+    vi.stubEnv("OMNESIS_EXPERIMENTAL", flag === "1" ? "0" : "1");
+    // The tree is built when the module loads, as it is for each CLI run.
+    const tree = await freshTree();
+    const visible = new Set(Object.keys(tree.visibleSubCommands()));
+    const registered = Object.keys(tree.SUB_COMMANDS);
+    expect(registered.includes("cloud")).toBe(flag === "1");
     expect(registered.filter((name) => !visible.has(name))).toEqual([
-      ...HIDDEN_COMMAND_ALIASES,
-      ...HIDDEN_INTERNAL_COMMANDS,
+      ...tree.HIDDEN_COMMAND_ALIASES,
+      ...tree.HIDDEN_INTERNAL_COMMANDS,
     ]);
+    expect(visible.has("cloud")).toBe(flag === "1");
     expect(visible.has("watches")).toBe(true);
     expect(visible.has("subscriptions")).toBe(false);
     expect(visible.has("brain")).toBe(true);
     expect(visible.has("briefs")).toBe(false);
     expect(visible.has("_portal-fleet-update-run")).toBe(false);
   });
+});
+
+test("the optional cloud command resolves without starting a gateway or requiring a Google identity", async () => {
+  vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "1");
+  const entry = (await freshTree()).SUB_COMMANDS.cloud;
+  expect(entry, "no command registered as `cloud`").toBeDefined();
+  expect(
+    commandName((typeof entry === "function" ? await entry() : await entry) as CommandDef),
+  ).toBe("cloud");
 });
 
 describe("the retired watch2 verb", () => {

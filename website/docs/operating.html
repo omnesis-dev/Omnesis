@@ -708,8 +708,9 @@ Gateway 1.4.0  <span class="t-dim">·</span>  <span class="t-dim">devices: 3 cur
             <strong>Use decision gate for Apple Watch complication</strong>. Without an available
             decision model, the complication offers Ask and Tell. If routing fails after Send, or
             the intent is uncertain, it falls back to Ask. The transcript is sent to the decision
-            backend. See <a href="apps#voice-and-quick-capture">Apple Watch</a> for the capture
-            flow.
+            backend. The Wear OS watch app is routed by the same choice and the same setting, which
+            the Android phone exposes as <strong>Use decision gate for watch capture</strong>. See
+            <a href="apps#voice-and-quick-capture">Apple Watch</a> for the capture flow.
           </li>
           <li>
             <strong>Email dates in time queries.</strong> When
@@ -893,10 +894,14 @@ Gateway 1.4.0  <span class="t-dim">·</span>  <span class="t-dim">devices: 3 cur
           gateway through node-llama-cpp, on the GPU through Metal on Apple Silicon. The
           <code>transcriber</code> runs whisper.cpp in a separate process, so a crash in the native
           code cannot take the gateway down; it uses the GPU through Metal on Apple Silicon and the
-          CPU elsewhere. The <code>ocr</code> role has three local runtimes:
-          <code>apple-vision</code> (macOS, with the Swift toolchain installed),
-          <code>tesseract</code> (with the <code>tesseract</code> binary installed), and
-          <code>gguf</code>, a llama.cpp vision model you supply, run through
+          CPU elsewhere. Its engine is compiled from source when Omnesis is installed, and an
+          install where that build fails goes ahead without it: on a machine without a C/C++
+          compiler, and on Linux with GCC 14 or later, which rejects the whisper.cpp source. There,
+          local Whisper models cannot run, the gateway reports why, and the
+          <code>transcriber</code> role needs a transcription server, described below. The
+          <code>ocr</code> role has three local runtimes: <code>apple-vision</code> (macOS, with the
+          Swift toolchain installed), <code>tesseract</code> (with the <code>tesseract</code> binary
+          installed), and <code>gguf</code>, a llama.cpp vision model you supply, run through
           <code>llama-mtmd-cli</code> with its model and projector paths set under
           <code>inference.ocr.gguf</code>. Each image gets 120 seconds of OCR by default; for a
           backend that needs longer on dense pages, set

@@ -200,11 +200,16 @@ extension HomeView {
         }
     }
 
-    /// Send a pending push target to its destination.
     private func routePendingTarget() -> Bool {
         guard let target = router.pendingTarget else { return false }
         menuOpen = false
-        if case .accessAuthorization = target {
+        if target.opensDevices {
+            _ = router.consume()
+            // A pairing request lands on its own list, over the devices it adds to.
+            if target == .pairingRequests { PendingPairingRequests.shared.requestOpen() }
+            settingsDestination = .devices
+            return true
+        } else if case .accessAuthorization = target {
             _ = router.consume()
             accessAuthorizationPresentation = AccessAuthorizationPresentation(initialCode: nil)
             return true
@@ -276,8 +281,6 @@ struct HomeView: View {
     /// presents the code-gated owner flow; details remain hidden until the
     /// paired phone submits the short code shown by the MCP client.
     @State private var accessAuthorizationPresentation: AccessAuthorizationPresentation?
-    /// Which waiting access requests the home banner was dismissed for.
-    @State private var accessBannerState = AccessPendingRequestBannerState()
     /// A privacy decision that was already waiting when the app became active.
     /// `PrivacyApprovalAutoOpenPolicy` decides whether it may be offered.
     @State private var privacyApprovalPresentation: PrivacyApprovalPresentation?
@@ -354,7 +357,9 @@ struct HomeView: View {
                     // Attached to the section rather than the whole container so
                     // the banner travels with the app it is reporting on, instead
                     // of hanging over the menu.
-                    .safeAreaInset(edge: .top, spacing: 0) { topBanners }
+                    .safeAreaInset(edge: .top, spacing: 0) {
+                        HomeTopBanners(onReviewAccess: reviewPendingAccessRequest) { settingsDestination = $0 }
+                    }
 
                 // Quick capture rises over the section rather than being
                 // presented as a full-screen cover. It still arrives from the
@@ -532,48 +537,6 @@ struct HomeView: View {
             consumePendingPrivacyApproval()
             store.homeTabChanged(selection)
             consumeForegroundConversationRequest()
-        }
-    }
-
-    /// What sits above the section: a waiting access request first, then
-    /// the permission and notification problems.
-    private var topBanners: some View {
-        VStack(spacing: 0) {
-            if let offer = accessBannerState.offer(
-                from: store.pendingAccessRequests,
-                nowMillis: Int64(Date().timeIntervalSince1970 * 1000)
-            ) {
-                AccessPendingRequestBanner(
-                    offer: offer,
-                    onReview: { reviewPendingAccessRequest(offer.newest) },
-                    onDismiss: {
-                        accessBannerState.dismiss(
-                            store.pendingAccessRequests,
-                            nowMillis: Int64(Date().timeIntervalSince1970 * 1000)
-                        )
-                    }
-                )
-            }
-            let showNotificationWarning = NotificationWarningDismissal.shouldShowWarning(
-                health: store.pushDeliveryHealth,
-                dismissed: store.notificationWarningDismissed
-            )
-            // Gateway push setup is explained in Settings → Notifications, not here:
-            // it asks whoever runs the gateway to act, and a banner over every screen
-            // hides the controls beneath it.
-            if !store.degradedSourcePermissions.isEmpty || showNotificationWarning {
-                AppAttentionBanner(
-                    problems: store.degradedSourcePermissions,
-                    notificationWarning: showNotificationWarning ? store.pushDeliveryHealth.warning : nil,
-                    onOpenPermissions: { settingsDestination = .permissions(sourceId: nil) },
-                    onOpenNotificationSettings: {
-                        if let url = URL(string: UIApplication.openSettingsURLString) {
-                            UIApplication.shared.open(url)
-                        }
-                    },
-                    onDismissNotification: showNotificationWarning ? { store.dismissNotificationWarning() } : nil
-                )
-            }
         }
     }
 

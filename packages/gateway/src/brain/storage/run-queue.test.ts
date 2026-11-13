@@ -53,7 +53,7 @@ function schedAt(hours: number): number {
 import { getRunAttribution } from "./run-attribution.js";
 import type Database from "better-sqlite3";
 
-describe("steward run queue", () => {
+describe("Brain run queue", () => {
   let path: string;
   let db: Db;
   beforeEach(() => {

@@ -101,6 +101,7 @@ export class AnalyticsDb {
   private readonly queries: AnalyticsQueryRunner;
   private readonly watchOutbox: WatchAnalyticsOutboxStore;
   private watchBackfill: ((sourceId: string) => boolean) | null = null;
+  private watchActive: (() => boolean) | null = null;
   /**
    * Cached `boundDocument` registry, keyed by bare source type. Built
    * lazily from the catalog and invalidated on any catalog mutation
@@ -228,7 +229,7 @@ export class AnalyticsDb {
       (dataInput.deletedKeys?.length ?? 0) > 0 ||
       (dataInput.ledgerDeletedKeys?.length ?? 0) > 0;
     const watchCapture =
-      this.watchBackfill && dataInput.records.length > 0
+      this.watchBackfill && (this.watchActive?.() ?? true) && dataInput.records.length > 0
         ? { observedAt: Date.now(), backfill: this.watchBackfill(dataInput.sourceId) }
         : undefined;
     const dataResult = hasDataWork
@@ -286,12 +287,14 @@ export class AnalyticsDb {
   }
 
   /** Enable durable analytics capture for the experimental Watch runtime. */
-  enableWatchOutbox(backfill: (sourceId: string) => boolean): void {
+  enableWatchOutbox(backfill: (sourceId: string) => boolean, active?: () => boolean): void {
     this.watchBackfill = backfill;
+    this.watchActive = active ?? null;
   }
 
   disableWatchOutbox(): void {
     this.watchBackfill = null;
+    this.watchActive = null;
   }
 
   readWatchOutbox(cursor: WatchOutboxCursor, limit: number): Promise<WatchOutboxBatch> {

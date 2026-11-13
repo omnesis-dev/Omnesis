@@ -540,6 +540,20 @@ describe("hosted iOS simulator preparation", () => {
       "OMNESIS_JOURNEY_IOS_UDID=$udid",
     );
     expect(read("scripts/run-mobile-journeys.sh")).toContain('udid="$OMNESIS_JOURNEY_IOS_UDID"');
+    const interactions = journeys.find(
+      (step) => step.name === "lane [ios-cloud-pairing-interactions]",
+    );
+    expect(journeys.indexOf(interactions)).toBeGreaterThan(
+      journeys.findIndex((step) => step.name === "lane [ios-journeys]"),
+    );
+    expect(interactions.run).toContain("-scheme OmnesisDemoUITests");
+    expect(interactions.run).toContain(
+      "-only-testing:OmnesisDemoUITests/CloudPairingInteractionUITests",
+    );
+    expect(interactions.run).toContain("platform=iOS Simulator,id=$OMNESIS_JOURNEY_IOS_UDID");
+    expect(interactions.run).toContain("-enableCodeCoverage YES");
+    expect(interactions.run).toContain("${{ runner.temp }}/mobile-journeys/cloud-pairing.xcresult");
+    expect(interactions.run).toContain("set -o pipefail");
   });
 });
 
@@ -783,10 +797,20 @@ describe("latest iOS destination discovery", () => {
   });
 });
 
-// Run the actual wrapper through startup failure without Xcode or a gateway.
-// Child stubs record whether readiness failure cleans up and preserves evidence.
-describe("iOS live gateway startup", () => {
-  function failedStartup({ destination, simulatorFails = false, discoveryFails = false } = {}) {
+// Run the actual wrapper without Xcode or a gateway. Child stubs record the
+// order of each step, so startup and test-run failures show what ran and what
+// was cleaned up.
+describe("iOS live gateway wrapper", () => {
+  const LOST =
+    "xcodebuild: error: Unable to find a device matching the provided destination specifier:";
+
+  /**
+   * `xcodebuild` lists one outcome per `xcodebuild test` call: `lost` refuses
+   * the destination as Xcode does (exit 70, result bundle already created),
+   * `failed` is a test failure (exit 65) and `passed` succeeds. Without it the
+   * gateway fails to start. `discoveryFailsAt` makes that readiness wait fail.
+   */
+  function runWrapper({ destination, simulatorFails = false, discoveryFailsAt, xcodebuild } = {}) {
     const fixture = mkdtempSync(join(tmpdir(), "ios-e2e-startup-"));
     try {
       const scripts = join(fixture, "scripts");
@@ -807,7 +831,14 @@ describe("iOS live gateway startup", () => {
         `
         if [[ "$1" == */wait-ios-destination.mjs ]]; then
           echo "discover:$2" >> "$TEST_CALLS"
-          ${discoveryFails ? "exit 71" : "exit 0"}
+          if [[ "$(grep -c '^discover:' "$TEST_CALLS")" == "\${TEST_DISCOVERY_FAILS_AT:-}" ]]; then
+            exit 71
+          fi
+          exit 0
+        fi
+        if [[ "$1" == */verify-ios-e2e-results.mjs ]]; then
+          echo "verify" >> "$TEST_CALLS"
+          exit 0
         fi
         echo "prepare:$*" >> "$TEST_CALLS"
         ${simulatorFails ? "exit 70" : 'echo "00000000-0000-0000-0000-000000000017"'}
@@ -823,9 +854,49 @@ describe("iOS live gateway startup", () => {
           echo "\${OMNESIS_E2E_DISABLE_ICON_FETCH:-}:\${OMNESIS_E2E_DISABLE_RELEASE_CHECK:-}" > "$TEST_CALLS.network"
           mkdir -p "$OMNESIS_CONFIG_DIR/logs"
           echo "synthetic startup diagnostic" > "$OMNESIS_CONFIG_DIR/logs/gateway.stdout.log"
+          if [[ -n "\${TEST_XCODEBUILD:-}" ]]; then
+            echo "synthetic-token" > "$OMNESIS_CONFIG_DIR/token"
+            exit 0
+          fi
           echo "SYNTH_GATEWAY_NOT_READY" >&2
           exit 23
         fi
+      `,
+      );
+      executable(join(bin, "curl"), `echo '{"items":[{"id":"person"}]}'`);
+      executable(
+        join(bin, "xcodebuild"),
+        `
+        [[ "$1" == test ]]
+        while [[ "$1" != -resultBundlePath ]]; do shift; done
+        bundle="$2"
+        attempt="$(( $(grep -c '^test:' "$TEST_CALLS" || true) + 1 ))"
+        outcome="$(cut -d, -f"$attempt" <<<"$TEST_XCODEBUILD")"
+        echo "test:$outcome" >> "$TEST_CALLS"
+        if [[ -e "$bundle" ]]; then
+          echo "xcodebuild: error: Existing file at -resultBundlePath" >&2
+          exit 64
+        fi
+        mkdir "$bundle"
+        case "$outcome" in
+          lost)
+            echo "${LOST}" >&2
+            echo '  Available destinations for the "Omnesis" scheme:' >&2
+            exit 70 ;;
+          failed)
+            echo "** TEST FAILED **"
+            exit 65 ;;
+          passed)
+            echo "** TEST SUCCEEDED **" ;;
+        esac
+      `,
+      );
+      executable(
+        join(bin, "xcrun"),
+        `
+        [[ "$1 $2" == "xcresulttool get" ]]
+        echo "results" >> "$TEST_CALLS"
+        echo '{"testNodes":[]}'
       `,
       );
       const env = {
@@ -838,21 +909,22 @@ describe("iOS live gateway startup", () => {
       delete env.OMNESIS_E2E_DEST;
       delete env.OMNESIS_E2E_DISABLE_ICON_FETCH;
       delete env.OMNESIS_E2E_DISABLE_RELEASE_CHECK;
+      delete env.TEST_XCODEBUILD;
+      delete env.TEST_DISCOVERY_FAILS_AT;
       if (destination) env.OMNESIS_E2E_DEST = destination;
+      if (xcodebuild) env.TEST_XCODEBUILD = xcodebuild.join(",");
+      if (discoveryFailsAt) env.TEST_DISCOVERY_FAILS_AT = String(discoveryFailsAt);
       const result = spawnSync("bash", [join(scripts, "run-ios-e2e.sh")], {
         env,
         encoding: "utf8",
         timeout: 10_000,
       });
+      const started = !simulatorFails && discoveryFailsAt !== 1;
       return {
         ...result,
         calls: readFileSync(calls, "utf8").trim().split("\n"),
-        gatewayNetworkFlags:
-          simulatorFails || discoveryFails ? undefined : readFileSync(`${calls}.network`, "utf8"),
-        log:
-          simulatorFails || discoveryFails
-            ? undefined
-            : readFileSync(join(config, "logs/gateway.stdout.log"), "utf8"),
+        gatewayNetworkFlags: started ? readFileSync(`${calls}.network`, "utf8") : undefined,
+        log: started ? readFileSync(join(config, "logs/gateway.stdout.log"), "utf8") : undefined,
       };
     } finally {
       rmSync(fixture, { recursive: true, force: true });
@@ -860,7 +932,7 @@ describe("iOS live gateway startup", () => {
   }
 
   it("resolves an available iPhone before startup and cleans up failed startup", () => {
-    const result = failedStartup();
+    const result = runWrapper();
     expect(result.status).toBe(1);
     expect(result.calls[0]).toMatch(/prepare:.*scripts\/ci\/prepare-ios-simulator.mjs$/);
     expect(result.calls.slice(1)).toEqual([
@@ -876,11 +948,11 @@ describe("iOS live gateway startup", () => {
   });
 
   it("boots a gateway that fetches no hosted icons and checks no releases", () => {
-    expect(failedStartup().gatewayNetworkFlags).toBe("1:1\n");
+    expect(runWrapper().gatewayNetworkFlags).toBe("1:1\n");
   });
 
   it("honors a destination already prepared by CI", () => {
-    const result = failedStartup({
+    const result = runWrapper({
       destination: "platform=iOS Simulator,id=00000000-0000-0000-0000-000000000018",
     });
     expect(result.status).toBe(1);
@@ -894,14 +966,14 @@ describe("iOS live gateway startup", () => {
   });
 
   it("does not spawn a gateway when simulator preparation fails", () => {
-    const result = failedStartup({ simulatorFails: true });
+    const result = runWrapper({ simulatorFails: true });
     expect(result.status).toBe(70);
     expect(result.calls).toHaveLength(1);
     expect(result.calls[0]).toMatch(/^prepare:/);
   });
 
   it("does not spawn a gateway when Xcode cannot discover the prepared phone", () => {
-    const result = failedStartup({ discoveryFails: true });
+    const result = runWrapper({ discoveryFailsAt: 1 });
     expect(result.status).toBe(71);
     expect(result.calls.map((call) => call.split(":")[0])).toEqual([
       "prepare",
@@ -909,6 +981,62 @@ describe("iOS live gateway startup", () => {
       "packages",
       "discover",
     ]);
+  });
+
+  const discovered = "discover:platform=iOS Simulator,id=00000000-0000-0000-0000-000000000017";
+  const beforeTests = [
+    expect.stringMatching(/^prepare:/),
+    "project",
+    "packages",
+    discovered,
+    "start:300",
+  ];
+
+  it("runs the live tests once and verifies their results", () => {
+    const result = runWrapper({ xcodebuild: ["passed"] });
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.calls).toEqual([...beforeTests, "test:passed", "results", "verify", "stop:300"]);
+    expect(result.stdout).toContain("** TEST SUCCEEDED **");
+  });
+
+  it("waits again and retries once when Xcode loses the destination before building", () => {
+    const result = runWrapper({ xcodebuild: ["lost", "passed"] });
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.calls).toEqual([
+      ...beforeTests,
+      "test:lost",
+      discovered,
+      "test:passed",
+      "results",
+      "verify",
+      "stop:300",
+    ]);
+    expect(result.stdout).toContain("Unable to find a device matching");
+    expect(result.stderr).toContain("retrying once");
+  });
+
+  it("fails when Xcode loses the destination a second time", () => {
+    const result = runWrapper({ xcodebuild: ["lost", "lost", "passed"] });
+    expect(result.status).toBe(70);
+    expect(result.calls).toEqual([
+      ...beforeTests,
+      "test:lost",
+      discovered,
+      "test:lost",
+      "stop:300",
+    ]);
+  });
+
+  it("does not retry a test failure", () => {
+    const result = runWrapper({ xcodebuild: ["failed", "passed"] });
+    expect(result.status).toBe(65);
+    expect(result.calls).toEqual([...beforeTests, "test:failed", "stop:300"]);
+  });
+
+  it("fails without a second test run when the destination does not come back", () => {
+    const result = runWrapper({ xcodebuild: ["lost", "passed"], discoveryFailsAt: 2 });
+    expect(result.status).toBe(71);
+    expect(result.calls).toEqual([...beforeTests, "test:lost", discovered, "stop:300"]);
   });
 
   it("allows a cold macOS boot and uploads only failure logs after the live lane", () => {
@@ -923,4 +1051,119 @@ describe("iOS live gateway startup", () => {
     expect(upload.with.path).toBe("${{ env.OMNESIS_CONFIG_DIR }}/logs/*.log");
     expect(upload.with["retention-days"]).toBe(7);
   });
+});
+
+/** Run the real wrapper through fixture setup, stopping at the mocked Xcode launch. */
+function bootstrap(failedFeature = "") {
+  const fixture = mkdtempSync(join(tmpdir(), "ios-lab-fixture-"));
+  try {
+    const scripts = join(fixture, "scripts");
+    const bin = join(fixture, "bin");
+    const calls = join(fixture, "calls");
+    const handoff = join(fixture, "simulator-handoff.json");
+    mkdirSync(join(scripts, "ci"), { recursive: true });
+    mkdirSync(join(fixture, "ios"));
+    mkdirSync(bin);
+    const wrapper = readFileSync(join(root, "scripts/run-ios-e2e.sh"), "utf8");
+    // Relocate the simulator's fixed handoff only in this stubbed copy, so
+    // parallel tests cannot touch a real native lane's /tmp configuration.
+    const fixedHandoff = "CONFIG_FILE=/tmp/omnesis-ios-e2e-config.json";
+    if (!wrapper.includes(fixedHandoff)) throw new Error("Update the fixture handoff isolation");
+    writeFileSync(
+      join(scripts, "run-ios-e2e.sh"),
+      wrapper.replace(fixedHandoff, 'CONFIG_FILE="$TEST_HANDOFF"'),
+    );
+    function executable(path, source) {
+      writeFileSync(path, `#!/usr/bin/env bash\nset -eu\n${source}`);
+      chmodSync(path, 0o755);
+    }
+    executable(join(bin, "node"), 'echo "discovery" >> "$TEST_CALLS"');
+    executable(join(bin, "xcodegen"), 'echo "project" >> "$TEST_CALLS"');
+    executable(join(scripts, "ci/resolve-ios-packages.sh"), 'echo "packages" >> "$TEST_CALLS"');
+    executable(
+      join(scripts, "synth-gateway.sh"),
+      `
+      if [[ "$1" == start ]]; then
+        echo "start:experimental=$OMNESIS_EXPERIMENTAL" >> "$TEST_CALLS"
+        mkdir -p "$OMNESIS_CONFIG_DIR/logs" "$OMNESIS_CONFIG_DIR/tls"
+        echo fixture-token > "$OMNESIS_CONFIG_DIR/token"
+        echo fixture-certificate > "$OMNESIS_CONFIG_DIR/tls/cert.pem"
+      else
+        echo stop >> "$TEST_CALLS"
+      fi
+    `,
+    );
+    executable(
+      join(bin, "curl"),
+      `
+      route=""
+      for argument in "$@"; do
+        if [[ "$argument" == https://localhost:17601/* ]]; then route="$argument"; fi
+      done
+      if [[ "$route" == */admin/lab/* ]]; then
+        feature="\${route##*/}"
+        [[ "$*" == *"--cacert $OMNESIS_CONFIG_DIR/tls/cert.pem"* ]]
+        [[ "$*" == *"Authorization: Bearer fixture-token"* ]]
+        [[ "$*" == *'-X PUT --data {"enabled":true}'* ]]
+        echo "lab:$feature" >> "$TEST_CALLS"
+        if [[ "$feature" == "$TEST_FAILED_FEATURE" ]]; then exit 22; fi
+        echo '{}'
+      elif [[ "$route" == */people/search* ]]; then
+        echo people >> "$TEST_CALLS"
+        echo '{"items":[{"id":"person_example"}]}'
+      else
+        echo unexpected-route >&2
+        exit 77
+      fi
+    `,
+    );
+    executable(join(bin, "xcodebuild"), 'echo xcodebuild >> "$TEST_CALLS"; exit 59');
+    const result = spawnSync("bash", [join(scripts, "run-ios-e2e.sh")], {
+      env: {
+        ...process.env,
+        PATH: `${bin}:${process.env.PATH}`,
+        OMNESIS_CONFIG_DIR: join(fixture, "config"),
+        OMNESIS_GATEWAY_PORT: "17601",
+        OMNESIS_E2E_DEST: "platform=iOS Simulator,name=Fixture phone",
+        OMNESIS_EXPERIMENTAL: "0",
+        TEST_CALLS: calls,
+        TEST_HANDOFF: handoff,
+        TEST_FAILED_FEATURE: failedFeature,
+      },
+      encoding: "utf8",
+      timeout: 10_000,
+    });
+    return { ...result, calls: readFileSync(calls, "utf8").trim().split("\n") };
+  } finally {
+    rmSync(fixture, { recursive: true, force: true });
+  }
+}
+
+describe("iOS live gateway Lab fixture", () => {
+  it("opts into Tasks and Watches before launching native tests, keeping Brain off", () => {
+    const result = bootstrap();
+    expect(result.status, result.stderr).toBe(59);
+    expect(result.calls).toEqual([
+      "project",
+      "packages",
+      "discovery",
+      "start:experimental=1",
+      "lab:tasks",
+      "lab:watches",
+      "people",
+      "xcodebuild",
+      "stop",
+    ]);
+  });
+
+  it.each(["tasks", "watches"])(
+    "fails before Xcode and cleans up when %s opt-in fails",
+    (feature) => {
+      const result = bootstrap(feature);
+      expect(result.status, result.stderr).toBe(22);
+      expect(result.calls).toContain(`lab:${feature}`);
+      expect(result.calls).not.toContain("xcodebuild");
+      expect(result.calls.at(-1)).toBe("stop");
+    },
+  );
 });

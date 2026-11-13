@@ -56,17 +56,28 @@ export function getKnowledgeNode(db: Db, id: string): KnowledgeNode | null {
 }
 export function listKnowledgeNodes(
   db: Db,
-  options: { kind?: KnowledgeNode["kind"]; afterId?: string; limit?: number } = {},
+  options: {
+    kind?: KnowledgeNode["kind"];
+    afterId?: string;
+    limit?: number;
+    excludeLoops?: boolean;
+  } = {},
 ): KnowledgeNode[] {
   const limit = Math.max(1, Math.min(500, options.limit ?? 100));
   const result: KnowledgeNode[] = [];
   let after = options.afterId ?? "";
   while (result.length < limit) {
     const rows = db
-      .prepare<[string | null, string | null, string, number], KnowledgeNodeRow>(
-        "SELECT * FROM knowledge_nodes WHERE (? IS NULL OR kind=?) AND id>? ORDER BY id LIMIT ?",
+      .prepare<[string | null, string | null, number, string, number], KnowledgeNodeRow>(
+        "SELECT * FROM knowledge_nodes WHERE (? IS NULL OR kind=?) AND (?=0 OR kind!='loop') AND id>? ORDER BY id LIMIT ?",
       )
-      .all(options.kind ?? null, options.kind ?? null, after, limit - result.length);
+      .all(
+        options.kind ?? null,
+        options.kind ?? null,
+        Number(options.excludeLoops === true),
+        after,
+        limit - result.length,
+      );
     if (!rows.length) break;
     for (const row of rows) {
       after = row.id;

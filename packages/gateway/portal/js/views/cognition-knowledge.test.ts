@@ -153,7 +153,7 @@ it("preserves experimental routes and rejects unsafe reference protocols", () =>
     "/portal/doc/document%2Fone?evidence=passage",
   );
   expect(knowledgeReferenceHref("wiki:project#claim:date")).toBe(
-    "/portal/debug/cognition/knowledge/project?claim=date",
+    "/portal/debug/brain/knowledge/project?claim=date",
   );
   expect(knowledgeReferenceHref("javascript:alert(1)")).toBeNull();
 });
@@ -233,14 +233,14 @@ it("does not label a failed or loading history as an empty history", () => {
 afterEach(() => vi.unstubAllGlobals());
 it("selects library entries without leaving the document or changing the library filter", () => {
   expect(knowledgeSelectionHref("outcome/one")).toBe(
-    "/portal/debug/cognition/knowledge/outcome%2Fone",
+    "/portal/debug/brain/knowledge/outcome%2Fone",
   );
   expect(knowledgeSelectionHref("outcome/one", "loop")).toBe(
-    "/portal/debug/cognition/knowledge/outcome%2Fone?kind=loop",
+    "/portal/debug/brain/knowledge/outcome%2Fone?kind=loop",
   );
-  expect(knowledgeSelectionHref(null, "wiki")).toBe("/portal/debug/cognition/knowledge?kind=wiki");
+  expect(knowledgeSelectionHref(null, "wiki")).toBe("/portal/debug/brain/knowledge?kind=wiki");
   expect(knowledgeSelectionHref("retired-loop:example", "loop", "retired")).toContain("?kind=loop&status=retired");
-  expect(knowledgeSelectionHref(null, "observation", "held")).toBe("/portal/debug/cognition/knowledge?kind=observation&status=held");
+  expect(knowledgeSelectionHref(null, "observation", "held")).toBe("/portal/debug/brain/knowledge?kind=observation&status=held");
   const pushState = vi.fn(),
     dispatchEvent = vi.fn(),
     preventDefault = vi.fn();
@@ -264,7 +264,7 @@ it("keeps All selected while loop and observation cards supply canonical detail 
     expect(url.searchParams.has("kind")).toBe(false);
     expect(url.searchParams.get("entryKind")).toBe(kind);
     expect(knowledgeSelectionHref("entry-fixture", kind, "all", kind)).toBe(
-      `/portal/debug/cognition/knowledge/entry-fixture?kind=${kind}`,
+      `/portal/debug/brain/knowledge/entry-fixture?kind=${kind}`,
     );
   }
 });

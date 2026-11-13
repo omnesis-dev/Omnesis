@@ -2,6 +2,16 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<key>OmnesisCloudRelayEnabled</key>
+	<string>$(OMNESIS_CLOUD_RELAY_ENABLED)</string>
+	<key>OmnesisGoogleClientID</key>
+	<string>$(OMNESIS_GOOGLE_CLIENT_ID)</string>
+	<key>OmnesisCloudRelayPasskeysEnabled</key>
+	<string>$(OMNESIS_CLOUD_RELAY_PASSKEYS_ENABLED)</string>
+	<key>OmnesisCloudRelaySkipPublicCertificateCheck</key>
+	<string>$(OMNESIS_CLOUD_RELAY_SKIP_PUBLIC_CERTIFICATE_CHECK)</string>
+	<key>OmnesisCloudRelayURL</key>
+	<string>$(OMNESIS_CLOUD_RELAY_URL)</string>
 	<key>OmnesisTaskWidgetAccessGroup</key>
 	<string>$(AppIdentifierPrefix)$(OMNESIS_BUNDLE_ID).task-widgets</string>
 	<key>BGTaskSchedulerPermittedIdentifiers</key>
@@ -35,7 +45,7 @@
 		</dict>
 	</array>
 	<key>CFBundleVersion</key>
-	<string>346</string>
+	<string>349</string>
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
 	<key>LSRequiresIPhoneOS</key>

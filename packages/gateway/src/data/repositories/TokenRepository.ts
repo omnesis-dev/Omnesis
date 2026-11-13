@@ -677,3 +677,13 @@ export function isDeviceTokenActive(db: Db, id: TokenId, deviceId: DeviceId): bo
     )
     .get(id, deviceId, Date.now());
 }
+
+/** Non-expired device credentials eligible for a scoped administrative reminder. */
+export function listDeviceIdsWithActiveScope(db: Db, scope: Scope): DeviceId[] {
+  return db
+    .prepare<[number, string], { device_id: string }>(
+      "SELECT DISTINCT device_id FROM tokens WHERE (expires_at IS NULL OR expires_at >= ?) AND EXISTS (SELECT 1 FROM json_each(tokens.scopes) WHERE value = ?)",
+    )
+    .all(now(), scope)
+    .map((row) => DeviceId(row.device_id));
+}

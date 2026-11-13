@@ -3,7 +3,7 @@
 
 /**
  * `search_loops` + `fetch_loop` + `list_loops` — the interactive (chat) agent's
- * READ-ONLY window into the background Cognition Steward's tracked obligations ("open
+ * READ-ONLY window into the background Brain's tracked obligations ("open
  * loops"), available only in experimental mode. The chat agent can find,
  * enumerate, and inspect what the background agent is tracking about the user's
  * life, but has no mutation surface: it never creates, updates, deletes, or

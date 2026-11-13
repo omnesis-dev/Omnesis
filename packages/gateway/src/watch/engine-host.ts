@@ -141,6 +141,8 @@ export type WatchStateResult =
   | { readonly outcome: "unreadable"; readonly why: string };
 
 export interface EngineHostDeps {
+  /** Live Lab admission, checked again at evaluation and delivery boundaries. */
+  readonly enabled?: () => boolean;
   /** This host's own connection to the journal. Never the materializer's. */
   readonly db: EncryptedSqliteDatabase;
   readonly journal: WatchJournalStore;
@@ -761,6 +763,7 @@ export class WatchEngineHost {
       idle: true,
     };
 
+    if (this.deps.enabled && !this.deps.enabled()) return result;
     const listed = this.deps.definitions.active();
     const resumeAt =
       this.nextWatchId === null ? -1 : listed.findIndex((w) => w.id === this.nextWatchId);
@@ -784,7 +787,10 @@ export class WatchEngineHost {
     for (const stored of active) {
       // Each completed watch has committed its own cursor and effects, so this
       // is a safe boundary at which to let foreground scheduler work go first.
-      if (attempted > 0 && shouldYield?.() === true) {
+      if (
+        (this.deps.enabled && !this.deps.enabled()) ||
+        (attempted > 0 && shouldYield?.() === true)
+      ) {
         this.nextWatchId = stored.id;
         // Keep the scheduler on the active cadence so the continuation is not
         // delayed by the 30-second idle interval.
@@ -1199,7 +1205,12 @@ export class WatchEngineHost {
     watch: WatchDefinition,
     trace: WatchTrace,
   ): Promise<{ delivered: number; suppressed: number }> {
-    if (!watch.delivery || trace.firings.length === 0) return { delivered: 0, suppressed: 0 };
+    if (
+      (this.deps.enabled && !this.deps.enabled()) ||
+      !watch.delivery ||
+      trace.firings.length === 0
+    )
+      return { delivered: 0, suppressed: 0 };
 
     // Which ledger, which cap, and which transport — chosen once by kind, so
     // the loop below is the same for both and there is one place where a third
@@ -1237,6 +1248,7 @@ export class WatchEngineHost {
     let delivered = 0;
 
     for (const firing of trace.firings) {
+      if (this.deps.enabled && !this.deps.enabled()) break;
       // The cap entry and its outcome are one attempt. Anchor both to the same
       // instant so a slow transport crossing local midnight cannot split them
       // across different reporting days.
@@ -1274,6 +1286,7 @@ export class WatchEngineHost {
       // rather than un-capping the day.
       await this.deps.writes.run(() => Promise.resolve(channel.record(stored.id, day)));
       try {
+        if (this.deps.enabled && !this.deps.enabled()) break;
         const outcome = await send.send({
           watchId: stored.id,
           watchName: stored.name,

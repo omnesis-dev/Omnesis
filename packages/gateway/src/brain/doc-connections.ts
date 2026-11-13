@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 /**
- * The Cognition Steward's inline "connections" for a document — the open loops it is a
+ * The Brain's inline "connections" for a document — the open loops it is a
  * source for, the durable annotations recorded about it, and the temporal
  * annotations it grounds (deadlines/events/expiries) — projected to compact
  * wire-hint shapes. Shared search/fetch ports expose memory in every mode and

@@ -66,6 +66,7 @@ function creationReceipt(candidateId: string) {
 }
 function service(verifier: EntailCapability) {
   return new KnowledgeService({
+    tasksEnabled: () => true,
     db,
     writeGate: directKnowledgeGate(db),
     clock: () => 10,

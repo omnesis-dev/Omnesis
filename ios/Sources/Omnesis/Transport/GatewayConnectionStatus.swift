@@ -24,6 +24,15 @@ struct GatewayConnectionStatus: Equatable {
     let explanation: String?
     let diagnostic: String?
 
+    static func pathIndicator(state: DeviceSocket.ConnectionState, selected: GatewayConnectionPath?) -> GatewayConnectionPath? {
+        guard let selected else { return nil }
+        switch state {
+        case .connected: return selected
+        case .connecting, .authenticating, .reconnecting: return .reconnecting
+        case .disconnected, .failed: return nil
+        }
+    }
+
     init(_ state: DeviceSocket.ConnectionState) {
         switch state {
         case .disconnected, .connecting, .authenticating:

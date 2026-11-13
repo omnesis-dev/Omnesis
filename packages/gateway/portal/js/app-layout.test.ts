@@ -9,7 +9,7 @@ const {
   clearOmnesisStorage, getStatus, listPrivacyApprovals, listSubscriptionApprovals, logout, reload, toggleTheme,
 } = vi.hoisted(() => ({
   clearOmnesisStorage: vi.fn(),
-  getStatus: vi.fn(async () => ({ experimental: false, developer: false })),
+  getStatus: vi.fn(async (): Promise<Record<string, unknown>> => ({ experimental: false, developer: false })),
   listPrivacyApprovals: vi.fn(async () => ({ totalCount: 3 })),
   listSubscriptionApprovals: vi.fn(async () => ({ totalCount: 0 })),
   logout: vi.fn(async () => {}),
@@ -347,7 +347,7 @@ describe("decisions waiting, badged on the nav item where each is decided", () =
   });
 
   test("watch requests badge Watches, not Audit, and only in experimental mode", async () => {
-    getStatus.mockResolvedValue({ experimental: true, developer: false });
+    getStatus.mockResolvedValue({ experimental: true, developer: false, lab: { brain: false, tasks: false, watches: true } });
     listPrivacyApprovals.mockResolvedValue({ totalCount: 2 });
     listSubscriptionApprovals.mockResolvedValue({ totalCount: 5 });
     await mount();
@@ -356,11 +356,19 @@ describe("decisions waiting, badged on the nav item where each is decided", () =
   });
 
   test("one endpoint failing cannot hide the other's waiting decisions", async () => {
-    getStatus.mockResolvedValue({ experimental: true, developer: false });
+    getStatus.mockResolvedValue({ experimental: true, developer: false, lab: { brain: false, tasks: false, watches: true } });
     listPrivacyApprovals.mockResolvedValue({ totalCount: 3 });
     listSubscriptionApprovals.mockRejectedValue({ status: 503 });
     await mount();
     await vi.waitFor(() => expect(itemNamed("Audit")?.querySelector(".sidebar-badge")?.textContent).toBe("3"));
     expect(itemNamed("Watches")?.querySelector(".sidebar-badge")).toBeNull();
   });
+  test("experimental mode alone does not offer Tasks or Watches", async () => {
+    getStatus.mockResolvedValue({ experimental: true, tasks: { available: true }, lab: { brain: false, tasks: false, watches: false } });
+    await mount();
+    expect(itemNamed("Tasks")).toBeUndefined();
+    expect(itemNamed("Watches")).toBeUndefined();
+    expect(listSubscriptionApprovals).not.toHaveBeenCalled();
+  });
+
 });

@@ -5,7 +5,7 @@
  * Renders `OMNESIS.md` into the one prompt section every agent surface shares.
  *
  * Four builders inject this — the interactive agent, its generic sub-agents,
- * the deep-research specialists, and the background Cognition Steward (plus its
+ * the deep-research specialists, and the background Brain (plus its
  * brief talk-back threads). They render it through this one function so the
  * block reads identically wherever the agent meets it, and so a change to its
  * framing cannot land on one surface and miss another.

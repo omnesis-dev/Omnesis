@@ -35,7 +35,7 @@ describe("claim-aware Markdown", () => {
     expect(rendered).toContain('class="kn-link-icon kn-link-icon--person_annotation"');
     expect(rendered).toContain('class="kn-link-icon-badge kn-link-icon-badge--file"');
     expect(rendered).toContain('class="kn-link-icon-badge kn-link-icon-badge--user"');
-    expect(rendered).toContain('href="/portal/debug/cognition/knowledge/loop_invented?kind=loop"');
+    expect(rendered).toContain('href="/portal/debug/brain/knowledge/loop_invented?kind=loop"');
     expect(DOMPurify.sanitize).toHaveBeenLastCalledWith(
       expect.not.stringContaining("<svg"),
       expect.any(Object),
@@ -43,7 +43,7 @@ describe("claim-aware Markdown", () => {
   });
   it("preserves canonical portal query and fragment selectors while hydrating references", () => {
     const documentHref = "/portal/doc/letter%2Fone?evidence=paragraph#selection";
-    const pageHref = "/portal/debug/cognition/knowledge/loop_fixture?kind=loop&field=status#detail";
+    const pageHref = "/portal/debug/brain/knowledge/loop_fixture?kind=loop&field=status#detail";
     const markdown = `[Document](${documentHref}) [Outcome](${pageHref})`;
     expect(internalKnowledgeHref(documentHref)).toBeNull();
     expect(internalKnowledgeHref(pageHref)).toBeNull();
@@ -51,7 +51,7 @@ describe("claim-aware Markdown", () => {
     const rendered = renderKnowledgeMarkdown(markdown).html;
     expect(rendered).toContain('href="/portal/doc/letter%2Fone?evidence=paragraph#selection"');
     expect(parseHTML(rendered).document.querySelector('a[href*="loop_fixture"]')?.getAttribute("href")).toBe(
-      "/portal/debug/cognition/knowledge/loop_fixture?kind=loop&field=status#detail",
+      "/portal/debug/brain/knowledge/loop_fixture?kind=loop&field=status#detail",
     );
     expect(rendered).toContain('class="kn-link-icon kn-link-icon--source"');
   });
@@ -62,9 +62,9 @@ describe("claim-aware Markdown", () => {
       "loop:loop_fixture", "wiki:wiki_fixture#claim:detail", "wiki:root_fixture",
     ]);
     const rendered = renderKnowledgeMarkdown(markdown).html;
-    expect(rendered).toContain('href="/portal/debug/cognition/knowledge/loop_fixture?kind=loop"');
-    expect(rendered).toContain('href="/portal/debug/cognition/knowledge/wiki_fixture?claim=detail"');
-    expect(rendered).toContain('href="/portal/debug/cognition/knowledge/root_fixture"');
+    expect(rendered).toContain('href="/portal/debug/brain/knowledge/loop_fixture?kind=loop"');
+    expect(rendered).toContain('href="/portal/debug/brain/knowledge/wiki_fixture?claim=detail"');
+    expect(rendered).toContain('href="/portal/debug/brain/knowledge/root_fixture"');
     expect(rendered).toContain('class="kn-link-icon kn-link-icon--loop"');
     expect(rendered).toContain('class="kn-link-icon kn-link-icon--wiki"');
     expect(rendered).toContain('href="https://example.org/loop_fixture"');
@@ -88,15 +88,15 @@ describe("claim-aware Markdown", () => {
     const result = renderKnowledgeMarkdown(markdown, claims);
     expect(result.html).toContain("<h2>Supplies</h2>");
     expect(result.html).toContain("<h2>Next step</h2>");
-    expect(result.html).toContain('href="/portal/debug/cognition/knowledge/materials"');
-    expect(result.html).toContain('href="/portal/debug/cognition/knowledge/collection?kind=loop"');
+    expect(result.html).toContain('href="/portal/debug/brain/knowledge/materials"');
+    expect(result.html).toContain('href="/portal/debug/brain/knowledge/collection?kind=loop"');
     expect(result.html).toContain('class="kn-link-icon kn-link-icon--wiki"');
     expect(result.html).toContain('class="kn-link-icon kn-link-icon--loop"');
     expect([...result.targets.values()]).toEqual(["supplies", "collection"]);
   });
   it("resolves canonical portal links and excludes code examples from metadata hydration", () => {
     const markdown =
-      "[Page](/portal/debug/cognition/knowledge/project) [Note](/portal/doc/letter%2Fone) ` [Example](source:private-example) `";
+      "[Page](/portal/debug/brain/knowledge/project) [Note](/portal/doc/letter%2Fone) ` [Example](source:private-example) `";
     expect(extractKnowledgeReferences(markdown)).toEqual(["node:project", "source:letter/one"]);
     const rendered = renderKnowledgeMarkdown(markdown, [], {
       "node:project": { kind: "root" },
@@ -159,24 +159,24 @@ describe("claim-aware Markdown", () => {
   it("rewrites typed internal links but never invents claims in code examples", () => {
     const markdown = '[Supplies](wiki:materials)\n\n`<claim id="example">example</claim>`';
     const result = renderKnowledgeMarkdown(markdown, []);
-    expect(result.html).toContain('href="/portal/debug/cognition/knowledge/materials"');
+    expect(result.html).toContain('href="/portal/debug/brain/knowledge/materials"');
     expect(result.html).toContain("<code>");
     expect(result.targets.size).toBe(0);
     expect(internalKnowledgeHref("javascript:alert(1)")).toBeNull();
     expect(internalKnowledgeHref("wiki:page/with space")).toBe(
-      "/portal/debug/cognition/knowledge/page%2Fwith%20space",
+      "/portal/debug/brain/knowledge/page%2Fwith%20space",
     );
   });
   it("retains claim and canonical field targets in internal navigation", () => {
     expect(internalKnowledgeHref("wiki:project#claim:date")).toBe(
-      "/portal/debug/cognition/knowledge/project?claim=date",
+      "/portal/debug/brain/knowledge/project?claim=date",
     );
     expect(internalKnowledgeHref("loop:task#field:state")).toBe(
-      "/portal/debug/cognition/knowledge/task?kind=loop&field=state",
+      "/portal/debug/brain/knowledge/task?kind=loop&field=state",
     );
     const rendered = parseHTML(renderKnowledgeMarkdown("[State](loop:task#field:state)").html);
     expect(rendered.document.querySelector("a")?.getAttribute("href")).toBe(
-      "/portal/debug/cognition/knowledge/task?kind=loop&field=state",
+      "/portal/debug/brain/knowledge/task?kind=loop&field=state",
     );
   });
   it("refuses invalid offsets rather than highlighting matching prose elsewhere", () => {

@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+// First, so a sign-in handed over in the URL fragment leaves the address bar before anything reads it.
+import { takeAccountSignIn } from "./lib/cloud-pairing-handoff.js";
 import { html, render } from "htm/preact";
 import { Component } from "preact";
 import { useState, useEffect, useLayoutEffect, useRef } from "preact/hooks";
@@ -38,6 +40,8 @@ import { WarningTriangle } from "./components/model-health.js";
 import { TestInstanceCard } from "./components/test-instance-card.js";
 import { countLabel, localDay, supportsTaskConversations } from "./lib/tasks-model.js";
 import { onTaskCounts } from "./lib/task-counts.js";
+import { CloudPairingLogin } from "./components/cloud-pairing-login.js";
+import { CloudPairingBanner } from "./components/cloud-pairing-banner.js";
 
 const DocumentView = lazy(() => import("./views/document.js").then((m) => m.DocumentView));
 const PeopleView = lazy(() => import("./views/people.js").then((m) => m.PeopleView));
@@ -113,7 +117,8 @@ if (typeof window !== "undefined") {
   });
 }
 
-function LoginView({ reason } = {}) {
+// Sign-in appears only when the gateway advertises the optional cloud relay.
+function LoginView({ reason, cloudRelay = false } = {}) {
   const [token, setToken] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
@@ -160,6 +165,7 @@ function LoginView({ reason } = {}) {
             ${loading ? "Authenticating..." : "Log in"}
           </button>
         </form>
+        ${cloudRelay && html`<${CloudPairingLogin} />`}
         <p class="login-hint">
           Your default token is in <code>~/.config/omnesis/token</code>, or run
           ${" "}<code>omnesis devices pair</code> with <code>kind=portal</code> for a one-shot code.
@@ -279,6 +285,9 @@ function App() {
   // flash in by default. The same lightweight poll also carries the passive
   // release result.
   const [experimental, setExperimental] = useState(false);
+  const [labAvailable, setLabAvailable] = useState(false);
+  const [lab, setLab] = useState({ brain: false, tasks: false, watches: false });
+  const [cloudRelay, setCloudRelay] = useState(false);
 
   // Whether the gateway runs in developer mode (OMNESIS_DEV_MODE=1). Separate
   // from experimental; reveals the floating developer-annotation button. Stays
@@ -311,7 +320,7 @@ function App() {
   async function refreshPendingDecisions() {
     const [answers, watches] = await Promise.allSettled([
       listPrivacyApprovals({ status: "pending", limit: 1 }),
-      experimental
+      lab.watches
         ? listSubscriptionApprovals({ status: "pending", limit: 1 })
         : Promise.resolve(null),
     ]);
@@ -327,7 +336,7 @@ function App() {
   // Count once on arrival — polling alone would leave a waiting decision
   // unbadged for a whole interval — and again when /status resolves, since
   // whether watch requests count at all depends on what it reports.
-  useEffect(() => { refreshPendingDecisions(); }, [experimental]);
+  useEffect(() => { refreshPendingDecisions(); }, [lab.watches]);
   useVisiblePoll(refreshPendingDecisions, PRIVACY_PENDING_POLL_MS);
 
   // Today's open tasks, shown on the Tasks nav item as "Tasks (n)". Read
@@ -368,10 +377,13 @@ function App() {
       if (generation !== statusRequestGeneration.current) return;
       setModelHealth(status?.modelHealth ?? { warnings: [] });
       setExperimental(status?.experimental === true);
+      setLabAvailable(status?.labAvailable === true);
+      setLab({ brain: status?.lab?.brain === true, tasks: status?.lab?.tasks === true, watches: status?.lab?.watches === true });
+      setCloudRelay(status?.cloudRelay === true);
       setDeveloper(status?.developer === true);
       setDemo(status?.demo === true);
       setTestInstance(status?.testInstance ?? null);
-      setTasksAvailable(status?.tasks?.available === true);
+      setTasksAvailable(status?.lab?.tasks === true && status?.tasks?.available === true);
       setTaskConversations(supportsTaskConversations(status?.capabilities));
       const nextReleaseUpdate = releaseUpdateFromStatus(status);
       setReleaseUpdate((current) =>
@@ -586,7 +598,10 @@ function App() {
   };
 
   if (sessionExpired) {
-    return html`<${LoginView} reason="Your session expired. Log in again to continue." />`;
+    return html`<${LoginView}
+      reason="Your session expired. Log in again to continue."
+      cloudRelay=${cloudRelay}
+    />`;
   }
 
   // A client opened this window to ask one question, so it gets one question.
@@ -635,7 +650,7 @@ function App() {
 
         <nav class="sidebar-nav" aria-label="Main navigation">
           ${NAV_ITEMS.filter(
-            (item) => (!item.experimental || experimental) && (!item.requiresTasks || tasksAvailable),
+            (item) => (!item.experimental || (item.view === "watches" ? lab.watches : experimental)) && (!item.requiresTasks || tasksAvailable),
           ).map((item) => {
             // "Ask" (the agent landing) is special: it navigates AND
             // dispatches the fresh-session event, so clicking it from
@@ -778,6 +793,9 @@ function App() {
       </aside>
 
       <main class="app-main">
+        ${cloudRelay && html`<${CloudPairingBanner}
+          paused=${route.view === "settings" && route.tab === "devices"}
+        />`}
         ${route.view === "document"
           ? html`<${DocumentView} id=${route.id} />`
           : route.view === "people"
@@ -792,6 +810,7 @@ function App() {
               modelsSection=${route.modelsSection}
               modelHealth=${modelHealth}
               onModelsRefresh=${refreshGatewayStatus}
+              onLabChange=${refreshGatewayStatus}
               accessAuthorizationId=${route.accessAuthorizationId}
               accessLevelId=${route.accessLevelId}
               accessNewLevel=${route.accessNewLevel}
@@ -800,7 +819,10 @@ function App() {
               device=${route.device ?? null}
               policyId=${route.policyId}
               completeAccessInPortal=${route.completeAccessInPortal}
+              cloudRelay=${cloudRelay}
               experimental=${experimental}
+              lab=${lab}
+              labAvailable=${labAvailable}
               theme=${theme}
               onThemeToggle=${handleThemeToggle}
               onLogout=${handleLogout}
@@ -809,8 +831,8 @@ function App() {
           ? html`<${BrowserNotesApprovalView} requestId=${route.requestId} feature="find" />`
           : route.view === "browser-notes"
           ? html`<${BrowserNotesApprovalView} requestId=${route.requestId} />`
-          : route.view === "tasks"
-          ? html`<${TasksView} taskView=${route.taskView} focusTaskId=${route.focusTaskId ?? null} experimental=${experimental} chatAvailable=${taskConversations} />`
+          : route.view === "tasks" && tasksAvailable
+          ? html`<${TasksView} taskView=${route.taskView} focusTaskId=${route.focusTaskId ?? null} experimental=${lab.brain} chatAvailable=${taskConversations} />`
           : route.view === "capture"
           ? html`<${CaptureView} day=${route.day ?? null} experimental=${experimental} />`
           : route.view === "privacy"
@@ -821,14 +843,14 @@ function App() {
               directTab=${route.directTab ?? false}
               directSessionId=${route.directSessionId ?? null}
             />`
-          : route.view === "watches" && experimental
+          : route.view === "watches" && lab.watches
           ? html`<${WatchesView}
               watchApprovalId=${route.watchApprovalId}
               watchId=${route.watchId}
               watchFiringId=${route.watchFiringId}
             />`
           : route.view === "debug"
-          ? html`<${DebugView} tab=${route.tab} graphParams=${route.graph} dataParams=${route.data} sqlParams=${route.sql} experimental=${experimental} developer=${developer} cognitionTab=${route.cognitionTab} cognitionId=${route.cognitionId} calendarId=${route.calendarId} watchDebugId=${route.watchDebugId} watchDebugSeq=${route.watchDebugSeq} />`
+          ? html`<${DebugView} tab=${route.tab} graphParams=${route.graph} dataParams=${route.data} sqlParams=${route.sql} experimental=${experimental} lab=${lab} developer=${developer} cognitionTab=${route.cognitionTab} cognitionId=${route.cognitionId} calendarId=${route.calendarId} watchDebugId=${route.watchDebugId} watchDebugSeq=${route.watchDebugSeq} />`
           : route.view === "agent"
           ? html`<${AgentView} convoId=${route.convoId} experimental=${experimental} developer=${developer} />`
           : html`<${SearchView} initialQuery=${route.query || ""} />`
@@ -865,10 +887,12 @@ async function init() {
   const session = await checkSession();
   await loadSourceMeta();
 
+  // Only the cloud relay's sign-in view can use a handed-over sign-in; anywhere else it is dropped.
+  if (session.authenticated || session.cloudRelay !== true) takeAccountSignIn();
   if (session.authenticated) {
     render(html`<${ErrorBoundary}><${App} /></${ErrorBoundary}>`, document.getElementById("app"));
   } else {
-    render(html`<${ErrorBoundary}><${LoginView} /></${ErrorBoundary}>`, document.getElementById("app"));
+    render(html`<${ErrorBoundary}><${LoginView} cloudRelay=${session.cloudRelay === true} /></${ErrorBoundary}>`, document.getElementById("app"));
   }
 }
 

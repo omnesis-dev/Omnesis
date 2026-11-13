@@ -42,6 +42,7 @@ beforeEach(() => {
   createKnowledgeTables(db);
   createKnowledgeWorkTables(db);
   service = new KnowledgeService({
+    tasksEnabled: () => true,
     db,
     writeGate: directKnowledgeGate(db),
     getSettings: () => resolveBrainSettings(),

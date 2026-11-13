@@ -545,8 +545,9 @@ and sorts the whole match. For mixed directions, bound the leading column and
 exclude the cursor's tie: `ts <= ? AND NOT (ts = ? AND id <= ?)`.
 
 **A long read holds the WAL open.** The writer checkpoints between ops once
-about 2,000 frames wait and rewinds the WAL once it passes `journal_size_limit`
-(`workers/wal-checkpoint.ts`), but SQLite gives a checkpoint no frame limit, and
+about 2,000 frames wait, rewinds the WAL once it passes its 64 MiB size limit,
+and cuts the file back to that limit in slices between ops, never in a commit
+(`workers/wal-checkpoint.ts`). SQLite gives a checkpoint no frame limit, and
 a reader holding an old snapshot pins every frame written after it. A
 statement or open iterator that runs for a minute on an `omnesis.db` read
 handle therefore lets a minute of writes pile up uncopied, and the first
@@ -1440,3 +1441,13 @@ consumers ask the registry and fail closed when a required projection is missing
 They preserve attributed speech as indivisible witnesses and never expand a
 partial read. The semantic `evidenceAuthority` metadata digest participates in
 normal Knowledge source invalidation; its value alone does not grant authority.
+
+### Omnesis Lab is runtime state, separate from configuration
+
+Brain, Tasks and Watches read their live opt-ins through `labFeatureEnabled(db, id)`.
+Persisted choices use the single writer and are advertised by `/status`; settings only
+control feature behavior. Agent tool discovery, prompts, context reads, invocation admission,
+and background producers must all respect the matching feature flag. Task automation
+requires both Brain and Tasks. Preserve cleanup and evidence invalidation when a feature
+is disabled. The canonical names, descriptions and original SVGs live in
+`packages/gateway/src/lab/catalog.ts` and are served to every client by `/admin/lab`.

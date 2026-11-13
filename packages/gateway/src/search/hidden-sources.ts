@@ -10,7 +10,7 @@
  * embeddings, FTS) while staying invisible to ordinary user-facing
  * retrieval — open loops are the canonical case: general search never
  * surfaces them (the product reads them through the dedicated `/loops`
- * routes instead), but the Cognition Steward's `open_loop_search` tool needs
+ * routes instead), but the Brain's `open_loop_search` tool needs
  * them indexed.
  *
  * Each candidate choke point (the lexical/browse WHERE builder, the

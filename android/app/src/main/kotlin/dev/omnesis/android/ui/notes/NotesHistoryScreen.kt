@@ -17,6 +17,7 @@ import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.ChevronRight
+import androidx.compose.material.icons.outlined.CloudOff
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.Mic
@@ -31,6 +32,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -43,6 +45,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.repeatOnLifecycle
 import dev.omnesis.android.designsystem.components.OmSpinner
 import dev.omnesis.android.designsystem.theme.OmTheme
+import dev.omnesis.android.notes.PendingNote
 import dev.omnesis.android.transport.dto.NoteEntryDto
 import dev.omnesis.android.ui.common.GatewayErrorView
 import dev.omnesis.android.ui.common.classifyGatewayError
@@ -60,6 +63,9 @@ fun NotesHistoryScreen(
     vm: NotesHistoryViewModel = hiltViewModel(),
     captureLabel: String = "Tell",
     onOpenConversation: (String) -> Unit = {},
+    /** Notes captured on this phone that the gateway has not accepted yet. */
+    pendingNotes: List<PendingNote> = emptyList(),
+    onOpenPendingNotes: () -> Unit = {},
 ) {
     val state by vm.state.collectAsStateWithLifecycle()
     val lifecycle = LocalLifecycleOwner.current
@@ -76,7 +82,7 @@ fun NotesHistoryScreen(
     }
     BackHandler(state.selected != null) { vm.select(null) }
     NotesHistoryContent(state, onBack, onCapture, onOpenSettings, vm::select, { vm.refresh() }, vm::loadMore,
-        vm::edit, vm::delete, vm::undo, onOpenTask, captureLabel, onOpenConversation)
+        vm::edit, vm::delete, vm::undo, onOpenTask, captureLabel, onOpenConversation, pendingNotes, onOpenPendingNotes)
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -95,6 +101,8 @@ fun NotesHistoryContent(
     onOpenTask: (String) -> Unit = {},
     captureLabel: String = "Tell",
     onOpenConversation: (String) -> Unit = {},
+    pendingNotes: List<PendingNote> = emptyList(),
+    onOpenPendingNotes: () -> Unit = {},
 ) {
     val c = OmTheme.colors
     val selected = state.selected
@@ -128,28 +136,22 @@ fun NotesHistoryContent(
             )
         },
     ) { padding ->
+        // Notes still on this phone are in nobody's history yet. They are named above whatever
+        // the gateway did or did not return, most of all when it could not be reached.
+        val waiting = pendingNotes.isNotEmpty()
         when {
             selected != null -> NoteDetail(state, selected, onEdit, onDelete, onUndo, onOpenTask, onOpenConversation, Modifier.padding(padding))
-            state.loading -> Box(Modifier.padding(padding).fillMaxSize(), contentAlignment = Alignment.Center) { OmSpinner() }
-            state.entries.isEmpty() && state.error != null -> Box(Modifier.padding(padding)) {
-                GatewayErrorView("load notes", state.error, onRefresh, onOpenSettings)
-            }
-            state.entries.isEmpty() -> Column(
-                Modifier.padding(padding).fillMaxSize().padding(32.dp),
-                horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center,
-            ) {
-                Box(Modifier.size(64.dp).clip(RoundedCornerShape(18.dp)).background(c.accent.copy(alpha = 0.1f)),
-                    contentAlignment = Alignment.Center) {
-                    Icon(Icons.Outlined.Notes, null, Modifier.size(30.dp), tint = c.accent)
+            state.entries.isEmpty() -> Column(Modifier.padding(padding).fillMaxSize()) {
+                if (waiting) {
+                    PendingNotesBanner(pendingNotes, onOpenPendingNotes,
+                        Modifier.padding(start = 16.dp, top = 12.dp, end = 16.dp))
                 }
-                Spacer(Modifier.height(20.dp))
-                Text("No notes yet", fontSize = 22.sp, fontWeight = FontWeight.SemiBold, color = c.textPrimary)
-                Spacer(Modifier.height(8.dp))
-                Text("What you tell Omnesis, and what it does next, will appear here.", fontSize = 14.sp,
-                    lineHeight = 21.sp, color = c.textSecondary, textAlign = TextAlign.Center)
-                Spacer(Modifier.height(20.dp))
-                Button(onClick = onCapture, shape = RoundedCornerShape(10.dp)) {
-                    Text(if (captureLabel == "Tell") "Tell Omnesis" else captureLabel)
+                Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+                    when {
+                        state.loading -> OmSpinner()
+                        state.error != null -> GatewayErrorView("load notes", state.error, onRefresh, onOpenSettings)
+                        else -> NotesEmptyState(captureLabel, onCapture)
+                    }
                 }
             }
             else -> LazyColumn(
@@ -157,6 +159,7 @@ fun NotesHistoryContent(
                 contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
+                if (waiting) item(key = PENDING_BANNER_KEY) { PendingNotesBanner(pendingNotes, onOpenPendingNotes) }
                 state.error?.let { error -> item { TextButton(onClick = onRefresh) {
                     Text(classifyGatewayError(error) + " Retry", color = c.warning)
                 } } }
@@ -171,6 +174,59 @@ fun NotesHistoryContent(
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun NotesEmptyState(captureLabel: String, onCapture: () -> Unit) {
+    val c = OmTheme.colors
+    Column(
+        Modifier.fillMaxSize().padding(32.dp),
+        horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center,
+    ) {
+        Box(Modifier.size(64.dp).clip(RoundedCornerShape(18.dp)).background(c.accent.copy(alpha = 0.1f)),
+            contentAlignment = Alignment.Center) {
+            Icon(Icons.Outlined.Notes, null, Modifier.size(30.dp), tint = c.accent)
+        }
+        Spacer(Modifier.height(20.dp))
+        Text("No notes yet", fontSize = 22.sp, fontWeight = FontWeight.SemiBold, color = c.textPrimary)
+        Spacer(Modifier.height(8.dp))
+        Text("What you tell Omnesis, and what it does next, will appear here.", fontSize = 14.sp,
+            lineHeight = 21.sp, color = c.textSecondary, textAlign = TextAlign.Center)
+        Spacer(Modifier.height(20.dp))
+        Button(onClick = onCapture, shape = RoundedCornerShape(10.dp)) {
+            Text(if (captureLabel == "Tell") "Tell Omnesis" else captureLabel)
+        }
+    }
+}
+
+/** Not a note id: the gateway's ids are UUIDs. */
+private const val PENDING_BANNER_KEY = "pending-notes-banner"
+
+/**
+ * Says how many notes are waiting on this phone and shows the latest. Tapping it opens the
+ * list of them, with retry and discard.
+ */
+@Composable
+private fun PendingNotesBanner(notes: List<PendingNote>, onOpen: () -> Unit, modifier: Modifier = Modifier) {
+    val c = OmTheme.colors
+    val shape = RoundedCornerShape(12.dp)
+    val title = if (notes.size == 1) "1 note waiting on this phone" else "${notes.size} notes waiting on this phone"
+    val latest = notes.maxByOrNull { it.capturedAt }?.text?.ifBlank { "Voice note" }.orEmpty()
+    Row(
+        modifier.fillMaxWidth().clip(shape).background(c.bgSecondary)
+            .border(1.dp, c.borderLight, shape)
+            .clickable(onClickLabel = "Review unsent notes", role = Role.Button, onClick = onOpen)
+            .padding(horizontal = 16.dp, vertical = 12.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(Icons.Outlined.CloudOff, null, Modifier.size(20.dp), tint = c.warning)
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(title, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = c.textPrimary,
+                maxLines = 2, overflow = TextOverflow.Ellipsis)
+            Text(latest, fontSize = 12.sp, color = c.textSecondary, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+        Icon(Icons.Outlined.ChevronRight, null, Modifier.size(17.dp), tint = c.textMuted)
     }
 }
 
@@ -371,6 +427,7 @@ internal fun noteSurface(surface: String?): String? = when (surface) {
     "android-tile" -> "Android Quick Settings"
     "android-shortcut" -> "Android shortcut"
     "android-assistant" -> "Android assistant"
+    "android-watch" -> "Wear OS watch"
     "cli" -> "Command line"
     null -> null
     else -> "Other capture"

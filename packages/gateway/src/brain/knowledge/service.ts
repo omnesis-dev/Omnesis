@@ -2,6 +2,8 @@
 // Copyright (c) 2026 Adrien Conrath
 
 /** Model-facing synthesis boundary. Verification attestations never come from tool arguments. */
+import { labFeatureEnabled } from "../../lab/store.js";
+import { taskDocumentHidden } from "../../lab/document-policy.js";
 import {
   annotationEntailmentFailures,
   annotationAssessmentFailure,
@@ -16,6 +18,8 @@ import {
   ContextualAssessmentError,
 } from "../../inference/contextual-entailment.js";
 import { raceAbort } from "../decision-call.js";
+import { VERIFIER_FOREGROUND_DEADLINE_MS } from "../../inference/verifier-limits.js";
+import { parseClaimReference } from "./references.js";
 import { assertWikiRepairAssessment } from "./wiki-factual-repair.js";
 import { KnowledgeVerificationTimeoutError, verificationFailure } from "./verification-failure.js";
 import { CONTEXTUAL_VERIFIER, knowledgeClaimContexts } from "./claim-context.js";
@@ -70,6 +74,8 @@ export interface KnowledgeServiceDeps {
   clock: () => number;
   log: Logger;
   mirror?: { refresh: (id: string) => Promise<void> };
+  /** Host-owned task authority; fixtures may supply an isolated policy. */
+  tasksEnabled?: () => boolean;
 }
 export type { KnowledgeReferenceView } from "./reference-reader.js";
 import {
@@ -81,7 +87,17 @@ import {
 export class KnowledgeService {
   constructor(readonly deps: KnowledgeServiceDeps) {}
 
+  tasksEnabled(): boolean {
+    return this.deps.tasksEnabled?.() ?? labFeatureEnabled(this.deps.db, "tasks");
+  }
+
+  taskNodeHidden(id: string): boolean {
+    return getKnowledgeNode(this.deps.db, id)?.kind === "loop" && !this.tasksEnabled();
+  }
+
   history(input: KnowledgeHistoryRequest) {
+    if (this.taskNodeHidden(input.id))
+      throw new KnowledgeStorageError("reference_invalid", "Knowledge history unavailable");
     return readKnowledgeHistory(this.deps.db, input);
   }
 
@@ -90,7 +106,7 @@ export class KnowledgeService {
     editing = false,
   ): (KnowledgeNode & { claims: ReturnType<typeof getKnowledgeClaims> }) | null {
     const node = getKnowledgeNode(this.deps.db, id);
-    if (!node) return null;
+    if (!node || (node.kind === "loop" && !this.tasksEnabled())) return null;
     return {
       ...node,
       markdown: editing ? node.markdown : node.plainText,
@@ -107,13 +123,25 @@ export class KnowledgeService {
   }
 
   list(options: Parameters<typeof listKnowledgeNodes>[1] = {}): KnowledgeNode[] {
-    return listKnowledgeNodes(this.deps.db, options).map((node) => ({
+    return listKnowledgeNodes(this.deps.db, {
+      ...options,
+      excludeLoops: options.excludeLoops || !this.tasksEnabled(),
+    }).map((node) => ({
       ...node,
       markdown: node.plainText,
     }));
   }
 
   reference(value: string): KnowledgeReferenceView {
+    const ref = parseClaimReference(value);
+    if (
+      !this.tasksEnabled() &&
+      (ref.kind === "loop" ||
+        (ref.kind === "source"
+          ? taskDocumentHidden(this.deps.db, ref.id)
+          : this.taskNodeHidden(ref.id)))
+    )
+      throw new KnowledgeStorageError("reference_invalid", "Knowledge reference unavailable");
     const { verifierEvidence: _framing, ...view } = this.verificationReference(value);
     return view;
   }
@@ -526,7 +554,7 @@ export class KnowledgeService {
     const controller = new AbortController();
     const timer = setTimeout(
       () => controller.abort(new KnowledgeVerificationTimeoutError()),
-      45000,
+      VERIFIER_FOREGROUND_DEADLINE_MS,
     );
     try {
       return await raceAbort(run(controller.signal), controller.signal);

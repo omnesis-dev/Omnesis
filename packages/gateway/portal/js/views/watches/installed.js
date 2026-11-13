@@ -502,7 +502,7 @@ export function InstalledWatchDetail({
   // added from a hand-written DSL document, and for one compiled before
   // compiles were recorded.
   const compileRunHref = watch.compileRunId
-    ? `/portal/debug/cognition/runs/${encodeURIComponent(watch.compileRunId)}`
+    ? `/portal/debug/brain/runs/${encodeURIComponent(watch.compileRunId)}`
     : null;
   const rows = mergeWatchFirings(firings, egress);
   return html`<div class="privacy-conversation-detail privacy-subscription-detail">

@@ -69,7 +69,7 @@ export function knowledgeLinkReference(value) {
     /^(source|wiki|loop|annotation):[^#]+(?:#(?:claim|field|evidence):.+)?$/.test(value ?? "")
   )
     return value;
-  const match = /^\/portal\/(doc|debug\/cognition\/(?:knowledge|loops))\/([^/?#]+)(?:\?[^#]*)?(?:#.*)?$/.exec(
+  const match = /^\/portal\/(doc|debug\/(?:brain|cognition)\/(?:knowledge|loops))\/([^/?#]+)(?:\?[^#]*)?(?:#.*)?$/.exec(
     value ?? "",
   );
   if (!match) return null;

@@ -882,7 +882,7 @@ describe("agent reducer — plan panel", () => {
     expect((s as any).conversationOrigin).toBeNull();
   });
 
-  it("steward tool calls are dropped from resumed interactive history", () => {
+  it("brain tool calls are dropped from resumed interactive history", () => {
     const s = r({ ...initialState() } as State, {
       kind: "load-conversation",
       sessionId: "sess-loop",

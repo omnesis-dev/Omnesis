@@ -6,7 +6,7 @@
  * everything here should be reused at least twice.
  */
 import { z } from "zod";
-import { sourceContractWireRangeSchema } from "@omnesis/core";
+import { cloudRelayEnabled, sourceContractWireRangeSchema } from "@omnesis/core";
 import {
   DEVICE_KINDS,
   MULTI_DEVICE_MODES,
@@ -47,6 +47,24 @@ export const scopeSchema = z
   .refine(isValidScope, { message: "invalid scope" })
   .transform((s): ScopeType => Scope(s));
 
+/**
+ * A field whose accepted shape depends on the cloud relay opt-in, read at parse
+ * time. Each side reports its own issues unchanged, so a gateway without the
+ * opt-in validates, and words its refusals, exactly as it did before.
+ */
+export function cloudRelayGated<On extends z.ZodTypeAny>(
+  on: On,
+  off: z.ZodTypeAny,
+): z.ZodType<z.output<On>, unknown> {
+  return z.unknown().transform((value, ctx): z.output<On> => {
+    const result = (cloudRelayEnabled() ? on : off).safeParse(value);
+    if (result.success) return result.data as z.output<On>;
+    for (const issue of result.error.issues)
+      ctx.addIssue({ code: "custom", message: issue.message, path: [...issue.path] });
+    return z.NEVER;
+  });
+}
+
 /** Non-empty array of scopes (branded as `Scope[]`). */
 export const scopeArraySchema = z.array(scopeSchema).min(1);
 
@@ -69,6 +87,8 @@ export const deviceCapabilitySchema = z
     replicaVersionPolicies: z.record(sourceTypeSchema, z.literal("source-updated-at")).optional(),
     syncLease: z.boolean().optional(),
     deviceDoctor: z.literal(true).optional(),
+    // Typed only with the cloud relay; otherwise an unknown key like any other.
+    pairingNotifications: cloudRelayGated(z.boolean(), z.unknown()).optional(),
     pushAppId: z.string().trim().min(1).max(255).optional(),
     // Lenient on purpose: a mode a newer client reports must not fail its
     // hello or pairing; `deviceTlsTrustMode` narrows it when read.

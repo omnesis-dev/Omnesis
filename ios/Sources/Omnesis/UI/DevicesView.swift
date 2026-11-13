@@ -32,7 +32,11 @@ struct DevicesView: View {
     @State private var loading = true
     @State private var loadError: Error?
     @State private var showPairSheet = false
+    @State private var showPairingRequests = false
     @State private var repairTarget: DeviceRecord?
+
+    /// Every sign-in enrollment surface below sits behind the cloud build flag.
+    private let cloudRelayEnabled: Bool
 
     /// Preview-only flag: when true, `.task` never reaches the gateway, so a
     /// seeded snapshot renders deterministically. Always false in production.
@@ -40,6 +44,7 @@ struct DevicesView: View {
 
     init() {
         self.isPreview = false
+        self.cloudRelayEnabled = CloudRelayFeature.enabled
     }
 
     #if DEBUG
@@ -49,13 +54,15 @@ struct DevicesView: View {
         previewDevices: [DeviceRecord],
         previewTokens: [String: [TokenRecord]] = [:],
         previewLoading: Bool = false,
-        previewError: Error? = nil
+        previewError: Error? = nil,
+        previewCloudRelayEnabled: Bool = false
     ) {
         self._devices = State(initialValue: previewDevices)
         self._tokensByDevice = State(initialValue: previewTokens)
         self._loading = State(initialValue: previewLoading)
         self._loadError = State(initialValue: previewError)
         self.isPreview = true
+        self.cloudRelayEnabled = previewCloudRelayEnabled
     }
     #endif
 
@@ -69,6 +76,11 @@ struct DevicesView: View {
                 ToolbarItem(placement: .topBarLeading) {
                     SettingsBackButton()
                 }
+                if cloudRelayEnabled {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        GatewayPairingRequestsButton(scopes: store.pairing?.scopes, client: store.admin, isPresented: $showPairingRequests)
+                    }
+                }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button {
                         showPairSheet = true
@@ -80,13 +92,14 @@ struct DevicesView: View {
             .toolbarBackground(Theme.bgPrimary, for: .navigationBar)
             .refreshable { await load() }
             .task { await load() }
+            .task(id: PendingPairingRequests.shared.openRequests) { await openRequestedPairingRequests() }
             .sheet(isPresented: $showPairSheet) {
-                PairDeviceView()
+                PairDeviceView(cloudRelayEnabled: cloudRelayEnabled)
                     .environment(store)
                     .onDisappear { Task { await load() } }
             }
             .sheet(item: $repairTarget) { device in
-                PairDeviceView(repairTarget: device)
+                PairDeviceView(repairTarget: device, cloudRelayEnabled: cloudRelayEnabled)
                     .environment(store)
                     .onDisappear { Task { await load() } }
             }
@@ -112,9 +125,21 @@ struct DevicesView: View {
                 onRevokeToken: { tokenId, deviceId in try await revokeToken(tokenId, deviceId: deviceId) },
                 onRevokeDevice: { device in try await revokeDevice(device) },
                 onForgetDevice: { device in try await forgetDevice(device) },
-                onRepairDevice: { device in repairTarget = device }
+                onRepairDevice: { device in repairTarget = device },
+                cloudRelayEnabled: cloudRelayEnabled
             )
         }
+    }
+
+    /// A notification tap or the home banner asked for Pairing requests. The request is used
+    /// once, also on a phone that may not open the list, so it never opens on a later visit.
+    private func openRequestedPairingRequests() async {
+        let pending = PendingPairingRequests.shared
+        guard pending.consumeOpen(), cloudRelayEnabled,
+              PendingPairingRequests.eligible(cloudRelayEnabled: true, scopes: store.pairing?.scopes) else { return }
+        // Devices is itself still arriving; a sheet asked for mid-transition is dropped.
+        guard await (try? Task.sleep(for: .milliseconds(450))) != nil else { return }
+        showPairingRequests = true
     }
 
     /// Revoke one token, then refresh that device's token list. Throws so the
@@ -221,6 +246,7 @@ struct DevicesList: View {
     /// Forget a revoked device for good; returns the banner text or throws.
     var onForgetDevice: (DeviceRecord) async throws -> String = { _ in "" }
     var onRepairDevice: (DeviceRecord) -> Void = { _ in }
+    var cloudRelayEnabled = CloudRelayFeature.enabled
 
     @State private var notice: Notice?
     /// Other paired devices are collapsed by default to keep the list compact.
@@ -270,6 +296,7 @@ struct DevicesList: View {
         onRevokeDevice: @escaping (DeviceRecord) async throws -> String = { _ in "" },
         onForgetDevice: @escaping (DeviceRecord) async throws -> String = { _ in "" },
         onRepairDevice: @escaping (DeviceRecord) -> Void = { _ in },
+        cloudRelayEnabled: Bool = CloudRelayFeature.enabled,
         startOtherExpanded: Bool = false,
         seededFailure: SeededFailure? = nil
     ) {
@@ -281,6 +308,7 @@ struct DevicesList: View {
         self.onRevokeDevice = onRevokeDevice
         self.onForgetDevice = onForgetDevice
         self.onRepairDevice = onRepairDevice
+        self.cloudRelayEnabled = cloudRelayEnabled
         self._showOther = State(initialValue: startOtherExpanded)
         self._notice = State(
             initialValue: seededFailure.map { Notice(ok: false, text: $0.text, deviceId: $0.deviceId) }
@@ -382,7 +410,8 @@ struct DevicesList: View {
             onRevokeToken: { tokenId in
                 revokeTokenConfirm = TokenRef(tokenId: tokenId, deviceId: device.id)
             },
-            mutationsDisabled: busy
+            mutationsDisabled: busy,
+            cloudRelayEnabled: cloudRelayEnabled
         )
     }
 
@@ -582,6 +611,36 @@ func deviceGatewayMessage(_ error: Error) -> String {
     }
 }
 
+/// The admin-scoped presentation owns its sheet independently of the device list's refresh lifecycle.
+/// The screen that holds it can open the sheet too, through `isPresented`.
+@available(iOS 17.0, *)
+struct GatewayPairingRequestsButton: View {
+    let scopes: [String]?
+    let client: (any GatewayPairingApproving)?
+    private let isPresented: Binding<Bool>?
+    @State private var ownPresented = false
+
+    init(scopes: [String]?, client: (any GatewayPairingApproving)?, isPresented: Binding<Bool>? = nil) {
+        self.scopes = scopes
+        self.client = client
+        self.isPresented = isPresented
+    }
+
+    var body: some View {
+        let presented = isPresented ?? $ownPresented
+        if PendingPairingRequests.eligible(cloudRelayEnabled: true, scopes: scopes) {
+            Button(PairingApprovalPresentation.title, systemImage: "checkmark.shield") { presented.wrappedValue = true }
+                .accessibilityIdentifier("devices.pairingRequests")
+                .sheet(
+                    isPresented: presented,
+                    // The home banner counts what is still waiting, not what was just decided.
+                    onDismiss: { PendingPairingRequests.shared.requestRefresh() },
+                    content: { GatewayPairingApprovalView(client: client).omnesisColorScheme() }
+                )
+        }
+    }
+}
+
 // MARK: - Previews
 
 #if DEBUG
@@ -591,6 +650,18 @@ func deviceGatewayMessage(_ error: Error) -> String {
         DevicesView(
             previewDevices: PreviewMocks.devices,
             previewTokens: PreviewMocks.deviceTokens
+        )
+    }
+    .environment(AppStore.preview())
+}
+
+@available(iOS 17.0, *)
+#Preview("Devices — signed-in devices") {
+    NavigationStack {
+        DevicesView(
+            previewDevices: PreviewMocks.devicesWithSignInJoins,
+            previewTokens: PreviewMocks.deviceTokens,
+            previewCloudRelayEnabled: true
         )
     }
     .environment(AppStore.preview())

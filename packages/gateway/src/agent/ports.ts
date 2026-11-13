@@ -31,6 +31,8 @@ import {
   parseSourceKey,
   recordReference,
 } from "@omnesis/core";
+import { taskDocumentHidden } from "../lab/document-policy.js";
+import { labFeatureEnabled } from "../lab/store.js";
 import { readSourceEvidenceAuthority } from "../sources/evidence-authority.js";
 import { readFreshKnowledgeProjection } from "../brain/knowledge/projection-read.js";
 import {
@@ -185,7 +187,9 @@ export function createGatewaySearchPort(
           // never sets this, so its behaviour is unchanged. The pipeline re-gates
           // on experimental defensively.
           cognitiveProjection:
-            !knowledgeReads || authorization?.restricted ? false : experimentalVisible(),
+            !knowledgeReads || authorization?.restricted || !db
+              ? false
+              : labFeatureEnabled(db, "brain") && labFeatureEnabled(db, "tasks"),
         },
         permitted
           ? {
@@ -215,7 +219,11 @@ export function createGatewaySearchPort(
       // hint, and either graph context on the leading hits or, with graph
       // context off, the auto-attached top-hit breadcrumb.
       let results: DocRef[] = response.results
-        .filter((item) => !permitted || permitted.has(item.sourceId))
+        .filter(
+          (item) =>
+            (!permitted || permitted.has(item.sourceId)) &&
+            (!db || !taskDocumentHidden(db, item.documentId)),
+        )
         .map((item) => searchResultToDocRef(item, syncStatus, !authorization?.restricted));
       // Resolve after async retrieval too: ingestion may have created the
       // conversation while the search was waiting for its worker or embedder.
@@ -326,14 +334,15 @@ function attachBreadcrumbs(
     const visible = neighbors.filter(
       (n) =>
         n.documentId !== excludeDocId &&
-        (knowledgeReads || !isKnowledgeReadSource(n.sourceId ?? "")),
+        (knowledgeReads || !isKnowledgeReadSource(n.sourceId ?? "")) &&
+        !taskDocumentHidden(db, n.documentId),
     );
     if (visible.length > 0) r.breadcrumb = visible.map(oneHopNeighborToBreadcrumb);
   }
 }
 
 /**
- * Attach the Cognition Steward's inline connections — the open loops each hit is a
+ * Attach the Brain's inline connections — the open loops each hit is a
  * source for, the durable annotations recorded about it, and the temporal
  * annotations it grounds — to every search result, in experimental mode. Mirrors
  * `attachBreadcrumbs`; mutates the DocRefs in place. This is the agent search
@@ -345,7 +354,7 @@ function attachDocConnections(db: Db, results: DocRef[], knowledgeReads = true):
     const { openLoops, annotations, temporalAnnotations } = readDocConnections(db, r.documentId, {
       annotations: true,
       temporalAnnotations: experimentalVisible(),
-      openLoops: knowledgeReads && experimentalVisible(),
+      openLoops: knowledgeReads && labFeatureEnabled(db, "brain") && labFeatureEnabled(db, "tasks"),
     });
     if (openLoops.length > 0) r.openLoops = openLoops;
     if (annotations.length > 0) r.annotations = annotations;
@@ -480,6 +489,7 @@ export function createGatewayDocumentPort(
         const resolvedId = resolveKnowledgeDocumentAlias(db, documentId);
         if (!resolvedId) return null;
         documentId = resolvedId;
+        if (taskDocumentHidden(db, documentId)) return null;
         if (options?.knowledgeReads === false && isKnowledgeReadDocument(db, documentId))
           return null;
         const permitted = authorization ? permittedSourceIds(db, authorization) : null;
@@ -551,7 +561,10 @@ export function createGatewayDocumentPort(
           const conn = readDocConnections(db, row.id, {
             annotations: true,
             temporalAnnotations: experimentalVisible(),
-            openLoops: options?.knowledgeReads !== false && experimentalVisible(),
+            openLoops:
+              options?.knowledgeReads !== false &&
+              labFeatureEnabled(db, "brain") &&
+              labFeatureEnabled(db, "tasks"),
           });
           if (conn.openLoops.length > 0) ref.openLoops = conn.openLoops;
           if (conn.annotations.length > 0) ref.annotations = conn.annotations;
@@ -617,7 +630,8 @@ export function createGatewayDocumentPort(
             result.neighbors = expansion.neighbors
               .filter(
                 (n) =>
-                  options?.knowledgeReads !== false || !isKnowledgeReadSource(n.sourceId ?? ""),
+                  (options?.knowledgeReads !== false || !isKnowledgeReadSource(n.sourceId ?? "")) &&
+                  !taskDocumentHidden(db, n.documentId),
               )
               .map((n) => oneHopNeighborToDocRef(n, syncStatus));
             result.neighborsTruncated = expansion.truncated;
@@ -657,7 +671,7 @@ export function createGatewayDocumentByUrlPort(
       const t0 = Date.now();
       const matches = lookupDocumentIdsBySourceUrl(db, [url], getUrlCanonicalizers());
       const ids = (matches.get(url) ?? []).filter(
-        (id) => knowledgeReads || !isKnowledgeReadDocument(db, id),
+        (id) => (knowledgeReads || !isKnowledgeReadDocument(db, id)) && !taskDocumentHidden(db, id),
       );
       if (ids.length === 0) {
         return { url, durationMs: Date.now() - t0 };
@@ -1174,12 +1188,17 @@ export function createGatewayPersonPort(
       const limit = Math.min(LOOKUP_PEOPLE_MAX_LIMIT, Math.max(1, requested));
       // `experimental` is a main-thread env read — compute it here and pass the
       // boolean into the (possibly off-thread) assembly, never inside the worker.
-      const experimental = experimentalVisible();
+      const experimental = labFeatureEnabled(db, "brain") && labFeatureEnabled(db, "tasks");
       const results = opts?.lookupGate
         ? await opts.lookupGate.lookupPeople(input.query, limit, { experimental })
         : assemblePersonLookup(db, input.query, limit, { experimental });
 
-      if (opts?.knowledgeReads === false) for (const result of results) delete result.openLoops;
+      if (
+        opts?.knowledgeReads === false ||
+        !labFeatureEnabled(db, "brain") ||
+        !labFeatureEnabled(db, "tasks")
+      )
+        for (const result of results) delete result.openLoops;
 
       return {
         query: input.query,
@@ -1223,6 +1242,7 @@ export function createGatewayTrailPort(
         if (options.knowledgeReads === false && isKnowledgeReadDocument(db, fullId)) {
           throw new Error("Maintained knowledge reads are disabled");
         }
+        if (taskDocumentHidden(db, fullId)) throw new Error("Tasks are disabled in Omnesis Lab");
         if (seen.has(fullId)) continue;
         seen.add(fullId);
         resolved.push(fullId);
@@ -1260,6 +1280,15 @@ export function createGatewayTrailPort(
             }
           : {}),
       });
+      graph.vertices = graph.vertices.filter(
+        (vertex) =>
+          vertex.kind !== "document" ||
+          !taskDocumentHidden(db, vertex.documentId ?? vertex.id.replace(/^doc:/, "")),
+      );
+      const visibleIds = new Set(graph.vertices.map((vertex) => vertex.id));
+      graph.edges = graph.edges.filter(
+        (edge) => visibleIds.has(edge.from) && visibleIds.has(edge.to),
+      );
       await attachRecordFields(db, analytics, graph);
       return eventTrailFromGraph(graph);
     },

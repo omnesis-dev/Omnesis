@@ -4,6 +4,7 @@
 import { existsSync, unlinkSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+import { setLabFlag } from "../../lab/store.js";
 import { createDatabase } from "../../db.js";
 import { directWriteGate } from "../../write-gate.js";
 import { createOpenLoop, getOpenLoop, listOpenLoopLedger } from "../storage/open-loops.js";
@@ -25,8 +26,11 @@ let db: Database.Database;
 beforeEach(() => {
   path = `/tmp/omnesis-test-${randomUUID()}.db`;
   db = createDatabase(path);
+  vi.stubEnv("OMNESIS_EXPERIMENTAL", "1");
+  setLabFlag(db, "tasks", true);
 });
 afterEach(() => {
+  vi.unstubAllEnvs();
   db.close();
   for (const suffix of ["", "-wal", "-shm", "-journal"])
     if (existsSync(path + suffix)) unlinkSync(path + suffix);

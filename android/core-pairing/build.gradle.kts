@@ -7,6 +7,8 @@ plugins {
     alias(libs.plugins.kotlin.serialization)
 }
 
+apply(from = rootProject.file("logic-coverage.gradle.kts"))
+
 android {
     namespace = "dev.omnesis.android.pairing"
     compileSdk = 36
@@ -22,6 +24,11 @@ android {
     }
 }
 
+// DeviceEnrollmentLiveE2ETest runs only under -PomnesisE2e (scripts/run-android-e2e.sh).
+tasks.withType<Test>().configureEach {
+    if (project.hasProperty("omnesisE2e")) systemProperty("omnesis.android.e2e", "1")
+}
+
 dependencies {
     api(project(":core-transport"))
     implementation(libs.kotlinx.serialization.json)
@@ -35,4 +42,5 @@ dependencies {
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)
     testImplementation(libs.okhttp.mockwebserver)
+    testImplementation(libs.okhttp.tls)
 }

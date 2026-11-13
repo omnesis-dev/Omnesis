@@ -105,7 +105,7 @@ internal const val DIRECT_CARD_MAX_SQL_ROWS = 10
 
 sealed interface DirectDecodedResult {
     data class Typed(val result: AgentToolResult) : DirectDecodedResult
-    /** `{kind:"structured", resultType, data}` — the steward loop/memory tools. Parsed from raw JSON. */
+    /** `{kind:"structured", resultType, data}` — the Brain loop/memory tools. Parsed from raw JSON. */
     data class Structured(val resultType: String, val data: JsonElement) : DirectDecodedResult
     data object Missing : DirectDecodedResult
     data object Undecodable : DirectDecodedResult
@@ -462,7 +462,7 @@ private fun directLoopFetchedCard(decoded: DirectDecodedResult): DirectCardConte
     )
 }
 
-/* ── Structured steward tools ────────────────────────────────────────── */
+/* ── Structured Brain tools ────────────────────────────────────────── */
 
 private fun directStructuredCard(
     tool: String,

@@ -17,6 +17,7 @@
     { "path": "packages/watch" },
     { "path": "packages/watch/tsconfig.tests.json" },
     { "path": "packages/relay" },
+    { "path": "packages/cloud-relay" },
     { "path": "packages/agent-integration" },
     { "path": "packages/providers/apple" },
     { "path": "packages/providers/chrome" },

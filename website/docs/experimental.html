@@ -149,12 +149,42 @@
         <p class="docs-kicker">Experimental</p>
         <h1>Experimental</h1>
         <p class="docs-lead">
-          <code>OMNESIS_EXPERIMENTAL=1</code> enables unstable features: browser-extension page
-          notes and Find, realtime voice conversations in the Omnesis Demo iOS app,
-          <strong>Omnesis Brain</strong>, which reads your data in the background and keeps cited
-          notes and loops and writes a morning brief, and <strong>Omnesis Watch</strong>, which
-          tells you or an agent when a condition becomes true. This page explains how to run,
-          observe and stop them.
+          <code>OMNESIS_EXPERIMENTAL=1</code> reveals Omnesis Lab and enables other unstable
+          features: browser-extension page notes and Find, realtime voice conversations in the
+          Omnesis Demo iOS app, <strong>Omnesis Brain</strong>, which reads your data in the
+          background and keeps cited notes and loops and writes a morning brief, and
+          <strong>Omnesis Watch</strong>, which tells you or an agent when a condition becomes true.
+          This page explains how to run, observe and stop them.
+        </p>
+        <h2 id="lab">Omnesis Lab</h2>
+        <p>
+          Start the gateway with <code>OMNESIS_EXPERIMENTAL=1</code>, then open
+          <strong>Settings → Omnesis Lab</strong> in the portal, iOS app, or Android app. Turn on
+          <strong>Brain</strong>, <strong>Tasks</strong>, and <strong>Watches</strong>
+          individually. They start off on new installs. Choices are shared by all clients and saved
+          independently of feature settings; switching experimental mode off hides them and stops
+          their runtime without forgetting your choices.
+        </p>
+        <p>
+          Tasks works without the Brain: keep your task journal manually or ask Omnesis in chat or
+          Tell Omnesis to create and update tasks. With both enabled, the Brain can also suggest
+          tasks and update them in the background. With Tasks off, neither agent receives task tools
+          or task instructions. Watches runs independently of the Brain. The Brain also needs a
+          runnable <strong>Brain agent</strong> model assignment.
+          <strong>Settings → Sweeps</strong> and <strong>Debug → Brain</strong> appear only while
+          the Brain is enabled.
+        </p>
+        <p>
+          Upgrading preserves existing use: task history enables Tasks, an existing watch enables
+          Watches, and an existing background-agent assignment enables the Brain. An explicit Lab
+          choice is never overwritten on restart. Disabling a feature preserves its data.
+        </p>
+        <p>
+          Mobile apps and gateways can be updated separately. With an older gateway, updated apps
+          use its existing Tasks and experimental-feature availability; Lab controls appear only
+          when the gateway supports them. With an updated gateway, older apps keep using the
+          existing APIs, but have no Lab controls and may still show a Watches menu after Watches is
+          disabled. The gateway enforces disabled features regardless of the app version.
         </p>
         <div class="callout warn">
           <strong>These features are experimental</strong> as they are unstable and
@@ -163,9 +193,9 @@
         <p>
           Nothing here is visible unless the process was started with
           <code>OMNESIS_EXPERIMENTAL=1</code>. Set it on the gateway to reveal browser notes, Find,
-          Brain, Watch and their controls. With it unset, their experimental routes and autonomous
-          work are unavailable. Source indexing, grounded memory reads, evidence invalidation and
-          privacy cleanup remain active. For a gateway you run in the foreground:
+          Omnesis Lab and its controls. With it unset, their experimental routes and autonomous work
+          are unavailable. Source indexing, grounded memory reads, evidence invalidation and privacy
+          cleanup remain active. For a gateway you run in the foreground:
         </p>
         <div class="term">
           <div class="term-bar"><span></span><span></span><span></span></div>
@@ -365,6 +395,217 @@
           text. Agent searches reuse the portal's conversation and ephemeral tool components.
         </p>
 
+        <h2 id="tasks">Tasks</h2>
+        <p>
+          <strong>Tasks</strong> is a list of things you mean to do, kept the way a bullet journal
+          keeps them. It is in the apps' menu and at <code>/portal/tasks</code> in the portal, and
+          requires Tasks to be enabled in Omnesis Lab, with no model assignment required. Each task
+          has a planned time, separate from any real deadline: a day, a month, or
+          <em>someday</em> for no particular time. Planning a task for Friday does not make Friday
+          its due date.
+        </p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>View</th>
+                <th>Shows</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Today</td>
+                <td>
+                  Open tasks newest first by when they were created: tasks planned for today, tasks
+                  carried from an earlier day or month, and tasks whose deadline is today or past.
+                  Carried tasks keep their marker. Tasks completed or struck today appear below.
+                </td>
+              </tr>
+              <tr>
+                <td>Month</td>
+                <td>
+                  Tasks planned for this month, or for a later day in it, and unplanned tasks due
+                  later this month.
+                </td>
+              </tr>
+              <tr>
+                <td>Future</td>
+                <td>Tasks planned or due in a later month, and tasks planned for someday.</td>
+              </tr>
+              <tr>
+                <td>Anytime</td>
+                <td>Tasks with no planned time and no deadline.</td>
+              </tr>
+              <tr>
+                <td>Waiting</td>
+                <td>Tasks that wait on someone else, or on another task.</td>
+              </tr>
+              <tr>
+                <td>Done</td>
+                <td>Completed and struck tasks, newest first.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p>
+          Each view's tab shows how many open tasks it holds, and the menu's <strong>Tasks</strong>
+          entry shows today's. On iPhone, swipe left or right across the list to move to the next or
+          previous view; a swipe that starts at the left edge of the screen opens the menu instead.
+          To add a task, tell Omnesis: the microphone button at the top right of Tasks opens a
+          <a href="apps#voice-and-quick-capture">Tell Omnesis note</a>. A note such as "call the
+          garage on Friday" adds a task, and "I won't repaint the fence after all" strikes it. A
+          task that came from your documents lists them under its title, each with its source's
+          icon; tap one to open the document. A task planned for an earlier day stays on Today until
+          you complete, move or strike it; nothing drops off on its own.
+        </p>
+        <p>
+          Tap a task's circle to complete it. In the apps, touch and hold anywhere on the task for
+          its other actions, which fan out above and to the left of your finger. Keep holding, slide
+          onto one and let go; letting go anywhere else changes nothing. Rest on
+          <strong>Other month</strong> to see the months. With VoiceOver or TalkBack, the same
+          actions are in the task's accessibility actions.
+        </p>
+        <ul>
+          <li>
+            <strong>Done</strong>, or <strong>Done + note</strong> to say how it ended, by voice or
+            typing as with a Tell Omnesis note;
+          </li>
+          <li>
+            <strong>Tomorrow</strong>, <strong>Next month</strong>, or <strong>Other month</strong>
+            for any later month, to move it;
+          </li>
+          <li><strong>Cancel task</strong>, for a task you no longer intend to do;</li>
+          <li>
+            <strong>Tell Omnesis</strong>, to capture a note about this task. Its title is shown as
+            fixed context. On iPhone, it starts listening immediately; say what you want to change,
+            or stop the microphone to type instead. Saving the note does not itself reopen a
+            completed task. This action requires matching app and gateway support; older gateways do
+            not offer it.
+          </li>
+          <li>
+            <strong>Chat about this</strong>, to start a conversation with
+            <a href="#chat-about-a-task">the agent</a> about the task, which needs an agent model
+            assigned.
+          </li>
+        </ul>
+        <p>
+          Tap the task itself for its details: edit its title, description, planned time and
+          deadline, and see its history, every change and where it was made. In the portal, clicking
+          the task opens these actions beneath it instead, with
+          <strong>Next week</strong> (the coming Monday) as a further move, and
+          <strong>Chat about this</strong> to the right of <strong>History</strong>.
+        </p>
+        <p>
+          Every change shows a one-line receipt with <strong>Undo</strong>. Undo reverses the latest
+          change to that task; an earlier change cannot be undone once the task has changed again. A
+          task can also change from a conversation with <a href="agent#tasks">the agent</a> or from
+          a <a href="apps#voice-and-quick-capture">Tell Omnesis note</a>; its history records which.
+        </p>
+
+        <h3 id="ios-task-widgets">iOS task widgets</h3>
+        <p>
+          Add <strong>Omnesis → Tasks</strong> from the Home Screen widget gallery. Choose small,
+          medium, large, or the extra-large iPad layout. Lock Screen widgets are available in
+          inline, circular and rectangular sizes. Open the paired app once after installing to make
+          its tasks available to the widgets.
+        </p>
+        <p>
+          In <strong>Edit Widget</strong>, choose a day, week or month. A start offset of
+          <strong>1</strong> starts tomorrow, next week or next month respectively. Use the arrows
+          on a Home Screen widget to browse earlier or later periods, tap the date between them to
+          return to the current period, and use the page counter to see more tasks. If two widgets
+          have the same date settings, give them different <strong>Panel</strong> values to browse
+          them independently.
+        </p>
+        <p>
+          Tap a task's circle to complete it from a Home Screen or rectangular Lock Screen widget;
+          the device may ask you to unlock first. Tap its title to open the task in Omnesis. Future
+          periods show their planned tasks and deadlines; today's outstanding tasks are carried into
+          the current period. The Today view shows tasks newest first. Unscheduled tasks without a
+          deadline stay in the app's Anytime view. Widgets refresh when iOS allows and after task
+          actions; if the gateway is unreachable, a Home Screen widget labels its saved list as
+          offline. Completion requires a connection and a failed action leaves the task open.
+        </p>
+
+        <h3 id="android-task-widgets">Android task widgets</h3>
+        <p>
+          Add <strong>Omnesis → Tasks</strong> from your launcher's Home Screen widget picker.
+          Resize it horizontally and vertically for a compact list, a larger task list, or a wide
+          tablet layout. Each widget keeps its own date range and page.
+        </p>
+        <p>
+          Use <strong>Day</strong>, <strong>Week</strong> and <strong>Month</strong> to choose the
+          date range, the arrows to browse earlier or later periods, and the date to return to the
+          current period. The page control shows more tasks. Tap a circle to complete a task, or its
+          title to open it in the app. Future periods show their plans and deadlines; only the
+          current period includes today's outstanding tasks. The Today view shows tasks newest
+          first. Month-only plans appear in the month view. Tasks without a plan or deadline stay in
+          Anytime in the app.
+        </p>
+        <p>
+          Widgets follow the device's light or dark theme. A saved list remains available while the
+          gateway is unreachable, labelled offline; completing a task requires a connection. Android
+          schedules background refreshes, and opening the app or changing a task requests a refresh.
+          Removing or changing the pairing clears the widget's saved list.
+        </p>
+
+        <h2 id="task-tools">Tasks</h2>
+        <p>
+          In any conversation, the agent works with your <a href="#tasks">Tasks</a> when you ask it
+          to. It can list them, add one, complete, move, strike or edit one, and undo a change it
+          made: “move the dentist call to next week”, “I sent the invoice, tick it off”. It states
+          each change in one line, such as <em>Moved to 2026-10-19: Call the dentist</em>, and the
+          change is recorded in the task's history as made in that conversation, where
+          <strong>Undo</strong> in the Tasks view also reverses it. It changes a task only when you
+          ask; a question about your tasks gets an answer, not an edit. The journal and these task
+          tools work independently of autonomous background processing. When useful, the agent can
+          search for supporting documents and link them to a task, including one you captured with
+          Tell Omnesis. Tasks created in chat also link the creating conversation as a reference,
+          alongside any supporting documents. Deleting the conversation removes that reference but
+          leaves its tasks in place. Changes to linked documents are recorded and can be undone.
+          Moving a task changes when you plan to do it; its deadline is separate and changes only
+          when explicitly edited. Task tools reject fields that do not apply to an action before
+          making a change. Striking out a task can be undone. Deleting a task permanently removes it
+          and its history.
+        </p>
+        <h3 id="chat-about-a-task">Chat about a task</h3>
+        <p>
+          <strong>Chat about this</strong> on a task opens a new conversation about it, titled with
+          the task and showing a card with its state, due day and number of linked documents; the
+          card opens the task. Each reply in that conversation reads the task as it stands at that
+          moment: its title, state, planned time, deadline, description, history, and its linked
+          documents with a short excerpt of each, which the agent can open in full. A change you
+          make to the task between messages is in the next reply's context. If the task is deleted,
+          the conversation stays and the agent is told so. Each tap opens a new conversation;
+          earlier ones stay in the conversation list.
+        </p>
+        <p>
+          With a model assigned to <strong>Agent</strong>, notes you capture with Tell Omnesis from
+          the portal, the apps or the CLI are also read and acted on, each by one short agent turn
+          of its own. These turns use the same search, document-link, memory and task abilities as a
+          conversation, with the same feature gates. Editing a captured note uses the same abilities
+          to apply its correction, taking the earlier text and result into account instead of
+          repeating unchanged instructions. Tell Omnesis is available without experimental mode; its
+          note processing does not require autonomous Brain processing or an open chat. Chat and
+          Tell Omnesis use the same Agent model, with a separate bounded turn for each note. Reading
+          starts the first time an Agent model is assigned; notes captured while it is later
+          unassigned are read once it is assigned again. Notes that external agents add through MCP,
+          OpenClaw or Hermes are saved and searchable but never acted on.
+          <strong>Act on Tell Omnesis notes</strong> in the model's details under
+          <strong>Settings → Models</strong>, or <code>agent.noteAgent</code> set to
+          <code>false</code>, switches this off; notes captured while it is off are only saved, and
+          are not read when it is switched back on. See
+          <a href="apps#voice-and-quick-capture">Voice and quick capture</a>.
+        </p>
+
+        <p>
+          If a clear request in a note cannot be completed safely without clarification, Omnesis
+          keeps the note and opens a normal conversation with the original request and its question.
+          The note's receipt offers <strong>Continue in chat</strong>, and a notification brings you
+          back to the conversation. Your reply continues with the normal Agent abilities and the
+          context already provided. Requests that can be completed directly remain asynchronous.
+        </p>
+
         <h2 id="brain">Omnesis Brain</h2>
         <p>
           Brain is a background agent. It reads your records as they arrive, and on a schedule,
@@ -436,7 +677,7 @@
                   Reusable context for projects and topics, with claim-level provenance. A compact
                   root wiki provides current orientation and must fit its configured size limit.
                 </td>
-                <td>Debug → Cognition → Library</td>
+                <td>Debug → Brain → Library</td>
               </tr>
               <tr>
                 <td>Time index</td>
@@ -446,7 +687,7 @@
                   documents it came from. The agent's time query returns them beside source dates
                   and date mentions.
                 </td>
-                <td>Debug → Cognition → Timeline</td>
+                <td>Debug → Brain → Timeline</td>
               </tr>
               <tr>
                 <td>Open loops</td>
@@ -457,9 +698,7 @@
                   <code>done</code>, <code>dismissed</code>. A loop Brain finds is a suggested task
                   until you accept it.
                 </td>
-                <td>
-                  Tasks → Suggested, then your Tasks once accepted; Debug → Cognition → Library
-                </td>
+                <td>Tasks → Suggested, then your Tasks once accepted; Debug → Brain → Library</td>
               </tr>
               <tr>
                 <td>Annotations</td>
@@ -468,7 +707,7 @@
                   document and a confidence. The agent's <a href="agent#memory">memory</a>
                   reads the same notes.
                 </td>
-                <td>The document or person page; Debug → Cognition → Library</td>
+                <td>The document or person page; Debug → Brain → Library</td>
               </tr>
               <tr>
                 <td>Observations</td>
@@ -477,7 +716,7 @@
                   each citing and quoting its sources, with the window in which it matters and the
                   loops it relates to. None reaches you directly.
                 </td>
-                <td>Debug → Cognition → Observations; Debug → Cognition → Library</td>
+                <td>Debug → Brain → Observations; Debug → Brain → Library</td>
               </tr>
               <tr>
                 <td>Morning brief</td>
@@ -596,13 +835,13 @@
           ranks an observation for the brief, judges a new suggestion, or decides how soon to read
           new evidence, the decision model is shown the few past reactions most like the item in
           front of it, with your words where you gave any.
-          <strong>Debug → Cognition → Interest</strong> lists every reaction it has recorded, lets
-          you try a lookup, shows each suggestion verdict, and offers any withheld suggestion again.
-          Set <code>brain.interest.enabled</code> to <code>false</code> to stop recording and
-          showing them.
+          <strong>Debug → Brain → Interest</strong> lists every reaction it has recorded, lets you
+          try a lookup, shows each suggestion verdict, and offers any withheld suggestion again. Set
+          <code>brain.interest.enabled</code> to <code>false</code> to stop recording and showing
+          them.
         </p>
         <p>
-          In experimental mode, <a href="apps#tasks">Tasks</a> gains a
+          With Brain and Tasks enabled in Omnesis Lab, <a href="#tasks">Tasks</a> gains a
           <strong>Suggested</strong> view in the portal and the apps. By default, loops Brain finds
           appear only in Suggested and become yours when you accept them. With the suggestion gate
           set to <code>enforce</code>, the interest-based policy described below can instead adopt
@@ -635,8 +874,8 @@
           is left out of it. Proposals still waiting when Brain starts are checked again: one that
           no longer changes anything is dropped, and one Brain would now apply on its own is
           applied. Set <code>brain.tasks.autoApply</code> to <code>false</code> to have every change
-          proposed. Your own tasks never decay. Without experimental mode, neither the Suggested
-          view nor proposed changes appear.
+          proposed. Your own tasks never decay. With Brain disabled, neither the Suggested view nor
+          proposed changes appear.
         </p>
         <p>
           With a decision model assigned and <code>brain.tasks.proposeGate</code> set to
@@ -645,7 +884,7 @@
           like tasks you accepted or created, it is adopted as your task at once; otherwise it is
           suggested as usual. <code>brain.tasks.proposeGate</code> sets what the verdict does.
           <code>shadow</code>, the default, only records it, so
-          <strong>Debug → Cognition → Interest</strong> shows what would have happened.
+          <strong>Debug → Brain → Interest</strong> shows what would have happened.
           <code>enforce</code> acts on it: a withheld suggestion stays tracked and comes back when
           you undo it from its history, and an adopted one reads
           <strong>Added by Omnesis</strong> with an <strong>Undo</strong>; undoing an adoption is
@@ -653,20 +892,20 @@
           model outage leaves a suggestion as it is.
         </p>
         <p>
-          <strong>Debug → Cognition → Observations</strong> lists observations by state, with each
-          one's close reason, its scores when noted and at the recheck, related tasks, the run that
-          noted it and the brief message that carried it. The same tab shows the would-have-pushed
-          log and each day's brief items. Closed observations are kept for 90 days
+          <strong>Debug → Brain → Observations</strong> lists observations by state, with each one's
+          close reason, its scores when noted and at the recheck, related tasks, the run that noted
+          it and the brief message that carried it. The same tab shows the would-have-pushed log and
+          each day's brief items. Closed observations are kept for 90 days
           (<code>brain.observations.retentionDays</code>), then reduced to an outcome record of
           their state, scores and what you did.
         </p>
 
         <h3 id="brain-turning-on">Turning it on</h3>
         <p>
-          Brain runs only when two things are true: the gateway runs with
-          <code>OMNESIS_EXPERIMENTAL=1</code>, and a model is assigned to the
-          <code>background-agent</code> role and can actually be reached. Either alone does nothing.
-          The second step is the one that starts spending: assigning the model starts the enabled
+          Brain runs only when the gateway runs with <code>OMNESIS_EXPERIMENTAL=1</code>, Brain is
+          enabled in <strong>Settings → Omnesis Lab</strong>, and a model is assigned to the
+          <code>background-agent</code> role and can actually be reached. All three are required.
+          Once both the opt-in and a runnable model are present, the gateway starts the enabled
           producers, from reacting to new records to scheduled sweeps and the morning brief. Read
           <a href="#brain-spend">Bounding the spend</a> before you assign it. The one exception is
           the catch-up over your history, which waits until you start it yourself (see
@@ -872,8 +1111,8 @@
           on its verdict, and every role shares the account's usage allowance.
           <code>GET /status</code> reports the gate as <code>brain</code>, with
           <code>visible</code>, <code>enabled</code>, <code>modelAssigned</code> and
-          <code>active</code>; the portal's <strong>Debug → Cognition</strong> pages say which of
-          the two conditions is missing.
+          <code>active</code>; the portal's <strong>Debug → Brain</strong> pages say which of the
+          two conditions is missing.
         </p>
 
         <h3 id="brain-how-it-runs">How it runs</h3>
@@ -933,7 +1172,7 @@
         </p>
         <p>
           Historical organization is opt-in. Open
-          <strong>Debug → Cognition → Discovery</strong> and press
+          <strong>Debug → Brain → Discovery</strong> and press
           <strong>Start reading history</strong>. The pass honors historical enablement, active
           hours and admission caps, and reports separate interpretation, organization and conversion
           coverage. Recent-first is the default; historical evidence need not contain a future date
@@ -1047,8 +1286,8 @@
           before paging through the history.
         </p>
         <p>
-          Open <strong>Debug → Cognition → Library</strong> to browse the Brain’s library. Selecting
-          an entry keeps the library’s filters and loaded results in place. On desktop, the list and
+          Open <strong>Debug → Brain → Library</strong> to browse the Brain’s library. Selecting an
+          entry keeps the library’s filters and loaded results in place. On desktop, the list and
           reading pane scroll independently. More entries load as you approach the end of the list;
           Refresh includes newly added or updated entries. Person notes identify their subject and
           link to the current person profile. In Overview, switch between rendered Markdown and Raw
@@ -1380,9 +1619,9 @@
 
         <p>
           Every judgement the decision model makes is recorded and shown in
-          <strong>Debug → Cognition</strong> with a scale icon: worth admission, record and task
-          checks, the suggestion gate, observation salience, discovery and review timing, and,
-          outside any Brain run, date-mention worth and search routing. Open
+          <strong>Debug → Brain</strong> with a scale icon: worth admission, record and task checks,
+          the suggestion gate, observation salience, discovery and review timing, and, outside any
+          Brain run, date-mention worth and search routing. Open
           <strong>Maintenance → Advanced → Retained decision history</strong> to filter them by
           kind; each one also appears on the run, page or observation it was made for, and
           <strong>Request and answer</strong> shows exactly what the model was asked and what it
@@ -1622,12 +1861,12 @@ comfortably within the promised time. An empty pass is a good outcome.</pre>
 
         <h3 id="brain-observing">Observing it</h3>
         <p>
-          In the portal, <strong>Debug → Cognition</strong> holds the Library (pages, loops,
-          annotations and observations) and the Timeline; Agent runs shows the queue, transcripts,
-          decisions and spend; Observations and Interest follow the morning brief and what Brain
-          learns from your reactions; Maintenance follows repair batches; Discovery shows coverage,
-          the budget and historical admission controls; Confidence &amp; feedback compares stated
-          confidence with observed outcomes; Behavioral notes shows the agent-notes file.
+          In the portal, <strong>Debug → Brain</strong> holds the Library (pages, loops, annotations
+          and observations) and the Timeline; Agent runs shows the queue, transcripts, decisions and
+          spend; Observations and Interest follow the morning brief and what Brain learns from your
+          reactions; Maintenance follows repair batches; Discovery shows coverage, the budget and
+          historical admission controls; Confidence &amp; feedback compares stated confidence with
+          observed outcomes; Behavioral notes shows the agent-notes file.
           <strong>System → Gateway jobs</strong> shows when each scheduled task last ran. The same
           data is available from the CLI:
         </p>
@@ -1684,7 +1923,7 @@ comfortably within the promised time. An empty pass is a good outcome.</pre>
         </p>
 
         <h3 id="brain-stopping">Pausing and turning it off</h3>
-        <p>There are four levels, from narrowest to widest:</p>
+        <p>There are five levels, from narrowest to widest:</p>
         <ul>
           <li>
             <strong>Pause the catch-up.</strong> The Discovery tab's pause control sets
@@ -1698,9 +1937,15 @@ comfortably within the promised time. An empty pass is a good outcome.</pre>
           <li>
             <strong>Unassign the model.</strong>
             <code>omnesis model assign background-agent disabled</code> stops all new Brain work at
-            once. While experimental mode is on, <strong>Debug → Cognition</strong> still shows what
-            was written, the Morning brief conversation keeps its past messages, and Tasks keeps
-            every task, including suggestions not yet accepted. Notes stop being read.
+            once. While experimental mode is on, <strong>Debug → Brain</strong> still shows what was
+            written, the Morning brief conversation keeps its past messages, and Tasks keeps every
+            task, including suggestions not yet accepted. Tell Omnesis notes continue using the
+            Agent model.
+          </li>
+          <li>
+            <strong>Disable Brain in Omnesis Lab.</strong> Background processing stops and Sweeps
+            and Debug → Brain disappear. Tasks and Watches keep their independent choices. Chat and
+            Tell Omnesis continue using the Agent model.
           </li>
           <li>
             <strong>Turn experimental mode off.</strong> Restart the gateway without
@@ -1758,10 +2003,11 @@ comfortably within the promised time. An empty pass is a good outcome.</pre>
           already derived from an excluded source is kept as it is, and Brain still sees it as
           knowledge: an annotation keeps its quoted evidence, a loop keeps its linked documents, and
           a page keeps the claims that cite the source, unchanged. Those annotations are not
-          re-verified while the exclusion holds, and no new or changed claim may cite the source.
-          Editing or deleting one of its documents still repairs or removes what cites it. Removing
-          an entry makes the source's documents eligible again: historical review admits the ones
-          inside
+          re-verified while the exclusion holds, so the portal labels them
+          <em>not re-checked · source excluded</em> instead of showing their last verification as
+          current. No new or changed claim may cite the source. Editing or deleting one of its
+          documents still repairs or removes what cites it. Removing an entry makes the source's
+          documents eligible again: historical review admits the ones inside
           <code>brain.bootstrap.horizon</code>, and later arrivals and edits are reactive as usual.
           Documents that arrived while the source was excluded are not replayed as live arrivals.
         </p>
@@ -2176,9 +2422,9 @@ comfortably within the promised time. An empty pass is a good outcome.</pre>
         </p>
         <p>
           Every compile is recorded as a run of kind <code>subscription_compile</code> on
-          <strong>Debug → Cognition → Agent runs</strong>, with the full transcript: what the
-          compiler looked up, what it wrote and each repair turn. An installed watch links to it
-          from its detail page. The transcript contains corpus text the compiler read.
+          <strong>Debug → Brain → Agent runs</strong>, with the full transcript: what the compiler
+          looked up, what it wrote and each repair turn. An installed watch links to it from its
+          detail page. The transcript contains corpus text the compiler read.
         </p>
         <p>
           <strong>An agent's request needs approval</strong> before it can wake anyone. Until then
@@ -2766,7 +3012,8 @@ curl -s -X POST "$OMNESIS_GATEWAY_URL/admin/watch/compile" \
           it. <strong>Debug → Watch runtime</strong> draws one watch as a graph, shows what each
           stateful node is holding per key and every armed timer, and lights up the path an event
           took, including the times the watch looked and did not fire. It is read-only; actions stay
-          in the CLI. The iOS and Android apps show watches read-only when experimental mode is on.
+          in the CLI. The iOS and Android apps show watches read-only when Watches is enabled in
+          Omnesis Lab.
         </p>
         <p>
           <code>omnesis watch report</code> puts every stopped watch in one bucket:

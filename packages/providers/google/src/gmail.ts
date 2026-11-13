@@ -1077,7 +1077,7 @@ export class GmailSource {
         // Typed scheduled/due date promotion — parsed from schema.org
         // JSON-LD markup that transactional mail (flights, hotels, orders,
         // reservations, invoices) embeds. Lets downstream consumers key off the
-        // date without re-parsing prose, and lets the steward waker treat a
+        // date without re-parsing prose, and lets the Brain waker treat a
         // machine-sent confirmation as the actionable obligation it is.
         ...(schemaDates.scheduledAt ? { scheduledAt: schemaDates.scheduledAt } : {}),
         ...(schemaDates.dueAt ? { dueAt: schemaDates.dueAt } : {}),

@@ -30,7 +30,7 @@ public final class AdminClient: Sendable {
     private let pairingGeneration: String?
     private let session: URLSessionLike
     private let decoder: JSONDecoder
-    private let encoder: JSONEncoder
+    let encoder: JSONEncoder
 
     public init(
         baseURL: URL,
@@ -44,6 +44,20 @@ public final class AdminClient: Sendable {
         self.session = session
         decoder = JSONDecoder()
         encoder = JSONEncoder()
+    }
+
+    public func pairingApprovalRequests() async throws -> [GatewayPairingApprovalRequest] {
+        let (data, _) = try await dispatch(method: "GET", path: "/admin/cloud-pairing/requests", body: nil)
+        struct Envelope: Decodable { let items: [GatewayPairingApprovalRequest] }
+        return try decodeOrThrow(Envelope.self, from: data).items
+    }
+
+    public func decidePairingApproval(requestId: String, approve: Bool) async throws {
+        struct Decision: Encodable { let requestId: String
+            let approve: Bool
+        }
+        let body = try encoder.encode(Decision(requestId: requestId, approve: approve))
+        _ = try await dispatch(method: "POST", path: "/admin/cloud-pairing/decision", body: body)
     }
 
     // MARK: - Source registry
@@ -209,7 +223,8 @@ public final class AdminClient: Sendable {
     /// POST `/admin/devices/pair-qr` — encode the pairing payload server-side
     /// so every client shares the versioned pairing contract. Automatic policy
     /// uses system trust for configured public origins and leaf pinning elsewhere.
-    /// `gatewayUrl` is which network identity the new phone should reach.
+    /// `gatewayUrl` is which network identity the new phone should reach: with the
+    /// cloud build flag on, an address from `pairAddresses`, passed back unchanged.
     /// Returns the JSON string ready for QR rendering.
     public func buildPairQr(pairingCode: String, gatewayUrl: String) async throws -> String {
         struct Body: Encodable {
@@ -241,13 +256,11 @@ public final class AdminClient: Sendable {
         }
     }
 
-    /// GET `/admin/network-identities` — the addresses this gateway is
-    /// reachable at (LAN, mDNS, Tailscale). The pairing flow lets the user
-    /// pick which one bakes into the QR's `gatewayUrl` so the new phone can
-    /// reach the gateway from whatever network it's on.
-    public func listNetworkIdentities() async throws -> [NetworkIdentity] {
-        let (data, _) = try await dispatch(method: "GET", path: "/admin/network-identities", body: nil)
-        return try decodeOrThrow(Page<NetworkIdentity>.self, from: data).items
+    /// POST `/admin/devices/pair-addresses`: every address the gateway could put in
+    /// this code's QR, judged for the device the code was minted for.
+    public func pairAddresses(pairingCode: String) async throws -> PairingAddressPlan {
+        let body = try encoder.encode(["pairingCode": pairingCode])
+        return try await decodeOrThrow(PairingAddressPlan.self, from: dispatch(method: "POST", path: PairingAddressPlan.path, body: body).0)
     }
 
     public func listSyncStatuses() async throws -> [SourceSyncStatus] {
@@ -689,7 +702,7 @@ public final class AdminClient: Sendable {
 
     // MARK: - Core request machinery
 
-    private func dispatch(
+    func dispatch(
         method: String,
         path: String,
         body: Data?
@@ -731,7 +744,7 @@ public final class AdminClient: Sendable {
         }
     }
 
-    private func decodeOrThrow<T: Decodable>(_ type: T.Type, from data: Data) throws -> T {
+    func decodeOrThrow<T: Decodable>(_ type: T.Type, from data: Data) throws -> T {
         do {
             return try decoder.decode(type, from: data)
         } catch {
@@ -778,20 +791,4 @@ extension AdminClient {
     }
 }
 
-/// A `CodingKey` whose value is supplied at runtime — for encoding maps with
-/// dynamic string keys (e.g. the `inference.assignments` capability patch).
-struct AnyKey: CodingKey {
-    let stringValue: String
-    let intValue: Int? = nil
-    init(_ stringValue: String) {
-        self.stringValue = stringValue
-    }
-
-    init?(stringValue: String) {
-        self.stringValue = stringValue
-    }
-
-    init?(intValue _: Int) {
-        nil
-    }
-}
+extension AdminClient: GatewayPairingApproving {}

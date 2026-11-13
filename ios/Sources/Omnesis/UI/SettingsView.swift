@@ -21,6 +21,7 @@ enum SettingsDestination: Hashable, Identifiable {
     )
     case models(initialRole: String?)
     case devices
+    case lab
     case notifications
     /// Every policy a grant can be judged against, listed. Sits beside
     /// Devices because both answer "what has this gateway agreed to".
@@ -30,6 +31,7 @@ enum SettingsDestination: Hashable, Identifiable {
     case policy(familyId: String, name: String?)
     /// Developer mode only: the HealthKit sample-uuid probe.
     case healthSamples
+    case omnesisAccount
 
     var id: String {
         switch self {
@@ -38,11 +40,13 @@ enum SettingsDestination: Hashable, Identifiable {
         case .remotePermissions(let sourceId, let deviceId, _, _):
             "remote-permissions:\(sourceId):\(deviceId)"
         case .models(let initialRole): "models:\(initialRole ?? "all")"
+        case .lab: "lab"
         case .devices: "devices"
         case .notifications: "notifications"
         case .policies: "policies"
         case .policy(let familyId, _): "policy:\(familyId)"
         case .healthSamples: "health-samples"
+        case .omnesisAccount: "omnesis-account"
         }
     }
 }
@@ -72,6 +76,7 @@ struct SettingsView: View {
     @State private var showMoodConsentAlert: Bool
     @State private var showAccessAuthorization = false
     @State private var path: [SettingsDestination]
+    @State private var omnesisAccount = OmnesisAccountModel.live()
     private let destinationMode: DestinationMode
     #if DEBUG
     private let previewClaimReason: NotificationClaimDiagnostic.Reason?
@@ -286,6 +291,7 @@ struct SettingsView: View {
                     }
                 }
                 .task(id: scenePhase) { await refreshModelHealthWhileActive() }
+                .task { await omnesisAccount.load(client: store.admin) }
                 .refreshable {
                     await store.syncAll()
                     await store.refreshSourcePermissionHealth()
@@ -324,10 +330,46 @@ struct SettingsView: View {
     #endif
 
     @ViewBuilder
+    private var labDestinationView: some View {
+        #if DEBUG
+        if destinationMode == .preview {
+            LabView(snapshot: PreviewMocks.lab, preview: true)
+        } else {
+            LabView()
+        }
+        #else
+        LabView()
+        #endif
+    }
+
+    private var notificationsDestinationView: some View {
+        Form { notificationsSection }
+            .scrollContentBackground(.hidden)
+            .background(Theme.bgPrimary)
+            .navigationTitle("Notifications")
+            .navigationBarTitleDisplayMode(.inline)
+    }
+
+    @ViewBuilder
+    private var devicesDestinationView: some View {
+        #if DEBUG
+        if destinationMode == .preview {
+            DevicesView(
+                previewDevices: PreviewMocks.devices,
+                previewTokens: PreviewMocks.deviceTokens
+            )
+        } else {
+            DevicesView()
+        }
+        #else
+        DevicesView()
+        #endif
+    }
+
+    @ViewBuilder
     private func destinationView(_ destination: SettingsDestination) -> some View {
         switch destination {
-        case .root:
-            EmptyView()
+        case .root: EmptyView()
         case .permissions(let sourceId):
             SourcePermissionHealthView(focusedSourceId: sourceId)
         case .remotePermissions(let sourceId, let deviceId, let sourceName, let deviceName):
@@ -352,24 +394,11 @@ struct SettingsView: View {
             ModelsView(initialPickerRole: initialRole)
             #endif
         case .devices:
-            #if DEBUG
-            if destinationMode == .preview {
-                DevicesView(
-                    previewDevices: PreviewMocks.devices,
-                    previewTokens: PreviewMocks.deviceTokens
-                )
-            } else {
-                DevicesView()
-            }
-            #else
-            DevicesView()
-            #endif
+            devicesDestinationView
+        case .lab:
+            labDestinationView
         case .notifications:
-            Form { notificationsSection }
-                .scrollContentBackground(.hidden)
-                .background(Theme.bgPrimary)
-                .navigationTitle("Notifications")
-                .navigationBarTitleDisplayMode(.inline)
+            notificationsDestinationView
         case .policies:
             #if DEBUG
             if destinationMode == .preview {
@@ -404,6 +433,7 @@ struct SettingsView: View {
             #else
             EmptyView()
             #endif
+        case .omnesisAccount: OmnesisAccountView(model: omnesisAccount, client: store.admin)
         }
     }
 
@@ -844,15 +874,21 @@ struct SettingsView: View {
                     }
                 }
 
-                GatewayConnectionRow(state: store.wsState)
+                GatewayConnectionRow(state: store.wsState, path: store.connectionPath)
             }
 
             NavigationLink(value: SettingsDestination.models(initialRole: nil)) {
                 modelsSettingsLabel
             }
+            if store.labAvailable {
+                NavigationLink(value: SettingsDestination.lab) {
+                    Label("Omnesis Lab", systemImage: "flask")
+                }
+            }
             NavigationLink(value: SettingsDestination.devices) {
                 Label("Configure Devices", systemImage: "laptopcomputer.and.iphone")
             }
+            OmnesisAccountSettingsLink(model: omnesisAccount)
             // "Policies", not "Privacy Policy": the App Store privacy policy
             // linked further down this screen is a different document, and two
             // rows with near-identical names would be read as the same thing.
@@ -879,24 +915,8 @@ struct SettingsView: View {
         } header: {
             Text("Gateway")
         } footer: {
-            switch store.pairing?.tlsMode {
-            case .system:
-                Text(
-                    "This pairing uses system HTTPS verification. Re-pair to change its URL. "
-                        + "Re-pair wipes the token + buffered batches and scans a new QR."
-                )
-            case .pinnedLeaf:
-                Text(
-                    "Omnesis requires HTTPS. Edit the URL only when the same certificate-pinned "
-                        + "gateway moves; re-pair if the gateway or certificate was replaced."
-                )
-            case .legacy:
-                Text(
-                    "This legacy pairing uses HTTPS with system verification. Re-pair to upgrade "
-                        + "its trust settings before changing the gateway URL."
-                )
-            case nil:
-                EmptyView()
+            if let description = GatewayTrustDescription.message(for: store.pairing?.tlsMode) {
+                Text(description)
             }
         }
         .listRowBackground(Theme.bgSecondary)
@@ -908,8 +928,7 @@ struct SettingsView: View {
             return
         }
         do {
-            try PairingService().updateGatewayURL(url)
-            store.reload()
+            try store.updateGatewayURL(url)
             editingURL = false
         } catch {
             if case PairingPayloadError.invalidShape(let message) = error {
@@ -917,6 +936,27 @@ struct SettingsView: View {
             } else {
                 saveError = error.localizedDescription
             }
+        }
+    }
+}
+
+enum GatewayTrustDescription {
+    static func message(for mode: PairingTlsMode?) -> String? {
+        switch mode {
+        case .system:
+            "This pairing uses system HTTPS verification. Re-pair to change its URL. "
+                + "Re-pair wipes the token + buffered batches and scans a new QR."
+        case .pinnedKeyStrict:
+            "Omnesis verifies this gateway's public key and HTTPS hostname. "
+                + "Certificates can renew automatically; re-pair if the gateway key changes."
+        case .pinnedLeaf, .pinnedLeafStrict:
+            "Omnesis requires HTTPS. Edit the URL only when the same certificate-pinned "
+                + "gateway moves; re-pair if the gateway or certificate was replaced."
+        case .legacy:
+            "This legacy pairing uses HTTPS with system verification. Re-pair to upgrade "
+                + "its trust settings before changing the gateway URL."
+        case nil:
+            nil
         }
     }
 }
@@ -1588,4 +1628,11 @@ struct SourceDepartureConfirmation: View {
 }
 
 #endif
+#endif
+
+#if DEBUG && canImport(SwiftUI) && canImport(UIKit)
+#Preview("Settings · Omnesis Lab") {
+    SettingsView(initialDestination: .lab, previewData: true)
+        .environment(AppStore.preview())
+}
 #endif

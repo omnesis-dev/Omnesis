@@ -92,6 +92,7 @@ final class NotificationClaimerTests: XCTestCase {
         let claimer = NotificationClaimer(
             baseURL: baseURL,
             token: "omn_device",
+            claimsPairingNotifications: true,
             request: http.perform
         )
 
@@ -105,6 +106,7 @@ final class NotificationClaimerTests: XCTestCase {
         XCTAssertEqual(claimed.remaining, 4)
         let request = try XCTUnwrap(http.requests.first)
         XCTAssertEqual(request.url?.path, "/notifications/claim")
+        XCTAssertEqual(request.value(forHTTPHeaderField: "X-Omnesis-Pairing-Notifications"), "1")
         XCTAssertEqual(request.httpMethod, "POST")
         XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer omn_device")
         XCTAssertEqual(String(data: request.httpBody ?? Data(), encoding: .utf8), "{}")
@@ -313,7 +315,9 @@ final class NotificationClaimerTests: XCTestCase {
             XCTFail("unexpected error: \(error)")
         }
     }
+}
 
+final class NotificationDrainTests: XCTestCase {
     func testDrainIsBoundedAndConfirmsOnlyRenderedItems() async {
         let fixture = NotificationDrainFixture(items: (1 ... 4).map(claimedNotification))
 
@@ -454,6 +458,23 @@ final class NotificationClaimerTests: XCTestCase {
         XCTAssertNotEqual(firstLease.id, retryLease.id)
         XCTAssertEqual(firstLease.localRequestIdentifier, retryLease.localRequestIdentifier)
     }
+
+    private func claimedNotification(_ suffix: Int) -> ClaimedNotification {
+        ClaimedNotification(
+            id: "00000000-0000-4000-8000-\(String(format: "%012d", suffix))",
+            kind: "conversation",
+            targetId: "conversation-\(suffix)",
+            title: "Fictional notification \(suffix)",
+            body: "Invented notification body.",
+            collapseId: "conversation:conversation-\(suffix)",
+            remaining: suffix,
+            route: .conversation(conversationId: "conversation-\(suffix)")
+        )
+    }
+}
+
+final class NotificationCredentialTests: XCTestCase {
+    private let baseURL = URL(string: "https://gateway.example.test:17600")!
 
     func testProvisionerStoresOnlyNarrowCredentialAndIsIdempotent() async throws {
         let store = InMemoryStore()
@@ -619,19 +640,6 @@ final class NotificationClaimerTests: XCTestCase {
         )
         XCTAssertEqual(stored.fingerprint, String(repeating: "c", count: 64))
         XCTAssertEqual(stored.token, "newest-claim-token")
-    }
-
-    private func claimedNotification(_ suffix: Int) -> ClaimedNotification {
-        ClaimedNotification(
-            id: "00000000-0000-4000-8000-\(String(format: "%012d", suffix))",
-            kind: "conversation",
-            targetId: "conversation-\(suffix)",
-            title: "Fictional notification \(suffix)",
-            body: "Invented notification body.",
-            collapseId: "conversation:conversation-\(suffix)",
-            remaining: suffix,
-            route: .conversation(conversationId: "conversation-\(suffix)")
-        )
     }
 }
 

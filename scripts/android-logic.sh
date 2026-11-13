@@ -30,8 +30,12 @@
 #
 # Usage:
 #   scripts/android-logic.sh                       # the pure-logic JVM lane (core modules)
-#   scripts/android-logic.sh --module :feature-health   # one module's testDebugUnitTest
+#   scripts/android-logic.sh --module :feature-health   # one module's unit tests
 #   scripts/android-logic.sh --tests dev.omnesis.android.transport.dto.DtoDecodeTest
+#   scripts/android-logic.sh --module :wear --assemble   # the tests, then the module's debug APK
+#   scripts/android-logic.sh --task :app:testFullDebugUnitTest --task :wear:bundleRelease
+#                                                  # exactly these Gradle tasks, as a CI lane names them
+#   scripts/android-logic.sh --module :core-pairing --coverage   # the tests, then a logic coverage report
 #
 # Configuration (all optional except the host; generic defaults — nothing
 # operator-private is committed: the host alias / paths are read at runtime):
@@ -57,17 +61,63 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 # --- Arguments. ----------------------------------------------------------------
-# --module <m>       restrict to a single Gradle module's testDebugUnitTest.
+# --module <m>       restrict to a single Gradle module's unit-test task.
 # --tests <filter>   pass a --tests filter through to gradle.
+# --assemble         with --module on an application module, also package its
+#                    debug APK: the manifest merge, resource link and dexing a
+#                    unit-test task never runs.
+# --task <task>      run exactly this Gradle task instead of the lane's own
+#                    choice; repeat it to run several in one Gradle process.
+#                    It reproduces a CI lane whose tasks no other option
+#                    reaches: the other app edition's tests, a release bundle.
+# --keep-going       with --task, run every named task even after one fails.
+# --coverage         with --module :core-pairing, :core-transport or :app, also
+#                    write that module's logic coverage report and copy it back
+#                    (OMNESIS_ANDROID_LOGIC_COVERAGE_OUT, outside the checkout).
 MODULE=""
 TESTS_FILTER=""
+ASSEMBLE=""
+TASKS=()
+KEEP_GOING=""
+COVERAGE=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    --coverage) COVERAGE=1; shift ;;
     --module) shift; [[ -n "${1:-}" ]] || { echo "android-logic: --module needs a value" >&2; exit 64; }; MODULE="$1"; shift ;;
     --tests)  shift; [[ -n "${1:-}" ]] || { echo "android-logic: --tests needs a value" >&2; exit 64; }; TESTS_FILTER="$1"; shift ;;
+    --assemble) ASSEMBLE="1"; shift ;;
+    --task)
+      shift
+      # A task path and nothing else: the value is interpolated into the
+      # command the host runs.
+      [[ "${1:-}" =~ ^:?[A-Za-z][A-Za-z0-9:_-]*$ ]] || { echo "android-logic: --task needs a Gradle task path" >&2; exit 64; }
+      TASKS+=("$1"); shift ;;
+    --keep-going) KEEP_GOING="1"; shift ;;
     *) echo "android-logic: unknown argument '$1'" >&2; exit 64 ;;
   esac
 done
+# The module and test filter are interpolated into the command the host runs.
+[[ -z "$MODULE" || "$MODULE" =~ ^:?[a-zA-Z0-9_-]+$ ]] || { echo "android-logic: unsupported module characters" >&2; exit 64; }
+[[ -z "$TESTS_FILTER" || "$TESTS_FILTER" =~ ^[a-zA-Z0-9_:.*/=-]+$ ]] || { echo "android-logic: unsupported test filter characters" >&2; exit 64; }
+if [[ -n "$ASSEMBLE" && -z "$MODULE" ]]; then
+  echo "android-logic: --assemble needs --module" >&2
+  exit 64
+fi
+if [[ ${#TASKS[@]} -gt 0 && ( -n "$MODULE" || -n "$ASSEMBLE" ) ]]; then
+  echo "android-logic: --task names the tasks itself; it does not combine with --module or --assemble" >&2
+  exit 64
+fi
+if [[ -n "$KEEP_GOING" && ${#TASKS[@]} -eq 0 ]]; then
+  echo "android-logic: --keep-going needs --task" >&2
+  exit 64
+fi
+if [[ "$COVERAGE" == 1 && ${#TASKS[@]} -gt 0 ]]; then
+  echo "android-logic: --coverage reports on one --module's tests; it does not combine with --task" >&2
+  exit 64
+fi
+if [[ "$COVERAGE" == 1 && "${MODULE#:}" != "core-pairing" && "${MODULE#:}" != "core-transport" && "${MODULE#:}" != "app" ]]; then
+  echo "android-logic: --coverage requires --module :core-pairing, :core-transport or :app" >&2; exit 64
+fi
 
 # --- Configuration (generic env, fail-loud on the host). -----------------------
 HOST="${OMNESIS_EPIC_MACOS_HOST:-}"
@@ -126,20 +176,54 @@ fi
 # --- Pick the Gradle tasks. ----------------------------------------------------
 # Default = the pure-logic JVM modules whose testDebugUnitTest needs NO emulator
 # and NO Robolectric Compose render: the transport decoders/clients, pairing,
-# the design-system markdown logic, and the phone setup flow engine. (The :app and :feature-health modules
+# the design-system markdown logic, the phone setup flow engine, the watch
+# relay contract, and the Wear OS app's logic. (The :app and :feature-health modules
 # also have logic tests, but they share a module with the slow Roborazzi
 # screenshot lane — narrow to them with --module + --tests when needed.)
-if [[ -n "$MODULE" ]]; then
-  if [[ "$MODULE" == ":app" || "$MODULE" == "app" ]]; then
-    GRADLE_TASKS=":app:testPlayDebugUnitTest"
+# A plain Kotlin/JVM module (no Android plugin) has a single `test` task rather
+# than per-variant ones; it is recognised by the plugin its build script applies.
+unit_test_task() {
+  local module=":${1#:}"
+  local build_script="$ROOT/android/${module#:}/build.gradle.kts"
+  if [[ "$module" == ":app" ]]; then
+    echo ":app:testPlayDebugUnitTest"
+  elif [[ -f "$build_script" ]] && grep -q 'libs\.plugins\.kotlin\.jvm' "$build_script"; then
+    echo "$module:test"
   else
-    GRADLE_TASKS="$MODULE:testDebugUnitTest"
+    echo "$module:testDebugUnitTest"
   fi
-else
-  GRADLE_TASKS=":core-transport:testDebugUnitTest :core-pairing:testDebugUnitTest :core-designsystem:testDebugUnitTest :core-setup:testDebugUnitTest"
-fi
+}
+# The debug APK task of an application module. The phone app has two editions;
+# the one unit tests run against is the one assembled.
+assemble_task() {
+  local module=":${1#:}"
+  if [[ "$module" == ":app" ]]; then
+    echo ":app:assemblePlayDebug"
+  else
+    echo "$module:assembleDebug"
+  fi
+}
 GRADLE_EXTRA=""
 [[ -n "$TESTS_FILTER" ]] && GRADLE_EXTRA="--tests $TESTS_FILTER"
+if [[ ${#TASKS[@]} -gt 0 ]]; then
+  GRADLE_TASKS="${TASKS[*]}"
+  # The Kotlin daemon heap the CI lanes give a build that compiles both app
+  # editions at once; the 2g from gradle.properties runs out now and then.
+  GRADLE_EXTRA="$GRADLE_EXTRA -Pkotlin.daemon.jvmargs=-Xmx3g"
+  [[ -n "$KEEP_GOING" ]] && GRADLE_EXTRA="$GRADLE_EXTRA --continue"
+elif [[ -n "$MODULE" ]]; then
+  GRADLE_TASKS="$(unit_test_task "$MODULE")"
+  # A --tests filter belongs to the test task, so the assemble task follows it.
+  if [[ -n "$ASSEMBLE" ]]; then
+    GRADLE_EXTRA="$GRADLE_EXTRA $(assemble_task "$MODULE")"
+  fi
+else
+  GRADLE_TASKS=":core-transport:testDebugUnitTest :core-pairing:testDebugUnitTest :core-designsystem:testDebugUnitTest :core-setup:testDebugUnitTest :core-wear-protocol:test :wear-core:test"
+fi
+COVERAGE_TASK=""
+if [[ "$COVERAGE" == 1 ]]; then
+  COVERAGE_TASK=":${MODULE#:}:logicCoverageReport -PomnesisCoverage=true"
+fi
 
 echo "→ macOS host:        $HOST"
 echo "→ warm scratch:      $RESOLVED_TARGET (persistent — Gradle cache reused)"
@@ -192,7 +276,18 @@ ssh "$HOST" "bash -lc '
   export ANDROID_SDK_ROOT=\"\$ANDROID_HOME\"
   export PATH=\"\$JAVA_HOME/bin:\$PATH\"
   [ -x ./gradlew ] || { echo \"./gradlew not found in \$(pwd)\" >&2; exit 1; }
-  ./gradlew $GRADLE_TASKS $GRADLE_EXTRA --build-cache --configuration-cache
+  ./gradlew $GRADLE_TASKS $GRADLE_EXTRA $COVERAGE_TASK --build-cache --configuration-cache
 '" || fail "the Android JVM-only logic lane failed on '$HOST' (compile or test failure)"
+
+if [[ "$COVERAGE" == 1 ]]; then
+  COVERAGE_OUT="${OMNESIS_ANDROID_LOGIC_COVERAGE_OUT:-$(mktemp -d "${TMPDIR:-/tmp}/omnesis-android-coverage.XXXXXX")}"
+  mkdir -p "$COVERAGE_OUT"
+  COVERAGE_OUT="$(cd "$COVERAGE_OUT" && pwd -P)"
+  case "$COVERAGE_OUT" in "$ROOT"|"$ROOT"/*) fail "coverage output must be outside the checkout" ;; esac
+  rsync -az "$HOST:$RESOLVED_TARGET/android/${MODULE#:}/build/reports/logic-coverage/" "$COVERAGE_OUT/" \
+    || fail "could not retrieve the Android coverage report"
+  [[ -s "$COVERAGE_OUT/coverage.xml" ]] || fail "Android coverage report is missing or empty"
+  echo "→ Android coverage report: $COVERAGE_OUT/coverage.xml"
+fi
 
 echo "✓ Android pure-logic JVM test lane passed on $HOST — emulator-less, fast feedback."

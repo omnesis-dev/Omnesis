@@ -118,6 +118,7 @@ describe("shared temporal substrate (real gateway)", () => {
     server = await startScriptedLoopModelServer({ behaviors: new Map() });
     harness = new SyntheticE2EHarness({
       gatewayMode: "experimental",
+      labFeatures: { brain: true, tasks: true, watches: true },
       universe: "e2e-minimal",
       embedderBackend: "fake",
       // The unified temporal window sits behind the Brain gate; assigning a

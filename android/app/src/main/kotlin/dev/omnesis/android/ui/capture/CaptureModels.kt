@@ -13,6 +13,9 @@ object CaptureSurface {
 
     fun unified(surface: String): Boolean = surface == TILE || surface == VOICE_SHORTCUT
 
+    /** A note or recording made on a paired Wear OS watch and relayed through this phone. */
+    const val WATCH = "android-watch"
+
     /** Capture launched by a Gemini or Google Assistant App Action. */
     const val ASSISTANT = "android-assistant"
 
@@ -24,6 +27,12 @@ object CaptureSurface {
 enum class SpeechState {
     /** Mic idle — tap to (re)start listening; typing always works. */
     IDLE,
+
+    /**
+     * Dictation was asked for and is about to start: the app has just started and is
+     * still learning what its gateway offers. The microphone is not open yet.
+     */
+    PREPARING,
 
     /** Actively recognizing; partial results stream into the text field. */
     LISTENING,

@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 /**
- * Tests for the merge-adjudication steward surface:
+ * Tests for the merge-adjudication Brain surface:
  *
  *   - runMergeAdjudicationEnqueuePass: per-candidate dedupe key,
  *     adjudicated/re-detected filtering, self skip, cadence gate,

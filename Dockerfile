@@ -67,9 +67,10 @@ COPY scripts/native-runtime-preflight.mjs scripts/native-vector-compat.mjs scrip
 COPY scripts/ci/npm-ci.sh scripts/ci/npm-ci.sh
 COPY scripts/runtime/ scripts/runtime/
 COPY scripts/release/ scripts/release/
-# Published builds set this so an image cannot ship without ffmpeg-static, which
-# npm drops without an error when its binary download fails (scripts/ci/npm-ci.sh).
-ARG NPM_CI_REQUIRE_FFMPEG=0
+# Published builds set this so an image cannot ship without an optional package
+# npm dropped without an error, such as DuckDB's platform binary or ffmpeg-static
+# (scripts/ci/npm-ci.sh).
+ARG NPM_CI_REQUIRE_OPTIONAL=0
 # The root prepare hook installs git hooks and the root postinstall runs
 # patch-package, a devDependency that `--omit=dev` leaves out. The native-runtime
 # compatibility preinstall remains, as do dependency lifecycle scripts.

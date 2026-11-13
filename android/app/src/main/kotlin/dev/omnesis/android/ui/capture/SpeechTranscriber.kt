@@ -17,6 +17,8 @@ import android.util.Log
 import androidx.annotation.RequiresApi
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
+import kotlin.coroutines.resume
+import kotlinx.coroutines.suspendCancellableCoroutine
 
 /**
  * Thin wrapper over the platform [SpeechRecognizer] for quick-capture dictation.
@@ -24,10 +26,15 @@ import javax.inject.Inject
  * recognition service decides whether that preference can be honored. All calls
  * must come from the main thread — the platform recognizer requires it. Open so
  * ViewModel tests can substitute a scripted fake for the platform recognizer.
+ *
+ * Vocabulary hints go only to the on-device recognizer, and only once [support] has
+ * confirmed it has the language; the default recognizer, which may be a cloud service,
+ * never receives them. [prepare] earns that confirmation ahead of the first session.
  */
 open class SpeechTranscriber @Inject constructor(
     @ApplicationContext private val context: Context,
     private val vocabulary: dev.omnesis.android.voice.SpeechVocabulary = dev.omnesis.android.voice.SpeechVocabulary(),
+    private val support: OnDeviceSpeechSupport = OnDeviceSpeechSupport(),
 ) {
 
     interface Listener {
@@ -74,9 +81,6 @@ open class SpeechTranscriber @Inject constructor(
     private var recognizer: RecognizerBackend? = null
     internal var factory: RecognizerFactory = PlatformRecognizerFactory(context)
     private var purpose = "dictation"
-    private val supportedLocales = mutableMapOf<String, Long>()
-    private val checkedLocales = mutableMapOf<String, Long>()
-    private val supportProbes = mutableMapOf<RecognizerBackend, String>()
     private val handler = android.os.Handler(android.os.Looper.getMainLooper())
 
     /** Context for this capture, independent of whether gateway voice-note storage is enabled. */
@@ -85,26 +89,22 @@ open class SpeechTranscriber @Inject constructor(
         purpose = value
     }
 
-    @RequiresApi(Build.VERSION_CODES.TIRAMISU)
-    private fun preflight(locale: String) {
-        val now = android.os.SystemClock.elapsedRealtime()
-        if (checkedLocales[locale]?.let { now - it < 300_000 } == true) return
-        checkedLocales.clear()
-        checkedLocales[locale] = now
-        supportedLocales.keys.retainAll(setOf(locale))
-        val probe = runCatching { factory.onDevice() }.getOrNull() ?: return
-        supportProbes[probe] = locale
-        val release = Runnable { if (supportProbes.remove(probe) != null) probe.destroy() }
-        handler.postDelayed(release, 10_000)
-        try {
-            probe.support(speechIntent(emptyList(), null, locale)) { installed ->
-                if (probe in supportProbes && installed?.any { it.equals(locale, ignoreCase = true) } == true) {
-                    supportedLocales[locale] = android.os.SystemClock.elapsedRealtime()
-                }
-                handler.removeCallbacks(release)
-                release.run()
+    /**
+     * Checks, ahead of any recognition session, whether the on-device recognizer has the
+     * device language, and suspends until the answer is in — so the first session can be
+     * given vocabulary hints instead of only the second. Returns at once when there are no
+     * hints to give or no on-device recognizer to ask. Callers that hold up a capture on
+     * this bound the wait themselves.
+     */
+    open suspend fun prepare() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
+        val locale = Locale.getDefault().toLanguageTag()
+        if (PURPOSES.none { vocabulary.cache.phrases(it, locale).isNotEmpty() } || !factory.onDeviceAvailable()) return
+        suspendCancellableCoroutine { continuation ->
+            support.check(factory, locale, speechIntent(emptyList(), null, locale)) {
+                if (continuation.isActive) continuation.resume(Unit)
             }
-        } catch (_: Exception) { handler.removeCallbacks(release); release.run() }
+        }
     }
 
     /** The pipe the current session reads from, when the app is recording the microphone itself. */
@@ -131,7 +131,7 @@ open class SpeechTranscriber @Inject constructor(
         val hints = vocabulary.cache.phrases(purpose, locale)
         val onDeviceAvailable = Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
             hints.isNotEmpty() && factory.onDeviceAvailable()
-        val local = if (onDeviceAvailable && supportedLocales[locale]?.let { android.os.SystemClock.elapsedRealtime() - it < 300_000 } == true) {
+        val local = if (onDeviceAvailable && support.confirmed(locale)) {
             runCatching { factory.onDevice() }.getOrNull()
         } else null
         val r = local ?: factory.default()
@@ -154,7 +154,7 @@ open class SpeechTranscriber @Inject constructor(
                     Log.i(TAG, "Speech recognition ended with error $error")
                 }
                 if (local != null && (error == SpeechRecognizer.ERROR_LANGUAGE_UNAVAILABLE || error == SpeechRecognizer.ERROR_LANGUAGE_NOT_SUPPORTED)) {
-                    supportedLocales.remove(locale)
+                    support.revoke(locale)
                     // The caller's existing bounded retry starts the default provider unhinted.
                     // Do not replay consumed audio or reopen the microphone here.
                     listener.onEnded(EndReason.FAULT)
@@ -169,8 +169,11 @@ open class SpeechTranscriber @Inject constructor(
             override fun onEvent(eventType: Int, params: Bundle?) = Unit
         })
         r.start(speechIntent(if (local != null) hints else emptyList(), audio, if (local != null) locale else null))
-        // Support discovery does no microphone work and never holds up microphone startup.
-        if (onDeviceAvailable && local == null) handler.post { if (recognizer === r) preflight(locale) }
+        // A session that could not be hinted asks again for the next one. The check does no
+        // microphone work and never holds up microphone startup.
+        if (onDeviceAvailable && local == null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            handler.post { if (recognizer === r) support.check(factory, locale, speechIntent(emptyList(), null, locale)) }
+        }
     }
 
     /** Biasing strings are supplied only by the verified on-device branch above. */
@@ -198,11 +201,6 @@ open class SpeechTranscriber @Inject constructor(
 
     /** Abandons the session without waiting for results and releases the recognizer. */
     open fun cancel() {
-        supportProbes.forEach { (probe, locale) ->
-            checkedLocales.remove(locale)
-            probe.destroy()
-        }
-        supportProbes.clear()
         handler.removeCallbacksAndMessages(null)
         recognizer?.let {
             it.cancel()
@@ -232,6 +230,7 @@ open class SpeechTranscriber @Inject constructor(
 
     private companion object {
         const val TAG = "Omnesis:capture"
+        val PURPOSES = listOf("dictation", "agent")
     }
 }
 

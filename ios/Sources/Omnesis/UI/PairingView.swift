@@ -32,23 +32,68 @@ struct PairingView: View {
     @State private var isPairing = false
     @State private var showingPasteJSON = false
     @State private var manualJSON = ""
+    @State private var showingGoogleSignIn = false
+    @State private var showingScanner = false
     /// Decoded payload waiting for user confirmation. We show a sheet
     /// with host + fingerprint and require an explicit "Pair" tap
     /// before persisting any token — protects against a malicious QR
     /// silently steering the app at a hostile gateway.
     @State private var pendingPayload: PairingPayload?
+    private let googleConfiguration: GoogleCloudPairingConfiguration?
+    private let accountConfiguration: AccountCloudPairingConfiguration?
 
-    init(initialGatewayURL: URL? = nil) {
+    init(
+        initialGatewayURL: URL? = nil,
+        googleConfiguration: GoogleCloudPairingConfiguration? = .configured(),
+        accountConfiguration: AccountCloudPairingConfiguration? = .configured()
+    ) {
         _manualGatewayUrl = State(initialValue: initialGatewayURL?.absoluteString ?? "")
+        self.googleConfiguration = googleConfiguration
+        self.accountConfiguration = accountConfiguration
     }
 
     var body: some View {
         NavigationStack {
-            scannerStep
+            if let accountConfiguration {
+                accountEntry(accountConfiguration)
+            } else {
+                presentations(scanner(pushed: false))
+            }
         }
     }
 
-    private var scannerStep: some View {
+    /// With an Omnesis account available, pairing opens on the two ways to connect. The camera
+    /// starts only once the person picks the QR code.
+    private func accountEntry(_ configuration: AccountCloudPairingConfiguration) -> some View {
+        presentations(
+            AccountCloudPairingView(
+                configuration: configuration,
+                onScan: { showingScanner = true },
+                onManual: { showingManualEntry = true }
+            )
+            .overlay { pairingProgress }
+            .navigationDestination(isPresented: $showingScanner) { scanner(pushed: true) }
+        )
+    }
+
+    @ViewBuilder
+    private var pairingProgress: some View {
+        if isPairing {
+            Color.black.opacity(0.4).ignoresSafeArea()
+            VStack(spacing: 12) {
+                ProgressView().controlSize(.large)
+                Text("Pairing…").foregroundStyle(.white).font(.headline)
+            }
+        }
+    }
+
+    /// The Google-only sign-in of a build without an Omnesis account configuration.
+    private var legacyGoogle: GoogleCloudPairingConfiguration? {
+        accountConfiguration == nil ? googleConfiguration : nil
+    }
+
+    /// `pushed` is the scanner opened from the account entry. Cancel and the sign-in choices stay on that entry.
+    private func scanner(pushed: Bool) -> some View {
         ZStack {
             QRScannerRepresentable(onRead: handleRead, onError: { scanError = $0 })
                 .ignoresSafeArea()
@@ -59,22 +104,28 @@ struct PairingView: View {
                     .padding()
             }
 
-            if isPairing {
-                Color.black.opacity(0.4).ignoresSafeArea()
-                VStack(spacing: 12) {
-                    ProgressView().controlSize(.large)
-                    Text("Pairing…").foregroundStyle(.white).font(.headline)
-                }
-            }
+            pairingProgress
         }
-        .navigationTitle("Pair with your gateway")
+        .navigationTitle(pushed ? "Scan the QR code" : "Pair with your gateway")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
-            ToolbarItem(placement: .cancellationAction) {
-                Button("Cancel") { dismiss() }
+            if !pushed {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                }
             }
             ToolbarItem(placement: .primaryAction) {
                 Menu {
+                    if legacyGoogle != nil {
+                        Button { showingGoogleSignIn = true } label: {
+                            Label {
+                                Text("Sign in with Google")
+                            } icon: {
+                                Image("GoogleSignInMark").renderingMode(.original)
+                            }
+                        }
+                        .accessibilityIdentifier("pairing.google.menuSignIn")
+                    }
                     Button("Enter code manually") { showingManualEntry = true }
                     Button("Paste JSON") { showingPasteJSON = true }
                 } label: {
@@ -83,37 +134,47 @@ struct PairingView: View {
                 .accessibilityIdentifier("pairing.moreOptions")
             }
         }
-        .sheet(isPresented: $showingManualEntry) {
-            manualEntrySheet
-        }
-        .sheet(isPresented: $showingPasteJSON) {
-            pasteJSONSheet
-        }
-        .sheet(isPresented: Binding(
-            get: { pendingPayload != nil },
-            set: { if !$0 { pendingPayload = nil } }
-        )) {
-            if let payload = pendingPayload {
-                PairingConfirmationSheet(
-                    payload: payload,
-                    isPairing: isPairing,
-                    onCancel: { pendingPayload = nil },
-                    onConfirm: {
-                        let pending = payload
-                        pendingPayload = nil
-                        Task { await pair(payload: pending) }
-                    }
-                )
+    }
+
+    /// The sheets and the alert every pairing step shares, attached once to the root step.
+    private func presentations(_ content: some View) -> some View {
+        content
+            .sheet(isPresented: $showingManualEntry) {
+                manualEntrySheet
             }
-        }
-        .alert("Scan error", isPresented: Binding(
-            get: { scanError != nil },
-            set: { if !$0 { scanError = nil } }
-        )) {
-            Button("OK", role: .cancel) { scanError = nil }
-        } message: {
-            Text(scanError ?? "")
-        }
+            .sheet(isPresented: $showingGoogleSignIn) {
+                if let configuration = legacyGoogle {
+                    GoogleCloudPairingView(configuration: configuration)
+                }
+            }
+            .sheet(isPresented: $showingPasteJSON) {
+                pasteJSONSheet
+            }
+            .sheet(isPresented: Binding(
+                get: { pendingPayload != nil },
+                set: { if !$0 { pendingPayload = nil } }
+            )) {
+                if let payload = pendingPayload {
+                    PairingConfirmationSheet(
+                        payload: payload,
+                        isPairing: isPairing,
+                        onCancel: { pendingPayload = nil },
+                        onConfirm: {
+                            let pending = payload
+                            pendingPayload = nil
+                            Task { await pair(payload: pending) }
+                        }
+                    )
+                }
+            }
+            .alert("Scan error", isPresented: Binding(
+                get: { scanError != nil },
+                set: { if !$0 { scanError = nil } }
+            )) {
+                Button("OK", role: .cancel) { scanError = nil }
+            } message: {
+                Text(scanError ?? "")
+            }
     }
 
     private var overlay: some View {
@@ -124,6 +185,10 @@ struct PairingView: View {
                 .font(.footnote.bold().monospaced())
             Text("Then scan the QR code shown in the terminal.")
                 .font(.footnote)
+            if legacyGoogle != nil {
+                GoogleSignInButton { showingGoogleSignIn = true }
+                    .accessibilityIdentifier("pairing.google.open")
+            }
         }
         .padding()
         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 14))
@@ -319,52 +384,76 @@ struct PairingConfirmationSheet: View {
     let isPairing: Bool
     let onCancel: () -> Void
     let onConfirm: () -> Void
+    /// The scrolling layout fits the longer key text a cloud build can show.
+    var cloudRelayEnabled = CloudRelayFeature.enabled
 
     var body: some View {
         NavigationStack {
-            VStack(alignment: .leading, spacing: Theme.Spacing.lg) {
-                Text("Confirm pairing")
-                    .font(.title2.bold())
-                    .foregroundStyle(Theme.textPrimary)
-
-                Text("About to pair with:")
-                    .font(.subheadline)
-                    .foregroundStyle(Theme.textSecondary)
-
-                hostCard
-                fingerprintCard
-
-                Spacer()
-
-                HStack(spacing: Theme.Spacing.md) {
-                    Button(action: onCancel) {
-                        Text("Cancel")
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, Theme.Spacing.md)
-                            .background(Theme.bgTertiary)
-                            .foregroundStyle(Theme.textPrimary)
-                            .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.large))
+            Group {
+                if cloudRelayEnabled {
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: Theme.Spacing.lg) {
+                            summary
+                            actions
+                        }
+                        .padding(Theme.Spacing.lg)
+                        .frame(maxWidth: .infinity, alignment: .topLeading)
                     }
-                    .disabled(isPairing)
+                } else {
+                    VStack(alignment: .leading, spacing: Theme.Spacing.lg) {
+                        summary
 
-                    Button(action: onConfirm) {
-                        Text(isPairing ? "Pairing…" : "Pair")
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, Theme.Spacing.md)
-                            .background(Theme.accent)
-                            .foregroundStyle(.white)
-                            .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.large))
+                        Spacer()
+
+                        actions
                     }
-                    .disabled(isPairing)
-                    .accessibilityIdentifier("pairing.confirm")
+                    .padding(Theme.Spacing.lg)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                 }
             }
-            .padding(Theme.Spacing.lg)
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             .background(Theme.bgPrimary.ignoresSafeArea())
             .navigationBarTitleDisplayMode(.inline)
         }
         .omnesisColorScheme()
+    }
+
+    @ViewBuilder
+    private var summary: some View {
+        Text("Confirm pairing")
+            .font(.title2.bold())
+            .foregroundStyle(Theme.textPrimary)
+
+        Text("About to pair with:")
+            .font(.subheadline)
+            .foregroundStyle(Theme.textSecondary)
+
+        hostCard
+        fingerprintCard
+    }
+
+    private var actions: some View {
+        HStack(spacing: Theme.Spacing.md) {
+            Button(action: onCancel) {
+                Text("Cancel")
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, Theme.Spacing.md)
+                    .background(Theme.bgTertiary)
+                    .foregroundStyle(Theme.textPrimary)
+                    .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.large))
+            }
+            .disabled(isPairing)
+
+            Button(action: onConfirm) {
+                Text(isPairing ? "Pairing…" : "Pair")
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, Theme.Spacing.md)
+                    .background(Theme.accent)
+                    .foregroundStyle(.white)
+                    .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.large))
+            }
+            .disabled(isPairing)
+            .accessibilityIdentifier("pairing.confirm")
+        }
     }
 
     private var hostCard: some View {
@@ -417,11 +506,24 @@ struct PairingConfirmationSheet: View {
                     .font(.caption)
                     .foregroundStyle(Theme.textSecondary)
                 } else if let formatted = fingerprintFormatted {
-                    Text(formatted)
-                        .font(Theme.monospace(size: 12))
-                        .foregroundStyle(Theme.textPrimary)
-                        .textSelection(.enabled)
-                        .lineLimit(4)
+                    if trustPresentation == .pinnedKey {
+                        Text("Gateway public key fingerprint").font(.subheadline.bold()).foregroundStyle(Theme.textPrimary)
+                        Text("The gateway keeps this key when its HTTPS certificate renews.").font(.caption)
+                            .foregroundStyle(Theme.textSecondary)
+                    }
+                    if cloudRelayEnabled {
+                        Text(formatted)
+                            .font(.system(.footnote, design: .monospaced))
+                            .foregroundStyle(Theme.textPrimary)
+                            .textSelection(.enabled)
+                            .fixedSize(horizontal: false, vertical: true)
+                    } else {
+                        Text(formatted)
+                            .font(Theme.monospace(size: 12))
+                            .foregroundStyle(Theme.textPrimary)
+                            .textSelection(.enabled)
+                            .lineLimit(4)
+                    }
                 } else {
                     Text(legacyUsesHTTPS ? "System-trusted HTTPS (legacy)" : "Unencrypted (legacy payload)")
                         .font(.subheadline.bold())
@@ -453,17 +555,17 @@ struct PairingConfirmationSheet: View {
     private var fingerprintHex: String? {
         switch payload {
         case .v4(let v4):
-            if case .pinnedLeaf(let fingerprint) = v4.tls {
-                fingerprint.lowercased()
-            } else {
-                nil
+            switch v4.tls {
+            case .pinnedLeaf(let fingerprint), .pinnedLeafStrict(let fingerprint): fingerprint.lowercased()
+            case .pinnedKeyStrict(let spki): spki.lowercased()
+            case .system: nil
             }
         case .v3(let v3): v3.fingerprint.lowercased()
         case .v2, .v1: nil
         }
     }
 
-    private enum TrustPresentation { case system, pinnedLeaf, legacy }
+    private enum TrustPresentation { case system, pinnedLeaf, pinnedKey, legacy }
 
     private var legacyUsesHTTPS: Bool {
         guard case .legacy = trustPresentation else { return false }
@@ -482,7 +584,8 @@ struct PairingConfirmationSheet: View {
         case .v4(let v4):
             switch v4.tls {
             case .system: .system
-            case .pinnedLeaf: .pinnedLeaf
+            case .pinnedLeaf, .pinnedLeafStrict: .pinnedLeaf
+            case .pinnedKeyStrict: .pinnedKey
             }
         case .v3: .pinnedLeaf
         case .v2, .v1: .legacy
@@ -514,6 +617,8 @@ struct PairingConfirmationSheet: View {
             switch v4.tls {
             case .system: "System-trusted HTTPS (V4)"
             case .pinnedLeaf: "TLS-pinned (V4)"
+            case .pinnedLeafStrict: "Verified gateway (V4)"
+            case .pinnedKeyStrict: "Verified gateway key (V4)"
             }
         case .v3: "TLS-pinned (V3)"
         case .v2: "Unpinned exchange (V2)"
@@ -522,121 +627,16 @@ struct PairingConfirmationSheet: View {
     }
 }
 
-/// Thin UIViewController wrapper around `AVCaptureSession`.
-@available(iOS 17.0, *)
-struct QRScannerRepresentable: UIViewControllerRepresentable {
-    let onRead: (String) -> Void
-    let onError: (String) -> Void
-
-    func makeUIViewController(context: Context) -> QRScannerViewController {
-        QRScannerViewController(onRead: onRead, onError: onError)
-    }
-
-    func updateUIViewController(_ uiViewController: QRScannerViewController, context: Context) {}
-}
-
-@available(iOS 17.0, *)
-final class QRScannerViewController: UIViewController, AVCaptureMetadataOutputObjectsDelegate {
-    private let onRead: (String) -> Void
-    private let onError: (String) -> Void
-    private let session = AVCaptureSession()
-    private var previewLayer: AVCaptureVideoPreviewLayer?
-    private var didDeliver = false
-
-    init(onRead: @escaping (String) -> Void, onError: @escaping (String) -> Void) {
-        self.onRead = onRead
-        self.onError = onError
-        super.init(nibName: nil, bundle: nil)
-    }
-
-    @available(*, unavailable)
-    required init?(coder: NSCoder) {
-        fatalError("init(coder:) not used")
-    }
-
-    override func viewDidLoad() {
-        super.viewDidLoad()
-        view.backgroundColor = .black
-        configureSession()
-    }
-
-    override func viewDidAppear(_ animated: Bool) {
-        super.viewDidAppear(animated)
-        guard !session.isRunning else { return }
-        // AVCaptureSession.startRunning() blocks until the session is
-        // configured — must not run on the main thread. Capture the
-        // session reference explicitly so the detached task doesn't
-        // touch main-actor-isolated `self` (Swift 6 strict concurrency).
-        let captureSession = session
-        Task.detached {
-            captureSession.startRunning()
-        }
-    }
-
-    override func viewWillDisappear(_ animated: Bool) {
-        super.viewWillDisappear(animated)
-        guard session.isRunning else { return }
-        let captureSession = session
-        Task.detached {
-            captureSession.stopRunning()
-        }
-    }
-
-    override func viewDidLayoutSubviews() {
-        super.viewDidLayoutSubviews()
-        previewLayer?.frame = view.bounds
-    }
-
-    private func configureSession() {
-        guard let device = AVCaptureDevice.default(for: .video) else {
-            onError("Camera not available. Tap the ⋯ menu to enter the pairing code manually.")
-            return
-        }
-        do {
-            let input = try AVCaptureDeviceInput(device: device)
-            guard session.canAddInput(input) else {
-                onError("Camera input unavailable.")
-                return
-            }
-            session.addInput(input)
-
-            let output = AVCaptureMetadataOutput()
-            guard session.canAddOutput(output) else {
-                onError("Metadata output unavailable.")
-                return
-            }
-            session.addOutput(output)
-            output.setMetadataObjectsDelegate(self, queue: .main)
-            output.metadataObjectTypes = [.qr]
-
-            let preview = AVCaptureVideoPreviewLayer(session: session)
-            preview.videoGravity = .resizeAspectFill
-            preview.frame = view.bounds
-            view.layer.addSublayer(preview)
-            previewLayer = preview
-        } catch {
-            onError("Camera error: \(error.localizedDescription)")
-        }
-    }
-
-    func metadataOutput(
-        _ output: AVCaptureMetadataOutput,
-        didOutput metadataObjects: [AVMetadataObject],
-        from connection: AVCaptureConnection
-    ) {
-        guard !didDeliver,
-              let object = metadataObjects.first as? AVMetadataMachineReadableCodeObject,
-              let raw = object.stringValue
-        else { return }
-        didDeliver = true
-        onRead(raw)
-    }
-}
-
 #if DEBUG
 @available(iOS 17.0, *)
 #Preview("Pairing") {
-    PairingView()
+    PairingView(googleConfiguration: PreviewMocks.googleCloudPairingConfiguration)
+        .environment(AppStore.preview())
+}
+
+@available(iOS 17.0, *)
+#Preview("Pairing — Omnesis account") {
+    PairingView(accountConfiguration: PreviewMocks.accountCloudPairingConfiguration)
         .environment(AppStore.preview())
 }
 
@@ -670,6 +670,28 @@ final class QRScannerViewController: UIViewController, AVCaptureMetadataOutputOb
         isPairing: false,
         onCancel: {},
         onConfirm: {}
+    )
+}
+
+@available(iOS 17.0, *)
+#Preview("Confirmation — V3 (pinned), cloud build") {
+    PairingConfirmationSheet(
+        payload: .v3(PreviewMocks.pairingPayloadV3),
+        isPairing: false,
+        onCancel: {},
+        onConfirm: {},
+        cloudRelayEnabled: true
+    )
+}
+
+@available(iOS 17.0, *)
+#Preview("Confirmation — V3 (pinned), default build") {
+    PairingConfirmationSheet(
+        payload: .v3(PreviewMocks.pairingPayloadV3),
+        isPairing: false,
+        onCancel: {},
+        onConfirm: {},
+        cloudRelayEnabled: false
     )
 }
 

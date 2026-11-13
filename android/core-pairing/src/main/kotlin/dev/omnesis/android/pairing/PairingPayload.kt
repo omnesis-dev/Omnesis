@@ -25,6 +25,8 @@ sealed interface PairingPayload {
     sealed interface V4Tls {
         data object System : V4Tls
         data class PinnedLeaf(val fingerprint: String) : V4Tls
+        data class PinnedLeafStrict(val fingerprint: String) : V4Tls
+        data class PinnedKeyStrict(val spkiFingerprint: String) : V4Tls
     }
 
     data class V4(val gatewayUrl: String, val pairingCode: String, val tls: V4Tls) : PairingPayload
@@ -34,7 +36,8 @@ sealed interface PairingPayload {
     data class V1(val url: String, val token: String, val accountId: String, val name: String) : PairingPayload
 
     companion object {
-        fun decode(raw: String): PairingPayload {
+        /** [cloudRelay] is off unless the build enables cloud connectivity; off, the strict trust modes are unknown. */
+        fun decode(raw: String, cloudRelay: Boolean = false): PairingPayload {
             val obj = runCatching { OmnesisJson.parseToJsonElement(raw).jsonObject }
                 .getOrElse { throw PairingPayloadException("invalid pairing payload: not JSON") }
 
@@ -49,16 +52,25 @@ sealed interface PairingPayload {
                     requireHttpsUrl(gatewayUrl)
                     val tls = runCatching { obj["tls"]?.jsonObject }.getOrNull()
                         ?: throw PairingPayloadException("missing field 'tls'")
-                    when (tls["mode"]?.jsonPrimitive?.contentOrNull) {
+                    val mode = tls["mode"]?.jsonPrimitive?.contentOrNull
+                    if (!cloudRelay && mode != "system" && mode != "pinned-leaf") throw PairingPayloadException("invalid TLS trust mode")
+                    when (mode) {
                         "system" -> {
                             requireHttpsOrigin(gatewayUrl)
                             V4(gatewayUrl, pairingCode, V4Tls.System)
                         }
-                        "pinned-leaf" -> {
+                        "pinned-key-strict" -> {
+                            val spki = tls["spkiFingerprint"]?.jsonPrimitive?.contentOrNull.orEmpty()
+                            requireNonEmpty(spki, "tls.spkiFingerprint")
+                            requireValidFingerprint(spki)
+                            V4(gatewayUrl, pairingCode, V4Tls.PinnedKeyStrict(spki))
+                        }
+                        "pinned-leaf", "pinned-leaf-strict" -> {
                             val fingerprint = tls["fingerprint"]?.jsonPrimitive?.contentOrNull.orEmpty()
                             requireNonEmpty(fingerprint, "tls.fingerprint")
                             requireValidFingerprint(fingerprint)
-                            V4(gatewayUrl, pairingCode, V4Tls.PinnedLeaf(fingerprint))
+                            V4(gatewayUrl, pairingCode, if (tls["mode"]?.jsonPrimitive?.contentOrNull == "pinned-leaf-strict")
+                                V4Tls.PinnedLeafStrict(fingerprint) else V4Tls.PinnedLeaf(fingerprint))
                         }
                         else -> throw PairingPayloadException("invalid TLS trust mode")
                     }

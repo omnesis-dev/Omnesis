@@ -53,6 +53,8 @@ import { normalizeSourceMetaIcons } from "../../icon-normalizer.js";
 import { getUrlCanonicalizers, getUrlCanonicalizerSpecs } from "../../url-canonicalizers.js";
 import { enforceWriteScopeForSource, enforceWriteScopeForSourceType } from "../scope.js";
 import { listLiveAnnotationsForDoc } from "../../brain/index.js";
+import { resolveBrainSettings } from "../../brain/config.js";
+import { docAnnotationIdsOnExcludedSources } from "../../brain/storage/annotations.js";
 import {
   countLiveDependentsForAnnotation,
   listLiveDependentsForAnnotation,
@@ -1505,6 +1507,8 @@ export class DocumentService {
       createdAt: string;
       verificationState: string | null;
       lastVerifiedAt: string | null;
+      /** Set when the background re-check never revisits this row; its stored state is not current. */
+      notRechecked?: "source_excluded";
       dependentCount: number;
       dependents?: Array<{ kind: "observation" | "loop"; id: string; title: string }>;
       sortCreatedAt: number;
@@ -1517,6 +1521,13 @@ export class DocumentService {
     });
     const hasMore = probe.length > options.limit;
     const annotations = hasMore ? probe.slice(0, options.limit) : probe;
+    const onExcludedSource = docAnnotationIdsOnExcludedSources(
+      this.deps.db,
+      annotations.map((annotation) => annotation.id),
+      this.deps.configStore
+        ? resolveBrainSettings(this.deps.configStore.get().brain).excludedSources
+        : [],
+    );
     return {
       hasMore,
       items: annotations.map((annotation) => {
@@ -1537,6 +1548,9 @@ export class DocumentService {
             annotation.lastVerifiedAt === null
               ? null
               : new Date(annotation.lastVerifiedAt).toISOString(),
+          ...(onExcludedSource.has(annotation.id)
+            ? { notRechecked: "source_excluded" as const }
+            : {}),
           dependentCount:
             dependents?.length ??
             countLiveDependentsForAnnotation(this.deps.db, "doc", annotation.id),

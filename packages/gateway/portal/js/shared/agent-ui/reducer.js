@@ -510,7 +510,7 @@ function historyPageSignature(messages) {
 }
 
 /**
- * Fold a stored Cognition Steward transcript's raw AgentEvent stream — the
+ * Fold a stored Brain transcript's raw AgentEvent stream — the
  * `CognitionRunTranscript.events` array of `{ type, payload }`, verbatim — into
  * the portal's `turn[]` shape for a STATIC, read-only render (the Cognition
  * debug transcript's Formatted view).
@@ -571,7 +571,7 @@ export function transcriptEventsToTurns(events) {
         break;
       }
       case "agent.user.message": {
-        // The interactive agent's user bubble. A steward transcript carries
+        // The interactive agent's user bubble. A brain transcript carries
         // none, but handle it so a reused stream still reads turn-by-turn.
         turns.push({
           id: payload.userMessageId ?? `u-${n++}`,

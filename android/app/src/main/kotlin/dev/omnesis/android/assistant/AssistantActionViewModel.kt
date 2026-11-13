@@ -15,11 +15,15 @@ import dev.omnesis.android.notes.QueueReason
 import dev.omnesis.android.ui.capture.CaptureSurface
 import dev.omnesis.android.ui.capture.SpeechTranscriber
 import dev.omnesis.android.voice.SilenceDetector
+import dev.omnesis.android.voice.SpeechReadiness
+import dev.omnesis.android.voice.SpeechWarmUp
 import dev.omnesis.android.voice.VoiceNoteSession
 import dev.omnesis.android.voice.VoiceNoteSessions
 import javax.inject.Inject
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 
 /**
@@ -31,6 +35,10 @@ import kotlinx.coroutines.launch
  * out of sight — its end of speech ends the capture and its words stand in if the
  * gateway cannot transcribe. When it cannot run on the recording, the
  * [SilenceDetector] ends the capture instead.
+ *
+ * The Assistant often starts the app cold, so listening waits for the [SpeechWarmUp]
+ * that began with this model. While it does, [preparing] is true and the overlay says
+ * so instead of inviting the person to speak into a microphone that is not open.
  */
 @HiltViewModel
 class AssistantActionViewModel @Inject constructor(
@@ -39,6 +47,7 @@ class AssistantActionViewModel @Inject constructor(
     private val transcriber: SpeechTranscriber,
     private val voiceNotes: VoiceNoteSessions,
     private val savedState: SavedStateHandle,
+    private val speechReadiness: SpeechReadiness = SpeechReadiness {},
 ) : ViewModel() {
     private val _state = MutableStateFlow<AssistantActionUiState>(
         AssistantActionUiState.Listening(AssistantActionKind.ASK),
@@ -59,6 +68,17 @@ class AssistantActionViewModel @Inject constructor(
 
     /** Set while the capture is recorded with no recognizer; it decides when speech ended. */
     private var silenceDetector: SilenceDetector? = null
+
+    /** Started with the model, so the wait overlaps the Activity's own start-up. */
+    private val speechWarmUp = SpeechWarmUp(viewModelScope, speechReadiness, transcriber::prepare)
+
+    /** A [startListening] held back until [speechWarmUp] ends. */
+    private var deferredListening: Job? = null
+
+    private val _preparing = MutableStateFlow(false)
+
+    /** Listening was asked for and is held back by the warm-up: the microphone is not open yet. */
+    val preparing: StateFlow<Boolean> = _preparing.asStateFlow()
 
     fun handle(intent: Intent, freshDelivery: Boolean, trustedDelivery: Boolean = false) {
         if (!freshDelivery && savedState.get<Boolean>(KEY_HANDLED) == true) {
@@ -113,6 +133,17 @@ class AssistantActionViewModel @Inject constructor(
     fun startListening() {
         val listening = _state.value as? AssistantActionUiState.Listening ?: return
         if (request == null) return
+        if (speechWarmUp.isActive) {
+            _preparing.value = true
+            if (deferredListening?.isActive == true) return
+            deferredListening = viewModelScope.launch {
+                speechWarmUp.join()
+                deferredListening = null
+                _preparing.value = false
+                startListening()
+            }
+            return
+        }
         if (listening.kind == AssistantActionKind.CAPTURE && voiceNote == null) {
             voiceNote = voiceNotes.begin()?.also {
                 it.listener = voiceNoteListener(it)
@@ -251,6 +282,9 @@ class AssistantActionViewModel @Inject constructor(
     }
 
     private fun cancelRecognition() {
+        deferredListening?.cancel()
+        deferredListening = null
+        _preparing.value = false
         recognitionGeneration++
         transcriber.cancel()
         silenceDetector = null

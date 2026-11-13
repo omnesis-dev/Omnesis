@@ -16,6 +16,7 @@ import { DOCUMENT_FIELD_SEMANTICS } from "@omnesis/source-sdk";
 import { isSafeUrlCanonicalizerPattern } from "../../known-url-pattern-safety.js";
 import { accountDescriptorSchema } from "./account-descriptor.js";
 import {
+  cloudRelayGated,
   deviceCapabilitySchema,
   deviceKindSchema,
   nonEmptyString,
@@ -163,7 +164,11 @@ export type RevokePairingBody = z.infer<typeof revokePairingBody>;
 export const pairQrBody = z.object({
   pairingCode: nonEmptyString,
   gatewayUrl: nonEmptyString,
-  trustMode: z.enum(["auto", "system", "pinned-leaf"]).optional(),
+  // The strict modes belong to the cloud relay and do not exist without it.
+  trustMode: cloudRelayGated(
+    z.enum(["auto", "system", "pinned-leaf", "pinned-leaf-strict", "pinned-key-strict"]),
+    z.enum(["auto", "system", "pinned-leaf"]),
+  ).optional(),
 });
 export type PairQrBody = z.infer<typeof pairQrBody>;
 

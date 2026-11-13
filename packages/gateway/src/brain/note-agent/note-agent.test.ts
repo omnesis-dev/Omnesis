@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { z } from "zod";
 import { HttpChatBackend } from "@omnesis/agent";
 import { createLogger, type AgentEvent, type ToolResult } from "@omnesis/core";
+import { setLabFlag } from "../../lab/store.js";
 import { createDevice } from "../../data/repositories/DeviceRepository.js";
 import { enqueueNotification } from "../../push/queue.js";
 import { createDatabase } from "../../db.js";
@@ -69,9 +70,12 @@ let db: Database.Database;
 
 beforeEach(() => {
   vi.stubEnv("OMNESIS_SYNTHETIC", "0");
-  vi.stubEnv("OMNESIS_EXPERIMENTAL", "0");
+  vi.stubEnv("OMNESIS_EXPERIMENTAL", "1");
   path = `/tmp/omnesis-test-${randomUUID()}.db`;
   db = createDatabase(path);
+  setLabFlag(db, "brain", false);
+  setLabFlag(db, "tasks", true);
+  setLabFlag(db, "watches", true);
 });
 afterEach(() => {
   vi.unstubAllEnvs();
@@ -3289,4 +3293,22 @@ describe("owner note edit revisions", () => {
     expect(writes).toBe(2);
     expect(getNoteRuns(db, [fresh]).get(fresh)?.priorUncertain).toBe(false);
   });
+});
+
+test("Tell Omnesis keeps memory and questions but withholds disabled Tasks and task context", async () => {
+  setLabFlag(db, "tasks", false);
+  const id = queueNote("Remember that I prefer the north entrance.");
+  let inspected = false;
+  const backend = toolCallingBackend((input) => {
+    inspected = true;
+    expect(input.tools.some((tool) => tool.name.startsWith("task_"))).toBe(false);
+    expect(input.systemPrompt).not.toContain("add it with task_create");
+    expect(input.systemPrompt).not.toContain("with task_list");
+    expect(input.systemPrompt).toContain("remember it with the memory tools");
+    return [];
+  }, "Saved your note.");
+  const { runner } = agent(backend);
+  expect(await runner.drain()).toBe(1);
+  expect(inspected).toBe(true);
+  expect(getNoteRuns(db, [id]).get(id)?.state).toBe("done");
 });

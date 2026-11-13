@@ -7,6 +7,7 @@ public enum TaskWidgetClientError: Error, Equatable {
     case insecureCredential
     case invalidResponse
     case unavailable
+    case featureDisabled
     case unauthorized
 }
 
@@ -22,12 +23,20 @@ public struct TaskWidgetClient: Sendable {
         if let request { self.request = request
             return
         }
-        let session: URLSession = if credential.tlsMode == "pinned-leaf", let pin = credential.fingerprint {
-            PinnedSession(fingerprintHex: pin, host: credential.url.host).session
+        let session: URLSession = if credential.tlsMode == "pinned-key-strict", let spki = credential.spkiFingerprint {
+            PinnedSession(spkiFingerprint: spki, host: credential.url.host, directRoute: credential.directRoute).session
+        } else if ["pinned-leaf", "pinned-leaf-strict"].contains(credential.tlsMode), let pin = credential.fingerprint {
+            PinnedSession(
+                fingerprintHex: pin,
+                host: credential.tlsMode == "pinned-leaf-strict" ? nil : credential.url.host,
+                requireCertificateValidity: credential.tlsMode == "pinned-leaf-strict",
+                directRoute: credential.directRoute
+            ).session
         } else {
             URLSession(configuration: .ephemeral)
         }
-        self.request = { try await session.data(for: $0) }
+        let owner = GatewayOwnedSession(session)
+        self.request = { try await owner.data(for: $0) }
     }
 
     public func fetch(now: Date = Date(), calendar: Calendar = .current) async throws -> TaskWidgetSnapshot {
@@ -76,6 +85,7 @@ public struct TaskWidgetClient: Sendable {
         guard let http = response as? HTTPURLResponse else { throw TaskWidgetClientError.invalidResponse }
         switch http.statusCode {
         case 200 ... 299: return data
+        case 404: throw TaskWidgetClientError.featureDisabled
         case 401, 403: throw TaskWidgetClientError.unauthorized
         default: throw TaskWidgetClientError.unavailable
         }

@@ -63,6 +63,12 @@ import { MoveConnectionDialog } from "./access/move-dialog.js";
 import { LEVEL_NAME_TAKEN_MESSAGE } from "./access/name-fields.js";
 import { PendingRequests } from "./access/pending-requests.js";
 import {
+  hostedClientsHint,
+  leadsWithLocalAddress,
+  relayPublicAddress,
+  useRelayStatus,
+} from "./access/public-address.js";
+import {
   accessLevels,
   connectionEntries,
   errorMessage,
@@ -99,6 +105,9 @@ export function AccessView({
   newLevel = false,
   connectOpen = false,
   completeInPortal = false,
+  // Whether the gateway advertises the optional cloud relay. Only then does the
+  // page read the relay's status, for the public address it gives the gateway.
+  cloudRelay = false,
   completeAuthorization = async (approvalId) => {
     const result = await completeAccessAuthorization(approvalId);
     globalThis.location.assign(result.redirectTo);
@@ -109,6 +118,8 @@ export function AccessView({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [connectLocal, setConnectLocal] = useState(false);
+  const relayStatus = useRelayStatus(cloudRelay, connectOpen || connectLocal);
+  const relay = relayPublicAddress(cloudRelay, relayStatus, overview.oauth);
   // The pending request under review, with the gateway's `connection`
   // proposal for it. The gateway sends a proposal with every pending request;
   // a lookup without one cannot be reviewed and the page says so.
@@ -596,6 +607,7 @@ export function AccessView({
   };
   const openConnect = () => setConnectLocal(true);
   const configHref = "/portal/settings/config";
+  const hostedHint = hostedClientsHint(relay);
 
   return html`
     <div class="access-view">
@@ -617,13 +629,17 @@ export function AccessView({
           : null}
       </header>
 
-      ${overviewReady && overview.oauth?.loopbackOnly
+      ${overviewReady && leadsWithLocalAddress(overview.oauth)
         ? html`<div class="access-oauth-blocker" role="status">
             <strong>Local agents can connect.</strong>
             <span>Use Connect an agent for clients running on the gateway’s machine.
               To connect from another machine, set <code>gateway.publicBaseUrl</code> on the${" "}
-              <a href=${configHref} onClick=${(event) => { event.preventDefault(); navigate(configHref); }}>Config tab</a>.
-              This can be a private network address; ChatGPT and Claude apps need an Internet-reachable address.
+              <a href=${configHref} onClick=${(event) => { event.preventDefault(); navigate(configHref); }}>Config tab</a>.${" "}
+              ${hostedHint
+                ? html`This can be a private network address. ${hostedHint.map((part) => typeof part === "string"
+                    ? part
+                    : html`<a href=${part.route} onClick=${(event) => { event.preventDefault(); navigate(part.route); }}>${part.text}</a>`)}`
+                : "This can be a private network address; ChatGPT and Claude apps need an Internet-reachable address."}
             </span>
           </div>`
         : null}
@@ -669,7 +685,7 @@ export function AccessView({
             }}
           />`}
 
-      ${connectVisible && html`<${ConnectAgentDialog} oauth=${overview.oauth} onClose=${closeConnect} />`}
+      ${connectVisible && html`<${ConnectAgentDialog} oauth=${overview.oauth} relay=${relay} onClose=${closeConnect} />`}
 
       ${movingEntry && html`<${MoveConnectionDialog}
         key=${movingEntry.grant.id}

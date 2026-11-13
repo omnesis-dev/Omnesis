@@ -82,6 +82,9 @@ public enum PushTarget: Equatable, Sendable {
     /// A generic MCP authorization request. It carries no request identifier
     /// or code: tapping it may only open the trusted short-code entry sheet.
     case accessAuthorization
+    case pairingRequests
+    /// A device joined this gateway by signing in. Opens the device list, where it can be removed.
+    case deviceJoined
     /// A finished agent turn whose answer outlived its spoken budget
     /// (a Siri ask handed off to the push channel) — deep-links into
     /// that conversation on the Agent surface.
@@ -109,6 +112,11 @@ public enum PushTarget: Equatable, Sendable {
 }
 
 extension PushTarget {
+    /// Targets whose destination is Settings → Devices.
+    var opensDevices: Bool {
+        self == .pairingRequests || self == .deviceJoined
+    }
+
     /// Short kind label safe for `.public` log interpolation — the case
     /// name only, never the associated ids (the privacy-approval id in
     /// particular is payload data and must stay redactable).
@@ -116,6 +124,8 @@ extension PushTarget {
         switch self {
         case .privacyApproval: "privacy-approval"
         case .accessAuthorization: "access-authorization"
+        case .pairingRequests: "device-pairing"
+        case .deviceJoined: "device-joined"
         case .agentAnswer: "agent-answer"
         case .watchFiring: "watch-firing"
         case .watch: "watch"
@@ -131,9 +141,14 @@ extension PushTarget {
     /// normal launch flow.
     /// One parser intentionally owns compatibility for canonical and legacy payloads.
     // swiftlint:disable:next cyclomatic_complexity
-    public static func fromUserInfo(_ userInfo: [AnyHashable: Any]) -> PushTarget? {
+    public static func fromUserInfo(
+        _ userInfo: [AnyHashable: Any],
+        cloudRelayEnabled: Bool = CloudRelayFeature.enabled
+    )
+        -> PushTarget? {
         guard let omnesis = userInfo["omnesis"] as? [String: Any] else { return nil }
         let kind = omnesis["kind"] as? String
+        if kind == "device-joined" { return cloudRelayEnabled ? .deviceJoined : nil }
         if let targetId = omnesis["targetId"] as? String, !targetId.isEmpty {
             switch kind {
             case "privacy-approval":
@@ -146,6 +161,8 @@ extension PushTarget {
                 return sourcePermissionTarget(sourceId: targetId, payload: omnesis)
             case "access-authorization":
                 return targetId == "access" ? .accessAuthorization : nil
+            case "device-pairing":
+                return cloudRelayEnabled && targetId == "pairing" ? .pairingRequests : nil
             default: break
             }
         }

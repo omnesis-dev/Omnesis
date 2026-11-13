@@ -8,6 +8,7 @@ import {
   type WhisperRequestHeader,
   type WhisperWorkerMessage,
 } from "./whisper-worker-protocol.js";
+import { LOCAL_WHISPER_UNAVAILABLE } from "./whisper-transcriber.js";
 import type { WhisperWorkerProcess, WhisperWorkerSpawner } from "./whisper-transcriber.js";
 import type { ResolvedAssignment, TranscriptionVocabulary } from "@omnesis/core";
 
@@ -383,7 +384,7 @@ describe("TranscribeService", () => {
       runnable: false,
       reason: "Checking for the local transcription runtime.",
     });
-    await vi.waitFor(() => expect(svc.readiness().reason).toMatch(/smart-whisper/));
+    await vi.waitFor(() => expect(svc.readiness().reason).toBe(LOCAL_WHISPER_UNAVAILABLE));
     expect(svc.readiness().runnable).toBe(false);
     svc.readiness();
     expect(probes).toBe(1);

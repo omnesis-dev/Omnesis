@@ -69,6 +69,15 @@ describe("AnnotationList", () => {
     expect(verify).toContain("2d ago");
   });
 
+  test("a row on an excluded source says it is not re-checked, not its stale state", () => {
+    const nodes = expandToHostNodes(
+      AnnotationList({ annotations: [{ ...ANN, notRechecked: "source_excluded" }] }),
+    );
+    const verify = nodes.find((n) => n.class === "meta-annotation-verify")?.text.trim();
+    expect(verify).toBe("not re-checked · source excluded");
+    expect(verify).not.toContain("2d ago");
+  });
+
   test("a verification stamp without a check time renders the bare state", () => {
     const nodes = expandToHostNodes(
       AnnotationList({
@@ -115,8 +124,8 @@ describe("AnnotationList", () => {
     const summary = nodes.find((n) => n.tag === "summary");
     expect(summary?.text.trim()).toBe("2 dependent outputs");
     const links = nodes.filter((n) => n.class === "meta-annotation-dependent");
-    expect(links[0].href).toBe("/portal/debug/cognition/observations/obs_1");
-    expect(links[1].href).toBe("/portal/debug/cognition/knowledge/loop_1?kind=loop");
+    expect(links[0].href).toBe("/portal/debug/brain/observations/obs_1");
+    expect(links[1].href).toBe("/portal/debug/brain/knowledge/loop_1?kind=loop");
     expect(nodes.some((n) => n.markup?.includes("kn-link-icon--observation"))).toBe(true);
     expect(nodes.some((n) => n.markup?.includes("kn-link-icon--loop"))).toBe(true);
     expect(links.map((l) => l.text.trim())).toEqual([

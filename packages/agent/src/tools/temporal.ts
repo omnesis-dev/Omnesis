@@ -5,7 +5,7 @@
  * `temporal_query` — the shared READ-ONLY temporal query. The gateway composes
  * deterministic, immutable source projections, date mentions found in
  * document text, and LLM-owned temporal annotations behind this one surface.
- * Annotation mutation remains exclusive to the background Cognition Steward.
+ * Annotation mutation remains exclusive to the background Brain.
  *
  * The agent queries by a window expressed in plain date terms; overlap (an entry
  * whose interval intersects the window) is resolved server-side. A point query

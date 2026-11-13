@@ -4,6 +4,7 @@
 // Load $OMNESIS_CONFIG_DIR/.env before any env read (incl. resolveGatewayUrl).
 import "./load-env.js";
 import { pathToFileURL } from "node:url";
+import { pairedGatewayRequestUrl, pairedLogicalGatewayUrl } from "@omnesis/cloud-relay/bootstrap";
 import {
   applyPrivateUmask,
   acquireUpdateLock,
@@ -40,6 +41,7 @@ import {
 import {
   HttpGatewayClient,
   GatewayWsClient,
+  PAIRED_TRANSPORT_WS_HEARTBEAT_TIMEOUT_MS,
   requireGatewaySourceContract,
 } from "@omnesis/gateway-client";
 import { defaultScopesForDeviceKind } from "@omnesis/types";
@@ -113,6 +115,16 @@ function ocrEnabledFromConfig(config: OmnesisConfig): boolean {
 }
 
 /**
+ * How long the device WebSocket may hear nothing before it reconnects. A
+ * collector that reaches its gateway through the paired transport notices a
+ * dead route sooner (see the tunable); every other collector keeps the
+ * client's default.
+ */
+export function wsHeartbeatTimeoutMs(): number | undefined {
+  return pairedGatewayRequestUrl() ? PAIRED_TRANSPORT_WS_HEARTBEAT_TIMEOUT_MS : undefined;
+}
+
+/**
  * Resolve the gateway URL the collector should connect to.
  *
  * Priority:
@@ -127,7 +139,7 @@ function ocrEnabledFromConfig(config: OmnesisConfig): boolean {
  * a fresh host can then trust the discovered gateway without a TTY prompt.
  */
 export async function resolveGatewayUrl(): Promise<{ url: string; fingerprint?: string }> {
-  const override = process.env.OMNESIS_GATEWAY_URL;
+  const override = pairedGatewayRequestUrl() ?? process.env.OMNESIS_GATEWAY_URL;
   if (override) return { url: override };
 
   if (process.env.OMNESIS_MDNS_DISABLE === "1") return { url: DEFAULT_GATEWAY_URL };
@@ -399,7 +411,10 @@ export async function resolveCollectorToken(
     const identity = await probeTokenIdentity(gatewayUrl, existing);
     const verdict = classifyCollectorAuth({
       status: identity.status,
-      everAuthenticated: credentialEverAuthenticated(persisted, { token: existing, gatewayUrl }),
+      everAuthenticated: credentialEverAuthenticated(persisted, {
+        token: existing,
+        gatewayUrl: pairedLogicalGatewayUrl(gatewayUrl),
+      }),
     });
     if (verdict === "authenticated") {
       // The gateway's name for this device is the one every command and the
@@ -460,7 +475,10 @@ export async function resolveCollectorToken(
       status: res.status,
       everAuthenticated:
         existingWasRefused ||
-        credentialEverAuthenticated(persisted, { token: bootstrap, gatewayUrl }),
+        credentialEverAuthenticated(persisted, {
+          token: bootstrap,
+          gatewayUrl: pairedLogicalGatewayUrl(gatewayUrl),
+        }),
     });
     if (verdict === "needs-pairing") return { outcome: "needs-pairing" };
     const txt = await res.text().catch(() => "");
@@ -563,7 +581,7 @@ function recordCollectorPaired(input: {
     state: "paired",
     deviceName: input.deviceName,
     ...(input.deviceId ? { deviceId: input.deviceId } : {}),
-    gatewayUrl: input.gatewayUrl,
+    gatewayUrl: pairedLogicalGatewayUrl(input.gatewayUrl),
     tokenFingerprint: tokenFingerprint(input.token),
     lastAuthenticatedAt: Date.now(),
     unauthorizedAt: null,
@@ -590,7 +608,7 @@ async function haltForRepair(input: {
   writeCollectorPairingState(input.configDir, {
     state: "needs-pairing",
     deviceName: input.deviceName,
-    gatewayUrl: input.gatewayUrl,
+    gatewayUrl: pairedLogicalGatewayUrl(input.gatewayUrl),
     tokenFingerprint: input.token ? tokenFingerprint(input.token) : "",
     lastAuthenticatedAt: input.lastAuthenticatedAt,
     unauthorizedAt: Date.now(),
@@ -599,7 +617,7 @@ async function haltForRepair(input: {
   log.error(
     needsPairingLogLine({
       deviceName: input.deviceName,
-      gatewayUrl: input.gatewayUrl,
+      gatewayUrl: pairedLogicalGatewayUrl(input.gatewayUrl),
       configDir: input.configDir,
     }),
   );
@@ -804,6 +822,7 @@ export async function main() {
   };
 
   const wsClient = new GatewayWsClient(gatewayUrl, token, {
+    heartbeatTimeoutMs: wsHeartbeatTimeoutMs(),
     onSocketError: retrustOnCertError,
     capabilities: {
       sourceContract: SOURCE_CONTRACT_WIRE_RANGE,

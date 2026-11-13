@@ -1396,6 +1396,164 @@ describe("scripts/ios-snapshot.sh macOS-host bridge guards (C10)", () => {
     expect(out).not.toMatch(/rsync ios\/ →/);
   }, 30000);
 
+  it("separates simulator cleanup identity from the unchanged build base", () => {
+    const source = readFileSync(iosSnapshot, "utf8");
+    const start = source.indexOf("\nDEST=") + 1;
+    const end = source.indexOf("# --- Guard: refuse", start);
+    expect(start).toBeGreaterThan(0);
+    expect(end).toBeGreaterThan(start);
+    // Execute the real configuration and validation block, without SSH or SDK access.
+    const program =
+      "set -euo pipefail\nCOVERAGE=0\n" +
+      source.slice(start, end) +
+      '\nprintf "%s\\n%s\\n" "$BUNDLE_ID" "$APP_BUNDLE_ID"\n';
+    for (const actual of ["", "dev.example.test.demo"]) {
+      const result = spawnSync("bash", ["-c", program], {
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          OMNESIS_IOS_SNAPSHOT_DEST: "platform=iOS Simulator,name=iPhone Test",
+          OMNESIS_IOS_SNAPSHOT_BUNDLE_ID: "dev.example.test",
+          OMNESIS_IOS_SNAPSHOT_APP_BUNDLE_ID: actual,
+        },
+      });
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout.trim().split("\n")).toEqual([
+        "dev.example.test",
+        actual || "dev.example.test",
+      ]);
+    }
+    const cleanup = source
+      .split("\n")
+      .filter((line) => /simctl.*(?:terminate|uninstall)/u.test(line));
+    expect(cleanup).toHaveLength(2);
+    for (const line of cleanup) {
+      expect(line).toContain("$APP_BUNDLE_ID");
+      expect(line).not.toContain('"$BUNDLE_ID"');
+    }
+    expect(source.split("\n").find((line) => line.includes("OMNESIS_BUNDLE_ID="))).toContain(
+      "$BUNDLE_ID",
+    );
+  });
+
+  it("rejects unsafe simulator cleanup identities before any host access", async () => {
+    for (const value of [
+      "dev.example.test;false",
+      "dev.example.test/other",
+      "dev.example.test'",
+      "dev.example.test\nother",
+    ]) {
+      const { code, out } = await runIosSnapshot(["--logic"], {
+        extraEnv: { OMNESIS_EPIC_MACOS_HOST: "stub", OMNESIS_IOS_SNAPSHOT_APP_BUNDLE_ID: value },
+      });
+      expect(code).toBe(1);
+      expect(out).toContain("snapshot app bundle id contains unsafe characters");
+      expect(out).not.toContain("rsync ios/");
+    }
+  });
+
+  it("rejects unsafe or incomplete simulator coverage arguments before host access", async () => {
+    for (const args of [
+      ["--only"],
+      ["--only", "OmnesisTests;false"],
+      ["--watch", "--coverage"],
+      ["--unknown"],
+    ]) {
+      const { code, out } = await runIosSnapshot(args, {
+        extraEnv: { OMNESIS_EPIC_MACOS_HOST: "" },
+      });
+      expect(code).toBe(64);
+      expect(out).not.toContain("rsync ios/");
+    }
+    const { code, out } = await runIosSnapshot(
+      ["--coverage", "--logic", "--only", "OmnesisTests/GatewayErrorViewTests"],
+      {
+        extraEnv: { OMNESIS_EPIC_MACOS_HOST: "" },
+      },
+    );
+    expect(code).toBe(78);
+    expect(out).toContain("OMNESIS_EPIC_MACOS_HOST is not set");
+  });
+
+  it("refuses simulator coverage artifacts inside the source checkout before transfer", async () => {
+    const { code, out } = await runIosSnapshot(["--coverage", "--logic"], {
+      extraEnv: { OMNESIS_EPIC_MACOS_HOST: "stub", OMNESIS_IOS_SNAPSHOT_OUT: repoRoot },
+    });
+    expect(code).toBe(1);
+    expect(out).toContain("coverage output must be outside the checkout");
+    expect(out).not.toContain("rsync ios/");
+  });
+
+  it("exports opt-in simulator coverage under the same build and preserves default PNG validation", () => {
+    const source = readFileSync(iosSnapshot, "utf8");
+    expect(source).toContain("COVERAGE=0");
+    expect(source).toContain("LOGIC_ONLY=0");
+    expect(source).toContain("-enableCodeCoverage YES -resultBundlePath");
+    expect(source).toContain("xcrun xccov view --report --json");
+    expect(source).toContain('"$OUT_DIR/coverage.json"');
+    expect(source).toContain("coverage output must be outside the checkout");
+    expect(source).toContain('[[ "$LOGIC_ONLY" == 1 ]]');
+    expect(source).toContain('[[ "$LOCAL_COUNT" -eq 0 ]]');
+  });
+
+  it("passes zero optional arguments by default and preserves coverage paths under strict shells", () => {
+    const source = readFileSync(iosSnapshot, "utf8");
+    const start = source.indexOf("\n  set --\n");
+    const end = source.indexOf("\n  rc=\\$?", start);
+    expect(start).toBeGreaterThan(0);
+    expect(end).toBeGreaterThan(start);
+    // Decode the remote command's escaping and execute its actual build block.
+    // Positional parameters also support zero arguments in macOS Bash 3.2.
+    const block = source.slice(start, end).replaceAll('\\"', '"').replaceAll("\\$", "$");
+    const scratch = tmpDir("omnesis-ios-build-args-");
+    for (const coverage of ["0", "1"]) {
+      const target = join(scratch, "scratch with spaces");
+      const log = join(scratch, `build-${coverage}.log`);
+      const result = spawnSync(
+        "bash",
+        ["--posix", "-c", `set -euo pipefail\nxcodebuild() { printf '%s\\n' "$@"; }\n${block}`],
+        {
+          encoding: "utf8",
+          env: {
+            ...process.env,
+            COVERAGE: coverage,
+            RESOLVED_TARGET: target,
+            SCHEME: "Omnesis",
+            DEST: "platform=iOS Simulator,name=iPhone Test",
+            ONLY_TESTING_ARGS: "-only-testing:OmnesisTests/PreviewSnapshotTests",
+            BUNDLE_ID: "dev.example.test",
+            SIGNING_SETTINGS: "CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO",
+            REMOTE_LOG: log,
+          },
+        },
+      );
+      expect(result.status, result.stderr).toBe(0);
+      expect(readFileSync(log, "utf8").trim().split("\n")).toEqual([
+        "test",
+        "-project",
+        "Omnesis.xcodeproj",
+        "-scheme",
+        "Omnesis",
+        "-destination",
+        "platform=iOS Simulator,name=iPhone Test",
+        "-derivedDataPath",
+        join(target, "DerivedData"),
+        "-only-testing:OmnesisTests/PreviewSnapshotTests",
+        ...(coverage === "1"
+          ? [
+              "-enableCodeCoverage",
+              "YES",
+              "-resultBundlePath",
+              join(target, ".omnesis-simulator-coverage.xcresult"),
+            ]
+          : []),
+        "OMNESIS_BUNDLE_ID=dev.example.test",
+        "CODE_SIGNING_ALLOWED=NO",
+        "CODE_SIGNING_REQUIRED=NO",
+      ]);
+    }
+  });
+
   it("commits no operator-private default (no host alias / operator-home absolute path)", () => {
     // The committed script must read the host + paths at runtime; it must not
     // bake in a personal ssh alias or an operator-home absolute path. Comments
@@ -1413,7 +1571,9 @@ describe("scripts/ios-snapshot.sh macOS-host bridge guards (C10)", () => {
     expect(src).toContain('developer_dir=\\"\\${DEVELOPER_DIR:-\\$(xcode-select -p)}\\"');
     expect(src).toContain("simctl=\\$(xcrun --find simctl)");
     expect(src).toContain('\\"\\$simctl\\" bootstatus \\"$SIMULATOR_SELECTOR\\" -b');
-    expect(src).toContain('\\"\\$simctl\\" uninstall \\"$SIMULATOR_SELECTOR\\" \\"$BUNDLE_ID\\"');
+    expect(src).toContain(
+      '\\"\\$simctl\\" uninstall \\"$SIMULATOR_SELECTOR\\" \\"$APP_BUNDLE_ID\\"',
+    );
   });
 
   it("keeps build output in removable scratch and clears host PNGs after copying", () => {
@@ -1641,8 +1801,8 @@ describe("android.yml CI workflow structure (C20)", () => {
     }
   });
 
-  it.each([undefined, ":app:bundlePlayRelease", ":app:bundleFullRelease"])(
-    "builds both release variants in bounded fresh processes and propagates failure (%s)",
+  it.each([undefined, ":app:bundlePlayRelease", ":app:bundleFullRelease", ":wear:bundleRelease"])(
+    "builds both release variants and the Wear OS app in bounded fresh processes and propagates failure (%s)",
     (failedTask) => {
       const dir = tmpDir("omnesis-android-build-workflow-");
       const calls = join(dir, "calls.jsonl");
@@ -1670,13 +1830,18 @@ describe("android.yml CI workflow structure (C20)", () => {
       const expected = [
         [":app:bundlePlayRelease", "--no-daemon", "--max-workers=2"],
         [":app:bundleFullRelease", "--no-daemon", "--max-workers=2"],
+        [":wear:assembleDebug", ":wear:bundleRelease", "--no-daemon", "--max-workers=2"],
       ];
+      // A failed build stops the lane: nothing after it runs.
+      const ran = failedTask
+        ? expected.findIndex((command) => command.includes(failedTask)) + 1
+        : expected.length;
       expect(
         readFileSync(calls, "utf8")
           .trim()
           .split("\n")
           .map((line) => JSON.parse(line)),
-      ).toEqual(failedTask === ":app:bundlePlayRelease" ? expected.slice(0, 1) : expected);
+      ).toEqual(expected.slice(0, ran));
     },
   );
 
@@ -1692,6 +1857,14 @@ describe("android.yml CI workflow structure (C20)", () => {
     // The unit-test lane runs too.
     expect(runs).toContain(":app:testPlayDebugUnitTest");
     expect(runs).toContain(":app:testFullDebugUnitTest");
+    // The plain Kotlin/JVM modules, which the build-wide testDebugUnitTest skips.
+    expect(runs).toContain(":core-wear-protocol:test");
+    expect(runs).toContain(":wear-core:test");
+    // Unit tests, goldens, APK and bundle of the watch app.
+    expect(runs).toContain(":wear:testDebugUnitTest");
+    expect(runs).toContain(":wear:verifyRoborazziDebug");
+    expect(runs).toContain(":wear:assembleDebug");
+    expect(runs).toContain(":wear:bundleRelease");
     expect(runs).toContain(":app:verifyPlayReleasePolicy");
   });
 
@@ -2612,7 +2785,8 @@ describe("full-validation workflow topology", () => {
       encoding: "utf8",
     });
     const [nodedir, npmConfigNodedir, args] = out.split("|");
-    expect(args).toBe("ci --no-audit");
+    // The wrapper points npm's debug log at its own directory.
+    expect(args).toMatch(/^ci --logs-dir \S+ --no-audit$/u);
     // npm 11 warns about `npm_config_nodedir`, which is not an npm option.
     expect(npmConfigNodedir).toBe("");
     expect(existsSync(join(nodedir, "include", "node", "common.gypi"))).toBe(true);
@@ -3587,6 +3761,81 @@ describe("scripts/ios-logic.sh sim-less native logic lane guards (C11)", () => {
     expect(out).toContain("--filter needs a value");
   }, 20000);
 
+  it("parses coverage independently from one filter and refuses ambiguous or executable arguments", async () => {
+    for (const args of [
+      ["--coverage", "--filter", "Google"],
+      ["Google", "--coverage"],
+    ]) {
+      const result = await runIosLogic(args, { extraEnv: { OMNESIS_EPIC_MACOS_HOST: "" } });
+      expect(result.code).toBe(78);
+      expect(result.out).toContain("OMNESIS_EPIC_MACOS_HOST is not set");
+    }
+    for (const args of [
+      ["--coverage", "--filter"],
+      ["--filter", "--coverage"],
+      ["Google", "Other"],
+      ["--bogus"],
+      ["Google;touch /tmp/omnesis-unsafe-filter"],
+    ]) {
+      const result = await runIosLogic(args, { extraEnv: { OMNESIS_EPIC_MACOS_HOST: "" } });
+      expect(result.code).toBe(64);
+      expect(result.out).not.toContain("rsync ios/");
+    }
+  });
+
+  it("style operations use the guarded native lane and reject mixed or duplicate operations", async () => {
+    for (const mode of ["--style-check", "--style-fix"]) {
+      const result = await runIosLogic([mode], { extraEnv: { OMNESIS_EPIC_MACOS_HOST: "" } });
+      expect(result.code).toBe(78);
+      expect(result.out).not.toContain("rsync ios/");
+    }
+    for (const args of [
+      ["--style-fix", "--coverage"],
+      ["--style-check", "Google"],
+      ["--style-fix", "--style-check"],
+    ]) {
+      const result = await runIosLogic(args, { extraEnv: { OMNESIS_EPIC_MACOS_HOST: "" } });
+      expect(result.code).toBe(64);
+    }
+    const source = readFileSync(join(repoRoot, "scripts/ios-style.sh"), "utf8");
+    expect(source).toContain(".github/workflows/swiftlint.yml");
+    expect(source).toContain("shasum -a 256 -c");
+    expect(source).toContain("diff --no-ext-diff --binary");
+    expect(source).toContain("--baseline");
+    expect(source).not.toMatch(/\/(?:Users|home)\/[a-z]/i);
+  });
+
+  it("ios-style independently rejects descendants of marked primary and symlinked CI paths before transfer", () => {
+    const sandbox = tmpDir("omnesis-style-guard-");
+    const marked = join(sandbox, "primary");
+    const descendant = join(marked, "nested", "scratch");
+    const ci = join(sandbox, "runner", "_work", "project");
+    const alias = join(sandbox, "scratch-link");
+    mkdirSync(descendant, { recursive: true });
+    mkdirSync(ci, { recursive: true });
+    writeFileSync(join(marked, ".omnesis-primary"), "");
+    symlinkSync(ci, alias);
+    const bin = join(sandbox, "bin");
+    mkdirSync(bin);
+    writeFileSync(join(bin, "ssh"), '#!/usr/bin/env bash\nshift\nexec bash -c "$@"\n', {
+      mode: 0o755,
+    });
+    for (const scratch of [descendant, alias]) {
+      const result = spawnSync("bash", [join(repoRoot, "scripts/ios-style.sh"), "check", scratch], {
+        cwd: repoRoot,
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          PATH: `${bin}:${process.env.PATH}`,
+          OMNESIS_EPIC_MACOS_HOST: "stub",
+        },
+      });
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain("refusing primary, home or CI scratch path");
+      expect(existsSync(join(scratch, "ios"))).toBe(false);
+    }
+  });
+
   it("refuses a scratch path that resolves into a CI runner _work clone", async () => {
     const path = sshStubPath();
     const sandbox = tmpDir("omnesis-ios-logic-work-");
@@ -3759,6 +4008,25 @@ describe("scripts/android-logic.sh emulator-less JVM logic lane guards (C11)", (
     expect(out).toContain("unknown argument");
   }, 20000);
 
+  it("requires an explicit supported coverage module and rejects executable filter values", async () => {
+    for (const args of [
+      ["--coverage"],
+      ["--coverage", "--module", ":other"],
+      ["--module", ":app;touch /tmp/omnesis-unsafe-module"],
+      ["--tests", "Google;touch /tmp/omnesis-unsafe-test"],
+    ]) {
+      const result = await runAndroidLogic(args, { extraEnv: { OMNESIS_EPIC_MACOS_HOST: "" } });
+      expect(result.code).toBe(64);
+      expect(result.out).not.toContain("rsync android/");
+    }
+    for (const module of [":app", ":core-pairing"]) {
+      const result = await runAndroidLogic(["--coverage", "--module", module], {
+        extraEnv: { OMNESIS_EPIC_MACOS_HOST: "" },
+      });
+      expect(result.code).toBe(78);
+    }
+  });
+
   it("refuses a scratch path that resolves into a CI runner _work clone", async () => {
     const path = sshStubPath();
     const sandbox = tmpDir("omnesis-android-logic-work-");
@@ -3813,7 +4081,30 @@ describe("scripts/android-logic.sh emulator-less JVM logic lane guards (C11)", (
     expect(src).toMatch(/--build-cache --configuration-cache/);
     // Default scopes to the pure-JVM logic modules (no :app screenshot module).
     expect(src).toMatch(/:core-transport:testDebugUnitTest/);
+    // A plain Kotlin/JVM module has no per-variant test task: the watch relay
+    // contract and the watch app's logic.
+    expect(src).toMatch(/:core-wear-protocol:test(?!DebugUnitTest)/);
+    expect(src).toMatch(/:wear-core:test(?!DebugUnitTest)/);
   });
+
+  it("takes an explicit task list as Gradle task paths only", async () => {
+    // The value is interpolated into the command the host runs.
+    for (const value of ["x; rm -rf ~", "--init-script", ":app:test $(id)", ""]) {
+      const { code, out } = await runAndroidLogic(["--task", value], {
+        extraEnv: { OMNESIS_EPIC_MACOS_HOST: "stub" },
+      });
+      expect(code, value).toBe(64);
+      expect(out).toContain("--task needs a Gradle task path");
+    }
+    const mixed = await runAndroidLogic(["--task", ":wear:bundleRelease", "--module", ":wear"], {
+      extraEnv: { OMNESIS_EPIC_MACOS_HOST: "stub" },
+    });
+    expect(mixed.code).toBe(64);
+    const alone = await runAndroidLogic(["--keep-going"], {
+      extraEnv: { OMNESIS_EPIC_MACOS_HOST: "stub" },
+    });
+    expect(alone.code).toBe(64);
+  }, 30000);
 
   it("commits no operator-private default (no host alias / operator-home absolute path)", () => {
     const src = readFileSync(androidLogic, "utf8");

@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { spawn, spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { fork, spawnSync } from "node:child_process";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { resolveWorkerEntry } from "@omnesis/core";
 import {
@@ -14,6 +14,7 @@ import {
   STDERR_CAPTURE_CHARS,
   type ProcessLauncher,
 } from "./index.js";
+import type { LauncherRequest } from "../workers/process-launcher-host.js";
 
 const hosts: HostedProcessLauncher[] = [];
 afterEach(() => {
@@ -73,6 +74,21 @@ function processState(pid: number): string {
   const ps = spawnSync("ps", ["-o", "stat=", "-p", String(pid)], { encoding: "utf8" });
   return ps.stdout.trim().slice(0, 1);
 }
+/**
+ * A complete newline-delimited process ID, or 0 until the whole line is there.
+ * A program creates the file before it writes to it, so a file
+ * that exists can still be empty, and `Number("")` is 0, a process ID that
+ * `kill(0, 0)` reports alive whatever happened to the program.
+ */
+function pidIn(path: string): number {
+  try {
+    const line = readFileSync(path, "utf8");
+    return /^[1-9]\d*\n$/.test(line) ? Number(line) : 0;
+  } catch {
+    return 0;
+  }
+}
+
 async function eventually(check: () => boolean, ms = 5_000): Promise<boolean> {
   const until = Date.now() + ms;
   while (Date.now() < until) {
@@ -170,7 +186,7 @@ describe.each(launchers)("%s launcher", (_name, make) => {
       process.execPath,
       [
         "-e",
-        "require('node:fs').writeFileSync(process.argv[1],String(process.pid)); setTimeout(()=>{},30000)",
+        "require('node:fs').writeFileSync(process.argv[1],String(process.pid)+'\\n'); setTimeout(()=>{},30000)",
         marker,
       ],
       {
@@ -179,8 +195,8 @@ describe.each(launchers)("%s launcher", (_name, make) => {
       },
     );
     try {
-      expect(await eventually(() => existsSync(marker), processBudget)).toBe(true);
-      const pid = Number(readFileSync(marker, "utf8"));
+      expect(await eventually(() => pidIn(marker) > 0, processBudget)).toBe(true);
+      const pid = pidIn(marker);
       abort.abort();
       expect(await pending).toMatchObject({ exitCode: null, failure: "aborted" });
       expect(await eventually(() => !alive(pid))).toBe(true);
@@ -267,13 +283,13 @@ describe("hosted launcher", () => {
       process.execPath,
       [
         "-e",
-        "require('node:fs').writeFileSync(process.argv[1],String(process.pid)); setTimeout(()=>{},30000)",
+        "require('node:fs').writeFileSync(process.argv[1],String(process.pid)+'\\n'); setTimeout(()=>{},30000)",
         marker,
       ],
       { timeoutMs: 30_000 },
     );
-    expect(await eventually(() => readdirSync(join(marker, "..")).includes("pid"))).toBe(true);
-    const programPid = Number(readFileSync(marker, "utf8").trim());
+    expect(await eventually(() => pidIn(marker) > 0, processBudget)).toBe(true);
+    const programPid = pidIn(marker);
     process.kill(hostPid, "SIGKILL");
     expect(await pending).toMatchObject({
       failure: "spawn",
@@ -337,13 +353,13 @@ describe("hosted launcher", () => {
       process.execPath,
       [
         "-e",
-        "require('node:fs').writeFileSync(process.argv[1],String(process.pid)); setTimeout(()=>{},30000)",
+        "require('node:fs').writeFileSync(process.argv[1],String(process.pid)+'\\n'); setTimeout(()=>{},30000)",
         marker,
       ],
       { timeoutMs: 30_000 },
     );
-    expect(await eventually(() => readdirSync(join(marker, "..")).includes("pid"))).toBe(true);
-    const programPid = Number(readFileSync(marker, "utf8").trim());
+    expect(await eventually(() => pidIn(marker) > 0, processBudget)).toBe(true);
+    const programPid = pidIn(marker);
     host.dispose();
     expect(await pending).toMatchObject({ failure: "spawn" });
     expect(
@@ -355,6 +371,87 @@ describe("hosted launcher", () => {
       timeoutMs: 10_000,
     });
     expect(Number(text(after.stdout))).toBe(process.pid);
+  });
+
+  it("kills a program it could not report because the caller had already disconnected", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "omnesis-launcher-disconnect-"));
+    const marker = join(dir, "program-pid");
+    const spawned = join(dir, "spawned-pids");
+    const preload = join(dir, "record-spawn.mjs");
+    // Record ownership in the host at spawn(), before its IPC publication can
+    // fail. This also observes a program killed before its JavaScript starts.
+    writeFileSync(
+      preload,
+      `
+      import childProcess from 'node:child_process';
+      import {appendFileSync} from 'node:fs';
+      import {syncBuiltinESMExports} from 'node:module';
+      const original=childProcess.spawn;
+      childProcess.spawn=(...args)=>{
+        const child=original(...args);
+        if(child.pid)appendFileSync(${JSON.stringify(spawned)},String(child.pid)+'\\n');
+        return child;
+      };
+      syncBuiltinESMExports();
+    `,
+    );
+    const controls = (): number[] => {
+      try {
+        return readFileSync(spawned, "utf8")
+          .split("\n")
+          .filter((line) => /^[1-9]\d*$/u.test(line))
+          .map(Number);
+      } catch {
+        return [];
+      }
+    };
+    const entry = resolveWorkerEntry(
+      "../workers/process-launcher-host.ts",
+      import.meta.url,
+      "../workers/register-tsx.mjs",
+    );
+    const child = fork(fileURLToPath(entry.url), [], {
+      execArgv: [...entry.execArgv, "--import", pathToFileURL(preload).href],
+      serialization: "advanced",
+      stdio: ["ignore", "ignore", "pipe", "ipc"],
+    });
+    let stderr = "";
+    child.stderr?.on("data", (chunk: Buffer) => (stderr += chunk.toString()));
+    const exited = new Promise<number | null>((resolve) => child.once("exit", resolve));
+    try {
+      await new Promise<void>((resolve, reject) => {
+        child.once("message", () => resolve());
+        child.once("error", reject);
+        child.once("exit", () => reject(new Error(`Launcher exited before ready: ${stderr}`)));
+      });
+      const run: LauncherRequest = {
+        type: "run",
+        id: 1,
+        command: process.execPath,
+        args: [
+          "-e",
+          "require('node:fs').writeFileSync(process.argv[1],String(process.pid)+'\\n'); setTimeout(()=>{},30000)",
+          marker,
+        ],
+        opts: { timeoutMs: 30_000 },
+      };
+      // Close in the same tick, before the host can publish the control PID.
+      child.send(run);
+      child.disconnect();
+      expect(await exited, stderr).toBe(0);
+      expect(controls().length).toBeGreaterThan(0);
+      expect(
+        await eventually(() => controls().every((pid) => !running(pid)), processBudget),
+        `owned controls still running: ${controls().join(", ")}`,
+      ).toBe(true);
+      const payloadPid = pidIn(marker);
+      if (payloadPid > 0)
+        expect(await eventually(() => !running(payloadPid), processBudget)).toBe(true);
+    } finally {
+      if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+      await exited;
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it("starts programs from the caller while a failed host waits out its back-off", async () => {

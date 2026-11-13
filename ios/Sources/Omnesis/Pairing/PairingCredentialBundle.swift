@@ -22,6 +22,8 @@ public struct PairingCredentialBundle: Codable, Equatable, Sendable {
     public let scopes: [String]
     public let tlsMode: String
     public let fingerprint: String?
+    public let spkiFingerprint: String?
+    public let directCandidates: [GatewayDirectCandidate]?
 
     public init(
         url: String,
@@ -32,7 +34,9 @@ public struct PairingCredentialBundle: Codable, Equatable, Sendable {
         name: String,
         scopes: [String],
         tlsMode: String,
-        fingerprint: String?
+        fingerprint: String?,
+        spkiFingerprint: String? = nil,
+        directCandidates: [GatewayDirectCandidate]? = nil
     ) {
         self.url = url
         self.token = token
@@ -43,6 +47,8 @@ public struct PairingCredentialBundle: Codable, Equatable, Sendable {
         self.scopes = scopes
         self.tlsMode = tlsMode
         self.fingerprint = fingerprint
+        self.spkiFingerprint = spkiFingerprint
+        self.directCandidates = directCandidates
     }
 
     public func encoded() throws -> String {
@@ -63,5 +69,27 @@ public struct PairingCredentialBundle: Codable, Equatable, Sendable {
             )
         }
         return try JSONDecoder().decode(Self.self, from: data)
+    }
+}
+
+extension PairingCredentialBundle {
+    func replacingDirectCandidates(_ candidates: [GatewayDirectCandidate]?) -> Self {
+        Self(
+            url: url,
+            token: token,
+            pairingGeneration: pairingGeneration,
+            accountId: accountId,
+            deviceId: deviceId,
+            name: name,
+            scopes: scopes,
+            tlsMode: tlsMode,
+            fingerprint: fingerprint,
+            spkiFingerprint: spkiFingerprint,
+            directCandidates: candidates
+        )
+    }
+
+    func sameAuthority(as other: Self) -> Bool {
+        replacingDirectCandidates(nil) == other.replacingDirectCandidates(nil)
     }
 }

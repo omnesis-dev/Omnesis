@@ -8,6 +8,7 @@ import {
   pairingReachRank,
   type PairingAddressContext,
   type PairingPlatform,
+  relayPairingAddressOption,
 } from "./pairing-address.js";
 
 const TRUSTED = "https://studio.tail-example.ts.net:7600";
@@ -197,6 +198,32 @@ describe("pairingReachRank", () => {
     ].map((url) => pairingReachRank(judgePairingAddress(url, ctx)));
     expect(ranks).toEqual([...ranks].sort((a, b) => a - b));
     expect(new Set(ranks).size).toBe(5);
+  });
+});
+
+describe("relayPairingAddressOption", () => {
+  test("names the Omnesis address plainly and never offers it for typing by hand", () => {
+    expect(relayPairingAddressOption("https://g-fictional1.relay.example.test/")).toEqual({
+      gatewayUrl: "https://g-fictional1.relay.example.test",
+      host: "g-fictional1.relay.example.test",
+      label: "Omnesis address",
+      kind: "relay",
+      usable: true,
+      reach: "anywhere",
+      systemTrust: false,
+      summary: "Works from anywhere. Needs remote access to stay on.",
+    });
+  });
+
+  test("ranks after every other address that reaches beyond home and before the local ones", () => {
+    const ctx = context("android", [TRUSTED]);
+    const rank = (url: string) => pairingReachRank(judgePairingAddress(url, ctx));
+    const relay = pairingReachRank(
+      relayPairingAddressOption("https://g-fictional1.relay.example.test"),
+    );
+    expect(relay).toBeGreaterThan(rank(TRUSTED));
+    expect(relay).toBeGreaterThan(rank("https://100.101.102.103:7600"));
+    expect(relay).toBeLessThan(rank("https://192.168.1.20:7600"));
   });
 });
 

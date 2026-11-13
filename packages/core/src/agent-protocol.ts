@@ -158,7 +158,7 @@ export const searchProvenanceSchema = z.object({
 export type SearchProvenance = z.infer<typeof searchProvenanceSchema>;
 
 /**
- * A compact reference to an open loop the Cognition Steward tracks that this document
+ * A compact reference to an open loop the Brain tracks that this document
  * is a source for — the "what is this document part of" connection, attached
  * inline to search / fetch results when the gateway is in experimental mode.
  * A pointer, not the loop's full state (that lives behind `fetch_loop`); absent
@@ -171,13 +171,13 @@ export const docLoopRefSchema = z.object({
   title: z.string(),
   /** Lifecycle state: `open` | `snoozed` (terminal loops are never attached). */
   state: z.string(),
-  /** Importance the Cognition Steward assigned (0-1), for ordering. */
+  /** Importance the Brain assigned (0-1), for ordering. */
   importance: z.number().optional(),
 });
 export type DocLoopRef = z.infer<typeof docLoopRefSchema>;
 
 /**
- * A compact, hint-shaped view of a durable annotation the Cognition Steward recorded
+ * A compact, hint-shaped view of a durable annotation the Brain recorded
  * ABOUT a document — a prior to reground against, never a hard fact. Attached
  * inline to search/fetch results; the verbatim evidence quote is
  * deliberately omitted from the wire shape (it lives in the source document).
@@ -201,7 +201,7 @@ export const docAnnotationHintSchema = z.object({
 export type DocAnnotationHint = z.infer<typeof docAnnotationHintSchema>;
 
 /**
- * A compact, hint-shaped view of a temporal annotation the Cognition Steward filed
+ * A compact, hint-shaped view of a temporal annotation the Brain filed
  * that cites a document — the "what dated fact is this a source for" backlink.
  * A pointer into the LLM-owned temporal-annotation store; the verbatim interval
  * bounds are omitted from the wire shape. Attached inline to agent search /
@@ -331,19 +331,19 @@ export const docRefSchema = z.object({
   provenance: searchProvenanceSchema.optional(),
   /**
    * Open loops this document is a source for — the "what is this part of"
-   * connection the Cognition Steward tracks, attached inline in experimental mode
+   * connection the Brain tracks, attached inline in experimental mode
    * (loops exist only then). Surfaced on both agent searches and fetch
    * results; absent/empty when no tracked loop references the document.
    */
   openLoops: z.array(docLoopRefSchema).optional(),
   /**
-   * Durable annotations the Cognition Steward recorded ABOUT this document — grounded
+   * Durable annotations the Brain recorded ABOUT this document — grounded
    * priors to reground against, never facts. Attached inline on fetch results
    * in experimental mode; absent/empty when none exist.
    */
   annotations: z.array(docAnnotationHintSchema).optional(),
   /**
-   * Temporal annotations the Cognition Steward filed that cite this document —
+   * Temporal annotations the Brain filed that cite this document —
    * deadlines/events/expiries grounded in it. Attached inline in experimental
    * mode on BOTH agent search and fetch results; absent/empty when none.
    */
@@ -382,7 +382,7 @@ export const personSummarySchema = z.object({
    */
   interactionScore: z.number().optional(),
   /**
-   * Durable annotations the Cognition Steward recorded ABOUT this person — grounded
+   * Durable annotations the Brain recorded ABOUT this person — grounded
    * priors to reground against, never facts. Attached inline on lookup_people
    * results in experimental mode; absent/empty when none exist.
    */
@@ -1337,7 +1337,7 @@ const triggerToggledResult = z.object({
 
 /**
  * Generic structured payload for feature-scoped tools with no bespoke
- * renderer — currently the background Cognition Steward's loop/brief/notes tools,
+ * renderer — currently the background Brain's loop/brief/notes tools,
  * whose sessions are headless and never broadcast, so only the model reads
  * the result. `resultType` namespaces the payload shape (e.g.
  * `open_loop.created`); a renderer that does encounter one shows the raw
@@ -1352,7 +1352,7 @@ export type StructuredToolResult = z.infer<typeof structuredResult>;
 
 /**
  * Result of a successful interactive `search_loops` call (experimental) — the
- * chat agent reading the Cognition Steward's tracked obligations. Read-only; mirrors
+ * chat agent reading the Brain's tracked obligations. Read-only; mirrors
  * the `search.results` / `person.results` shape so a renderer can present the
  * same rolling-slot card. Empty `loops` is a successful "nothing matched".
  */

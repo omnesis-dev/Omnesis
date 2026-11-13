@@ -134,6 +134,8 @@ struct TaskWidgetView: View {
             header
             if entry.status == .unpaired {
                 message("Open Omnesis", detail: "Pair your gateway to see your tasks.", symbol: "link")
+            } else if entry.status == .disabled {
+                message("Tasks are off", detail: "Enable Tasks in Omnesis Lab.", symbol: "flask")
             } else if entry.snapshot == nil {
                 message("Gateway unavailable", detail: "Open Omnesis to reconnect.", symbol: "wifi.slash")
             } else if entry.tasks.isEmpty {
@@ -342,6 +344,7 @@ struct TaskWidgetView: View {
 
     private var footerLabel: String {
         switch entry.status {
+        case .disabled: "Enable in Omnesis Lab"
         case .completionFailed: "Couldn't complete"
         case .offline: "Offline · cached"
         case .unpaired: "Your tasks, close by"
@@ -354,6 +357,7 @@ struct TaskWidgetView: View {
     }
 
     private var accessorySymbol: String {
+        if entry.status == .disabled { return "flask" }
         if entry.status == .unpaired { return "link" }
         if entry.snapshot == nil || entry.status == .offline { return "wifi.slash" }
         if entry.status == .completionFailed { return "exclamationmark.circle" }
@@ -361,6 +365,7 @@ struct TaskWidgetView: View {
     }
 
     private var accessoryLabel: String {
+        if entry.status == .disabled { return "Enable Tasks in Omnesis Lab" }
         if entry.status == .unpaired { return "Open Omnesis to pair" }
         if entry.snapshot == nil { return "Gateway unavailable" }
         let summary = "\(title) · \(entry.tasks.count) tasks"
@@ -410,7 +415,8 @@ struct TaskWidgetView: View {
                     Link(task.title, destination: entry.taskURL(task.id)).font(.caption).lineLimit(2)
                 }
             } else {
-                Text(entry.snapshot == nil ? "Gateway unavailable" : "Nothing planned").font(.caption)
+                Text(entry.status == .disabled ? "Tasks are off" : entry.snapshot == nil ? "Gateway unavailable" : "Nothing planned")
+                    .font(.caption)
             }
         }
     }

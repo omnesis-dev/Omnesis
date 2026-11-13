@@ -11,7 +11,7 @@
  * newer datum lands mid-flight, and in what order and with what
  * parallelism a backlog is consumed.
  *
- * None of it judges a decision the steward made. The puppet's plans exist
+ * None of it judges a decision the Brain made. The puppet's plans exist
  * only to give the engine something concrete to execute.
  *
  * Some stimuli have no producer that a test can drive deterministically —

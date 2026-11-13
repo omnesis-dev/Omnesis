@@ -211,6 +211,7 @@ it("acquires placement receipts through the real nonparallel maintenance tools",
   });
   const log = createLogger("placement-tools-test");
   const service = new KnowledgeService({
+    tasksEnabled: () => true,
     db,
     writeGate: directKnowledgeGate(db),
     clock: () => 2,

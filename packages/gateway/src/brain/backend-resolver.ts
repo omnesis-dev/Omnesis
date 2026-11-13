@@ -4,7 +4,7 @@
 /**
  * Resolution of the `background-agent` capability role to a runnable
  * {@link ChatBackend} — the same generic role resolution the sub-agent
- * roles use (`resolveRoleBackend`), specialised to the Cognition Steward's
+ * roles use (`resolveRoleBackend`), specialised to the Brain's
  * role. Resolved fresh on every call so a live model swap takes effect
  * on the next queued run without a restart. Null means "no runnable
  * backend right now" (unassigned, unresolved, key missing, or a local
@@ -60,7 +60,8 @@ export function loadBrainCompletionProvider(
   registry: BackgroundAgentResolver,
   readiness: ChatRoleReadinessDeps,
   deps: LoadCompletionDeps,
+  isEnabled: () => boolean = () => false,
 ) {
-  if (!briefsFeatureStatus(registry, readiness).active) return null;
+  if (!briefsFeatureStatus(registry, readiness, isEnabled).active) return null;
   return loadCompletionFromResolved(registry.resolve(BACKGROUND_AGENT_ROLE), deps);
 }

@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 /**
- * The Agent Run Queue drainer — the worker half of the Cognition Steward's
+ * The Agent Run Queue drainer — the worker half of the Brain's
  * outbox: a periodic drain task
  * claims due runs (atomic `UPDATE … RETURNING`, attempts bumped — a
  * crash mid-run leaves the row `pending` and naturally re-claimable)
@@ -789,13 +789,13 @@ export function createCognitionDrainerTasks(
       }
       if (failedAdmission)
         log.warn(
-          `steward drain failed: ${admissionError instanceof Error ? admissionError.message : String(admissionError)}`,
+          `Brain drain failed: ${admissionError instanceof Error ? admissionError.message : String(admissionError)}`,
         );
       tracker.recordTick(outcomes.filter((outcome) => outcome !== "retry").length);
       tracker.setRemaining(safeCount(opts.db, maxAttempts, log));
       if (visited.size)
         log.info(
-          `steward drain: claimed=${visited.size} completed=${outcomes.filter((o) => o === "completed").length} failed=${outcomes.filter((o) => o === "failed").length} retrying=${outcomes.filter((o) => o === "retry").length}`,
+          `Brain drain: claimed=${visited.size} completed=${outcomes.filter((o) => o === "completed").length} failed=${outcomes.filter((o) => o === "failed").length} retrying=${outcomes.filter((o) => o === "retry").length}`,
         );
       return { kind: "done", value: { idle: visited.size === 0 && !failedAdmission } };
     },
@@ -805,9 +805,9 @@ export function createCognitionDrainerTasks(
   const jobs: BackgroundJob[] = [
     periodicJob(drainTask, {
       scheduler,
-      displayName: "Cognition Steward run drain",
+      displayName: "Brain run drain",
       description:
-        "Claims due Cognition Steward runs from the agent run queue and executes them headlessly, with exponential backoff and per-day spend accounting.",
+        "Claims due Brain runs from the agent run queue and executes them headlessly, with exponential backoff and per-day spend accounting.",
       category: "briefs",
       tracker,
       isDisabled: () => !opts.isEnabled(),
@@ -822,7 +822,7 @@ function safeCount(db: Db, maxAttempts: number, log: Logger): number {
     return countPendingCognitionRuns(db, maxAttempts);
   } catch (err) {
     log.debug(
-      `steward ground-truth refresh failed: ${err instanceof Error ? err.message : String(err)}`,
+      `Brain ground-truth refresh failed: ${err instanceof Error ? err.message : String(err)}`,
     );
     return 0;
   }

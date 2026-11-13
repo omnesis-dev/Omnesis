@@ -208,16 +208,16 @@ describe("Watch sub-routes", () => {
 
 describe("Cognition sub-routes", () => {
   test("resolve ahead of the single-segment tab matcher", () => {
-    expect(route("/portal/debug/cognition")).toEqual({
+    expect(route("/portal/debug/brain")).toEqual({
       view: "debug",
-      tab: "cognition",
+      tab: "brain",
       cognitionTab: "runs",
       cognitionId: null,
-      redirectTo: "/portal/debug/cognition/runs",
+      redirectTo: "/portal/debug/brain/runs",
     });
-    expect(route("/portal/debug/cognition/runs/run-42")).toEqual({
+    expect(route("/portal/debug/brain/runs/run-42")).toEqual({
       view: "debug",
-      tab: "cognition",
+      tab: "brain",
       cognitionTab: "runs",
       cognitionId: "run-42",
     });
@@ -239,14 +239,14 @@ describe("Calendar route", () => {
   });
 
   test("answers its old Cognition paths with a redirect", () => {
-    expect(route("/portal/debug/cognition/calendar")).toEqual({
+    expect(route("/portal/debug/brain/calendar")).toEqual({
       view: "debug",
       tab: "calendar",
       calendarId: null,
       redirectTo: "/portal/debug/calendar",
     });
     for (const section of ["calendar", "time-index", "temporal-annotations"]) {
-      expect(route(`/portal/debug/cognition/${section}/ta_42`)).toMatchObject({
+      expect(route(`/portal/debug/brain/${section}/ta_42`)).toMatchObject({
         tab: "calendar",
         calendarId: "ta_42",
         redirectTo: "/portal/debug/calendar/ta_42",
@@ -256,17 +256,24 @@ describe("Calendar route", () => {
 });
 
 test("retired loop routes preserve identity in the knowledge library", () => {
-  expect(route("/portal/debug/cognition/loops/outcome%2Fone")).toEqual({
-    view: "debug", tab: "cognition", cognitionTab: "knowledge", cognitionId: "outcome/one",
-    redirectTo: "/portal/debug/cognition/knowledge/outcome%2Fone?kind=loop",
+  expect(route("/portal/debug/brain/loops/outcome%2Fone")).toEqual({
+    view: "debug", tab: "brain", cognitionTab: "knowledge", cognitionId: "outcome/one",
+    redirectTo: "/portal/debug/brain/knowledge/outcome%2Fone?kind=loop",
   });
-  expect(route("/portal/debug/cognition/loops").redirectTo).toBe("/portal/debug/cognition/knowledge?kind=loop");
+  expect(route("/portal/debug/brain/loops").redirectTo).toBe("/portal/debug/brain/knowledge?kind=loop");
 });
 
 
 test("observation deep links address the Observations inspector", () => {
-  expect(route("/portal/debug/cognition/observations/obs%2Ffixture")).toEqual({
-    view: "debug", tab: "cognition", cognitionTab: "observations", cognitionId: "obs/fixture",
+  expect(route("/portal/debug/brain/observations/obs%2Ffixture")).toEqual({
+    view: "debug", tab: "brain", cognitionTab: "observations", cognitionId: "obs/fixture",
   });
 });
 
+
+test("legacy cognition links redirect to the matching Brain view", () => {
+  expect(route("/portal/debug/cognition/runs/run-42", "?kind=chat")).toEqual({
+    view: "debug", tab: "brain", cognitionTab: "runs", cognitionId: "run-42",
+    redirectTo: "/portal/debug/brain/runs/run-42?kind=chat",
+  });
+});

@@ -57,6 +57,18 @@ export function portalDeviceName() {
 }
 
 /**
+ * Makes `name` this browser's portal device name, for a sign-in that already
+ * named the device elsewhere: the device row and later logins then agree.
+ */
+export function setPortalDeviceName(name) {
+  try {
+    localStorage.setItem(DEVICE_NAME_KEY, name);
+  } catch {
+    /* without storage every login names the browser afresh, as portalDeviceName does */
+  }
+}
+
+/**
  * Stable per-install identity for this browser, minted once. The gateway
  * adopts the device row carrying it on re-login, so the row keeps its id —
  * and any rename — across sessions. Null when storage is unavailable.

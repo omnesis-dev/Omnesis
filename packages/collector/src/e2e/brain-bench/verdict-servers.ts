@@ -3,7 +3,7 @@
 
 /**
  * The scripted stand-in for the entailment gate that sits between the
- * steward's decision and the write landing.
+ * Brain's decision and the write landing.
  *
  * Durable-memory entailment writes fail open in production, and so does the
  * morning recheck of an observation's claims. That is also a testing hazard:

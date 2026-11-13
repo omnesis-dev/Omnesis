@@ -72,6 +72,7 @@ function firingAnswerRequestId(
 }
 
 export interface SubscriptionRoutesDeps {
+  isEnabled?: () => boolean;
   service?: SubscriptionService;
   /**
    * Whether the gateway is still willing to start a compile.
@@ -305,7 +306,7 @@ async function createOnWatchV2(
 
 export function mountSubscriptionRoutes(app: RouteApp, deps: SubscriptionRoutesDeps): void {
   const requireFeature = async (_c: unknown, next: () => Promise<void>): Promise<void> => {
-    if (!experimentalVisible()) throw new NotFoundError("Not found");
+    if (!(deps.isEnabled?.() ?? experimentalVisible())) throw new NotFoundError("Not found");
     await next();
   };
   const requireService = (): SubscriptionService => {

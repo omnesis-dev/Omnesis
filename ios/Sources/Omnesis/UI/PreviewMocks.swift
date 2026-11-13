@@ -12,6 +12,34 @@ import SwiftUI
 /// Everything here is `#if DEBUG` only — never shipped in release.
 @available(iOS 17.0, *)
 enum PreviewMocks {
+    /// The gateway catalog copied for offline visual previews.
+    static let lab: LabSnapshot = try! JSONDecoder().decode(LabSnapshot.self, from: Data(#"""
+    {"experimental": true, "features": [{"id": "brain", "name": "Brain", "description": "Processes your data in the background to connect information, keep knowledge up to date, and surface useful insights.", "iconSvg": "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"24\" height=\"24\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.5\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M12 5a3 3 0 0 0-5.8-1A3.5 3.5 0 0 0 3 8a4 4 0 0 0-1 7 3.5 3.5 0 0 0 4 5 3 3 0 0 0 6-1V5Zm0 0a3 3 0 0 1 5.8-1A3.5 3.5 0 0 1 21 8a4 4 0 0 1 1 7 3.5 3.5 0 0 1-4 5 3 3 0 0 1-6-1\"/><path d=\"M6 8c2 0 3 1 3 3m-6 4c2-1 4 0 4 2m11-9c-2 0-3 1-3 3m6 4c-2-1-4 0-4 2\"/></svg>", "enabled": false}, {"id": "tasks", "name": "Tasks", "description": "Keep a personal task journal. Add, schedule, and complete tasks yourself or ask Omnesis to help. Enable the Brain as well for background suggestions and updates.", "iconSvg": "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"24\" height=\"24\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.5\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><rect x=\"4\" y=\"3\" width=\"16\" height=\"18\" rx=\"3\"/><path d=\"m7 8 1.5 1.5L11 7m2 2h4m-10 6 1.5 1.5L11 14m2 2h4\"/></svg>", "enabled": true}, {"id": "watches", "name": "Watches", "description": "Watch for changes in your data and receive a notification when your conditions are met.", "iconSvg": "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"24\" height=\"24\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.5\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z\"/><circle cx=\"12\" cy=\"12\" r=\"3\"/><path d=\"M12 1v2m0 18v2\"/></svg>", "enabled": false}]}
+    """#.utf8))
+
+    static func labFeatures(enabled: Bool) -> LabSnapshot {
+        LabSnapshot(experimental: true, features: lab.features.map {
+            LabFeature(id: $0.id, name: $0.name, description: $0.description, enabled: enabled, iconSvg: $0.iconSvg)
+        })
+    }
+
+    static let googleCloudPairingConfiguration = GoogleCloudPairingConfiguration(
+        clientId: "fictional-ios.apps.googleusercontent.com", relayOrigin: URL(string: "https://relay.example.test")!
+    )
+    static func googlePairingPanel(_ phase: GoogleCloudPairingCoordinator.Phase) -> GoogleCloudPairingPanel {
+        let hasCode = [.comparing, .waiting, .ready, .pairing].contains(phase)
+        return GoogleCloudPairingPanel(
+            phase: phase,
+            verificationCode: hasCode ? "465 774" : nil,
+            gatewayHost: hasCode ? "gateway.example.test" : nil,
+            error: phase == .failed ? CloudPairingError.refused : nil,
+
+            onSignIn: {},
+
+            onPair: {}
+        )
+    }
+
     static let copyableMarkdownInline = "Address: `42 Example Street, Exampleville`. Reference: `000042`. **Keep** this [link](https://example.com)."
     static let copyableMarkdownBlock = "42 Example Street\nExampleville\n"
     static let copyableMarkdownValueAndCode = """
@@ -742,6 +770,73 @@ enum PreviewMocks {
         NetworkIdentity(address: "198.51.100.7", label: "Tailscale (off-LAN)", kind: "tailscale", offLan: true),
     ]
 
+    static let pairingQrPayload =
+        #"{"v":4,"gatewayUrl":"https://gateway.tail-fictional.ts.net:7600","pairingCode":"7K3M-9QX2","tls":{"mode":"system"}}"#
+
+    /// The gateway's address plan for an iPhone's pairing code: a Tailscale name, a home
+    /// address, the gateway's Omnesis address, and one address an iPhone cannot use.
+    static let pairingAddressPlan = PairingAddressPlan(
+        platform: "ios",
+        addresses: [
+            PairingAddressOption(
+                gatewayUrl: "https://gateway.tail-fictional.ts.net:7600",
+                host: "gateway.tail-fictional.ts.net",
+                label: "Tailscale name",
+                summary: "Works anywhere, while Tailscale is connected on the phone.",
+                reach: "tailnet",
+                systemTrust: true
+            ),
+            PairingAddressOption(
+                gatewayUrl: "https://192.0.2.42:7600",
+                host: "192.0.2.42",
+                label: "Local network",
+                summary: "Works on the gateway's own network, typically your home Wi-Fi.",
+                reach: "local-network",
+                systemTrust: false
+            ),
+            PairingAddressOption(
+                gatewayUrl: "https://g-fictional.relay.example.test",
+                host: "g-fictional.relay.example.test",
+                label: "Omnesis address",
+                summary: "Works from anywhere. Needs remote access to stay on.",
+                reach: "anywhere",
+                systemTrust: false,
+                kind: "relay"
+            ),
+            PairingAddressOption(
+                gatewayUrl: "https://198.51.100.7:7600",
+                host: "198.51.100.7",
+                label: "Tailscale IP",
+                usable: false,
+                reason: "An iPhone refuses this address. Pair with the Tailscale name instead."
+            ),
+        ],
+        recommendedUrl: "https://gateway.tail-fictional.ts.net:7600"
+    )
+
+    /// A gateway only reachable at home, with the hint on how to reach it from elsewhere.
+    static let pairingAddressPlanHomeOnly = PairingAddressPlan(
+        platform: "ios",
+        addresses: [pairingAddressPlan.addresses[1], pairingAddressPlan.addresses[3]],
+        recommendedUrl: "https://192.0.2.42:7600",
+        awayFromHome: PairingAwayFromHomeHint(onTailnet: true, tailscaleName: nil)
+    )
+
+    /// No address this phone can use.
+    static let pairingAddressPlanNoneUsable = PairingAddressPlan(
+        platform: "ios",
+        addresses: [pairingAddressPlan.addresses[3]],
+        recommendedUrl: nil,
+        awayFromHome: PairingAwayFromHomeHint(onTailnet: false)
+    )
+
+    /// Addresses for a device that is not a phone.
+    static let pairingAddressPlanAgent = PairingAddressPlan(
+        platform: nil,
+        addresses: Array(pairingAddressPlan.addresses.prefix(2)),
+        recommendedUrl: "https://gateway.tail-fictional.ts.net:7600"
+    )
+
     // MARK: - Sync statuses
 
     static let syncStatusSyncing = SourceSyncStatus(
@@ -1145,7 +1240,9 @@ enum PreviewMocks {
         ),
         dbSizeBytes: 4_000_000_000,
         latestActivityBySource: nil,
-        experimental: true
+        experimental: true,
+        lab: LabFlags(brain: true, tasks: true, watches: true),
+        labAvailable: true
     )
 
     /// Experimental mode on a gateway that also serves Tasks — every
@@ -1155,6 +1252,8 @@ enum PreviewMocks {
         dbSizeBytes: statusSnapshotExperimental.dbSizeBytes,
         latestActivityBySource: nil,
         experimental: true,
+        lab: LabFlags(brain: true, tasks: true, watches: true),
+        labAvailable: true,
         tasks: TasksStatus(available: true)
     )
 
@@ -4270,7 +4369,7 @@ enum PreviewMocks {
 
     //
     // Fully fictional loop scenario — invented names + example venues only.
-    // The chat agent reads the background Cognition Steward's tracked obligations
+    // The chat agent reads the background Brain's tracked obligations
     // around planning a team offsite.
 
     /// A document that two tracked loops rest on — drives the inline

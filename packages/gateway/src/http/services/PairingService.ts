@@ -5,6 +5,7 @@ import { createLogger } from "@omnesis/core";
 import {
   SCOPE_SUBSCRIPTIONS_RECEIVE,
   type DeviceCapability,
+  type DeviceEnrollmentSignIn,
   type DeviceId,
   type DeviceKind,
   type DeviceRecord,
@@ -18,6 +19,7 @@ import {
   listDevices,
   peekPairing,
   resolveDeviceName,
+  type DevicePairingRedemption,
   type PendingPairing,
 } from "../../data/repositories/DeviceRepository.js";
 import {
@@ -71,6 +73,13 @@ export interface PairingServiceDeps {
   sourceService: Pick<SourceService, "clearRemovedForDeviceTypes">;
   wsServer?: Pick<DeviceWsServer, "isConnected" | "disconnectDevice">;
   now?: () => number;
+  /** A device joined without anyone approving it, so its owner should hear about it. */
+  onDeviceJoined?: (device: {
+    deviceId: DeviceId;
+    name: string;
+    kind: DeviceKind;
+    signIn: DeviceEnrollmentSignIn | null;
+  }) => void;
 }
 
 export interface PairingServiceInput {
@@ -161,17 +170,28 @@ export class PairingService {
       };
     }
 
-    const result = await w.redeemDevicePairing({
-      pairingCode: input.pairingCode,
-      ...(preview ? { expectedKind: preview.kind } : {}),
-      capabilities: input.capabilities ?? {},
-      ...(input.idempotencyKey ? { idempotencyKey: input.idempotencyKey } : {}),
-      onlineDeviceIds: this.deps.wsServer
-        ? listDevices(db)
-            .filter((device) => this.deps.wsServer!.isConnected(device.id))
-            .map((device) => device.id)
-        : [],
-    });
+    return this.afterDeviceRedemption(
+      await w.redeemDevicePairing({
+        pairingCode: input.pairingCode,
+        ...(preview ? { expectedKind: preview.kind } : {}),
+        capabilities: input.capabilities ?? {},
+        ...(input.idempotencyKey ? { idempotencyKey: input.idempotencyKey } : {}),
+        onlineDeviceIds: this.onlineDeviceIds(),
+      }),
+    );
+  }
+
+  private onlineDeviceIds(): DeviceId[] {
+    return this.deps.wsServer
+      ? listDevices(this.deps.db)
+          .filter((device) => this.deps.wsServer!.isConnected(device.id))
+          .map((device) => device.id)
+      : [];
+  }
+
+  private async afterDeviceRedemption(
+    result: DevicePairingRedemption,
+  ): Promise<PairingServiceResult> {
     if (result.outcome === "invalid") {
       return { outcome: "invalid", error: "invalid or expired pairing code" };
     }
@@ -196,7 +216,24 @@ export class PairingService {
 
     this.deps.statusCache.bump();
     log.info(`Device paired: ${device.name} (${device.kind}) id=${device.id}`);
+    this.announceJoin(device);
     return { outcome: "paired-device", device, tokenId, token, scopes: result.scopes };
+  }
+
+  /** An approved device had a person say yes, so only an automatic join announces. */
+  private announceJoin(device: DeviceRecord): void {
+    if (device.enrollment?.method !== "automatic") return;
+    try {
+      this.deps.onDeviceJoined?.({
+        deviceId: device.id,
+        name: device.name,
+        kind: device.kind,
+        signIn: device.enrollment?.signIn ?? null,
+      });
+    } catch {
+      // The credentials are already committed; a notification must not lose them.
+      log.warn(`Could not announce that ${device.id} joined`);
+    }
   }
 
   private async redeemAgent(

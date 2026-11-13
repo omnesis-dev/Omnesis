@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 /**
- * The headless Cognition Steward run driver — executes one claimed queue run
+ * The headless Brain run driver — executes one claimed queue run
  * end-to-end on the `SubagentService.runChild` pattern: build an
  * {@link AgentSession} directly (a NON-broadcasting session — nothing
  * here touches the WS fan-out, so background runs never spam clients),
@@ -11,7 +11,7 @@
  *
  * There is deliberately no HTTP surface: runs enter through the queue
  * and results land in storage. The prompt and tool surfaces are
- * injectable seams — the Cognition Steward's real per-kind prompts and its
+ * injectable seams — the Brain's real per-kind prompts and its
  * loop/brief write-tools plug in here; the defaults below are a minimal
  * generic envelope that keeps the driver testable on its own.
  */
@@ -62,7 +62,7 @@ export function defaultCognitionPrompt(run: ClaimedCognitionRun): string {
       ? " — a previous attempt of this run may have partially completed; before creating anything, check for work already stamped with this run id and adopt it"
       : "";
   return [
-    "Background Cognition Steward run.",
+    "Background Brain run.",
     `Run id: ${run.id}`,
     `Attempt: ${run.attempts}${reAttempt}`,
     `Kind: ${run.kind}`,
@@ -70,7 +70,7 @@ export function defaultCognitionPrompt(run: ClaimedCognitionRun): string {
   ].join("\n");
 }
 
-/** The default (placeholder) system prompt; the real Cognition Steward prompt plugs in via the seam. */
+/** The default (placeholder) system prompt; the real Brain prompt plugs in via the seam. */
 function defaultCognitionSystemPrompt(): string {
   return "You are a background agent processing one queued run. Respond concisely.";
 }
@@ -155,7 +155,7 @@ export interface CognitionRunDriverDeps {
   transcripts: FsCognitionTranscriptStore;
   log: Logger;
   /**
-   * Seam for the Cognition Steward's tool surface, built fresh per claimed run
+   * Seam for the Brain's tool surface, built fresh per claimed run
    * so the handles carry the run's id (creates stamp `created_by_run`,
    * ledger appends stamp the run id). Default: no tools.
    */

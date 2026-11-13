@@ -179,6 +179,26 @@ describe("writer watchdog description", () => {
   });
 });
 
+describe("writer WAL cut metrics", () => {
+  test("count the steps that cut the WAL file and the bytes they cut, apart from copies", () => {
+    const runner = new WriterTaskRunner({
+      gatewayDbPath: testDbPath(),
+      journalMode: "WAL",
+      workerUrl: WORKER_URL,
+    });
+    const record = (
+      runner as unknown as { recordCheckpoint(run: WalCheckpointRun): void }
+    ).recordCheckpoint.bind(runner);
+    record({ mode: "RESTART", outcome: "rewound", log: 0, checkpointed: 0, ms: 1 });
+    record({ mode: "CUT", outcome: "cut", log: 3, checkpointed: 0, cutBytes: 4_096, ms: 1 });
+    record({ mode: "CUT", outcome: "cut", log: 5, checkpointed: 0, cutBytes: 1_024, ms: 1 });
+    record({ mode: "PASSIVE", outcome: "copied", log: 5, checkpointed: 5, ms: 1 });
+    const metrics = runner.walCheckpointMetrics(60)!;
+    expect(metrics).toMatchObject({ runs: 4, rewinds: 1, cuts: 2, cutBytes: 5_120 });
+    expect(metrics.lifetime).toMatchObject({ runs: 4, rewinds: 1, cuts: 2, cutBytes: 5_120 });
+  });
+});
+
 describe("writer deferred-rewind streak", () => {
   type Outcome = WalCheckpointRun["outcome"];
   function streakAfter(outcomes: Outcome[]) {

@@ -12,10 +12,14 @@ import kotlinx.serialization.Serializable
  * Gateway TS shape (the wire contract these mirror):
  *
  * ```ts
- * // POST /notes            body: { id?: string; text: string; capturedAt?: string; surface?: string; deviceId?: string }
+ * // POST /notes            body: { id?: string; text: string; capturedAt?: string;
+ * //                                capturedTimeZoneId?: string; capturedUtcOffsetSeconds?: number;
+ * //                                surface?: string; deviceId?: string; taskId?: string }
  * //                        `id` is a client-generated idempotency key (UUID): a retried
  * //                        POST with the same id returns the stored entry instead of
- * //                        creating a duplicate.
+ * //                        creating a duplicate. `capturedTimeZoneId` (an IANA zone) and
+ * //                        `capturedUtcOffsetSeconds` travel as a pair: the gateway rejects
+ * //                        one without the other.
  * type NoteEntry = {
  *   id: string;
  *   day: string;          // "YYYY-MM-DD"
@@ -62,6 +66,8 @@ data class VoiceNoteBody(
     val deviceId: String? = null,
     val language: String? = null,
     val taskId: String? = null,
+    val capturedTimeZoneId: String? = null,
+    val capturedUtcOffsetSeconds: Int? = null,
 )
 
 /** `POST /notes/voice` 202: the note is saved and its transcription queued. */
@@ -81,6 +87,8 @@ data class CreateNoteBody(
     val surface: String? = null,
     val deviceId: String? = null,
     val taskId: String? = null,
+    val capturedTimeZoneId: String? = null,
+    val capturedUtcOffsetSeconds: Int? = null,
 )
 
 @Serializable

@@ -9,9 +9,10 @@
 
 import { existsSync, unlinkSync } from "node:fs";
 import { randomUUID } from "node:crypto";
-import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { vi, afterEach, beforeEach, describe, expect, test } from "vitest";
 import { ProviderId, SourceId } from "@omnesis/types";
 import { createDatabase, upsertDocuments } from "../../db.js";
+import { setLabFlag } from "../../lab/store.js";
 import { directWriteGate } from "../../write-gate.js";
 import { createOpenLoop } from "../storage/open-loops.js";
 import { TaskService } from "./service.js";
@@ -34,9 +35,13 @@ let tasks: TaskService;
 beforeEach(() => {
   path = `/tmp/omnesis-test-${randomUUID()}.db`;
   db = createDatabase(path);
+  vi.stubEnv("OMNESIS_EXPERIMENTAL", "1");
+  setLabFlag(db, "tasks", true);
+  setLabFlag(db, "brain", false);
   tasks = new TaskService(db, directWriteGate(db), () => NOW);
 });
 afterEach(() => {
+  vi.unstubAllEnvs();
   db.close();
   for (const suffix of ["", "-wal", "-shm", "-journal"])
     if (existsSync(path + suffix)) unlinkSync(path + suffix);

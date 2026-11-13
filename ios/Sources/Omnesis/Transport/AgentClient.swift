@@ -1326,7 +1326,7 @@ public struct AgentUsage: Codable, Sendable, Equatable, Hashable {
 
 // MARK: - Doc ref + person
 
-/// A compact reference to an open loop the Cognition Steward tracks that a document
+/// A compact reference to an open loop the Brain tracks that a document
 /// is a source for — the "what is this document part of" connection, attached
 /// inline to search / fetch results when the gateway is in experimental mode.
 /// A pointer, not the loop's full state (that lives behind `fetch_loop`);
@@ -1343,7 +1343,7 @@ public struct AgentDocLoopRef: Codable, Sendable, Equatable, Hashable, Identifia
     public let title: String
     /// Lifecycle state (`open` | `snoozed`; terminal loops are never attached).
     public let state: String
-    /// Importance the Cognition Steward assigned (0–1), for ordering.
+    /// Importance the Brain assigned (0–1), for ordering.
     public let importance: Double?
 
     public init(loopId: String, title: String, state: String, importance: Double? = nil) {
@@ -1354,7 +1354,7 @@ public struct AgentDocLoopRef: Codable, Sendable, Equatable, Hashable, Identifia
     }
 }
 
-/// A compact, hint-shaped view of a durable annotation the Cognition Steward recorded
+/// A compact, hint-shaped view of a durable annotation the Brain recorded
 /// ABOUT a document — a prior to reground against, never a hard fact. Attached
 /// inline to fetch results in experimental mode; the verbatim evidence quote
 /// is deliberately omitted from the wire shape. Mirrors `DocAnnotationHint` in
@@ -1399,12 +1399,12 @@ public struct AgentDocRef: Codable, Sendable, Equatable, Hashable, Identifiable 
     /// summary doesn't depend on a side-channel having loaded yet.
     public let unitName: String?
     /// Open loops this document is a source for — the "what is this part
-    /// of" connection the Cognition Steward tracks, attached inline in
+    /// of" connection the Brain tracks, attached inline in
     /// experimental mode (loops exist only then). Surfaced on both agent
     /// searches and fetch results; nil/empty when no tracked loop
     /// references the document.
     public let openLoops: [AgentDocLoopRef]?
-    /// Durable annotations the Cognition Steward recorded ABOUT this document —
+    /// Durable annotations the Brain recorded ABOUT this document —
     /// grounded priors, never facts. Attached inline on fetch results in
     /// experimental mode; nil/empty when none exist.
     public let annotations: [AgentDocAnnotationHint]?

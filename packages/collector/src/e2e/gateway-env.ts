@@ -21,6 +21,9 @@ const E2E_GATEWAY_DEFAULTS: Readonly<NodeJS.ProcessEnv> = {
   OMNESIS_CPU_CONCURRENCY: "2",
   OMNESIS_SEARCH_WORKER_CONCURRENCY: "1",
   OMNESIS_USEARCH_BACKFILL_THREADS: "1",
+  // The relay certificate monitor is on by default and queries a public CT
+  // provider; a harness that tests it opts back in explicitly.
+  OMNESIS_CLOUD_RELAY_CERTIFICATE_MONITOR_ENABLED: "0",
 };
 
 const E2E_INTERNAL_DEFAULTS: Readonly<NodeJS.ProcessEnv> = {

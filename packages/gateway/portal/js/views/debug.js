@@ -40,14 +40,14 @@ import { GraphView } from "./graph.js";
 import { CognitionView } from "./cognition.js";
 import { CalendarTab } from "./calendar.js";
 import { DoctorTab } from "./doctor.js";
-import { WatchDebugTab } from "./watch-debug.js";
 
-// The two table/query tabs load on first open rather than with the page. Both
-// reach the SQL editor module and its CodeMirror dependency (~480 KB of vendor
-// JS), and the SQL tab additionally pulls sql-formatter (~290 KB) — none of
-// which a visit to Metrics or Doctor has any use for.
+// SQL-capable tabs load on first open rather than with the page. They reach
+// the SQL editor module and its CodeMirror dependency (~480 KB of vendor JS),
+// and SQL and Watch also pull sql-formatter (~290 KB) — none of which a visit
+// to Metrics or Doctor has any use for.
 const DataView = lazy(() => import("./data.js").then((m) => m.DataView));
 const SqlView = lazy(() => import("./sql.js").then((m) => m.SqlView));
+const WatchDebugTab = lazy(() => import("./watch-debug.js").then((m) => m.WatchDebugTab));
 
 const WINDOW_OPTIONS = [
   { label: "1 min", seconds: 60 },
@@ -147,6 +147,7 @@ export function DebugView({
   dataParams,
   sqlParams,
   experimental,
+  lab = { brain: experimental, watches: experimental },
   developer = false,
   cognitionTab,
   cognitionId,
@@ -154,7 +155,7 @@ export function DebugView({
   watchDebugId,
   watchDebugSeq,
 } = {}) {
-  const tabs = debugTabs(experimental);
+  const tabs = debugTabs(experimental, lab);
   const validTabs = new Set(tabs.map((t) => t.key));
   // The URL is the single source of truth for which tab is open — no mirrored
   // local state to drift out of sync. That means a link into a specific tab
@@ -165,7 +166,7 @@ export function DebugView({
 
   return html`
     <div class="debug-view debug-workspace">
-      <${DebugNavigation} tab=${activeTab} routeTab=${tab} cognitionTab=${cognitionTab} experimental=${experimental} />
+      <${DebugNavigation} tab=${activeTab} routeTab=${tab} cognitionTab=${cognitionTab} experimental=${experimental} lab=${lab} />
       ${DEBUG_INTROS[activeTab] && html`<header class="debug-section-heading"><h1>${DEBUG_INTROS[activeTab][0]}</h1><p>${DEBUG_INTROS[activeTab][1]}</p></header>`}
       ${activeTab === "data" && html`<${DataView}
         store=${dataParams?.store ?? null}
@@ -182,12 +183,12 @@ export function DebugView({
         selectedId=${calendarId ?? null}
         developer=${developer}
       />`}
-      ${activeTab === "cognition" && experimental && html`<${CognitionView}
+      ${activeTab === "brain" && lab.brain && html`<${CognitionView}
         subTab=${cognitionTab}
         selectedId=${cognitionId}
         developer=${developer}
       />`}
-      ${activeTab === "watch" && experimental && html`<${WatchDebugTab}
+      ${activeTab === "watch" && lab.watches && html`<${WatchDebugTab}
         watchId=${watchDebugId ?? null}
         seq=${watchDebugSeq ?? null}
       />`}
@@ -666,7 +667,7 @@ const CATEGORY_ORDER = [
   "auth",
   "search",
   "watches",
-  // Every Cognition Steward job reports this category. Absent from this list
+  // Every Brain job reports this category. Absent from this list
   // they still render, but sorted into the unknown-category tail rather than
   // in a deliberate position among their neighbours.
   "briefs",

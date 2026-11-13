@@ -38,6 +38,9 @@ fi
 export OMNESIS_CONFIG_DIR="${OMNESIS_CONFIG_DIR:-/tmp/omnesis-ios-e2e}"
 export OMNESIS_GATEWAY_PORT="${OMNESIS_GATEWAY_PORT:-17601}"
 export OMNESIS_SYNTH_UNIVERSE="${OMNESIS_SYNTH_UNIVERSE:-e2e-minimal}"
+# The live transport suite exercises the optional Tasks and Watches APIs.
+# Open the Lab explicitly; the synthetic-mode flag never opts into products.
+export OMNESIS_EXPERIMENTAL=1
 # Keep the gateway off the network, like every gateway the E2E suites spawn.
 # Synthetic sources inherit their real providers' hosted icons, and a descriptor
 # listing waits for each one, so third-party hosts would decide how long the
@@ -98,6 +101,14 @@ if [[ -z "$TOKEN" ]]; then
 fi
 echo "→ Gateway up. Token captured."
 
+# Opt into only the products this fixture exercises. Keep the Brain off so
+# autonomous background work cannot alter the live transport test's inputs.
+for feature in tasks watches; do
+  curl --fail --silent --show-error --cacert "$OMNESIS_CONFIG_DIR/tls/cert.pem" \
+    -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+    -X PUT --data '{"enabled":true}' "${URL}/admin/lab/$feature" >/dev/null
+done
+
 # Poll until Jane Doe resolves in the people graph. `synth-gateway.sh
 # seed_sources` returns when /admin/sources/add POSTs land, but
 # `resolveDocumentPeople` runs as a background writer-handler — the
@@ -137,14 +148,35 @@ json.dump({'gatewayURL': '$URL', 'apiToken': '$TOKEN'}, sys.stdout)
 RESULT_DIR="$(mktemp -d)"
 trap 'cleanup; rm -f "$CONFIG_FILE"; rm -rf "$RESULT_DIR"' EXIT
 
-xcodebuild test \
-  -project Omnesis.xcodeproj \
-  -scheme Omnesis \
-  -destination "$DEST" \
-  "${PACKAGE_FLAGS[@]}" \
-  -resultBundlePath "$RESULT_DIR/live.xcresult" \
-  -only-testing:OmnesisTests/GatewayLiveE2ETests \
-  -only-testing:OmnesisTests/RealtimeAudioCaptureDeviceTests
+# Every xcodebuild process discovers simulators afresh. On a loaded hosted
+# runner that discovery can give up with no simulators at all, even though the
+# readiness wait above saw the phone; xcodebuild then refuses the destination
+# (exit 70) before it builds or runs anything. Wait for the destination again
+# and retry that refusal once. Any other failure, or a second refusal, fails.
+LOST_DESTINATION="Unable to find a device matching the provided destination specifier"
+for attempt in 1 2; do
+  # A refused run may already have written its result bundle, and xcodebuild
+  # will not overwrite one.
+  rm -rf "$RESULT_DIR/live.xcresult"
+  status=0
+  xcodebuild test \
+    -project Omnesis.xcodeproj \
+    -scheme Omnesis \
+    -destination "$DEST" \
+    "${PACKAGE_FLAGS[@]}" \
+    -resultBundlePath "$RESULT_DIR/live.xcresult" \
+    -only-testing:OmnesisTests/GatewayLiveE2ETests \
+    -only-testing:OmnesisTests/RealtimeAudioCaptureDeviceTests \
+    2>&1 | tee "$RESULT_DIR/xcodebuild.log" || status=$?
+  if [[ "$status" -eq 70 && "$attempt" -eq 1 ]] &&
+    grep -qF "$LOST_DESTINATION" "$RESULT_DIR/xcodebuild.log"; then
+    echo "→ Xcode lost $DEST before building; waiting for it again and retrying once…" >&2
+    node "$ROOT/scripts/ci/wait-ios-destination.mjs" "$DEST" "${PACKAGE_FLAGS[@]}"
+    continue
+  fi
+  if [[ "$status" -ne 0 ]]; then exit "$status"; fi
+  break
+done
 
 # Gateway coverage must never silently skip. Hardware probes must pass when
 # their explicit local fixture is enabled, and otherwise remain skipped.

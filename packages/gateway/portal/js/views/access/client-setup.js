@@ -9,15 +9,23 @@
 // OAuth flow, so nothing here carries a credential.
 
 import { AGENT_ICONS } from "./agent-brand.js";
+import {
+  DOCS,
+  PUBLISH_DOMAIN,
+  PUBLISH_FUNNEL,
+  addressChoices,
+  hostedClientAddress,
+  localClientAddress,
+} from "./public-address.js";
+
+export { isPrivateAddress, usesNonStandardPort } from "./public-address.js";
 
 const SERVER_NAME = "omnesis";
 
-/** The gateway does not serve the docs; these are the published pages. */
-const DOCS = "https://omnesis.dev/docs";
 const DEVELOPER_MODE_GUIDE = "https://developers.openai.com/api/docs/guides/developer-mode";
 export const PUBLISH_DOCS = {
-  funnel: `${DOCS}/connect#tailscale-funnel`,
-  domain: `${DOCS}/setup#public-domain`,
+  funnel: PUBLISH_FUNNEL,
+  domain: PUBLISH_DOMAIN,
   certificates: `${DOCS}/setup#certificates`,
   trust: `${DOCS}/connect#trust-certificate`,
 };
@@ -28,50 +36,6 @@ export const TRUST_STEP_LABEL = "Trust this gateway's certificate first";
 /** POSIX-shell single quoting, so a value can never split a pasted command. */
 function shellQuote(value) {
   return /^[A-Za-z0-9_./:@%+=,-]+$/u.test(value) ? value : `'${value.replaceAll("'", `'\\''`)}'`;
-}
-
-const PRIVATE_SUFFIXES = [".local", ".internal", ".lan", ".home.arpa", ".localhost"];
-
-/**
- * Whether an address can only be reached from the gateway's own networks:
- * loopback, link-local, RFC 1918, carrier-grade NAT (which is where Tailscale
- * addresses live), IPv6 unique-local, and the reserved private DNS suffixes.
- * A public-looking name may still be unpublished; that the gateway cannot see.
- */
-export function isPrivateAddress(resource) {
-  let host;
-  try {
-    host = new URL(resource).hostname.toLowerCase();
-  } catch {
-    return false;
-  }
-  if (host === "localhost" || PRIVATE_SUFFIXES.some((suffix) => host.endsWith(suffix))) return true;
-  const v4 = host.match(/^(\d{1,3})\.(\d{1,3})\.\d{1,3}\.\d{1,3}$/u);
-  if (v4) {
-    const [a, b] = [Number(v4[1]), Number(v4[2])];
-    return (
-      a === 10 ||
-      a === 127 ||
-      (a === 169 && b === 254) ||
-      (a === 172 && b >= 16 && b <= 31) ||
-      (a === 192 && b === 168) ||
-      (a === 100 && b >= 64 && b <= 127)
-    );
-  }
-  if (host.startsWith("[")) {
-    const v6 = host.slice(1, -1);
-    return v6 === "::1" || /^f[cd]/u.test(v6) || /^fe[89ab]/u.test(v6);
-  }
-  return false;
-}
-
-/** Whether an https address names a port other than 443. */
-export function usesNonStandardPort(resource) {
-  try {
-    return new URL(resource).port !== "";
-  } catch {
-    return false;
-  }
 }
 
 /**
@@ -172,9 +136,13 @@ function harnessCommands(harness, oauth, address, pairingCode) {
  *   finish the sign-in on a machine without a browser, with an optional
  *   command to run there.
  * - `needsPublicAddress` marks agents that reach the gateway from the Internet,
- *   and `standardPortOnly` those that only dial port 443. With an address such
- *   an agent cannot reach, it is `blocked` and has no commands or
- *   instructions, because none of them could work.
+ *   and `standardPortOnly` those that only dial port 443. Each gets an
+ *   `addressNotice` (see `hostedClientAddress`): whether it can use the
+ *   address, and the notice shown with it. With an address such an agent
+ *   cannot reach, it is `blocked` and has no commands or instructions,
+ *   because none of them could work. Any other agent gets an `addressNotice`,
+ *   and is `blocked`, only for an Omnesis address that cannot be used right
+ *   now (see `localClientAddress`).
  * - `needsTrustedCertificate` marks agents that only accept a certificate an
  *   authority they trust issued. Where the gateway's address serves one no
  *   public authority issued, the agent is `blocked` too, unless
@@ -186,12 +154,13 @@ function harnessCommands(harness, oauth, address, pairingCode) {
  *   as an agent device before signing in.
  *
  * @param {{ resource: string, resources?: Array<{ resource: string, servedByGateway: boolean, direct: boolean, publiclyTrusted?: boolean }>, tlsFingerprintSha256?: string | null, certificate?: { kind: string, trustFile: string | null } | null }} oauth
- * @param {{ harnessAddress?: { gatewayUrl: string, servedByGateway: boolean, direct: boolean }, pairingCode?: string }} [pairing]
+ * @param {{ harnessAddress?: { gatewayUrl: string, servedByGateway: boolean, direct: boolean }, pairingCode?: string, relay?: { state: string, url?: string } }} [options]
+ *   `oauth.resource` is the address selected in the dialog, and `relay` the
+ *   gateway's relay-hosted address, from `relayPublicAddress`.
  */
-export function agentSetups(oauth, { harnessAddress, pairingCode } = {}) {
+export function agentSetups(oauth, { harnessAddress, pairingCode, relay } = {}) {
   const url = shellQuote(oauth.resource);
   const address = harnessAddress ?? harnessAddresses(oauth)[0];
-  const privateAddress = isPrivateAddress(oauth.resource);
   const untrustedCertificate = servesUntrustedCertificate(oauth);
   const agents = [
     {
@@ -329,16 +298,17 @@ export function agentSetups(oauth, { harnessAddress, pairingCode } = {}) {
       docs: `${DOCS}/connect#harness-install`,
     },
   ];
-  const nonStandardPort = usesNonStandardPort(oauth.resource);
-  return agents.map((agent) => {
+  const choices = addressChoices(oauth, relay);
+  return agents.map((listed) => {
+    const addressNotice = listed.needsPublicAddress
+      ? hostedClientAddress(listed, oauth.resource, relay, choices)
+      : localClientAddress(oauth.resource, relay, choices);
+    const agent = addressNotice ? { ...listed, addressNotice } : listed;
+    const blocked = { ...agent, blocked: true, commands: [], alternatives: false, note: [], headless: undefined };
+    // An address that does not answer says nothing about the certificate behind it.
+    if (addressNotice && !addressNotice.usable) return blocked;
     const trustFile = untrustedCertificate ? agentTrustFile(agent, mainAddressCertificate(oauth)) : null;
-    if (
-      (agent.needsPublicAddress && privateAddress) ||
-      (agent.standardPortOnly && nonStandardPort) ||
-      (agent.needsTrustedCertificate && untrustedCertificate && !trustFile)
-    ) {
-      return { ...agent, blocked: true, commands: [], alternatives: false, note: [], headless: undefined };
-    }
+    if (agent.needsTrustedCertificate && untrustedCertificate && !trustFile) return blocked;
     if (!trustFile) return agent;
     const { variable } = agent.certificateTrust;
     return {

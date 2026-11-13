@@ -82,6 +82,7 @@ it("reads the knowledge ledgers on the main handle only through index seeks", as
   const writeGate = directKnowledgeGate(writer);
   const clock = () => now;
   const service = new KnowledgeService({
+    tasksEnabled: () => true,
     db: main,
     writeGate,
     getSettings: () => settings,

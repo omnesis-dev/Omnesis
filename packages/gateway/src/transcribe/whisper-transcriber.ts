@@ -124,7 +124,18 @@ export type WhisperModuleLoader = () => Promise<{ Whisper: unknown }>;
 export const defaultWhisperLoader: WhisperModuleLoader = () =>
   import(SMART_WHISPER_SPECIFIER) as Promise<{ Whisper: unknown }>;
 
-/** Whether the local-transcription native deps are installed and resolvable. */
+/**
+ * Why a local Whisper model cannot run when `whisperDepsAvailable` is false.
+ * `smart-whisper` is an optional dependency that compiles whisper.cpp when
+ * Omnesis is installed and is left out where that build fails: on a host
+ * without a C/C++ toolchain, and on Linux with GCC 14 or later, whose compiler
+ * rejects the whisper.cpp source it bundles (#891). Installing again does not
+ * help there, so the message points at a transcription server instead.
+ */
+export const LOCAL_WHISPER_UNAVAILABLE =
+  "Local Whisper models cannot run on this gateway: their whisper.cpp engine could not be built on this machine when Omnesis was installed. Assign the transcriber to a transcription server instead.";
+
+/** Whether the local-transcription native module is installed and loads. */
 export async function whisperDepsAvailable(
   loader: WhisperModuleLoader = defaultWhisperLoader,
 ): Promise<boolean> {

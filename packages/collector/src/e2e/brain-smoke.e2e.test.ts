@@ -116,7 +116,7 @@ describe("Brain Bench smoke", () => {
     expect(calls[0]!.flavour).toBe("synthesis.knowledge");
     expect(calls[0]!.subject).toBeNull();
 
-    // Direct discovery never enters the canonical steward toolset.
+    // Direct discovery never enters the canonical Brain toolset.
     const executed = await bench.obs.executedTools(runs[0]!.id);
     expect(executed.find((step) => step.tool === "list_tables")?.result).toMatchObject({
       kind: "error",

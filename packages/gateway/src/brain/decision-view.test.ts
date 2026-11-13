@@ -21,7 +21,7 @@ function transcript(over: Partial<CognitionRunTranscript> = {}): CognitionRunTra
     payload: { docId: "doc_a", event: "created", datumAt: 500 },
     startedAt: 1000,
     finishedAt: 2000,
-    prompt: "Background Cognition Steward run.",
+    prompt: "Background Brain run.",
     events: [],
     finalText: "Tracked the new commitment.",
     outcome: "completed",

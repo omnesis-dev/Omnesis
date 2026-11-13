@@ -10,9 +10,11 @@ import { describe, test, expect, beforeEach, afterEach, vi } from "vitest";
 type Db = Database.Database;
 
 import { createDatabase } from "../db.js";
+import { setLabFlag } from "../lab/store.js";
 import { createOpenLoop } from "../brain/storage/open-loops.js";
 import { createPersonAnnotation } from "../brain/storage/person-annotations.js";
 import { createGatewayPersonPort } from "./ports.js";
+import type { PersonSummary } from "@omnesis/core";
 import type { PersonLookupGate } from "../domain/person-lookup.js";
 import type Database from "better-sqlite3";
 
@@ -269,10 +271,12 @@ describe("createGatewayPersonPort.lookup", () => {
       expect(out.query).toBe("anyone");
     });
 
-    test("passes experimental=true when experimental mode is on", async () => {
+    test("passes experimental=true when Brain and Tasks are opted in", async () => {
       const prev = process.env.OMNESIS_EXPERIMENTAL;
       process.env.OMNESIS_EXPERIMENTAL = "1";
       try {
+        setLabFlag(db, "brain", true);
+        setLabFlag(db, "tasks", true);
         const lookupPeople = vi.fn(async () => []);
         const port = createGatewayPersonPort(db, { lookupGate: { lookupPeople } });
         await port.lookup({ query: "q", limit: 3 });
@@ -282,6 +286,49 @@ describe("createGatewayPersonPort.lookup", () => {
         else process.env.OMNESIS_EXPERIMENTAL = prev;
       }
     });
+
+    test.each(["brain", "tasks"] as const)(
+      "withholds task context when %s is disabled while the worker waits",
+      async (feature) => {
+        vi.stubEnv("OMNESIS_EXPERIMENTAL", "1");
+        try {
+          setLabFlag(db, "brain", true);
+          setLabFlag(db, "tasks", true);
+          let resolveLookup!: (rows: PersonSummary[]) => void;
+          const lookupPeople = vi.fn(
+            () =>
+              new Promise<PersonSummary[]>((resolve) => {
+                resolveLookup = resolve;
+              }),
+          );
+          const pending = createGatewayPersonPort(db, { lookupGate: { lookupPeople } }).lookup({
+            query: "Maya",
+            limit: 3,
+          });
+          expect(lookupPeople).toHaveBeenCalledWith("Maya", 3, { experimental: true });
+          setLabFlag(db, feature, false);
+          resolveLookup([
+            {
+              canonicalId: "p-lab",
+              displayName: "Maya Reeves",
+              aliases: ["maya@example.com"],
+              openLoops: [
+                { loopId: "loop-lab", title: "Prepare workshop materials", state: "open" },
+              ],
+            },
+          ]);
+          const result = await pending;
+          expect(result.results[0]).toMatchObject({
+            canonicalId: "p-lab",
+            displayName: "Maya Reeves",
+            aliases: ["maya@example.com"],
+          });
+          expect(result.results[0]?.openLoops).toBeUndefined();
+        } finally {
+          vi.unstubAllEnvs();
+        }
+      },
+    );
 
     test("falls back to the synchronous main-thread read when no gate is wired", async () => {
       insertPerson({
@@ -301,6 +348,8 @@ describe("createGatewayPersonPort.lookup", () => {
     const prev = process.env.OMNESIS_EXPERIMENTAL;
     beforeEach(() => {
       process.env.OMNESIS_EXPERIMENTAL = "1";
+      setLabFlag(db, "brain", true);
+      setLabFlag(db, "tasks", true);
     });
     afterEach(() => {
       if (prev === undefined) delete process.env.OMNESIS_EXPERIMENTAL;
@@ -339,6 +388,29 @@ describe("createGatewayPersonPort.lookup", () => {
       expect(summary?.openLoops?.map((l) => l.loopId)).toEqual(["olp_actor"]);
       expect(summary?.openLoops?.[0]?.title).toBe("Send the signed lease");
     });
+
+    test.each(["brain", "tasks"] as const)(
+      "withholds task context when %s is opted out",
+      async (feature) => {
+        insertPerson({ id: "p-lab", name: "Maya Reeves", emails: ["maya@example.com"] });
+        createOpenLoop(
+          db,
+          {
+            id: "loop-lab",
+            createdByRun: "fixture",
+            title: "Prepare workshop materials",
+            confidence: 0.9,
+            importance: 0.5,
+            actors: ["p-lab"],
+          },
+          3_000,
+        );
+        setLabFlag(db, feature, false);
+        const result = await createGatewayPersonPort(db).lookup({ query: "Maya" });
+        expect(result.results[0]?.canonicalId).toBe("p-lab");
+        expect(result.results[0]?.openLoops).toBeUndefined();
+      },
+    );
 
     test("a person with no loops omits the field", async () => {
       insertPerson({ id: "p-b", name: "Maria Smith", emails: ["maria.b@example.com"] });

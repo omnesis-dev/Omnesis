@@ -5,7 +5,7 @@ import Database from "better-sqlite3";
 import { afterEach, beforeEach, expect, it } from "vitest";
 import { createLogger } from "@omnesis/core";
 import { resolveBrainSettings } from "../config.js";
-import { withGrantedMutationsOnly } from "../steward/runtime.js";
+import { withGrantedMutationsOnly } from "../runtime/runtime.js";
 import { createKnowledgeTables, saveKnowledgeNode } from "./storage.js";
 import { readKnowledgeHistory } from "./history-view.js";
 import { KnowledgeService } from "./service.js";
@@ -147,6 +147,7 @@ it("keeps an emoji intact at the maximum character boundary", () => {
 it("exposes a read-only history tool through the production maintenance grant filter", async () => {
   save(0);
   const service = new KnowledgeService({
+    tasksEnabled: () => true,
     db,
     writeGate: directKnowledgeGate(db),
     getSettings: () => resolveBrainSettings(),

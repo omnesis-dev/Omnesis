@@ -3,7 +3,7 @@
 
 /**
  * The real-time waker's V1 heuristics — the pure decision of whether a
- * `document.upserted` event should wake the Cognition Steward, and with what
+ * `document.upserted` event should wake the Brain, and with what
  * debounce. Separated from the bus subscriber so it's testable without
  * an EventBus (the near-dup `decideUpsertReason` shape).
  *

@@ -30,7 +30,7 @@ const UPDATE = email({
 
 test("enabling Brain keeps an existing owner's task, references and authored deadline", async () => {
   const bench = await BrainBench.start({
-    experimental: false,
+    experimental: true,
     syncSources: false,
     entailment: () => "entailment",
     brain: {
@@ -67,6 +67,10 @@ test("enabling Brain keeps an existing owner's task, references and authored dea
     },
   });
   try {
+    await bench.harness.gatewayJson("/admin/lab/brain", {
+      method: "PUT",
+      body: JSON.stringify({ enabled: false }),
+    });
     await bench.push(GUIDE);
     const guideId = await bench.docId(GUIDE.externalId);
     const created = await bench.obs.createTask({
@@ -78,11 +82,14 @@ test("enabling Brain keeps an existing owner's task, references and authored dea
     const taskId = created.task!.id;
     expect(created.task).toMatchObject({ origin: "user", accepted: true });
     expect(created.task!.documents.map((doc) => doc.id)).toEqual([guideId]);
-    expect(
-      (await bench.harness.gatewayJson<{ experimental: boolean }>("/status")).experimental,
-    ).toBe(false);
+    expect(await bench.harness.gatewayJson("/status")).toMatchObject({
+      lab: { brain: false, tasks: true },
+    });
 
-    await bench.harness.restartGateway({ gatewayMode: "experimental" });
+    await bench.harness.gatewayJson("/admin/lab/brain", {
+      method: "PUT",
+      body: JSON.stringify({ enabled: true }),
+    });
     expect(await bench.obs.status()).toMatchObject({ experimental: true, brain: { active: true } });
     const afterRestart = (await bench.obs.task(taskId)).task;
     expect(afterRestart).toMatchObject({

@@ -19,8 +19,8 @@ import {
 import { writerHandlers } from "../../scheduler/writer-handlers.js";
 import { TemporalQueryService } from "../../enrichment/temporal/temporal-query-service.js";
 import { insertTemporalAnnotation } from "../../enrichment/temporal-annotations/storage.js";
-import { buildCognitionOwnTools } from "../steward/tools.js";
-import { createOpenLoopMirror } from "../steward/mirror.js";
+import { buildCognitionOwnTools } from "../runtime/tools.js";
+import { createOpenLoopMirror } from "../runtime/mirror.js";
 import { buildMaintenanceCanonicalTools } from "./canonical-tool-fence.js";
 import {
   readKnowledgeCollectionRevision,

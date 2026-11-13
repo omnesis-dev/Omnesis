@@ -1,0 +1,14 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "composite": false,
+    "declaration": false,
+    "declarationMap": false,
+    "noEmit": true,
+    "rootDir": "."
+  },
+  // Protocol integration tests run the real gateway while production relay code stays independent.
+  "references": [{ "path": "../core" }, { "path": "../gateway" }],
+  "include": ["src/**/*.test.ts"],
+  "exclude": []
+}

@@ -3631,7 +3631,7 @@ let agentBatchTools: Set<String> = [
 let agentEphemeralGateMaxHoldSeconds: Double = 1.5 * AppBuild.ephemeralRecordingPacingMultiplier
 
 /// Humanize a structured tool result's `resultType` for the generic
-/// steward action card: "open_loop.ledger_appended" → "Open loop
+/// Brain action card: "open_loop.ledger_appended" → "Open loop
 /// ledger appended". Mirrors the portal's inline equivalent.
 func agentHumanizeResultType(_ resultType: String) -> String {
     let words = resultType
@@ -4141,7 +4141,7 @@ enum AgentTurnBuilder {
             return url.count > 80 ? String(url.prefix(77)) + "…" : url
         default:
             if agentEphemeralTools.contains(tool) {
-                // Steward actions (brief items / loops / temporal notes / notes):
+                // Brain actions (brief items / loops / temporal notes / notes):
                 // surface the most human-readable arg instead of raw JSON —
                 // these render in the ephemeral card's header.
                 if let title = dict["title"] as? String { return String(title.prefix(80)) }

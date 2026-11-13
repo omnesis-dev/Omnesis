@@ -12,6 +12,7 @@ import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.workDataOf
+import dev.omnesis.android.BuildConfig
 import dev.omnesis.android.pairing.EncryptedPreferencesStore
 import dev.omnesis.android.pairing.PairingService
 import java.util.concurrent.TimeUnit
@@ -23,7 +24,7 @@ object TaskWidgetUpdates {
     private const val PERIODIC = "omnesis-task-widget-periodic"
     private const val REFRESH = "omnesis-task-widget-refresh"
 
-    internal fun pairing(context: Context) = PairingService(EncryptedPreferencesStore(context)).current()
+    internal fun pairing(context: Context) = PairingService(EncryptedPreferencesStore(context), cloudRelay = BuildConfig.CLOUD_RELAY_ENABLED).current()
     internal fun ids(context: Context): IntArray = AppWidgetManager.getInstance(context)
         .getAppWidgetIds(ComponentName(context, TasksWidgetProvider::class.java))
 
@@ -34,6 +35,13 @@ object TaskWidgetUpdates {
         if (store.reconcile(authority)) runCatching { TaskWidgetCache(app).clear() }
         renderAll(app)
         if (authority != null && ids(app).isNotEmpty()) refresh(app)
+    }
+
+    fun tasksDisabled(context: Context) {
+        WorkManager.getInstance(context).cancelAllWorkByTag(TAG)
+        runCatching { TaskWidgetCache(context).clear() }
+        TaskWidgetStore(context).status(TaskWidgetStatus.DISABLED)
+        renderAll(context)
     }
 
     fun refresh(context: Context) {

@@ -770,7 +770,7 @@ describe("AgentLifecycle", () => {
     });
   });
 
-  test("routes Codex roles to the correct lane (background steward, interactive agent, and inference)", () => {
+  test("routes Codex roles to the correct lane (background Brain, interactive agent, and inference)", () => {
     const registry = new InferenceRegistry({
       modelsDir,
       configDir,

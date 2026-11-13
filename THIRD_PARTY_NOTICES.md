@@ -9,7 +9,7 @@ satisfy the notice-retention requirements of the permissive licenses (MIT, BSD,
 ISC, Apache-2.0, OFL) and the weak-copyleft licenses (MPL-2.0, LGPL-3.0) those
 components carry.
 
-It includes a Models.dev catalog notice, a DuckDB httpfs extension notice and seven sections:
+It includes a Models.dev catalog notice, a DuckDB httpfs extension notice and eleven sections:
 
 1. **Vendored browser libraries** — minified JS bundles committed under
    `packages/gateway/portal/vendor/` and served by the gateway's web portal.
@@ -19,9 +19,14 @@ It includes a Models.dev catalog notice, a DuckDB httpfs extension notice and se
 4. **Browser-extension libraries** — code bundled into the Chrome extension.
 5. **Docker client binaries** — the Docker CLI and its Compose plugin, copied
    into the published `omnesis-updater` image.
-6. **iOS runtime dependencies** — SwiftDraw's native SVG renderer.
+6. **Native runtime dependencies** — SwiftDraw and AndroidSVG renderers.
 7. **Runtime npm production dependencies** — the transitive closure of production
    (non-dev) npm packages pulled in by the published `@omnesis/*` packages.
+8. **Android Google sign-in dependencies** — Credential Manager and Google's
+   identity SDK used by optional Google pairing.
+9. **Swift certificate parsing** — Apple's ASN.1 parser used for public-key pinning.
+10. **ACME protocol client** — gateway certificate issuance and renewal.
+11. **Passkey verification** — account registration and authentication with WebAuthn.
 
 Copyright holders and license identifiers below were verified against each
 package's own `LICENSE` file and `package.json` (and, for the vendored bundles,
@@ -223,6 +228,12 @@ license:
 The complete upstream license is at
 <https://github.com/lucide-icons/lucide/blob/main/LICENSE>.
 
+The Wear OS app's button and status glyphs
+(`android/wear/src/main/res/drawable/ic_*.xml`, apart from the launcher icon)
+are path data from Google's [Material Icons](https://github.com/google/material-design-icons),
+licensed under the
+[Apache License 2.0](https://github.com/google/material-design-icons/blob/master/LICENSE).
+
 The website footer bundles the X and Discord SVG marks, the portal's
 Sources page bundles the Android mark (`packages/gateway/portal/img/android-logo.svg`),
 and the portal's Connect an agent dialog bundles the Claude mark
@@ -353,13 +364,19 @@ image. They are redistributed unmodified; neither is present in the
 Both carry their own `LICENSE` and `NOTICE` upstream; a redistributor of the
 image should retain this attribution.
 
-## 6. iOS runtime dependency
+## 6. Native runtime dependencies
 
 The iOS app uses **SwiftDraw 0.29.0** to parse and rasterize provider SVG logos
 fetched through the gateway. SwiftDraw is licensed under **zlib**; Copyright
 (c) 2019 Simon Whitty. Omnesis does not alter its source. The complete upstream
 license and source are at
 [SwiftDraw 0.29.0](https://github.com/swhitty/SwiftDraw/blob/0.29.0/LICENSE.txt).
+
+The Android app uses **AndroidSVG 1.4** (`com.caverock:androidsvg-aar`) to
+rasterize the gateway's shared Omnesis Lab icons. It is licensed under
+**Apache-2.0** and is used without source changes. The complete upstream
+[license](https://github.com/BigBadaboom/androidsvg/blob/master/LICENSE)
+is available with the source.
 
 The Omnesis Demo iPhone app also uses **WebRTC M155**, distributed as the standalone
 **shiguredo-webrtc-build m155.8059.4.1** XCFramework. It contains WebRTC and
@@ -511,8 +528,54 @@ own source-availability / notice obligations.
 - `tslib@2.8.1` — 0BSD
 - `postal-mime@2.7.4` — MIT-0
 
+## 8. Android Google sign-in dependencies
+
+Optional Google pairing in the Android app uses:
+
+- `androidx.credentials:credentials:1.6.0` and
+  `androidx.credentials:credentials-play-services-auth:1.6.0`, licensed under
+  the [Apache License 2.0](https://www.apache.org/licenses/LICENSE-2.0).
+  Their metadata is published in Google's Maven repository:
+  [Credential Manager POM](https://dl.google.com/dl/android/maven2/androidx/credentials/credentials/1.6.0/credentials-1.6.0.pom)
+  and [Play Services adapter POM](https://dl.google.com/dl/android/maven2/androidx/credentials/credentials-play-services-auth/1.6.0/credentials-play-services-auth-1.6.0.pom).
+- `com.google.android.libraries.identity.googleid:googleid:1.1.1`, whose
+  [published POM](https://dl.google.com/dl/android/maven2/com/google/android/libraries/identity/googleid/googleid/1.1.1/googleid-1.1.1.pom)
+  declares the [Android Software Development Kit License](https://developer.android.com/studio/terms.html).
+
+These dependencies are resolved through Gradle; their source is not vendored or
+relicensed under Omnesis's AGPL header. Google sign-in is disabled without the
+configured OAuth registrations; QR and manual pairing remain available.
+
+## 9. Swift certificate parsing
+
+Strict public-key pinning uses Apple's `swift-asn1` 1.7.4 to parse the complete
+certificate SubjectPublicKeyInfo. It is licensed under the
+[Apache License 2.0](https://github.com/apple/swift-asn1/blob/1.7.4/LICENSE.txt).
+The dependency is resolved through Swift Package Manager; its source is not
+vendored or relicensed under Omnesis's AGPL header.
+
+## 10. ACME protocol client
+
+Optional gateway certificate provisioning uses `acme-client` 5.4.0, licensed
+under the [MIT License](https://github.com/publishlab/node-acme-client/blob/master/LICENSE).
+The npm lockfile records its transitive dependency licenses. Its source is
+resolved through npm, rather than vendored or relicensed under Omnesis's AGPL
+header. ACME account and gateway TLS private keys remain on the gateway.
+
+## 11. Passkey verification
+
+Optional account passkeys use `@simplewebauthn/server` 14.1.0, licensed under
+the MIT License, copyright (c) 2020 Matthew Miller. The dependency and its
+transitive dependencies are resolved through npm; their upstream license files
+remain in the installed packages. Authenticator private keys remain with the
+user's credential provider. Omnesis stores public credential records only.
+
 ---
 
 _This document is a compliance aid, not legal advice. Redistributors should
 verify obligations against each component's own `LICENSE` file, which travels
 with the source and the installed `node_modules`._
+
+## Google sign-in artwork
+
+Google LLC retains the rights to the original Google G artwork bundled in the portal, native sign-in buttons and relay discovery page. Source: [official sign-in mark](https://developers.google.com/static/identity/images/g-logo.png). Its use is governed by Google's [Sign in with Google branding guidelines](https://developers.google.com/identity/branding-guidelines), rather than this repository's AGPL license. The artwork is copied without modification.

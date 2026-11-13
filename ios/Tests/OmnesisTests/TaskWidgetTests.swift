@@ -163,6 +163,29 @@ final class TaskWidgetTests: XCTestCase {
         XCTAssertNil(try TaskWidgetStorage.credential(store: store))
     }
 
+    func testStrictPairingTrustIsRetainedInWidgetCredentials() throws {
+        let store = InMemoryStore()
+        let strict = TaskWidgetCredential(
+            url: credential.url,
+            token: credential.token,
+            deviceId: credential.deviceId,
+            tlsMode: "pinned-leaf-strict",
+            fingerprint: String(repeating: "a", count: 64)
+        )
+        XCTAssertTrue(strict.isSecure)
+        try TaskWidgetStorage.configure(strict, store: store)
+        XCTAssertEqual(try TaskWidgetStorage.credential(store: store), strict)
+        let malformed = TaskWidgetCredential(
+            url: credential.url,
+            token: credential.token,
+            deviceId: credential.deviceId,
+            tlsMode: "pinned-leaf-strict",
+            fingerprint: "invalid"
+        )
+        try TaskWidgetStorage.configure(malformed, store: store)
+        XCTAssertNil(try TaskWidgetStorage.credential(store: store))
+    }
+
     func testStaleRenderedAuthorityCannotCompleteAgainstNewPairing() async throws {
         let store = InMemoryStore()
         try TaskWidgetStorage.configure(credential, store: store)
@@ -188,6 +211,18 @@ final class TaskWidgetTests: XCTestCase {
         }
         XCTAssertTrue(requests.values.isEmpty)
         XCTAssertNotEqual(renderedAuthority, replacement.authorityID)
+    }
+
+    func testDisabledTasksDoesNotReadJournalViews() async throws {
+        let requests = Requests()
+        requests.status = 404
+        do {
+            _ = try await TaskWidgetClient(credential: credential, request: { requests.send($0) }).fetch()
+            XCTFail("Expected the Lab gate to close the widget")
+        } catch {
+            XCTAssertEqual(error as? TaskWidgetClientError, .featureDisabled)
+        }
+        XCTAssertEqual(requests.values.count, 1)
     }
 
     func testCompletionFailureRetainsTaskAndSuccessRemovesIt() async throws {
@@ -254,12 +289,18 @@ final class TaskWidgetTests: XCTestCase {
         }
     }
 
-    func testFetchReadsAllCompletePartitionsAndDeduplicatesTasks() async throws {
+    func testLegacyGatewayWidgetReadsPartitionsWithoutLabRoutes() async throws {
+        let legacy = try JSONDecoder().decode(StatusSnapshot.self, from: Data(
+            #"{"documents":{"total":0,"bySource":{}},"experimental":false,"tasks":{"available":true}}"#.utf8
+        ))
+        XCTAssertTrue(legacy.tasksAvailable)
+        XCTAssertFalse(legacy.labAvailable)
         let requests = Requests()
         let client = TaskWidgetClient(credential: credential, request: { requests.send($0) })
         let snapshot = try await client.fetch(now: date("2026-10-14"), calendar: calendar)
         XCTAssertEqual(snapshot.tasks.map(\.id), ["one"])
         XCTAssertEqual(requests.values.count, 4)
+        XCTAssertTrue(requests.values.allSatisfy { $0.url?.path == "/tasks" })
         XCTAssertEqual(Set(requests.values.compactMap {
             URLComponents(url: $0.url!, resolvingAgainstBaseURL: false)?.queryItems?.first { $0.name == "view" }?.value
         }), ["today", "month", "future", "anytime"])

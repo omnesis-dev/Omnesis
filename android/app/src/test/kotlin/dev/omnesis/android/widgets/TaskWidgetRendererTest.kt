@@ -62,6 +62,20 @@ class TaskWidgetRendererTest {
     }
 
     @Test
+    fun disabled_tasks_hide_cached_counts_pages_and_rows_at_every_size() {
+        for ((width, height) in listOf(170 to 170, 360 to 170, 720 to 360)) {
+            val root = render(TaskWidgetState(page = 2), width, height, status = TaskWidgetStatus.DISABLED)
+            assertEquals("Tasks are off", root.findViewById<TextView>(R.id.tasks_widget_message_title).text)
+            assertEquals(View.GONE, root.findViewById<View>(R.id.tasks_widget_count_block).visibility)
+            assertEquals(View.GONE, root.findViewById<View>(R.id.tasks_widget_page).visibility)
+            assertEquals(View.GONE, root.findViewById<View>(R.id.tasks_widget_rows).visibility)
+            assertEquals(0, root.findViewById<LinearLayout>(R.id.tasks_widget_left).childCount)
+            assertEquals(0, root.findViewById<LinearLayout>(R.id.tasks_widget_right).childCount)
+            assertEquals("0", root.findViewById<TextView>(R.id.tasks_widget_count).text)
+        }
+    }
+
+    @Test
     fun week_month_plan_with_deadline_displays_the_due_day() {
         val task = WidgetTask("month-due", "Review the workshop outline", scheduledFor = "2026-06", dueDay = "2026-06-18")
         val root = render(TaskWidgetState(period = TaskWidgetPeriod.WEEK), 360, 360,

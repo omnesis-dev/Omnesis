@@ -23,6 +23,8 @@ import {
   SOURCE_CONTRACT_WIRE_RANGE,
   resolveSourceMaxAge,
 } from "@omnesis/core";
+import { setLabFlag } from "./lab/store.js";
+
 import { computeSnapshotAbsencePlan, createDatabase, getSyncState, getWipeEpoch } from "./db.js";
 import { LATEST_SCHEMA_VERSION } from "./data/migrations.js";
 import { createServer } from "./server.js";
@@ -473,6 +475,8 @@ describe("health endpoint", () => {
       expect(syntheticOnly.capabilities).not.toHaveProperty("browserFeatures");
       expect(syntheticOnly.capabilities).not.toHaveProperty("browserNotesEdit");
       process.env.OMNESIS_EXPERIMENTAL = "1";
+      expect((await (await app.request("/health")).json()).capabilities.subscriptions).toBe(false);
+      setLabFlag(db, "watches", true);
       const on = await (await app.request("/health")).json();
       expect(on.experimental).toBe(true);
       expect(on.capabilities).toEqual({
@@ -3948,6 +3952,82 @@ describe("device management endpoints", () => {
         (i) => i.address,
       ),
     ).toEqual(["192.168.1.20", "studio-northstar.local"]);
+  });
+
+  test("/admin/devices/pair-addresses and pair-qr follow the gateway's Omnesis address as remote access comes and goes", async () => {
+    vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "1");
+    const relayOrigin = "https://g-fictional1.relay.example.test";
+    const spki = "c".repeat(64);
+    const relay = { enabled: true, ready: true, origin: relayOrigin as string | undefined };
+    const status = vi.fn(async () => ({
+      enabled: relay.enabled,
+      publicOrigin: relay.origin,
+      enrollment: { state: "enrolled" },
+      certificate: { state: "valid" },
+      publicMcp: { ready: relay.ready },
+    }));
+    const options = {
+      tlsFingerprintSha256: "a".repeat(64),
+      cloudTlsSpkiFingerprintSha256: () => spki,
+      cloudRelayManagement: { status },
+    } as unknown as NonNullable<Parameters<typeof createServer>[2]>;
+    const post = (target: ReturnType<typeof createServer>, path: string, body: unknown) =>
+      target.request(path, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${TEST_TOKEN}`, "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+    try {
+      const customApp = createServer(db, undefined, options);
+      const pairingCode = await mintPairingCode("ios");
+      const plan = async () =>
+        (await (
+          await post(customApp, "/admin/devices/pair-addresses", { pairingCode })
+        ).json()) as {
+          addresses: Array<{ gatewayUrl: string; label: string; kind?: string; usable: boolean }>;
+        };
+      const qr = () =>
+        post(customApp, "/admin/devices/pair-qr", { pairingCode, gatewayUrl: relayOrigin });
+
+      expect((await plan()).addresses.filter((a) => a.kind === "relay")).toMatchObject([
+        { gatewayUrl: relayOrigin, label: "Omnesis address", usable: true },
+      ]);
+      const encoded = await qr();
+      expect(encoded.status).toBe(200);
+      expect(JSON.parse(((await encoded.json()) as { qrPayload: string }).qrPayload)).toEqual({
+        v: 4,
+        gatewayUrl: relayOrigin,
+        pairingCode,
+        tls: { mode: "pinned-key-strict", spkiFingerprint: spki },
+      });
+
+      // Remote access turned off while the gateway runs.
+      relay.enabled = false;
+      relay.ready = false;
+      expect((await plan()).addresses.map((a) => a.gatewayUrl)).not.toContain(relayOrigin);
+      const refused = await qr();
+      expect(refused.status).toBe(400);
+      expect(JSON.stringify(await refused.json())).toMatch(/Turn on remote access/);
+
+      // The gateway left its account: it has no such address any more.
+      relay.origin = undefined;
+      expect((await plan()).addresses.some((a) => a.kind === "relay")).toBe(false);
+
+      // Without the opt-in the management service is never consulted.
+      vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "");
+      relay.enabled = relay.ready = true;
+      relay.origin = relayOrigin;
+      status.mockClear();
+      const offApp = createServer(db, undefined, options);
+      const offPlan = (await (
+        await post(offApp, "/admin/devices/pair-addresses", { pairingCode })
+      ).json()) as { addresses: Array<Record<string, unknown>> };
+      expect(offPlan.addresses.map((a) => a.gatewayUrl)).not.toContain(relayOrigin);
+      expect(offPlan.addresses.every((a) => !("kind" in a))).toBe(true);
+      expect(status).not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 
   test("/admin/devices/pair-addresses refuses a code that is not pending", async () => {

@@ -13,9 +13,11 @@
  * The model lives on the gateway (where the GPU and the always-on compute
  * are); the source only ever holds the bytes transiently.
  *
- * Returning `null` means "no transcript" — transcription is disabled, no
- * transcriber is assigned, the audio couldn't be fetched/decoded, or no
- * speech was detected. Callers fall back to a plain placeholder.
+ * Returning `null` means no transcriber can run — transcription is disabled
+ * or no transcriber is assigned. A recording the gateway will not transcribe
+ * (empty, too large, undecodable) rejects with an {@link AudioRejectedError}
+ * instead, so a source can tell the two apart. Callers fall back to a plain
+ * placeholder.
  */
 
 import { SyncError, type PersonIdentifier, type SourceId, type SyncIssue } from "@omnesis/types";
@@ -65,8 +67,16 @@ export type { TranscriptionResult } from "./models/capabilities.js";
 export const MAX_TRANSCRIPTION_MS = 6 * 60 * 60_000;
 
 /**
- * Rejects with {@link AudioUnreadableError} when the gateway decoded the bytes
- * and found no audio in them, and with a transient `SyncError` when the
+ * The most audio bytes `POST /inference/transcribe` accepts in one request; it
+ * answers 413 above it. A source that knows a recording is larger skips it
+ * before uploading it, and records it as {@link AUDIO_TOO_LARGE}.
+ */
+export const MAX_TRANSCRIBE_AUDIO_BYTES = 25 * 1024 * 1024;
+
+/**
+ * Rejects with an {@link AudioRejectedError} when the audio itself cannot be
+ * transcribed — {@link AudioUnreadableError} when the gateway decoded the
+ * bytes and found no audio in them — and with a transient `SyncError` when the
  * transcriber or the gateway could not be reached.
  */
 export type AudioTranscribeFn = (
@@ -98,6 +108,14 @@ export const TRANSCRIBER_UNAVAILABLE = "transcriber-unavailable";
 export const AUDIO_UNREADABLE = "audio-unreadable";
 
 /**
+ * The error a source records against an audio item larger than
+ * {@link MAX_TRANSCRIBE_AUDIO_BYTES}. Sending the same bytes again gives the
+ * same answer, so a source stops sending the item until its audio changes. A
+ * per-item note in a source's own store, like {@link TRANSCRIBER_UNAVAILABLE}.
+ */
+export const AUDIO_TOO_LARGE = "audio-too-large";
+
+/**
  * The request header a client sends on `POST /inference/transcribe` to say it
  * understands {@link TRANSCRIBE_AUDIO_UNREADABLE_CODE}. A gateway answers a
  * client that does not send it with the retryable 503 it answers every other
@@ -114,14 +132,39 @@ export const TRANSCRIBE_REPORT_UNREADABLE_HEADER = "x-omnesis-report-unreadable-
 export const TRANSCRIBE_AUDIO_UNREADABLE_CODE = "AUDIO_UNREADABLE";
 
 /**
- * Thrown by an {@link AudioTranscribeFn} when the gateway reported that the
- * audio bytes decode to no audio. It concerns the one item, so its scope is
- * `item`; it is never transient, because retrying the same bytes cannot
- * succeed.
+ * Why the gateway would not transcribe one recording:
+ *
+ * - `unreadable` — the bytes decode to no audio (see {@link AudioUnreadableError}).
+ * - `empty`      — there are no bytes at all.
+ * - `too-large`  — the bytes exceed what the gateway accepts (413).
+ * - `refused`    — the gateway refused the request as malformed (400).
  */
-export class AudioUnreadableError extends SyncError {
-  constructor(message = "the audio could not be decoded") {
+export type AudioRejectionReason = "unreadable" | "empty" | "too-large" | "refused";
+
+/**
+ * Thrown by an {@link AudioTranscribeFn} when the gateway can run a
+ * transcriber but will not transcribe this recording. It concerns the one
+ * item, so its scope is `item`; it is never transient, because sending the
+ * same request again gets the same answer. It is distinct from a `null`
+ * result, which means no transcriber can run at all.
+ */
+export class AudioRejectedError extends SyncError {
+  constructor(
+    readonly reason: AudioRejectionReason,
+    message: string,
+  ) {
     super("unknown", message, { scope: "item" });
+    this.name = "AudioRejectedError";
+  }
+}
+
+/**
+ * Thrown by an {@link AudioTranscribeFn} when the gateway reported that the
+ * audio bytes decode to no audio.
+ */
+export class AudioUnreadableError extends AudioRejectedError {
+  constructor(message = "the audio could not be decoded") {
+    super("unreadable", message);
     this.name = "AudioUnreadableError";
   }
 }
@@ -139,6 +182,7 @@ export class AudioUnreadableError extends SyncError {
  * - `audio-unavailable`       — the audio is gone from the source for good.
  * - `audio-missing`           — the audio was never downloaded to this device.
  * - `audio-unreadable`        — the audio's bytes decode to no audio.
+ * - `audio-too-large`         — the audio is larger than the gateway transcribes.
  */
 export type TranscriptionPlaceholderState =
   | "awaiting"
@@ -146,7 +190,8 @@ export type TranscriptionPlaceholderState =
   | "no-speech"
   | "audio-unavailable"
   | "audio-missing"
-  | "audio-unreadable";
+  | "audio-unreadable"
+  | "audio-too-large";
 
 /** The words every conversation source puts after its audio placeholder. */
 export function transcriptionPlaceholderNote(state: TranscriptionPlaceholderState): string {
@@ -163,6 +208,8 @@ export function transcriptionPlaceholderNote(state: TranscriptionPlaceholderStat
       return "audio not downloaded on this device";
     case "audio-unreadable":
       return "audio could not be decoded";
+    case "audio-too-large":
+      return "audio too large to transcribe";
     default:
       return assertNever(state);
   }
@@ -178,6 +225,8 @@ export interface TranscriptionBacklog {
   unavailable: number;
   /** Items whose audio decodes to no audio, so they are not sent again until a resync. */
   unreadable: number;
+  /** Items whose audio is too large to transcribe, so they are not sent again while it is unchanged. */
+  tooLarge?: number;
 }
 
 /**
@@ -186,7 +235,8 @@ export interface TranscriptionBacklog {
  * working through is information; one that waits for an unavailable transcriber
  * is a warning with troubleshooting steps attached. Audio that is gone is reported
  * once as a warning, since nothing will bring it back; so is audio that cannot
- * be decoded, which is not sent again until the source is resynced.
+ * be decoded, which is not sent again until the source is resynced, and audio
+ * too large to transcribe, which is not sent again while it is unchanged.
  */
 export function transcriptionSyncIssues(
   backlog: TranscriptionBacklog,
@@ -236,6 +286,17 @@ export function transcriptionSyncIssues(
       count: backlog.unreadable,
       severity: "warning",
       message: `${countOf(backlog.unreadable, unit)} could not be transcribed: the audio could not be decoded`,
+    });
+  }
+  const tooLarge = backlog.tooLarge ?? 0;
+  if (tooLarge > 0) {
+    issues.push({
+      code: "transcription-audio-too-large",
+      scope: "item",
+      kind: "unknown",
+      count: tooLarge,
+      severity: "warning",
+      message: `${countOf(tooLarge, unit)} could not be transcribed: the audio is larger than the ${Math.floor(MAX_TRANSCRIBE_AUDIO_BYTES / (1024 * 1024))} MB the transcriber accepts`,
     });
   }
   return issues;

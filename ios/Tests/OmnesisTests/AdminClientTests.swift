@@ -29,6 +29,47 @@ final class AdminClientTests: XCTestCase {
         return (data, response)
     }
 
+    func testLabToggleUsesAdminEndpointAndConfirmsGatewayState() async throws {
+        let session = MockSession()
+        session.responder = { [weak self] request in
+            self!.makeResponse(
+                status: 200,
+                body: """
+                {"experimental":true,"features":[{"id":"tasks","name":"Tasks","description":"Plan your work.","enabled":true}]}
+                """,
+                url: request.url!
+            )
+        }
+        let client = AdminClient(baseURL: base, token: "omn_example", session: session)
+        let initial = try await client.getLab()
+        XCTAssertEqual(initial.features.first?.id, "tasks")
+        let updated = try await client.setLabFeature("tasks", enabled: true)
+        XCTAssertEqual(updated.features.first?.enabled, true)
+        XCTAssertEqual(session.requests[0].httpMethod, "GET")
+        XCTAssertEqual(session.requests[0].url?.path, "/admin/lab")
+        let request = session.requests[1]
+        XCTAssertEqual(request.httpMethod, "PUT")
+        XCTAssertEqual(request.url?.path, "/admin/lab/tasks")
+        XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer omn_example")
+        let body = try JSONSerialization.jsonObject(with: XCTUnwrap(request.httpBody)) as? [String: Bool]
+        XCTAssertEqual(body, ["enabled": true])
+    }
+
+    func testLabStatusDefaultsClosedForOlderGateway() throws {
+        let snapshot = try JSONDecoder().decode(StatusSnapshot.self, from: Data("{\"documents\":{\"total\":0,\"bySource\":{}}}".utf8))
+        XCTAssertNil(snapshot.lab)
+        XCTAssertFalse(snapshot.labAvailable)
+    }
+
+    func testLabStatusDecodesIndependentFlags() throws {
+        let snapshot = try JSONDecoder().decode(StatusSnapshot.self, from: Data("""
+        {"documents":{"total":0,"bySource":{}},"experimental":true,"lab":{"brain":false,"tasks":true,"watches":false}}
+        """.utf8))
+        XCTAssertEqual(snapshot.lab?.brain, false)
+        XCTAssertEqual(snapshot.lab?.tasks, true)
+        XCTAssertEqual(snapshot.lab?.watches, false)
+    }
+
     func testListSourcesSendsAuthorizationHeader() async throws {
         let session = MockSession()
         session.responder = { [weak self] req in
@@ -1230,29 +1271,6 @@ final class AdminClientTests: XCTestCase {
         XCTAssertNil(retry?["trustMode"])
     }
 
-    func testListNetworkIdentitiesDecodesPageItems() async throws {
-        let session = MockSession()
-        session.responder = { [weak self] req in
-            self!.makeResponse(
-                status: 200,
-                body: """
-                {"items":[
-                  {"address":"192.0.2.42","label":"LAN","kind":"lan","offLan":false},
-                  {"address":"198.51.100.7","label":"Tailscale","kind":"tailscale","offLan":true}
-                ],
-                 "pageInfo":{"hasMore":false,"limit":2}}
-                """,
-                url: req.url!
-            )
-        }
-        let client = AdminClient(baseURL: base, token: "omn_t", session: session)
-        let identities = try await client.listNetworkIdentities()
-        XCTAssertEqual(identities.count, 2)
-        XCTAssertEqual(identities[0].address, "192.0.2.42")
-        XCTAssertEqual(identities[1].offLan, true)
-        XCTAssertEqual(session.requests[0].url?.absoluteString, "http://mac.local:7600/admin/network-identities")
-    }
-
     // MARK: - Backend verify
 
     func testVerifyModelPostsBodyAndDecodesVerdict() async throws {
@@ -1285,26 +1303,49 @@ final class AdminClientTests: XCTestCase {
         XCTAssertEqual(decoded?["force"] as? Bool, true)
     }
 
-    // MARK: - Pairing QR gateway-URL host swap
+    // MARK: - Pairing addresses
 
-    func testSwapHostPreservesSchemeAndPort() throws {
-        // The portal swaps only the host, keeping the gateway's real scheme/port.
-        XCTAssertEqual(
-            try swapHost(into: XCTUnwrap(URL(string: "https://mac.local:7600")), host: "198.51.100.7"),
-            "https://198.51.100.7:7600"
-        )
-        // Non-default port is preserved (the bug this guards against was a
-        // hardcoded :7600).
-        XCTAssertEqual(
-            try swapHost(into: XCTUnwrap(URL(string: "https://mac.local:17600")), host: "192.0.2.42"),
-            "https://192.0.2.42:17600"
-        )
-        // Plain HTTP origin keeps its scheme (no port → none added).
-        XCTAssertEqual(
-            try swapHost(into: XCTUnwrap(URL(string: "http://mac.local")), host: "192.0.2.42"),
-            "http://192.0.2.42"
-        )
-        // No origin → https fallback, no port assumed.
-        XCTAssertEqual(swapHost(into: nil, host: "192.0.2.42"), "https://192.0.2.42")
+    /// The gateway judges every address for the device a code was minted for; the app shows
+    /// its words and hands the chosen `gatewayUrl` back unchanged.
+    func testPairAddressesPostsTheCodeAndDecodesThePlan() async throws {
+        let session = MockSession()
+        session.responder = { [weak self] req in
+            self!.makeResponse(
+                status: 200,
+                body: """
+                {"platform":"ios","recommendedUrl":"https://192.0.2.42:7600","awayFromHome":{"onTailnet":false,"tailscaleName":null},
+                 "addresses":[
+                  {"gatewayUrl":"https://192.0.2.42:7600","host":"192.0.2.42","label":"Local network","usable":true,
+                   "reach":"local-network","systemTrust":false,"summary":"Works on the gateway's own network."},
+                  {"gatewayUrl":"https://g-fictional.relay.example.test","host":"g-fictional.relay.example.test",
+                   "label":"Omnesis address","kind":"relay","usable":true,"reach":"anywhere","systemTrust":false,
+                   "summary":"Works from anywhere. Needs remote access to stay on."},
+                  {"gatewayUrl":"https://198.51.100.7:7600","host":"198.51.100.7","label":"Tailscale IP","usable":false,
+                   "reason":"An iPhone refuses this address."}]}
+                """,
+                url: req.url!
+            )
+        }
+
+        let client = AdminClient(baseURL: base, token: "omn_t", session: session)
+        let plan = try await client.pairAddresses(pairingCode: "7K3M-9QX2")
+
+        XCTAssertEqual(session.requests[0].httpMethod, "POST")
+        XCTAssertTrue((session.requests[0].url?.absoluteString ?? "").hasSuffix("/admin/devices/pair-addresses"))
+        let sent = try JSONSerialization.jsonObject(with: session.requests[0].httpBody ?? Data()) as? [String: Any]
+        XCTAssertEqual(sent?["pairingCode"] as? String, "7K3M-9QX2")
+        XCTAssertEqual(sent?.count, 1)
+
+        XCTAssertEqual(plan.platform, "ios")
+        XCTAssertEqual(plan.recommendedUrl, "https://192.0.2.42:7600")
+        XCTAssertEqual(plan.awayFromHome, PairingAwayFromHomeHint(onTailnet: false))
+        XCTAssertEqual(plan.usable.map(\.label), ["Local network", "Omnesis address"])
+        XCTAssertEqual(plan.usable.map(\.kind), [nil, "relay"])
+        XCTAssertEqual(plan.usable[1].summary, "Works from anywhere. Needs remote access to stay on.")
+        XCTAssertEqual(plan.refused.map(\.reason), ["An iPhone refuses this address."])
+
+        XCTAssertEqual(plan.title(plan.usable[0]), "Local network · 192.0.2.42 (recommended)")
+        XCTAssertEqual(plan.title(plan.refused[0]), "Tailscale IP · 198.51.100.7")
+        XCTAssertNil(plan.option(at: "https://198.51.100.7:7600"))
     }
 }

@@ -759,7 +759,7 @@ private sealed interface UrlSlotItem {
     data object Miss : UrlSlotItem
 }
 
-// MARK: - Loops (experimental — read-only window into the Cognition Steward)
+// MARK: - Loops (experimental — read-only window into the Brain)
 
 /** Recent ledger entries revealed on a fetch_loop card. */
 private const val MaxLoopLedgerToReveal = 6
@@ -1386,7 +1386,7 @@ private fun EphemeralDismissContainer(
 
 /**
  * A search/url result row: 11-dp source icon + 11-sp textSecondary title, and a
- * trailing "🔗 N" pill when the Cognition Steward tracks open loops this document is a
+ * trailing "🔗 N" pill when the Brain tracks open loops this document is a
  * source for (experimental-only [AgentDocRef.openLoops]).
  */
 @Composable
@@ -1412,7 +1412,7 @@ private fun SlotDocRow(ref: AgentDocRef, catalog: SourceCatalog) {
 
 /**
  * Inline "in N loop(s)" pill on a doc-result row — a compact accent-tinted
- * chain-link badge shown when the Cognition Steward tracks open loops this document is a
+ * chain-link badge shown when the Brain tracks open loops this document is a
  * source for. Feeds the reader "this is part of something the agent is watching"
  * without opening the loop.
  */

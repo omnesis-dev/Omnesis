@@ -82,6 +82,7 @@ describe("`omnesis brain` operator CLI (spawned gateway, feature active)", () =>
 
     harness = new SyntheticE2EHarness({
       gatewayMode: "experimental",
+      labFeatures: { brain: true, tasks: true, watches: true },
       universe: "e2e-minimal",
       // The queue may soft-fail runs the rhythm enqueues on boot — irrelevant
       // here, the suite asserts on seeded rows only.
@@ -169,7 +170,7 @@ describe("`omnesis brain` operator CLI (spawned gateway, feature active)", () =>
   test("`brain transcript <runId>` prints the prompt and final text; --json emits the raw artifact", async () => {
     const pretty = await runCli(harness, ["brain", "transcript", RUN_WITH_TRANSCRIPT]);
     expect(pretty.exitCode, pretty.stderr).toBe(0);
-    expect(pretty.stdout).toContain("Background Cognition Steward run."); // prompt
+    expect(pretty.stdout).toContain("Background Brain run."); // prompt
     expect(pretty.stdout).toContain("open_loop_create"); // tool timeline
     expect(pretty.stdout).toContain("Tracked the invoice as an open loop."); // final text
 
@@ -346,7 +347,7 @@ function seedSubstrate(h: SyntheticE2EHarness): void {
       payload: { docId: DOC_ID, event: "created", datumAt: now - 50_000 },
       startedAt: now - 40_000,
       finishedAt,
-      prompt: "Background Cognition Steward run.",
+      prompt: "Background Brain run.",
       events: [
         {
           type: "agent.tool.start",

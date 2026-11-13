@@ -16,7 +16,10 @@ import dev.omnesis.android.designsystem.theme.OmTheme
 import dev.omnesis.android.designsystem.theme.OmnesisTheme
 import dev.omnesis.android.transport.dto.DeviceCapabilities
 import dev.omnesis.android.transport.dto.DeviceRecord
+import dev.omnesis.android.transport.dto.AwayFromHomeHint
 import dev.omnesis.android.transport.dto.NetworkIdentity
+import dev.omnesis.android.transport.dto.PairingAddressOption
+import dev.omnesis.android.transport.dto.PairingAddressPlan
 import dev.omnesis.android.transport.dto.PendingPairing
 import dev.omnesis.android.transport.dto.AgentIntegrationCapability
 import dev.omnesis.android.transport.dto.TokenRecord
@@ -24,6 +27,7 @@ import dev.omnesis.android.ui.common.Loadable
 import dev.omnesis.android.ui.devices.DeviceCard
 import dev.omnesis.android.ui.devices.DevicesContent
 import dev.omnesis.android.ui.devices.DevicesViewModel
+import dev.omnesis.android.ui.devices.LegacyPairDeviceContent
 import dev.omnesis.android.ui.devices.PairDeviceContent
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -290,14 +294,11 @@ class DevicesScreenshotTest {
         PairDeviceContent(
             pending = null,
             kind = null,
-            identities = emptyList(),
-            selectedHostIdx = 0,
             qrPayload = null,
             qrError = null,
             submitting = false,
             error = null,
             onPair = {},
-            onSelectHost = {},
         )
     }
 
@@ -316,22 +317,166 @@ class DevicesScreenshotTest {
         PairDeviceContent(
             pending = null,
             kind = null,
-            identities = emptyList(),
-            selectedHostIdx = 0,
             qrPayload = null,
             qrError = null,
             submitting = false,
             error = null,
             onPair = {},
-            onSelectHost = {},
             repairTarget = devices()[1],
         )
     }
 
+    // What the gateway answers for an iPhone: every label, summary and reason below is its own text.
+    private val tailscaleName = PairingAddressOption(
+        "https://gateway.tail1234.ts.net:7600", "gateway.tail1234.ts.net", "Tailscale name", usable = true,
+        summary = "Works at home and away, as long as Tailscale is connected on the phone.", reach = "tailnet", systemTrust = true,
+    )
+    private val lanAddress = PairingAddressOption(
+        "https://192.168.1.20:7600", "192.168.1.20", "Local network", usable = true,
+        summary = "Works only while the phone is on the same network as the gateway, such as your home Wi-Fi.", reach = "local-network",
+    )
+    private val omnesisAddress = PairingAddressOption(
+        "https://g-7f3a91.relay.example.com", "g-7f3a91.relay.example.com", "Omnesis address", usable = true,
+        summary = "Works from anywhere. Needs remote access to stay on.", reach = "anywhere", kind = "relay",
+    )
+    private val tailscaleIp = PairingAddressOption(
+        "https://100.64.0.7:7600", "100.64.0.7", "Tailscale IP", usable = false,
+        reason = "iPhones can't use the gateway's Tailscale IP address: its certificate covers the name gateway.tail1234.ts.net, " +
+            "which works at home and away while Tailscale is connected on the phone.",
+    )
+
+    @Composable
+    private fun pairResult(plan: PairingAddressPlan, selected: PairingAddressOption?, expanded: Boolean = true) {
+        PairDeviceContent(
+            pending = PendingPairing(pairingCode = "7K3M-9QX2", expiresAt = NOW + 540_000L),
+            kind = "ios",
+            qrPayload = selected?.let { "{\"v\":4,\"gatewayUrl\":\"${it.gatewayUrl}\",\"pairingCode\":\"7K3M-9QX2\",\"tls\":{\"mode\":\"system\"}}" },
+            qrError = null,
+            submitting = false,
+            error = null,
+            onPair = {},
+            addressPlan = plan,
+            selectedUrl = selected?.gatewayUrl,
+            expanded = expanded,
+        )
+    }
+
+    /** As the sheet opens: the QR, where the address works, and both disclosures closed. */
+    @Test
+    @Config(qualifiers = "w411dp-h1300dp-xxhdpi")
+    fun pair_addresses_collapsed_dark() = capture("pair_addresses_collapsed_dark", dark = true) {
+        ThemedSurface {
+            pairResult(
+                PairingAddressPlan("ios", listOf(omnesisAddress, tailscaleName, lanAddress, tailscaleIp), recommendedUrl = omnesisAddress.gatewayUrl),
+                omnesisAddress,
+                expanded = false,
+            )
+        }
+    }
+
+    @Test
+    fun pair_result_relay_dark() = capture("pair_result_relay_dark", dark = true) {
+        ThemedSurface {
+            pairResult(PairingAddressPlan("ios", listOf(tailscaleName), recommendedUrl = tailscaleName.gatewayUrl), tailscaleName)
+        }
+    }
+
+    /** A Tailscale name, a LAN address and the Omnesis address to choose from, and one this phone is refused. */
+    @Composable
+    private fun pairAddresses() = pairResult(
+        PairingAddressPlan("ios", listOf(omnesisAddress, tailscaleName, lanAddress, tailscaleIp), recommendedUrl = omnesisAddress.gatewayUrl),
+        omnesisAddress,
+    )
+
+    @Test
+    @Config(qualifiers = "w411dp-h1300dp-xxhdpi")
+    fun pair_addresses_light() = capture("pair_addresses_light", dark = false) { ThemedSurface { pairAddresses() } }
+
+    @Test
+    @Config(qualifiers = "w411dp-h1300dp-xxhdpi")
+    fun pair_addresses_dark() = capture("pair_addresses_dark", dark = true) { ThemedSurface { pairAddresses() } }
+
+    /** Only the home network is offered, so the screen says how to reach the gateway away from home. */
+    @Test
+    @Config(qualifiers = "w411dp-h1300dp-xxhdpi")
+    fun pair_addresses_home_only_light() = capture("pair_addresses_home_only_light", dark = false) {
+        ThemedSurface {
+            pairResult(
+                PairingAddressPlan("ios", listOf(lanAddress, tailscaleIp), recommendedUrl = lanAddress.gatewayUrl, awayFromHome = AwayFromHomeHint(onTailnet = true, tailscaleName = "gateway.tail1234.ts.net")),
+                lanAddress,
+            )
+        }
+    }
+
+    @Test
+    fun repair_result_relay_dark() = capture("repair_result_relay_dark", dark = true) {
+        ThemedSurface { repairResult() }
+    }
+
+    @Test
+    fun repair_result_relay_light() = capture("repair_result_relay_light", dark = false) {
+        ThemedSurface { repairResult() }
+    }
+
+    @Composable
+    private fun repairResult() {
+        PairDeviceContent(
+            pending = PendingPairing(pairingCode = "7K3M-9QX2", expiresAt = NOW + 540_000L),
+            kind = "android",
+            qrPayload = "{\"v\":4,\"gatewayUrl\":\"https://gateway.example:7600\",\"pairingCode\":\"7K3M-9QX2\",\"tls\":{\"mode\":\"system\"}}",
+            qrError = null,
+            submitting = false,
+            error = null,
+            onPair = {},
+            repairTarget = devices()[1],
+            addressPlan = PairingAddressPlan(
+                "android",
+                listOf(PairingAddressOption("https://gateway.example:7600", "gateway.example", "Public address", usable = true, summary = "Works wherever the phone can reach gateway.example.", reach = "anywhere", systemTrust = true)),
+                recommendedUrl = "https://gateway.example:7600",
+            ),
+            selectedUrl = "https://gateway.example:7600",
+        )
+    }
+
+    @Test
+    fun pair_agent_result_relay_light() = capture("pair_agent_result_relay_light", dark = false) {
+        ThemedSurface { agentPairResult() }
+    }
+
+    @Test
+    fun pair_agent_result_relay_dark() = capture("pair_agent_result_relay_dark", dark = true) {
+        ThemedSurface { agentPairResult() }
+    }
+
+    /** The agent's commands name the gateway's recommended address; the other one is a tap away. */
+    @Composable
+    private fun agentPairResult() {
+        val agentLan = lanAddress.copy(summary = "Works only while the device is on the same network as the gateway, such as your home Wi-Fi.")
+        val agentTailscale = tailscaleName.copy(summary = "Works at home and away, as long as Tailscale is connected on the device.")
+        PairDeviceContent(
+            pending = PendingPairing(
+                pairingCode = "FICTION-2486",
+                expiresAt = NOW + 540_000L,
+            ),
+            kind = "agent",
+            qrPayload = null,
+            qrError = null,
+            submitting = false,
+            error = null,
+            onPair = {},
+            addressPlan = PairingAddressPlan(null, listOf(agentTailscale, agentLan), recommendedUrl = agentTailscale.gatewayUrl),
+            selectedUrl = agentTailscale.gatewayUrl,
+            expanded = true,
+        )
+    }
+
+    // --- The pair sheet of a build without cloud connectivity: main's, byte for byte ------
+    // These keep main's names and goldens; the cases above render the cloud build's sheet.
+
     @Test
     fun pair_result_dark() = capture("pair_result_dark", dark = true) {
         ThemedSurface {
-            PairDeviceContent(
+            LegacyPairDeviceContent(
                 pending = PendingPairing(
                     pairingCode = "7K3M-9QX2",
                     expiresAt = NOW + 540_000L,
@@ -355,17 +500,17 @@ class DevicesScreenshotTest {
 
     @Test
     fun repair_result_dark() = capture("repair_result_dark", dark = true) {
-        ThemedSurface { repairResult() }
+        ThemedSurface { legacyRepairResult() }
     }
 
     @Test
     fun repair_result_light() = capture("repair_result_light", dark = false) {
-        ThemedSurface { repairResult() }
+        ThemedSurface { legacyRepairResult() }
     }
 
     @Composable
-    private fun repairResult() {
-        PairDeviceContent(
+    private fun legacyRepairResult() {
+        LegacyPairDeviceContent(
             pending = PendingPairing(pairingCode = "7K3M-9QX2", expiresAt = NOW + 540_000L),
             kind = "android",
             identities = listOf(NetworkIdentity("gateway.example", "Public HTTPS", "public", true)),
@@ -382,17 +527,17 @@ class DevicesScreenshotTest {
 
     @Test
     fun pair_agent_result_light() = capture("pair_agent_result_light", dark = false) {
-        ThemedSurface { agentPairResult() }
+        ThemedSurface { legacyAgentPairResult() }
     }
 
     @Test
     fun pair_agent_result_dark() = capture("pair_agent_result_dark", dark = true) {
-        ThemedSurface { agentPairResult() }
+        ThemedSurface { legacyAgentPairResult() }
     }
 
     @Composable
-    private fun agentPairResult() {
-        PairDeviceContent(
+    private fun legacyAgentPairResult() {
+        LegacyPairDeviceContent(
             pending = PendingPairing(
                 pairingCode = "FICTION-2486",
                 expiresAt = NOW + 540_000L,

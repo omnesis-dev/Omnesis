@@ -15,7 +15,7 @@ import { getKnowledgeStatus, getKnowledgeBatches, getKnowledgeBatch, getKnowledg
 import { knowledgeReferenceHref, knowledgePath, readable } from "./knowledge-reader.js";
 import { summarizeMaintenance, batchStatusLabel, maintenanceTierLabel, maintenanceReasonLabel } from "./knowledge-maintenance-model.js";
 
-const maintenancePath = (id) => `/portal/debug/cognition/maintenance${id ? `/${encodeURIComponent(id)}` : ""}`;
+const maintenancePath = (id) => `/portal/debug/brain/maintenance${id ? `/${encodeURIComponent(id)}` : ""}`;
 const timestamp = (value) => value == null ? "Not scheduled" : new Date(value).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", year: "numeric" });
 function follow(event) {
   if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
@@ -99,7 +99,7 @@ export function BatchDetail({ id, summary }) {
       <div class="km-section-heading"><h2>Maintenance batch</h2><${BatchBadge} status=${result.status} /></div>
       <${MaintenancePills} tier=${result.tier} reasons=${result.reasons ?? []} />
       ${summary && html`<p class="km-detail-date">Created ${timestamp(summary.createdAt)}${summary.finishedAt ? ` · Finished ${timestamp(summary.finishedAt)}` : ""}</p>`}
-      ${result.runId ? html`<a class="km-transcript" href=${`/portal/debug/cognition/runs/${encodeURIComponent(result.runId)}`}>View agent transcript ↗</a>` : html`<p class="kn-caption">No agent run assigned.</p>`}
+      ${result.runId ? html`<a class="km-transcript" href=${`/portal/debug/brain/runs/${encodeURIComponent(result.runId)}`}>View agent transcript ↗</a>` : html`<p class="kn-caption">No agent run assigned.</p>`}
     </header>
     <div class="km-detail-body">
       ${frontier.length > 0 && html`<div class="km-outcomes" aria-label="Check outcomes">${Object.entries(counts).map(([status, count]) => html`<span><strong>${count}</strong> ${resultLabel(status)}</span>`)}</div>`}

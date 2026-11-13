@@ -5,6 +5,7 @@ import { experimentalVisible } from "@omnesis/core";
 import { createGatewayLoopReadPort } from "../brain/interactive-loop-port.js";
 import { createGatewayTemporalPort } from "../enrichment/temporal/interactive-temporal-port.js";
 import { createGatewayEntityContextPort } from "../domain/cognitive-graph/interactive-entity-context-port.js";
+import { withTaskTemporalPolicy } from "./lab-temporal-policy.js";
 import {
   createGatewayDocumentByUrlPort,
   createGatewayDocumentPort,
@@ -80,7 +81,7 @@ export function createGatewayAgentPorts(deps: GatewayAgentPortsDeps): ToolPorts 
         })
       : undefined,
     // Read-only loop port (experimental): lets the interactive agent find and
-    // read the background Cognition Steward's tracked obligations — no mutation, no
+    // read the background Brain's tracked obligations — no mutation, no
     // briefs. The registry also gates these tools on experimental mode.
     loopRead:
       knowledgeReads && experimentalVisible()
@@ -92,10 +93,15 @@ export function createGatewayAgentPorts(deps: GatewayAgentPortsDeps): ToolPorts 
     // runs, plus that agent's own selective interpretations when it does.
     // Source-restricted answers build separate ports and do not receive this.
     // No write surface.
-    temporal: createGatewayTemporalPort(db, analyticsDb, undefined, {
-      ...(deps.mentionWorthGateActive ? { hideUnworthyMentions: deps.mentionWorthGateActive } : {}),
-      ...(deps.temporalStoreReads ? { storeReads: deps.temporalStoreReads } : {}),
-    }),
+    temporal: withTaskTemporalPolicy(
+      createGatewayTemporalPort(db, analyticsDb, undefined, {
+        ...(deps.mentionWorthGateActive
+          ? { hideUnworthyMentions: deps.mentionWorthGateActive }
+          : {}),
+        ...(deps.temporalStoreReads ? { storeReads: deps.temporalStoreReads } : {}),
+      }),
+      db,
+    ),
     // Read-only cognitive-context (reap) port (experimental): lets the
     // interactive agent pull the whole neighbourhood the background agent
     // linked around one entity in a single call — no write surface.

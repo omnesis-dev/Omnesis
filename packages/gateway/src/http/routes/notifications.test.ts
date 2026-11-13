@@ -136,3 +136,46 @@ describe("notification claim routes", () => {
     expect(confirm).toHaveBeenCalledWith(DEVICE_ID, LEASE_ID);
   });
 });
+
+test("without the cloud relay opt-in the negotiation header is ignored", async () => {
+  vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "");
+  try {
+    const claim = vi.fn(async () => null);
+    const { app } = appWith(bearer([SCOPE_PUSH_CLAIM]), {
+      claim,
+      confirm: vi.fn(async () => false),
+    });
+    const response = await app.request("/notifications/claim", {
+      method: "POST",
+      headers: { "content-type": "application/json", "X-Omnesis-Pairing-Notifications": "1" },
+      body: "{}",
+    });
+    expect(response.status).toBe(204);
+    expect(claim.mock.calls).toEqual([[DEVICE_ID]]);
+  } finally {
+    vi.unstubAllEnvs();
+  }
+});
+
+test("new reminder kinds require explicit negotiation on this authenticated claim", async () => {
+  vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "1");
+  for (const value of [undefined, "true", "0", "1"]) {
+    const claim = vi.fn(async () => null);
+    const { app } = appWith(bearer([SCOPE_PUSH_CLAIM]), {
+      claim,
+      confirm: vi.fn(async () => false),
+    });
+    const response = await app.request("/notifications/claim", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        ...(value ? { "X-Omnesis-Pairing-Notifications": value } : {}),
+      },
+      body: "{}",
+    });
+    expect(response.status).toBe(204);
+    if (value === "1") expect(claim).toHaveBeenCalledWith(DEVICE_ID, true);
+    else expect(claim).toHaveBeenCalledWith(DEVICE_ID);
+  }
+  vi.unstubAllEnvs();
+});

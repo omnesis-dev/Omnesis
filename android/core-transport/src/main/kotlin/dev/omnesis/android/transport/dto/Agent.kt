@@ -35,13 +35,13 @@ data class AgentDocRef(
     val people: List<String>? = null,
     val unitName: String? = null,
     /**
-     * Open loops the Cognition Steward tracks that this document is a source for — the
+     * Open loops the Brain tracks that this document is a source for — the
      * "what is this part of" connection, attached inline in experimental mode.
      * Absent/empty when no tracked loop references the document.
      */
     val openLoops: List<AgentDocLoopRef>? = null,
     /**
-     * Durable annotations the Cognition Steward recorded ABOUT this document — grounded
+     * Durable annotations the Brain recorded ABOUT this document — grounded
      * priors, never facts. Attached inline on fetch results in experimental mode;
      * absent/empty when none exist.
      */
@@ -59,12 +59,12 @@ data class AgentDocLoopRef(
     val title: String = "",
     /** Lifecycle state: `open` | `snoozed` (terminal loops are never attached). */
     val state: String = "",
-    /** Importance the Cognition Steward assigned (0-1), for ordering. */
+    /** Importance the Brain assigned (0-1), for ordering. */
     val importance: Double? = null,
 )
 
 /**
- * A hint-shaped view of a durable annotation the Cognition Steward recorded ABOUT a
+ * A hint-shaped view of a durable annotation the Brain recorded ABOUT a
  * document — a grounded prior to reground against, never a hard fact. The
  * verbatim evidence quote is deliberately absent from the wire shape. Mirrors
  * `DocAnnotationHint`.

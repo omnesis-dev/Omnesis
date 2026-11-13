@@ -82,6 +82,7 @@ export interface McpStreamableRoutesDeps {
   isAgentIntegrationDevice?: (deviceId: DeviceId) => boolean;
   publicBaseUrl?: string;
   mcpResourceUrls?: readonly string[];
+  additionalOAuthIssuerUrls?: import("../../access/oauth-urls.js").OAuthIssuerSource;
   /** Required final authorization and attribution fence for every corpus result. */
   recordMcpToolInvocation: (input: McpToolInvocationAuditInput) => Promise<void>;
   /**
@@ -121,6 +122,7 @@ export function mountMcpStreamableRoutes(
         deps.publicBaseUrl,
         deps.mcpResourceUrls,
         c.req.header("Authorization") !== undefined,
+        deps.additionalOAuthIssuerUrls,
       );
     }
     return next();
@@ -194,28 +196,42 @@ function createUnifiedHandler(deps: McpStreamableRoutesDeps): McpHttpHandler {
   const captureLimiter = notesRateLimiter();
   const directManifests = new Map<
     string,
-    { loadedAt: number; value: Promise<DirectMcpServerManifest> }
+    { loadedAt: number; revision: string; value: Promise<DirectMcpServerManifest> }
   >();
-  const loadDirectManifest = (authorization: CorpusAuthorization) => {
-    if (!deps.directBoundary) return null;
+  const loadDirectManifest = (
+    authorization: CorpusAuthorization,
+  ): Promise<DirectMcpServerManifest> | null => {
+    const boundary = deps.directBoundary;
+    if (!boundary) return null;
+    const revision = boundary.catalogRevision();
     const now = Date.now();
     for (const [digest, entry] of directManifests) {
       if (now - entry.loadedAt >= DIRECT_MANIFEST_CACHE_MS) directManifests.delete(digest);
     }
     const cached = directManifests.get(authorization.digest);
-    if (cached && now - cached.loadedAt < DIRECT_MANIFEST_CACHE_MS) {
+    if (
+      cached &&
+      cached.revision === revision &&
+      now - cached.loadedAt < DIRECT_MANIFEST_CACHE_MS
+    ) {
       return cached.value;
     }
-    const value = Promise.all([
-      Promise.resolve(deps.directBoundary.manifest(authorization)),
-      deps.directBoundary.instructions(authorization),
+    const value: Promise<DirectMcpServerManifest> = Promise.all([
+      Promise.resolve(boundary.manifest(authorization)),
+      boundary.instructions(authorization),
     ])
-      .then(([tools, instructions]) => ({ tools: [...tools], instructions }))
+      .then(([tools, instructions]) => {
+        // Instructions can await catalogue I/O; a Lab toggle during that wait
+        // must not publish the earlier inventory or instructions.
+        if (boundary.catalogRevision() !== revision) return loadDirectManifest(authorization)!;
+        return { tools: [...tools], instructions };
+      })
       .catch((error: unknown) => {
-        directManifests.delete(authorization.digest);
+        if (directManifests.get(authorization.digest)?.value === value)
+          directManifests.delete(authorization.digest);
         throw error;
       });
-    directManifests.set(authorization.digest, { loadedAt: now, value });
+    directManifests.set(authorization.digest, { loadedAt: now, revision, value });
     return value;
   };
 
@@ -734,8 +750,14 @@ function oauthChallenge(
   publicBaseUrl?: string,
   mcpResourceUrls?: readonly string[],
   rejectedToken = false,
+  additionalOAuthIssuerUrls?: import("../../access/oauth-urls.js").OAuthIssuerSource,
 ) {
-  const urls = resolveOAuthUrls(c.req.url, publicBaseUrl, mcpResourceUrls);
+  const urls = resolveOAuthUrls(
+    c.req.url,
+    publicBaseUrl,
+    mcpResourceUrls,
+    additionalOAuthIssuerUrls,
+  );
   if (!urls) {
     return c.json({ error: "OAuth requires gateway.publicBaseUrl for non-loopback access." }, 503);
   }

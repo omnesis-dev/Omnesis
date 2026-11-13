@@ -9,6 +9,7 @@
     "dev": "tsx watch src/main.ts"
   },
   "dependencies": {
+    "@omnesis/cloud-relay": "*",
     "@omnesis/config": "*",
     "@omnesis/core": "*",
     "@omnesis/gateway-client": "*",

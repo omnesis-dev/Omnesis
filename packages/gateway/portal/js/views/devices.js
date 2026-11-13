@@ -5,6 +5,7 @@
 // connected to the gateway (collectors, CLI, portal, iOS, Android, agents).
 // Pair new devices, revoke devices and their credentials.
 
+import { DeviceConnectionPill } from "../components/device-connection-pill.js";
 import { html } from "htm/preact";
 import { useEffect, useMemo, useRef, useState } from "preact/hooks";
 import QRCode from "qrcode";
@@ -29,12 +30,14 @@ import {
 } from "../api.js";
 import { ConfirmModal } from "../components/confirm-modal.js";
 import { CopyBlock, CopyValue } from "../components/copy-button.js";
-import { navigate } from "../lib/router.js";
+import { navigate, replaceRoute } from "../lib/router.js";
 import { accessLevels, accessRules, errorMessage, overviewPolicies } from "./access/shared.js";
 import { answerPrivacySummary, reachSummary } from "./access/terms.js";
 import { CHROME_WEB_STORE_URL } from "../lib/extension-links.js";
 import { KindIcon, PairKindIcon } from "../lib/device-kind-icon.js";
 import { useVisiblePoll } from "../lib/use-visible-poll.js";
+import { CloudPairingRequests } from "../components/cloud-pairing-requests.js";
+import { deviceJoinedLabel } from "../components/relay-device-enrollment.js";
 import { DoctorReportView } from "./doctor.js";
 import {
   currentDeviceIdForKind,
@@ -378,13 +381,13 @@ function PhonePairQr({ pairingCode, kind }) {
     if (!canvasRef.current || !payload) return undefined;
     // QR contrast must follow the page: dark modules on white in light mode,
     // an inverted light-on-dark code that sits on the dark page otherwise.
-    // Redraw on a theme flip so an open pairing dialog stays scannable.
+    // Redraw on a theme flip so an open pairing page stays scannable.
     const draw = () => {
       const canvas = canvasRef.current;
       if (!canvas) return;
       const isLight = document.documentElement.dataset.theme === "light";
       // Level L — Baileys-style payloads are a couple hundred bytes; more
-      // error correction forces a larger QR that doesn't fit the modal.
+      // error correction forces a larger QR than a phone screen needs.
       QRCode.toCanvas(canvas, payload, {
         width: 240,
         margin: 2,
@@ -762,6 +765,7 @@ function answerLevelsOf(overview) {
 }
 
 const ACCESS_PATH = "/portal/settings/access";
+const DEVICES_PATH = "/portal/settings/devices";
 
 /** A gateway refusal ("name the integration …") as a sentence for the page. */
 function sentence(text) {
@@ -906,6 +910,7 @@ export function DeviceCard({
   onRevokeToken,
   accessOverview,
   onSetDeviceLevel,
+  cloudRelay = false,
 }) {
   const d = device;
   const hostname = d.capabilities?.hostname;
@@ -920,7 +925,9 @@ export function DeviceCard({
     d.kind === "ios" || d.kind === "android"
       ? `Notifications: ${notificationTransportLabel(d)}`
       : null;
-  const sub = [kindLabel, hostname || harness, phoneTransport].filter(Boolean).join(" · ");
+  // How a device joined exists only with the optional cloud relay switched on.
+  const joined = cloudRelay ? deviceJoinedLabel(d.enrollment) : null;
+  const sub = [kindLabel, hostname || harness, phoneTransport, joined].filter(Boolean).join(" · ");
   const revoked = Boolean(d.revokedAt);
   const needsPairing = revoked && Boolean(d.needsPairing);
   const activeNow = !revoked && (isThis || d.online);
@@ -944,6 +951,7 @@ export function DeviceCard({
             <span class="devices-card-titlerow">
               <span class="devices-card-name">${d.name}</span>
               ${isThis && html`<span class="devices-card-badge">This device</span>`}
+              ${cloudRelay && html`<${DeviceConnectionPill} path=${d.connectionPath} revoked=${revoked} />`}
               ${revoked && html`<span class=${`devices-card-badge ${needsPairing ? "needs-pairing" : "revoked"}`}>${needsPairing ? "Needs re-pairing" : "Revoked"}</span>`}
               ${!revoked && versionChip(d)}
               ${!revoked && updateChip(d)}
@@ -1210,12 +1218,13 @@ export function PairInstructions({ pairResult, identities, selectedHostIdx, setS
 }
 
 /**
- * Modal that hosts the pair-a-device flow: pick a kind, generate a code. The
- * gateway grants the kind's canonical scopes, so there is nothing else to
- * choose here. The generated code and its per-kind redeem instructions (see
- * PairInstructions) render inline below the form.
+ * The pair-a-device page, shown in place of the device list: pick a kind,
+ * generate a code. The gateway grants the kind's canonical scopes, so there is
+ * nothing else to choose here. The generated code and its per-kind redeem
+ * instructions (see PairInstructions) render below the form, so a long set of
+ * instructions scrolls with the page instead of overflowing a dialog.
  */
-function PairModal({
+function PairPage({
   pairKind,
   onKindChange,
   answerLevels = [],
@@ -1225,7 +1234,6 @@ function PairModal({
   onPairNameChange = () => {},
   pairResult,
   pairError = null,
-  setPairResult,
   pairing,
   onPair,
   identities,
@@ -1234,109 +1242,104 @@ function PairModal({
   onClose,
   repairTarget,
 }) {
+  // The page replaces the list the operator was scrolled through, so bring its
+  // heading into view and move focus there, as the Access detail pages do.
+  const headingRef = useRef(null);
   useEffect(() => {
-    const onKey = (e) => {
-      if (e.key === "Escape") onClose();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
+    headingRef.current?.scrollIntoView?.({ block: "nearest" });
+    headingRef.current?.focus({ preventScroll: true });
+  }, [repairTarget?.id]);
 
   return html`
-    <div
-      class="confirm-modal-backdrop"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="pair-modal-title"
-      onClick=${onClose}
-    >
-      <div class="confirm-modal devices-modal" onClick=${(e) => e.stopPropagation()}>
-        <div id="pair-modal-title" class="confirm-modal-title">
+    <section class="devices-pair-page" aria-labelledby="pair-page-title">
+      <div class="devices-pair-page-header">
+        <button type="button" class="doc-back" onClick=${onClose}>← Back to devices</button>
+        <h2 id="pair-page-title" tabIndex="-1" ref=${headingRef}>
           ${repairTarget ? `Repair ${repairTarget.name}` : "Pair a new device"}
-        </div>
-        ${repairTarget && html`
-          <p class="devices-pair-label">
-            ${repairTarget.kind === "integration"
-              ? `This code is bound to ${repairTarget.name}. Re-pairing keeps its device identity and its access level.`
-              : `This code is bound to ${repairTarget.name}. Re-pairing keeps its device identity, sources, memberships, cursors, and existing data.`}
-          </p>
-        `}
-        <form class="devices-pair-form" onSubmit=${onPair}>
-          ${!repairTarget && html`<fieldset class="devices-kind-picker">
-            <legend>What would you like to pair?</legend>
-            <div class="devices-kind-grid">
-              ${deviceKinds().map((kind) => html`<label key=${kind} class="devices-kind-option">
-                <input
-                  type="radio"
-                  name="pair-kind"
-                  value=${kind}
-                  checked=${pairKind === kind}
-                  autoFocus=${pairKind === kind}
-                  onChange=${() => onKindChange(kind)}
-                />
-                <span class="devices-kind-tile">
-                  <${PairKindIcon} kind=${kind} />
-                  <span>${KIND_LABELS[kind]}</span>
-                </span>
-              </label>`)}
-            </div>
-          </fieldset>`}
-          ${!repairTarget && pairKind === "integration" && html`<div class="form-group">
-            <label for="pair-name">Name</label>
-            <input
-              id="pair-name"
-              type="text"
-              required
-              maxlength="120"
-              value=${pairName}
-              onInput=${(e) => onPairNameChange(e.target.value)}
-            />
-          </div>`}
-          ${!repairTarget && pairKind === "integration" && html`<div class="form-group">
-            <label for="pair-level">Access level</label>
-            <select id="pair-level" value=${pairLevelId} onChange=${(e) => onPairLevelChange(e.target.value)}>
-              <option value="">Choose later — questions refused until then</option>
-              ${answerLevels.map((level) => html`<option key=${level.id} value=${level.id}>${level.name}</option>`)}
-            </select>
-            <p class="devices-muted devices-pair-level-note">
-              An integration reads your data only through its access level: the sources its answers
-              may use and the privacy policy that reviews them.${" "}
-              <a href=${ACCESS_PATH} onClick=${(event) => { event.preventDefault(); navigate(ACCESS_PATH); }}>Manage access levels</a>
-            </p>
-          </div>`}
-          ${pairError && html`<div class="devices-banner error" role="alert">${pairError}</div>`}
-          <div class="devices-pair-actions">
-            <button type="submit" class="btn-primary" disabled=${pairing}>
-              ${pairing ? "Generating…" : repairTarget ? "Generate repair code" : "Generate pairing code"}
-            </button>
-            <button type="button" class="btn-ghost" onClick=${onClose}>Close</button>
-          </div>
-        </form>
-
-        ${pairResult && html`
-          <div class="devices-pair-result">
-            ${isPhoneKind(pairResult.kind)
-              ? html`<p class="devices-pair-expiry">
-                  This code expires in ${Math.max(0, Math.floor((pairResult.expiresAt - Date.now()) / 1000))}s.
-                </p>`
-              : html`<div class="devices-pair-code-row">
-                  <span class="devices-pair-label">Pairing code</span>
-                  <${CopyValue} text=${pairResult.pairingCode} title="Copy pairing code">
-                    <code class="devices-pair-code">${pairResult.pairingCode}</code>
-                  <//>
-                  <span class="devices-pair-expiry">expires in ${Math.max(0, Math.floor((pairResult.expiresAt - Date.now()) / 1000))}s</span>
-                </div>`}
-            <${PairInstructions}
-              pairResult=${pairResult}
-              identities=${identities}
-              selectedHostIdx=${selectedHostIdx}
-              setSelectedHostIdx=${setSelectedHostIdx}
-            />
-            <button class="btn-tiny" onClick=${() => setPairResult(null)}>dismiss</button>
-          </div>
-        `}
+        </h2>
       </div>
-    </div>
+      ${repairTarget && html`
+        <p class="devices-pair-label">
+          ${repairTarget.kind === "integration"
+            ? `This code is bound to ${repairTarget.name}. Re-pairing keeps its device identity and its access level.`
+            : `This code is bound to ${repairTarget.name}. Re-pairing keeps its device identity, sources, memberships, cursors, and existing data.`}
+        </p>
+      `}
+      <form class="devices-pair-form" onSubmit=${onPair}>
+        ${!repairTarget && html`<fieldset class="devices-kind-picker">
+          <legend>What would you like to pair?</legend>
+          <div class="devices-kind-grid">
+            ${deviceKinds().map((kind) => html`<label key=${kind} class="devices-kind-option">
+              <input
+                type="radio"
+                name="pair-kind"
+                value=${kind}
+                checked=${pairKind === kind}
+                onChange=${() => onKindChange(kind)}
+              />
+              <span class="devices-kind-tile">
+                <${PairKindIcon} kind=${kind} />
+                <span>${KIND_LABELS[kind]}</span>
+              </span>
+            </label>`)}
+          </div>
+        </fieldset>`}
+        ${!repairTarget && pairKind === "integration" && html`<div class="form-group">
+          <label for="pair-name">Name</label>
+          <input
+            id="pair-name"
+            type="text"
+            required
+            maxlength="120"
+            value=${pairName}
+            onInput=${(e) => onPairNameChange(e.target.value)}
+          />
+        </div>`}
+        ${!repairTarget && pairKind === "integration" && html`<div class="form-group">
+          <label for="pair-level">Access level</label>
+          <select id="pair-level" value=${pairLevelId} onChange=${(e) => onPairLevelChange(e.target.value)}>
+            <option value="">Choose later — questions refused until then</option>
+            ${answerLevels.map((level) => html`<option key=${level.id} value=${level.id}>${level.name}</option>`)}
+          </select>
+          <p class="devices-muted devices-pair-level-note">
+            An integration reads your data only through its access level: the sources its answers
+            may use and the privacy policy that reviews them.${" "}
+            <a href=${ACCESS_PATH} onClick=${(event) => { event.preventDefault(); navigate(ACCESS_PATH); }}>Manage access levels</a>
+          </p>
+        </div>`}
+        ${pairError && html`<div class="devices-banner error" role="alert">${pairError}</div>`}
+        <div class="devices-pair-actions">
+          <button type="submit" class="btn-primary" disabled=${pairing}>
+            ${pairing ? "Generating…" : repairTarget ? "Generate repair code" : "Generate pairing code"}
+          </button>
+        </div>
+      </form>
+
+      ${pairResult && html`
+        <div class="devices-pair-result">
+          ${isPhoneKind(pairResult.kind)
+            ? html`<p class="devices-pair-expiry">
+                This code expires in ${Math.max(0, Math.floor((pairResult.expiresAt - Date.now()) / 1000))}s.
+              </p>`
+            : html`<div class="devices-pair-code-row">
+                <span class="devices-pair-label">Pairing code</span>
+                <${CopyValue} text=${pairResult.pairingCode} title="Copy pairing code">
+                  <code class="devices-pair-code">${pairResult.pairingCode}</code>
+                <//>
+                <span class="devices-pair-expiry">expires in ${Math.max(0, Math.floor((pairResult.expiresAt - Date.now()) / 1000))}s</span>
+              </div>`}
+          <${PairInstructions}
+            pairResult=${pairResult}
+            identities=${identities}
+            selectedHostIdx=${selectedHostIdx}
+            setSelectedHostIdx=${setSelectedHostIdx}
+          />
+          <div class="devices-pair-actions">
+            <button type="button" class="btn-secondary" onClick=${onClose}>Done</button>
+          </div>
+        </div>
+      `}
+    </section>
   `;
 }
 
@@ -1349,7 +1352,7 @@ export function resolvePairKindRequest(pairKindRequest) {
   return DEVICE_KINDS.includes(pairKindRequest) ? pairKindRequest : null;
 }
 
-export function DevicesView({ pairKindRequest = null, focusDeviceId = null } = {}) {
+export function DevicesView({ pairKindRequest = null, focusDeviceId = null, cloudRelay = false } = {}) {
   const requestedPairKind = resolvePairKindRequest(pairKindRequest);
   const [devices, setDevices] = useState([]);
   const [tokens, setTokens] = useState([]);
@@ -1368,7 +1371,7 @@ export function DevicesView({ pairKindRequest = null, focusDeviceId = null } = {
   const [pairLevelId, setPairLevelId] = useState("");
   const [pairName, setPairName] = useState("");
   const [pairResult, setPairResult] = useState(null);
-  // A refused pairing is shown in the modal that asked for it, where it stays
+  // A refused pairing is shown on the page that asked for it, where it stays
   // until the operator changes the request or asks again.
   const [pairError, setPairError] = useState(null);
   const [pairing, setPairing] = useState(false);
@@ -1379,32 +1382,32 @@ export function DevicesView({ pairKindRequest = null, focusDeviceId = null } = {
   const [identities, setIdentities] = useState([]);
   const [selectedHostIdx, setSelectedHostIdx] = useState(0);
 
-  // Confirm-modal state — used for revoke-device + revoke-token, both
-  // destructive.
+  // Confirmation state also holds action errors, independently of roster polling.
   const [confirmState, setConfirmState] = useState(null);
+  const confirmPending = useRef(false);
 
   // Device id backing the current portal session (from /whoami) — pins the
   // "This device" card. Null when the session isn't bound to a device.
   const [sessionDeviceId, setSessionDeviceId] = useState(null);
-  // Pairing is an occasional action, so it lives behind a button → modal
-  // rather than an always-open form — unless a `?pair=` deep link asked for
-  // it open on arrival.
-  const [pairModalOpen, setPairModalOpen] = useState(requestedPairKind !== null);
+  // Pairing is an occasional action, so it lives behind a button that swaps
+  // the device list for the pairing page — unless a `?pair=` deep link asked
+  // for that page on arrival.
+  const [pairPageOpen, setPairPageOpen] = useState(requestedPairKind !== null);
   // The Access overview behind the per-device access-level picker: its levels,
   // sources and policies. Best effort like the other auxiliary fetches: without
   // it the picker stays hidden and the rest of the page is unaffected.
   const [accessOverview, setAccessOverview] = useState(null);
 
   // A `?pair=` request that arrives without a remount (Back/Forward, or a
-  // second navigation while the tab is already open) still opens the modal:
+  // second navigation while the tab is already open) still opens the page:
   // state initializers only run on mount. Keyed on the request value, so
-  // closing the modal does not refire it.
+  // leaving the page does not refire it.
   useEffect(() => {
     if (requestedPairKind !== null) {
       setPairKind(requestedPairKind);
       setPairResult(null);
       setRepairTarget(null);
-      setPairModalOpen(true);
+      setPairPageOpen(true);
     }
   }, [requestedPairKind]);
   const [repairTarget, setRepairTarget] = useState(null);
@@ -1620,12 +1623,8 @@ export function DevicesView({ pairKindRequest = null, focusDeviceId = null } = {
       confirmLabel: "Forget",
       destructive: true,
       onConfirm: async () => {
-        try {
-          await forgetDevice(id);
-          await refresh();
-        } catch (e) {
-          setError(String(e.message || e));
-        }
+        await forgetDevice(id);
+        await refresh();
       },
     });
   }
@@ -1780,26 +1779,29 @@ export function DevicesView({ pairKindRequest = null, focusDeviceId = null } = {
   );
   const updatableIds = useMemo(() => new Set(behindDevices.map((d) => d.id)), [behindDevices]);
 
-  function openPairModal() {
+  function openPairPage() {
     pairRequestGeneration.current += 1;
     setRepairTarget(null);
     setPairResult(null);
     setPairError(null);
-    setPairModalOpen(true);
+    setPairPageOpen(true);
   }
 
-  function openRepairModal(device) {
+  function openRepairPage(device) {
     pairRequestGeneration.current += 1;
     setRepairTarget(device);
     setPairResult(null);
     setPairError(null);
-    setPairModalOpen(true);
+    setPairPageOpen(true);
   }
 
-  function closePairModal() {
+  function closePairPage() {
     pairRequestGeneration.current += 1;
     setPairing(false);
-    setPairModalOpen(false);
+    setPairPageOpen(false);
+    // Drop a `?pair=` deep link from the address bar, so a refresh shows the
+    // list the operator went back to rather than reopening the pairing page.
+    if (requestedPairKind !== null) replaceRoute(DEVICES_PATH);
   }
 
   // One card, shared across the This device / Live / Other groups.
@@ -1813,7 +1815,7 @@ export function DevicesView({ pairKindRequest = null, focusDeviceId = null } = {
       onToggle=${toggleExpand}
       onRevokeDevice=${handleRevokeDevice}
       onForgetDevice=${handleForgetDevice}
-      onRepairDevice=${openRepairModal}
+      onRepairDevice=${openRepairPage}
       onUpdateDevice=${updatableIds.has(d.id) ? handleUpdateDevice : null}
       health=${doctorByDevice.get(d.id)}
       healthRequesting=${doctorRequesting}
@@ -1822,135 +1824,159 @@ export function DevicesView({ pairKindRequest = null, focusDeviceId = null } = {
       onRevokeToken=${handleRevokeToken}
       accessOverview=${accessOverview}
       onSetDeviceLevel=${handleSetDeviceLevel}
+      cloudRelay=${cloudRelay}
     />`;
 
   return html`
-    <div class="devices-view">
-      <div class="devices-header">
-        <div>
-          <p class="devices-subtitle">Clients authorized to use your gateway.</p>
-          ${updateTarget && html`
-            <p class="devices-gateway-version">Gateway version <strong>${updateTarget}</strong></p>
-          `}
-        </div>
-        <div class="devices-header-right">
-          <div class="devices-summary">
-            <span class="devices-stat"><strong>${devices.length}</strong> device${devices.length === 1 ? "" : "s"}</span>
-            <span class="devices-stat-sep">·</span>
-            <span class="devices-stat"><span class="devices-online-dot"></span>${liveCount} live connection${liveCount === 1 ? "" : "s"}</span>
-            ${revokedTotal > 0 && html`
-              <span class="devices-stat-sep">·</span>
-              <span class=${`devices-stat ${needsPairingTotal > 0 ? "needs-pairing" : ""}`}
-                title=${needsPairingTotal > 0
-                  ? "Revoked devices that still host sources need a repair code before they can sync again."
-                  : "Revoked devices keep their row, their sources and their data."}>
-                ${revokedTotal} revoked${needsPairingTotal > 0 ? ` (${needsPairingTotal} awaiting repair)` : ""}
-              </span>
-            `}
-          </div>
-          <button
-            class="btn-secondary"
-            disabled=${loading || doctorRequesting}
-            onClick=${() => handleRunHealth()}
-          >${doctorRequesting ? "Requesting…" : "Run health checks"}</button>
-          ${behindDevices.length > 0 && html`
-            <button
-              class="btn-secondary"
-              title=${`Tell every device this gateway commands to update itself to ${updateTarget}.`}
-              onClick=${() => handleUpdateAll(behindDevices)}
-            >Update all (${behindDevices.length})</button>
-          `}
-          <button class="btn-primary devices-pair-btn" onClick=${openPairModal}>Pair device</button>
-        </div>
-      </div>
-
-      ${error && html`<div class="devices-banner error">${error}</div>`}
-      ${doctorError && html`<div class="devices-banner error">${doctorError}</div>`}
-      ${showHealthProgress && !doctorError && html`
-        <${FleetHealthProgress} healthByDevice=${doctorByDevice} requesting=${doctorRequesting} />
-      `}
-
-      ${loading
-        ? html`<div class="devices-empty">Loading…</div>`
-        : devices.length === 0
-          ? html`<div class="devices-empty">
-              No devices paired yet.
-              <button class="btn-tiny" onClick=${openPairModal}>Pair your first device</button>
-            </div>`
-          : html`
-            <div class="devices-groups">
-              ${thisDevice && html`
-                <section class="devices-group">
-                  <h2 class="devices-group-title">This device</h2>
-                  <div class="devices-cards">${renderCard(thisDevice)}</div>
-                </section>
-              `}
-              <section class="devices-group">
-                <h2 class="devices-group-title">
-                  Live connections ${live.length > 0 ? html`<span class="devices-count">${live.length}</span>` : null}
-                </h2>
-                ${live.length === 0
-                  ? html`<div class="devices-muted devices-group-empty">No other live connections right now.</div>`
-                  : html`<div class="devices-cards">${live.map(renderCard)}</div>`}
-              </section>
-              ${other.length > 0 && html`
-                <section class="devices-group devices-group-other">
-                  <button
-                    class="devices-group-toggle"
-                    aria-expanded=${showOther}
-                    onClick=${() => setShowOther((v) => !v)}
-                  >
-                    <span class="devices-card-chevron" aria-hidden="true">${showOther ? "▾" : "▸"}</span>
-                    Other devices <span class="devices-count">${other.length}</span>
-                  </button>
-                  ${showOther && html`<div class="devices-cards">${other.map(renderCard)}</div>`}
-                </section>
+    <div class=${cloudRelay ? "devices-view relay-on" : "devices-view"}>
+      ${pairPageOpen
+        ? html`
+          <${PairPage}
+            pairKind=${pairKind}
+            onKindChange=${(kind) => {
+              setPairKind(kind);
+              setPairResult(null);
+              setPairError(null);
+            }}
+            answerLevels=${accessOverview ? answerLevelsOf(accessOverview) : []}
+            pairLevelId=${pairLevelId}
+            onPairLevelChange=${(levelId) => {
+              setPairLevelId(levelId);
+              setPairResult(null);
+              setPairError(null);
+            }}
+            pairName=${pairName}
+            onPairNameChange=${(value) => {
+              setPairName(value);
+              setPairResult(null);
+              setPairError(null);
+            }}
+            pairResult=${pairResult}
+            pairError=${pairError}
+            pairing=${pairing}
+            onPair=${handlePair}
+            identities=${identities}
+            selectedHostIdx=${selectedHostIdx}
+            setSelectedHostIdx=${setSelectedHostIdx}
+            onClose=${closePairPage}
+            repairTarget=${repairTarget}
+          />
+        `
+        : html`
+          <div class="devices-header">
+            <div>
+              <p class="devices-subtitle">Clients authorized to use your gateway.</p>
+              ${updateTarget && html`
+                <p class="devices-gateway-version">Gateway version <strong>${updateTarget}</strong></p>
               `}
             </div>
+            <div class="devices-header-right">
+              <div class="devices-summary">
+                <span class="devices-stat"><strong>${devices.length}</strong> device${devices.length === 1 ? "" : "s"}</span>
+                <span class="devices-stat-sep">·</span>
+                <span class="devices-stat"><span class="devices-online-dot"></span>${liveCount} live connection${liveCount === 1 ? "" : "s"}</span>
+                ${revokedTotal > 0 && html`
+                  <span class="devices-stat-sep">·</span>
+                  <span class=${`devices-stat ${needsPairingTotal > 0 ? "needs-pairing" : ""}`}
+                    title=${needsPairingTotal > 0
+                      ? "Revoked devices that still host sources need a repair code before they can sync again."
+                      : "Revoked devices keep their row, their sources and their data."}>
+                    ${revokedTotal} revoked${needsPairingTotal > 0 ? ` (${needsPairingTotal} awaiting repair)` : ""}
+                  </span>
+                `}
+              </div>
+              <button
+                class="btn-secondary"
+                disabled=${loading || doctorRequesting}
+                onClick=${() => handleRunHealth()}
+              >${doctorRequesting ? "Requesting…" : "Run health checks"}</button>
+              ${behindDevices.length > 0 && html`
+                <button
+                  class="btn-secondary"
+                  title=${`Tell every device this gateway commands to update itself to ${updateTarget}.`}
+                  onClick=${() => handleUpdateAll(behindDevices)}
+                >Update all (${behindDevices.length})</button>
+              `}
+              <button class="btn-primary devices-pair-btn" onClick=${openPairPage}>Pair device</button>
+            </div>
+          </div>
+
+          ${cloudRelay && html`<${CloudPairingRequests} />`}
+          ${error && html`<div class="devices-banner error">${error}</div>`}
+          ${doctorError && html`<div class="devices-banner error">${doctorError}</div>`}
+          ${showHealthProgress && !doctorError && html`
+            <${FleetHealthProgress} healthByDevice=${doctorByDevice} requesting=${doctorRequesting} />
           `}
 
-      ${pairModalOpen && html`<${PairModal}
-        pairKind=${pairKind}
-        onKindChange=${(kind) => {
-          setPairKind(kind);
-          setPairResult(null);
-          setPairError(null);
-        }}
-        answerLevels=${accessOverview ? answerLevelsOf(accessOverview) : []}
-        pairLevelId=${pairLevelId}
-        onPairLevelChange=${(levelId) => {
-          setPairLevelId(levelId);
-          setPairResult(null);
-          setPairError(null);
-        }}
-        pairName=${pairName}
-        onPairNameChange=${(value) => {
-          setPairName(value);
-          setPairResult(null);
-          setPairError(null);
-        }}
-        pairResult=${pairResult}
-        pairError=${pairError}
-        setPairResult=${setPairResult}
-        pairing=${pairing}
-        onPair=${handlePair}
-        identities=${identities}
-        selectedHostIdx=${selectedHostIdx}
-        setSelectedHostIdx=${setSelectedHostIdx}
-        onClose=${closePairModal}
-        repairTarget=${repairTarget}
-      />`}
+          ${loading
+            ? html`<div class="devices-empty">Loading…</div>`
+            : devices.length === 0
+              ? html`<div class="devices-empty">
+                  No devices paired yet.
+                  <button class="btn-tiny" onClick=${openPairPage}>Pair your first device</button>
+                </div>`
+              : html`
+                <div class="devices-groups">
+                  ${thisDevice && html`
+                    <section class="devices-group">
+                      <h2 class="devices-group-title">This device</h2>
+                      <div class="devices-cards">${renderCard(thisDevice)}</div>
+                    </section>
+                  `}
+                  <section class="devices-group">
+                    <h2 class="devices-group-title">
+                      Live connections ${live.length > 0 ? html`<span class="devices-count">${live.length}</span>` : null}
+                    </h2>
+                    ${live.length === 0
+                      ? html`<div class="devices-muted devices-group-empty">No other live connections right now.</div>`
+                      : html`<div class="devices-cards">${live.map(renderCard)}</div>`}
+                  </section>
+                  ${other.length > 0 && html`
+                    <section class="devices-group devices-group-other">
+                      <button
+                        class="devices-group-toggle"
+                        aria-expanded=${showOther}
+                        onClick=${() => setShowOther((v) => !v)}
+                      >
+                        <span class="devices-card-chevron" aria-hidden="true">${showOther ? "▾" : "▸"}</span>
+                        Other devices <span class="devices-count">${other.length}</span>
+                      </button>
+                      ${showOther && html`<div class="devices-cards">${other.map(renderCard)}</div>`}
+                    </section>
+                  `}
+                </div>
+              `}
+        `}
       <${ConfirmModal}
         open=${!!confirmState}
         title=${confirmState?.title}
-        body=${confirmState?.body}
-        confirmLabel=${confirmState?.confirmLabel}
+        body=${html`
+          ${confirmState?.body}
+          ${confirmState?.error && html`<div class="devices-banner error" role="alert">${confirmState.error}</div>`}
+        `}
+        confirmLabel=${confirmState?.pending ? "Working…" : confirmState?.confirmLabel}
+        confirmDisabled=${!!confirmState?.pending}
+        cancelDisabled=${!!confirmState?.pending}
         destructive=${!!confirmState?.destructive}
-        onCancel=${() => setConfirmState(null)}
+        onCancel=${() => { if (!confirmPending.current) setConfirmState(null); }}
         onConfirm=${async () => {
-          const fn = confirmState?.onConfirm;
-          setConfirmState(null);
-          try { if (fn) await fn(); } catch (err) { console.error(err); }
+          if (confirmPending.current || !confirmState) return;
+          confirmPending.current = true;
+          setConfirmState((state) => ({ ...state, pending: true, error: null }));
+          try {
+            await confirmState.onConfirm();
+            setConfirmState(null);
+          } catch (err) {
+            setConfirmState((state) => ({
+              ...state,
+              pending: false,
+              error: err?.code === "DEVICE_STILL_HOSTS_SOURCES"
+                ? "This device still hosts sources. Move or remove them from Sources before forgetting it."
+                : sentence(errorMessage(err, "The action could not be completed.")),
+            }));
+          } finally {
+            confirmPending.current = false;
+          }
         }}
       />
     </div>

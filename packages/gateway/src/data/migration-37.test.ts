@@ -3,7 +3,7 @@
 
 /**
  * Migration 37: create the `retired_loops` consolidation store (the Briefs /
- * Cognition Steward append-only trace of resolved/removed loops that reconcile scans
+ * Brain append-only trace of resolved/removed loops that reconcile scans
  * for recurrences).
  *
  * A brand-new `IF NOT EXISTS` table via the idempotent

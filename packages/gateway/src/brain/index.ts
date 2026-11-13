@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 /**
- * The Briefs / Cognition Steward feature module (experimental; inert unless the
+ * The Briefs / Brain feature module (experimental; inert unless the
  * feature is active). This barrel is the module's stable surface for the
  * handful of shared-code extension points (schema setup, the historical
  * migrations' derived-state purge, the hidden-search registration); feature-
@@ -77,7 +77,7 @@ export {
   type PersonAnnotationRow,
 } from "./storage/person-annotations.js";
 // Open-loop / observation / notes write ops, consumed by the write gate (the
-// Cognition Steward's tools mutate through it — single-writer invariant).
+// Brain's tools mutate through it — single-writer invariant).
 export {
   cascadeOpenLoopPrivacyDelete,
   hasAnyOpenLoops,

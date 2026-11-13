@@ -165,7 +165,7 @@ export function KnowledgeClaimReader({ node, references = EMPTY_REFERENCES, onCl
         ${usage.error && html`<p class="kn-caption">Usage could not be loaded. Open Connections to try again.</p>`}
         ${[["References to this claim", usedBy.claim], ["References to this page", usedBy.page]].map(([title, edges]) => edges.length > 0 && html`
           <strong>${title}</strong>
-          <ul class="kn-claim-popover-refs">${edges.map((edge) => html`<li key=${edge.node.id}><a href=${`/portal/debug/cognition/knowledge/${encodeURIComponent(edge.node.id)}${edge.claimId ? `?claim=${encodeURIComponent(edge.claimId)}` : ""}`}><${KnowledgeIcon} ...${edge.node} />${edge.node.title || "Untitled record"}</a></li>`)}</ul>
+          <ul class="kn-claim-popover-refs">${edges.map((edge) => html`<li key=${edge.node.id}><a href=${`/portal/debug/brain/knowledge/${encodeURIComponent(edge.node.id)}${edge.claimId ? `?claim=${encodeURIComponent(edge.claimId)}` : ""}`}><${KnowledgeIcon} ...${edge.node} />${edge.node.title || "Untitled record"}</a></li>`)}</ul>
         `)}
         ${usage.nextCursor && html`<p class="kn-caption">More connections are available in Connections.</p>`}
       </div>

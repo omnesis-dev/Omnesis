@@ -7,7 +7,7 @@ import { normalizeForQuoteMatch } from "@omnesis/core";
  * The evidence firewall's quote test — one normalized-substring predicate
  * shared by every consumer that must agree on "does this quote still appear
  * in that document": the annotation tools' write/revise firewall
- * (`steward/tools.ts`) and the content-change invalidators' surgical
+ * (`runtime/tools.ts`) and the content-change invalidators' surgical
  * quote-survival check (`storage/annotations.ts` /
  * `storage/person-annotations.ts`). A leaf module (only @omnesis/core) so the
  * storage layer (imported by the writer worker) never pulls the agent-tools
@@ -34,7 +34,7 @@ export function containsNormalized(haystack: string, needle: string): boolean {
 
 /**
  * Normalizing a whole document body is O(content) and allocates a full copy;
- * the firewall does it once per grounding quote, so the Cognition Steward re-normalizes
+ * the firewall does it once per grounding quote, so the Brain re-normalizes
  * the same evidence doc many times across a run (its firewall, entailment, and
  * per-atom checks), synchronously on the main event loop. This bounded cache
  * collapses those to one normalization per distinct content, keyed on the

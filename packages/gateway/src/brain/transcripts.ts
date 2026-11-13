@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 /**
- * Per-run Cognition Steward transcripts — operator debug artifacts, one JSON
+ * Per-run Brain transcripts — operator debug artifacts, one JSON
  * file per run attempt on the gateway's filesystem (like logs, and like
  * the conversation store's JSON-file convention).
  *
