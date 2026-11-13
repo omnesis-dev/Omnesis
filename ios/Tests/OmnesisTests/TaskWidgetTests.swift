@@ -289,12 +289,18 @@ final class TaskWidgetTests: XCTestCase {
         }
     }
 
-    func testFetchReadsAllCompletePartitionsAndDeduplicatesTasks() async throws {
+    func testLegacyGatewayWidgetReadsPartitionsWithoutLabRoutes() async throws {
+        let legacy = try JSONDecoder().decode(StatusSnapshot.self, from: Data(
+            #"{"documents":{"total":0,"bySource":{}},"experimental":false,"tasks":{"available":true}}"#.utf8
+        ))
+        XCTAssertTrue(legacy.tasksAvailable)
+        XCTAssertFalse(legacy.labAvailable)
         let requests = Requests()
         let client = TaskWidgetClient(credential: credential, request: { requests.send($0) })
         let snapshot = try await client.fetch(now: date("2026-10-14"), calendar: calendar)
         XCTAssertEqual(snapshot.tasks.map(\.id), ["one"])
         XCTAssertEqual(requests.values.count, 4)
+        XCTAssertTrue(requests.values.allSatisfy { $0.url?.path == "/tasks" })
         XCTAssertEqual(Set(requests.values.compactMap {
             URLComponents(url: $0.url!, resolvingAgainstBaseURL: false)?.queryItems?.first { $0.name == "view" }?.value
         }), ["today", "month", "future", "anytime"])

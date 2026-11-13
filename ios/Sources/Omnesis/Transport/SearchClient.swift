@@ -1430,7 +1430,7 @@ public struct StatusSnapshot: Decodable, Sendable {
             [String: LatestActivity].self, forKey: .latestActivityBySource
         )
         experimental = try c.decodeIfPresent(Bool.self, forKey: .experimental) ?? false
-        lab = try? c.decodeIfPresent(LabFlags.self, forKey: .lab)
+        lab = c.contains(.lab) ? ((try? c.decode(LabFlags.self, forKey: .lab)) ?? LabFlags()) : nil
         labAvailable = try c.decodeIfPresent(Bool.self, forKey: .labAvailable) ?? false
         developer = try c.decodeIfPresent(Bool.self, forKey: .developer) ?? false
         // A shape this app cannot read reads as absent rather than failing

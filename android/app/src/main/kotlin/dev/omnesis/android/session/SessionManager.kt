@@ -920,10 +920,10 @@ class SessionManager @Inject constructor(
         _modelHealth.value = status.modelHealth
         _experimentalEnabled.value = status.experimental
         _labAvailable.value = status.labAvailable
-        _lab.value = if (status.labAvailable) status.lab else dev.omnesis.android.transport.dto.LabFlags()
+        _lab.value = status.effectiveLabFlags
         _developerEnabled.value = status.developer
         val tasksWereAvailable = _tasksAvailable.value
-        _tasksAvailable.value = _lab.value.tasks && status.tasks?.available == true
+        _tasksAvailable.value = status.tasksAvailable
         if (!_tasksAvailable.value) TaskWidgetUpdates.tasksDisabled(applicationContext)
         else if (!tasksWereAvailable) TaskWidgetUpdates.refresh(applicationContext)
         _taskNoteCaptureAvailable.value = status.taskNoteCapture

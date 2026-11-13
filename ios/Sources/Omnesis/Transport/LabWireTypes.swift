@@ -37,3 +37,18 @@ public struct LabFeature: Decodable, Identifiable, Sendable {
     public let enabled: Bool
     public let iconSvg: String?
 }
+
+/// Explicit Lab flags take priority; gateways that predate Lab keep their advertised surfaces.
+extension StatusSnapshot {
+    public var tasksAvailable: Bool {
+        tasks?.available == true && (lab?.tasks ?? true)
+    }
+
+    public var brainEnabled: Bool {
+        lab?.brain ?? experimental
+    }
+
+    public var watchesEnabled: Bool {
+        lab?.watches ?? experimental
+    }
+}

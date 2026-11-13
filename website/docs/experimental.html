@@ -179,6 +179,13 @@
           Watches, and an existing background-agent assignment enables the Brain. An explicit Lab
           choice is never overwritten on restart. Disabling a feature preserves its data.
         </p>
+        <p>
+          Mobile apps and gateways can be updated separately. With an older gateway, updated apps
+          use its existing Tasks and experimental-feature availability; Lab controls appear only
+          when the gateway supports them. With an updated gateway, older apps keep using the
+          existing APIs, but have no Lab controls and may still show a Watches menu after Watches is
+          disabled. The gateway enforces disabled features regardless of the app version.
+        </p>
         <div class="callout warn">
           <strong>These features are experimental</strong> as they are unstable and
           research/exploration projects within the Omnesis code base.

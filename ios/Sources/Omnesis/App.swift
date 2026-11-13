@@ -893,11 +893,11 @@ public final class AppStore {
     }
 
     public var brainEnabled: Bool {
-        statusSnapshot?.lab?.brain == true
+        statusSnapshot?.brainEnabled == true
     }
 
     public var watchesEnabled: Bool {
-        statusSnapshot?.lab?.watches == true
+        statusSnapshot?.watchesEnabled == true
     }
 
     /// Whether the paired gateway runs in developer mode (`OMNESIS_DEV_MODE`).
@@ -985,7 +985,7 @@ public final class AppStore {
     /// Whether the paired gateway serves Tasks (`/status` → `tasks.available`).
     /// The gateway advertises the effective Lab gate.
     public var tasksAvailable: Bool {
-        adminCoord.statusSnapshot?.lab?.tasks == true && adminCoord.statusSnapshot?.tasks?.available == true
+        adminCoord.statusSnapshot?.tasksAvailable == true
     }
 
     /// Open tasks on today's page — the count on the drawer's Tasks entry.

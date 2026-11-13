@@ -38,7 +38,7 @@ class PairedWidgetTasksGateway(pairing: Pairing) : WidgetTasksGateway {
     private val client = TasksClient(http)
     private val gateway = GatewayClient(http)
 
-    override suspend fun available(): Boolean = gateway.status().let { it.experimental && it.lab.tasks && it.tasks?.available == true }
+    override suspend fun available(): Boolean = gateway.status().tasksAvailable
 
 
     override suspend fun tasks(view: TaskView, day: String) = client.view(view, day).tasks.map(WidgetTask::from)

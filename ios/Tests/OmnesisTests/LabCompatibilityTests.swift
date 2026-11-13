@@ -44,4 +44,54 @@ final class LabCompatibilityTests: XCTestCase {
         XCTAssertTrue(partial.tasks)
         XCTAssertFalse(partial.watches)
     }
+
+    private func status(_ fields: [String: Any] = [:]) throws -> StatusSnapshot {
+        var payload = fields
+        payload["documents"] = ["total": 0, "bySource": [String: Int]()] as [String: Any]
+        return try JSONDecoder().decode(StatusSnapshot.self, from: JSONSerialization.data(withJSONObject: payload))
+    }
+
+    func testLegacyStatusRetainsItsAdvertisedSurfacesWithoutOfferingLab() throws {
+        for experimental in [false, true] {
+            let snapshot = try status(["experimental": experimental, "tasks": ["available": true]])
+            XCTAssertNil(snapshot.lab)
+            XCTAssertTrue(snapshot.tasksAvailable, "Legacy stable gateways also serve Tasks")
+            XCTAssertEqual(snapshot.brainEnabled, experimental)
+            XCTAssertEqual(snapshot.watchesEnabled, experimental)
+            XCTAssertFalse(snapshot.labAvailable)
+        }
+        let older = try status()
+        XCTAssertFalse(older.tasksAvailable)
+        XCTAssertFalse(older.brainEnabled)
+        XCTAssertFalse(older.watchesEnabled)
+        XCTAssertFalse(older.labAvailable)
+    }
+
+    func testExplicitLabOptOutsOverrideLegacyExperimentalAndTasksAdvertisements() throws {
+        let snapshot = try status([
+            "experimental": true, "tasks": ["available": true], "labAvailable": true,
+            "lab": ["brain": false, "tasks": false, "watches": false],
+        ])
+        XCTAssertFalse(snapshot.tasksAvailable)
+        XCTAssertFalse(snapshot.brainEnabled)
+        XCTAssertFalse(snapshot.watchesEnabled)
+        XCTAssertTrue(snapshot.labAvailable)
+        let partial = try status(["experimental": true, "tasks": ["available": true], "lab": ["tasks": true]])
+        XCTAssertTrue(partial.tasksAvailable)
+        XCTAssertFalse(partial.brainEnabled)
+        XCTAssertFalse(partial.watchesEnabled)
+        let unavailable = try status(["tasks": ["available": false], "lab": ["tasks": true]])
+        XCTAssertFalse(unavailable.tasksAvailable)
+    }
+
+    func testPresentUnreadableLabDoesNotFallBackToLegacyEnabledState() throws {
+        let unreadable: [Any] = [NSNull(), false, ["tasks": "invalid"]]
+        for lab in unreadable {
+            let snapshot = try status(["experimental": true, "tasks": ["available": true], "lab": lab])
+            XCTAssertNotNil(snapshot.lab)
+            XCTAssertFalse(snapshot.tasksAvailable)
+            XCTAssertFalse(snapshot.brainEnabled)
+            XCTAssertFalse(snapshot.watchesEnabled)
+        }
+    }
 }

@@ -29,8 +29,9 @@ data class StatusSnapshot(
      * features hidden.
      */
     val experimental: Boolean = false,
-    /** Effective per-feature switches advertised by the gateway. */
-    val lab: LabFlags = LabFlags(),
+    /** Missing on older gateways; an explicit object, including all false, is authoritative. */
+    @Serializable(with = StatusLabFlagsSerializer::class)
+    val lab: LabFlags? = null,
     val labAvailable: Boolean = false,
     /** Private speech hints are opt-in; older gateways omit this field. */
     val transcriptionVocabulary: Boolean = false,
@@ -63,6 +64,13 @@ data class StatusSnapshot(
      */
     val capabilities: JsonElement? = null,
 ) {
+    /** Preserve legacy discovery only when the gateway predates the Lab wire field. */
+    val effectiveLabFlags: LabFlags
+        get() = lab ?: LabFlags(brain = experimental, tasks = tasks?.available == true, watches = experimental)
+
+    val tasksAvailable: Boolean
+        get() = effectiveLabFlags.tasks && tasks?.available == true
+
     /** The gateway opens a conversation about a task (`POST /tasks/:id/conversation`). */
     val taskConversations: Boolean
         get() = speaks(TASK_CONVERSATIONS, TASK_CONVERSATIONS_VERSION)
