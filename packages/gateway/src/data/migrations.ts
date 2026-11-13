@@ -172,6 +172,7 @@ import { indexDocumentsBySourceExternalId } from "./migration-187-documents-sour
 import { indexDocumentsBySourceCreatedRevision } from "./migration-208-documents-source-created-revision-index.js";
 import { addAnnotationRecheckQueuedAt } from "./migration-213-annotation-recheck-queued.js";
 import { addSourceVersion } from "./migration-218-source-version.js";
+import { addInventoryFullRead } from "./migration-219-inventory-full-read.js";
 import { addDeviceEnrollment } from "./migration-214-device-enrollment.js";
 import { LATEST_SCHEMA_VERSION } from "./schema-version.js";
 import type { Db } from "./types.js";
@@ -5021,13 +5022,18 @@ export const MIGRATIONS: readonly Migration[] = [
     up: addSourceVersion,
   },
   {
+    version: 219,
+    description: "record when an enumeration had read everything its source holds",
+    up: addInventoryFullRead,
+  },
+  {
     // One step for everything a source filter keeps: saved policies and their
     // source index, document facts with their publication and refresh state,
     // source scope declarations, Answer source proofs, and the guards that
     // keep a filtered capability narrow under a gateway that predates them.
     // Every creator is idempotent and the two passes visit capability
     // settings only, so the step costs nothing on an install with no filter.
-    version: 219,
+    version: 220,
     description: "add source filters: policies, document facts and Answer source proofs",
     up(db) {
       createScopePolicyStore(db);

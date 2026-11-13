@@ -15,6 +15,7 @@ import { DERIVED_INDEX_FILE_PATTERN, createLogger } from "@omnesis/core";
 import { openEncryptedSqlite } from "../sqlite-encryption.js";
 import { useImmediateTransactions } from "../sqlite-transactions.js";
 import { buildEmbeddingPreamble } from "./embedding-input.js";
+import { createFilterCopyTables } from "./filter-copy.js";
 import { withScanPageCache } from "./scan-page-cache.js";
 
 const log = createLogger("indexer:db");
@@ -494,6 +495,9 @@ export function createIndexDatabase(path: string, opts: OpenIndexDbOptions = {})
   // here, so the search read path can resolve "which generation serves
   // reads" with one cheap PK lookup that is atomically flippable in a single
   // UPDATE. This table holds the per-generation detail.
+  // What source filters read, copied from the corpus (see `filter-copy.ts`).
+  createFilterCopyTables(db);
+
   db.exec(`
     CREATE TABLE IF NOT EXISTS index_versions (
       version      INTEGER PRIMARY KEY,

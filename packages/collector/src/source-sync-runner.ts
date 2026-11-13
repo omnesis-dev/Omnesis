@@ -934,6 +934,7 @@ export class SourceSyncRunner {
                 sourceVersion: pendingStructuredPage
                   ? pendingStructuredPage.sourceVersion
                   : source.sourceVersion,
+                fullReadComplete: result.fullReadComplete,
                 // Forward the source's forward-looking consent deadline so the
                 // gateway persists it and can warn ahead of expiry. Pass through
                 // verbatim — `undefined` leaves the stored value untouched, `null`
@@ -1084,6 +1085,7 @@ export class SourceSyncRunner {
               : (result.watermark ?? { guarantee: "observation" }),
             meta: metaForGateway,
             sourceVersion: source.sourceVersion,
+            fullReadComplete: result.fullReadComplete,
           });
           if (writeResult.rejectedAsRemoved) {
             log.info(`Sync stopped because ${source.id} was removed at the gateway`);

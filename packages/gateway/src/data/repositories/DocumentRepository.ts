@@ -3,6 +3,7 @@
 
 import {
   recordSourceInventoryPage,
+  recordSourcePageAfterInventory,
   recordSourceInventoryDocument,
 } from "./SourceInventoryRepository.js";
 type Db = Database.Database;
@@ -2255,6 +2256,11 @@ export interface UpsertWithCursorArgs {
    * the page. Unset is 0: a host that sends none.
    */
   sourceVersion?: number;
+  /**
+   * What the source said, on the last page of a cycle, about having read
+   * everything it holds; see `recordSourceInventoryPage`.
+   */
+  fullReadComplete?: boolean;
   pendingPageId?: string;
   providerId: string;
   sourceId: string;
@@ -2692,7 +2698,14 @@ export function upsertWithCursor(
         !a.hasMore,
         Date.now(),
         a.sourceVersion ?? 0,
+        !a.hasMore && a.fullReadComplete !== false,
       );
+    else
+      recordSourcePageAfterInventory(db, a.sourceId, cursorRow, {
+        sourceVersion: a.sourceVersion ?? 0,
+        fullRead: !a.hasMore && a.fullReadComplete === true,
+        now: Date.now(),
+      });
     if (a.pendingPageId !== undefined)
       db.prepare(
         "UPDATE pending_source_pages SET cursor_committed = 1 WHERE source_id = ? AND cursor_row = ? AND page_id = ?",

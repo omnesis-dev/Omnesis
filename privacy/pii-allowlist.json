@@ -76,7 +76,10 @@
     },
     {
       "value": "120363000000000001@g.us",
-      "paths": ["packages/providers/whatsapp/src/normalizer.test.ts"],
+      "paths": [
+        "packages/providers/whatsapp/src/normalizer.test.ts",
+        "packages/core/src/filter-identifiers.test.ts"
+      ],
       "reason": "reviewed invented fixture"
     },
     {
@@ -1193,7 +1196,10 @@
     },
     {
       "value": "mayareeves@gmail.com",
-      "paths": ["packages/gateway/src/people.test.ts"],
+      "paths": [
+        "packages/gateway/src/people.test.ts",
+        "packages/core/src/filter-identifiers.test.ts"
+      ],
       "reason": "reviewed existing fixture"
     },
     {
@@ -1942,6 +1948,79 @@
       "value": "3@s.whatsapp.net",
       "paths": ["packages/providers/whatsapp/src/chat-list.test.ts"],
       "reason": "Invented WhatsApp JID for the chat-filter fixtures: a 555-01xx number under a real area code or a made-up group id; never corpus data."
+    },
+    {
+      "value": "12025550123@s.whatsapp.net",
+      "paths": ["packages/core/src/filter-identifiers.test.ts"],
+      "reason": "Invented value in the tests of the source-filter check (the AGENTS.md example names, reserved-range numbers, made-up mailboxes used to exercise mailbox-provider rules); never personal corpus data."
+    },
+    {
+      "value": "Fictional.Maya+lists@GoogleMail.com",
+      "paths": ["packages/gateway/src/access/filter-people.test.ts"],
+      "reason": "Invented value in the tests of the source-filter check (the AGENTS.md example names, reserved-range numbers, made-up mailboxes used to exercise mailbox-provider rules); never personal corpus data."
+    },
+    {
+      "value": "Fictional.Maya+news@gmail.com",
+      "paths": ["packages/gateway/src/access/filter-sql.test.ts"],
+      "reason": "Invented value in the tests of the source-filter check (the AGENTS.md example names, reserved-range numbers, made-up mailboxes used to exercise mailbox-provider rules); never personal corpus data."
+    },
+    {
+      "value": "Fictional.Maya+news@googlemail.com",
+      "paths": ["packages/gateway/src/access/filter-sql.test.ts"],
+      "reason": "Invented value in the tests of the source-filter check (the AGENTS.md example names, reserved-range numbers, made-up mailboxes used to exercise mailbox-provider rules); never personal corpus data."
+    },
+    {
+      "value": "Fictional.Scope.Check+Filter@GoogleMail.com",
+      "paths": ["packages/core/src/filter-identifiers.test.ts"],
+      "reason": "Invented value in the tests of the source-filter check (the AGENTS.md example names, reserved-range numbers, made-up mailboxes used to exercise mailbox-provider rules); never personal corpus data."
+    },
+    {
+      "value": "Fictional.Scope.Check+Filter@gmail.com",
+      "paths": ["packages/core/src/filter-identifiers.test.ts"],
+      "reason": "Invented value in the tests of the source-filter check (the AGENTS.md example names, reserved-range numbers, made-up mailboxes used to exercise mailbox-provider rules); never personal corpus data."
+    },
+    {
+      "value": "Fictional.Scope.Check+news@gmail.com",
+      "paths": ["packages/core/src/filter-identifiers.test.ts"],
+      "reason": "Invented value in the tests of the source-filter check (the AGENTS.md example names, reserved-range numbers, made-up mailboxes used to exercise mailbox-provider rules); never personal corpus data."
+    },
+    {
+      "value": "FictionalScopeCheck+x+y@gmail.com",
+      "paths": ["packages/core/src/filter-identifiers.test.ts"],
+      "reason": "Invented value in the tests of the source-filter check (the AGENTS.md example names, reserved-range numbers, made-up mailboxes used to exercise mailbox-provider rules); never personal corpus data."
+    },
+    {
+      "value": "fictional.scope.check@gmail.com",
+      "paths": ["packages/core/src/filter-identifiers.test.ts"],
+      "reason": "Invented value in the tests of the source-filter check (the AGENTS.md example names, reserved-range numbers, made-up mailboxes used to exercise mailbox-provider rules); never personal corpus data."
+    },
+    {
+      "value": "fictional.scope.check@googlemail.com",
+      "paths": ["packages/core/src/filter-identifiers.test.ts"],
+      "reason": "Invented value in the tests of the source-filter check (the AGENTS.md example names, reserved-range numbers, made-up mailboxes used to exercise mailbox-provider rules); never personal corpus data."
+    },
+    {
+      "value": "fictional.scopecheck@GMAIL.com",
+      "paths": ["packages/core/src/filter-identifiers.test.ts"],
+      "reason": "Invented value in the tests of the source-filter check (the AGENTS.md example names, reserved-range numbers, made-up mailboxes used to exercise mailbox-provider rules); never personal corpus data."
+    },
+    {
+      "value": "fictionalmaya@gmail.com",
+      "paths": [
+        "packages/gateway/src/access/filter-people.test.ts",
+        "packages/gateway/src/access/filter-sql.test.ts"
+      ],
+      "reason": "Invented value in the tests of the source-filter check (the AGENTS.md example names, reserved-range numbers, made-up mailboxes used to exercise mailbox-provider rules); never personal corpus data."
+    },
+    {
+      "value": "fictionalscopecheck@gmail.com",
+      "paths": ["packages/core/src/filter-identifiers.test.ts"],
+      "reason": "Invented value in the tests of the source-filter check (the AGENTS.md example names, reserved-range numbers, made-up mailboxes used to exercise mailbox-provider rules); never personal corpus data."
+    },
+    {
+      "value": "mayareeves@googlemail.com",
+      "paths": ["packages/core/src/filter-identifiers.test.ts"],
+      "reason": "Invented value in the tests of the source-filter check (the AGENTS.md example names, reserved-range numbers, made-up mailboxes used to exercise mailbox-provider rules); never personal corpus data."
     }
   ],
   "phones": [
@@ -2225,6 +2304,11 @@
       "value": "310-555-6789",
       "paths": ["packages/core/src/people-utils.test.ts"],
       "reason": "reviewed existing fixture"
+    },
+    {
+      "value": "+44.7700.900.123",
+      "paths": ["packages/core/src/filter-identifiers.test.ts"],
+      "reason": "Invented value in the tests of the source-filter check (the AGENTS.md example names, reserved-range numbers, made-up mailboxes used to exercise mailbox-provider rules); never personal corpus data."
     }
   ],
   "privateIps": [
@@ -3161,7 +3245,9 @@
         "evals/universes/immich-sync/cast.json",
         "evals/universes/immich-sync/sources/immich/fake-corpus.json",
         "packages/providers/immich/src/document-event-profile.test.ts",
-        "packages/providers/immich/src/source.test.ts"
+        "packages/providers/immich/src/source.test.ts",
+        "packages/gateway/src/access/filter-editor-reads.test.ts",
+        "packages/gateway/src/access/filter-sql.test.ts"
       ],
       "reason": "Reviewed deterministic output of the original fictional universe authoring modules; fictional cast/venue/product or public title-case prose, never personal corpus data."
     },
@@ -3281,7 +3367,13 @@
         "packages/providers/immich/src/document-event-profile.test.ts",
         "packages/providers/immich/src/provider.test.ts",
         "packages/providers/immich/src/source.test.ts",
-        "packages/providers/strava/src/broker.test.ts"
+        "packages/providers/strava/src/broker.test.ts",
+        "packages/core/src/filter-identifiers.test.ts",
+        "packages/gateway/src/access/filter-decision.test.ts",
+        "packages/gateway/src/access/filter-editor-reads.test.ts",
+        "packages/gateway/src/access/filter-people.test.ts",
+        "packages/gateway/src/access/filter-sql.test.ts",
+        "packages/gateway/src/indexer/filter-copy.test.ts"
       ],
       "reason": "Reviewed deterministic output of the original fictional universe authoring modules; fictional cast/venue/product or public title-case prose, never personal corpus data."
     },
@@ -10515,7 +10607,8 @@
         "packages/watch/src/runtime/update-storm.test.ts",
         "packages/watch/universes/poc/events.json",
         "packages/watch/universes/poc/watches/alice-declines-dinner.json",
-        "packages/providers/discord/src/source.test.ts"
+        "packages/providers/discord/src/source.test.ts",
+        "packages/gateway/src/access/filter-editor-reads.test.ts"
       ],
       "reason": "reviewed existing fixture"
     },
@@ -12682,7 +12775,8 @@
         "packages/providers/discord/src/document-event-profile.test.ts",
         "packages/providers/discord/src/normalizer.test.ts",
         "packages/providers/discord/src/source.test.ts",
-        "packages/providers/discord/src/sync-cycle.test.ts"
+        "packages/providers/discord/src/sync-cycle.test.ts",
+        "packages/gateway/src/access/filter-sql.test.ts"
       ],
       "reason": "reviewed: invented Discord fixture (CLAUDE.md example names and made-up servers; Discord permission and header labels, not people)"
     },
@@ -13230,6 +13324,19 @@
       "value": "David Lin",
       "paths": ["evals/universes/repository-filters/cast.json"],
       "reason": "Invented cast of the repository-filters universe, taken from the AGENTS.md example names; never personal corpus data."
+    },
+    {
+      "value": "Aliases Unlimited",
+      "paths": ["packages/gateway/src/access/filter-editor-reads.test.ts"],
+      "reason": "Invented value in the tests of the source-filter check (the AGENTS.md example names, reserved-range numbers, made-up mailboxes used to exercise mailbox-provider rules); never personal corpus data."
+    },
+    {
+      "value": "Studio Mac",
+      "paths": [
+        "packages/gateway/src/access/filter-editor-reads.test.ts",
+        "packages/gateway/src/access/filter-readiness.test.ts"
+      ],
+      "reason": "Invented value in the tests of the source-filter check (the AGENTS.md example names, reserved-range numbers, made-up mailboxes used to exercise mailbox-provider rules); never personal corpus data."
     }
   ],
   "secretFixtures": [

@@ -89,8 +89,10 @@ const WOUND_BACK = [
   217,
   // 218 adds the source version columns, their counts and the queue, which undoSourceVersion drops.
   218,
-  // 219 source authority and Answer proofs are removed by undoSourceScopes.
+  // 219 adds an enumeration's full-read time, which undoSourceVersion drops.
   219,
+  // 220 source authority and Answer proofs are removed by undoSourceScopes.
+  220,
 ];
 
 let dir: string;
@@ -329,7 +331,7 @@ function undoDeviceEnrollment(db: Db): void {
   }
 }
 
-/** Undo migration 218: the source version columns, their running counts and the queue. */
+/** Undo migrations 218 and 219: the source version columns, their running counts, the queue and the full-read time. */
 function undoSourceVersion(db: Db): void {
   db.exec("DROP TABLE IF EXISTS document_filter_index_queue");
   for (const trigger of ["insert", "delete", "move"])
@@ -339,6 +341,7 @@ function undoSourceVersion(db: Db): void {
     ["documents", "source_version"],
     ["sync_state", "source_version"],
     ["source_inventories", "min_source_version"],
+    ["source_inventories", "full_read_at"],
   ] as const) {
     const present = db
       .prepare<[], { name: string }>(`SELECT name FROM pragma_table_info('${table}')`)

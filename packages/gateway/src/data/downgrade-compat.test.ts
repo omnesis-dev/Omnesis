@@ -359,10 +359,10 @@ describe("a downgrade across migrations that leave cursors alone", () => {
  * flag.
  */
 describe("the cursor-compatibility version", () => {
-  // 219 adds source-filter policy and Answer-proof state. It changes no
+  // 220 adds source-filter policy and Answer-proof state. It changes no
   // sync_state ownership, body cursor meaning or required resume state.
   /** Every migration through this version has been decided on. */
-  const REVIEWED_THROUGH = 219;
+  const REVIEWED_THROUGH = 220;
   const FLAGGED = [131, 133, 134, 139, 141, 146, 178];
 
   test("every migration has been decided on", () => {

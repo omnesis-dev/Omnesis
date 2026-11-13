@@ -206,6 +206,7 @@ interface CursorUpsertRequest {
     meta?: UpsertWithCursorArgs["meta"];
     /** The source version the host sent with the page; absent from a host that sends none. */
     sourceVersion?: number;
+    fullReadComplete?: boolean;
   };
 }
 
@@ -1006,6 +1007,7 @@ export class DocumentService {
         hasMore: body.hasMore,
         initialInventory: body.initialInventory,
         sourceVersion: body.sourceVersion ?? 0,
+        fullReadComplete: body.fullReadComplete,
         cursor: body.cursor as UpsertWithCursorArgs["cursor"],
         cursorDeviceId: args.cursorDeviceId,
         streamId: args.streamId,

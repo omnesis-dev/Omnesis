@@ -1080,6 +1080,7 @@ export class HttpGatewayClient implements GatewayClient {
     meta?: Omit<SourceSyncMeta, "contentRetention">;
     filterLists?: FilterListPublication[];
     sourceVersion?: number;
+    fullReadComplete?: boolean;
   }): Promise<UpsertWithCursorResponse> {
     return (await this.request("/documents/with-cursor", {
       method: "POST",

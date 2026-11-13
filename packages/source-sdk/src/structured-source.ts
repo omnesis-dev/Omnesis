@@ -2087,6 +2087,17 @@ export interface StructuredSyncResult<TCursor extends SyncCursor = SyncCursor> {
   cursor: TCursor;
   /** Whether more pages are available */
   hasMore: boolean;
+  /**
+   * Whether the source has now read everything it holds for this account. Only
+   * read on the last page of a cycle (`hasMore: false`).
+   *
+   * Left unset, the last page of a cycle that started with no cursor counts
+   * as the whole account, which is right for a source that reads everything in
+   * one cycle. A source that imports its history in stages says `false` on the
+   * last page of a cycle that leaves older history for later, and `true` on
+   * the last page of the cycle that finishes it.
+   */
+  fullReadComplete?: boolean;
   /** Optional progress info */
   progress?: SyncProgress;
 
