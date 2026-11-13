@@ -9,6 +9,7 @@ import { tlsFiles } from "../test/support.js";
 import { GatewayGoogleWeb } from "./google-gateway-web.js";
 import { gatewayBindingNonce } from "./gateway-binding.js";
 import { accountId } from "./identity.js";
+import type { GoogleBrowserTrust } from "./google-browser-trust.js";
 let directory: string;
 beforeEach(async () => {
   directory = await mkdtemp(join(tmpdir(), "gateway-web-google-"));
@@ -19,7 +20,14 @@ afterEach(async () => {
   await rm(directory, { recursive: true, force: true });
 });
 const callback = "https://gateway.example.test/admin/cloud-relay/google/callback";
-async function fixture(patch: NodeJS.ProcessEnv = {}) {
+const untrusted: GoogleBrowserTrust = { deviceClientIds: [], deviceAuthorizedParties: [] };
+const managedTrust: GoogleBrowserTrust = {
+  ownerLinkClientId: "managed-owner-client",
+  deviceEnrollmentClientId: "managed-device-client",
+  deviceClientIds: ["managed-device-client"],
+  deviceAuthorizedParties: ["managed-device-client"],
+};
+async function fixture(patch: NodeJS.ProcessEnv = {}, trust: GoogleBrowserTrust = untrusted) {
   const tls = tlsFiles(directory, "gateway.example.test"),
     secretFile = join(directory, "google-web.json"),
     metadataFile = join(directory, "link.json");
@@ -75,7 +83,14 @@ async function fixture(patch: NodeJS.ProcessEnv = {}) {
     accountId: "a".repeat(64),
     expiresAt: 4000000000,
   }));
-  const options = { env: () => env, metadataFile, identity: { verify }, fetch, register };
+  const options = {
+    env: () => env,
+    trust: () => trust,
+    metadataFile,
+    identity: { verify },
+    fetch,
+    register,
+  };
   const service = new GatewayGoogleWeb(options);
   await service.initialize();
   return { service, env, identity, verify, fetch, register, metadataFile, secretFile, options };
@@ -316,15 +331,14 @@ test("previously verified discovery can be removed after Google web configuratio
 });
 
 async function managedFixture() {
-  const f = await fixture({
-    OMNESIS_CLOUD_RELAY_GOOGLE_BROWSER_OWNER_CLIENT_ID: "managed-owner-client",
-    OMNESIS_CLOUD_RELAY_GOOGLE_BROWSER_DEVICE_CLIENT_ID: "managed-device-client",
-    OMNESIS_CLOUD_RELAY_GOOGLE_BROWSER_DEVICE_NATIVE_CLIENT_IDS: "managed-device-client",
-    OMNESIS_CLOUD_RELAY_GOOGLE_BROWSER_DEVICE_AUTHORIZED_PARTIES: "managed-device-client",
-    OMNESIS_CLOUD_RELAY_GOOGLE_GATEWAY_WEB_CLIENT_ID: undefined,
-    OMNESIS_CLOUD_RELAY_GOOGLE_GATEWAY_WEB_SECRET_FILE: undefined,
-    OMNESIS_CLOUD_RELAY_GOOGLE_GATEWAY_WEB_CALLBACK_URL: undefined,
-  });
+  const f = await fixture(
+    {
+      OMNESIS_CLOUD_RELAY_GOOGLE_GATEWAY_WEB_CLIENT_ID: undefined,
+      OMNESIS_CLOUD_RELAY_GOOGLE_GATEWAY_WEB_SECRET_FILE: undefined,
+      OMNESIS_CLOUD_RELAY_GOOGLE_GATEWAY_WEB_CALLBACK_URL: undefined,
+    },
+    managedTrust,
+  );
   const { generateKeyPairSync } = await import("node:crypto");
   const { SignJWT } = await import("jose");
   await writeFile(
@@ -450,10 +464,8 @@ test("managed browser admission, expiry and optional-service failure remain boun
   await advanced.service.refreshManaged();
   expect(advanced.fetch).not.toHaveBeenCalled();
   const unavailable = new GatewayGoogleWeb({
-    env: () => ({
-      ...advanced.env,
-      OMNESIS_CLOUD_RELAY_GOOGLE_BROWSER_OWNER_CLIENT_ID: "managed-owner-client",
-    }),
+    env: () => advanced.env,
+    trust: () => ({ ...untrusted, ownerLinkClientId: "managed-owner-client" }),
     metadataFile: join(directory, "unconfigured-link"),
     fetch: vi.fn(async () => {
       throw new Error("Provider unavailable");

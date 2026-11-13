@@ -27,7 +27,7 @@ import {
   type TrustedSignInSource,
   type VerifiedSignIn,
 } from "./gateway-sign-in-proof.js";
-import { googleBrowserTrust } from "./google-browser-trust.js";
+import { googleBrowserTrust, type GoogleBrowserTrust } from "./google-browser-trust.js";
 import { signInDigest, type SignInProof } from "./device-enrollment.js";
 import type { EnrollmentPolicy, GatewayEnrollment } from "./google-pairing.js";
 import type { GatewayBrowserCallbackOrigins } from "./gateway-browser-callback.js";
@@ -117,6 +117,8 @@ export class GatewayAccountLink {
       google?(): IdentityProvider | undefined;
       /** How often an untrusted sign-in may fetch the account's evidence; tests set 0. */
       signInSyncIntervalMs?: number;
+      /** Test seam: production always trusts the compiled-in official Google clients. */
+      googleTrust?(): GoogleBrowserTrust;
     },
   ) {
     this.browser =
@@ -137,10 +139,10 @@ export class GatewayAccountLink {
   private readonly challenges = new EnrollmentChallenges();
   private googleProvider?: { key: string; provider: IdentityProvider };
 
-  /** Audiences come from this installation's configuration. Relay discovery can never add one. */
+  /** Audiences come from the compiled-in registry and local static configuration. Relay discovery can never add one. */
   private googleIdentity(): IdentityProvider | undefined {
     const env = this.options.env(),
-      trust = googleBrowserTrust(env);
+      trust = googleBrowserTrust(this.options.googleTrust?.());
     const split = (value: string | undefined) =>
       (value ?? "")
         .split(",")

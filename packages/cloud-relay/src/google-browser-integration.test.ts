@@ -61,10 +61,6 @@ test.each(["owner-link", "device-enrollment"] as GoogleBrowserPurpose[])(
     const gateway = new ManagedGoogleBrowser({
       env: () => ({
         OMNESIS_CLOUD_RELAY_URL: origin,
-        OMNESIS_CLOUD_RELAY_GOOGLE_BROWSER_OWNER_CLIENT_ID: "fixture-owner-client",
-        OMNESIS_CLOUD_RELAY_GOOGLE_BROWSER_DEVICE_CLIENT_ID: "fixture-device-client",
-        OMNESIS_CLOUD_RELAY_GOOGLE_BROWSER_DEVICE_NATIVE_CLIENT_IDS: "fixture-ios-client",
-        OMNESIS_CLOUD_RELAY_GOOGLE_BROWSER_DEVICE_AUTHORIZED_PARTIES: "fixture-android-client",
         OMNESIS_CLOUD_RELAY_GATEWAY_ID: f.registration.gatewayId,
         OMNESIS_CLOUD_RELAY_GATEWAY_ORIGIN: f.registration.publicOrigin,
         OMNESIS_CLOUD_RELAY_OWNER_KEY_FILE: ownerFile,
@@ -72,6 +68,12 @@ test.each(["owner-link", "device-enrollment"] as GoogleBrowserPurpose[])(
         OMNESIS_ACME_DIRECTORY_URL: "https://ca.example.test/directory",
         OMNESIS_ACME_CERT_FILE: f.files.certFile,
         OMNESIS_ACME_KEY_FILE: f.files.keyFile,
+      }),
+      trust: () => ({
+        ownerLinkClientId: "fixture-owner-client",
+        deviceEnrollmentClientId: "fixture-device-client",
+        deviceClientIds: ["fixture-ios-client"],
+        deviceAuthorizedParties: ["fixture-android-client"],
       }),
       fetch: transport,
       identity: f.issuer,

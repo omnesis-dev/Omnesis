@@ -69,6 +69,8 @@ type Tunnel = NonNullable<ReturnType<typeof startGatewayCloudTunnel>>;
 export interface CloudRelayManagerOptions {
   certificateMonitor?: Pick<GatewayCertificateMonitor, "start" | "status" | "close">;
   googleCallbackOrigins?(): import("./google-browser-callback.js").GoogleBrowserCallbackOrigins;
+  /** Test seam: production always trusts the compiled-in official Google clients. */
+  googleTrust?(): import("./google-browser-trust.js").GoogleBrowserTrust;
   configDir: string;
   env: NodeJS.ProcessEnv;
   gatewayUrl(): string;
@@ -198,6 +200,7 @@ export class GatewayCloudRelayManagement implements CloudRelayManagement {
       callbackOrigins: options.googleCallbackOrigins,
       fetch: options.fetch,
       register: options.register,
+      trust: options.googleTrust,
     });
     await manager.google.initialize();
     manager.account = new GatewayAccountLink({
@@ -206,6 +209,7 @@ export class GatewayCloudRelayManagement implements CloudRelayManagement {
       callbackOrigins: options.googleCallbackOrigins,
       fetch: options.fetch,
       register: options.register,
+      googleTrust: options.googleTrust,
       // Devices sign for the key they were shown, which is whichever certificate serves the public name.
       spkiFingerprint: () => options.publicSpkiFingerprint?.() ?? manager.spkiFingerprintSha256(),
     });

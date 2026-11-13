@@ -202,8 +202,10 @@ These public app associations contain no private credentials.
 
 ## Google configuration
 
-All identifiers and credential files are configuration. No real identifier or
-secret is bundled. Native/public applications do not contain web client secrets.
+Credential files and the relay's own OAuth clients are configuration. The only
+bundled identifiers are the official relay's public client IDs that gateways
+trust (below); no secret is bundled. Native/public applications do not contain
+web client secrets.
 
 - **Managed browser sign-in:** the relay operator configures the shared web client
   with `OMNESIS_CLOUD_RELAY_GOOGLE_WEB_CLIENT_ID` and
@@ -216,8 +218,8 @@ secret is bundled. Native/public applications do not contain web client secrets.
   client. Gateways discover public client IDs; normal users configure neither
   OAuth secrets nor individual Google callback registrations. Native audiences
   and Android authorized parties are advertised by the same service. The gateway
-  accepts only IDs from its independently trusted public deployment registry;
-  discovery cannot expand that registry.
+  accepts only IDs from its compiled-in public deployment registry; discovery
+  cannot expand that registry.
 - **Gateway:** reserve a separate installed-application OAuth client in
   `OMNESIS_CLOUD_RELAY_GOOGLE_GATEWAY_CLIENT_ID` for certificate registration.
   It must not be a web/mobile/ordinary desktop audience.
@@ -239,19 +241,19 @@ secret is bundled. Native/public applications do not contain web client secrets.
   `OMNESIS_CLOUD_RELAY_URL` using local build configuration. Register the correct
   application identifier and signing certificate with Google.
 
-The public deployment registry is separate from OAuth secrets. Until deployment
-client IDs are shipped, managed Google sign-in remains unavailable by default.
-Operators can supply public IDs through
-`OMNESIS_CLOUD_RELAY_GOOGLE_BROWSER_OWNER_CLIENT_ID`,
-`OMNESIS_CLOUD_RELAY_GOOGLE_BROWSER_DEVICE_CLIENT_ID`,
-`OMNESIS_CLOUD_RELAY_GOOGLE_BROWSER_DEVICE_NATIVE_CLIENT_IDS` (comma-separated
-native audiences), and
-`OMNESIS_CLOUD_RELAY_GOOGLE_BROWSER_DEVICE_AUTHORIZED_PARTIES` (comma-separated
-presenters). The owner client must be distinct from every device audience and
-presenter. These are installation configuration, not user-facing portal settings.
-A relay can advertise a subset of those IDs; an unexpected audience or presenter
-fails closed. Google JWT verification checks the independently trusted audience
-again when redeeming a pending operation.
+The public deployment registry is separate from OAuth secrets. The official
+relay's public Google client IDs (owner-link client, device-enrollment client,
+native device audiences and Android presenters) are compiled into the gateway
+in `src/google-browser-trust.ts`, so a gateway with only
+`OMNESIS_CLOUD_RELAY_ENABLED=1` offers managed Google sign-in. They are not
+configuration: no environment variable or portal setting changes them, and the
+relay's discovery response never adds to them. They only name which Google apps
+may present a token; the gateway still checks Google's signature, issuer,
+audience, presenter and nonce itself. The owner client is distinct from every
+device audience and presenter. A relay can advertise a subset of those IDs; an
+unexpected audience or presenter fails closed, so a relay running its own Google
+clients leaves managed Google sign-in unavailable. Google JWT verification
+checks the trusted audience again when redeeming a pending operation.
 
 Isolated tests use synthetic credentials. Live Google sign-in additionally needs
 native/desktop registrations and the web redirects. These commands do not change
