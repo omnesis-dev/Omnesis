@@ -278,6 +278,10 @@ export interface RestCommentRow {
 
 export interface RestRepoRow {
   full_name: string;
+  /** GitHub's id for the repository, which a rename or a transfer keeps. */
+  id?: number;
+  /** The user or organization that holds the repository, with GitHub's id for it. */
+  owner?: { id?: number; login?: string } | null;
 }
 
 export interface RestCommitListRow {

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import { REPOSITORY_FIELD } from "./repositories.js";
 import type { DocumentEventProfile, DocumentMetadataFieldSpec } from "@omnesis/source-sdk";
 
 /**
@@ -15,6 +16,38 @@ const repoField = {
   description:
     "Repository the document belongs to, spelled owner/name exactly as it appears in the GitHub URL (for example acme/widgets).",
   identifiesPeople: true,
+} satisfies DocumentMetadataFieldSpec;
+
+/**
+ * The repository a document belongs to, by GitHub's own numeric id, which a
+ * rename or a transfer keeps. Shared by both sources, and what a filter
+ * matches on.
+ *
+ * A document carries the one repository it sits in. The tree a filter picks
+ * from has the owners (users and organizations) at the top and each
+ * repository beneath the owner that holds it; that tree is the list the source
+ * publishes, not something a document says.
+ *
+ * The id of a personal repository names its owner as surely as its name does.
+ */
+const repositoryIdsField = {
+  path: REPOSITORY_FIELD,
+  type: "string-array",
+  description:
+    "GitHub's numeric id of the repository the document belongs to, as a list of one. It stays the same when the repository is renamed or moves to another owner. Absent when GitHub reported no id for the repository.",
+  identifiesPeople: true,
+  filter: {
+    capability: "tree",
+    minVersion: 2,
+    scope: "global",
+    noun: { one: "repository", many: "repositories" },
+    levels: [
+      { one: "owner", many: "owners" },
+      { one: "repository", many: "repositories" },
+    ],
+    picker: "tree",
+    inside: { one: "repository", many: "repositories" },
+  },
 } satisfies DocumentMetadataFieldSpec;
 
 /**
@@ -58,6 +91,7 @@ export const githubThreadsDocumentProfile: DocumentEventProfile = {
       },
     },
     repoField,
+    repositoryIdsField,
     {
       path: "extra.number",
       type: "number",
@@ -85,6 +119,7 @@ export const githubCommitsDocumentProfile: DocumentEventProfile = {
   personRoles: ["author", "participant", "mentioned"],
   metadataFields: [
     repoField,
+    repositoryIdsField,
     {
       path: "extra.mergeCommit",
       type: "boolean",
