@@ -207,6 +207,7 @@ struct DocumentAccessSection: View {
 
 /// The account a document comes from, as the inspector names it: "WhatsApp · +1 (555) 010-0123".
 @available(iOS 17.0, *)
+@MainActor
 func documentSourceLine(_ sourceId: String, store: AppStore) -> String {
     let name = store.sourceLabel(forSourceId: sourceId) ?? humanName(for: sourceTypeFromId(sourceId))
     let account = store.sources.first { $0.id == sourceId }?.accountId ?? sourceAccountOf(sourceId)
