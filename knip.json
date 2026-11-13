@@ -9,6 +9,7 @@
         "scripts/install-e2e/cli-trace.cjs",
         "scripts/blog/*.{mjs,ts}",
         "bench/*.ts",
+        "evals/multilingual-search/{gateway-probe,icu-probe,native-benchmark}.mjs",
         "evals/universes/*/_build/*.mjs",
         "evals/universes/*/agent-demos/_build/*.mjs"
       ]

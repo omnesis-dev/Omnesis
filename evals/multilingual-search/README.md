@@ -1,5 +1,10 @@
 # Multilingual lexical search investigation
 
+[RESULTS.md](RESULTS.md) reports the expanded study, prototypes, measured gains,
+regressions and remaining rollout work. [findings-v2.json](findings-v2.json)
+retains the expanded aggregate and per-language measurements, controls and source
+hashes.
+
 The expanded prototype and independent study are described in
 [PLAN.md](PLAN.md), [the combined integration](integration/README.md),
 [the native analysis core](prototype/README.md),

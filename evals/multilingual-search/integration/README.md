@@ -15,6 +15,8 @@ the default tokenizer, or use any live service or user configuration.
   point. A reserved query-only locale passes compiled terms through unchanged.
   Query/index fingerprints and generation epochs are checked within the same
   read snapshot as cache following and result assembly.
+  Ordinary queries use unique OR terms, matching the public quality protocol;
+  intentional phrases retain repeated terms and their order.
 - `verify.mjs` checks lifecycle, encryption, offsets, query escaping,
   restrictions, updates, workers, reopening and generation behavior.
 - `parity.mjs` checks token/offset/query round trips over the fixed 30-language
