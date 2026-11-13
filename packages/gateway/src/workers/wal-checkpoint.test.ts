@@ -1,13 +1,14 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import { rmSync, statSync } from "node:fs";
 import { createRequire } from "node:module";
 import { Worker } from "node:worker_threads";
 import Database from "better-sqlite3";
 import { afterEach, describe, expect, it } from "vitest";
 
+import { openEncryptedSqlite } from "../sqlite-encryption.js";
 import {
   WalCheckpointer,
   WAL_SIZE_LIMIT_BYTES,
@@ -22,24 +23,35 @@ const POLICY: WalCheckpointPolicy = {
   restartRetryMinMs: 5_000,
   restartRetryMaxMs: 20_000,
   busyTimeoutMs: 5_000,
+  sizeLimitBytes: WAL_SIZE_LIMIT_BYTES,
+  cutSliceBytes: 16 * 1024 * 1024,
 };
+
+const MIB = 1024 * 1024;
 
 const opened: Database.Database[] = [];
 const workers: Worker[] = [];
 let path = "";
+let key: Buffer | undefined;
 
-function writer(journalMode: "WAL" | "TRUNCATE" = "WAL"): Database.Database {
+function writer(
+  journalMode: "WAL" | "TRUNCATE" = "WAL",
+  encryptionKey?: Buffer,
+): Database.Database {
   path = `/tmp/omnesis-test-${randomUUID()}.db`;
-  const seed = new Database(path);
+  key = encryptionKey;
+  const seed = key ? (openEncryptedSqlite(path, { key }) as Database.Database) : new Database(path);
   seed.exec("CREATE TABLE notes (id INTEGER PRIMARY KEY, body BLOB NOT NULL)");
   seed.close();
-  const db = openWriteConn(path, journalMode);
+  const db = openWriteConn(path, journalMode, key?.toString("hex"));
   opened.push(db);
   return db;
 }
 
 function reader(): Database.Database {
-  const db = new Database(path, { readonly: true });
+  const db = key
+    ? (openEncryptedSqlite(path, { key, readonly: true }) as Database.Database)
+    : new Database(path, { readonly: true });
   opened.push(db);
   return db;
 }
@@ -52,6 +64,20 @@ function write(db: Database.Database, rows: number): void {
       for (let i = 0; i < Math.min(50, rows - done); i++) insert.run();
     })();
   }
+}
+
+/** Commit about `bytes` of new pages, in transactions of about 1 MiB. */
+function writeBytes(db: Database.Database, bytes: number): void {
+  const insert = db.prepare("INSERT INTO notes (body) VALUES (randomblob(64000))");
+  for (let done = 0; done < bytes; done += 16 * 64_000) {
+    db.transaction(() => {
+      for (let i = 0; i < 16; i++) insert.run();
+    })();
+  }
+}
+
+function walBytes(): number {
+  return statSync(`${path}-wal`).size;
 }
 
 function wal(db: Database.Database): { log: number; checkpointed: number } {
@@ -187,9 +213,8 @@ describe("WalCheckpointer", () => {
     expect(new WalCheckpointer(db, POLICY).maintain(1)).toBeNull();
   });
 
-  it("rewinds a long WAL and the next commit cuts the file to the size limit", () => {
+  it("rewinds a long WAL and the next commit starts it over", () => {
     const db = writer();
-    expect(db.pragma("journal_size_limit", { simple: true })).toBe(WAL_SIZE_LIMIT_BYTES);
     const clock = copyClock(db);
     const checkpointer = new WalCheckpointer(
       clock.db,
@@ -207,21 +232,85 @@ describe("WalCheckpointer", () => {
     expect(db.pragma("busy_timeout", { simple: true })).toBe(POLICY.busyTimeoutMs);
   });
 
-  it("truncates a rewound WAL past the limit", () => {
+  it("leaves the commit after a rewind the file's size, and cuts it back between ops a slice at a time", () => {
     const db = writer();
-    db.pragma("journal_size_limit = 1048576");
     const clock = copyClock(db);
+    const slice = 8 * MIB;
     const checkpointer = new WalCheckpointer(
       clock.db,
-      { ...POLICY, pendingFrames: 1_000_000 },
+      { ...POLICY, pendingFrames: 1_000_000, cutSliceBytes: slice },
       clock.now,
     );
-    write(db, 1_200);
-    expect(statSync(`${path}-wal`).size).toBeGreaterThan(4 * 1024 * 1024);
+    writeBytes(db, WAL_SIZE_LIMIT_BYTES + 3 * slice);
+    const longest = walBytes();
+    expect(longest).toBeGreaterThan(WAL_SIZE_LIMIT_BYTES + 2 * slice);
     expect(checkpointer.maintain()).toMatchObject({ outcome: "rewound" });
+
     write(db, 1);
-    expect(statSync(`${path}-wal`).size).toBeLessThanOrEqual(1024 * 1024);
+    expect(wal(db).log).toBeLessThan(10);
+    expect(walBytes()).toBe(longest);
+
+    const cuts: number[] = [];
+    for (let run = checkpointer.maintain(); run; run = checkpointer.maintain()) {
+      const before = walBytes() + run.cutBytes!;
+      expect(run).toMatchObject({ mode: "CUT", outcome: "cut" });
+      expect(run.cutBytes).toBeGreaterThan(0);
+      expect(run.cutBytes).toBeLessThanOrEqual(slice);
+      expect(before - walBytes()).toBe(run.cutBytes);
+      cuts.push(run.cutBytes!);
+      write(db, 1);
+    }
+    expect(cuts.length).toBeGreaterThan(2);
+    expect(cuts.reduce((sum, b) => sum + b, 0)).toBe(longest - WAL_SIZE_LIMIT_BYTES);
+    expect(walBytes()).toBe(WAL_SIZE_LIMIT_BYTES);
+    expect(checkpointer.maintain()).toBeNull();
+
+    const rows = db.prepare<[], { n: number }>("SELECT count(*) AS n FROM notes").get()!.n;
+    write(db, 50);
+    expect(checkpointer.maintain(1)).toMatchObject({ mode: "PASSIVE", outcome: "copied" });
+    expect(reader().prepare<[], { n: number }>("SELECT count(*) AS n FROM notes").get()!.n).toBe(
+      rows + 50,
+    );
+    expect(db.pragma("integrity_check", { simple: true })).toBe("ok");
   });
+
+  it.each([
+    ["a plaintext", undefined],
+    ["an encrypted", randomBytes(32)],
+  ])(
+    "cuts nothing before the commit after a rewind, and never into the frames %s WAL holds",
+    (_, encryptionKey) => {
+      const db = writer("WAL", encryptionKey);
+      const clock = copyClock(db);
+      const limit = MIB;
+      const checkpointer = new WalCheckpointer(
+        clock.db,
+        { ...POLICY, pendingFrames: 1_000_000, sizeLimitBytes: limit, cutSliceBytes: 64 * MIB },
+        clock.now,
+      );
+      write(db, 1_200);
+      const longest = walBytes();
+      expect(longest).toBeGreaterThan(4 * MIB);
+      expect(checkpointer.maintain()).toMatchObject({ outcome: "rewound" });
+      expect(checkpointer.maintain()).not.toMatchObject({ outcome: "cut" });
+      expect(walBytes()).toBe(longest);
+
+      write(db, 600);
+      const { log } = wal(db);
+      const frames = 32 + log * ((db.pragma("page_size", { simple: true }) as number) + 24);
+      expect(frames).toBeGreaterThan(limit);
+      expect(checkpointer.maintain()).toMatchObject({ outcome: "cut", cutBytes: longest - frames });
+      expect(walBytes()).toBe(frames);
+      expect(checkpointer.maintain()).toBeNull();
+
+      const held = reader();
+      expect(held.prepare<[], { n: number }>("SELECT count(*) AS n FROM notes").get()!.n).toBe(
+        1_800,
+      );
+      expect(checkpointer.maintain(1)).toMatchObject({ mode: "PASSIVE", outcome: "copied" });
+      expect(db.pragma("integrity_check", { simple: true })).toBe("ok");
+    },
+  );
 
   it("gives up within its wait while a reader holds an old snapshot, and retries after the interval", () => {
     const db = writer();
@@ -286,6 +375,7 @@ describe("WalCheckpointer", () => {
       const calls: string[] = [];
       let busyTimeout = POLICY.busyTimeoutMs;
       const db = {
+        name: `/tmp/omnesis-test-${randomUUID()}.db`,
         prepare: (sql: string) => ({
           get: (): Row => {
             const mode = /\((\w+)\)/.exec(sql)![1]!;
@@ -295,9 +385,11 @@ describe("WalCheckpointer", () => {
             return script.restart!();
           },
         }),
-        pragma: (text: string) => {
+        pragma: (text: string): number | undefined => {
+          if (text === "page_size") return 4096;
           const set = /busy_timeout = (\d+)/.exec(text);
           if (set) busyTimeout = Number(set[1]);
+          return undefined;
         },
       } as unknown as Database.Database;
       return { db, calls, busyTimeout: () => busyTimeout };
