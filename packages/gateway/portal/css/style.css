@@ -17338,6 +17338,14 @@ details[open] > .agent-tool-error-summary .agent-tool-error-chevron { transform:
   flex-direction: column;
   gap: 10px;
 }
+.watch-pane-list + .watch-pane-rows { margin-top: 12px; }
+.watch-pane-input-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.watch-pane-input-heading > code { overflow-wrap: anywhere; }
 .watch-pane-list > li {
   padding: 8px 10px;
   border: 1px solid var(--border-light);
@@ -17352,7 +17360,8 @@ details[open] > .agent-tool-error-summary .agent-tool-error-chevron { transform:
   padding: 0;
 }
 .watch-pane-map { margin: 6px 0; }
-.watch-pane-code {
+.watch-pane-code,
+pre.watch-pane-code.sql-static {
   margin: 6px 0;
   padding: 10px 12px;
   border: 1px solid var(--border-light);
@@ -17362,9 +17371,8 @@ details[open] > .agent-tool-error-summary .agent-tool-error-chevron { transform:
   font-size: 11px;
   line-height: 1.5;
   color: var(--text-primary);
-  /* A query's shape is how you read it: it scrolls rather than wraps. */
-  white-space: pre;
-  overflow-x: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
   max-height: 320px;
   overflow-y: auto;
 }
