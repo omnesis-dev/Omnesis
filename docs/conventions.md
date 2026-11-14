@@ -106,7 +106,10 @@ Answer tasks persist their authorization and the cumulative set of documents
 every prompt and tool read, including inherited history
 (`privacy/answer-scope.ts`). Each later model stage and the final release
 recheck that set against the filters as they stand then, and a document that
-is no longer readable stops the answer.
+is no longer readable stops the answer. A read set that cannot be fully
+accounted for (a read outside the observed ports, or more than
+`MAX_ANSWER_SCOPE_DOCUMENTS`) is never released either. Filtered Direct
+captures each call's read set and runs the same check before returning.
 
 **Identifiers.** A typed or picked phone number, address or domain takes its
 spelling from `canonicalFilterIdentifier` (`@omnesis/core`), which uses the

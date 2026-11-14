@@ -707,14 +707,17 @@ export default defineSource({
         <p>
           <code>outputRevision</code> describes changed output meaning, not cursor shape. It is the
           source's own version: an integer that starts at 1, only goes up, and is unrelated to the
-          Omnesis release. Declare it on every source and raise it in the change that makes the
-          source write something new on its records. The host sends it with every sync page and the
-          gateway stores it on each document, keeping the highest revision a document was written or
-          re-read at; a document stored without one counts as revision 0. A source that omits it
-          writes at revision 1, and the conformance checks warn. It does not trigger reprocessing or
-          a backfill: implement and test any required re-emission separately. Provider contracts
-          contribute their API generation and required capabilities; each child declares its own
-          state. Never migrate one sibling's bookmark using another's decoder.
+          Omnesis release. Declare it on every source as <code>contract.outputRevision</code> and
+          raise it in the change that makes the source write something new on its records. The host
+          sends it with every sync page and the gateway stores it on each document, keeping the
+          highest revision a document was written or re-read at; a document stored without one
+          counts as revision 0. A source that omits it writes at revision 1, and the conformance
+          checks warn. It does not trigger reprocessing or a backfill: records already stored keep
+          their revision until the account is resynced, and a resync in place, which re-reads the
+          source from an empty cursor, stamps the current revision on every record it brings back,
+          unchanged ones included. Implement and test any other re-emission separately. Provider
+          contracts contribute their API generation and required capabilities; each child declares
+          its own state. Never migrate one sibling's bookmark using another's decoder.
         </p>
 
         <h3 id="authentication">Authentication sessions</h3>
@@ -798,8 +801,9 @@ export default defineSource({
         <p>
           A field that holds the source's own ID for something a record belongs to (a label, a
           folder, a chat) can also carry <code>filter</code>, which says how records can be matched
-          on it. The source chooses a <code>capability</code> the gateway already has and brings no
-          matching code of its own:
+          on it by the <a href="experimental#source-filters">source filters</a> an access level
+          applies to external agents, an experimental feature. The source chooses a
+          <code>capability</code> the gateway already has and brings no matching code of its own:
         </p>
         <ul>
           <li>
