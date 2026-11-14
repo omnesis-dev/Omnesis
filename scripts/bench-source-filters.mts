@@ -9,7 +9,9 @@
  *   npx tsx scripts/bench-source-filters.mts [documents=1000000] [contentBytes=900] [scans=3] [points=200]
  *
  * It builds a throwaway store under the system temp directory, keyed like a
- * production one, holding one invented account of `documents` records:
+ * production one, holding one invented account of `documents` records (and
+ * the same records again in an account of a source that declares nothing
+ * filterable, the baseline a sync page is timed against):
  *
  * - half at source version 0 (no label or folder detail), half at version 2;
  * - 200 labels, one to three on each new record;
@@ -83,6 +85,8 @@ const POINTS = Number(pointsArg ?? 200);
 /** The gateway's default read-handle page cache (`runtime-settings.ts`). */
 const READ_CACHE_BYTES = 256 * 1024 * 1024;
 const SOURCE = "bench-mail:reader";
+/** An account holding the same records, of a source with nothing filterable. */
+const UNFILTERED = "bench-unfiltered:reader";
 const LABELS = 200;
 const FOLDERS = 50_000;
 const FOLDER_FANOUT = 4;
@@ -301,31 +305,42 @@ try {
      VALUES (?, ?, ?, ?, '', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   );
   const id = (index: number): string => `doc-${String(index).padStart(8, "0")}`;
-  for (let from = 0; from < TOTAL; from += 10_000) {
-    db.transaction(() => {
-      for (let index = from; index < Math.min(from + 10_000, TOTAL); index++) {
-        const at = new Date(Date.parse("2020-01-01T00:00:00Z") + index * 60_000).toISOString();
-        insert.run(
-          id(index),
-          SOURCE,
-          SOURCE,
-          index % 50 === 49 ? `message-${index - 1}/att/1` : `message-${index}`,
-          `message ${index}`,
-          contentAt(index),
-          `hash-${index}`,
-          metadataAt(index),
-          at,
-          at,
-          at,
-          at,
-          index % 2 === 0 ? 0 : 2,
-        );
-      }
-    })();
+  // The same records again in an account of a source that declares nothing
+  // filterable, so a sync page can be timed against an account of the same
+  // size without filter rows.
+  for (const [sourceId, prefix] of [
+    [SOURCE, "doc"],
+    [UNFILTERED, "same"],
+  ] as const) {
+    for (let from = 0; from < TOTAL; from += 10_000) {
+      db.transaction(() => {
+        for (let index = from; index < Math.min(from + 10_000, TOTAL); index++) {
+          const at = new Date(Date.parse("2020-01-01T00:00:00Z") + index * 60_000).toISOString();
+          insert.run(
+            prefix === "doc" ? id(index) : `${prefix}-${String(index).padStart(8, "0")}`,
+            sourceId,
+            sourceId,
+            index % 50 === 49 ? `message-${index - 1}/att/1` : `message-${index}`,
+            `message ${index}`,
+            contentAt(index),
+            `hash-${index}`,
+            metadataAt(index),
+            at,
+            at,
+            at,
+            at,
+            index % 2 === 0 ? 0 : 2,
+          );
+        }
+      })();
+    }
   }
   upsertSourceDocumentProfiles(
     db,
-    [{ sourceType: "bench-mail", outputRevision: 2, profile: profile(false) as never }],
+    [
+      { sourceType: "bench-mail", outputRevision: 2, profile: profile(false) as never },
+      { sourceType: "bench-unfiltered", outputRevision: 2, profile: unfilteredProfile() as never },
+    ],
     Date.now(),
   );
   publishList(
@@ -658,20 +673,15 @@ try {
         sourceUpdatedAt: at,
       };
     }) as unknown as Parameters<typeof upsertDocuments>[1];
-  // The same page for an account of a source whose profile is the same but
-  // declares nothing filterable (the same people are indexed) is the write
-  // without rows; ten pages each, alternating, for a median. A page is written
-  // in one transaction, and the way the writer's sync operation writes it:
-  // five records per transaction, giving the writer back between. Level 0 is
+  // The same page for the account of the same size whose source declares
+  // nothing filterable (the same people are indexed) is the write without
+  // rows; ten pages each, alternating, for a median. A page is written in one
+  // transaction, and the way the writer's sync operation writes it: five
+  // records per transaction, giving the writer back between. Level 0 is
   // merged by the pages themselves; the background task merges the larger
   // levels between pages, and that work is timed apart (see the merge rows)
   // and is the pages' too.
-  const PLAIN = "bench-unfiltered:reader";
-  upsertSourceDocumentProfiles(
-    db,
-    [{ sourceType: "bench-unfiltered", outputRevision: 2, profile: unfilteredProfile() as never }],
-    Date.now(),
-  );
+  const PLAIN = UNFILTERED;
   const ROUNDS = 10;
   let pageFrom = TOTAL;
   for (const [mode, chunked] of [

@@ -33,7 +33,7 @@
  * sync page is the number of distinct pages it touches. Postings ordered by
  * term put a record's half-dozen postings on as many pages far apart in a
  * large table. They are therefore written at level 0, keyed like the rest
- * but small enough to stay in cache, and moved up a level at a time by
+ * but a few pages large, and moved up a level at a time by
  * {@link mergeFilterPostings}, many to a page, each level about ten times
  * the size of the one below (see "Merging postings a level up"). A record
  * is numbered by its rowid, so its record row lands at the end of the table
@@ -219,9 +219,9 @@ export function createDocumentFilterValueTables(db: Db): void {
     ) WITHOUT ROWID;
     -- One posting per value a record carries, with the record's version and
     -- known details copied so a count reads nothing else. Keyed by level,
-    -- term, record number: a posting is written at level 0, a run small
-    -- enough to stay in cache, and moved a level up in term order by
-    -- mergeFilterPostings once its level is full. A reader asks every level.
+    -- term, record number: a posting is written at level 0, a few pages,
+    -- and moved a level up in term order by mergeFilterPostings once its
+    -- level is full. A reader asks every level that holds postings.
     CREATE TABLE IF NOT EXISTS document_filter_postings (
       level INTEGER NOT NULL,
       term INTEGER NOT NULL,

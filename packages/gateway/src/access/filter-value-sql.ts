@@ -397,17 +397,19 @@ export function filterValueItemCountsSql(
     // several (found from their `[many]` postings), or, when those records
     // are more than the ids' postings, the distinct records of the postings.
     // Either way the records holding an id the list does not have are then
-    // taken out.
+    // taken out, found from those records' own terms. Postings are counted,
+    // never collected: only the rare case of more records holding several
+    // ids than postings reads them record by record.
     const selected = expandedSql(sql, plan, detail, entriesSql);
     const bad = unlistedRecordsSql(sql, plan);
     return `WITH
         sel(idx, device, id) AS MATERIALIZED (${selected}),
         bad(seq) AS MATERIALIZED (SELECT DISTINCT seq FROM (${bad})),
-        hits(idx, seq) AS MATERIALIZED (
-          SELECT sel.idx, p.seq FROM sel
+        sums(idx, n) AS MATERIALIZED (
+          SELECT sel.idx, count(*) FROM sel
           ${postingsOf(sql, plan, detail.path, "sel.device", "sel.id")}
-           WHERE ${qualifies(sql, plan, "p")}),
-        sums(idx, n) AS MATERIALIZED (SELECT idx, count(*) FROM hits GROUP BY idx),
+           WHERE ${qualifies(sql, plan, "p")}
+           GROUP BY sel.idx),
         several(seq, device) AS MATERIALIZED (
           SELECT p.seq, s.device_id FROM document_filter_slots s
             CROSS JOIN document_filter_terms t ON t.slot = s.slot AND t.value = ''
@@ -427,9 +429,21 @@ export function filterValueItemCountsSql(
              GROUP BY sel.idx, several.seq)
            WHERE held > 1 GROUP BY idx),
         distinct_records(idx, n) AS MATERIALIZED (
-          SELECT idx, count(DISTINCT seq) FROM hits GROUP BY idx),
+          SELECT sel.idx, count(DISTINCT p.seq) FROM sel
+          ${postingsOf(sql, plan, detail.path, "sel.device", "sel.id")}
+           WHERE ${qualifies(sql, plan, "p")}
+           GROUP BY sel.idx),
         unlisted(idx, n) AS MATERIALIZED (
-          SELECT idx, count(DISTINCT seq) FROM hits WHERE seq IN bad GROUP BY idx)
+          SELECT sel.idx, count(DISTINCT b.seq) FROM bad b
+            CROSS JOIN document_filter_records ur ON ur.seq = b.seq
+            CROSS JOIN json_each(ur.terms) uj
+            CROSS JOIN document_filter_terms ut ON ut.term = uj.value
+            CROSS JOIN document_filter_slots us
+              ON us.slot = ut.slot AND us.source_id = ${sql.bind(plan.sourceId)}
+             AND us.field = ${sql.bind(detail.path)}
+            CROSS JOIN sel ON sel.device = us.device_id AND sel.id = ut.value
+           WHERE ${qualifies(sql, plan, "ur")}
+           GROUP BY sel.idx)
       SELECT sums.idx AS idx,
              CASE
                WHEN (SELECT count(*) FROM several) <= (SELECT coalesce(sum(n), 0) FROM sums)
