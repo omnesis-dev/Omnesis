@@ -6,6 +6,7 @@ import { bodyLimit } from "hono/body-limit";
 import { CloudRelayManagementFailure } from "@omnesis/cloud-relay";
 import { scope } from "../../scope.js";
 import { validateJson } from "../../validate.js";
+import { arrivedThroughRelay } from "../../client-ip.js";
 import {
   cloudRelayConfigureBody,
   cloudRelayEnableBody,
@@ -107,6 +108,31 @@ export function mountCloudRelayManagementRoutes(
           throw new CloudRelayManagementFailure(503, "account-unavailable");
         return service.setEnrollmentPolicy(c.req.valid("json").policy);
       }),
+  );
+  app.post(
+    "/admin/cloud-relay/incidents/ack",
+    scope.admin(),
+    bounded,
+    validateJson(cloudRelayActionBody),
+    async (c) => {
+      // While someone else may hold a certificate for the gateway's name, a relayed request may
+      // come from a page posing as the gateway, so only the owner on the gateway itself may lift
+      // the hold: the local CLI, or an admin request that didn't come through the relay.
+      if (arrivedThroughRelay((name) => c.req.header(name), c.env))
+        return c.json(
+          {
+            error:
+              "Certificate incidents can only be acknowledged on the gateway itself: run `omnesis cloud incidents ack` on the gateway host.",
+            code: "local-request-required",
+          },
+          403,
+        );
+      return respond(c, async () => {
+        if (!service.acknowledgeIncidentHold)
+          throw new CloudRelayManagementFailure(503, "account-unavailable");
+        return service.acknowledgeIncidentHold();
+      });
+    },
   );
   app.delete("/admin/cloud-relay/trusted-sign-ins/:id", scope.admin(), async (c) =>
     respond(c, async () => {

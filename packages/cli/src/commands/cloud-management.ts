@@ -15,7 +15,7 @@ import {
   type CloudStatus,
 } from "./cloud-status.js";
 
-function requireCloudRelay(): void {
+export function requireCloudRelay(): void {
   if (!cloudRelayEnabled())
     throw new CliError(
       "Omnesis account commands require OMNESIS_CLOUD_RELAY_ENABLED=1",
@@ -35,6 +35,8 @@ const DONE = {
     "This gateway is unlinked from your Omnesis account. It can no longer be reached from outside your home network, and devices can no longer join by signing in. Devices already paired keep working on your home network.",
   enrollment: "",
   "trusted-sign-ins": "Trusted sign-in removed. Devices already paired keep working.",
+  "incidents/ack":
+    "Certificate incident acknowledged. New devices follow your new-device setting again. An incident for another certificate puts the hold back.",
 } as const;
 
 /**

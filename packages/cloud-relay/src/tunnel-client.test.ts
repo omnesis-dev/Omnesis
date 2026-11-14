@@ -5,7 +5,7 @@ import { PassThrough } from "node:stream";
 import { randomUUID } from "node:crypto";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { GatewayTunnel, type GatewayTunnelOptions } from "./tunnel-client.js";
-import { relayedClientAddress } from "./relay-client-address.js";
+import { isRelayTunnelPeer, relayedClientAddress } from "./relay-client-address.js";
 import type { EventEmitter } from "node:events";
 
 const mocks = vi.hoisted(() => ({ sockets: [] as unknown[], connect: vi.fn(), stream: vi.fn() }));
@@ -397,9 +397,13 @@ test("the relay's address for a stream is recorded against the dialled gateway s
   expect(at(41001)).toBe("203.0.113.20");
   expect(at(41002)).toBeUndefined();
   expect(at(41003)).toBeUndefined();
+  // Whatever the relay named, or left out, every dialled socket is known to be the relay's.
+  for (const port of [41001, 41002, 41003])
+    expect(isRelayTunnelPeer({ remoteAddress: "127.0.0.1", remotePort: port })).toBe(true);
   named.destroy();
   await flush();
   expect(at(41001)).toBeUndefined();
+  expect(isRelayTunnelPeer({ remoteAddress: "127.0.0.1", remotePort: 41001 })).toBe(false);
   // An overlong value is not a valid control frame at all.
   control.emit(
     "message",

@@ -418,6 +418,18 @@ export class E2EHarness {
   }
 
   /**
+   * Stops the gateway process and starts it again on the same port, database and
+   * config directory, as a reboot or an update would. The in-process collector's
+   * WebSocket is closed and not reopened; HTTP calls work as before.
+   */
+  async restartGateway(): Promise<void> {
+    this.collectorWs?.disconnect();
+    this.collectorWs = null;
+    await this.killGatewaySubprocess();
+    await this.startGateway();
+  }
+
+  /**
    * Tear down: kill gateway, stop engine, clean up.
    */
   async destroy(): Promise<void> {

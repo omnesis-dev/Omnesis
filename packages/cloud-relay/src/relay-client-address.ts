@@ -13,11 +13,20 @@ import { isIP } from "node:net";
  * Only that tunnel client writes this table. The gateway reads it to keep one
  * relayed client's rate limits apart from another's and for audit lines; it
  * never authorizes anything, since the relay could name any address it likes.
+ *
+ * Every socket the tunnel client dials is recorded, whether or not the relay
+ * named an address: that it came through the relay is the gateway's own fact,
+ * which the relay can't hide by leaving the address out.
  */
-const clients = new Map<string, { client: string }>();
+const clients = new Map<string, { client?: string }>();
 
 function plain(address: string): string {
   return /^::ffff:/i.test(address) && isIP(address.slice(7)) === 4 ? address.slice(7) : address;
+}
+
+function entry(peer: { remoteAddress?: string; remotePort?: number }) {
+  if (!peer.remoteAddress || peer.remotePort === undefined) return undefined;
+  return clients.get(`${plain(peer.remoteAddress)}|${peer.remotePort}`);
 }
 
 /** The address the relay reported for the client behind this loopback peer, if any. */
@@ -25,23 +34,33 @@ export function relayedClientAddress(peer: {
   remoteAddress?: string;
   remotePort?: number;
 }): string | undefined {
-  if (!peer.remoteAddress || peer.remotePort === undefined) return undefined;
-  return clients.get(`${plain(peer.remoteAddress)}|${peer.remotePort}`)?.client;
+  return entry(peer)?.client;
 }
 
-/** Records the relayed client of a connected loopback socket until that socket closes. */
+/**
+ * Whether this peer is a socket this process's relay tunnel dialled, so the request on it came
+ * through the relay. Unlike a header, nothing the relay sends can make this false.
+ */
+export function isRelayTunnelPeer(peer: { remoteAddress?: string; remotePort?: number }): boolean {
+  return entry(peer) !== undefined;
+}
+
+/**
+ * Records a connected loopback socket the tunnel dialled until that socket closes, with the
+ * client the relay named for it when that is an address.
+ */
 export function recordRelayedClient(
   socket: {
     localAddress?: string;
     localPort?: number;
     once(event: "close", listener: () => void): unknown;
   },
-  client: string,
+  client: string | undefined,
 ): void {
-  const address = plain(client);
-  if (!isIP(address) || !socket.localAddress || socket.localPort === undefined) return;
+  if (!socket.localAddress || socket.localPort === undefined) return;
+  const address = client === undefined ? undefined : plain(client);
   const key = `${plain(socket.localAddress)}|${socket.localPort}`,
-    entry = { client: address };
+    entry = address !== undefined && isIP(address) ? { client: address } : {};
   clients.set(key, entry);
   socket.once("close", () => {
     if (clients.get(key) === entry) clients.delete(key);
