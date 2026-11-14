@@ -144,6 +144,26 @@ how it was confirmed (`via`). The field is top-level so that a gateway version
 that predates it drops it on save, which leaves nothing confirmed; an entry the
 running version can't read is dropped the same way. A new link starts with none.
 
+The owner confirms a passkey on the account page of the gateway's own origin
+(Settings → Omnesis account, where linking returns to). The card appears while
+the gateway has an origin of its own and no confirmed passkey:
+
+1. `POST /admin/cloud-relay/passkeys/confirm/options` (admin) issues a
+   `pin-passkey` ceremony: `{ purpose, rpId, origin, challenge, binding,
+webauthnChallenge, expiresAt }`. The binding is `gatewayPasskeyPinBinding(gatewayId,
+accountId)`.
+2. The page asks for any of the account's passkeys (discoverable credentials).
+3. `POST /admin/cloud-relay/passkeys/confirm` (`{ proof }`) verifies the assertion
+   against the public key the relay lists for that credential id on the linked
+   account. A wrong key in the listing only makes the check fail: the private key
+   never leaves the owner's authenticator. Confirming lifts the owner's own decline
+   or a withdrawal of that passkey.
+
+A confirmation goes away when the account stops listing the sign-in, or when the
+owner removes it. `GET /admin/cloud-relay/trusted-sign-ins` lists each pin with
+its source and whether it is confirmed (and how); the portal's New devices section
+and `omnesis cloud trusted-sign-ins` show the same.
+
 A Google token counts as made in an official app (`native-google`) only when an
 official native client presented it: the Android release or test client as
 `azp` of a token for the web client, or the iOS client as both `aud` and `azp`.

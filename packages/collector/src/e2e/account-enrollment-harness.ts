@@ -706,10 +706,29 @@ export interface CloudRelayStatus {
   };
   deviceEnrollment: {
     policy: "automatic" | "ask";
-    trustedSignIns: Array<{ type: string; id: string; addedAt: number; source?: string }>;
+    trustedSignIns: Array<{
+      type: string;
+      id: string;
+      addedAt: number;
+      source?: string;
+      confirmed?: boolean;
+    }>;
+    confirmedSignIns?: Array<{ type: string; id: string; at: number; via: string }>;
+    confirmOrigin?: string;
   };
   certificateMonitor?: { state: string; incidents: Array<{ certificateFingerprint: string }> };
   incidentHold?: { since: string; certificates: string[] };
+}
+
+/** What the gateway hands a page for a passkey ceremony on its own origin. */
+export interface GatewayPasskeyCeremony {
+  purpose: string;
+  rpId: string;
+  origin: string;
+  challenge: string;
+  binding: string;
+  webauthnChallenge: string;
+  expiresAt: number;
 }
 
 export interface DeviceRow {
@@ -961,6 +980,23 @@ export class EnrollmentGateway {
     );
   }
 
+  /** Starts confirming a passkey on the gateway's page, as the portal's card does. */
+  async passkeyConfirmation(): Promise<GatewayPasskeyCeremony> {
+    return this.json<GatewayPasskeyCeremony>("/admin/cloud-relay/passkeys/confirm/options", {
+      method: "POST",
+      body: "{}",
+    });
+  }
+
+  /** Sends a `gateway-passkey` assertion to confirm; the raw answer, refusals included. */
+  async confirmPasskey(proof: unknown): Promise<Response> {
+    return this.fetch("/admin/cloud-relay/passkeys/confirm", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ proof }),
+    });
+  }
+
   async setPolicy(policy: "automatic" | "ask"): Promise<CloudRelayStatus> {
     return this.json<CloudRelayStatus>("/admin/cloud-relay/enrollment", {
       method: "PUT",
@@ -1124,6 +1160,71 @@ export class PasskeyBrowser {
 
   async close(): Promise<void> {
     await this.browser.close();
+  }
+}
+
+/**
+ * Runs a passkey prompt in `session` on a page at `origin` for the WebAuthn `challenge`, and
+ * returns the assertion as a gateway-passkey proof's `credential`. The page is an empty one the
+ * test serves at that origin: what a relay (or any other site the relay domain covers) could
+ * serve to steer an owner's passkey, since every account passkey belongs to the relay's host.
+ */
+export async function assertionOn(
+  session: PasskeySession,
+  origin: string,
+  challenge: string,
+  rpId = RELAY_HOST,
+): Promise<Record<string, unknown>> {
+  // The profile's virtual authenticator is attached to its own page, so the prompt runs there.
+  const page = session.page;
+  const url = `${origin}/__fixture-passkey-page`;
+  await page.route(url, (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "text/html",
+      body: "<!doctype html><title>.</title>",
+    }),
+  );
+  try {
+    await page.goto(url);
+    return await page.evaluate(
+      async ({ challenge, rpId }) => {
+        const decode = (text: string) =>
+          Uint8Array.from(
+            atob(text.replace(/-/g, "+").replace(/_/g, "/") + "===".slice((text.length + 3) % 4)),
+            (char) => char.charCodeAt(0),
+          );
+        const encode = (buffer: ArrayBuffer) =>
+          btoa(String.fromCharCode(...new Uint8Array(buffer)))
+            .replace(/\+/g, "-")
+            .replace(/\//g, "_")
+            .replace(/=+$/, "");
+        const credential = (await navigator.credentials.get({
+          publicKey: {
+            challenge: decode(challenge),
+            rpId,
+            allowCredentials: [],
+            userVerification: "required",
+          },
+        })) as PublicKeyCredential;
+        const response = credential.response as AuthenticatorAssertionResponse;
+        return {
+          id: credential.id,
+          rawId: encode(credential.rawId),
+          type: "public-key",
+          clientExtensionResults: {},
+          response: {
+            clientDataJSON: encode(response.clientDataJSON),
+            authenticatorData: encode(response.authenticatorData),
+            signature: encode(response.signature),
+            userHandle: encode(response.userHandle!),
+          },
+        };
+      },
+      { challenge, rpId },
+    );
+  } finally {
+    await page.unroute(url);
   }
 }
 

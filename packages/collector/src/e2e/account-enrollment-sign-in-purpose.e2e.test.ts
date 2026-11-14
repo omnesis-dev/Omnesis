@@ -559,7 +559,11 @@ describe.skipIf(!browserReady)("a sign-in made to link a gateway never enrolls a
     );
     expect(after.account.linked).toBe(false);
     // With no account it joins nothing automatically, and the owner's choices are on record.
-    expect(after.deviceEnrollment).toEqual({ policy: "ask", trustedSignIns: [] });
+    expect(after.deviceEnrollment).toEqual({
+      policy: "ask",
+      trustedSignIns: [],
+      confirmedSignIns: [],
+    });
     expect(await linkRecord(cabin)).toMatchObject({
       linked: false,
       dormant: true,

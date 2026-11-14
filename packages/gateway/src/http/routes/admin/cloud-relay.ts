@@ -14,6 +14,7 @@ import {
   cloudRelayEnrollmentBody,
   cloudRelayConnectBody,
   cloudRelayRemoveSignInQuery,
+  cloudRelayConfirmPasskeyBody,
 } from "../../schemas/cloud-relay.js";
 import type { CloudRelayManagement } from "@omnesis/cloud-relay";
 import type { Context } from "hono";
@@ -154,6 +155,54 @@ export function mountCloudRelayManagementRoutes(
         return { ...status, revokedDevices: await devices.revokeJoinedWith(id) };
       }),
   );
+  // The sign-ins this gateway trusts, where each came from and whether the owner confirmed it
+  // here. Read-only: the same facts as the status, listed for the portal and the CLI.
+  app.get("/admin/cloud-relay/trusted-sign-ins", scope.admin(), async (c) =>
+    respond(c, async () => {
+      const enrollment = (await service.status()).deviceEnrollment;
+      if (!enrollment) throw new CloudRelayManagementFailure(503, "account-unavailable");
+      const pinned = new Set(enrollment.trustedSignIns.map(({ type, id }) => `${type}:${id}`));
+      return {
+        items: [
+          ...enrollment.trustedSignIns.map((signIn) => ({
+            ...signIn,
+            via: enrollment.confirmedSignIns.find(
+              ({ type, id }) => type === signIn.type && id === signIn.id,
+            )?.via,
+          })),
+          ...enrollment.confirmedSignIns
+            .filter(({ type, id }) => !pinned.has(`${type}:${id}`))
+            .map(({ type, id, at, via }) => ({ type, id, addedAt: at, confirmed: true, via })),
+        ],
+        ...(enrollment.confirmOrigin ? { confirmOrigin: enrollment.confirmOrigin } : {}),
+      };
+    }),
+  );
+  // Confirming a passkey runs on the gateway's own page: options, then the assertion.
+  app.post(
+    "/admin/cloud-relay/passkeys/confirm/options",
+    scope.admin(),
+    bounded,
+    validateJson(cloudRelayActionBody),
+    async (c) =>
+      respond(c, async () => {
+        if (!service.passkeyConfirmation)
+          throw new CloudRelayManagementFailure(503, "account-unavailable");
+        return service.passkeyConfirmation();
+      }),
+  );
+  app.post(
+    "/admin/cloud-relay/passkeys/confirm",
+    scope.admin(),
+    bounded,
+    validateJson(cloudRelayConfirmPasskeyBody),
+    async (c) =>
+      respond(c, async () => {
+        if (!service.confirmPasskey)
+          throw new CloudRelayManagementFailure(503, "account-unavailable");
+        return service.confirmPasskey(c.req.valid("json").proof);
+      }),
+  );
   app.get("/admin/cloud-relay/account/callback", scope.admin(), async (c) => {
     try {
       if (!service.accountCallback)
@@ -216,14 +265,7 @@ export function mountCloudRelayManagementRoutes(
   }
 }
 
-async function respond(
-  c: Context<AppEnv>,
-  operation: () => Promise<
-    | import("@omnesis/cloud-relay").CloudRelayManagementStatus
-    | { authorizeUrl: string }
-    | { revokedDevices: string[] }
-  >,
-) {
+async function respond(c: Context<AppEnv>, operation: () => Promise<object>) {
   try {
     return c.json(await operation());
   } catch (error) {

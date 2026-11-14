@@ -18,6 +18,7 @@ import { CloudRelayManagementFailure } from "./management.js";
 import { HostedNameTaken } from "./relay-configuration.js";
 import { googleBrowserTrust } from "./google-browser-trust.js";
 import { hostedGatewayHostname } from "./hosted-name.js";
+import { GatewayAccountLink } from "./gateway-account-link.js";
 import { GatewayUnregistered, readOrCreateGatewayOwnerKey } from "./gateway-key-client.js";
 
 let directory: string, manager: GatewayCloudRelayManagement | undefined;
@@ -1415,6 +1416,20 @@ test(
       code: "configuration-invalid",
     });
     expect(removed.revision).toBeGreaterThan(automatic.revision);
+    // Confirming a passkey goes to the account link, and the status after it is a new revision.
+    const ceremony = { purpose: "pin-passkey" } as ReturnType<
+      GatewayAccountLink["passkeyConfirmation"]
+    >;
+    const options = vi
+      .spyOn(GatewayAccountLink.prototype, "passkeyConfirmation")
+      .mockReturnValue(ceremony);
+    const confirm = vi.spyOn(GatewayAccountLink.prototype, "confirmPasskey").mockResolvedValue();
+    expect(await manager.passkeyConfirmation()).toBe(ceremony);
+    const confirmed = await manager.confirmPasskey({ type: "gateway-passkey" });
+    expect(confirm).toHaveBeenCalledExactlyOnceWith({ type: "gateway-passkey" });
+    expect(confirmed.revision).toBeGreaterThan(removed.revision);
+    options.mockRestore();
+    confirm.mockRestore();
   },
 );
 

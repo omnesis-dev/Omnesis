@@ -461,6 +461,9 @@ test("sign-in connection controls are explicitly unavailable when the service ha
     ["/admin/cloud-relay/connect/cancel", post()],
     ["/admin/cloud-relay/enrollment", { ...post({ policy: "ask" }), method: "PUT" }],
     ["/admin/cloud-relay/trusted-sign-ins/fictional-pin", { method: "DELETE" }],
+    ["/admin/cloud-relay/passkeys/confirm/options", post()],
+    ["/admin/cloud-relay/passkeys/confirm", post({ proof: gatewayProof })],
+    ["/admin/cloud-relay/trusted-sign-ins", { method: "GET" }],
   ] as const) {
     const response = await router.request(path, init);
     expect(response.status).toBe(503);
@@ -555,4 +558,116 @@ test("a certificate incident is acknowledged only by an admin request that didn'
   // Without the opt-in the route doesn't exist.
   vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "0");
   expect((await app().request("/admin/cloud-relay/incidents/ack", post())).status).toBe(404);
+});
+
+const gatewayProof = {
+  type: "gateway-passkey",
+  challenge: "Y2hhbGxlbmdlY2hhbGxlbmdlY2hhbGxlbmdlY2hhbGw",
+  credential: {
+    id: "Y3JlZGVudGlhbA",
+    rawId: "Y3JlZGVudGlhbA",
+    type: "public-key",
+    clientExtensionResults: {},
+    response: {
+      clientDataJSON: "e30",
+      authenticatorData: "YXV0aA",
+      signature: "c2ln",
+      userHandle: "dXNlcg",
+    },
+  },
+};
+
+test("confirming a passkey on the gateway's page and listing sign-ins are admin-only and validated", async () => {
+  const ceremony = {
+    purpose: "pin-passkey" as const,
+    rpId: "relay.example.test",
+    origin: "https://g-abcdefgh.relay.example.test",
+    challenge: gatewayProof.challenge,
+    binding: "binding",
+    webauthnChallenge: "webauthn-challenge",
+    expiresAt: 1,
+  };
+  service.passkeyConfirmation = vi.fn().mockResolvedValue(ceremony);
+  service.confirmPasskey = vi.fn().mockResolvedValue(status);
+  const router = app();
+  expect(
+    (await router.request("/admin/cloud-relay/passkeys/confirm/options", post({ x: 1 }))).status,
+  ).toBe(400);
+  const options = await router.request("/admin/cloud-relay/passkeys/confirm/options", post());
+  expect(options.status).toBe(200);
+  expect(options.headers.get("cache-control")).toBe("no-store");
+  expect(await options.json()).toEqual(ceremony);
+  // Only a gateway-passkey assertion is accepted: no relay-page proof, nothing extra.
+  for (const body of [
+    {},
+    { proof: { ...gatewayProof, type: "passkey" } },
+    { proof: { ...gatewayProof, issuedAt: "1794240000" } },
+    { proof: gatewayProof, extra: true },
+  ])
+    expect((await router.request("/admin/cloud-relay/passkeys/confirm", post(body))).status).toBe(
+      400,
+    );
+  expect(service.confirmPasskey).not.toHaveBeenCalled();
+  expect(
+    (await router.request("/admin/cloud-relay/passkeys/confirm", post({ proof: gatewayProof })))
+      .status,
+  ).toBe(200);
+  expect(service.confirmPasskey).toHaveBeenCalledExactlyOnceWith(gatewayProof);
+  vi.mocked(service.confirmPasskey!).mockRejectedValueOnce(
+    new CloudRelayManagementFailure(403, "passkey-not-confirmed"),
+  );
+  const refused = await router.request(
+    "/admin/cloud-relay/passkeys/confirm",
+    post({ proof: gatewayProof }),
+  );
+  expect(refused.status).toBe(403);
+  expect(await refused.json()).toMatchObject({ code: "passkey-not-confirmed" });
+  for (const [path, init] of [
+    ["/admin/cloud-relay/passkeys/confirm/options", post()],
+    ["/admin/cloud-relay/passkeys/confirm", post({ proof: gatewayProof })],
+    ["/admin/cloud-relay/trusted-sign-ins", { method: "GET" }],
+  ] as const)
+    expect((await app({ ...bearer, scopes: [SCOPE_READ] }).request(path, init)).status).toBe(403);
+
+  // The list names each pin's source and whether it was confirmed here, and adds confirmations
+  // of sign-ins that are not pinned.
+  vi.mocked(service.status).mockResolvedValue({
+    ...status,
+    deviceEnrollment: {
+      policy: "automatic",
+      trustedSignIns: [
+        { type: "passkey", id: "p1", addedAt: 1, source: "link-page", confirmed: true },
+        { type: "google", id: "g1", addedAt: 2, source: "countersigned", confirmed: false },
+      ],
+      confirmedSignIns: [
+        { type: "passkey", id: "p1", at: 3, via: "gateway-origin" },
+        { type: "passkey", id: "p2", at: 4, via: "android-app" },
+      ],
+      confirmOrigin: ceremony.origin,
+    },
+  });
+  const listed = await router.request("/admin/cloud-relay/trusted-sign-ins");
+  expect(listed.status).toBe(200);
+  expect(await listed.json()).toEqual({
+    items: [
+      {
+        type: "passkey",
+        id: "p1",
+        addedAt: 1,
+        source: "link-page",
+        confirmed: true,
+        via: "gateway-origin",
+      },
+      { type: "google", id: "g1", addedAt: 2, source: "countersigned", confirmed: false },
+      { type: "passkey", id: "p2", addedAt: 4, confirmed: true, via: "android-app" },
+    ],
+    confirmOrigin: ceremony.origin,
+  });
+  vi.mocked(service.status).mockResolvedValue({
+    ...status,
+    deviceEnrollment: { policy: "ask", trustedSignIns: [], confirmedSignIns: [] },
+  });
+  expect(await (await router.request("/admin/cloud-relay/trusted-sign-ins")).json()).toEqual({
+    items: [],
+  });
 });

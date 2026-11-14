@@ -19396,6 +19396,12 @@ summary.decision-card-head {
 .relay-confirm { flex-basis: 100%; max-width: 62ch; padding: 12px 14px; border: 1px solid var(--border); border-radius: var(--radius-md); }
 .relay-confirm .relay-hint { margin-top: 6px !important; font-size: 13px; color: var(--text-secondary); }
 .relay-confirm .relay-actions { margin-top: 12px; }
+.relay-section > .relay-confirm { margin-top: 10px; }
+.relay-strong { font-weight: 500; }
+.relay-sign-ins { margin-top: 16px; }
+.relay-sign-in-list { list-style: none; margin: 6px 0 0; padding: 0; }
+.relay-sign-in { display: flex; flex-direction: column; gap: 2px; padding: 7px 0; border-top: 1px solid var(--border); }
+.relay-sign-in:first-child { border-top: none; }
 .relay-row-action .relay-copy { margin-top: -6px; }
 .relay-row-action:empty { display: none; }
 .relay-address { font-size: 13px; }

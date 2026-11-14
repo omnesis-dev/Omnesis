@@ -299,6 +299,47 @@ test("the page's remaining actions each have a command: unlink, policy, and list
   await runCommand(cloudManagementCommands.policy, { rawArgs: ["automatic"] });
   expect(printed()).toContain("New devices join when you sign in to your Omnesis account");
 });
+test("trusted sign-ins say whether, and how, the owner confirmed each on this gateway", async () => {
+  vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "1");
+  const output = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+  gatewayJson.mockImplementation(async () => ({
+    deviceEnrollment: {
+      policy: "automatic",
+      trustedSignIns: [
+        { type: "passkey", id: "passkey-one", addedAt: Date.UTC(2028, 0, 3), source: "link-page" },
+        {
+          type: "google",
+          id: "google-two",
+          addedAt: Date.UTC(2028, 0, 4),
+          source: "countersigned",
+        },
+      ],
+      confirmedSignIns: [
+        {
+          type: "passkey",
+          id: "passkey-one",
+          at: Date.UTC(2028, 0, 5) / 1000,
+          via: "gateway-origin",
+        },
+        {
+          type: "passkey",
+          id: "passkey-three",
+          at: Date.UTC(2028, 0, 6) / 1000,
+          via: "android-app",
+        },
+        { type: "passkey", id: "passkey-four", at: Date.UTC(2028, 0, 7) / 1000, via: "later" },
+      ],
+    },
+  }));
+  await listTrustedSignIns();
+  expect(String(output.mock.calls[0]![0]).split("\n")).toEqual([
+    "passkey-one  passkey, signed in on the Omnesis account page, added 2028-01-03T00:00:00.000Z, confirmed on this gateway's own page 2028-01-05T00:00:00.000Z",
+    "google-two  Google account, already on the account when a passkey trusted here was added, signed for by that passkey, added 2028-01-04T00:00:00.000Z, not confirmed on this gateway",
+    "passkey-three  passkey, confirmed in the Android app 2028-01-06T00:00:00.000Z",
+    "passkey-four  passkey, confirmed 2028-01-07T00:00:00.000Z",
+    "",
+  ]);
+});
 test("every new command refuses before any gateway call unless cloud relay is enabled", async () => {
   vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "0");
   for (const [name, rawArgs] of [

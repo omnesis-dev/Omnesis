@@ -86,6 +86,9 @@ describe("sign-in enrollment with the cloud relay flag off", () => {
       ["DELETE", "/admin/cloud-relay/trusted-sign-ins/fictional"],
       ["POST", "/admin/cloud-relay/incidents/ack", {}],
       ["DELETE", "/admin/cloud-relay/trusted-sign-ins/fictional?revokeDevices=true"],
+      ["GET", "/admin/cloud-relay/trusted-sign-ins"],
+      ["POST", "/admin/cloud-relay/passkeys/confirm/options", {}],
+      ["POST", "/admin/cloud-relay/passkeys/confirm", { proof: {} }],
       ["GET", "/admin/cloud-pairing/requests"],
       ["POST", "/admin/cloud-pairing/decision", {}],
     ];
