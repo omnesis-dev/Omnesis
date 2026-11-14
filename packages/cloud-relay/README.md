@@ -607,17 +607,52 @@ Automated backups and provider deployment are outside this implementation.
 
 ## Independent DNS broker
 
-The optional independent broker keeps Cloudflare mutation credentials outside
-the exposed relay. Run `cloud-relay serve-dns-broker` on an independent host or
-credential boundary that a compromised relay VPS cannot read. A second port on
-the same compromised host does not provide that isolation. The broker needs
-the current independent recovery policy and public trust anchors described
-above, but no relay session-signing key, account database or Google credential.
+The DNS broker is the only holder of the DNS token that can prove control of
+gateway names, so a compromised relay holds nothing that can get a certificate
+for a gateway's name through DNS-01. It runs as a Cloudflare Worker with one
+Durable Object (`src/dns-broker-worker.ts`, configured from
+`deploy/dns-broker/wrangler.jsonc.example`), or on Node with
+`cloud-relay serve-dns-broker` on a host the relay can't reach. Both run the same
+core (`src/dns-broker-core.ts`), which uses only zod and Web Crypto.
 
-Its operator configuration is:
+**Names are bound on first use.** Every operation is a one-use broker challenge
+signed by the gateway's Ed25519 owner key over the broker's origin and the exact
+request. The broker serves only a gateway's own derived name
+(`g-<label>.<relay domain>` for its gateway id), and binds that name to the
+first owner key that claims it:
+
+| Operation    | Effect                                                                                                                                      |
+| ------------ | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| `claim`      | Binds the name to this owner key. A second claim by the same key is a no-op; any other key gets 409.                                        |
+| `txt-create` | Leases `_acme-challenge.<name>` for ten minutes. One lease per name; a crash-safe journal removes it on expiry, failure or restart.         |
+| `txt-remove` | Ends the lease.                                                                                                                             |
+| `caa`        | Publishes `0 issue "letsencrypt.org; validationmethods=dns-01; accounturi=<account>"` at the name, with the relay wildcard's A/AAAA records |
+| `release`    | Removes the name's records. The name stays bound to its owner key.                                                                          |
+
+A new gateway claims its name before it first asks the relay for its
+configuration, so the relay never learns the id early enough to claim the name
+first. Names the relay granted before the broker existed are seeded from an
+export of the relay database taken at a trusted moment: `cloud-relay
+export-gateway-keys` reads `OMNESIS_CLOUD_RELAY_DB` and writes
+`OMNESIS_CLOUD_RELAY_DNS_BROKER_EXPORT_FILE`, and `cloud-relay
+dns-broker-import-registry` sends it to `OMNESIS_ACME_DNS_BROKER_URL` with the
+token in `OMNESIS_CLOUD_RELAY_DNS_BROKER_IMPORT_TOKEN_FILE`. An import never
+replaces a name the broker already binds. The import route exists only while
+the import token is configured.
+
+The CAA record names only accounts under the configured prefix (Let's Encrypt
+production by default), and the account URL can't carry another parameter. A
+CAA record at the name stops the relay's wildcard from answering for it, so the
+broker copies the wildcard's addresses to the name, unproxied.
+
+The Node broker's configuration is:
 
 ```text
 OMNESIS_ACME_DNS_BROKER_URL
+OMNESIS_CLOUD_RELAY_DOMAIN
+OMNESIS_CLOUD_RELAY_DNS_BROKER_REGISTRY
+OMNESIS_CLOUD_RELAY_DNS_BROKER_IMPORT_TOKEN_FILE
+OMNESIS_CLOUD_RELAY_DNS_BROKER_CAA_ACCOUNT_URI_PREFIX
 OMNESIS_CLOUD_RELAY_DNS_BROKER_BIND
 OMNESIS_CLOUD_RELAY_DNS_BROKER_PORT
 OMNESIS_CLOUD_RELAY_DNS_BROKER_TLS_CERT_FILE
@@ -625,35 +660,31 @@ OMNESIS_CLOUD_RELAY_DNS_BROKER_TLS_KEY_FILE
 OMNESIS_CLOUD_RELAY_ACME_ZONE_ID
 OMNESIS_CLOUD_RELAY_ACME_ZONE_NAME
 OMNESIS_CLOUD_RELAY_ACME_TOKEN_FILE
-OMNESIS_CLOUD_RELAY_ACME_JOURNAL
 ```
 
-Non-loopback listeners require TLS. The private token file contains a JSON
-`token` field. Limit its Cloudflare permissions to DNS editing in the intended
-zone. The provider only publishes leased TXT records for the exact authorized
-hostname, and abandoned leases are cleaned up from the durable journal.
+Non-loopback listeners require TLS. The private token files contain a JSON
+`token` field. Limit the Cloudflare token to DNS editing in the intended zone.
+The registry file holds the name bindings and the lease journal; keep it across
+restarts. The Worker takes the same settings as `BROKER_ORIGIN`,
+`RELAY_DOMAIN`, `ZONE_ID`, `ZONE_NAME` and `CAA_ACCOUNT_URI_PREFIX` variables and
+the `CLOUDFLARE_API_TOKEN` and `REGISTRY_IMPORT_TOKEN` secrets.
 
-The gateway selects this path with:
+With a recovery policy configured (see above) and `OMNESIS_CLOUD_RELAY_ACME_JOURNAL`,
+the Node broker also serves the receipt-authorized version 1 routes, which a
+gateway selects with:
 
 ```sh
 OMNESIS_ACME_DNS_PROVIDER=independent
 OMNESIS_ACME_DNS_BROKER_URL=https://dns.example.test
 ```
 
-It requires its existing signed recovery receipt. Each create/remove operation
-obtains a fresh, bounded, one-use broker challenge and signs the exact operation
-with both local private keys. The signature binds the broker recipient, gateway
-identity, receipt and TXT value or lease ID. The broker verifies the independent
-authority and current revocations before performing an operation. A stolen
-relay HMAC, modified routing database or forwarded request cannot authorize a
-different operation. The gateway receives no Cloudflare token.
+Version 1 requires the gateway's signed recovery receipt and signs each
+operation with both its owner and TLS keys.
 
 Remove Cloudflare credentials and the DNS journal settings from the exposed
-relay process in independent mode. Its startup rejects those credentials when
-an independent broker is selected. Shared frontends may forward signed broker
-requests, but must preserve the configured recipient and the independent
-credential boundary. Existing inline DNS brokering remains available for
-isolated testing and deployments choosing that trust model.
+relay process once the broker serves its gateways. With
+`OMNESIS_ACME_DNS_PROVIDER=independent` or `OMNESIS_ACME_DNS_BROKER_URL` set,
+the relay refuses to start while it still holds them.
 
 Selecting DNS-01 in the legitimate client does not stop an attacker from asking
 a CA to use HTTP-01. Production issuance restrictions must therefore cover all
