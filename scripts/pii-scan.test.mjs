@@ -428,6 +428,7 @@ describe("a file's own licence header in a staged diff", () => {
       );
       const local = relative(join(import.meta.dirname, ".."), path);
       expect(isOwnCopyrightHeaderLine(local, copyright)).toBe(true);
+      expect(isOwnCopyrightHeaderLine(path, copyright)).toBe(true);
       expect(isOwnCopyrightHeaderLine(local, copyright + "\r")).toBe(true);
       expect(isOwnCopyrightHeaderLine(local, "// Copyright (c) 2026 Other Person")).toBe(false);
     } finally {

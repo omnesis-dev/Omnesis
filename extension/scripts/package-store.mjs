@@ -4,7 +4,7 @@
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { chmod, lstat, mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
-import { dirname, join, relative } from "node:path";
+import { dirname, join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import JSZip from "jszip";
 import {
@@ -148,7 +148,8 @@ async function regularFiles(directory) {
     )) {
       const path = join(current, entry.name);
       if (entry.isDirectory()) await walk(path);
-      else if (entry.isFile() && (await stat(path)).isFile()) found.push(relative(directory, path));
+      else if (entry.isFile() && (await stat(path)).isFile())
+        found.push(relative(directory, path).split(sep).join("/"));
       else
         throw new Error(`Store package contains unsupported entry: ${relative(directory, path)}`);
     }

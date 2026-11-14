@@ -252,9 +252,10 @@ describe("SearchWorkerPool respawn", () => {
     pool = makePool({ maxRespawnStreak: 2 });
     await pool.start();
 
-    // Every replacement will fail to open its handle.
-    for (const suffix of ["", "-wal", "-shm"]) rmSync(`${dbPath}${suffix}`, { force: true });
+    // Join the owning thread before removing its open SQLite files. The
+    // synchronous removal finishes before the scheduled respawn can run.
     await workerOf(pool, 0).terminate();
+    for (const suffix of ["", "-wal", "-shm"]) rmSync(`${dbPath}${suffix}`, { force: true });
 
     await waitFor("the pool to give up on the slot", () => poolLog().includes(GIVE_UP_LINE));
     const log = poolLog();

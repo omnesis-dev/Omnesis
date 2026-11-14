@@ -17,7 +17,7 @@ import {
   rmSync,
   statSync,
 } from "node:fs";
-import { join, relative, resolve, sep } from "node:path";
+import { join, resolve } from "node:path";
 import {
   atomicWriteFileSync,
   clearMarkerKeyringState,
@@ -35,6 +35,7 @@ import {
   stripOpenClawConfig,
 } from "./harness-config.js";
 import { removeInstallerPathLines } from "./profile.js";
+import { pathIsInside as isInside } from "./path-containment.js";
 import type { UninstallContext } from "./context.js";
 import type { Action, PrivilegedCommand, Step, StepResult } from "./types.js";
 
@@ -82,11 +83,6 @@ function canonical(path: string): string {
   } catch {
     return resolve(path);
   }
-}
-
-function isInside(child: string, parent: string): boolean {
-  const rel = relative(parent, child);
-  return rel === "" || (!rel.startsWith("..") && !rel.startsWith(sep) && rel !== "..");
 }
 
 /** Refuse a recursive delete of `/`, the home directory or anything above it. */

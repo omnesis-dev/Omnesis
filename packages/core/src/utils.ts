@@ -2,6 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { createHash } from "node:crypto";
+import { homedir } from "node:os";
 import { join } from "node:path";
 
 /**
@@ -88,7 +89,7 @@ export function toErrorMessage(err: unknown): string {
  * Defaults to ~/.config/omnesis but can be overridden with OMNESIS_CONFIG_DIR.
  */
 export const DEFAULT_CONFIG_DIR =
-  process.env.OMNESIS_CONFIG_DIR ?? join(process.env.HOME ?? "~", ".config", "omnesis");
+  process.env.OMNESIS_CONFIG_DIR ?? join(process.env.HOME ?? homedir(), ".config", "omnesis");
 
 /**
  * The gateway's document store, inside its config directory. Its presence is

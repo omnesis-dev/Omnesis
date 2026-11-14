@@ -175,13 +175,13 @@ describe("needsPairingLogLine", () => {
     const line = needsPairingLogLine({
       deviceName: "workstation-collector",
       gatewayUrl: "https://gateway.example.com:7600",
-      configDir: "/etc/omnesis",
+      configDir: join(dir, "config"),
     });
     expect(line).toContain("workstation-collector");
     expect(line).toContain("https://gateway.example.com:7600");
     expect(line).toContain("omnesis devices repair workstation-collector");
     expect(line).toContain("omnesis pair <code>");
-    expect(line).toContain("/etc/omnesis/collector-token");
+    expect(line).toContain(join(dir, "config", "collector-token"));
     expect(line.split("\n")).toHaveLength(1);
   });
 });

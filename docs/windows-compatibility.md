@@ -115,6 +115,20 @@ Native worker initialization and complete manual Gateway/Collector validation
 remain open; isolated main-thread and Worker initialization passed without
 reproducing the full startup failure. No product deadlines were raised.
 
+A verified worker-cache generation is now shared with subsequently created
+Node Workers in the same process, avoiding repeated trusted bootstrap work.
+The seed is bound to the process ID, exact source generation and cache path;
+failed initialization remains sticky, and workers without a valid seed perform
+full verification. Native execution and a successful complete Gateway start
+are still required before attributing the startup failure to this overhead.
+
+Portable follow-ups preserve exact 64-bit filesystem identities in disk usage,
+use the native home when a shell has no `HOME`, write slash-separated ZIP entry
+names, and distinguish Windows drives in uninstall containment. Uninstall also
+recognizes escaped service references before removing a shared CLI. Focused
+regressions retain Linux/macOS behavior, including real hard-link deduplication,
+explicit home/config overrides and Unix service quoting.
+
 ## Broader failing baselines
 
 The complete Windows unit baseline at `3c076e8e3` recorded 35,642 passing tests,

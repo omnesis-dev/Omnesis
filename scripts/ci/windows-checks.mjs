@@ -30,6 +30,20 @@ export const INSTALLER_TEST_EXCLUSIONS = [
 ];
 
 export const FOCUSED_UNIT_FILES = [
+  "scripts/pii-scan.test.mjs",
+  "packages/gateway/src/disk-usage-identity.test.ts",
+  "packages/gateway/src/workers/search-pool.respawn.test.ts",
+  "packages/gateway/src/indexer/usearch-validation.test.ts",
+  "packages/core/src/default-config-dir.test.ts",
+  "packages/core/src/sqlite-snapshot-races.test.ts",
+  "packages/core/src/sqlite-snapshot.test.ts",
+  "packages/core/src/collector-pairing-state.test.ts",
+  "evals/briefs/src/deepseek-lane.test.ts",
+  "packages/types/src/temporal-vocabulary.test.ts",
+  "packages/eval/src/suite.test.ts",
+  "packages/cli/src/commands/uninstall.test.ts",
+  "packages/cli/src/uninstall/path-containment.test.ts",
+  "packages/gateway/src/disk-usage.test.ts",
   "packages/cli/src/update/source-launcher.test.ts",
   "packages/cli/src/update/build-heap.test.ts",
   "packages/cli/src/commands/secure-docker.test.ts",
