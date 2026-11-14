@@ -553,28 +553,55 @@ const concurrentRefusalFixture = String.raw`
 public static partial class OmnesisPrivateFile {
   static Action FixtureWriter;
   [DllImport("kernel32.dll",CharSet=CharSet.Unicode,SetLastError=true,EntryPoint="MoveFileExW")] static extern bool FixtureMove(string source,string target,uint flags);
-  public static string FixtureConcurrentRefusal(string path) {
-    bool published=false;
+  static void FixturePosixReplace(string staging,string path) {
+    using(PinnedParent parent=Parent(path))
+    using(SafeFileHandle source=RelativeOpen(parent.Handle,Path.GetFileName(staging),false,0x130081U,7U)) {
+      byte[] name=Encoding.Unicode.GetBytes(parent.Leaf);
+      int rootOffset=IntPtr.Size,lengthOffset=IntPtr.Size*2,nameOffset=lengthOffset+4;
+      int size=(IntPtr.Size==8?24:16)+name.Length;IntPtr buffer=Marshal.AllocHGlobal(size);
+      try {
+        for(int index=0;index<size;index++) Marshal.WriteByte(buffer,index,0);
+        Marshal.WriteInt32(buffer,0,3);Marshal.WriteIntPtr(buffer,rootOffset,parent.Handle.DangerousGetHandle());
+        Marshal.WriteInt32(buffer,lengthOffset,name.Length);Marshal.Copy(name,0,IntPtr.Add(buffer,nameOffset),name.Length);
+        RenameIoStatus io;int status=NtSetInformationFile(source,out io,buffer,(uint)size,65);
+        if(status<0) throw new Win32Exception((int)RtlNtStatusToDosError(status));
+      } finally {Marshal.FreeHGlobal(buffer);}
+    }
+  }
+  public static string FixtureConcurrentRefusal(string path,bool legacy) {
+    bool published=false,blocked=false;
     FixtureWriter=delegate {
       byte[] bytes=Encoding.UTF8.GetBytes("invented newer external writer bytes");
       string staging=path+".external";
       WriteInput(staging,bytes.Length,false,false,"",false,true,new MemoryStream(bytes),false,null);
-      Check(FixtureMove(staging,path,9U));published=true;
+      if(legacy) {
+        if(FixtureMove(staging,path,9U)) throw new InvalidOperationException("Legacy replacement unexpectedly succeeded");
+        int error=Marshal.GetLastWin32Error();if(error!=5) throw new Win32Exception(error);
+        blocked=true;
+      } else {FixturePosixReplace(staging,path);published=true;}
     };
     try {Inspect(path,false,true,true);return "unexpected";}
-    catch(UnauthorizedAccessException) {return published?"refused:published":"refused:missing-control";}
+    catch(UnauthorizedAccessException) {return published?"refused:published":blocked?"refused:legacy-blocked":"refused:missing-control";}
     finally {FixtureWriter=null;}
   }
 }
 `;
 
-test.runIf(process.platform === "win32")(
-  "unsafe refusal cannot overwrite a concurrent ordinary external publisher or mutate the old alias",
-  async () => {
+// POSIX|REPLACE permits an open destination's old handles to remain valid.
+// Legacy MoveFileEx cannot replace that same open leaf, even with DELETE sharing.
+// https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/ntifs/ns-ntifs-_file_rename_information
+test.runIf(process.platform === "win32").each([
+  { publisher: "POSIX external publisher", legacy: false },
+  { publisher: "blocked legacy publisher", legacy: true },
+])(
+  "unsafe refusal preserves the target and old alias with a $publisher",
+  async ({ legacy }) => {
     const root = mkdtempSync(join(tmpdir(), "private external publisher-"));
     const target = join(root, "selected.txt"),
-      alias = join(root, "old-alias.txt");
+      alias = join(root, "old-alias.txt"),
+      staging = target + ".external";
     const bytes = Buffer.from("invented retained previous writer bytes");
+    const newer = "invented newer external writer bytes";
     try {
       await inspectWindowsPrivatePaths([{ path: root, kind: "directory" }], {
         repair: true,
@@ -598,24 +625,42 @@ test.runIf(process.platform === "win32")(
           "-NoProfile",
           "-NonInteractive",
           "-Command",
-          "$ErrorActionPreference='Stop';$source=[Console]::In.ReadToEnd();Add-Type -TypeDefinition $source;[Console]::Out.Write([OmnesisPrivateFile]::FixtureConcurrentRefusal($env:OMNESIS_REPAIR_TARGET));",
+          "$ErrorActionPreference='Stop';$source=[Console]::In.ReadToEnd();Add-Type -TypeDefinition $source;[Console]::Out.Write([OmnesisPrivateFile]::FixtureConcurrentRefusal($env:OMNESIS_REPAIR_TARGET,($env:OMNESIS_REPAIR_LEGACY -eq '1')));",
         ],
         {
-          env: { ...process.env, OMNESIS_REPAIR_TARGET: target },
+          env: {
+            ...process.env,
+            OMNESIS_REPAIR_TARGET: target,
+            OMNESIS_REPAIR_LEGACY: legacy ? "1" : "0",
+          },
           input: Buffer.from(source),
           timeoutMs: 60_000,
         },
       );
       expect(result.failure, result.stderr).toBeUndefined();
+      expect(Object.hasOwn(result, "cleanupFailure")).toBe(false);
       expect(result.exitCode, result.stderr).toBe(0);
-      expect(Buffer.from(result.stdout).toString()).toBe("refused:published");
-      expect(readFileSync(target, "utf8")).toBe("invented newer external writer bytes");
+      expect(Buffer.from(result.stdout).toString()).toBe(
+        legacy ? "refused:legacy-blocked" : "refused:published",
+      );
+      expect(readFileSync(target)).toEqual(legacy ? bytes : Buffer.from(newer));
       expect(await acl(alias)).toBe(oldAcl);
       expect(readFileSync(alias)).toEqual(bytes);
       expect(statSync(alias, { bigint: true }).ino).toBe(before.ino);
+      if (legacy) {
+        expect(await acl(target)).toBe(oldAcl);
+        expect(statSync(target, { bigint: true }).ino).toBe(before.ino);
+        expect(readdirSync(root).sort()).toEqual([
+          "old-alias.txt",
+          "selected.txt",
+          "selected.txt.external",
+        ]);
+        expect(await readWindowsPrivateFile(staging)).toEqual(Buffer.from(newer));
+        rmSync(staging);
+      }
       expect(readdirSync(root).sort()).toEqual(["old-alias.txt", "selected.txt"]);
       expect(await inspectWindowsPrivatePaths([{ path: target, kind: "file" }])).toEqual([
-        { private: true, fixed: false },
+        { private: !legacy, fixed: false },
       ]);
     } finally {
       rmSync(root, { recursive: true, force: true });
