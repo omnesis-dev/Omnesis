@@ -643,12 +643,16 @@ extension GatewayRoutingProxyTests {
         ))
         let factory = RepairableLiveListenerFactory()
         let pin = PinnedSession(spkiFingerprint: peer.info.spkiFingerprint, host: route.host)
+        let stall = FirstTrustStall()
         let proxy = try GatewayRoutingProxy(
             route: route,
             limits: .production,
             listenPort: 0,
             transport: factory.transport,
-            verifyTrust: { trust, host in pin.resolve(trust, challengeHost: host) == .pinned(systemTrusted: false) }
+            verifyTrust: { trust, host in
+                stall.once()
+                return pin.resolve(trust, challengeHost: host) == .pinned(systemTrusted: false)
+            }
         )
         defer { proxy.close() }
         let endpoint = proxy.listeningPort
@@ -740,6 +744,19 @@ private final class RepairableLiveListenerFactory: @unchecked Sendable {
             self.lock.unlock()
             return wrapped
         })
+    }
+}
+
+/// Holds the first trust verification past the production per-candidate budget, as a stalled runner can.
+private final class FirstTrustStall: @unchecked Sendable {
+    private let lock = NSLock()
+    private var stalled = false
+    func once() {
+        lock.lock()
+        defer { lock.unlock() }
+        guard !stalled else { return }
+        stalled = true
+        Thread.sleep(forTimeInterval: GatewayRoutingProxy.Limits.production.attempt + 0.25)
     }
 }
 
