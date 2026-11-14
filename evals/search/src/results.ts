@@ -1,0 +1,111 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Adrien Conrath
+
+/**
+ * The committed record of one eval run: a summary (`<name>.json`) and one row
+ * per scored query (`<name>.queries.tsv`), which is what lets two runs be
+ * compared query by query.
+ */
+
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+
+import type { Language } from "./dataset.js";
+import type { QueryScore } from "./metrics.js";
+
+export const RESULTS_DIR = join(dirname(fileURLToPath(import.meta.url)), "..", "results");
+
+/** `lexical`: no embedder, keyword search only. `hybrid`: keyword + local embeddings. */
+export type RunMode = "lexical" | "hybrid";
+
+export interface LanguageResult extends QueryScore {
+  language: Language;
+  /** Queries scored: those with at least one relevant passage in the pool. */
+  queries: number;
+  passages: number;
+  /** Queries the search returned nothing for. */
+  emptyResults: number;
+}
+
+export interface RunSummary {
+  name: string;
+  mode: RunMode;
+  startedAt: string;
+  /** What the gateway under test was built from. */
+  source: { commit: string; dirty: boolean; branch: string };
+  dataset: { name: string; poolSize: number; revisions: { topics: string; corpus: string } };
+  /** Embedding model in `hybrid` mode. */
+  embedder: string | null;
+  /** Settings the run changes from the gateway's defaults. */
+  gatewayConfig: Record<string, unknown>;
+  /** Each language weighted equally. */
+  macro: QueryScore;
+  languages: LanguageResult[];
+  totals: { passages: number; chunks: number; queries: number };
+  timing: {
+    ingestSeconds: number;
+    indexSeconds: number;
+    querySeconds: number;
+    queryMsP50: number;
+    queryMsP95: number;
+  };
+  /** How many queries each keyword ranker served. */
+  lexicalEngines: Record<string, number>;
+}
+
+export interface QueryRow extends QueryScore {
+  language: Language;
+  queryId: string;
+}
+
+const QUERY_HEADER = "language\tquery\tndcg10\trecall100\tmrr10";
+
+function round(value: number): number {
+  return Math.round(value * 1e6) / 1e6;
+}
+
+export function writeRun(summary: RunSummary, rows: readonly QueryRow[], dir = RESULTS_DIR): void {
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, `${summary.name}.json`), `${JSON.stringify(summary, null, 2)}\n`);
+  const lines = rows.map(
+    (r) =>
+      `${r.language}\t${r.queryId}\t${round(r.ndcg10)}\t${round(r.recall100)}\t${round(r.mrr10)}`,
+  );
+  writeFileSync(
+    join(dir, `${summary.name}.queries.tsv`),
+    `${[QUERY_HEADER, ...lines].join("\n")}\n`,
+  );
+}
+
+export function listRuns(dir = RESULTS_DIR): string[] {
+  if (!existsSync(dir)) return [];
+  return readdirSync(dir)
+    .filter((f) => f.endsWith(".json"))
+    .map((f) => f.slice(0, -".json".length))
+    .sort();
+}
+
+export function readSummary(name: string, dir = RESULTS_DIR): RunSummary {
+  const path = join(dir, `${name}.json`);
+  if (!existsSync(path)) {
+    throw new Error(`No run named "${name}". Known runs: ${listRuns(dir).join(", ") || "none"}`);
+  }
+  return JSON.parse(readFileSync(path, "utf8")) as RunSummary;
+}
+
+export function readQueryRows(name: string, dir = RESULTS_DIR): QueryRow[] {
+  const lines = readFileSync(join(dir, `${name}.queries.tsv`), "utf8")
+    .split("\n")
+    .filter(Boolean);
+  return lines.slice(1).map((line) => {
+    const [language, queryId, ndcg10, recall100, mrr10] = line.split("\t");
+    return {
+      language: language as Language,
+      queryId: queryId!,
+      ndcg10: Number(ndcg10),
+      recall100: Number(recall100),
+      mrr10: Number(mrr10),
+    };
+  });
+}

@@ -26,6 +26,7 @@ All paths below are local files. Use `Read` (or `Grep` to find the right page), 
 | iOS-specific agent rules (XcodeGen, device deploy, SwiftUI preview + snapshot self-critique loop, TestFlight) — read before editing anything in `ios/` | `ios/AGENTS.md` (= `ios/CLAUDE.md`) |
 | Public docs — what users see; update alongside behavior changes (see § Documentation maintenance)                                                      | `website/docs/`                     |
 | Main-thread stalls — the 50 ms rule, the sanctioned fixes, and finding a culprit with the stall log, `/admin/stalls` and flight-recorder profiles      | `docs/stall-investigation.md`       |
+| Search quality — a public multilingual benchmark run through the real engine; measure any change to tokenization, query compilation or ranking with it | `evals/search/README.md`            |
 | Architecture, per-source detail, HTTP API, config knobs                                                                                                | the code (repo map below)           |
 
 The repo at a glance:
