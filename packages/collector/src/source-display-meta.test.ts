@@ -67,6 +67,13 @@ describe("what the gateway is told about how to display a source", () => {
     });
   });
 
+  test("the family carries the definition's resync cost", () => {
+    const sentence = "This reads every transaction again.";
+    const meta = sourceDisplayMeta(source({ family: { name: "Accounts", resyncCost: sentence } }));
+    expect(meta.family?.resyncCost).toBe(sentence);
+    expect(sourceDisplayMeta(source()).family?.resyncCost).toBeUndefined();
+  });
+
   test("an embedded icon is carried when there is no url", () => {
     const meta = sourceDisplayMeta(
       source({

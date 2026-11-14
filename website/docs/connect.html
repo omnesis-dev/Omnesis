@@ -362,12 +362,23 @@
           Permissions and connection details are always visible within each access level card.
           <code>omnesis access levels</code> prints the same list from the CLI.
         </p>
+        <p>
+          In the portal and the iOS and Android apps, open <strong>Settings → Access</strong> to
+          view connections and create or edit access levels. Creation guides you through
+          permissions, source accounts, access to new sources and Answer's privacy policy, then asks
+          you to review and name the level. Questions that do not apply to the selected permissions
+          are skipped. The portal keeps the flow within Settings → Access, with its navigation
+          available throughout. The final review groups the selected permissions and sources;
+          editing a level shows only changed settings before saving. Changes apply to every
+          connection using that level.
+        </p>
         <ul>
           <li>
             <strong>Edit a level</strong>: the change applies to every connection and integration
-            that uses it, and the editor names them before you save. Old access tokens stop working
-            at once, and each client picks up the new rules on its next refresh without signing in
-            again.
+            that uses it. Open the setting you want to change, then review the differences and the
+            affected connections before saving. Your existing permissions stay in effect until you
+            save. Old access tokens stop working at once, and each client picks up the new rules on
+            its next refresh without signing in again.
           </li>
           <li>
             <strong>Create a level</strong> with <strong>New access level</strong>, before any agent
@@ -379,6 +390,20 @@
             every other connection working.
           </li>
         </ul>
+
+        <h3 id="who-can-read">Who can read a document</h3>
+        <p>
+          <strong>Who can read this?</strong> on a document's page in the portal, and in a
+          document's details in the iOS and Android apps, lists every access level, including levels
+          no agent uses yet, with the connections and integrations on each. For each level it gives
+          one verdict for Answer and one for Direct: whether the document is readable, and why, for
+          example that the permission is not granted on the level or that the document's account is
+          not shared. Each verdict comes from the same check an agent's read goes through, so the
+          page and a real read cannot disagree. For Answer, readable means the Omnesis agent may use
+          the document when answering that agent; whether an answer is then released is still the
+          privacy policy's review. The page is for you only and is never available to an external
+          agent.
+        </p>
 
         <h2 id="privacy-policy">Privacy policy</h2>
         <p>
@@ -793,13 +818,14 @@
         <ul>
           <li>
             <strong>An existing level</strong> goes straight to review. Connections on the same
-            level share its permissions.
+            level share its permissions, and the review says when other connections already use it.
           </li>
           <li>
-            <strong>New access level</strong> asks for a name, then Answer, Direct and Notes, the
-            sources and privacy policy, and a review of the resulting access. Answer and Direct must
-            be able to read at least one source. The review says when the chosen level is already
-            used by other connections.
+            <strong>New access level</strong> asks for a name, then the same questions as creating a
+            level from Settings → Access, one at a time: permissions, source accounts, access to new
+            sources and Answer's privacy policy. It ends with a review of the resulting access,
+            where each answer can still be changed. Answer and Direct must be able to read at least
+            one source.
           </li>
           <li>
             <strong>Replace a connection</strong>, for an agent signing in again, takes over that

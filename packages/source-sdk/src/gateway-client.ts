@@ -10,6 +10,8 @@ import type {
   SourceId,
   SourceType,
   ProviderId,
+  FilterListPublication,
+  FilterListReceipt,
 } from "@omnesis/types";
 import type { SourceWatermark, SyncCursor } from "./source.js";
 import type { PendingStructuredPage, PrepareStructuredPage } from "./pending-source-page.js";
@@ -179,12 +181,28 @@ export interface SourceSyncMeta {
   family?: SourceFamilyMeta;
 }
 
+/**
+ * One source type's document-event profile as a collector publishes it.
+ *
+ * `outputRevision` is the source version the profile describes. The gateway
+ * keeps the profile of the highest revision it has been sent, so a collector
+ * on an older build cannot replace a newer description with its own. A
+ * publication without one counts as revision 0.
+ */
+export interface DocumentEventProfilePublication {
+  sourceType: string;
+  outputRevision?: number;
+  profile: DocumentEventProfile;
+}
+
 /** See {@link SourceSyncMeta.family}. */
 export interface SourceFamilyMeta {
   icon?: string;
   label?: string;
   bgColor?: string;
   accentColor?: string;
+  /** The definition's `resyncCost` sentence. See `SourceDefinition.resyncCost`. */
+  resyncCost?: string;
 }
 
 /** Generic initial enumeration identity, resumed independently of provider cursor contents. */
@@ -309,6 +327,12 @@ export interface UpsertWithCursorResponse {
   holder?: string;
   /** True when durable source removal refused this page. */
   rejectedAsRemoved?: true;
+  /**
+   * What became of each list page the request carried, in the order sent.
+   * Absent when it carried none, when the page was refused, and on a gateway
+   * that does not store lists.
+   */
+  filterLists?: FilterListReceipt[];
   /** @deprecated Snapshot work is recorded in one bounded pass; retries are unnecessary. */
   retrySnapshot?: true;
 }
@@ -515,6 +539,14 @@ export interface GatewayClient {
   getWipeEpoch(sourceId: SourceId): Promise<number | undefined>;
 
   /**
+   * The digest of each list the gateway holds for the source's filterable
+   * fields, keyed by field path, read from the source's sync state. A list
+   * the gateway has never been sent has no entry. `undefined` means the
+   * gateway does not store lists, and none should be sent.
+   */
+  getFilterListDigests?(sourceId: SourceId): Promise<Record<string, string> | undefined>;
+
+  /**
    * Claim a new per-source write epoch. Optional for compatibility with older
    * gateways, which only fence writes across explicit source wipes.
    */
@@ -658,9 +690,7 @@ export interface GatewayClient {
    * without the compiler holding any source-specific knowledge. Replaces
    * whatever was previously stored.
    */
-  setDocumentEventProfiles(
-    entries: Array<{ sourceType: string; profile: DocumentEventProfile }>,
-  ): Promise<void>;
+  setDocumentEventProfiles(entries: DocumentEventProfilePublication[]): Promise<void>;
 
   /**
    * Push the union of external widget-vendor origins declared by every KNOWN
@@ -743,6 +773,20 @@ export interface GatewayClient {
     consentExpiresAt?: string | null;
     watermark?: SourceWatermark;
     meta?: Omit<SourceSyncMeta, "contentRetention">;
+    /**
+     * Pages of the lists the source publishes for its filterable fields. The
+     * gateway stores them once the page is accepted and answers for each in
+     * the response's `filterLists`.
+     */
+    filterLists?: FilterListPublication[];
+    /**
+     * The source's output revision (`contract.outputRevision`), applied to
+     * every document on the page. The gateway stores it per document, never
+     * lowering a stored one, and counts a page that carries none as 0.
+     */
+    sourceVersion?: number;
+    /** What the source said about having read everything; see `SyncResult.fullReadComplete`. */
+    fullReadComplete?: boolean;
   }): Promise<UpsertWithCursorResponse>;
 
   /** List documents with filtering and pagination. The wire envelope is

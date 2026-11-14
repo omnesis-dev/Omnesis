@@ -206,6 +206,7 @@ export default defineProvider<MicrosoftContext>({
         url: outlookIconUrl,
       },
       contract: {
+        outputRevision: 1,
         // The host resolves the stored cursor against this before `sync`
         // runs, so a value from a build that could not read it never reaches
         // `sync`.
@@ -266,6 +267,7 @@ export default defineProvider<MicrosoftContext>({
         url: oneDriveIconUrl,
       },
       contract: {
+        outputRevision: 1,
         // The host resolves the stored cursor against this before `sync`
         // runs, so a value from a build that could not read it never reaches
         // `sync`.
@@ -322,6 +324,7 @@ export default defineProvider<MicrosoftContext>({
         imageDataUri: outlookCalendarIconDataUri,
       },
       contract: {
+        outputRevision: 1,
         // The host resolves the stored cursor against this before `sync`
         // runs, so a value from a build that could not read it never reaches
         // `sync`.

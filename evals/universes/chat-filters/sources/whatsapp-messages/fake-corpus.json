@@ -1,0 +1,79 @@
+{
+  "corpus": {
+    "meJid": "12025550101:0@s.whatsapp.net",
+    "meLid": "200000000000001:0@lid",
+    "contacts": [
+      { "id": "12025550123@s.whatsapp.net", "name": "Maya Reeves", "notify": "Maya" },
+      { "id": "12025550142@s.whatsapp.net", "name": "Jamie Lopez", "notify": "Jamie" },
+      { "id": "12025550177@s.whatsapp.net", "name": "David Lin", "notify": "David" }
+    ],
+    "chats": [
+      {
+        "jid": "12025550123@s.whatsapp.net",
+        "name": "Maya Reeves",
+        "messages": [
+          {
+            "id": "wam-direct-1",
+            "ts": 1772971200,
+            "text": "Are you still free for the trail run on Saturday? zqfilter",
+            "pushName": "Maya"
+          },
+          {
+            "id": "wam-direct-2",
+            "ts": 1772971500,
+            "text": "Yes, I will bring the route map. zqfilter",
+            "fromMe": true
+          }
+        ]
+      },
+      {
+        "jid": "120000000000000001@g.us",
+        "name": "Studio Northstar crew",
+        "isGroup": true,
+        "participants": [
+          "12025550101@s.whatsapp.net",
+          "12025550123@s.whatsapp.net",
+          "12025550142@s.whatsapp.net"
+        ],
+        "messages": [
+          {
+            "id": "wam-crew-1",
+            "ts": 1772971800,
+            "text": "The rehearsal room is booked for Thursday evening. zqfilter",
+            "senderJid": "12025550123@s.whatsapp.net",
+            "pushName": "Maya"
+          },
+          {
+            "id": "wam-crew-2",
+            "ts": 1773058200,
+            "text": "Doors open at six, bring the cables. zqfilter",
+            "senderJid": "12025550123@s.whatsapp.net",
+            "pushName": "Maya"
+          }
+        ]
+      },
+      {
+        "jid": "120000000000000002@g.us",
+        "name": "Riverside neighbours",
+        "isGroup": true,
+        "participants": [
+          "12025550101@s.whatsapp.net",
+          "12025550123@s.whatsapp.net",
+          "200000000000077@lid"
+        ],
+        "messages": [
+          {
+            "id": "wam-neighbours-1",
+            "ts": 1772972100,
+            "text": "The street cleaning moved to Monday morning. zqfilter",
+            "senderJid": "12025550123@s.whatsapp.net",
+            "pushName": "Maya"
+          }
+        ]
+      }
+    ]
+  },
+  "scenario": {
+    "mode": "complete"
+  }
+}

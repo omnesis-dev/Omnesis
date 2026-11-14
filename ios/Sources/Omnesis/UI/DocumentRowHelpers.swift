@@ -166,10 +166,12 @@ struct SourceIconView: View {
     let sourceId: String
     let store: AppStore
     var size: CGFloat = 22
+    /// Artwork the caller already holds for this account, used before the store's own.
+    var art: String?
 
     var body: some View {
         let type = sourceTypeFromId(sourceId)
-        let src = store.sourceIconById[sourceId] ?? store.sourceIconByType[type]
+        let src = art ?? store.sourceIconById[sourceId] ?? store.sourceIconByType[type]
         if let src, let url = URL(string: src), src.hasPrefix("http") {
             AsyncImage(url: url) { phase in
                 if let image = phase.image {

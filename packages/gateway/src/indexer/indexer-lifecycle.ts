@@ -134,6 +134,8 @@ export interface IndexerModelInfo {
  * these are re-created inside the lifecycle.
  */
 export interface IndexerLifecycleDeps {
+  /** Forget queued version-only changes once the indexer has copied them; see `filter-copy.ts`. */
+  completeFilterIndexQueue?: (documentIds: readonly string[]) => Promise<void>;
   /** Capability→backend resolver. loadConfig/resolve('embedder')/getBackendApiKey. */
   inferenceRegistry: InferenceRegistry;
   /** Live config store. .get() is read on every startIndexer/runEmbedSwap. */
@@ -673,6 +675,7 @@ export class IndexerLifecycle {
     }
 
     const proxy = new IndexerWorkerProxy({
+      completeFilterIndexQueue: this.deps.completeFilterIndexQueue,
       lexicalOnly,
       beginModelCall,
       modelPath,

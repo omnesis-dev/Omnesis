@@ -2,6 +2,13 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { randomUUID } from "node:crypto";
+import { experimentalEnabled } from "@omnesis/core";
+import {
+  ScopePolicyEditError,
+  conservativeSources,
+  writeScopeState,
+  type StoredScopeState,
+} from "./scope-policy-store.js";
 
 import { appendAudit, isUniqueConstraint } from "./store-helpers.js";
 import type { Db } from "../data/types.js";
@@ -88,8 +95,37 @@ export function insertLevel(
   rules: StoredGrantRules,
   actorTokenId: string | null,
   now: number,
+  copy = false,
 ): { id: string; name: string; revision: number } {
   const id = randomUUID();
+  rules = rules.map((rule) => {
+    if (!copy && (rule.filterRevision ?? 0) > 0)
+      throw new ScopePolicyEditError("New filters start at revision zero.");
+    if (!rule.scopePolicies?.length) return rule;
+    if (rule.capability === "notes")
+      throw new ScopePolicyEditError("Notes cannot carry source filters.");
+    const capability = rule.capability;
+    if (!copy && !experimentalEnabled())
+      throw new ScopePolicyEditError("Source filters require experimental mode.");
+    if (
+      !copy &&
+      rule.scopePolicies.some(
+        (policy) =>
+          typeof policy.audience !== "object" ||
+          policy.audience.accessLevel !== "new" ||
+          policy.audience.capability !== rule.capability,
+      )
+    )
+      throw new ScopePolicyEditError("Invalid filter audience.");
+    return {
+      ...rule,
+      filterRevision: 1,
+      scopePolicies: rule.scopePolicies.map((policy) => ({
+        ...policy,
+        audience: { accessLevel: id, capability },
+      })),
+    };
+  });
   const trimmed = name.trim();
   db.prepare(
     `INSERT INTO access_levels (id, name, revision, created_at, updated_at)
@@ -114,11 +150,21 @@ export function writeLevelCapabilities(db: Db, levelId: string, rules: StoredGra
      ) VALUES (?, ?, ?, ?, ?, ?)`,
   );
   for (const rule of rules) {
+    const scope: StoredScopeState | null = rule.filterRevision
+      ? {
+          sourceMode: rule.sourceMode,
+          sourceIds: rule.sourceIds,
+          filterRevision: rule.filterRevision,
+          scopePolicies: rule.scopePolicies ?? [],
+        }
+      : null;
+    writeScopeState(db, "level", levelId, rule.capability, scope);
+    const legacy = conservativeSources({ ...rule, scopePolicies: rule.scopePolicies ?? [] });
     insert.run(
       levelId,
       rule.capability,
-      rule.sourceMode,
-      JSON.stringify(rule.sourceIds),
+      legacy.sourceMode,
+      JSON.stringify(legacy.sourceIds),
       rule.releaseMode,
       rule.policyFamilyId,
     );
@@ -157,6 +203,16 @@ export function createGrantOnLevel(
      )
      SELECT ?, capability, source_mode, source_ids, release_mode, policy_family_id
        FROM access_level_capabilities WHERE level_id = ?`,
+  ).run(id, levelId);
+  db.prepare(
+    `INSERT INTO access_scope_capabilities
+    (owner_kind, owner_id, capability, source_mode, source_ids, filter_revision, policies)
+    SELECT 'grant', ?, capability, source_mode, source_ids, filter_revision, policies
+    FROM access_scope_capabilities WHERE owner_kind = 'level' AND owner_id = ?`,
+  ).run(id, levelId);
+  db.prepare(
+    `INSERT OR IGNORE INTO access_scope_legacy_denials(owner_kind,owner_id,capability)
+    SELECT 'grant',?,capability FROM access_scope_legacy_denials WHERE owner_kind='level' AND owner_id=?`,
   ).run(id, levelId);
   return { id, revision: 1 };
 }

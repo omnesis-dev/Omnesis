@@ -124,3 +124,6 @@ export const stringParamsSchema = z.record(z.string(), z.string());
 
 /** RFC 5322-ish basic email shape: `local@domain.tld`. */
 export const emailLikeSchema = z.string().regex(/^[^\s@]+@[^\s@]+\.[^\s@]+$/, "invalid email");
+
+/** A source's output version on the wire: a whole number, 0 meaning "none". */
+export const sourceVersionShape = z.number().int().min(0).max(1_000_000);

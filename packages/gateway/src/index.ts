@@ -191,6 +191,7 @@ import {
   nearDupInboxFlushTask,
   indexerWakeTask,
   createCleanupTasks,
+  createFilterListSweepTask,
   createBackendReprobeTask,
   createSubscriptionDeliveriesTask,
   type PeriodicTask,
@@ -264,6 +265,7 @@ import { DERIVATION_STAGES, type DerivationStage } from "./domain/DocumentDeriva
 import { subscribeDerivationNudge } from "./scheduler/tasks/derivation-nudge.js";
 import { SubscriptionDeliveryService } from "./subscriptions/delivery.js";
 import { AnswerCompletionDeliveryService } from "./privacy/completion-delivery.js";
+import { assertAnswerTaskReleaseCurrent } from "./privacy/answer-scope.js";
 import { createWatchFiringThreadOpener } from "./watch/firing-thread.js";
 import { ApnsClient } from "./push/transports/direct-apns.js";
 import { FcmClient } from "./push/transports/direct-fcm.js";
@@ -1111,6 +1113,8 @@ searchPipeline.setGatewayDb(db);
 // search provenance, on the io worker.
 searchPipeline.setKnowledgeReadability(ioGate);
 searchPipeline.setProvenanceReads(ioGate);
+// A filtered search checks its results against the corpus on the io worker.
+searchPipeline.setFilterRecheckReads(ioGate);
 
 // Dedicated search-worker pool (Slice 3B): relocate the heavy
 // candidate-generation block (BM25 + usearch + fusion/boost/diversity + hydrate)
@@ -1488,6 +1492,7 @@ const agentLifecycle = new AgentLifecycle({
   temporalStoreReads: ioGate,
   // The Privacy page's exchange pages read off the main loop.
   privacyExchangeReads: ioGate,
+  scopeHistoryReads: ioGate,
   deleteDocumentIndexBatch: async (documentId, limit, sourceDeleted) => {
     return indexerLifecycle.deleteDocumentIndexBatch(documentId, limit, sourceDeleted);
   },
@@ -1740,6 +1745,7 @@ const recordCompleterSpend =
   };
 
 const indexerLifecycle = new IndexerLifecycle({
+  completeFilterIndexQueue: (documentIds) => writeGate.completeFilterIndexQueue(documentIds),
   inferenceRegistry,
   configStore,
   indexerStatus,
@@ -3624,6 +3630,21 @@ const cleanupBundle = createCleanupTasks(
   },
   scheduler,
 );
+// Published filter lists are replaced by writing a new version beside the old
+// one; this collects the versions nothing reads any more.
+const filterListSweepTask = createFilterListSweepTask({
+  writeGate,
+  log: log.child("filter-lists"),
+});
+scheduler.schedule(filterListSweepTask);
+const filterListSweepJob = periodicJob(filterListSweepTask, {
+  scheduler,
+  displayName: "Filter list cleanup",
+  description:
+    "Deletes replaced versions of the lists sources publish for their filterable fields.",
+  category: "infra",
+  tracker: new StatelessTracker(),
+});
 const pushWakeRetryHandle = scheduler.schedule(pushWakeRetryBundle.task);
 const cleanupHandles = cleanupBundle.tasks.map((t) => scheduler.schedule(t));
 void cleanupHandles;
@@ -3787,6 +3808,7 @@ const answerCompletionDeliveryService = new AnswerCompletionDeliveryService({
   writeGate,
   transport: wsServer,
   getDevice: (id) => getDevice(db, id),
+  assertTaskScopeCurrent: (taskId) => assertAnswerTaskReleaseCurrent(db, taskId),
   log: log.child("privacy:completion-delivery"),
 });
 const answerCompletionDeliveryHandle = scheduler.schedule({
@@ -3825,6 +3847,7 @@ backgroundJobs.registerAll([
   nearDupInboxFlushBundle.job,
   indexerWakeBundle.job,
   ...cleanupBundle.jobs,
+  filterListSweepJob,
   pushWakeRetryBundle.job,
   activityRetentionBundle.job,
   absenceSweepBundle.job,

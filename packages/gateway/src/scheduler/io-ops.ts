@@ -488,13 +488,23 @@ interface IoOpDef {
 const DEFAULT_BUDGET_MS = 200;
 const HEAVY_BUDGET_MS = 2_000;
 
+const USER_IO_READS: ReadonlySet<string> = new Set([
+  "io.filterReadableDocumentIds",
+  "io.sourceFilterEditor",
+  "io.sourceFilterOptionsPage",
+  "io.documentFilterDetails",
+  "io.documentAccessAudit",
+]);
+
 const COMPUTE_OP_DEFS: readonly IoOpDef[] = [
   // Every read port in `io-read-ports.ts`: the status cache's refresh, the
   // knowledge engine's planning window, batch recovery and payload capture,
   // and an analytics page's replica ledger reads.
+  // A filtered search's result check and the owner's filter screens are
+  // waited on by a person, so they run ahead of background reads.
   ...ioReadOpNames(IO_READS).map((name): IoOpDef => ({
     name,
-    priority: "background",
+    priority: USER_IO_READS.has(name) ? "user" : "background",
     latencyBudgetMs: HEAVY_BUDGET_MS,
   })),
   { name: "io.fetchTranscriptionVocabularyBatch", priority: "background" },

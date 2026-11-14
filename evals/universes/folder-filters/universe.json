@@ -1,0 +1,46 @@
+{
+  "name": "folder-filters",
+  "description": "Coding-agent sessions run in work, personal and workshop project folders, and a folder of local files laid out the same way, for the source filters that share or hide by folder. A second computer also hosts one of the session sources and the local files, at the same paths.",
+  "cast": "cast.json",
+  "agentDemos": null,
+  "devices": [
+    {
+      "id": "laptop",
+      "name": "Invented laptop collector",
+      "kind": "collector"
+    },
+    {
+      "id": "desktop",
+      "name": "Invented desktop collector",
+      "kind": "collector"
+    }
+  ],
+  "multiDeviceModes": {
+    "claude-code": "partitioned",
+    "local-files": "partitioned"
+  },
+  "sources": [
+    {
+      "descriptorId": "claude-code",
+      "accountIds": ["claude-maya"],
+      "device": "laptop",
+      "members": ["desktop"]
+    },
+    {
+      "descriptorId": "codex",
+      "accountIds": ["codex-maya"],
+      "device": "laptop"
+    },
+    {
+      "descriptorId": "local-files",
+      "accountIds": ["files-maya"],
+      "device": "laptop",
+      "members": ["desktop"]
+    },
+    {
+      "descriptorId": "pi",
+      "accountIds": ["pi-maya"],
+      "device": "laptop"
+    }
+  ]
+}

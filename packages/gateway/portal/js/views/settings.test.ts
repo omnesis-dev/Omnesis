@@ -6,9 +6,13 @@ import { parseHTML } from "linkedom";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
 const router = vi.hoisted(() => ({ replaceRoute: vi.fn() }));
+const lazyTab = vi.hoisted(() => ({ render: vi.fn() }));
 
 vi.mock("../lib/lazy.js", () => ({
-  lazy: () => () => h("div", { class: "stub-settings-tab" }),
+  lazy: () => (props: Record<string, unknown>) => {
+    lazyTab.render(props);
+    return h("div", { class: "stub-settings-tab" });
+  },
 }));
 vi.mock("../lib/router.js", () => router);
 
@@ -39,12 +43,17 @@ describe("Settings header actions", () => {
 
   test("marks the Models tab while another settings page is open and clears on recovery", async () => {
     await act(async () => {
-      render(h(SettingsView, { tab: "config", modelHealth: { warnings: [{ role: "agent" }] } }), host);
+      render(
+        h(SettingsView, { tab: "config", modelHealth: { warnings: [{ role: "agent" }] } }),
+        host,
+      );
     });
     const warning = host.querySelector('.config-tab [aria-label="Models need attention"]');
     expect(warning).not.toBeNull();
     const tab = warning?.closest("button") as HTMLButtonElement;
-    await act(async () => { tab.click(); });
+    await act(async () => {
+      tab.click();
+    });
     expect(router.replaceRoute).toHaveBeenCalledWith("/portal/settings/models");
     await act(async () => {
       render(h(SettingsView, { tab: "config", modelHealth: { warnings: [] } }), host);
@@ -102,8 +111,7 @@ describe("Settings header actions", () => {
       render(h(SettingsView, { tab: "policies", policyId: "policy-a" }), host);
     });
 
-    const labels = [...host.querySelectorAll(".config-tab")]
-      .map((tab) => tab.textContent?.trim());
+    const labels = [...host.querySelectorAll(".config-tab")].map((tab) => tab.textContent?.trim());
     const access = labels.indexOf("Access");
     expect(access).toBeGreaterThan(-1);
     expect(labels[access + 1]).toBe("Policies");
@@ -111,33 +119,69 @@ describe("Settings header actions", () => {
 
     // This tab labels both the list and one policy's editor, so
     // clicking it from the editor walks back to the list.
-    const policiesTab = [...host.querySelectorAll("button")]
-      .find((button) => button.textContent?.trim() === "Policies") as HTMLButtonElement;
-    await act(async () => { policiesTab.click(); });
+    const policiesTab = [...host.querySelectorAll("button")].find(
+      (button) => button.textContent?.trim() === "Policies",
+    ) as HTMLButtonElement;
+    await act(async () => {
+      policiesTab.click();
+    });
     expect(router.replaceRoute).toHaveBeenCalledWith("/portal/settings/policies");
   });
 
-  test("walks back to the access inventory from every page the Access tab opens", async () => {
-    const accessTab = () => [...host.querySelectorAll("button")]
-      .find((button) => button.textContent?.trim() === "Access") as HTMLButtonElement;
-
-    for (const page of [
-      { accessLevelId: "level-1" },
-      { accessNewLevel: true },
-      { accessAuthorizationId: "approval-1" },
-      { accessConnect: true },
-    ]) {
+  test("keeps new and existing access levels inside Settings with the Access tab selected", async () => {
+    for (const page of [{ accessLevelId: "level-1" }, { accessNewLevel: true }]) {
       vi.clearAllMocks();
-      await act(async () => { render(h(SettingsView, { tab: "access", ...page }), host); });
-      await act(async () => { accessTab().click(); });
+      await act(async () => {
+        render(h(SettingsView, { tab: "access", ...page }), host);
+      });
+      expect(host.querySelector(".settings-view--access-task > .stub-settings-tab")).not.toBeNull();
+      expect(host.querySelector(".settings-header")).not.toBeNull();
+      expect(host.querySelector(".config-tab.active")?.textContent?.trim()).toBe("Access");
+      expect(lazyTab.render).toHaveBeenLastCalledWith({
+        authorizationId: null,
+        levelId: "accessLevelId" in page ? page.accessLevelId : null,
+        newLevel: "accessNewLevel" in page ? page.accessNewLevel : false,
+        connectOpen: false,
+        completeInPortal: false,
+        cloudRelay: false,
+      });
+      expect(router.replaceRoute).not.toHaveBeenCalled();
+      const accessTab = [...host.querySelectorAll("button")].find(
+        (button) => button.textContent?.trim() === "Access",
+      ) as HTMLButtonElement;
+      await act(async () => {
+        accessTab.click();
+      });
+      expect(router.replaceRoute).toHaveBeenCalledWith("/portal/settings/access");
+    }
+  });
+
+  test("walks back to the access inventory from authorization and connection pages", async () => {
+    const accessTab = () =>
+      [...host.querySelectorAll("button")].find(
+        (button) => button.textContent?.trim() === "Access",
+      ) as HTMLButtonElement;
+
+    for (const page of [{ accessAuthorizationId: "approval-1" }, { accessConnect: true }]) {
+      vi.clearAllMocks();
+      await act(async () => {
+        render(h(SettingsView, { tab: "access", ...page }), host);
+      });
+      await act(async () => {
+        accessTab().click();
+      });
       expect(router.replaceRoute).toHaveBeenCalledWith("/portal/settings/access");
     }
 
     // The inventory itself is where the tab already is: clicking it there
     // does not push the address around.
     vi.clearAllMocks();
-    await act(async () => { render(h(SettingsView, { tab: "access" }), host); });
-    await act(async () => { accessTab().click(); });
+    await act(async () => {
+      render(h(SettingsView, { tab: "access" }), host);
+    });
+    await act(async () => {
+      accessTab().click();
+    });
     expect(router.replaceRoute).not.toHaveBeenCalled();
   });
   test("offers Lab after Config and withholds Sweeps when Brain is off", async () => {

@@ -2675,6 +2675,7 @@ export class SourceService {
       if (indexWriteGate) {
         await indexWriteGate.deleteIndexBySource(id);
       }
+      await sourceDataRemoval.forgetFilterLists(id);
       await w.markSourceCleanupDone(id);
       this.sweepFailures.delete(id);
       log.info(`Post-removal sweep for ${id} finished in ${Date.now() - startedMs}ms`);

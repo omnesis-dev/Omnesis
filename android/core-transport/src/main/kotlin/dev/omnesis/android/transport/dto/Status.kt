@@ -78,6 +78,10 @@ data class StatusSnapshot(
     val taskNoteCapture: Boolean
         get() = speaks("taskNoteCapture", 1)
 
+    /** The gateway lets a paired phone create and change access levels. */
+    val accessLevelEditing: Boolean
+        get() = speaks("accessLevelEditing", 1)
+
     /** Whether the capability [name] advertises a version range that includes [version]. */
     private fun speaks(name: String, version: Int): Boolean {
         val range = ((capabilities as? JsonObject)?.get(name) as? JsonObject) ?: return false

@@ -244,9 +244,15 @@ through the registry. Verify:
 - A missing capability refuses creation, reaches setup-failure reporting, and
   leaves supported siblings operational. Provider and entry requirements merge;
   a provider-level state decoder must never migrate a child's bookmark.
-- `outputRevision` describes output meaning, not cursor shape. It does not
-  schedule reprocessing; prove the explicit re-emission/backfill mechanism if
-  output changes must affect already indexed records.
+- `outputRevision` describes output meaning, not cursor shape. Every source
+  declares its own, starting at 1, and a change to what the source writes raises
+  it in the same change; it never goes down. The host sends it with every sync
+  page and the gateway stores it on each document. It does not schedule
+  reprocessing: records already stored keep their version until the account
+  is resynced. For a filterable field an ordinary resync in place is the only
+  remedy; no source adds a pass of its own for filters (§ 11.1). Prove any
+  other re-emission mechanism if an output change must reach records already
+  indexed.
 - `contract.state.decode` accepts every settled, pending, empty-store and legacy
   state the source can produce. Supply a complete major migration chain and
   classify bare installed cursors with `legacyVersion` where needed. Minor
@@ -594,12 +600,76 @@ includeAudioTypes })` and the injected `extractAttachment`; no bespoke
   agent's `count_messages` counts each document as one message.
 - Two sources must be distinguishable by profile alone (the catalog hides
   source names).
+- A field marked `filter`, or a `personFilter`, follows § 11.1.
 - `documentTemporalProjections` use only the closed field set
   (`$semanticTime`, `scheduledAt`, `dueAt`, `endsAt`, `timeZone`, `status`);
   `temporalProjection` on analytics tables anchors on `$semanticTime` and
   references declared columns of the right type.
 - `semanticallyIndexed` reflects reality; a semantic-match watch on an
   unindexed source is refused.
+
+### 11.1 Filterable fields (when declared)
+
+A field marked `filter` in the profile, and the profile's `personFilter`, are
+optional. They let an access level share or hide part of an account from
+external agents. The gateway checks every record on its own source version
+and its own details at each read, so a record that does not carry what a
+field promises is hidden, never guessed at. When a source declares either:
+
+- **Version.** The change that starts writing a field raises `outputRevision`
+  and sets the field's `minVersion` to the new value. `minVersion: 0` is only
+  for a field that records stored before versions were recorded already carry
+  in the same form; prove that against the stored form, not the new
+  normalizer. No earlier `outputRevision` of the source writes the field's
+  path, with any meaning.
+- **None versus unknown.** A `string-array` field writes `[]` when the item
+  belongs to nothing and is absent when the source does not know. A `string`
+  field is used only where every record has a value, and is absent when it is
+  not known. Never write a placeholder for "unknown".
+- **Ids, not names.** The field holds the upstream's stable ids (a label id,
+  a folder id, a numeric repository id), never display names, so a rename
+  keeps a saved filter. A tree field holds the record's immediate container
+  only, never its path, and only ids that are in the published list; the list
+  names every parent up to a root, so a move is one changed list entry.
+- **People.** `personFilter.roles` lists only roles the profile declares,
+  never `mentioned`. Each person in those roles carries a readable email or an
+  international phone number of a declared identifier kind; someone the source
+  cannot identify carries no identifier rather than a guess. A source that
+  stops listing people at a cap declares it as `maxPeople`.
+- **Lists.** Every filterable field has a producer attached with
+  `withFilterLists`, keyed by the field's path. It lists everything that
+  exists in the account for the field, including what no record belongs to,
+  and nothing about individual records. It returns the whole list or throws,
+  never a part of it, and throws `FilterListNotReadyError` while a list built
+  from the cycle's own pages is not whole yet. Ids are unique; an item whose
+  parent the source cannot see is a root. `members` appear only where the
+  field declares `listsMembers`, and an item with a member the source cannot
+  name by a declared identifier, or whose roster it does not hold whole, sets
+  `membersIncomplete`. The list's cost grows with the number of labels or
+  folders, never with the number of records.
+- **Device scope.** `scope: "device"` is used exactly when an id only means
+  something on the device that produced it (a path on disk), and only on a
+  `partitioned` source; the definition refuses it otherwise.
+- **Change.** A record is emitted again whenever its filterable detail
+  changes upstream (a label added, an item moved), even when its text did
+  not. An attachment carries `extra.parentExternalId`, the external id of its
+  parent in the same stream, and is decided through it.
+- **Resync.** A sync that starts with no cursor emits every record the source
+  holds, unchanged ones included, so a resync in place stamps the current
+  version on each of them. `onResync()` prepares that full pass (§ 5).
+- **Staged history.** A source that imports its history over several cycles
+  returns `fullReadComplete: false` on the last page of a cycle that leaves
+  history for later and `true` on the one that finishes it; otherwise the
+  first cycle reads as a full read of the account.
+- **Resync cost.** The definition has a `resyncCost` sentence (one line, at
+  most 200 characters) saying what reading the account again takes, in the
+  user's terms: "This reads about 95,000 messages a day."
+- **Tests.** The parity test (§ 11) covers each filterable path. Normalizer
+  tests cover a record that belongs to nothing (`[]`), one whose detail is not
+  known (absent), and that ids, not names, are written. List tests cover a
+  rename, a move, a deletion, a failed listing and, for members, an incomplete
+  roster. A test proves an unchanged record is emitted again by a pass from an
+  empty cursor.
 
 ## 12. Multiple instances of the same source
 

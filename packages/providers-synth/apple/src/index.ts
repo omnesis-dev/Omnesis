@@ -1,9 +1,17 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import realApple, { AppleCalendarSource, AppleCallLogSource } from "@omnesis/provider-apple";
-import { defineProvider } from "@omnesis/source-sdk";
+import realApple, {
+  AppleCalendarSource,
+  AppleCallLogSource,
+  IMESSAGE_CHAT_FIELD,
+} from "@omnesis/provider-apple";
+import { defineProvider, withFilterLists } from "@omnesis/source-sdk";
 import {
+  ChatRoster,
+  loadChatRosterFixtures,
+  registerChatRoster,
+  unregisterChatRoster,
   fakeLocalFlow,
   getPerson,
   loadCast,
@@ -198,13 +206,23 @@ export default defineProvider<Record<string, never>>({
         const w = wiring[s.id];
         if (!w) throw new Error(`No synth wiring for apple source: ${s.id}`);
         const entries = w.load();
-        return {
-          async sync(cursor) {
+        const instance = {
+          async sync(cursor: SynthCursor | null) {
             return syncFromFixture(entries, cursor, (e) => w.map(e, { sourceId, providerId }), {
               sourceId,
             });
           },
         };
+        if (s.id !== "apple-imessage") return instance;
+        const roster = new ChatRoster(loadChatRosterFixtures("apple-imessage", loadChats()), [
+          "phone",
+          "email",
+        ]);
+        registerChatRoster(String(sourceId), roster);
+        return withFilterLists(
+          { ...instance, dispose: async () => unregisterChatRoster(String(sourceId)) },
+          { [IMESSAGE_CHAT_FIELD]: () => roster.list() },
+        );
       },
     };
   }),

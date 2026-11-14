@@ -115,10 +115,13 @@ export interface StatusRoutesDeps {
  * `/health` and `/status` so a client shows an action only where it works.
  * `taskConversations`: `POST /tasks/:id/conversation` ("Chat about this").
  * `taskNoteCapture`: text and voice captures accept their originating task ID.
+ * `accessLevelEditing`: a paired phone may create and change access levels
+ * (`POST /admin/access/levels`, `PATCH` and `DELETE /admin/access/levels/:id`).
  */
 const GENERAL_CAPABILITIES = {
   taskConversations: { min: 1, max: 1 },
   taskNoteCapture: { min: 1, max: 1 },
+  accessLevelEditing: { min: 1, max: 1 },
 } as const;
 
 /**

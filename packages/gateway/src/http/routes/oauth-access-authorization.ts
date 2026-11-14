@@ -586,14 +586,14 @@ export function mountOAuthAuthorizationRoutes(
   app.post(
     "/admin/access/levels",
     noStore,
-    scope.portalAdmin(),
+    scope.accessEditorAdmin((deviceId) => access.isNativeAccessEditorDevice(deviceId)),
     validateJson(accessLevelCreateBody),
     async (c) => {
       const result = await access.createLevel({
         ...c.req.valid("json"),
         actorTokenId: c.get("auth").tokenId!,
       });
-      if (!result.ok) return c.json({ error: result.error }, 409);
+      if (!result.ok) return c.json(accessRefusal(result), 409);
       log.info(`Access level ${result.value.id} created`);
       return c.json({ level: result.value }, 201);
     },
@@ -601,7 +601,7 @@ export function mountOAuthAuthorizationRoutes(
   app.patch(
     "/admin/access/levels/:id",
     noStore,
-    scope.portalAdmin(),
+    scope.accessEditorAdmin((deviceId) => access.isNativeAccessEditorDevice(deviceId)),
     validateJson(accessLevelUpdateBody),
     async (c) => {
       const levelId = oauthApprovalId.safeParse(c.req.param("id"));
@@ -612,7 +612,7 @@ export function mountOAuthAuthorizationRoutes(
         actorTokenId: c.get("auth").tokenId!,
       });
       if (!result.ok) {
-        return c.json({ error: result.error }, result.error === "not-found" ? 404 : 409);
+        return c.json(accessRefusal(result), result.error === "not-found" ? 404 : 409);
       }
       log.info(
         `Access level ${levelId.data} updated to revision ${result.value.revision} for ${result.value.connectionCount} connections`,
@@ -620,19 +620,24 @@ export function mountOAuthAuthorizationRoutes(
       return c.json({ level: result.value });
     },
   );
-  app.delete("/admin/access/levels/:id", noStore, scope.portalAdmin(), async (c) => {
-    const levelId = oauthApprovalId.safeParse(c.req.param("id"));
-    if (!levelId.success) return c.json({ error: "not-found" }, 404);
-    const result = await access.deleteLevel({
-      levelId: levelId.data,
-      actorTokenId: c.get("auth").tokenId!,
-    });
-    if (!result.ok) {
-      return c.json({ error: result.error }, result.error === "not-found" ? 404 : 409);
-    }
-    log.info(`Access level ${levelId.data} deleted`);
-    return c.json({ removed: true });
-  });
+  app.delete(
+    "/admin/access/levels/:id",
+    noStore,
+    scope.accessEditorAdmin((deviceId) => access.isNativeAccessEditorDevice(deviceId)),
+    async (c) => {
+      const levelId = oauthApprovalId.safeParse(c.req.param("id"));
+      if (!levelId.success) return c.json({ error: "not-found" }, 404);
+      const result = await access.deleteLevel({
+        levelId: levelId.data,
+        actorTokenId: c.get("auth").tokenId!,
+      });
+      if (!result.ok) {
+        return c.json({ error: result.error }, result.error === "not-found" ? 404 : 409);
+      }
+      log.info(`Access level ${levelId.data} deleted`);
+      return c.json({ removed: true });
+    },
+  );
   app.put(
     "/admin/access/connections/:id/level",
     noStore,
@@ -772,6 +777,17 @@ export function mountOAuthAuthorizationRoutes(
       });
     },
   );
+}
+
+/** A refused access change: its code, and the owner's sentence when it carries one. */
+function accessRefusal(result: { error: string; message?: string }): {
+  error: string;
+  message?: string;
+} {
+  return {
+    error: result.error,
+    ...(result.message === undefined ? {} : { message: result.message }),
+  };
 }
 
 /** An API caller names JSON; a browser navigating from the consent page does not. */

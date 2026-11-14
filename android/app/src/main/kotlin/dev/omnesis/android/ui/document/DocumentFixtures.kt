@@ -6,6 +6,15 @@ package dev.omnesis.android.ui.document
 import dev.omnesis.android.transport.dto.AgentTrailEvent
 import dev.omnesis.android.transport.dto.AgentTrailEventDoc
 import dev.omnesis.android.transport.dto.AgentTrailEventPerson
+import dev.omnesis.android.transport.dto.AuditAgent
+import dev.omnesis.android.transport.dto.AuditLevel
+import dev.omnesis.android.transport.dto.AuditNotes
+import dev.omnesis.android.transport.dto.AuditVerdict
+import dev.omnesis.android.transport.dto.DocumentAccessAudit
+import dev.omnesis.android.transport.dto.DocumentFilterDetails
+import dev.omnesis.android.transport.dto.DocumentFilterField
+import dev.omnesis.android.transport.dto.DocumentFilterItem
+import dev.omnesis.android.transport.dto.FilterNoun
 import dev.omnesis.android.transport.dto.DocumentNearDupes
 import dev.omnesis.android.transport.dto.NearDupEdge
 import kotlinx.serialization.json.JsonElement
@@ -79,3 +88,58 @@ private fun trailEvent(
     ),
     people = listOf(AgentTrailEventPerson(personId = "self", name = "You", role = "sender", isSelf = true)),
 )
+
+/**
+ * The invented WhatsApp day the filter-details and "Who can read this?" renders show, with the details a filter sees
+ * of it and the verdict of every access level, as the gateway would send them.
+ */
+internal object DocumentFixtures {
+    private const val SOURCE_ID = "whatsapp-messages:+15550100123"
+    private const val SOURCE_NAME = "WhatsApp · +1 (555) 010-0123"
+
+    val workshopDay = dev.omnesis.android.transport.dto.DocumentDetail(
+        id = "0f6c2a1e-6b8d-4e43-9c2a-5d1e7b3f9a10", providerId = "whatsapp:+15550100123", sourceId = SOURCE_ID, externalId = "day:120363000000000001@g.us:2026-03-14",
+        title = "Workshop planning — 14 March",
+        content = "Maya Reeves: Shall we book the room for Thursday?\nJamie Lopez: Thursday works. I'll bring the slides.",
+        metadata = sampleMetadata(documentType = "conversation"),
+        sourceCreatedAt = "2026-03-14T09:12:00Z", sourceUpdatedAt = "2026-03-14T18:40:00Z", ingestedAt = "2026-03-14T18:41:00Z",
+    )
+
+    val filterDetails = DocumentFilterDetails(
+        documentId = workshopDay.id, sourceVersion = 1,
+        fields = listOf(
+            DocumentFilterField("extra.chatId", FilterNoun("chat", "chats"), DocumentFilterField.PRESENT,
+                items = listOf(DocumentFilterItem("chat-workshop", "Workshop planning"))),
+            DocumentFilterField("\$people", FilterNoun("person", "people"), DocumentFilterField.PRESENT,
+                items = listOf(DocumentFilterItem("+15550100142", "Maya Reeves"), DocumentFilterItem("+15550100187", "Jamie Lopez"))),
+        ),
+    )
+
+    /** The day's details as the owner's inspector shows them, with the WhatsApp [icon]. */
+    fun bundle(icon: dev.omnesis.android.designsystem.components.SourceIconModel) = DocumentDetailViewModel.DocumentBundle(
+        doc = workshopDay,
+        sourceDisplay = DocumentDetailViewModel.SourceDisplayLookup(mapOf(SOURCE_ID to DocumentDetailViewModel.SourceDisplay(SOURCE_NAME, icon))),
+        owner = true,
+        filterDetails = filterDetails,
+    )
+
+    private fun verdict(readable: Boolean, code: String, text: String) = AuditVerdict(readable, code, text)
+    private val directNotGranted = verdict(false, "permission-not-granted", "Direct is not granted on this level")
+
+    val audit = DocumentAccessAudit(
+        documentId = workshopDay.id, title = workshopDay.title, sourceId = SOURCE_ID, sourceName = "WhatsApp", accountLabel = "+1 (555) 010-0123", sourceVersion = 1,
+        notes = AuditNotes(
+            answer = "“Can read” under Answer means Omnesis may use this document when answering that agent. Whether an answer is then released is decided by the privacy policy’s review.",
+            owner = "This page is for you, the owner. It is never available to an external agent.",
+        ),
+        levels = listOf(
+            AuditLevel("level-family", "Family helper", emptyList(),
+                answer = verdict(true, "readable", "This account is shared with all content"), direct = directNotGranted),
+            AuditLevel("level-notes", "Notes capture", emptyList(),
+                answer = verdict(false, "permission-not-granted", "Answer is not granted on this level"), direct = directNotGranted),
+            AuditLevel("level-research", "Research assistant",
+                listOf(AuditAgent("grant-aurora", "Aurora Planner", "connection"), AuditAgent("grant-northstar", "Northstar Assistant", "connection"), AuditAgent("device-kitchen", "Kitchen speaker", "device")),
+                answer = verdict(false, "hidden-by-item", "Hidden by: chat Workshop planning"), direct = verdict(false, "account-not-shared", "This account is not shared")),
+        ),
+    )
+}

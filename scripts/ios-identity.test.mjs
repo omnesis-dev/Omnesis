@@ -840,6 +840,10 @@ describe("iOS live gateway wrapper", () => {
           echo "verify" >> "$TEST_CALLS"
           exit 0
         fi
+        if [[ "$1" == */native-e2e-pair.mjs ]]; then
+          echo "pair:$4" >> "$TEST_CALLS"
+          exit 0
+        fi
         echo "prepare:$*" >> "$TEST_CALLS"
         ${simulatorFails ? "exit 70" : 'echo "00000000-0000-0000-0000-000000000017"'}
       `,
@@ -990,6 +994,8 @@ describe("iOS live gateway wrapper", () => {
     "packages",
     discovered,
     "start:300",
+    // The live tests use a genuinely paired owner phone.
+    "pair:ios",
   ];
 
   it("runs the live tests once and verifies their results", () => {
@@ -1077,7 +1083,10 @@ function bootstrap(failedFeature = "") {
       writeFileSync(path, `#!/usr/bin/env bash\nset -eu\n${source}`);
       chmodSync(path, 0o755);
     }
-    executable(join(bin, "node"), 'echo "discovery" >> "$TEST_CALLS"');
+    executable(
+      join(bin, "node"),
+      'if [[ "$1" == */native-e2e-pair.mjs ]]; then echo "pair" >> "$TEST_CALLS"; else echo "discovery" >> "$TEST_CALLS"; fi',
+    );
     executable(join(bin, "xcodegen"), 'echo "project" >> "$TEST_CALLS"');
     executable(join(scripts, "ci/resolve-ios-packages.sh"), 'echo "packages" >> "$TEST_CALLS"');
     executable(
@@ -1151,6 +1160,7 @@ describe("iOS live gateway Lab fixture", () => {
       "lab:tasks",
       "lab:watches",
       "people",
+      "pair",
       "xcodebuild",
       "stop",
     ]);

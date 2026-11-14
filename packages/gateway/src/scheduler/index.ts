@@ -70,6 +70,7 @@ export {
 } from "./tasks/near-dup-inbox.js";
 
 export { createCleanupTasks, type CleanupTaskOpts, type CleanupBundle } from "./tasks/cleanup.js";
+export { createFilterListSweepTask, type FilterListSweepOpts } from "./tasks/filter-list-sweep.js";
 export {
   createBackendReprobeTask,
   type BackendReprobeOpts,

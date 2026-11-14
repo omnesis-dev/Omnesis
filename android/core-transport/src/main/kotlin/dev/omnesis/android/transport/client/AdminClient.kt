@@ -178,6 +178,41 @@ class AdminClient(private val http: GatewayHttp) : GatewayPairingApproving, Clou
         http.getPrivateJson(listOf("admin", "access", "authorizations", id))
 
     /** Authority choices available to a paired owner approving an MCP request. */
+    suspend fun createAccessLevel(body: dev.omnesis.android.transport.dto.AccessLevelCreateBody) =
+        http.postJson<dev.omnesis.android.transport.dto.AccessLevelCreateBody, dev.omnesis.android.transport.dto.AccessLevelReply>("admin/access/levels", body).level
+
+    suspend fun updateAccessLevel(id: String, body: dev.omnesis.android.transport.dto.AccessLevelUpdateBody) =
+        http.patchJson<dev.omnesis.android.transport.dto.AccessLevelUpdateBody, dev.omnesis.android.transport.dto.AccessLevelReply>("admin/access/levels/${pathEncode(id)}", body).level
+
+    /** `DELETE /admin/access/levels/{id}`. The gateway refuses a level that connections or integrations use with `level-in-use`. */
+    suspend fun deleteAccessLevel(id: String) = http.deleteSegments(listOf("admin", "access", "levels", id))
+
+    /** `GET /admin/access/source-filters/{sourceId}`: what the account's filter can match on, field by field. */
+    suspend fun filterEditor(sourceId: String): dev.omnesis.android.transport.dto.FilterEditor =
+        http.getPrivateJson(listOf("admin", "access", "source-filters", sourceId))
+
+    /** One page of a field's choices: a search with [query], or the children of [parentId] in [device]'s tree. */
+    suspend fun filterOptions(
+        sourceId: String, field: String, query: String = "", parentId: String? = null, device: String? = null, cursor: String? = null,
+    ): dev.omnesis.android.transport.dto.FilterOptions =
+        http.getPrivateJson(listOf("admin", "access", "source-filters", sourceId, "options"),
+            buildMap { put("field", field); put("q", query); parentId?.let { put("parentId", it) }; device?.let { put("device", it) }; cursor?.let { put("cursor", it) } })
+
+    suspend fun filterPreview(policy: dev.omnesis.android.transport.dto.SourceFilter): dev.omnesis.android.transport.dto.FilterPreview =
+        http.postJsonSegments(listOf("admin", "access", "source-filters", policy.sourceId, "preview"), dev.omnesis.android.transport.dto.FilterPreviewBody(policy))
+
+    /** The gateway's reading of a typed phone number, email or domain: the canonical address, or the sentence to show. */
+    suspend fun checkFilterIdentifier(type: String, value: String): dev.omnesis.android.transport.dto.FilterIdentifierCheck =
+        http.postJsonSegments(listOf("admin", "access", "source-filters", "identifiers"), dev.omnesis.android.transport.dto.FilterIdentifierBody(type, value))
+
+    /** `GET /admin/documents/{id}/filter-details`: what a filter sees of the document. */
+    suspend fun documentFilterDetails(documentId: String): dev.omnesis.android.transport.dto.DocumentFilterDetails =
+        http.getPrivateJson(listOf("admin", "documents", documentId, "filter-details"))
+
+    /** `GET /admin/documents/{id}/access`: every access level, with whether its Answer and Direct can read the document. */
+    suspend fun documentAccess(documentId: String): dev.omnesis.android.transport.dto.DocumentAccessAudit =
+        http.getPrivateJson(listOf("admin", "documents", documentId, "access"))
+
     suspend fun accessOverview(): AccessOverview = http.getPrivateJson(listOf("admin", "access"))
 
     /** Approve or deny a pending MCP authorization request. */

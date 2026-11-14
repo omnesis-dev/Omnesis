@@ -29,13 +29,14 @@ import {
   DRIVE_TEXT_MIME_PREFIXES,
 } from "./constants.js";
 import { googleApiStatus, mapGoogleApiError } from "./api-error.js";
+import { driveParentIds, listDriveFolders } from "./drive-folders.js";
 import type {
   AttachmentExtractionConfig,
   AttachmentExtractFn,
   ExtractionResult,
 } from "@omnesis/core";
 import type { SyncCursor, SyncResult } from "@omnesis/source-sdk";
-import type { DocumentInput, PersonMention } from "@omnesis/types";
+import type { DocumentInput, FilterListItem, PersonMention } from "@omnesis/types";
 
 const log = createLogger("source:google-drive");
 
@@ -234,6 +235,18 @@ export class GoogleDriveSource {
         startPageToken: state.startPageToken,
       });
       return await this.incrementalSync(state);
+    } catch (error: unknown) {
+      throw mapGoogleApiError(error);
+    }
+  }
+
+  /**
+   * The folders the account can see and the folder each sits in, for the tree
+   * a filter picks from. See {@link listDriveFolders} for what it costs.
+   */
+  async listFolders(signal: AbortSignal): Promise<FilterListItem[]> {
+    try {
+      return await listDriveFolders(this.drive, signal);
     } catch (error: unknown) {
       throw mapGoogleApiError(error);
     }
@@ -529,9 +542,6 @@ export class GoogleDriveSource {
         tags: [],
         documentType: "file",
         people: people.length > 0 ? people : undefined,
-        // `extra` does NOT carry folder path / driveLocation today.
-        // Adding `path`, `driveLocation`, `driveName`, `parentIds` is gated
-        // on extending DRIVE_FILE_FIELDS + a folder-cache resolver.
         extra: {
           // Extractor-emitted extras first (e.g. `ocr`/`ocrPageCount` when a
           // scanned/image-only page was OCR'd) so Drive carries the same
@@ -539,6 +549,10 @@ export class GoogleDriveSource {
           // below override on collision.
           ...(extracted.extra ?? {}),
           mimeType,
+          // The folders the file sits in directly, by id; the names and the
+          // folders above them are in the account's published folder list.
+          // Always written, empty for a file in no folder the account sees.
+          folderIds: driveParentIds(file),
           shared: file.shared ?? false,
           fileSize: file.size ? parseInt(file.size, 10) : undefined,
           ...(extracted.pages !== undefined ? { pages: extracted.pages } : {}),

@@ -36,7 +36,18 @@ const log = createLogger("gateway").child("source-document-profiles");
 export interface SourceDocumentProfileEntry {
   /** Source type (the `<type>` half of a `<type>:<accountId>` source id). */
   sourceType: string;
+  /**
+   * The source version the profile describes. Absent on a publication from a
+   * collector that sends none, which counts as 0.
+   */
+  outputRevision?: number;
   profile: DocumentEventProfile;
+}
+
+/** A stored profile with the source version it was published at. */
+export interface StoredSourceDocumentProfile {
+  profile: DocumentEventProfile;
+  outputRevision: number;
 }
 
 export function createSourceDocumentProfilesTable(db: Db): void {
@@ -44,7 +55,8 @@ export function createSourceDocumentProfilesTable(db: Db): void {
     CREATE TABLE IF NOT EXISTS source_document_profiles (
       source_type TEXT PRIMARY KEY,
       profile_json TEXT NOT NULL,
-      published_at INTEGER NOT NULL
+      published_at INTEGER NOT NULL,
+      output_revision INTEGER NOT NULL DEFAULT 0
     )
   `);
 }
@@ -65,29 +77,48 @@ export function createSourceDocumentProfilesTable(db: Db): void {
  * the code at all, which nothing reads: lookups are keyed by the source types
  * the operator actually has. That is the right way round to be wrong.
  *
+ * Two collectors on different builds publish different profiles for the same
+ * source type, and whichever connects last would otherwise win. So a stored
+ * profile is replaced only by one of an equal or higher source version: the
+ * newer build's description stays, whatever order the collectors connect in.
+ * Equal versions replace, which keeps a profile edited without a version
+ * change flowing as it always has.
+ *
  * One transaction, so a reader never observes a partial publish.
  */
 export function upsertSourceDocumentProfiles(
   db: Db,
   entries: readonly SourceDocumentProfileEntry[],
   publishedAt: number,
-): { stored: number } {
-  const insert = db.prepare<[string, string, number]>(
-    `INSERT INTO source_document_profiles (source_type, profile_json, published_at)
-     VALUES (?, ?, ?)
+): { stored: number; skipped: number } {
+  const insert = db.prepare<[string, string, number, number]>(
+    `INSERT INTO source_document_profiles
+       (source_type, profile_json, output_revision, published_at)
+     VALUES (?, ?, ?, ?)
      ON CONFLICT(source_type) DO UPDATE SET
        profile_json = excluded.profile_json,
-       published_at = excluded.published_at`,
+       output_revision = excluded.output_revision,
+       published_at = excluded.published_at
+     WHERE excluded.output_revision >= source_document_profiles.output_revision`,
   );
 
+  let stored = 0;
   db.transaction(() => {
     for (const entry of entries) {
-      insert.run(entry.sourceType, JSON.stringify(entry.profile), publishedAt);
+      stored += insert.run(
+        entry.sourceType,
+        JSON.stringify(entry.profile),
+        entry.outputRevision ?? 0,
+        publishedAt,
+      ).changes;
     }
   })();
 
-  log.info(`stored document-event profiles for ${entries.length} source type(s)`);
-  return { stored: entries.length };
+  const skipped = entries.length - stored;
+  log.info(
+    `stored document-event profiles for ${stored} source type(s), kept a newer one for ${skipped}`,
+  );
+  return { stored, skipped };
 }
 
 /**
@@ -97,27 +128,45 @@ export function upsertSourceDocumentProfiles(
  * identical across accounts.
  */
 export function getSourceDocumentProfile(db: Db, sourceType: string): DocumentEventProfile | null {
+  return getStoredSourceDocumentProfile(db, sourceType)?.profile ?? null;
+}
+
+/** As {@link getSourceDocumentProfile}, with the source version it was published at. */
+export function getStoredSourceDocumentProfile(
+  db: Db,
+  sourceType: string,
+): StoredSourceDocumentProfile | null {
   const row = db
-    .prepare<[string], { profile_json: string }>(
-      "SELECT profile_json FROM source_document_profiles WHERE source_type = ?",
+    .prepare<[string], { profile_json: string; output_revision: number }>(
+      "SELECT profile_json, output_revision FROM source_document_profiles WHERE source_type = ?",
     )
     .get(sourceType);
   if (!row) return null;
-  return parseProfile(sourceType, row.profile_json);
+  const profile = parseProfile(sourceType, row.profile_json);
+  return profile ? { profile, outputRevision: row.output_revision } : null;
 }
 
 /** Every published profile, ordered by source type for a stable projection. */
-export function listSourceDocumentProfiles(db: Db): SourceDocumentProfileEntry[] {
+export function listSourceDocumentProfiles(
+  db: Db,
+): Array<SourceDocumentProfileEntry & { outputRevision: number }> {
   const rows = db
-    .prepare<[], { source_type: string; profile_json: string }>(
-      "SELECT source_type, profile_json FROM source_document_profiles ORDER BY source_type",
+    .prepare<[], { source_type: string; profile_json: string; output_revision: number }>(
+      `SELECT source_type, profile_json, output_revision
+         FROM source_document_profiles ORDER BY source_type`,
     )
     .all();
 
-  const entries: SourceDocumentProfileEntry[] = [];
+  const entries: Array<SourceDocumentProfileEntry & { outputRevision: number }> = [];
   for (const row of rows) {
     const profile = parseProfile(row.source_type, row.profile_json);
-    if (profile) entries.push({ sourceType: row.source_type, profile });
+    if (profile) {
+      entries.push({
+        sourceType: row.source_type,
+        outputRevision: row.output_revision,
+        profile,
+      });
+    }
   }
   return entries;
 }

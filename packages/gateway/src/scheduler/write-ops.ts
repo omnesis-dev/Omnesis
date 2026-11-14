@@ -439,6 +439,14 @@ const WRITE_OP_DEFS: readonly WriteOpDef[] = [
   // Collector boot push of every source type's document-event profile. One
   // small transaction over a table with one row per installed source type.
   { name: "sources.upsertDocumentProfiles", priority: "realtime" },
+  // One batch of version-only changes the indexer has copied, forgotten.
+  { name: "documents.completeFilterIndexQueue", priority: "background" },
+  // One page of a list a collector publishes for a filterable field. Awaited by
+  // the collector's sync page, so it runs with ingestion; applied in bounded
+  // sub-batches that give the writer back between them.
+  { name: "filterLists.stagePart", priority: "realtime" },
+  { name: "filterLists.delete", priority: "user" },
+  { name: "filterLists.sweep", priority: "background" },
 
   // ── the Brain run queue ───────────────────────────────────────
   // Agent runs are asynchronous background work that must never contend

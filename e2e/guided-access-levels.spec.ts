@@ -1,0 +1,1435 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Adrien Conrath
+
+import { readFileSync, writeFileSync, mkdirSync, chmodSync } from "node:fs";
+import { join } from "node:path";
+import { test, expect, type Page } from "@playwright/test";
+// The fields the real providers declare, with independently invented account and content data.
+const levelId = "00000000-0000-4000-8000-000000000093";
+const policyId = "00000000-0000-4000-8000-000000000094";
+const baseSources = [
+  {
+    id: "gmail:owner@example.com",
+    sourceType: "gmail",
+    displayName: "Gmail",
+    available: true,
+    filterable: true,
+  },
+  {
+    id: "google-drive:owner@example.com",
+    sourceType: "google-drive",
+    displayName: "Google Drive",
+    available: true,
+    filterable: true,
+  },
+];
+const noun = (one: string, many: string) => ({ one, many });
+const counted = { status: "ready", tooOld: 0, unmatched: 0, tooOldText: null, unmatchedText: null };
+const people = (identifiers: string[]) => ({
+  field: "$people",
+  capability: "person",
+  noun: noun("person", "people"),
+  picker: "search",
+  scope: "global",
+  identifiers,
+  state: { status: "ready" },
+  counts: counted,
+});
+/** Each source type's filterable fields, as its package declares them. */
+const FIELDS: Record<string, unknown[]> = {
+  gmail: [
+    people(["email", "domain"]),
+    {
+      field: "extra.labelIds",
+      capability: "membership",
+      noun: noun("label", "labels"),
+      picker: "tree",
+      scope: "global",
+      levels: [noun("label", "labels")],
+      insideText: "Includes the labels inside.",
+      state: { status: "ready" },
+      counts: counted,
+    },
+  ],
+  "google-drive": [
+    {
+      field: "extra.folderId",
+      capability: "tree",
+      noun: noun("folder", "folders"),
+      picker: "tree",
+      scope: "global",
+      levels: [noun("folder", "folders")],
+      insideText: "Includes the folders inside.",
+      state: { status: "ready" },
+      counts: counted,
+    },
+  ],
+  "whatsapp-messages": [
+    {
+      field: "extra.chatJid",
+      capability: "membership",
+      noun: noun("chat", "chats"),
+      picker: "search",
+      scope: "global",
+      state: { status: "ready" },
+      counts: counted,
+    },
+    people(["phone"]),
+  ],
+};
+/** A field's items carry the capability its declaration names. */
+const FIELD_CAPABILITY: Record<string, string> = {
+  "extra.labelIds": "membership",
+  "extra.folderId": "tree",
+  "extra.chatJid": "membership",
+};
+const LABEL = { capability: "membership", field: "extra.labelIds", id: "planning" };
+const savedPolicy = {
+  sourceId: baseSources[0]!.id,
+  audience: { accessLevel: levelId, capability: "answer" },
+  rules: [{ action: "share", match: [LABEL] }],
+  otherwise: "hide",
+};
+const answer = {
+  capability: "answer",
+  // A filtered rule leaves its filtered accounts out of `sources`, for clients that do not
+  // apply filters, and carries the real selection in `scopeSources`.
+  sources: { mode: "allowlist", sourceIds: [baseSources[1]!.id] },
+  scopeSources: { mode: "allowlist", sourceIds: baseSources.map((source) => source.id) },
+  release: { mode: "reviewed", policyFamilyId: policyId },
+  filterRevision: 3,
+  scopePolicies: [savedPolicy],
+};
+const direct = {
+  capability: "direct",
+  sources: { mode: "allowlist", sourceIds: baseSources.map((source) => source.id) },
+  filterRevision: 5,
+  scopePolicies: [],
+};
+const nameFor = (ref: {
+  capability: string;
+  field?: string;
+  id?: string;
+  label?: string;
+  identifiers?: Array<{ value: string }>;
+}) =>
+  ref.id?.match(/-item-(\d+)$/)
+    ? `${ref.field === "extra.folderId" ? "Folder" : "Label"} ${String(Number(ref.id.match(/-item-(\d+)$/)![1]) + 1).padStart(2, "0")} — Independently invented catalogue entry`
+    : ref.field === "extra.labelIds"
+      ? "Planning"
+      : ref.field === "extra.folderId"
+        ? "Comet notes"
+        : ref.label || ref.identifiers?.map((item) => item.value).join(" or ") || "Maya Reeves";
+async function assertPrimaryContrast(page: Page) {
+  const dialog = page.getByRole("dialog");
+  const scope = (await dialog.count()) ? dialog : page;
+  const button = scope
+    .locator(
+      ".guided-task-footer .btn-primary:enabled, .guided-filter-footer .btn-primary:enabled, .confirm-modal-actions .btn-primary:enabled",
+    )
+    .last();
+  if (!(await button.count())) return;
+  const check = async () => {
+    const ratio = await button.evaluate((element) => {
+      const luminance = (color: string) => {
+        const channels = color
+          .match(/\d+/g)!
+          .slice(0, 3)
+          .map(Number)
+          .map((channel) => {
+            const value = channel / 255;
+            return value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
+          });
+        return channels[0]! * 0.2126 + channels[1]! * 0.7152 + channels[2]! * 0.0722;
+      };
+      const style = getComputedStyle(element),
+        a = luminance(style.color),
+        b = luminance(style.backgroundColor);
+      return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
+    });
+    expect(ratio).toBeGreaterThanOrEqual(4.5);
+  };
+  await check();
+  // Focusing or pressing a footer action dismisses an open search overlay.
+  // Its interaction colors are exercised on the same builder with searches closed.
+  if (await page.locator(".source-filter-results:not([hidden])").count()) return;
+  await button.hover();
+  await check();
+  await button.focus();
+  await check();
+  await page.mouse.down();
+  await check();
+  // Measure :active without activating the action or its backdrop.
+  await page.evaluate(() =>
+    document.addEventListener(
+      "click",
+      (event) => {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+      },
+      { capture: true, once: true },
+    ),
+  );
+  await page.mouse.up();
+  await page.mouse.move(0, 0);
+}
+async function assertInputAffordance(page: Page) {
+  const ratios = await page
+    .locator(
+      '.guided-level-flow input:enabled:not([type="checkbox"]):not([type="radio"]), .guided-level-flow select:enabled, .guided-filter-editor input:enabled:not([type="checkbox"]):not([type="radio"]), .guided-filter-editor select:enabled',
+    )
+    .evaluateAll((elements) => {
+      const luminance = (color: string) => {
+        const values = color
+          .match(/[\d.]+/g)!
+          .slice(0, 3)
+          .map(Number)
+          .map((channel) => {
+            const value = channel / 255;
+            return value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
+          });
+        return values[0]! * 0.2126 + values[1]! * 0.7152 + values[2]! * 0.0722;
+      };
+      return elements
+        .filter((element) => (element as HTMLElement).offsetParent !== null)
+        .map((element) => {
+          let background = getComputedStyle(element).backgroundColor;
+          let parent = element.parentElement;
+          while ((background === "transparent" || background === "rgba(0, 0, 0, 0)") && parent) {
+            background = getComputedStyle(parent).backgroundColor;
+            parent = parent.parentElement;
+          }
+          const border = luminance(getComputedStyle(element).borderTopColor),
+            surface = luminance(background);
+          return (Math.max(border, surface) + 0.05) / (Math.min(border, surface) + 0.05);
+        });
+    });
+  for (const ratio of ratios) expect(ratio).toBeGreaterThanOrEqual(3);
+}
+async function assertExitConfirmationInViewport(page: Page) {
+  const modal = page.locator(".guided-exit-confirmation .confirm-modal");
+  if (!(await modal.count())) return;
+  const bounds = await modal.evaluate((element) => {
+    const controls = [element, ...element.querySelectorAll("button")];
+    return controls.map((control) => {
+      const rect = control.getBoundingClientRect();
+      return (
+        rect.left >= 0 &&
+        rect.top >= 0 &&
+        rect.right <= window.innerWidth &&
+        rect.bottom <= window.innerHeight
+      );
+    });
+  });
+  expect(bounds.every(Boolean)).toBe(true);
+}
+async function capture(
+  page: Page,
+  testInfo: { outputPath: (name: string) => string },
+  name: string,
+  captureScale = 1,
+) {
+  // Wait for ordinary summary reads as well as finite layout transitions.
+  await expect(page.locator(".compact-policy-impact").filter({ hasText: "Counting…" })).toHaveCount(
+    0,
+  );
+  // Leave deliberate preparation and progress states visible in their captures.
+  await page.evaluate(async () => {
+    await Promise.allSettled(
+      document
+        .getAnimations()
+        .filter((animation) => Number.isFinite(animation.effect?.getComputedTiming().endTime))
+        .map((animation) => animation.finished),
+    );
+  });
+  await assertExitConfirmationInViewport(page);
+  const root = process.env.OMNESIS_ACCESS_FLOW_CAPTURE_DIR;
+  if (root) mkdirSync(root, { recursive: true, mode: 0o700 });
+  const path = root ? join(root, name + ".png") : testInfo.outputPath(name + ".png");
+  if (captureScale === 1) await page.screenshot({ path });
+  else {
+    const session = await page.context().newCDPSession(page);
+    try {
+      const { cssVisualViewport: viewport } = await session.send("Page.getLayoutMetrics");
+      const result = await session.send("Page.captureScreenshot", {
+        format: "png",
+        captureBeyondViewport: false,
+        clip: {
+          x: viewport.pageX,
+          y: viewport.pageY,
+          width: viewport.clientWidth,
+          height: viewport.clientHeight,
+          scale: captureScale,
+        },
+      });
+      writeFileSync(path, Buffer.from(result.data, "base64"));
+    } finally {
+      await session.detach();
+    }
+  }
+  await assertPrimaryContrast(page);
+  await assertInputAffordance(page);
+  if (root) chmodSync(path, 0o600);
+  return path;
+}
+for (const theme of ["dark", "light"])
+  for (const width of [1440, 390])
+    test(`guided create and targeted edit preserve exact permissions at ${width}px in ${theme}`, async ({
+      page,
+    }, testInfo) => {
+      const sources = [...baseSources];
+      let longCatalogue = false,
+        sameNameCatalogue = false;
+      let previews = "ready",
+        options = "ready",
+        filtersEnabled = true;
+      const iconFile = process.env.OMNESIS_ACCESS_FLOW_ICON_FILE;
+      const fixtureIcons = iconFile
+        ? (JSON.parse(readFileSync(iconFile, "utf8")) as Record<string, string>)
+        : {};
+      for (const source of sources)
+        Object.assign(source, { icon: fixtureIcons[source.sourceType] });
+      await page.addInitScript((theme) => localStorage.setItem("omnesis.theme", theme), theme);
+      await page.setViewportSize({ width, height: width === 390 ? 844 : 1080 });
+      const configDir = process.env.OMNESIS_PORTAL_TEST_CONFIG_DIR;
+      if (!configDir) throw new Error("An isolated Portal test gateway is required.");
+      const token = readFileSync(join(configDir, "token"), "utf8").trim();
+      expect((await page.request.post("/portal/api/login", { data: { token } })).ok()).toBe(true);
+      let levels = [
+        {
+          id: levelId,
+          name: "Research assistant",
+          revision: 1,
+          connectionCount: 0,
+          createdAt: 1,
+          updatedAt: 1,
+          rules: [answer, direct],
+        },
+      ];
+      let active = 0,
+        maximum = 0,
+        conflict = true;
+      const writes: Array<Record<string, unknown>> = [];
+      let holdWrite = false,
+        releaseWrite: (() => void) | undefined;
+      const overview = () => ({
+        principals: [],
+        pendingAuthorizations: [],
+        pendingRequests: [],
+        oauth: null,
+        policies: [],
+        policyFamilies: [{ id: policyId, name: "Project policy", isDefault: true }],
+        defaultPolicyFamilyId: policyId,
+        sourceFilters: { enabled: filtersEnabled },
+        sources,
+        levels,
+      });
+      await page.route("**/admin/access", (route) => route.fulfill({ json: overview() }));
+      await page.route("**/admin/access/source-filters/*/options?*", async (route) => {
+        if (options === "error") {
+          await route.fulfill({
+            status: 503,
+            json: { error: "Options are temporarily unavailable." },
+          });
+          return;
+        }
+        const url = new URL(route.request().url()),
+          field = url.searchParams.get("field")!,
+          parent = url.searchParams.get("parentId");
+        const sourceId = decodeURIComponent(url.pathname.split("/").at(-2)!);
+        const declared = FIELDS[sources.find((source) => source.id === sourceId)!.sourceType]!;
+        const phoneOnly =
+          (
+            declared.find((item) => (item as { field: string }).field === "$people") as
+              { identifiers: string[] } | undefined
+          )?.identifiers.includes("email") === false;
+        const capability = FIELD_CAPABILITY[field];
+        const folder = field === "extra.folderId";
+        const ref =
+          field === "$people"
+            ? {
+                capability: "person",
+                label: "Maya Reeves",
+                identifiers: [
+                  phoneOnly
+                    ? { type: "phone", value: "+15550100144" }
+                    : { type: "email", value: "maya@example.com" },
+                ],
+              }
+            : {
+                capability,
+                field,
+                id:
+                  field === "extra.labelIds"
+                    ? sameNameCatalogue
+                      ? "planning-replacement"
+                      : "planning"
+                    : parent
+                      ? "folder-child"
+                      : "folder-root",
+              };
+        const label = (text: string) => ({ label: text, shortLabel: text.split("/").at(-1) });
+        const items =
+          longCatalogue && field !== "$people"
+            ? Array.from({ length: 65 }, (_, index) => ({
+                ref: { capability, field, id: `${parent || field}-item-${index}` },
+                ...label(
+                  `${folder ? "Folder" : "Label"} ${String(index + 1).padStart(2, "0")} — Independently invented catalogue entry`,
+                ),
+                count: 6,
+                hasChildren: folder && !parent,
+              }))
+            : [
+                {
+                  ref,
+                  ...label(
+                    folder
+                      ? parent
+                        ? "Comet notes"
+                        : "Dawn archive"
+                      : field === "extra.labelIds"
+                        ? "Planning"
+                        : "Maya Reeves",
+                  ),
+                  count: 6,
+                  hasChildren: folder && !parent,
+                },
+              ];
+        const cursor = url.searchParams.get("cursor");
+        const offset = cursor ? Number(Buffer.from(cursor, "base64url").toString()) : 0;
+        await route.fulfill({
+          json: {
+            sourceId,
+            field,
+            items: items.slice(offset, offset + 50),
+            nextCursor:
+              offset + 50 < items.length
+                ? Buffer.from(String(offset + 50)).toString("base64url")
+                : undefined,
+          },
+        });
+      });
+      await page.route("**/admin/access/source-filters/*/preview", async (route) => {
+        if (previews === "error") {
+          await route.fulfill({
+            status: 503,
+            json: { error: "Filter previews are busy. Try again shortly." },
+          });
+          return;
+        }
+        active++;
+        maximum = Math.max(maximum, active);
+        if (active > 4) {
+          active--;
+          await route.fulfill({
+            status: 503,
+            json: { error: "Filter previews are busy. Try again shortly." },
+          });
+          return;
+        }
+        const body = route.request().postDataJSON(),
+          sourceId = decodeURIComponent(new URL(route.request().url()).pathname.split("/").at(-2)!);
+        await new Promise((resolve) => setTimeout(resolve, 25));
+        const only = body.policy.rules[0].action === "share";
+        active--;
+        await route.fulfill({
+          json:
+            previews === "counting"
+              ? { status: "pending", retryAfterMs: 60_000 }
+              : {
+                  status: "ready",
+                  sourceId,
+                  total: 20,
+                  visible: only ? 6 : 12,
+                  hidden: only ? 14 : 8,
+                  tooOld: 0,
+                  unmatched: 2,
+                  tooOldText: null,
+                  unmatchedText: "2 records can’t be matched to a label and stay hidden.",
+                  connected: true,
+                  items: body.policy.rules.flatMap(
+                    (rule: { match: Array<{ capability: string; field?: string; id?: string }> }) =>
+                      rule.match.map((ref) => ({
+                        ref,
+                        label:
+                          previews === "missing" && ref.capability !== "person"
+                            ? ref.id
+                            : nameFor(ref),
+                        count: previews === "missing" && ref.capability !== "person" ? 0 : 6,
+                        ...(previews === "missing" && ref.capability !== "person"
+                          ? { missing: true, reason: "not-in-list" }
+                          : {}),
+                      })),
+                  ),
+                },
+        });
+      });
+      // An account's editor: the fields its source declares, all ready.
+      const editorPath = (url: URL) =>
+        /^\/admin\/access\/source-filters\/[^/]+$/.test(url.pathname) &&
+        !url.pathname.endsWith("/identifiers");
+      await page.route(editorPath, async (route) => {
+        const sourceId = decodeURIComponent(
+          new URL(route.request().url()).pathname.split("/").at(-1)!,
+        );
+        const source = sources.find((item) => item.id === sourceId);
+        if (!source || source.available === false) {
+          await route.fulfill({ status: 404, json: { error: "Unknown source." } });
+          return;
+        }
+        await route.fulfill({
+          json: {
+            sourceId,
+            sourceType: source.sourceType,
+            devices: [{ id: "dev-invented", name: "Invented laptop" }],
+            showDeviceLevel: false,
+            profile: "declared",
+            profileText: null,
+            connected: true,
+            fields: FIELDS[source.sourceType] ?? [],
+          },
+        });
+      });
+      await page.route("**/admin/access/source-filters/identifiers", async (route) => {
+        const { type, value } = route.request().postDataJSON();
+        const digits = String(value)
+          .replace(/[^0-9+]/g, "")
+          .replace(/^00/, "+");
+        await route.fulfill({
+          json:
+            type === "phone"
+              ? /^\+[1-9][0-9]{6,14}$/.test(digits)
+                ? { identifier: { type, value: digits } }
+                : { error: "Enter a valid phone number. Include the international country code." }
+              : String(value).includes(".")
+                ? {
+                    identifier: {
+                      type,
+                      value: String(value)
+                        .trim()
+                        .toLowerCase()
+                        .replace(/^mailto:/, ""),
+                    },
+                  }
+                : {
+                    error:
+                      type === "email" ? "Enter a valid email address." : "Enter a valid domain.",
+                  },
+        });
+      });
+      await page.route("**/admin/access/levels", async (route) => {
+        const body = route.request().postDataJSON();
+        writes.push(body);
+        levels.push({
+          id: "00000000-0000-4000-8000-000000000095",
+          name: body.name,
+          revision: 1,
+          connectionCount: 0,
+          createdAt: 2,
+          updatedAt: 2,
+          rules: body.rules,
+        });
+        await route.fulfill({ json: { level: levels.at(-1) } });
+      });
+      await page.route(`**/admin/access/levels/${levelId}`, async (route) => {
+        const body = route.request().postDataJSON();
+        writes.push(body);
+        if (conflict) {
+          conflict = false;
+          levels = levels.map((level) =>
+            level.id === levelId ? { ...level, revision: 2 } : level,
+          );
+          await route.fulfill({ status: 409, json: { error: "stale-revision" } });
+          return;
+        }
+        if (holdWrite)
+          await new Promise<void>((resolve) => {
+            releaseWrite = resolve;
+          });
+        levels = levels.map((level) =>
+          level.id === levelId
+            ? { ...level, rules: body.rules, revision: level.revision + 1 }
+            : level,
+        );
+        await route.fulfill({ json: { level: levels.find((level) => level.id === levelId) } });
+      });
+      const shot = (name: string) => capture(page, testInfo, `${theme}-${width}-${name}`);
+      const forward = () => page.getByRole("button", { name: "Continue", exact: true }).click();
+      const sourceRow = (name: string) =>
+        page.locator(".guided-source-row").filter({ has: page.getByText(name, { exact: true }) });
+      const modal = () => page.getByRole("dialog");
+      const pickMatches = async () => {
+        if (await modal().getByLabel("All content", { exact: false }).isChecked())
+          await modal().getByLabel("Only matching content", { exact: false }).check();
+        await modal().getByRole("button", { name: "Continue", exact: true }).click();
+        await modal().getByRole("searchbox").first().focus();
+      };
+      const openPicker = async (scopeKind: string) => {
+        const kind = scopeKind === "participant" ? "people" : `${scopeKind}s`;
+        await modal()
+          .getByRole("searchbox", { name: `Search ${kind}`, exact: true })
+          .focus();
+        await expect(
+          modal().getByRole("searchbox", { name: `Search ${kind}`, exact: true }),
+        ).toHaveAttribute("aria-expanded", "true");
+      };
+      const closePicker = () => modal().locator(".modal-title").click();
+      const refreshBuilder = async () => {
+        await closePicker();
+        if (await modal().getByRole("button", { name: "Back", exact: true }).count())
+          await modal().getByRole("button", { name: "Back", exact: true }).click();
+        await modal().getByRole("button", { name: "Continue", exact: true }).click();
+      };
+      await page.goto("/portal/settings/access");
+      await expect(
+        page.getByRole("heading", { name: "Agent access", exact: true }),
+      ).toBeInViewport();
+      await shot("00-access-entry");
+      await page.getByRole("button", { name: "New access level", exact: true }).click();
+      await expect(
+        page.getByRole("heading", {
+          name: "What should this connection be allowed to do?",
+          exact: true,
+        }),
+      ).toBeInViewport();
+      await expect(
+        page.getByRole("heading", {
+          name: "What should this connection be allowed to do?",
+          exact: true,
+        }),
+      ).toBeFocused();
+      await expect(page.locator(".settings-header")).toBeVisible();
+      await expect(page.locator(".config-tab.active")).toHaveText("Access");
+      await expect(page.locator(".config-tab.active")).toBeInViewport({ ratio: 1 });
+      await expect(page.locator(".app-sidebar")).toBeVisible();
+      await expect(page.getByRole("button", { name: "Continue", exact: true })).toBeInViewport();
+      await expect(page.getByLabel("Access level name", { exact: true })).toHaveCount(0);
+      await shot("supplement-00-answer-only-permissions");
+      await page
+        .locator(".access-capability-preset")
+        .filter({ has: page.getByText("Direct", { exact: true }) })
+        .locator("input")
+        .check();
+      await shot("new-01-permissions");
+      await forward();
+      await expect(
+        page.getByRole("heading", { name: "Which sources can Answer use?", exact: true }),
+      ).toBeInViewport();
+      await sourceRow("Gmail").getByRole("checkbox").check();
+      await sourceRow("Google Drive").getByRole("checkbox").check();
+      await shot("new-02-answer-data");
+      await sourceRow("Gmail")
+        .getByRole("button", { name: "Change Gmail content", exact: true })
+        .click();
+      await shot("filter-01-mode");
+      await expect(modal().getByLabel("All content", { exact: false })).toBeChecked();
+      await modal().getByRole("button", { name: "Done", exact: true }).click();
+      await expect(page.getByRole("dialog")).toHaveCount(0);
+      await expect(sourceRow("Gmail")).toContainText("All content");
+      await sourceRow("Gmail")
+        .getByRole("button", { name: "Change Gmail content", exact: true })
+        .click();
+      await pickMatches();
+      await openPicker("label");
+      await modal()
+        .getByRole("checkbox", { name: /Planning/ })
+        .check();
+      await shot("filter-02-label-picker");
+      await refreshBuilder();
+      await expect(
+        modal().getByRole("button", { name: "Apply filter", exact: true }),
+      ).toBeEnabled();
+      await shot("filter-03-selected-label-table");
+      await openPicker("label");
+      await expect(modal().getByRole("checkbox", { name: /Planning/ })).toBeChecked();
+      await refreshBuilder();
+      await modal().getByRole("button", { name: "Apply filter", exact: true }).click();
+      await sourceRow("Google Drive")
+        .getByRole("button", { name: "Change Google Drive content", exact: true })
+        .click();
+      await modal().getByLabel("Everything except matching content", { exact: false }).check();
+      await pickMatches();
+      await modal().getByRole("button", { name: "Open Dawn archive", exact: true }).click();
+      await modal()
+        .getByRole("checkbox", { name: /Comet notes/ })
+        .check();
+      await shot("filter-04-folder-picker");
+      await refreshBuilder();
+      await expect(
+        modal().getByRole("button", { name: "Apply filter", exact: true }),
+      ).toBeEnabled();
+      await shot("filter-05-except-selected-table");
+      await modal().getByRole("button", { name: "Apply filter", exact: true }).click();
+      await forward();
+      await expect(
+        page.getByRole("heading", { name: "Which sources can Direct read?", exact: true }),
+      ).toBeInViewport();
+      await shot("new-03-direct-choice");
+      await page.getByLabel("Choose different sources", { exact: false }).check();
+      await forward();
+      await shot("new-04-direct-data");
+      await sourceRow("Google Drive")
+        .getByRole("button", { name: "Change Google Drive content", exact: true })
+        .click();
+      await modal().getByLabel("All content", { exact: false }).check();
+      await shot("filter-06-all-content-expansion");
+      await modal().getByRole("button", { name: "Done", exact: true }).click();
+      await forward();
+      await expect(
+        page.getByRole("heading", { name: "What about new sources?", exact: true }),
+      ).toBeInViewport();
+      await shot("new-05-future");
+      const futureInfo = page
+        .getByRole("button", { name: "About Keep new sources blocked", exact: true })
+        .first();
+      const futureHelp = page.locator("#future-answer-false-info");
+      const futureBlocked = page.getByLabel("Keep new sources blocked", { exact: false }).first();
+      await futureBlocked.focus();
+      await futureInfo.hover();
+      await futureHelp.hover();
+      await expect(futureHelp).toBeVisible();
+      await page.keyboard.press("Escape");
+      await expect(futureHelp).toBeHidden();
+      await expect(futureBlocked).toBeFocused();
+      await expect(futureBlocked).toBeChecked();
+      await futureInfo.focus();
+      await expect(futureHelp).toBeVisible();
+      await page.keyboard.press("Escape");
+      await expect(futureHelp).toBeHidden();
+      await futureInfo.focus();
+      await expect(futureHelp).toBeVisible();
+      await shot("new-05b-future-info");
+      await forward();
+      await expect(
+        page.getByRole("heading", { name: "How should answers be released?", exact: true }),
+      ).toBeInViewport();
+      await shot("new-06-release");
+      await forward();
+      await page.getByLabel("Access level name", { exact: true }).fill("Project assistant");
+      await shot("new-07-review");
+      const reviewChange = (title: string) =>
+        page
+          .locator(".guided-review-decision")
+          .filter({ has: page.getByRole("heading", { name: title, exact: true }) })
+          .getByRole("button", { name: "Change", exact: true });
+      await reviewChange("Answer release").click();
+      await forward();
+      await expect(
+        page.getByRole("heading", { name: "Ready to create this access level?", exact: true }),
+      ).toBeVisible();
+      await reviewChange("Answer data").click();
+      await sourceRow("Google Drive")
+        .getByRole("button", { name: "Change Google Drive content", exact: true })
+        .click();
+      await modal().getByLabel("Only matching content", { exact: false }).check();
+      await pickMatches();
+      await refreshBuilder();
+      await expect(
+        modal().getByRole("button", { name: "Apply filter", exact: true }),
+      ).toBeEnabled();
+      await modal().getByRole("button", { name: "Apply filter", exact: true }).click();
+      await forward();
+      await expect(
+        page.getByRole("heading", { name: "Ready to create this access level?", exact: true }),
+      ).toBeVisible();
+      await shot("new-07a-review-after-correction");
+      await page.locator(".guided-task-footer").scrollIntoViewIfNeeded();
+      await shot("new-07b-review-after-correction-bottom");
+      await page.getByRole("button", { name: "Create access level", exact: true }).click();
+      await expect(page.locator(".access-notice")).toBeInViewport();
+      await expect(page.locator(".access-notice")).toContainText("Project assistant");
+      await shot("new-08-success");
+      const created = writes[0] as {
+        rules: Array<{ capability: string; scopePolicies?: unknown[] }>;
+      };
+      expect(
+        created.rules.find((rule) => rule.capability === "answer")!.scopePolicies,
+      ).toHaveLength(2);
+      expect(
+        created.rules.find((rule) => rule.capability === "direct")!.scopePolicies,
+      ).toHaveLength(1);
+      await expect(page.getByText(/filtered content/).first()).toBeVisible();
+      await page.goto(`/portal/settings/access/levels/${levelId}`);
+      await expect(
+        page.getByRole("heading", { name: "What would you like to change?", exact: true }),
+      ).toBeInViewport();
+      await shot("edit-01-overview");
+      // Permissions read as the shared pills; Direct data has one way in; no rule sits over the footer.
+      const permissionsRow = page
+        .locator(".guided-overview-decision")
+        .filter({ has: page.getByRole("heading", { name: "Permissions", exact: true }) });
+      await expect(permissionsRow.locator(".capability-pills")).toHaveAccessibleName(
+        "Answer and Direct allowed, Notes not allowed",
+      );
+      await expect(
+        page
+          .locator(".guided-overview-decision")
+          .filter({ has: page.getByRole("heading", { name: "Direct data", exact: true }) })
+          .getByRole("button"),
+      ).toHaveText(["Change"]);
+      await expect(page.locator(".guided-task-footer")).toHaveCSS("border-top-width", "0px");
+      await page.locator(".guided-task-footer").scrollIntoViewIfNeeded();
+      await shot("edit-01b-overview-bottom");
+      const change = async (title: string) =>
+        page
+          .locator(".guided-overview-decision")
+          .filter({ has: page.getByRole("heading", { name: title, exact: true }) })
+          .getByRole("button", { name: "Change", exact: true })
+          .click();
+      await change("Answer data");
+      await shot("edit-02-targeted-data");
+      await sourceRow("Gmail")
+        .getByRole("button", { name: "Change Gmail content", exact: true })
+        .click();
+      await modal().getByLabel("Everything except matching content", { exact: false }).check();
+      await pickMatches();
+      await refreshBuilder();
+      await expect(
+        modal().getByRole("button", { name: "Apply filter", exact: true }),
+      ).toBeEnabled();
+      await modal().getByRole("button", { name: "Apply filter", exact: true }).click();
+      await page.getByRole("button", { name: "Done", exact: true }).click();
+      await page.getByRole("button", { name: "Review changes", exact: true }).click();
+      await expect(page.locator(".guided-review-decision")).toHaveCount(1);
+      await expect(page.locator(".guided-account-delta")).toHaveCount(1);
+      await expect(page.locator(".guided-account-delta")).toContainText("Hide matching content");
+      await expect(
+        page.locator(".guided-account-delta .compact-filter-table").last(),
+      ).toContainText("Planning");
+      await expect(page.locator(".guided-account-delta")).not.toContainText("Google Drive");
+      await shot("edit-03-data-delta");
+      // The review goes Back to the level page, which holds Cancel.
+      await expect(
+        page.locator(".guided-task-footer").getByRole("button", { name: "Cancel" }),
+      ).toHaveCount(0);
+      await page.getByRole("button", { name: "Back", exact: true }).click();
+      await page.getByRole("button", { name: "Cancel", exact: true }).click();
+      await expect(page.getByRole("button", { name: "Keep editing", exact: true })).toBeFocused();
+      await shot("edit-03b-discard-confirmation");
+      await page.keyboard.press("Escape");
+      await expect(page.getByRole("button", { name: "Cancel", exact: true })).toBeFocused();
+      await expect(
+        page.getByRole("dialog", { name: "Discard this draft?", exact: true }),
+      ).toHaveCount(0);
+      await page.getByRole("button", { name: "Review changes", exact: true }).click();
+      await expect(page.locator(".guided-account-delta")).toContainText("Hide matching content");
+      await expect(
+        page.locator(".guided-account-delta .compact-filter-table").last(),
+      ).toContainText("Planning");
+      await page.getByRole("button", { name: "Save changes", exact: true }).click();
+      await expect(page.getByRole("alert")).toContainText("Your changes are kept");
+      await expect(page.getByRole("alert")).toBeInViewport();
+      await shot("edit-04-conflict");
+      await expect(page.locator(".guided-task-footer")).not.toContainText(
+        "Load the latest version",
+      );
+      if (width === 390) {
+        await page.setViewportSize({ width: width / 2, height: 422 });
+        const recovery = page.getByRole("button", {
+          name: "Load the latest version and discard my changes",
+          exact: true,
+        });
+        await recovery.scrollIntoViewIfNeeded();
+        await expect(recovery).toBeInViewport();
+        await expect(page.locator(".config-tab.active")).toBeInViewport({ ratio: 1 });
+        expect(
+          await page
+            .locator("html")
+            .evaluate((element) => element.scrollWidth <= element.clientWidth),
+        ).toBe(true);
+        const saveBounds = await page
+          .getByRole("button", { name: "Save changes", exact: true })
+          .boundingBox();
+        expect(saveBounds).not.toBeNull();
+        expect(saveBounds!.x).toBeGreaterThanOrEqual(0);
+        expect(saveBounds!.x + saveBounds!.width).toBeLessThanOrEqual(width / 2);
+        const zoomPath = await capture(
+          page,
+          testInfo,
+          `${theme}-${width}-edit-04b-conflict-200percent`,
+          2,
+        );
+        const zoomPng = readFileSync(zoomPath);
+        expect(zoomPng.readUInt32BE(16)).toBe(width);
+        expect(zoomPng.readUInt32BE(20)).toBe(844);
+        await page
+          .getByRole("button", { name: "Save changes", exact: true })
+          .scrollIntoViewIfNeeded();
+        await expect(
+          page.getByRole("button", { name: "Save changes", exact: true }),
+        ).toBeInViewport({ ratio: 1 });
+        await capture(page, testInfo, `${theme}-${width}-edit-04c-conflict-actions-200percent`, 2);
+        await page.setViewportSize({ width, height: 844 });
+      }
+      await page
+        .getByRole("button", {
+          name: "Load the latest version and discard my changes",
+          exact: true,
+        })
+        .click();
+      await expect(
+        page.getByRole("heading", { name: "What would you like to change?", exact: true }),
+      ).toBeVisible();
+      await change("Answer release");
+      await page.getByLabel("Release without privacy review", { exact: false }).check();
+      await page.getByRole("button", { name: "Done", exact: true }).click();
+      await page.getByRole("button", { name: "Review changes", exact: true }).click();
+      await expect(page.locator(".guided-review-decision")).toHaveCount(1);
+      await expect(page.locator(".guided-review-decision")).toContainText("Answer release");
+      await shot("edit-05-release-delta");
+      holdWrite = true;
+      await page.getByRole("button", { name: "Save changes", exact: true }).click();
+      await expect.poll(() => Boolean(releaseWrite)).toBe(true);
+      await expect(page.locator(".guided-review-decision button")).toBeDisabled();
+      await expect(page.getByRole("button", { name: "Back", exact: true })).toBeDisabled();
+      await shot("edit-05b-saving");
+      holdWrite = false;
+      releaseWrite!();
+      await expect(page.locator(".access-notice")).toBeInViewport();
+      await shot("edit-06-success");
+      const last = writes.at(-1)!;
+      expect(last.expectedRevision).toBe(2);
+      expect(last.expectedFilterRevisions).toEqual({ answer: 3, direct: 5 });
+      longCatalogue = true;
+      sources.push(
+        ...Array.from({ length: 10 }, (_, index) => ({
+          ...baseSources[0]!,
+          id: `gmail:account-${index + 1}@example.org`,
+        })),
+      );
+      await page.goto("/portal/settings/access/levels/new");
+      await forward();
+      await expect(page.getByRole("searchbox", { name: "Find an account" })).toBeVisible();
+      await page.getByRole("button", { name: "Allow all", exact: true }).click();
+      const account = page
+        .locator(".guided-source-row")
+        .filter({ has: page.getByText("account-10@example.org", { exact: true }) });
+      await account.getByRole("button", { name: "Change Gmail content", exact: true }).click();
+      await expect(modal()).toHaveAccessibleName(/account-10@example.org/);
+      await shot("stress-01-second-account-mode");
+      await modal().getByRole("button", { name: "Close", exact: true }).focus();
+      await page.keyboard.press("Shift+Tab");
+      await expect(modal().getByRole("button", { name: "Done", exact: true })).toBeFocused();
+      await pickMatches();
+      await openPicker("label");
+      const search = modal().getByRole("searchbox", { name: "Search labels", exact: true });
+      await search.fill("invented");
+      await expect(
+        modal().locator(".source-filter-results:not([hidden]) .source-filter-options li"),
+      ).toHaveCount(50);
+      await modal().getByRole("button", { name: "Load more", exact: true }).click();
+      await expect(
+        modal().locator(".source-filter-results:not([hidden]) .source-filter-options li"),
+      ).toHaveCount(65);
+      const results = modal().locator(
+        ".source-filter-results:not([hidden]) .source-filter-options input",
+      );
+      for (let index = 40; index < 60; index++) await results.nth(index).check();
+      const lastSelection = results.nth(59);
+      await lastSelection.scrollIntoViewIfNeeded();
+      const offset = await modal()
+        .locator(".source-filter-results:not([hidden])")
+        .evaluate((element) => element.scrollTop);
+      expect(offset).toBeGreaterThan(500);
+      await shot("stress-02-long-picker");
+      await refreshBuilder();
+      await expect(
+        modal().getByRole("button", { name: "Apply filter", exact: true }),
+      ).toBeEnabled();
+      await shot("stress-03-large-selected-table");
+      await openPicker("label");
+      await expect(search).toHaveValue("invented");
+      await expect
+        .poll(() =>
+          modal()
+            .locator(".source-filter-results:not([hidden])")
+            .evaluate((element) => element.scrollTop),
+        )
+        .toBeCloseTo(offset, 0);
+      await expect(lastSelection).toBeChecked();
+      await openPicker("participant");
+      await openPicker("label");
+      await expect(search).toHaveValue("invented");
+      await expect(
+        modal().locator(".source-filter-results:not([hidden]) .source-filter-options li"),
+      ).toHaveCount(65);
+      await expect
+        .poll(() =>
+          modal()
+            .locator(".source-filter-results:not([hidden])")
+            .evaluate((element) => element.scrollTop),
+        )
+        .toBeCloseTo(offset, 0);
+      await search.fill("catalogue");
+      await expect(
+        modal().locator(".source-filter-results:not([hidden]) .source-filter-options li"),
+      ).toHaveCount(50);
+      await expect
+        .poll(() =>
+          modal()
+            .locator(".source-filter-results:not([hidden])")
+            .evaluate((element) => element.scrollTop),
+        )
+        .toBe(0);
+      await search.fill("invented");
+      await expect
+        .poll(() =>
+          modal()
+            .locator(".source-filter-results:not([hidden])")
+            .evaluate((element) => element.scrollTop),
+        )
+        .toBeCloseTo(offset, 0);
+      await refreshBuilder();
+      await modal().getByRole("button", { name: "Apply filter", exact: true }).click();
+      await expect(account.locator(".guided-readable-boundary")).toContainText(
+        "Share matching content · 20 items",
+      );
+      await account.scrollIntoViewIfNeeded();
+      await shot("stress-04-compact-boundary-row");
+      // The tree uses the same exact-context restoration as the search picker.
+      const driveRow = sourceRow("Google Drive");
+      await driveRow
+        .getByRole("button", { name: "Change Google Drive content", exact: true })
+        .click();
+      await pickMatches();
+      await expect(
+        modal().locator(".source-filter-results:not([hidden]) .source-filter-options li"),
+      ).toHaveCount(50);
+      await modal().getByRole("button", { name: "Load more", exact: true }).click();
+      await expect(
+        modal().locator(".source-filter-results:not([hidden]) .source-filter-options li"),
+      ).toHaveCount(65);
+      await modal()
+        .getByRole("button", { name: /Open Folder 60/ })
+        .click();
+      await expect(
+        modal().locator(".source-filter-results:not([hidden]) .source-filter-options li"),
+      ).toHaveCount(50);
+      await modal().getByRole("button", { name: "Load more", exact: true }).click();
+      await expect(
+        modal().locator(".source-filter-results:not([hidden]) .source-filter-options li"),
+      ).toHaveCount(65);
+      await modal()
+        .locator(".source-filter-results:not([hidden]) .source-filter-options input")
+        .nth(59)
+        .check();
+      const folderOffset = await modal()
+        .locator(".source-filter-results:not([hidden])")
+        .evaluate((element) => element.scrollTop);
+      await refreshBuilder();
+      await openPicker("folder");
+      await expect(modal().getByRole("navigation", { name: "Location" })).toContainText(
+        "Folder 60",
+      );
+      await expect
+        .poll(() =>
+          modal()
+            .locator(".source-filter-results:not([hidden])")
+            .evaluate((element) => element.scrollTop),
+        )
+        .toBeCloseTo(folderOffset, 0);
+      await shot("stress-05-folder-return");
+      await modal().getByRole("searchbox", { name: "Search folders", exact: true }).focus();
+      await page.keyboard.press("Escape");
+      await expect(modal()).toBeVisible();
+      await expect(
+        modal().getByRole("searchbox", { name: "Search folders", exact: true }),
+      ).toHaveAttribute("aria-expanded", "false");
+      await page.keyboard.press("Escape");
+      await expect(
+        driveRow.getByRole("button", { name: "Change Google Drive content", exact: true }),
+      ).toBeFocused();
+      await page.getByRole("button", { name: "Cancel", exact: true }).click();
+      await expect(
+        page.getByRole("dialog", { name: "Discard this draft?", exact: true }),
+      ).toBeVisible();
+      await expect(page.getByRole("button", { name: "Keep editing", exact: true })).toBeFocused();
+      await page.keyboard.press("Shift+Tab");
+      await expect(page.getByRole("button", { name: "Discard draft", exact: true })).toBeFocused();
+      await page.keyboard.press("Tab");
+      await expect(page.getByRole("button", { name: "Keep editing", exact: true })).toBeFocused();
+      await shot("stress-06-discard-confirmation");
+      if (width === 390) {
+        await page.setViewportSize({ width: 195, height: 422 });
+        await capture(page, testInfo, `${theme}-${width}-stress-06b-discard-200percent`, 2);
+        await page.setViewportSize({ width, height: 844 });
+      }
+      await page.getByRole("button", { name: "Keep editing", exact: true }).click();
+      await expect(page.getByRole("button", { name: "Cancel", exact: true })).toBeFocused();
+      await expect(account.locator(".guided-readable-boundary")).toContainText(
+        "Share matching content · 20 items",
+      );
+      await page.getByRole("button", { name: "Cancel", exact: true }).click();
+      await page.getByRole("button", { name: "Discard draft", exact: true }).click();
+      longCatalogue = false;
+      sources.push({
+        id: "whatsapp-messages:+15550100142",
+        sourceType: "whatsapp-messages",
+        displayName: "WhatsApp",
+        icon: fixtureIcons["whatsapp-messages"],
+        available: true,
+        filterable: true,
+      } as (typeof sources)[number]);
+      await page.goto("/portal/settings/access/levels/new");
+      const permission = (name: string) =>
+        page
+          .locator(".access-capability-preset")
+          .filter({ has: page.getByText(name, { exact: true }) })
+          .locator("input");
+      await permission("Answer").uncheck();
+      await permission("Direct").check();
+      await shot("supplement-01-direct-only-permissions");
+      await forward();
+      await sourceRow("WhatsApp").getByRole("checkbox").check();
+      await sourceRow("WhatsApp")
+        .getByRole("button", { name: "Change WhatsApp content", exact: true })
+        .click();
+      await pickMatches();
+      await modal()
+        .locator(".source-filter-results:not([hidden]) .source-filter-options input")
+        .check();
+      await shot("supplement-02-whatsapp-conversation");
+      await openPicker("participant");
+      await modal().getByRole("textbox", { name: "Value", exact: true }).fill("+15550100143");
+      await modal().getByRole("button", { name: "Add", exact: true }).click();
+      await expect(
+        modal()
+          .locator(".source-filter-results:not([hidden])")
+          .getByText("Loading…", { exact: true }),
+      ).toHaveCount(0);
+      await shot("supplement-03-whatsapp-phone");
+      await refreshBuilder();
+      await expect(
+        modal().getByRole("button", { name: "Apply filter", exact: true }),
+      ).toBeEnabled();
+      await modal().getByRole("button", { name: "Apply filter", exact: true }).click();
+      await shot("supplement-04a-direct-only-data");
+      await forward();
+      await shot("supplement-04-direct-only-future");
+      await forward();
+      await expect(
+        page.getByRole("heading", { name: "Ready to create this access level?", exact: true }),
+      ).toBeVisible();
+      await shot("supplement-05-direct-only-review");
+      await reviewChange("Permissions").click();
+      await permission("Direct").uncheck();
+      await permission("Notes").check();
+      await shot("supplement-06a-notes-only-permissions");
+      await forward();
+      await shot("supplement-06-notes-only-review");
+      await reviewChange("Permissions").click();
+      await permission("Notes").uncheck();
+      await permission("Answer").check();
+      await forward();
+      const gmail = sourceRow("Gmail").filter({
+        has: page.getByText("owner@example.com", { exact: true }),
+      });
+      await gmail.getByRole("checkbox").check();
+      await gmail.getByRole("button", { name: "Change Gmail content", exact: true }).click();
+      await pickMatches();
+      await modal()
+        .getByRole("textbox", { name: "Value", exact: true })
+        .fill("reviewer@example.org");
+      await modal().getByRole("button", { name: "Add", exact: true }).click();
+      await modal().getByRole("combobox", { name: "Type", exact: true }).selectOption("domain");
+      await modal().getByRole("textbox", { name: "Value", exact: true }).fill("example.io");
+      await modal().getByRole("button", { name: "Add", exact: true }).click();
+      await shot("supplement-07-gmail-email-domain");
+      options = "error";
+      await openPicker("label");
+      await expect(modal().getByText("Options are temporarily unavailable.")).toBeVisible();
+      await expect(modal().getByRole("button", { name: "Try again", exact: true })).toBeVisible();
+      await shot("supplement-08-options-unavailable");
+      options = "ready";
+      await modal().getByRole("button", { name: "Try again", exact: true }).click();
+      // Counts that cannot be loaded, or are still being counted, never hold back Apply.
+      previews = "error";
+      await refreshBuilder();
+      await expect(modal().getByText("Counts could not be loaded.")).toBeVisible();
+      await expect(
+        modal().getByRole("button", { name: "Apply filter", exact: true }),
+      ).toBeEnabled();
+      await shot("supplement-09-preview-unavailable");
+      previews = "counting";
+      await modal().getByRole("button", { name: "Try again", exact: true }).click();
+      await expect(modal().getByText("Counting…").first()).toBeVisible();
+      await expect(
+        modal().getByRole("button", { name: "Apply filter", exact: true }),
+      ).toBeEnabled();
+      await expect(modal().getByRole("button", { name: /refresh/i })).toHaveCount(0);
+      await shot("supplement-10-counting");
+      previews = "ready";
+      await openPicker("label");
+      await modal()
+        .getByRole("checkbox", { name: /Planning/ })
+        .check();
+      previews = "missing";
+      await refreshBuilder();
+      await expect(
+        modal().getByText("No longer in this account", { exact: true }).first(),
+      ).toBeVisible();
+      await shot("supplement-11-missing");
+      await page.keyboard.press("Escape");
+      await page.getByRole("button", { name: "Cancel", exact: true }).click();
+      await page.getByRole("button", { name: "Discard draft", exact: true }).click();
+      previews = "ready";
+      filtersEnabled = false;
+      await page.goto(`/portal/settings/access/levels/${levelId}`);
+      await change("Answer data");
+      await sourceRow("Gmail")
+        .filter({ has: page.getByText("owner@example.com", { exact: true }) })
+        .getByRole("button", { name: "View Gmail content", exact: true })
+        .click();
+      await expect(modal().getByText(/requires experimental mode/)).toBeVisible();
+      await shot("supplement-12-read-only");
+      await page.keyboard.press("Escape");
+      filtersEnabled = true;
+      await page.goto(`/portal/settings/access/levels/${levelId}`);
+      await change("Permissions");
+      await shot("supplement-13-edit-permissions");
+      await permission("Notes").check();
+      await page.getByRole("button", { name: "Done", exact: true }).click();
+      await page.getByRole("button", { name: "Review changes", exact: true }).click();
+      await shot("supplement-13b-edit-permissions-delta");
+      await page.getByRole("button", { name: "Back", exact: true }).click();
+      await change("New sources");
+      await shot("supplement-14-edit-future");
+      await page.getByLabel("Allow new sources automatically", { exact: false }).first().check();
+      await page.getByRole("button", { name: "Done", exact: true }).click();
+      await page.getByRole("button", { name: "Review changes", exact: true }).click();
+      await shot("supplement-14b-edit-future-delta");
+      await page.getByRole("button", { name: "Back", exact: true }).click();
+      await page.getByRole("button", { name: "Cancel", exact: true }).click();
+      await page.getByRole("button", { name: "Discard draft", exact: true }).click();
+      await page.goto("/portal/settings/access/levels/new");
+      await permission("Direct").check();
+      await forward();
+      const linkedGmail = () =>
+        sourceRow("Gmail").filter({ has: page.getByText("owner@example.com", { exact: true }) });
+      await linkedGmail().getByRole("checkbox").check();
+      await linkedGmail()
+        .getByRole("button", { name: "Change Gmail content", exact: true })
+        .click();
+      await pickMatches();
+      await openPicker("label");
+      await modal()
+        .getByRole("checkbox", { name: /Planning/ })
+        .check();
+      await refreshBuilder();
+      await expect(
+        modal().getByRole("button", { name: "Apply filter", exact: true }),
+      ).toBeEnabled();
+      await modal().getByRole("button", { name: "Apply filter", exact: true }).click();
+      await forward();
+      await forward();
+      await forward();
+      await forward();
+      await reviewChange("Direct data").click();
+      await expect(
+        page.getByRole("heading", { name: "Which sources can Direct read?", exact: true }),
+      ).toBeVisible();
+      await shot("supplement-15-linked-direct-correction");
+      await page.getByLabel("Choose different sources", { exact: false }).check();
+      await forward();
+      await shot("supplement-16-independent-direct-data");
+      await linkedGmail()
+        .getByRole("button", { name: "Change Gmail content", exact: true })
+        .click();
+      await pickMatches();
+      await modal()
+        .getByRole("textbox", { name: "Value", exact: true })
+        .fill("independent@example.org");
+      await modal().getByRole("button", { name: "Add", exact: true }).click();
+      await refreshBuilder();
+      await expect(
+        modal().getByRole("button", { name: "Apply filter", exact: true }),
+      ).toBeEnabled();
+      await shot("supplement-17-independent-direct-filter");
+      await modal().getByRole("button", { name: "Apply filter", exact: true }).click();
+      await forward();
+      await expect(
+        page.getByRole("heading", { name: "Ready to create this access level?", exact: true }),
+      ).toBeVisible();
+      await page.getByLabel("Access level name", { exact: true }).fill("Independent boundaries");
+      await shot("supplement-18-linked-correction-review");
+      await page.getByRole("button", { name: "Create access level", exact: true }).click();
+      await expect(page.locator(".access-notice")).toContainText("Independent boundaries");
+      const independent = writes.at(-1)! as {
+        rules: Array<{
+          capability: string;
+          scopePolicies: Array<{ rules: Array<{ match: unknown[] }> }>;
+        }>;
+      };
+      expect(
+        independent.rules.find((rule) => rule.capability === "answer")!.scopePolicies[0]!.rules[0]!
+          .match,
+      ).toEqual([LABEL]);
+      expect(
+        independent.rules.find((rule) => rule.capability === "direct")!.scopePolicies[0]!.rules[0]!
+          .match,
+      ).toEqual(
+        expect.arrayContaining([
+          LABEL,
+          {
+            capability: "person",
+            label: "independent@example.org",
+            identifiers: [{ type: "email", value: "independent@example.org" }],
+          },
+        ]),
+      );
+      const missingId = "00000000-0000-4000-8000-000000000096";
+      levels.push({
+        ...levels[0]!,
+        id: missingId,
+        name: "Retained account boundary",
+        rules: [
+          {
+            ...answer,
+            sources: { mode: "allowlist", sourceIds: ["gmail:missing@example.org"] },
+            scopeSources: undefined,
+            scopePolicies: [],
+          },
+        ],
+      });
+      await page.goto(`/portal/settings/access/levels/${missingId}`);
+      await expect(page.locator(".guided-edit-overview")).toContainText("1 account selected");
+      await shot("supplement-19-unavailable-account-overview");
+      await change("Answer data");
+      const missingAccount = page.locator(".guided-source-row").filter({
+        has: page.getByText("missing@example.org · no longer connected", { exact: true }),
+      });
+      await expect(missingAccount.getByRole("checkbox")).toBeChecked();
+      await expect(missingAccount).toContainText("All content");
+      await shot("supplement-20-unavailable-unfiltered-account");
+      await page.getByRole("button", { name: "Cancel", exact: true }).click();
+      await change("Permissions");
+      await permission("Notes").check();
+      await page.getByRole("button", { name: "Done", exact: true }).click();
+      await page.getByRole("button", { name: "Review changes", exact: true }).click();
+      await expect(
+        page.locator(".guided-unchanged details, .guided-unchanged summary"),
+      ).toHaveCount(0);
+      await page
+        .getByText("missing@example.org · no longer connected", { exact: true })
+        .first()
+        .scrollIntoViewIfNeeded();
+      await expect(page.getByRole("alert")).toContainText("would not be able to read any source");
+      await expect(page.getByRole("button", { name: "Save changes", exact: true })).toBeDisabled();
+      await shot("supplement-21-unavailable-account-review");
+      await page.getByRole("button", { name: "Back", exact: true }).click();
+      await page.getByRole("button", { name: "Cancel", exact: true }).click();
+      await page.getByRole("button", { name: "Discard draft", exact: true }).click();
+      // Create genuine app-owned history destinations before editing the draft.
+      await page.getByRole("button", { name: "New access level", exact: true }).click();
+      await page.evaluate(async (path) => {
+        const modulePath = "/portal/js/lib/router.js";
+        const router = await import(modulePath);
+        router.navigate(path);
+      }, `/portal/settings/access/levels/${levelId}`);
+      await expect(
+        page.getByRole("heading", { name: "What would you like to change?", exact: true }),
+      ).toBeVisible();
+      await page.goBack();
+      await expect(
+        page.getByRole("heading", {
+          name: "What should this connection be allowed to do?",
+          exact: true,
+        }),
+      ).toBeVisible();
+      await forward();
+      await linkedGmail().getByRole("checkbox").check();
+      await page.evaluate(() =>
+        history.replaceState(
+          { ...history.state, fixtureState: "preserved" },
+          "",
+          location.pathname + "?draft=retained#selection",
+        ),
+      );
+      const draftUrl = page.url();
+      const traverse = async (direction: "back" | "forward", accept: boolean) => {
+        await Promise.all([
+          page.waitForEvent("dialog").then(async (dialog) => {
+            expect(dialog.message()).toContain("unsaved access-level changes");
+            if (accept) await dialog.accept();
+            else await dialog.dismiss();
+          }),
+          direction === "back" ? page.goBack() : page.goForward(),
+        ]);
+      };
+      await traverse("forward", false);
+      await expect(page).toHaveURL(draftUrl);
+      await expect(linkedGmail().getByRole("checkbox")).toBeChecked();
+      expect(await page.evaluate(() => history.state.fixtureState)).toBe("preserved");
+      await shot("supplement-22-forward-decline-retained-draft");
+      await traverse("forward", true);
+      await expect(
+        page.getByRole("heading", { name: "What would you like to change?", exact: true }),
+      ).toBeVisible();
+      await page.goBack();
+      await expect(
+        page.getByRole("heading", {
+          name: "What should this connection be allowed to do?",
+          exact: true,
+        }),
+      ).toBeVisible();
+      await forward();
+      await linkedGmail().getByRole("checkbox").check();
+      await traverse("back", false);
+      await expect(page).toHaveURL(draftUrl);
+      await expect(linkedGmail().getByRole("checkbox")).toBeChecked();
+      await shot("supplement-23-back-decline-retained-draft");
+      await traverse("back", true);
+      await expect(page.getByRole("heading", { name: "Agent access", exact: true })).toBeVisible();
+      sameNameCatalogue = true;
+      const sameNameId = "00000000-0000-4000-8000-000000000097";
+      levels.push({
+        ...levels[0]!,
+        id: sameNameId,
+        name: "Same-name selection check",
+        rules: [
+          {
+            ...answer,
+            scopePolicies: answer.scopePolicies.map((policy) => ({
+              ...policy,
+              audience: { ...policy.audience, accessLevel: sameNameId },
+            })),
+          },
+        ],
+      });
+      await page.goto(`/portal/settings/access/levels/${sameNameId}`);
+      await change("Answer data");
+      const sameNameAccount = sourceRow("Gmail").filter({
+        has: page.getByText("owner@example.com", { exact: true }),
+      });
+      await sameNameAccount
+        .getByRole("button", { name: "Change Gmail content", exact: true })
+        .click();
+      await pickMatches();
+      await modal().getByRole("button", { name: "Remove Planning", exact: true }).click();
+      await openPicker("label");
+      await modal()
+        .getByRole("checkbox", { name: /Planning/ })
+        .check();
+      await closePicker();
+      await expect(
+        modal().getByRole("button", { name: "Apply filter", exact: true }),
+      ).toBeEnabled();
+      await modal().getByRole("button", { name: "Apply filter", exact: true }).click();
+      await page.getByRole("button", { name: "Done", exact: true }).click();
+      await page.getByRole("button", { name: "Review changes", exact: true }).click();
+      await expect(page.locator(".compact-filter-ref")).toHaveCount(2);
+      // The added selection leads the change table; the removed one follows.
+      await expect(page.locator(".compact-filter-ref").first()).toContainText(
+        "Selection ID: planning-replacement",
+      );
+      await expect(page.locator("tr.is-removed .compact-filter-ref")).toHaveText(
+        "Selection ID: planning",
+      );
+      await shot("edit-same-name-native-selection");
+      expect(maximum).toBeLessThanOrEqual(2);
+      expect(
+        await page
+          .locator("html")
+          .evaluate((element) => element.scrollWidth <= element.clientWidth),
+      ).toBe(true);
+    });

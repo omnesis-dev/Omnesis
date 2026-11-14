@@ -253,7 +253,7 @@ it("selects library entries without leaving the document or changing the library
     currentTarget: { getAttribute: () => href },
   });
   expect(preventDefault).toHaveBeenCalledOnce();
-  expect(pushState).toHaveBeenCalledWith(null, "", href);
+  expect(pushState).toHaveBeenCalledWith({ __omnesisRouteIndex: 1 }, "", href);
   expect(dispatchEvent).toHaveBeenCalledOnce();
 });
 it("keeps All selected while loop and observation cards supply canonical detail hints", () => {

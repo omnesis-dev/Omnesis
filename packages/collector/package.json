@@ -72,6 +72,7 @@
     "@omnesis/provider-coinbase-synth": "*",
     "@omnesis/provider-core-location-visits-synth": "*",
     "@omnesis/provider-enable-banking-synth": "*",
+    "@omnesis/provider-filing-synth": "*",
     "@omnesis/provider-github-synth": "*",
     "@omnesis/provider-google-synth": "*",
     "@omnesis/provider-granola-synth": "*",

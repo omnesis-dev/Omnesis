@@ -13,7 +13,7 @@ import {
   statSync,
 } from "node:fs";
 import { homedir } from "node:os";
-import { isAbsolute, join, relative, resolve, sep } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import picomatch from "picomatch";
 import {
   createLogger,
@@ -24,10 +24,13 @@ import {
 } from "@omnesis/core";
 import {
   defineSource,
+  directoryFilterList,
   probeTreeReadAccess,
   syncPage,
   SnapshotEnumeration,
   config as configSchema,
+  FilterListNotReadyError,
+  withFilterLists,
   type SourceInstance,
   type SyncProgress,
 } from "@omnesis/source-sdk";
@@ -47,7 +50,10 @@ import {
 } from "./policy.js";
 import { normalizeFile } from "./normalizer.js";
 import { localFilesIconDataUri } from "./icons.js";
-import { localFilesDocumentEventProfile } from "./document-event-profile.js";
+import {
+  LOCAL_FILES_FOLDER_FIELD,
+  localFilesDocumentEventProfile,
+} from "./document-event-profile.js";
 import { localFilesStateSpec } from "./state.js";
 import { SKIP_RETRY_MS } from "./types.js";
 import type { LocalFileEntry, LocalFileState, LocalFilesSyncCursor } from "./types.js";
@@ -120,6 +126,11 @@ interface ScanResult {
    * that a file in an unaffected folder was deleted.
    */
   gaps: Map<string, string>;
+  /**
+   * Every directory the walk went into, by its resolved path, whether or not
+   * it holds a file worth indexing. They are what the source lists as folders.
+   */
+  directories: string[];
   stats: { skipped: Record<string, number>; unreadable: number };
 }
 
@@ -155,6 +166,8 @@ interface WalkState {
   unreadable: number;
   /** Resolved absolute paths already collected (symlink alias dedupe). */
   seen: Set<string>;
+  /** Resolved paths of the directories walked so far. */
+  directories: Set<string>;
 }
 
 function countSkip(state: WalkState, reason: string): void {
@@ -166,9 +179,13 @@ function countSkip(state: WalkState, reason: string): void {
  * followed with cycle detection but must resolve inside a declared root;
  * symlinked files resolving outside are refused. Every early exit that hides
  * part of the tree marks the scan incomplete so no deletions are asserted.
+ *
+ * `dir` is the path the walk reached the directory by and `resolvedDir` where
+ * it really is; the two differ below a symlinked directory.
  */
 function walkDir(
   dir: string,
+  resolvedDir: string,
   root: string,
   depth: number,
   visited: Set<string>,
@@ -197,6 +214,7 @@ function walkDir(
     countSkip(state, pruneReason);
     return;
   }
+  state.directories.add(resolvedDir);
 
   for (const entry of dirents) {
     if (state.rootFailure || state.ceiling) return;
@@ -260,7 +278,7 @@ function walkDir(
         continue;
       }
       visited.add(resolved);
-      walkDir(fullPath, root, depth + 1, visited, isInside, isExcluded, state);
+      walkDir(fullPath, resolved, root, depth + 1, visited, isInside, isExcluded, state);
     } else if (isFile) {
       // Ahead of every refusal below, because an evicted iCloud file is a
       // hidden file by construction and `isRefusedPath` refuses hidden files.
@@ -440,6 +458,8 @@ export default defineSource({
   defaultSourcePrior: -0.15,
   defaultSyncInterval: "60m",
   documentEventProfile: localFilesDocumentEventProfile,
+  resyncCost:
+    "Every file in these folders is read again on the computer that holds it: nothing is downloaded, and a large folder of PDFs can take a few hours.",
   icon: {
     sfSymbol: "folder",
     color: "#64748B",
@@ -447,6 +467,7 @@ export default defineSource({
     imageDataUri: localFilesIconDataUri,
   },
   contract: {
+    outputRevision: 2,
     // Checked once by the host before `sync` runs, rather than re-derived on
     // every page for the lifetime of the install.
     state: localFilesStateSpec,
@@ -583,6 +604,7 @@ export default defineSource({
         skipped: {},
         unreadable: 0,
         seen: new Set<string>(),
+        directories: new Set<string>(),
       };
       const gaps = new Map<string, string>();
       for (const root of roots) {
@@ -605,7 +627,7 @@ export default defineSource({
           gaps.set(root, `Root unreadable: ${displayPath(root)}`);
           continue;
         }
-        walkDir(root, root, 0, visited, isInside, isExcluded, state);
+        walkDir(root, root, root, 0, visited, isInside, isExcluded, state);
         const failure = state.rootFailure ?? state.ceiling;
         if (failure) gaps.set(root, failure);
       }
@@ -613,11 +635,18 @@ export default defineSource({
         files: state.files,
         placeholders: [...state.placeholders, ...state.presentButUnread],
         gaps,
+        directories: [...state.directories],
         stats: { skipped: state.skipped, unreadable: state.unreadable },
       };
     }
 
-    return {
+    /**
+     * The directories the last sync page knew: the ones its scan walked, and
+     * the ones holding a file it tracks. `undefined` before any page.
+     */
+    let knownDirectories: string[] | undefined;
+
+    const instance: SourceInstance<LocalFilesSyncCursor> = {
       probeReadAccess: ({ signal }) =>
         probeTreeReadAccess({
           signal,
@@ -964,6 +993,15 @@ export default defineSource({
             `(tree: ${allFiles.length}, hasMore: ${hasMore}, folders vouched for: ` +
             `${strayDocument ? 0 : claims.length}/${roots.length})`,
         );
+        // A tracked file the scan did not reach (its folder was unreadable
+        // this time, or it is evicted to the cloud) still has a document, so
+        // its directory stays listed.
+        knownDirectories = [
+          ...new Set([
+            ...scan.directories,
+            ...Object.keys(newFileMap).map((path) => dirname(path)),
+          ]),
+        ];
         const issue = !hasMore ? enumeration.withheldIssue() : undefined;
         return syncPage(documents, updatedCursor, {
           hasMore,
@@ -981,5 +1019,15 @@ export default defineSource({
         });
       },
     };
+    return withFilterLists(instance, {
+      // Listed from what the sync's own scan found, so listing reads nothing
+      // from the disk and costs one step per directory.
+      [LOCAL_FILES_FOLDER_FIELD]: () => {
+        if (knownDirectories === undefined) {
+          throw new FilterListNotReadyError("the folders have not been read yet");
+        }
+        return directoryFilterList(knownDirectories, { roots, home: homedir() });
+      },
+    });
   },
 });

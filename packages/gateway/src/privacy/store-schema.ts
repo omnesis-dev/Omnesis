@@ -2,6 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { createPrivacyPolicyHistoryTables } from "./policy-history.js";
+import { createAnswerScopeSchema } from "./answer-scope-schema.js";
 import type { PrivacyDb } from "./store-types.js";
 
 /** Install the protocol-neutral persistence used by the external answer boundary. */
@@ -234,6 +235,7 @@ export function createAnswerPrivacyTables(db: PrivacyDb): void {
       ON answer_workflow_grants(owner_id, created_at DESC);
   `);
   createAnswerApprovalListIndexes(db);
+  createAnswerScopeSchema(db);
 }
 
 export function createAnswerApprovalListIndexes(db: PrivacyDb): void {

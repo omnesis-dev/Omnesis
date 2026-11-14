@@ -16,6 +16,7 @@ import dev.omnesis.android.transport.dto.AnnotationsResponse
 import dev.omnesis.android.transport.dto.DocumentAttachment
 import dev.omnesis.android.transport.dto.DocumentDetail
 import dev.omnesis.android.transport.dto.DocumentEventTrail
+import dev.omnesis.android.transport.dto.DocumentFilterDetails
 import dev.omnesis.android.transport.dto.DocumentNearDupes
 import dev.omnesis.android.transport.dto.DocumentRefs
 import dev.omnesis.android.transport.dto.PersonMention
@@ -73,6 +74,10 @@ class DocumentDetailViewModel @Inject constructor(
         val annotationsPaging: CursorPagingState = CursorPagingState(),
         val annotationDependents: Map<String, AnnotationDependentsUi> = emptyMap(),
         val sourceDisplay: SourceDisplayLookup = SourceDisplayLookup.EMPTY,
+        /** Whether the paired device is the owner's, which alone may see filter details and who can read the document. */
+        val owner: Boolean = false,
+        /** What a filter sees of the document; null for another device, or while it is unavailable. */
+        val filterDetails: DocumentFilterDetails? = null,
     )
 
     /** Pre-resolved source display (label + icon + accent) for the sourceIds in the bundle. */
@@ -117,6 +122,7 @@ class DocumentDetailViewModel @Inject constructor(
         viewModelScope.launch {
             runCatching {
                 val s = session.requireSession()
+                val owner = "admin" in s.pairing.scopes
                 val doc = s.search.document(documentId)
                 if (requestGeneration != generation) return@launch
                 // Show the body immediately, then enrich with the secondary panels.
@@ -125,6 +131,7 @@ class DocumentDetailViewModel @Inject constructor(
                         doc = doc,
                         graphLoading = true,
                         sourceDisplay = resolveDisplay(setOf(doc.sourceId)),
+                        owner = owner,
                     ),
                 )
                 coroutineScope {
@@ -136,6 +143,10 @@ class DocumentDetailViewModel @Inject constructor(
                     val annotationsDeferred = async {
                         runCatching { s.search.documentAnnotations(documentId) }
                             .getOrNull() ?: AnnotationsResponse()
+                    }
+                    // Owner-only; an older gateway without the route simply shows no filter details.
+                    val filterDetailsDeferred = async {
+                        if (owner) runCatching { s.admin.documentFilterDetails(documentId) }.getOrNull() else null
                     }
                     val peopleResult = peopleDeferred.await()
                     val attachmentsResult = attachmentsDeferred.await()
@@ -178,6 +189,8 @@ class DocumentDetailViewModel @Inject constructor(
                             nextCursor = annotationPage.pageInfo.nextCursor,
                         ),
                         sourceDisplay = resolveDisplay(sourceIds),
+                        owner = owner,
+                        filterDetails = filterDetailsDeferred.await(),
                     )
                 }
             }.fold(

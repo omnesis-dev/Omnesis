@@ -99,6 +99,10 @@ export interface FakeCommit {
 }
 
 export interface FakeRepo {
+  /** GitHub's id for the repository, as the listing reports it. */
+  id?: number;
+  /** The user or organization holding the repository, as the listing reports it. */
+  owner?: { id?: number; login?: string };
   threads: FakeThread[];
   discussions: FakeDiscussion[];
   commits: FakeCommit[];
@@ -308,7 +312,11 @@ export class FakeGithub {
     if (path === "/user") return this.json({ login: "tester", name: "Test Er" });
     if (path === "/user/repos") {
       return this.page(
-        [...this.repos.keys()].map((full_name) => ({ full_name })),
+        [...this.repos.entries()].map(([full_name, repo]) => ({
+          full_name,
+          ...(repo.id !== undefined ? { id: repo.id } : {}),
+          ...(repo.owner !== undefined ? { owner: repo.owner } : {}),
+        })),
         page,
         url.toString(),
       );

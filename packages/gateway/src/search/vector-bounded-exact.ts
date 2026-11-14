@@ -3,6 +3,8 @@
 
 import usearch from "usearch";
 import { EMBEDDING_DIM, getActiveIndexVersion, getIndexVersion } from "../indexer/db.js";
+import { scopeSearchActive } from "./scope-authorization.js";
+import { scopedVectorCandidates } from "./scoped-vector.js";
 import { buildMetadataFilter, normalizeDateTo } from "./metadata.js";
 import { DEFAULT_SEARCH_PARAMS, DEFAULT_VECTOR_CONFIG } from "./search-config.js";
 import { visibleChunkClause } from "./visible-chunks.js";
@@ -38,6 +40,21 @@ export function boundedExactVectorCandidates(
   documentIds?: readonly string[],
   expectedModelId?: string | null,
 ): SearchCandidate[] | null {
+  if (scopeSearchActive(db))
+    return db.transaction(() => {
+      const version = getActiveIndexVersion(db);
+      if (version !== null) {
+        const active = getIndexVersion(db, version);
+        if (
+          !active ||
+          active.embed_dim !== query.length ||
+          (expectedModelId != null && active.embed_model !== expectedModelId)
+        ) {
+          throw new Error("Exact vector snapshot belongs to a different embedding generation");
+        }
+      }
+      return scopedVectorCandidates(db, query, filters, limit, documentIds);
+    })();
   const bound = Math.min(MAX_ROWS, Math.floor(candidateBudget));
   if (bound < 1 || query.byteLength > MAX_VECTOR_BYTES || !query.length) return null;
   if (!query.every(Number.isFinite)) return null;

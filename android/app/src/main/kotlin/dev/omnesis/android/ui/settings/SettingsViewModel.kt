@@ -71,6 +71,7 @@ class SettingsViewModel @Inject constructor(
     val pushConfigured: Boolean get() = pushManager.configured
     val labAvailable = session.labAvailable
     val modelHealth = session.modelHealth
+    val accessLevelEditing = session.accessLevelEditingAvailable
     val pushPlan = session.pushPlan
     val pushRegistrationFailed = session.pushRegistrationFailed
     val pushAppId: String get() = BuildConfig.APPLICATION_ID

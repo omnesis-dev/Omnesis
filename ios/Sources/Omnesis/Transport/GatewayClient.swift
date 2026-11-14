@@ -69,6 +69,12 @@ public final class GatewayClient: Sendable {
             guard case .serverError(_, let body) = self else { return nil }
             return GatewayErrorEnvelope.parse(body)?.error
         }
+
+        /// The gateway's sentence for a refusal the owner can act on, when the envelope carries one.
+        public var gatewaySentence: String? {
+            guard case .serverError(_, let body) = self else { return nil }
+            return GatewayErrorEnvelope.parse(body)?.message
+        }
     }
 
     // MARK: - Public API
@@ -366,16 +372,20 @@ public struct SyncLeaseResponse: Decodable, Equatable, Sendable {
 // MARK: - Wire types
 
 /// The envelope every 4xx/5xx from the gateway carries:
-/// `{ "error": <message>, "code": <CODE>, "detail"?: <unknown> }`. `code`
+/// `{ "error": <message>, "code": <CODE>, "message"?: <sentence>, "detail"?: <unknown> }`. `code`
 /// is the branch key for callers that react to a specific refusal; `error`
-/// is what goes on screen.
+/// is what goes on screen, unless a refusal the owner can act on carries its
+/// own `message`.
 public struct GatewayErrorEnvelope: Decodable, Equatable, Sendable {
     public let error: String
     public let code: String?
+    /// The gateway's sentence for a refusal the owner can act on, e.g. why a filter entry cannot be saved.
+    public let message: String?
 
-    public init(error: String, code: String? = nil) {
+    public init(error: String, code: String? = nil, message: String? = nil) {
         self.error = error
         self.code = code
+        self.message = message
     }
 
     /// Nil when `data` is not the envelope (a proxy's HTML, a truncated body).

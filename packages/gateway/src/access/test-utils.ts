@@ -11,10 +11,24 @@ import {
   registerOAuthClient,
 } from "./store.js";
 import type { Db } from "../data/types.js";
-import type { AuthorizationDecisionSelection, OAuthTokenSet } from "./types.js";
+import type {
+  AccessGrantRule,
+  AccessGrantRuleInput,
+  AuthorizationDecisionSelection,
+  OAuthTokenSet,
+} from "./types.js";
 
 export const TEST_OAUTH_REDIRECT = "http://127.0.0.1:48123/callback";
 export const TEST_OAUTH_VERIFIER = "v".repeat(64);
+
+/**
+ * The rule a client that knows source filters sends back for one it was
+ * served: the real boundary in `sources`, and no `scopeSources`.
+ */
+export function requestRule(rule: AccessGrantRule): AccessGrantRuleInput {
+  const { scopeSources, ...sent } = rule;
+  return scopeSources ? { ...sent, sources: scopeSources } : sent;
+}
 
 export interface InteractiveAccessFixture {
   clientId: string;

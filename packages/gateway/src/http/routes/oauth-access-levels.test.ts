@@ -376,4 +376,30 @@ describe("access level management", () => {
       expect.objectContaining({ id: levelId, name: "answers", revision: 1 }),
     ]);
   });
+
+  test("a paired phone creates, renames and deletes a level with its own token", async () => {
+    db.prepare(
+      `INSERT INTO devices (id, name, kind, capabilities, paired_at)
+       VALUES ('00000000-0000-4000-8000-000000000003', 'Synthetic phone', 'ios', '{}', 1)`,
+    ).run();
+    const phone = { "X-Test-Bearer": "yes" };
+    const created = await send(
+      "POST",
+      "/admin/access/levels",
+      { name: "reading only", rules: DIRECT_RULES },
+      phone,
+    );
+    expect(created.status).toBe(201);
+    const levelId = created.body.level.id as string;
+    const renamed = await send(
+      "PATCH",
+      `/admin/access/levels/${levelId}`,
+      { expectedRevision: 1, name: "renamed" },
+      phone,
+    );
+    expect(renamed.status).toBe(200);
+    const removed = await send("DELETE", `/admin/access/levels/${levelId}`, undefined, phone);
+    expect(removed).toEqual({ status: 200, body: { removed: true } });
+    expect((await overview()).levels).toEqual([]);
+  });
 });

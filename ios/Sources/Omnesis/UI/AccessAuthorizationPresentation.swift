@@ -96,6 +96,13 @@ func accessAuthorizationMayBeginDecision(
     !deciding && nowMillis < expiresAt
 }
 
+private enum AccessAuthorizationCopy {
+    static let expired = "This authorization request expired. Start the connection again."
+    static let alreadyCompleted = "This authorization request was already completed."
+    static let phoneUnauthorized = "This phone is no longer authorized. Re-pair it from Settings."
+    static let phoneForbidden = "This phone does not have permission to authorize connections. Re-pair it from Settings."
+}
+
 func accessAuthorizationDecisionMessage(
     errorCode: String?,
     choiceRefresh: AccessAuthorizationChoiceRefresh
@@ -103,9 +110,9 @@ func accessAuthorizationDecisionMessage(
     -> String {
     switch errorCode {
     case "expired":
-        return "This authorization request expired. Start the connection again."
+        return AccessAuthorizationCopy.expired
     case "already-decided":
-        return "This authorization request was already completed."
+        return AccessAuthorizationCopy.alreadyCompleted
     case "inactive-grant", "invalid-selection", "stale-revision":
         if choiceRefresh == .refreshed {
             return "Access choices changed. Review the refreshed request."
@@ -116,9 +123,9 @@ func accessAuthorizationDecisionMessage(
         }
         return "The available access choices changed. Reload the request before trying again."
     case "device-unauthorized":
-        return "This phone is no longer authorized. Re-pair it from Settings."
+        return AccessAuthorizationCopy.phoneUnauthorized
     case "device-forbidden":
-        return "This phone does not have permission to authorize connections. Re-pair it from Settings."
+        return AccessAuthorizationCopy.phoneForbidden
     case "invalid-input":
         return "Some values are invalid. Review the source selections."
     default:
@@ -148,25 +155,25 @@ func accessAuthorizationLookupFailure(_ error: Error, key: AccessAuthorizationLo
 func accessAuthorizationLookupMessage(_ error: Error) -> String {
     if let local = error as? AccessAuthorizationLocalError {
         switch local {
-        case .expired: return "This authorization request expired. Start the connection again."
-        case .alreadyDecided: return "This authorization request was already completed."
+        case .expired: return AccessAuthorizationCopy.expired
+        case .alreadyDecided: return AccessAuthorizationCopy.alreadyCompleted
         case .noLongerPending: return "This request is no longer waiting for a decision."
         }
     }
     if case GatewayClient.Error.unauthorized = error {
-        return "This phone is no longer authorized. Re-pair it from Settings."
+        return AccessAuthorizationCopy.phoneUnauthorized
     }
     if case GatewayClient.Error.forbidden = error {
-        return "This phone does not have permission to authorize connections. Re-pair it from Settings."
+        return AccessAuthorizationCopy.phoneForbidden
     }
     if case GatewayClient.Error.notFound = error {
         return "No pending authorization matches that code."
     }
     switch accessAuthorizationErrorCode(error) {
     case "expired":
-        return "This authorization request expired. Start the connection again."
+        return AccessAuthorizationCopy.expired
     case "already-decided":
-        return "This authorization request was already completed."
+        return AccessAuthorizationCopy.alreadyCompleted
     case "inactive-grant", "invalid-selection", "stale-revision":
         return "The available access choices changed. Review the refreshed request."
     default:
@@ -223,7 +230,12 @@ func accessAuthorizationErrorCode(_ error: Error) -> String? {
     if case .serverError(let status, _) = gatewayError, status == 400 {
         return "invalid-input"
     }
-    return gatewayError.gatewayCode ?? gatewayError.gatewayMessage
+    return accessRefusalCode(gatewayError)
+}
+
+/// The name the gateway gives a refusal on the access routes, such as `level-name-taken`.
+func accessRefusalCode(_ error: GatewayClient.Error) -> String? {
+    error.gatewayCode ?? error.gatewayMessage
 }
 
 func accessAuthorizationIsTerminalError(_ error: Error) -> Bool {
@@ -234,18 +246,6 @@ func accessAuthorizationIsTerminalError(_ error: Error) -> Bool {
 func accessAuthorizationIsStaleSelectionError(_ error: Error) -> Bool {
     guard let code = accessAuthorizationErrorCode(error) else { return false }
     return ["inactive-grant", "invalid-selection", "stale-revision"].contains(code)
-}
-
-/// The review's Answer privacy row: the policy the form's rules are judged
-/// against, by name when the overview lists it.
-func accessAnswerPrivacySummary(form: AccessAuthorizationFormState, overview: AccessOverview) -> String {
-    switch form.answerRelease {
-    case .reviewed:
-        overview.policyFamilies.first(where: { $0.id == form.policyFamilyId })?.name
-            ?? "Privacy policy"
-    case .unreviewed:
-        "No privacy review"
-    }
 }
 
 /// One capability a connection may hold.
@@ -267,33 +267,9 @@ enum AccessCapability: String, CaseIterable {
     }
 }
 
-/// The semantic colour a capability is drawn in.
-///
-/// A granted capability is never `withheld`: grey means the connection does
-/// not hold it, so a granted one drawn grey would say the opposite of what it
-/// means. Danger belongs to Direct alone — the capability that actually
-/// returns raw records — which is why an answer released without review is the
-/// warning tone rather than a second red.
-enum AccessCapabilityTone: Equatable {
-    case granted
-    case raw
-    case unreviewed
-    case notes
-    case withheld
-}
-
-func accessCapabilityTone(
-    _ capability: AccessCapability,
-    held: Bool,
-    unreviewed: Bool = false
-)
-    -> AccessCapabilityTone {
-    guard held else { return .withheld }
-    switch capability {
-    case .answer: return unreviewed ? .unreviewed : .granted
-    case .direct: return .raw
-    case .notes: return .notes
-    }
+/// A capability's name as every screen prints it, from the name a rule carries on the wire.
+func accessCapabilityName(_ capability: String) -> String {
+    AccessCapability(rawValue: capability)?.label ?? capability.capitalized
 }
 
 /// What a connection would be allowed to do, as the three slots print it.
@@ -301,7 +277,6 @@ struct AccessCapabilityHoldings: Equatable {
     var answer = false
     var direct = false
     var notes = false
-    var answerUnreviewed = false
 
     /// Nothing else about a connection means anything until it grants
     /// something.
@@ -317,12 +292,17 @@ struct AccessCapabilityHoldings: Equatable {
         }
     }
 
-    func tone(_ capability: AccessCapability) -> AccessCapabilityTone {
-        accessCapabilityTone(
-            capability,
-            held: holds(capability),
-            unreviewed: capability == .answer && answerUnreviewed
-        )
+    /// "Answer and Direct allowed, Notes not allowed": the three slots as one sentence.
+    var spokenSummary: String {
+        let allowed = AccessCapability.allCases.filter(holds).map(\.label)
+        let withheld = AccessCapability.allCases.filter { !holds($0) }.map(\.label)
+        return [(allowed, "allowed"), (withheld, "not allowed")]
+            .filter { !$0.0.isEmpty }
+            .map { names, state in
+                let list = names.count == 1 ? names[0] : names.dropLast().joined(separator: ", ") + " and " + names[names.count - 1]
+                return list + " " + state
+            }
+            .joined(separator: ", ")
     }
 }
 
@@ -334,68 +314,33 @@ func accessCapabilityHoldings(rules: [AccessGrantRule]) -> AccessCapabilityHoldi
             holdings.notes = true
         case .direct:
             holdings.direct = true
-        case .answer(_, let release):
+        case .answer:
             holdings.answer = true
-            holdings.answerUnreviewed = release == .unreviewed
         }
     }
     return holdings
 }
 
-/// The capabilities a single source list governs.
-///
-/// One list standing for two capabilities has to name both when it refuses:
-/// saying only "Direct" in front of a list the owner chose for Answer and
-/// Direct together describes a boundary that is not there.
-enum AccessSourceScope: Hashable {
-    case answer
-    case direct
-    case shared
-
-    var name: String {
-        switch self {
-        case .answer: "Answer"
-        case .direct: "Direct"
-        case .shared: "Answer and Direct"
-        }
-    }
-
-    var editorTitle: String {
-        switch self {
-        case .answer: "Answer sources"
-        case .direct: "Direct sources"
-        case .shared: "Sources for Answer and Direct"
-        }
-    }
-}
-
-/// The most source decisions one rule can record on the wire.
-let accessMaxSourceSelections = 256
-
-/// Shown where the fix is — inside the source list that earns it.
-func accessSourceBoundaryError(
-    scope: AccessSourceScope,
-    permitsAnyKnownSource: Bool,
-    recordedSelectionCount: Int
-)
-    -> String? {
-    if recordedSelectionCount > accessMaxSourceSelections {
-        return "\(scope.name) can record at most \(accessMaxSourceSelections) source selections."
-    }
-    if !permitsAnyKnownSource {
-        return "Select at least one source for \(scope.name)."
-    }
-    return nil
-}
-
 /// Nothing else about a connection means anything until it grants something.
-let accessNoCapabilityMessage = "Select at least one capability."
+let accessNoCapabilityMessage = "Choose at least one permission."
 
+/// The numbered steps the approval's indicator shows. Data & privacy stands for every screen between Permissions
+/// and the review.
 enum AccessAuthorizationStep: CaseIterable, Hashable {
     case connection
     case permissions
     case data
     case review
+
+    /// The indicator step a screen of the flow belongs to.
+    init(_ step: AccessFlowStep) {
+        switch step {
+        case .name, .overview: self = .connection
+        case .permissions: self = .permissions
+        case .answerData, .directChoice, .directData, .future, .release: self = .data
+        case .review: self = .review
+        }
+    }
 
     var title: String {
         switch self {
@@ -417,14 +362,6 @@ enum AccessAuthorizationStep: CaseIterable, Hashable {
     }
 }
 
-enum AccessAnswerReleaseChoice: String, CaseIterable, Identifiable {
-    case reviewed
-    case unreviewed
-    var id: String {
-        rawValue
-    }
-}
-
 /// `value` cut at a character boundary to at most `maxUTF16Length` UTF-16
 /// units, the unit the gateway measures names and labels in.
 func accessAuthorizationPrefix(_ value: String, maxUTF16Length: Int) -> String {
@@ -438,189 +375,54 @@ func accessAuthorizationPrefix(_ value: String, maxUTF16Length: Int) -> String {
     return result
 }
 
-/// The permissions being approved, as the wizard's steps edit them.
-///
-/// The form holds capabilities and source lists only; which connection they
-/// belong to is the Connection step's choice.
-struct AccessAuthorizationFormState {
-    var notesEnabled = false
-    var directEnabled = false
-    var answerEnabled = true
-    var directSources: AccessSourceSelectionState
-    var answerSources: AccessSourceSelectionState
-    /// Whether one source list governs both Answer and Direct. They read the
-    /// same corpus, so one list is the usual answer; a narrower one for
-    /// Direct, which returns raw records, is the deliberate exception. While
-    /// the two are linked `answerSources` is the only list that exists —
-    /// `directSources` is not consulted and not kept in step.
-    var linkSources = true
-    var answerRelease: AccessAnswerReleaseChoice = .reviewed
-    var policyFamilyId = ""
-
-    init(sourceIds: Set<String>) {
-        directSources = .newGrant(knownSourceIds: sourceIds)
-        answerSources = .newGrant(knownSourceIds: sourceIds)
-    }
-
-    /// The form the wizard opens on, built from what the gateway serves for
-    /// the request right now: every available source the overview lists is
-    /// known to it, and the prefill is the rules the lookup names, if any. A
-    /// refresh after a refused selection rebuilds the form the same way, so
-    /// permissions revoked in the meantime are gone from it.
-    static func opening(
+extension AccessLevelDraft {
+    /// The new level an approval opens on, built from what the gateway serves for the request right now: the level
+    /// editor's blank level (Answer, released through the default policy, with no account chosen yet) or `prefill`,
+    /// the rules of a connection the same app already holds, so the wizard opens on what that connection can do
+    /// today. A refresh after a refused selection builds it the same way, so permissions revoked in the meantime
+    /// are gone from it. An agent that asks through Answer always holds Answer.
+    static func approving(
         request: AccessAuthorizationRequest,
         overview: AccessOverview,
         prefill: [AccessGrantRule]?
     )
-        -> AccessAuthorizationFormState {
-        var form = AccessAuthorizationFormState(sourceIds: overview.availableSourceIds)
-        form.populate(request: request, overview: overview, prefill: prefill)
-        return form
+        -> AccessLevelDraft {
+        var draft = AccessLevelDraft(level: nil, overview: overview)
+        if let prefill { draft.adopt(prefill, overview: overview) }
+        if request.requiresAnswer { draft.setEnabled("answer", true, overview: overview) }
+        return draft
     }
 
-    /// Start from the request's defaults — Answer on, released through the
-    /// default policy — or from `prefill`, the rules of a connection the
-    /// same app already holds, so the wizard opens on what that connection
-    /// can do today rather than on a blank grant.
-    ///
-    /// Only available sources are known to the lists, so "every source" means
-    /// the same set on every platform that approves the same client; a source
-    /// the grant names that is listed but unavailable is a retained reference,
-    /// like one the overview no longer lists at all.
-    mutating func populate(
-        request: AccessAuthorizationRequest,
-        overview: AccessOverview,
-        prefill: [AccessGrantRule]? = nil
-    ) {
-        policyFamilyId = overview.defaultPolicyFamilyId
-            ?? overview.policyFamilies.first?.id
-            ?? ""
-        guard let prefill else {
-            answerEnabled = true
-            return
-        }
-        let known = overview.availableSourceIds
-        notesEnabled = false
-        directEnabled = false
-        answerEnabled = false
-        var directBoundary: AccessSourceBoundary?
-        var answerBoundary: AccessSourceBoundary?
-        for rule in prefill {
+    /// Takes another level's rules as this unsaved level's own: no filter revision to fence on, every filter
+    /// addressed to this level, and the default policy in place of one the overview no longer lists, which the
+    /// policy picker could not show.
+    private mutating func adopt(_ saved: [AccessGrantRule], overview: AccessOverview) {
+        let levelId = id
+        rules = saved.map { rule -> AccessGrantRule in
+            let policies = rule.scopePolicies.map { policy -> ScopePolicy in
+                var copy = policy
+                copy.audience = .init(accessLevel: levelId, capability: rule.capability)
+                return copy
+            }
             switch rule {
             case .notes:
-                notesEnabled = true
-            case .direct(let sources):
-                directEnabled = true
-                directBoundary = sources
-                directSources = AccessSourceSelectionState(boundary: sources, knownSourceIds: known)
-            case .answer(let sources, let release):
-                answerEnabled = true
-                answerBoundary = sources
-                answerSources = AccessSourceSelectionState(boundary: sources, knownSourceIds: known)
-                switch release {
-                case .reviewed(let familyId):
-                    answerRelease = .reviewed
-                    // A policy the overview no longer lists cannot be picked,
-                    // so the default already set above stands in for it.
-                    if overview.policyFamilies.contains(where: { $0.id == familyId }) {
-                        policyFamilyId = familyId
-                    }
-                case .unreviewed:
-                    answerRelease = .unreviewed
+                return .notes
+            case .direct(let sources, _, _):
+                return .direct(sources: sources, scopePolicies: policies)
+            case .answer(let sources, let release, _, _):
+                var kept = release
+                if case .reviewed(let family) = release, !overview.policyFamilies.contains(where: { $0.id == family }) {
+                    kept = .reviewed(policyFamilyId: overview.startingPolicyFamilyId)
                 }
+                return .answer(sources: sources, release: kept, scopePolicies: policies)
             }
         }
-        // Two reading rules drawn on the same boundary are one list; a Direct
-        // rule narrower than Answer's is the separate list it was written as.
-        if let directBoundary, let answerBoundary {
-            linkSources = directBoundary == answerBoundary
-        }
+        directSameAsAnswer = accessDirectMirrorsAnswer(rules)
     }
+}
 
-    /// Whether Answer is part of this grant, however it got there.
-    func answerActive(request: AccessAuthorizationRequest) -> Bool {
-        answerEnabled || request.requiresAnswer
-    }
-
-    /// Which capabilities this grant would hold, as the three slots print it.
-    func holdings(request: AccessAuthorizationRequest) -> AccessCapabilityHoldings {
-        let answer = answerActive(request: request)
-        return AccessCapabilityHoldings(
-            answer: answer,
-            direct: directEnabled,
-            notes: notesEnabled,
-            answerUnreviewed: answer && answerRelease == .unreviewed
-        )
-    }
-
-    /// The scopes this grant asks the owner to draw a source list for, in slot
-    /// order. Two linked reading capabilities share one list, so they ask once.
-    func sourceScopes(request: AccessAuthorizationRequest) -> [AccessSourceScope] {
-        let answer = answerActive(request: request)
-        if answer, directEnabled { return linkSources ? [.shared] : [.answer, .direct] }
-        if answer { return [.answer] }
-        return directEnabled ? [.direct] : []
-    }
-
-    /// The source list a scope edits. A linked pair edits Answer's, which is
-    /// what makes the Direct rule written below Answer's list by construction
-    /// rather than by keeping a second copy in step with it.
-    func sources(for scope: AccessSourceScope) -> AccessSourceSelectionState {
-        scope == .direct ? directSources : answerSources
-    }
-
-    mutating func setSources(_ value: AccessSourceSelectionState, for scope: AccessSourceScope) {
-        if scope == .direct { directSources = value } else { answerSources = value }
-    }
-
-    /// What approval sends to a gateway without connection proposals, or nil
-    /// while the form does not yet describe a grant the gateway would accept.
-    /// The credential is labelled with the client's own name.
-    func selection(
-        request: AccessAuthorizationRequest,
-        overview: AccessOverview
-    )
-        -> AccessAuthorizationSelection? {
-        let rules = rules(request: request, overview: overview)
-        guard !rules.isEmpty else { return nil }
-        return .connect(
-            rules: rules,
-            credentialLabel: accessAuthorizationPrefix(request.clientName, maxUTF16Length: 160)
-        )
-    }
-
-    /// The rules the form describes, or none while it does not yet describe
-    /// a grant the gateway would accept.
-    func rules(
-        request: AccessAuthorizationRequest,
-        overview: AccessOverview
-    )
-        -> [AccessGrantRule] {
-        let known = overview.availableSourceIds
-        var result: [AccessGrantRule] = notesEnabled ? [.notes] : []
-        if directEnabled {
-            let selection = sources(
-                for: linkSources && answerActive(request: request) ? .shared : .direct
-            )
-            guard selection.permitsAnyKnownSource(known) else { return [] }
-            let boundary = selection.boundary(knownSourceIds: known)
-            guard boundary.sourceIds.count <= accessMaxSourceSelections else { return [] }
-            result.append(.direct(sources: boundary))
-        }
-        if answerActive(request: request) {
-            guard answerSources.permitsAnyKnownSource(known) else { return [] }
-            let release: AccessAnswerRelease
-            switch answerRelease {
-            case .reviewed:
-                guard !policyFamilyId.isEmpty else { return [] }
-                release = .reviewed(policyFamilyId: policyFamilyId)
-            case .unreviewed:
-                release = .unreviewed
-            }
-            let boundary = answerSources.boundary(knownSourceIds: known)
-            guard boundary.sourceIds.count <= accessMaxSourceSelections else { return [] }
-            result.append(.answer(sources: boundary, release: release))
-        }
-        return result
-    }
+/// What approval sends to a gateway without connection proposals: the rules, under a credential labelled with the
+/// client's own name. Nil while the rules cannot be sent.
+func accessConnectSelection(rules: [AccessGrantRule]?, request: AccessAuthorizationRequest) -> AccessAuthorizationSelection? {
+    rules.map { .connect(rules: $0, credentialLabel: accessAuthorizationPrefix(request.clientName, maxUTF16Length: 160)) }
 }

@@ -445,12 +445,20 @@ async function parseClaudeCodeSession(
   if (id !== null && id !== undefined) structurallyComplete = false;
 
   let cwd: string | undefined;
+  // Claude Code records the working directory on every entry. The session's
+  // project folder is the first one on the conversation as it stands: the walk
+  // above runs from the newest entry back across every compaction to the
+  // oldest, so reversed it starts where the session did.
+  let startCwd: string | undefined;
   let branch: string | undefined;
   let model: string | undefined;
   const messages: ParsedLocalAgentSession["messages"] = [];
   let humanTurn = false;
   for (const node of reversed.reverse()) {
-    if (node.cwd !== undefined) cwd = node.cwd;
+    if (node.cwd !== undefined) {
+      startCwd ??= node.cwd;
+      cwd = node.cwd;
+    }
     if (node.branch !== undefined) branch = node.branch;
     if (node.model !== undefined) model = node.model;
     if (node.turnOrigin === "human") humanTurn = true;
@@ -466,6 +474,7 @@ async function parseClaudeCodeSession(
   return {
     id: sessionId,
     cwd,
+    startCwd,
     name: customTitle?.trim() || aiTitle?.trim() || undefined,
     branch,
     model,
@@ -503,6 +512,7 @@ export default defineSource({
   conversational: true,
   contentRetention: "best-effort",
   contract: {
+    outputRevision: 2,
     // The host resolves the stored cursor against this before `sync` runs,
     // so an unrecognised value is refused as unreadable rather than read as
     // "no sessions yet".
@@ -513,7 +523,10 @@ export default defineSource({
   documentEventProfile: createLocalAgentSessionDocumentEventProfile({
     harnessId: "claude-code",
     agentName: "Claude Code",
+    projectFolderSince: 2,
   }),
+  resyncCost:
+    "Your Claude Code session files are read again on each computer that has them: nothing is downloaded, and it takes a few minutes at most.",
   icon: claudeCodeIcon,
   config: configSchema.object({
     sessionsPath: configSchema.path({

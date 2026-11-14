@@ -16,10 +16,14 @@
 # `default` universe's recorded scenarios, so no model runs. It listens on a
 # high port with its own config dir and is stopped on exit.
 #
-# iOS runs `MobileJourneyUITests` on the simulator named by
-# OMNESIS_JOURNEY_IOS_SIMULATOR. Android needs an emulator already booted and
-# visible to adb — the CI lane boots one; locally, start your AVD first — and
-# runs `:app:connectedPlayDebugAndroidTest`, which holds only the journeys.
+# iOS runs `MobileJourneyUITests` and then `SourceFilterFolderGestureUITests`
+# on the simulator named by OMNESIS_JOURNEY_IOS_SIMULATOR. Source-filter
+# authoring is experimental, so that second class runs after the gateway is
+# restarted on the same corpus with OMNESIS_EXPERIMENTAL=1; the main journeys
+# keep the gateway the environment asks for. Android needs an emulator already
+# booted and visible to adb — the CI lane boots one; locally, start your AVD
+# first — and runs `:app:connectedPlayDebugAndroidTest`, which holds only the
+# journeys.
 #
 # A journey that fails is retried once (OMNESIS_JOURNEY_RETRIES), because
 # simulators and emulators have known one-off flakes; a journey that fails
@@ -166,7 +170,12 @@ print(max(matches)[1])
   echo "  built in $((SECONDS - started))s."
 }
 
+# Runs the named test classes as one xcodebuild invocation against the gateway
+# that is up, keeping its artifacts under the phase's name.
 run_ios() {
+  local phase="$1"
+  shift
+  local classes=("$@")
   local udid="$IOS_UDID"
   local bundle_id
   bundle_id="$("$ROOT/scripts/ios-resolved-bundle-id.sh" OmnesisDemo)"
@@ -186,7 +195,6 @@ import json, os
 print(json.dumps({"gatewayURL": os.environ["URL"], "token": os.environ["TOKEN"], "fingerprint": os.environ["FINGERPRINT"]}))
 ')"
 
-  local classes=(MobileJourneyUITests)
   local tests=()
   local expected=0
   if [[ -n "${OMNESIS_JOURNEY_ONLY:-}" ]]; then
@@ -199,11 +207,13 @@ print(json.dumps({"gatewayURL": os.environ["URL"], "token": os.environ["TOKEN"],
     done
   fi
 
-  xcrun simctl io "$udid" recordVideo --codec h264 --force "$ARTIFACTS/ios-journeys.mp4" \
-    >"$ARTIFACTS/recorder.log" 2>&1 &
+  local recording="$ARTIFACTS/ios-journeys-$phase.mp4"
+  local result="$ARTIFACTS/ios-journeys-$phase.xcresult"
+  xcrun simctl io "$udid" recordVideo --codec h264 --force "$recording" \
+    >"$ARTIFACTS/recorder-$phase.log" 2>&1 &
   RECORDER_PID=$!
 
-  echo "→ Running the iOS journeys…"
+  echo "→ Running the iOS journeys ($phase gateway)…"
   # The full xcodebuild output goes to the artifacts; the console keeps the
   # test verdicts and errors.
   local status=0
@@ -214,9 +224,9 @@ print(json.dumps({"gatewayURL": os.environ["URL"], "token": os.environ["TOKEN"],
     -destination "platform=iOS Simulator,id=$udid" \
     -derivedDataPath "$IOS_DERIVED_DATA" \
     "${IOS_PACKAGE_FLAGS[@]}" \
-    -resultBundlePath "$ARTIFACTS/ios-journeys.xcresult" \
+    -resultBundlePath "$result" \
     -retry-tests-on-failure -test-iterations $((RETRIES + 1)) \
-    "${tests[@]}" 2>&1 | tee "$ARTIFACTS/xcodebuild.log" \
+    "${tests[@]}" 2>&1 | tee "$ARTIFACTS/xcodebuild-$phase.log" \
     | grep -E --line-buffered '^(Test Case|Test Suite|Testing|Executed|\*\*)|error:'
   status="${PIPESTATUS[0]}"
   set -e
@@ -224,16 +234,16 @@ print(json.dumps({"gatewayURL": os.environ["URL"], "token": os.environ["TOKEN"],
 
   if [[ "$status" != 0 ]]; then
     mkdir -p "$ARTIFACTS/failure-attachments"
-    xcrun xcresulttool export attachments --path "$ARTIFACTS/ios-journeys.xcresult" \
+    xcrun xcresulttool export attachments --path "$result" \
       --output-path "$ARTIFACTS/failure-attachments" --only-failures >/dev/null 2>&1 || true
-    echo "✗ iOS journeys failed (xcodebuild exit $status). Artifacts: $ARTIFACTS" >&2
+    echo "✗ iOS journeys failed on the $phase gateway (xcodebuild exit $status). Artifacts: $ARTIFACTS" >&2
     return "$status"
   fi
   # A skipped test reads as TEST SUCCEEDED. The lane passes only when every
   # journey it selected ran and passed.
-  xcrun xcresulttool get test-results summary --path "$ARTIFACTS/ios-journeys.xcresult" \
-    >"$ARTIFACTS/summary.json"
-  python3 - "$ARTIFACTS/summary.json" "$expected" <<'PY' || return 1
+  xcrun xcresulttool get test-results summary --path "$result" \
+    >"$ARTIFACTS/summary-$phase.json"
+  python3 - "$ARTIFACTS/summary-$phase.json" "$expected" <<'PY' || return 1
 import json, sys
 summary, expected = json.load(open(sys.argv[1])), int(sys.argv[2])
 total, passed = summary["totalTestCount"], summary["passedTests"]
@@ -242,8 +252,8 @@ print(f"iOS journeys: {total} run, {passed} passed, {skipped} skipped, {failed} 
 if skipped or total == 0 or (expected and passed < expected):
     sys.exit("✗ Not every iOS journey ran and passed.")
 PY
-  rm -f "$ARTIFACTS/ios-journeys.mp4"
-  echo "✓ iOS journeys passed."
+  rm -f "$recording"
+  echo "✓ iOS journeys passed on the $phase gateway."
 }
 
 # ── Android ────────────────────────────────────────────────────────────────
@@ -472,56 +482,88 @@ if [[ ! -f "$HOME/.config/omnesis/models/$MODEL_FILE" ]]; then
   ln -sf "$MODEL_CACHE/$MODEL_FILE" "$OMNESIS_CONFIG_DIR/models/$MODEL_FILE"
 fi
 
-echo "→ Booting the synthetic gateway on $URL (universe e2e-minimal, replay agent)…"
-gateway_started=$SECONDS
 # A blank slate every run; the model link survives.
 if [[ -d "$OMNESIS_CONFIG_DIR" ]]; then
   "$ROOT/scripts/synth-gateway.sh" stop >/dev/null 2>&1 || true
   find "$OMNESIS_CONFIG_DIR" -mindepth 1 -maxdepth 1 -not -name models -exec rm -rf {} +
 fi
-# OAuth-backed synthetic sources sync without waiting on an add-source wizard.
-OMNESIS_SYNTH_UNIVERSE=e2e-minimal \
-  OMNESIS_SYNTH_PRE_DISCOVERED=1 \
-  OMNESIS_AGENT_FIXTURE="$ROOT/evals/universes/default/agent-demos" \
-  "$ROOT/scripts/synth-gateway.sh" start >"$ARTIFACTS/gateway-start.log" 2>&1 || {
-  cat "$ARTIFACTS/gateway-start.log" >&2
-  exit 1
-}
 
-TOKEN="$(cat "$OMNESIS_CONFIG_DIR/token")"
-FINGERPRINT="$(openssl x509 -in "$OMNESIS_CONFIG_DIR/tls/cert.pem" -noout -fingerprint -sha256 \
-  | cut -d= -f2 | tr -d ':' | tr 'A-F' 'a-f')"
+# Boots the gateway and reads the credentials the journeys pair with. Any
+# argument goes to `synth-gateway.sh start`.
+TOKEN=""
+FINGERPRINT=""
+start_gateway() {
+  local log="$ARTIFACTS/gateway-start.log"
+  echo "→ Booting the synthetic gateway on $URL (universe e2e-minimal, replay agent)…"
+  # OAuth-backed synthetic sources sync without waiting on an add-source wizard.
+  OMNESIS_SYNTH_UNIVERSE=e2e-minimal \
+    OMNESIS_SYNTH_PRE_DISCOVERED=1 \
+    OMNESIS_AGENT_FIXTURE="$ROOT/evals/universes/default/agent-demos" \
+    "$ROOT/scripts/synth-gateway.sh" start ${1+"$@"} >>"$log" 2>&1 || {
+    cat "$log" >&2
+    exit 1
+  }
+  TOKEN="$(cat "$OMNESIS_CONFIG_DIR/token")"
+  FINGERPRINT="$(openssl x509 -in "$OMNESIS_CONFIG_DIR/tls/cert.pem" -noout -fingerprint -sha256 \
+    | cut -d= -f2 | tr -d ':' | tr 'A-F' 'a-f')"
+}
 
 # The search journeys look for this invented document; the index is ready for
 # them once the gateway's own search returns it. Search reads a snapshot that
 # refreshes on a timer, so each check asks for a fresh one first.
 READY_DOCUMENT="Acme Q3 Planning"
 READY_BUDGET_SECONDS="${OMNESIS_JOURNEY_READY_TIMEOUT:-900}"
-echo "→ Waiting for the corpus to be searchable…"
-ready=0
-ready_deadline=$((SECONDS + READY_BUDGET_SECONDS))
-while ((SECONDS < ready_deadline)); do
-  curl -sk -m 20 -X POST "$URL/admin/search-snapshot/refresh" \
-    -H "Authorization: Bearer $TOKEN" >/dev/null 2>&1 || true
-  if curl -sk -m 20 -X POST "$URL/search" \
-    -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
-    -d "{\"text\":\"$READY_DOCUMENT\",\"limit\":10}" 2>/dev/null \
-    | node -e '
-        let s = ""; process.stdin.on("data", d => s += d).on("end", () => {
-          try { process.exit(JSON.parse(s).results.some(r => r.title === process.argv[1]) ? 0 : 1); }
-          catch { process.exit(1); }
-        });
-      ' "$READY_DOCUMENT"; then
-    ready=1
-    break
-  fi
-  sleep 2
-done
-if [[ "$ready" != 1 ]]; then
+wait_for_corpus() {
+  local started=$SECONDS
+  echo "→ Waiting for the corpus to be searchable…"
+  local ready_deadline=$((SECONDS + READY_BUDGET_SECONDS))
+  while ((SECONDS < ready_deadline)); do
+    curl -sk -m 20 -X POST "$URL/admin/search-snapshot/refresh" \
+      -H "Authorization: Bearer $TOKEN" >/dev/null 2>&1 || true
+    if curl -sk -m 20 -X POST "$URL/search" \
+      -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+      -d "{\"text\":\"$READY_DOCUMENT\",\"limit\":10}" 2>/dev/null \
+      | node -e '
+          let s = ""; process.stdin.on("data", d => s += d).on("end", () => {
+            try { process.exit(JSON.parse(s).results.some(r => r.title === process.argv[1]) ? 0 : 1); }
+            catch { process.exit(1); }
+          });
+        ' "$READY_DOCUMENT"; then
+      echo "  corpus ready after $((SECONDS - started))s."
+      return 0
+    fi
+    sleep 2
+  done
   echo "The gateway never returned \"$READY_DOCUMENT\" from /search within ${READY_BUDGET_SECONDS}s." >&2
   exit 1
-fi
-echo "  corpus ready $((SECONDS - gateway_started))s after the gateway started."
+}
 
 export URL
-"run_$PLATFORM"
+if [[ "$PLATFORM" == android ]]; then
+  start_gateway
+  wait_for_corpus
+  run_android
+  exit
+fi
+
+# Source-filter authoring is experimental, so its journeys need a gateway
+# started with the gate on; the main journeys run on the gateway the
+# environment asks for. A full run restarts the gateway between the two on the
+# corpus it already indexed, so nothing is seeded or embedded twice.
+IOS_EXPERIMENTAL_CLASS=SourceFilterFolderGestureUITests
+only="${OMNESIS_JOURNEY_ONLY:-}"
+if [[ "$only" != "$IOS_EXPERIMENTAL_CLASS"* ]]; then
+  start_gateway
+  wait_for_corpus
+  run_ios stable MobileJourneyUITests
+fi
+if [[ -z "$only" ]]; then
+  "$ROOT/scripts/synth-gateway.sh" stop >>"$ARTIFACTS/gateway-start.log" 2>&1
+  OMNESIS_EXPERIMENTAL=1 start_gateway --no-seed
+elif [[ "$only" == "$IOS_EXPERIMENTAL_CLASS"* ]]; then
+  OMNESIS_EXPERIMENTAL=1 start_gateway
+fi
+if [[ -z "$only" || "$only" == "$IOS_EXPERIMENTAL_CLASS"* ]]; then
+  wait_for_corpus
+  run_ios experimental "$IOS_EXPERIMENTAL_CLASS"
+fi

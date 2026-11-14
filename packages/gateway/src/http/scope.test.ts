@@ -61,6 +61,47 @@ describe("scope guards", () => {
     expect(res.status).toBe(200);
   });
 
+  test("native access editors require registered owner devices and preserve portal CSRF", async () => {
+    for (const [auth, native, expected] of [
+      [null, false, 401],
+      [authStub([SCOPE_READ]), true, 403],
+      [authStub([SCOPE_ADMIN]), false, 403],
+      [authStub([SCOPE_ADMIN]), true, 200],
+      [{ ...authStub([SCOPE_ADMIN]), deviceId: null }, true, 403],
+    ] as const) {
+      const app = makeApp(auth);
+      app.post(
+        "/edit",
+        scope.accessEditorAdmin(() => native),
+        (c) => c.json({ ok: true }),
+      );
+      expect((await app.request("/edit", { method: "POST" })).status).toBe(expected);
+    }
+    const portal: AuthContext = {
+      authMethod: "portal-session",
+      deviceId: null,
+      credentialDeviceId: null,
+      tokenId: "tok_test" as TokenId,
+      scopes: [SCOPE_ADMIN],
+      csrfToken: "synthetic-csrf",
+    };
+    const app = makeApp(portal);
+    app.post(
+      "/edit",
+      scope.accessEditorAdmin(() => false),
+      (c) => c.json({ ok: true }),
+    );
+    expect((await app.request("/edit", { method: "POST" })).status).toBe(403);
+    expect(
+      (
+        await app.request("/edit", {
+          method: "POST",
+          headers: { "X-Omnesis-CSRF": "synthetic-csrf" },
+        })
+      ).status,
+    ).toBe(200);
+  });
+
   test("read: 401 with no auth, 403 without read scope, 200 with read", async () => {
     let app = makeApp(null);
     app.get("/r", scope.read(), (c) => c.json({ ok: true }));

@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { SourceId } from "@omnesis/types";
 import { createDatabase } from "../../db.js";
 import { setSyncState, getSourceMeta } from "./SyncStateRepository.js";
-import { setSourceFamilyMeta } from "./SourceFamilyMetaRepository.js";
+import { getSourceResyncCost, setSourceFamilyMeta } from "./SourceFamilyMetaRepository.js";
 import { markSourceCleanupDone } from "./SourceRepository.js";
 import { deleteAllBySource } from "./DocumentRepository.js";
 
@@ -83,6 +83,60 @@ describe("re-declaring a family", () => {
     setSourceFamilyMeta(db, "example-browser", { label: "Browsers" });
 
     expect(rowsWritten() - before).toBe(0);
+  });
+});
+
+/**
+ * What reading a source again from the start costs is the source's own
+ * sentence, declared once for the type and pushed with its family identity.
+ */
+describe("a family's resync cost", () => {
+  const sentence = "This reads about 95,000 messages a day.";
+
+  test("is stored from the meta a sync pushes and read back by source type", () => {
+    setSyncState(
+      db,
+      "example-mail:one",
+      { phase: "done" },
+      { label: "One", family: { label: "Example mail", resyncCost: sentence } },
+    );
+
+    expect(getSourceResyncCost(db, "example-mail")).toBe(sentence);
+    expect(getSourceResyncCost(db, "example-browser")).toBeNull();
+  });
+
+  test("is stored for a family that declares nothing else", () => {
+    setSourceFamilyMeta(db, "example-mail", { resyncCost: sentence });
+    expect(getSourceResyncCost(db, "example-mail")).toBe(sentence);
+  });
+
+  test("is kept when a later push omits it, as an older collector's does", () => {
+    setSourceFamilyMeta(db, "example-mail", { label: "Example mail", resyncCost: sentence });
+    setSourceFamilyMeta(db, "example-mail", { label: "Mail" });
+
+    expect(getSourceResyncCost(db, "example-mail")).toBe(sentence);
+    expect(getSourceMeta(db)["example-mail"]).toEqual({ label: "Mail" });
+  });
+
+  test("is replaced when the source changes its sentence", () => {
+    setSourceFamilyMeta(db, "example-mail", { resyncCost: sentence });
+    setSourceFamilyMeta(db, "example-mail", { resyncCost: "This reads every message again." });
+
+    expect(getSourceResyncCost(db, "example-mail")).toBe("This reads every message again.");
+  });
+
+  test("repeating it writes nothing", () => {
+    setSourceFamilyMeta(db, "example-mail", { label: "Example mail", resyncCost: sentence });
+    const before = db.prepare<[], { n: number }>("SELECT total_changes() AS n").get()!.n;
+
+    setSourceFamilyMeta(db, "example-mail", { label: "Example mail", resyncCost: sentence });
+
+    expect(db.prepare<[], { n: number }>("SELECT total_changes() AS n").get()!.n - before).toBe(0);
+  });
+
+  test("is not part of the display identity every client loads", () => {
+    setSourceFamilyMeta(db, "example-mail", { label: "Example mail", resyncCost: sentence });
+    expect(getSourceMeta(db)["example-mail"]).toEqual({ label: "Example mail" });
   });
 });
 

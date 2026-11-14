@@ -9,6 +9,8 @@ import { activeAccessTokenPredicate } from "./active-access-token.js";
 import { getOAuthClient, oauthClientAuthenticates } from "./store-clients.js";
 import { appendAudit, getActiveCredential, hashSecret, issueTokenPair } from "./store-helpers.js";
 import { parseStringArray } from "./store-rules.js";
+import { isScopeQuarantined } from "./scope-quarantine.js";
+import { readScopeState } from "./scope-policy-store.js";
 import type {
   AccessCapability,
   AccessGrantCapability,
@@ -157,8 +159,17 @@ export function lookupPrincipalAccessToken(
   audience: string,
   now = Date.now(),
 ): PrincipalAccessTokenInfo | null {
-  // Resolve the token, credential, grant revision, principal, and capability
-  // rows in one SQLite statement.  Separate autocommit reads are unsafe here:
+  return db.transaction(() => lookupPrincipalAccessTokenSnapshot(db, rawToken, audience, now))();
+}
+
+function lookupPrincipalAccessTokenSnapshot(
+  db: Db,
+  rawToken: string,
+  audience: string,
+  now: number,
+): PrincipalAccessTokenInfo | null {
+  // Resolve token identity and both capability representations in one snapshot.
+  // Separate autocommit reads are unsafe here:
   // a writer could revise the grant after the revision check but before the
   // capability read, allowing a stale token to inherit newly-added authority
   // for one request.
@@ -210,6 +221,14 @@ export function lookupPrincipalAccessToken(
   if (!first) return null;
   const capabilities: AccessGrantCapability[] = [];
   for (const row of rows) {
+    const scope = readScopeState(db, "grant", row.grant_id, row.capability);
+    if (isScopeQuarantined(db, "grant", row.grant_id, row.capability)) {
+      row.source_mode = "allowlist";
+      row.source_ids = "[]";
+    } else if (scope?.scopePolicies.length) {
+      row.source_mode = scope.sourceMode;
+      row.source_ids = JSON.stringify(scope.sourceIds);
+    }
     const sourceIds = parseStringArray(row.source_ids);
     if (
       sourceIds === null ||
@@ -229,6 +248,7 @@ export function lookupPrincipalAccessToken(
     }
     capabilities.push({
       capability: row.capability,
+      ...(scope ?? {}),
       sourceMode: row.source_mode,
       sourceIds,
       releaseMode: row.release_mode,

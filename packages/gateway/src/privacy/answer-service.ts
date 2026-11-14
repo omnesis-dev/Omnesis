@@ -18,6 +18,11 @@ import {
   type AnswerCandidateTrace,
 } from "../agent/service.js";
 import {
+  serializeCorpusAuthorization,
+  type CorpusAuthorizationIdentity,
+  type CorpusAuthorization,
+} from "../access/corpus-authorization.js";
+import {
   AnswerStoreError,
   auditDisplay,
   digestCandidate,
@@ -25,6 +30,13 @@ import {
   loadPrivacyReviewerContext,
 } from "./store.js";
 import { getTaskByClientRequest } from "./store-internals.js";
+import {
+  createAnswerScopeReadObserver,
+  assertAnswerRunScopeCurrent,
+  assertAnswerTaskScopeCurrent,
+  assertAnswerTaskReleaseCurrent,
+  type AnswerScopeReadObserver,
+} from "./answer-scope.js";
 import {
   recordedPolicyFamily,
   reviewedPolicyFamily,
@@ -36,6 +48,13 @@ import {
   timeAnswerStoreOp,
   type AnswerProfileReport,
 } from "./answer-profile.js";
+import type { AnswerHistoryReads } from "./context-reads.js";
+import type {
+  CompleteAnswerTaskInput,
+  AnswerEgressEndpoint,
+  AppendAnswerAuditEventInput,
+  RecordAnswerEgressInput,
+} from "./store-types.js";
 import type { McpToolInvocationAuditInput } from "../access/types.js";
 import type { ChatMessage } from "@omnesis/agent";
 import type {
@@ -56,12 +75,6 @@ import type {
   PrivacyReviewResult,
 } from "./reviewer.js";
 import type { FiringAnswerEvidence } from "./firing-evidence.js";
-import type {
-  AnswerEgressEndpoint,
-  AppendAnswerAuditEventInput,
-  RecordAnswerEgressInput,
-} from "./store-types.js";
-import type { CorpusAuthorization } from "../access/corpus-authorization.js";
 
 const log = createLogger("gateway:privacy:answer");
 
@@ -124,6 +137,7 @@ export interface AnswerCandidateGenerator {
       evidenceDocumentIds?: readonly string[];
       firingEvidence?: FiringAnswerEvidence;
       corpusAuthorization?: CorpusAuthorization;
+      scopeReads?: AnswerScopeReadObserver;
       profiler?: AnswerProfiler;
     },
   ): ReturnType<AgentService["generateReadOnlyAnswerCandidate"]>;
@@ -131,6 +145,7 @@ export interface AnswerCandidateGenerator {
 
 export interface AnswerServiceDeps {
   db: Database.Database;
+  scopeHistoryReads?: AnswerHistoryReads;
   writeGate: Pick<
     WriteGate,
     | "beginAnswerTask"
@@ -193,6 +208,10 @@ export class AnswerService {
   private readonly activeByOwner = new Map<string, number>();
   private readonly lastEscalationAt = new Map<string, number>();
   private activeTotal = 0;
+  private readonly scopeObservers = new Map<
+    string,
+    ReturnType<typeof createAnswerScopeReadObserver>
+  >();
 
   constructor(private readonly deps: AnswerServiceDeps) {
     this.now = deps.now ?? Date.now;
@@ -282,6 +301,9 @@ export class AnswerService {
     const task = await timeAnswerStoreOp("beginAnswerTask", () =>
       this.deps.writeGate.beginAnswerTask({
         ownerId: request.ownerId,
+        ...(request.corpusAuthorization?.scopePolicies.length
+          ? { scopeAuthorization: serializeCorpusAuthorization(request.corpusAuthorization) }
+          : {}),
         workflowId: request.workflowId,
         conversationId: request.conversationId,
         clientRequestId: request.clientRequestId,
@@ -309,6 +331,17 @@ export class AnswerService {
       throw new AnswerTaskInProgressError(task.taskId);
     }
 
+    if (request.corpusAuthorization?.scopePolicies.length)
+      this.scopeObservers.set(
+        task.taskId,
+        createAnswerScopeReadObserver(() =>
+          assertAnswerRunScopeCurrent(
+            this.deps.db,
+            task.taskId,
+            this.scopeObservers.get(task.taskId)?.snapshot(),
+          ),
+        ),
+      );
     let capturedTrace: AnswerCandidateTrace | undefined;
     let tracePersisted = false;
     let capacityHeld = false;
@@ -344,11 +377,12 @@ export class AnswerService {
             ? Promise.resolve(null)
             : this.deps.policyStore.get(),
         Promise.resolve(
-          loadPrivacyReviewerContext(
-            this.deps.db,
+          this.loadReviewerContext(
             task.workflowId,
             task.conversationId,
             request.ownerId,
+            task.taskId,
+            request.signal,
           ),
         ),
       ]);
@@ -362,12 +396,17 @@ export class AnswerService {
         );
       }
       const policyFamily = policy ? reviewedPolicyFamily(policy) : undefined;
+      if (generationContext.scopeReads)
+        this.scopeObservers.get(task.taskId)?.inherit(generationContext.scopeReads);
       const answerHistory = boundReleasedHistory(
         toChatHistory(generationContext.priorExternalConversation),
       );
       // Known bug: #50 — this in-process agent run can hold the event loop
       // long enough to starve trusted-app reads (incl. the approval surface).
       const candidateOptions = {
+        ...(this.scopeObservers.has(task.taskId)
+          ? { scopeReads: this.scopeObservers.get(task.taskId)! }
+          : {}),
         ...(request.firingEvidence ? { firingEvidence: request.firingEvidence } : {}),
         ...(request.evidenceDocumentIds
           ? { evidenceDocumentIds: request.evidenceDocumentIds }
@@ -377,6 +416,13 @@ export class AnswerService {
           : {}),
         ...(profiler ? { profiler } : {}),
       };
+      assertAnswerRunScopeCurrent(
+        this.deps.db,
+        task.taskId,
+        // Tools and memory have not read anything yet. Their full observer
+        // remains incomplete until AgentService constructs the trusted ports.
+        generationContext.scopeReads ?? { complete: true, documentIds: [] },
+      );
       const candidateResult = await this.deps.agent.generateReadOnlyAnswerCandidate(
         request.question,
         answerHistory,
@@ -385,6 +431,11 @@ export class AnswerService {
           capturedTrace = trace;
         },
         Object.keys(candidateOptions).length > 0 ? candidateOptions : undefined,
+      );
+      assertAnswerRunScopeCurrent(
+        this.deps.db,
+        task.taskId,
+        this.scopeObservers.get(task.taskId)?.snapshot(),
       );
       const candidate: AnswerCandidate = {
         answer: candidateResult.answer,
@@ -433,6 +484,7 @@ export class AnswerService {
             },
             profiler,
           );
+      assertAnswerTaskScopeCurrent(this.deps.db, task.taskId);
       if (response.status === "approval_required") {
         this.notifyApprovalBestEffort(request.ownerId, response.approvalId);
       }
@@ -475,8 +527,41 @@ export class AnswerService {
       }
       throw err;
     } finally {
+      this.scopeObservers.delete(task.taskId);
       if (capacityHeld) this.releaseCapacity(request.ownerId);
     }
+  }
+
+  private async loadReviewerContext(
+    workflowId: string,
+    conversationId: string,
+    ownerId: string,
+    taskId: string,
+    signal?: AbortSignal,
+  ) {
+    if (this.scopeObservers.has(taskId) && !this.deps.scopeHistoryReads)
+      throw new AgentError(
+        "agent_unavailable",
+        "Filtered Answer history requires an available read worker.",
+      );
+    return loadPrivacyReviewerContext(this.deps.db, workflowId, conversationId, ownerId, taskId, {
+      reads: this.deps.scopeHistoryReads,
+      signal,
+    });
+  }
+
+  private async completeTask(input: CompleteAnswerTaskInput): Promise<AnswerResponse> {
+    const observer = this.scopeObservers.get(input.taskId);
+    const response = await this.deps.writeGate.completeAnswerTask({
+      ...input,
+      ...(observer ? { scopeReads: observer.snapshot() } : {}),
+    });
+    assertAnswerTaskScopeCurrent(this.deps.db, input.taskId);
+    return response;
+  }
+
+  assertTaskScopeCurrent(taskId: string, currentIdentity?: CorpusAuthorizationIdentity): void {
+    assertAnswerTaskReleaseCurrent(this.deps.db, taskId, currentIdentity);
   }
 
   async getResponse(
@@ -516,7 +601,7 @@ export class AnswerService {
     } = {},
   ): Promise<{ response: AnswerResponse; responseJson: string } | null> {
     const { mcpInvocationAudit, deviceAnswerAuthority, includeCitations } = options;
-    return this.deps.writeGate.recordAnswerEgress({
+    const recorded = await this.deps.writeGate.recordAnswerEgress({
       id: `egress_${randomUUID()}`,
       taskId,
       ownerId,
@@ -526,6 +611,20 @@ export class AnswerService {
       ...(deviceAnswerAuthority ? { deviceAnswerAuthority } : {}),
       ...(includeCitations ? { includeCitations: true } : {}),
     });
+    assertAnswerTaskReleaseCurrent(
+      this.deps.db,
+      taskId,
+      mcpInvocationAudit
+        ? {
+            principalId: mcpInvocationAudit.principalId,
+            grantId: mcpInvocationAudit.grantId,
+            grantRevision: mcpInvocationAudit.grantRevision,
+            credentialId: mcpInvocationAudit.credentialId,
+            accessTokenId: mcpInvocationAudit.accessTokenId,
+          }
+        : undefined,
+    );
+    return recorded;
   }
 
   private async reviewAndCommitFreshDisclosure(
@@ -549,12 +648,15 @@ export class AnswerService {
     profiler?: AnswerProfiler,
     attempt = 0,
   ): Promise<AnswerResponse> {
-    const reviewerContext = loadPrivacyReviewerContext(
-      this.deps.db,
+    const reviewerContext = await this.loadReviewerContext(
       input.workflowId,
       input.conversationId,
       input.ownerId,
+      input.taskId,
+      input.signal,
     );
+    if (reviewerContext.scopeReads)
+      this.scopeObservers.get(input.taskId)?.inherit(reviewerContext.scopeReads);
     const reviewHistory = boundReviewerHistory(reviewerContext.priorExternalConversation);
     const cumulativeDisclosure = {
       ...reviewerContext.cumulativeDisclosure,
@@ -563,6 +665,11 @@ export class AnswerService {
     };
     // The review runs inside a task whose answer is already generated, so it
     // waits out a quota reset rather than holding that work for approval.
+    assertAnswerRunScopeCurrent(
+      this.deps.db,
+      input.taskId,
+      this.scopeObservers.get(input.taskId)?.snapshot(),
+    );
     const review = await this.deps.reviewer.review(
       {
         currentQuestion: input.currentQuestion,
@@ -580,6 +687,22 @@ export class AnswerService {
       { ...(profiler ? { profiler } : {}), rateLimitPatience: BACKGROUND_RATE_LIMIT_PATIENCE },
     );
     await this.persistReviewAudit(input.taskId, input.ownerId, review, this.now());
+    assertAnswerRunScopeCurrent(
+      this.deps.db,
+      input.taskId,
+      this.scopeObservers.get(input.taskId)?.snapshot(),
+    );
+    if (reviewerContext.scopeHistoryWithheld)
+      return this.holdOrDenyWithoutApproval(
+        input.taskId,
+        input.ownerId,
+        input.candidate,
+        review.review,
+        this.now(),
+        false,
+        [],
+        input.approvalMode,
+      );
     try {
       return await this.commitReviewedCandidate(
         input.taskId,
@@ -648,7 +771,7 @@ export class AnswerService {
     }
     if (result.decision === "deny") {
       return timeAnswerStoreOp("completeAnswerTask", () =>
-        this.deps.writeGate.completeAnswerTask({
+        this.completeTask({
           taskId,
           ownerId,
           review: result.review,
@@ -703,6 +826,7 @@ export class AnswerService {
 
     // The reduced answer is judged under the policy the first pass named.
     const policyFamily = recordedPolicyFamily(result.review);
+    assertAnswerRunScopeCurrent(this.deps.db, taskId, this.scopeObservers.get(taskId)?.snapshot());
     const secondReview = await this.deps.reviewer.review(
       {
         currentQuestion,
@@ -720,6 +844,7 @@ export class AnswerService {
       { ...(profiler ? { profiler } : {}), rateLimitPatience: BACKGROUND_RATE_LIMIT_PATIENCE },
     );
     await this.persistReviewAudit(taskId, ownerId, secondReview, this.now());
+    assertAnswerRunScopeCurrent(this.deps.db, taskId, this.scopeObservers.get(taskId)?.snapshot());
     const combinedReview = combineReductionReviews(result.review, secondReview.review);
     if (secondReview.decision === "allow") {
       return this.releaseIfPolicyCurrent(
@@ -739,7 +864,7 @@ export class AnswerService {
     }
     if (secondReview.decision === "deny") {
       return timeAnswerStoreOp("completeAnswerTask", () =>
-        this.deps.writeGate.completeAnswerTask({
+        this.completeTask({
           taskId,
           ownerId,
           review: combinedReview,
@@ -775,7 +900,7 @@ export class AnswerService {
     reductions: string[],
   ): Promise<AnswerResponse> {
     return timeAnswerStoreOp("completeAnswerTask", () =>
-      this.deps.writeGate.completeAnswerTask({
+      this.completeTask({
         taskId,
         ownerId,
         review,
@@ -808,7 +933,7 @@ export class AnswerService {
       return this.holdForApproval(taskId, ownerId, candidate, review, now, reduced, reductions);
     }
     return timeAnswerStoreOp("completeAnswerTask", () =>
-      this.deps.writeGate.completeAnswerTask({
+      this.completeTask({
         taskId,
         ownerId,
         review,
@@ -841,7 +966,7 @@ export class AnswerService {
     try {
       const operation = () =>
         timeAnswerStoreOp("completeAnswerTask", () =>
-          this.deps.writeGate.completeAnswerTask({
+          this.completeTask({
             taskId,
             ownerId,
             review,
@@ -906,7 +1031,8 @@ export class AnswerService {
     conversationId: string,
     attempt = 0,
   ): Promise<AnswerResponse> {
-    const context = loadPrivacyReviewerContext(this.deps.db, workflowId, conversationId, ownerId);
+    const context = await this.loadReviewerContext(workflowId, conversationId, ownerId, taskId);
+    if (context.scopeReads) this.scopeObservers.get(taskId)?.inherit(context.scopeReads);
     const review: PrivacyReviewRecord = {
       recipeVersion: "explicit-unreviewed-v1",
       provider: null,
@@ -918,7 +1044,7 @@ export class AnswerService {
     };
     try {
       return await timeAnswerStoreOp("completeAnswerTask", () =>
-        this.deps.writeGate.completeAnswerTask({
+        this.completeTask({
           taskId,
           ownerId,
           review,

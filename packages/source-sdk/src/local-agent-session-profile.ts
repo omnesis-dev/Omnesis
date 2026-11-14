@@ -3,10 +3,20 @@
 
 import type { DocumentEventProfile } from "./structured-source.js";
 
+/** Profile path of the project folder a coding session started in. */
+export const LOCAL_AGENT_SESSION_PROJECT_FOLDER_FIELD = "extra.projectFolder";
+
+const PROJECT_FOLDER = { one: "project folder", many: "project folders" };
+
 /** Queryable metadata shared by local coding-agent transcript documents. */
 export function createLocalAgentSessionDocumentEventProfile(options: {
   harnessId: string;
   agentName: string;
+  /**
+   * The source's `outputRevision` from which its documents carry the project
+   * folder the session started in.
+   */
+  projectFolderSince: number;
 }): DocumentEventProfile {
   return {
     documentTypes: ["conversation"],
@@ -46,6 +56,25 @@ export function createLocalAgentSessionDocumentEventProfile(options: {
         path: "extra.cwd",
         type: "string",
         description: "Working directory recorded by the coding agent.",
+      },
+      {
+        path: LOCAL_AGENT_SESSION_PROJECT_FOLDER_FIELD,
+        type: "string",
+        description:
+          "Id of the project folder the session started in: the working directory the coding agent recorded when the session began, as an absolute path on the device that ran it. Nothing later in the session changes it. Absent when the session file recorded no directory.",
+        // A session has one starting folder or an unknown one, never none, so
+        // the field is a single value: a list could say "no folder", which a
+        // filter would read as safe to share.
+        filter: {
+          capability: "tree",
+          minVersion: options.projectFolderSince,
+          // A path only means something on the machine it is on.
+          scope: "device",
+          noun: PROJECT_FOLDER,
+          levels: [PROJECT_FOLDER],
+          picker: "tree",
+          inside: PROJECT_FOLDER,
+        },
       },
       {
         path: "extra.branch",

@@ -13,6 +13,7 @@ import {
   type SourceConformanceOptions,
 } from "@omnesis/source-sdk/testing";
 import {
+  mergeContractDeclarations,
   resolveSourceState,
   type SourceDefinition,
   type SourceInstance,
@@ -444,6 +445,28 @@ describe("registered provider contract conformance", () => {
         .map((source) => source.id)
         .sort(),
     ).toEqual(Object.keys(historical).sort());
+  });
+
+  it("every registered source declares the revision of its output", () => {
+    // The revision is stored on every document a source writes and only ever
+    // rises, so each source states its own rather than inheriting a default
+    // nobody chose: a source that starts writing something new raises it in
+    // the same change, and this is where a forgotten declaration surfaces.
+    const undeclared = allDefinitions.flatMap((definition) =>
+      "sources" in definition
+        ? definition.sources
+            .filter(
+              (source) =>
+                mergeContractDeclarations(definition.contract, source.contract)?.outputRevision ===
+                undefined,
+            )
+            .map((source) => source.id)
+        : definition.contract?.outputRevision === undefined
+          ? [definition.id]
+          : [],
+    );
+    expect(allDefinitions.length).toBeGreaterThan(10);
+    expect(undeclared).toEqual([]);
   });
 
   for (const definition of allDefinitions) {

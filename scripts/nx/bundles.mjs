@@ -63,6 +63,9 @@ export const bundles = {
       "task-conversation.e2e.test.ts",
       "replay-scenarios.e2e.test.ts",
       "mcp-*.e2e.test.ts",
+      // Source filters: what an external agent may read under a filter, and
+      // the per-account details and lists it is decided by.
+      "filter-*.e2e.test.ts",
       "watch-*.e2e.test.ts",
       "japan-trip-deep-research.e2e.test.ts",
     ],

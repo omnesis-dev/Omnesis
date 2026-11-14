@@ -1,0 +1,62 @@
+[
+  {
+    "externalId": "lf-drive-contract",
+    "name": "zqfilter TITLE_CONTRACT",
+    "mimeType": "text/plain",
+    "content": "zqfilter invented record BODY_CONTRACT",
+    "owner": "p_maya",
+    "createdAt": "2026-04-01T09:00:00Z",
+    "modifiedAt": "2026-04-01T09:00:00Z",
+    "parentIds": ["lf-drive-contracts"]
+  },
+  {
+    "externalId": "lf-drive-brief",
+    "name": "zqfilter TITLE_BRIEF",
+    "mimeType": "text/plain",
+    "content": "zqfilter invented record BODY_BRIEF",
+    "owner": "p_maya",
+    "createdAt": "2026-04-02T09:00:00Z",
+    "modifiedAt": "2026-04-02T09:00:00Z",
+    "parentIds": ["lf-drive-northstar"]
+  },
+  {
+    "externalId": "lf-drive-roster",
+    "name": "zqfilter TITLE_ROSTER",
+    "mimeType": "text/plain",
+    "content": "zqfilter invented record BODY_ROSTER",
+    "owner": "p_maya",
+    "createdAt": "2026-04-03T09:00:00Z",
+    "modifiedAt": "2026-04-03T09:00:00Z",
+    "parentIds": ["lf-drive-clients"]
+  },
+  {
+    "externalId": "lf-drive-recipe",
+    "name": "zqfilter TITLE_RECIPE",
+    "mimeType": "text/plain",
+    "content": "zqfilter invented record BODY_RECIPE",
+    "owner": "p_maya",
+    "createdAt": "2026-04-04T09:00:00Z",
+    "modifiedAt": "2026-04-04T09:00:00Z",
+    "parentIds": ["lf-drive-personal"]
+  },
+  {
+    "externalId": "lf-drive-shared",
+    "name": "zqfilter TITLE_SHARED",
+    "mimeType": "text/plain",
+    "content": "zqfilter invented record BODY_SHARED",
+    "owner": "p_maya",
+    "createdAt": "2026-04-05T09:00:00Z",
+    "modifiedAt": "2026-04-05T09:00:00Z",
+    "parentIds": ["lf-drive-northstar", "lf-drive-personal"]
+  },
+  {
+    "externalId": "lf-drive-loose",
+    "name": "zqfilter TITLE_LOOSE",
+    "mimeType": "text/plain",
+    "content": "zqfilter invented record BODY_LOOSE",
+    "owner": "p_maya",
+    "createdAt": "2026-04-06T09:00:00Z",
+    "modifiedAt": "2026-04-06T09:00:00Z",
+    "parentIds": []
+  }
+]

@@ -1,0 +1,735 @@
+/* SPDX-License-Identifier: AGPL-3.0-or-later
+ * Copyright (c) 2026 Adrien Conrath */
+/* Access decisions use the normal Settings shell, type scale and scroll surface. */
+.settings-view--access-task > .config-tabs {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  flex-shrink: 0;
+  background: var(--bg-primary);
+}
+.access-task-shell .access-editor-page {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  max-width: 960px;
+  min-width: 0;
+  gap: 18px;
+  margin: 0;
+  container-type: inline-size;
+  container-name: guided-task;
+}
+.access-task-shell .access-page-header {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 0;
+}
+.access-task-shell .access-page-header > div {
+  min-width: 0;
+}
+.access-task-shell .access-page-header h2 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.access-task-shell .access-eyebrow {
+  display: none;
+}
+.access-task-shell .access-page-back {
+  min-height: 32px;
+  font-size: 13px;
+}
+.guided-level-flow {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  color: var(--text-primary);
+  font-size: 13px;
+  line-height: 1.5;
+}
+.guided-progress {
+  margin-bottom: 6px;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+.guided-question {
+  margin-bottom: 18px;
+}
+.guided-question h3 {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 600;
+  line-height: 1.3;
+  letter-spacing: -0.015em;
+}
+.guided-question h3:focus {
+  outline: none;
+}
+.guided-question p {
+  margin: 6px 0 0;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+.guided-decision-body {
+  min-width: 0;
+  padding-bottom: 24px;
+}
+.guided-task-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 0 max(12px, env(safe-area-inset-bottom));
+  background: var(--bg-primary);
+}
+.guided-task-footer > span,
+.guided-task-footer > div > span {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.guided-level-flow button,
+.guided-level-flow select {
+  min-height: 32px;
+  font-size: 13px;
+}
+.guided-task-footer .btn-primary {
+  min-width: 100px;
+  padding: 6px 14px;
+  font-weight: 600;
+}
+.guided-task-footer .btn-ghost,
+.guided-filter-footer .btn-ghost {
+  padding: 6px 10px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  color: var(--text-secondary);
+  background: transparent;
+  cursor: pointer;
+}
+.guided-task-footer .btn-ghost:hover,
+.guided-filter-footer .btn-ghost:hover {
+  color: var(--text-primary);
+  background: var(--bg-secondary);
+}
+.guided-level-flow button:focus-visible,
+.guided-filter-editor button:focus-visible,
+.guided-level-flow select:focus-visible,
+.guided-level-flow a:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+.guided-task-error {
+  margin: 0 0 12px;
+}
+.guided-conflict-recovery {
+  display: block;
+  margin-top: 8px;
+  max-width: 100%;
+  white-space: normal;
+}
+.guided-level-flow .access-capability-presets {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.guided-level-flow .access-capability-preset,
+.guided-choice {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  width: 100%;
+  margin: 0;
+  padding: 10px 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  cursor: pointer;
+}
+.guided-level-flow .access-capability-preset:has(input:checked),
+.guided-level-flow .access-capability-preset.is-risk:has(input:checked),
+.guided-choice.is-selected {
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+.guided-level-flow .access-capability-preset input,
+.guided-choice input {
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  margin: 2px 0 0;
+  accent-color: var(--accent);
+}
+.guided-level-flow .access-capability-preset strong,
+.guided-choice strong {
+  color: var(--text-primary);
+  font-size: 13px;
+  font-weight: 600;
+}
+.guided-level-flow .access-capability-preset small {
+  display: block;
+  margin-top: 2px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.guided-level-flow .access-capability-warning {
+  color: var(--text-primary);
+}
+.guided-choices {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.guided-choice > span > strong {
+  display: block;
+}
+.guided-choice > span > small {
+  display: block;
+  margin-top: 2px;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+.guided-choice-row > .guided-choice {
+  width: auto;
+  flex: 0 1 auto;
+}
+.guided-future-choices {
+  display: grid;
+  gap: 20px;
+}
+.guided-future-choices fieldset {
+  display: grid;
+  gap: 0;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.guided-future-choices legend {
+  margin: 0 0 4px;
+  padding: 0;
+  font-weight: 600;
+}
+.guided-source-search {
+  display: grid;
+  gap: 5px;
+  max-width: 420px;
+  margin-bottom: 12px;
+}
+.guided-source-search input,
+.guided-level-flow .access-name-field input {
+  min-height: 32px;
+  padding: 5px 9px;
+  font: inherit;
+  color: var(--text-primary);
+  background: var(--bg-primary);
+  border: 1px solid var(--text-muted);
+  border-radius: 6px;
+}
+.guided-source-tools {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.guided-source-tools > span {
+  margin-right: auto;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+.guided-source-list {
+  display: grid;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.guided-source-list:empty {
+  display: none;
+}
+.guided-source-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 4px 12px;
+  min-width: 0;
+  min-height: 48px;
+  padding: 8px 8px 8px 14px;
+}
+.guided-source-row + .guided-source-row {
+  border-top: 1px solid var(--border-light);
+}
+.guided-source-select {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  margin: 0;
+  cursor: pointer;
+}
+.guided-source-select input {
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: var(--accent);
+}
+.guided-source-select img,
+.guided-source-select svg {
+  display: block;
+  width: 20px;
+  height: 20px;
+}
+.guided-source-select strong {
+  font-size: 13px;
+  font-weight: 600;
+}
+.guided-source-boundary {
+  display: contents;
+}
+.guided-source-boundary > .guided-readable-boundary {
+  grid-column: 2;
+  grid-row: 1;
+  color: var(--text-secondary);
+  font-size: 12px;
+  text-align: right;
+}
+.guided-source-row:not(.is-selected) .guided-source-boundary > .guided-readable-boundary {
+  color: var(--text-muted);
+}
+.guided-source-boundary > button {
+  grid-column: 3;
+  grid-row: 1;
+  flex-shrink: 0;
+  min-height: 28px;
+  padding: 3px 12px;
+  border-color: var(--border);
+  background: transparent;
+  font-size: 12px;
+}
+.guided-source-row > .source-filter-notice {
+  grid-column: 1 / -1;
+  margin: 0;
+}
+.guided-level-flow .grant-builder-release {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+.guided-level-flow .grant-builder-release > legend {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+}
+.guided-level-flow .grant-builder-release-choice {
+  margin: 0;
+  padding: 8px 0;
+  border: 0;
+  border-radius: 0;
+  font-size: 13px;
+  background: transparent;
+}
+.guided-level-flow .grant-builder-release-choice:has(input:checked) {
+  border: 0;
+  background: transparent;
+}
+.guided-level-flow .grant-builder-release-choice input {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--accent);
+}
+.guided-level-flow .grant-builder-release-reviewed select {
+  border-color: var(--text-muted);
+  min-height: 30px;
+  padding: 4px 28px 4px 8px;
+  font-size: 13px;
+}
+/* Each decision is one bordered card: a titled header that carries its action,
+   then its value. Data decisions list accounts; the others fit one row. */
+.guided-edit-overview,
+.guided-level-review {
+  display: grid;
+  gap: 12px;
+}
+.guided-overview-decision,
+.guided-review-decision {
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.guided-overview-decision > header,
+.guided-review-decision > header {
+  display: flex;
+  align-items: center;
+  gap: 4px 12px;
+  min-height: 44px;
+  padding: 6px 8px 6px 14px;
+}
+.guided-overview-decision.is-data > header,
+.guided-review-decision > header {
+  border-bottom: 1px solid var(--border);
+  border-radius: 7px 7px 0 0;
+  background: var(--bg-secondary);
+}
+.guided-overview-decision h4,
+.guided-review-decision h4 {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+}
+.guided-overview-actions,
+.guided-review-decision > header > button {
+  margin-left: auto;
+}
+.guided-overview-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.guided-overview-decision > header button,
+.guided-review-decision > header button {
+  min-height: 28px;
+  padding: 3px 12px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+}
+.guided-overview-decision > header .btn-secondary,
+.guided-review-decision > header .btn-secondary {
+  border-color: var(--border);
+  color: var(--text-primary);
+}
+.guided-overview-decision > header button:hover:not(:disabled),
+.guided-review-decision > header button:hover:not(:disabled) {
+  border-color: var(--border);
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+}
+.guided-overview-decision.is-setting {
+  display: grid;
+  grid-template-columns: 150px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 4px 16px;
+  min-height: 44px;
+  padding: 6px 8px 6px 14px;
+}
+.guided-overview-decision.is-setting > header {
+  display: contents;
+}
+.guided-overview-decision.is-setting .guided-overview-actions {
+  grid-column: 3;
+  grid-row: 1;
+}
+.guided-overview-decision.is-setting .guided-overview-value {
+  grid-column: 2;
+  grid-row: 1;
+  min-width: 0;
+}
+.guided-overview-value p {
+  margin: 0;
+  color: var(--text-secondary);
+}
+.guided-overview-decision.is-data .guided-overview-value > p,
+.guided-review-decision > p {
+  padding: 12px 14px;
+}
+/* A new level's review lists each setting's value directly under its heading. */
+.guided-review-decision > .capability-pills,
+.guided-review-decision > .compact-setting-value {
+  padding: 12px 14px;
+}
+.guided-review-decision > .capability-pills {
+  display: flex;
+}
+.compact-source-summary {
+  padding: 12px 14px;
+}
+.compact-source-summary + .compact-source-summary {
+  border-top: 1px solid var(--border-light);
+}
+.guided-data-summary > p,
+.guided-account-deltas > p {
+  margin: 0;
+  padding: 12px 14px;
+  color: var(--text-secondary);
+}
+/* A change reads top to bottom: what was saved, then what replaces it. */
+.guided-change-pair {
+  display: grid;
+}
+.guided-review-decision > .guided-change-pair {
+  padding: 4px 14px;
+}
+.guided-change-pair > section {
+  display: grid;
+  grid-template-columns: 56px minmax(0, 1fr);
+  align-items: start;
+  gap: 4px 12px;
+  min-width: 0;
+  padding: 10px 0;
+}
+.guided-change-pair > section + section {
+  border-top: 1px dashed var(--border);
+}
+.guided-change-pair > section > strong {
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.75;
+}
+/* A capability that is off has no value to show, only that it is off. */
+.guided-not-granted {
+  margin: 0;
+  color: var(--text-secondary);
+}
+.guided-change-pair .guided-not-granted {
+  font-size: 13px;
+  line-height: 1.6;
+}
+.guided-change-filters {
+  margin: 4px 0 12px;
+  padding-left: 68px;
+}
+.guided-unchanged {
+  margin-top: 8px;
+}
+.guided-empty-change {
+  margin: 0;
+  color: var(--text-secondary);
+}
+.guided-level-flow .access-name-field {
+  max-width: 420px;
+  gap: 5px;
+  margin-bottom: 16px;
+}
+.guided-level-flow .access-name-field label {
+  font-size: 13px;
+}
+.guided-level-flow .access-impact {
+  margin-top: 20px;
+  padding: 0;
+  border: 0;
+  font-size: 12px;
+}
+.guided-level-flow .access-impact strong {
+  font-size: 13px;
+  font-weight: 600;
+}
+.guided-readable-boundary {
+  overflow-wrap: anywhere;
+}
+.guided-account-delta {
+  padding: 12px 14px 2px;
+}
+.guided-account-delta + .guided-account-delta {
+  border-top: 1px solid var(--border-light);
+}
+/* Pale accent fills need dark labels in both application themes and states. */
+.guided-level-flow .btn-primary,
+.guided-filter-editor .btn-primary,
+.guided-exit-confirmation .confirm-modal-actions .btn-primary {
+  color: #0d2137;
+  background: #79c0ff;
+  border-color: #79c0ff;
+}
+.guided-level-flow .btn-primary:hover:not(:disabled),
+.guided-filter-editor .btn-primary:hover:not(:disabled),
+.guided-exit-confirmation .confirm-modal-actions .btn-primary:hover:not(:disabled) {
+  color: #0d2137;
+  background: #a2d3ff;
+  border-color: #a2d3ff;
+}
+.guided-level-flow .btn-primary:active:not(:disabled),
+.guided-filter-editor .btn-primary:active:not(:disabled) {
+  color: #0d2137;
+  background: #58a6ff;
+  border-color: #58a6ff;
+}
+/* A step that cannot go on yet: a quiet surface button, not a dimmed primary one. */
+.guided-level-flow .btn-primary:disabled,
+.guided-filter-editor .btn-primary:disabled,
+.access-request-actions .btn-primary:disabled {
+  opacity: 1;
+  color: var(--text-secondary);
+  background: var(--bg-tertiary);
+  border-color: var(--border);
+}
+.guided-exit-confirmation button {
+  min-height: 36px;
+  font-size: 13px;
+}
+.guided-exit-confirmation button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+.guided-level-flow input:not([type="checkbox"]):not([type="radio"]),
+.guided-level-flow select {
+  border-color: var(--text-muted);
+}
+@media (pointer: coarse) {
+  .guided-level-flow button,
+  .guided-level-flow select,
+  .guided-level-flow .access-name-field input,
+  .guided-source-boundary > button,
+  .guided-exit-confirmation button {
+    min-height: 44px;
+  }
+  .guided-choice,
+  .guided-level-flow .access-capability-preset {
+    min-height: 44px;
+  }
+}
+@container guided-task (max-width: 480px) {
+  .guided-overview-decision.is-setting {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+  .guided-overview-decision.is-setting .guided-overview-actions {
+    grid-column: 2;
+  }
+  .guided-overview-decision.is-setting .guided-overview-value {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    padding-bottom: 4px;
+  }
+  .guided-overview-decision.is-data > header {
+    flex-wrap: wrap;
+  }
+  .guided-source-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+  .guided-source-boundary > .guided-readable-boundary {
+    grid-column: 1;
+    grid-row: 2;
+    padding-left: 24px;
+    text-align: left;
+  }
+  .guided-source-boundary > button {
+    grid-column: 2;
+  }
+  .guided-change-pair > section {
+    grid-template-columns: 1fr;
+  }
+  .guided-change-filters {
+    padding-left: 0;
+  }
+  .guided-question h3 {
+    font-size: 18px;
+  }
+  .access-task-shell .access-page-header {
+    flex-wrap: wrap;
+    gap: 4px 12px;
+  }
+  .access-task-shell .access-page-header > div {
+    flex: 1 0 100%;
+  }
+}
+@container guided-task (max-width: 300px) {
+  .guided-task-footer,
+  .guided-task-footer > span {
+    flex-wrap: wrap;
+  }
+  .guided-task-footer > div,
+  .guided-task-footer > span {
+    flex: 1 0 100%;
+  }
+  .guided-task-footer .btn-primary {
+    flex: 1;
+  }
+  .guided-overview-decision > header,
+  .guided-review-decision > header {
+    flex-wrap: wrap;
+  }
+}
+@media (max-width: 600px) {
+  .guided-level-flow input:not([type="checkbox"]):not([type="radio"]),
+  .guided-level-flow select {
+    font-size: 16px;
+  }
+  .guided-task-footer {
+    gap: 8px;
+  }
+  .guided-task-footer > span {
+    gap: 6px;
+  }
+}
+@media (max-width: 300px) {
+  .guided-exit-confirmation .confirm-modal {
+    box-sizing: border-box;
+    max-width: calc(100vw - 24px);
+    max-height: calc(100dvh - 24px);
+    overflow-y: auto;
+    padding: 16px;
+  }
+  .guided-exit-confirmation .confirm-modal-actions {
+    flex-direction: column;
+  }
+  .guided-exit-confirmation .confirm-modal-actions button {
+    width: 100%;
+  }
+}
+
+.guided-level-flow .grant-builder-release-choice {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 12px;
+}
+.guided-level-flow .compact-release-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  max-width: 100%;
+}
+.guided-level-flow .compact-release-title > label {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  cursor: pointer;
+}
+.guided-level-flow .compact-release-title input {
+  flex-shrink: 0;
+  margin: 0;
+}
+.guided-level-flow .compact-release-title strong {
+  overflow-wrap: anywhere;
+}
+.guided-level-flow .compact-info {
+  display: inline-flex;
+}
+
+.guided-reuse-summary {
+  margin-top: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+/* Text these pages call muted must stay readable: every flow uses the secondary tone for it. */
+.access-view,
+.access-editor-page,
+.access-authorization-page,
+.doc-access-view,
+.modal-panel:has(.guided-filter-editor) {
+  --text-muted: var(--text-secondary);
+}
+/* A notice that leads a page keeps its distance from the caption under it. */
+.guided-level-flow > .guided-task-error {
+  margin-bottom: 16px;
+}

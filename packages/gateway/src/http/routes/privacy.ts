@@ -5,7 +5,11 @@ import { assertNever } from "@omnesis/core";
 import { PRIVACY_EXISTENCE_DECISIONS, PRIVACY_POLICY_DECISIONS } from "@omnesis/types/privacy";
 import { z } from "zod";
 
-import { AnswerStoreError, PrivacyCursorError } from "../../privacy/store.js";
+import {
+  AnswerStoreError,
+  rehydrateAnswerStoreError,
+  PrivacyCursorError,
+} from "../../privacy/store.js";
 import { BadRequestError, HttpError, NotFoundError, ServiceUnavailableError } from "../errors.js";
 import { scope } from "../scope.js";
 import { validateJson } from "../validate.js";
@@ -381,13 +385,20 @@ export function mountPrivacyRoutes(app: RouteApp, deps: AgentRoutesDeps): void {
   for (const action of ["approve", "deny"] as const) {
     app.post(`/admin/privacy/approvals/:id/${action}`, noStore, scope.admin(), async (c) => {
       const auth = c.get("auth");
-      const response = await requireDeps().resolveApproval(c.req.param("id"), action, {
-        requestId: c.get("requestId"),
-        tokenId: auth.tokenId,
-        deviceId: auth.deviceId,
-      });
-      if (!response) throw new NotFoundError("Privacy approval not found.");
-      return c.json(response);
+      try {
+        const response = await requireDeps().resolveApproval(c.req.param("id"), action, {
+          requestId: c.get("requestId"),
+          tokenId: auth.tokenId,
+          deviceId: auth.deviceId,
+        });
+        if (!response) throw new NotFoundError("Privacy approval not found.");
+        return c.json(response);
+      } catch (error) {
+        const storeError = rehydrateAnswerStoreError(error);
+        if (storeError?.code === "authority_changed")
+          throw new HttpError(409, "ANSWER_ACCESS_CHANGED", storeError.message);
+        throw error;
+      }
     });
   }
 

@@ -1,0 +1,58 @@
+[
+  {
+    "externalId": "+12025550123:2026-03-08",
+    "chatId": "+12025550123",
+    "chatTitle": "Maya Reeves",
+    "date": "2026-03-08",
+    "counterparty": "p_maya",
+    "messages": [
+      {
+        "from": "p_maya",
+        "at": "2026-03-08T09:15:00Z",
+        "text": "Could you send the marathon entry form when you have a minute? zqfilter"
+      },
+      { "from": "self", "at": "2026-03-08T09:20:00Z", "text": "Sending it tonight. zqfilter" }
+    ]
+  },
+  {
+    "externalId": "chat100000000000000001:2026-03-08",
+    "chatId": "chat100000000000000001",
+    "chatTitle": "Trail crew",
+    "date": "2026-03-08",
+    "counterparty": "p_maya",
+    "participants": ["p_maya"],
+    "messages": [
+      {
+        "from": "p_maya",
+        "at": "2026-03-08T10:00:00Z",
+        "text": "Saturday start is at the north car park, seven sharp. zqfilter"
+      }
+    ]
+  },
+  {
+    "externalId": "chat100000000000000001:2026-03-09",
+    "chatId": "chat100000000000000001",
+    "chatTitle": "Trail crew",
+    "date": "2026-03-09",
+    "counterparty": "p_maya",
+    "participants": ["p_maya"],
+    "messages": [
+      { "from": "self", "at": "2026-03-09T08:05:00Z", "text": "I can drive two people. zqfilter" }
+    ]
+  },
+  {
+    "externalId": "chat100000000000000002:2026-03-08",
+    "chatId": "chat100000000000000002",
+    "chatTitle": "Riverside Estate notices",
+    "date": "2026-03-08",
+    "counterparty": "p_maya",
+    "participants": ["p_maya"],
+    "messages": [
+      {
+        "from": "p_maya",
+        "at": "2026-03-08T11:30:00Z",
+        "text": "The bin collection day changes next week. zqfilter"
+      }
+    ]
+  }
+]

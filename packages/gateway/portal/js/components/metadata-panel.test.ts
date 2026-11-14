@@ -3,7 +3,10 @@
 
 import { describe, test, expect } from "vitest";
 // @ts-expect-error — sibling .js module, no .d.ts in the portal tree.
-import { formatExtractedDate, formatIsoDate, MetadataPanel } from "./metadata-panel.js";
+import * as metadataPanel from "./metadata-panel.js";
+
+const { documentTypeLabel, formatExtractedDate, formatIsoDate, formatTimestamp, MetadataPanel } =
+  metadataPanel;
 
 // `formatExtractedDate` turns one Omnesis-extracted date (as returned by
 // GET /documents/:id/dates) into the string shown in the "Enriched by Omnesis"
@@ -191,5 +194,39 @@ describe("MetadataPanel — partition origin", () => {
       }),
     );
     expect(nodes.find((node) => node.class.includes("meta-row-device"))).toBeUndefined();
+  });
+});
+
+describe("MetadataPanel — sections", () => {
+  test("Document, Timestamps and Identifiers, with a type in words and exact moments", () => {
+    const created = new Date(2026, 2, 14, 9, 12).getTime();
+    const nodes = expandToHostNodes(
+      MetadataPanel({
+        document: {
+          id: "0f6c2a1e-6b8d-4e43-9c2a-5d1e7b3f9a10",
+          external_id: "day:invented-chat:2026-03-14",
+          source_id: "whatsapp-messages:+1 (555) 010-0123",
+          metadata: JSON.stringify({ documentType: "conversation" }),
+          source_created_at: created,
+        },
+      }),
+    );
+    expect(nodes.filter((node) => node.class === "meta-section-title").map((node) => node.text)).toEqual([
+      "Document",
+      "Timestamps",
+      "Identifiers",
+    ]);
+    const values = nodes.filter((node) => node.class.startsWith("meta-value")).map((node) => node.text);
+    expect(values).toContain("Conversation");
+    expect(values.some((text) => text.endsWith(" · +1 (555) 010-0123"))).toBe(true);
+    expect(values).toContain("14 March 2026, 09:12");
+    expect(values).toContain("0f6c2a1e-6b8d-4e43-9c2a-5d1e7b3f9a10");
+    expect(values).toContain("day:invented-chat:2026-03-14");
+  });
+
+  test("a stored type and a moment read in plain words", () => {
+    expect(documentTypeLabel("chat-day")).toBe("Chat day");
+    expect(formatTimestamp(new Date(2026, 2, 14, 18, 40).toISOString())).toBe("14 March 2026, 18:40");
+    expect(formatTimestamp("not a date")).toBe("not a date");
   });
 });

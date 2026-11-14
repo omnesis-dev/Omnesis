@@ -157,3 +157,9 @@ private fun parseInstant(iso: String?): Instant? {
     return runCatching { Instant.parse(iso) }.getOrNull()
         ?: runCatching { ZonedDateTime.parse(iso).toInstant() }.getOrNull()
 }
+
+private val DETAIL_TIME: DateTimeFormatter = DateTimeFormatter.ofPattern("d MMMM yyyy, HH:mm")
+
+/** A document timestamp as its details show it, in local time: "14 March 2026, 09:12". Text that is not an instant is shown as it is. */
+fun documentDetailTime(iso: String): String =
+    parseInstant(iso)?.let { DETAIL_TIME.withLocale(Locale.getDefault()).withZone(ZoneId.systemDefault()).format(it) } ?: iso

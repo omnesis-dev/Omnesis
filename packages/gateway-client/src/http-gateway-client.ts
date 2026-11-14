@@ -41,7 +41,7 @@ import type {
   GatewaySearchResponse,
   AnalyticsTableSchema,
   AnalyticsCatalogEntry,
-  DocumentEventProfile,
+  DocumentEventProfilePublication,
   DocumentTemporalProjectionSpec,
   ReconcileResponse,
   SnapshotAbsenceOutcome,
@@ -55,7 +55,14 @@ import type {
   UpsertWithCursorResponse,
   PendingStructuredPage,
 } from "@omnesis/source-sdk";
-import type { DocumentInput, AccountId, SourceId, SourceType, ProviderId } from "@omnesis/types";
+import type {
+  DocumentInput,
+  AccountId,
+  FilterListPublication,
+  SourceId,
+  SourceType,
+  ProviderId,
+} from "@omnesis/types";
 import type {
   TranscriptionResult,
   AudioTranscribeFn,
@@ -713,6 +720,17 @@ export class HttpGatewayClient implements GatewayClient {
     return typeof data.wipeEpoch === "number" ? data.wipeEpoch : undefined;
   }
 
+  async getFilterListDigests(sourceId: SourceId): Promise<Record<string, string> | undefined> {
+    const data = await this.request(`/sync-state/${encodeURIComponent(sourceId)}`);
+    const digests: unknown = data.filterListDigests;
+    if (typeof digests !== "object" || digests === null) return undefined;
+    return Object.fromEntries(
+      Object.entries(digests).filter(
+        (entry): entry is [string, string] => typeof entry[1] === "string",
+      ),
+    );
+  }
+
   async beginSyncAttempt(
     sourceId: SourceId,
     options: { signal?: AbortSignal; attemptId?: string } = {},
@@ -992,9 +1010,7 @@ export class HttpGatewayClient implements GatewayClient {
    * restart the collector has not yet reconnected after. Replaces whatever was
    * previously stored.
    */
-  async setDocumentEventProfiles(
-    entries: Array<{ sourceType: string; profile: DocumentEventProfile }>,
-  ): Promise<void> {
+  async setDocumentEventProfiles(entries: DocumentEventProfilePublication[]): Promise<void> {
     await this.request("/admin/source-document-profiles", {
       method: "POST",
       body: JSON.stringify({ entries }),
@@ -1062,6 +1078,9 @@ export class HttpGatewayClient implements GatewayClient {
     consentExpiresAt?: string | null;
     watermark?: SourceWatermark;
     meta?: Omit<SourceSyncMeta, "contentRetention">;
+    filterLists?: FilterListPublication[];
+    sourceVersion?: number;
+    fullReadComplete?: boolean;
   }): Promise<UpsertWithCursorResponse> {
     return (await this.request("/documents/with-cursor", {
       method: "POST",

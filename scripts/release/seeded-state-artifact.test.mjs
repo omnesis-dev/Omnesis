@@ -20,6 +20,7 @@ import { runSchemaSetup } from "../../packages/gateway/src/data/schema.js";
 import { createDatabase } from "../../packages/gateway/src/db.js";
 import { LATEST_SCHEMA_VERSION } from "../../packages/gateway/src/data/schema-version.js";
 import { createTranscriptionVocabularyTables } from "../../packages/gateway/src/transcribe/vocabulary/storage.js";
+import { createSourceFilterListTables } from "../../packages/gateway/src/data/repositories/SourceFilterListRepository.js";
 import { createIndexDatabase } from "../../packages/gateway/src/indexer/db.js";
 import {
   createLiveVoiceUsageTable,
@@ -243,6 +244,53 @@ describe("seeded-state artifacts", () => {
     output.close();
   });
 
+  it("preserves published filter lists with their items and members", () => {
+    const paths = fixture();
+    const source = new Database(paths.sourcePath);
+    createSourceFilterListTables(source);
+    source.exec(`
+      INSERT INTO source_filter_lists
+        (source_id, field, device_id, generation, digest, item_count, published_at)
+        VALUES ('filing:northstar', 'extra.groupId', '', 3, 'digest-3', 1, 1000);
+      INSERT INTO source_filter_items
+        (source_id, field, device_id, generation, item_id, parent_id, label)
+        VALUES ('filing:northstar', 'extra.groupId', '', 3, 'g-team', NULL, 'Atlas team');
+      INSERT INTO source_filter_item_members
+        (source_id, field, device_id, generation, item_id, identifier_type, identifier_value)
+        VALUES ('filing:northstar', 'extra.groupId', '', 3, 'g-team', 'email',
+          'maya.reeves@example.com');
+    `);
+    source.close();
+    const tables = ["source_filter_lists", "source_filter_items", "source_filter_item_members"];
+    createSeededStateArtifact(
+      {
+        ...spec(paths, tables),
+        expected: {
+          rowCounts: { "omnesis.db": Object.fromEntries(tables.map((table) => [table, 1])) },
+        },
+      },
+      paths.artifact,
+    );
+    const output = new Database(join(paths.artifact, "omnesis.db"), { readonly: true });
+    // The join every read makes still resolves in the copy.
+    expect(
+      output
+        .prepare(
+          `SELECT l.digest, i.label, m.identifier_value AS member
+             FROM source_filter_lists l
+             JOIN source_filter_items i
+               ON i.source_id = l.source_id AND i.field = l.field
+              AND i.device_id = l.device_id AND i.generation = l.generation
+             JOIN source_filter_item_members m
+               ON m.source_id = i.source_id AND m.field = i.field
+              AND m.device_id = i.device_id AND m.generation = i.generation
+              AND m.item_id = i.item_id`,
+        )
+        .get(),
+    ).toEqual({ digest: "digest-3", label: "Atlas team", member: "maya.reeves@example.com" });
+    output.close();
+  });
+
   it("preserves voice accounting schema without copying installation call records", () => {
     const paths = fixture();
     const source = new Database(paths.sourcePath);
@@ -354,6 +402,34 @@ describe("seeded-state artifacts", () => {
       expect(unclassified).toEqual([]);
       database.close();
     }
+  });
+
+  it("omits source-filter authority and Answer readsets even from explicit export requests", () => {
+    const paths = fixture();
+    const forbidden = [
+      "access_scope_capabilities",
+      "access_scope_legacy_denials",
+      "access_scope_policy_sources",
+      "scope_policy_mutation_context",
+      "answer_task_scope",
+      "answer_task_scope_documents",
+    ];
+    const source = new Database(paths.sourcePath);
+    for (const table of forbidden) {
+      source.exec(`CREATE TABLE ${table}(private_authority TEXT);`);
+      source.prepare(`INSERT INTO ${table} VALUES(?)`).run("must-not-ship");
+      expect(seededStateTableSpec(table, ["private_authority"])).toBeNull();
+    }
+    source.close();
+    createSeededStateArtifact(spec(paths), paths.artifact);
+    const output = new Database(join(paths.artifact, "omnesis.db"), { readonly: true });
+    for (const table of forbidden) {
+      expect(output.prepare(`SELECT count(*) FROM ${table}`).pluck().get()).toBe(0);
+      expect(() =>
+        createSeededStateArtifact(spec(paths, ["documents", table]), join(paths.root, table)),
+      ).toThrow(/cannot be exported/);
+    }
+    output.close();
   });
 
   it("preserves pending synthesis privacy fences but clears guards and decision receipts", () => {

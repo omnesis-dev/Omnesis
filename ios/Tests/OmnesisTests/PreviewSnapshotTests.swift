@@ -6,7 +6,54 @@ import Observation
 @testable import Omnesis
 import SwiftUI
 import UIKit
+import Vision
 import XCTest
+
+/// Holds the actual options requests so two mounted Retry operations can finish out of order.
+private actor ScopePickerRetrySession: URLSessionLike {
+    private var requests: [URLRequest] = []
+    private var held: [Int: CheckedContinuation<(Data, URLResponse), Error>] = [:]
+
+    var arrived: Int {
+        requests.count
+    }
+
+    var cursors: [String?] {
+        requests.map { request in
+            request.url.flatMap { URLComponents(url: $0, resolvingAgainstBaseURL: false) }?
+                .queryItems?.first { $0.name == "cursor" }?.value
+        }
+    }
+
+    func data(for request: URLRequest) async throws -> (Data, URLResponse) {
+        let index = requests.count
+        requests.append(request)
+        return try await withCheckedThrowingContinuation { held[index] = $0 }
+    }
+
+    func answer(_ index: Int, with page: ScopeOptions) throws {
+        let url = try XCTUnwrap(requests[index].url)
+        let response = try XCTUnwrap(HTTPURLResponse(
+            url: url, statusCode: 200, httpVersion: "HTTP/1.1", headerFields: ["Content-Type": "application/json"]
+        ))
+        let data = try JSONEncoder().encode(page)
+        let continuation = try XCTUnwrap(held.removeValue(forKey: index))
+        continuation.resume(returning: (data, response))
+    }
+
+    func fail(_ index: Int) throws {
+        let continuation = try XCTUnwrap(held.removeValue(forKey: index))
+        continuation.resume(throwing: URLError(.timedOut))
+    }
+
+    func cancelHeld() {
+        let remaining = held.values
+        held.removeAll()
+        for continuation in remaining {
+            continuation.resume(throwing: CancellationError())
+        }
+    }
+}
 
 // This catalogue holds one test per screen state, and the app has hundreds of
 // them: its length is the point, and every view added to the app lengthens it.
@@ -1667,14 +1714,16 @@ final class PreviewSnapshotTests: XCTestCase {
     /// `drawHierarchy` capture below silently yields a blank page rather than
     /// failing, so an oversized canvas reads as a passing test with an empty
     /// PNG. A view too tall for one canvas gets a narrower fixture instead.
-    private func snapshot(
+    func snapshot(
         _ view: some View,
         name: String,
         size: CGSize = canvasSize,
-        ignoresSafeArea: Bool = false
+        ignoresSafeArea: Bool = false,
+        standardRange: Bool = false
     ) {
-        render(view, name: name, size: size, scheme: .dark, ignoresSafeArea: ignoresSafeArea)
-        render(view, name: "\(name)-light", size: size, scheme: .light, ignoresSafeArea: ignoresSafeArea)
+        for (scheme, suffix) in [(ColorScheme.dark, ""), (.light, "-light")] {
+            render(view, name: name + suffix, size: size, scheme: scheme, ignoresSafeArea: ignoresSafeArea, standardRange: standardRange)
+        }
     }
 
     /// A system sheet is presented asynchronously and only after its host is
@@ -1696,13 +1745,16 @@ final class PreviewSnapshotTests: XCTestCase {
     /// `ignoresSafeArea` lays the view out with no safe-area inset. A hosting
     /// controller outside a window otherwise reserves one at the bottom, which
     /// hides the foot of a full-screen page that pins its actions there.
+    /// `standardRange` writes the PNG in sRGB, so a colour token reads back as its
+    /// own hex value; the device's wide-gamut default stores other numbers for it.
     @discardableResult
     private func render(
         _ view: some View,
         name: String,
         size: CGSize,
         scheme: ColorScheme,
-        ignoresSafeArea: Bool = false
+        ignoresSafeArea: Bool = false,
+        standardRange: Bool = false
     )
         -> UIImage {
         let isDark = scheme == .dark
@@ -1726,7 +1778,9 @@ final class PreviewSnapshotTests: XCTestCase {
         host.view.setNeedsLayout()
         host.view.layoutIfNeeded()
 
-        let renderer = UIGraphicsImageRenderer(size: size)
+        let format = UIGraphicsImageRendererFormat.preferred()
+        if standardRange { format.preferredRange = .standard }
+        let renderer = UIGraphicsImageRenderer(size: size, format: format)
         let image = renderer.image { _ in
             host.view.drawHierarchy(in: host.view.bounds, afterScreenUpdates: true)
         }
@@ -8908,6 +8962,498 @@ final class PreviewSnapshotTests: XCTestCase {
                 .environment(store)
                 .environment(store.notificationRouter),
             name: "190-home-source-permission-banner"
+        )
+    }
+
+    func testAccessScopeAuthoringDisabledEntries() {
+        let overview = PreviewMocks.scopeReadOnlyOverview
+        snapshot(
+            NavigationStack { AccessLevelEditorView(level: overview.levels[0], overview: overview, previewStep: .answerData) }
+                .environment(AppStore.preview()),
+            name: "scope-level-authoring-disabled",
+            size: CGSize(width: 393, height: 852),
+            ignoresSafeArea: true
+        )
+        snapshot(
+            AccessAuthorizationSheet(
+                previewRequest: PreviewMocks.accessAuthorizationRequest,
+                overview: overview,
+                mode: .sharedSources
+            ).environment(AppStore.preview()),
+            name: "scope-consent-authoring-disabled",
+            size: CGSize(width: 393, height: 1400)
+        )
+    }
+
+    func testScopePickerConsumesProvidedBookmarkAndStartsAnotherSearchAtTop() async throws {
+        let source = PreviewMocks.accessDrive
+        let (firstPage, secondPage) = scopePickerPageFixtures()
+        try assertProviderFixtureWireRefs(firstPage.items.map(\.ref) + secondPage.items.map(\.ref))
+        // Consume an explicit bookmark over two accumulated provider pages.
+        // Recording that bookmark from a real swipe is covered by the UI journey.
+        let options = try appendScopeOptions(secondPage, to: firstPage)
+        let last = try XCTUnwrap(options.items.last)
+        for scheme in [ColorScheme.light, .dark] {
+            let name = scheme == .dark ? "dark" : "light"
+            var saved = ScopePickerSession(field: PreviewMocks.accessFolderField, sourceId: source.id)
+            let location = saved.location(for: source.id)
+            saved.catalogues[location] = options
+            saved.positions[location] = .init(itemId: .item(.init(last.ref)), index: options.items.count - 1)
+            var installedRestored: SourceFilterPickerView?
+            let restored = try mountScopePicker(
+                source: source, session: saved, scheme: scheme, mounted: { installedRestored = $0 }
+            )
+            defer {
+                restored.1.rootView = AnyView(EmptyView())
+                restored.0.isHidden = true
+                installedRestored = nil
+            }
+            try await awaitScopePickerLayout(
+                { installedRestored },
+                window: restored.0,
+                location: location,
+                name: "scope-picker-provided-readiness-failed-\(name)"
+            )
+            let scroll = try XCTUnwrap(scopePickerScroll(in: restored.1.view))
+            XCTAssertGreaterThan(scroll.contentSize.height, scroll.bounds.height * 2, "The fixture must require scrolling")
+            XCTAssertGreaterThan(scroll.contentOffset.y, 0, "A page-two bookmark must not render at the top")
+            try captureScopePicker(
+                restored.0,
+                name: "scope-picker-provided-bookmark-\(name)",
+                visibleLabel: last.label
+            )
+            restored.1.rootView = AnyView(EmptyView())
+            restored.0.isHidden = true
+
+            var anotherSearch = saved
+            anotherSearch.query = "folder"
+            // The same rows also match this query, so a leaked old anchor would still resolve.
+            anotherSearch.catalogues[anotherSearch.location(for: source.id)] = options
+            var installedFresh: SourceFilterPickerView?
+            let fresh = try mountScopePicker(
+                source: source, session: anotherSearch, scheme: scheme, mounted: { installedFresh = $0 }
+            )
+            defer {
+                fresh.1.rootView = AnyView(EmptyView())
+                fresh.0.isHidden = true
+                installedFresh = nil
+            }
+            let freshLocation = anotherSearch.location(for: source.id)
+            try await awaitScopePickerLayout(
+                { installedFresh },
+                window: fresh.0,
+                location: freshLocation,
+                target: .top,
+                name: "scope-picker-fresh-readiness-failed-\(name)"
+            )
+            let reset = try XCTUnwrap(scopePickerScroll(in: fresh.1.view))
+            XCTAssertGreaterThan(reset.contentSize.height, reset.bounds.height * 2, "The new query must still require scrolling")
+            // The top target is the search GroupBox inside the stack's padding,
+            // not the absolute content origin. Verify the current query's target
+            // and the actual first result pixels instead of an inset-only offset.
+            XCTAssertEqual(installedFresh?.pendingRestore?.location, freshLocation)
+            XCTAssertEqual(installedFresh?.pendingRestore?.target, .top)
+            try captureScopePicker(
+                fresh.0,
+                name: "scope-picker-new-search-\(name)",
+                visibleLabel: XCTUnwrap(options.items.first).label
+            )
+        }
+    }
+
+    func testScopePickerObsoleteRetryCannotRestoreDuringNewerRetry() async throws {
+        let source = PreviewMocks.accessDrive
+        let (firstPage, secondPage) = scopePickerPageFixtures()
+        let options = try appendScopeOptions(secondPage, to: firstPage)
+        let transport = ScopePickerRetrySession()
+        defer { Task { await transport.cancelHeld() } }
+        let client = try AccessClient(
+            baseURL: XCTUnwrap(URL(string: "https://gateway.example.org")),
+            token: "invented-picker-retry-token",
+            session: transport
+        )
+        let store = AppStore.preview()
+        await store.awaitPairingRuntimeForTesting()
+        store.injectAccessClientForTesting(client)
+        var saved = ScopePickerSession(field: PreviewMocks.accessFolderField, sourceId: source.id)
+        let location = saved.location(for: source.id)
+        let leading = ScopePickerAnchor.item(.init(options.items[57].ref))
+        saved.catalogues[location] = options
+        saved.positions[location] = .init(itemId: leading, index: 57)
+        var installed: SourceFilterPickerView?
+        let mounted = try mountScopePicker(
+            source: source, session: saved, scheme: .light, store: store, mounted: { installed = $0 }
+        )
+        defer {
+            mounted.1.rootView = AnyView(EmptyView())
+            mounted.0.isHidden = true
+            installed = nil
+        }
+        try await awaitScopePicker("The mounted picker must start its initial options request") {
+            await transport.arrived == 1 && installed != nil
+        }
+        let picker = try XCTUnwrap(installed)
+        try await transport.fail(0)
+        try await awaitScopePicker("A transient initial error must leave the real Retry path available") {
+            picker.error != nil && !picker.loading
+        }
+
+        // These call the installed State's exact openLocation used by Retry.
+        // R1 has its first 50 rows, but its final 15 remain held by the transport.
+        let retry1 = Task { await picker.openLocation() }
+        defer { retry1.cancel() }
+        try await awaitScopePicker("R1 must request a fresh first page") { await transport.arrived == 2 }
+        try await transport.answer(1, with: firstPage)
+        try await awaitScopePicker("R1 must request the remaining cached rows") { await transport.arrived == 3 }
+        let retry2 = Task { await picker.openLocation() }
+        defer { retry2.cancel() }
+        try await awaitScopePicker("R2 must hold its own first page before R1 finishes") { await transport.arrived == 4 }
+        let cursors = await transport.cursors
+        XCTAssertEqual(cursors, [nil, nil, "second", nil])
+
+        try await transport.answer(2, with: secondPage)
+        await retry1.value
+        XCTAssertTrue(picker.loading, "R2 is still waiting for its first page")
+        XCTAssertNil(picker.pendingRestore, "An obsolete producer cannot publish restoration for the newer request")
+        XCTAssertEqual(picker.restoringLocation, location, "R1 cannot consume R2's restoration while R2 is suspended")
+        XCTAssertEqual(picker.session.positions[location]?.itemId, leading, "The observed leading bookmark must remain intact")
+
+        try await transport.answer(3, with: firstPage)
+        try await awaitScopePicker("R2 must restore its own complete catalogue") { await transport.arrived == 5 }
+        try await transport.answer(4, with: secondPage)
+        await retry2.value
+        try await awaitScopePicker("Only the completed current request may finish restoration") {
+            !picker.loading && picker.error == nil && picker.restoringLocation == nil
+                && picker.options?.items.count == 65 && picker.session.positions[location]?.itemId == leading
+        }
+        XCTAssertEqual(picker.session.positions[location]?.itemId, leading)
+        try captureScopePicker(
+            mounted.0,
+            name: "scope-picker-current-retry-restored",
+            visibleLabel: XCTUnwrap(options.items.last).label
+        )
+    }
+
+    private func awaitScopePickerLayout(
+        _ installed: @escaping () -> SourceFilterPickerView?,
+        window: UIWindow,
+        location: ScopePickerLocation,
+        target: ScopePickerAnchor? = nil,
+        name: String
+    ) async throws {
+        try await awaitScopePicker(
+            "The mounted picker must issue its matching catalogue layout: \(name)",
+            diagnostic: { self.scopePickerReadinessDiagnostic(installed(), window: window, name: name) },
+            condition: {
+                guard let picker = installed(), let request = picker.pendingRestore,
+                      let scroll = self.scopePickerScroll(in: window) else { return false }
+                return (target == nil || request.target == target)
+                    && picker.issuedRestoreRevision == request.revision && picker.activeRestoreRevision == nil
+                    && picker.restoringLocation == nil && picker.optionsLocation == location
+                    && scroll.bounds.width > 0 && scroll.bounds.height > 0
+            }
+        )
+    }
+
+    private func awaitScopePicker(
+        _ message: String,
+        diagnostic: (() -> String)? = nil,
+        condition: () async -> Bool
+    ) async throws {
+        let deadline = Date().addingTimeInterval(5)
+        while Date() < deadline {
+            if await condition() { return }
+            try await Task.sleep(nanoseconds: 20_000_000)
+        }
+        XCTFail(message + (diagnostic.map { " | " + $0() } ?? ""))
+        throw CancellationError()
+    }
+
+    private func scopePickerReadinessDiagnostic(_ picker: SourceFilterPickerView?, window: UIWindow, name: String) -> String {
+        let scroll = scopePickerScroll(in: window)
+        let state = "pending=\(String(describing: picker?.pendingRestore)) "
+            + "issued=\(String(describing: picker?.issuedRestoreRevision)) active=\(String(describing: picker?.activeRestoreRevision)) "
+            + "restoring=\(String(describing: picker?.restoringLocation)) location=\(String(describing: picker?.location)) "
+            + "catalogueLocation=\(String(describing: picker?.optionsLocation)) "
+            + "offset=\(String(describing: scroll?.contentOffset)) inset=\(String(describing: scroll?.adjustedContentInset))"
+        let image = UIGraphicsImageRenderer(size: window.bounds.size).image { _ in
+            window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
+        }
+        do {
+            try writeSnapshotPNG(image, to: Self.outputDir.appendingPathComponent(name + ".png"))
+            return state + " diagnosticFrame=\(name).png"
+        } catch {
+            return state + " diagnosticFrameError=\(error)"
+        }
+    }
+
+    private func scopePickerPageFixtures() -> (ScopeOptions, ScopeOptions) {
+        let source = PreviewMocks.accessDrive
+        let items = (0 ..< 65).map { index in
+            ScopeOption(
+                ref: .tree(field: PreviewMocks.accessFolderField, id: "example-folder-\(index)"),
+                label: index == 0 ? "First folder" : index == 64 ? "Last folder" : "Example folder \(index)",
+                count: index + 1
+            )
+        }
+        let firstPage = ScopeOptions(
+            sourceId: source.id, field: PreviewMocks.accessFolderField, items: Array(items.prefix(50)), nextCursor: "second"
+        )
+        let secondPage = ScopeOptions(sourceId: source.id, field: PreviewMocks.accessFolderField, items: Array(items.suffix(15)))
+        return (firstPage, secondPage)
+    }
+
+    private func mountScopePicker(
+        source: AccessSourceInstance, session: ScopePickerSession, scheme: ColorScheme,
+        store: AppStore? = nil, mounted: ((SourceFilterPickerView) -> Void)? = nil
+    ) throws
+        -> (UIWindow, UIHostingController<AnyView>) {
+        let scene = try XCTUnwrap(UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+            .first { $0.activationState == .foregroundActive })
+        var picker = SourceFilterPickerView(
+            source: source,
+            editor: PreviewMocks.accessEditors[source.id],
+            session: session,
+            selected: { _ in }
+        )
+        picker.mountedForTesting = mounted
+        let view = NavigationStack {
+            picker
+        }.environment(store ?? AppStore.preview()).preferredColorScheme(scheme)
+        let host = UIHostingController(rootView: AnyView(view))
+        let window = UIWindow(windowScene: scene)
+        window.frame = scene.coordinateSpace.bounds
+        window.rootViewController = host
+        window.makeKeyAndVisible()
+        window.layoutIfNeeded()
+        host.view.layoutIfNeeded()
+        return (window, host)
+    }
+
+    private func scopePickerScroll(in view: UIView) -> UIScrollView? {
+        let nested = view.subviews.compactMap { scopePickerScroll(in: $0) }
+        return ([view as? UIScrollView].compactMap { $0 } + nested).max {
+            $0.contentSize.height < $1.contentSize.height
+        }
+    }
+
+    private func captureScopePicker(_ window: UIWindow, name: String, visibleLabel: String) throws {
+        let image = UIGraphicsImageRenderer(size: window.bounds.size).image { _ in
+            window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
+        }
+        try writeSnapshotPNG(image, to: Self.outputDir.appendingPathComponent(name + ".png"))
+        // Lazy scroll offsets are estimates. Recognize the actual captured pixels
+        // so a viewport showing earlier rows cannot pass as the final row.
+        let request = VNRecognizeTextRequest()
+        request.recognitionLevel = .accurate
+        request.recognitionLanguages = ["en-US"]
+        request.usesLanguageCorrection = false
+        try VNImageRequestHandler(cgImage: XCTUnwrap(image.cgImage), options: [:]).perform([request])
+        let observations = request.results ?? []
+        func normalized(_ value: String) -> String {
+            String(value.lowercased().filter { $0.isLetter || $0.isNumber })
+        }
+        let visible = observations.contains { observation in
+            CGRect(x: 0, y: 0, width: 1, height: 1).contains(observation.boundingBox)
+                && observation.topCandidates(1).first.map { normalized($0.string) == normalized(visibleLabel) } == true
+        }
+        let recognized = observations.compactMap { $0.topCandidates(1).first?.string }.joined(separator: " | ")
+        XCTAssertTrue(visible, "The captured viewport must visibly contain \(visibleLabel): \(recognized)")
+    }
+
+    /// The gallery's example data, checked against what each provider's contract puts on the wire.
+    private func validatedAccessGalleryOverview() throws -> AccessOverview {
+        let overview = PreviewMocks.accessCanonicalOverview
+        XCTAssertEqual(overview.sources.map(\.sourceType), ["gmail", "google-drive", "whatsapp-messages"])
+        XCTAssertEqual(PreviewMocks.accessGmailEditor.fields.first?.identifiers, ["email", "domain"])
+        XCTAssertEqual(PreviewMocks.accessWhatsAppEditor.fields.last?.identifiers, ["phone"])
+        XCTAssertEqual(PreviewMocks.accessDriveEditor.fields.map(\.field), [PreviewMocks.accessFolderField])
+        let options = PreviewMocks.accessConversations + PreviewMocks.accessPeople + PreviewMocks.accessRootFolders
+            + PreviewMocks.accessProjectFolders + PreviewMocks.accessSessionDevices + PreviewMocks.accessHomeFolders
+            + PreviewMocks.accessOwnerRepositories
+        let saved = overview.levels.flatMap(\.rules).flatMap(\.scopePolicies) + [PreviewMocks.accessWhatsAppChangedPolicy]
+        try assertProviderFixtureWireRefs(options.map(\.ref) + saved.flatMap(\.rules).flatMap(\.match))
+        XCTAssertEqual(overview.levels.map(\.name), ["Research assistant", "Notes capture"])
+        XCTAssertEqual(Set(PreviewMocks.accessGalleryIcons.keys), Set(overview.sources.compactMap(\.sourceType)))
+        return overview
+    }
+
+    /// Every fixture entry names a field its account's editor declares, with that field's capability, and puts only
+    /// the keys of its kind of entry on the wire.
+    private func assertProviderFixtureWireRefs(_ refs: [ScopeRef]) throws {
+        let fields = PreviewMocks.accessEditors.values.flatMap(\.fields)
+        for ref in refs {
+            let object = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(ref)) as? [String: Any])
+            let declared = try XCTUnwrap(fields.first { $0.field == ref.editorField }, "No account declares \(ref.editorField)")
+            XCTAssertEqual(declared.capability, ref.capability)
+            if ref.isPerson {
+                XCTAssertEqual(Set(object.keys), ["capability", "label", "identifiers"])
+                XCTAssertFalse((ref.label ?? "").isEmpty)
+                XCTAssertFalse((ref.identifiers ?? []).isEmpty)
+                let types = Set((ref.identifiers ?? []).map(\.type))
+                XCTAssertTrue(
+                    fields.contains { $0.field == ref.editorField && types.isSubset(of: $0.identifiers ?? []) },
+                    "No account takes \(types.sorted()) for a person"
+                )
+            } else {
+                XCTAssertEqual(
+                    Set(object.keys),
+                    declared.perDevice ? ["capability", "field", "id", "device"] : ["capability", "field", "id"]
+                )
+                XCTAssertNotNil(ref.id)
+            }
+        }
+    }
+
+    /// Every screen of the Access page, the access-level and source-filter flows and the approval sheet,
+    /// one `gallery-<slug>` render each, all drawn from the same example data.
+    func testAccessGallery() throws {
+        try testAccessGalleryHome()
+        try testAccessGalleryDecisions()
+        testAccessGalleryFilters()
+        testAccessGalleryReviews()
+        testAccessGalleryApproval()
+    }
+
+    private func accessGalleryStore() -> AppStore {
+        AppStore.preview(sourceIconByType: PreviewMocks.accessGalleryIcons)
+    }
+
+    /// Draws one gallery screen in a 393 × 852 frame, or taller for a screen whose content needs more.
+    /// The screens draw their own bars, and a navigation stack would cap them at the display's height,
+    /// so they are rendered without one.
+    private func accessGallery(_ slug: String, height: CGFloat = 852, @ViewBuilder _ content: () -> some View) {
+        snapshot(
+            content().environment(accessGalleryStore()),
+            name: "gallery-\(slug)",
+            size: CGSize(width: 393, height: height),
+            ignoresSafeArea: true,
+            standardRange: true
+        )
+    }
+
+    private func accessGalleryEditor(
+        _ step: AccessFlowStep? = nil,
+        new: Bool = false,
+        conflict: Bool = false,
+        overview: AccessOverview = PreviewMocks.accessCanonicalOverview,
+        change: @escaping (inout AccessLevelDraft) -> Void = { _ in }
+    )
+        -> AccessLevelEditorView {
+        AccessLevelEditorView(
+            level: new ? nil : overview.levels[0],
+            overview: overview,
+            previewConflict: conflict,
+            previewStep: step,
+            previewChange: change,
+            previewLabels: PreviewMocks.accessCanonicalLabels,
+            previewTotals: PreviewMocks.accessCanonicalTotals
+        )
+    }
+
+    func testAccessGalleryHome() throws {
+        let overview = try validatedAccessGalleryOverview()
+        accessGallery("access-home") { AccessHomeView(previewOverview: overview) }
+        accessGallery("access-home-menu") { AccessHomeView(previewOverview: overview, previewMenuOpen: true) }
+        accessGallery("delete-confirm") { AccessHomeView(previewOverview: overview, previewDeleting: overview.levels[1]) }
+        accessGallery("delete-in-use") { AccessHomeView(previewOverview: overview, previewDeleting: overview.levels[0]) }
+        accessGallery("level-page") { accessGalleryEditor() }
+        accessGallery("level-changed-elsewhere") { accessGalleryEditor(conflict: true) }
+    }
+
+    func testAccessGalleryDecisions() throws {
+        _ = try validatedAccessGalleryOverview()
+        accessGallery("name") { accessGalleryEditor(.name) }
+        accessGallery("permissions") { accessGalleryEditor(.permissions) }
+        accessGallery("answer-data") { accessGalleryEditor(.answerData) }
+        accessGallery("direct-data") { accessGalleryEditor(.directData) }
+        accessGallery("direct-data-linked") { accessGalleryEditor(.directData, change: PreviewMocks.accessDirectLinked) }
+        accessGallery("new-sources") { accessGalleryEditor(.future) }
+        accessGallery("release") { accessGalleryEditor(.release) }
+        accessGallery("direct-choice") {
+            accessGalleryEditor(.directChoice, new: true, change: PreviewMocks.accessNewLevel)
+        }
+    }
+
+    func testAccessGalleryFilters() {
+        let whatsApp = PreviewMocks.accessWhatsApp
+        let saved = PreviewMocks.accessWhatsAppPolicy
+        accessGallery("filter-mode") { PreviewMocks.accessFilterEditor(whatsApp, policy: saved) }
+        accessGallery("filter-picker-folders") {
+            PreviewMocks.accessFilterEditor(
+                PreviewMocks.accessDrive,
+                policy: PreviewMocks.accessDrivePolicy,
+                step: .matches,
+                session: PreviewMocks.accessFolderSession
+            )
+        }
+        accessGallery("filter-picker-people") {
+            PreviewMocks.accessFilterEditor(whatsApp, policy: saved, step: .matches, session: PreviewMocks.accessPeopleSession)
+        }
+        accessGallery("filter-review") {
+            PreviewMocks.accessFilterEditor(whatsApp, policy: saved, preview: PreviewMocks.accessWhatsAppPreview, step: .review)
+        }
+        accessGallery("filter-review-counts") {
+            PreviewMocks.accessFilterEditor(
+                PreviewMocks.accessDrive, policy: PreviewMocks.accessDrivePolicy, preview: PreviewMocks.accessDrivePreview, step: .review
+            )
+        }
+        accessGallery("filter-needs-resync") {
+            PreviewMocks.accessFilterEditor(
+                PreviewMocks.accessGmail,
+                policy: PreviewMocks.accessSharingPolicy(PreviewMocks.accessGmail, []),
+                step: .matches,
+                session: PreviewMocks.accessLabelSession
+            )
+        }
+        accessGallery("filter-resyncing") {
+            PreviewMocks.accessFilterEditor(
+                PreviewMocks.accessDrive,
+                policy: PreviewMocks.accessSharingPolicy(PreviewMocks.accessDrive, []),
+                editor: PreviewMocks.accessDriveResyncingEditor,
+                step: .matches,
+                session: PreviewMocks.accessDriveFolderSession
+            )
+        }
+        accessGallery("filter-account-not-connected") {
+            PreviewMocks.accessFilterEditor(
+                PreviewMocks.accessDisconnectedWhatsApp,
+                policy: saved,
+                editor: PreviewMocks.accessDisconnectedWhatsAppEditor
+            )
+        }
+    }
+
+    func testAccessGalleryReviews() {
+        accessGallery("review-changes") { accessGalleryEditor(.review, change: PreviewMocks.accessNameChange) }
+        accessGallery("review-changed-filter", height: 1200) { accessGalleryEditor(.review, change: PreviewMocks.accessFilterChange) }
+        accessGallery("review-new-level") { accessGalleryEditor(.review, new: true, change: PreviewMocks.accessNewLevel) }
+        accessGallery("review-direct-removed", height: 1600) {
+            accessGalleryEditor(.review, overview: PreviewMocks.accessDirectAsAnswerOverview, change: PreviewMocks.accessDirectRemoved)
+        }
+    }
+
+    func testAccessGalleryApproval() {
+        accessGalleryApproval("approval-connection", mode: .requestedConnection, height: 950)
+        accessGalleryApproval("approval-permissions", mode: .requestedPermissions)
+        accessGalleryApproval("approval-sources", mode: .requestedSources)
+        accessGalleryApproval("approval-review", mode: .requestedReview, height: 915)
+        accessGalleryApproval("approval-review-existing", mode: .requestedExistingReview, height: 960)
+    }
+
+    private func accessGalleryApproval(_ slug: String, mode: AccessAuthorizationPreviewMode, height: CGFloat = 852) {
+        snapshot(
+            AccessAuthorizationSheet(
+                previewRequest: PreviewMocks.accessCanonicalRequest,
+                overview: PreviewMocks.accessCanonicalOverview,
+                mode: mode,
+                hostsNavigation: false
+            )
+            .environment(accessGalleryStore()),
+            name: "gallery-\(slug)",
+            size: CGSize(width: 393, height: height),
+            ignoresSafeArea: true,
+            standardRange: true
         )
     }
 

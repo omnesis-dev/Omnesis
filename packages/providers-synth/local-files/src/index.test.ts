@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
@@ -15,6 +15,8 @@ vi.mock("@omnesis/providers-synth-common", async (importOriginal) => ({
 }));
 import realSource from "@omnesis/provider-local-files";
 import {
+  collectFilterList,
+  directoryFilterId,
   withVersionedState,
   isStateEnvelope,
   type StateOutcome,
@@ -64,6 +66,39 @@ describe("local-files synthetic source", () => {
         modifiedAt: "2026-10-03T12:00:00Z",
       },
     ];
+  });
+  test("files carry their folder and the twin lists the materialized folders", async () => {
+    state.fixture = [
+      {
+        path: "work/atlas-api/zqfilter-atlas.md",
+        content:
+          "# Atlas\n\nInvented notes on the pagination cursor of the Atlas API, kept long.\n",
+      },
+      {
+        path: "zqfilter-inbox.md",
+        content: "# Inbox\n\nUnsorted invented notes kept at the top of the folder, kept long.\n",
+      },
+    ];
+    const instance = await create();
+    const { documents } = await drain(instance);
+    const top = directoryFilterId(realpathSync(join(root, "synthetic-local-files")))!;
+    expect(
+      Object.fromEntries(documents.map((doc) => [doc.title, doc.metadata.extra?.folder])),
+    ).toEqual({
+      "zqfilter-atlas.md": `${top}/work/atlas-api`,
+      "zqfilter-inbox.md": top,
+    });
+
+    expect(source.contract?.outputRevision).toBe(realSource.contract?.outputRevision);
+    expect(source.resyncCost).toBe(realSource.resyncCost);
+    const listed = await collectFilterList(instance.filterLists!["extra.folder"]!, {
+      signal: new AbortController().signal,
+    });
+    expect(listed.map((item) => [item.id, item.parentId])).toEqual([
+      [top, undefined],
+      [`${top}/work`, top],
+      [`${top}/work/atlas-api`, `${top}/work`],
+    ]);
   });
   test("a persisted production-version envelope resumes through the twin's host state boundary", async () => {
     const realState = realSource.contract!.state!;

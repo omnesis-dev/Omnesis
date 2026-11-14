@@ -20,6 +20,7 @@ import {
   deviceKindSchema,
   nonEmptyString,
   scopeArraySchema,
+  sourceVersionShape,
   stringParamsSchema,
   urlPatternRegexSchema,
 } from "./common.js";
@@ -612,6 +613,7 @@ export type OwnedWebDomainsBody = z.infer<typeof ownedWebDomainsBody>;
 // `validateDocumentEventProfile` at the route so both the collector and the
 // gateway enforce one definition. Each profile is opaque source-declared
 // data — no source name is interpreted here.
+const filterDeclarationSchema = z.record(z.string(), z.unknown());
 const documentMetadataFieldSpecSchema = z.object({
   path: nonEmptyString,
   type: z.enum(["string", "number", "boolean", "string-array"]),
@@ -629,15 +631,26 @@ const documentMetadataFieldSpecSchema = z.object({
   // undeclared key would be stripped and the agent's message counts would
   // silently fall back to one message per document.
   semantics: z.enum(DOCUMENT_FIELD_SEMANTICS).optional(),
+  // How a filter matches on the field. Kept as the object the source
+  // declared, without naming its keys: a collector newer than this gateway may
+  // declare a capability or a key this build does not know, and that has to be
+  // stored and reported as such rather than refused or half-stripped.
+  // `access/filter-fields.ts` is where it is read and judged.
+  filter: filterDeclarationSchema.optional(),
 });
 export const sourceDocumentProfilesBody = z.object({
   entries: z.array(
     z.object({
       sourceType: nonEmptyString,
+      // The source version the profile describes. A collector that sends none
+      // counts as 0 and cannot replace a profile published with a version.
+      outputRevision: sourceVersionShape.optional(),
       profile: z.object({
         documentTypes: z.array(nonEmptyString).optional(),
         personRoles: z.array(z.enum(PERSON_ROLES)).optional(),
         metadataFields: z.array(documentMetadataFieldSpecSchema).optional(),
+        // See `filter` on a field.
+        personFilter: filterDeclarationSchema.optional(),
       }),
     }),
   ),

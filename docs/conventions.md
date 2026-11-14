@@ -40,6 +40,116 @@ Source providers expose a `defineSource<Cursor>({...})` factory call rather than
 
 - Helper: `packages/source-sdk/src/define-source.ts`
 
+### External source filters read the source version and the record's own details
+
+A source filter narrows what an access level's external agents (Answer and
+Direct) can read of one account: share only what matches, or hide what
+matches. Everything it decides comes from three things the gateway already
+stores, and nothing is kept per record for filtering.
+
+**The source version on every record.** Each source declares an
+`outputRevision` that starts at 1 and only goes up. The collector sends it on
+every sync page, and the gateway stores it on each record it writes
+(`documents.source_version`) as the larger of the stored and incoming
+version, so an older host never lowers it. A record stored before versions
+were recorded reads 0. A page that brings a record back unchanged still
+stamps the new version on it.
+
+**Filterable fields in the document-event profile.** A source marks a field
+of its `documentEventProfile` as filterable with `filter`
+(`DocumentFieldFilterSpec`: a `membership` or `tree` capability, the
+`minVersion` from which its records carry the field, a `global` or `device`
+scope, and the picker's nouns), and says how its people are matched with
+`personFilter`. Watch reads the same profile and ignores both keys. The field
+holds the source's own ids, never display names, so a rename changes nothing
+in a saved filter. On a `string-array` field `[]` means "belongs to nothing"
+and an absent field means "not known"; the check depends on that difference.
+A capability is a way of matching the gateway knows; a source chooses one and
+brings no matching logic of its own. `access/filter-fields.ts` is the only
+place the gateway interprets these declarations.
+
+**Per-account lists.** The names, the tree of folders and the members of
+chats live in a list per account and field, which a source produces with
+`withFilterLists` and its host publishes as part of an ordinary sync cycle:
+after the cycle's first committed page, and again after its last for a list
+that is only whole then. The host compares the list's digest with the one the
+gateway reports and sends it only when it changed. A list describes what
+exists in the account, never which record belongs to what, so its cost grows
+with the number of labels or folders. The gateway switches to a list only
+once every page of it has arrived.
+
+**One check.** `access/filter-sql.ts` compiles a saved filter into a verdict
+per record: readable, hidden by an item, not included, too old (the record's
+version is below a field's `minVersion`) or detail unknown. A record is
+readable exactly when its verdict is readable, and a record that is too old or
+lacks a detail stays hidden under any filter. A tree entry covers everything
+beneath it through the list, and an item the list does not hold is unknown.
+An attachment is decided through the record it was attached to. The same
+compiler runs against the corpus and against the copy of the filterable
+details kept in the search index database (`indexer/filter-copy.ts`). Its
+statements call SQL functions that read people in every stored form; register
+them with `registerFilterSqlFunctions` on any connection that runs them.
+
+- A single read (fetch, URL lookup) and the owner's "who can read this
+  document" page call `decideDocumentAccess` (`access/filter-decision.ts`), so
+  the explanation and the real read cannot disagree.
+- Set reads use `documentAccessInclusionSql`, built from the same verdict.
+- Filtered search generates candidates on the index copy, on a search worker
+  only (`FilteredSearchUnavailableError` otherwise), then rechecks the result
+  ids against the corpus with `filterReadableDocumentIds` before facets and
+  counts. A stale copy can therefore under-return for a moment and never leak.
+  The Answer read set is rechecked the same way.
+- People, trail and temporal tools are absent for a restricted grant, and
+  analytics of a filtered account is excluded (`access/permitted-sources.ts`).
+
+Answer tasks persist their authorization and the cumulative set of documents
+every prompt and tool read, including inherited history
+(`privacy/answer-scope.ts`). Each later model stage and the final release
+recheck that set against the filters as they stand then, and a document that
+is no longer readable stops the answer. A read set that cannot be fully
+accounted for (a read outside the observed ports, or more than
+`MAX_ANSWER_SCOPE_DOCUMENTS`) is never released either. Filtered Direct
+captures each call's read set and runs the same check before returning.
+
+**Identifiers.** A typed or picked phone number, address or domain takes its
+spelling from `canonicalFilterIdentifier` (`@omnesis/core`), which uses the
+same phone library as people resolution. Clients send typed text to the
+gateway to be read; they keep no parser of their own.
+
+**Whole-account reads.** Counts per field and per item, the preview of a
+draft filter and the count of records that cannot be placed walk a whole
+account. They run on the IO worker, in the background, and are cached under a
+stamp that changes whenever anything they read may have changed; a request
+that finds no cached value answers `pending` and the client asks again after
+`retryAfterMs`.
+
+**Records too old for a field.** A new filter entry on a field is accepted
+only while the field is `ready` (`access/filter-readiness.ts`): every cursor
+row that feeds the account has completed a full read at a version of at least
+the field's `minVersion`, and the field's list has arrived. A full read is a
+sync that starts with no cursor and ends with the source having read
+everything; a source that imports its history over several cycles says when
+with `fullReadComplete`. Entries already saved stay whatever the field's
+state; records they cannot decide are hidden and counted. The only remedy for
+old records is an ordinary resync in place, which keeps record ids and
+individual deletions and re-reads the source at its usual pace. No source has
+a filter-only pass.
+
+Served rules give clients that predate filters a conservative `sources`
+boundary and carry the real one in `scopeSources`, so an older client can
+narrow a filtered level but never widen it, and an older gateway denies a
+filtered source.
+
+- Contract: `packages/types/src/source-filters.ts`
+- Declarations: `DocumentFieldFilterSpec` and `PersonFilterSpec` on the
+  profile (`packages/source-sdk/src/structured-source.ts`)
+- Lists: `packages/source-sdk/src/filter-lists.ts`,
+  `packages/collector/src/filter-list-publisher.ts`
+- Check: `packages/gateway/src/access/filter-sql.ts`, `filter-decision.ts`
+- Readiness and editor reads: `access/filter-readiness.ts`,
+  `access/source-filter-editor.ts`
+- Index copy: `packages/gateway/src/indexer/filter-copy.ts`
+
 ### Voice is a media lease on the canonical agent
 
 The speech frontend delegates substantive work to `AgentService.openVoiceSession`.

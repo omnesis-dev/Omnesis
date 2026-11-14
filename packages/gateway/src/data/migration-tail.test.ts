@@ -82,6 +82,17 @@ const WOUND_BACK = [
   214,
   // 215 persists the Lab choices; windBack drops them before replay.
   215,
+  // 216 adds a profile's source version, dropped by windBack, and a family's
+  // resync cost, on a table windBack drops whole.
+  216,
+  // 217 creates the published filter lists; windBack drops them before replay.
+  217,
+  // 218 adds the source version columns, their counts and the queue, which undoSourceVersion drops.
+  218,
+  // 219 adds an enumeration's full-read time, which undoSourceVersion drops.
+  219,
+  // 220 source authority and Answer proofs are removed by undoSourceFilters.
+  220,
 ];
 
 let dir: string;
@@ -95,6 +106,41 @@ beforeEach(() => {
 afterEach(() => {
   rmSync(dir, { recursive: true, force: true });
 });
+
+interface ScopeTailObject {
+  type: "table" | "index" | "trigger";
+  name: string;
+}
+
+/** These namespaces are introduced by the source-scope migration tail. */
+function sourceFilterObjects(db: Db): ScopeTailObject[] {
+  const tables = (column: string) =>
+    ["scope_policy_*", "access_scope_*", "answer_task_scope*"]
+      .map((pattern) => `${column} GLOB '${pattern}'`)
+      .join(" OR ");
+  return db
+    .prepare<[], ScopeTailObject>(
+      `SELECT type,name FROM sqlite_master
+    WHERE (type IN ('table','index') AND (${tables("tbl_name")}))
+      OR (type='trigger' AND (name GLOB 'scope_*' OR name GLOB 'access_scope_*'))
+    ORDER BY type,name`,
+    )
+    .all();
+}
+
+/** Undo migration 220: its tables, and the triggers it put on the access tables. */
+function undoSourceFilters(db: Db): void {
+  const objects = sourceFilterObjects(db);
+  const foreignKeys = db.pragma("foreign_keys", { simple: true });
+  db.pragma("foreign_keys = OFF");
+  try {
+    for (const type of ["trigger", "table"] as const)
+      for (const object of objects.filter((item) => item.type === type))
+        db.exec(`DROP ${type.toUpperCase()} "${object.name.replaceAll('"', '""')}"`);
+  } finally {
+    if (foreignKeys) db.pragma("foreign_keys = ON");
+  }
+}
 
 /** Remove additive evidence shape so migration 192 must install it again. */
 function undoVocabularyEvidence(db: Db): void {
@@ -284,7 +330,33 @@ function undoDeviceEnrollment(db: Db): void {
   }
 }
 
+/** Undo migrations 218 and 219: the source version columns, their running counts, the queue and the full-read time. */
+function undoSourceVersion(db: Db): void {
+  db.exec("DROP TABLE IF EXISTS document_filter_index_queue");
+  for (const trigger of ["insert", "delete", "move"])
+    db.exec(`DROP TRIGGER IF EXISTS source_version_counts_${trigger}`);
+  db.exec("DROP TABLE IF EXISTS source_version_counts");
+  for (const [table, column] of [
+    ["documents", "source_version"],
+    ["sync_state", "source_version"],
+    ["source_inventories", "min_source_version"],
+    ["source_inventories", "full_read_at"],
+  ] as const) {
+    const present = db
+      .prepare<[], { name: string }>(`SELECT name FROM pragma_table_info('${table}')`)
+      .all()
+      .some((row) => row.name === column);
+    if (present) db.exec(`ALTER TABLE ${table} DROP COLUMN ${column}`);
+  }
+}
+
 function windBack(db: Db): void {
+  undoSourceFilters(db);
+  undoSourceVersion(db);
+  db.exec("DROP TABLE source_filter_item_members");
+  db.exec("DROP TABLE source_filter_items");
+  db.exec("DROP TABLE source_filter_lists");
+  db.exec("ALTER TABLE source_document_profiles DROP COLUMN output_revision");
   db.exec("DROP TABLE lab_features");
   undoDeviceEnrollment(db);
   db.exec("ALTER TABLE agent_messages DROP COLUMN author_json");
@@ -645,8 +717,40 @@ describe("an install several versions behind, upgrading", () => {
     expect(WOUND_BACK).toEqual(TAIL_VERSIONS);
   });
 
+  test("the source filter migration recreates its entire schema instead of replaying over it", () => {
+    const head = createDatabase(dbPath) as unknown as Db;
+    const expected = sourceFilterObjects(head);
+    try {
+      expect(expected).toEqual(
+        expect.arrayContaining([
+          { type: "table", name: "access_scope_capabilities" },
+          { type: "table", name: "access_scope_policy_sources" },
+          { type: "table", name: "access_scope_legacy_denials" },
+          { type: "table", name: "scope_policy_mutation_context" },
+          { type: "table", name: "answer_task_scope" },
+          { type: "table", name: "answer_task_scope_documents" },
+          { type: "trigger", name: "scope_legacy_level_insert" },
+        ]),
+      );
+      windBack(head);
+      expect(sourceFilterObjects(head)).toEqual([]);
+    } finally {
+      (head as unknown as Database.Database).close();
+    }
+    const upgraded = upgrade();
+    try {
+      expect(sourceFilterObjects(upgraded)).toEqual(expected);
+      expect(
+        upgraded.prepare("SELECT name FROM pragma_table_info('answer_task_scope')").all(),
+      ).toEqual([{ name: "task_id" }, { name: "authorization" }, { name: "complete" }]);
+    } finally {
+      (upgraded as unknown as Database.Database).close();
+    }
+  });
+
   test("the tail runs in order and lands on the head version", () => {
     seedOlderInstall((old) => {
+      expect(sourceFilterObjects(old)).toEqual([]);
       expect(
         old.prepare("SELECT name FROM sqlite_master WHERE name='knowledge_nodes'").get(),
       ).toBeUndefined();
@@ -981,6 +1085,48 @@ describe("an install several versions behind, upgrading", () => {
     }
   });
 
+  test("stored documents, cursors and inventories count as written before versions were stored", () => {
+    seedOlderInstall((db) => {
+      db.prepare(
+        `INSERT INTO documents (id, provider_id, source_id, external_id, title, content, content_hash, metadata, source_created_at, source_updated_at, ingested_at, updated_at)
+         VALUES ('d-1', 'fixture-notes', 'fixture-notes:studio', 'note-1', 'A note', 'body', 'hash-1', '{}', '2026-01-01', '2026-01-01', '2026-01-01', '2026-01-01')`,
+      ).run();
+      db.prepare(
+        "INSERT INTO sync_state (source_id, device_id, cursor) VALUES ('fixture-notes:studio', '', '{}')",
+      ).run();
+      db.prepare(
+        `INSERT INTO source_inventories (id, source_id, cursor_row, started_at, first_received_at, observed_at)
+         VALUES ('inventory-1', 'fixture-notes:studio', '', '2026-01-01T00:00:00.000Z', 1, 1)`,
+      ).run();
+    });
+
+    const db = upgrade();
+    try {
+      expect(db.prepare("SELECT source_version FROM documents").all()).toEqual([
+        { source_version: 0 },
+      ]);
+      expect(db.prepare("SELECT source_version FROM sync_state").all()).toEqual([
+        { source_version: 0 },
+      ]);
+      expect(db.prepare("SELECT min_source_version FROM source_inventories").all()).toEqual([
+        { min_source_version: 0 },
+      ]);
+      expect(db.prepare("SELECT * FROM source_version_counts").all()).toEqual([
+        {
+          source_id: "fixture-notes:studio",
+          stream_id: "",
+          source_version: 0,
+          document_count: 1,
+        },
+      ]);
+      expect(db.prepare("SELECT COUNT(*) AS n FROM document_filter_index_queue").get()).toEqual({
+        n: 0,
+      });
+    } finally {
+      (db as unknown as Database.Database).close();
+    }
+  });
+
   test("no family identity is invented for a type whose accounts disagree", () => {
     seedOlderInstall((db) => {
       for (const [id, label] of [
@@ -999,6 +1145,35 @@ describe("an install several versions behind, upgrading", () => {
       expect(
         db.prepare<[], { n: number }>("SELECT COUNT(*) AS n FROM source_family_meta").get()!.n,
       ).toBe(0);
+    } finally {
+      (db as unknown as Database.Database).close();
+    }
+  });
+
+  test("a stored profile counts as published without a source version, so any collector replaces it", () => {
+    seedOlderInstall((old) => {
+      old
+        .prepare(
+          "INSERT INTO source_document_profiles (source_type, profile_json, published_at) VALUES (?, ?, ?)",
+        )
+        .run("example-source", JSON.stringify({ documentTypes: ["note"] }), 1000);
+    });
+    const db = upgrade();
+    try {
+      expect(db.prepare("SELECT * FROM source_document_profiles").all()).toEqual([
+        {
+          source_type: "example-source",
+          profile_json: JSON.stringify({ documentTypes: ["note"] }),
+          output_revision: 0,
+          published_at: 1000,
+        },
+      ]);
+      expect(
+        db
+          .prepare<[], { name: string }>("SELECT name FROM pragma_table_info('source_family_meta')")
+          .all()
+          .map((row) => row.name),
+      ).toContain("resync_cost");
     } finally {
       (db as unknown as Database.Database).close();
     }

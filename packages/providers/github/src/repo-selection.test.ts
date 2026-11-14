@@ -4,7 +4,10 @@
 import { describe, expect, it } from "vitest";
 import { GithubClient } from "./client.js";
 import { FakeGithub } from "./fake-github.js";
-import { parseRepoFilter, reconcileMissingRepos, resolveRepoList } from "./repo-selection.js";
+import { parseRepoFilter, reconcileMissingRepos, resolveRepos } from "./repo-selection.js";
+
+const resolveRepoList = async (...args: Parameters<typeof resolveRepos>) =>
+  (await resolveRepos(...args)).map((repo) => repo.full_name);
 
 function clientFor(fake: FakeGithub) {
   return new GithubClient("github_pat_test", { fetchImpl: fake.fetchImpl, sleep: async () => {} });
@@ -25,7 +28,7 @@ describe("parseRepoFilter", () => {
   });
 });
 
-describe("resolveRepoList", () => {
+describe("resolveRepos", () => {
   it("defaults to every accessible repo", async () => {
     const fake = new FakeGithub();
     fake.addRepo("acme/widgets");

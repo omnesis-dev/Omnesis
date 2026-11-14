@@ -13,7 +13,6 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -30,24 +29,18 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.Cancel
 import androidx.compose.material.icons.outlined.Key
 import androidx.compose.material3.Button
-import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
@@ -83,6 +76,7 @@ import dev.omnesis.android.designsystem.theme.OmSpacing
 import dev.omnesis.android.designsystem.theme.OmTheme
 import dev.omnesis.android.access.AccessAuthorizationPairingIdentity
 import dev.omnesis.android.transport.dto.AccessAuthorizationRequest
+import dev.omnesis.android.transport.dto.AccessCapability
 import dev.omnesis.android.transport.dto.AccessOverview
 import dev.omnesis.android.transport.dto.AccessReconnectProposal
 import kotlinx.coroutines.delay
@@ -101,6 +95,15 @@ fun AccessAuthorizationScreen(
     vm: AccessAuthorizationViewModel = hiltViewModel(),
 ) {
     val state by vm.state.collectAsStateWithLifecycle()
+    val filterSession = vm.filterSession
+    val filterNavigation = remember(filterSession) { SourceFilterNavigation() }
+    val filterEdit = state.filterEdit
+    val filterForm = state.form
+    val filterOverview = state.overview
+    if (filterEdit != null && filterSession != null && filterForm != null && filterOverview != null) {
+        AccessLevelFilterEditor(filterForm.level, filterOverview, filterEdit.source.id, filterEdit.capability, filterSession, filterNavigation,
+            vm::sourceIcon, vm::sourceName, onClose = vm::closeFilter, changed = vm::applyFilter)
+    }
     LaunchedEffect(initialCode, initialRequestId, launchNonce, expectedPairing) {
         when {
             expectedPairing == null -> Unit
@@ -109,12 +112,16 @@ fun AccessAuthorizationScreen(
         }
     }
     val navigateBack = {
-        val previous = if (state.completion == null) {
-            state.form?.let { previousStep(state.step, it, state.request?.requiresAnswer == true) }
+        val form = state.form
+        val request = state.request
+        val overview = state.overview
+        val previous = if (state.completion == null && form != null && request != null && overview != null) {
+            val positions = authorizationPositions(form)
+            positions.getOrNull(authorizationPositionIndex(positions, state.step, state.dataPage) - 1)
         } else {
             null
         }
-        if (previous == null) onClose() else vm.goTo(previous)
+        if (previous == null) onClose() else vm.goTo(previous.step, previous.dataPage)
     }
     BackHandler(onBack = navigateBack)
     AccessAuthorizationContent(
@@ -128,6 +135,8 @@ fun AccessAuthorizationScreen(
         onShowPolicy = vm::showPolicy,
         onDismissPolicy = vm::dismissPolicy,
         iconFor = vm::sourceIcon,
+        nameFor = vm::sourceName,
+        onEditFilter = vm::editFilter,
     )
 }
 
@@ -140,10 +149,13 @@ internal fun AccessAuthorizationContent(
     onLookup: () -> Unit,
     onDecide: (Boolean, dev.omnesis.android.transport.dto.AccessAuthorizationSelection?) -> Unit,
     onFormChange: (AccessAuthorizationForm) -> Unit = {},
-    onStepChange: (AccessAuthorizationStep) -> Unit = {},
+    onStepChange: (AccessAuthorizationStep, AccessLevelPage?) -> Unit = { _, _ -> },
     onShowPolicy: (String) -> Unit = {},
+    onEditFilter: (dev.omnesis.android.transport.dto.AccessSourceInstance, AccessCapability) -> Unit = { _, _ -> },
     onDismissPolicy: () -> Unit = {},
     iconFor: (String) -> SourceIconModel = { SourceIconModel(fallbackInitial = it.take(1).uppercase()) },
+    /** The catalog's name for the source of an account id, where it has one. */
+    nameFor: (String) -> String? = { null },
     /**
      * The current time, in epoch milliseconds, that the deadline and "Last used" times are
      * measured against. Screenshots pass a fixed instant so their text never drifts.
@@ -154,20 +166,14 @@ internal fun AccessAuthorizationContent(
     Scaffold(
         containerColor = c.bgPrimary,
         topBar = {
-            CenterAlignedTopAppBar(
-                title = {
-                    Text(when {
-                        state.completion != null -> "Authorization"
-                        state.request == null -> "Connect an agent"
-                        else -> "Review access"
-                    })
+            AccessTopBar(
+                title = when {
+                    state.completion != null -> "Authorization"
+                    state.request == null -> "Connect an agent"
+                    else -> REVIEW_ACCESS_TITLE
                 },
-                navigationIcon = {
-                    IconButton(onClick = onClose) {
-                        Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "Back")
-                    }
-                },
-                colors = TopAppBarDefaults.centerAlignedTopAppBarColors(containerColor = c.bgPrimary),
+                leading = "Close",
+                onLeading = onClose,
             )
         },
     ) { padding ->
@@ -193,6 +199,7 @@ internal fun AccessAuthorizationContent(
                 reconnect = state.reconnect,
                 overview = state.overview,
                 step = state.step,
+                dataPage = state.dataPage,
                 form = requireNotNull(state.form),
                 deciding = state.deciding,
                 actionError = state.actionError,
@@ -201,7 +208,9 @@ internal fun AccessAuthorizationContent(
                 onFormChange = onFormChange,
                 onStepChange = onStepChange,
                 onShowPolicy = onShowPolicy,
+                onEditFilter = onEditFilter,
                 iconFor = iconFor,
+                nameFor = nameFor,
                 clock = clock,
                 // The keyboard takes its height from the bottom of the wizard, so the step and its
                 // actions stay above it; the insets this Scaffold already padded are not counted twice.
@@ -215,13 +224,13 @@ internal fun AccessAuthorizationContent(
 }
 
 /**
- * The chosen policy's text, over the wizard rather than in place of it. The wizard holds its
- * own actions at the foot of a nested Scaffold, so a nav destination would unwind the
- * part-made decision the operator came here to finish.
+ * The chosen policy's text, over the screen that asked for it rather than in place of it. The
+ * approval and the level editor both hold a part-made decision, which a nav destination would
+ * unwind.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun AccessPolicySheet(preview: AccessPolicyPreview, onDismiss: () -> Unit) {
+internal fun AccessPolicySheet(preview: AccessPolicyPreview, onDismiss: () -> Unit) {
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         containerColor = OmTheme.colors.bgPrimary,
@@ -356,15 +365,18 @@ private fun AuthorizationWizard(
     reconnect: AccessReconnectProposal?,
     overview: AccessOverview,
     step: AccessAuthorizationStep,
+    dataPage: AccessLevelPage?,
     form: AccessAuthorizationForm,
     deciding: Boolean,
     actionError: String?,
     levelNameTaken: Boolean,
     onDecide: (Boolean, dev.omnesis.android.transport.dto.AccessAuthorizationSelection?) -> Unit,
     onFormChange: (AccessAuthorizationForm) -> Unit,
-    onStepChange: (AccessAuthorizationStep) -> Unit,
+    onStepChange: (AccessAuthorizationStep, AccessLevelPage?) -> Unit,
     onShowPolicy: (String) -> Unit,
+    onEditFilter: (dev.omnesis.android.transport.dto.AccessSourceInstance, AccessCapability) -> Unit,
     iconFor: (String) -> SourceIconModel,
+    nameFor: (String) -> String?,
     clock: () -> Long,
     modifier: Modifier = Modifier,
 ) {
@@ -378,31 +390,38 @@ private fun AuthorizationWizard(
     // The clock ticks every second; the decision depends only on these, so it is not rebuilt
     // on each tick.
     val selection = remember(form, overview, request) { form.selection(request, overview) }
-    val steps = authorizationSteps(form, request.requiresAnswer)
-    val stepIndex = steps.indexOf(step).coerceAtLeast(0)
+    val draft = form.level
+    val steps = authorizationSteps(form)
+    val positions = remember(form) { authorizationPositions(form) }
+    val index = authorizationPositionIndex(positions, step, dataPage)
+    val position = positions[index]
     Scaffold(
         modifier = modifier,
         containerColor = OmTheme.colors.bgPrimary,
         bottomBar = {
             WizardActions(
-                first = stepIndex == 0,
-                last = stepIndex == steps.lastIndex,
-                canContinue = !expired && when (step) {
-                    AccessAuthorizationStep.CONNECTION -> form.connection?.canContinue(request, overview) == true
-                    AccessAuthorizationStep.PERMISSIONS ->
-                        form.answerEnabled || request.requiresAnswer || form.directEnabled || form.notesEnabled
-                    AccessAuthorizationStep.DATA, AccessAuthorizationStep.REVIEW -> selection != null
+                first = index == 0,
+                last = index == positions.lastIndex,
+                canContinue = !expired && when (position.step) {
+                    AccessAuthorizationStep.CONNECTION -> form.connection?.canContinue(request, overview, draft) == true
+                    AccessAuthorizationStep.PERMISSIONS -> draft.pageError(AccessLevelPage.PERMISSIONS, overview) == null
+                    // Each decision must hold before the next is asked; the last also needs the whole selection to.
+                    AccessAuthorizationStep.DATA -> position.dataPage?.let { draft.pageError(it, overview) } == null &&
+                        (positions.getOrNull(index + 1)?.step == AccessAuthorizationStep.DATA || selection != null)
+                    AccessAuthorizationStep.REVIEW -> selection != null
                 },
                 deciding = deciding,
-                onBack = { onStepChange(steps[stepIndex - 1]) },
-                onContinue = { onStepChange(steps[stepIndex + 1]) },
+                note = position.dataPage?.let { draft.accountsNote(it, overview) },
+                onBack = { positions[index - 1].let { onStepChange(it.step, it.dataPage) } },
+                onContinue = { positions[index + 1].let { onStepChange(it.step, it.dataPage) } },
                 onDeny = { onDecide(false, null) },
                 onAllow = { onDecide(true, selection) },
             )
         },
     ) { padding ->
+        val change: (AccessLevelDraft) -> Unit = { onFormChange(form.copy(level = it)) }
         LazyColumn(
-            Modifier.fillMaxSize().padding(padding).padding(horizontal = OmSpacing.lg),
+            Modifier.fillMaxSize().padding(padding).padding(horizontal = AccessUi.Inset),
             verticalArrangement = Arrangement.spacedBy(OmSpacing.md),
         ) {
             item {
@@ -412,19 +431,22 @@ private fun AuthorizationWizard(
                     expired = expired,
                     steps = steps,
                     step = step,
-                    onStepChange = onStepChange,
+                    onStepChange = { onStepChange(it, null) },
                 )
             }
-            actionError?.let { item { WarningCard(it) } }
-            when (step) {
+            actionError?.let { item { AccessNotice(it, error = true) } }
+            if (form.filtersUnavailable(overview) && (step == AccessAuthorizationStep.DATA || step == AccessAuthorizationStep.REVIEW)) {
+                item { AccessNotice(FILTERS_UNAVAILABLE_MESSAGE, error = true) }
+            }
+            when (position.step) {
                 AccessAuthorizationStep.CONNECTION -> item {
                     ConnectionStep(request, overview, form, nowMillis, levelNameTaken, onFormChange)
                 }
-                AccessAuthorizationStep.PERMISSIONS -> item {
-                    PermissionsStep(request, form, onFormChange)
-                }
-                AccessAuthorizationStep.DATA -> item {
-                    DataAndPrivacyStep(overview, request, form, iconFor, onShowPolicy, onFormChange)
+                AccessAuthorizationStep.PERMISSIONS, AccessAuthorizationStep.DATA -> item {
+                    val page = if (position.step == AccessAuthorizationStep.PERMISSIONS) AccessLevelPage.PERMISSIONS else position.dataPage ?: AccessLevelPage.ANSWER_DATA
+                    LevelStep(page) {
+                        AccessLevelDecisionControls(page, draft, overview, iconFor, nameFor, onShowPolicy, change, onEditFilter, requiredAnswer = request.requiresAnswer)
+                    }
                 }
                 AccessAuthorizationStep.REVIEW -> item {
                     ReviewStep(
@@ -432,20 +454,31 @@ private fun AuthorizationWizard(
                         overview = overview,
                         form = form,
                         legacyConnectionName = reconnect?.principal?.name,
+                        positions = positions,
+                        change = { onStepChange(it.step, it.dataPage) },
                     )
                 }
             }
             item { Spacer(Modifier.height(OmSpacing.xl)) }
-            if (stepIndex == 0) {
+            if (index == 0) {
                 item {
-                    Text(
-                        "Going back leaves this request pending until it expires. You can enter the code again.",
-                        color = OmTheme.colors.textSecondary,
-                        style = MaterialTheme.typography.bodySmall,
-                    )
+                    AccessDetailText("Going back leaves this request pending until it expires. You can enter the code again.")
                 }
             }
         }
+    }
+}
+
+/**
+ * One decision of a new access level inside the approval: the question the level editor asks on that
+ * step, then the same content it shows there.
+ */
+@Composable
+private fun LevelStep(page: AccessLevelPage, content: @Composable () -> Unit) {
+    Column(Modifier.fillMaxWidth().padding(top = OmSpacing.sm)) {
+        AccessQuestionHeader(page.question(creating = true), subtitle = page.subtitle)
+        AccessGap(AccessUi.ContentGap)
+        content()
     }
 }
 
@@ -493,16 +526,6 @@ private fun AuthorizationRequestHeader(
         }
         StepIndicator(steps = steps, current = step, onSelect = onStepChange)
     }
-}
-
-private fun previousStep(
-    step: AccessAuthorizationStep,
-    form: AccessAuthorizationForm,
-    requiresAnswer: Boolean,
-): AccessAuthorizationStep? {
-    val steps = authorizationSteps(form, requiresAnswer)
-    val index = steps.indexOf(step)
-    return if (index > 0) steps[index - 1] else null
 }
 
 /**
@@ -710,141 +733,6 @@ private fun StepMarker(index: Int, isCurrent: Boolean, isComplete: Boolean) {
                 fontSize = MARKER_TEXT_SIZE,
                 fontWeight = FontWeight.SemiBold,
             )
-        }
-    }
-}
-
-@Composable
-private fun PermissionsStep(
-    request: AccessAuthorizationRequest,
-    form: AccessAuthorizationForm,
-    update: (AccessAuthorizationForm) -> Unit,
-) {
-    Column(verticalArrangement = Arrangement.spacedBy(OmSpacing.md)) {
-        SectionTitle("What should this connection be allowed to do?")
-        CapabilityCard(
-            "Answer",
-            "Ask questions using allowed sources. A privacy policy can review every answer before it is released.",
-            form.answerEnabled || request.requiresAnswer,
-            request.requiresAnswer,
-        ) { update(form.copy(answerEnabled = it).relinkSources(it || request.requiresAnswer, form.directEnabled)) }
-        if (request.requiresAnswer) {
-            Text("Answer is required by this integration.", color = OmTheme.colors.textSecondary)
-        }
-        CapabilityCard(
-            "Direct",
-            "Search and read raw matching records.",
-            form.directEnabled,
-            false,
-            warning = "Direct is not protected by a privacy policy.",
-        ) {
-            update(
-                form.copy(directEnabled = it)
-                    .relinkSources(form.answerEnabled || request.requiresAnswer, it),
-            )
-        }
-        CapabilityCard(
-            "Notes",
-            "Save notes with Tell Omnesis. The agent’s name is recorded with each note. " +
-                "This does not grant access to read existing notes.",
-            form.notesEnabled,
-            false,
-        ) { update(form.copy(notesEnabled = it)) }
-    }
-}
-
-@Composable
-private fun DataAndPrivacyStep(
-    overview: AccessOverview,
-    request: AccessAuthorizationRequest,
-    form: AccessAuthorizationForm,
-    iconFor: (String) -> SourceIconModel,
-    onShowPolicy: (String) -> Unit,
-    update: (AccessAuthorizationForm) -> Unit,
-) {
-    val answerOn = form.answerEnabled || request.requiresAnswer
-    val both = answerOn && form.directEnabled
-    Column(verticalArrangement = Arrangement.spacedBy(OmSpacing.lg)) {
-        if (both) {
-            RadioCard(
-                "Allow the same sources for Answer and Direct",
-                "One selection controls both capabilities.",
-                form.linkedSources,
-            ) { update(form.withLinkedSources(true, answerOn)) }
-            RadioCard(
-                "Allow different sources",
-                "Direct may expose raw records, so a narrower boundary can be useful.",
-                !form.linkedSources,
-            ) { update(form.withLinkedSources(false, answerOn)) }
-        }
-        if (both && form.linkedSources) {
-            SourceRuleEditor(
-                "Sources available to Answer and Direct",
-                AccessSourceScope.SHARED,
-                overview.sources,
-                form.answerSources,
-                iconFor,
-            ) { update(form.copy(answerSources = it)) }
-        } else {
-            if (answerOn) {
-                SourceRuleEditor(
-                    "Answer sources",
-                    AccessSourceScope.ANSWER,
-                    overview.sources,
-                    form.answerSources,
-                    iconFor,
-                ) { update(form.copy(answerSources = it)) }
-            }
-            if (form.directEnabled) {
-                HorizontalDivider(color = OmTheme.colors.border)
-                SourceRuleEditor(
-                    "Direct sources",
-                    AccessSourceScope.DIRECT,
-                    overview.sources,
-                    form.directBoundary(answerOn),
-                    iconFor,
-                ) { update(form.copy(directSources = it)) }
-            }
-        }
-        if (answerOn) {
-            HorizontalDivider(color = OmTheme.colors.border)
-            SectionTitle("Privacy for Answer")
-            RadioCard(
-                "Review answers with a privacy policy",
-                null,
-                form.answerRelease == AccessAnswerReleaseChoice.REVIEWED,
-            ) { update(form.copy(answerRelease = AccessAnswerReleaseChoice.REVIEWED)) }
-            if (form.answerRelease == AccessAnswerReleaseChoice.REVIEWED) {
-                if (overview.policyFamilies.isEmpty()) {
-                    WarningCard("No published privacy policy is available. Omnesis will fail closed.")
-                } else {
-                    overview.policyFamilies.forEach { policy ->
-                        RadioRow(policy.name, "Revision ${policy.revision}", form.policyFamilyId == policy.id) {
-                            update(form.copy(policyFamilyId = policy.id))
-                        }
-                    }
-                    if (form.policyFamilyId.isBlank()) {
-                        FieldError("Choose a privacy policy for Answer, or release answers automatically.")
-                    }
-                    form.policyFamilyId.takeIf { it.isNotBlank() }?.let { familyId ->
-                        TextButton(
-                            onClick = { onShowPolicy(familyId) },
-                            contentPadding = PaddingValues(
-                                horizontal = 0.dp,
-                                vertical = OmSpacing.xs,
-                            ),
-                        ) {
-                            Text("Read this policy")
-                        }
-                    }
-                }
-            }
-            RadioCard(
-                "Release answers automatically",
-                "High risk: source boundaries and audit still apply, but no reviewer checks the answer.",
-                form.answerRelease == AccessAnswerReleaseChoice.UNREVIEWED,
-                warning = true,
-            ) { update(form.copy(answerRelease = AccessAnswerReleaseChoice.UNREVIEWED)) }
         }
     }
 }

@@ -77,13 +77,12 @@ import {
 } from "../enrichment/temporal-annotations/storage.js";
 import { createDocumentTemporalProjectionTables } from "../enrichment/temporal-projections/document-storage.js";
 import { supersedeNotificationsByCollapseIdPrefix } from "../push/queue.js";
+import { advanceWorkflowDisclosure, parseReview } from "../privacy/store-internals.js";
 import {
-  advanceWorkflowDisclosure,
   createAnswerApprovalListIndexes,
   createAnswerPrivacyTables,
   createDirectAuditTables,
-  parseReview,
-} from "../privacy/store.js";
+} from "../privacy/store-schema.js";
 import {
   createSubscriptionApprovalListIndexes,
   createSubscriptionTables,
@@ -92,6 +91,8 @@ import { createTranscriptionVocabularyState } from "../transcribe/vocabulary/reb
 import { installTranscriptionVocabulary } from "../transcribe/vocabulary/storage.js";
 import { createNoteAgentTables } from "../brain/note-agent/storage.js";
 import { createNoteHandoffTables } from "../brain/note-agent/handoffs.js";
+import { createScopePolicyStore } from "../access/scope-policy-store.js";
+import { createAnswerScopeSchema } from "../privacy/answer-scope-schema.js";
 import { migrateV152AccessGrants } from "./migration-152-access-grants.js";
 import { migrateV153AccessPolicyFamilies } from "./migration-153-access-policy-families.js";
 import { markLinkStatsDirty } from "./DirtyMarks.js";
@@ -151,6 +152,8 @@ import { addSourceAccountDescriptor } from "./migration-172-source-account.js";
 import { addPersonAliasAssertions } from "./migration-173-alias-assertions.js";
 import { namespaceWhatsappLids } from "./migration-174-lid-namespace.js";
 import { addSourceFamilyMeta } from "./migration-175-source-family-meta.js";
+import { addSourceVersionDeclarations } from "./migration-216-source-version-declarations.js";
+import { addSourceFilterLists } from "./migration-217-source-filter-lists.js";
 import { addDocumentPartitionKey } from "./migration-176-document-partition-key.js";
 import { addSourceWireContracts } from "./migration-177-source-wire-contract.js";
 import { addPendingSourcePages } from "./migration-178-pending-source-pages.js";
@@ -161,6 +164,8 @@ import { addCredentialApprovedAudience } from "./migration-183-credential-approv
 import { indexDocumentsBySourceExternalId } from "./migration-187-documents-source-external-index.js";
 import { indexDocumentsBySourceCreatedRevision } from "./migration-208-documents-source-created-revision-index.js";
 import { addAnnotationRecheckQueuedAt } from "./migration-213-annotation-recheck-queued.js";
+import { addSourceVersion } from "./migration-218-source-version.js";
+import { addInventoryFullRead } from "./migration-219-inventory-full-read.js";
 import { addDeviceEnrollment } from "./migration-214-device-enrollment.js";
 import { LATEST_SCHEMA_VERSION } from "./schema-version.js";
 import type { Db } from "./types.js";
@@ -4992,6 +4997,37 @@ export const MIGRATIONS: readonly Migration[] = [
       createLabTable(db);
       db.exec(`INSERT OR IGNORE INTO lab_features (id, enabled)
         VALUES ('tasks', EXISTS(SELECT 1 FROM open_loops UNION ALL SELECT 1 FROM open_loop_ledger LIMIT 1));`);
+    },
+  },
+  {
+    version: 216,
+    description: "record the source version of each published profile and a source's resync cost",
+    up: addSourceVersionDeclarations,
+  },
+  {
+    version: 217,
+    description: "store the lists collectors publish for a source's filterable fields",
+    up: addSourceFilterLists,
+  },
+  {
+    version: 218,
+    description: "record the source version on every document, cursor row and inventory",
+    up: addSourceVersion,
+  },
+  {
+    version: 219,
+    description: "record when an enumeration had read everything its source holds",
+    up: addInventoryFullRead,
+  },
+  {
+    // Saved source filters, with the triggers that keep a gateway built
+    // before them from widening a filtered level, and what a filtered Answer
+    // read, checked again before the answer is released. New tables only.
+    version: 220,
+    description: "store saved source filters and what a filtered Answer read",
+    up(db) {
+      createScopePolicyStore(db);
+      createAnswerScopeSchema(db);
     },
   },
 ];

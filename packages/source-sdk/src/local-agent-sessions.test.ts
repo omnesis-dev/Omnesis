@@ -1063,6 +1063,7 @@ describe("createLocalAgentSessionSource", () => {
     const profile = createLocalAgentSessionDocumentEventProfile({
       harnessId: "fictional-agent",
       agentName: "Nova",
+      projectFolderSince: 2,
     });
 
     expect(() => validateDocumentEventProfile(profile, "fictional local sessions")).not.toThrow();

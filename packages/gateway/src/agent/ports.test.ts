@@ -7,6 +7,7 @@ import { tmpdir } from "node:os";
 import { describe, test, expect, beforeEach, afterEach, vi } from "vitest";
 import { UnsupportedSearchFilterError } from "@omnesis/agent";
 import { setLabFlag } from "../lab/store.js";
+import { LEDGER_PROFILE, publishProfile } from "../access/filter-test-utils.js";
 import { createCorpusAuthorization } from "../access/corpus-authorization.js";
 
 type Db = Database.Database;
@@ -249,6 +250,85 @@ describe("maintained knowledge read boundary", () => {
 });
 
 describe("createGatewayDocumentPort.fetch", () => {
+  test.each(["share", "hide"] as const)(
+    "filters document bodies and URL lookup with %s lists",
+    async (action) => {
+      for (const id of ["selected", "other", "unknown"]) {
+        insertDocument({ id, sourceId: "files:test", title: id, content: `Body for ${id}` });
+        db.prepare("UPDATE documents SET source_url = ? WHERE id = ?").run(
+          `https://example.org/${id}`,
+          id,
+        );
+      }
+      publishProfile(db, "files", 5, LEDGER_PROFILE);
+      // "unknown" was written before its source recorded labels, so no filter can place it.
+      const labelled = db.prepare(
+        "UPDATE documents SET metadata = json_set(metadata, '$.extra.labelIds', json(?)), source_version = 3 WHERE id = ?",
+      );
+      labelled.run(JSON.stringify(["L-chat"]), "selected");
+      labelled.run(JSON.stringify(["L-other"]), "other");
+      const authorization = createCorpusAuthorization(
+        {
+          principalId: "principal-example",
+          grantId: "grant-example",
+          grantRevision: 1,
+          credentialId: "credential-example",
+          accessTokenId: "token-example",
+        },
+        [
+          {
+            capability: "direct",
+            sourceMode: "all",
+            sourceIds: [],
+            releaseMode: null,
+            policyFamilyId: null,
+            policyRevision: null,
+            privacyPolicy: null,
+            filterRevision: 1,
+            scopePolicies: [
+              {
+                sourceId: "files:test",
+                audience: { accessLevel: "level-example", capability: "direct" },
+                rules: [
+                  {
+                    action,
+                    match: [{ capability: "membership", field: "extra.labelIds", id: "L-chat" }],
+                  },
+                ],
+                otherwise: action === "share" ? "hide" : "share",
+              },
+            ],
+          },
+        ],
+        "direct",
+      )!;
+      const docs = createGatewayDocumentPort(db, undefined, undefined, authorization);
+      const urls = createGatewayDocumentByUrlPort(db, undefined, authorization);
+      for (const id of ["selected", "other", "unknown"]) {
+        const visible =
+          id !== "unknown" && (action === "share" ? id === "selected" : id === "other");
+        expect((await docs.fetch(id)) !== null).toBe(visible);
+        expect((await urls.lookup(`https://example.org/${id}`)).ref !== undefined).toBe(visible);
+      }
+      insertDocument({
+        id: "gateway-owned",
+        sourceId: "unconfigured-raw",
+        title: "Other source",
+        content: "Fictional unrelated source.",
+      });
+      db.prepare("DELETE FROM sources WHERE id = ?").run("unconfigured-raw");
+      db.prepare("UPDATE documents SET source_url = ? WHERE id = ?").run(
+        "https://example.org/gateway-owned",
+        "gateway-owned",
+      );
+      // A document of no configured source can quote what the filter hides.
+      expect(await docs.fetch("gateway-owned")).toBeNull();
+      expect((await urls.lookup("https://example.org/gateway-owned")).ref).toBeUndefined();
+      expect(await createGatewayDocumentPort(db).fetch("gateway-owned")).not.toBeNull();
+      expect(await createGatewayDocumentPort(db).fetch("unknown")).not.toBeNull();
+    },
+  );
+
   test("stable fetch surfaces memory while restricted fetch omits it", async () => {
     vi.stubEnv("OMNESIS_EXPERIMENTAL", "0");
     vi.stubEnv("OMNESIS_SYNTHETIC", "0");

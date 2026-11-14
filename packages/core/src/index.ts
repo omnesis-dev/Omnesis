@@ -851,6 +851,13 @@ export {
   countryNameToISO2,
 } from "./people-utils.js";
 export type { MailAddress } from "./people-utils.js";
+export {
+  canonicalFilterIdentifier,
+  readTypedFilterIdentifier,
+  filterIdentifierDomain,
+  storedSpellings,
+  FILTER_IDENTIFIER_ERRORS,
+} from "./filter-identifiers.js";
 
 export {
   resolveAttachmentConfig,

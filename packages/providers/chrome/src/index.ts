@@ -136,6 +136,7 @@ export default defineSource({
   authType: "local",
   unitName: "bookmarks",
   contract: {
+    outputRevision: 1,
     // The host resolves the stored cursor against this before `sync` runs,
     // so an unrecognised value is refused as unreadable rather than read as
     // "no bookmarks yet".

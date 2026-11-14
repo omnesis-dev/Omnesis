@@ -32,6 +32,7 @@ export class AnswerCompletionDeliveryService {
       writeGate: WriteGate;
       transport: AnswerCompletionTransport;
       getDevice: (id: DeviceId) => DeviceRecord | null;
+      assertTaskScopeCurrent: (taskId: string) => void;
       log: Logger;
       now?: () => number;
     },
@@ -96,6 +97,7 @@ export class AnswerCompletionDeliveryService {
         await this.retry(delivery, now, "completion delivery became stale");
         return;
       }
+      this.deps.assertTaskScopeCurrent(delivery.taskId);
       const accepted = await this.deps.transport.sendCommand(
         deviceId,
         "answer-completion.commit",

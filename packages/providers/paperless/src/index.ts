@@ -104,6 +104,7 @@ export default defineProvider<PaperlessContext>({
       analyticsSchemas: allSchemas,
       documentEventProfile: paperlessDocumentEventProfile,
       contract: {
+        outputRevision: 1,
         apiVersion: 2,
         state: paperlessDocumentsStateSpec,
         requires: ["state-envelope"],

@@ -17,6 +17,7 @@ import {
   allDescriptors as defaultDescriptors,
   allDefinitions as defaultDefinitions,
   experimentalDescriptorHidden,
+  extractDescriptors,
 } from "./source-descriptors.js";
 import {
   anotherEnabledKeyAddresses,
@@ -31,7 +32,7 @@ import type { SourceSetupFailure } from "./source-instantiator.js";
 import type { SourceConfig, AttachmentExtractFn, AudioTranscribeFn } from "@omnesis/core";
 import type {
   AccountDescriptor,
-  DocumentEventProfile,
+  DocumentEventProfilePublication,
   GatewayClient,
   SourceDescriptor,
   SourceOrProviderDefinition,
@@ -126,9 +127,12 @@ export function collectOwnedWebDomains(
 
 /**
  * Collect the `documentEventProfile` declared by *every* source definition —
- * added or not — as `{ sourceType, profile }` entries. The gateway persists
- * them so subscription compilation can learn what each source's documents can
- * be asked about without holding source-specific knowledge itself.
+ * added or not — as `{ sourceType, outputRevision, profile }` entries. The
+ * gateway persists them so subscription compilation can learn what each
+ * source's documents can be asked about without holding source-specific
+ * knowledge itself. `outputRevision` is the source's own version, which lets
+ * the gateway keep the newest description when collectors on different builds
+ * publish the same source type.
  *
  * Definitions that declare no profile contribute nothing; their documents stay
  * addressable only through the fields every document has. Entries are sorted
@@ -138,16 +142,19 @@ export function collectOwnedWebDomains(
  */
 export function collectDocumentEventProfiles(
   definitions: readonly SourceOrProviderDefinition[],
-): Array<{ sourceType: string; profile: DocumentEventProfile }> {
-  const entries: Array<{ sourceType: string; profile: DocumentEventProfile }> = [];
-  const collect = (sourceType: string, profile: DocumentEventProfile | undefined): void => {
-    if (profile) entries.push({ sourceType, profile });
-  };
+): DocumentEventProfilePublication[] {
+  const entries: DocumentEventProfilePublication[] = [];
   for (const def of definitions) {
-    if (def.type === "provider") {
-      for (const source of def.sources) collect(source.id, source.documentEventProfile);
-    } else {
-      collect(def.id, def.documentEventProfile);
+    // The descriptor carries the revision the source's sync pages are sent at.
+    const revisions = new Map(
+      extractDescriptors(def).map((descriptor) => [
+        String(descriptor.id),
+        descriptor.outputRevision,
+      ]),
+    );
+    const declared = def.type === "provider" ? def.sources : [def];
+    for (const { id, documentEventProfile: profile } of declared) {
+      if (profile) entries.push({ sourceType: id, outputRevision: revisions.get(id), profile });
     }
   }
   return entries.sort((a, b) => a.sourceType.localeCompare(b.sourceType));

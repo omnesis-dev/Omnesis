@@ -22,10 +22,8 @@
 #   - config dir /tmp/omnesis-ios-e2e (wiped on each run)
 #   - universe e2e-minimal (slim, deterministic, fast boot)
 #
-# The shell script does NOT register iOS as a paired device — the tests
-# use the bootstrap admin token directly, bypassing the pairing flow.
-# Pairing-flow E2E coverage is a follow-up; this wrapper is intentionally
-# scoped to "the Swift transport classes decode real gateway responses."
+# Tests use a genuinely paired owner phone, so native-only owner boundaries
+# are exercised as well as the transport response shapes.
 
 set -euo pipefail
 
@@ -80,6 +78,7 @@ fi
 cleanup() {
   echo "→ Stopping synth gateway…"
   "$ROOT/scripts/synth-gateway.sh" stop >/dev/null 2>&1 || true
+  rm -f /tmp/omnesis-ios-e2e-config.json
 }
 # Startup can fail after spawning either process; always tear both down.
 trap cleanup EXIT
@@ -139,12 +138,8 @@ echo "→ Running OmnesisTests/GatewayLiveE2ETests against the gateway…"
 # XCTSkip if it's missing — so running xcodebuild test directly without
 # this wrapper script skips the suite cleanly.
 CONFIG_FILE=/tmp/omnesis-ios-e2e-config.json
-# The config carries the gateway admin token; create it owner-only from the
-# start (umask in a subshell, no world-readable window) and remove it on exit.
-(umask 077; python3 -c "
-import json, sys
-json.dump({'gatewayURL': '$URL', 'apiToken': '$TOKEN'}, sys.stdout)
-" > "$CONFIG_FILE")
+# Pair a real owner phone; the helper writes its short-lived config owner-only.
+node "$ROOT/scripts/ci/native-e2e-pair.mjs" "$URL" "$OMNESIS_CONFIG_DIR/token" ios "$CONFIG_FILE"
 RESULT_DIR="$(mktemp -d)"
 trap 'cleanup; rm -f "$CONFIG_FILE"; rm -rf "$RESULT_DIR"' EXIT
 

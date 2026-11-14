@@ -4,17 +4,24 @@
 // The ways the Access pages take a name: in place of a name already on a row,
 // as a labelled field in a form, and as the name of a new access level inside
 // the choice that creates it. Connections and access levels share the
-// gateway's limits, so they share these fields.
+// gateway's limits, so they share these fields. The choices of a list of
+// access levels — an existing level, or a new one — are here too.
 
 import { html } from "htm/preact";
 import { useEffect, useRef, useState } from "preact/hooks";
+
+import { CapabilityPills } from "../../components/access-pills.js";
+import { levelUsersLabel } from "./shared.js";
 
 // The longest name the gateway takes for a connection or an access level, so
 // a field stops where a save would.
 export const ACCESS_NAME_MAX = 120;
 
 /** What every page says when a new level name is one a live level already has. */
-export const LEVEL_NAME_TAKEN_MESSAGE = "An access level with that name already exists.";
+export const LEVEL_NAME_TAKEN_MESSAGE = "An access level already uses this name. Choose another.";
+
+/** What a list of access levels calls the choice of creating one. */
+export const NEW_LEVEL = "new";
 
 /** Whether a typed name is one the gateway takes: something left once trimmed. */
 export function validAccessName(value) {
@@ -31,6 +38,11 @@ export function levelNameTaken(name, levels, exceptId = null) {
   const wanted = name.trim().toLowerCase();
   if (!wanted) return false;
   return levels.some((level) => level.id !== exceptId && level.name.trim().toLowerCase() === wanted);
+}
+
+/** Whether `name` can name a new access level beside `levels`. */
+export function validNewLevelName(name, levels) {
+  return validAccessName(name) && !levelNameTaken(name, levels);
 }
 
 /**
@@ -75,6 +87,58 @@ export function NameField({
 }
 
 /**
+ * The name of a new access level, refused in place when it is empty or one of
+ * `levels` already has it. A field that starts empty passes `touched` once the
+ * owner has typed, so a fresh form does not open on a complaint.
+ */
+export function LevelNameField({
+  id,
+  value,
+  onInput,
+  levels,
+  touched = true,
+  disabled = false,
+  inline = false,
+}) {
+  return html`<${NameField}
+    id=${id}
+    label="Access level name"
+    value=${value}
+    onInput=${onInput}
+    emptyMessage=${touched ? "Enter a name for this access level." : ""}
+    conflictMessage=${levelNameTaken(value, levels) ? LEVEL_NAME_TAKEN_MESSAGE : ""}
+    disabled=${disabled}
+    inline=${inline}
+  />`;
+}
+
+/**
+ * An existing access level as a choice in a list of levels: its name, who
+ * uses it and what it allows. `tag` follows the name; `children` are further
+ * lines under it.
+ */
+export function LevelChoice({
+  radioName,
+  level,
+  rules,
+  checked,
+  onSelect,
+  disabled = false,
+  tag = null,
+  children = null,
+}) {
+  return html`<label class=${`access-choice-option${disabled ? " is-disabled" : ""}`}>
+    <input type="radio" name=${radioName} checked=${checked} disabled=${disabled} onChange=${onSelect} />
+    <span class="access-choice-text">
+      <strong>${level.name}${tag}</strong>
+      <small>${levelUsersLabel(level)}</small>
+      ${children}
+    </span>
+    <${CapabilityPills} rules=${rules} />
+  </label>`;
+}
+
+/**
  * The "New access level" choice in a list of levels, with the new level's
  * name inside it once it is chosen.
  *
@@ -98,13 +162,11 @@ export function NewLevelChoice({
       <span class="access-choice-text"><strong>New access level</strong></span>
     </label>
     ${checked
-      ? html`<${NameField}
+      ? html`<${LevelNameField}
           id=${fieldId}
-          label="Access level name"
           value=${levelName}
           onInput=${onLevelName}
-          emptyMessage="Enter a name for this access level."
-          conflictMessage=${levelNameTaken(levelName, levels) ? LEVEL_NAME_TAKEN_MESSAGE : ""}
+          levels=${levels}
           disabled=${disabled}
           inline
         />`

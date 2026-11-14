@@ -82,6 +82,11 @@ export interface StoredSyncState {
    * cannot read.
    */
   minimum_gateway_version: number;
+  /**
+   * The source version of the last page committed on this row: what its host
+   * runs now. 0 when that host sends none, or before its first page.
+   */
+  source_version: number;
 }
 
 export interface ListDocumentsOptions {
@@ -111,6 +116,13 @@ export interface ListedDocumentRow {
 
 export interface UpsertDocumentsOptions {
   initialInventory?: { id: string; startedAt: string };
+  /**
+   * The source version each source's documents are written at: what the
+   * host's sync page carried. A source with no entry is written at 0, which
+   * is every write that is not a versioned sync page. A stored document keeps
+   * the highest version it was written or re-read at.
+   */
+  sourceVersions?: Readonly<Record<string, number>>;
   /**
    * Conflict policy for shared documents emitted by independent replicas.
    * `source-updated-at` makes the source's canonical update timestamp the

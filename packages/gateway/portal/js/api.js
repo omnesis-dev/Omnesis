@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import { clearScopeLabels } from "./components/source-filter-labels.js";
+
 import { portalDeviceName, portalInstallId } from "./lib/storage.js";
 import { NOTES_HISTORY_PAGE_SIZE } from "./lib/notes.js";
 
@@ -86,6 +88,7 @@ export async function checkSession() {
   // has even logged in.
   const res = await fetch("/portal/api/session", { credentials: "same-origin" });
   const data = await res.json();
+  if (!data.authenticated || _csrfToken !== (data.csrfToken ?? null)) clearScopeLabels();
   _authenticated = data.authenticated;
   _scope = data.scope ?? null;
   _csrfToken = data.authenticated ? (data.csrfToken ?? null) : null;
@@ -113,6 +116,7 @@ export async function login(token) {
   });
   const data = await res.json();
   if (data.ok) {
+    clearScopeLabels();
     _authenticated = true;
     _scope = data.scope;
     _csrfToken = data.csrfToken ?? null;
@@ -125,6 +129,7 @@ export async function login(token) {
  * Log out (clear session cookie).
  */
 export async function logout() {
+  clearScopeLabels();
   await fetch("/portal/api/logout", {
     method: "POST",
     credentials: "same-origin",
@@ -182,6 +187,7 @@ async function request(method, path, opts = {}) {
   const init = {
     method,
     ...(opts.cache ? { cache: opts.cache } : {}),
+    ...(opts.signal ? { signal: opts.signal } : {}),
     headers:
       opts.body !== undefined || (opts.csrf && _csrfToken)
         ? {
@@ -216,6 +222,8 @@ async function request(method, path, opts = {}) {
       // The gateway's own sentence about what went wrong, for surfaces that
       // show the operator a message rather than the request line.
       if (typeof envelope?.error === "string") err.serverMessage = envelope.error;
+      // A sentence that goes with that code, e.g. why a refused level save was refused.
+      if (typeof envelope?.message === "string") err.serverDetail = envelope.message;
     } catch {
       // Non-JSON error bodies still use the status/message contract above.
     }
@@ -949,8 +957,34 @@ export const revokeTokenById = (id) =>
 // --- Delegated MCP access (Portal owner surface) ---
 
 /** Every connection an agent holds on this gateway, with the access levels they can share. */
-export const getAccessOverview = () =>
-  request("GET", "/admin/access", { cache: "no-store" });
+export const getAccessOverview = (signal) =>
+  request("GET", "/admin/access", { cache: "no-store", signal });
+
+/**
+ * One account's filter editor: its devices, and per filterable field the
+ * nouns, the picker, whether a filter can use it yet and its counts.
+ */
+export const getSourceFilterEditor = (sourceId, signal) =>
+  request("GET", `/admin/access/source-filters/${encodeURIComponent(sourceId)}`, { signal, cache: "no-store" });
+
+/** One page of a field's items: `{ field, q?, parentId?, device?, cursor? }`. */
+export const getSourceFilterOptions = (sourceId, query, signal) =>
+  request("GET", `/admin/access/source-filters/${encodeURIComponent(sourceId)}/options`, { query, signal, cache: "no-store" });
+
+/** A typed phone number, email or domain: `{ identifier }` in the gateway's spelling, or the `{ error }` sentence to show. */
+export const checkFilterIdentifier = (type, value, signal) =>
+  request("POST", "/admin/access/source-filters/identifiers", { body: { type, value }, signal });
+
+/** The labels, folders, chats and people a filter would decide this document by, and the source version that wrote it. */
+export const getDocumentFilterDetails = (id, signal) =>
+  request("GET", `/admin/documents/${encodeURIComponent(id)}/filter-details`, { signal, cache: "no-store" });
+
+/** Every access level, its agents, and whether each can read this document through Answer and Direct, and why. */
+export const getDocumentAccess = (id, signal) =>
+  request("GET", `/admin/documents/${encodeURIComponent(id)}/access`, { signal, cache: "no-store" });
+
+export const previewSourceFilter = (sourceId, policy, signal) =>
+  request("POST", `/admin/access/source-filters/${encodeURIComponent(sourceId)}/preview`, { body: { policy }, signal });
 
 /**
  * Resolve the short code shown by an MCP client's authorization window: the

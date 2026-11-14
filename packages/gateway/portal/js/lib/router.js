@@ -29,52 +29,25 @@ const DEBUG_TAB_ALIASES = {
 /** Cognition section names that address the Calendar; they redirect to its own Debug tab. */
 const CALENDAR_COGNITION_SECTIONS = new Set(["calendar", "time-index", "temporal-annotations"]);
 
-// Optional unsaved-work guard for editors. The guard returns a message when
-// navigating now would discard edits, or null to allow it. Both in-app
-// navigations run it; a declined guard aborts before touching history.
-// A native dialog is deliberate: navigation is synchronous, so an async
-// modal promise cannot gate it. Last setter wins; editors clear on unmount.
-let routeLeaveGuard = null;
-export function setRouteLeaveGuard(guard) {
-  routeLeaveGuard = guard;
-}
-function allowRouteLeave() {
-  if (typeof routeLeaveGuard !== "function") return true;
-  const message = routeLeaveGuard();
-  return !message || window.confirm(message);
-}
-
-export function navigate(path) {
-  if (!allowRouteLeave()) return false;
-  history.pushState(null, "", path);
-  window.dispatchEvent(new CustomEvent("route-change"));
-  return true;
-}
-
-// Replace the current history entry and re-render from the new route. Use this
-// when the old URL represents state the user explicitly cleared: Browser Back
-// must not resurrect it.
-export function replaceRoute(path) {
-  if (!allowRouteLeave()) return false;
-  history.replaceState(null, "", path);
-  window.dispatchEvent(new CustomEvent("route-change"));
-  return true;
-}
-
-// Replace the current history entry without pushing a new one. Used when
-// the URL needs to mirror in-page state (e.g. the People search box's
-// `?q=` query) — pushState here would flood the back stack with one
-// entry per keystroke. No route-change event is fired since the in-page
-// state already changed and components don't need to re-derive from URL.
-export function replaceUrl(path) {
-  history.replaceState(null, "", path);
-}
+export {
+  setRouteLeaveGuard,
+  navigate,
+  replaceRoute,
+  replaceUrl,
+  onRouteChange,
+} from "./router-history.js";
 
 export function parseRoute() {
   const path = location.pathname;
 
   if (path === "/portal" || path === "/portal/") {
     return { view: "agent", convoId: null };
+  }
+
+  // A document's "Who can read this?" page sits under the document itself.
+  const docAccessMatch = path.match(/^\/portal\/doc\/(.+)\/access\/?$/);
+  if (docAccessMatch) {
+    return { view: "document-access", id: decodeURIComponent(docAccessMatch[1]) };
   }
 
   const docMatch = path.match(/^\/portal\/doc\/(.+)$/);
@@ -91,7 +64,12 @@ export function parseRoute() {
     return { view: "people", personId: decodeURIComponent(personMatch[1]) };
   }
 
-  if (path === "/portal/people" || path === "/portal/people/" || path === "/portal/people/rules" || path === "/portal/people/candidates") {
+  if (
+    path === "/portal/people" ||
+    path === "/portal/people/" ||
+    path === "/portal/people/rules" ||
+    path === "/portal/people/candidates"
+  ) {
     const params = new URLSearchParams(location.search);
     let tab;
     if (path === "/portal/people/rules") tab = "rules";
@@ -120,7 +98,10 @@ export function parseRoute() {
   }
 
   if (path === "/portal/browser-notes" || path === "/portal/browser-notes/") {
-    return { view: "browser-notes", requestId: new URLSearchParams(location.search).get("request") };
+    return {
+      view: "browser-notes",
+      requestId: new URLSearchParams(location.search).get("request"),
+    };
   }
 
   // /portal/tasks[/<view>] — the bullet-journal Tasks view; the optional
@@ -191,9 +172,7 @@ export function parseRoute() {
   // One privacy policy, open for editing on the Policies tab. The same policy
   // under the Access tab is an equivalent spelling and redirects, so the
   // address bar names the tab on screen.
-  const policyMatch = path.match(
-    /^\/portal\/settings\/(policies|access\/policies)\/([^/]+)\/?$/,
-  );
+  const policyMatch = path.match(/^\/portal\/settings\/(policies|access\/policies)\/([^/]+)\/?$/);
   if (policyMatch) {
     const policyId = decodePathSegment(policyMatch[2]);
     if (policyId === null) return { view: "search" };
@@ -242,20 +221,17 @@ export function parseRoute() {
     const canonicalPath = `/portal/settings/${tab}${modelsSection ? `/${modelsSection}` : ""}`;
     const normalized = path.replace(/\/$/, "");
     const isCanonical =
-      normalized === canonicalPath
-      || (tab === DEFAULT_SETTINGS_TAB && !modelsSection && normalized === "/portal/settings");
+      normalized === canonicalPath ||
+      (tab === DEFAULT_SETTINGS_TAB && !modelsSection && normalized === "/portal/settings");
     // `?pair=<kind>` on the Devices tab opens the pairing modal with that
     // device kind preselected, so a link can carry the user straight from
     // e.g. the Sources extension promo into pairing. The Devices view
     // validates the kind and ignores anything it doesn't recognise.
-    const pairRequest = tab === "devices"
-      ? new URLSearchParams(location.search).get("pair")
-      : null;
+    const pairRequest = tab === "devices" ? new URLSearchParams(location.search).get("pair") : null;
     // `?device=<id>` on the Devices tab opens that device's card and scrolls
     // to it, so a page that names a device can link straight to it.
-    const deviceRequest = tab === "devices"
-      ? new URLSearchParams(location.search).get("device")
-      : null;
+    const deviceRequest =
+      tab === "devices" ? new URLSearchParams(location.search).get("device") : null;
     return {
       view: "settings",
       tab,
@@ -317,8 +293,8 @@ export function parseRoute() {
     const watchFiringId = decodePathSegment(watchFiringMatch[2]);
     if (watchId === null || watchFiringId === null) return { view: "search" };
     const canonical =
-      `/portal/watches/${encodeURIComponent(watchId)}`
-      + `/firings/${encodeURIComponent(watchFiringId)}`;
+      `/portal/watches/${encodeURIComponent(watchId)}` +
+      `/firings/${encodeURIComponent(watchFiringId)}`;
     return {
       view: "watches",
       watchApprovalId: null,
@@ -412,9 +388,7 @@ export function parseRoute() {
   // resolve here so a refresh or bookmark lands where the operator left off.
   const privacyDirectMatch = path.match(/^\/portal\/audit\/direct(?:\/([^/]+))?\/?$/);
   if (privacyDirectMatch) {
-    const directSessionId = privacyDirectMatch[1]
-      ? decodePathSegment(privacyDirectMatch[1])
-      : null;
+    const directSessionId = privacyDirectMatch[1] ? decodePathSegment(privacyDirectMatch[1]) : null;
     if (privacyDirectMatch[1] && directSessionId === null) return { view: "search" };
     return {
       view: "privacy",
@@ -440,9 +414,7 @@ export function parseRoute() {
   // Privacy is one page: the exchange feed and whatever is waiting on a
   // decision. `activity`, `conversations` and `approvals` are alternative
   // spellings of it and redirect so the address bar names the page on screen.
-  const privacyMatch = path.match(
-    /^\/portal\/audit(?:\/(activity|conversations|approvals))?\/?$/,
-  );
+  const privacyMatch = path.match(/^\/portal\/audit(?:\/(activity|conversations|approvals))?\/?$/);
   if (privacyMatch) {
     return {
       view: "privacy",
@@ -557,8 +529,8 @@ export function parseRoute() {
     // unrecognised segment — redirects onto the segment form.
     const normalized = path.replace(/\/$/, "");
     const isCanonical =
-      normalized === `/portal/debug/${tab}`
-      || (tab === DEFAULT_DEBUG_TAB && normalized === "/portal/debug");
+      normalized === `/portal/debug/${tab}` ||
+      (tab === DEFAULT_DEBUG_TAB && normalized === "/portal/debug");
     if (!isCanonical) {
       route.redirectTo = `/portal/debug/${tab}${location.search}`;
     }
@@ -612,13 +584,4 @@ function decodePathSegment(value) {
   } catch {
     return null;
   }
-}
-
-export function onRouteChange(callback) {
-  window.addEventListener("popstate", callback);
-  window.addEventListener("route-change", callback);
-  return () => {
-    window.removeEventListener("popstate", callback);
-    window.removeEventListener("route-change", callback);
-  };
 }

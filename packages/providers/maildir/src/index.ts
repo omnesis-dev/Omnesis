@@ -38,6 +38,7 @@ export default defineSource({
   unitName: "emails",
   icon: maildirIcon,
   contract: {
+    outputRevision: 1,
     // The host resolves the stored cursor against this before `sync` runs.
     state: maildirStateSpec,
     apiVersion: 2,

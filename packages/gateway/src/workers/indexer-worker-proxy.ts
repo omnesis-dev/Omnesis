@@ -63,6 +63,8 @@ export function buildIndexerCutoffMap(config: {
 }
 
 export interface IndexerWorkerOptions {
+  /** Forget queued version-only changes whose copy rows the worker has written. */
+  completeFilterIndexQueue?: (documentIds: readonly string[]) => Promise<void>;
   lexicalOnly?: boolean;
   /** Bound to this worker's model configuration, never the current replacement. */
   beginModelCall?: () => { success(): void; failure(error: unknown): void };
@@ -642,6 +644,14 @@ export class IndexerWorkerProxy implements Embedder {
 
   private handleMessage(msg: IndexerToMain): void {
     switch (msg.type) {
+      case "filterCopyQueued": {
+        void this.opts.completeFilterIndexQueue?.(msg.documentIds).catch((error: unknown) => {
+          log.warn(
+            `forgetting copied filter queue entries failed: ${error instanceof Error ? error.message : String(error)}`,
+          );
+        });
+        break;
+      }
       case "embeddingStarted": {
         const call = this.opts.beginModelCall?.();
         if (call) this.modelCalls.set(msg.id, call);

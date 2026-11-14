@@ -54,20 +54,24 @@ extension AccessAnswerRelease: Codable {
 
 public enum AccessGrantRule: Equatable, Sendable {
     case notes
-    case direct(sources: AccessSourceBoundary)
-    case answer(sources: AccessSourceBoundary, release: AccessAnswerRelease)
+    case direct(sources: AccessSourceBoundary, filterRevision: Int? = nil, scopePolicies: [ScopePolicy] = [])
+    case answer(sources: AccessSourceBoundary, release: AccessAnswerRelease, filterRevision: Int? = nil, scopePolicies: [ScopePolicy] = [])
 }
 
 extension AccessGrantRule: Codable {
-    private enum CodingKeys: String, CodingKey { case capability, sources, release }
+    private enum CodingKeys: String, CodingKey { case capability, sources, scopeSources, release, filterRevision, scopePolicies }
     private enum Capability: String, Codable { case direct, answer, notes }
 
+    /// A filtered rule carries its real boundary in `scopeSources`, and in `sources` the one a client
+    /// that knows no filters can apply safely. A rule without filters, and a gateway that sends no
+    /// `scopeSources`, carry the real boundary in `sources`. Only `sources` is ever sent.
     public init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
-        let sources = try values.decode(AccessSourceBoundary.self, forKey: .sources)
+        let listed = try values.decode(AccessSourceBoundary.self, forKey: .sources)
+        let sources = try values.decodeIfPresent(AccessSourceBoundary.self, forKey: .scopeSources) ?? listed
         switch try values.decode(Capability.self, forKey: .capability) {
         case .notes:
-            guard sources == AccessSourceBoundary(mode: .all, sourceIds: []), !values.contains(.release) else {
+            guard listed == AccessSourceBoundary(mode: .all, sourceIds: []), !values.contains(.release) else {
                 throw DecodingError.dataCorruptedError(
                     forKey: .sources,
                     in: values,
@@ -76,11 +80,17 @@ extension AccessGrantRule: Codable {
             }
             self = .notes
         case .direct:
-            self = .direct(sources: sources)
+            self = try .direct(
+                sources: sources,
+                filterRevision: values.decodeIfPresent(Int.self, forKey: .filterRevision),
+                scopePolicies: values.decodeIfPresent([ScopePolicy].self, forKey: .scopePolicies) ?? []
+            )
         case .answer:
             self = try .answer(
                 sources: sources,
-                release: values.decode(AccessAnswerRelease.self, forKey: .release)
+                release: values.decode(AccessAnswerRelease.self, forKey: .release),
+                filterRevision: values.decodeIfPresent(Int.self, forKey: .filterRevision),
+                scopePolicies: values.decodeIfPresent([ScopePolicy].self, forKey: .scopePolicies) ?? []
             )
         }
     }
@@ -91,12 +101,16 @@ extension AccessGrantRule: Codable {
         case .notes:
             try values.encode(Capability.notes, forKey: .capability)
             try values.encode(AccessSourceBoundary(mode: .all, sourceIds: []), forKey: .sources)
-        case .direct(let sources):
+        case .direct(let sources, let revision, let policies):
             try values.encode(Capability.direct, forKey: .capability)
             try values.encode(sources, forKey: .sources)
-        case .answer(let sources, let release):
+            try values.encodeIfPresent(revision ?? (policies.isEmpty ? nil : 0), forKey: .filterRevision)
+            if !policies.isEmpty { try values.encode(policies, forKey: .scopePolicies) }
+        case .answer(let sources, let release, let revision, let policies):
             try values.encode(Capability.answer, forKey: .capability)
             try values.encode(sources, forKey: .sources)
+            try values.encodeIfPresent(revision ?? (policies.isEmpty ? nil : 0), forKey: .filterRevision)
+            if !policies.isEmpty { try values.encode(policies, forKey: .scopePolicies) }
             try values.encode(release, forKey: .release)
         }
     }
@@ -107,6 +121,9 @@ public struct AccessSourceInstance: Codable, Equatable, Identifiable, Sendable {
     public let name: String
     public let icon: String?
     public let available: Bool
+    public var sourceType: String?
+    /// Whether the account's source declares a field a filter can use. The filter editor says which.
+    public var filterable: Bool?
 
     public init(id: String, name: String, icon: String? = nil, available: Bool = true) {
         self.id = id
@@ -190,12 +207,27 @@ public struct AccessGrantSummary: Codable, Equatable, Identifiable, Sendable {
 
 /// A named, reusable set of permissions several connections can share.
 public struct AccessLevelSummary: Codable, Equatable, Identifiable, Sendable {
+    /// A paired device whose own questions are answered under this level.
+    public struct Device: Codable, Equatable, Identifiable, Sendable {
+        public let id: String
+        public let name: String
+        public let kind: String
+
+        public init(id: String, name: String, kind: String) {
+            self.id = id
+            self.name = name
+            self.kind = kind
+        }
+    }
+
     public let id: String
     public let name: String
     public let revision: Int
     public let rules: [AccessGrantRule]
     /// How many live connections use this level.
     public let connectionCount: Int
+    /// The integrations on this level. Nil from a gateway that does not report them.
+    public let devices: [Device]?
     public let createdAt: Int64
     public let updatedAt: Int64
 
@@ -205,6 +237,7 @@ public struct AccessLevelSummary: Codable, Equatable, Identifiable, Sendable {
         revision: Int,
         rules: [AccessGrantRule],
         connectionCount: Int,
+        devices: [Device]? = nil,
         createdAt: Int64,
         updatedAt: Int64
     ) {
@@ -213,6 +246,7 @@ public struct AccessLevelSummary: Codable, Equatable, Identifiable, Sendable {
         self.revision = revision
         self.rules = rules
         self.connectionCount = connectionCount
+        self.devices = devices
         self.createdAt = createdAt
         self.updatedAt = updatedAt
     }
@@ -244,6 +278,8 @@ public struct AccessPendingRequest: Codable, Equatable, Identifiable, Sendable {
 }
 
 public struct AccessOverview: Equatable, Sendable {
+    public struct SourceFilters: Codable, Equatable, Sendable { public var enabled: Bool }
+    public var sourceFilters: SourceFilters?
     public let principals: [AccessPrincipalSummary]
     public let sources: [AccessSourceInstance]
     public let policyFamilies: [AccessPolicyFamilySummary]
@@ -280,7 +316,7 @@ public struct AccessOverview: Equatable, Sendable {
 
 extension AccessOverview: Codable {
     private enum CodingKeys: String, CodingKey {
-        case principals, sources, policyFamilies, privacyPolicies, defaultPolicyFamilyId, pendingRequests, levels
+        case principals, sources, policyFamilies, privacyPolicies, defaultPolicyFamilyId, pendingRequests, levels, sourceFilters
     }
 
     public init(from decoder: Decoder) throws {
@@ -297,6 +333,7 @@ extension AccessOverview: Codable {
         )
         pendingRequests = try values.decodeIfPresent([AccessPendingRequest].self, forKey: .pendingRequests)
         levels = try values.decodeIfPresent([AccessLevelSummary].self, forKey: .levels) ?? []
+        sourceFilters = try values.decodeIfPresent(SourceFilters.self, forKey: .sourceFilters)
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -307,6 +344,7 @@ extension AccessOverview: Codable {
         try values.encodeIfPresent(defaultPolicyFamilyId, forKey: .defaultPolicyFamilyId)
         try values.encodeIfPresent(pendingRequests, forKey: .pendingRequests)
         try values.encode(levels, forKey: .levels)
+        try values.encodeIfPresent(sourceFilters, forKey: .sourceFilters)
     }
 }
 
@@ -507,13 +545,6 @@ public struct AccessSourceSelectionState: Equatable, Sendable {
         }
     }
 
-    public static func newGrant(knownSourceIds: Set<String>) -> Self {
-        Self(
-            boundary: AccessSourceBoundary(mode: .allowlist, sourceIds: []),
-            knownSourceIds: knownSourceIds
-        )
-    }
-
     public mutating func setMode(_ newMode: AccessSourceMode, knownSourceIds: Set<String>) {
         mode = newMode
         switch newMode {
@@ -569,18 +600,6 @@ public struct AccessSourceSelectionState: Equatable, Sendable {
             if mode == .all { mode = .denylist }
             if mode == .denylist { explicitlyDeniedIds.insert(sourceId) }
         }
-    }
-
-    public mutating func allowAll(_ knownSourceIds: Set<String>) {
-        allowedSourceIds.formUnion(knownSourceIds)
-        explicitlyDeniedIds.subtract(knownSourceIds)
-        unavailableReferencedIds.subtract(knownSourceIds)
-    }
-
-    public mutating func blockAll(_ knownSourceIds: Set<String>) {
-        allowedSourceIds.subtract(knownSourceIds)
-        if mode == .all { mode = .denylist }
-        if mode == .denylist { explicitlyDeniedIds.formUnion(knownSourceIds) }
     }
 
     public func boundary(knownSourceIds: Set<String>) -> AccessSourceBoundary {

@@ -68,6 +68,11 @@ const FORBIDDEN_TABLES = new Set([
   "access_level_capabilities",
   "access_levels",
   "access_principals",
+  // Saved external grants and their rollback quarantine are installation authority.
+  "access_scope_capabilities",
+  "access_scope_legacy_denials",
+  "access_scope_policy_sources",
+  "scope_policy_mutation_context",
   "agent_pairing_redemption_receipts",
   "pairing_redemption_receipts",
   "answer_approvals",
@@ -106,6 +111,9 @@ const FORBIDDEN_TABLES = new Set([
   "answer_releases",
   "answer_request_tombstones",
   "answer_tasks",
+  // Authorization snapshots and fetched-document readsets belong to those tasks.
+  "answer_task_scope",
+  "answer_task_scope_documents",
   "answer_workflow_disclosure",
   "answer_workflow_grants",
   "answer_workflows",
@@ -161,11 +169,21 @@ const SAFE_TABLES = new Set([
   "document_absence_scopes",
   "document_absences",
   "document_extracted_dates",
+  // Derived work: documents whose source version rose with nothing else
+  // changed, waiting for whoever keeps a copy of that version.
+  "document_filter_index_queue",
   "document_links",
   "document_people",
   "document_temporal_projection_sources",
   "document_temporal_projections",
   "documents",
+  // The search index's copy of what source filters read. Derived from the
+  // corpus and rebuilt by the indexer, so a clone starts with none of it.
+  "index_filter_documents",
+  "index_filter_item_members",
+  "index_filter_items",
+  "index_filter_lists",
+  "index_filter_sources",
   "index_meta",
   "index_totals",
   "index_versions",
@@ -272,6 +290,11 @@ const SAFE_TABLES = new Set([
   "retired_loops",
   "schema_migrations",
   "source_document_profiles",
+  // Lists collectors published for filterable fields: names and trees of an
+  // account, kept with the corpus so saved filters keep resolving in a clone.
+  "source_filter_item_members",
+  "source_filter_items",
+  "source_filter_lists",
   "source_devices",
   "source_inventories",
   "source_inventory_documents",
@@ -286,6 +309,10 @@ const SAFE_TABLES = new Set([
   "source_mode_transitions",
   "source_watermarks",
   "source_wipe_epoch",
+  // How many documents each source holds per source version: kept by triggers
+  // on `documents`, which the copy installs after the rows, so the counts
+  // travel with the documents they count.
+  "source_version_counts",
   "source_wire_contracts",
   "source_sync_issues",
   "sources",
@@ -345,6 +372,15 @@ const SAFE_ROW_FILTERS = new Map([
   ["document_absence_observations", "0"],
   ["document_absence_scopes", "0"],
   ["document_absences", "0"],
+  // Pending derived work restarts empty; a clone's copies of a document's
+  // source version are rebuilt from the documents themselves.
+  ["document_filter_index_queue", "0"],
+  // Rebuilt from the clone's own documents, lists and declarations.
+  ["index_filter_documents", "0"],
+  ["index_filter_item_members", "0"],
+  ["index_filter_items", "0"],
+  ["index_filter_lists", "0"],
+  ["index_filter_sources", "0"],
   // Doctor runs are transient observations about one installation's hosts.
   // Preserve the table shape without cloning host-local health details.
   ["device_doctor_runs", "0"],

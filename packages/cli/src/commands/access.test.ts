@@ -226,6 +226,32 @@ describe("access levels", () => {
     ]);
   });
 
+  test("counts a filtered level's whole boundary, not the part older clients are shown", async () => {
+    const { formatAccessLevels } = await import("./access.js");
+    const lines = formatAccessLevels({
+      sources: [
+        { id: "src-notes", available: true },
+        { id: "src-mail", available: true },
+      ],
+      policyFamilies: [],
+      levels: [
+        {
+          id: "level-filtered",
+          name: "Filtered reader",
+          connectionCount: 0,
+          rules: [
+            {
+              capability: "direct",
+              sources: { mode: "allowlist", sourceIds: ["src-notes"] },
+              scopeSources: { mode: "allowlist", sourceIds: ["src-notes", "src-mail"] },
+            },
+          ],
+        },
+      ],
+    }).map((line) => line.replace(/\x1b\[[0-9;]*m/g, ""));
+    expect(lines[1]).toBe("  direct from 2 of 2 sources");
+  });
+
   test("says when there are none", async () => {
     const { formatAccessLevels } = await import("./access.js");
     expect(formatAccessLevels({ sources: [], policyFamilies: [], levels: [] })).toEqual([

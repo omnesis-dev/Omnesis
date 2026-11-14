@@ -10,12 +10,15 @@
 import { html } from "htm/preact";
 import { useState } from "preact/hooks";
 
-import { CapabilityTriad } from "../../components/grant-builder.js";
 import { Modal } from "../../components/modal.js";
-import { ACCESS_NAME_MAX, NewLevelChoice, levelNameTaken, validAccessName } from "./name-fields.js";
-import { LEVEL_HELPER, accessRules, levelUsersLabel } from "./shared.js";
-
-const NEW_LEVEL = "new";
+import {
+  ACCESS_NAME_MAX,
+  LevelChoice,
+  NEW_LEVEL,
+  NewLevelChoice,
+  validNewLevelName,
+} from "./name-fields.js";
+import { LEVEL_HELPER, accessRules } from "./shared.js";
 
 /**
  * The first name a new level can take without colliding with a live one:
@@ -43,9 +46,7 @@ export function MoveConnectionDialog({ entry, levels, overview, busy = false, er
   const [selected, setSelected] = useState(others.length === 0 ? NEW_LEVEL : null);
   const [levelName, setLevelName] = useState(() => firstFreeLevelName(entry.name, levels));
   const chosen = others.find((level) => level.id === selected) ?? null;
-  const ready = selected === NEW_LEVEL
-    ? validAccessName(levelName) && !levelNameTaken(levelName, levels)
-    : Boolean(chosen);
+  const ready = selected === NEW_LEVEL ? validNewLevelName(levelName, levels) : Boolean(chosen);
   const radioName = `access-move-${entry.grant.id}`;
 
   const submit = (event) => {
@@ -61,14 +62,14 @@ export function MoveConnectionDialog({ entry, levels, overview, busy = false, er
       <p class="access-dialog-note">${LEVEL_HELPER}</p>
       <fieldset class="access-choice-list" disabled=${busy}>
         <legend class="sr-only">${`Access level for ${entry.name}`}</legend>
-        ${others.map((level) => html`<label class="access-choice-option" key=${level.id}>
-          <input type="radio" name=${radioName} checked=${selected === level.id} onChange=${() => setSelected(level.id)} />
-          <span class="access-choice-text">
-            <strong>${level.name}</strong>
-            <small>${levelUsersLabel(level)}</small>
-          </span>
-          <${CapabilityTriad} rules=${accessRules(level, overview)} />
-        </label>`)}
+        ${others.map((level) => html`<${LevelChoice}
+          key=${level.id}
+          radioName=${radioName}
+          level=${level}
+          rules=${accessRules(level, overview)}
+          checked=${selected === level.id}
+          onSelect=${() => setSelected(level.id)}
+        />`)}
         <${NewLevelChoice}
           radioName=${radioName}
           checked=${selected === NEW_LEVEL}

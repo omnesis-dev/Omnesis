@@ -37,10 +37,16 @@ import {
   validateTemporalProjectionContracts,
 } from "./structured-source.js";
 import { emptySync } from "./source.js";
-import { validateContractDeclaration, type SourceContractDeclaration } from "./source-contract.js";
+import {
+  mergeContractDeclarations,
+  resolveOutputRevision,
+  validateContractDeclaration,
+  type SourceContractDeclaration,
+} from "./source-contract.js";
 import { isDerivedFromSchema, toSourceParams } from "./config-schema.js";
 import { nodePathProbe } from "./path-probe-node.js";
 import { executionModeOf, type ExecutionMode } from "./execution-mode.js";
+import type { FilterListProducers } from "./filter-lists.js";
 import type { ConnectionState } from "./connection-state.js";
 import type { AccountDescriptor } from "./account-descriptor.js";
 import type { AuthResult, AuthSession } from "./auth-session.js";
@@ -291,6 +297,13 @@ export interface SourceInstance<TCursor extends SyncCursor = SyncCursor> {
    * undefined to use the definition-level name.
    */
   label?: string;
+
+  /**
+   * One producer per filterable field of the source's profile, each listing
+   * what exists in the account for that field. Set with `withFilterLists`;
+   * the host runs them and publishes the lists as part of an ordinary sync.
+   */
+  filterLists?: FilterListProducers;
 
   /** Clean up resources (close DB connections, etc.) */
   dispose?(): Promise<void>;
@@ -835,6 +848,13 @@ export interface SourceDefinition<
    */
   documentEventProfile?: DocumentEventProfile;
   /**
+   * One plain sentence telling the user what reading this source again from
+   * the start costs, shown where a resync is offered: "This reads about
+   * 95,000 messages a day." Only the source knows its own rate limits and
+   * volumes, so only the source can say. At most 200 characters, on one line.
+   */
+  resyncCost?: string;
+  /**
    * Suggested sync interval when this source is added. Applied to the
    * source's stored config on `addSources`. The user can override later
    * by editing the source's config. Falls back to `defaultSyncInterval`
@@ -1014,6 +1034,8 @@ export interface ProviderSourceEntry<
   documentTemporalProjections?: DocumentTemporalProjectionSpec[];
   /** See `SourceDefinition.documentEventProfile`. */
   documentEventProfile?: DocumentEventProfile;
+  /** See `SourceDefinition.resyncCost`. */
+  resyncCost?: string;
   /** See SourceDefinition.defaultSyncInterval. */
   defaultSyncInterval?: string;
   /**
@@ -1282,6 +1304,24 @@ function validateLocalAvailabilityParams(
   }
 }
 
+/** Longest `resyncCost` sentence; it is shown inline beside a button. */
+export const RESYNC_COST_MAX_LENGTH = 200;
+
+function validateResyncCost(resyncCost: string | undefined, owner: string): void {
+  if (resyncCost === undefined) return;
+  if (
+    typeof resyncCost !== "string" ||
+    resyncCost.trim().length === 0 ||
+    resyncCost !== resyncCost.trim() ||
+    resyncCost.length > RESYNC_COST_MAX_LENGTH ||
+    /[\r\n]/.test(resyncCost)
+  ) {
+    throw new Error(
+      `${owner}: 'resyncCost' must be one sentence on one line, at most ${RESYNC_COST_MAX_LENGTH} characters, with no surrounding whitespace`,
+    );
+  }
+}
+
 /**
  * Define a single-source package.
  *
@@ -1327,7 +1367,11 @@ export function defineSource<
     def.documentTemporalProjections,
     `defineSource('${def.id}')`,
   );
-  validateDocumentEventProfile(def.documentEventProfile, `defineSource('${def.id}')`);
+  validateDocumentEventProfile(def.documentEventProfile, `defineSource('${def.id}')`, {
+    outputRevision: resolveOutputRevision(def.contract),
+    partitioned: def.multiDevice?.mode === "partitioned",
+  });
+  validateResyncCost(def.resyncCost, `defineSource('${def.id}')`);
   validateContractDeclaration(def.contract, `defineSource('${def.id}')`);
   if (def.config && def.params && !isDerivedFromSchema(def.params)) {
     throw new Error(
@@ -1431,7 +1475,11 @@ export function defineProvider<TContext>(
       s.documentTemporalProjections,
       `defineProvider source '${s.id}'`,
     );
-    validateDocumentEventProfile(s.documentEventProfile, `defineProvider source '${s.id}'`);
+    validateDocumentEventProfile(s.documentEventProfile, `defineProvider source '${s.id}'`, {
+      outputRevision: resolveOutputRevision(mergeContractDeclarations(def.contract, s.contract)),
+      partitioned: (s.multiDevice ?? def.multiDevice)?.mode === "partitioned",
+    });
+    validateResyncCost(s.resyncCost, `defineProvider source '${s.id}'`);
   }
 
   return {
@@ -1523,7 +1571,11 @@ export function defineStructuredSource<
     def.documentTemporalProjections,
     `defineStructuredSource('${def.id}')`,
   );
-  validateDocumentEventProfile(def.documentEventProfile, `defineStructuredSource('${def.id}')`);
+  validateDocumentEventProfile(def.documentEventProfile, `defineStructuredSource('${def.id}')`, {
+    outputRevision: resolveOutputRevision(def.contract),
+    partitioned: def.multiDevice?.mode === "partitioned",
+  });
+  validateResyncCost(def.resyncCost, `defineStructuredSource('${def.id}')`);
   validateContractDeclaration(def.contract, `defineStructuredSource('${def.id}')`);
   if (executionModeOf(def) === "pull" && typeof def.create !== "function") {
     throw new Error(

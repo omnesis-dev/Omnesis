@@ -3,6 +3,7 @@
 
 import {
   recordSourceInventoryPage,
+  recordSourcePageAfterInventory,
   recordSourceInventoryDocument,
 } from "./SourceInventoryRepository.js";
 import { isKnowledgeDocumentReadable } from "../../brain/knowledge/retrieval-fence.js";
@@ -34,6 +35,7 @@ import {
 } from "./ReplicaDeletionClaimRepository.js";
 import {
   setSyncState,
+  setSyncStateSourceVersion,
   getWipeEpoch,
   bumpWipeEpoch,
   resetSiblingMemberCursors,
@@ -327,10 +329,13 @@ export function upsertDocuments(
   documents = filterRemovedSourceDocuments(db, tombstoned.kept);
 
   const stmt = db.prepare(`
-    INSERT INTO documents (id, provider_id, source_id, external_id, stream_id, partition_key, title, content, content_hash, extracted_content_hash, metadata, source_created_at, source_updated_at, ingested_at, updated_at, source_url)
-    VALUES ($id, $provider_id, $source_id, $external_id, $stream_id, $partition_key, $title, $content, $content_hash, $extracted_content_hash, $metadata, $source_created_at, $source_updated_at, $ingested_at, $updated_at, $source_url)
+    INSERT INTO documents (id, provider_id, source_id, external_id, stream_id, partition_key, title, content, content_hash, extracted_content_hash, metadata, source_created_at, source_updated_at, ingested_at, updated_at, source_url, source_version)
+    VALUES ($id, $provider_id, $source_id, $external_id, $stream_id, $partition_key, $title, $content, $content_hash, $extracted_content_hash, $metadata, $source_created_at, $source_updated_at, $ingested_at, $updated_at, $source_url, $source_version)
     ON CONFLICT(provider_id, source_id, external_id, stream_id) DO UPDATE SET
       title = excluded.title,
+      -- A version only rises. A page from a host on an older build, or one
+      -- that sends no version, rewrites the document and keeps the version.
+      source_version = MAX(documents.source_version, excluded.source_version),
       content = excluded.content,
       content_hash = excluded.content_hash,
       extracted_content_hash = excluded.extracted_content_hash,
@@ -425,6 +430,23 @@ export function upsertDocuments(
     -- for an update, and no row when the conflict left the document as it was.
     RETURNING id
   `);
+  // A document the upsert left as it was still records that this page read
+  // it. Only the version moves: `updated_at` is the indexer's event clock and
+  // the derived-state markers stand for work whose inputs did not change, so
+  // neither may see a re-read. The queue row is how a keeper of its own copy
+  // of the version learns of a change the clock does not show.
+  const stampVersionStmt = db.prepare<
+    [number, string, string, string, string, number],
+    { id: string }
+  >(`
+    UPDATE documents SET source_version = ?
+     WHERE provider_id = ? AND source_id = ? AND external_id = ? AND stream_id = ?
+       AND source_version < ?
+    RETURNING id
+  `);
+  const queueVersionChangeStmt = db.prepare<[string]>(
+    "INSERT OR IGNORE INTO document_filter_index_queue (document_id) VALUES (?)",
+  );
   const exactReplicaStmt = db.prepare<
     [string, string, string, string, string, string, string, string | null, string, string | null],
     { found: number }
@@ -515,6 +537,7 @@ export function upsertDocuments(
         );
       }
       const streamId = options.streams?.[doc.sourceId] ?? "";
+      const sourceVersion = options.sourceVersions?.[doc.sourceId] ?? 0;
       const metadata = documentsMetadataCodec.serialize(doc.metadata as DocumentsMetadata);
       const sourceUrl =
         doc.preparedSourceUrl !== undefined
@@ -532,6 +555,7 @@ export function upsertDocuments(
           options.initialInventory,
           false,
           Date.now(),
+          sourceVersion,
         );
       }
       const stored = stmt.get({
@@ -551,6 +575,7 @@ export function upsertDocuments(
         ingested_at: now,
         updated_at: now,
         source_url: sourceUrl,
+        source_version: sourceVersion,
         replica_version_policy:
           options.replicaVersionPolicies?.[doc.sourceId] === "source-updated-at" ? 1 : 0,
       }) as { id: string } | undefined;
@@ -572,9 +597,22 @@ export function upsertDocuments(
           sourceUrl,
         );
         if (!exact) {
+          // The stored document is another member's newer copy, so this
+          // page's version says nothing about what wrote it.
           ignoredReplicaDocuments.push({ sourceId: doc.sourceId, externalId: doc.externalId });
           continue;
         }
+      }
+      if (stored === undefined && sourceVersion > 0) {
+        const stamped = stampVersionStmt.get(
+          sourceVersion,
+          doc.providerId,
+          doc.sourceId,
+          doc.externalId,
+          streamId,
+          sourceVersion,
+        );
+        if (stamped) queueVersionChangeStmt.run(stamped.id);
       }
       if (options.initialInventory && inserted)
         recordSourceInventoryDocument(db, {
@@ -1260,6 +1298,47 @@ export function getDocumentCount(db: Db, sourceId: string): number {
     )
     .get(sourceId);
   return row?.count ?? 0;
+}
+
+/** How many documents one source, or one stream of it, holds at a source version. */
+export interface SourceVersionCount {
+  sourceVersion: number;
+  count: number;
+}
+
+/**
+ * How many documents a source holds at each source version, lowest first.
+ * Version 0 is the documents stored without one.
+ *
+ * `streamId` narrows the count to one contributing device's stream of a
+ * partitioned source; left out, every stream of the source is counted
+ * together. Read from the running counts (`source_version_counts`), so it
+ * costs a few rows whatever the source holds and is safe on any thread.
+ */
+export function countDocumentsBySourceVersion(
+  db: Db,
+  sourceId: string,
+  streamId?: string,
+): SourceVersionCount[] {
+  if (streamId === undefined) {
+    return db
+      .prepare<[string], SourceVersionCount>(
+        `SELECT source_version AS sourceVersion, SUM(document_count) AS count
+           FROM source_version_counts
+          WHERE source_id = ?
+          GROUP BY source_version
+          ORDER BY source_version`,
+      )
+      .all(sourceId);
+  }
+  return db
+    .prepare<[string, string], SourceVersionCount>(
+      `SELECT source_version AS sourceVersion, document_count AS count
+         FROM source_version_counts
+        WHERE source_id = ? AND stream_id = ?
+        ORDER BY source_version`,
+    )
+    .all(sourceId, streamId);
 }
 
 /**
@@ -2073,6 +2152,16 @@ export function applyReplicaOmissions(db: Db, a: ReplicaOmissionArgs): ReplicaVe
  */
 export interface UpsertWithCursorArgs {
   initialInventory?: { id: string; startedAt: string };
+  /**
+   * The source version the page's host sent, applied to every document on
+   * the page. Unset is 0: a host that sends none.
+   */
+  sourceVersion?: number;
+  /**
+   * What the source said, on the last page of a cycle, about having read
+   * everything it holds; see `recordSourceInventoryPage`.
+   */
+  fullReadComplete?: boolean;
   pendingPageId?: string;
   providerId: string;
   sourceId: string;
@@ -2326,6 +2415,7 @@ export function upsertWithCursor(
         a.documents,
         {
           initialInventory: a.initialInventory,
+          sourceVersions: { [a.sourceId]: a.sourceVersion ?? 0 },
           writeEpochs: a.wipeEpoch === undefined ? undefined : { [a.sourceId]: a.wipeEpoch },
           cursorRows: { [a.sourceId]: cursorRow },
           streams: { [a.sourceId]: streamId },
@@ -2458,6 +2548,7 @@ export function upsertWithCursor(
       a.wipeEpoch,
       cursorRow,
     );
+    setSyncStateSourceVersion(db, a.sourceId, cursorRow, a.sourceVersion ?? 0);
     if (a.initialInventory)
       recordSourceInventoryPage(
         db,
@@ -2466,7 +2557,15 @@ export function upsertWithCursor(
         a.initialInventory,
         !a.hasMore,
         Date.now(),
+        a.sourceVersion ?? 0,
+        !a.hasMore && a.fullReadComplete !== false,
       );
+    else
+      recordSourcePageAfterInventory(db, a.sourceId, cursorRow, {
+        sourceVersion: a.sourceVersion ?? 0,
+        fullRead: !a.hasMore && a.fullReadComplete === true,
+        now: Date.now(),
+      });
     if (a.pendingPageId !== undefined)
       db.prepare(
         "UPDATE pending_source_pages SET cursor_committed = 1 WHERE source_id = ? AND cursor_row = ? AND page_id = ?",
@@ -2630,6 +2729,7 @@ export function upsertWithCursorYieldable(
       token,
       chunkSize,
       initialInventory: args.initialInventory,
+      sourceVersions: { [args.sourceId]: args.sourceVersion ?? 0 },
       writeEpochs: args.wipeEpoch === undefined ? undefined : { [args.sourceId]: args.wipeEpoch },
       cursorRows: { [args.sourceId]: args.cursorDeviceId ?? "" },
       streams: { [args.sourceId]: args.streamId ?? "" },

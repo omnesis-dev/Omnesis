@@ -60,6 +60,7 @@ import { SourceLifecycle } from "./source-lifecycle.js";
 import { ProgressTracker } from "./progress-tracker.js";
 import { FeedProcessSupervisor } from "./feed-process-supervisor.js";
 import { runWithSyncTimeout } from "./source-sync-attempt.js";
+import { FilterListPublisher, newFilterListCycle } from "./filter-list-publisher.js";
 import type {
   DocumentIngestionContext,
   DocumentInput,
@@ -207,6 +208,8 @@ export class SourceSyncRunner {
   private readonly heldLeases = new Set<SourceId>();
   /** Renewal timers keeping a held lease alive through a long page fetch. */
   private readonly leaseHeartbeats = new Map<SourceId, ReturnType<typeof setInterval>>();
+  /** Publishes the lists a source produces for its filterable fields. */
+  private readonly filterLists: FilterListPublisher;
 
   constructor(
     private readonly gateway: GatewayClient,
@@ -214,7 +217,9 @@ export class SourceSyncRunner {
     private readonly syncTimeoutMs: number,
     private readonly feedProcess: FeedProcessSupervisor = new FeedProcessSupervisor(),
     private readonly ingestionContext?: DocumentIngestionContext,
-  ) {}
+  ) {
+    this.filterLists = new FilterListPublisher(gateway);
+  }
 
   /**
    * Give up every sync lease this collector holds — on shutdown, so a
@@ -606,10 +611,15 @@ export class SourceSyncRunner {
         return;
       }
       let cursor = state?.cursor ?? null;
-      // Provider-independent provenance survives a partial page and collector restart.
+      // A sync that starts with no cursor reads the whole source: the first
+      // one, and the first after a resync, in place or from scratch, reset
+      // the cursor. Each such pass is an enumeration of its own, so the
+      // gateway learns when the source was last read whole and at which
+      // version. The gateway hands back the one still open, which survives a
+      // partial page and a collector restart.
       const initialInventory =
         state?.initialInventory ??
-        (!state
+        (cursor === null
           ? ((await this.gateway.getInitialSourceInventory?.(source.id)) ?? {
               id: randomUUID(),
               startedAt: new Date().toISOString(),
@@ -702,6 +712,29 @@ export class SourceSyncRunner {
           }
         }
       }
+      // The source's lists are offered after its first page has committed:
+      // the gateway then knows the source, and a long first read does not
+      // keep the lists waiting for its last page. They are offered once more
+      // after the last page, for the lists the first offer left open, such as
+      // one that is only whole once every page has been read.
+      const listCycle = newFilterListCycle();
+      let listsOffered = false;
+      const offerFilterLists = async (committed: { cursor: typeof cursor; hasMore: boolean }) => {
+        if (committed.cursor === null || (listsOffered && committed.hasMore)) return;
+        listsOffered = true;
+        await this.filterLists.publish(
+          source,
+          {
+            cursor: committed.cursor,
+            hasMore: committed.hasMore,
+            wipeEpoch,
+            sourceVersion: source.sourceVersion,
+            signal,
+            holder: mode !== "replicated" || this.heldLeases.has(source.id),
+          },
+          listCycle,
+        );
+      };
       let hasMore = true;
       // TODO: End the tick with a log.error when a structured page carries no rows, deletes or
       // documents, leaves the cursor unchanged and still says hasMore; it is refetched at once
@@ -762,6 +795,7 @@ export class SourceSyncRunner {
               },
               meta: metaForGateway,
               documentTemporalProjections: source.documentTemporalProjections,
+              sourceVersion: source.sourceVersion,
             });
             result = pendingStructuredPage.result;
           }
@@ -901,6 +935,12 @@ export class SourceSyncRunner {
                 initialInventory,
                 cursor: result.cursor,
                 wipeEpoch,
+                // A stored page commits under the revision that produced it,
+                // which after a host upgrade is not this build's.
+                sourceVersion: pendingStructuredPage
+                  ? pendingStructuredPage.sourceVersion
+                  : source.sourceVersion,
+                fullReadComplete: result.fullReadComplete,
                 // Forward the source's forward-looking consent deadline so the
                 // gateway persists it and can warn ahead of expiry. Pass through
                 // verbatim — `undefined` leaves the stored value untouched, `null`
@@ -988,6 +1028,7 @@ export class SourceSyncRunner {
           reportSnapshotAbsence(source.id, writeResult.absence);
 
           cursor = result.cursor;
+          await offerFilterLists(result);
 
           if (result.progress) {
             // Per-cycle progress: `total` is the queue size for this sync
@@ -1049,6 +1090,8 @@ export class SourceSyncRunner {
               ? undefined
               : (result.watermark ?? { guarantee: "observation" }),
             meta: metaForGateway,
+            sourceVersion: source.sourceVersion,
+            fullReadComplete: result.fullReadComplete,
           });
           if (writeResult.rejectedAsRemoved) {
             log.info(`Sync stopped because ${source.id} was removed at the gateway`);
@@ -1073,6 +1116,7 @@ export class SourceSyncRunner {
           reportSnapshotAbsence(source.id, writeResult.absence);
 
           cursor = result.cursor;
+          await offerFilterLists(result);
 
           // Update progress — per-cycle accounting. `total` = items in this
           // cycle's queue (e.g. notes modified since last cursor); `processed`

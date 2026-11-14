@@ -19,6 +19,14 @@
  */
 
 import Database from "better-sqlite3";
+import {
+  buildFilterCopyBatch,
+  readFilterIndexQueue,
+  refreshFilterCopyDeclarations,
+  refreshFilterListCopy,
+  writeFilterCopyBatch,
+} from "../indexer/filter-copy.js";
+import { registerFilterSqlFunctions } from "../access/filter-people.js";
 type Db = Database.Database;
 import { existsSync } from "node:fs";
 import { parentPort } from "node:worker_threads";
@@ -126,6 +134,54 @@ function openGatewayReadConn(path: string, gatewayDbKeyHex?: string): Db {
   // Disable mmap-based reads — see packages/gateway/src/db.ts.
   db.exec("PRAGMA mmap_size = 0");
   return db;
+}
+
+/** Documents of version-only changes, and of a changed declaration, copied per cycle. */
+const FILTER_COPY_BATCH = 500;
+
+/** Copy the filter details of documents the scan went through into the index. */
+function copyFilterDetails(gatewayDb: Db, indexDb: Db, documentIds: readonly string[]): void {
+  if (documentIds.length === 0) return;
+  try {
+    writeFilterCopyBatch(indexDb, buildFilterCopyBatch(gatewayDb, documentIds));
+  } catch (error) {
+    log(
+      "warn",
+      "indexer-worker",
+      `filter details copy failed: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+}
+
+/**
+ * Bring the index's copy of filter details up to the corpus for what the
+ * scan cannot see: lists, a changed declaration, and records whose version
+ * rose with nothing else changed. The queue entries copied are handed to
+ * the gateway, which forgets them on its writer. Returns whether there was
+ * work.
+ */
+function maintainFilterCopy(gatewayDb: Db, indexDb: Db): boolean {
+  try {
+    const lists = refreshFilterListCopy({ corpusDb: gatewayDb, indexDb });
+    const declared = refreshFilterCopyDeclarations({
+      corpusDb: gatewayDb,
+      indexDb,
+      limit: FILTER_COPY_BATCH,
+    });
+    const queued = readFilterIndexQueue(gatewayDb, FILTER_COPY_BATCH);
+    if (queued.length > 0) {
+      writeFilterCopyBatch(indexDb, buildFilterCopyBatch(gatewayDb, queued));
+      post({ type: "filterCopyQueued", documentIds: queued });
+    }
+    return lists > 0 || declared > 0 || queued.length > 0;
+  } catch (error) {
+    log(
+      "warn",
+      "indexer-worker",
+      `filter details maintenance failed: ${error instanceof Error ? error.message : String(error)}`,
+    );
+    return false;
+  }
 }
 
 function openIndexWriteConn(path: string, indexDbKeyHex?: string): Db {
@@ -621,6 +677,8 @@ async function handleInit(init: IndexerInit): Promise<void> {
   try {
     const gatewayDb = openGatewayReadConn(init.gatewayDbPath, init.gatewayDbKeyHex);
     const indexDb = openIndexWriteConn(init.indexDbPath, init.indexDbKeyHex);
+    registerFilterSqlFunctions(gatewayDb);
+    registerFilterSqlFunctions(indexDb);
     // Detect a model swap that bypassed the runtime config-change path
     // (env-override edits while the gateway is down, same-name file
     // replaced with a different dim, fresh installs whose stamp is
@@ -753,6 +811,7 @@ async function handleInit(init: IndexerInit): Promise<void> {
         return { userActive, walPendingFrames };
       },
       indexWriteOptions: { usearch: usearchHandle },
+      onPageScanned: (documentIds) => copyFilterDetails(gatewayDb, indexDb, documentIds),
     });
 
     log(
@@ -1180,9 +1239,10 @@ async function runIndexCycle(trigger: "timer" | "wake"): Promise<void> {
         PENDING_VECTOR_DELETE_BATCH,
       );
       const r = await state!.indexer.indexUpdated();
+      const filterCopyWork = maintainFilterCopy(state!.gatewayDb, state!.indexDb);
       // Adaptive timer: signal whether this cycle found real work.
       if (state) {
-        state.lastCycleHadWork = r.indexed > 0 || r.updated > 0 || r.errors > 0;
+        state.lastCycleHadWork = r.indexed > 0 || r.updated > 0 || r.errors > 0 || filterCopyWork;
       }
       // Save even after a no-work pass. Usearch makes clean saves a no-op, and
       // this retries a prior transient save failure instead of leaving the

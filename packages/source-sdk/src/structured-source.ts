@@ -15,7 +15,16 @@
  * touching any provider.
  */
 
-import { PERSON_ROLES, type DocumentInput, type PersonRole, type SyncIssue } from "@omnesis/types";
+import {
+  FILTER_CAPABILITIES,
+  FILTER_IDENTIFIER_TYPES,
+  PERSON_ROLES,
+  type DocumentFieldFilterSpec,
+  type DocumentInput,
+  type PersonFilterSpec,
+  type PersonRole,
+  type SyncIssue,
+} from "@omnesis/types";
 import {
   canonicalTemporalKind,
   TEMPORAL_KINDS,
@@ -469,6 +478,14 @@ export interface DocumentMetadataFieldSpec {
    * A profile declares each meaning on at most one field.
    */
   semantics?: DocumentFieldSemantics;
+  /**
+   * Marks the field as one a filter can match on, and says how: which of the
+   * gateway's filter capabilities applies, from which source version records
+   * carry the field, and how a picker names its values. The field must be a
+   * `string` or a `string-array` holding the source's own ids. See
+   * `DocumentFieldFilterSpec`.
+   */
+  filter?: DocumentFieldFilterSpec;
 }
 
 /** The meanings a document metadata field can declare; see `DocumentMetadataFieldSpec.semantics`. */
@@ -510,6 +527,12 @@ export interface DocumentEventProfile {
   personRoles?: PersonRole[];
   /** Queryable metadata fields, each with its own vocabulary. */
   metadataFields?: DocumentMetadataFieldSpec[];
+  /**
+   * How a filter matches the people a record involves: which roles count,
+   * which identifier kinds the source writes on them, and from which source
+   * version. See `PersonFilterSpec`.
+   */
+  personFilter?: PersonFilterSpec;
 }
 
 /**
@@ -1435,10 +1458,16 @@ const DOCUMENT_FIELD_TYPES = new Set(["string", "number", "boolean", "string-arr
  * pointing at a value the source does not list would let a natural-language
  * phrase compile into a predicate that can never match, and the operator
  * would approve prose describing a watch that is silently dead.
+ *
+ * Filter declarations (`filter` on a field, `personFilter`) are checked only
+ * when `filters` is given, which is where a source is defined. A gateway
+ * receiving a published profile passes none: it stores the declarations as
+ * published and judges them when it reads them.
  */
 export function validateDocumentEventProfile(
   profile: DocumentEventProfile | undefined,
   contextLabel: string,
+  filters?: FilterDeclarationContext,
 ): void {
   if (!profile) return;
   const where = `${contextLabel}: documentEventProfile`;
@@ -1541,6 +1570,215 @@ export function validateDocumentEventProfile(
       seenSemantics.add(field.semantics);
     }
   }
+  if (filters) validateFilterDeclarations(profile, where, filters);
+}
+
+/**
+ * What a filter declaration is checked against: facts about the source that
+ * the profile itself does not carry.
+ */
+export interface FilterDeclarationContext {
+  /** The source's resolved `outputRevision`; no `minVersion` may exceed it. */
+  outputRevision: number;
+  /**
+   * Whether the source's multi-device mode is `partitioned`. Leave undefined
+   * where that is not known, and the `scope: "device"` rule is not checked.
+   */
+  partitioned?: boolean;
+}
+
+/** Most filterable fields one profile may declare. */
+export const DOCUMENT_PROFILE_MAX_FILTER_FIELDS = 8;
+/** Longest noun a filter declaration may carry; it is shown in a picker. */
+const FILTER_NOUN_MAX_LENGTH = 40;
+/** Most depth nouns a tree may name. */
+const FILTER_MAX_LEVELS = 8;
+
+const FILTER_CAPABILITY_SET: ReadonlySet<string> = new Set(FILTER_CAPABILITIES);
+const FILTER_IDENTIFIER_TYPE_SET: ReadonlySet<string> = new Set(FILTER_IDENTIFIER_TYPES);
+
+/**
+ * Check every filter declaration of a profile against the source contract.
+ *
+ * Runs where a source is defined. The gateway stores a published profile
+ * without it, because a newer collector may declare something this gateway
+ * does not know yet; it applies {@link documentFieldFilterProblem} and
+ * {@link personFilterProblem} when it reads the profile instead.
+ */
+function validateFilterDeclarations(
+  profile: DocumentEventProfile,
+  where: string,
+  context: FilterDeclarationContext,
+): void {
+  const fields = profile.metadataFields ?? [];
+  const filterable = fields.filter((field) => field.filter !== undefined);
+  if (filterable.length > DOCUMENT_PROFILE_MAX_FILTER_FIELDS) {
+    throw new Error(
+      `${where} declares more than ${DOCUMENT_PROFILE_MAX_FILTER_FIELDS} filterable fields.`,
+    );
+  }
+  for (const field of filterable) {
+    const problem = documentFieldFilterProblem(field.type, field.filter, context);
+    if (problem) throw new Error(`${where} field '${field.path}' filter ${problem}.`);
+  }
+  if (profile.personFilter !== undefined) {
+    const problem = personFilterProblem(profile.personFilter, profile, context);
+    if (problem) throw new Error(`${where} personFilter ${problem}.`);
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function nounProblem(value: unknown, name: string): string | null {
+  if (!isRecord(value)) return `${name} must be a noun with 'one' and 'many'`;
+  for (const key of ["one", "many"] as const) {
+    const text = value[key];
+    if (typeof text !== "string" || text.trim().length === 0) {
+      return `${name}.${key} must be a non-empty string`;
+    }
+    if (text.length > FILTER_NOUN_MAX_LENGTH) {
+      return `${name}.${key} is longer than ${FILTER_NOUN_MAX_LENGTH} characters`;
+    }
+  }
+  return null;
+}
+
+function minVersionProblem(value: unknown, outputRevision: number): string | null {
+  if (typeof value !== "number" || !Number.isInteger(value) || value < 0) {
+    return `minVersion must be an integer >= 0, got ${String(value)}`;
+  }
+  if (value > outputRevision) {
+    return `minVersion ${value} is above the source's outputRevision ${outputRevision}; raise outputRevision in the change that starts writing the field`;
+  }
+  return null;
+}
+
+/**
+ * What is wrong with a field's `filter` declaration, or `null` when it is a
+ * valid {@link DocumentFieldFilterSpec}.
+ *
+ * Takes the declaration as unknown data, so one definition of the rules
+ * serves both a source being defined and a gateway reading a profile some
+ * other build published. The phrase reads after "filter".
+ */
+export function documentFieldFilterProblem(
+  fieldType: string,
+  filter: unknown,
+  context: FilterDeclarationContext,
+): string | null {
+  if (!isRecord(filter)) return "must be an object";
+  const { capability } = filter;
+  if (typeof capability !== "string" || !FILTER_CAPABILITY_SET.has(capability)) {
+    return `has unsupported capability '${String(capability)}'`;
+  }
+  if (capability === "person") {
+    return "cannot use the 'person' capability; people are declared once, as the profile's personFilter";
+  }
+  if (fieldType !== "string" && fieldType !== "string-array") {
+    return `needs a string or string-array field, not a ${fieldType}`;
+  }
+  const version = minVersionProblem(filter.minVersion, context.outputRevision);
+  if (version) return version;
+  if (filter.scope !== "global" && filter.scope !== "device") {
+    return `scope must be 'global' or 'device', got '${String(filter.scope)}'`;
+  }
+  if (filter.scope === "device" && context.partitioned === false) {
+    return "scope 'device' needs a source whose multiDevice mode is 'partitioned'";
+  }
+  const noun = nounProblem(filter.noun, "noun");
+  if (noun) return noun;
+  if (filter.picker !== "search" && filter.picker !== "tree") {
+    return `picker must be 'search' or 'tree', got '${String(filter.picker)}'`;
+  }
+  const tree = capability === "tree";
+  if (filter.picker === "tree" && !tree) return "picker 'tree' needs the 'tree' capability";
+  if (filter.levels !== undefined) {
+    if (!tree) return "levels needs the 'tree' capability";
+    if (!Array.isArray(filter.levels) || filter.levels.length === 0) {
+      return "levels must be a non-empty list of nouns";
+    }
+    if (filter.levels.length > FILTER_MAX_LEVELS) {
+      return `levels names more than ${FILTER_MAX_LEVELS} depths`;
+    }
+    for (const [index, level] of filter.levels.entries()) {
+      const problem = nounProblem(level, `levels[${index}]`);
+      if (problem) return problem;
+    }
+  }
+  if (filter.inside !== undefined) {
+    if (!tree) return "inside needs the 'tree' capability";
+    const inside = nounProblem(filter.inside, "inside");
+    if (inside) return inside;
+  }
+  if (filter.listsMembers !== undefined && typeof filter.listsMembers !== "boolean") {
+    return "listsMembers must be a boolean";
+  }
+  return null;
+}
+
+/**
+ * What is wrong with a profile's `personFilter`, or `null` when it is a valid
+ * {@link PersonFilterSpec} for that profile. See
+ * {@link documentFieldFilterProblem}; the phrase reads after "personFilter".
+ */
+export function personFilterProblem(
+  personFilter: unknown,
+  profile: { personRoles?: readonly string[]; metadataFields?: readonly unknown[] },
+  context: FilterDeclarationContext,
+): string | null {
+  if (!isRecord(personFilter)) return "must be an object";
+  const version = minVersionProblem(personFilter.minVersion, context.outputRevision);
+  if (version) return version;
+
+  const { roles, identifiers, maxPeople, membersOf } = personFilter;
+  if (!Array.isArray(roles) || roles.length === 0) return "roles must be a non-empty list";
+  const populated = new Set(profile.personRoles ?? []);
+  const seenRoles = new Set<unknown>();
+  for (const role of roles) {
+    if (typeof role !== "string" || !PERSON_ROLE_SET.has(role)) {
+      return `has unsupported role '${String(role)}'`;
+    }
+    if (role === "mentioned") {
+      return "cannot use the 'mentioned' role; a mention in the text is not involvement";
+    }
+    if (seenRoles.has(role)) return `lists role '${role}' twice`;
+    if (!populated.has(role)) {
+      return `uses role '${role}', which the profile's personRoles does not declare`;
+    }
+    seenRoles.add(role);
+  }
+
+  if (!Array.isArray(identifiers) || identifiers.length === 0) {
+    return "identifiers must be a non-empty list";
+  }
+  const seenIdentifiers = new Set<unknown>();
+  for (const identifier of identifiers) {
+    if (typeof identifier !== "string" || !FILTER_IDENTIFIER_TYPE_SET.has(identifier)) {
+      return `has unsupported identifier '${String(identifier)}'`;
+    }
+    if (seenIdentifiers.has(identifier)) return `lists identifier '${identifier}' twice`;
+    seenIdentifiers.add(identifier);
+  }
+
+  if (
+    maxPeople !== undefined &&
+    (typeof maxPeople !== "number" || !Number.isInteger(maxPeople) || maxPeople < 1)
+  ) {
+    return `maxPeople must be an integer >= 1, got ${String(maxPeople)}`;
+  }
+
+  if (membersOf !== undefined) {
+    const target = (profile.metadataFields ?? []).find(
+      (field) => isRecord(field) && field.path === membersOf,
+    );
+    const filter = isRecord(target) ? target.filter : undefined;
+    if (!isRecord(filter) || filter.listsMembers !== true) {
+      return `membersOf names '${String(membersOf)}', which is not a filterable field with listsMembers`;
+    }
+  }
+  return null;
 }
 
 /** Match `{column}` placeholders in a `RecordDisplaySpec.titleTemplate`. */
@@ -1847,6 +2085,17 @@ export interface StructuredSyncResult<TCursor extends SyncCursor = SyncCursor> {
   cursor: TCursor;
   /** Whether more pages are available */
   hasMore: boolean;
+  /**
+   * Whether the source has now read everything it holds for this account. Only
+   * read on the last page of a cycle (`hasMore: false`).
+   *
+   * Left unset, the last page of a cycle that started with no cursor counts
+   * as the whole account, which is right for a source that reads everything in
+   * one cycle. A source that imports its history in stages says `false` on the
+   * last page of a cycle that leaves older history for later, and `true` on
+   * the last page of the cycle that finishes it.
+   */
+  fullReadComplete?: boolean;
   /** Optional progress info */
   progress?: SyncProgress;
 

@@ -256,6 +256,8 @@ export type IndexerJobUpdate = {
 };
 
 export type IndexerToMain =
+  /** Queued version-only changes whose copy rows are written; the gateway forgets them. */
+  | { type: "filterCopyQueued"; documentIds: string[] }
   | { type: "embeddingStarted"; id: number }
   | {
       type: "embeddingSettled";
