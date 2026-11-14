@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import { randomBytes } from "node:crypto";
 import {
   killWindowsOwnedProcess,
   runWindowsOwnedProcess,
@@ -31,6 +32,7 @@ function jobFrame(
   args: readonly string[],
   completion?: WindowsJobOptions["completion"],
   control?: WindowsJobControlConfiguration,
+  syncReceipt?: string,
 ): Buffer {
   if (completion !== undefined && completion !== "tree" && completion !== "root")
     throw new Error("Invalid Windows job completion policy");
@@ -43,6 +45,7 @@ function jobFrame(
       parentPid: process.pid,
       ...(completion === undefined ? {} : { completion }),
       ...(control ? { control } : {}),
+      ...(syncReceipt ? { syncReceipt } : {}),
     }),
     "utf8",
   );
@@ -66,14 +69,16 @@ function bootstrapWindowsWorker(
       Buffer.from(WINDOWS_JOB_POWERSHELL_SCRIPT, "utf16le").toString("base64"),
     ],
   };
+  const nonce = randomBytes(32).toString("hex");
   return runWindowsOwnedProcessSync(
     invocation,
-    jobFrame(request.invocation.command, request.invocation.args),
+    jobFrame(request.invocation.command, request.invocation.args, undefined, undefined, nonce),
     {
       input: request.input,
       timeoutMs: Math.max(1, Math.min(timeoutMs, 30_000)),
       maxBuffer: 65_536,
     },
+    { nonce },
   );
 }
 
@@ -128,7 +133,7 @@ export function spawnWindowsJob(
         : opts.startupTimeoutMs - (Date.now() - start),
     );
   } catch (error) {
-    if (expired()) throw timeout();
+    if (expired()) throw Object.assign(timeout(), cleanupFailureReceipt(error));
     throw error;
   }
   if (expired()) throw timeout();
@@ -157,8 +162,20 @@ export function spawnWindowsJob(
     throw error;
   }
 }
-function deadlineFailure(reason: "timeout" | "aborted"): WindowsJobResult {
-  return { exitCode: null, signal: null, stdout: Buffer.alloc(0), stderr: "", failure: reason };
+function cleanupFailureReceipt(error: unknown): { cleanupFailure?: unknown } {
+  if (error !== null && typeof error === "object" && Object.hasOwn(error, "cleanupFailure"))
+    return { cleanupFailure: (error as { cleanupFailure: unknown }).cleanupFailure };
+  return {};
+}
+function deadlineFailure(reason: "timeout" | "aborted", error?: unknown): WindowsJobResult {
+  return {
+    exitCode: null,
+    signal: null,
+    stdout: Buffer.alloc(0),
+    stderr: "",
+    failure: reason,
+    ...cleanupFailureReceipt(error),
+  };
 }
 function failedSpawn(error: unknown): WindowsJobResult {
   return {
@@ -168,6 +185,7 @@ function failedSpawn(error: unknown): WindowsJobResult {
     stderr: "",
     failure: "spawn",
     failureMessage: error instanceof Error ? error.message : String(error),
+    ...cleanupFailureReceipt(error),
   };
 }
 /** Publish the helper PID before queuing target configuration or input bytes. */
@@ -188,7 +206,7 @@ export function runWindowsJob(
   } catch (error) {
     return Promise.resolve(
       opts.timeoutMs !== undefined && Date.now() - start >= opts.timeoutMs
-        ? deadlineFailure("timeout")
+        ? deadlineFailure("timeout", error)
         : failedSpawn(error),
     );
   }
@@ -232,17 +250,18 @@ export function runWindowsJobSync(
 ): WindowsJobResult {
   const start = Date.now();
   if (opts.timeoutMs !== undefined && opts.timeoutMs <= 0) return deadlineFailure("timeout");
+  const nonce = randomBytes(32).toString("hex");
   let frame: Buffer, invocation: WindowsOwnedInvocation;
   try {
-    frame = jobFrame(command, args, opts.completion);
+    frame = jobFrame(command, args, opts.completion, undefined, nonce);
     invocation = windowsJobInvocation(opts.timeoutMs);
   } catch (error) {
     return opts.timeoutMs !== undefined && Date.now() - start >= opts.timeoutMs
-      ? deadlineFailure("timeout")
+      ? deadlineFailure("timeout", error)
       : failedSpawn(error);
   }
   const timeoutMs =
     opts.timeoutMs === undefined ? undefined : opts.timeoutMs - (Date.now() - start);
   if (timeoutMs !== undefined && timeoutMs <= 0) return deadlineFailure("timeout");
-  return runWindowsOwnedProcessSync(invocation, frame, { ...opts, timeoutMs });
+  return runWindowsOwnedProcessSync(invocation, frame, { ...opts, timeoutMs }, { nonce });
 }

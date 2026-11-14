@@ -25,6 +25,7 @@ import {
   spawnWindowsJob,
 } from "./windows-job.js";
 import { execWindowsJob } from "./windows-job-exec.js";
+import { runWindowsOwnedProcessSync } from "./windows-owned-process.js";
 import { writeWindowsPrivateFileAtomicStream } from "./windows-private-file.js";
 
 class Helper extends EventEmitter {
@@ -54,6 +55,22 @@ class Helper extends EventEmitter {
     this.emit("exit", code, signal);
     this.emit("close", code, signal);
   }
+}
+
+function joinedSyncResult(status: number, stderr = "", nativeCode = 0) {
+  mocks.spawnSync.mockImplementation((_command, _args, options: { input: Buffer }) => {
+    const size = options.input.readUInt32LE();
+    const config = JSON.parse(options.input.subarray(4, size + 4).toString());
+    return {
+      pid: 12345,
+      status,
+      signal: null,
+      stdout: Buffer.from([0, 255]),
+      stderr: Buffer.from(
+        `OMNESIS_JOB:${nativeCode}\n${stderr}\nOMNESIS_JOB_JOINED:${config.syncReceipt}\n`,
+      ),
+    };
+  });
 }
 
 let helper: Helper;
@@ -100,6 +117,49 @@ afterEach(() => {
 });
 
 describe("Windows job stream protocol", () => {
+  it.each(["stream", "buffer", "sync"] as const)(
+    "preserves bootstrap cleanup markers through %s entrypoint deadline classification",
+    async (mode) => {
+      for (const expired of [false, true])
+        for (const marked of [false, true]) {
+          const clock = vi.spyOn(Date, "now").mockReturnValue(1000);
+          const failure = Object.assign(
+            new Error("invented native bootstrap refusal"),
+            marked ? { cleanupFailure: undefined } : {},
+          );
+          mocks.workerInvocation.mockImplementationOnce(() => {
+            if (expired) clock.mockReturnValue(1100);
+            throw failure;
+          });
+          try {
+            if (mode === "stream") {
+              let caught: unknown;
+              try {
+                spawnWindowsJob("fixture", [], { startupTimeoutMs: 100 });
+              } catch (error) {
+                caught = error;
+              }
+              expect(caught).toBeInstanceOf(Error);
+              expect(Object.hasOwn(caught as Error, "cleanupFailure")).toBe(marked);
+              if (expired) expect(caught).toMatchObject({ code: "ETIMEDOUT" });
+              else expect(caught).toBe(failure);
+            } else {
+              const result =
+                mode === "buffer"
+                  ? await runWindowsJob("fixture", [], { timeoutMs: 100 })
+                  : runWindowsJobSync("fixture", [], { timeoutMs: 100 });
+              expect(result.failure).toBe(expired ? "timeout" : "spawn");
+              expect(Object.hasOwn(result, "cleanupFailure")).toBe(marked);
+            }
+            expect(mocks.spawn).not.toHaveBeenCalled();
+            expect(mocks.spawnSync).not.toHaveBeenCalled();
+          } finally {
+            clock.mockRestore();
+          }
+        }
+    },
+  );
+
   it.each(["buffered", "publication", "exec"] as const)(
     "retains an explicit undefined cleanup rejection for %s consumers",
     async (mode) => {
@@ -238,12 +298,7 @@ describe("Windows job stream protocol", () => {
     helper.rawStderr.write("OMNESIS_JOB:0\n");
     await helper.close(7);
     expect(await pending).toMatchObject({ exitCode: 7 });
-    mocks.spawnSync.mockReturnValue({
-      status: 7,
-      signal: null,
-      stdout: Buffer.from([0, 255]),
-      stderr: Buffer.from("OMNESIS_JOB:0\n"),
-    });
+    joinedSyncResult(7);
     expect(runWindowsJobSync("fixture", [], { completion: "root" })).toMatchObject({
       exitCode: 7,
       stdout: Buffer.from([0, 255]),
@@ -409,13 +464,137 @@ describe("Windows job exec capture", () => {
 });
 
 describe("synchronous Windows job framing", () => {
-  it("shares binary framing and preserves target exit 127", () => {
-    mocks.spawnSync.mockReturnValue({
-      status: 127,
-      signal: null,
-      stdout: Buffer.from([0, 255]),
-      stderr: Buffer.from("OMNESIS_JOB:0\nwarning"),
+  it("keeps independent bootstrap and target receipt nonces out of target input, arguments and environment", () => {
+    const program = Buffer.from("invented public bootstrap input"),
+      input = Buffer.from([255, 0]);
+    joinedSyncResult(0);
+    mocks.workerInvocation.mockImplementationOnce(
+      (
+        _mode: string,
+        bootstrap: (request: {
+          invocation: { command: string; args: string[] };
+          input: Buffer;
+        }) => unknown,
+      ) => {
+        expect(
+          bootstrap({
+            invocation: {
+              command: "powershell.exe",
+              args: ["-EncodedCommand", "invented-public-program"],
+            },
+            input: program,
+          }),
+        ).toMatchObject({ exitCode: 0, stderr: "" });
+        return { command: "native-worker.exe", args: ["job"], parentBirth: "123456789" };
+      },
+    );
+    expect(
+      runWindowsJobSync("literal-target.exe", ["literal argument"], {
+        input,
+        env: { EXAMPLE: "invented" },
+      }).exitCode,
+    ).toBe(0);
+    expect(mocks.spawnSync).toHaveBeenCalledTimes(2);
+    const nonces = mocks.spawnSync.mock.calls.map(([command, args, options], index) => {
+      const body = options.input as Buffer,
+        size = body.readUInt32LE();
+      const config = JSON.parse(body.subarray(4, size + 4).toString());
+      expect(config.syncReceipt).toMatch(/^[a-f0-9]{64}$/u);
+      expect(JSON.stringify([command, args, options.env])).not.toContain(config.syncReceipt);
+      expect(body.subarray(size + 4)).toEqual(index === 0 ? program : input);
+      return config.syncReceipt as string;
     });
+    expect(nonces[0]).not.toBe(nonces[1]);
+  });
+
+  it.each([0, 126, 127])(
+    "preserves joined target status %s without leaking private metadata",
+    (status) => {
+      const literal = "literal\0stderr\nOMNESIS_JOB_JOINED:not-a-private-frame";
+      joinedSyncResult(status, literal);
+      const result = runWindowsJobSync("fixture", ["literal & argument"], {
+        input: Buffer.from([255, 0]),
+      });
+      expect(result).toEqual({
+        exitCode: status,
+        signal: null,
+        stdout: Buffer.from([0, 255]),
+        stderr: literal,
+      });
+      const body = mocks.spawnSync.mock.calls.at(-1)![2].input as Buffer;
+      const size = body.readUInt32LE();
+      const config = JSON.parse(body.subarray(4, size + 4).toString());
+      expect(config.syncReceipt).toMatch(/^[a-f0-9]{64}$/u);
+      expect(body.subarray(size + 4)).toEqual(Buffer.from([255, 0]));
+      expect(result.stderr).not.toContain(config.syncReceipt);
+      expect(Object.hasOwn(result, "cleanupFailure")).toBe(false);
+    },
+  );
+  it("preserves an ordinary native creation refusal with a joined empty Job", () => {
+    joinedSyncResult(1, "", 2);
+    const result = runWindowsJobSync("missing.exe", []);
+    expect(result.failureMessage).toContain("ENOENT");
+    expect(result.stderr).toBe("");
+    expect(Object.hasOwn(result, "cleanupFailure")).toBe(false);
+  });
+  it("does not demand a child-Job receipt for self-contained filesystem refusals", () => {
+    mocks.spawnSync.mockReturnValue({
+      pid: 12345,
+      status: 1,
+      signal: null,
+      stdout: Buffer.alloc(0),
+      stderr: Buffer.from("OMNESIS_JOB:0\nEPRIVATE:validate:5"),
+    });
+    const result = runWindowsOwnedProcessSync(
+      { command: "filesystem-worker.exe", args: [] },
+      Buffer.alloc(0),
+    );
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toBe("EPRIVATE:validate:5");
+    expect(Object.hasOwn(result, "cleanupFailure")).toBe(false);
+  });
+
+  it.each(["missing", "unjoined", "mismatched", "duplicate", "truncated", "trailing"] as const)(
+    "requires a nonce-bound completion receipt for %s helper output",
+    (kind) => {
+      let expectedNonce = "";
+      mocks.spawnSync.mockImplementation((_command, _args, options: { input: Buffer }) => {
+        const length = options.input.readUInt32LE();
+        const config = JSON.parse(options.input.subarray(4, length + 4).toString());
+        const nonce = typeof config.syncReceipt === "string" ? config.syncReceipt : "a".repeat(64);
+        expectedNonce = nonce;
+        const receipt = `\nOMNESIS_JOB_JOINED:${nonce}\n`;
+        const tail =
+          kind === "missing"
+            ? ""
+            : kind === "unjoined"
+              ? "\nEJOB:unjoined-cleanup\n"
+              : kind === "mismatched"
+                ? `\nOMNESIS_JOB_JOINED:${"f".repeat(64)}\n`
+                : kind === "duplicate"
+                  ? receipt + receipt
+                  : kind === "trailing"
+                    ? receipt + "trailing diagnostic"
+                    : receipt.slice(0, -3);
+        return {
+          pid: 12345,
+          status: kind === "unjoined" ? 1 : 0,
+          signal: null,
+          stdout: Buffer.alloc(0),
+          stderr: Buffer.from("OMNESIS_JOB:0\nliteral diagnostic" + tail),
+        };
+      });
+      const result = runWindowsJobSync("fixture", []);
+      expect(Object.hasOwn(result, "cleanupFailure")).toBe(true);
+      expect(result.failure).toBe("spawn");
+      expect(result.failureMessage).toMatch(/cleanup/u);
+      expect(result.stderr).not.toContain(expectedNonce);
+      expect(result.failureMessage).not.toContain(expectedNonce);
+    },
+  );
+
+  it("shares binary framing and preserves target exit 127", () => {
+    joinedSyncResult(127, "warning");
     const run = runWindowsJobSync("literal fixture", ["& argument"], {
       input: Buffer.from([255, 0]),
       timeoutMs: 1000,

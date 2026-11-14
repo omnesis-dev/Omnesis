@@ -71,6 +71,40 @@ function verified(request: WindowsBootstrapRequest) {
   };
 }
 describe("Windows native worker cache boundary", () => {
+  it.each(["success-shaped", "failure-shaped"] as const)(
+    "rejects and retains %s bootstrap cleanup uncertainty",
+    async (kind) => {
+      const { windowsWorkerInvocation } = await import("./windows-worker-cache.js");
+      const cleanup =
+        kind === "success-shaped" ? undefined : new Error("invented private bootstrap detail");
+      const bootstrap = vi.fn((request: WindowsBootstrapRequest) => ({
+        ...verified(request),
+        cleanupFailure: cleanup,
+        ...(kind === "failure-shaped"
+          ? { failure: "spawn" as const, stderr: "invented input must not be echoed" }
+          : {}),
+      }));
+      let failure: unknown;
+      try {
+        windowsWorkerInvocation("job", bootstrap);
+      } catch (error) {
+        failure = error;
+      }
+      expect(failure).toBeInstanceOf(Error);
+      expect(Object.hasOwn(failure as Error, "cleanupFailure")).toBe(true);
+      expect(failure).toMatchObject({
+        cleanupFailure: cleanup,
+        message: expect.stringMatching(/^Cannot initialize the protected Windows native worker/u),
+      });
+      expect((failure as Error).message).not.toContain("invented");
+      expect((failure as Error).cause).toMatchObject({
+        message: "Windows native bootstrap cleanup was not confirmed",
+      });
+      expect(() => windowsWorkerInvocation("filesystem", bootstrap)).toThrow(failure as Error);
+      expect(bootstrap).toHaveBeenCalledOnce();
+    },
+  );
+
   it.each([
     ["504911232000000001", "1"],
     ["621355968000000001", "116444736000000001"],

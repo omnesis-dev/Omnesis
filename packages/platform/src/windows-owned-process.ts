@@ -394,7 +394,10 @@ export function runWindowsOwnedProcessSync(
   invocation: WindowsOwnedInvocation,
   initialInput: Uint8Array,
   opts: WindowsOwnedSyncOptions = {},
+  receipt?: { nonce: string },
 ): WindowsJobResult {
+  if (receipt && !/^[a-f0-9]{64}$/u.test(receipt.nonce))
+    throw new Error("Invalid synchronous Windows job receipt expectation");
   const output = opts.stdout ?? (opts.captureStdout === false ? "ignore" : "capture");
   const run = spawnSync(invocation.command, invocation.args, {
     cwd: opts.cwd,
@@ -406,7 +409,16 @@ export function runWindowsOwnedProcessSync(
     killSignal: "SIGKILL",
     maxBuffer: opts.maxBuffer ?? 16 * 1024 * 1024,
   });
-  const raw = run.stderr?.toString("utf8") ?? "";
+  let raw = run.stderr?.toString("utf8") ?? "";
+  let receiptJoined = false;
+  if (receipt) {
+    const pattern = new RegExp(`(?:^|\\r?\\n)OMNESIS_JOB_JOINED:${receipt.nonce}\\r?\\n`, "gu");
+    const matches = [...raw.matchAll(pattern)];
+    receiptJoined =
+      matches.length === 1 && matches[0]!.index + matches[0]![0].length === raw.length;
+    // Do not expose parent-only authentication metadata, even on malformed output.
+    raw = raw.replace(pattern, "").replaceAll(receipt.nonce, "[redacted]");
+  }
   const end = raw.indexOf("\n");
   const match = /^OMNESIS_JOB:(\d+)\r?$/u.exec(raw.slice(0, end < 0 ? raw.length : end));
   const nativeCode = match ? Number(match[1]) : undefined;
@@ -430,6 +442,18 @@ export function runWindowsOwnedProcessSync(
       ? `Cannot start program (${name})`
       : stderr || "Windows process helper exited before starting the program";
   }
+  const helperCreated = run.pid > 0 || run.status !== null;
+  const cleanupFailed =
+    helperCreated &&
+    (Boolean(run.error || run.signal) || (receipt !== undefined && !receiptJoined));
+  if (cleanupFailed) {
+    failure ??= "spawn";
+    failureMessage = failureMessage
+      ? `${failureMessage}; Windows job cleanup was not confirmed`
+      : "Windows job cleanup was not confirmed";
+  }
+  if (receipt && failureMessage)
+    failureMessage = failureMessage.replaceAll(receipt.nonce, "[redacted]");
   return {
     exitCode: failure ? null : run.status,
     signal: run.signal,
@@ -437,10 +461,9 @@ export function runWindowsOwnedProcessSync(
     stderr,
     ...(failure ? { failure } : {}),
     ...(failureMessage ? { failureMessage } : {}),
-    // Synchronous APIs cannot service the asynchronous control pipe. A killed
-    // helper remains kernel-contained, but raw close cannot prove descendants
-    // joined; callers must not interpret that failure as a completed cleanup.
-    ...((run.error || run.signal) && run.pid > 0
+    // Raw helper status is never a Job join receipt. Filesystem operations do
+    // not create a child tree and deliberately omit the Job-only expectation.
+    ...(cleanupFailed
       ? {
           cleanupFailure: new Error("Synchronous Windows helper cleanup was not confirmed"),
         }

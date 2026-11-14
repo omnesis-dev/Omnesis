@@ -252,7 +252,17 @@ public static partial class OmnesisProcessJob {
   public static int Run(string command,string[] args,int parentPid,string completion) {
     return Run(command,args,parentPid,completion,null,null,null,0);
   }
+  static string completedSyncReceipt;
+  public static void WriteSyncReceipt() {
+    string nonce=System.Threading.Interlocked.Exchange(ref completedSyncReceipt,null);
+    if(nonce!=null) Console.Error.Write("\nOMNESIS_JOB_JOINED:"+nonce+"\n");
+  }
   public static int Run(string command,string[] args,int parentPid,string completion,string controlPipe,string controlCookie,string parentBirth,long controlDeadline) {
+    return Run(command,args,parentPid,completion,controlPipe,controlCookie,parentBirth,controlDeadline,null);
+  }
+  public static int Run(string command,string[] args,int parentPid,string completion,string controlPipe,string controlCookie,string parentBirth,long controlDeadline,string syncReceipt) {
+    System.Threading.Interlocked.Exchange(ref completedSyncReceipt,null);
+    if(syncReceipt!=null && !System.Text.RegularExpressions.Regex.IsMatch(syncReceipt,"\\A[0-9a-f]{64}\\z")) throw new InvalidDataException("Invalid synchronous completion metadata");
     if(completion!="tree" && completion!="root") throw new InvalidDataException("Invalid process completion policy");
     IntPtr parent=IntPtr.Zero,job=IntPtr.Zero,list=IntPtr.Zero,handles=IntPtr.Zero,jobs=IntPtr.Zero;
     ProcessInfo process=new ProcessInfo(); bool assigned=false,initialized=false,joined=false,setupFinished=false;
@@ -336,18 +346,20 @@ public static partial class OmnesisProcessJob {
         }
       } catch {cleanupFailed=true;}
       try {if(control!=null) control.Dispose();} catch {cleanupFailed=true;}
-      if(process.thread!=IntPtr.Zero) CloseHandle(process.thread);
-      if(process.process!=IntPtr.Zero) CloseHandle(process.process);
+      if(process.thread!=IntPtr.Zero && !CloseHandle(process.thread)) cleanupFailed=true;
+      if(process.process!=IntPtr.Zero && !CloseHandle(process.process)) cleanupFailed=true;
       if(initialized) DeleteProcThreadAttributeList(list);
       if(list!=IntPtr.Zero) Marshal.FreeHGlobal(list);
       if(handles!=IntPtr.Zero) Marshal.FreeHGlobal(handles);
       if(jobs!=IntPtr.Zero) Marshal.FreeHGlobal(jobs);
-      if(job!=IntPtr.Zero) CloseHandle(job);
-      if(parent!=IntPtr.Zero) CloseHandle(parent);
+      if(job!=IntPtr.Zero && !CloseHandle(job)) cleanupFailed=true;
+      if(parent!=IntPtr.Zero && !CloseHandle(parent)) cleanupFailed=true;
       if(cleanupFailed) {
         if(operationFailure==null) throw new IOException("Owned process cleanup was not confirmed");
         Console.Error.WriteLine("EJOB:unjoined-cleanup");
       }
+      if(!cleanupFailed && setupFinished && joined && syncReceipt!=null)
+        System.Threading.Interlocked.Exchange(ref completedSyncReceipt,syncReceipt);
     }
   }
 }`;
@@ -356,6 +368,7 @@ export const WINDOWS_JOB_POWERSHELL_SCRIPT = `
 $ErrorActionPreference = 'Stop'
 $WarningPreference = 'SilentlyContinue'
 $ProgressPreference = 'SilentlyContinue'
+$code = 1
 try {
 $compressed=[Convert]::FromBase64String('${gzipSync(Buffer.from(WINDOWS_JOB_NATIVE_SOURCE, "utf8")).toString("base64")}')
 $compressedStream=[IO.MemoryStream]::new($compressed)
@@ -366,9 +379,13 @@ Add-Type -ReferencedAssemblies @('System.dll','System.Core.dll') -TypeDefinition
 $config = [OmnesisProcessJob]::ReadConfiguration() | ConvertFrom-Json
 $completion = 'tree'
 if ($null -ne $config.PSObject.Properties['completion']) { $completion = [string]$config.completion }
-$code = [OmnesisProcessJob]::Run([string]$config.command, [string[]]$config.args, [int]$config.parentPid, $completion)
-exit $code
+$receipt = $null
+if ($null -ne $config.PSObject.Properties['syncReceipt']) { $receipt = [string]$config.syncReceipt }
+$code = [OmnesisProcessJob]::Run([string]$config.command, [string[]]$config.args, [int]$config.parentPid, $completion, $null, $null, $null, 0, $receipt)
 } catch {
   [Console]::Error.WriteLine($_.Exception.Message)
-  exit 1
-}`;
+  $code = 1
+}
+if ($null -ne ('OmnesisProcessJob' -as [type])) { [OmnesisProcessJob]::WriteSyncReceipt() }
+exit $code
+`;

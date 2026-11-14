@@ -62,6 +62,7 @@ export class CodexRuntimeLifecycle {
   private activeLogin: ActiveLogin | null = null;
   private claim: "login-starting" | "agent-setup" | "logout" | null = null;
   private loginStartInFlight: Promise<void> | null = null;
+  private readonly acceptedWork = new Set<Promise<void>>();
   private disposed = false;
   private cleanupFailure: unknown;
   private disposal: Promise<void> | undefined;
@@ -110,6 +111,18 @@ export class CodexRuntimeLifecycle {
     );
   }
 
+  private retainAcceptedWork(): () => void {
+    let finish!: () => void;
+    const work = new Promise<void>((resolve) => {
+      finish = resolve;
+    });
+    this.acceptedWork.add(work);
+    return () => {
+      this.acceptedWork.delete(work);
+      finish();
+    };
+  }
+
   async runAgentSetup<T>(operation: () => Promise<T>): Promise<T> {
     this.assertCleanupConfirmed();
     if (this.disposed) throw new Error("Codex runtime service disposed.");
@@ -124,10 +137,12 @@ export class CodexRuntimeLifecycle {
       );
     }
     this.claim = "agent-setup";
+    const finish = this.retainAcceptedWork();
     try {
       return await operation();
     } finally {
       if (this.claim === "agent-setup") this.claim = null;
+      finish();
     }
   }
 
@@ -137,7 +152,8 @@ export class CodexRuntimeLifecycle {
 
   private async disposeLifecycle(): Promise<void> {
     this.disposed = true;
-    await this.loginStartInFlight;
+    // Disposal is not admitted work: close admission, then join the accepted operations.
+    await Promise.all([this.loginStartInFlight, ...this.acceptedWork]);
     const active = this.activeLogin;
     if (!active) {
       if (this.cleanupFailure !== undefined) throw this.cleanupFailure;
@@ -432,9 +448,11 @@ export class CodexRuntimeLifecycle {
       );
     }
     this.claim = "logout";
+    const finish = this.retainAcceptedWork();
     try {
       await this.opts.ensureSelectedRuntime();
       this.assertCleanupConfirmed();
+      if (this.disposed) throw new Error("Codex runtime service disposed.");
       if (this.activeLogin) {
         clearTimeout(this.activeLogin.timer);
         if (this.activeLogin.running || this.activeLogin.termination) {
@@ -454,6 +472,7 @@ export class CodexRuntimeLifecycle {
       try {
         const commandInfo = await this.opts.supervisor.current.runtime.resolveCommandInfo();
         this.assertCleanupConfirmed();
+        if (this.disposed) throw new Error("Codex runtime service disposed.");
         const invocation = nodeCommandInvocation(commandInfo.command, [
           ...this.opts.cliArgsPrefix,
           "logout",
@@ -472,6 +491,7 @@ export class CodexRuntimeLifecycle {
           this.holdCleanup(err);
           throw err;
         }
+        if (this.disposed) throw err;
         log.warn(`Codex logout command failed; removing local auth file: ${conciseError(err)}`);
       }
       this.assertCleanupConfirmed();
@@ -492,6 +512,7 @@ export class CodexRuntimeLifecycle {
       return { ok: true, status };
     } finally {
       if (this.claim === "logout") this.claim = null;
+      finish();
     }
   }
 

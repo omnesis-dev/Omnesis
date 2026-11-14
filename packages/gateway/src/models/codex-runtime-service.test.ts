@@ -138,6 +138,257 @@ describe("Codex service disposal failures", () => {
     }
   });
 
+  it.each(["logout", "agent-setup", "logout-resolution"] as const)(
+    "joins accepted %s work before lifecycle disposal settles",
+    async (kind) => {
+      const dir = await mkdtemp(join(tmpdir(), "omnesis-codex-lifecycle-join-"));
+      const core = await import("@omnesis/core");
+      let release!: () => void, started!: () => void;
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const entered = new Promise<void>((resolve) => {
+        started = resolve;
+      });
+      const execute = vi.spyOn(core, "execWindowsJob").mockImplementation(async () => {
+        started();
+        await gate;
+        return { stdout: "", stderr: "" };
+      });
+      const platform = Object.getOwnPropertyDescriptor(process, "platform")!;
+      const lifecycle = new CodexRuntimeLifecycle({
+        codexHome: dir,
+        cliArgsPrefix: [],
+        env: process.env,
+        refreshTimeoutMs: 100,
+        loginStartTimeoutMs: 100,
+        loginTtlMs: 100,
+        supervisor: {
+          current: {
+            runtime: {
+              resolveCommandInfo: async () => {
+                if (kind === "logout-resolution") {
+                  started();
+                  await gate;
+                }
+                return { command: process.execPath };
+              },
+            },
+          },
+        } as unknown as CodexGenerationSupervisor,
+        ensureSelectedRuntime: () => Promise.resolve(),
+        updateInProgress: () => false,
+        refresh: () => Promise.reject(new Error("Unexpected refresh")),
+        invalidateRefresh: vi.fn(),
+        describeRuntime: () => Promise.resolve(undefined),
+        setStatus: vi.fn(),
+      });
+      Object.defineProperty(process, "platform", { ...platform, value: "win32" });
+      const work = kind.startsWith("logout")
+        ? lifecycle.logout()
+        : lifecycle.runAgentSetup(async () => {
+            started();
+            await gate;
+            return "joined";
+          });
+      const workResult = work.catch((error: unknown) => error);
+      let closed = false;
+      let closing: Promise<void> | undefined;
+      try {
+        await entered;
+        closing = lifecycle.dispose().then(() => {
+          closed = true;
+        });
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        expect(closed).toBe(false);
+        expect(lifecycle.cleanupReceipt()).toMatchObject({ cleanupPending: true });
+        release();
+        const result = await workResult;
+        if (kind === "logout-resolution")
+          expect(result).toMatchObject({ message: "Codex runtime service disposed." });
+        else expect(result).not.toBeInstanceOf(Error);
+        await closing;
+        expect(lifecycle.cleanupReceipt()).toBeUndefined();
+        expect(execute).toHaveBeenCalledTimes(kind === "logout" ? 1 : 0);
+      } finally {
+        release();
+        await work.catch(() => {});
+        await closing?.catch(() => {});
+        Object.defineProperty(process, "platform", platform);
+        vi.restoreAllMocks();
+        await rm(dir, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it("closes service admission synchronously while accepted cleanup is held", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "omnesis-codex-closed-admission-"));
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    vi.spyOn(CodexRuntimeLifecycle.prototype, "dispose").mockReturnValue(held);
+    vi.spyOn(CodexRuntimeUpdater.prototype, "dispose").mockResolvedValue();
+    vi.spyOn(CodexAppServerRuntime.prototype, "resolveCommandInfo").mockRejectedValue(
+      new Error("Unexpected admission"),
+    );
+    const refresh = vi.spyOn(CodexGenerationSupervisor.prototype, "use");
+    const login = vi.spyOn(CodexRuntimeLifecycle.prototype, "startDeviceLogin");
+    const logout = vi.spyOn(CodexRuntimeLifecycle.prototype, "logout");
+    const setup = vi.spyOn(CodexRuntimeLifecycle.prototype, "runAgentSetup");
+    const update = vi.spyOn(CodexRuntimeUpdater.prototype, "start");
+    const service = new CodexRuntimeService({ configDir: dir, command: process.execPath });
+    const backend = service.createBackend({ model: "gpt-example-frontier" });
+    const closing = service.dispose();
+    try {
+      await expect(service.refresh()).rejects.toThrow(/disposed/);
+      await expect(service.startDeviceLogin()).rejects.toThrow(/disposed/);
+      await expect(service.logout()).rejects.toThrow(/disposed/);
+      await expect(service.setupAgent({} as ConfigStore, "gpt-example-frontier")).rejects.toThrow(
+        /disposed/,
+      );
+      await expect(service.getRuntimeUpdate()).rejects.toThrow(/disposed/);
+      await expect(service.startRuntimeUpdate({ dryRun: false })).rejects.toThrow(/disposed/);
+      await expect(service.cancelRuntimeUpdate()).rejects.toThrow(/disposed/);
+      const run = async () => {
+        for await (const event of backend.runTurn({
+          sessionId: "invented",
+          messageId: "invented",
+          userMessage: "Invented input",
+          systemPrompt: "",
+          history: [],
+          tools: [],
+        }))
+          void event;
+      };
+      await expect(run()).rejects.toThrow(/disposed/);
+      expect(refresh).not.toHaveBeenCalled();
+      expect(login).not.toHaveBeenCalled();
+      expect(logout).not.toHaveBeenCalled();
+      expect(setup).not.toHaveBeenCalled();
+      expect(update).not.toHaveBeenCalled();
+    } finally {
+      release();
+      await closing;
+      vi.restoreAllMocks();
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("rechecks disposal after a turn's accepted runtime selection settles", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "omnesis-codex-selection-close-"));
+    let releaseSelection!: () => void, entered!: () => void, releaseCleanup!: () => void;
+    const selected = new Promise<void>((resolve) => {
+      releaseSelection = resolve;
+    });
+    const selecting = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const cleanup = new Promise<void>((resolve) => {
+      releaseCleanup = resolve;
+    });
+    vi.spyOn(CodexRuntimeUpdater.prototype, "ensureSelectedRuntime").mockImplementation(() => {
+      entered();
+      return selected;
+    });
+    vi.spyOn(CodexRuntimeUpdater.prototype, "dispose").mockResolvedValue();
+    vi.spyOn(CodexRuntimeLifecycle.prototype, "dispose").mockReturnValue(cleanup);
+    const run = vi
+      .spyOn(CodexAppServerRuntime.prototype, "runTurn")
+      .mockImplementation(async function* () {
+        yield* [];
+      });
+    const service = new CodexRuntimeService({
+      configDir: dir,
+      command: process.execPath,
+      interactivePoolSize: 0,
+    });
+    const turn = (async () => {
+      for await (const event of service.createBackend({ model: "gpt-example-frontier" }).runTurn({
+        sessionId: "invented",
+        messageId: "invented",
+        userMessage: "Invented input",
+        systemPrompt: "",
+        history: [],
+        tools: [],
+      }))
+        void event;
+    })();
+    const result = turn.catch((error: unknown) => error);
+    await selecting;
+    const closing = service.dispose();
+    try {
+      releaseSelection();
+      expect(await result).toMatchObject({ message: "Codex runtime service disposed." });
+      expect(run).not.toHaveBeenCalled();
+    } finally {
+      releaseSelection();
+      releaseCleanup();
+      await result;
+      await closing;
+      vi.restoreAllMocks();
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("joins an accepted refresh helper before service disposal can confirm cleanup", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "omnesis-codex-refresh-join-"));
+    const home = join(dir, "codex-home");
+    await mkdir(home);
+    await writeFile(join(home, "auth.json"), "{}");
+    const agent = await import("@omnesis/agent"),
+      core = await import("@omnesis/core");
+    vi.spyOn(agent, "ensureCodexHome").mockResolvedValue();
+    vi.spyOn(CodexAppServerRuntime.prototype, "resolveCommandInfo").mockResolvedValue({
+      source: "override",
+      command: process.execPath,
+    });
+    vi.spyOn(CodexAppServerRuntime.prototype, "probeRuntime").mockResolvedValue({
+      command: process.execPath,
+      version: "0.167.0",
+    });
+    let release!: () => void, entered!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const running = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const execute = vi.spyOn(core, "execWindowsJob").mockImplementation(async () => {
+      entered();
+      await gate;
+      return { stdout: "invented logged-in status", stderr: "" };
+    });
+    const models = vi.spyOn(CodexAppServerRuntime.prototype, "listModels");
+    const platform = Object.getOwnPropertyDescriptor(process, "platform")!;
+    Object.defineProperty(process, "platform", { ...platform, value: "win32" });
+    const service = new CodexRuntimeService({ configDir: dir, command: process.execPath });
+    const refreshing = service.refresh();
+    let closed = false;
+    let closing: Promise<void> | undefined;
+    try {
+      await running;
+      closing = service.dispose().then(() => {
+        closed = true;
+      });
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(closed).toBe(false);
+      release();
+      await refreshing;
+      await closing;
+      expect(models).not.toHaveBeenCalled();
+      expect(execute).toHaveBeenCalledOnce();
+      expect(service.cleanupFailure()).toBeUndefined();
+    } finally {
+      release();
+      await refreshing.catch(() => {});
+      await closing?.catch(() => {});
+      Object.defineProperty(process, "platform", platform);
+      vi.restoreAllMocks();
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   it("clears a pending shutdown receipt after the retained disposal positively settles", async () => {
     const dir = await mkdtemp(join(tmpdir(), "omnesis-codex-joined-dispose-"));
     let release!: () => void;

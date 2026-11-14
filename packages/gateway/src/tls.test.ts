@@ -350,37 +350,39 @@ test.skipIf(process.platform !== "win32")(
   },
 );
 
-test("an unconfirmed self-signed issuer retains its owned private scratch instead of reporting ordinary failure cleanup", async () => {
-  const before = processLauncher();
-  let scratch: string | undefined;
-  const failure = new Error("Invented self-signed issuer join failure");
-  setProcessLauncher({
-    run: (_file, args) => {
-      const keyPath = args[args.indexOf("-keyout") + 1]!;
-      scratch = join(keyPath, "..");
-      writeFileSync(keyPath, "invented partial private key");
-      return Promise.resolve(
-        Object.assign(
-          {
-            exitCode: null,
-            signal: null,
-            stdout: Buffer.alloc(0),
-            stderr: "",
-            failure: "spawn" as const,
-          },
-          { cleanupFailure: failure },
-        ),
-      );
-    },
-  });
-  try {
-    const error = await generateSelfSigned().catch((error: unknown) => error);
-    expect(error).toBeInstanceOf(TlsIssuerCleanupUnconfirmedError);
-    expect(error).toMatchObject({ cleanupFailure: failure, scratchDirectory: scratch });
-    expect(existsSync(scratch!)).toBe(true);
-    expect(readFileSync(join(scratch!, "key.pem"), "utf8")).toBe("invented partial private key");
-  } finally {
-    setProcessLauncher(before);
-    if (scratch) rmSync(scratch, { recursive: true, force: true });
-  }
-});
+test.each([undefined, new Error("Invented join failure")])(
+  "an unconfirmed self-signed issuer retains its owned private scratch instead of reporting ordinary failure cleanup (%s)",
+  async (failure) => {
+    const before = processLauncher();
+    let scratch: string | undefined;
+    setProcessLauncher({
+      run: (_file, args) => {
+        const keyPath = args[args.indexOf("-keyout") + 1]!;
+        scratch = join(keyPath, "..");
+        writeFileSync(keyPath, "invented partial private key");
+        return Promise.resolve(
+          Object.assign(
+            {
+              exitCode: null,
+              signal: null,
+              stdout: Buffer.alloc(0),
+              stderr: "",
+              failure: "spawn" as const,
+            },
+            { cleanupFailure: failure },
+          ),
+        );
+      },
+    });
+    try {
+      const error = await generateSelfSigned().catch((error: unknown) => error);
+      expect(error).toBeInstanceOf(TlsIssuerCleanupUnconfirmedError);
+      expect(error).toMatchObject({ cleanupFailure: failure, scratchDirectory: scratch });
+      expect(existsSync(scratch!)).toBe(true);
+      expect(readFileSync(join(scratch!, "key.pem"), "utf8")).toBe("invented partial private key");
+    } finally {
+      setProcessLauncher(before);
+      if (scratch) rmSync(scratch, { recursive: true, force: true });
+    }
+  },
+);

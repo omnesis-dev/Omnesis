@@ -48,6 +48,7 @@ interface CodexRuntimeUpdaterOptions {
 export class CodexRuntimeUpdater {
   private readonly opts: CodexRuntimeUpdaterOptions;
   private disposed = false;
+  private readonly inspections = new Set<Promise<unknown>>();
   private selectedRuntimeInitialized = false;
   private selectedRuntimeInFlight: Promise<void> | null = null;
   private updateInFlight: Promise<void> | null = null;
@@ -69,7 +70,34 @@ export class CodexRuntimeUpdater {
     this.disposed = true;
     this.cancelRequested = true;
     this.updateAbort?.abort();
-    await Promise.all([this.updateInFlight, this.selectedRuntimeInFlight]);
+    await Promise.all([
+      this.updateInFlight,
+      this.selectedRuntimeInFlight,
+      Promise.allSettled([...this.inspections]),
+    ]);
+  }
+
+  private assertAdmitting(): void {
+    if (this.disposed) throw new Error("Codex runtime updater disposed.");
+  }
+
+  private inspect<T>(run: () => Promise<T>): Promise<T> {
+    if (this.disposed) return Promise.reject(new Error("Codex runtime updater disposed."));
+    const work = Promise.resolve()
+      .then(() => {
+        this.assertAdmitting();
+        return run();
+      })
+      .then((result) => {
+        this.assertAdmitting();
+        return result;
+      });
+    this.inspections.add(work);
+    void work.then(
+      () => this.inspections.delete(work),
+      () => this.inspections.delete(work),
+    );
+    return work;
   }
 
   async ensureSelectedRuntime(): Promise<void> {
@@ -123,8 +151,13 @@ export class CodexRuntimeUpdater {
     return this.selectedRuntimeInFlight;
   }
 
-  async get(): Promise<CodexRuntimeUpdateSnapshot> {
+  get(): Promise<CodexRuntimeUpdateSnapshot> {
+    return this.inspect(() => this.inspectSnapshot());
+  }
+
+  private async inspectSnapshot(): Promise<CodexRuntimeUpdateSnapshot> {
     await this.ensureSelectedRuntime();
+    this.assertAdmitting();
     const plan = this.opts.supervisor.cleanupError
       ? await this.computePlan()
       : this.updateInFlight && this.lastPlan
@@ -134,7 +167,9 @@ export class CodexRuntimeUpdater {
   }
 
   async start(opts: { dryRun: boolean }): Promise<CodexRuntimeUpdateSnapshot> {
+    this.assertAdmitting();
     const snapshot = await this.get();
+    this.assertAdmitting();
     if (opts.dryRun || !snapshot.plan.canUpdate || snapshot.plan.action === "none") return snapshot;
     if (this.opts.loginBusy()) {
       throw new CodexRuntimeUpdateConflictError(
@@ -180,7 +215,11 @@ export class CodexRuntimeUpdater {
     return this.get();
   }
 
-  async computePlan(): Promise<CodexRuntimeUpdatePlan> {
+  computePlan(): Promise<CodexRuntimeUpdatePlan> {
+    return this.inspect(() => this.inspectPlan());
+  }
+
+  private async inspectPlan(): Promise<CodexRuntimeUpdatePlan> {
     const common = {
       targetVersion: CODEX_RUNTIME_COMPAT.testedVersion,
       preservesLogin: true as const,
@@ -199,6 +238,7 @@ export class CodexRuntimeUpdater {
     let commandInfo: CodexRuntimeCommandInfo;
     try {
       commandInfo = await this.opts.supervisor.current.runtime.resolveCommandInfo();
+      this.assertAdmitting();
     } catch (err) {
       const cleanup = codexCleanupFailure(err);
       if (cleanup) {

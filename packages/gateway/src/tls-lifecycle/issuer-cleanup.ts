@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import { ownedProcessCleanupReceipt } from "../owned-process-cleanup.js";
+
 /** A private issuer directory remains owned until its process cleanup is confirmed. */
 export class TlsIssuerCleanupUnconfirmedError extends Error {
   readonly scratchDirectory?: string;
@@ -27,12 +29,8 @@ export function tlsIssuerCleanupFailure(
       ? error
       : new TlsIssuerCleanupUnconfirmedError(error.cleanupFailure, error, scratchDirectory);
   }
-  if (
-    error !== null &&
-    typeof error === "object" &&
-    "cleanupFailure" in error &&
-    error.cleanupFailure !== undefined
-  )
-    return new TlsIssuerCleanupUnconfirmedError(error.cleanupFailure, error, scratchDirectory);
-  return null;
+  const receipt = ownedProcessCleanupReceipt(error);
+  return receipt
+    ? new TlsIssuerCleanupUnconfirmedError(receipt.failure, error, scratchDirectory)
+    : null;
 }

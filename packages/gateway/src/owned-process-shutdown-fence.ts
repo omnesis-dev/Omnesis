@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import { ownedProcessCleanupReceipt } from "./owned-process-cleanup.js";
+
 export interface OwnedProcessCleanup {
   /** Read-only; pending receipts carry cleanupPending:true, terminal ones do not. */
   receipt(): unknown;
@@ -21,14 +23,8 @@ function waitForReview(): Promise<never> {
   return new Promise<never>(() => {});
 }
 function receiptState(error: unknown): "none" | "pending" | "terminal" {
-  if (
-    error === null ||
-    typeof error !== "object" ||
-    !("cleanupFailure" in error) ||
-    error.cleanupFailure === undefined
-  )
-    return "none";
-  return "cleanupPending" in error && error.cleanupPending === true ? "pending" : "terminal";
+  const receipt = ownedProcessCleanupReceipt(error);
+  return receipt ? (receipt.pending ? "pending" : "terminal") : "none";
 }
 
 /** Pending proofs can join; explicit rejected or terminal ownership uncertainty requires review. */

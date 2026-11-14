@@ -174,7 +174,12 @@ export function windowsWorkerInvocation(
         },
         input: Buffer.concat([frame(program), frame(metadata), source, COMMIT]),
       });
-      if (result.failure || result.exitCode !== 0 || result.stdout.length > 65536) {
+      if (
+        Object.hasOwn(result, "cleanupFailure") ||
+        result.failure ||
+        result.exitCode !== 0 ||
+        result.stdout.length > 65536
+      ) {
         // Only fixed native stage/code or compiler locations leave this trust
         // boundary; never echo a command, input frame, path or source payload.
         const diagnostic = /^EPRIVATE:[a-z-]{1,60}:[0-9]{1,10}\r?$/mu
@@ -186,10 +191,16 @@ export function windowsWorkerInvocation(
           .map((line) => line.trim())
           .join(", ");
         const details = [diagnostic, compilation].filter(Boolean).join("; ");
-        throw new Error(
+        const error = new Error(
           "Cannot initialize the protected Windows native worker" +
             (details ? ` (${details})` : ""),
+          Object.hasOwn(result, "cleanupFailure")
+            ? { cause: new Error("Windows native bootstrap cleanup was not confirmed") }
+            : undefined,
         );
+        if (Object.hasOwn(result, "cleanupFailure"))
+          Object.assign(error, { cleanupFailure: result.cleanupFailure });
+        throw error;
       }
       let record: unknown;
       try {

@@ -31,6 +31,11 @@ test("joined shutdown releases the lease and invokes its ordinary exit synchrono
 
 test.each([
   ["TLS", new TlsIssuerCleanupUnconfirmedError(new Error("invented join failure"), undefined)],
+  ["undefined marker", { cleanupFailure: undefined }],
+  [
+    "nested undefined marker",
+    new Error("Invented outer failure", { cause: { cleanupFailure: undefined } }),
+  ],
   ["Codex", new CodexGenerationCleanupError(new Error("invented generation join failure"))],
 ])(
   "explicit %s uncertainty permits other teardown but prevents lease release and timeout exit",
@@ -89,38 +94,41 @@ test("the default terminal review hold retains one referenced timer without poll
   expect(exit).not.toHaveBeenCalled();
 });
 
-test("a pending disposal later joins without becoming a permanent review hold and keeps the timeout verdict", async () => {
-  let resolve!: () => void;
-  let receipt: unknown = { cleanupFailure: true, cleanupPending: true };
-  const settle = vi.fn(
-    () =>
-      new Promise<void>((yes) => {
-        resolve = yes;
-      }),
-  );
-  const participant = { receipt: () => receipt, settle };
-  const report = vi.fn(),
-    review = vi.fn(() => new Promise<never>(() => {})),
-    release = vi.fn();
-  const fence = new OwnedProcessShutdownFence(report, [participant], review);
-  fence.releaseLock({ release });
-  const timedOut = true,
-    exit = vi.fn((): never => {
-      throw new Error(`exit ${timedOut ? 1 : 0}`);
-    });
-  const completion = fence.finish(exit);
-  const rejected = expect(completion).rejects.toThrow("exit 1");
-  await vi.waitFor(() => expect(settle).toHaveBeenCalledOnce());
-  expect(release).not.toHaveBeenCalled();
-  expect(exit).not.toHaveBeenCalled();
-  receipt = undefined;
-  resolve();
-  await rejected;
-  expect(release).toHaveBeenCalledOnce();
-  expect(exit).toHaveBeenCalledOnce();
-  expect(report).not.toHaveBeenCalled();
-  expect(review).not.toHaveBeenCalled();
-});
+test.each([true, undefined])(
+  "a pending disposal later joins without becoming a permanent review hold and keeps the timeout verdict (%s)",
+  async (marker) => {
+    let resolve!: () => void;
+    let receipt: unknown = { cleanupFailure: marker, cleanupPending: true };
+    const settle = vi.fn(
+      () =>
+        new Promise<void>((yes) => {
+          resolve = yes;
+        }),
+    );
+    const participant = { receipt: () => receipt, settle };
+    const report = vi.fn(),
+      review = vi.fn(() => new Promise<never>(() => {})),
+      release = vi.fn();
+    const fence = new OwnedProcessShutdownFence(report, [participant], review);
+    fence.releaseLock({ release });
+    const timedOut = true,
+      exit = vi.fn((): never => {
+        throw new Error(`exit ${timedOut ? 1 : 0}`);
+      });
+    const completion = fence.finish(exit);
+    const rejected = expect(completion).rejects.toThrow("exit 1");
+    await vi.waitFor(() => expect(settle).toHaveBeenCalledOnce());
+    expect(release).not.toHaveBeenCalled();
+    expect(exit).not.toHaveBeenCalled();
+    receipt = undefined;
+    resolve();
+    await rejected;
+    expect(release).toHaveBeenCalledOnce();
+    expect(exit).toHaveBeenCalledOnce();
+    expect(report).not.toHaveBeenCalled();
+    expect(review).not.toHaveBeenCalled();
+  },
+);
 
 test("tracked TLS close remains joined even before a terminal receipt exists", async () => {
   vi.useFakeTimers();
@@ -231,4 +239,14 @@ test("an early Codex receipt is checked before its later disposal stage without 
   expect(later.settle).not.toHaveBeenCalled();
   expect(report).toHaveBeenCalledOnce();
   expect(review).toHaveBeenCalledOnce();
+});
+
+test("a cyclic cause without a marker remains an ordinary error", async () => {
+  const error = new Error("Invented ordinary cyclic failure");
+  Object.assign(error, { cause: error });
+  const report = vi.fn();
+  const participant = { receipt: () => undefined, settle: () => Promise.reject(error) };
+  const fence = new OwnedProcessShutdownFence(report, [participant]);
+  await expect(fence.join(participant)).rejects.toBe(error);
+  expect(report).not.toHaveBeenCalled();
 });

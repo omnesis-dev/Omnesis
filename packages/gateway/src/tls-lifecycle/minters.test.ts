@@ -306,31 +306,33 @@ test("Windows issuer default backend awaits an owned Job with literal arguments 
   }
 });
 
-test("unconfirmed issuer cleanup retains its private scratch and never tries another candidate", async () => {
-  let scratch: string | undefined;
-  const cleanup = new Error("Invented owned Job join failure");
-  const run = vi.fn((_file: string, args: string[]) => {
-    scratch = dirname(args[1]!);
-    return Promise.reject(
-      Object.assign(new Error("Invented missing command with unconfirmed cleanup"), {
-        code: "ENOENT",
-        cleanupFailure: cleanup,
-      }),
-    );
-  });
-  try {
-    const minter = createHostMinter({ mkcertCandidates: ["first issuer", "second issuer"], run });
-    const error = await minter
-      .mint("mkcert", ["localhost"], signal())
-      .catch((error: unknown) => error);
-    expect(error).toBeInstanceOf(TlsIssuerCleanupUnconfirmedError);
-    expect(error).toMatchObject({ cleanupFailure: cleanup, scratchDirectory: scratch });
-    expect(run).toHaveBeenCalledOnce();
-    expect(existsSync(scratch!)).toBe(true);
-  } finally {
-    if (scratch) rmSync(scratch, { recursive: true, force: true });
-  }
-});
+test.each([undefined, new Error("Invented join failure")])(
+  "unconfirmed issuer cleanup retains its private scratch and never tries another candidate (%s)",
+  async (cleanup) => {
+    let scratch: string | undefined;
+    const run = vi.fn((_file: string, args: string[]) => {
+      scratch = dirname(args[1]!);
+      return Promise.reject(
+        Object.assign(new Error("Invented missing command with unconfirmed cleanup"), {
+          code: "ENOENT",
+          cleanupFailure: cleanup,
+        }),
+      );
+    });
+    try {
+      const minter = createHostMinter({ mkcertCandidates: ["first issuer", "second issuer"], run });
+      const error = await minter
+        .mint("mkcert", ["localhost"], signal())
+        .catch((error: unknown) => error);
+      expect(error).toBeInstanceOf(TlsIssuerCleanupUnconfirmedError);
+      expect(error).toMatchObject({ cleanupFailure: cleanup, scratchDirectory: scratch });
+      expect(run).toHaveBeenCalledOnce();
+      expect(existsSync(scratch!)).toBe(true);
+    } finally {
+      if (scratch) rmSync(scratch, { recursive: true, force: true });
+    }
+  },
+);
 
 test("Windows worker startup timeout keeps the existing status budget and permits a joined fallback", async () => {
   const descriptor = Object.getOwnPropertyDescriptor(process, "platform")!;

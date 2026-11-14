@@ -1246,6 +1246,20 @@ root's status, the owner terminates remaining Job members and joins their exit
 and output. Streamed commands retain the default tree lifetime.
 POSIX paths preserve their native process behavior.
 
+Synchronous Job calls and native-cache bootstrapping require a fresh parent-only
+completion receipt after native cleanup. A helper exit code alone cannot prove
+that its children joined. Preserve an own `cleanupFailure` property through
+wrappers even when its value is `undefined`; that presence means cleanup remains
+unconfirmed. Self-contained filesystem workers have no child tree and use their
+separate process-lifetime contract.
+
+Services close admission before joining accepted work. Disposal must retain
+in-flight probes and lifecycle operations as well as active turns; a status read
+that launches a helper is owned work. Recheck admission after an awaited lookup
+before launching another command. A pending cleanup receipt may clear when its
+retained proof settles; terminal uncertainty keeps the process and lease for
+review.
+
 Updater and continuation launches create `beginUpdateLockChildJoin` against the
 actual held lock before starting a child. Its private persisted marker survives
 ownership adoption and process exit. Clear that exact scope only after the owned

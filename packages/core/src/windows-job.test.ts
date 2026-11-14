@@ -9,7 +9,12 @@ import { pathToFileURL } from "node:url";
 import { dirname, join } from "node:path";
 import { Readable } from "node:stream";
 import { describe, expect, it } from "vitest";
-import { killWindowsJob, runWindowsJob, spawnWindowsJob } from "./windows-job.js";
+import {
+  killWindowsJob,
+  runWindowsJob,
+  runWindowsJobSync,
+  spawnWindowsJob,
+} from "./windows-job.js";
 import { execWindowsJob } from "./windows-job-exec.js";
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -78,6 +83,38 @@ describe("Windows job fixture programs", () => {
 });
 
 describe.skipIf(process.platform !== "win32")("Windows native job containment", () => {
+  it.each([0, 7, 126, 127])(
+    "joins a synchronous target with actual exit %s",
+    (status) => {
+      const result = runWindowsJobSync(
+        process.execPath,
+        [
+          "-e",
+          `process.stdout.write(Buffer.from([0,255,42]));process.stderr.write('literal diagnostic');process.exitCode=${status}`,
+        ],
+        { timeoutMs: 30_000 },
+      );
+      expect(result.exitCode).toBe(status);
+      expect(result.stdout).toEqual(Buffer.from([0, 255, 42]));
+      expect(result.stderr).toBe("literal diagnostic");
+      expect(Object.hasOwn(result, "cleanupFailure")).toBe(false);
+    },
+    45_000,
+  );
+  it("joins a synchronous native executable refusal without declaring cleanup uncertain", () => {
+    const dir = mkdtempSync(join(tmpdir(), "omnesis-sync-refusal-"));
+    try {
+      const result = runWindowsJobSync(join(dir, "invented-missing-worker.exe"), [], {
+        timeoutMs: 30_000,
+      });
+      expect(result.failure).toBe("spawn");
+      expect(result.failureMessage).toContain("ENOENT");
+      expect(Object.hasOwn(result, "cleanupFailure")).toBe(false);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 45_000);
+
   it("preserves bare executable PATH and extension lookup without a shell", async () => {
     const result = await runWindowsJob("node", ["-e", "process.stdout.write(process.arch)"], {
       env: { ...process.env, PATH: dirname(process.execPath) },

@@ -35,6 +35,78 @@ function generation(version: string): CodexRuntimeGeneration {
 }
 
 describe("CodexRuntimeUpdater", () => {
+  it.each(["get", "plan", "start"] as const)(
+    "joins accepted %s inspections and never launches after disposal",
+    async (kind) => {
+      const original = generation("0.142.4");
+      let release!: () => void, entered!: () => void;
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const running = new Promise<void>((resolve) => {
+        entered = resolve;
+      });
+      original.runtime.resolveCommandInfo = async () => {
+        entered();
+        await gate;
+        return commandInfo("0.142.4");
+      };
+      const probe = vi.fn(() =>
+        Promise.resolve({ command: "/synthetic/codex", version: "0.142.4" }),
+      );
+      original.runtime.probeRuntime = probe;
+      const prepare = vi.fn(() => Promise.reject(new Error("Unexpected prepare")));
+      const supervisor = new CodexGenerationSupervisor(original);
+      const status: CodexBackendStatus = {
+        type: "codex",
+        configured: false,
+        status: "unreachable",
+        loggedIn: false,
+        models: [],
+      };
+      const updater = new CodexRuntimeUpdater({
+        installer: {
+          readActive: () => Promise.resolve(null),
+          prepare,
+        } as unknown as CodexRuntimeInstaller,
+        supervisor,
+        refreshTimeoutMs: 100,
+        createGeneration: () => generation("0.151.0"),
+        validateGeneration: () => Promise.resolve(),
+        describeRuntime: () => Promise.resolve(undefined),
+        refresh: () => Promise.resolve(status),
+        status: () => status,
+        loginBusy: () => false,
+      });
+      const read =
+        kind === "get"
+          ? updater.get()
+          : kind === "plan"
+            ? updater.computePlan()
+            : updater.start({ dryRun: false });
+      const result = read.catch((error: unknown) => error);
+      let closed = false;
+      await running;
+      const closing = updater.dispose().then(() => {
+        closed = true;
+      });
+      try {
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        expect(closed).toBe(false);
+        release();
+        expect(await result).toMatchObject({ message: "Codex runtime updater disposed." });
+        await closing;
+        expect(probe).not.toHaveBeenCalled();
+        expect(prepare).not.toHaveBeenCalled();
+      } finally {
+        release();
+        await result;
+        await closing;
+        await supervisor.dispose();
+      }
+    },
+  );
+
   it.each(["resolve", "probe"] as const)(
     "never offers repair after the current runtime's %s cleanup is unconfirmed",
     async (phase) => {

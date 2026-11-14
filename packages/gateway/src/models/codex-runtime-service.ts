@@ -314,7 +314,9 @@ export class CodexRuntimeService {
     lane: CodexLane,
     opts: CodexRuntimeTurnOptions,
   ): AsyncIterable<import("@omnesis/core").AgentEvent> {
+    this.assertAdmitting();
     await this.updater.ensureSelectedRuntime();
+    this.assertAdmitting();
     yield* this.supervisor.runner(lane).runTurn(opts);
   }
 
@@ -358,6 +360,7 @@ export class CodexRuntimeService {
     const results = await Promise.allSettled([
       Promise.resolve().then(() => this.updater.dispose()),
       Promise.resolve().then(() => this.lifecycle.dispose()),
+      ...(this.refreshInFlight ? [this.refreshInFlight.promise] : []),
     ]);
     results.push(
       ...(await Promise.allSettled([Promise.resolve().then(() => this.supervisor.dispose())])),
@@ -367,18 +370,22 @@ export class CodexRuntimeService {
   }
 
   async getRuntimeUpdate(): Promise<CodexRuntimeUpdateSnapshot> {
+    this.assertAdmitting();
     return this.updater.get();
   }
 
   async startRuntimeUpdate(opts: { dryRun: boolean }): Promise<CodexRuntimeUpdateSnapshot> {
+    this.assertAdmitting();
     return this.updater.start(opts);
   }
 
   async cancelRuntimeUpdate(): Promise<CodexRuntimeUpdateSnapshot> {
+    this.assertAdmitting();
     return this.updater.cancel();
   }
 
   refresh(): Promise<CodexBackendStatus> {
+    if (this.disposal) return Promise.reject(new Error("Codex runtime service disposed."));
     const epoch = this.refreshEpoch;
     if (this.refreshInFlight?.epoch === epoch) return this.refreshInFlight.promise;
     this.status = {
@@ -389,6 +396,7 @@ export class CodexRuntimeService {
     const promise = this.supervisor
       .use(async () => {
         const status = await this.computeStatus();
+        this.assertCleanupConfirmed();
         const runtimeUpdate = await this.updater.computePlan();
         this.assertCleanupConfirmed();
         const enriched = { ...status, runtimeUpdate };
@@ -420,6 +428,7 @@ export class CodexRuntimeService {
   }
 
   setupAgent(configStore: ConfigStore, model: string): Promise<AgentSetupResult> {
+    if (this.disposal) return Promise.reject(new Error("Codex runtime service disposed."));
     return this.lifecycle
       .runAgentSetup(() =>
         setupAgentAssignment({
@@ -439,6 +448,7 @@ export class CodexRuntimeService {
   }
 
   async startDeviceLogin(): Promise<CodexLoginFlow> {
+    this.assertAdmitting();
     return this.lifecycle.startDeviceLogin();
   }
 
@@ -447,10 +457,12 @@ export class CodexRuntimeService {
   }
 
   cancelLogin(): { ok: true; canceled: boolean; flow: CodexLoginFlow | null } {
+    this.assertAdmitting();
     return this.lifecycle.cancelLogin();
   }
 
   async logout(): Promise<{ ok: true; status: CodexBackendStatus }> {
+    this.assertAdmitting();
     return this.lifecycle.logout();
   }
 
@@ -487,8 +499,13 @@ export class CodexRuntimeService {
     }
   }
 
+  private assertAdmitting(): void {
+    if (this.disposal) throw new Error("Codex runtime service disposed.");
+  }
+
   private assertCleanupConfirmed(): void {
     if (this.supervisor.cleanupError) throw this.supervisor.cleanupError;
+    this.assertAdmitting();
   }
 
   private refuseUnconfirmedCleanup(error: unknown): void {
@@ -498,6 +515,7 @@ export class CodexRuntimeService {
 
   private async computeStatus(): Promise<CodexBackendStatus> {
     const runtime = await this.describeRuntime();
+    this.assertCleanupConfirmed();
     if (!this.hasStoredAuth()) {
       return {
         type: "codex",
@@ -512,6 +530,7 @@ export class CodexRuntimeService {
     }
 
     await ensureCodexHome(this.codexHome);
+    this.assertCleanupConfirmed();
     const childEnv = buildCodexEnv(this.env, this.codexHome);
     if (runtime && !runtime.supported) {
       return {

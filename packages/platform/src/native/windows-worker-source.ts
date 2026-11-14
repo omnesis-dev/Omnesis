@@ -145,10 +145,13 @@ public static class WindowsWorker {
           Dictionary<string,object> channel=Object(control);
           return OmnesisProcessJob.Run(Text(data,"command",null),arguments,checked((int)Number(data,"parentPid")),Text(data,"completion","tree"),Text(channel,"pipe",null),Text(channel,"cookie",null),Text(channel,"parentBirth",null),Number(channel,"deadlineUnixMs"));
         }
-        return OmnesisProcessJob.Run(Text(data,"command",null),arguments,checked((int)Number(data,"parentPid")),Text(data,"completion","tree"));
+        object receipt;
+        string syncReceipt=data.TryGetValue("syncReceipt",out receipt) ? Text(data,"syncReceipt",null) : null;
+        return OmnesisProcessJob.Run(Text(data,"command",null),arguments,checked((int)Number(data,"parentPid")),Text(data,"completion","tree"),null,null,null,0,syncReceipt);
       }
       throw new InvalidDataException();
     } catch(Exception error) {Console.Error.Write(ErrorCode(error));return 1;}
+    finally {if(args.Length==1 && args[0]=="job") OmnesisProcessJob.WriteSyncReceipt();}
   }
 }
 `;
