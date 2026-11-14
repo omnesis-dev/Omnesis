@@ -17,13 +17,27 @@ public struct GatewayPairingApprovalRequest: Decodable, Equatable, Identifiable,
     public var canTrustSignIn: Bool?
     /// Its device key belongs to a device the owner removed before.
     public var revokedDevice: Bool?
+    /// The address Google verified in the token the gateway checked itself; never one the device named.
+    public var signInEmail: String?
+    /// The gateway suggests remembering this sign-in: the first confirmation on this gateway.
+    public var rememberByDefault: Bool?
+    /// A Google account other than the one the gateway was connected with: never remembered here.
+    public var otherGoogleAccount: Bool?
     public var id: String {
         requestId
     }
 }
 
+/// `GET /admin/cloud-pairing/requests`: the waiting devices, and whether approving one from this
+/// phone will ask for the owner's passkey first (a label only; the gateway checks each approval).
+public struct GatewayPairingApprovals: Decodable, Sendable {
+    public let items: [GatewayPairingApprovalRequest]
+    public var stepUpRequired: Bool?
+}
+
 public protocol GatewayPairingApproving: Sendable {
     func pairingApprovalRequests() async throws -> [GatewayPairingApprovalRequest]
+    func pairingApprovals() async throws -> GatewayPairingApprovals
     func decidePairingApproval(requestId: String, approve: Bool) async throws
     func decidePairingApproval(requestId: String, approve: Bool, trustSignIn: Bool) async throws
     /// The gateway's own page that approves `requestId` with the owner's passkey, for a phone the
@@ -38,6 +52,10 @@ extension GatewayPairingApproving {
 
     public func approvalPage(requestId _: String) -> URL? {
         nil
+    }
+
+    public func pairingApprovals() async throws -> GatewayPairingApprovals {
+        try await GatewayPairingApprovals(items: pairingApprovalRequests())
     }
 }
 
@@ -61,6 +79,10 @@ public final class GatewayPairingApprovalModel {
     public private(set) var denied: GatewayPairingApprovalRequest?
     /// The follow-up was taken: new devices now always ask.
     public private(set) var askingFirst = false
+    /// Approving from this phone asks for the owner's passkey first, so the button says so.
+    public private(set) var stepUpRequired = false
+    /// Requests whose suggested "remember" was applied once; the owner's own choice then stands.
+    private var suggested: Set<String> = []
     private var compared: [String: String] = [:]
     private var trustedSignIns: Set<String> = []
     private var generation = UUID()
@@ -76,7 +98,8 @@ public final class GatewayPairingApprovalModel {
         error = nil
         let operation = generation
         do {
-            let incoming = try await client.pairingApprovalRequests()
+            let listed = try await client.pairingApprovals()
+            let incoming = listed.items
             try Task.checkCancellation()
             guard operation == generation else { return }
             guard incoming.count <= 128, Set(incoming.map(\.id)).count == incoming.count,
@@ -85,7 +108,12 @@ public final class GatewayPairingApprovalModel {
             // few minutes so the new device can read its answer; the owner has no use for it.
             requests = incoming.filter { $0.status == "pending" } + incoming.filter { $0.status == "approving" }
             compared = compared.filter { id, code in incoming.contains { $0.id == id && $0.verificationCode == code } }
-            trustedSignIns = trustedSignIns.filter { id in incoming.contains { $0.id == id && $0.canTrustSignIn == true } }
+            trustedSignIns = trustedSignIns.filter { id in incoming.contains { $0.id == id && Self.rememberable($0) } }
+            // The gateway suggests remembering the first confirmation; once, so unticking it sticks.
+            for request in requests where request.rememberByDefault == true && Self.rememberable(request) {
+                if suggested.insert(request.id).inserted { trustedSignIns.insert(request.id) }
+            }
+            stepUpRequired = listed.stepUpRequired == true
             if let stepUp, !requests.contains(where: { $0.id == stepUp.requestId }) { self.stepUp = nil }
         } catch {
             guard operation == generation else { return }
@@ -103,9 +131,10 @@ public final class GatewayPairingApprovalModel {
         compared[request.id] == request.verificationCode
     }
 
-    /// Off by default: trusting a sign-in lets it join new devices without asking.
+    /// Off unless the gateway suggests it: remembering a sign-in lets it add devices without asking.
+    /// Never for a Google account other than the one the gateway was connected with.
     public func setTrustSignIn(_ value: Bool, requestId: String) {
-        guard requests.contains(where: { $0.id == requestId && $0.canTrustSignIn == true }) else { return }
+        guard requests.contains(where: { $0.id == requestId && Self.rememberable($0) }) else { return }
         if value { trustedSignIns.insert(requestId) } else { trustedSignIns.remove(requestId) }
     }
 
@@ -179,10 +208,16 @@ public final class GatewayPairingApprovalModel {
         requests = []
         compared = [:]
         trustedSignIns = []
+        suggested = []
+        stepUpRequired = false
         error = nil
         stepUp = nil
         denied = nil
         askingFirst = false
+    }
+
+    static func rememberable(_ request: GatewayPairingApprovalRequest) -> Bool {
+        request.canTrustSignIn == true && request.otherGoogleAccount != true
     }
 
     private func pending(_ request: GatewayPairingApprovalRequest) -> Bool {

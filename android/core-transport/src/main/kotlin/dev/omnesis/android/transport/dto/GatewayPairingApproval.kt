@@ -20,7 +20,20 @@ data class GatewayPairingApprovalRequest(
     val signIn: String? = null,
     /** Its device key belongs to a device the owner removed before. */
     val revokedDevice: Boolean = false,
+    /** The address Google verified in the token the gateway checked itself; never one the device named. */
+    val signInEmail: String? = null,
+    /** The gateway suggests remembering this sign-in: the first confirmation on this gateway. */
+    val rememberByDefault: Boolean = false,
+    /** A Google account other than the one the gateway was connected with: never remembered here. */
+    val otherGoogleAccount: Boolean = false,
 )
+
+/**
+ * `GET /admin/cloud-pairing/requests`: the waiting devices, and whether approving one from this
+ * phone asks for the owner's passkey first (a label only; the gateway checks each approval).
+ */
+@Serializable
+data class GatewayPairingApprovals(val items: List<GatewayPairingApprovalRequest>, val stepUpRequired: Boolean = false)
 
 /**
  * Where a passkey ceremony on this gateway runs, as `/devices/account/config` advertises it
@@ -50,6 +63,7 @@ data class GatewayPasskeyCeremony(
 
 interface GatewayPairingApproving {
     suspend fun pairingApprovalRequests(): List<GatewayPairingApprovalRequest>
+    suspend fun pairingApprovals(): GatewayPairingApprovals = GatewayPairingApprovals(pairingApprovalRequests())
     suspend fun decidePairingApproval(requestId: String, approve: Boolean, trustSignIn: Boolean = false)
     /**
      * Where this gateway runs passkey ceremonies, or null when approving with a passkey can't work
@@ -69,9 +83,6 @@ interface GatewayPairingApproving {
     suspend fun approvePairingWithPasskey(requestId: String, proof: JsonObject, trustSignIn: Boolean = false): Unit =
         throw UnsupportedOperationException("passkey approval is not available")
 }
-
-@Serializable
-internal data class GatewayPairingApprovalRequests(val items: List<GatewayPairingApprovalRequest>)
 
 /** `trustSignIn` is left out unless it is set. */
 @Serializable

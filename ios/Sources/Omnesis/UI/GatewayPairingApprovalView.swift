@@ -107,7 +107,12 @@ struct GatewayPairingApprovalView: View {
 
     private func decisionControls(_ request: GatewayPairingApprovalRequest) -> some View {
         VStack(alignment: .leading, spacing: Theme.Spacing.md) {
-            if request.canTrustSignIn == true {
+            if request.otherGoogleAccount == true {
+                Text(PairingApprovalPresentation.otherGoogleAccount)
+                    .font(.footnote)
+                    .foregroundStyle(Theme.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else if request.canTrustSignIn == true {
                 Toggle(
                     isOn: Binding(
                         get: { model.trustsSignIn(request) },
@@ -116,6 +121,8 @@ struct GatewayPairingApprovalView: View {
                 ) {
                     VStack(alignment: .leading, spacing: Theme.Spacing.xs) {
                         Text(PairingApprovalPresentation.remember(signIn: request.signIn)).foregroundStyle(Theme.textPrimary)
+                        // The address Google verified for the gateway, large: the owner checks it is theirs.
+                        if let email = request.signInEmail { Text(email).font(.headline).foregroundStyle(Theme.textPrimary) }
                         Text(PairingApprovalPresentation.rememberDetail).font(.footnote).foregroundStyle(Theme.textSecondary)
                     }
                     .fixedSize(horizontal: false, vertical: true)
@@ -125,7 +132,8 @@ struct GatewayPairingApprovalView: View {
                 .accessibilityIdentifier("pairingApproval.trustSignIn")
             }
             Button { decide(request, approve: true) } label: {
-                Text(PairingApprovalPresentation.approve).frame(maxWidth: .infinity)
+                Text(model.stepUpRequired ? PairingApprovalPresentation.approveWithFaceID : PairingApprovalPresentation.approve)
+                    .frame(maxWidth: .infinity)
             }
             .buttonStyle(.borderedProminent)
             .tint(Theme.accent)
@@ -190,8 +198,11 @@ struct GatewayPairingApprovalView: View {
 
     /// The kind of device, and the sign-in it used when the gateway verified one.
     static func kindLine(_ request: GatewayPairingApprovalRequest) -> String {
-        [DeviceKindMeta.label(request.kind), DeviceJoinPresentation.signInMethod(request.signIn).map { "signed in with \($0)" }]
-            .compactMap(\.self).joined(separator: " · ")
+        [
+            DeviceKindMeta.label(request.kind),
+            DeviceJoinPresentation.signInMethod(request.signIn).map { "signed in with \($0)" },
+            request.signInEmail,
+        ].compactMap(\.self).joined(separator: " · ")
     }
 
     private func refresh() async {

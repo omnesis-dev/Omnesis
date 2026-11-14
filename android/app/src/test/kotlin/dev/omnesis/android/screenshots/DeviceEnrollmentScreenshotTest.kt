@@ -113,6 +113,28 @@ class DeviceEnrollmentScreenshotTest {
         GatewayPairingApprovalContent(GatewayPairingApprovalController.State(requests = listOf(request)), NOW, {}, { _, _ -> }, {})
     }
 
+    /**
+     * The first confirmation on this gateway: the verified Google address in large type and
+     * "Remember" suggested on; approving from this phone asks for the owner's fingerprint.
+     */
+    @Test fun approval_of_the_first_confirmation() = capture("approval-first-confirmation") {
+        GatewayPairingApprovalContent(
+            GatewayPairingApprovalController.State(
+                requests = listOf(request.copy(kind = "portal", name = "Maya's MacBook", signInEmail = "maya@example.com", rememberByDefault = true)),
+                trustSignIn = setOf(request.requestId),
+                stepUpRequired = true,
+            ),
+            NOW, {}, { _, _ -> }, {},
+        )
+    }
+
+    @Test fun approval_of_another_google_account() = capture("approval-other-account") {
+        GatewayPairingApprovalContent(
+            GatewayPairingApprovalController.State(requests = listOf(request.copy(signInEmail = "jamie@example.org", otherGoogleAccount = true))),
+            NOW, {}, { _, _ -> }, {},
+        )
+    }
+
     /** A device the owner removed before is back: a red line above its code. */
     @Test fun approval_of_a_device_removed_before() = capture("approval-removed-before") {
         GatewayPairingApprovalContent(

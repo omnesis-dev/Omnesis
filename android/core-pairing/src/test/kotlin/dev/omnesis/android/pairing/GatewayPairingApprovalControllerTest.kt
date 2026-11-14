@@ -95,6 +95,22 @@ class GatewayPairingApprovalControllerTest {
         assertNull(model.state.value.denied)
     }
 
+    /** M5: the gateway suggests remembering the first confirmation, never for another Google account. */
+    @Test fun `the first confirmation is remembered by default once and another account never`() = runTest {
+        val first = request().copy(canTrustSignIn = true, rememberByDefault = true, signIn = "google", signInEmail = "maya@example.com")
+        val other = request().copy(requestId = "00000000-0000-4000-8000-000000000912", canTrustSignIn = true, otherGoogleAccount = true)
+        val client = Client(listOf(first, other)).apply { stepUpRequired = true }
+        val model = createController()
+        model.refresh(client)
+        assertTrue(model.state.value.stepUpRequired)
+        assertEquals(setOf(first.requestId), model.state.value.trustSignIn)
+        model.setTrustSignIn(other.requestId, true)
+        assertEquals(setOf(first.requestId), model.state.value.trustSignIn)
+        model.setTrustSignIn(first.requestId, false)
+        model.refresh(client)
+        assertTrue("The owner's own choice was overridden", model.state.value.trustSignIn.isEmpty())
+    }
+
     @Test fun `only requests still waiting are listed`() = runTest {
         val approved = request(status = "approved").copy(requestId = "00000000-0000-4000-8000-000000000902")
         val denied = request(status = "denied").copy(requestId = "00000000-0000-4000-8000-000000000903")
@@ -340,6 +356,8 @@ class GatewayPairingApprovalControllerTest {
     private class Client(var rows: List<GatewayPairingApprovalRequest>) : GatewayPairingApproving, dev.omnesis.android.transport.dto.CloudRelayManaging {
         var failure = false
         var decisionError: Exception? = null
+        var stepUpRequired = false
+        override suspend fun pairingApprovals() = dev.omnesis.android.transport.dto.GatewayPairingApprovals(pairingApprovalRequests(), stepUpRequired)
         val policies = mutableListOf<String>()
         override suspend fun setCloudRelayEnrollmentPolicy(policy: String): dev.omnesis.android.transport.dto.CloudRelayStatus {
             policies += policy

@@ -69,6 +69,7 @@ internal const val PAIRING_APPROVAL_REMEMBER_DETAIL = "Next time you sign in wit
 internal const val PAIRING_APPROVAL_DENIED = "Denied. If you didn't try to connect a device, someone may know your Google password."
 internal const val PAIRING_APPROVAL_ASK_FIRST = "Make new devices always ask me"
 internal const val PAIRING_APPROVAL_ASKING_FIRST = "New devices now always ask you first."
+internal const val PAIRING_APPROVAL_OTHER_GOOGLE_ACCOUNT = "This isn't the Google account you connected with, so it can't be remembered."
 
 internal fun pairingApprovalHeadline(name: String) = "$name wants to connect"
 
@@ -171,7 +172,7 @@ fun GatewayPairingApprovalContent(
                 Column(verticalArrangement = Arrangement.spacedBy(OmSpacing.sm)) {
                     Text(pairingApprovalHeadline(request.name), style = MaterialTheme.typography.titleMedium, color = c.textPrimary)
                     Text(
-                        listOfNotNull(DeviceKindMeta.label(request.kind), deviceSignInMethod(request.signIn)?.let { "signed in with $it" }).joinToString(" · "),
+                        listOfNotNull(DeviceKindMeta.label(request.kind), deviceSignInMethod(request.signIn)?.let { "signed in with $it" }, request.signInEmail).joinToString(" · "),
                         style = MaterialTheme.typography.bodySmall,
                         color = c.textSecondary,
                     )
@@ -179,7 +180,8 @@ fun GatewayPairingApprovalContent(
                     if (request.status == "pending" && request.expiresAt > now) {
                         Text(pairingApprovalQuestion(request.kind), style = MaterialTheme.typography.bodyMedium, color = c.textPrimary, modifier = Modifier.testTag("pairingApproval.explanation"))
                         VerificationCode(request.verificationCode, Modifier.fillMaxWidth().padding(vertical = OmSpacing.sm).testTag("pairingApproval.code"), TextAlign.Center, large = true)
-                        if (request.canTrustSignIn) {
+                        if (request.otherGoogleAccount) Text(PAIRING_APPROVAL_OTHER_GOOGLE_ACCOUNT, style = MaterialTheme.typography.bodySmall, color = c.textSecondary)
+                        else if (request.canTrustSignIn) {
                             val trusted = request.requestId in state.trustSignIn
                             Row(
                                 Modifier.fillMaxWidth().testTag("pairingApproval.trust").toggleable(
@@ -192,6 +194,8 @@ fun GatewayPairingApprovalContent(
                             ) {
                                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                                     Text(pairingApprovalRemember(request.signIn), color = c.textPrimary)
+                                    // The address Google verified for the gateway, large: the owner checks it is theirs.
+                                    request.signInEmail?.let { Text(it, style = MaterialTheme.typography.titleMedium, color = c.textPrimary) }
                                     Text(PAIRING_APPROVAL_REMEMBER_DETAIL, style = MaterialTheme.typography.bodySmall, color = c.textSecondary)
                                 }
                                 Switch(checked = trusted, onCheckedChange = null, enabled = !state.busy)
@@ -202,7 +206,7 @@ fun GatewayPairingApprovalContent(
                             enabled = !state.busy,
                             colors = ButtonDefaults.buttonColors(containerColor = c.accent, contentColor = Color.White),
                             modifier = Modifier.fillMaxWidth().testTag("pairingApproval.approve"),
-                        ) { Text("Yes, approve") }
+                        ) { Text(if (state.stepUpRequired) "Yes, approve with fingerprint" else "Yes, approve") }
                         // As on the portal: the owner's passkey, confirmed on this gateway, approves
                         // exactly this request. A portal's request is approved only in its browser.
                         if (state.passkeyApproval && request.kind != "portal") OutlinedButton(

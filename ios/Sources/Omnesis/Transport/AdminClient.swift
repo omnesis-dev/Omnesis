@@ -48,8 +48,8 @@ public final class AdminClient: Sendable {
 
     public func pairingApprovalRequests() async throws -> [GatewayPairingApprovalRequest] {
         let (data, _) = try await dispatch(method: "GET", path: "/admin/cloud-pairing/requests", body: nil)
-        struct Envelope: Decodable { let items: [GatewayPairingApprovalRequest] }
-        return try decodeOrThrow(Envelope.self, from: data).items
+        // The envelope also says whether approving asks for a passkey: `pairingApprovals()`.
+        return try decodeOrThrow(GatewayPairingApprovals.self, from: data).items
     }
 
     public func decidePairingApproval(requestId: String, approve: Bool) async throws {

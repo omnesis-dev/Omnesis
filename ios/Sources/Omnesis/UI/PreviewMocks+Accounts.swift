@@ -68,7 +68,9 @@ extension PreviewMocks {
             verificationCode: "465 774",
             expiresAt: (Date().timeIntervalSince1970 + 86400) * 1000,
             signIn: "google",
-            canTrustSignIn: true
+            canTrustSignIn: true,
+            signInEmail: "maya@example.com",
+            rememberByDefault: true
         ),
     ])
 

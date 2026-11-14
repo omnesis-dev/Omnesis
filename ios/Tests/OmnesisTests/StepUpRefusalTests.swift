@@ -175,3 +175,54 @@ final class PairingDenialFollowUpTests: XCTestCase {
         XCTAssertFalse(model.askingFirst)
     }
 }
+
+/// M5: the gateway suggests remembering the first confirmation, never for another Google account.
+@MainActor
+final class PairingRememberDefaultTests: XCTestCase {
+    private struct Gateway: GatewayPairingApproving {
+        let rows: [GatewayPairingApprovalRequest]
+        func pairingApprovalRequests() async throws -> [GatewayPairingApprovalRequest] {
+            rows
+        }
+
+        func pairingApprovals() async throws -> GatewayPairingApprovals {
+            GatewayPairingApprovals(items: rows, stepUpRequired: true)
+        }
+
+        func decidePairingApproval(requestId _: String, approve _: Bool) async throws {}
+    }
+
+    private func row(_ id: String, remember: Bool? = nil, other: Bool? = nil) -> GatewayPairingApprovalRequest {
+        GatewayPairingApprovalRequest(
+            requestId: id,
+            kind: "portal",
+            name: "Fictional laptop",
+            status: "pending",
+            verificationCode: "465 774",
+            expiresAt: 1_100_000,
+            signIn: "google",
+            canTrustSignIn: true,
+            signInEmail: "maya@example.com",
+            rememberByDefault: remember,
+            otherGoogleAccount: other
+        )
+    }
+
+    func testTheFirstConfirmationIsRememberedByDefaultOnceAndAnotherAccountNever() async {
+        let first = row("00000000-0000-4000-8000-000000000911", remember: true)
+        let other = row("00000000-0000-4000-8000-000000000912", other: true)
+        let plain = row("00000000-0000-4000-8000-000000000913")
+        let gateway = Gateway(rows: [first, other, plain])
+        let model = GatewayPairingApprovalModel(now: { Date(timeIntervalSince1970: 1000) })
+        await model.refresh(client: gateway)
+        XCTAssertTrue(model.stepUpRequired)
+        XCTAssertTrue(model.trustsSignIn(first))
+        XCTAssertFalse(model.trustsSignIn(plain))
+        model.setTrustSignIn(true, requestId: other.id)
+        XCTAssertFalse(model.trustsSignIn(other), "Another Google account was remembered")
+        // The owner's own choice stands across reads.
+        model.setTrustSignIn(false, requestId: first.id)
+        await model.refresh(client: gateway)
+        XCTAssertFalse(model.trustsSignIn(first))
+    }
+}

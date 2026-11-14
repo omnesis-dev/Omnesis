@@ -9,7 +9,7 @@ import dev.omnesis.android.transport.dto.CloudRelayStatus
 import dev.omnesis.android.transport.dto.DeviceEnrollmentPolicyBody
 import dev.omnesis.android.transport.dto.GatewayPairingApproving
 import dev.omnesis.android.transport.dto.GatewayPairingApprovalRequest
-import dev.omnesis.android.transport.dto.GatewayPairingApprovalRequests
+import dev.omnesis.android.transport.dto.GatewayPairingApprovals
 import dev.omnesis.android.transport.dto.GatewayPairingApprovalDecision
 import dev.omnesis.android.transport.dto.GatewayAccountPairingConfig
 import dev.omnesis.android.transport.dto.GatewayPairingApprovalCeremonyRequest
@@ -137,8 +137,9 @@ import okhttp3.HttpUrl
  * actions. Mirrors the iOS `AdminClient` routes/shapes exactly.
  */
 class AdminClient(private val http: GatewayHttp) : GatewayPairingApproving, CloudRelayManaging {
-    override suspend fun pairingApprovalRequests(): List<GatewayPairingApprovalRequest> =
-        http.getJson<GatewayPairingApprovalRequests>("admin/cloud-pairing/requests").items
+    override suspend fun pairingApprovalRequests(): List<GatewayPairingApprovalRequest> = pairingApprovals().items
+
+    override suspend fun pairingApprovals(): GatewayPairingApprovals = http.getJson("admin/cloud-pairing/requests")
 
     override suspend fun decidePairingApproval(requestId: String, approve: Boolean, trustSignIn: Boolean) {
         http.postJson<GatewayPairingApprovalDecision, OkResponse>(

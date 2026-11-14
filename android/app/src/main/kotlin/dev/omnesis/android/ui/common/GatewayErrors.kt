@@ -204,7 +204,7 @@ private fun transportErrorKind(t: Throwable): GatewayErrorKind = when (t) {
  * address of its own, so only the computer running Omnesis can make the change. Mirrors iOS.
  */
 enum class StepUpRefusal(val title: String, val message: String) {
-    REQUIRED("Confirm it's you", "This change needs Face ID on your gateway's page."),
+    REQUIRED("Confirm it's you", "This change needs your fingerprint on your gateway's page."),
     UNAVAILABLE("Security lock is on", "This change can only be made on the computer running Omnesis right now."),
     ;
 

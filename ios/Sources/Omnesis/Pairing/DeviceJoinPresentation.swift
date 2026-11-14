@@ -28,6 +28,10 @@ public enum DeviceJoinPresentation {
 /// portal use the same ones: a question about the device, with a code the owner looks at.
 public enum PairingApprovalPresentation {
     public static let approve = "Yes, approve"
+    /// When approving from this phone asks for the owner's passkey on the gateway's page.
+    public static let approveWithFaceID = "Yes, approve with Face ID"
+    /// Remembering is never offered for a Google account the gateway was not connected with.
+    public static let otherGoogleAccount = "This isn't the Google account you connected with, so it can't be remembered."
     public static let deny = "No, deny"
     public static let title = "Waiting for your OK"
     public static let empty = "No devices are waiting for your OK."
