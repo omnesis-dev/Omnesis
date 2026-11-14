@@ -559,9 +559,10 @@ function runAll() {
  * nothing but the SPDX line, a shebang or blank lines before it.
  */
 export function isOwnCopyrightHeaderLine(path, added) {
-  if (!path || !COPYRIGHT_LINE_RE.test(added)) return false;
-  const head = safeRead(join(REPO_ROOT, path)).split("\n").slice(0, 4);
-  const index = head.indexOf(added);
+  const candidate = added.endsWith("\r") ? added.slice(0, -1) : added;
+  if (!path || !COPYRIGHT_LINE_RE.test(candidate)) return false;
+  const head = safeRead(join(REPO_ROOT, path)).split(/\r?\n/u).slice(0, 4);
+  const index = head.indexOf(candidate);
   if (index === -1) return false;
   const prefix = head.slice(0, index).map((line) => line.trim());
   return (

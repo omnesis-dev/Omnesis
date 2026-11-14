@@ -61,15 +61,18 @@ describe("the forwardable tools as every copy states them", () => {
   // Hermes registers a user plugin's tools whether or not its manifest names
   // them, and its plugin doctor loads the plugin with no connection, so only the
   // tools every load registers can be declared without a warning.
-  test("the Hermes manifest declares only the tools every load registers", () => {
-    const provided = /^provides_tools:\n((?: {2}- [a-z_]+\n)+)/mu.exec(
-      source("../hermes/plugin.yaml"),
-    );
-    if (!provided) throw new Error("the Hermes manifest declares no tools");
-    expect([...provided[1]!.matchAll(/- ([a-z_]+)/gu)].map((match) => match[1])).toEqual([
-      "omnesis_answer",
-      "omnesis_subscription_answer",
-      "omnesis_subscriptions",
-    ]);
-  });
+  test.each(["\n", "\r\n"])(
+    "the Hermes manifest declares only the tools every load registers with %j lines",
+    (newline) => {
+      const provided = /^provides_tools:\r?\n((?: {2}- [a-z_]+\r?\n)+)/mu.exec(
+        source("../hermes/plugin.yaml").replace(/\r?\n/gu, newline),
+      );
+      if (!provided) throw new Error("the Hermes manifest declares no tools");
+      expect([...provided[1]!.matchAll(/- ([a-z_]+)/gu)].map((match) => match[1])).toEqual([
+        "omnesis_answer",
+        "omnesis_subscription_answer",
+        "omnesis_subscriptions",
+      ]);
+    },
+  );
 });

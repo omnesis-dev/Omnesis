@@ -81,6 +81,8 @@ const pendingServerRequests = new Map();
 
 log("startup", {
   pid: process.pid,
+  // The Windows job host retains ownership until every member is joined.
+  ownerPid: process.platform === "win32" ? process.ppid : process.pid,
   argv: process.argv.slice(2),
   cwd: process.cwd(),
   codexHome: process.env.CODEX_HOME ?? null,

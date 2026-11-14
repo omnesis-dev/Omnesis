@@ -20,8 +20,8 @@
  */
 
 import { spawn } from "node:child_process";
-import { assertNever } from "@omnesis/core";
-import { harnessClientName } from "@omnesis/agent-integration";
+import { assertNever, runWindowsJob } from "@omnesis/core";
+import { resolveHarnessCommand, harnessClientName } from "@omnesis/agent-integration";
 import { SKILL_NAME, type Harness } from "./harness-skills.js";
 import {
   formatCommandSpec,
@@ -319,12 +319,44 @@ export function spawnHarnessCommand(
   return new Promise((resolve) => {
     let stdout = "";
     let settled = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
     const settle = (result: HarnessCommandResult): void => {
       if (settled) return;
       settled = true;
+      if (timer) clearTimeout(timer);
       resolve(result);
     };
-    const child = spawn(spec.command, spec.args, {
+    let invocation;
+    try {
+      invocation = resolveHarnessCommand(spec.command, spec.args, {
+        env: { ...process.env, ...spec.env },
+      });
+    } catch {
+      settle({ code: 127, stdout });
+      return;
+    }
+    if (process.platform === "win32" && mode === "capture") {
+      void runWindowsJob(invocation.command, invocation.args, {
+        cwd: spec.cwd,
+        env: { ...process.env, ...spec.env },
+        timeoutMs: CAPTURE_TIMEOUT_MS,
+        completion: "root",
+      }).then(
+        (result) =>
+          settle({
+            code:
+              result.failure === "timeout"
+                ? 124
+                : result.failure === "spawn"
+                  ? 127
+                  : (result.exitCode ?? 1),
+            stdout: Buffer.from(result.stdout).toString("utf8"),
+          }),
+        () => settle({ code: 127, stdout }),
+      );
+      return;
+    }
+    const child = spawn(invocation.command, invocation.args, {
       cwd: spec.cwd,
       env: { ...process.env, ...spec.env },
       stdio: mode === "capture" ? ["ignore", "pipe", "ignore"] : "inherit",
@@ -333,7 +365,7 @@ export function spawnHarnessCommand(
     child.stdout?.on("data", (chunk: string) => {
       stdout += chunk;
     });
-    const timer =
+    timer =
       mode === "capture"
         ? setTimeout(() => {
             child.kill("SIGKILL");

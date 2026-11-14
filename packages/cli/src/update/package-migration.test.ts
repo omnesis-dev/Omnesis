@@ -17,6 +17,7 @@ import {
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
+import { systemdEnvLine, systemdEscapeArg } from "../service/units.js";
 import { UpdateInterruptionRouter } from "./interruption.js";
 import { sourceRecoveryLauncher } from "./source-launcher.js";
 import {
@@ -38,7 +39,7 @@ afterEach(() => {
 });
 
 function fixture(withServices = false, aliased = false) {
-  const physicalHome = realpathSync(mkdtempSync(join(tmpdir(), "omnesis-package-migration-")));
+  const physicalHome = realpathSync(mkdtempSync(join(tmpdir(), "omnesis package migration-")));
   const home = aliased ? `${physicalHome}-alias` : physicalHome;
   if (aliased) {
     symlinkSync(physicalHome, home, "dir");
@@ -75,7 +76,7 @@ function fixture(withServices = false, aliased = false) {
   const unit = (component: "gateway" | "collector") =>
     join(unitDir, `omnesis-${component}.service`);
   const unitText = (component: string) =>
-    `[Unit]\nDescription=${component}\n[Service]\nEnvironment=KEEP=exactly\nExecStart=${launcher} ${component} run\n[Install]\nWantedBy=default.target\n`;
+    `[Unit]\nDescription=${component}\n[Service]\nEnvironment=KEEP=exactly\nExecStart=${[launcher, component, "run"].map(systemdEscapeArg).join(" ")}\n[Install]\nWantedBy=default.target\n`;
   if (withServices) {
     writeFileSync(unit("gateway"), unitText("gateway"));
     writeFileSync(unit("collector"), unitText("collector"));
@@ -296,7 +297,7 @@ describe("source-to-package migration", () => {
       fx.unit("gateway"),
       fx
         .unitText("gateway")
-        .replace("Environment=KEEP=exactly", `Environment=OMNESIS_CONFIG_DIR=${fx.configDir}`),
+        .replace("Environment=KEEP=exactly", systemdEnvLine("OMNESIS_CONFIG_DIR", fx.configDir)),
     );
     const healthCalls: Array<[string, string, number]> = [];
     deps.awaitHealth = async (version, bind, port) => {
@@ -316,7 +317,10 @@ describe("source-to-package migration", () => {
       fx.unit("gateway"),
       fx
         .unitText("gateway")
-        .replace("Environment=KEEP=exactly", `Environment=OMNESIS_CONFIG_DIR=${serviceConfigDir}`),
+        .replace(
+          "Environment=KEEP=exactly",
+          systemdEnvLine("OMNESIS_CONFIG_DIR", serviceConfigDir),
+        ),
     );
 
     await expect(
@@ -511,7 +515,7 @@ describe("source-to-package migration", () => {
       fx.unit("gateway"),
       fx
         .unitText("gateway")
-        .replace("Environment=KEEP=exactly", `Environment=SOURCE_HELPER=${fx.rootDir}/tool`),
+        .replace("Environment=KEEP=exactly", systemdEnvLine("SOURCE_HELPER", `${fx.rootDir}/tool`)),
     );
     deps.approve = async () => true;
 

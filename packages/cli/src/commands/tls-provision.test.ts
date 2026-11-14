@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { chmodSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { describe, it, expect, vi } from "vitest";
 import {
   defaultTlsProvisionEnv,
@@ -17,24 +18,29 @@ import {
 const CONFIG_DIR = join(tmpdir(), "omnesis-test-config");
 
 describe("defaultTlsProvisionEnv", () => {
-  it("uses the connected macOS app for status, DNS, and certificate issuance", () => {
-    const home = mkdtempSync(join(tmpdir(), "omnesis-tailscale-cli-"));
+  it("uses the connected bundled-app CLI mode for status, DNS, and certificate issuance", () => {
+    const home = mkdtempSync(join(tmpdir(), "omnesis tailscale-cli-"));
     try {
-      const cli = join(home, "Applications/Tailscale.app/Contents/MacOS/Tailscale");
-      const disconnected = join(home, "bin/tailscale");
-      mkdirSync(dirname(cli), { recursive: true });
-      mkdirSync(dirname(disconnected), { recursive: true });
-      writeFileSync(disconnected, '#!/bin/sh\nprintf \'{"BackendState":"NeedsLogin"}\\n\'\n');
+      const preload = join(home, "tailscale-fixture.mjs");
       writeFileSync(
-        cli,
-        '#!/bin/sh\n[ "$TAILSCALE_BE_CLI" = 1 ] || exit 1\ncase "$1" in\n  status) if [ "$2" = --json ]; then printf \'{"BackendState":"Running","Self":{"DNSName":"gw.example.ts.net."}}\\n\'; fi ;;\n  cert) printf "CERT" > "$3"; printf "KEY" > "$5" ;;\n  *) exit 1 ;;\nesac\n',
+        preload,
+        `import {basename} from 'node:path';import {writeFileSync} from 'node:fs';
+        const connected=process.env.TAILSCALE_BE_CLI==='1';
+        if(basename(process.argv[1])==='cert'){
+          if(!connected)process.exit(1);
+          const args=process.argv.slice(2);writeFileSync(args[args.indexOf('--cert-file')+1],'CERT');writeFileSync(args[args.indexOf('--key-file')+1],'KEY');
+        }else console.log(JSON.stringify(connected?{BackendState:'Running',Self:{DNSName:'gw.example.ts.net.'}}:{BackendState:'NeedsLogin'}));
+        process.exit(0);`,
       );
-      chmodSync(cli, 0o755);
-      chmodSync(disconnected, 0o755);
+      vi.stubEnv("TAILSCALE_BE_CLI", undefined);
+      vi.stubEnv(
+        "NODE_OPTIONS",
+        `${process.env.NODE_OPTIONS ?? ""} --import=${pathToFileURL(preload).href}`,
+      );
       const env = defaultTlsProvisionEnv(
         [
-          { file: disconnected, bundledApp: false },
-          { file: cli, bundledApp: true },
+          { file: process.execPath, bundledApp: false },
+          { file: process.execPath, bundledApp: true },
         ],
         home,
       );
@@ -46,6 +52,7 @@ describe("defaultTlsProvisionEnv", () => {
       expect(readFileSync(cert, "utf8")).toBe("CERT");
       expect(readFileSync(key, "utf8")).toBe("KEY");
     } finally {
+      vi.unstubAllEnvs();
       rmSync(home, { recursive: true, force: true });
     }
   });

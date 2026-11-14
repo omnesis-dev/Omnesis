@@ -5,6 +5,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, test, expect, beforeEach, afterEach } from "vitest";
+import { inspectWindowsPrivatePathSync } from "./windows-private-file.js";
 import {
   classifyCollectorAuth,
   COLLECTOR_PAIRING_STATE_FILE,
@@ -149,7 +150,11 @@ describe("pairing state file", () => {
   test("the file is owner-only — it sits beside the token files", async () => {
     writeCollectorPairingState(dir, paired());
     const { statSync } = await import("node:fs");
-    expect(statSync(join(dir, COLLECTOR_PAIRING_STATE_FILE)).mode & 0o777).toBe(0o600);
+    if (process.platform === "win32")
+      expect(
+        inspectWindowsPrivatePathSync(join(dir, COLLECTOR_PAIRING_STATE_FILE), "file").private,
+      ).toBe(true);
+    else expect(statSync(join(dir, COLLECTOR_PAIRING_STATE_FILE)).mode & 0o777).toBe(0o600);
   });
 
   test("an absent, malformed or incomplete file reads as no record", () => {

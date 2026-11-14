@@ -188,13 +188,28 @@ test("resolves the exact gateway dependency with spaces without assuming exporte
   }
 });
 
+test("an already cancelled command never starts a subprocess", async () => {
+  let retired = false;
+  const result = await runOwned(process.execPath, ["-e", "process.exit(99)"], {
+    cwd: process.cwd(),
+    env: {},
+    timeoutMs: 1000,
+    signal: AbortSignal.abort(),
+    retire: async () => {
+      retired = true;
+    },
+  });
+  expect(result).toEqual({ code: null, signal: null, timedOut: false, interrupted: true });
+  expect(retired).toBe(false);
+});
+
 test("owned subprocess timeout and secret output remain fixed numeric status", async () => {
   const scratch = realpathSync(mkdtempSync(join(tmpdir(), "vector-process-")));
   try {
     const failure = await runOwned(
       process.execPath,
       ["-e", "console.error('SECRET-CANARY');process.exit(7)"],
-      { cwd: scratch, env: {}, timeoutMs: 1000 },
+      { cwd: scratch, env: {}, timeoutMs: process.platform === "win32" ? 20_000 : 1000 },
     );
     expect(failure).toEqual({ code: 7, signal: null, timedOut: false, interrupted: false });
     const timeout = await runOwned(
@@ -203,7 +218,7 @@ test("owned subprocess timeout and secret output remain fixed numeric status", a
       { cwd: scratch, env: {}, timeoutMs: 250 },
     );
     expect(timeout.timedOut).toBe(true);
-    expect(timeout.signal).toBe("SIGKILL");
+    if (process.platform !== "win32") expect(timeout.signal).toBe("SIGKILL");
   } finally {
     rmSync(scratch, { recursive: true, force: true });
   }
@@ -220,15 +235,19 @@ test("owns and drains a surviving grandchild after a successful leader exits", a
         await runOwned(process.execPath, ["-e", program, pidfile], {
           cwd: scratch,
           env: {},
-          timeoutMs: 2000,
+          timeoutMs: process.platform === "win32" ? 20_000 : 2000,
         })
       ).code,
     ).toBe(0);
     const pid = Number(readFileSync(pidfile, "utf8"));
-    const state = spawnSync("ps", ["-p", String(pid), "-o", "stat="], {
-      encoding: "utf8",
-    }).stdout.trim();
-    expect(!state || state.startsWith("Z")).toBe(true);
+    if (process.platform === "win32") {
+      expect(() => process.kill(pid, 0)).toThrow();
+    } else {
+      const state = spawnSync("ps", ["-p", String(pid), "-o", "stat="], {
+        encoding: "utf8",
+      }).stdout.trim();
+      expect(!state || state.startsWith("Z")).toBe(true);
+    }
   } finally {
     rmSync(scratch, { recursive: true, force: true });
   }
@@ -247,26 +266,30 @@ test("cancellation promptly drains TERM-resistant leader and grandchild without 
   try {
     const helper = new URL("../native-vector-compat.mjs", import.meta.url).href;
     const program = `import {runOwned} from ${JSON.stringify(helper)};import {existsSync,readFileSync} from 'node:fs';import {setTimeout as delay} from 'node:timers/promises';
-const started=Date.now();const ready=process.argv[1];
+const ready=process.argv[1];const controller=new AbortController();
 const command="const{spawn}=require('node:child_process');const{writeFileSync}=require('node:fs');process.on('SIGTERM',()=>{});const child=spawn(process.execPath,['-e',\\"process.on('SIGTERM',()=>{});setInterval(()=>{},1000)\\"],{stdio:'ignore'});writeFileSync(process.argv[1],String(child.pid));setInterval(()=>{},1000);";
-const task=runOwned(process.execPath,['-e',command,ready],{cwd:process.cwd(),env:{},timeoutMs:600000});
-for(let i=0;i<100&&!existsSync(ready);i++)await delay(10);
-const wasReady=existsSync(ready);process.kill(process.pid,'SIGTERM');
+const task=runOwned(process.execPath,['-e',command,ready],{cwd:process.cwd(),env:{},timeoutMs:600000,signal:controller.signal});
+const deadline=Date.now()+(process.platform==='win32'?20000:1000);while(Date.now()<deadline&&!existsSync(ready))await delay(10);
+const wasReady=existsSync(ready);const started=Date.now();controller.abort();
 const result=await task;if(!wasReady)throw Error('child not ready');console.log(JSON.stringify({result,pid:Number(readFileSync(ready,'utf8')),elapsed:Date.now()-started}));`;
     const result = spawnSync(
       process.execPath,
       ["--input-type=module", "-e", program, join(scratch, "ready")],
-      { cwd: scratch, encoding: "utf8", timeout: 15000 },
+      { cwd: scratch, encoding: "utf8", timeout: process.platform === "win32" ? 30_000 : 15000 },
     );
     expect(result.status, result.stderr).toBe(0);
     const data = JSON.parse(result.stdout);
     expect(data.result.interrupted).toBe(true);
     expect(data.result.timedOut).toBe(false);
     expect(data.elapsed).toBeLessThan(5000);
-    const state = spawnSync("ps", ["-p", String(data.pid), "-o", "stat="], {
-      encoding: "utf8",
-    }).stdout.trim();
-    expect(!state || state.startsWith("Z")).toBe(true);
+    if (process.platform === "win32") {
+      expect(() => process.kill(data.pid, 0)).toThrow();
+    } else {
+      const state = spawnSync("ps", ["-p", String(data.pid), "-o", "stat="], {
+        encoding: "utf8",
+      }).stdout.trim();
+      expect(!state || state.startsWith("Z")).toBe(true);
+    }
   } finally {
     rmSync(scratch, { recursive: true, force: true });
   }
@@ -306,7 +329,9 @@ test("actual installed native vectors succeed without touching dependency files 
   expect(result).toEqual({ repaired: false, applicable: true });
 });
 
-test.each(["published-hoisted", "published-nested", "source-workspace", "global-nested"])(
+test
+  .skipIf(process.platform === "win32")
+  .each(["published-hoisted", "published-nested", "source-workspace", "global-nested"])(
   "real npm rebuild targets only resolved usearch in %s with special path characters",
   async (layout) => {
     const scratch = realpathSync(mkdtempSync(join(tmpdir(), "native npm scope ' spaces ")));
@@ -451,7 +476,7 @@ test("only compilation inherits the header-cache HOME and explicit network/toolc
   }
 });
 
-test.each([
+test.skipIf(process.platform === "win32").each([
   ["project denial", false, {}],
   ["environment ignore", true, { npm_config_ignore_scripts: "true" }],
   ["uppercase environment ignore", true, { NPM_CONFIG_IGNORE_SCRIPTS: "true" }],
@@ -541,7 +566,7 @@ test.each(["relative/npm-cli.js", "/nonexistent-native-vector-fixture/npm-cli.js
   },
 );
 
-test.each(
+test.skipIf(process.platform === "win32").each(
   [
     [
       "project",

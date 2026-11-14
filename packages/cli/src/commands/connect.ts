@@ -39,6 +39,7 @@ import {
   isSystemTrust,
   pinnedTrust,
   resolveHarnessBinary,
+  resolveHarnessCommand,
   upgradeLegacyIntegrationCredentials,
   writeIntegrationCredentials,
   type GatewayCapabilities,
@@ -207,6 +208,9 @@ export function skillFilePath(harness: Harness, home: string): string {
  */
 function hermesHomeExecutable(home: string): string | undefined {
   return [
+    ...(process.platform === "win32"
+      ? [join(home, "hermes-agent", "venv", "Scripts", "hermes.exe")]
+      : []),
     join(home, "hermes-agent", "venv", "bin", "hermes"),
     join(home, "hermes-agent", "hermes"),
   ].find((candidate) => existsSync(candidate));
@@ -718,7 +722,13 @@ function attemptInstaller(
   args: string[],
   environment: NodeJS.ProcessEnv,
 ): string | null {
-  const result = spawnSync(command, args, {
+  let invocation;
+  try {
+    invocation = resolveHarnessCommand(command, args, { env: environment });
+  } catch (error) {
+    return error instanceof Error ? error.message : String(error);
+  }
+  const result = spawnSync(invocation.command, invocation.args, {
     env: environment,
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"],
@@ -776,7 +786,12 @@ const LEGACY_OPENCLAW_PLUGIN_UNTRACKED =
   'Plugin "omnesis-bridge" has no authoritative package-owner metadata.';
 
 function retirePersistedLegacyOpenClawPlugin(environment: NodeJS.ProcessEnv): void {
-  const result = spawnSync("openclaw", ["plugins", "uninstall", "omnesis-bridge", "--force"], {
+  const invocation = resolveHarnessCommand(
+    "openclaw",
+    ["plugins", "uninstall", "omnesis-bridge", "--force"],
+    { env: environment },
+  );
+  const result = spawnSync(invocation.command, invocation.args, {
     env: environment,
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"],

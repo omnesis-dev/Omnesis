@@ -12,12 +12,15 @@ test("source private filesystem helpers load under Node without compiled sibling
     [
       "--input-type=module",
       "-e",
-      `const { privateWindowsFiles } = await import(${JSON.stringify(entry)});
+      `const { privateWindowsFiles, loadWindowsPlatformRuntime } = await import(${JSON.stringify(entry)});
 const first = privateWindowsFiles();
 if (typeof first.readWindowsPrivateFileContentsSync !== 'function' ||
     typeof first.writeWindowsPrivateFileAtomicSync !== 'function' ||
     typeof first.secureWindowsPrivatePathSync !== 'function' ||
     first !== privateWindowsFiles()) throw new Error('Invalid source private filesystem runtime');
+if (typeof loadWindowsPlatformRuntime('windows-job').spawnWindowsJob !== 'function') throw new Error('Invalid source process runtime');
+let refused=false;try { loadWindowsPlatformRuntime('../unrelated'); } catch { refused=true; }
+if (!refused) throw new Error('Runtime loader accepted an unrelated module');
 console.log('source helpers ready');`,
     ],
     { cwd: fileURLToPath(new URL("../", import.meta.url)), encoding: "utf8", timeout: 15_000 },

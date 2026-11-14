@@ -26,7 +26,7 @@ vi.mock("node:fs", async (importOriginal) => {
 
 let directory: string;
 beforeEach(async () => {
-  directory = await mkdtemp(join(tmpdir(), "omnesis-recovery-paths-"));
+  directory = fs.realpathSync(await mkdtemp(join(tmpdir(), "omnesis-recovery-paths-")));
   vi.spyOn(process.stdout, "write").mockImplementation(() => true);
 });
 afterEach(async () => {

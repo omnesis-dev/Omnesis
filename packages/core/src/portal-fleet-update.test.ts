@@ -5,6 +5,7 @@ import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { inspectWindowsPrivatePathSync } from "./windows-private-file.js";
 import {
   PORTAL_FLEET_UPDATE_OUTPUT_MAX_BYTES,
   createPortalFleetUpdateOperation,
@@ -45,7 +46,11 @@ describe("portal fleet update operation state", () => {
   test("atomically persists and updates an owner-only record", () => {
     expect(readPortalFleetUpdateOperation(configDir)).toBeNull();
     expect(writePortalFleetUpdateOperation(configDir, queued())).toEqual(queued());
-    expect(statSync(portalFleetUpdateOperationPath(configDir)).mode & 0o777).toBe(0o600);
+    if (process.platform === "win32")
+      expect(
+        inspectWindowsPrivatePathSync(portalFleetUpdateOperationPath(configDir), "file").private,
+      ).toBe(true);
+    else expect(statSync(portalFleetUpdateOperationPath(configDir)).mode & 0o777).toBe(0o600);
 
     const completedAt = "2026-09-16T12:01:00.000Z";
     const updated = updatePortalFleetUpdateOperation(configDir, (current) => ({

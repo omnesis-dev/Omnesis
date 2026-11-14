@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 
 /** Load builtins-only platform source before npm has created workspace aliases. */
 export async function bootstrapWindowsPlatform(entry = "windows-job.ts") {
-  if (!["windows-job.ts", "windows-process.ts"].includes(entry))
+  if (!["windows-job.ts", "windows-process.ts", "windows-private-file.ts"].includes(entry))
     throw new Error("Unsupported Windows platform bootstrap entry");
   const root = new URL("../../packages/platform/src/", import.meta.url);
   const hook = registerHooks({

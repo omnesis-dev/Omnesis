@@ -19,6 +19,7 @@ import { fileURLToPath } from "node:url";
 
 import { describe, expect, it, vi } from "vitest";
 import { z } from "zod";
+import { inspectWindowsPrivatePathSync, type AgentEvent, type ToolResult } from "@omnesis/core";
 import { searchModelContextResult } from "./test-fixtures/search-model-context.js";
 
 import {
@@ -38,7 +39,6 @@ import {
 import { renderTranscriptUserInput } from "./transcript-user-input.js";
 import { setActivityMarker } from "./activity.js";
 import type { ChatMessage, ToolHandle, TurnInput } from "./backend.js";
-import type { AgentEvent, ToolResult } from "@omnesis/core";
 
 const fakeCodexPath = fileURLToPath(
   new URL("./test-fixtures/fake-codex-app-server.mjs", import.meta.url),
@@ -623,9 +623,14 @@ describe("CodexAppServerBackend", () => {
           (event) => event.type === "agent.message.end",
         )?.payload.stopReason,
       ).toBe("end_turn");
-      const pid = firstPayload<{ pid: number }>(readLog(logPath), "startup").pid;
+      const { pid, ownerPid } = firstPayload<{ pid: number; ownerPid: number }>(
+        readLog(logPath),
+        "startup",
+      );
       process.kill(pid, "SIGTERM");
-      await vi.waitFor(() => expect(() => process.kill(pid, 0)).toThrow());
+      // An exited target is still owned while its Windows job host drains.
+      // Queue replacements only after the actual client process lifetime ends.
+      await vi.waitFor(() => expect(() => process.kill(ownerPid, 0)).toThrow());
       const turns = await Promise.all([
         collect(backend.runTurn(baseInput())),
         collect(backend.runTurn(baseInput())),
@@ -755,7 +760,7 @@ describe("CodexAppServerBackend", () => {
       packageName: MANAGED_CODEX_PACKAGE,
       packageVersion: MANAGED_CODEX_PACKAGE_VERSION,
     });
-    expect(managed.command).toContain("@openai/codex");
+    expect(managed.command.replaceAll("\\", "/")).toContain("@openai/codex");
   });
 
   it("initializes the installed managed runtime and lists models without an inference turn", async () => {
@@ -958,9 +963,17 @@ describe("CodexAppServerBackend", () => {
       expect(configToml).toContain("shell_tool = false");
       expect(configToml).toContain("multi_agent = false");
       expect(configToml).toContain("network_access = false");
-      expect(statSync(codexHome).mode & 0o777).toBe(0o700);
-      expect(statSync(workspaceDir).mode & 0o777).toBe(0o700);
-      expect(statSync(join(codexHome, "config.toml")).mode & 0o777).toBe(0o600);
+      if (process.platform === "win32") {
+        for (const path of [codexHome, workspaceDir])
+          expect(inspectWindowsPrivatePathSync(path, "directory").private).toBe(true);
+        expect(inspectWindowsPrivatePathSync(join(codexHome, "config.toml"), "file").private).toBe(
+          true,
+        );
+      } else {
+        expect(statSync(codexHome).mode & 0o777).toBe(0o700);
+        expect(statSync(workspaceDir).mode & 0o777).toBe(0o700);
+        expect(statSync(join(codexHome, "config.toml")).mode & 0o777).toBe(0o600);
+      }
 
       const logs = readLog(logPath);
       const startup = firstPayload<{

@@ -7,6 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import {
+  inspectWindowsPrivatePathSync,
   clearSecretFileKeyCacheForTests,
   createSecretStore,
   ensureInstallRootKey,
@@ -277,7 +278,9 @@ describe("authFlow", () => {
 
     // session.json: atomic, 0600, account_key = identification_hash.
     const path = sessionPath("revolut-de", configDir);
-    expect(statSync(path).mode & 0o777).toBe(0o600);
+    if (process.platform === "win32")
+      expect(inspectWindowsPrivatePathSync(path, "file").private).toBe(true);
+    else expect(statSync(path).mode & 0o777).toBe(0o600);
     const session = loadSession("revolut-de", configDir)!;
     expect(session.valid_until).toBe("2026-11-28T12:00:00.000Z");
     expect(session.aspsp).toEqual({ name: "Revolut", country: "DE" });
@@ -412,7 +415,9 @@ describe("authFlow", () => {
     expect(fields?.private_key).toContain("-----BEGIN");
     expect(fields?.application_id).toBe(APP_ID);
     const credsFile = join(configDir, "enable-banking-credentials.json");
-    expect(statSync(credsFile).mode & 0o777).toBe(0o600);
+    if (process.platform === "win32")
+      expect(inspectWindowsPrivatePathSync(credsFile, "file").private).toBe(true);
+    else expect(statSync(credsFile).mode & 0o777).toBe(0o600);
   });
 
   test("missing receiveCode fails fast with channel guidance", async () => {

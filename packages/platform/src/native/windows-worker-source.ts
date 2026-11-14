@@ -84,6 +84,9 @@ public static class WindowsWorker {
       OmnesisProcessMetadata.Kill(ids,births);
     } else if(action=="create" || action=="atomic") {
       OmnesisPrivateFile.Write(Text(data,"path",null),Number(data,"length"),action=="atomic",Flag(data,"readOnly",false),Text(data,"staging",""),Flag(data,"receipt",false),Flag(data,"replaceExisting",true));
+    } else if(action=="copy-private") {
+      if(Console.OpenStandardInput().ReadByte()!=-1) throw new InvalidDataException();
+      OmnesisPrivateFile.CopyRegularToPrivate(Text(data,"source",null),Text(data,"path",null));
     } else if(action=="regular-prefix") {
       OmnesisPrivateFile.ReadRegularPrefix(Text(data,"path",null),Number(data,"limit"));
     } else if(action=="read") {

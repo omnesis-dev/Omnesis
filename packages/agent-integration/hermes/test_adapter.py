@@ -7337,6 +7337,23 @@ class WindowsPersistenceRoutingTests(unittest.TestCase):
                 self.assertEqual(json.loads(data), {"invented": True})
                 self.assertFalse(path.exists())
 
+    def test_bridge_frames_complete_binary_writes_and_rejects_oversize_before_launch(self):
+        payload = b"\x00\xffinvented\n"
+        completed = types.SimpleNamespace(returncode=0, stdout=b"", stderr=b"")
+        with patch.object(adapter_module, "_windows_node_command", return_value=["fixture-node"]), patch.object(adapter_module.subprocess, "run", return_value=completed) as run:
+            adapter_module._windows_bridge("write", "invented.json", payload)
+            self.assertEqual(run.call_args.args[0], ["fixture-node", "framed-v1"])
+            frame = run.call_args.kwargs["input"]
+            magic = b"OMNESIS_HERMES_WRITE_V1\0"
+            self.assertEqual(frame[:len(magic)], magic)
+            self.assertEqual(int.from_bytes(frame[len(magic):len(magic) + 4], "little"), len(payload))
+            self.assertEqual(frame[len(magic) + 4:], payload + b"\0OMNESIS_HERMES_WRITE_COMMIT_V1\0")
+            run.reset_mock()
+            with patch.object(adapter_module, "_WINDOWS_WRITE_MAX_BYTES", len(payload) - 1):
+                with self.assertRaisesRegex(ValueError, "input limit"):
+                    adapter_module._windows_bridge("write", "invented.json", payload)
+            run.assert_not_called()
+
     def test_windows_liveness_never_calls_python_console_signal_api(self):
         with patch.object(adapter_module, "_uses_windows_files", return_value=True), patch.object(adapter_module, "_windows_bridge", return_value=b"false") as bridge, patch.object(adapter_module.os, "kill") as kill:
             self.assertFalse(adapter_module._process_is_alive(12345))

@@ -36,7 +36,7 @@ afterEach(() => {
 
 function allFiles(directory, prefix = "") {
   return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
-    const relative = prefix ? join(prefix, entry.name) : entry.name;
+    const relative = prefix ? `${prefix}/${entry.name}` : entry.name;
     return entry.isDirectory() ? allFiles(join(directory, entry.name), relative) : [relative];
   });
 }
@@ -116,11 +116,13 @@ describe("runtime staging", () => {
     const [executable, args, options] = calls[0];
     expect(executable).toBe(process.execPath);
     expect(args.slice(0, 2)).toEqual([
-      expect.stringMatching(/node_modules\/typescript\/bin\/tsc$/u),
+      expect.stringMatching(/node_modules[\\/]typescript[\\/]bin[\\/]tsc$/u),
       "--build",
     ]);
     expect(args.slice(2)).toEqual(entries.map((entry) => join(process.cwd(), entry.dir)));
-    expect(args).toEqual(expect.arrayContaining([expect.stringMatching(/packages\/near-dupes$/u)]));
+    expect(args).toEqual(
+      expect.arrayContaining([expect.stringMatching(/packages[\\/]near-dupes$/u)]),
+    );
     expect(options).toMatchObject({ stdio: "inherit" });
   });
 
@@ -141,7 +143,9 @@ describe("runtime staging", () => {
     expect(manifest.packages.some((entry) => entry.name === "@omnesis/gateway")).toBe(true);
     expect(existsSync(join(directory, "packages/gateway/dist/index.js"))).toBe(true);
     expect(existsSync(join(directory, "packages/cloud-relay/dist/tunnel-client.js"))).toBe(true);
-    expect(statSync(join(directory, "packages/gateway/dist/index.js")).mode & 0o777).toBe(0o644);
+    const entryMode = statSync(join(directory, "packages/gateway/dist/index.js")).mode;
+    if (process.platform === "win32") expect(entryMode & 0o200).toBe(0o200);
+    else expect(entryMode & 0o777).toBe(0o644);
     const schemaVersionModule = join(directory, "packages/gateway/dist/data/schema-version.js");
     expect(existsSync(schemaVersionModule)).toBe(true);
     const isolatedDirectory = mkdtempSync(join(tmpdir(), "omnesis-schema-version-"));

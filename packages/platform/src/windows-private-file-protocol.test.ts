@@ -10,7 +10,9 @@ vi.mock("node:child_process", async (original) => ({
 }));
 vi.mock("./windows-worker-cache.js", () => ({ windowsWorkerInvocation: mocks.workerInvocation }));
 import {
+  copyWindowsPrivateFileSync,
   createWindowsPrivateFileSync,
+  readWindowsPrivateFileSync,
   readWindowsPrivateFileContentsSync,
   deleteWindowsPrivateFileExactSync,
   inspectWindowsPrivatePathSync,
@@ -57,6 +59,32 @@ describe("Windows private native protocol", () => {
     expect(
       run.command.length + 3 + run.args.reduce((size, arg) => size + arg.length + 3, 0),
     ).toBeLessThanOrEqual(32767);
+  });
+  it("copies literal paths natively without transferring file contents through JavaScript", () => {
+    const source = "C:\\example folder\\literal & $().db";
+    const destination = "C:\\example folder\\private backup.db";
+    copyWindowsPrivateFileSync(source, destination);
+    const request = frame();
+    expect(request.metadata).toEqual({ action: "copy-private", path: destination, source });
+    expect(request.bytes).toEqual(Buffer.alloc(0));
+    expect(request.args).not.toContain(source);
+    expect(request.args).not.toContain(destination);
+    expect(mocks.spawnSync.mock.calls.at(-1)![2].timeout).toBeUndefined();
+    const calls = mocks.spawnSync.mock.calls.length;
+    expect(() => copyWindowsPrivateFileSync(source, source)).toThrow("must differ");
+    expect(() => copyWindowsPrivateFileSync(source + "\0", destination)).toThrow(
+      "Invalid private file path",
+    );
+    expect(mocks.spawnSync).toHaveBeenCalledTimes(calls);
+  });
+  it("keeps synchronous credential reads bounded inside the native request", () => {
+    const path = "C:\\Example\\pairing.json";
+    expect(readWindowsPrivateFileSync(path, 65536)).toEqual(Buffer.alloc(0));
+    expect(frame().metadata).toEqual({ action: "read", path, limit: 65536 });
+    const calls = mocks.spawnSync.mock.calls.length;
+    for (const limit of [-1, Infinity, 16 * 1024 * 1024 + 1])
+      expect(() => readWindowsPrivateFileSync(path, limit)).toThrow("read bound");
+    expect(mocks.spawnSync).toHaveBeenCalledTimes(calls);
   });
   it("publishes atomic/read-only intent inside the metadata frame", () => {
     writeWindowsPrivateFileAtomicSync("C:\\Example\\private.json", Buffer.from("invented"), {

@@ -93,7 +93,7 @@ describe("portable Node CI bootstrap", () => {
       },
       run: (args, options) => {
         expect(options.completion).toBe("root");
-        if (args[0] === f.npmCli) {
+        if (realpathSync.native(args[0]) === realpathSync.native(f.npmCli)) {
           observed = true;
           const headers = options.env.npm_package_config_node_gyp_nodedir;
           expect(readFileSync(join(headers, "Release", "node.lib"), "utf8")).toBe(
@@ -238,7 +238,7 @@ test("npm CLI resolution never depends on the node_modules tree npm ci will remo
   }
   expect(
     await npmJavaScriptEntry({ npm_execpath: unstable }, join(root, "runtime/node.exe"), root),
-  ).toBe(realpathSync(stable));
+  ).toBe(realpathSync.native(stable));
 });
 
 test("a checkout directory alias cannot hide a removable npm CLI", async () => {
@@ -254,7 +254,7 @@ test("a checkout directory alias cannot hide a removable npm CLI", async () => {
   symlinkSync(actual, alias, "junction");
   expect(
     await npmJavaScriptEntry({ npm_execpath: unstable }, join(root, "runtime/node.exe"), alias),
-  ).toBe(realpathSync(stable));
+  ).toBe(realpathSync.native(stable));
 });
 
 test("the bootstrap executes when invoked through a directory alias", async () => {

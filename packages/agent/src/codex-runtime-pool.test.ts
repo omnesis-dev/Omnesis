@@ -26,6 +26,10 @@ import {
 } from "./codex-runtime-pool.js";
 import type { AgentEvent } from "@omnesis/core";
 
+vi.mock("node:fs", async (original) => {
+  const fs = await original<typeof import("node:fs")>();
+  return { ...fs, symlinkSync: vi.fn(fs.symlinkSync) };
+});
 const log = createLogger("test:codex-pool");
 
 let dir: string;
@@ -73,6 +77,23 @@ function makePool(size: number, fakes: FakeRuntime[]): CodexRuntimePool {
 }
 
 describe("CodexRuntimePool routing", () => {
+  it("observes idle authentication preparation failures without an unhandled rejection", async () => {
+    const pool = makePool(1, []);
+    writeFileSync(join(dir, "pool"), "invented occupied path");
+    const warning = vi.spyOn(log, "warn").mockImplementation(() => {});
+    try {
+      pool.reassertAuth();
+      await vi.waitFor(() =>
+        expect(warning).toHaveBeenCalledWith(
+          expect.stringContaining("authentication reconciliation failed"),
+        ),
+      );
+      expect(readFileSync(join(dir, "pool"), "utf8")).toBe("invented occupied path");
+    } finally {
+      await pool.dispose();
+    }
+  });
+
   it.each([0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY])(
     "rejects invalid capacity %s",
     (size) => {
@@ -439,4 +460,24 @@ it("preserves delegated consumer return and releases its lease", async () => {
   expect((await next).done).toBe(false);
   await iterator.return?.();
   expect(pool.describe()).toEqual({ size: 1, inFlight: [0], queued: 0 });
+});
+
+it("reports the optional Windows symlink prerequisite without discarding the shared login", () => {
+  const owner = join(dir, "owner-auth.json"),
+    member = join(dir, "member");
+  writeFileSync(owner, "invented preserved login");
+  mkdirSync(member);
+  const descriptor = Object.getOwnPropertyDescriptor(process, "platform")!;
+  const failure = Object.assign(new Error("symbolic link privilege absent"), { code: "EPERM" });
+  vi.mocked(symlinkSync).mockImplementationOnce(() => {
+    throw failure;
+  });
+  Object.defineProperty(process, "platform", { ...descriptor, value: "win32" });
+  try {
+    expect(() => reconcileMemberAuth(member, owner, log)).toThrow("Enable Windows Developer Mode");
+    expect(readFileSync(owner, "utf8")).toBe("invented preserved login");
+    expect(existsSync(join(member, "auth.json"))).toBe(false);
+  } finally {
+    Object.defineProperty(process, "platform", descriptor);
+  }
 });

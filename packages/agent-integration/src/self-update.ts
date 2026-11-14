@@ -20,11 +20,18 @@
  */
 
 import { spawn } from "node:child_process";
-import { accessSync, constants, existsSync, statSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { delimiter, dirname, join } from "node:path";
 import { summarizeCommandFailure } from "./command-output.js";
+import {
+  resolveHarnessBinary,
+  resolveHarnessCommand,
+  harnessSearchPath,
+} from "./harness-command.js";
+import { runHarnessUpdateProcess } from "./harness-update-process.js";
 import type { Harness } from "./protocol.js";
+export { resolveHarnessBinary } from "./harness-command.js";
 
 /** How a self-update ended, in the vocabulary the gateway records. */
 export interface HarnessUpdateAttempt {
@@ -92,41 +99,6 @@ export function restartOwedDetail(harness: Harness, version: string, reason: str
  * npm install), the npm user prefix, `~/.local/bin`, and the Homebrew and
  * `/usr/local` prefixes. Null when none holds an executable.
  */
-export function resolveHarnessBinary(
-  harness: Harness,
-  opts: {
-    env?: NodeJS.ProcessEnv;
-    execPath?: string;
-    isExecutable?: (path: string) => boolean;
-  } = {},
-): string | null {
-  const env = opts.env ?? process.env;
-  const home = env.HOME ?? homedir();
-  const isExecutable = opts.isExecutable ?? executableFile;
-  const directories = [
-    ...(env.PATH ?? "").split(delimiter).filter((entry) => entry.length > 0),
-    dirname(opts.execPath ?? process.execPath),
-    join(home, ".npm-global", "bin"),
-    join(home, ".local", "bin"),
-    "/opt/homebrew/bin",
-    "/usr/local/bin",
-  ];
-  for (const directory of directories) {
-    const candidate = join(directory, harness);
-    if (isExecutable(candidate)) return candidate;
-  }
-  return null;
-}
-
-function executableFile(path: string): boolean {
-  try {
-    accessSync(path, constants.X_OK);
-    return statSync(path).isFile();
-  } catch {
-    return false;
-  }
-}
-
 /**
  * Prepare `<binary> gateway restart` to run detached: its own process group,
  * no stdio, unreferenced, so it outlives the harness it stops and nothing in
@@ -155,12 +127,20 @@ export function detachedHarnessRestart(opts: {
         reported = true;
         onFailure(restartOwedDetail(opts.harness, opts.version, reason));
       };
-      const path = [dirname(opts.binary), dirname(opts.execPath ?? process.execPath), env.PATH]
+      const path = [
+        dirname(opts.binary),
+        dirname(opts.execPath ?? process.execPath),
+        harnessSearchPath(env),
+      ]
         .filter((entry): entry is string => Boolean(entry))
         .join(delimiter);
       let child: ReturnType<typeof spawn>;
       try {
-        child = spawnProcess(opts.binary, args, {
+        const invocation = resolveHarnessCommand(opts.binary, args, {
+          env,
+          execPath: opts.execPath,
+        });
+        child = spawnProcess(invocation.command, invocation.args, {
           detached: true,
           stdio: "ignore",
           env: { ...env, PATH: path },
@@ -195,14 +175,10 @@ export function resolveCliPath(env: NodeJS.ProcessEnv = process.env): string {
   const override = env.OMNESIS_CLI_BIN?.trim();
   if (override) return override;
   const wrapper = join(env.HOME ?? homedir(), ".local", "bin", "omnesis");
+  if (process.platform === "win32")
+    return [wrapper + ".exe", wrapper + ".cmd"].find((path) => existsSync(path)) ?? "omnesis";
   return existsSync(wrapper) ? wrapper : "omnesis";
 }
-
-/**
- * How much of the update's output is kept for the summary reported back. A
- * failing build is verbose and only its tail explains itself.
- */
-const CAPTURED_OUTPUT_BYTES = 8_000;
 
 /**
  * How long the update may run before this plugin stops believing in it. A
@@ -240,6 +216,8 @@ export function createHarnessCliUpdater(opts: {
   cliPath?: string;
   spawnFn?: typeof spawn;
   deadlineMs?: number;
+  /** Explicit cancellation by the host; ordinary plugin stop does not cancel an update. */
+  signal?: AbortSignal;
   resolveHarness?: (harness: Harness) => string | null;
 }): HarnessSelfUpdater {
   const cliPath = opts.cliPath ?? resolveCliPath();
@@ -247,92 +225,64 @@ export function createHarnessCliUpdater(opts: {
   const spawnProcess = opts.spawnFn ?? spawn;
   const deadlineMs = opts.deadlineMs ?? UPDATE_DEADLINE_MS;
   return {
-    run: (target) =>
-      new Promise<HarnessUpdateAttempt>((resolve) => {
-        const label = updateTargetLabel(target);
-        const targetArg =
-          "version" in target ? `--target-version=${target.version}` : `--commit=${target.commit}`;
-        const child = spawnProcess(
-          cliPath,
-          [
-            "update",
-            "--yes",
-            "--no-restart",
-            targetArg,
-            ...(target.allowRewind ? ["--allow-rewind"] : []),
-            `--wait-for-lock=${lockWaitMinutes(deadlineMs)}`,
-          ],
-          { stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, NO_COLOR: "1" } },
-        );
-        let settled = false;
-        const settle = (attempt: HarnessUpdateAttempt): void => {
-          if (settled) return;
-          settled = true;
-          clearTimeout(deadline);
-          resolve(attempt);
+    run: async (target) => {
+      const label = updateTargetLabel(target);
+      const targetArg =
+        "version" in target ? `--target-version=${target.version}` : `--commit=${target.commit}`;
+      const result = await runHarnessUpdateProcess(
+        cliPath,
+        [
+          "update",
+          "--yes",
+          "--no-restart",
+          targetArg,
+          ...(target.allowRewind ? ["--allow-rewind"] : []),
+          `--wait-for-lock=${lockWaitMinutes(deadlineMs)}`,
+        ],
+        { deadlineMs, signal: opts.signal, spawnFn: opts.spawnFn },
+      );
+      if (result.failure === "timeout")
+        return {
+          state: "failed",
+          detail: `The update did not finish within ${Math.round(deadlineMs / 60_000)} minutes and was stopped.`,
         };
-        const deadline = setTimeout(() => {
-          child.kill("SIGKILL");
-          settle({
-            state: "failed",
-            detail: `The update did not finish within ${Math.round(deadlineMs / 60_000)} minutes and was stopped.`,
-          });
-        }, deadlineMs);
-        deadline.unref?.();
-        // Everything, for context, and stderr alone, where the CLI writes its
-        // refusal: the summary prefers the latter so progress lines printed
-        // just before a failure never stand in for it.
-        let output = "";
-        let errors = "";
-        const collect = (chunk: Buffer): void => {
-          output = `${output}${chunk.toString()}`.slice(-CAPTURED_OUTPUT_BYTES);
+      if (result.failure === "cancelled")
+        return { state: "failed", detail: "The update was cancelled and its process was stopped." };
+      if (result.failure === "spawn")
+        return {
+          state: "failed",
+          detail: `Could not run \`${cliPath} update\` on this machine: ${errorMessage(result.cause)}. Set OMNESIS_CLI_BIN if the CLI is installed elsewhere.`,
         };
-        child.stdout?.on("data", collect);
-        child.stderr?.on("data", (chunk: Buffer) => {
-          collect(chunk);
-          errors = `${errors}${chunk.toString()}`.slice(-CAPTURED_OUTPUT_BYTES);
+      if (result.code === 0) {
+        const binary = resolveHarness(opts.harness);
+        if (binary === null)
+          return {
+            state: "restart-pending",
+            detail: restartOwedDetail(
+              opts.harness,
+              label,
+              `\`${opts.harness}\` was not found on this machine`,
+            ),
+          };
+        const restart = detachedHarnessRestart({
+          harness: opts.harness,
+          version: label,
+          binary,
+          spawnFn: spawnProcess,
         });
-        child.on("error", (error) => {
-          settle({
-            state: "failed",
-            detail:
-              `Could not run \`${cliPath} update\` on this machine: ${error.message}. ` +
-              `Set OMNESIS_CLI_BIN if the CLI is installed elsewhere.`,
-          });
-        });
-        child.on("close", (code) => {
-          if (code === 0) {
-            const binary = resolveHarness(opts.harness);
-            if (binary === null) {
-              settle({
-                state: "restart-pending",
-                detail: restartOwedDetail(
-                  opts.harness,
-                  label,
-                  `\`${opts.harness}\` was not found on this machine`,
-                ),
-              });
-              return;
-            }
-            const restart = detachedHarnessRestart({
-              harness: opts.harness,
-              version: label,
-              binary,
-              spawnFn: spawnProcess,
-            });
-            settle({
-              state: "installed",
-              detail: `Installed ${label}; restarting ${opts.harness} now: ${restart.command}`,
-              restart,
-            });
-            return;
-          }
-          const summary = summarizeCommandFailure(errors) || summarizeCommandFailure(output);
-          settle({
-            state: "failed",
-            detail: `\`${cliPath} update\` exited ${code ?? "with no code"}. ${summary}`.trimEnd(),
-          });
-        });
-      }),
+        return {
+          state: "installed",
+          detail: `Installed ${label}; restarting ${opts.harness} now: ${restart.command}`,
+          restart,
+        };
+      }
+      const summary =
+        summarizeCommandFailure(result.errors) || summarizeCommandFailure(result.output);
+      return {
+        state: "failed",
+        detail:
+          `\`${cliPath} update\` exited ${result.code ?? "with no code"}. ${summary}`.trimEnd(),
+      };
+    },
   };
 }

@@ -229,6 +229,9 @@ public static partial class OmnesisPrivateFile {
     }
   }
   public static void Write(string path,long length,bool atomic,bool readOnly,string staging,bool receipt,bool replaceExisting) {
+    WriteInput(path,length,atomic,readOnly,staging,receipt,replaceExisting,Console.OpenStandardInput(),true,null);
+  }
+  static void WriteInput(string path,long length,bool atomic,bool readOnly,string staging,bool receipt,bool replaceExisting,Stream input,bool framedCommit,Action validateInput) {
     Stage="resolve";path=FullPath(path); if(length<0) throw new InvalidDataException();
     Stage="parent";using(SafeFileHandle parent=Parent(path)) {
       string scratch=atomic?path+".omnesis-"+System.Diagnostics.Process.GetCurrentProcess().Id+"-"+Guid.NewGuid().ToString("N")+".tmp":path;
@@ -240,14 +243,19 @@ public static partial class OmnesisPrivateFile {
         try {
           Stage="validate";Info created=Information(file.SafeFileHandle,false); RequirePrivate(file.SafeFileHandle,true);
           if(receipt) Console.Error.WriteLine("OMNESIS_PRIVATE_CREATED:"+Identity(created));
-          Stage="write";Stream input=Console.OpenStandardInput(); byte[] bytes=new byte[65536]; long remaining=length;
+          Stage="write";byte[] bytes=new byte[65536]; long remaining=length;
           while(remaining>0) {
-            int read=input.Read(bytes,0,(int)Math.Min(bytes.Length,remaining)); if(read==0) throw new EndOfStreamException();
+            int read=input.Read(bytes,0,(int)Math.Min(bytes.Length,remaining));
+            if(read==0) {if(!framedCommit) Stage="copy-source-changed";throw new EndOfStreamException();}
             file.Write(bytes,0,read); remaining-=read;
           }
-          Stage="commit";byte[] commit=Encoding.ASCII.GetBytes("\0OMNESIS_PRIVATE_COMMIT_V1\0"), actual=ReadExact(commit.Length);
-          for(int i=0;i<commit.Length;i++) if(actual[i]!=commit[i]) throw new InvalidDataException();
-          if(input.ReadByte()!=-1) throw new InvalidDataException();
+          Stage="commit";
+          if(framedCommit) {
+            byte[] commit=Encoding.ASCII.GetBytes("\0OMNESIS_PRIVATE_COMMIT_V1\0"), actual=ReadExact(commit.Length);
+            for(int i=0;i<commit.Length;i++) if(actual[i]!=commit[i]) throw new InvalidDataException();
+          }
+          if(input.ReadByte()!=-1) {if(!framedCommit) Stage="copy-source-changed";throw new InvalidDataException();}
+          if(validateInput!=null) validateInput();
           Stage="flush";file.Flush(true);
           if(readOnly) { Stage="readonly";ReadOnly(file.SafeFileHandle,true); }
           if(atomic) { Stage="rename";Rename(file.SafeFileHandle,parent,path,replaceExisting); }

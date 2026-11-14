@@ -461,6 +461,7 @@ test("managed setup discovers hosted routing, enrolls without Google, obtains a 
     accounts.close();
     await closeServer(server);
     await authority?.close();
+    await Promise.all([app.close(), directApp.close()]);
     db.close();
   }
 });

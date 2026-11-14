@@ -87,6 +87,7 @@ function keysIn(
   key: RegExp,
   what: string,
 ): string[] {
+  source = source.replaceAll("\r\n", "\n");
   const start = source.indexOf(opens);
   expect(start, `${what} does not declare ${opens}`).toBeGreaterThanOrEqual(0);
   const end = source.indexOf(closes, start);
@@ -114,6 +115,28 @@ function readmeCodes(): string[] {
 }
 
 describe("the refusal vocabulary", () => {
+  it.each(["\n", "\r\n"])(
+    "source declarations retain their exact vocabulary with %j lines",
+    (newline) => {
+      const source = [
+        "_SUBSCRIPTION_UNSUPPORTED_MESSAGES = {",
+        ...REFUSAL_CODES.map((code) => `    "${code}": "invented refusal",`),
+        "}",
+        'UNRELATED = {"invented_unrelated": "ignored"}',
+        "",
+      ].join(newline);
+      expect(
+        keysIn(
+          source,
+          "_SUBSCRIPTION_UNSUPPORTED_MESSAGES = {",
+          "\n}\n",
+          /^ {4}"([a-z0-9_]+)":/gm,
+          "invented adapter declaration",
+        ),
+      ).toEqual([...REFUSAL_CODES]);
+    },
+  );
+
   it.each(ADAPTERS)("is the same set in %s as the gateway mints", (path) => {
     expect([...adapterCodes(path)].sort()).toEqual([...REFUSAL_CODES].sort());
   });

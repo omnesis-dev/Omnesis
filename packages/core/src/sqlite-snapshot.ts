@@ -11,6 +11,7 @@ import {
   fstatSync,
 } from "node:fs";
 import { basename, join } from "node:path";
+import { copyWindowsPrivateFileSync } from "./windows-private-file.js";
 import { createPrivateScratch } from "./private-scratch.js";
 
 /**
@@ -94,10 +95,15 @@ function copyStableSnapshot(sourcePath: string, namespace: string): SqliteSnapsh
     for (const [index, suffix] of suffixes.entries()) {
       if (before[index] !== null) {
         try {
-          copyFileSync(sourcePath + suffix, snapshotPath + suffix);
-          chmodSync(snapshotPath + suffix, 0o600);
+          if (process.platform === "win32")
+            copyWindowsPrivateFileSync(sourcePath + suffix, snapshotPath + suffix);
+          else {
+            copyFileSync(sourcePath + suffix, snapshotPath + suffix);
+            chmodSync(snapshotPath + suffix, 0o600);
+          }
         } catch (error) {
-          if ((error as NodeJS.ErrnoException).code === "ENOENT")
+          const reason = error as NodeJS.ErrnoException & { stage?: string };
+          if (reason.code === "ENOENT" || reason.stage === "copy-source-changed")
             throw new SqliteSnapshotChangedError();
           throw error;
         }

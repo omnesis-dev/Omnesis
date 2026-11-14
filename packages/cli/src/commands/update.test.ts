@@ -3,7 +3,7 @@
 
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { delimiter, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { defineCommand, runCommand } from "citty";
 import { describe, test, expect, vi, beforeEach, afterEach } from "vitest";
@@ -1665,7 +1665,7 @@ describe("executing a host's plan", () => {
     );
     expect(executed(runner)).toContain("/home/example/.local/bin/hermes gateway restart");
     const restart = runner.calls.find((call) => call.spec.command.endsWith("/hermes"));
-    expect(restart?.spec.env?.PATH?.split(":")[0]).toBe("/home/example/.local/bin");
+    expect(restart?.spec.env?.PATH?.split(delimiter)[0]).toBe("/home/example/.local/bin");
     expect(output()).not.toContain("Could not restart hermes");
   });
 

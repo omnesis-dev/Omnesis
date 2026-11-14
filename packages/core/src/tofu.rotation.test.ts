@@ -27,7 +27,7 @@ function mint(
   name: string,
   sans: string[] = ["DNS:localhost", "IP:127.0.0.1"],
   days = 3,
-): { cert: string; key: string; fingerprint: string } {
+): { cert: string; canonicalCert: string; key: string; fingerprint: string } {
   const cnf = join(dir, `${name}.cnf`);
   writeFileSync(
     cnf,
@@ -66,9 +66,12 @@ function mint(
     ],
     { stdio: ["ignore", "ignore", "pipe"] },
   );
-  const cert = readFileSync(certPath, "utf8");
+  // OpenSSL on Windows emits CRLF; the saved input must remain distinct from
+  // the canonical PEM reconstructed from the served DER certificate.
+  const cert = readFileSync(certPath, "utf8").replace(/\r?\n/gu, "\r\n");
   return {
     cert,
+    canonicalCert: new X509Certificate(cert).toString(),
     key: readFileSync(keyPath, "utf8"),
     fingerprint: createHash("sha256").update(new X509Certificate(cert).raw).digest("hex"),
   };
@@ -137,8 +140,8 @@ describe("a saved certificate the gateway no longer serves", () => {
 
     process.env.OMNESIS_TRUST_FINGERPRINT = `sha256:${second.fingerprint}`;
     const followed = await ensureGatewayTrust({ gatewayUrl, configDir, verifyServed: true });
-    expect(followed).toEqual({ action: "trusted-in-process", certPem: second.cert });
-    expect(readFileSync(join(configDir, "tls", "cert.pem"), "utf8")).toBe(second.cert);
+    expect(followed).toEqual({ action: "trusted-in-process", certPem: second.canonicalCert });
+    expect(readFileSync(join(configDir, "tls", "cert.pem"), "utf8")).toBe(second.canonicalCert);
     expect((await fetch(`${gatewayUrl}/health`)).ok).toBe(true);
   });
 
@@ -176,7 +179,7 @@ describe("a fingerprint learned from discovery", () => {
         discoveredFingerprint: third.fingerprint,
       }),
     ).toEqual({ action: "trusted-in-process" });
-    expect(readFileSync(join(freshDir, "tls", "cert.pem"), "utf8")).toBe(third.cert);
+    expect(readFileSync(join(freshDir, "tls", "cert.pem"), "utf8")).toBe(third.canonicalCert);
 
     // A rotation the network vouches for is still refused. The process CA
     // store already holds every certificate trusted above, so the rotated one
@@ -191,7 +194,7 @@ describe("a fingerprint learned from discovery", () => {
         verifyServed: true,
       }),
     ).rejects.toThrow(GatewayCertificateChangedError);
-    expect(readFileSync(join(freshDir, "tls", "cert.pem"), "utf8")).toBe(third.cert);
+    expect(readFileSync(join(freshDir, "tls", "cert.pem"), "utf8")).toBe(third.canonicalCert);
   });
 });
 
@@ -254,7 +257,7 @@ describe("retrustGateway", () => {
       previousFingerprint: second.fingerprint,
       certPath: join(configDir, "tls", "cert.pem"),
     });
-    expect(readFileSync(join(configDir, "tls", "cert.pem"), "utf8")).toBe(first.cert);
+    expect(readFileSync(join(configDir, "tls", "cert.pem"), "utf8")).toBe(first.canonicalCert);
     expect((await fetch(`${gatewayUrl}/health`)).ok).toBe(true);
   });
 

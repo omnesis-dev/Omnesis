@@ -54,7 +54,7 @@ export function localSshFixturePath(directory) {
     env: { ...process.env, PATH: path },
     encoding: "utf8",
   }).trim();
-  const same = realpathSync(nativeBashPath(selected)) === realpathSync(ssh);
+  const same = realpathSync.native(nativeBashPath(selected)) === realpathSync.native(ssh);
   if (!same) throw new Error("The local SSH fixture must shadow every real SSH executable");
   return path;
 }

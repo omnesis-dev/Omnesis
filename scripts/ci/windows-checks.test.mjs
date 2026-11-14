@@ -89,6 +89,7 @@ describe("Windows CI coverage", () => {
   test("every Windows lane proves the rebuilt vector binding before running source checks", () => {
     const config = workflow();
     expect(config.on.pull_request.paths).toContain("patches/**");
+    expect(config.on.pull_request.paths).toContain(".gitattributes");
     const steps = config.jobs.windows.steps;
     const dependencies = steps.findIndex(({ id }) => id === "dependencies");
     const prepare = steps.findIndex(

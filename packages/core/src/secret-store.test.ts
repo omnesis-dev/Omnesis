@@ -36,6 +36,8 @@ import {
   openRecoveryEnvelope,
 } from "./recovery-envelope.js";
 
+import { passphraseSecretEntryPaths } from "./secret-store-paths.js";
+
 import { inspectWindowsPrivatePaths } from "./windows-private-file.js";
 
 const dirs: string[] = [];
@@ -456,9 +458,8 @@ describe("passphrase backend", () => {
     const store = createSecretStore({ backend: "passphrase", configDir });
     await store.write("first-name", "secret value");
 
-    const dir = join(configDir, "keyring", "passphrase");
-    const from = join(dir, `${Buffer.from("first-name", "utf8").toString("base64url")}.json`);
-    const to = join(dir, `${Buffer.from("second-name", "utf8").toString("base64url")}.json`);
+    const from = passphraseSecretEntryPaths(configDir, "first-name").path;
+    const to = passphraseSecretEntryPaths(configDir, "second-name").path;
     renameSync(from, to);
 
     await expect(store.read("second-name")).rejects.toThrow(PassphraseMismatchError);

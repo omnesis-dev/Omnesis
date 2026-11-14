@@ -6,6 +6,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { createRequire } from "node:module";
 import { isDeepStrictEqual } from "node:util";
+import { nodeCommandInvocation } from "../../packages/core/src/node-command.ts";
 import { waitForChild } from "../lib/check-process.mjs";
 import {
   allE2EBundles,
@@ -67,10 +68,11 @@ function commandFailure(command, args, error) {
  * keeps the way it ended in the log.
  */
 export function jsonCommand(command, args) {
+  const invocation = nodeCommandInvocation(command, args);
   for (let attempt = 1; ; attempt++) {
     try {
       return JSON.parse(
-        execFileSync(command, args, {
+        execFileSync(invocation.command, invocation.args, {
           encoding: "utf8",
           env: { ...process.env, NX_DAEMON: "false" },
           maxBuffer: 32 * 1024 * 1024,
@@ -456,9 +458,15 @@ function gitHead() {
 function nativeSourceIdentity(required) {
   if (!required) return null;
   const command = process.env.OMNESIS_NATIVE_DISPATCHER || "omnesis-native-job";
+  const invocation = nodeCommandInvocation(command, [
+    "fingerprint",
+    "--checkout",
+    process.cwd(),
+    "--json",
+  ]);
   try {
     return JSON.parse(
-      execFileSync(command, ["fingerprint", "--checkout", process.cwd(), "--json"], {
+      execFileSync(invocation.command, invocation.args, {
         encoding: "utf8",
       }),
     );

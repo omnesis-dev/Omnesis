@@ -29,6 +29,7 @@ import {
   spawnWindowsJob,
   execWindowsJob,
   readPackageVersion,
+  atomicWriteFile,
   type AgentContextAssessment,
   type AgentEvent,
   type Logger,
@@ -37,6 +38,7 @@ import {
 
 import { readJsonRpcLines, encodeJsonRpcLine } from "./json-rpc-lines.js";
 import { markActivity } from "./activity.js";
+import { codexPoolAuthOwner, prepareCodexPrivateState } from "./codex-private-state.js";
 import { toolInputJsonSchema } from "./zod-to-json-schema.js";
 import { stripLocalTimeAnnotationsDeep } from "./local-times.js";
 import { serializeToolResultForModel } from "./tool-result-text.js";
@@ -576,7 +578,9 @@ export class CodexAppServerRuntime {
   }
 
   private async startClient(): Promise<CodexJsonRpcClient> {
-    await ensureCodexRuntimeDirs(this.codexHome, this.workspaceDir);
+    const owner = codexPoolAuthOwner(this);
+    if (process.platform === "win32" && owner) await prepareCodexPrivateState([owner.home]);
+    await ensureRuntimeDirs(this.codexHome, this.workspaceDir, owner?.path);
     const commandInfo = await this.resolveCommandInfo();
     await assertSupportedCodexRuntime({
       command: commandInfo.command,
@@ -1160,6 +1164,24 @@ export async function ensureCodexRuntimeDirs(
   codexHome: string,
   workspaceDir: string,
 ): Promise<void> {
+  await ensureRuntimeDirs(codexHome, workspaceDir);
+}
+
+async function ensureRuntimeDirs(
+  codexHome: string,
+  workspaceDir: string,
+  sharedAuthPath?: string,
+): Promise<void> {
+  if (process.platform === "win32") {
+    await prepareCodexPrivateState(
+      [codexHome, workspaceDir],
+      sharedAuthPath ? { home: codexHome, target: sharedAuthPath } : undefined,
+    );
+    await atomicWriteFile(join(codexHome, "config.toml"), STRICT_CODEX_CONFIG_TOML, {
+      mode: 0o600,
+    });
+    return;
+  }
   await ensurePrivateDirectory(codexHome);
   await ensurePrivateDirectory(workspaceDir);
   const configPath = join(codexHome, "config.toml");

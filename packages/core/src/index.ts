@@ -386,6 +386,7 @@ export {
   PRIVATE_UMASK,
   applyPrivateUmask,
   ensurePrivateDirSync,
+  ensurePrivateDirs,
   ensurePrivateFileSync,
 } from "./security-files.js";
 
@@ -1440,7 +1441,10 @@ export { execWindowsJob } from "./windows-job-exec.js";
 
 export {
   inspectWindowsPrivatePathSync,
+  inspectWindowsPrivatePaths,
+  copyWindowsPrivateFileSync,
   readWindowsPrivateFile,
+  readWindowsPrivateFileSync,
   createWindowsPrivateFile,
   readWindowsRegularFilePrefix,
 } from "./windows-private-file.js";

@@ -216,8 +216,28 @@ def _windows_bridge_error(stderr: bytes, path: str) -> None:
     raise PermissionError(errno.EACCES, "Windows integration persistence failed; check Node.js 24 and private file access", path)
 
 
+# Credentials and forwarded-tool catalog JSON are already materialized by the
+# caller. This high bound accommodates catalog serialization while rejecting
+# unbounded bridge input; the versioned frame is shared with windows-files.mjs.
+_WINDOWS_WRITE_MAX_BYTES = 1024 * 1024 * 1024
+_WINDOWS_WRITE_MAGIC = b"OMNESIS_HERMES_WRITE_V1\0"
+_WINDOWS_WRITE_COMMIT = b"\0OMNESIS_HERMES_WRITE_COMMIT_V1\0"
+
+
 def _windows_bridge(operation: str, path: str, data: bytes | None = None) -> bytes:
-    result = subprocess.run(_windows_node_command(operation, path), input=data or b"", stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=60, check=False)
+    request = data or b""
+    if operation == "write":
+        if len(request) > _WINDOWS_WRITE_MAX_BYTES:
+            raise ValueError("Windows integration state exceeds the bridge input limit")
+        # EOF alone cannot authorize publication: an abruptly killed Python
+        # owner may leave only part of this frame in the inherited pipe.
+        request = _WINDOWS_WRITE_MAGIC + len(request).to_bytes(4, "little") + request + _WINDOWS_WRITE_COMMIT
+    command = _windows_node_command(operation, path)
+    if operation == "write":
+        # Older bridges reject extra argv instead of persisting this frame as
+        # raw credential bytes during a partially replaced installation.
+        command.append("framed-v1")
+    result = subprocess.run(command, input=request, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=60, check=False)
     if result.returncode:
         _windows_bridge_error(result.stderr, path)
     return result.stdout

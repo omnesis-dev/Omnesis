@@ -1349,6 +1349,12 @@ Gateway 1.4.0  <span class="t-dim">·</span>  <span class="t-dim">devices: 3 cur
 
         <h3 id="codex">Codex runtime and capacity</h3>
         <p>
+          On Windows, Codex authentication sharing between isolated runtimes requires permission to
+          create file symbolic links. Enable Windows Developer Mode for a standard account before
+          configuring this optional backend. Omnesis keeps its Codex state in dedicated private
+          directories; do not point it at a personal Codex home or a general working directory.
+        </p>
+        <p>
           Omnesis manages a Codex runtime version tested with the installed release. In
           <strong>Settings → Models → Backends</strong>, <strong>Refresh model list</strong> asks
           the installed runtime for its models, and <strong>Update runtime</strong> installs the

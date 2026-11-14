@@ -12,20 +12,36 @@ interface PrivateWindowsFiles {
   writeWindowsPrivateFileAtomicSync(path: string, bytes: Uint8Array): void;
 }
 
-const localRequire = createRequire(import.meta.url);
 let files: PrivateWindowsFiles | undefined;
 
 /** The standalone archive carries canonical generated helpers, with no Omnesis runtime dependency. */
 export function privateWindowsFiles(): PrivateWindowsFiles {
   if (files) return files;
-  const bundled = fileURLToPath(
-    new URL("./private-platform/windows-private-file.js", import.meta.url),
-  );
+  const candidate = loadWindowsPlatformRuntime(
+    "windows-private-file",
+  ) as Partial<PrivateWindowsFiles> | null;
+  if (
+    typeof candidate?.readWindowsPrivateFileContentsSync !== "function" ||
+    typeof candidate.writeWindowsPrivateFileAtomicSync !== "function" ||
+    typeof candidate.secureWindowsPrivatePathSync !== "function" ||
+    typeof candidate.inspectWindowsPrivatePathSync !== "function"
+  )
+    throw new Error("This Windows integration archive has an invalid private filesystem runtime");
+  files = candidate as PrivateWindowsFiles;
+  return files;
+}
+
+const localRequire = createRequire(import.meta.url);
+/** Only canonical generated modules shipped beside the integration runtime. */
+export function loadWindowsPlatformRuntime(name: "windows-private-file" | "windows-job"): unknown {
+  if (name !== "windows-private-file" && name !== "windows-job")
+    throw new Error("Invalid integration Windows runtime module");
+  const bundled = fileURLToPath(new URL(`./private-platform/${name}.js`, import.meta.url));
   let entry: string;
   let sourceRoot: URL | undefined;
   if (existsSync(bundled)) entry = bundled;
   else if (import.meta.url.endsWith(".ts")) {
-    entry = localRequire.resolve("@omnesis/platform/windows-private-file");
+    entry = localRequire.resolve(`@omnesis/platform/${name}`);
     sourceRoot = new URL("./", pathToFileURL(entry));
   } else {
     throw new Error("This Windows integration archive is missing its private filesystem runtime");
@@ -49,19 +65,11 @@ export function privateWindowsFiles(): PrivateWindowsFiles {
         },
       })
     : undefined;
-  let candidate: Partial<PrivateWindowsFiles> | null;
+  let candidate: unknown;
   try {
-    candidate = localRequire(entry) as Partial<PrivateWindowsFiles> | null;
+    candidate = localRequire(entry);
   } finally {
     hook?.deregister();
   }
-  if (
-    typeof candidate?.readWindowsPrivateFileContentsSync !== "function" ||
-    typeof candidate.writeWindowsPrivateFileAtomicSync !== "function" ||
-    typeof candidate.secureWindowsPrivatePathSync !== "function" ||
-    typeof candidate.inspectWindowsPrivatePathSync !== "function"
-  )
-    throw new Error("This Windows integration archive has an invalid private filesystem runtime");
-  files = candidate as PrivateWindowsFiles;
-  return files;
+  return candidate;
 }

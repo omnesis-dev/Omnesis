@@ -5,12 +5,12 @@ import { describe, test, expect, beforeAll, afterAll } from "vitest";
 import Database from "better-sqlite3";
 type Db = Database.Database;
 import { SourceId, ProviderId, SyncError } from "@omnesis/types";
-import { rowsFor, tablesWritten } from "@omnesis/source-sdk/testing";
+import { setFixtureMode, rowsFor, tablesWritten } from "@omnesis/source-sdk/testing";
 import { coreDataToISO, coreDataToDate, appNameFromBundleId } from "./types.js";
 import { aggregateDaily } from "./aggregator.js";
 import definition from "./index.js";
 import type { UsageSession } from "./types.js";
-import { mkdtempSync, rmSync, chmodSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -669,7 +669,7 @@ describe("KnowledgeDbReader", () => {
     const dbPath = makeDbWith([
       { pk: 1, stream: "/app/usage", bundle: "a", start: 1, end: 2, created: 2 },
     ]);
-    chmodSync(dbPath, 0o000);
+    setFixtureMode(dbPath, 0o000);
     try {
       expect(() => new KnowledgeDbReader(dbPath)).toThrow(SyncError);
       try {
@@ -683,7 +683,7 @@ describe("KnowledgeDbReader", () => {
         expect(syncErr.remediation?.executable).toBe(process.execPath);
       }
     } finally {
-      chmodSync(dbPath, 0o600);
+      setFixtureMode(dbPath, 0o600);
     }
   });
 });

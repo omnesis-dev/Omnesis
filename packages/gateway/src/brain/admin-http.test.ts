@@ -348,12 +348,16 @@ describe("inert-when-off + scopes", () => {
 
   test("every /admin/brain route 404s when no status getter is wired at all", async () => {
     const bare = createServer(db, dbPath, { configDir });
-    for (const route of ALL_ROUTES) {
-      const res = await bare.request(route.path, {
-        method: route.method,
-        headers: { authorization: `Bearer ${ADMIN_TOKEN}` },
-      });
-      expect(res.status, `${route.method} ${route.path}`).toBe(404);
+    try {
+      for (const route of ALL_ROUTES) {
+        const res = await bare.request(route.path, {
+          method: route.method,
+          headers: { authorization: `Bearer ${ADMIN_TOKEN}` },
+        });
+        expect(res.status, `${route.method} ${route.path}`).toBe(404);
+      }
+    } finally {
+      await bare.close();
     }
   });
 
@@ -2376,25 +2380,29 @@ describe("/admin/brain/clock (the replay time cursor)", () => {
       configDir,
       briefsClock: clock,
     });
-    const before = await virtualApp.request("/admin/brain/clock", {
-      headers: { authorization: `Bearer ${ADMIN_TOKEN}` },
-    });
-    expect(((await before.json()) as { virtual: boolean }).virtual).toBe(true);
+    try {
+      const before = await virtualApp.request("/admin/brain/clock", {
+        headers: { authorization: `Bearer ${ADMIN_TOKEN}` },
+      });
+      expect(((await before.json()) as { virtual: boolean }).virtual).toBe(true);
 
-    const set = await virtualApp.request("/admin/brain/clock", {
-      method: "POST",
-      headers: { authorization: `Bearer ${ADMIN_TOKEN}`, "content-type": "application/json" },
-      body: JSON.stringify({ now: "2026-05-10T12:00:00.000Z" }),
-    });
-    expect(set.status).toBe(200);
-    expect(clock()).toBe(Date.parse("2026-05-10T12:00:00.000Z"));
+      const set = await virtualApp.request("/admin/brain/clock", {
+        method: "POST",
+        headers: { authorization: `Bearer ${ADMIN_TOKEN}`, "content-type": "application/json" },
+        body: JSON.stringify({ now: "2026-05-10T12:00:00.000Z" }),
+      });
+      expect(set.status).toBe(200);
+      expect(clock()).toBe(Date.parse("2026-05-10T12:00:00.000Z"));
 
-    const bad = await virtualApp.request("/admin/brain/clock", {
-      method: "POST",
-      headers: { authorization: `Bearer ${ADMIN_TOKEN}`, "content-type": "application/json" },
-      body: JSON.stringify({ now: "not a time" }),
-    });
-    expect(bad.status).toBe(400);
+      const bad = await virtualApp.request("/admin/brain/clock", {
+        method: "POST",
+        headers: { authorization: `Bearer ${ADMIN_TOKEN}`, "content-type": "application/json" },
+        body: JSON.stringify({ now: "not a time" }),
+      });
+      expect(bad.status).toBe(400);
+    } finally {
+      await virtualApp.close();
+    }
   });
 });
 

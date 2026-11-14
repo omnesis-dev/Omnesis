@@ -17,7 +17,7 @@ let vault: string;
 const first = 9_007_199_254_740_992n;
 const second = first + 1n;
 beforeEach(() => {
-  root = fs.mkdtempSync(join(tmpdir(), "obsidian-exact-identity-"));
+  root = fs.realpathSync(fs.mkdtempSync(join(tmpdir(), "obsidian-exact-identity-")));
   vault = join(root, "InventedVault");
   fs.mkdirSync(vault);
   fs.mkdirSync(join(vault, ".obsidian"));

@@ -1,11 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   clearMarkerKeyringState,
+  createSecretStore,
+  OMNESIS_INSTALL_ROOT_KEY,
   ensureInstallRootKey,
   inspectStorageKey,
   markSecretFileEncryptionRequired,
@@ -139,19 +141,10 @@ describe("resolveGatewayStorageEncryptionKeys", () => {
     await ensureInstallRootKey({ backend: "file", configDir: dir });
     await resolveGatewayStorageEncryptionKeys(dir);
 
-    // Simulate a partial wipe: marker + wrapped keys + the root-key entry are
-    // gone, but the file store's marker-state entries survive under
-    // keyring/dev.omnesis/ (entry filenames are base64url of the entry name).
+    // Remove the marker, wrapped keys and root entry while retaining marker state.
     rmSync(join(dir, "keyring", "storage-encryption-required"));
     rmSync(join(dir, "keyring", "storage-keys"), { recursive: true, force: true });
-    const storeDir = join(dir, "keyring", "dev.omnesis");
-    const rootKeyEntry = readdirSync(storeDir).find((f) =>
-      Buffer.from(f.replace(/\.secret$/, ""), "base64url")
-        .toString("utf8")
-        .includes("install-root-key"),
-    );
-    if (!rootKeyEntry) throw new Error("expected a root key entry in the file store");
-    rmSync(join(storeDir, rootKeyEntry));
+    await createSecretStore({ backend: "file", configDir: dir }).delete(OMNESIS_INSTALL_ROOT_KEY);
 
     await expect(resolveGatewayStorageEncryptionKeys(dir)).rejects.toThrow(
       /records that live storage encryption was enabled/i,

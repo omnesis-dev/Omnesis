@@ -71,7 +71,8 @@ beforeEach(() => {
   app = createServer(db, dbPath, { writeGate: directWriteGate(db), configDir });
 });
 
-afterEach(() => {
+afterEach(async () => {
+  await app.close();
   db.close();
   for (const suffix of ["", "-wal", "-shm", "-journal"]) {
     if (existsSync(dbPath + suffix)) unlinkSync(dbPath + suffix);

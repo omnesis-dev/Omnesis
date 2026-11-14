@@ -21,6 +21,7 @@ import {
   type CodexRuntimeTurnOptions,
   type CodexTurnRunner,
 } from "./codex-app-server-backend.js";
+import { bindCodexPoolAuthOwner, prepareCodexPrivateState } from "./codex-private-state.js";
 import type { AgentEvent, Logger } from "@omnesis/core";
 
 /**
@@ -91,7 +92,7 @@ export function reconcileMemberAuth(memberHome: string, sharedAuthPath: string, 
     if (link?.isSymbolicLink()) {
       if (safeReadlink(memberAuth) === sharedAuthPath) return; // already sharing
       rmSync(memberAuth, { force: true });
-      symlinkSync(sharedAuthPath, memberAuth);
+      shareAuthLink(sharedAuthPath, memberAuth);
       return;
     }
     if (link?.isFile()) {
@@ -106,9 +107,30 @@ export function reconcileMemberAuth(memberHome: string, sharedAuthPath: string, 
       }
       rmSync(memberAuth, { force: true });
     }
-    symlinkSync(sharedAuthPath, memberAuth);
+    shareAuthLink(sharedAuthPath, memberAuth);
   } catch (err) {
+    if (err instanceof CodexAuthLinkPermissionError) throw err;
     log.warn(`auth reconcile for member home ${memberHome} failed: ${errText(err)}`);
+  }
+}
+
+class CodexAuthLinkPermissionError extends Error {}
+function shareAuthLink(target: string, path: string): void {
+  try {
+    symlinkSync(target, path);
+  } catch (error) {
+    if (
+      process.platform === "win32" &&
+      error &&
+      typeof error === "object" &&
+      "code" in error &&
+      (error.code === "EPERM" || error.code === "EACCES")
+    )
+      throw new CodexAuthLinkPermissionError(
+        "Codex authentication sharing on Windows requires file symbolic-link permission. Enable Windows Developer Mode and verify access to the dedicated Codex state directories.",
+        { cause: error },
+      );
+    throw error;
   }
 }
 
@@ -117,6 +139,8 @@ export class CodexRuntimePool implements CodexTurnRunner {
   private readonly sharedAuthPath: string;
   private readonly log: Logger;
   private disposed = false;
+  private sharedPrivacy: Promise<void> | undefined;
+  private readonly memberPrivacy = new Map<PoolMember, Promise<void>>();
   private readonly waiters: PoolWaiter[] = [];
 
   constructor(private readonly opts: CodexRuntimePoolOptions) {
@@ -128,13 +152,16 @@ export class CodexRuntimePool implements CodexTurnRunner {
     const size = opts.size;
     const createRuntime =
       opts.createRuntime ??
-      ((home, workspace, index): PoolMemberRuntime =>
-        new CodexAppServerRuntime({
+      ((home, workspace, index): PoolMemberRuntime => {
+        const runtime = new CodexAppServerRuntime({
           ...opts.runtimeOptions,
           codexHome: home,
           workspaceDir: workspace,
           logger: this.log.child(`member-${index}`),
-        }));
+        });
+        bindCodexPoolAuthOwner(runtime, opts.sharedHome);
+        return runtime;
+      });
     for (let index = 0; index < size; index += 1) {
       const home = join(opts.poolHomeBase, String(index));
       this.members.push({
@@ -155,7 +182,10 @@ export class CodexRuntimePool implements CodexTurnRunner {
    *  propagates immediately; steady-state reconciliation happens per-lease. */
   reassertAuth(): void {
     for (const member of this.members) {
-      if (member.inFlight === 0) this.prepareMember(member);
+      if (member.inFlight === 0)
+        void this.prepareMember(member).catch((error: unknown) => {
+          this.log.warn(`Codex pool authentication reconciliation failed: ${errText(error)}`);
+        });
     }
   }
 
@@ -193,7 +223,9 @@ export class CodexRuntimePool implements CodexTurnRunner {
       opts.signal?.throwIfAborted();
       if (this.disposed) throw new Error("Codex runtime pool disposed");
       // Each lease owns an idle member exclusively, including auth preparation.
-      this.prepareMember(member);
+      await this.prepareMember(member);
+      opts.signal?.throwIfAborted();
+      if (this.disposed) throw new Error("Codex runtime pool disposed");
       yield* member.runtime.runTurn(opts);
       status = "completed";
     } catch (error) {
@@ -208,10 +240,27 @@ export class CodexRuntimePool implements CodexTurnRunner {
   }
 
   /** Ensure a member's isolated home exists and its `auth.json` tracks the
-   *  shared login (newest-wins). Cheap: a handful of sync fs calls, run only on
-   *  the idle→busy edge. */
-  private prepareMember(member: PoolMember): void {
-    mkdirSync(member.home, { recursive: true });
+   *  shared login (newest-wins). Windows verifies dedicated state asynchronously
+   *  before first use; steady-state reconciliation runs on the idle→busy edge. */
+  private async prepareMember(member: PoolMember): Promise<void> {
+    if (process.platform === "win32") {
+      try {
+        await (this.sharedPrivacy ??= prepareCodexPrivateState([this.opts.sharedHome]));
+        let ready = this.memberPrivacy.get(member);
+        if (!ready) {
+          ready = prepareCodexPrivateState([member.home], {
+            home: member.home,
+            target: this.sharedAuthPath,
+          });
+          this.memberPrivacy.set(member, ready);
+        }
+        await ready;
+      } catch (error) {
+        this.sharedPrivacy = undefined;
+        this.memberPrivacy.delete(member);
+        throw error;
+      }
+    } else mkdirSync(member.home, { recursive: true });
     reconcileMemberAuth(member.home, this.sharedAuthPath, this.log);
   }
 

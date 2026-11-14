@@ -13,8 +13,10 @@ import {
   symlinkSync,
   writeFileSync,
 } from "node:fs";
-import { join } from "node:path";
+import { join, win32 } from "node:path";
+import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
+import { inspectWindowsPrivatePathSync } from "@omnesis/core";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { prepareDemoHostStates } from "./synthetic-demo-host-state.js";
 
@@ -88,7 +90,10 @@ describe("demo host filesystem and credential boundary", () => {
       device: { ...pairing.device, name: "Fictional device" },
     });
     const path = join(state.dir, "pairing.json");
-    expect(statSync(path).mode & 0o777).toBe(0o600);
+    if (process.platform === "win32") {
+      expect(inspectWindowsPrivatePathSync(path, "file").private).toBe(true);
+      expect(inspectWindowsPrivatePathSync(state.dir, "directory").private).toBe(true);
+    } else expect(statSync(path).mode & 0o777).toBe(0o600);
     expect(JSON.parse(readFileSync(path, "utf8"))).toEqual(pairing);
     const retry = prepareDemoHostStates(root, ["macbook"]).get("macbook")!;
     expect(retry.saved).toEqual(pairing);
@@ -104,10 +109,17 @@ describe("demo host filesystem and credential boundary", () => {
   it("rejects public permissions, oversize state, and malformed JSON without exposing its text", () => {
     const state = prepareDemoHostStates(root, ["macbook"]).get("macbook")!;
     const path = join(state.dir, "pairing.json");
-    writeFileSync(path, JSON.stringify(pairing), { mode: 0o600 });
-    chmodSync(path, 0o644);
-    expect(() => prepareDemoHostStates(root, ["macbook"])).toThrow("bounded private");
-    chmodSync(path, 0o600);
+    state.save(pairing);
+    if (process.platform === "win32") {
+      const icacls = win32.join(process.env.SystemRoot ?? "C:\\Windows", "System32", "icacls.exe");
+      execFileSync(icacls, [path, "/grant", "*S-1-1-0:(R)", "/Q"]);
+      expect(() => prepareDemoHostStates(root, ["macbook"])).toThrow("bounded private");
+      execFileSync(icacls, [path, "/remove:g", "*S-1-1-0", "/Q"]);
+    } else {
+      chmodSync(path, 0o644);
+      expect(() => prepareDemoHostStates(root, ["macbook"])).toThrow("bounded private");
+      chmodSync(path, 0o600);
+    }
     writeFileSync(path, " ".repeat(64 * 1024 + 1));
     expect(() => prepareDemoHostStates(root, ["macbook"])).toThrow("bounded private");
     writeFileSync(path, '{"fictional-secret":');

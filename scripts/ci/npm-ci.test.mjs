@@ -285,6 +285,28 @@ async function exec(command, args, options) {
   return { status, stderr };
 }
 
+/** Keep real npm tarball/retry behavior, with offline headers for packages that compile no native code. */
+async function execBootstrap(fixture, args, env) {
+  const actualNpm = await npmJavaScriptEntry(env);
+  const runtime = npmCiFixture(fixture.project);
+  writeFileSync(runtime.npmCli, `require(${JSON.stringify(actualNpm)});\n`);
+  const started = runtime.start(args, { ...env, npm_execpath: runtime.npmCli });
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    // The production entry owns and joins its npm/header descendants on IPC disconnect.
+    if (started.child.connected) started.child.disconnect();
+  }, 45_000);
+  try {
+    const result = await started.result;
+    if (timedOut)
+      throw new Error(`Real npm bootstrap exceeded its fixture deadline: ${result.stderr}`);
+    return { status: result.code, stderr: result.stderr };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 describe("portable Node bootstrap against the real npm", () => {
   const npmArgs = (fixture) => [
     "--no-audit",
@@ -318,14 +340,10 @@ describe("portable Node bootstrap against the real npm", () => {
   test("the wrapper installs again and gets the optional package back", async () => {
     const fixture = await projectWithFlakyOptional(1);
     try {
-      const result = await exec(
-        process.execPath,
-        [join(import.meta.dirname, "npm-ci.mjs"), ...npmArgs(fixture)],
-        {
-          cwd: fixture.project,
-          env: { ...env, NPM_CI_REQUIRE_OPTIONAL: "1" },
-        },
-      );
+      const result = await execBootstrap(fixture, npmArgs(fixture), {
+        ...env,
+        NPM_CI_REQUIRE_OPTIONAL: "1",
+      });
       expect(result.stderr).toContain(
         "npm ci dropped optional packages that failed to install: binding (attempt 1 of 3)",
       );
@@ -339,14 +357,11 @@ describe("portable Node bootstrap against the real npm", () => {
   test("the wrapper fails a build that requires it when the package stays missing", async () => {
     const fixture = await projectWithFlakyOptional(Infinity);
     try {
-      const result = await exec(
-        process.execPath,
-        [join(import.meta.dirname, "npm-ci.mjs"), ...npmArgs(fixture)],
-        {
-          cwd: fixture.project,
-          env: { ...env, NPM_CI_ATTEMPTS: "2", NPM_CI_REQUIRE_OPTIONAL: "1" },
-        },
-      );
+      const result = await execBootstrap(fixture, npmArgs(fixture), {
+        ...env,
+        NPM_CI_ATTEMPTS: "2",
+        NPM_CI_REQUIRE_OPTIONAL: "1",
+      });
       expect(result.status).toBe(1);
       expect(result.stderr).toContain("binding, after 2 attempts, and this build requires them");
     } finally {

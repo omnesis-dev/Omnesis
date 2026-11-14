@@ -44,6 +44,9 @@ describe("pathValueForCollector", () => {
       "/Users/maya/Documents/field-notes",
     );
     expect(pathValueForCollector("/Volumes/Archive", hostname(), env)).toBe("/Volumes/Archive");
+    expect(pathValueForCollector("~/Notes\\literal", hostname(), env)).toBe(
+      "/Users/maya/Notes\\literal",
+    );
     // A remote collector still resolves its own.
     expect(pathValueForCollector("~/notes", "remote.example", env)).toBe("~/notes");
   });

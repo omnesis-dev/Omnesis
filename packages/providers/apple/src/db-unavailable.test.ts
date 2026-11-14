@@ -12,7 +12,8 @@
  * a connection-wide condition, and its `SyncError` says so via `scope`.
  */
 
-import { chmodSync, rmSync } from "node:fs";
+import { rmSync } from "node:fs";
+import { setFixtureMode } from "@omnesis/source-sdk/testing";
 import { describe, expect, test, beforeEach, afterEach } from "vitest";
 import { SyncError } from "@omnesis/types";
 import { AppleNotesSource } from "./notes.js";
@@ -47,7 +48,7 @@ describe("an unreadable database costs only the source that reads it", () => {
   test.skipIf(!canDenyReads)(
     "the notes source reports the denial while imessage syncs its messages",
     async () => {
-      chmodSync(fixture.notesPath, 0o000);
+      setFixtureMode(fixture.notesPath, 0o000);
       await fixture.provider.authenticate();
 
       const notes = new AppleNotesSource(fixture.provider, IDS);
@@ -88,7 +89,7 @@ describe("an unreadable database costs only the source that reads it", () => {
       fixture.calendarPath,
       fixture.callLogPath,
     ]) {
-      chmodSync(path, 0o000);
+      setFixtureMode(path, 0o000);
     }
     // Every database is refused, so the provider itself refuses; the sources
     // are constructed directly to reach their own reporting.

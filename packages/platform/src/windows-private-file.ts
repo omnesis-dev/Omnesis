@@ -41,6 +41,7 @@ type Operation =
       replaceExisting?: boolean;
     }
   | { action: "cleanup"; path: string; identity: string }
+  | { action: "copy-private"; path: string; source: string }
   | { action: "regular-prefix"; path: string; limit: number }
   | ({ action: "read"; path: string; limit: number } & WindowsPrivateExactNames)
   | ({ action: "delete"; path: string } & WindowsPrivateExactNames)
@@ -54,7 +55,11 @@ function invocation(
 ): { command: string; args: readonly string[]; input: Buffer; timeoutMs: number | undefined } {
   const started = Date.now();
   const paths =
-    operation.action === "inspect" ? operation.paths.map((entry) => entry.path) : [operation.path];
+    operation.action === "inspect"
+      ? operation.paths.map((entry) => entry.path)
+      : operation.action === "copy-private"
+        ? [operation.path, operation.source]
+        : [operation.path];
   if (paths.length > 5000 || paths.some((path) => path.includes("\0")))
     throw new Error("Invalid private file path");
   const metadata = Buffer.from(JSON.stringify(operation), "utf8");
@@ -159,8 +164,12 @@ export async function readWindowsRegularFilePrefix(
     throw new Error("Invalid Windows regular-file prefix response");
   return { bytes: result.subarray(8), size };
 }
-function operateSync(operation: Operation, input?: Uint8Array): Buffer {
-  const run = invocation(operation, input);
+function operateSync(
+  operation: Operation,
+  input?: Uint8Array,
+  budget: number | null = 30_000,
+): Buffer {
+  const run = invocation(operation, input, true, budget);
   return resultBytes(
     runWindowsOwnedProcessSync(run, run.input, {
       timeoutMs: run.timeoutMs,
@@ -168,11 +177,25 @@ function operateSync(operation: Operation, input?: Uint8Array): Buffer {
     }),
   );
 }
+/** Copy without buffering file contents in JavaScript; protect bytes before atomic publication. */
+export function copyWindowsPrivateFileSync(source: string, destination: string): void {
+  if (win32.normalize(source) === win32.normalize(destination))
+    throw new Error("Private copy source and destination must differ");
+  // Like copyFileSync, a filesystem copy has no size-dependent wall-clock cap.
+  // The native process remains bound to its owner and streams a fixed buffer.
+  operateSync({ action: "copy-private", path: destination, source }, undefined, null);
+}
 /** Read a bounded regular file through the handle whose owner and DACL are verified. */
 export function readWindowsPrivateFile(path: string, limit = MAX_BYTES): Promise<Buffer> {
   if (!Number.isSafeInteger(limit) || limit < 0 || limit > 16 * 1024 * 1024)
     throw new Error("Invalid private file read bound");
   return operate({ action: "read", path, limit });
+}
+/** Synchronous bounded read for preflight paths that cannot defer credential validation. */
+export function readWindowsPrivateFileSync(path: string, limit = MAX_BYTES): Buffer {
+  if (!Number.isSafeInteger(limit) || limit < 0 || limit > 16 * 1024 * 1024)
+    throw new Error("Invalid private file read bound");
+  return operateSync({ action: "read", path, limit });
 }
 /** Capture a whole protected file like readFile, without the authority-key size cap. */
 export function readWindowsPrivateFileContents(
