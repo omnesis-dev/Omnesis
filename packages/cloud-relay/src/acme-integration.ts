@@ -14,8 +14,16 @@ import { readPrivateJson } from "./google-credentials.js";
 import {
   gatewayKeySessionSource,
   prepareGatewayOwner,
+  readOrCreateGatewayOwnerKey,
   registerGatewayKey,
 } from "./gateway-key-client.js";
+import {
+  brokerOrRelayPresenter,
+  dnsBrokerClient,
+  dnsBrokerSelection,
+} from "./dns-broker-client.js";
+import { hostedGatewayHostname } from "./hosted-name.js";
+import { relayOrigin } from "./network.js";
 import { independentDnsPresenter } from "./independent-dns-client.js";
 import { publicGatewayOrigin } from "./gateway-certificate.js";
 import { publicKeyFingerprint } from "./gateway-key-auth.js";
@@ -24,7 +32,14 @@ import { bindingOrigin } from "./gateway-binding.js";
 const schema = z.object({
   OMNESIS_ACME_DIRECTORY_URL: z.string().url(),
   OMNESIS_ACME_TERMS_ACCEPTED: z.literal("1"),
-  OMNESIS_ACME_DNS_PROVIDER: z.enum(["relay", "cloudflare", "independent"]).default("relay"),
+  /**
+   * `auto`: the official relay's gateways use the official DNS broker once it serves them, and
+   * the relay before that; other relays keep the relay. `broker` needs a broker URL and never
+   * uses the relay.
+   */
+  OMNESIS_ACME_DNS_PROVIDER: z
+    .enum(["auto", "relay", "broker", "cloudflare", "independent"])
+    .default("auto"),
   OMNESIS_ACME_ACCOUNT_KEY_FILE: z.string().min(1).optional(),
   OMNESIS_ACME_DNS_ZONE_ID: z.string().min(1).optional(),
   OMNESIS_ACME_DNS_ZONE_NAME: z.string().min(1).optional(),
@@ -85,8 +100,11 @@ export async function createGatewayAcmeController(
     (!config.OMNESIS_ACME_DNS_BROKER_URL || config.OMNESIS_ACME_DNS_TOKEN_FILE)
   )
     throw new Error("Independent DNS requires a broker URL and no local provider token");
-  if (config.OMNESIS_ACME_DNS_BROKER_URL && config.OMNESIS_ACME_DNS_PROVIDER !== "independent")
-    throw new Error("A DNS broker URL requires the independent DNS provider");
+  if (
+    config.OMNESIS_ACME_DNS_BROKER_URL &&
+    !["independent", "broker"].includes(config.OMNESIS_ACME_DNS_PROVIDER)
+  )
+    throw new Error("A DNS broker URL requires the independent or broker DNS provider");
   const publicOrigin = publicGatewayOrigin(env);
   const publicKeyFile = config.OMNESIS_ACME_KEY_FILE ?? `${config.OMNESIS_ACME_CERT_FILE}.key`;
   const direct = resolveTlsMaterial({
@@ -192,13 +210,43 @@ export async function createGatewayAcmeController(
             fetch: options.fetch,
           });
         else {
+          const relayUrl = config.OMNESIS_CLOUD_RELAY_URL;
+          const selection = dnsBrokerSelection(env, relayUrl);
+          // The broker serves only the gateway's own hosted name, never a custom domain.
+          const hosted =
+            bindingOrigin(publicOrigin).hostname ===
+            hostedGatewayHostname(keyOptions.gatewayId, relayOrigin(relayUrl).hostname);
+          if (selection?.required && !hosted)
+            throw new Error("The DNS broker serves only the gateway's hosted name");
           const session = gatewayKeySessionSource(keyOptions);
-          presenter = relayDnsPresenter({
-            relayUrl: config.OMNESIS_CLOUD_RELAY_URL,
-            session,
-            invalidateSession: session.invalidate,
-            fetch: options.fetch,
-          });
+          const relay =
+            config.OMNESIS_ACME_DNS_PROVIDER === "broker"
+              ? undefined
+              : relayDnsPresenter({
+                  relayUrl,
+                  session,
+                  invalidateSession: session.invalidate,
+                  fetch: options.fetch,
+                });
+          presenter =
+            selection && hosted
+              ? brokerOrRelayPresenter({
+                  broker: dnsBrokerClient({
+                    brokerUrl: selection.url,
+                    relayUrl,
+                    gatewayId: keyOptions.gatewayId,
+                    owner: () =>
+                      readOrCreateGatewayOwnerKey(
+                        keyOptions.ownerKeyFile ?? `${keyOptions.sessionFile}.owner-key`,
+                        false,
+                      ),
+                    fetch: options.fetch,
+                  }),
+                  required: selection.required,
+                  relay,
+                  markerFile: `${accountKeyFile}.dns-broker.json`,
+                })
+              : relay!;
         }
         await activate(abort.signal);
         state = {

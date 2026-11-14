@@ -855,6 +855,19 @@ The default hosted flow separates certificate issuance from DNS cooperation:
 The broker receives no CSR, ACME account JWS or private keys. The gateway does not
 receive the relay's Cloudflare token and needs no inbound Internet listener.
 
+`OMNESIS_ACME_DNS_PROVIDER` selects who publishes the DNS-01 digest for a hosted
+name. The default, `auto`, sends a gateway of the official relay to the
+[independent DNS broker](#independent-dns-broker) compiled into the gateway
+(`https://dns.omnesis.app`) as soon as that broker answers for the relay's
+domain, and keeps using the relay's DNS cooperation until then; gateways of
+any other relay keep the relay. The broker's address is never taken from the
+relay. A new gateway claims its hosted name at the broker before it first asks
+the relay for its configuration, and draws a new id when the broker binds the
+name to another key. Once a gateway has used the broker it never returns to
+the relay: an unreachable broker then fails the renewal, which retries. `relay`
+keeps the relay's cooperation, and `broker` with `OMNESIS_ACME_DNS_BROKER_URL`
+uses that broker only, with no fallback. Custom domains never use the broker.
+
 The gateway keeps its existing direct TLS certificate and private key. Public
 TLS uses its own stable private key, independent of direct certificate renewal. Configure
 a **separate** `OMNESIS_ACME_CERT_FILE` for the public hostname's certificate:
