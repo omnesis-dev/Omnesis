@@ -107,6 +107,8 @@ export interface CloudRelayManagementStatus {
   /** Local choices about new devices. These are never sent to the relay. */
   deviceEnrollment?: {
     policy: "automatic" | "ask";
+    /** Linked, and no sign-in confirmed here yet: every new device waits for a person. */
+    confirmationNeeded: boolean;
     trustedSignIns: {
       type: "google" | "passkey";
       id: string;

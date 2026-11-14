@@ -10,8 +10,17 @@ import {
 } from "../lib/cloud-pairing-api.js";
 import { waitingCloudPairingRequests } from "../lib/cloud-pairing-waiting.js";
 import { useVisiblePoll } from "../lib/use-visible-poll.js";
+import {
+  approveWithPasskey,
+  onGatewayOrigin,
+  passkeysSupported,
+} from "../lib/gateway-passkey.js";
 
-export function CloudPairingRequest({ request, onDecision }) {
+/**
+ * `passkey`: this page is on the gateway's own origin, so a request can also be approved with a
+ * passkey the owner confirmed here. A browser's request is approved only in that browser.
+ */
+export function CloudPairingRequest({ request, onDecision, passkey = false, approve = approveWithPasskey }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
   const latest = useRef(request);
@@ -28,7 +37,7 @@ export function CloudPairingRequest({ request, onDecision }) {
   const pending = request.status === "pending";
   const expired = request.expiresAt <= Date.now();
 
-  async function decide(approve) {
+  async function decide(accept, withPasskey = false) {
     if (
       deciding.current ||
       !active.current ||
@@ -41,11 +50,13 @@ export function CloudPairingRequest({ request, onDecision }) {
     setBusy(true);
     setError(null);
     try {
-      await decideCloudPairing(
-        request.requestId,
-        approve,
-        request.canTrustSignIn && approve ? trust : undefined,
-      );
+      const trustSignIn = request.canTrustSignIn && accept ? trust : undefined;
+      if (withPasskey)
+        await approve({
+          requestId: request.requestId,
+          ...(trustSignIn === undefined ? {} : { trustSignIn }),
+        });
+      else await decideCloudPairing(request.requestId, accept, trustSignIn);
       await onDecision();
     } catch (failure) {
       setError(failure.message);
@@ -99,6 +110,17 @@ export function CloudPairingRequest({ request, onDecision }) {
           <button class="btn-primary" disabled=${busy || approving} onClick=${() => decide(true)}>
             ${busy || approving ? "Updating…" : "Approve"}
           </button>
+          ${
+            passkey &&
+            request.kind !== "portal" &&
+            html`<button
+              class="btn-secondary"
+              disabled=${busy || approving}
+              onClick=${() => decide(true, true)}
+            >
+              Approve with passkey
+            </button>`
+          }
           <button class="btn-secondary" disabled=${busy || approving} onClick=${() => decide(false)}>
             Deny
           </button>
@@ -121,6 +143,7 @@ const SIGN_IN_LABELS = { google: "Google", passkey: "Passkey" };
 /** The public configuration endpoint exists only when optional Google pairing is enabled. */
 export function CloudPairingRequests() {
   const [enabled, setEnabled] = useState(false);
+  const [passkey, setPasskey] = useState(false);
   const [requests, setRequests] = useState([]);
   const [error, setError] = useState(null);
   const refresh = async () => {
@@ -138,6 +161,7 @@ export function CloudPairingRequests() {
       .then((config) => {
         if (!active || !config) return;
         setEnabled(true);
+        setPasskey(onGatewayOrigin(config.gatewayPasskey?.origin) && passkeysSupported());
         refresh();
       })
       .catch(() => {});
@@ -158,6 +182,7 @@ export function CloudPairingRequests() {
         html`<${CloudPairingRequest}
           key=${`${request.requestId}:${request.verificationCode}`}
           request=${request}
+          passkey=${passkey}
           onDecision=${refresh}
         />`,
     )}

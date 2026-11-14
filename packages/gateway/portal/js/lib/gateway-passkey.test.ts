@@ -1,7 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
+import { webcrypto } from "node:crypto";
+import { approvalDeviceTranscript as cloudRelayApprovalTranscript } from "@omnesis/cloud-relay";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import {
+  approvalDeviceTranscript,
+  approveWithPasskey,
   GatewayPasskeyError,
   gatewayPasskeyProof,
   onGatewayOrigin,
@@ -137,5 +141,71 @@ describe("gateway passkey ceremonies in the portal", () => {
           location: { origin: ORIGIN },
         }),
       ).rejects.toThrow("That passkey can't be used here. Try your Omnesis passkey.");
+  });
+});
+
+describe("approving a held request with a passkey", () => {
+  const REQUEST = "11111111-2222-4333-8444-555555555555";
+  const ok = (body: unknown = {}) => new Response(JSON.stringify(body));
+  test("asks for the ceremony, prompts, and sends the assertion with the browser's own signature", async () => {
+    const pair = await webcrypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, false, [
+      "sign",
+      "verify",
+    ]);
+    const transport = vi
+      .fn()
+      .mockResolvedValueOnce(ok({ challenge: CHALLENGE, origin: ORIGIN }))
+      .mockResolvedValueOnce(ok({ ok: true }));
+    vi.stubGlobal("fetch", transport);
+    vi.stubGlobal("crypto", webcrypto);
+    const prove = vi.fn().mockResolvedValue({ type: "gateway-passkey" });
+    await approveWithPasskey(
+      { requestId: REQUEST, trustSignIn: true, deviceKey: pair.privateKey },
+      { prove },
+    );
+    expect(transport.mock.calls.map(([path]) => path)).toEqual([
+      "/devices/account/approval/options",
+      "/devices/account/approval",
+    ]);
+    const body = JSON.parse(transport.mock.calls[1]![1].body);
+    expect(body).toMatchObject({ requestId: REQUEST, proof: { type: "gateway-passkey" }, trustSignIn: true });
+    const valid = await webcrypto.subtle.verify(
+      { name: "ECDSA", hash: "SHA-256" },
+      pair.publicKey,
+      Buffer.from(body.deviceSignature, "base64url"),
+      new TextEncoder().encode(approvalDeviceTranscript(REQUEST, CHALLENGE)),
+    );
+    expect(valid).toBe(true);
+    // The transcript is the gateway's, byte for byte.
+    expect(approvalDeviceTranscript(REQUEST, CHALLENGE)).toBe(
+      cloudRelayApprovalTranscript({ requestId: REQUEST, challenge: CHALLENGE }).toString(),
+    );
+  });
+
+  test("an expired request, a refused passkey and any other failure each say what to do", async () => {
+    const prove = vi.fn().mockResolvedValue({ type: "gateway-passkey" });
+    const sign = vi.fn().mockResolvedValue("signature");
+    const signal = new AbortController().signal;
+    for (const [responses, deviceKey, message] of [
+      [[new Response("{}", { status: 404 })], undefined, "can't be approved here anymore"],
+      [[ok({ challenge: CHALLENGE }), new Response("{}", { status: 403 })], undefined, "Use a passkey you confirmed on this gateway."],
+      [[ok({ challenge: CHALLENGE }), new Response("{}", { status: 403 })], {}, "in the browser that asked to join"],
+      [[ok({ challenge: CHALLENGE }), new Response("{}", { status: 500 })], undefined, "Couldn't approve this request."],
+    ] as const) {
+      const transport = vi.fn();
+      for (const response of responses) transport.mockResolvedValueOnce(response);
+      vi.stubGlobal("fetch", transport);
+      await expect(
+        approveWithPasskey(
+          { requestId: REQUEST, signal, ...(deviceKey ? { deviceKey } : {}) },
+          { prove, sign },
+        ),
+      ).rejects.toThrow(message);
+      expect(transport.mock.calls[0]![1].signal).toBe(signal);
+    }
+    // With no injected helpers it uses the real prompt, which refuses an off-origin page.
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(ok({ ...ceremony })));
+    vi.stubGlobal("location", { origin: "https://elsewhere.example.test" });
+    await expect(approveWithPasskey({ requestId: REQUEST })).rejects.toThrow("Open this page at");
   });
 });

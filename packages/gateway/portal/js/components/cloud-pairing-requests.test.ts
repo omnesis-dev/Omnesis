@@ -245,3 +245,68 @@ test("a request from a device the owner revoked says so before the code", async 
   await show();
   expect(host.querySelector(".cloud-pairing-revoked")).toBeNull();
 });
+
+test("on the gateway's own page an app's request can be approved with a passkey; a browser's cannot", async () => {
+  const approve = vi.fn().mockResolvedValue(undefined);
+  const onDecision = vi.fn();
+  await act(async () => {
+    render(
+      h(CloudPairingRequest, {
+        request: { ...request, signIn: "passkey", canTrustSignIn: true },
+        onDecision,
+        passkey: true,
+        approve,
+      }),
+      host,
+    );
+  });
+  await act(async () => {
+    const box = host.querySelector('input[type="checkbox"]') as HTMLInputElement;
+    box.checked = true;
+    box.dispatchEvent(new window.Event("change", { bubbles: true }));
+  });
+  await act(async () => button("Approve with passkey").click());
+  expect(approve).toHaveBeenCalledExactlyOnceWith({
+    requestId: request.requestId,
+    trustSignIn: true,
+  });
+  expect(api.decideCloudPairing).not.toHaveBeenCalled();
+  expect(onDecision).toHaveBeenCalledOnce();
+  approve.mockRejectedValueOnce(new Error("Your gateway didn't accept that passkey."));
+  render(null, host);
+  await act(async () => {
+    render(h(CloudPairingRequest, { request, onDecision, passkey: true, approve }), host);
+  });
+  await act(async () => button("Approve with passkey").click());
+  expect(approve).toHaveBeenLastCalledWith({ requestId: request.requestId });
+  expect(host.querySelector('[role="alert"]')?.textContent).toBe(
+    "Your gateway didn't accept that passkey.",
+  );
+  render(null, host);
+  await act(async () => {
+    render(
+      h(CloudPairingRequest, { request: { ...request, kind: "portal" }, onDecision, passkey: true }),
+      host,
+    );
+  });
+  expect(button("Approve with passkey")).toBeUndefined();
+});
+
+test("the list offers passkey approval only on the gateway's own origin", async () => {
+  vi.stubGlobal("location", { origin: "https://g-abcdefgh.relay.example.test" });
+  vi.stubGlobal("PublicKeyCredential", function PublicKeyCredential() {});
+  vi.stubGlobal("navigator", { credentials: { get: vi.fn() } });
+  api.cloudPairingRequests.mockResolvedValue({ items: [request] });
+  for (const [origin, shown] of [
+    ["https://g-abcdefgh.relay.example.test", true],
+    ["https://g-other.relay.example.test", false],
+  ] as const) {
+    api.cloudPairingConfig.mockResolvedValue({ gatewayPasskey: { rpId: "relay.example.test", origin } });
+    await showRequests();
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(Boolean(button("Approve with passkey"))).toBe(shown);
+    render(null, host);
+  }
+});

@@ -40,6 +40,7 @@ import {
   gatewayPasskeyPinBinding,
   gatewayPasskeySignInProofSchema,
   signInDigest,
+  type GatewayPasskeySignInProof,
   type GatewayPasskeyPurpose,
   type SignInProof,
 } from "./device-enrollment.js";
@@ -70,8 +71,6 @@ const MAX_DECLINED_PASSKEYS = 256;
 const MAX_WITHDRAWN_SIGN_INS = 256;
 /** Certificates an incident hold names, and acknowledged ones kept so a restart doesn't raise them again. */
 const MAX_INCIDENT_CERTIFICATES = 64;
-/** A sign-in that arrives untrusted fetches the account's evidence at most this often. */
-const SIGN_IN_SYNC_INTERVAL_MS = 2_000;
 const bindingSchema = z
   .object({ relayOrigin: z.string().url(), gatewayId: z.string().uuid(), ownerAccountId: digest })
   .strict();
@@ -205,8 +204,6 @@ export class GatewayAccountLink {
       /** The public TLS key devices sign for. */
       spkiFingerprint?(): string | undefined;
       google?(): IdentityProvider | undefined;
-      /** How often an untrusted sign-in may fetch the account's evidence; tests set 0. */
-      signInSyncIntervalMs?: number;
       /** Test seam: production always trusts the compiled-in official Google clients. */
       googleTrust?(): GoogleBrowserTrust;
     },
@@ -448,36 +445,173 @@ export class GatewayAccountLink {
       challenges: this.challenges,
       verifyProof: (proof, nonce, key) => this.verifyProof(proof, nonce, key),
       canTrust: (signIn) => this.canTrust(signIn),
-      trustSignIn: (signIn, source) => this.trustSignIn(signIn, source),
+      trustSignIn: (signIn) => this.trustSignIn(signIn),
+      verifyGatewayPasskey: (proof, challenge, nonce) =>
+        this.verifyGatewayEnrollment(proof, challenge, nonce),
+      approvalCeremony: (binding) => {
+        const origin = this.gatewayOrigin();
+        return origin
+          ? this.ceremony(
+              "approve-request",
+              origin,
+              this.ceremonies.issue("approve-request", binding),
+              binding,
+            )
+          : undefined;
+      },
+      verifyApproval: (proof, binding) => this.verifyApproval(proof, binding),
+      gatewayPasskey: () => {
+        const origin = this.gatewayOrigin();
+        return origin
+          ? { rpId: bindingOrigin(installationRelayUrl(this.options.env())!).hostname, origin }
+          : undefined;
+      },
     };
   }
   /**
-   * A passkey added moments ago may carry a vouching sign-in this gateway has not fetched yet, and
-   * a Google account or passkey the account had before this gateway's passkey was added may be
-   * countersigned by it. Either way the evidence is fetched and checked before the answer.
+   * A device's passkey sign-in on this gateway's page. The key is the one the owner confirmed
+   * here, else the one pinned here, else the one the account lists: a pinned or listed key only
+   * lets the request be held for a person, since the relay chose it. Only a confirmed key makes
+   * the sign-in trusted.
+   */
+  private async verifyGatewayEnrollment(
+    proof: GatewayPasskeySignInProof,
+    challenge: string,
+    nonce: string,
+  ): Promise<VerifiedSignIn | undefined> {
+    const record = this.record?.linked && this.verifiedAccountId() ? this.record : undefined;
+    if (!record) return undefined;
+    const id = proof.credential.id;
+    const confirmed = record.confirmedSignIns.find(
+      (value): value is Extract<ConfirmedSignIn, { type: "passkey" }> =>
+        value.type === "passkey" && value.id === id,
+    );
+    const pinned = record.trustedSignIns.find(
+      (value): value is Extract<TrustedSignIn, { type: "passkey" }> =>
+        value.type === "passkey" && value.id === id,
+    );
+    let publicKey = confirmed?.publicKey ?? pinned?.publicKey;
+    if (!publicKey) {
+      const listing = await this.browser.credentials?.(this.abort.signal).catch(() => undefined);
+      if (listing?.accountId === undefined || listing.accountId === record.accountId)
+        publicKey = listing?.passkeys.find((value) => value.id === id)?.publicKey;
+    }
+    if (!publicKey) return undefined;
+    const verified = await this.verifier.verifyGatewayPasskey(proof, {
+      purpose: "device-enrollment",
+      challenge,
+      binding: nonce,
+      key: () => ({ publicKey: publicKey, counter: confirmed?.counter ?? 0 }),
+    });
+    if (!verified) return undefined;
+    if (confirmed && verified.counter !== confirmed.counter)
+      await this.recordCounter(record, id, verified.counter);
+    return {
+      type: "passkey",
+      id,
+      // A pin the relay's evidence may have added is no confirmation: only the owner's own
+      // ceremony on this gateway makes a passkey trusted.
+      trusted: confirmed !== undefined,
+      channel: verified.channel,
+      pin: {
+        type: "passkey",
+        id,
+        publicKey: verified.publicKey,
+        addedAt: Math.floor(Date.now() / 1000),
+      },
+    };
+  }
+  /**
+   * Whether a passkey the owner confirmed here approved a held request on this gateway's page.
+   * Only a confirmed key counts: a key the relay lists could be the relay's own.
+   */
+  private async verifyApproval(input: unknown, binding: string): Promise<boolean> {
+    const record = this.record?.linked && this.verifiedAccountId() ? this.record : undefined;
+    const parsed = gatewayPasskeySignInProofSchema.safeParse(input);
+    if (
+      !record ||
+      !parsed.success ||
+      !this.ceremonies.take("approve-request", parsed.data.challenge, binding)
+    )
+      return false;
+    const confirmed = (id: string) =>
+      record.confirmedSignIns.find(
+        (value): value is Extract<ConfirmedSignIn, { type: "passkey" }> =>
+          value.type === "passkey" && value.id === id,
+      );
+    const verified = await this.verifier.verifyGatewayPasskey(parsed.data, {
+      purpose: "approve-request",
+      challenge: parsed.data.challenge,
+      binding,
+      key: (id) => confirmed(id),
+    });
+    if (!verified) return false;
+    if (verified.counter !== confirmed(verified.id)!.counter)
+      await this.recordCounter(record, verified.id, verified.counter);
+    return true;
+  }
+  /**
+   * Keeps the signature counter a confirmed passkey last presented. A record that changed in the
+   * meantime is left as it is: the next use records the counter again.
+   */
+  private async recordCounter(
+    record: Extract<Record, { linked: true }>,
+    id: string,
+    counter: number,
+  ): Promise<void> {
+    await this.save(
+      {
+        ...record,
+        confirmedSignIns: record.confirmedSignIns.map((value) =>
+          value.type === "passkey" && value.id === id ? { ...value, counter } : value,
+        ),
+      },
+      this.abort.signal,
+      record,
+    ).catch(() => undefined);
+  }
+  /**
+   * A sign-in made on the relay's account page or in an app. It is trusted only when no relay page
+   * could have made it and the owner confirmed it on this gateway: a passkey assertion from the
+   * official Android app with a confirmed passkey, or a Google token an official app presented
+   * for a confirmed Google account. Anything else verified may wait for a person.
    */
   private async verifyProof(proof: SignInProof, nonce: string, key: string | undefined) {
-    const verified = await this.verifier.verify(proof, "device-enrollment", nonce, key);
-    if (!verified || verified.trusted) return verified;
-    await this.sync(
-      this.abort.signal,
-      this.options.signInSyncIntervalMs ?? SIGN_IN_SYNC_INTERVAL_MS,
-    ).catch(() => undefined);
-    return this.verifier.verify(proof, "device-enrollment", nonce, key);
+    const confirmed = this.confirmedSignIns();
+    const confirmedKey =
+      proof.type === "passkey"
+        ? confirmed.find(
+            (value): value is Extract<ConfirmedSignIn, { type: "passkey" }> =>
+              value.type === "passkey" && value.id === proof.credential.id,
+          )?.publicKey
+        : undefined;
+    const verified = await this.verifier.verify(
+      proof,
+      "device-enrollment",
+      nonce,
+      confirmedKey ?? key,
+    );
+    return verified && { ...verified, trusted: this.confirmed(verified) };
+  }
+  /** Whether `signIn` is one the owner confirmed here, made where no relay page could make it. */
+  private confirmed(signIn: VerifiedSignIn): boolean {
+    const confirmed = this.confirmedSignIns();
+    return signIn.pin.type === "google"
+      ? signIn.channel === "native-google" &&
+          confirmed.some((value) => value.type === "google" && value.id === signIn.pin.id)
+      : signIn.channel === "android-app" &&
+          confirmed.some(
+            (value) =>
+              value.type === "passkey" &&
+              value.id === signIn.pin.id &&
+              value.publicKey === (signIn.pin as { publicKey: string }).publicKey,
+          );
   }
   private syncing?: Promise<void>;
-  private lastSyncAt = 0;
-  /**
-   * One fetch at a time: a caller arriving while one runs waits for it. A sign-in may start one
-   * only `minimumIntervalMs` after the last, so untrusted sign-ins can't make the gateway ask the
-   * relay faster than that.
-   */
-  private sync(signal: AbortSignal, minimumIntervalMs = 0): Promise<void> {
-    if (this.syncing) return this.syncing;
-    if (Date.now() - this.lastSyncAt < minimumIntervalMs) return Promise.resolve();
-    this.syncing = this.syncCredentials(signal).finally(() => {
+  /** One fetch at a time: a caller arriving while one runs waits for it. */
+  private sync(signal: AbortSignal): Promise<void> {
+    this.syncing ??= this.syncCredentials(signal).finally(() => {
       this.syncing = undefined;
-      this.lastSyncAt = Date.now();
     });
     return this.syncing;
   }
@@ -571,39 +705,66 @@ export class GatewayAccountLink {
     await this.save({ ...record, enrollmentPolicy: policy }, this.abort.signal, record);
   }
   /**
-   * A Google subject is named by Google's own signature. A passkey's public key arrives with the
-   * request, so a self-made key verifies too; it is trusted only when the relay lists this id with
-   * this key for the linked account, and never when that list can't be read.
+   * Whether approving a held request may also confirm its sign-in. Only a sign-in no relay page
+   * could have made can be confirmed this way: a passkey on this gateway's page or in the Android
+   * app, or a Google token an official app presented. It must also be the linked account's: the
+   * account lists that Google account, or that passkey id with that key. A sign-in made on a relay
+   * page is confirmed on this gateway's page instead.
    */
   async canTrust(signIn: VerifiedSignIn): Promise<boolean> {
-    if (signIn.trusted || this.verifiedAccountId() === undefined) return false;
-    if (signIn.pin.type === "google") return true;
-    const { id, publicKey } = signIn.pin;
+    if (
+      signIn.trusted ||
+      this.verifiedAccountId() === undefined ||
+      signIn.channel === "relay-page" ||
+      signIn.channel === "web-google"
+    )
+      return false;
     const current = await this.browser.credentials?.(this.abort.signal).catch(() => undefined);
-    return (
-      current?.passkeys.some((value) => value.id === id && value.publicKey === publicKey) ?? false
-    );
+    if (
+      !current ||
+      (current.accountId !== undefined && current.accountId !== this.record?.accountId)
+    )
+      return false;
+    const pin = signIn.pin;
+    return pin.type === "google"
+      ? current.google.includes(pin.id)
+      : current.passkeys.some((value) => value.id === pin.id && value.publicKey === pin.publicKey);
   }
-  async trustSignIn(signIn: VerifiedSignIn, source: TrustedSignInSource): Promise<void> {
-    const record = this.requireLinked();
+  /** Confirms the sign-in of a request the owner approved, as `canTrust` allows. */
+  async trustSignIn(signIn: VerifiedSignIn): Promise<void> {
+    this.requireLinked();
     // Checked again here: the relay's list may have changed since the request was held.
     if (!(await this.canTrust(signIn)))
       throw new CloudRelayManagementFailure(409, "configuration-invalid");
+    const current = this.requireLinked();
+    const at = Math.floor(Date.now() / 1000);
+    const pin = signIn.pin;
+    const confirmation: ConfirmedSignIn =
+      pin.type === "google"
+        ? { type: "google", id: pin.id, at, via: "native-google-approval" }
+        : {
+            type: "passkey",
+            id: pin.id,
+            publicKey: pin.publicKey,
+            counter: 0,
+            at,
+            via: signIn.channel === "android-app" ? "android-app" : "gateway-origin",
+          };
     await this.save(
       {
-        ...record,
-        trustedSignIns: [
-          ...record.trustedSignIns.filter((value) => value.id !== signIn.id),
-          { ...signIn.pin, source },
-        ],
-        declinedPasskeys: record.declinedPasskeys.filter((id) => id !== signIn.id),
-        declinedGoogle: record.declinedGoogle.filter((id) => id !== signIn.id),
-        withdrawnSignIns: record.withdrawnSignIns.filter(
+        ...current,
+        confirmedSignIns: [
+          ...current.confirmedSignIns.filter((value) => value.id !== signIn.id),
+          confirmation,
+        ].slice(-MAX_CONFIRMED_SIGN_INS),
+        declinedPasskeys: current.declinedPasskeys.filter((id) => id !== signIn.id),
+        declinedGoogle: current.declinedGoogle.filter((id) => id !== signIn.id),
+        withdrawnSignIns: current.withdrawnSignIns.filter(
           (value) => value !== signInDigest(signIn.pin),
         ),
       },
       this.abort.signal,
-      record,
+      current,
     );
   }
   /**
@@ -716,6 +877,8 @@ export class GatewayAccountLink {
     const origin = record ? this.gatewayOrigin() : undefined;
     return {
       policy: this.enrollmentPolicy(),
+      // Linked with nothing confirmed: every new device waits for a person.
+      confirmationNeeded: Boolean(record) && confirmed.length === 0,
       trustedSignIns: (record?.trustedSignIns ?? []).map(({ type, id, addedAt, source }) => ({
         type,
         id,
@@ -745,7 +908,9 @@ export class GatewayAccountLink {
     )
       return;
     const current = await this.browser.credentials?.(signal);
-    if (!current) return;
+    // A listing for another account says nothing about this one.
+    if (!current || (current.accountId !== undefined && current.accountId !== record.accountId))
+      return;
     const now = () => Math.floor(Date.now() / 1000);
     // What the account lists now, by the name a countersignature and the withdrawn set use.
     const listed = new Map<string, SignInPin>();

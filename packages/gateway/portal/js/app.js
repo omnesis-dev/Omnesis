@@ -889,6 +889,12 @@ async function init() {
 
   // Only the cloud relay's sign-in view can use a handed-over sign-in; anywhere else it is dropped.
   if (session.authenticated || session.cloudRelay !== true) takeAccountSignIn();
+  // Approving a device with a passkey needs no portal login: the passkey is the credential.
+  if (session.cloudRelay === true && window.location.pathname === "/portal/approve") {
+    const { ApproveView } = await import("./views/approve.js");
+    render(html`<${ErrorBoundary}><${ApproveView} /></${ErrorBoundary}>`, document.getElementById("app"));
+    return;
+  }
   if (session.authenticated) {
     render(html`<${ErrorBoundary}><${App} /></${ErrorBoundary}>`, document.getElementById("app"));
   } else {

@@ -32,6 +32,8 @@ export function MessageActions({ text, action, children }) {
   }, [position]);
   function open(event) {
     if (event.target.closest?.("a, button, input, textarea, select")) return;
+    // Preserve the browser's selection menu, including Copy for just the selected text.
+    if (window.getSelection?.()?.isCollapsed === false) return;
     event.preventDefault();
     const rect = root.current.getBoundingClientRect();
     setPosition({

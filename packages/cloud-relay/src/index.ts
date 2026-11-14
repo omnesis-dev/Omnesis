@@ -13,6 +13,8 @@ export { startGatewayCloudTunnel, readRelaySession } from "./gateway-integration
 export {
   GooglePairingRequests,
   googlePairingRequestSchema,
+  gatewayPasskeyOptionsSchema,
+  passkeyApprovalSchema,
   googlePairingNonce,
 } from "./google-pairing.js";
 export {

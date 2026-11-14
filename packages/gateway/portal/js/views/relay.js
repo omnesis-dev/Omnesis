@@ -530,7 +530,7 @@ const POLICY_CHOICES = [
   {
     value: "automatic",
     title: "Join automatically",
-    text: "A device joins once you sign in to your Omnesis account with a sign-in this gateway trusts. You're notified and can remove it any time.",
+    text: "A device joins once you sign in with a passkey or Google account you confirmed on this gateway, on its own page or in an Omnesis app. Other sign-ins wait for your approval. You're notified and can remove a device any time.",
   },
   {
     value: "ask",
@@ -593,7 +593,7 @@ function TrustedSignIns({ enrollment }) {
   ];
   if (rows.length === 0) return null;
   return html`<div class="relay-sign-ins">
-    <p class="relay-row-value relay-strong">Trusted sign-ins</p>
+    <p class="relay-row-value relay-strong">Sign-ins</p>
     <ul class="relay-sign-in-list">
       ${rows.map((signIn) => {
         const source = signIn.source
@@ -601,7 +601,7 @@ function TrustedSignIns({ enrollment }) {
           : undefined;
         const confirmation = signIn.via
           ? (CONFIRMED_VIA[signIn.via] ?? "Confirmed")
-          : "Not confirmed on this gateway";
+          : "Not confirmed on this gateway: devices using it wait for your approval";
         return html`<li class="relay-sign-in" key=${`${signIn.type}:${signIn.id}`}>
           <span class="relay-row-value">
             ${`${signIn.type === "passkey" ? "Passkey" : "Google account"} `}
@@ -620,9 +620,15 @@ function NewDevices({ enrollment, held, busy, run }) {
   return html`<section class="relay-section" aria-labelledby="relay-new-devices-title">
     <h3 class="relay-section-title" id="relay-new-devices-title">New devices</h3>
     ${
-      passkeyConfirmationNeeded(enrollment) &&
       !held &&
-      html`<${GatewayPasskeyConfirm} enrollment=${enrollment} busy=${busy} run=${run} />`
+      (passkeyConfirmationNeeded(enrollment)
+        ? html`<${GatewayPasskeyConfirm} enrollment=${enrollment} busy=${busy} run=${run} />`
+        : enrollment.confirmationNeeded &&
+          html`<p class="relay-notice" role="status">
+            Every new device waits for your approval: no sign-in is confirmed on this gateway.
+            Approve a device that signed in with Google in an Omnesis app, and choose to trust
+            that Google account.
+          </p>`)
     }
     <p class="relay-hint">What happens when a new device signs in to your Omnesis account.</p>
     ${

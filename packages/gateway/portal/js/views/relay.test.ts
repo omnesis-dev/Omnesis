@@ -681,7 +681,7 @@ describe("problems", () => {
       "Certificate monitor: incident, last checked 2028-01-02T00:00:00.000Z",
       `Unexpected certificate: name ${HOST}, public key ${FINGERPRINT}, certificate ${"e".repeat(64)}, issuer Fictional test issuer, serial ABCD, valid 2028-01-01T00:00:00.000Z to 2028-02-01T00:00:00.000Z, seen 2028-01-02T00:00:00.000Z, log entry fixture-entry-1`,
       "Account: linked",
-      "New devices: automatic, 2 trusted sign-ins",
+      "New devices: automatic, 0 confirmed sign-ins, 2 on record",
       "Recovery receipt: present, expires 2030-03-17T17:46:40.000Z",
       "Relay: https://relay.example.test",
       "Certificate provider: none",
@@ -936,7 +936,7 @@ describe("new devices", () => {
     await show();
     expect(text()).toContain("What happens when a new device signs in");
     expect(text()).toContain(
-      "A device joins once you sign in to your Omnesis account with a sign-in this gateway trusts. You're notified and can remove it any time.",
+      "A device joins once you sign in with a passkey or Google account you confirmed on this gateway, on its own page or in an Omnesis app. Other sign-ins wait for your approval. You're notified and can remove a device any time.",
     );
     expect(text()).toContain(
       "A device waits until you approve it on a device you already use, and the codes match. Someone with your Google password still can't get in.",
@@ -1010,8 +1010,8 @@ describe("trusted sign-ins and confirming a passkey", () => {
     );
     expect(rows).toEqual([
       "Passkey passkeyficti Used to connect this gateway · Confirmed on this gateway",
-      "Google account googlefictio Already on your account, vouched for by a passkey added later · Not confirmed on this gateway",
-      "Passkey passkeyficti Source not recorded · Not confirmed on this gateway",
+      "Google account googlefictio Already on your account, vouched for by a passkey added later · Not confirmed on this gateway: devices using it wait for your approval",
+      "Passkey passkeyficti Source not recorded · Not confirmed on this gateway: devices using it wait for your approval",
       "Passkey passkeyficti Confirmed in the Android app",
       "Passkey passkeyficti Confirmed",
     ]);
@@ -1042,11 +1042,28 @@ describe("trusted sign-ins and confirming a passkey", () => {
     expect(link("g-abcdefgh.relay.example.test")?.getAttribute("href")).toBe(
       `${ORIGIN}/portal/settings/account`,
     );
-    // A gateway with no origin of its own (a custom domain) shows no card.
+    // A gateway with no origin of its own (a custom domain) shows no card, only that every device
+    // waits until a Google account is confirmed from an app.
     state.status = connected({
-      deviceEnrollment: { policy: "automatic", trustedSignIns: [], confirmedSignIns: [] },
+      deviceEnrollment: {
+        policy: "automatic",
+        confirmationNeeded: true,
+        trustedSignIns: [],
+        confirmedSignIns: [],
+      },
     });
     await show();
     expect(text()).not.toContain("Confirm your passkey on this gateway");
+    expect(text()).toContain("Every new device waits for your approval");
+    state.status = connected({
+      deviceEnrollment: {
+        policy: "automatic",
+        confirmationNeeded: false,
+        trustedSignIns: [],
+        confirmedSignIns: [{ type: "google", id: "g", at: 1, via: "native-google-approval" }],
+      },
+    });
+    await show();
+    expect(text()).not.toContain("Every new device waits for your approval");
   });
 });

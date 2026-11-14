@@ -13,6 +13,7 @@ import type { CloudRelayManagementStatus } from "@omnesis/cloud-relay";
 export type CloudStatus = Partial<Omit<CloudRelayManagementStatus, "deviceEnrollment">> & {
   deviceEnrollment?: {
     policy?: string;
+    confirmationNeeded?: boolean;
     trustedSignIns?: { type?: string; id?: string; addedAt?: number; source?: string }[];
     /** Absent from a gateway that predates confirming sign-ins on its own page. */
     confirmedSignIns?: { type?: string; id?: string; at?: number; via?: string }[];
@@ -208,7 +209,9 @@ export function formatCloudStatus(status: CloudStatus, version?: string): string
       status.deviceEnrollment?.policy === "ask"
         ? "ask first"
         : status.deviceEnrollment?.policy === "automatic"
-          ? "join automatically"
+          ? status.deviceEnrollment.confirmationNeeded
+            ? "join automatically once a sign-in is confirmed here; until then each waits for approval"
+            : "join automatically with a sign-in confirmed here"
           : "not reported",
     ],
     ["Trusted sign-ins", String(signIns.length)],

@@ -17,8 +17,13 @@
  *   holds every new device until the owner acknowledges it on the gateway
  *   itself; no request through the relay lifts the hold, and a restart keeps it.
  *
- * The automatic policy is on and the signing passkey is pinned throughout, so
- * every hold below is caused by the attack, not by the owner's settings.
+ * The automatic policy is on and the signing passkey is pinned throughout. Most
+ * sign-ins here are made on the relay's page, which never joins a device on
+ * its own (TM-01), so each such test also checks the defence it is about before
+ * that hold: what the device asked for, what the gateway refused, and what a
+ * replay can still reach once the owner approved. Where a test needs a sign-in
+ * that joins on its own, it confirms the passkey on the gateway's page and
+ * signs in there.
  */
 
 import {
@@ -50,6 +55,10 @@ import {
   EnrollmentWorld,
   GatewayRefused,
   PasskeyBrowser,
+  assertionOn,
+  confirmPasskeyHere,
+  gatewayPasskeyJoin,
+  joinAfterApproval,
   runCli,
   browserSuiteAvailable,
   certificateSwapProxy,
@@ -58,6 +67,7 @@ import {
   signInOnThisMachine,
   signedInAccount,
   waitFor,
+  type GatewayPasskeyCeremony,
   type PasskeySession,
 } from "./account-enrollment-harness.js";
 import { gatewayBootBudgetMs } from "./gateway-env.js";
@@ -219,23 +229,32 @@ describe.skipIf(!browserReady)("a relay cannot enroll devices on its own", () =>
     }
   }, 60_000);
 
-  test("first contact: a logged leaf from a trusted authority joins with no comparison", async () => {
+  test("first contact: with a logged leaf from a trusted authority the device asks for no approval of its own; TM-01: its relay-page sign-in is held anyway", async () => {
     const { requests, transport } = recordingTransport();
+    const name = "Fictional logged-path CLI";
     const pairing = await pairBySignIn({
       gateway: logged,
-      name: "Fictional logged-path CLI",
+      name,
       keyFile: join(directory, "logged", "device.key"),
       gatewayJson: transport,
     });
-    const joined = await pairing.result;
-    expect(pairing.comparisons).toEqual([]);
+    const held = await waitFor(
+      async () => (await logged.pendingRequests()).find((request) => request.name === name),
+      "the held request",
+    );
     expect(requests).toHaveLength(1);
     expect(requests[0]!.body.requireApproval).toBeUndefined();
-    expect(requests[0]!.reply).toMatchObject({ status: "approved" });
+    await waitFor(() => requests[0]!.reply !== undefined, "the device to read the reply");
+    expect(requests[0]!.reply).toMatchObject({ status: "pending" });
+    expect(held).toMatchObject({ signIn: "passkey", canTrustSignIn: false });
+    await waitFor(() => pairing.comparisons.length === 1, "the comparison code");
+    expect(pairing.comparisons[0]).toBe(held.verificationCode);
+    await logged.decide(held.requestId, true);
+    const joined = await pairing.result;
     expect(
       (await logged.devices()).find((device) => device.id === joined.deviceId)?.enrollment,
     ).toMatchObject({
-      method: "automatic",
+      method: "approved",
     });
   }, 180_000);
 
@@ -256,7 +275,7 @@ describe.skipIf(!browserReady)("a relay cannot enroll devices on its own", () =>
     // The gateway lists the request before the device has read its reply.
     await waitFor(() => requests[0]!.reply !== undefined, "the device to read the reply");
     expect(requests[0]!.reply).toMatchObject({ status: "pending" });
-    // The sign-in itself was trusted; only the certificate check held it.
+    // The device itself asked for a person, before the gateway saw where it signed in.
     expect(held).toMatchObject({ signIn: "passkey", canTrustSignIn: false });
     await waitFor(() => pairing.comparisons.length === 1, "the comparison code");
     expect(pairing.comparisons[0]).toBe(held.verificationCode);
@@ -381,28 +400,33 @@ describe.skipIf(!browserReady)("a relay cannot enroll devices on its own", () =>
 
   test("a captured request cannot be replayed into another join", async () => {
     const { requests, transport } = recordingTransport();
-    const joined = await (
-      await pairBySignIn({
-        gateway: logged,
-        name: "Fictional replayed CLI",
-        keyFile: join(directory, "replayed", "device.key"),
-        gatewayJson: transport,
-      })
-    ).result;
+    const name = "Fictional replayed CLI";
+    const pairing = await pairBySignIn({
+      gateway: logged,
+      name,
+      keyFile: join(directory, "replayed", "device.key"),
+      gatewayJson: transport,
+    });
+    const held = await waitFor(
+      async () => (await logged.pendingRequests()).find((request) => request.name === name),
+      "the held request",
+    );
+    await logged.decide(held.requestId, true);
+    const joined = await pairing.result;
     const captured = requests[0]!;
-    expect(captured.reply).toMatchObject({ status: "approved" });
+    expect(captured.reply).toMatchObject({ status: "pending" });
     const target = { publicOrigin: logged.publicOrigin, certificate: logged.leaf.cert };
     const devices = (await logged.devices()).length;
     await logged.pace(2);
 
     // The same body again: its one-use challenge is spent, so at most the
-    // original answer comes back, whose pairing code was already redeemed.
+    // request's own answer comes back, whose pairing code was already redeemed.
     const again = await devicePinnedJson(target, "/devices/account/request", captured.body).catch(
       (error: unknown) => error,
     );
     if (again instanceof GatewayRefused) expect([403, 404, 409]).toContain(again.status);
     else {
-      expect(again).toMatchObject({ pairingCode: captured.reply!.pairingCode });
+      expect(again).toMatchObject({ status: "approved", pairingCode: expect.any(String) });
       const redeemed = await devicePinnedJson(target, "/devices/pair", {
         pairingCode: (again as { pairingCode: string }).pairingCode,
         capabilities: { platform: "cli" },
@@ -454,6 +478,39 @@ describe.skipIf(!browserReady)("a relay cannot enroll devices on its own", () =>
         expect(observing.deviceEnrollment.policy).toBe("automatic");
         expect(observing).not.toHaveProperty("incidentHold");
 
+        // The owner confirms the passkey on the gateway's own page, so a passkey sign-in made
+        // there joins on its own; and a second ceremony starts before anyone else holds a
+        // certificate for the name.
+        const confirm = async (ceremony: GatewayPasskeyCeremony) =>
+          gateway.confirmPasskey({
+            type: "gateway-passkey",
+            challenge: ceremony.challenge,
+            credential: await assertionOn(
+              session,
+              gateway.publicOrigin,
+              ceremony.webauthnChallenge,
+            ),
+          });
+        expect((await confirm(await gateway.passkeyConfirmation())).status).toBe(200);
+        const early = await gateway.passkeyConfirmation();
+        const joinOptions = () => {
+          const devicePublicKey = generateKeyPairSync("ec", { namedCurve: "prime256v1" })
+            .publicKey.export({ type: "spki", format: "der" })
+            .toString("base64url");
+          return gateway.fetch("/devices/account/passkey/options", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({
+              requestId: randomUUID(),
+              kind: "cli",
+              name: "Fictional incident-page CLI",
+              secret: randomBytes(32).toString("hex"),
+              devicePublicKey,
+            }),
+          });
+        };
+        expect((await joinOptions()).status).toBe(200);
+
         // Someone obtains a publicly trusted, logged certificate for the gateway's name
         // with a key of their own.
         const rogue = await world.pki.leaf("rogue", [gateway.hostname], { sct: true });
@@ -475,7 +532,25 @@ describe.skipIf(!browserReady)("a relay cannot enroll devices on its own", () =>
         ).toEqual([rogueFingerprint]);
         expect(held.deviceEnrollment.policy).toBe("ask");
 
-        // A sign-in the gateway trusts, which joined with no approval before, now waits for one.
+        // TM-01 (certificate incident): whoever holds that certificate can serve a page on the
+        // gateway's own name, so nothing signed there counts while the hold is on. The ceremony
+        // from before the hold confirms nothing, no new one starts, and no passkey join starts.
+        const steered = await confirm(early);
+        expect(steered.status).toBe(403);
+        expect(await steered.json()).toMatchObject({ code: "passkey-not-confirmed" });
+        const noCeremony = await gateway.fetch("/admin/cloud-relay/passkeys/confirm/options", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: "{}",
+        });
+        expect(noCeremony.status).toBe(409);
+        expect(await noCeremony.json()).toMatchObject({ code: "passkey-origin-unavailable" });
+        expect((await joinOptions()).status).toBe(404);
+        expect(held.deviceEnrollment).not.toHaveProperty("confirmOrigin");
+        expect(held.deviceEnrollment.confirmedSignIns).toHaveLength(1);
+
+        // A device that signs in reaches the owner only as a held request, and declining it
+        // joins nothing.
         const name = "Fictional held-by-incident CLI";
         const pairing = await pairBySignIn({
           gateway,
@@ -527,6 +602,14 @@ describe.skipIf(!browserReady)("a relay cannot enroll devices on its own", () =>
         const acknowledged = await gateway.status();
         expect(acknowledged).not.toHaveProperty("incidentHold");
         expect(acknowledged.deviceEnrollment.policy).toBe("automatic");
+        // The gateway's page counts again: the confirmed passkey joins a device on its own.
+        expect((await joinOptions()).status).toBe(200);
+        const rejoined = await gatewayPasskeyJoin(gateway, session, {
+          kind: "cli",
+          name: "Fictional after-incident CLI",
+        });
+        expect(rejoined.reply.status).toBe("approved");
+        expect(rejoined.joined?.deviceId).toEqual(expect.any(String));
         // The incident itself stays on record, and doesn't hold again after another restart.
         expect(acknowledged.certificateMonitor!.incidents).toHaveLength(1);
         await gateway.restart();
@@ -546,8 +629,16 @@ describe.skipIf(!browserReady)("a relay cannot enroll devices on its own", () =>
 
   test("F5/A2: a revoked device whose key signs in again with a trusted sign-in is held for the owner, and its row stays revoked until the owner approves", async () => {
     const name = "Fictional stolen CLI";
-    const keyFile = join(directory, "stolen", "device.key");
-    const joined = await (await pairBySignIn({ gateway: logged, name, keyFile })).result;
+    const device = {
+      kind: "cli" as const,
+      name,
+      key: generateKeyPairSync("ec", { namedCurve: "prime256v1" }),
+    };
+    // A passkey confirmed on the gateway's own page is what joins on its own.
+    await confirmPasskeyHere(logged, session);
+    const first = await gatewayPasskeyJoin(logged, session, device);
+    expect(first.reply.status).toBe("approved");
+    const joined = first.joined!;
     const row = async () =>
       (await logged.devices()).find((device) => device.id === joined.deviceId);
     expect((await row())?.enrollment).toMatchObject({ method: "automatic" });
@@ -557,29 +648,21 @@ describe.skipIf(!browserReady)("a relay cannot enroll devices on its own", () =>
     expect(revokedAt).toEqual(expect.any(Number));
 
     // Whoever holds it signs in again: the policy is automatic, the passkey is
-    // pinned and the leaf is logged, so only the revocation can hold it.
-    const { requests, transport } = recordingTransport();
-    const again = await pairBySignIn({ gateway: logged, name, keyFile, gatewayJson: transport });
-    // The first join's request is still listed, as approved; this one must wait.
-    const held = await waitFor(
-      async () =>
-        (await logged.pendingRequests()).find(
-          (request) => request.name === name && request.status === "pending",
-        ),
-      "the held request",
+    // confirmed and the assertion is made on the gateway's page, so only the
+    // revocation can hold it.
+    const again = await gatewayPasskeyJoin(logged, session, device);
+    expect(again.reply.status).toBe("pending");
+    expect(again.reply).not.toHaveProperty("pairingCode");
+    const held = (await logged.pendingRequests()).find(
+      (request) => request.requestId === again.requestId,
     );
-    expect(requests[0]!.body.requireApproval).toBeUndefined();
-    await waitFor(() => requests[0]!.reply !== undefined, "the device to read the reply");
-    expect(requests[0]!.reply).toMatchObject({ status: "pending" });
-    expect(requests[0]!.reply).not.toHaveProperty("pairingCode");
-    expect(held).toMatchObject({ signIn: "passkey", revokedDevice: true });
+    expect(held).toMatchObject({ status: "pending", signIn: "passkey", revokedDevice: true });
+    expect(held!.verificationCode).toBe(again.reply.verificationCode);
     expect((await row())?.revokedAt).toBe(revokedAt);
 
     // One approval brings the same device back.
-    await waitFor(() => again.comparisons.length === 1, "the comparison code");
-    expect(again.comparisons[0]).toBe(held.verificationCode);
-    await logged.decide(held.requestId, true);
-    const restored = await again.result;
+    await logged.decide(again.requestId, true);
+    const restored = await joinAfterApproval(logged, device, again);
     expect(restored.deviceId).toBe(joined.deviceId);
     expect((await row())?.revokedAt ?? null).toBeNull();
     expect((await row())?.enrollment).toMatchObject({ method: "approved", signIn: "passkey" });
@@ -590,13 +673,10 @@ describe.skipIf(!browserReady)("a relay cannot enroll devices on its own", () =>
     const pinned = (await logged.status()).deviceEnrollment.trustedSignIns;
     expect(pinned).toHaveLength(1);
     const signIn = pinned[0]!;
-    const joined = await (
-      await pairBySignIn({
-        gateway: logged,
-        name: "Fictional rogue CLI",
-        keyFile: join(directory, "rogue", "device.key"),
-      })
-    ).result;
+    await confirmPasskeyHere(logged, session);
+    const joined = (
+      await gatewayPasskeyJoin(logged, session, { kind: "cli", name: "Fictional rogue CLI" })
+    ).joined!;
     const bystander = await logged.json<{ device: { id: string } }>("/admin/devices", {
       method: "POST",
       body: JSON.stringify({
@@ -621,6 +701,9 @@ describe.skipIf(!browserReady)("a relay cannot enroll devices on its own", () =>
     expect(removed.revokedDevices).not.toContain(bystander.device.id);
     expect((await row(joined.deviceId))?.revokedAt).toEqual(expect.any(Number));
     expect((await row(bystander.device.id))?.revokedAt ?? null).toBeNull();
-    expect((await logged.status()).deviceEnrollment.trustedSignIns).toEqual([]);
+    const after = (await logged.status()).deviceEnrollment;
+    expect(after.trustedSignIns).toEqual([]);
+    // Its confirmation goes with it.
+    expect(after.confirmedSignIns).toEqual([]);
   }, 300_000);
 });

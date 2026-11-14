@@ -128,7 +128,10 @@ test("a prompt problem, a refused request and anything else each say what to do"
 test("elsewhere it links to the gateway's own page, and without passkeys it says so", async () => {
   await show({ location: { origin: "https://192.0.2.1:7600" } });
   expect(button()).toBeNull();
-  expect(host.querySelector("a")?.getAttribute("href")).toBe(`${ORIGIN}/portal/settings/account`);
+  expect([...host.querySelectorAll("a")].map((link) => link.getAttribute("href"))).toEqual([
+    "/portal/settings/devices",
+    `${ORIGIN}/portal/settings/account`,
+  ]);
   await show({ supported: false });
   expect(button()).toBeNull();
   expect(text()).toContain("This browser can't use passkeys.");

@@ -63,12 +63,17 @@ export function GatewayPasskeyConfirm({
     </p>
     <p class="relay-hint">
       Use your Omnesis passkey once, here on this gateway's own page. The gateway then knows the
-      passkey is yours without relying on the Omnesis relay.
+      passkey is yours without relying on the Omnesis relay. Until you do, every new device waits
+      for your approval.
+    </p>
+    <p class="relay-hint">
+      Devices that already joined by signing in are marked “Joined with Omnesis account” in${" "}
+      <a href="/portal/settings/devices">Devices</a>. Remove any you don't recognise.
     </p>
     ${
       !here
         ? html`<p class="relay-hint">
-            Open this page at
+            Open this page at${" "}
             <a href=${`${origin}/portal/settings/account`}>${new URL(origin).host}</a> to confirm.
           </p>`
         : !supported

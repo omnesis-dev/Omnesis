@@ -113,7 +113,7 @@ describe.skipIf(!browserReady)("connect a gateway by signing in", () => {
   }, 60_000);
 
   test(
-    "a brand-new gateway with only the flag, a relay URL and a certificate directory connects from its portal all the way, and a device then joins automatically",
+    "a brand-new gateway with only the flag, a relay URL and a certificate directory connects from its portal all the way, and a device that signs in on the relay's page is held until the owner approves it",
     async () => {
       // A private ACME directory the gateway is told about, as an operator would
       // name a staging or private CA. Its leaves carry an embedded SCT list.
@@ -217,7 +217,8 @@ describe.skipIf(!browserReady)("connect a gateway by signing in", () => {
           tunnel: { state: "online" },
           certificate: { state: "valid" },
           account: { linked: true },
-          deviceEnrollment: { policy: "automatic" },
+          // Linked, with the link page's passkey only a suggestion until it is confirmed here.
+          deviceEnrollment: { policy: "automatic", confirmationNeeded: true, confirmedSignIns: [] },
         });
         expect(done.deviceEnrollment).not.toHaveProperty("chosen");
         expect(done.deviceEnrollment.trustedSignIns.map((pin) => pin.id)).toEqual(
@@ -243,7 +244,8 @@ describe.skipIf(!browserReady)("connect a gateway by signing in", () => {
         expect(served.issuer).toContain(FIXTURE_ACME_ISSUER);
         expect(served.subjectAltName).toBe(`DNS:${hostname}`);
 
-        // Nobody chose a policy: a CLI joins through the relay with no comparison.
+        // TM-01: nobody chose a policy, yet a CLI whose sign-in was made on the relay's page is
+        // held for the owner, who compares its code and approves it.
         process.env.OMNESIS_CLOUD_RELAY_GATEWAY_CA_FILE = acmeRoot;
         const comparisons: string[] = [];
         let launched!: (url: string) => void;
@@ -282,33 +284,39 @@ describe.skipIf(!browserReady)("connect a gateway by signing in", () => {
             }),
           ]),
         );
-        // A held request would mean the gateway did not trust this join; say why.
-        const held = waitFor(
+        const held = await waitFor(
           async () =>
             (
-              await fresh.gatewayJson<{ items: Array<{ name: string; status: string }> }>(
-                "/admin/cloud-pairing/requests",
-              )
+              await fresh.gatewayJson<{
+                items: Array<{
+                  requestId: string;
+                  name: string;
+                  status: string;
+                  canTrustSignIn: boolean;
+                  verificationCode: string;
+                }>;
+              }>("/admin/cloud-pairing/requests")
             ).items.find(
               (request) => request.name === "Fictional hallway CLI" && request.status === "pending",
             ),
-          "a held request",
+          "the held request",
           120_000,
-        ).then((request) => {
-          throw new Error(
-            `The join was held instead of automatic: ${JSON.stringify(request)}; comparisons ${JSON.stringify(comparisons)}`,
-          );
+        );
+        expect(held).toMatchObject({ canTrustSignIn: false });
+        await waitFor(() => comparisons.length === 1, "the device to show its comparison code");
+        expect(comparisons).toEqual([held.verificationCode]);
+        await fresh.gatewayJson("/admin/cloud-pairing/decision", {
+          method: "POST",
+          body: JSON.stringify({ requestId: held.requestId, approve: true }),
         });
-        held.catch(() => undefined);
-        const joined = await Promise.race([pairing, held]);
-        expect(comparisons).toEqual([]);
+        const joined = await pairing;
         expect(joined.gatewayUrl).toBe(done.publicOrigin);
         expect(joined.gatewayCertificate.trim()).toBe(served.pem.trim());
         const row = (await fresh.gatewayJson<{ items: DeviceRow[] }>("/admin/devices")).items.find(
           (device) => device.id === joined.deviceId,
         );
         expect(row).toMatchObject({ kind: "cli", name: "Fictional hallway CLI" });
-        expect(row?.enrollment).toMatchObject({ method: "automatic", signIn: "passkey" });
+        expect(row?.enrollment).toMatchObject({ method: "approved", signIn: "passkey" });
         expect(session.errors).toEqual([]);
         expect(person.errors).toEqual([]);
       } finally {
@@ -322,7 +330,7 @@ describe.skipIf(!browserReady)("connect a gateway by signing in", () => {
   );
 
   test(
-    "open signup: the code the gateway shows leads to a new passkey account, and the gateway ends linked with that sign-in pinned and joining automatically until the owner asks to approve",
+    "open signup: the code the gateway shows leads to a new passkey account, and the gateway ends linked with that sign-in pinned as a suggestion, waiting for the owner to confirm it",
     async () => {
       const gateway = await EnrollmentGateway.start(world, "open");
       gateways.push(gateway);
@@ -336,8 +344,13 @@ describe.skipIf(!browserReady)("connect a gateway by signing in", () => {
       expect(done.enrollment.state).toBe("enrolled");
       expect(done.tunnel.state).toBe("online");
       expect(done.account.linked).toBe(true);
-      expect(done.deviceEnrollment).toMatchObject({ policy: "automatic" });
+      expect(done.deviceEnrollment).toMatchObject({
+        policy: "automatic",
+        confirmationNeeded: true,
+        confirmOrigin: gateway.publicOrigin,
+      });
       expect(done.deviceEnrollment.trustedSignIns).toHaveLength(1);
+      expect(done.deviceEnrollment.trustedSignIns[0]).toMatchObject({ confirmed: false });
       expect(done.deviceEnrollment.trustedSignIns[0]!.type).toBe("passkey");
       // The pinned credential is the one this browser's authenticator holds.
       expect(done.deviceEnrollment.trustedSignIns.map((pin) => pin.id)).toEqual(
