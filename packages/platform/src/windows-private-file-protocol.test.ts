@@ -16,6 +16,7 @@ import {
   readWindowsPrivateFileContentsSync,
   deleteWindowsPrivateFileExactSync,
   inspectWindowsPrivatePathSync,
+  prepareWindowsPrivateStorageDirectorySync,
   secureWindowsPrivatePathSync,
   writeWindowsPrivateFileAtomicSync,
 } from "./windows-private-file.js";
@@ -45,6 +46,17 @@ function frame(): { metadata: unknown; bytes: Buffer; command: string; args: str
   };
 }
 describe("Windows private native protocol", () => {
+  it("frames storage ancestry and inheritance preflight as metadata only", () => {
+    const path = "C:\\invented folder\\literal & $()";
+    prepareWindowsPrivateStorageDirectorySync(path);
+    const request = frame();
+    expect(request.metadata).toEqual({ action: "storage-directory", path });
+    expect(request.bytes).toEqual(Buffer.alloc(0));
+    expect(request.args).not.toContain(path);
+    expect(() => prepareWindowsPrivateStorageDirectorySync(path + "\0")).toThrow(
+      "Invalid private file path",
+    );
+  });
   it("declares and frames arbitrary binary payloads larger than authority keys without shell interpolation", () => {
     const bytes = Buffer.alloc(96 * 1024, 255),
       path = "C:\\example folder\\literal & $().key";

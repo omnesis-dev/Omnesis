@@ -6,10 +6,15 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test } from "vitest";
-import { bashExecutable, prependPath, localSshFixturePath } from "../lib/test-shell.mjs";
+import {
+  bashExecutable,
+  bashEnvironment,
+  prependPath,
+  localSshFixturePath,
+} from "../lib/test-shell.mjs";
 
 test("Windows shell fixtures select Git Bash rather than WSL from PATH", () => {
-  const gitBash = String.raw`C:\Program Files\Git\bin\bash.exe`;
+  const gitBash = String.raw`C:\Program Files\Git\usr\bin\bash.exe`;
   expect(
     bashExecutable({
       platform: "win32",
@@ -17,6 +22,15 @@ test("Windows shell fixtures select Git Bash rather than WSL from PATH", () => {
       exists: (path) => path === gitBash,
     }),
   ).toBe(gitBash);
+});
+test("Windows fixtures prefer the interpreter when the PATH-rewriting redirector also exists", () => {
+  expect(
+    bashExecutable({
+      platform: "win32",
+      env: { ProgramFiles: String.raw`C:\Program Files` },
+      exists: () => true,
+    }),
+  ).toBe(String.raw`C:\Program Files\Git\usr\bin\bash.exe`);
 });
 test("a missing Git Bash fails rather than silently using WSL", () => {
   expect(() => bashExecutable({ platform: "win32", env: {}, exists: () => false })).toThrow(
@@ -48,7 +62,43 @@ test("bridge guard fixtures execute locally and refuse transfer", () => {
     });
     expect(transfer.status).toBe(91);
     expect(transfer.stderr).toContain("Unexpected transfer");
+    const nestedTransfer = spawnSync(
+      bashExecutable(),
+      ["-c", 'ssh ignored-fixture-host "rsync ignored"'],
+      {
+        env,
+        encoding: "utf8",
+      },
+    );
+    expect(nestedTransfer.status).toBe(91);
+    expect(nestedTransfer.stderr).toContain("Unexpected transfer");
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
+});
+
+test("Bash environment keeps Windows tool overrides first and normalizes only duplicate PATH keys", () => {
+  const env = {
+    PATH: String.raw`C:\fixture;C:\Windows`,
+    Path: "ignored duplicate",
+    NODE_OPTIONS: "--no-warnings",
+    INVENTED: "retained",
+  };
+  const prepared = bashEnvironment(env, {
+    platform: "win32",
+    executable: String.raw`C:\Git\usr\bin\bash.exe`,
+  });
+  expect(prepared).toEqual({
+    PATH: String.raw`C:\fixture;C:\Windows;C:\Git\usr\bin`,
+    NODE_OPTIONS: "--no-warnings",
+    INVENTED: "retained",
+  });
+  expect(env.Path).toBe("ignored duplicate");
+  expect(
+    bashEnvironment(prepared, {
+      platform: "win32",
+      executable: String.raw`C:\Git\usr\bin\bash.exe`,
+    }),
+  ).toEqual(prepared);
+  expect(bashEnvironment(env, { platform: "linux" })).toEqual(env);
 });

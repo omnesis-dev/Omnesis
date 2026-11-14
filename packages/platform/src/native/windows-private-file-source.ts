@@ -1,7 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-export const WINDOWS_PRIVATE_FILE_NATIVE_SOURCE = String.raw`using System;
+import { WINDOWS_DIRECTORY_POLICY_NATIVE_SOURCE } from "./windows-directory-policy-source.js";
+import { WINDOWS_FILE_REPAIR_NATIVE_SOURCE } from "./windows-file-repair-source.js";
+
+export const WINDOWS_PRIVATE_FILE_NATIVE_SOURCE =
+  String.raw`using System;
 using System.ComponentModel;
 using System.Collections.Generic;
 using System.IO;
@@ -82,22 +86,18 @@ public static partial class OmnesisPrivateFile {
     foreach(string sid in new string[]{User(),"S-1-5-18","S-1-5-32-544"}) security.AddAccessRule(new FileSystemAccessRule(new SecurityIdentifier(sid),FileSystemRights.FullControl,AccessControlType.Allow));
     return security;
   }
-  static void Repair(SafeFileHandle handle,bool directory) {
-    // A file may have another name outside the selected tree. Never change
-    // its shared object-wide permissions through just one of those names.
-    Info current=Information(handle,directory);
-    if(!directory && current.links!=1) throw new UnauthorizedAccessException();
-    byte[] bytes;
-    if(directory) {
-      DirectorySecurity security=new DirectorySecurity(); security.SetAccessRuleProtection(true,false);
-      foreach(string sid in new string[]{User(),"S-1-5-18","S-1-5-32-544"}) security.AddAccessRule(new FileSystemAccessRule(new SecurityIdentifier(sid),FileSystemRights.FullControl,InheritanceFlags.ContainerInherit|InheritanceFlags.ObjectInherit,PropagationFlags.None,AccessControlType.Allow));
-      bytes=security.GetSecurityDescriptorBinaryForm();
-    } else bytes=FileAcl().GetSecurityDescriptorBinaryForm();
+  static DirectorySecurity DirectoryAcl() {
+    DirectorySecurity security=new DirectorySecurity();security.SetOwner(new SecurityIdentifier(User()));security.SetAccessRuleProtection(true,false);
+    foreach(string sid in new string[]{User(),"S-1-5-18","S-1-5-32-544"}) security.AddAccessRule(new FileSystemAccessRule(new SecurityIdentifier(sid),FileSystemRights.FullControl,InheritanceFlags.ContainerInherit|InheritanceFlags.ObjectInherit,PropagationFlags.None,AccessControlType.Allow));
+    return security;
+  }
+  static void RepairDirectory(SafeFileHandle handle) {
+    Information(handle,true);
+    byte[] bytes=DirectoryAcl().GetSecurityDescriptorBinaryForm();
     GCHandle pinned=GCHandle.Alloc(bytes,GCHandleType.Pinned);
     try {
-      // SetSecurityInfo invokes inheritance propagation over existing children,
-      // outside our explicit bounded/no-follow inspection. This native update
-      // changes only the held object; OI/CI still apply to newly created children.
+      // Change only this held directory; inherited OI/CI grants protect future
+      // children without propagating a repair into unrelated existing files.
       int status=NtSetSecurityObject(handle,0x80000004U,pinned.AddrOfPinnedObject());
       if(status<0) throw new Win32Exception((int)RtlNtStatusToDosError(status));
     } finally { pinned.Free(); }
@@ -116,7 +116,7 @@ public static partial class OmnesisPrivateFile {
     public IntPtr security,quality;
   }
   [DllImport("ntdll.dll")] static extern int NtCreateFile(out IntPtr handle,uint access,ref RelativeAttributes attributes,out RenameIoStatus io,IntPtr allocation,uint fileAttributes,uint share,uint disposition,uint options,IntPtr ea,uint eaLength);
-  static SafeFileHandle RelativeOpen(SafeFileHandle parent,string name,bool directory,uint access,uint sharing,uint disposition=1U,byte[] security=null) {
+  static SafeFileHandle RelativeOpen(SafeFileHandle parent,string name,bool directory,uint access,uint sharing,uint disposition=1U,byte[] security=null,uint extraOptions=0U) {
     if(String.IsNullOrEmpty(name) || name=="." || name==".." || name.IndexOfAny(new char[]{'\\','/',':','\0'})>=0) throw new InvalidDataException();
     IntPtr text=Marshal.StringToHGlobalUni(name),unicode=IntPtr.Zero;
     GCHandle descriptor=default(GCHandle);
@@ -128,7 +128,7 @@ public static partial class OmnesisPrivateFile {
       RenameIoStatus io;IntPtr raw;
       // Each lookup is one literal component below its retained parent.
       // No FILE_OPEN_FOR_BACKUP_INTENT: data access still obeys the source ACL.
-      int status=NtCreateFile(out raw,access,ref attributes,out io,IntPtr.Zero,0,sharing,disposition,0x200020U|(directory?1U:0x40U),IntPtr.Zero,0);
+      int status=NtCreateFile(out raw,access,ref attributes,out io,IntPtr.Zero,0,sharing,disposition,0x200020U|(directory?1U:0x40U)|extraOptions,IntPtr.Zero,0);
       SafeFileHandle handle=new SafeFileHandle(raw,true);
       try {
         if(status<0) throw new Win32Exception((int)RtlNtStatusToDosError(status));
@@ -192,9 +192,7 @@ public static partial class OmnesisPrivateFile {
     using(PinnedParent parent=Parent(path))
     using(SafeFileHandle handle=RelativeOpen(parent.Handle,parent.Leaf,false,0x130181U,0U)) {
       Stage="validate";Information(handle,false); RequirePrivate(handle); Stage="name";Names(path,exact,exactParent);
-      ReadOnly(handle,false); IntPtr disposition=Marshal.AllocHGlobal(4);
-      try { Marshal.WriteInt32(disposition,1); Check(SetFileInformationByHandle(handle,4,disposition,4)); }
-      finally { Marshal.FreeHGlobal(disposition); }
+      DeleteEntry(handle);
     }
   }
   public static void Read(string path,long limit,string exact,string exactParent) {
@@ -222,9 +220,9 @@ public static partial class OmnesisPrivateFile {
       }
     }
   }
-  static void ReadOnly(SafeFileHandle file,bool value) {
+  static void ReadOnly(SafeFileHandle file) {
     Info current=Information(file,false);
-    uint attributes=value?current.attributes|1:current.attributes&~1U;
+    uint attributes=current.attributes|1U;
     if(attributes==current.attributes) return;
     if(current.links!=1) throw new UnauthorizedAccessException();
     IntPtr info=Marshal.AllocHGlobal(40);
@@ -234,7 +232,7 @@ public static partial class OmnesisPrivateFile {
       Check(SetFileInformationByHandle(file,0,info,40));
     } finally { Marshal.FreeHGlobal(info); }
   }
-  static void Rename(SafeFileHandle file,SafeFileHandle parent,string target,bool replaceExisting) {
+  static void Rename(SafeFileHandle file,SafeFileHandle parent,string target,bool replaceExisting,bool replacePinnedSource=false) {
     // SMB requires an absolute name and a null RootDirectory; the validated
     // parent denies untrusted writes and stays pinned without delete sharing.
     bool extendedNetwork=target.StartsWith(@"\\?\UNC\",StringComparison.OrdinalIgnoreCase);
@@ -246,7 +244,9 @@ public static partial class OmnesisPrivateFile {
     IntPtr info=Marshal.AllocHGlobal(infoSize);
     try {
       for(int i=0;i<infoSize;i++) Marshal.WriteByte(info,i,0);
-      Marshal.WriteInt32(info,0,replaceExisting?0x43:0x42); Marshal.WriteIntPtr(info,rootOffset,network?IntPtr.Zero:parent.DangerousGetHandle());
+      // Ordinary writers honor held source/read pins. Only copy-on-repair
+      // replaces its own exclusively held source through POSIX semantics.
+      Marshal.WriteInt32(info,0,(replaceExisting?0x41:0)|(replacePinnedSource?2:0)); Marshal.WriteIntPtr(info,rootOffset,network?IntPtr.Zero:parent.DangerousGetHandle());
       Marshal.WriteInt32(info,lengthOffset,name.Length); Marshal.Copy(name,0,IntPtr.Add(info,nameOffset),name.Length);
       // The Win32 wrapper rejects this valid relative RootDirectory form.
       // Native rename preserves the pinned parent instead of resolving a path
@@ -263,11 +263,17 @@ public static partial class OmnesisPrivateFile {
       }
     } finally { Marshal.FreeHGlobal(info); }
   }
-  static void Discard(SafeFileHandle file) {
-    try { ReadOnly(file,false); } catch { }
+  static void DeleteEntry(SafeFileHandle file) {
+    // Remove only the selected directory entry. Clearing READONLY would change
+    // every hardlink's shared attributes; unsupported filesystems fail closed.
     IntPtr info=Marshal.AllocHGlobal(4);
-    try { Marshal.WriteInt32(info,1); Check(SetFileInformationByHandle(file,4,info,4)); } finally { Marshal.FreeHGlobal(info); }
+    try {
+      Marshal.WriteInt32(info,0x13);RenameIoStatus io;
+      int status=NtSetInformationFile(file,out io,info,4U,64);
+      if(status<0) throw new Win32Exception((int)RtlNtStatusToDosError(status));
+    } finally { Marshal.FreeHGlobal(info); }
   }
+  static void Discard(SafeFileHandle file) { DeleteEntry(file); }
   static string Identity(Info info) {
     System.Globalization.CultureInfo culture=System.Globalization.CultureInfo.InvariantCulture;
     ulong index=((ulong)info.indexHigh<<32)|info.indexLow;
@@ -282,16 +288,14 @@ public static partial class OmnesisPrivateFile {
       using(handle) {
         Info info=Information(handle,false); RequirePrivate(handle);
         if(Identity(info)!=identity) throw new UnauthorizedAccessException();
-        ReadOnly(handle,false); IntPtr disposition=Marshal.AllocHGlobal(4);
-        try { Marshal.WriteInt32(disposition,1); Check(SetFileInformationByHandle(handle,4,disposition,4)); }
-        finally { Marshal.FreeHGlobal(disposition); }
+        DeleteEntry(handle);
       }
     }
   }
   public static void Write(string path,long length,bool atomic,bool readOnly,string staging,bool receipt,bool replaceExisting) {
     WriteInput(path,length,atomic,readOnly,staging,receipt,replaceExisting,Console.OpenStandardInput(),true,null);
   }
-  static void WriteInput(string path,long length,bool atomic,bool readOnly,string staging,bool receipt,bool replaceExisting,Stream input,bool framedCommit,Action validateInput) {
+  static void WriteInput(string path,long length,bool atomic,bool readOnly,string staging,bool receipt,bool replaceExisting,Stream input,bool framedCommit,Action validateInput,Action<SafeFileHandle> prepareOutput=null,bool replacePinnedSource=false) {
     Stage="resolve";path=FullPath(path); if(length<0) throw new InvalidDataException();
     Stage="parent";using(PinnedParent parent=Parent(path)) {
       string scratch=atomic?parent.Leaf+".omnesis-"+System.Diagnostics.Process.GetCurrentProcess().Id+"-"+Guid.NewGuid().ToString("N")+".tmp":parent.Leaf;
@@ -322,8 +326,10 @@ public static partial class OmnesisPrivateFile {
           if(input.ReadByte()!=-1) {if(!framedCommit) Stage="copy-source-changed";throw new InvalidDataException();}
           if(validateInput!=null) validateInput();
           Stage="flush";file.Flush(true);
-          if(readOnly) { Stage="readonly";ReadOnly(file.SafeFileHandle,true); }
-          if(atomic) { Stage="rename";Rename(file.SafeFileHandle,parent.Handle,path,replaceExisting); }
+          if(prepareOutput!=null) prepareOutput(file.SafeFileHandle);
+          if(readOnly) { Stage="readonly";ReadOnly(file.SafeFileHandle); }
+          if(prepareOutput!=null || readOnly) file.Flush(true);
+          if(atomic) { Stage="rename";Rename(file.SafeFileHandle,parent.Handle,path,replaceExisting,replacePinnedSource); }
         } catch(Exception failure) {
           string originalStage=Stage;
           try { Stage="cleanup";Discard(file.SafeFileHandle); }
@@ -351,18 +357,22 @@ public static partial class OmnesisPrivateFile {
       Info original=Information(handle,directory);
       if(PrivateEnough(Security(handle),protect)) return "private";
       if(!repair) return "unsafe";
-      if(directory) {Stage="repair";Repair(handle,true);return "fixed";}
-      // Metadata handles alone do not enforce delete sharing. Reopen the same
-      // literal leaf exclusively, then verify its object identity and current
-      // security before changing it. No hardlink can appear during mutation.
-      using(SafeFileHandle mutation=RelativeOpen(parent.Handle,parent.Leaf,false,0x160081U,0U)) {
-        if(Identity(Information(mutation,false))!=Identity(original)) throw new UnauthorizedAccessException();
-        if(PrivateEnough(Security(mutation),protect)) return "private";
-        Stage="repair";Repair(mutation,false);return "fixed";
+      if(directory) {Stage="repair";RepairDirectory(handle);return "fixed";}
+      Stage="repair-attributes";RepairAttributes(original);
+      // Only an unsafe idle source needs a readable content pin. Publication
+      // creates a different private object; the old inode is never hardened.
+      using(SafeFileHandle source=RelativeOpen(parent.Handle,parent.Leaf,false,0x120081U,0U)) {
+        Info before=Information(source,false);
+        if(Identity(before)!=Identity(original)) throw new UnauthorizedAccessException();
+        if(PrivateEnough(Security(source),protect)) return "private";
+        if(before.links!=1) throw new UnauthorizedAccessException();
+        Stage="repair-copy";RepairFile(path,source,before);return "fixed";
       }
     }
   }
-}`;
+}` +
+  WINDOWS_DIRECTORY_POLICY_NATIVE_SOURCE +
+  WINDOWS_FILE_REPAIR_NATIVE_SOURCE;
 
 export const WINDOWS_PRIVATE_FILE_POWERSHELL_SCRIPT = `
 $ErrorActionPreference='Stop'
@@ -375,6 +385,9 @@ ${WINDOWS_PRIVATE_FILE_NATIVE_SOURCE}
 $config=[OmnesisPrivateFile]::Configuration() | ConvertFrom-Json
 if ($config.action -eq 'create' -or $config.action -eq 'atomic') {
   [OmnesisPrivateFile]::Write([string]$config.path,[long]$config.length,($config.action -eq 'atomic'),[bool]$config.readOnly,[string]$config.staging,[bool]$config.receipt,($null -eq $config.replaceExisting -or [bool]$config.replaceExisting))
+} elseif ($config.action -eq 'storage-directory') {
+  if ([Console]::OpenStandardInput().ReadByte() -ne -1) { throw 'Unexpected storage input' }
+  [OmnesisPrivateFile]::PrepareStorageDirectory([string]$config.path)
 } elseif ($config.action -eq 'delete') {
   [OmnesisPrivateFile]::DeleteExact([string]$config.path,[string]$config.exactBasename,[string]$config.exactParentBasename)
 } elseif ($config.action -eq 'cleanup') {

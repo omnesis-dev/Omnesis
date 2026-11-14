@@ -6,6 +6,7 @@ import { mkdtemp, readFile, rm, writeFile, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeEach, afterEach, expect, test, vi } from "vitest";
+import { ensurePrivateDirs } from "@omnesis/core";
 import { tlsFiles } from "../test/support.js";
 import { runRelayCommand, startRelayDaemon } from "./runtime.js";
 import { RelaySessions } from "./identity.js";
@@ -16,6 +17,7 @@ import * as googleLink from "./gateway-google-link.js";
 let directory: string;
 beforeEach(async () => {
   directory = await mkdtemp(join(tmpdir(), "omnesis-key-runtime-"));
+  if (process.platform === "win32") await ensurePrivateDirs([directory]);
 });
 afterEach(async () => {
   vi.restoreAllMocks();

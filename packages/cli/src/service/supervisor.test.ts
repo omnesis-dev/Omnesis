@@ -12,7 +12,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, posix } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { CliError } from "@omnesis/cli-shared";
 import {
@@ -494,7 +494,12 @@ describe("LaunchdSupervisor", () => {
     expect(calls).toEqual([
       ["launchctl", "bootout", "gui/501/dev.omnesis.gateway"],
       ["launchctl", "print", "gui/501/dev.omnesis.gateway"],
-      ["launchctl", "bootstrap", "gui/501", plistPath],
+      [
+        "launchctl",
+        "bootstrap",
+        "gui/501",
+        posix.join(home, "Library", "LaunchAgents", "dev.omnesis.gateway.plist"),
+      ],
       // RunAtLoad spawns are not reliable outside a real GUI login context
       // (SSH installs leave the job pended) — install always kickstarts.
       ["launchctl", "kickstart", "-k", "gui/501/dev.omnesis.gateway"],

@@ -101,7 +101,7 @@ continued = true;
 }
 
 describe("CLI bootstrap permission repair", () => {
-  test("exact local doctor repair changes only metadata and exits before loading unsafe env", () => {
+  test("exact local doctor repair delegates safe replacement and exits before parsing unsafe env", () => {
     const { result, state, calls, dir, dotenv, contents } = run(["doctor", "--fix-permissions"]);
     expect(result.status).toBe(2);
     expect(result.stderr).toContain("Review the file, then rerun doctor --fix-permissions");
@@ -136,7 +136,7 @@ describe("CLI bootstrap permission repair", () => {
     expect(calls.map((call) => call.kind)).toEqual(["read-request"]);
   });
 
-  test("a verified Windows env continues normal bootstrap without repairing metadata", () => {
+  test("a verified Windows env continues normal bootstrap without permission repair", () => {
     const { result, state, calls, dotenv } = run(
       ["doctor", "--fix-permissions"],
       "win32",
@@ -148,7 +148,7 @@ describe("CLI bootstrap permission repair", () => {
     expect(calls).toEqual([{ kind: "read-request", path: dotenv }]);
   });
 
-  test("failed metadata repair still exits without reading or loading env bytes", () => {
+  test("failed access repair still exits without applying env values", () => {
     const { result, state, calls } = run(["doctor", "--fix-permissions"], "win32", true);
     expect(result.status).toBe(2);
     expect(result.stderr).toContain("could not be repaired");

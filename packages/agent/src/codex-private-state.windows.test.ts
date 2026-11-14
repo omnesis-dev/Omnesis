@@ -82,7 +82,10 @@ it.runIf(process.platform === "win32")(
           "-NoProfile",
           "-NonInteractive",
           "-Command",
-          "$ErrorActionPreference='Stop';[Console]::Out.Write((Get-Acl -LiteralPath $env:OMNESIS_CODEX_FIXTURE).Sddl);",
+          `$ErrorActionPreference='Stop';$PSModuleAutoLoadingPreference='None';
+$sections=[System.Security.AccessControl.AccessControlSections]::Access -bor [System.Security.AccessControl.AccessControlSections]::Owner -bor [System.Security.AccessControl.AccessControlSections]::Group;
+$acl=[System.IO.File]::GetAccessControl($env:OMNESIS_CODEX_FIXTURE,$sections);
+[Console]::Out.Write($acl.GetSecurityDescriptorSddlForm($sections));`,
         ],
         { env: { ...process.env, OMNESIS_CODEX_FIXTURE: file }, timeout: 20_000 },
       );

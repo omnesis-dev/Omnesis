@@ -22,6 +22,7 @@ import {
   atomicWriteFileSync,
   clearMarkerKeyringState,
   createSecretStore,
+  inspectWindowsPrivatePathSync,
   OMNESIS_INSTALL_ROOT_KEY,
   OMNESIS_SECRET_SERVICE,
   type SecureMarkerKind,
@@ -113,7 +114,16 @@ function editFile(path: string, edit: (text: string) => string | null): string |
     if (target !== path) rmSync(path, { force: true });
     return "it held only Omnesis settings, so it was removed";
   }
-  atomicWriteFileSync(target, next, { mode: statSync(target).mode & 0o7777 });
+  // NTFS stat mode does not encode the DACL. Preserve an already-private
+  // leaf through the protected atomic writer without repairing its ancestry.
+  const previousMode = statSync(target).mode & 0o7777;
+  const mode =
+    process.platform === "win32" && inspectWindowsPrivatePathSync(target, "file").private
+      ? previousMode & 0o200
+        ? 0o600
+        : 0o400
+      : previousMode;
+  atomicWriteFileSync(target, next, { mode });
   return undefined;
 }
 

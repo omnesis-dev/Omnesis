@@ -40,6 +40,7 @@ type Operation =
       receipt?: boolean;
       replaceExisting?: boolean;
     }
+  | { action: "storage-directory"; path: string }
   | { action: "cleanup"; path: string; identity: string }
   | { action: "copy-private"; path: string; source: string }
   | { action: "regular-prefix"; path: string; limit: number }
@@ -337,6 +338,12 @@ export async function inspectWindowsPrivatePaths(
     paths.length,
   );
 }
+/** Prepare only missing directory suffixes, refusing unsafe existing ancestry or child inheritance. */
+export function prepareWindowsPrivateStorageDirectorySync(path: string): void {
+  if (!path.isWellFormed()) throw new Error("Invalid private file path");
+  operateSync({ action: "storage-directory", path });
+}
+
 export function inspectWindowsPrivatePathSync(
   path: string,
   kind: WindowsPrivatePath["kind"],

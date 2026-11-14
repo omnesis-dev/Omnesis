@@ -1263,6 +1263,12 @@ may receive access. POSIX mode bits do not describe Windows ACL confidentiality.
 
 - Private Windows key files: `packages/core/src/windows-private-file.ts`
 
+Permission fixtures use `@omnesis/source-sdk/testing` on owned temporary paths.
+`setFixtureMode` stages read/list denial; `setFixtureDirectoryWritable` stages
+child creation/publication denial while retaining reads. Restore access in
+`finally`. Windows directory `chmod` does not establish these denials, and a
+read-denial capability does not justify skipping a write-publication test.
+
 Spawned gateways accept graceful shutdown through an inherited Node parent IPC
 channel, using the same coordinator as SIGINT/SIGTERM. Standalone processes add
 no listener. This avoids Windows' forceful signal emulation without exposing a

@@ -40,6 +40,27 @@ export function setFixtureMode(path: string, mode: number): void {
   );
 }
 
+/** Stage child creation/publication denial only on owned fixture directories. */
+export function setFixtureDirectoryWritable(
+  path: string,
+  writable: boolean,
+  restoreMode = 0o700,
+): void {
+  if (process.platform !== "win32") {
+    chmodSync(path, writable ? restoreMode : restoreMode & ~0o222);
+    return;
+  }
+  const sid = `*${ownSid()}`;
+  const args = writable
+    ? [path, "/remove:d", sid, "/Q"]
+    : [path, "/deny", `${sid}:(WD,AD,DC)`, "/Q"];
+  execFileSync(
+    win32.join(process.env.SystemRoot ?? "C:\\Windows", "System32", "icacls.exe"),
+    args,
+    { encoding: "utf8", timeout: 10_000, windowsHide: true },
+  );
+}
+
 /** Probe only owned data: backup privilege can bypass Windows read-denial DACLs. */
 export function probeFixtureReadDenial(
   read: (path: string) => unknown = readFileSync,

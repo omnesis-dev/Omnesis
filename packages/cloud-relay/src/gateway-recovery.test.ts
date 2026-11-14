@@ -5,6 +5,7 @@ import { createPublicKey } from "node:crypto";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { ensurePrivateDirs } from "@omnesis/core";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { createRecoveryAuthority, signRecoveryReceipt } from "./recovery-authority.js";
 import { gatewayRecoveryDraft, readGatewayRecoveryReceipt } from "./gateway-recovery.js";
@@ -18,6 +19,7 @@ let directory: string;
 const authority = createRecoveryAuthority();
 beforeEach(async () => {
   directory = await mkdtemp(join(tmpdir(), "omnesis-gateway-recovery-"));
+  if (process.platform === "win32") await ensurePrivateDirs([directory]);
 });
 afterEach(async () => {
   vi.restoreAllMocks();
@@ -110,7 +112,11 @@ test("every fresh proof can carry a bounded exact owner receipt from its default
   await writeFile(path, "not json");
   await expect(readGatewayRecoveryReceipt(f.options, f.identity)).rejects.toThrow();
   await writeFile(path, "x".repeat(65_537));
-  await expect(readGatewayRecoveryReceipt(f.options, f.identity)).rejects.toThrow("too large");
+  if (process.platform === "win32")
+    await expect(readGatewayRecoveryReceipt(f.options, f.identity)).rejects.toMatchObject({
+      code: "EPRIVATE",
+    });
+  else await expect(readGatewayRecoveryReceipt(f.options, f.identity)).rejects.toThrow("too large");
 });
 
 test("unreadable recovery artifacts cannot silently downgrade to invitation or receipt-less enrollment", async () => {

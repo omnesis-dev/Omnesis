@@ -38,7 +38,7 @@ export function loadBootstrapDotEnv(
   });
 }
 
-/** Metadata-only repair; the caller must exit and never continue the failed bootstrap. */
+/** Repair without exposing config bytes to the loader; the caller must exit afterward. */
 export function repairBootstrapDotEnvAccess(error: DotEnvBootstrapError): void {
   if (process.platform !== "win32") throw new Error("Windows bootstrap repair is unavailable");
   secureWindowsPrivatePathSync(dirname(error.path), "directory");

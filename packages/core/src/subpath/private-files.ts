@@ -4,3 +4,8 @@
 /** Durable private files and directories for lightweight Node worker graphs. */
 export { atomicWriteFile, atomicWriteFileSync, fsyncDir } from "../atomic-write.js";
 export { ensurePrivateDirSync, ensurePrivateDirs } from "../security-files.js";
+
+export {
+  inspectWindowsPrivatePathSync,
+  prepareWindowsPrivateStorageDirectorySync,
+} from "../windows-private-file.js";

@@ -17,6 +17,7 @@ export {
   writeWindowsPrivateFileAtomicSync,
   inspectWindowsPrivatePaths,
   inspectWindowsPrivatePathSync,
+  prepareWindowsPrivateStorageDirectorySync,
   secureWindowsPrivatePathSync,
   writeWindowsPrivateFileAtomicStream,
 } from "@omnesis/platform/windows-private-file";

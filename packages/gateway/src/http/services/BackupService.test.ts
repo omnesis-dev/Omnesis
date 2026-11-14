@@ -563,9 +563,7 @@ describe("BackupService", () => {
 
   test("a failed backup records the error and removes the partial dir", async () => {
     const service = makeService({
-      analyticsBackup: async () => {
-        throw new Error("duckdb copy exploded");
-      },
+      analyticsBackup: () => Promise.reject(new Error("duckdb copy exploded")),
     });
     const { backupId } = service.start();
     await service.whenIdle();
@@ -647,28 +645,27 @@ describe("BackupService", () => {
   });
 
   test("a failed pre-update backup prunes nothing", async () => {
-    let fail = false;
-    let retentionCount = 0;
+    const existing = Array.from({ length: 4 }, (_, n) =>
+      writeBackupManifest(`previous-${n}`, {
+        purpose: "pre-update",
+        startedAt: `2026-01-0${n + 1}T00:00:00.000Z`,
+        finishedAt: `2026-01-0${n + 1}T00:00:01.000Z`,
+      }),
+    );
     const service = makeService({
-      preUpdateRetentionCount: () => retentionCount,
-      analyticsBackup: async (dest) => {
-        if (fail) throw new Error("duckdb copy exploded");
-        writeFileSync(dest, "analytics-copy");
-      },
+      preUpdateRetentionCount: () => 2,
+      analyticsBackup: () => Promise.reject(new Error("duckdb copy exploded")),
     });
-    for (let n = 0; n < 4; n++) {
-      service.start(PRE_UPDATE);
-      await service.whenIdle();
-    }
     const before = service.list().map((backup) => backup.path);
+    expect(before).toHaveLength(existing.length);
 
-    retentionCount = 2;
-    fail = true;
     service.start(PRE_UPDATE);
     await service.whenIdle();
 
     expect(service.getStatus().lastResult?.ok).toBe(false);
+    expect(service.getStatus().lastResult?.error).toContain("duckdb copy exploded");
     expect(service.list().map((backup) => backup.path)).toEqual(before);
+    expect(existing.every((path) => existsSync(path))).toBe(true);
   });
 
   test("always retains the completed backup when the clock moves backwards", async () => {

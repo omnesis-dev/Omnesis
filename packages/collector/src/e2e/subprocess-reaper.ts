@@ -20,6 +20,7 @@
  */
 
 import { requestChildShutdown, WindowsProcessTree } from "@omnesis/core";
+import { waitForWindowsTreeExit } from "./windows-tree-drain.js";
 import type { ChildProcess } from "node:child_process";
 
 /** Process-group leader PIDs of detached children still expected to be alive. */
@@ -254,15 +255,12 @@ async function terminateSubprocessGroup(
       return;
     if (!windowsGroups.has(proc.pid)) await registerSubprocessGroup(proc);
     const record = windowsGroups.get(proc.pid)!;
-    const goneWithin = async (ms: number): Promise<boolean> => {
-      const deadline = Date.now() + ms;
-      for (;;) {
-        await record.tree.refresh();
-        if (!record.tree.alive && (proc.exitCode !== null || proc.signalCode !== null)) return true;
-        if (Date.now() >= deadline) return false;
-        await new Promise<void>((resolve) => setTimeout(resolve, 25));
-      }
-    };
+    const goneWithin = (ms: number): Promise<boolean> =>
+      waitForWindowsTreeExit(
+        record.tree,
+        () => proc.exitCode !== null || proc.signalCode !== null,
+        ms,
+      );
     if (
       initialSignal !== "SIGKILL" &&
       (await requestChildShutdown(proc)) &&

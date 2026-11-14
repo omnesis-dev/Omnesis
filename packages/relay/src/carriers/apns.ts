@@ -2,8 +2,10 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { createSign } from "node:crypto";
+
 import { readFile } from "node:fs/promises";
 import { connect, type ClientHttp2Session } from "node:http2";
+import { readWindowsPrivateFileContents } from "@omnesis/core";
 
 import { APNS_WAKE_JSON } from "@omnesis/core/push";
 
@@ -134,7 +136,11 @@ export class ApnsRelayCarrier implements RelayCarrier {
   private async getJwt(): Promise<string> {
     const now = this.clock.now();
     if (this.jwt && now - this.jwt.mintedAt < JWT_MAX_AGE_MS) return this.jwt.token;
-    this.keyPromise ??= readFile(this.opts.keyPath, "utf8").catch((err) => {
+    this.keyPromise ??= (
+      process.platform === "win32"
+        ? readWindowsPrivateFileContents(this.opts.keyPath).then((bytes) => bytes.toString("utf8"))
+        : readFile(this.opts.keyPath, "utf8")
+    ).catch((err) => {
       this.keyPromise = null;
       throw err;
     });

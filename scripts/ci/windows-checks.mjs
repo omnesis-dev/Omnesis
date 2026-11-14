@@ -2,6 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { spawn } from "node:child_process";
+import { existsSync } from "node:fs";
 import { waitForChild } from "../lib/check-process.mjs";
 
 /** Installation is outside the Windows runtime compatibility contract. */
@@ -30,6 +31,23 @@ export const INSTALLER_TEST_EXCLUSIONS = [
 ];
 
 export const FOCUSED_UNIT_FILES = [
+  "packages/platform/src/windows-storage-directory.windows.test.ts",
+  "packages/relay/src/store.windows.test.ts",
+  "packages/relay/src/windows-storage.test.ts",
+  "packages/relay/src/store.test.ts",
+  "packages/relay/src/credentials.test.ts",
+  "packages/relay/src/admin.test.ts",
+  "packages/relay/src/carriers/carriers.test.ts",
+  "packages/cloud-relay/src/google-credentials.test.ts",
+  "packages/cloud-relay/src/device-key-file.test.ts",
+  "packages/cloud-relay/src/runtime.test.ts",
+  "packages/cloud-relay/src/runtime-key.test.ts",
+  "packages/cloud-relay/src/runtime-acme.test.ts",
+  "packages/cli/src/commands/connect.test.ts",
+  "packages/cli/src/commands/connect.integration.test.ts",
+  "packages/gateway/src/workers/indexer-worker-boot.test.ts",
+  "packages/collector/src/e2e/windows-tree-drain.test.ts",
+  "scripts/ci/test-shell.test.mjs",
   "scripts/pii-scan.test.mjs",
   "packages/gateway/src/disk-usage-identity.test.ts",
   "packages/gateway/src/workers/search-pool.respawn.test.ts",
@@ -205,8 +223,36 @@ export const FOCUSED_E2E_FILES = [
   "packages/collector/src/e2e/source-descriptors.e2e.test.ts",
 ];
 
+/** Optional manual diagnosis uses literal, existing repository E2E files only. */
+export function windowsE2EFiles(text, exists = existsSync) {
+  if (text === "") return [];
+  let files;
+  try {
+    files = JSON.parse(text);
+  } catch {
+    throw new Error("Windows E2E files must be a JSON array of repository paths");
+  }
+  if (!Array.isArray(files) || files.length < 1 || files.length > 16)
+    throw new Error("Select between one and sixteen Windows E2E files");
+  const selected = new Set();
+  for (const file of files) {
+    if (
+      typeof file !== "string" ||
+      !/^packages\/[a-zA-Z0-9._/-]+\.e2e\.test\.ts$/u.test(file) ||
+      file.split("/").some((part) => part === "" || part === "." || part === "..") ||
+      !exists(file) ||
+      selected.has(file)
+    )
+      throw new Error("Select distinct existing repository E2E test files");
+    selected.add(file);
+  }
+  return [...selected];
+}
+
 /** Every entry is argv for Node, never a command interpreted by a shell. */
-export function windowsCheckTasks(lane, shard) {
+export function windowsCheckTasks(lane, shard, files = []) {
+  if (files.length && (lane !== "e2e" || shard !== undefined))
+    throw new Error("Selected Windows E2E files require the unsharded E2E lane");
   if (shard !== undefined && (lane !== "e2e" || !/^[12]\/2$/u.test(shard))) {
     throw new Error("Only the E2E lane takes --shard=1/2 or --shard=2/2");
   }
@@ -229,7 +275,7 @@ export function windowsCheckTasks(lane, shard) {
         ["scripts/test-hermes.mjs"],
       ];
     case "e2e":
-      return [["scripts/run-check.mjs", "e2e", ...(shard ? [`--shard=${shard}`] : [])]];
+      return [["scripts/run-check.mjs", "e2e", ...files, ...(shard ? [`--shard=${shard}`] : [])]];
     case "portal":
       return [["scripts/run-check.mjs", "portal"]];
     default:
@@ -262,7 +308,8 @@ async function main(args) {
     throw new Error("Pass one E2E shard");
   }
   const shard = options.find((option) => option.startsWith("--shard="))?.slice("--shard=".length);
-  const tasks = windowsCheckTasks(lane, shard);
+  const files = windowsE2EFiles(process.env.OMNESIS_WINDOWS_E2E_FILES ?? "");
+  const tasks = windowsCheckTasks(lane, shard, files);
   if (options.includes("--list")) {
     process.stdout.write(`${JSON.stringify(tasks, null, 2)}\n`);
     return 0;

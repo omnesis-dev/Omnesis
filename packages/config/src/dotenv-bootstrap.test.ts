@@ -38,7 +38,7 @@ function onPlatform<T>(platform: NodeJS.Platform, run: () => T): T {
 }
 
 describe("dotenv bootstrap security", () => {
-  test("bootstrap repair touches only directory/file access controls and does not read env bytes", () => {
+  test("bootstrap repair delegates protected file replacement without exposing env bytes to the loader", () => {
     const dir = scratch();
     const path = join(dir, ".env");
     const error = new DotEnvBootstrapError(path, new Error("Unsafe ACL"));

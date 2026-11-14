@@ -5,12 +5,14 @@ import { mkdtemp, rm, writeFile, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { X509Certificate } from "node:crypto";
+import { ensurePrivateDirs } from "@omnesis/core";
 import { beforeAll, afterAll, afterEach, expect, test, vi } from "vitest";
 import { tlsFiles } from "../test/support.js";
 import { CertSpotterProvider } from "./certificate-monitor-certspotter.js";
 let directory: string, der: string;
 beforeAll(async () => {
   directory = await mkdtemp(join(tmpdir(), "ct-provider-"));
+  if (process.platform === "win32") await ensurePrivateDirs([directory]);
   der = new X509Certificate(
     await readFile(tlsFiles(directory, "gateway.example.test").certFile),
   ).raw.toString("base64");

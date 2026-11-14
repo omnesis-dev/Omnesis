@@ -29,6 +29,10 @@ on:
         type: choice
         default: all
         options: [all, unit, e2e, portal]
+      e2e_files:
+        description: Optional JSON array of E2E paths for manual e2e diagnosis (1–16 files)
+        type: string
+        default: ""
 
 permissions:
   contents: read
@@ -52,7 +56,7 @@ jobs:
       fail-fast: false
       max-parallel: 4
       matrix:
-        include: ${{ fromJSON(github.event_name == 'pull_request' && '[{"name":"Windows focused","lane":"focused"}]' || github.event_name == 'workflow_dispatch' && inputs.lane == 'unit' && '[{"name":"Windows unit","lane":"unit"}]' || github.event_name == 'workflow_dispatch' && inputs.lane == 'e2e' && '[{"name":"Windows E2E 1/2","lane":"e2e","shard":"1/2"},{"name":"Windows E2E 2/2","lane":"e2e","shard":"2/2"}]' || github.event_name == 'workflow_dispatch' && inputs.lane == 'portal' && '[{"name":"Windows portal","lane":"portal"}]' || '[{"name":"Windows unit","lane":"unit"},{"name":"Windows E2E 1/2","lane":"e2e","shard":"1/2"},{"name":"Windows E2E 2/2","lane":"e2e","shard":"2/2"},{"name":"Windows portal","lane":"portal"}]') }}
+        include: ${{ fromJSON(github.event_name == 'pull_request' && '[{"name":"Windows focused","lane":"focused"}]' || github.event_name == 'workflow_dispatch' && inputs.lane == 'unit' && '[{"name":"Windows unit","lane":"unit"}]' || github.event_name == 'workflow_dispatch' && inputs.lane == 'e2e' && inputs.e2e_files != '' && '[{"name":"Windows E2E diagnosis","lane":"e2e"}]' || github.event_name == 'workflow_dispatch' && inputs.lane == 'e2e' && '[{"name":"Windows E2E 1/2","lane":"e2e","shard":"1/2"},{"name":"Windows E2E 2/2","lane":"e2e","shard":"2/2"}]' || github.event_name == 'workflow_dispatch' && inputs.lane == 'portal' && '[{"name":"Windows portal","lane":"portal"}]' || '[{"name":"Windows unit","lane":"unit"},{"name":"Windows E2E 1/2","lane":"e2e","shard":"1/2"},{"name":"Windows E2E 2/2","lane":"e2e","shard":"2/2"},{"name":"Windows portal","lane":"portal"}]') }}
     defaults:
       run:
         shell: pwsh
@@ -90,7 +94,18 @@ jobs:
         id: dependencies
         run: node scripts/ci/npm-ci.mjs --no-audit --no-fund
 
+      - name: Validate optional E2E selection
+        if: ${{ matrix.lane == 'e2e' }}
+        env:
+          SHARD: ${{ matrix.shard }}
+          OMNESIS_WINDOWS_E2E_FILES: ${{ github.event_name == 'workflow_dispatch' && inputs.lane == 'e2e' && inputs.e2e_files || '' }}
+        run: |
+          $checkArgs = @('scripts/ci/windows-checks.mjs', 'e2e', '--list')
+          if ($env:SHARD) { $checkArgs += "--shard=$env:SHARD" }
+          node @checkArgs
+
       - name: Build and prove Windows vector publication
+        id: native_vector
         run: node scripts/ci/build-windows-usearch.mjs
 
       - name: Typecheck all TypeScript source and test projects
@@ -119,15 +134,19 @@ jobs:
 
       - name: Full Windows unit and adapter tests
         # Preserve a failing typecheck verdict while collecting runtime failures.
-        if: ${{ !cancelled() && matrix.lane == 'unit' && steps.dependencies.outcome == 'success' }}
+        if: ${{ !cancelled() && matrix.lane == 'unit' && steps.dependencies.outcome == 'success' && steps.native_vector.outcome == 'success' }}
         run: node scripts/ci/windows-checks.mjs unit
 
       - name: Full Windows E2E shard with the real reference embedder
         if: ${{ matrix.lane == 'e2e' }}
         env:
           SHARD: ${{ matrix.shard }}
+          OMNESIS_WINDOWS_E2E_FILES: ${{ github.event_name == 'workflow_dispatch' && inputs.lane == 'e2e' && inputs.e2e_files || '' }}
           OMNESIS_TEST_EMBEDDER_CACHE: ${{ runner.temp }}/omnesis-test-embedder
-        run: node scripts/ci/with-test-embedder.mjs scripts/ci/windows-checks.mjs e2e --shard=$env:SHARD
+        run: |
+          $checkArgs = @('scripts/ci/with-test-embedder.mjs', 'scripts/ci/windows-checks.mjs', 'e2e')
+          if ($env:SHARD) { $checkArgs += "--shard=$env:SHARD" }
+          node @checkArgs
 
       - name: Full Windows portal tests
         if: ${{ matrix.lane == 'portal' }}

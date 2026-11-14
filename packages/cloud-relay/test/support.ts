@@ -10,7 +10,7 @@ import { once } from "node:events";
 import { execFileSync } from "node:child_process";
 import { join } from "node:path";
 import { SignJWT } from "jose";
-import { parseWebSocketAuthProtocolHeader } from "@omnesis/core";
+import { parseWebSocketAuthProtocolHeader, ensurePrivateFileSync } from "@omnesis/core";
 import { WebSocketServer, WebSocket } from "ws";
 import { RelayAccounts } from "../src/accounts.js";
 import { RelaySessions, localIdentityProvider } from "../src/identity.js";
@@ -312,6 +312,7 @@ export function tlsFiles(
     ],
     { stdio: "ignore" },
   );
+  if (process.platform === "win32") ensurePrivateFileSync(keyFile);
   return { keyFile, certFile };
 }
 

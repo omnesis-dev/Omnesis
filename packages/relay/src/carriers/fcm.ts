@@ -2,7 +2,9 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { createSign } from "node:crypto";
+
 import { readFile } from "node:fs/promises";
+import { readWindowsPrivateFileContents } from "@omnesis/core";
 
 import { FCM_WAKE_DATA } from "@omnesis/core/push";
 
@@ -102,7 +104,13 @@ export class FcmRelayCarrier implements RelayCarrier {
   }
 
   private getServiceAccount(): Promise<FcmServiceAccount> {
-    this.accountPromise ??= readFile(this.opts.serviceAccountPath, "utf8")
+    this.accountPromise ??= (
+      process.platform === "win32"
+        ? readWindowsPrivateFileContents(this.opts.serviceAccountPath).then((bytes) =>
+            bytes.toString("utf8"),
+          )
+        : readFile(this.opts.serviceAccountPath, "utf8")
+    )
       .then(parseFcmServiceAccount)
       .catch((err) => {
         this.accountPromise = null;

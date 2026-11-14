@@ -27,6 +27,7 @@ import { tmpdir } from "node:os";
 import { basename, dirname, join, relative } from "node:path";
 import {
   acquireUpdateLock,
+  ensurePrivateFileSync,
   inspectWindowsPrivatePaths,
   type GatewayLockHolder,
 } from "@omnesis/core";
@@ -1276,19 +1277,28 @@ describe("safety", () => {
     expect(existsSync(m.path(".env"))).toBe(true);
   });
 
-  test("file modes survive an edit", async () => {
+  test.each([0o600, 0o400])("file mode %i survives an edit", async (mode) => {
     const m = new Machine("linux");
     m.openclaw();
-    chmodSync(m.path(".openclaw", "openclaw.json"), 0o600);
-    await uninstall(m, { components: ["openclaw"] });
     const config = m.path(".openclaw", "openclaw.json");
+    ensurePrivateFileSync(config);
+    chmodSync(config, mode);
+    if (process.platform === "win32") {
+      const [before] = await inspectWindowsPrivatePaths([{ path: config, kind: "file" }], {
+        protect: true,
+      });
+      expect(before?.private).toBe(true);
+    }
+    const { code, text } = await uninstall(m, { components: ["openclaw"] });
+    expect(code, text()).toBe(0);
     if (process.platform === "win32") {
       const [status] = await inspectWindowsPrivatePaths([{ path: config, kind: "file" }], {
         protect: true,
       });
       expect(status?.private).toBe(true);
+      expect(statSync(config).mode & 0o200).toBe(mode & 0o200);
     } else {
-      expect(statSync(config).mode & 0o777).toBe(0o600);
+      expect(statSync(config).mode & 0o777).toBe(mode);
     }
   });
 });

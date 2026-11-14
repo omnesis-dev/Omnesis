@@ -11,6 +11,7 @@ import { request as httpsRequest } from "node:https";
 import { connect, createServer, type Socket } from "node:net";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { WebSocket } from "ws";
+import { createWindowsPrivateFile } from "@omnesis/core";
 import { echoGateway, fixture as relayFixture, until } from "../test/support.js";
 import { parseTrustedProxies, type CdnFront } from "./cdn-front.js";
 import { ProxyProtocolPeers } from "./proxy-protocol.js";
@@ -321,7 +322,8 @@ test("the daemon takes its reverse proxy from the environment, and none by defau
   const directory = await mkdtemp(join(tmpdir(), "omnesis-relay-cdn-"));
   const key = join(directory, "relay.key");
   const ranges = join(directory, "proxies");
-  await writeFile(key, randomBytes(32), { mode: 0o600 });
+  if (process.platform === "win32") await createWindowsPrivateFile(key, randomBytes(32));
+  else await writeFile(key, randomBytes(32), { mode: 0o600 });
   await writeFile(ranges, `# the proxy\n${EDGE}\n`);
   const base = {
     OMNESIS_CLOUD_RELAY_KEY_FILE: key,

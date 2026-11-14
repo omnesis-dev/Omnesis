@@ -24,7 +24,6 @@ public static partial class OmnesisPrivateFile {
   }
   [DllImport("kernel32.dll",CharSet=CharSet.Unicode,SetLastError=true)] static extern bool CreateDirectory(string path,ref Attributes attributes);
   const int MaximumCachePins=16384; // One-character components in a 32767-character Windows path.
-  const string Installer="S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464";
   [DllImport("kernel32.dll",SetLastError=true)] static extern IntPtr OpenProcess(uint access,bool inherit,int pid);
   [DllImport("kernel32.dll")] static extern IntPtr GetCurrentProcess();
   [DllImport("kernel32.dll",SetLastError=true)] static extern bool CloseHandle(IntPtr handle);
@@ -68,27 +67,10 @@ public static partial class OmnesisPrivateFile {
     Info info=Information(handle,true);
     return info.volume.ToString(System.Globalization.CultureInfo.InvariantCulture)+":"+(((ulong)info.indexHigh<<32)|info.indexLow).ToString(System.Globalization.CultureInfo.InvariantCulture)+":"+info.creation.ToString(System.Globalization.CultureInfo.InvariantCulture);
   }
-  static bool SystemAncestor(string path) {
-    string system=Path.GetFullPath(Environment.GetFolderPath(Environment.SpecialFolder.Windows)).TrimEnd(Path.DirectorySeparatorChar);
-    string full=path.TrimEnd(Path.DirectorySeparatorChar);
-    return String.Equals(full,Path.GetPathRoot(path).TrimEnd(Path.DirectorySeparatorChar),StringComparison.OrdinalIgnoreCase) ||
-      String.Equals(full,system,StringComparison.OrdinalIgnoreCase) || full.StartsWith(system+Path.DirectorySeparatorChar,StringComparison.OrdinalIgnoreCase);
-  }
   static void RequireAncestor(SafeFileHandle handle,string path,string cache) {
-    RawSecurityDescriptor descriptor=Security(handle);
     bool privateEntry=String.Equals(path,cache,StringComparison.OrdinalIgnoreCase) || path.StartsWith(cache+Path.DirectorySeparatorChar,StringComparison.OrdinalIgnoreCase);
-    bool installer=!privateEntry && SystemAncestor(path);
-    if(descriptor.Owner==null || (!Trusted(descriptor.Owner.Value) && !(installer && descriptor.Owner.Value==Installer)) || descriptor.DiscretionaryAcl==null) throw new UnauthorizedAccessException();
-    if(privateEntry) {RequirePrivate(handle,true);return;}
-    foreach(GenericAce ace in descriptor.DiscretionaryAcl) {
-      QualifiedAce rule=ace as QualifiedAce;
-      if(rule==null || (rule.AceQualifier!=AceQualifier.AccessAllowed && rule.AceQualifier!=AceQualifier.AccessDenied)) throw new UnauthorizedAccessException();
-      if(rule.AceQualifier!=AceQualifier.AccessAllowed || (rule.AceFlags&AceFlags.InheritOnly)!=0) continue;
-      string sid=rule.SecurityIdentifier.Value;
-      // Create-file/subdirectory alone cannot substitute an existing pinned
-      // child. Delete/rename, ACL/owner control and mutable metadata can.
-      if(!Trusted(sid) && !(installer && sid==Installer) && ((uint)rule.AccessMask&0x500D0150U)!=0) throw new UnauthorizedAccessException();
-    }
+    if(privateEntry) RequirePrivate(handle,true);
+    else RequireSafeAncestor(handle,path);
   }
   sealed class CachePins : IDisposable {
     readonly List<SafeFileHandle> handles=new List<SafeFileHandle>();
@@ -186,11 +168,7 @@ public static partial class OmnesisPrivateFile {
       }
     } finally {CloseHandle(owner);}
   }
-  static DirectorySecurity CacheDirectoryAcl() {
-    DirectorySecurity security=new DirectorySecurity();security.SetOwner(new SecurityIdentifier(User()));security.SetAccessRuleProtection(true,false);
-    foreach(string sid in new string[]{User(),"S-1-5-18","S-1-5-32-544"}) security.AddAccessRule(new FileSystemAccessRule(new SecurityIdentifier(sid),FileSystemRights.FullControl,InheritanceFlags.ContainerInherit|InheritanceFlags.ObjectInherit,PropagationFlags.None,AccessControlType.Allow));
-    return security;
-  }
+  static DirectorySecurity CacheDirectoryAcl() {return DirectoryAcl();}
   static void NewCacheDirectory(string path) {
     byte[] bytes=CacheDirectoryAcl().GetSecurityDescriptorBinaryForm();GCHandle pinned=GCHandle.Alloc(bytes,GCHandleType.Pinned);
     try {

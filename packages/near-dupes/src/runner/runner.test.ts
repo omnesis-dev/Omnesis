@@ -148,43 +148,33 @@ describe("NearDupeRunner", () => {
       ...filler,
     ]);
 
-    const storeUniform = new DupeStore(dupesPath);
-    new NearDupeRunner({
-      config: DEFAULT_CONFIG,
-      store: storeUniform,
-      corpus: new CorpusReader(corpusPath, { minContentLength: 50 }),
-      runId: "uniform-1",
-      recordThreshold: 0.0,
-      maxCandidatesPerDoc: 100,
-      skipExisting: false,
-    }).run();
-    const uniformPair = storeUniform.db
-      .prepare(
-        `SELECT jaccard FROM pairs WHERE algo_version = ? AND
-         ((doc_a = 'ticket-a' AND doc_b = 'ticket-b') OR
-          (doc_a = 'ticket-b' AND doc_b = 'ticket-a'))`,
-      )
-      .get(DEFAULT_CONFIG.algoVersion) as { jaccard: number } | undefined;
-    storeUniform.close();
-
-    const storeIdf = new DupeStore(dupesPath);
-    new NearDupeRunner({
-      config: IDF_CONFIG,
-      store: storeIdf,
-      corpus: new CorpusReader(corpusPath, { minContentLength: 50 }),
-      runId: "idf-1",
-      recordThreshold: 0.0,
-      maxCandidatesPerDoc: 100,
-      skipExisting: false,
-    }).run();
-    const idfPair = storeIdf.db
-      .prepare(
-        `SELECT jaccard FROM pairs WHERE algo_version = ? AND
-         ((doc_a = 'ticket-a' AND doc_b = 'ticket-b') OR
-          (doc_a = 'ticket-b' AND doc_b = 'ticket-a'))`,
-      )
-      .get(IDF_CONFIG.algoVersion) as { jaccard: number } | undefined;
-    storeIdf.close();
+    function scorePair(config: typeof DEFAULT_CONFIG, runId: string) {
+      const store = new DupeStore(dupesPath);
+      const corpus = new CorpusReader(corpusPath, { minContentLength: 50 });
+      try {
+        new NearDupeRunner({
+          config,
+          store,
+          corpus,
+          runId,
+          recordThreshold: 0.0,
+          maxCandidatesPerDoc: 100,
+          skipExisting: false,
+        }).run();
+        return store.db
+          .prepare(
+            `SELECT jaccard FROM pairs WHERE algo_version = ? AND
+             ((doc_a = 'ticket-a' AND doc_b = 'ticket-b') OR
+              (doc_a = 'ticket-b' AND doc_b = 'ticket-a'))`,
+          )
+          .get(config.algoVersion) as { jaccard: number } | undefined;
+      } finally {
+        corpus.close();
+        store.close();
+      }
+    }
+    const uniformPair = scorePair(DEFAULT_CONFIG, "uniform-1");
+    const idfPair = scorePair(IDF_CONFIG, "idf-1");
 
     expect(uniformPair).toBeDefined();
     expect(uniformPair!.jaccard).toBeGreaterThan(0.7);

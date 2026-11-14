@@ -28,7 +28,7 @@ try {
     throw error;
   }
   // Bootstrap cannot trust even the variables needed to load the normal CLI.
-  // This exact local repair path changes metadata and always ends this process.
+  // Native repair may replace the file, but never parses it or resumes this process.
   try {
     repairBootstrapDotEnvAccess(error);
   } catch {

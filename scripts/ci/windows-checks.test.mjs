@@ -16,6 +16,7 @@ import {
   FOCUSED_UNIT_FILES,
   INSTALLER_TEST_EXCLUSIONS,
   windowsCheckTasks,
+  windowsE2EFiles,
   runWindowsCheckTasks,
 } from "./windows-checks.mjs";
 
@@ -29,12 +30,12 @@ describe("Windows CI coverage", () => {
     expect(config.on.schedule).toEqual([{ cron: "43 4 * * *" }]);
     expect(config.on).toHaveProperty("workflow_dispatch");
     const expression = config.jobs.windows.strategy.matrix.include.slice(3, -2);
-    const matrix = (event, lane = "all") =>
+    const matrix = (event, lane = "all", e2eFiles = "") =>
       JSON.parse(
         JSON.stringify(
           runInNewContext(expression, {
             github: { event_name: event },
-            inputs: { lane },
+            inputs: { lane, e2e_files: e2eFiles },
             fromJSON: JSON.parse,
           }),
         ),
@@ -56,6 +57,21 @@ describe("Windows CI coverage", () => {
     expect(matrix("workflow_dispatch", "unit").map(({ lane }) => lane)).toEqual(["unit"]);
     expect(matrix("workflow_dispatch", "e2e").map(({ shard }) => shard)).toEqual(["1/2", "2/2"]);
     expect(matrix("workflow_dispatch", "portal").map(({ lane }) => lane)).toEqual(["portal"]);
+    const selected = JSON.stringify(["packages/collector/src/e2e/cli.e2e.test.ts"]);
+    expect(matrix("workflow_dispatch", "e2e", selected)).toEqual([
+      { name: "Windows E2E diagnosis", lane: "e2e" },
+    ]);
+    expect(matrix("schedule", "e2e", selected)).toEqual(matrix("schedule"));
+    expect(matrix("pull_request", "e2e", selected)).toEqual(matrix("pull_request"));
+    expect(matrix("workflow_dispatch", "all", selected)).toEqual(matrix("schedule"));
+    const e2eStep = config.jobs.windows.steps.find(
+      ({ name }) => name === "Full Windows E2E shard with the real reference embedder",
+    );
+    expect(e2eStep.env.OMNESIS_WINDOWS_E2E_FILES).toContain(
+      "github.event_name == 'workflow_dispatch'",
+    );
+    expect(e2eStep.run).not.toContain("inputs.e2e_files");
+
     // A diagnostic input cannot reduce scheduled or pull-request coverage.
     expect(matrix("schedule", "unit")).toEqual(matrix("schedule"));
     expect(matrix("pull_request", "portal")).toEqual(matrix("pull_request"));
@@ -96,9 +112,16 @@ describe("Windows CI coverage", () => {
     const prepare = steps.findIndex(
       ({ run }) => run === "node scripts/ci/build-windows-usearch.mjs",
     );
-    expect(prepare).toBe(dependencies + 1);
+    const selection = steps.findIndex(({ name }) => name === "Validate optional E2E selection");
+    expect(selection).toBe(dependencies + 1);
+    expect(prepare).toBe(selection + 1);
+    expect(steps[selection]).not.toHaveProperty("continue-on-error");
     expect(steps[prepare]).not.toHaveProperty("if");
     expect(steps[prepare]).not.toHaveProperty("continue-on-error");
+    expect(steps[prepare].id).toBe("native_vector");
+    const unit = steps.find(({ name }) => name === "Full Windows unit and adapter tests");
+    expect(unit.if).toContain("steps.native_vector.outcome == 'success'");
+
     for (const file of [
       "packages/gateway/src/indexer/usearch-index.test.ts",
       "packages/gateway/src/indexer/usearch-read-registry.test.ts",
@@ -132,7 +155,7 @@ describe("Windows CI coverage", () => {
       ({ name }) => name === "Full Windows unit and adapter tests",
     );
     expect(runtimeStep.if).toBe(
-      "${{ !cancelled() && matrix.lane == 'unit' && steps.dependencies.outcome == 'success' }}",
+      "${{ !cancelled() && matrix.lane == 'unit' && steps.dependencies.outcome == 'success' && steps.native_vector.outcome == 'success' }}",
     );
   });
 
@@ -183,9 +206,11 @@ describe("Windows CI coverage", () => {
     const step = workflow().jobs.windows.steps.find(
       ({ name }) => name === "Full Windows E2E shard with the real reference embedder",
     );
-    expect(step.run).toBe(
-      "node scripts/ci/with-test-embedder.mjs scripts/ci/windows-checks.mjs e2e --shard=$env:SHARD",
+    expect(step.run).toContain(
+      "@('scripts/ci/with-test-embedder.mjs', 'scripts/ci/windows-checks.mjs', 'e2e')",
     );
+    expect(step.run).toContain('if ($env:SHARD) { $checkArgs += "--shard=$env:SHARD" }');
+    expect(step.run).toContain("node @checkArgs");
     expect(step.env.SHARD).toBe("${{ matrix.shard }}");
     expect(step.env).toHaveProperty("OMNESIS_TEST_EMBEDDER_CACHE");
   });
@@ -257,4 +282,47 @@ test("independent Windows suites run after a failure and preserve the first nonz
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
+});
+
+describe("manual Windows E2E selection", () => {
+  const file = "packages/collector/src/e2e/cli.e2e.test.ts";
+  test("keeps default coverage and passes selected files as literal Node arguments", () => {
+    expect(windowsE2EFiles("")).toEqual([]);
+    const files = windowsE2EFiles(JSON.stringify([file]));
+    expect(windowsCheckTasks("e2e", undefined, files)).toEqual([
+      ["scripts/run-check.mjs", "e2e", file],
+    ]);
+    expect(() => windowsCheckTasks("unit", undefined, files)).toThrow(/unsharded/);
+    expect(() => windowsCheckTasks("e2e", "1/2", files)).toThrow(/unsharded/);
+  });
+  test.each([
+    "  ",
+    "not json",
+    "{}",
+    "[]",
+    "[null]",
+    "[1]",
+    JSON.stringify([file, file]),
+    JSON.stringify(Array(17).fill(file)),
+    JSON.stringify(["../collector.e2e.test.ts"]),
+    JSON.stringify(["packages/a/../../collector.e2e.test.ts"]),
+    JSON.stringify(["packages/a/./collector.e2e.test.ts"]),
+    JSON.stringify(["packages/a//collector.e2e.test.ts"]),
+    JSON.stringify(["C:\\tests\\collector.e2e.test.ts"]),
+    JSON.stringify(["packages/a/collector.test.ts"]),
+    JSON.stringify(["packages/a/collector.e2e.test.ts;unexpected"]),
+  ])("refuses an unsafe or empty selection %s", (input) => {
+    expect(() => windowsE2EFiles(input, () => true)).toThrow();
+  });
+  test("refuses missing files rather than silently expanding coverage", () => {
+    expect(() => windowsE2EFiles(JSON.stringify([file]), () => false)).toThrow(/existing/);
+  });
+  test("the real CLI lists only the selected test without launching a runner", () => {
+    const result = spawnSync(process.execPath, ["scripts/ci/windows-checks.mjs", "e2e", "--list"], {
+      encoding: "utf8",
+      env: { ...process.env, OMNESIS_WINDOWS_E2E_FILES: JSON.stringify([file]) },
+    });
+    expect(result.status, result.stderr).toBe(0);
+    expect(JSON.parse(result.stdout)).toEqual([["scripts/run-check.mjs", "e2e", file]]);
+  });
 });

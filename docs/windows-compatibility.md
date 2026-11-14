@@ -30,8 +30,11 @@ reaches the default branch.
 `node scripts/ci/windows-checks.mjs unit --list` prints the broad unit plan.
 The same entrypoint accepts `focused`, `e2e` and `portal`. Installer exclusions
 have explicit reasons. Manual dispatch defaults to the complete sweep and can
-select units, both E2E shards, or the portal for diagnosis; daily coverage remains
-broad.
+select units, both E2E shards, or the portal for diagnosis. An E2E-only manual
+run can also supply `e2e_files`, a JSON array of one to sixteen existing
+repository E2E paths. This creates one unsharded diagnostic job; it does not
+change pull-request or daily coverage. Paths are validated and passed as literal
+Node arguments, never interpolated into shell source.
 
 The first complete Windows unit baseline took about 163 minutes. Its failures
 and helper initialization costs must be resolved before treating that as a
@@ -102,6 +105,26 @@ that source, preserves previous destination bytes and leaves no scratch file.
 The corrected complete probe and current native inspection changes still need
 fresh Windows validation.
 
+Unsafe file permission repair uses a fixed-buffer copy into an initially private
+file and publishes it through the held parent. It does not modify the old file
+object's DACL or readonly attributes; aliases that appear during copying retain
+that object's original bytes and access controls. Ordinary canonical publishers
+honor deny-delete pins; only the repair's own atomic publication uses POSIX
+replacement while its source is held. Arbitrary same-user POSIX replacements
+outside this protocol are not an isolation boundary. An initially multi-linked,
+busy unsafe or unreadable source is refused. Already-private busy files still
+need no mutation. Creation and write timestamps and the readonly setting are
+preserved on the replacement, together with ordinary hidden, system, archive,
+temporary and not-content-indexed attributes. EFS encryption and other storage
+semantics needing dedicated preservation APIs fail closed before content reads;
+the deterministic EFS-metadata refusal case does not establish physical EFS
+execution. Exact-entry deletion and staging cleanup use
+native ignore-readonly disposition rather than clearing shared attributes;
+unsupported filesystems fail closed. Bootstrap repair never returns file bytes
+to the dotenv loader or applies config values, and still exits with status 2.
+Controlled after-check hardlink, failed-publication and denied-read regressions
+require fresh native execution before this repair path is considered verified.
+
 Actual x64 dependency preparation, encrypted keyring initialization, the compiled
 CLI and all six compiled gateway worker entrypoints passed in the ARM64 guest.
 Initial source and compiled manual Gateway observations ended during encrypted
@@ -129,6 +152,12 @@ recognizes escaped service references before removing a shared CLI. Focused
 regressions retain Linux/macOS behavior, including real hard-link deduplication,
 explicit home/config overrides and Unix service quoting.
 
+The focused Windows run at `f84413d74` passed 2,838 unit tests and failed 19,
+with 34 conditional skips. All 13 gateway E2E tests passed. The native vector
+build/publication proof and source/test typechecks passed. Remaining failures
+include process-tree cancellation, native file repair, permission fixtures and
+asynchronous test setup; these must pass at a fresh source checkpoint.
+
 ## Broader failing baselines
 
 The complete Windows unit baseline at `3c076e8e3` recorded 35,642 passing tests,
@@ -145,8 +174,13 @@ fixture, privacy and lifecycle corrections and require a new broad run.
 
 The broad unit run at `11f70451d` passed 38,121 tests and failed 239, with
 123 skips: 2,564 files passed, 66 failed and six were skipped. Its unit phase
-took about 90 minutes. The portal lane passed; both E2E shards remain pending.
-This run precedes the subsequent runtime and fixture corrections.
+took about 90 minutes. The portal lane passed all 70 tests. E2E shard one
+passed 733 tests and failed four; shard two passed 643 and failed seven, with
+13 conditional skips. The E2E phases took about 143 and 146 minutes. The four
+jobs consumed roughly seven runner-hours together, with at most four jobs
+concurrent. The daily schedule separates this workload from the existing full
+validation sweeps. These results precede subsequent runtime and fixture
+corrections and do not establish a passing daily baseline.
 
 Those baselines identified Unix-only process control, npm/shebang execution,
 Windows filesystem flushing, private-file protection, mapped-index publication,

@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { X509Certificate } from "node:crypto";
 import { execFileSync } from "node:child_process";
+import { ensurePrivateDirs } from "@omnesis/core";
 import { beforeAll, afterAll, beforeEach, afterEach, expect, test, vi } from "vitest";
 import { tlsFiles, malformedDateCertificate } from "../test/support.js";
 import { tlsSpkiFingerprint } from "./pinned-key.js";
@@ -43,6 +44,7 @@ beforeAll(async () => {
 afterAll(() => rm(root, { recursive: true, force: true }));
 beforeEach(async () => {
   directory = await mkdtemp(join(tmpdir(), "ct-journal-"));
+  if (process.platform === "win32") await ensurePrivateDirs([directory]);
   now = Date.now();
 });
 afterEach(() => rm(directory, { recursive: true, force: true }));

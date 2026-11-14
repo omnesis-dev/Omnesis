@@ -210,7 +210,12 @@ export async function createTestPki(directory: string, label: string): Promise<T
         "-extfile",
         extensionsFile,
       ]);
-      await chmod(keyFile, 0o600);
+      if (process.platform === "win32") {
+        const { ensurePrivateFileSync } = await import("@omnesis/core");
+        ensurePrivateFileSync(keyFile);
+      } else {
+        await chmod(keyFile, 0o600);
+      }
       return { certFile, keyFile, cert: await readFile(certFile, "utf8") };
     },
   };
@@ -318,7 +323,9 @@ export class EnrollmentWorld {
       { relay: await freePort(), data: await freePort() },
       options,
     );
-    await writeFile(world.relayKeyFile, randomBytes(32), { mode: 0o600 });
+    if (process.platform === "win32")
+      await createWindowsPrivateFile(world.relayKeyFile, randomBytes(32));
+    else await writeFile(world.relayKeyFile, randomBytes(32), { mode: 0o600 });
     const authorityKey = generateKeyPairSync("ed25519").privateKey.export({
       type: "pkcs8",
       format: "pem",

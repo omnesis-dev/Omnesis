@@ -31,7 +31,12 @@
 import { describe, it, expect, afterEach, afterAll, beforeAll } from "vitest";
 import captureAssert from "node:assert/strict";
 import { capturePortalScreenshot } from "./lib/portal-capture.mjs";
-import { execFileSync, execFile, spawn, spawnSync } from "node:child_process";
+import {
+  execFileSync as processExecFileSync,
+  execFile as processExecFile,
+  spawn as processSpawn,
+  spawnSync as processSpawnSync,
+} from "node:child_process";
 import {
   mkdtempSync,
   mkdirSync,
@@ -54,10 +59,41 @@ import { createRequire } from "node:module";
 import { gatewayBootBudgetMs } from "./lib/boot-budget.mjs";
 import {
   bashExecutable,
+  bashEnvironment,
   nativeBashPath,
   prependPath,
   localSshFixturePath,
 } from "./lib/test-shell.mjs";
+
+const fixtureBash = bashExecutable();
+function fixtureOptions(command, options) {
+  return command === fixtureBash
+    ? { ...options, env: bashEnvironment(options?.env ?? process.env, { executable: fixtureBash }) }
+    : options;
+}
+function execFileSync(command, args, options) {
+  return processExecFileSync(command, args, fixtureOptions(command, options));
+}
+function spawnSync(command, args, options) {
+  return processSpawnSync(command, args, fixtureOptions(command, options));
+}
+function spawn(command, args, options) {
+  return processSpawn(command, args, fixtureOptions(command, options));
+}
+function execFile(command, args, options, callback) {
+  if (typeof options === "function")
+    return processExecFile(command, args, fixtureOptions(command), options);
+  return processExecFile(command, args, fixtureOptions(command, options), callback);
+}
+
+it("Node fixture invocations keep their supplied environment unchanged", () => {
+  const supplied = "invented-node-only-path";
+  const output = execFileSync(process.execPath, ["-p", "process.env.PATH"], {
+    env: { ...process.env, PATH: supplied },
+    encoding: "utf8",
+  });
+  expect(output.trim()).toBe(supplied);
+});
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, "..");

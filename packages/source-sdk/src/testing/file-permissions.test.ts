@@ -13,7 +13,12 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test } from "vitest";
-import { canDenyFixtureReads, probeFixtureReadDenial, setFixtureMode } from "./file-permissions.js";
+import {
+  canDenyFixtureReads,
+  probeFixtureReadDenial,
+  setFixtureMode,
+  setFixtureDirectoryWritable,
+} from "./file-permissions.js";
 
 test.skipIf(!canDenyFixtureReads)(
   "owned fixtures stage actual file and directory read denial and restore it",
@@ -96,5 +101,30 @@ test.each(["setup", "read", "restore"])(
     ).toThrow(failure);
     expect(modes).toEqual([0o000, 0o600]);
     expect(existsSync(ownedFile)).toBe(false);
+  },
+);
+
+test.skipIf(process.getuid?.() === 0)(
+  "owned directories deny new children while retaining reads and recover publication",
+  () => {
+    const root = mkdtempSync(join(tmpdir(), "owned-write-denial-"));
+    const original = join(root, "original.txt");
+    const candidate = join(root, "candidate.txt");
+    try {
+      writeFileSync(original, "Invented retained fixture");
+      setFixtureDirectoryWritable(root, false);
+      expect(readFileSync(original, "utf8")).toBe("Invented retained fixture");
+      expect(readdirSync(root)).toEqual(["original.txt"]);
+      expect(() => writeFileSync(candidate, "New fixture", { flag: "wx" })).toThrow(
+        expect.objectContaining({ code: expect.stringMatching(/^(EACCES|EPERM)$/u) }),
+      );
+      expect(existsSync(candidate)).toBe(false);
+      setFixtureDirectoryWritable(root, true);
+      writeFileSync(candidate, "New fixture", { flag: "wx" });
+      expect(readFileSync(candidate, "utf8")).toBe("New fixture");
+    } finally {
+      setFixtureDirectoryWritable(root, true);
+      rmSync(root, { recursive: true, force: true });
+    }
   },
 );

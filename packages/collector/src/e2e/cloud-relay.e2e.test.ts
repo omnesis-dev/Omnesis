@@ -15,6 +15,7 @@ import {
   Socket,
   type AddressInfo,
 } from "node:net";
+import { createWindowsPrivateFile, ensurePrivateFileSync } from "@omnesis/core";
 import {
   createRelayClientProxy,
   certificateFingerprint,
@@ -125,9 +126,11 @@ describe("native cloud tunnel with real gateway, collector sync engine and CLI",
       "-extfile",
       gatewayExtensionsFile,
     ]);
+    if (process.platform === "win32") ensurePrivateFileSync(gatewayKeyFile);
     gatewayAuthorityCertificate = await readFile(authorityCertFile, "utf8");
     gatewayCertificate = await readFile(gatewayCertFile, "utf8");
-    await writeFile(keyFile, randomBytes(32));
+    if (process.platform === "win32") await createWindowsPrivateFile(keyFile, randomBytes(32));
+    else await writeFile(keyFile, randomBytes(32));
     relay = await startRelayProcess({
       OMNESIS_CLOUD_RELAY_KEY_FILE: keyFile,
       OMNESIS_SYNTHETIC: "1",

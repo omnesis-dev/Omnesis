@@ -4,6 +4,8 @@
 import { createPrivateKey } from "node:crypto";
 import { readFileSync, statSync } from "node:fs";
 
+import { readWindowsPrivateFileContentsSync } from "@omnesis/core";
+
 import type { RelayConfig } from "./config.js";
 
 export interface FcmServiceAccount {
@@ -59,6 +61,8 @@ export function parseFcmServiceAccount(raw: string): FcmServiceAccount {
 }
 
 function readProtectedCredentialFile(path: string, label: string): string {
+  if (process.platform === "win32")
+    return readWindowsPrivateFileContentsSync(path).toString("utf8");
   const stat = statSync(path);
   if (!stat.isFile()) throw new Error(`${label} must be a regular file`);
   if ((stat.mode & 0o077) !== 0) {

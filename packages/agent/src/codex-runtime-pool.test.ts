@@ -58,8 +58,22 @@ class FakeRuntime implements PoolMemberRuntime {
   turns = 0;
   events: AgentEvent[] = [];
   private releases: Array<() => void> = [];
+  private starts = new Map<number, Array<() => void>>();
+  whenTurns(count: number): Promise<void> {
+    if (this.turns >= count) return Promise.resolve();
+    return new Promise<void>((resolve) => {
+      const waiters = this.starts.get(count) ?? [];
+      waiters.push(resolve);
+      this.starts.set(count, waiters);
+    });
+  }
   async *runTurn(): AsyncIterable<AgentEvent> {
     this.turns += 1;
+    for (const [count, waiters] of this.starts) {
+      if (count > this.turns) continue;
+      this.starts.delete(count);
+      for (const resolve of waiters) resolve();
+    }
     await new Promise<void>((resolve) => this.releases.push(resolve));
     yield* this.events;
   }
@@ -132,7 +146,7 @@ describe("CodexRuntimePool routing", () => {
     const runs = [0, 1, 2].map(async () => {
       for await (const _ of pool.runTurn(turnOpts())) void _;
     });
-    await tick();
+    await waitForTurns(fakes);
 
     // Each member took exactly one turn — genuine 3-way concurrency.
     expect(fakes.map((f) => f.turns).sort()).toEqual([1, 1, 1]);
@@ -149,16 +163,16 @@ describe("CodexRuntimePool routing", () => {
     const runs = [0, 1, 2, 3].map(async () => {
       for await (const event of pool.runTurn(turnOpts())) void event;
     });
-    await tick();
+    await waitForTurns(fakes);
     expect(pool.describe()).toEqual({ size: 2, inFlight: [1, 1], queued: 2 });
     expect(fakes.map((f) => f.turns)).toEqual([1, 1]);
 
     fakes[1].releaseOne();
-    await tick();
+    await fakes[1].whenTurns(2);
     expect(fakes.map((f) => f.turns)).toEqual([1, 2]);
     expect(pool.describe().queued).toBe(1);
     fakes[1].releaseOne();
-    await tick();
+    await fakes[1].whenTurns(3);
     expect(fakes.map((f) => f.turns)).toEqual([1, 3]);
     expect(pool.describe().queued).toBe(0);
     fakes[0].releaseOne();
@@ -177,13 +191,13 @@ describe("CodexRuntimePool routing", () => {
     const controller = new AbortController();
     const canceled = consume(controller.signal);
     const successor = consume();
-    await tick();
+    await waitForTurns(fakes);
     const rejected = expect(canceled).rejects.toMatchObject({ name: "AbortError" });
     controller.abort();
     await rejected;
     expect(pool.describe().queued).toBe(1);
     fakes[0].releaseOne();
-    await tick();
+    await fakes[0].whenTurns(2);
     expect(fakes[0].turns).toBe(2);
     fakes[0].releaseOne();
     await Promise.all([running, successor]);
@@ -198,7 +212,7 @@ describe("CodexRuntimePool routing", () => {
     const running = consume();
     const waiting = [consume(), consume()];
     const rejected = waiting.map((promise) => expect(promise).rejects.toThrow("disposed"));
-    await tick();
+    await waitForTurns(fakes);
     await pool.dispose();
     await Promise.all(rejected);
     expect(pool.describe().queued).toBe(0);
@@ -218,7 +232,7 @@ describe("CodexRuntimePool per-lease auth", () => {
     const run = (async () => {
       for await (const _ of pool.runTurn(turnOpts())) void _;
     })();
-    await tick();
+    await waitForTurns(fakes);
 
     expect(lstatSync(member0).isSymbolicLink()).toBe(true);
     expect(readlinkSync(member0)).toBe(join(dir, "owner", "auth.json"));
@@ -235,7 +249,7 @@ describe("CodexRuntimePool per-lease auth", () => {
     let run = (async () => {
       for await (const _ of pool.runTurn(turnOpts())) void _;
     })();
-    await tick();
+    await waitForTurns(fakes);
     fakes[0].releaseOne();
     await run;
 
@@ -251,7 +265,7 @@ describe("CodexRuntimePool per-lease auth", () => {
     run = (async () => {
       for await (const _ of pool.runTurn(turnOpts())) void _;
     })();
-    await tick();
+    await fakes[0].whenTurns(2);
     expect(readFileSync(join(dir, "owner", "auth.json"), "utf8")).toBe('{"token":"fresh"}');
     expect(lstatSync(member0).isSymbolicLink()).toBe(true);
     fakes[0].releaseOne();
@@ -274,7 +288,7 @@ describe("CodexRuntimePool per-lease auth", () => {
     const run = (async () => {
       for await (const _ of pool.runTurn(turnOpts())) void _;
     })();
-    await tick();
+    await waitForTurns(fakes);
     expect(existsSync(join(dir, "pool", "0", "auth.json"))).toBe(true);
     fakes[0].releaseOne();
     await run;
@@ -418,7 +432,8 @@ function turnOpts() {
   } as unknown as Parameters<CodexRuntimePool["runTurn"]>[0];
 }
 
-const tick = () => new Promise((r) => setTimeout(r, 5));
+const waitForTurns = (fakes: FakeRuntime[]) =>
+  Promise.all(fakes.map((runtime) => runtime.whenTurns(1)));
 
 it("logs bounded content-free timing for a contended lease without changing FIFO", async () => {
   let now = 0;
@@ -431,14 +446,14 @@ it("logs bounded content-free timing for a contended lease without changing FIFO
     for await (const event of pool.runTurn(turnOpts())) void event;
   };
   const first = consume();
-  await tick();
+  await waitForTurns(fakes);
   now = 10;
   const second = consume();
-  await tick();
+  expect(pool.describe().queued).toBe(1);
   now = 40;
   fakes[0]!.releaseOne();
   await first;
-  await tick();
+  await fakes[0]!.whenTurns(2);
   expect(info.mock.calls[0]![0]).toMatch(
     /request=[a-f0-9-]+ status=leased member=0 waitMs=30 granted=true$/,
   );
@@ -474,7 +489,7 @@ it.each(["abort", "dispose"])(
       for await (const event of pool.runTurn({ ...turnOpts(), signal })) void event;
     };
     const first = consume();
-    await tick();
+    await waitForTurns(fakes);
     const controller = new AbortController();
     now = 5;
     const waiter = consume(controller.signal);
@@ -508,10 +523,10 @@ it("releases a contended member even when the timing logger throws", async () =>
   };
   const first = consume();
   const second = consume();
-  await tick();
+  await waitForTurns(fakes);
   fakes[0]!.releaseOne();
   await first;
-  await tick();
+  await fakes[0]!.whenTurns(2);
   fakes[0]!.releaseOne();
   await second;
   expect(fakes[0]!.turns).toBe(2);
@@ -527,7 +542,7 @@ it("preserves delegated consumer return and releases its lease", async () => {
   ];
   const iterator = pool.runTurn(turnOpts())[Symbol.asyncIterator]();
   const next = iterator.next();
-  await tick();
+  await waitForTurns(fakes);
   fakes[0]!.releaseOne();
   expect((await next).done).toBe(false);
   await iterator.return?.();

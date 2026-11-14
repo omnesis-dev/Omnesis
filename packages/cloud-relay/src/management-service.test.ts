@@ -350,8 +350,18 @@ test("disable aborts in-flight enrollment and no tunnel or renewal starts after 
   expect((await manager.status()).enabled).toBe(false);
 });
 test("malformed private configuration fails closed rather than minting another identity", async () => {
+  const f = fixture();
   await writeFile(join(directory, "cloud-relay"), "invalid");
-  await expect(GatewayCloudRelayManagement.open(fixture().options)).rejects.toThrow();
+  await expect(
+    GatewayCloudRelayManagement.open(f.options).then((opened) => {
+      manager = opened;
+      return opened;
+    }),
+  ).rejects.toThrow();
+  expect(f.prepare).not.toHaveBeenCalled();
+  expect(f.register).not.toHaveBeenCalled();
+  expect(await readFile(join(directory, "cloud-relay"), "utf8")).toBe("invalid");
+  expect(await readdir(directory)).toEqual(["cloud-relay"]);
 });
 test("existing environment gateway identity is adopted without preparing a second owner or changing TLS paths", async () => {
   const tls = tlsFiles(directory),
