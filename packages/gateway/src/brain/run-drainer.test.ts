@@ -108,7 +108,8 @@ describe("Brain run drainer", () => {
     transcripts = new FsCognitionTranscriptStore(join(dir, "t"));
     now = 100_000;
   });
-  afterEach(() => {
+  afterEach(async () => {
+    await transcripts.close();
     db.close();
     for (const suffix of ["", "-wal", "-shm", "-journal"]) {
       if (existsSync(dbPath + suffix)) unlinkSync(dbPath + suffix);

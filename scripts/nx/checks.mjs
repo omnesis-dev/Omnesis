@@ -4,6 +4,7 @@
 import { execFileSync, spawn } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { createRequire } from "node:module";
 import { isDeepStrictEqual } from "node:util";
 import { waitForChild } from "../lib/check-process.mjs";
 import {
@@ -16,12 +17,22 @@ import {
 } from "./bundles.mjs";
 import { assertTreeFingerprint, treeFingerprint } from "./tree-state.mjs";
 
-const nx = join(
-  process.cwd(),
-  "node_modules",
-  ".bin",
-  process.platform === "win32" ? "nx.cmd" : "nx",
-);
+const nxEntry = createRequire(import.meta.url).resolve("nx/bin/nx.js");
+
+/** Launch Nx's JavaScript entry directly; Windows batch shims are not executables. */
+export function nxInvocation(args) {
+  return { command: process.execPath, args: [nxEntry, ...args] };
+}
+
+function queryNx(args) {
+  const invocation = nxInvocation(args);
+  return jsonCommand(invocation.command, invocation.args);
+}
+
+function executeNx(args, env) {
+  const invocation = nxInvocation(args);
+  return execute(invocation.command, invocation.args, env);
+}
 
 function option(args, name, fallback) {
   const equals = args.find((arg) => arg.startsWith(`${name}=`));
@@ -305,7 +316,7 @@ export function hasVersionMetadata(files, selectedFiles) {
 }
 
 export function workspaceProjects() {
-  return jsonCommand(nx, ["show", "projects", "--json"]);
+  return queryNx(["show", "projects", "--json"]);
 }
 
 export function buildPlan({ base = "origin/main", extraBundles = [], files: filesOverride } = {}) {
@@ -322,7 +333,7 @@ export function buildPlan({ base = "origin/main", extraBundles = [], files: file
   // A broad plan runs the all-project tasks, so it needs no project graph.
   let projects = [];
   if (!broad && nxFiles.length) {
-    projects = jsonCommand(nx, [
+    projects = queryNx([
       "show",
       "projects",
       "--affected",
@@ -525,7 +536,7 @@ async function runPlan(plan) {
   let code;
   if (plan.tasks.includes("omnesis-workspace:nx-guards")) {
     assertTreeFingerprint(plan.base, plan.dirtyState);
-    code = await execute(nx, ["run", "omnesis-workspace:nx-guards"], env);
+    code = await executeNx(["run", "omnesis-workspace:nx-guards"], env);
     if (code !== 0) return finish(code);
   }
   if (plan.tasks.includes("release-metadata")) {
@@ -535,19 +546,18 @@ async function runPlan(plan) {
   }
   if (plan.tasks.includes("omnesis-workspace:nx-lint")) {
     assertTreeFingerprint(plan.base, plan.dirtyState);
-    code = await execute(nx, ["run", "omnesis-workspace:nx-lint"], env);
+    code = await executeNx(["run", "omnesis-workspace:nx-lint"], env);
     if (code !== 0) return finish(code);
   }
   for (const target of ["nx-unit-all", "nx-typecheck-all"]) {
     if (!plan.tasks.includes(`omnesis-workspace:${target}`)) continue;
     assertTreeFingerprint(plan.base, plan.dirtyState);
-    code = await execute(nx, ["run", `omnesis-workspace:${target}`], env);
+    code = await executeNx(["run", `omnesis-workspace:${target}`], env);
     if (code !== 0) return finish(code);
   }
   if (plan.affectedProjects.length) {
     assertTreeFingerprint(plan.base, plan.dirtyState);
-    code = await execute(
-      nx,
+    code = await executeNx(
       [
         "run-many",
         "--targets=nx-unit,nx-typecheck",
@@ -561,7 +571,7 @@ async function runPlan(plan) {
   const selectedE2E = [];
   for (const name of plan.bundles) {
     assertTreeFingerprint(plan.base, plan.dirtyState);
-    code = await execute(nx, ["run", `omnesis-workspace:nx-bundle-${name}`], {
+    code = await executeNx(["run", `omnesis-workspace:nx-bundle-${name}`], {
       ...env,
       OMNESIS_E2E_ALREADY_SELECTED: selectedE2E.join("\n"),
     });
@@ -606,7 +616,7 @@ export async function main(args = process.argv.slice(2)) {
     const source = nativeSourceIdentity(true);
     if (!source?.fingerprint)
       throw new Error(source?.reason || "Native source fingerprinting is unavailable");
-    return execute(nx, ["run", "omnesis-workspace:nx-full", "--skip-nx-cache"], {
+    return executeNx(["run", "omnesis-workspace:nx-full", "--skip-nx-cache"], {
       ...process.env,
       NX_DAEMON: "false",
       NX_TASKS_RUNNER_DYNAMIC_OUTPUT: "false",
@@ -620,7 +630,7 @@ export async function main(args = process.argv.slice(2)) {
   throw new Error("Expected checks mode: plan, affected, bundle, full");
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (import.meta.main) {
   main()
     .then((code) => (process.exitCode = code))
     .catch((error) => {

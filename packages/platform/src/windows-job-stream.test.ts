@@ -54,6 +54,7 @@ beforeEach(() => {
     args: [mode],
   }));
   helper = new Helper();
+  mocks.spawnSync.mockReset();
   mocks.spawn.mockReset().mockReturnValue(helper);
 });
 
@@ -63,6 +64,59 @@ afterEach(() => {
 });
 
 describe("Windows job stream protocol", () => {
+  it.each(["root", "tree"] as const)(
+    "frames explicit %s completion before raw input",
+    async (completion) => {
+      const proc = spawnWindowsJob("fixture", [], { completion });
+      proc.stdin.end(Buffer.from([0, 255]));
+      const input = Buffer.concat(helper.input);
+      const length = input.readUInt32LE();
+      expect(JSON.parse(input.subarray(4, length + 4).toString("utf8"))).toMatchObject({
+        completion,
+      });
+      expect(input.subarray(length + 4)).toEqual(Buffer.from([0, 255]));
+      helper.rawStderr.write("OMNESIS_JOB:0\n");
+      await proc.jobReady;
+      await helper.close(7);
+      expect(proc.exitCode).toBe(7);
+    },
+  );
+
+  it("carries root completion through buffered and synchronous runs without changing their exit status", async () => {
+    const pending = runWindowsJob("fixture", [], { completion: "root" });
+    let input = Buffer.concat(helper.input);
+    expect(JSON.parse(input.subarray(4, input.readUInt32LE() + 4).toString("utf8"))).toMatchObject({
+      completion: "root",
+    });
+    helper.rawStderr.write("OMNESIS_JOB:0\n");
+    await helper.close(7);
+    expect(await pending).toMatchObject({ exitCode: 7 });
+    mocks.spawnSync.mockReturnValue({
+      status: 7,
+      signal: null,
+      stdout: Buffer.from([0, 255]),
+      stderr: Buffer.from("OMNESIS_JOB:0\n"),
+    });
+    expect(runWindowsJobSync("fixture", [], { completion: "root" })).toMatchObject({
+      exitCode: 7,
+      stdout: Buffer.from([0, 255]),
+    });
+    input = mocks.spawnSync.mock.calls[0]![2].input;
+    expect(JSON.parse(input.subarray(4, input.readUInt32LE() + 4).toString("utf8"))).toMatchObject({
+      completion: "root",
+    });
+  });
+
+  it("rejects an unknown completion policy before preparing or launching a helper", async () => {
+    const invalid = { completion: "unowned" as "root" };
+    expect(() => spawnWindowsJob("fixture", [], invalid)).toThrow("completion policy");
+    expect(await runWindowsJob("fixture", [], invalid)).toMatchObject({ failure: "spawn" });
+    expect(runWindowsJobSync("fixture", [], invalid)).toMatchObject({ failure: "spawn" });
+    expect(mocks.workerInvocation).not.toHaveBeenCalled();
+    expect(mocks.spawn).not.toHaveBeenCalled();
+    expect(mocks.spawnSync).not.toHaveBeenCalled();
+  });
+
   it("queues literal configuration before immediate binary RPC input and strips split status", async () => {
     const proc = spawnWindowsJob("fixture executable", ["& literal", "雪"]);
     const output: Buffer[] = [];

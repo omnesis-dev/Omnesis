@@ -29,8 +29,11 @@ const ontology = loadOntology();
 const SELF = "0a1b2c3d-0000-4000-8000-000000000001";
 const ALICE = "b3f2a9d4-0000-4000-8000-000000000002";
 const temps: string[] = [];
+const stores = new Set<WatchStateStore>();
 
 afterEach(() => {
+  for (const store of stores) store.close();
+  stores.clear();
   for (const dir of temps.splice(0)) rmSync(dir, { recursive: true, force: true });
 });
 
@@ -38,7 +41,9 @@ function tempStore(): { store: WatchStateStore; path: string } {
   const dir = mkdtempSync(join(tmpdir(), "watch-v2-"));
   temps.push(dir);
   const path = join(dir, "watch.db");
-  return { store: new WatchStateStore(path), path };
+  const store = new WatchStateStore(path);
+  stores.add(store);
+  return { store, path };
 }
 
 function email(seq: number, thread: string, day: number, fromSelf = false): JournalEvent {

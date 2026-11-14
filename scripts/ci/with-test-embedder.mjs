@@ -4,7 +4,7 @@
 /** Run a Node check with the reference embedding model, without requiring Docker. */
 import { spawn } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { createReadStream, createWriteStream } from "node:fs";
+import { createReadStream, createWriteStream, readFileSync } from "node:fs";
 import { mkdir, rename, rm } from "node:fs/promises";
 import { createServer } from "node:http";
 import { createRequire } from "node:module";
@@ -16,13 +16,9 @@ import { pathToFileURL } from "node:url";
 import { waitForChild } from "../lib/check-process.mjs";
 
 // The same model, revision and quantization as scripts/test-embedder.sh.
-export const REFERENCE_MODEL = Object.freeze({
-  id: "Qwen/Qwen3-Embedding-0.6B",
-  repository: "Qwen/Qwen3-Embedding-0.6B-GGUF",
-  revision: "370f27d7550e0def9b39c1f16d3fbaa13aa67728",
-  file: "Qwen3-Embedding-0.6B-Q8_0.gguf",
-  sha256: "06507c7b42688469c4e7298b0a1e16deff06caf291cf0a5b278c308249c3e439",
-});
+export const REFERENCE_MODEL = Object.freeze(
+  JSON.parse(readFileSync(new URL("./reference-embedder.json", import.meta.url), "utf8")),
+);
 
 async function digest(path) {
   const hash = createHash("sha256");
@@ -152,7 +148,11 @@ export async function main(args = process.argv.slice(2)) {
       spawn(process.execPath, args, {
         stdio: "inherit",
         detached: process.platform !== "win32",
-        env: { ...process.env, OMNESIS_TEST_EMBEDDER_URL: `http://127.0.0.1:${port}` },
+        env: {
+          ...process.env,
+          OMNESIS_TEST_EMBEDDER_URL: `http://127.0.0.1:${port}`,
+          OMNESIS_TEST_EMBEDDER_MODEL_PATH: modelPath,
+        },
       }),
     );
   } finally {

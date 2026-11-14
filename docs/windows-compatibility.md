@@ -134,3 +134,37 @@ Windows Hermes persistence now uses the same canonical private-file runtime as
 the TypeScript integration, with a retained refresh-lease bridge and protected
 SQLite directory inheritance. Its adapter and packaging regressions pass on
 Linux; native Windows validation remains required.
+
+The complete broad Windows unit baseline at `3c076e8e3` finished with 35,642
+passing tests, 1,879 failures and 89 skips: 2,319 files passed, 232 failed and
+four were skipped. The unit phase took about 163 minutes and reported 16
+unhandled errors. This establishes additional work rather than a passing daily
+lane. Failure groups include hardcoded temporary paths, executable fixtures,
+POSIX permission expectations, private-file fixtures, CRLF comparisons and
+native filesystem flushing. The updated native helper and publication fixes
+still require a fresh broad verdict after focused validation.
+
+Real CPU embedding transitions exposed query starvation with a single embedding
+slot and in-flight queries crossing a generation flip. The first expanded
+four-case run passed HTTP-to-HTTP and HTTP-to-local, but failed local-to-HTTP
+and local-to-local. The fixes drain generation-bound searches before publishing,
+retain native bridges until handoff succeeds, and advance the fallback read
+snapshot. Native rebuild observations now use a fixture-only delivery gate
+around real worker results rather than depending on CPU speed. The frozen Linux four-case run now passes (wait 5 seconds, run 6 minutes
+11 seconds). Native Windows transition validation remains pending.
+
+The broader baseline also exposed unclosed SQLite and directory handles in
+transcript/Watch lifecycles, read-only file flushing, and runtime test fixtures
+that assumed POSIX paths or executable shebangs. Focused Linux regressions cover
+those changes. The Linux Docker lane caught a patch-verification guard rejecting
+valid pure additions; its fix preserves removal checks and verifies every
+installed dependency patch. Complete Linux, Windows and macOS verdicts remain
+required.
+
+The updated hosted Windows run passed dependency preparation. MSVC successfully
+produced the patched vector binding and sparse-file proof executable, but the
+process owner kept waiting after compilation completed: the binding step stayed
+open for another 15 minutes, and the proof-build wrapper hit its three-minute
+budget after reporting success. Native publication assertions therefore did not
+run. Finite build-root retirement is being corrected while ordinary streamed
+processes retain their descendant-lifetime contract; no deadline was raised.

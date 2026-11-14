@@ -6,6 +6,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { scriptedOpenClaw } from "../test-fixtures/openclaw.js";
 import { openClawSavedArchive, readOpenClawInstallRecord } from "./openclaw-install-record.js";
 
 const roots: string[] = [];
@@ -35,26 +36,6 @@ function archive(
   };
 }
 
-/**
- * A fake `openclaw` on an isolated PATH that records its arguments and prints
- * `stdout` for `plugins inspect`, exiting with `exitCode`.
- */
-function fakeOpenClaw(
-  root: string,
-  stdout: string,
-  exitCode = 0,
-): { env: NodeJS.ProcessEnv; argsFile: string } {
-  const argsFile = join(root, "args");
-  const outFile = join(root, "inspect.out");
-  writeFileSync(outFile, stdout);
-  writeFileSync(
-    join(root, "openclaw"),
-    `#!/bin/sh\nprintf '%s\\n' "$@" > "${argsFile}"\ncat "${outFile}"\nexit ${exitCode}\n`,
-    { mode: 0o755 },
-  );
-  return { env: { PATH: `${root}:/usr/bin:/bin` }, argsFile };
-}
-
 function report(install: Record<string, unknown> | undefined): string {
   return JSON.stringify({
     plugin: { id: "omnesis-integration", version: "0.0.0" },
@@ -65,9 +46,9 @@ function report(install: Record<string, unknown> | undefined): string {
 describe("readOpenClawInstallRecord", () => {
   it("reads the install record of the integration plugin", () => {
     const install = { integrity: "sha512-aW52ZW50ZWQ=", installedAt: "2030-01-01T00:00:00Z" };
-    const openclaw = fakeOpenClaw(scratch(), report(install));
+    const openclaw = scriptedOpenClaw(scratch(), report(install));
 
-    expect(readOpenClawInstallRecord(openclaw.env)).toEqual(install);
+    expect(readOpenClawInstallRecord(openclaw.env, openclaw.run)).toEqual(install);
     expect(readFileSync(openclaw.argsFile, "utf8").trim().split("\n")).toEqual([
       "plugins",
       "inspect",
@@ -77,12 +58,12 @@ describe("readOpenClawInstallRecord", () => {
   });
 
   it("reads past a banner printed before the report", () => {
-    const openclaw = fakeOpenClaw(
+    const openclaw = scriptedOpenClaw(
       scratch(),
       `OpenClaw 0.0.0 — an invented banner.\n\n${report({ shasum: "abc" })}\n`,
     );
 
-    expect(readOpenClawInstallRecord(openclaw.env)).toEqual({ shasum: "abc" });
+    expect(readOpenClawInstallRecord(openclaw.env, openclaw.run)).toEqual({ shasum: "abc" });
   });
 
   it.each([
@@ -90,9 +71,9 @@ describe("readOpenClawInstallRecord", () => {
     { name: "an unreadable report", stdout: "not json", exitCode: 0 },
     { name: "a failed inspection", stdout: report({ shasum: "abc" }), exitCode: 1 },
   ])("$name reads as no record", ({ stdout, exitCode }) => {
-    const openclaw = fakeOpenClaw(scratch(), stdout, exitCode);
+    const openclaw = scriptedOpenClaw(scratch(), stdout, exitCode);
 
-    expect(readOpenClawInstallRecord(openclaw.env)).toBeNull();
+    expect(readOpenClawInstallRecord(openclaw.env, openclaw.run)).toBeNull();
   });
 
   it("an openclaw that cannot be started reads as no record", () => {

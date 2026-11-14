@@ -67,6 +67,7 @@ test("builds against running Node headers and proves the exact installed Windows
     root: "/fixture/dependency",
   });
   expect(f.calls).toHaveLength(4);
+  expect(f.calls.every((call) => call.completion === "root")).toBe(true);
   const build = f.calls[1];
   expect(build.cwd).toBe("/fixture/dependency");
   expect(build.args).toEqual([

@@ -954,7 +954,7 @@ function attachSql(
 
 /**
  * Thrown when the store exists but cannot be opened. Carries DuckDB's own
- * words: a conflicting lock names the process that holds the file, an
+ * words: a conflicting lock may name the process that holds the file, an
  * AES-tag mismatch means a damaged block (DuckDB blames the key for any
  * block it cannot authenticate), anything else is the engine's verdict. On
  * an encrypted store the plaintext probe's verdict rides along, since a
@@ -978,7 +978,11 @@ export class AnalyticsStoreOpenError extends Error {
 }
 
 function diagnoseOpenFailure(message: string): string {
-  if (/conflicting lock is held/i.test(message)) {
+  if (
+    /conflicting lock is held|file is already open in|the process cannot access the file because it is being used by another process/i.test(
+      message,
+    )
+  ) {
     return "Another process holds the store open — a gateway still shutting down, a duplicate gateway, or a tool opened on the file. Stop it, then start this gateway again. ";
   }
   if (/AES tag|corrupt|checksum/i.test(message)) {

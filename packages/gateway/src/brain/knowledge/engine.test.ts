@@ -195,11 +195,12 @@ describe("knowledge coordinator", () => {
       throw new Error("Terminal work must not resolve a model");
     });
     const dir = mkdtempSync(join(tmpdir(), "omnesis-terminal-run-"));
+    const transcripts = new FsCognitionTranscriptStore(dir);
     try {
       const driver = new CognitionRunDriver({
         resolveBackend,
         log,
-        transcripts: new FsCognitionTranscriptStore(dir),
+        transcripts,
         preflight: async (run) => knowledgeFrontierPreflight(await engine.next(batch.id, run.id)),
       });
       expect(
@@ -227,6 +228,7 @@ describe("knowledge coordinator", () => {
         db.prepare("SELECT status FROM knowledge_work WHERE id='later-source-work'").get(),
       ).toEqual({ status: "pending" });
     } finally {
+      await transcripts.close();
       rmSync(dir, { recursive: true, force: true });
     }
   });

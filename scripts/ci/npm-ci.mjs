@@ -77,6 +77,7 @@ async function runNode(args, { env, cwd, signal, timeoutMs }) {
       cwd,
       signal,
       timeoutMs,
+      completion: "root",
       stdout: "inherit",
       onStderr: (bytes) => process.stderr.write(bytes),
     });
@@ -173,6 +174,7 @@ export async function npmCi(
           cwd,
           signal,
           timeoutMs: 180_000,
+          completion: "root",
         },
       );
       headers = join(devdir, version);
@@ -202,6 +204,7 @@ export async function npmCi(
           cwd,
           signal,
           timeoutMs: 20 * 60_000,
+          completion: "root",
         });
       } catch (error) {
         signal?.throwIfAborted();

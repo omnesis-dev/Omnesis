@@ -1231,6 +1231,9 @@ members exit. Configuration precedes raw stdin, and `jobReady` distinguishes
 native creation errors from target exit codes. Bounded probes use `execWindowsJob`
 so timeouts, cancellation and output limits stop the entire job and await closure.
 `runWindowsJob` adds buffered output and a publication gate before target start.
+Finite build commands explicitly use `completion: "root"`: after capturing the
+root's status, the owner terminates remaining Job members and joins their exit
+and output. Streamed commands retain the default tree lifetime.
 POSIX paths preserve their native process behavior.
 
 `terminateChildProcess` remains available for an already-running Windows root;

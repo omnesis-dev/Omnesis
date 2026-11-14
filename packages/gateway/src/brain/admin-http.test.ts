@@ -101,8 +101,11 @@ function post(path: string, token = ADMIN_TOKEN) {
   return app.request(path, { method: "POST", headers: { authorization: `Bearer ${token}` } });
 }
 
+const transcriptStores = new Set<FsCognitionTranscriptStore>();
 function transcriptStore(): FsCognitionTranscriptStore {
-  return new FsCognitionTranscriptStore(cognitionTranscriptsDir(configDir));
+  const store = new FsCognitionTranscriptStore(cognitionTranscriptsDir(configDir));
+  transcriptStores.add(store);
+  return store;
 }
 
 function seedLoop(
@@ -290,7 +293,10 @@ beforeEach(() => {
   });
 });
 
-afterEach(() => {
+afterEach(async () => {
+  await app.close();
+  await Promise.all([...transcriptStores].map((store) => store.close()));
+  transcriptStores.clear();
   db.close();
   cleanupDb(dbPath);
   rmSync(configDir, { recursive: true, force: true });
@@ -1331,6 +1337,19 @@ describe("GET /admin/brain/runs/:id", () => {
 });
 
 describe("transcripts", () => {
+  test("server disposal closes its transcript handles without closing the caller database", async () => {
+    seedTranscript({ runId: "run_disposal", finishedAt: 1000 });
+    expect((await get("/admin/brain/transcripts")).status).toBe(200);
+    await Promise.all([...transcriptStores].map((store) => store.close()));
+    transcriptStores.clear();
+    await app.close();
+    await app.close();
+    expect(db.prepare("SELECT 1 AS alive").get()).toEqual({ alive: 1 });
+    const directory = cognitionTranscriptsDir(configDir);
+    rmSync(directory, { recursive: true });
+    expect(existsSync(directory)).toBe(false);
+  });
+
   test("lists refs newest-finished first, filterable by runId", async () => {
     seedTranscript({ runId: "run_1", finishedAt: 1000 });
     seedTranscript({ runId: "run_2", finishedAt: 2000 });

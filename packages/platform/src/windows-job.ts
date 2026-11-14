@@ -22,10 +22,24 @@ export type {
   WindowsJobResult,
 } from "./windows-owned-process.js";
 
-function jobFrame(command: string, args: readonly string[]): Buffer {
+function jobFrame(
+  command: string,
+  args: readonly string[],
+  completion?: WindowsJobOptions["completion"],
+): Buffer {
+  if (completion !== undefined && completion !== "tree" && completion !== "root")
+    throw new Error("Invalid Windows job completion policy");
   if ([command, ...args].some((value) => value.includes("\0")))
     throw new Error("Program and arguments must not contain null bytes");
-  const payload = Buffer.from(JSON.stringify({ command, args, parentPid: process.pid }), "utf8");
+  const payload = Buffer.from(
+    JSON.stringify({
+      command,
+      args,
+      parentPid: process.pid,
+      ...(completion === undefined ? {} : { completion }),
+    }),
+    "utf8",
+  );
   if (payload.length > 262144) throw new Error("Process configuration is too large (ENAMETOOLONG)");
   const length = Buffer.alloc(4);
   length.writeUInt32LE(payload.length);
@@ -87,18 +101,18 @@ export function killWindowsJob(pid: number): void {
   killWindowsOwnedProcess(pid);
 }
 
-/** The helper remains alive until all descendants exit; stdio is raw binary. */
+/** Tree lifetime is the default; root completion first terminates and joins remaining members. */
 export function spawnWindowsJob(
   command: string,
   args: readonly string[],
-  opts: Pick<WindowsJobOptions, "cwd" | "env"> & { startupTimeoutMs?: number } = {},
+  opts: Pick<WindowsJobOptions, "cwd" | "env" | "completion"> & { startupTimeoutMs?: number } = {},
 ): WindowsJobProcess {
   const start = Date.now();
   const expired = () =>
     opts.startupTimeoutMs !== undefined && Date.now() - start >= opts.startupTimeoutMs;
   const timeout = () =>
     Object.assign(new Error("Command timed out"), { code: "ETIMEDOUT", killed: true });
-  const frame = jobFrame(command, args);
+  const frame = jobFrame(command, args, opts.completion);
   if (expired()) throw timeout();
   let invocation: WindowsOwnedInvocation;
   try {
@@ -144,7 +158,7 @@ export function runWindowsJob(
     return Promise.resolve(deadlineFailure("timeout"));
   let frame: Buffer, invocation: WindowsOwnedInvocation;
   try {
-    frame = jobFrame(command, args);
+    frame = jobFrame(command, args, opts.completion);
     invocation = windowsJobInvocation(opts.timeoutMs);
   } catch (error) {
     return Promise.resolve(
@@ -168,7 +182,7 @@ export function runWindowsJobSync(
   if (opts.timeoutMs !== undefined && opts.timeoutMs <= 0) return deadlineFailure("timeout");
   let frame: Buffer, invocation: WindowsOwnedInvocation;
   try {
-    frame = jobFrame(command, args);
+    frame = jobFrame(command, args, opts.completion);
     invocation = windowsJobInvocation(opts.timeoutMs);
   } catch (error) {
     return opts.timeoutMs !== undefined && Date.now() - start >= opts.timeoutMs

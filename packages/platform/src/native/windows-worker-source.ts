@@ -116,7 +116,7 @@ public static class WindowsWorker {
         object[] values=data["args"] as object[];if(values==null) throw new InvalidDataException();
         string[] arguments=new string[values.Length];
         for(int i=0;i<values.Length;i++) { arguments[i]=values[i] as string; if(arguments[i]==null) throw new InvalidDataException(); }
-        return OmnesisProcessJob.Run(Text(data,"command",null),arguments,checked((int)Number(data,"parentPid")));
+        return OmnesisProcessJob.Run(Text(data,"command",null),arguments,checked((int)Number(data,"parentPid")),Text(data,"completion","tree"));
       }
       throw new InvalidDataException();
     } catch(Exception error) {Console.Error.Write(ErrorCode(error));return 1;}

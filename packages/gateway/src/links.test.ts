@@ -4,23 +4,22 @@
 import { describe, test, expect, beforeEach, afterEach } from "vitest";
 import type Database from "better-sqlite3";
 type Db = Database.Database;
-import { buildCanonicalizerRegistry } from "@omnesis/core";
+
+import { unlinkSync, existsSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { randomUUID } from "node:crypto";
 import { SourceId, ProviderId } from "@omnesis/types";
+import { buildCanonicalizerRegistry } from "@omnesis/core";
+import { linkExtractionInputDigest } from "./domain/LinkExtractionInput.js";
+import { beginLinkDeclarationUpdate, finishLinkDeclarationUpdate } from "./data/list-revisions.js";
+import { collectorRosterSnapshot } from "./collector-declaration-roster.js";
 import {
-  createDatabase,
-  upsertDocuments,
-  deleteDocuments,
-  deleteAllBySource,
-  setSyncState,
-  invalidateUrlIdPatternCache,
-} from "./db.js";
-import {
-  setUrlCanonicalizers,
-  resetUrlCanonicalizers,
-  getUrlCanonicalizerSpecs,
-} from "./url-canonicalizers.js";
-import { setKnownUrlPatterns, resetKnownUrlPatterns } from "./known-url-patterns.js";
-import { resetUrlGraphRoles, setUrlGraphRoles } from "./url-graph-roles.js";
+  backfillOneDocument,
+  backfillSomeDocuments,
+  processDocumentLinks,
+} from "./domain/LinkExtraction.js";
+import { sourcePrefixPredicate } from "./data/source-addressing.js";
 import {
   resolveInboundLinks,
   getDocumentRefs,
@@ -47,18 +46,21 @@ import {
   upsertLinkStats,
   markLinkStatsDirty,
 } from "./links.js";
-import { sourcePrefixPredicate } from "./data/source-addressing.js";
+import { resetUrlGraphRoles, setUrlGraphRoles } from "./url-graph-roles.js";
+import { setKnownUrlPatterns, resetKnownUrlPatterns } from "./known-url-patterns.js";
 import {
-  backfillOneDocument,
-  backfillSomeDocuments,
-  processDocumentLinks,
-} from "./domain/LinkExtraction.js";
-import { collectorRosterSnapshot } from "./collector-declaration-roster.js";
-import { beginLinkDeclarationUpdate, finishLinkDeclarationUpdate } from "./data/list-revisions.js";
-import { linkExtractionInputDigest } from "./domain/LinkExtractionInput.js";
-
-import { unlinkSync, existsSync } from "node:fs";
-import { randomUUID } from "node:crypto";
+  setUrlCanonicalizers,
+  resetUrlCanonicalizers,
+  getUrlCanonicalizerSpecs,
+} from "./url-canonicalizers.js";
+import {
+  createDatabase,
+  upsertDocuments,
+  deleteDocuments,
+  deleteAllBySource,
+  setSyncState,
+  invalidateUrlIdPatternCache,
+} from "./db.js";
 import type { DocumentInput } from "@omnesis/types";
 
 const reconcileUnresolvedLinks = (database: Db, limit?: number): number =>
@@ -71,6 +73,7 @@ const STRESS_KNOWN_URL_PATTERNS = Array.from(
 
 let db: Db;
 let dbPath: string;
+let testDir: string;
 
 function cleanupDb(path: string) {
   for (const suffix of ["", "-wal", "-shm", "-journal"]) {
@@ -131,7 +134,8 @@ function keepUrlLinks(db: Db): void {
 }
 
 beforeEach(() => {
-  dbPath = `/tmp/omnesis-links-test-${randomUUID()}.db`;
+  testDir = mkdtempSync(join(tmpdir(), "omnesis-links-test-"));
+  dbPath = join(testDir, `omnesis-links-test-${randomUUID()}.db`);
   db = createDatabase(dbPath);
 });
 
@@ -147,6 +151,7 @@ describe("known-source matcher lifecycle on periodic reconciliation", () => {
 afterEach(() => {
   db.close();
   cleanupDb(dbPath);
+  rmSync(testDir, { recursive: true, force: true });
 });
 
 describe("processDocumentLinks — preserved link types", () => {
@@ -1695,7 +1700,7 @@ describe("computeLinkResolutions / upsertLinkResolutions (split path)", () => {
   test("split path produces same final state as reconcileUnresolvedLinks", async () => {
     // Build identical scenarios in two separate DBs and verify
     // document_links converges to the same state.
-    const otherPath = `/tmp/omnesis-links-test-${randomUUID()}.db`;
+    const otherPath = join(testDir, `omnesis-links-test-${randomUUID()}.db`);
     const otherDb = createDatabase(otherPath);
     try {
       // Seed both DBs identically. We deliberately do NOT call
@@ -2943,7 +2948,7 @@ describe("attachment links", () => {
 
 describe("extractLinksForBatch + upsertExtractedLinksBatch (split path)", () => {
   test("extractLinksForBatch returns same set of links as backfillSomeDocuments would have inserted", () => {
-    const otherPath = `/tmp/omnesis-links-test-${randomUUID()}.db`;
+    const otherPath = join(testDir, `omnesis-links-test-${randomUUID()}.db`);
     const otherDb = createDatabase(otherPath);
     try {
       // Seed identical docs in both DBs.
@@ -2998,7 +3003,7 @@ describe("extractLinksForBatch + upsertExtractedLinksBatch (split path)", () => 
   });
 
   test("resolves a url link to an existing target eagerly on the read handle", () => {
-    const otherPath = `/tmp/omnesis-links-test-${randomUUID()}.db`;
+    const otherPath = join(testDir, `omnesis-links-test-${randomUUID()}.db`);
     const otherDb = createDatabase(otherPath);
     try {
       const target = makeDoc({
@@ -3029,7 +3034,7 @@ describe("extractLinksForBatch + upsertExtractedLinksBatch (split path)", () => 
   // These cover the move of every link type's lookup onto the read handle,
   // and the bound that keeps one document's writes interruptible.
   test("resolves a references link on the read handle, not in the writer", () => {
-    const otherPath = `/tmp/omnesis-test-${randomUUID()}.db`;
+    const otherPath = join(testDir, `omnesis-test-${randomUUID()}.db`);
     const otherDb = createDatabase(otherPath);
     try {
       // A same-source `references` link: the kind a chatty source emits by
@@ -3064,7 +3069,7 @@ describe("extractLinksForBatch + upsertExtractedLinksBatch (split path)", () => 
   });
 
   test("the writer resolves nothing the read phase did not", () => {
-    const otherPath = `/tmp/omnesis-test-${randomUUID()}.db`;
+    const otherPath = join(testDir, `omnesis-test-${randomUUID()}.db`);
     const otherDb = createDatabase(otherPath);
     try {
       const target = makeDoc({ externalId: "noop-target" });
@@ -3095,7 +3100,7 @@ describe("extractLinksForBatch + upsertExtractedLinksBatch (split path)", () => 
   });
 
   test("EXISTS-guard skips a references target deleted between compute and apply", () => {
-    const otherPath = `/tmp/omnesis-test-${randomUUID()}.db`;
+    const otherPath = join(testDir, `omnesis-test-${randomUUID()}.db`);
     const otherDb = createDatabase(otherPath);
     try {
       const target = makeDoc({ externalId: "gone-target" });
@@ -3161,7 +3166,7 @@ describe("extractLinksForBatch + upsertExtractedLinksBatch (split path)", () => 
         }));
 
     // Reference run: no yielding.
-    const refPath = `/tmp/omnesis-test-${randomUUID()}.db`;
+    const refPath = join(testDir, `omnesis-test-${randomUUID()}.db`);
     const refDb = createDatabase(refPath);
     let expectedRows: ReturnType<typeof linkRows>;
     try {
@@ -3175,7 +3180,7 @@ describe("extractLinksForBatch + upsertExtractedLinksBatch (split path)", () => 
     }
 
     // Same work, interrupted after the first sub-batch.
-    const yieldPath = `/tmp/omnesis-test-${randomUUID()}.db`;
+    const yieldPath = join(testDir, `omnesis-test-${randomUUID()}.db`);
     const yieldDb = createDatabase(yieldPath);
     try {
       const docId = build(yieldDb);
@@ -3210,7 +3215,7 @@ describe("extractLinksForBatch + upsertExtractedLinksBatch (split path)", () => 
   });
 
   test("EXISTS-guard skips a url target deleted between compute and apply", () => {
-    const otherPath = `/tmp/omnesis-links-test-${randomUUID()}.db`;
+    const otherPath = join(testDir, `omnesis-links-test-${randomUUID()}.db`);
     const otherDb = createDatabase(otherPath);
     try {
       const target = makeDoc({

@@ -66,6 +66,7 @@ interface FakeResponsesEndpoint {
 }
 
 const cleanupPaths: string[] = [];
+const transcriptStores = new Set<FsCognitionTranscriptStore>();
 const openEndpoints: FakeResponsesEndpoint[] = [];
 
 describe("context-window V1 acceptance", () => {
@@ -75,6 +76,8 @@ describe("context-window V1 acceptance", () => {
   });
 
   afterEach(async () => {
+    await Promise.all([...transcriptStores].map((store) => store.close()));
+    transcriptStores.clear();
     await Promise.all(openEndpoints.splice(0).map((endpoint) => endpoint.close()));
     for (const path of cleanupPaths.splice(0)) {
       if (path.endsWith(".db")) {
@@ -268,6 +271,7 @@ describe("context-window V1 acceptance", () => {
     const dir = mkdtempSync(join(tmpdir(), "omnesis-context-queue-e2e-"));
     cleanupPaths.push(dir);
     const transcripts = new FsCognitionTranscriptStore(join(dir, "transcripts"));
+    transcriptStores.add(transcripts);
     const writeGate = directWriteGate(db);
     const driver = new CognitionRunDriver({
       resolveBackend: () => makeBackend(endpoint.baseUrl),
@@ -318,6 +322,7 @@ describe("context-window V1 acceptance", () => {
     expect(endpoint.createBodies).toHaveLength(0);
     await drain!.run(undefined, taskContext);
     expect(endpoint.countBodies).toHaveLength(1);
+    await transcripts.close();
     db.close();
   });
 });

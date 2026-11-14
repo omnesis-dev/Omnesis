@@ -12,6 +12,19 @@ import {
   type CognitionRunTranscript,
 } from "./transcripts.js";
 
+const scanDirectories = vi.hoisted(() => ({ opened: [] as import("node:fs").Dir[] }));
+vi.mock("node:fs/promises", async (original) => {
+  const actual = await original<typeof import("node:fs/promises")>();
+  return {
+    ...actual,
+    opendir: async (path: string) => {
+      const directory = await actual.opendir(path);
+      scanDirectories.opened.push(directory);
+      return directory;
+    },
+  };
+});
+
 function transcript(overrides: Partial<CognitionRunTranscript>): CognitionRunTranscript {
   return {
     runId: "run_1",
@@ -28,16 +41,128 @@ function transcript(overrides: Partial<CognitionRunTranscript>): CognitionRunTra
   };
 }
 
+const openedStores = new Set<FsCognitionTranscriptStore>();
+function trackedStore(dir: string): FsCognitionTranscriptStore {
+  const store = new FsCognitionTranscriptStore(dir);
+  openedStores.add(store);
+  return store;
+}
+async function closeStores(): Promise<void> {
+  await Promise.all([...openedStores].map((store) => store.close()));
+  openedStores.clear();
+}
+
 describe("FsCognitionTranscriptStore", () => {
   let dir: string;
   let store: FsCognitionTranscriptStore;
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), "omnesis-transcripts-"));
-    store = new FsCognitionTranscriptStore(join(dir, "transcripts"));
+    store = trackedStore(join(dir, "transcripts"));
   });
-  afterEach(() => {
-    store.close();
+  afterEach(async () => {
+    await closeStores();
     rmSync(dir, { recursive: true, force: true });
+  });
+
+  test("last-owner close releases partial discovery and prune scans before directory teardown", async () => {
+    for (let i = 0; i < 150; i++)
+      store.save(transcript({ runId: `partial_${i}`, finishedAt: i + 1 }));
+    const first = scanDirectories.opened.length;
+    await store.pruneBatch(1000, 1);
+    const held = scanDirectories.opened.slice(first);
+    expect(held).toHaveLength(2);
+    const closed = store.close();
+    expect(store.close()).toBe(closed);
+    await closed;
+    for (const directory of held)
+      await expect(directory.read()).rejects.toMatchObject({ code: "ERR_DIR_CLOSED" });
+    rmSync(join(dir, "transcripts"), { recursive: true });
+    expect(existsSync(join(dir, "transcripts"))).toBe(false);
+  });
+
+  test("closing one facade waits for another scan and preserves its shared cursor", async () => {
+    const directory = join(dir, "shared-scans");
+    mkdirSync(directory);
+    for (let i = 0; i < 10; i++)
+      writeFileSync(
+        join(directory, `${i + 1}-shared_${i}-a1.json`),
+        JSON.stringify(transcript({ runId: `shared_${i}`, finishedAt: i + 1 })),
+      );
+    const first = trackedStore(directory),
+      second = trackedStore(directory);
+    type Scan = {
+      advanceIndexBatch(limit: number): Promise<boolean>;
+      withIndexOperation<T>(operation: () => Promise<T>): Promise<T>;
+    };
+    const left = first as unknown as Scan,
+      right = second as unknown as Scan;
+    await left.withIndexOperation(() => left.advanceIndexBatch(1));
+    const cursor = scanDirectories.opened.at(-1)!;
+    const realRead = (): Promise<import("node:fs").Dirent | null> => cursor.read();
+    const started = Promise.withResolvers<void>(),
+      proceed = Promise.withResolvers<void>();
+    const spy = vi.spyOn(cursor, "read").mockImplementationOnce(async () => {
+      started.resolve();
+      await proceed.promise;
+      return realRead();
+    });
+    const scan = right.withIndexOperation(() => right.advanceIndexBatch(1));
+    await started.promise;
+    let finished = false;
+    const closing = first.close().then(() => {
+      finished = true;
+    });
+    try {
+      await Promise.resolve();
+      expect(finished).toBe(false);
+      proceed.resolve();
+      await expect(scan).resolves.toBe(false);
+      await closing;
+      spy.mockRestore();
+      expect((await second.listPage({ limit: 20 })).length).toBeGreaterThan(0);
+      await second.close();
+      await expect(cursor.read()).rejects.toMatchObject({ code: "ERR_DIR_CLOSED" });
+      rmSync(directory, { recursive: true });
+    } finally {
+      proceed.resolve();
+      spy.mockRestore();
+      await scan;
+      await closing;
+    }
+  });
+
+  test("close drains an admitted prune through its unlink and index commit", async () => {
+    store.save(transcript({ runId: "drained", finishedAt: 1 }));
+    const internal = store as unknown as { unlinkTranscript(name: string): Promise<void> };
+    const unlink = internal.unlinkTranscript.bind(store);
+    const started = Promise.withResolvers<void>(),
+      proceed = Promise.withResolvers<void>();
+    const spy = vi.spyOn(internal, "unlinkTranscript").mockImplementationOnce(async (name) => {
+      started.resolve();
+      await proceed.promise;
+      await unlink(name);
+    });
+    const pruning = store.pruneBatch(2, 1);
+    await started.promise;
+    let closed = false;
+    const closing = store.close().then(() => {
+      closed = true;
+    });
+    try {
+      await Promise.resolve();
+      expect(closed).toBe(false);
+      await expect(store.listPage({ limit: 1 })).rejects.toThrow(/closed/);
+      proceed.resolve();
+      await expect(pruning).resolves.toMatchObject({ deleted: 1 });
+      await closing;
+      const next = trackedStore(join(dir, "transcripts"));
+      expect(await next.listPage({ limit: 10 })).toEqual([]);
+    } finally {
+      proceed.resolve();
+      spy.mockRestore();
+      await pruning;
+      await closing;
+    }
   });
 
   test("save then list + load round-trips the transcript", () => {
@@ -219,16 +344,16 @@ describe("FsCognitionTranscriptStore", () => {
     await store.listPage({ limit: 5 });
     await store.pruneBatch(1, 10);
     expect(existsSync(wal)).toBe(true);
-    store.close();
+    await store.close();
     expect(existsSync(wal)).toBe(false);
     // Closing is final: the store does not quietly reopen its index.
     expect(() => store.save(transcript({ runId: "after-close", finishedAt: 3 }))).toThrow(/closed/);
     await expect(store.listPage({ limit: 5 })).rejects.toThrow(/closed/);
     expect(existsSync(wal)).toBe(false);
     // Another store on the same directory still reads what was committed.
-    const reopened = new FsCognitionTranscriptStore(join(dir, "transcripts"));
+    const reopened = trackedStore(join(dir, "transcripts"));
     expect((await reopened.listPage({ limit: 5 })).map((ref) => ref.runId)).toEqual(["kept-open"]);
-    reopened.close();
+    await reopened.close();
   });
 
   test("new transcript indexes enable incremental vacuum", async () => {
@@ -252,8 +377,8 @@ describe("FsCognitionTranscriptStore", () => {
       "utf8",
     );
 
-    const reader = new FsCognitionTranscriptStore(transcriptsDir);
-    const retention = new FsCognitionTranscriptStore(transcriptsDir);
+    const reader = trackedStore(transcriptsDir);
+    const retention = trackedStore(transcriptsDir);
     const indexInternals = reader as unknown as {
       advanceIndexBatch(): Promise<boolean>;
     };
@@ -310,7 +435,7 @@ describe("FsCognitionTranscriptStore", () => {
 
     // Crash after atomic rename but before the state commit: the complete final
     // file is authoritative and the next façade promotes the ref.
-    const recovered = new FsCognitionTranscriptStore(transcriptsDir);
+    const recovered = trackedStore(transcriptsDir);
     expect((await recovered.listPage({ limit: 10 })).map((ref) => ref.fileName)).toEqual([
       saved!.fileName,
     ]);
@@ -321,10 +446,10 @@ describe("FsCognitionTranscriptStore", () => {
     reopened
       .prepare("UPDATE transcript_refs SET state = 'pending_save' WHERE file_name = ?")
       .run(saved!.fileName);
-    reopened.close();
+    await reopened.close();
     rmSync(join(transcriptsDir, saved!.fileName));
     writeFileSync(join(transcriptsDir, `${saved!.fileName}.pending`), '{"partial":', "utf8");
-    const cleaned = new FsCognitionTranscriptStore(transcriptsDir);
+    const cleaned = trackedStore(transcriptsDir);
     expect(await cleaned.listPage({ limit: 10 })).toEqual([]);
     expect(readdirSync(transcriptsDir)).not.toContain(`${saved!.fileName}.pending`);
   });
@@ -340,7 +465,7 @@ describe("FsCognitionTranscriptStore", () => {
       .prepare("UPDATE transcript_refs SET state = 'deleting' WHERE file_name = ?")
       .run(saved!.fileName);
     beforeUnlink.close();
-    const restored = new FsCognitionTranscriptStore(transcriptsDir);
+    const restored = trackedStore(transcriptsDir);
     expect(await restored.listPage({ limit: 10 })).toHaveLength(1);
 
     const afterUnlink = new Sqlite(indexPath);
@@ -349,11 +474,11 @@ describe("FsCognitionTranscriptStore", () => {
       .run(saved!.fileName);
     afterUnlink.close();
     rmSync(join(transcriptsDir, saved!.fileName));
-    const removed = new FsCognitionTranscriptStore(transcriptsDir);
+    const removed = trackedStore(transcriptsDir);
     expect(await removed.listPage({ limit: 10 })).toEqual([]);
   });
 
-  test("startup settles every interrupted transition and leaves everything else as it was", () => {
+  test("startup settles every interrupted transition and leaves everything else as it was", async () => {
     const transcriptsDir = join(dir, "transcripts");
     for (let i = 0; i < 20; i += 1) {
       store.save(transcript({ runId: `run_kept_${i}`, finishedAt: 10_000 + i }));
@@ -397,7 +522,7 @@ describe("FsCognitionTranscriptStore", () => {
     const orphanTemp = "11-run_orphan-a1.json.pending";
     writeFileSync(join(transcriptsDir, orphanTemp), "{");
 
-    const reopened = new FsCognitionTranscriptStore(transcriptsDir);
+    const reopened = trackedStore(transcriptsDir);
     try {
       const after = new Sqlite(join(transcriptsDir, ".transcript-index.sqlite"), {
         readonly: true,
@@ -424,11 +549,11 @@ describe("FsCognitionTranscriptStore", () => {
       expect(files.filter((name) => name.endsWith(".pending"))).toEqual([orphanTemp]);
       expect(files).not.toContain(beforeRename);
     } finally {
-      reopened.close();
+      await reopened.close();
     }
   });
 
-  test("opening the store reads only the refs a crash left unsettled", () => {
+  test("opening the store reads only the refs a crash left unsettled", async () => {
     // Every store façade settles interrupted transitions while it is built,
     // which is on the gateway's boot path. A statement that scans the ref table
     // there costs time in proportion to the whole archive, all of it on the
@@ -445,11 +570,11 @@ describe("FsCognitionTranscriptStore", () => {
     });
     let reopened: FsCognitionTranscriptStore | undefined;
     try {
-      reopened = new FsCognitionTranscriptStore(join(dir, "transcripts"));
+      reopened = trackedStore(join(dir, "transcripts"));
     } finally {
       spy.mockRestore();
     }
-    reopened.close();
+    await reopened.close();
 
     const touchingRefs = statements.filter((source) => /\btranscript_refs\b/.test(source));
     expect(touchingRefs.length).toBeGreaterThan(0);
@@ -506,10 +631,10 @@ describe("evicting one run's transcripts", () => {
   let store: FsCognitionTranscriptStore;
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), "omnesis-transcripts-evict-"));
-    store = new FsCognitionTranscriptStore(join(dir, "transcripts"));
+    store = trackedStore(join(dir, "transcripts"));
   });
-  afterEach(() => {
-    store.close();
+  afterEach(async () => {
+    await closeStores();
     rmSync(dir, { recursive: true, force: true });
   });
 
@@ -548,7 +673,7 @@ describe("evicting one run's transcripts", () => {
       JSON.stringify(transcript({ runId: "run_legacy", finishedAt: 5000 })),
       "utf8",
     );
-    const fresh = new FsCognitionTranscriptStore(transcriptsDir);
+    const fresh = trackedStore(transcriptsDir);
 
     expect(await fresh.evictRuns(["run_legacy"])).toBe(1);
     expect(readdirSync(transcriptsDir).filter((n) => n.endsWith(".json"))).toEqual([]);

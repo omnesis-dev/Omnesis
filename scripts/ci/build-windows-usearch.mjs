@@ -16,6 +16,7 @@ async function runNode(args, options) {
   const { runWindowsJob } = await bootstrapWindowsPlatform();
   const result = await runWindowsJob(process.execPath, args, {
     ...options,
+    completion: "root",
     stdout: "inherit",
     onStderr: (bytes) => process.stderr.write(bytes),
   });
@@ -56,7 +57,7 @@ export async function buildWindowsUsearch({
     signal?.throwIfAborted();
     const devdir = join(scratch, "headers");
     const headers = join(devdir, version);
-    const options = { cwd, env: childEnv, signal, timeoutMs: 180_000 };
+    const options = { cwd, env: childEnv, signal, timeoutMs: 180_000, completion: "root" };
     if (
       (await run(
         [nodeGyp, "install", version, `--devdir=${devdir}`, `--arch=${arch}`, "--ensure"],

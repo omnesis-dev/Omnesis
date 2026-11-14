@@ -40,6 +40,73 @@ setTimeout(()=>{},60000);
 `;
 
 describe.skipIf(process.platform !== "win32")("Windows native job containment", () => {
+  it.each([0, 7])(
+    "root completion joins a persistent descendant, drains bytes and preserves root exit %s",
+    async (exitCode) => {
+      const dir = mkdtempSync(join(tmpdir(), "omnesis-job-finite-root-"));
+      const marker = join(dir, "members.json");
+      const unrelated = spawn(process.execPath, ["-e", "setInterval(()=>{},1000)"], {
+        stdio: "ignore",
+        windowsHide: true,
+      });
+      const unrelatedClosed = new Promise<void>((resolve) =>
+        unrelated.once("close", () => resolve()),
+      );
+      try {
+        const program = `
+const fs=require('node:fs');
+const {spawn}=require('node:child_process');
+const child=spawn(process.execPath,['-e', 'require("node:fs").writeSync(1,"child-ready\\n");process.send("ready");setInterval(()=>{},1000)'],{detached:true,stdio:['ignore','inherit','inherit','ipc']});
+child.once('message',()=>{
+  fs.writeFileSync(process.argv[1],JSON.stringify([process.pid,child.pid]));
+  fs.writeSync(1,Buffer.from([0,255,42]));fs.writeSync(2,'root-finished\\n');
+  process.exit(${exitCode});
+});
+`;
+        const result = await runWindowsJob(process.execPath, ["-e", program, marker], {
+          completion: "root",
+          timeoutMs: 20_000,
+        });
+        expect(result.failure, result.failureMessage ?? result.stderr).toBeUndefined();
+        expect(result.exitCode).toBe(exitCode);
+        expect(Buffer.from(result.stdout)).toEqual(
+          Buffer.concat([Buffer.from("child-ready\n"), Buffer.from([0, 255, 42])]),
+        );
+        expect(result.stderr).toBe("root-finished\n");
+        const members: number[] = JSON.parse(readFileSync(marker, "utf8"));
+        expect(members.every((pid) => !alive(pid))).toBe(true);
+        expect(alive(unrelated.pid!)).toBe(true);
+      } finally {
+        unrelated.kill("SIGKILL");
+        await unrelatedClosed;
+        rmSync(dir, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it("root completion still cancels the entire owned tree while its root is running", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "omnesis-job-root-abort-"));
+    const marker = join(dir, "members.json");
+    const controller = new AbortController();
+    const pending = runWindowsJob(process.execPath, ["-e", treeProgram, marker], {
+      completion: "root",
+      signal: controller.signal,
+      timeoutMs: 30_000,
+    });
+    try {
+      expect(await eventually(() => existsSync(marker))).toBe(true);
+      const members: number[] = JSON.parse(readFileSync(marker, "utf8"));
+      expect(members.every(alive)).toBe(true);
+      controller.abort();
+      expect(await pending).toMatchObject({ failure: "aborted", exitCode: null });
+      expect(await eventually(() => members.every((pid) => !alive(pid)))).toBe(true);
+    } finally {
+      controller.abort();
+      await pending;
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("preserves immediate streaming input and filters only the helper status", async () => {
     const proc = spawnWindowsJob(process.execPath, [
       "-e",
@@ -223,50 +290,53 @@ child.once('spawn',()=>{fs.writeFileSync(process.argv[1],String(child.pid));chil
     }
   });
 
-  it("closes the job when its launcher parent crashes without cleanup", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "omnesis-job-parent-"));
-    const marker = join(dir, "ready");
-    const moduleUrl = new URL("./windows-job.ts", import.meta.url).href;
-    const script = `
+  it.each([undefined, "root"] as const)(
+    "closes the job when its launcher parent crashes without cleanup (completion=%s)",
+    async (completion) => {
+      const dir = mkdtempSync(join(tmpdir(), "omnesis-job-parent-"));
+      const marker = join(dir, "ready");
+      const moduleUrl = new URL("./windows-job.ts", import.meta.url).href;
+      const script = `
       import {runWindowsJob} from ${JSON.stringify(moduleUrl)};
-      await runWindowsJob(process.execPath,['-e',${JSON.stringify(treeProgram)},${JSON.stringify(marker)}],{timeoutMs:60000});
+      await runWindowsJob(process.execPath,['-e',${JSON.stringify(treeProgram)},${JSON.stringify(marker)}],${JSON.stringify({ timeoutMs: 60000, completion })});
     `;
-    const loader = pathToFileURL(createRequire(import.meta.url).resolve("tsx")).href;
-    const parent = spawn(
-      process.execPath,
-      ["--import", loader, "--input-type=module", "-e", script],
-      {
-        stdio: ["ignore", "ignore", "pipe"],
-        windowsHide: true,
-      },
-    );
-    let stderr = "";
-    parent.stderr!.on("data", (bytes: Buffer) => {
-      stderr += bytes.toString("utf8");
-    });
-    const exited = new Promise<void>((resolve, reject) => {
-      parent.once("close", () => resolve());
-      parent.once("error", reject);
-    });
-    try {
-      expect(
-        await Promise.race([
-          eventually(() => existsSync(marker)),
-          exited.then(() => {
-            throw new Error("Fixture parent exited before starting its program: " + stderr);
-          }),
-        ]),
-      ).toBe(true);
-      const pids: number[] = JSON.parse(readFileSync(marker, "utf8"));
-      parent.kill("SIGKILL");
-      await exited;
-      expect(await eventually(() => pids.every((pid) => !alive(pid)))).toBe(true);
-    } finally {
-      if (parent.exitCode === null && parent.signalCode === null) parent.kill("SIGKILL");
-      await exited;
-      rmSync(dir, { recursive: true, force: true });
-    }
-  });
+      const loader = pathToFileURL(createRequire(import.meta.url).resolve("tsx")).href;
+      const parent = spawn(
+        process.execPath,
+        ["--import", loader, "--input-type=module", "-e", script],
+        {
+          stdio: ["ignore", "ignore", "pipe"],
+          windowsHide: true,
+        },
+      );
+      let stderr = "";
+      parent.stderr!.on("data", (bytes: Buffer) => {
+        stderr += bytes.toString("utf8");
+      });
+      const exited = new Promise<void>((resolve, reject) => {
+        parent.once("close", () => resolve());
+        parent.once("error", reject);
+      });
+      try {
+        expect(
+          await Promise.race([
+            eventually(() => existsSync(marker)),
+            exited.then(() => {
+              throw new Error("Fixture parent exited before starting its program: " + stderr);
+            }),
+          ]),
+        ).toBe(true);
+        const pids: number[] = JSON.parse(readFileSync(marker, "utf8"));
+        parent.kill("SIGKILL");
+        await exited;
+        expect(await eventually(() => pids.every((pid) => !alive(pid)))).toBe(true);
+      } finally {
+        if (parent.exitCode === null && parent.signalCode === null) parent.kill("SIGKILL");
+        await exited;
+        rmSync(dir, { recursive: true, force: true });
+      }
+    },
+  );
 
   it("does not execute the payload after publication fails and reaps the helper before rejecting", async () => {
     const failure = new Error("Synthetic publication failure");

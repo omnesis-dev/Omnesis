@@ -85,6 +85,10 @@ public static partial class OmnesisProcessJob {
     result.Append('\\',slashes*2); result.Append('\"'); return result.ToString();
   }
   public static int Run(string command,string[] args,int parentPid) {
+    return Run(command,args,parentPid,"tree");
+  }
+  public static int Run(string command,string[] args,int parentPid,string completion) {
+    if(completion!="tree" && completion!="root") throw new InvalidDataException("Invalid process completion policy");
     IntPtr parent=IntPtr.Zero,job=IntPtr.Zero,list=IntPtr.Zero,handles=IntPtr.Zero,jobs=IntPtr.Zero;
     ProcessInfo process=new ProcessInfo(); bool assigned=false,initialized=false;
     try {
@@ -118,12 +122,17 @@ public static partial class OmnesisProcessJob {
       assigned=true;
       Status(0);
       if(ResumeThread(process.thread)==UInt32.MaxValue) throw new Win32Exception(Marshal.GetLastWin32Error());
-      uint exit=STILL_ACTIVE; bool exited=false;
+      uint exit=STILL_ACTIVE; bool exited=false,remainingTerminated=false;
       for(;;) {
         if(WaitForSingleObject(parent,0)==WAIT_OBJECT) { Check(TerminateJobObject(job,1)); return 1; }
         if(!exited && WaitForSingleObject(process.process,0)==WAIT_OBJECT) { Check(GetExitCodeProcess(process.process,out exit)); exited=true; }
         Accounting accounting; Check(QueryInformationJobObject(job,1,out accounting,(uint)Marshal.SizeOf(typeof(Accounting)),IntPtr.Zero));
         if(exited && accounting.active==0) return unchecked((int)exit);
+        // The retained root handle proves completion. Cache its status before
+        // terminating only members of this owned Job, then join active==0.
+        if(exited && completion=="root" && !remainingTerminated) {
+          Check(TerminateJobObject(job,1)); remainingTerminated=true;
+        }
         System.Threading.Thread.Sleep(25);
       }
     } finally {
@@ -149,7 +158,9 @@ Add-Type -TypeDefinition @'
 ${WINDOWS_JOB_NATIVE_SOURCE}
 '@
 $config = [OmnesisProcessJob]::ReadConfiguration() | ConvertFrom-Json
-$code = [OmnesisProcessJob]::Run([string]$config.command, [string[]]$config.args, [int]$config.parentPid)
+$completion = 'tree'
+if ($null -ne $config.PSObject.Properties['completion']) { $completion = [string]$config.completion }
+$code = [OmnesisProcessJob]::Run([string]$config.command, [string[]]$config.args, [int]$config.parentPid, $completion)
 exit $code
 } catch {
   [Console]::Error.WriteLine($_.Exception.Message)

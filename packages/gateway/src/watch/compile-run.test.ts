@@ -92,13 +92,15 @@ function sink(behaviour: { throws?: boolean } = {}) {
 }
 
 const dirs: string[] = [];
+const transcriptStores: FsCognitionTranscriptStore[] = [];
 function transcriptsDir(): string {
   const dir = mkdtempSync(join(tmpdir(), "omnesis-compile-runs-"));
   dirs.push(dir);
   return dir;
 }
 
-afterEach(() => {
+afterEach(async () => {
+  await Promise.all(transcriptStores.splice(0).map((store) => store.close()));
   while (dirs.length > 0) rmSync(dirs.pop()!, { recursive: true, force: true });
 });
 
@@ -162,9 +164,11 @@ function port(opts: {
   backend?: CompilePortDeps["backend"];
   backtest?: CompilePortDeps["backtest"];
 }) {
+  const transcripts = new FsCognitionTranscriptStore(opts.dir);
+  transcriptStores.push(transcripts);
   const recorder = new WatchCompileRecorder({
     writeGate: opts.writeGate,
-    transcripts: new FsCognitionTranscriptStore(opts.dir),
+    transcripts,
     log: createLogger("test"),
   });
   return createCompilePort({

@@ -2,57 +2,25 @@
 // Copyright (c) 2026 Adrien Conrath
 
 /**
- * Headline live-swap E2E for the double-buffered embedder swap.
- *
- * This is the criterion the epic names first: a live, spawned-gateway swap that
- * proves vector (semantic) search NEVER goes offline while the embedding model
- * changes to a different-dimension one — and then serves from the NEW model's
- * index after the rebuild flips, all WITHOUT a gateway restart. The
- * deterministic four-transition matrix in
- * `packages/gateway/src/indexer/indexer-lifecycle.test.ts`
- * ("embedder swap — four-transition graceful matrix") pins the orchestration of
- * all four {local,http}-old × {local,http}-new transitions with mock embedders;
- * this complements it by exercising the real machinery end-to-end against a
- * real embedder over HTTP — the read-registry's live dim adoption, the
- * mid-rebuild query embedder staying pointed at the active generation, the
- * atomic flip, and the `/index/stats` two-readout — none of which a unit test
- * with mocks can prove.
- *
- * The swap exercised live is `http → http`:
- *   - OLD / active model: the real local `:8001` Qwen3-Embedding endpoint
- *     (1024-dim), populated with an invented corpus and serving vector search.
- *   - NEW / target model: a controllable, GATED fake HTTP embedder at a
- *     DIFFERENT dimension (512-dim). Gating the target is the honest, race-free
- *     way to hold the rebuild mid-flight: we let the dimension PROBE through but
- *     block the corpus re-embed until the test has observed that vector search
- *     is still live on the active (old) index — then release and watch the
- *     atomic flip land the new generation.
- *
- * The other three transitions (`http→local`, `local→http`, `local→local`)
- * require a real in-process GGUF embedder, which CUDA-crashes on this box (see
- * project memory: "Native backends must be subprocess-isolated"; the gateway's
- * own local embedder cannot be loaded here). They are NOT loaded live; they are
- * covered by the deterministic matrix above and called out with explicit
- * `it.skip`s below so the gap is visible rather than silently green.
- *
- * Dependency policy (mirrors `search-quality.e2e.ts`): the
- * `:8001` embedder is a REQUIRED dependency. On a CI runner an unreachable
- * `:8001` FAILS the job loudly; only on a developer's local box does it skip.
- *
- * The corpus is INVENTED (fictional docs — no operator corpus, per the repo
- * privacy rules).
+ * A live HTTP-to-HTTP embedding swap holds corpus rebuilds at a deterministic
+ * gate while searches continue on the active generation. The native CPU
+ * transitions registered below exercise the same production lifecycle with
+ * the verified reference GGUF, without GPU dependencies or chat inference.
  */
 
 import "./synth-env.js";
 
-import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
-
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 
-import { fakeEmbed } from "./fake-embedder.js";
 import { usearchMappings } from "./process-maps.js";
 import { SyntheticE2EHarness } from "./synth-harness.js";
-import type { AddressInfo } from "node:net";
+import {
+  CORPUS,
+  PROBE_QUERY,
+  startGatedEmbedderServer,
+  type GatedEmbedderServer,
+} from "./embedder-swap-fixtures.js";
+import { registerNativeEmbedderSwapTests } from "./embedder-swap-native.js";
 
 // Generic, overridable defaults — never an operator-private value. `:8001` is
 // the conventional local embedder endpoint documented for this project. The URL
@@ -72,123 +40,6 @@ const TARGET_DIM = 512;
 const TARGET_MODEL_ID = "fake-embed-swap-target-512";
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
-
-/** The probe input `probeHttpEmbedder` POSTs to discover a backend's dimension. */
-const PROBE_INPUT = "dimension probe";
-
-interface GatedEmbedderServer {
-  url: string;
-  modelId: string;
-  dim: number;
-  /** How many non-probe (corpus/query) embedding inputs have been served. */
-  servedInputs: () => number;
-  /** Open the gate so all held + future corpus-embed requests proceed. */
-  release: () => void;
-  close: () => Promise<void>;
-}
-
-/**
- * A controllable OpenAI-compatible fake embedder used as the SWAP TARGET. It
- * speaks the same `/v1/models` + `/v1/embeddings` subset as `fake-embedder.ts`
- * (reusing its deterministic `fakeEmbed`), with one addition: a GATE. The
- * dimension-probe request (`input: ["dimension probe"]`) always passes so the
- * swap can discover the target dim; every other (corpus re-embed) request
- * BLOCKS until `release()` is called. That lets the test hold the graceful
- * rebuild open, assert search is still live on the old index, then release and
- * watch the flip — with no timing races.
- */
-function startGatedEmbedderServer(dim: number, modelId: string): Promise<GatedEmbedderServer> {
-  let released = false;
-  const waiters: Array<() => void> = [];
-  const counter = { n: 0 };
-
-  const gate = (): Promise<void> => {
-    if (released) return Promise.resolve();
-    return new Promise<void>((resolve) => waiters.push(resolve));
-  };
-  const release = (): void => {
-    released = true;
-    while (waiters.length) waiters.shift()!();
-  };
-
-  const readBody = (req: IncomingMessage): Promise<string> =>
-    new Promise((resolve, reject) => {
-      const chunks: Buffer[] = [];
-      req.on("data", (c: Buffer) => chunks.push(c));
-      req.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")));
-      req.on("error", reject);
-    });
-  const sendJson = (res: ServerResponse, status: number, payload: unknown): void => {
-    res.writeHead(status, { "Content-Type": "application/json" });
-    res.end(JSON.stringify(payload));
-  };
-
-  const server: Server = createServer((req, res) => {
-    void (async () => {
-      const path = (req.url ?? "").split("?")[0];
-      if (req.method === "GET" && path === "/v1/models") {
-        sendJson(res, 200, {
-          object: "list",
-          data: [{ id: modelId, object: "model", owned_by: "omnesis-test" }],
-        });
-        return;
-      }
-      if (req.method === "POST" && path === "/v1/embeddings") {
-        let parsed: { input?: string | string[]; model?: string };
-        try {
-          parsed = JSON.parse(await readBody(req)) as typeof parsed;
-        } catch {
-          sendJson(res, 400, { error: { message: "invalid JSON body" } });
-          return;
-        }
-        const raw = parsed.input;
-        const inputs: string[] = typeof raw === "string" ? [raw] : Array.isArray(raw) ? raw : [];
-        if (inputs.length === 0) {
-          sendJson(res, 400, { error: { message: "input is required" } });
-          return;
-        }
-        const isProbe = inputs.length === 1 && inputs[0] === PROBE_INPUT;
-        // Everything except the dimension probe is held until the test releases
-        // the gate — that is the mid-rebuild window the headline assertion runs in.
-        if (!isProbe) {
-          counter.n += inputs.length;
-          await gate();
-        }
-        sendJson(res, 200, {
-          object: "list",
-          data: inputs.map((text, index) => ({
-            object: "embedding",
-            index,
-            embedding: fakeEmbed(text, dim),
-          })),
-          model: parsed.model ?? modelId,
-          usage: { prompt_tokens: 0, total_tokens: 0 },
-        });
-        return;
-      }
-      sendJson(res, 404, { error: { message: `no route for ${req.method} ${path}` } });
-    })();
-  });
-
-  return new Promise<GatedEmbedderServer>((resolve, reject) => {
-    server.once("error", reject);
-    server.listen(0, "127.0.0.1", () => {
-      const addr = server.address() as AddressInfo;
-      resolve({
-        url: `http://127.0.0.1:${addr.port}`,
-        modelId,
-        dim,
-        servedInputs: () => counter.n,
-        release,
-        close: () =>
-          new Promise<void>((res, rej) => {
-            release(); // never leave a request hanging on close
-            server.close((err) => (err ? rej(err) : res()));
-          }),
-      });
-    });
-  });
-}
 
 interface VectorStageReport {
   status?: "ran" | "skipped";
@@ -212,57 +63,6 @@ interface IndexStats {
     } | null;
   };
 }
-
-// Invented fictional corpus — no operator data. A handful of docs so the
-// rebuild has real work to re-embed and BM25/fusion have a pool to rank over.
-const CORPUS: ReadonlyArray<{ externalId: string; title: string; content: string }> = [
-  {
-    externalId: "swap-feline",
-    title: "Whiskers Nutrition Guide",
-    content:
-      "A grown house cat thrives on a protein-rich diet. Offer small portions of cooked poultry " +
-      "or quality wet kibble twice daily and always leave fresh water within reach.",
-  },
-  {
-    externalId: "swap-umbrella",
-    title: "Forecast Companion Note",
-    content:
-      "Grey clouds gathering over the bay usually mean a downpour by afternoon. Pack a folding " +
-      "parasol and waterproof boots before you head out.",
-  },
-  {
-    externalId: "swap-tuning",
-    title: "Six String Setup",
-    content:
-      "When a fretted instrument sounds sour, turn each peg slowly while plucking the open course " +
-      "until the pitch matches a reference tone.",
-  },
-  {
-    externalId: "swap-pasta",
-    title: "Weeknight Pasta Idea",
-    content:
-      "Toss cooked spaghetti with garlic, chilli flakes, and a handful of grated cheese for a fast " +
-      "midweek dinner.",
-  },
-  {
-    externalId: "swap-coast",
-    title: "Coastal Trip Plan",
-    content:
-      "We rented a small cottage near the harbour for the long weekend and walked the cliff path " +
-      "each morning.",
-  },
-  {
-    externalId: "swap-standup",
-    title: "Standup Recap",
-    content:
-      "Quick sync this morning: the design review slipped to Thursday and the analytics dashboard " +
-      "is in QA.",
-  },
-];
-
-// One query whose answer is a corpus doc. We assert the vector LANE answers it
-// (candidates > 0), not exact ranking — this is a liveness net, not a quality net.
-const PROBE_QUERY = "feeding a house cat";
 
 async function probeEmbedderReachable(): Promise<boolean> {
   const base = EMBEDDER_URL.replace(/\/+$/, "");
@@ -515,15 +315,6 @@ describe("Live double-buffered embedder swap keeps vector search live (headline)
       ).toBeLessThanOrEqual(1);
     }
   }, 300_000);
-
-  // The three local-involving transitions need a real in-process GGUF embedder,
-  // which CUDA-crashes on this box (project memory: native backends must be
-  // subprocess-isolated; the gateway's local embedder cannot be loaded here).
-  // Their orchestration is covered deterministically by the four-transition
-  // matrix in packages/gateway/src/indexer/indexer-lifecycle.test.ts
-  // ("embedder swap — four-transition graceful matrix"). Marked skip rather than
-  // omitted so the live-coverage gap is explicit.
-  test.skip("http→local: covered by the deterministic four-transition matrix (no live GGUF on this box)", () => {});
-  test.skip("local→http: covered by the deterministic four-transition matrix (no live GGUF on this box)", () => {});
-  test.skip("local→local: covered by the deterministic four-transition matrix (no live GGUF on this box)", () => {});
 });
+
+registerNativeEmbedderSwapTests();

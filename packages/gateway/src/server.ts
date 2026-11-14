@@ -2012,7 +2012,7 @@ export function createServer(
 
   // /admin/brain/* — the operator inspection surface the `omnesis
   // briefs` CLI drives (same live feature gate: 404 unless active).
-  mountBrainAdminRoutes(app, {
+  const brainAdmin = mountBrainAdminRoutes(app, {
     db,
     writeGate: w,
     getStatus: opts?.getBriefsStatus,
@@ -2073,5 +2073,5 @@ export function createServer(
     );
   }
 
-  return app;
+  return Object.assign(app, { close: () => brainAdmin.close() });
 }

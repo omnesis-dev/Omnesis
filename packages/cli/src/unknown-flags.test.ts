@@ -2,7 +2,8 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { execFile } from "node:child_process";
-import { fileURLToPath } from "node:url";
+import { createRequire } from "node:module";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 
 import { defineCommand } from "citty";
@@ -146,6 +147,7 @@ describe("what it must keep accepting", () => {
 describe("the binary itself", () => {
   const execFileAsync = promisify(execFile);
   const entry = fileURLToPath(new URL("./index.ts", import.meta.url));
+  const loader = pathToFileURL(createRequire(import.meta.url).resolve("tsx")).href;
 
   /** No gateway is reachable and none is needed: the refusal precedes any call. */
   const env = {
@@ -157,7 +159,11 @@ describe("the binary itself", () => {
 
   async function run(args: string[]): Promise<{ code: number; stderr: string; stdout: string }> {
     try {
-      const { stdout, stderr } = await execFileAsync("npx", ["tsx", entry, ...args], { env });
+      const { stdout, stderr } = await execFileAsync(
+        process.execPath,
+        ["--import", loader, entry, ...args],
+        { env },
+      );
       return { code: 0, stdout, stderr };
     } catch (err) {
       const e = err as { code?: number; stdout?: string; stderr?: string };

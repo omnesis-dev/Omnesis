@@ -62,7 +62,7 @@ function* walk(root) {
   }
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (import.meta.main) {
   main(process.argv.slice(2))
     .then((code) => (process.exitCode = code))
     .catch((error) => {

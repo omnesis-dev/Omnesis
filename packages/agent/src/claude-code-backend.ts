@@ -35,6 +35,9 @@ import { promisify } from "node:util";
 
 import {
   createLogger,
+  nodeCommandInvocation,
+  execWindowsJob,
+  spawnWindowsJob,
   readPackageVersion,
   type AgentContextAssessment,
   type AgentEvent,
@@ -321,11 +324,16 @@ export class ClaudeCodeRuntime implements ClaudeCodeTurnRunner {
     const command = await this.resolveCommand();
     let output: string;
     try {
-      const result = await execFileAsync(command, ["--version"], {
-        env: this.childEnv,
-        timeout: timeoutMs,
-        windowsHide: true,
-      });
+      const invocation = nodeCommandInvocation(command, ["--version"]);
+      const result = await (process.platform === "win32" ? execWindowsJob : execFileAsync)(
+        invocation.command,
+        invocation.args,
+        {
+          env: this.childEnv,
+          timeout: timeoutMs,
+          windowsHide: true,
+        },
+      );
       output = `${result.stdout}${result.stderr}`;
     } catch (err) {
       this.forgetCommand();
@@ -350,11 +358,16 @@ export class ClaudeCodeRuntime implements ClaudeCodeTurnRunner {
     const command = await this.resolveCommand();
     let stdout: string;
     try {
-      const result = await execFileAsync(command, ["auth", "status", "--json"], {
-        env: this.childEnv,
-        timeout: timeoutMs,
-        windowsHide: true,
-      });
+      const invocation = nodeCommandInvocation(command, ["auth", "status", "--json"]);
+      const result = await (process.platform === "win32" ? execWindowsJob : execFileAsync)(
+        invocation.command,
+        invocation.args,
+        {
+          env: this.childEnv,
+          timeout: timeoutMs,
+          windowsHide: true,
+        },
+      );
       stdout = String(result.stdout);
     } catch (err) {
       // Signed out is exit 1 with the same JSON on stdout.
@@ -1107,14 +1120,24 @@ class ClaudeCodeProcess {
 
   start(): void {
     if (this.proc) return;
-    const proc = spawn(this.opts.command, [...this.opts.args], {
-      cwd: this.opts.cwd,
-      env: this.opts.env,
-      stdio: ["pipe", "pipe", "pipe"],
-      windowsHide: true,
-    });
+    const invocation = nodeCommandInvocation(this.opts.command, this.opts.args);
+    const job =
+      process.platform === "win32"
+        ? spawnWindowsJob(invocation.command, invocation.args, {
+            cwd: this.opts.cwd,
+            env: this.opts.env,
+          })
+        : null;
+    const proc =
+      job ??
+      spawn(invocation.command, invocation.args, {
+        cwd: this.opts.cwd,
+        env: this.opts.env,
+        stdio: ["pipe", "pipe", "pipe"],
+        windowsHide: true,
+      });
     this.proc = proc;
-    this.exited = new Promise((resolve) => proc.once("exit", () => resolve()));
+    this.exited = new Promise((resolve) => proc.once("close", () => resolve()));
     createInterface({ input: proc.stdout }).on("line", (line) =>
       markActivity("agent.claudeCode.message", () => this.handleLine(line)),
     );
@@ -1126,13 +1149,20 @@ class ClaudeCodeProcess {
     proc.stdin.on("error", () => {
       /* the exit handler reports a dead process */
     });
-    proc.once("error", (err) => {
+    let failed = false;
+    const startFailed = (err: Error): void => {
+      if (failed || this.disposed) return;
+      failed = true;
       this.rejectAll(new Error(`Claude Code failed to start: ${err.message}`));
-      if (!this.disposed) this.opts.onExit?.(null, null);
-    });
+      this.opts.onExit?.(null, null);
+    };
+    proc.once("error", startFailed);
+    void job?.jobReady.catch((err: unknown) =>
+      startFailed(err instanceof Error ? err : new Error(String(err))),
+    );
     proc.once("exit", (code, sig) => {
       this.rejectAll(new Error(`Claude Code exited (${sig ?? code ?? "unknown"})`));
-      if (!this.disposed) this.opts.onExit?.(code, sig);
+      if (!this.disposed && !failed) this.opts.onExit?.(code, sig);
     });
   }
 

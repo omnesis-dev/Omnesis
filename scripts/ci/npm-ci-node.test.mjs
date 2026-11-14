@@ -83,6 +83,7 @@ describe("portable Node CI bootstrap", () => {
         NPM_PACKAGE_CONFIG_NODE_GYP_NODEDIR: "wrong headers",
       },
       run: (args, options) => {
+        expect(options.completion).toBe("root");
         if (args[0] === f.npmCli) {
           observed = true;
           const headers = options.env.npm_package_config_node_gyp_nodedir;

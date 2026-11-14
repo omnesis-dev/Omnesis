@@ -174,11 +174,46 @@ function safeJsonParse<T>(raw: string | null | undefined, fallback: T): T {
 }
 
 function openStoreDatabase(path: string, key: Buffer | null): Db {
+  if (key && sqliteFileLooksPlaintext(path)) migratePlaintextStore(path, key);
+  // SQLite may delete a rejected WAL when a writable handle closes. Validate
+  // existing bytes read-only first so corruption quarantine retains sidecars.
+  if (existsSync(path)) {
+    const probe = (key
+      ? new EncryptedDatabase(path, { readonly: true })
+      : new Database(path, { readonly: true })) as unknown as Db;
+    try {
+      if (key) keyStoreDatabase(probe, key);
+      probe.prepare("SELECT count(*) FROM sqlite_master").get();
+    } catch (error) {
+      closeFailedDatabase(probe, error);
+    }
+    probe.close();
+  }
   if (!key) return new Database(path);
-  if (sqliteFileLooksPlaintext(path)) migratePlaintextStore(path, key);
   const db = new EncryptedDatabase(path) as unknown as Db;
-  keyStoreDatabase(db, key);
+  try {
+    keyStoreDatabase(db, key);
+  } catch (error) {
+    closeFailedDatabase(db, error);
+  }
   return db;
+}
+
+/** A failed open owns its new handle until it closes, including before quarantine. */
+function closeFailedDatabase(db: Db, error: unknown): never {
+  const failures: unknown[] = [error];
+  try {
+    db.close();
+  } catch (cleanup) {
+    failures.push(cleanup);
+  }
+  if (failures.length > 1)
+    throw new AggregateError(
+      failures,
+      "Failed database initialization could not close its handle",
+      { cause: error },
+    );
+  throw error;
 }
 
 function keyStoreDatabase(db: Db, key: Buffer): void {
@@ -204,21 +239,19 @@ function keyStoreDatabase(db: Db, key: Buffer): void {
  * the whole encrypted archive and never something in between.
  */
 function migratePlaintextStore(path: string, key: Buffer): void {
-  const plain = new Database(path);
-  try {
-    plain.pragma("busy_timeout = 30000");
-    // Fold the WAL into the main file before it is copied: the copy carries
-    // only `path`, so anything still in the sidecar would be left behind.
-    plain.pragma("wal_checkpoint(TRUNCATE)");
-    plain.pragma("journal_mode = DELETE");
-  } finally {
-    plain.close();
-  }
-
-  // A leftover from an attempt that was interrupted is a partially rekeyed
-  // file, not a resumable one — it is discarded rather than reused.
   const staging = `${path}.rekey`;
   try {
+    const plain = new Database(path);
+    try {
+      plain.pragma("busy_timeout = 30000");
+      const checkpoint = plain.pragma("wal_checkpoint(TRUNCATE)") as { busy: number }[];
+      if (checkpoint.some((row) => row.busy !== 0))
+        throw new Error("Archive WAL checkpoint is busy");
+      if (plain.pragma("journal_mode = DELETE", { simple: true }) !== "delete")
+        throw new Error("Archive journal is busy");
+    } finally {
+      plain.close();
+    }
     clearStagingRekey(staging);
     copyFileSync(path, staging);
     const db = new EncryptedDatabase(staging);
@@ -229,30 +262,25 @@ function migratePlaintextStore(path: string, key: Buffer): void {
     } finally {
       db.close();
     }
+    // Publication failures are operational migration failures, never evidence
+    // that the valid active archive should be quarantined or replaced empty.
+    renameSync(staging, path);
+    rmSync(`${path}-wal`, { force: true });
+    rmSync(`${path}-shm`, { force: true });
   } catch (err) {
     try {
       clearStagingRekey(staging);
     } catch {
-      // Whatever stopped the migration may well stop the tidy-up too, and the
-      // next attempt clears the staging path before it uses it anyway. The
-      // failure worth reporting is the one that stopped the migration.
+      /* A later retry removes owned staging. */
     }
-    // Distinguished from a corrupt archive, and the difference decides whether
-    // `store.db` is kept. Everything above this point read the plaintext file
-    // successfully, so a failure here — a full disk, a permission — says
-    // nothing about the archive, and answering it by quarantining would throw
-    // away a perfectly good one to make room for an empty one.
-    throw new StoreRekeyFailure(toErrorMessage(err));
+    throw new StoreRekeyFailure(toErrorMessage(err), err);
   }
-  renameSync(staging, path);
-  rmSync(`${path}-wal`, { force: true });
-  rmSync(`${path}-shm`, { force: true });
 }
 
 /** A migration that failed after the archive was read intact. */
 class StoreRekeyFailure extends Error {
-  constructor(detail: string) {
-    super(`WhatsApp store encryption failed and the archive was left as it was: ${detail}`);
+  constructor(detail: string, cause?: unknown) {
+    super(`WhatsApp store encryption failed; the archive was preserved: ${detail}`, { cause });
     this.name = "StoreRekeyFailure";
   }
 }
@@ -303,6 +331,17 @@ export function inspectMessageStore(dir: string): LocalStoreProbeResult {
   } finally {
     key.fill(0);
   }
+}
+
+/** Operational access/locking failures never justify discarding a valid archive. */
+function sqliteCorruption(error: unknown): boolean {
+  if (typeof error !== "object" || error === null || !("code" in error)) return false;
+  return (
+    typeof error.code === "string" &&
+    (error.code === "SQLITE_NOTADB" ||
+      error.code === "SQLITE_CORRUPT" ||
+      error.code.startsWith("SQLITE_CORRUPT_"))
+  );
 }
 
 function sqliteNotADatabase(err: unknown): boolean {
@@ -516,8 +555,13 @@ export class MessageStore {
         // quarantining there would answer a full disk by destroying the very
         // thing that could not be copied. It is raised instead, which is the
         // same posture as a required key being unavailable.
-        if (err instanceof StoreRekeyFailure) throw err;
-        // Corrupt / locked / stale-WAL file: quarantine and re-bootstrap fresh
+        if (
+          err instanceof StoreRekeyFailure ||
+          err instanceof AggregateError ||
+          !sqliteCorruption(err)
+        )
+          throw err;
+        // Confirmed corrupt file: quarantine and re-bootstrap fresh
         // rather than throwing (which would skip or crash the source). The
         // archive is rebuildable via re-pair, so a clean restart is acceptable.
         log.error(`store.db open failed (${toErrorMessage(err)}); quarantining and starting fresh`);
@@ -559,15 +603,19 @@ export class MessageStore {
   }
 
   private configurePragmas(db: Db): Db {
-    db.pragma("journal_mode = WAL");
-    // Provider-internal rebuildable cache: NORMAL is durable enough (the phone
-    // is the real ground truth), and far cheaper than FULL for history bursts.
-    db.pragma("synchronous = NORMAL");
-    db.pragma("busy_timeout = 5000");
-    // Force pread() over mmap — same SIGBUS-avoidance rationale as the gateway.
-    db.pragma("mmap_size = 0");
-    db.pragma("wal_autocheckpoint = 1000");
-    return db;
+    try {
+      db.pragma("journal_mode = WAL");
+      // Provider-internal rebuildable cache: NORMAL is durable enough (the phone
+      // is the real ground truth), and far cheaper than FULL for history bursts.
+      db.pragma("synchronous = NORMAL");
+      db.pragma("busy_timeout = 5000");
+      // Force pread() over mmap — same SIGBUS-avoidance rationale as the gateway.
+      db.pragma("mmap_size = 0");
+      db.pragma("wal_autocheckpoint = 1000");
+      return db;
+    } catch (error) {
+      return closeFailedDatabase(db, error);
+    }
   }
 
   private runSchema(db: Db): void {

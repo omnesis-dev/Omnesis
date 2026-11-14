@@ -7,7 +7,12 @@ import * as fsp from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
-import { atomicWriteFile, atomicWriteFileSync, fsyncFileSync } from "./atomic-write.js";
+import {
+  atomicWriteFile,
+  atomicWriteFileSync,
+  fsyncDirSync,
+  fsyncFileSync,
+} from "./atomic-write.js";
 
 vi.mock("node:fs", async (actual) => ({ ...(await actual<typeof import("node:fs")>()) }));
 vi.mock("node:fs/promises", async (actual) => ({
@@ -67,6 +72,39 @@ describe("atomic writes", () => {
     fs.writeFileSync(path, "existing payload");
     fsyncFileSync(path);
     expect(readFileSync(path, "utf8")).toBe("existing payload");
+  });
+
+  test("strict directory flushes propagate supported-platform failures and close their handle", () => {
+    const failure = Object.assign(new Error("scripted directory flush failure"), { code: "EIO" });
+    const flush = vi.spyOn(fs, "fsyncSync").mockImplementation(() => {
+      throw failure;
+    });
+    const close = vi.spyOn(fs, "closeSync");
+    if (process.platform === "win32") {
+      // Windows has no directory fsync; strict mode retains that platform contract.
+      expect(() => fsyncDirSync(dir, { strict: true })).not.toThrow();
+      expect(flush).not.toHaveBeenCalled();
+      expect(close).not.toHaveBeenCalled();
+    } else {
+      expect(() => fsyncDirSync(dir, { strict: true })).toThrow(failure);
+      expect(close).toHaveBeenCalledOnce();
+      expect(() => fsyncDirSync(dir)).not.toThrow();
+      expect(close).toHaveBeenCalledTimes(2);
+    }
+  });
+
+  test("strict directory flushes retain open failures while the default remains best effort", () => {
+    const failure = Object.assign(new Error("scripted directory open failure"), { code: "EIO" });
+    const open = vi.spyOn(fs, "openSync").mockImplementation(() => {
+      throw failure;
+    });
+    if (process.platform === "win32") {
+      expect(() => fsyncDirSync(dir, { strict: true })).not.toThrow();
+      expect(open).not.toHaveBeenCalled();
+    } else {
+      expect(() => fsyncDirSync(dir, { strict: true })).toThrow(failure);
+      expect(() => fsyncDirSync(dir)).not.toThrow();
+    }
   });
 
   test.each(["sync", "async"])(

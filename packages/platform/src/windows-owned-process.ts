@@ -10,6 +10,8 @@ import {
 import { PassThrough, type Readable } from "node:stream";
 
 export interface WindowsJobOptions {
+  /** Tree lifetime by default; finite build roots may terminate remaining members after root exit. */
+  completion?: "tree" | "root";
   cwd?: string;
   env?: NodeJS.ProcessEnv;
   input?: Uint8Array;
@@ -271,7 +273,7 @@ export function runWindowsOwnedProcess(
 
 export type WindowsOwnedSyncOptions = Pick<
   WindowsJobOptions,
-  "cwd" | "env" | "input" | "timeoutMs" | "stdout" | "captureStdout"
+  "cwd" | "env" | "input" | "timeoutMs" | "stdout" | "captureStdout" | "completion"
 > & { maxBuffer?: number };
 export function runWindowsOwnedProcessSync(
   invocation: WindowsOwnedInvocation,

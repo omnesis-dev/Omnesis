@@ -57,6 +57,7 @@ import {
   type TemporalIntentOptions,
 } from "./temporal-intent.js";
 import { runCandidateGen } from "./candidate-gen.js";
+import { SearchGenerationGate } from "./generation-gate.js";
 import { describeQuery } from "./query-log.js";
 import { dedupeByContentHashWith } from "./dedupe.js";
 import { buildFacets } from "./facets.js";
@@ -108,6 +109,8 @@ const BOUND_ROW_COLUMNS = 12;
 
 export interface SearchPipelineOptions {
   indexDb: Db;
+  /** Advance the main-thread candidate snapshot after a generation publication. */
+  refreshIndexSnapshot?: () => Promise<unknown>;
   embedder?: Embedder;
   usearchRead?: import("../indexer/usearch-index.js").VectorReadSource;
   searchConfig?: SearchConfig;
@@ -161,7 +164,9 @@ export class SearchPipeline {
     return readRetrievalCoverage(this.indexDb, this.gatewayDb);
   }
 
+  private readonly generationGate = new SearchGenerationGate();
   private indexDb: Db;
+  private refreshIndexSnapshot?: () => Promise<unknown>;
   private embedder?: Embedder;
   /** Set while the indexer cannot hold the vector graph; the vector lane is skipped. */
   private vectorUnavailableReason: string | null = null;
@@ -212,6 +217,7 @@ export class SearchPipeline {
 
   constructor(opts: SearchPipelineOptions) {
     this.indexDb = opts.indexDb;
+    this.refreshIndexSnapshot = opts.refreshIndexSnapshot;
     this.embedder = opts.embedder;
     this.searchConfig = opts.searchConfig;
     this.embeddingModelId = opts.embeddingModelId;
@@ -371,13 +377,28 @@ export class SearchPipeline {
   }
 
   /**
-   * The embedder answering search queries right now, or undefined while none
-   * is attached. With an HTTP model it is a main-thread client, independent of
-   * the indexer worker's queue, so other latency-sensitive query embedding
-   * shares it rather than waiting behind indexing.
+   * A query capability for the attached generation. Calls participate in the
+   * publication barrier; a capability retained across replacement fails before
+   * invoking the retired native model. Callers reacquire after a model change.
    */
-  queryEmbedder(): Embedder | undefined {
-    return this.embedder;
+  queryEmbedder(): Pick<Embedder, "embedQuery"> | undefined {
+    const embedder = this.embedder;
+    if (!embedder) return undefined;
+    return {
+      embedQuery: (text: string) =>
+        this.generationGate.read(() => {
+          if (this.embedder !== embedder)
+            throw new Error(
+              "Semantic embedding generation changed; reacquire the query capability",
+            );
+          return embedder.embedQuery(text);
+        }),
+    };
+  }
+
+  /** Identity for the lifecycle owner deciding whether a native bridge can retire. */
+  isQueryEmbedder(embedder: Embedder): boolean {
+    return this.embedder === embedder;
   }
 
   /**
@@ -508,6 +529,36 @@ export class SearchPipeline {
       /** Resolved in the provenance read's snapshot; see `AgentSearchProvenanceOptions`. */
       excludeExternalDocuments?: readonly ExternalDocumentKey[];
     },
+  ): Promise<SearchResponse> {
+    return this.generationGate.read(() => this.searchGeneration(query, authorization, options));
+  }
+
+  /** Drain old searches before publishing a model/index pair or retiring its worker. */
+  async publishEmbeddingTransition(
+    operation: () => void,
+    options: { refreshSnapshot?: boolean } = {},
+  ): Promise<void> {
+    await this.generationGate.publish(async () => {
+      operation();
+      if (options.refreshSnapshot) {
+        try {
+          await this.refreshIndexSnapshot?.();
+        } catch (error) {
+          // Publication is committed. Keep retiring old native resources;
+          // the exact-vector generation guard refuses a stale snapshot and
+          // the snapshot's normal refresh retries it without blocking workers.
+          log.warn(
+            `Candidate snapshot refresh after embedding publication failed: ${error instanceof Error ? error.message : String(error)}`,
+          );
+        }
+      }
+    });
+  }
+
+  private async searchGeneration(
+    query: SearchQuery,
+    authorization: Parameters<SearchPipeline["search"]>[1],
+    options: Parameters<SearchPipeline["search"]>[2],
   ): Promise<SearchResponse> {
     const startMs = Date.now();
     // Capture the scheduler's inflight state at search start so we can

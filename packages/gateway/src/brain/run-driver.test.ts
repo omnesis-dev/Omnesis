@@ -72,7 +72,8 @@ describe("CognitionRunDriver", () => {
     dir = mkdtempSync(join(tmpdir(), "omnesis-run-driver-"));
     transcripts = new FsCognitionTranscriptStore(join(dir, "t"));
   });
-  afterEach(() => {
+  afterEach(async () => {
+    await transcripts.close();
     rmSync(dir, { recursive: true, force: true });
   });
 

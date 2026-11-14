@@ -181,22 +181,24 @@ export function fsyncFileSync(path: string): void {
   }
 }
 
-/** Flush a directory entry, so a rename inside it survives a power loss. Best effort. */
-export function fsyncDirSync(dir: string): void {
+/** Flush directory entries; strict callers retain recovery intent when a supported sync fails. */
+export function fsyncDirSync(dir: string, opts: { strict?: boolean } = {}): void {
   // Directory fsync is unsupported on Windows. Skip silently — the
   // file is already durable, only the rename atomicity is at risk.
   if (process.platform === "win32") return;
   let fd: number;
   try {
     fd = openSync(dir, "r");
-  } catch {
+  } catch (error) {
+    if (opts.strict) throw error;
     return;
   }
   try {
     fsyncSync(fd);
-  } catch {
+  } catch (error) {
     // Some filesystem types (FAT-on-USB, certain FUSE backends) reject
     // fsync on directory fds. The write itself is already durable.
+    if (opts.strict) throw error;
   } finally {
     closeSync(fd);
   }

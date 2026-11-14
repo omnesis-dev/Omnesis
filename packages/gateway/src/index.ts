@@ -711,6 +711,11 @@ const getRelaySettings = (): { enabled: boolean; url: string; visible: boolean }
 };
 
 const wsServerRef: { current?: DeviceWsServer } = {};
+const ownedTranscriptStores = new Set<{ close(): Promise<void> }>();
+function ownTranscriptStore(store: FsCognitionTranscriptStore): FsCognitionTranscriptStore {
+  ownedTranscriptStores.add(store);
+  return store;
+}
 let watchV2EngineHandle: import("./watch/engine-task.js").WatchV2Engine | undefined;
 const pushBroadcaster = new PushBroadcaster({
   queue: writeGate,
@@ -1095,6 +1100,7 @@ const getSourceDocCounts = (): readonly SourceDocCount[] => {
 
 const searchPipeline = new SearchPipeline({
   indexDb: searchIndexDb,
+  refreshIndexSnapshot: () => searchSnapshot.refresh(),
   searchConfig,
   embeddingModelId: embeddingModelIdForPipeline,
   queryEnricher: searchQueryEnricher,
@@ -2350,7 +2356,9 @@ if (watchV2 && watchStores?.ok) {
   const compileReasoningTokens = watchTunables?.compileReasoningTokens;
   const watchCompileRecorder = new WatchCompileRecorder({
     writeGate,
-    transcripts: new FsCognitionTranscriptStore(cognitionTranscriptsDir(configDir)),
+    transcripts: ownTranscriptStore(
+      new FsCognitionTranscriptStore(cognitionTranscriptsDir(configDir)),
+    ),
     log: log.child("watch-v2:compile-runs"),
   });
   const authoring: AuthorWatchDeps = {
@@ -3145,6 +3153,9 @@ await bootBriefs({
   writeGate,
   log,
   runQueue: {
+    onTranscriptStore: (store) => {
+      ownedTranscriptStores.add(store);
+    },
     db,
     scheduler,
     backgroundJobs,
@@ -3633,7 +3644,9 @@ void pushWakeRetryHandle;
 // Disposable operational history is pruned by one bounded background unit per
 // tick. The task exists even when disabled (the default), so a live config edit
 // can enable or shorten retention without restarting the gateway.
-const retentionTranscripts = new FsCognitionTranscriptStore(cognitionTranscriptsDir(configDir));
+const retentionTranscripts = ownTranscriptStore(
+  new FsCognitionTranscriptStore(cognitionTranscriptsDir(configDir)),
+);
 // A migration that retires a class of runs can delete their rows but not their
 // transcript files — it has no filesystem. It leaves the ids behind; this is
 // where they are collected, now that the directory is in scope. Not awaited:
@@ -3889,6 +3902,13 @@ const doShutdown = async (): Promise<void> => {
   const httpDrain = httpShutdown.close(server, 5_000);
   const [httpDrained] = await Promise.all([httpDrain, realtimeService.dispose()]);
   if (!httpDrained) log.warn("HTTP shutdown drain timed out; remaining connections closed");
+  try {
+    await app.close();
+  } catch (error) {
+    log.error(
+      `Route resource cleanup failed: ${error instanceof Error ? (error.stack ?? error.message) : String(error)}`,
+    );
+  }
   // A warm still scanning competes with the sidecar persist below for I/O and
   // the shutdown budget; its thread is throwaway, so stop it first — after the
   // lexical index service, because a settled warm starts the service's build.
@@ -4111,6 +4131,15 @@ const doShutdown = async (): Promise<void> => {
       `scheduler.dispose threw: ${err instanceof Error ? (err.stack ?? err.message) : String(err)}`,
     );
   }
+  const transcriptClosures = await Promise.allSettled(
+    [...ownedTranscriptStores].map((store) => store.close()),
+  );
+  ownedTranscriptStores.clear();
+  for (const result of transcriptClosures)
+    if (result.status === "rejected")
+      log.error(
+        `Transcript cleanup failed: ${result.reason instanceof Error ? result.reason.message : String(result.reason)}`,
+      );
   processVitals.dispose();
   await stallMonitor.dispose();
   // DB handles last — by this point no scheduled writer task is in

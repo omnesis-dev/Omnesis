@@ -110,7 +110,7 @@ jobs:
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ runner.temp }}/omnesis-test-embedder
-          key: windows-test-embedder-${{ hashFiles('scripts/ci/with-test-embedder.mjs') }}
+          key: windows-test-embedder-${{ hashFiles('scripts/ci/with-test-embedder.mjs', 'scripts/ci/reference-embedder.json') }}
 
       - name: Focused Windows runtime tests
         if: ${{ matrix.lane == 'focused' }}

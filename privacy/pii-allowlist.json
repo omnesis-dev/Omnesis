@@ -4420,7 +4420,7 @@
         "packages/collector/src/e2e/device-roster.e2e.test.ts",
         "packages/collector/src/e2e/embed-readhandle-refresh.e2e.test.ts",
         "packages/collector/src/e2e/embed-swap.e2e.test.ts",
-        "packages/collector/src/e2e/embedder-swap.e2e.test.ts",
+        "packages/collector/src/e2e/embedder-swap-fixtures.ts",
         "packages/collector/src/e2e/fake-apns.test.ts",
         "packages/collector/src/e2e/fake-embedder.test.ts",
         "packages/collector/src/e2e/fake-loop-model.test.ts",
@@ -6730,7 +6730,7 @@
     {
       "value": "Coastal Trip Plan",
       "paths": [
-        "packages/collector/src/e2e/embedder-swap.e2e.test.ts",
+        "packages/collector/src/e2e/embedder-swap-fixtures.ts",
         "packages/collector/src/e2e/search-quality.e2e.test.ts"
       ],
       "reason": "reviewed existing fixture"
@@ -7586,7 +7586,7 @@
     {
       "value": "Forecast Companion Note",
       "paths": [
-        "packages/collector/src/e2e/embedder-swap.e2e.test.ts",
+        "packages/collector/src/e2e/embedder-swap-fixtures.ts",
         "packages/collector/src/e2e/search-quality.e2e.test.ts"
       ],
       "reason": "reviewed existing fixture"
@@ -10730,7 +10730,7 @@
     {
       "value": "Six String Setup",
       "paths": [
-        "packages/collector/src/e2e/embedder-swap.e2e.test.ts",
+        "packages/collector/src/e2e/embedder-swap-fixtures.ts",
         "packages/collector/src/e2e/search-quality.e2e.test.ts"
       ],
       "reason": "reviewed existing fixture"
@@ -10817,7 +10817,7 @@
     {
       "value": "Standup Recap",
       "paths": [
-        "packages/collector/src/e2e/embedder-swap.e2e.test.ts",
+        "packages/collector/src/e2e/embedder-swap-fixtures.ts",
         "packages/collector/src/e2e/search-quality.e2e.test.ts"
       ],
       "reason": "reviewed existing fixture"
@@ -11817,7 +11817,7 @@
     {
       "value": "Weeknight Pasta Idea",
       "paths": [
-        "packages/collector/src/e2e/embedder-swap.e2e.test.ts",
+        "packages/collector/src/e2e/embedder-swap-fixtures.ts",
         "packages/collector/src/e2e/search-quality.e2e.test.ts"
       ],
       "reason": "reviewed existing fixture"
@@ -11841,7 +11841,7 @@
     {
       "value": "Whiskers Nutrition Guide",
       "paths": [
-        "packages/collector/src/e2e/embedder-swap.e2e.test.ts",
+        "packages/collector/src/e2e/embedder-swap-fixtures.ts",
         "packages/collector/src/e2e/search-quality.e2e.test.ts"
       ],
       "reason": "reviewed existing fixture"
