@@ -3,17 +3,12 @@
 
 import Foundation
 
-/// Whether a filter's counts must be asked for again: none have arrived for this account, the gateway is
-/// still counting the kinds the filter names, or the last attempt failed in a way that another may not.
-func scopeCountsNeedRefresh(policy: ScopePolicy, preview: ScopePreview?, error: Error?) -> Bool {
-    if let error { return scopePreviewCanRetry(error) }
-    guard let preview, preview.sourceId == policy.sourceId else { return true }
-    return !policy.readyToSave(preview.readiness)
-}
-
-/// How long to wait before asking for counts again: two seconds at first, longer each time, fifteen at most.
-func scopeCountRefreshDelay(attempt: Int) -> Duration {
-    .seconds(min(15, 2 * max(1, attempt)))
+/// How long to wait before asking the gateway again for something it is still working out: the wait it asks for,
+/// kept between half a second and fifteen seconds, or, when it names none, two seconds at first and longer each
+/// time, fifteen at most.
+func scopeRetryDelay(retryAfterMs: Int?, attempt: Int) -> Duration {
+    if let retryAfterMs { return .milliseconds(min(15000, max(500, retryAfterMs))) }
+    return .seconds(min(15, 2 * max(1, attempt)))
 }
 
 /// The row that offers typing what the list does not offer, naming only what the source accepts:
@@ -31,24 +26,21 @@ func scopeIdentifierTypeName(_ type: String) -> String {
     type == "phone" ? "Phone number" : type == "domain" ? "Domain" : "Email address"
 }
 
-/// What is said under a typed address that names no address of its type.
-func scopeTypedIdentifierProblem(_ type: String) -> String {
-    switch type {
-    case "phone": "Enter a valid phone number. Include the international country code."
-    case "domain": "Enter a valid domain."
-    default: "Enter a valid email address."
+/// The words beside the spinner while the gateway is still counting.
+let scopeCountingText = "Counting…"
+
+/// A filter's counts, asked for again while the gateway works them out; nil when it is still counting after
+/// several tries or the task is cancelled.
+func scopeSettledPreview(_ policy: ScopePolicy, client: AccessClient, attempts: Int = 8) async throws -> ScopePreview? {
+    for attempt in 1 ... attempts {
+        switch try await client.scopePreview(policy) {
+        case .ready(let preview): return preview
+        case .pending(let retryAfterMs):
+            try await Task.sleep(for: scopeRetryDelay(retryAfterMs: retryAfterMs, attempt: attempt))
+        }
     }
+    return nil
 }
 
-/// "4 records stay hidden until their details finish syncing.", or nil when every record could be compared with the filter.
-/// A record stays hidden while the gateway lacks the details a filter on its source matches it on.
-func scopeUncheckedRecordsLine(_ count: Int) -> String? {
-    guard count > 0 else { return nil }
-    return count == 1
-        ? "1 record stays hidden until its details finish syncing."
-        : "\(count) records stay hidden until their details finish syncing."
-}
-
-/// Why records wait hidden, under the line that counts them.
-let scopeUncheckedRecordsExplanation =
-    "Omnesis doesn’t have the details it needs to check them yet. Nothing is shared by mistake while they sync."
+/// Said under a filter that names more entries than the gateway holds.
+let scopeFilterLimitMessage = "A filter can include at most \(scopeFilterMaxEntries) items."

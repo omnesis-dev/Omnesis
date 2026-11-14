@@ -13,20 +13,10 @@ final class AccessScopePickerPagesTests: XCTestCase {
             let range = cursor == nil ? 0 ..< 50 : 50 ..< 65
             let value = ScopeOptions(
                 sourceId: "google-drive:files@example.org",
-                sourceType: "google-drive",
-                scopes: .init(
-                    revision: 3,
-                    items: [.init(
-                        kind: "folder",
-                        noun: .init(one: "folder", many: "folders"),
-                        picker: "tree",
-                        link: "hierarchy"
-                    )]
-                ),
-                readiness: [.init(kind: "folder", ready: true)],
+                field: "extra.folderIds",
                 items: range.map { index in
                     .init(
-                        ref: .init(kind: "folder", id: "folder-\(index)"),
+                        ref: .tree(field: "extra.folderIds", id: "folder-\(index)"),
                         label: "Example folder \(index)",
                         count: index + 1
                     )
@@ -47,7 +37,7 @@ final class AccessScopePickerPagesTests: XCTestCase {
             token: "fictional-owner",
             session: session
         )
-        let request = ScopePickerRequest(sourceId: "google-drive:files@example.org", kind: "folder", query: "", parentId: nil)
+        let request = ScopePickerRequest(sourceId: "google-drive:files@example.org", field: "extra.folderIds", query: "", parentId: nil)
         let first = try await loadScopePickerPages(client: client, request: request, previous: nil, cursor: nil, restoreCount: 0)
         XCTAssertEqual(first.items.count, 50)
         XCTAssertEqual(first.nextCursor, "second")
@@ -74,9 +64,10 @@ final class AccessScopePickerPagesTests: XCTestCase {
     }
 
     func testAnotherAccountPageIsRejectedWithoutChangingLoadedNavigationSnapshot() throws {
-        let previous = ScopeOptions(sourceId: "first", sourceType: "example", scopes: .init(items: []), readiness: [], items: [])
-        let wrong = ScopeOptions(sourceId: "another", sourceType: "example", scopes: .init(items: []), readiness: [], items: [])
+        let previous = ScopeOptions(sourceId: "first", field: "extra.folderIds", items: [])
+        let wrong = ScopeOptions(sourceId: "another", field: "extra.folderIds", items: [])
         XCTAssertThrowsError(try appendScopeOptions(wrong, to: previous))
+        XCTAssertThrowsError(try appendScopeOptions(ScopeOptions(sourceId: "first", field: "extra.labelIds", items: []), to: previous))
         XCTAssertEqual(previous.sourceId, "first")
     }
 }

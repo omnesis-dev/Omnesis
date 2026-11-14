@@ -10,10 +10,10 @@ final class AccessLevelChangeReviewTests: XCTestCase {
     private let mail = AccessSourceInstance(id: "scope-mail:reader@example.org", name: "Mail · reader@example.org")
     private let files = AccessSourceInstance(id: "scope-files:reader@example.org", name: "Files · reader@example.org")
     private let chat = AccessSourceInstance(id: "scope-chat:+15550100123", name: "Chat · +1 (555) 010-0123")
-    private let projects = ScopeRef(kind: "folder", id: "projects")
-    private let workshop = ScopeRef(kind: "conversation", id: "conversation-workshop")
-    private let maya = ScopeRef(kind: "participant", label: "Maya Reeves", identifiers: [.init(type: "phone", value: "+15550100141")])
-    private let jamie = ScopeRef(kind: "participant", label: "Jamie Lopez", identifiers: [.init(type: "phone", value: "+15550100142")])
+    private let projects = ScopeRef.tree(field: "extra.folderIds", id: "projects")
+    private let workshop = ScopeRef.membership(field: "extra.chatJid", id: "conversation-workshop")
+    private let maya = ScopeRef.person(label: "Maya Reeves", identifiers: [.init(type: "phone", value: "+15550100141")])
+    private let jamie = ScopeRef.person(label: "Jamie Lopez", identifiers: [.init(type: "phone", value: "+15550100142")])
 
     private var overview: AccessOverview {
         var overview = AccessOverview(principals: [], sources: [mail, files, chat], policyFamilies: [family], levels: [])

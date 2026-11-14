@@ -69,6 +69,11 @@
       "reason": "reviewed invented fixture"
     },
     {
+      "value": "120363000000000001@g.us",
+      "paths": ["ios/Sources/Omnesis/UI/PreviewMocksDocumentAccess.swift"],
+      "reason": "invented WhatsApp group id in the iOS document access preview"
+    },
+    {
       "value": "120363000000000002@g.us",
       "paths": ["packages/providers/whatsapp/src/normalizer.test.ts"],
       "reason": "reviewed invented fixture"

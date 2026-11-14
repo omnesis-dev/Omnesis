@@ -20,7 +20,7 @@ struct AccessLevelEditorView: View {
     @State var recoveryFailure: Error?
     @State var missingLevel = false
     @State var labelCredential: String?
-    @State var scopeLabels: [String: [ScopePreview.Item]] = [:]
+    @State var scopeLabels: [String: [ScopeItemHint]] = [:]
     @State var scopeTotals: [ScopePolicy: AccessFilterTotals] = [:]
     @State var error: Error?
     @State var nameTaken = false
@@ -39,7 +39,7 @@ struct AccessLevelEditorView: View {
         previewConflict: Bool = false,
         previewStep: AccessFlowStep? = nil,
         previewChange: (inout AccessLevelDraft) -> Void = { _ in },
-        previewLabels: [String: [ScopePreview.Item]] = [:],
+        previewLabels: [String: [ScopeItemHint]] = [:],
         previewTotals: [ScopePolicy: AccessFilterTotals] = [:],
         saved: @escaping () -> Void = {}
     ) {
@@ -183,14 +183,14 @@ struct AccessLevelEditorView: View {
                 let unreadable = recoveryFailure as? GatewayClient.Error == .invalidResponse
                 AccessBanner(
                     message: unreadable
-                        ? "The gateway returned an unreadable response. Your draft is retained."
-                        : "The latest access level could not be loaded. Your draft is retained.",
+                        ? "The gateway returned an unreadable response. Your changes are kept."
+                        : "The latest access level could not be loaded. Your changes are kept.",
                     action: "Try loading latest again"
                 ) { confirmReload = true }
             } else {
                 AccessBanner(
-                    message: "This access level changed elsewhere. Your draft is retained. Reload the latest level before saving.",
-                    action: "Reload latest and discard draft"
+                    message: "This access level changed elsewhere. Your changes are kept. Load the latest version before saving.",
+                    action: "Load the latest version and discard my changes"
                 ) { confirmReload = true }
             }
         } else if levelInUse {
@@ -245,7 +245,7 @@ struct AccessLevelEditorView: View {
         navigation.open(isEditing && destination == .directChoice ? .directData : destination, isEditing: isEditing, draft: draft)
     }
 
-    func labelHints(_ capability: String, _ sourceId: String) -> [ScopePreview.Item] {
+    func labelHints(_ capability: String, _ sourceId: String) -> [ScopeItemHint] {
         scopeLabels[capability + ":" + sourceId] ?? []
     }
 
@@ -261,7 +261,8 @@ struct AccessLevelEditorView: View {
         )
     }
 
-    /// Names and counts for every saved and drafted filter, which the lists and the review print.
+    /// Names and counts for every saved and drafted filter, which the lists and the review print. Each account's
+    /// editor gives the source's words for its items; counts the gateway is still working out are asked for again.
     func resolveLabels() async {
         let context = labelContextKey
         if let labelCredential, labelCredential != context.credential {
@@ -270,17 +271,21 @@ struct AccessLevelEditorView: View {
         }
         labelCredential = context.credential
         guard let client = try? (openedClient ?? store.access)?.authorized(for: store.access) else { return }
+        var fields: [String: [FilterEditorField]] = [:]
         for policy in context.policies.sorted(by: { ($0.audience.capability + $0.sourceId) < ($1.audience.capability + $1.sourceId) }) {
             guard !Task.isCancelled else { return }
             do {
-                let preview = try await client.scopePreview(policy)
-                guard !Task.isCancelled, client.isCurrent(store.access),
-                      preview.sourceId == policy.sourceId else { return }
-                let key = policy.audience.capability + ":" + policy.sourceId
-                scopeLabels[key] = mergingScopeLabelHints(scopeLabels[key] ?? [], preview.items)
-                if policy.readyToSave(preview.readiness) {
-                    scopeTotals[canonicalAccessPolicy(policy)] = .init(shared: preview.visible, hidden: preview.hidden)
+                if fields[policy.sourceId] == nil {
+                    fields[policy.sourceId] = try await client.filterEditor(sourceId: policy.sourceId).fields
                 }
+                guard let preview = try await scopeSettledPreview(policy, client: client) else { continue }
+                guard !Task.isCancelled, client.isCurrent(store.access), preview.sourceId == policy.sourceId else { return }
+                let key = policy.audience.capability + ":" + policy.sourceId
+                scopeLabels[key] = mergingScopeLabelHints(
+                    scopeLabels[key] ?? [],
+                    scopeItemHints(preview, fields: fields[policy.sourceId] ?? [])
+                )
+                scopeTotals[canonicalAccessPolicy(policy)] = .init(shared: preview.visible, hidden: preview.hidden)
             } catch { /* Saved labels remain readable when optional lookup fails. */ }
         }
     }

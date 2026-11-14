@@ -10,6 +10,8 @@ struct AccessDecisionLine: Identifiable, Equatable {
     var step: AccessFlowStep = .overview
     /// The capabilities to show as pills under the value; a line with no value shows only the pills.
     var holdings: AccessCapabilityHoldings?
+    /// A line that only reports, with no Change: the decisions of an existing level an approval connects to.
+    var fixed = false
 
     var id: String {
         title
@@ -28,6 +30,9 @@ enum AccessDecisionTitle {
 
 /// What a decision reads as when the level does not hold the capability it belongs to.
 let accessNotGrantedText = "Not granted"
+
+/// What stops the release decision: no privacy policy chosen, and no explicit choice to release without one.
+let accessReleaseProblem = "Choose a privacy policy for Answer, or explicitly choose unreviewed release."
 
 /// What a source list says when there is no account to list.
 let accessNoConnectedAccountsMessage = "No connected accounts are available. Connect a source before granting data access."
@@ -69,8 +74,8 @@ struct AccessAccountStatus: Equatable {
 /// this editor cannot express.
 func accessFilterModeStatus(_ policy: ScopePolicy) -> AccessAccountStatus {
     switch AccessAccountStatus.kind(of: policy) {
-    case .only: AccessAccountStatus(kind: .only, text: "Share matching content")
-    case .except: AccessAccountStatus(kind: .except, text: "Hide matching content")
+    case .only: AccessAccountStatus(kind: .only, text: accessShareMatchingText)
+    case .except: AccessAccountStatus(kind: .except, text: accessHideMatchingText)
     case .all, .notShared: AccessAccountStatus(kind: .all, text: AccessAccountStatus.savedFilter)
     }
 }
@@ -159,7 +164,7 @@ struct AccessDraftDecisions {
         case .permissions: draft.rules.isEmpty ? accessNoCapabilityMessage : nil
         case .answerData: draft.sourceProblem("answer", overview: overview, original: original)
         case .directData: draft.sourceProblem("direct", overview: overview, original: original)
-        case .release: draft.releaseIsValid(overview: overview) ? nil : "Choose an available policy before saving."
+        case .release: draft.releaseIsValid(overview: overview) ? nil : accessReleaseProblem
         case .overview, .name, .directChoice, .future, .review: nil
         }
     }
@@ -220,7 +225,7 @@ extension AccessDraftDecisions {
         accessFilterEntryVisible(
             authoringEnabled: overview.sourceFilters?.enabled,
             sourceAllowed: isAllowed(source.id, capability: capability),
-            hasDeclaration: source.scopes != nil,
+            hasDeclaration: source.filterable == true,
             hasSavedPolicy: policy(source.id, capability: capability) != nil
         )
     }
@@ -285,12 +290,16 @@ extension AccessDraftDecisions {
             + (filtered > 0 ? " · \(filtered) filtered" : selected.isEmpty ? "" : " · all content")
     }
 
+    /// "Answer: Blocked" and "Direct: Blocked", one line per capability held. Direct that follows Answer gets
+    /// new sources when Answer does.
     var newSourcesSummary: String {
-        let capabilities = newSourceCapabilities
+        let capabilities = ["answer", "direct"].filter(holds)
         guard !capabilities.isEmpty else { return accessNotGrantedText }
-        return capabilities
-            .map { newSourcesHeading($0) + ": " + (allowsNewSources($0) ? "Automatic" : "Blocked") }
-            .joined(separator: "\n")
+        return capabilities.map { capability in
+            let decider = capability == "direct" && directFollowsAnswer ? "answer" : capability
+            return accessCapabilityName(capability) + ": " + (allowsNewSources(decider) ? "Automatic" : "Blocked")
+        }
+        .joined(separator: "\n")
     }
 
     var releaseSummary: String {
@@ -345,4 +354,17 @@ func accessDisconnectedSource(_ id: String, overview: AccessOverview) -> AccessS
     var source = AccessSourceInstance(id: id, name: sibling ?? fallback.prefix(1).uppercased() + fallback.dropFirst(), available: false)
     source.sourceType = type
     return source
+}
+
+/// An existing level's decisions as an approval's review lists them: its data, new sources and release, each
+/// without Change. Its permissions are the pills on the level's own row.
+func accessLevelSummaryLines(_ level: AccessLevelSummary, overview: AccessOverview) -> [AccessDecisionLine] {
+    let draft = AccessLevelDraft(level: level, overview: overview)
+    return AccessDraftDecisions(draft: draft, overview: overview, original: draft).decisionLines
+        .filter { $0.title != AccessDecisionTitle.permissions }
+        .map { line in
+            var fixed = line
+            fixed.fixed = true
+            return fixed
+        }
 }

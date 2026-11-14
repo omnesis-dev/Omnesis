@@ -5,116 +5,184 @@
 import SwiftUI
 
 /// Example data for the two kinds of tree a filter can browse beyond plain folders: a coding agent's
-/// sessions by project folder, and repositories under their owners. Every name is invented.
+/// sessions by project folder on two devices, and repositories under their owners. Every name is invented.
 @available(iOS 17.0, *)
 extension PreviewMocks {
-    /// Each contract mirrors one source-owned declaration.
-    static let scopeProjectFolderContract = SourceScopes(revision: 1, items: [
-        .init(kind: "folder", noun: .init(one: "project folder", many: "project folders"), picker: "tree", link: "hierarchy"),
-    ])
-    static let scopeRepositoryContract = SourceScopes(revision: 1, items: [
-        .init(
-            kind: "folder",
-            noun: .init(one: "repository or owner", many: "repositories and owners"),
-            levels: [.init(one: "owner", many: "owners"), .init(one: "repository", many: "repositories")],
-            picker: "tree",
-            link: "hierarchy"
-        ),
-    ])
+    static let accessProjectFolderField = "extra.projectFolder"
+    static let accessRepositoryField = "extra.repositoryIds"
 
-    private static func treeAccount(_ id: String, _ name: String, type: String, scopes: SourceScopes) -> AccessSourceInstance {
+    private static func treeAccount(_ id: String, _ name: String, type: String) -> AccessSourceInstance {
         var source = AccessSourceInstance(id: id, name: name)
         source.sourceType = type
-        source.scopes = scopes
-        source.scopeReadiness = [.init(kind: "folder", ready: true)]
+        source.filterable = true
         return source
     }
 
-    static let accessSessions = treeAccount(
-        "claude-code:studio-laptop", "Claude Code Sessions · studio-laptop", type: "claude-code", scopes: scopeProjectFolderContract
-    )
-    static let accessRepositories = treeAccount(
-        "github:maya-reeves", "GitHub · maya-reeves", type: "github", scopes: scopeRepositoryContract
-    )
+    static let accessSessions = treeAccount("claude-code:sessions", "Claude Code · Studio Mac, Travel laptop", type: "claude-code")
+    static let accessRepositories = treeAccount("github:maya-reeves", "GitHub · maya-reeves", type: "github")
 
-    private static func node(
-        _ id: String, _ label: String, _ count: Int, parent: String? = nil, children: Bool = false, depth: Int? = nil
-    )
-        -> ScopeOption {
-        .init(ref: .init(kind: "folder", id: id), label: label, count: count, parentId: parent, hasChildren: children, depth: depth)
+    static let accessStudioMac = FilterDevice(id: "device-studio-mac", name: "Studio Mac")
+    static let accessTravelLaptop = FilterDevice(id: "device-travel-laptop", name: "Travel laptop")
+
+    private static let projectFolderNoun = FilterNoun(one: "project folder", many: "project folders")
+
+    /// Claude Code sessions by the folder each started in, on two devices.
+    private static func sessionsEditor(_ state: FilterFieldState) -> SourceFilterEditor {
+        SourceFilterEditor(
+            sourceId: accessSessions.id,
+            sourceType: "claude-code",
+            devices: [accessStudioMac, accessTravelLaptop],
+            showDeviceLevel: true,
+            fields: [FilterEditorField(
+                field: accessProjectFolderField,
+                capability: "tree",
+                noun: projectFolderNoun,
+                levels: [projectFolderNoun],
+                inside: projectFolderNoun,
+                insideText: "Includes the project folders inside.",
+                picker: "tree",
+                scope: "device",
+                state: state
+            )]
+        )
     }
 
-    /// The home directory every session of the account was run under, and the two folders inside it.
-    static let accessHomeFolder = node("dir:home", "~", 46, children: true)
+    static let accessSessionsEditor = sessionsEditor(.ready)
+    /// One of the devices runs an Omnesis too old to record project folders.
+    static let accessSessionsBehindEditor = sessionsEditor(.collectorBehind(
+        devices: [accessStudioMac], text: "Update Omnesis on Studio Mac to use these filters."
+    ))
+
+    static let accessRepositoriesEditor = SourceFilterEditor(sourceId: accessRepositories.id, sourceType: "github", fields: [
+        FilterEditorField(
+            field: accessRepositoryField,
+            capability: "tree",
+            noun: .init(one: "repository", many: "repositories"),
+            levels: [.init(one: "owner", many: "owners"), .init(one: "repository", many: "repositories")],
+            inside: .init(one: "repository", many: "repositories"),
+            insideText: "Includes the repositories inside.",
+            picker: "tree"
+        ),
+    ])
+
+    /// The two devices at the top of the project-folder tree.
+    static let accessSessionDevices = [(accessStudioMac, 46), (accessTravelLaptop, 12)].map { device, count in
+        ScopeOption(
+            ref: .tree(field: accessProjectFolderField, id: "", device: device.id),
+            label: device.name,
+            count: count,
+            hasChildren: true
+        )
+    }
+
+    private static func folder(
+        _ path: String, _ count: Int, parent: String? = nil, children: Bool = false, depth: Int
+    )
+        -> ScopeOption {
+        .init(
+            ref: .tree(field: accessProjectFolderField, id: path, device: accessStudioMac.id),
+            label: path,
+            shortLabel: path == "~" ? path : String(path.split(separator: "/").last ?? ""),
+            count: count,
+            parentId: parent,
+            hasChildren: children,
+            depth: depth
+        )
+    }
+
+    /// The home directory every session on the Studio Mac was run under, and the two folders inside it.
+    static let accessHomeFolder = folder("~", 46, children: true, depth: 0)
     static let accessHomeFolders = [
-        node("dir:work", "~/work", 31, parent: "dir:home", children: true),
-        node("dir:personal", "~/personal", 15, parent: "dir:home", children: true),
+        folder("~/work", 31, parent: "~", children: true, depth: 1),
+        folder("~/personal", 15, parent: "~", children: true, depth: 1),
+        folder("~/scratch", 0, parent: "~", depth: 1),
     ]
 
+    private static func repository(
+        _ id: String, _ label: String, _ count: Int, parent: String? = nil, children: Bool = false, depth: Int
+    )
+        -> ScopeOption {
+        .init(
+            ref: .tree(field: accessRepositoryField, id: id),
+            label: label,
+            shortLabel: String(label.split(separator: "/").last ?? ""),
+            count: count,
+            parentId: parent,
+            hasChildren: children,
+            depth: depth
+        )
+    }
+
     /// The organization that holds the work repositories, and those repositories.
-    static let accessOwner = node("owner:4101", "northstar-labs", 34, children: true, depth: 0)
+    static let accessOwner = repository("owner:4101", "northstar-labs", 34, children: true, depth: 0)
     static let accessOwnerRepositories = [
         ("repo:5201", "northstar-labs/atlas-api", 19), ("repo:5202", "northstar-labs/atlas-api-docs", 6),
         ("repo:5203", "northstar-labs/billing-service", 9),
     ]
-    .map { node($0.0, $0.1, $0.2, parent: "owner:4101", depth: 1) }
+    .map { repository($0.0, $0.1, $0.2, parent: "owner:4101", depth: 1) }
 
-    /// The picker of `source` opened on `parent`, listing `children`.
-    private static func treeSession(
-        _ source: AccessSourceInstance, _ parent: ScopeOption, _ children: [ScopeOption]
-    )
+    /// The picker of `source` opened along `path`, listing `children`.
+    private static func treeSession(_ source: AccessSourceInstance, field: String, _ path: [ScopeOption], _ children: [ScopeOption])
         -> ScopePickerSession {
-        var session = ScopePickerSession(kind: "folder", sourceId: source.id)
-        session.ancestors = [parent]
-        session.parentId = parent.ref.id
-        session.catalogues[session.location(for: source.id)] = ScopeOptions(
-            sourceId: source.id,
-            sourceType: source.sourceType ?? "",
-            scopes: source.scopes ?? .init(items: []),
-            readiness: source.scopeReadiness ?? [],
-            items: children
-        )
+        var session = ScopePickerSession(field: field, sourceId: source.id)
+        for item in path {
+            session.open(item)
+        }
+        session.catalogues[session.location(for: source.id)] = ScopeOptions(sourceId: source.id, field: field, items: children)
         return session
     }
 
-    /// The filter of a tree account sharing only `shared`: its choices opened on `parent`, or its review.
+    /// The filter of a tree account sharing only `shared`, or a new one that names nothing yet: its choices opened
+    /// along `path`, or its review.
     static func accessTreeFilter(
         _ source: AccessSourceInstance,
-        sharing shared: ScopeOption,
-        total: Int,
-        openOn parent: ScopeOption? = nil,
+        editor: SourceFilterEditor,
+        sharing shared: ScopeOption?,
+        total: Int = 0,
+        openAlong path: [ScopeOption]? = nil,
         listing children: [ScopeOption] = []
     )
         -> some View {
-        let item = ScopePreview.Item(
-            ref: shared.ref, label: shared.label, count: shared.count, parentId: shared.parentId, depth: shared.depth
-        )
-        let preview = ScopePreview(
-            sourceId: source.id,
-            total: total,
-            visible: shared.count,
-            hidden: total - shared.count,
-            unknown: 0,
-            items: [item],
-            samples: [],
-            readiness: source.scopeReadiness ?? []
-        )
+        let field = editor.fields[0]
+        let preview = shared.map { shared in
+            ScopePreview(
+                sourceId: source.id,
+                total: total,
+                visible: shared.count ?? 0,
+                hidden: total - (shared.count ?? 0),
+                items: [.init(ref: shared.ref, label: shared.label, count: shared.count ?? 0, depth: shared.depth)]
+            )
+        }
+        let hints = shared.map { shared in
+            [ScopeItemHint(
+                ref: shared.ref,
+                label: shared.label,
+                count: shared.count,
+                noun: scopeFieldNoun(shared.ref, fields: editor.fields, depth: shared.depth)
+            )]
+        } ?? []
         return SourceFilterEditorView(
             source: source,
             levelId: accessCanonicalLevelId,
             capability: "answer",
-            initialPolicy: ScopePolicy(
-                sourceId: source.id,
-                audience: .init(accessLevel: accessCanonicalLevelId, capability: "answer"),
-                rules: [.init(match: [shared.ref], action: "share")],
-                otherwise: "hide"
-            ),
+            initialPolicy: accessSharingPolicy(source, shared.map { [$0.ref] } ?? []),
             authoringEnabled: true,
-            preview: parent == nil ? preview : nil,
-            previewStep: parent == nil ? .review : .matches,
-            previewSession: parent.map { treeSession(source, $0, children) } ?? .init(),
-            displayHints: [item]
+            editor: editor,
+            preview: path == nil ? preview : nil,
+            previewStep: path == nil ? .review : .matches,
+            previewSession: path.map { treeSession(source, field: field.field, $0, children) } ?? .init(),
+            displayHints: hints
         ) { _ in }
+    }
+
+    /// A filter of `source` that shares only `refs`; with none, a new filter that names nothing yet.
+    static func accessSharingPolicy(_ source: AccessSourceInstance, _ refs: [ScopeRef]) -> ScopePolicy {
+        ScopePolicy(
+            sourceId: source.id,
+            audience: .init(accessLevel: accessCanonicalLevelId, capability: "answer"),
+            rules: [.init(match: refs, action: "share")],
+            otherwise: "hide"
+        )
     }
 
     /// The marks of the two tree accounts, so their renders need no network.
@@ -128,9 +196,10 @@ extension PreviewMocks {
     NavigationStack {
         PreviewMocks.accessTreeFilter(
             PreviewMocks.accessSessions,
+            editor: PreviewMocks.accessSessionsEditor,
             sharing: PreviewMocks.accessHomeFolders[0],
             total: 46,
-            openOn: PreviewMocks.accessHomeFolder,
+            openAlong: [PreviewMocks.accessSessionDevices[0], PreviewMocks.accessHomeFolder],
             listing: PreviewMocks.accessHomeFolders
         )
     }.environment(AppStore.preview(sourceIconByType: PreviewMocks.accessTreeIcons))
@@ -140,9 +209,10 @@ extension PreviewMocks {
     NavigationStack {
         PreviewMocks.accessTreeFilter(
             PreviewMocks.accessRepositories,
+            editor: PreviewMocks.accessRepositoriesEditor,
             sharing: PreviewMocks.accessOwner,
             total: 42,
-            openOn: PreviewMocks.accessOwner,
+            openAlong: [PreviewMocks.accessOwner],
             listing: PreviewMocks.accessOwnerRepositories
         )
     }.environment(AppStore.preview(sourceIconByType: PreviewMocks.accessTreeIcons))

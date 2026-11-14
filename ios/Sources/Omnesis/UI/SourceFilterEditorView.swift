@@ -4,6 +4,9 @@
 #if canImport(SwiftUI) && canImport(UIKit)
 import SwiftUI
 
+/// The filter of one account under one capability, in three steps: what to share, which items match, and a review
+/// of what the filter leaves readable. The account's fields come from the gateway's filter editor, which also says
+/// when a field cannot be used yet and why.
 @available(iOS 17.0, *)
 struct SourceFilterEditorView: View {
     @Environment(AppStore.self) var store
@@ -11,21 +14,24 @@ struct SourceFilterEditorView: View {
     let source: AccessSourceInstance
     let authoringEnabled: Bool
     let changed: (ScopePolicy?) -> Void
-    let displayHints: [ScopePreview.Item]
-    let hintsChanged: ([ScopePreview.Item]) -> Void
+    let displayHints: [ScopeItemHint]
+    let hintsChanged: ([ScopeItemHint]) -> Void
     let parentClient: AccessClient?
-    @State var labelHints: [ScopePreview.Item] = []
+    @State var labelHints: [ScopeItemHint] = []
     @State var policy: ScopePolicy
     @State var preview: ScopePreview?
     @State var previewedPolicy: ScopePolicy?
     @State var openedClient: AccessClient?
     @State var error: Error?
-    @State var loading = false
-    @State private var previewGeneration = 0
+    @State var editor: SourceFilterEditor?
+    @State var editorError: Error?
+    @State var editorGeneration = 0
+    @State var countsGeneration = 0
+    /// The owner asked for a resync and the gateway has not reported it running yet.
+    @State var resyncStarting = false
+    @State var resyncProblem: String?
     @State private var managing = false
     @State private var retainedRefs: [ScopeRef] = []
-    @State private var showingExamples = false
-    @State private var openProposal: Int?
     var refs: [ScopeRef] {
         policy.rules.first?.match ?? []
     }
@@ -34,31 +40,30 @@ struct SourceFilterEditorView: View {
         authoringEnabled && policy.editable
     }
 
-    private var previewKey: ScopePolicy {
-        policy
-    }
-
     init(
         source: AccessSourceInstance,
         levelId: String,
         capability: String,
         initialPolicy: ScopePolicy?,
         authoringEnabled: Bool,
+        editor: SourceFilterEditor? = nil,
         preview: ScopePreview? = nil,
         previewStep: ScopeFilterStep = .mode,
         previewSession: ScopePickerSession = .init(),
         client: AccessClient? = nil,
-        displayHints: [ScopePreview.Item] = [],
-        hintsChanged: @escaping ([ScopePreview.Item]) -> Void = { _ in },
+        displayHints: [ScopeItemHint] = [],
+        hintsChanged: @escaping ([ScopeItemHint]) -> Void = { _ in },
         changed: @escaping (ScopePolicy?) -> Void
     ) {
         _openedClient = State(initialValue: client)
         _step = State(initialValue: previewStep)
         _pickerSession = State(initialValue: previewSession)
+        _editor = State(initialValue: editor)
         self.parentClient = client
         self.displayHints = displayHints
         self.hintsChanged = hintsChanged
-        _labelHints = State(initialValue: mergingScopeLabelHints(displayHints, preview?.sourceId == source.id ? preview?.items ?? [] : []))
+        let previewHints = preview.map { scopeItemHints($0, fields: editor?.fields ?? []) } ?? []
+        _labelHints = State(initialValue: mergingScopeLabelHints(displayHints, preview?.sourceId == source.id ? previewHints : []))
         self.initialPolicy = initialPolicy
         self.capability = capability
         _mode = State(initialValue: ScopeFilterMode(
@@ -92,16 +97,7 @@ struct SourceFilterEditorView: View {
 
     private var commit: ScopeFilterCommit {
         if disconnected { return scopeDisconnectedFilterCommit(mode: mode, policy: policy, initial: initialPolicy) }
-        return ScopeFilterCommitState(
-            mode: mode,
-            policy: policy,
-            sourceId: source.id,
-            authoringEnabled: authoringEnabled,
-            preview: preview,
-            previewedPolicy: previewedPolicy,
-            loading: loading,
-            hasError: error != nil
-        ).decision
+        return ScopeFilterCommitState(mode: mode, policy: policy, sourceId: source.id, authoringEnabled: authoringEnabled).decision
     }
 
     private var canApply: Bool {
@@ -140,11 +136,15 @@ struct SourceFilterEditorView: View {
     private static let selectedFiltersHeading = "Selected filters"
     private static let applyTitle = "Apply filter"
 
-    /// The review is waiting for the gateway to say how many records the filter matches.
+    /// The counts of the filter as it stands, once the gateway has worked them out.
+    private var currentPreview: ScopePreview? {
+        guard let preview, previewedPolicy == policy, preview.sourceId == source.id else { return nil }
+        return preview
+    }
+
+    /// The review is waiting for the gateway to count what the filter leaves readable.
     private var counting: Bool {
-        guard previewing, error == nil else { return false }
-        guard let preview, previewedPolicy == policy, preview.sourceId == source.id else { return true }
-        return loading || !policy.readyToSave(preview.readiness)
+        previewing && error == nil && currentPreview == nil
     }
 
     var body: some View {
@@ -161,14 +161,23 @@ struct SourceFilterEditorView: View {
                 if writable, step != .mode, !disconnected { AccessBarButton("Cancel") { leave() } }
             }
         } content: {
-            if showsPicker {
+            if showsPicker, editor == nil, let editorError {
+                AccessScroll {
+                    AccessHeader(title: "Choose matching content") { AccessAccountLine(source: source) }
+                    GatewayErrorView(context: "load this account's filters", error: editorError, onRetry: { editorGeneration += 1 })
+                }
+            } else if showsPicker {
                 SourceFilterPickerView(
                     source: source,
+                    editor: editor,
                     client: openedClient,
                     selectedRefs: refs,
                     session: pickerSession,
                     sessionChanged: { adoptPickerSession($0) },
                     manageSelection: { managing = true },
+                    resync: { Task { await resyncAccount() } },
+                    resyncStarting: resyncStarting,
+                    resyncProblem: resyncProblem,
                     selected: { ref in policy.toggleMatch(ref) }
                 )
             } else {
@@ -206,20 +215,51 @@ struct SourceFilterEditorView: View {
         .onChange(of: displayHints) { _, hints in
             if (try? openedClient?.authorized(for: store.access)) != nil { labelHints = mergingScopeLabelHints(labelHints, hints) }
         }
+        .task(id: editorGeneration) { if source.available, authoringEnabled { await keepEditorCurrent() } }
         .task(id: step == .review ? nil : policy) { if step != .review { await resolveDisplayHints() } }
         .onChange(of: policy) { _, _ in previewedPolicy = nil }
         .id(step)
-        .task(id: previewing ? previewKey : nil) { if previewing { await keepCountsCurrent() } }
+        .task(id: previewing ? ScopeCountsRequest(policy: policy, generation: countsGeneration) : nil) {
+            if previewing { await keepCountsCurrent() }
+        }
     }
 
-    /// Asks for the filter's counts, and again while the gateway is still counting, so they arrive without a refresh control.
+    /// Asks for the filter's counts, and again while the gateway is still working them out, so they arrive without
+    /// a refresh control.
     private func keepCountsCurrent() async {
+        if openedClient == nil { openedClient = store.access }
         var attempt = 0
         while !Task.isCancelled {
-            guard await refresh(),
-                  scopeCountsNeedRefresh(policy: policy, preview: previewedPolicy == policy ? preview : nil, error: error) else { return }
+            guard let client = openedClient, client.isCurrent(store.access) else {
+                if openedClient != nil { error = GatewayClient.Error.unauthorized }
+                return
+            }
+            let requested = policy
             attempt += 1
-            try? await Task.sleep(for: scopeCountRefreshDelay(attempt: attempt))
+            do {
+                let response = try await client.scopePreview(requested)
+                try Task.checkCancellation()
+                guard client.isCurrent(store.access), policy == requested else { return }
+                switch response {
+                case .ready(let value):
+                    guard value.sourceId == source.id else {
+                        error = GatewayClient.Error.invalidResponse
+                        return
+                    }
+                    preview = value
+                    previewedPolicy = requested
+                    labelHints = mergingScopeLabelHints(labelHints, scopeItemHints(value, fields: editor?.fields ?? []))
+                    error = nil
+                    return
+                case .pending(let retryAfterMs):
+                    try await Task.sleep(for: scopeRetryDelay(retryAfterMs: retryAfterMs, attempt: attempt))
+                }
+            } catch is CancellationError { return } catch {
+                guard !Task.isCancelled, policy == requested else { return }
+                self.error = error
+                guard scopePreviewCanRetry(error) else { return }
+                try? await Task.sleep(for: scopeRetryDelay(retryAfterMs: nil, attempt: attempt))
+            }
         }
     }
 
@@ -228,6 +268,8 @@ struct SourceFilterEditorView: View {
         pickerSession = .init()
         labelHints = []
         previewedPolicy = nil
+        editor = nil
+        editorGeneration += 1
         error = GatewayClient.Error.unauthorized
     }
 
@@ -247,11 +289,7 @@ struct SourceFilterEditorView: View {
         }
     }
 
-    @ViewBuilder private var stepFooter: some View {
-        if step == .matches, !listsSelection, refs.isEmpty {
-            Text(mode == .only ? scopeFilterEmptySelectionMessage : "Nothing selected. All content will be shared.")
-                .accessText(.rowSecondary, color: AccessUI.secondary)
-        }
+    private var stepFooter: some View {
         Button(action: advance) { Text(primaryTitle) }
             .buttonStyle(AccessPrimaryButtonStyle())
             .disabled((step == .mode && mode == .all && commit == .blocked) || (step == .matches && !managing && missingSelection)
@@ -316,7 +354,7 @@ struct SourceFilterEditorView: View {
 
     /// The saved filter of an account that is no longer connected: what it does and what it names, each removable.
     @ViewBuilder private var disconnectedContent: some View {
-        Text("This account is no longer connected. Saved filters can be removed but not added.")
+        Text("This account is no longer connected. You can remove its saved entries.")
             .accessText(.rowSecondary, color: AccessUI.secondary)
             .fixedSize(horizontal: false, vertical: true)
             .padding(AccessUI.cardPadding)
@@ -348,7 +386,7 @@ struct SourceFilterEditorView: View {
         AccessSectionHeading(Self.selectedFiltersHeading)
         // The first row brings its own padding; without it the rows would start that much further under the heading.
         VStack(spacing: 0) { selectedRows(removable: false) }.padding(.top, -AccessUI.rowPadding)
-        AccessProblemText(text: policy.withinLimits ? nil : "Choose at most 256 items.")
+        AccessProblemText(text: policy.withinLimits ? nil : scopeFilterLimitMessage)
         AccessSectionHeading("Result")
         result
     }
@@ -359,7 +397,7 @@ struct SourceFilterEditorView: View {
             error = GatewayClient.Error.unauthorized
             return
         }
-        hintsChanged(visibleLabelHints)
+        hintsChanged(namedHints)
         changed(value)
         dismiss()
     }
@@ -368,8 +406,8 @@ struct SourceFilterEditorView: View {
         let item = previewItem(index)
         return AccessFilterItemRow(
             ref: ref,
-            named: scopeLabelHint(for: ref, in: visibleLabelHints),
-            scopes: source.scopes,
+            hint: hint(for: ref),
+            noun: scopeFieldNoun(ref, fields: editor?.fields ?? []),
             count: item?.missing == true ? nil : item?.count,
             counting: counting,
             status: item?.missing == true ? "No longer available" : nil,
@@ -382,144 +420,99 @@ struct SourceFilterEditorView: View {
             }
         }
     }
-
-    /// Asks the gateway what the filter matches. False when there is no gateway to ask.
-    @discardableResult
-    private func refresh() async -> Bool {
-        if openedClient == nil { openedClient = store.access }
-        guard let client = openedClient, client.isCurrent(store.access) else {
-            if openedClient != nil { error = GatewayClient.Error.unauthorized }
-            return false
-        }
-        let requestedPolicy = policy
-        previewGeneration += 1
-        let generation = previewGeneration
-        previewedPolicy = nil
-        loading = true
-        defer { if generation == previewGeneration { loading = false } }
-        do {
-            let value = try await client.scopePreview(requestedPolicy)
-            try Task.checkCancellation()
-            guard client.isCurrent(store.access) else { return false }
-            guard policy == requestedPolicy, generation == previewGeneration else { return false }
-            guard value.sourceId == source.id else {
-                error = GatewayClient.Error.invalidResponse
-                return true
-            }
-            previewedPolicy = requestedPolicy
-            preview = value
-            labelHints = mergingScopeLabelHints(labelHints, value.items)
-            error = nil
-        } catch is CancellationError { return false } catch {
-            guard !Task.isCancelled, policy == requestedPolicy, generation == previewGeneration else { return false }
-            self.error = error
-        }
-        return true
-    }
 }
 
 @available(iOS 17.0, *)
 extension SourceFilterEditorView {
-    /// What the filter leaves shared right now: the count in progress, why it failed, or the two figures.
+    /// What the filter leaves shared: the count in progress, why it failed, or the two figures with the gateway's
+    /// sentences for records it cannot decide.
     @ViewBuilder private var result: some View {
         if counting {
             HStack(spacing: 10) {
                 AccessCountingSpinner()
-                Text("Counting matching records…").accessText(.rowSecondary, color: AccessUI.secondary)
+                Text(scopeCountingText).accessText(.rowSecondary, color: AccessUI.secondary)
             }
             .frame(minHeight: 44)
             .accessibilityElement(children: .combine)
         } else if let error {
-            Text(scopePreviewFailureMessage(error, classifiedFallbackTitle: GatewayErrorView.classify(error).title))
-                .accessText(.rowSecondary, color: AccessUI.secondary)
-        } else if let preview {
+            SourceFilterRetryLine(message: scopePreviewFailureMessage(error)) {
+                self.error = nil
+                countsGeneration += 1
+            }
+        } else if let preview = currentPreview {
             AccessStatPair(shared: preview.visible, hidden: preview.hidden)
-            if let unchecked = scopeUncheckedRecordsLine(preview.unknown) {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(unchecked).accessText(.rowSecondary)
-                    Text(scopeUncheckedRecordsExplanation).accessText(.rowSecondary, color: AccessUI.secondary)
+            let lines = preview.undecidedLines
+            if !lines.isEmpty {
+                VStack(alignment: .leading, spacing: 8) {
+                    ForEach(lines, id: \.self) { Text($0).accessText(.rowSecondary, color: AccessUI.secondary) }
                 }
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(.top, 12)
-                .accessibilityElement(children: .combine)
-            }
-            Color.clear.frame(height: 6)
-            let offers = writable ? preview.identifierProposals ?? [] : []
-            disclosureRow("See examples", open: showingExamples, last: offers.isEmpty && !showingExamples) { showingExamples.toggle() }
-            if showingExamples { examples(preview.samples, last: offers.isEmpty) }
-            ForEach(Array(offers.enumerated()), id: \.offset) { index, proposal in
-                let open = openProposal == index
-                disclosureRow("Other addresses for \(proposal.label)", open: open, last: index == offers.count - 1 && !open) {
-                    openProposal = open ? nil : index
-                }
-                if open { otherAddresses(proposal) }
             }
         }
     }
 
-    private func disclosureRow(_ title: String, open: Bool, last: Bool, toggle: @escaping () -> Void) -> some View {
-        AccessRow(last: last) {
-            Button(action: toggle) {
-                HStack {
-                    Text(title).accessText(.rowTitle)
-                    Spacer(minLength: 12)
-                    Image(systemName: open ? "chevron.up" : "chevron.right")
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundStyle(AccessUI.secondary)
-                        .accessibilityHidden(true)
-                }
-                .contentShape(.rect)
-            }
-            .buttonStyle(.plain)
-            .accessibilityValue(open ? "Expanded" : "Collapsed")
+    /// Resyncs the account in place, the remedy for a field its records predate, then asks the editor again at once
+    /// so the field shows its progress.
+    func resyncAccount() async {
+        guard !resyncStarting else { return }
+        guard let admin = store.admin else {
+            resyncProblem = GatewayErrorView.classify(GatewayClient.Error.unauthorized).title
+            return
+        }
+        resyncStarting = true
+        resyncProblem = nil
+        do {
+            try await admin.resyncSource(sourceId: source.id, mode: .inPlace)
+            editorGeneration += 1
+        } catch {
+            resyncStarting = false
+            resyncProblem = GatewayErrorView.classify(error).title
         }
     }
 
-    @ViewBuilder private func examples(_ samples: [ScopePreview.Sample], last: Bool) -> some View {
-        if samples.isEmpty { Text("No examples to show.").accessText(.rowSecondary, color: AccessUI.secondary).padding(.vertical, 12) }
-        ForEach(Array(samples.enumerated()), id: \.element.documentId) { index, sample in
-            AccessRow(last: last && index == samples.count - 1) {
-                HStack(spacing: 12) {
-                    Text(sample.title).accessText(.rowSecondary).frame(maxWidth: .infinity, alignment: .leading)
-                    AccessPill(text: sample.visible ? "Shared" : "Hidden", tone: sample.visible ? .accent : .neutral)
-                }
+    /// Loads the account's fields, and again while one is settling or its counts are being worked out.
+    func keepEditorCurrent() async {
+        var attempt = 0
+        while !Task.isCancelled {
+            if openedClient == nil { openedClient = store.access }
+            guard let client = try? openedClient?.authorized(for: store.access) else {
+                if openedClient != nil, editor == nil { editorError = GatewayClient.Error.unauthorized }
+                return
+            }
+            do {
+                let value = try await client.filterEditor(sourceId: source.id)
+                try Task.checkCancellation()
+                guard client.isCurrent(store.access), value.sourceId == source.id else { return }
+                editor = value
+                editorError = nil
+                let waiting = value.resync?.state == "needs-resync"
+                    || value.fields.contains { if case .needsResync = $0.state { true } else { false } }
+                if !waiting { resyncStarting = false }
+                guard value.settling || (resyncStarting && waiting) else { return }
+                attempt += 1
+                try await Task.sleep(for: scopeRetryDelay(retryAfterMs: value.retryAfterMs, attempt: attempt))
+            } catch is CancellationError { return } catch {
+                if editor == nil { editorError = error }
+                return
             }
         }
-    }
-
-    /// Other addresses the gateway knows for a selected person, which the filter can take in.
-    private func otherAddresses(_ proposal: ScopePreview.Proposal) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(proposal.identifiers.map(\.value).joined(separator: ", ")).accessText(.rowSecondary, color: AccessUI.secondary)
-            Button {
-                guard policy.rules[0].match.indices.contains(proposal.itemIndex),
-                      policy.rules[0].match[proposal.itemIndex].kind == "participant" else { return }
-                let old = policy.rules[0].match[proposal.itemIndex].identifiers ?? []
-                let merged = Array(Set(old + proposal.identifiers)).sorted { $0.value < $1.value }
-                policy.rules[0].match[proposal.itemIndex].identifiers = merged
-                openProposal = nil
-            } label: {
-                Text("Include these addresses").accessText(.rowTitle, color: Theme.accent).frame(minHeight: 44)
-            }.buttonStyle(.plain)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.top, 12)
     }
 }
 
 #if DEBUG
 @available(iOS 17.0, *)
 extension PreviewMocks {
-    /// The filter editor on one of the canonical accounts, opened at a step. `named: false` leaves the
-    /// saved items without the names a connected account's lists and counts would give them.
+    /// The filter editor on one of the canonical accounts, opened at a step, its saved items named as the gateway
+    /// names them.
     static func accessFilterEditor(
         _ source: AccessSourceInstance,
         policy: ScopePolicy?,
+        editor: SourceFilterEditor? = nil,
         preview: ScopePreview? = nil,
         step: ScopeFilterStep = .mode,
         session: ScopePickerSession = .init(),
-        authoringEnabled: Bool = true,
-        named: Bool = true
+        authoringEnabled: Bool = true
     )
         -> some View {
         SourceFilterEditorView(
@@ -528,10 +521,11 @@ extension PreviewMocks {
             capability: "answer",
             initialPolicy: policy,
             authoringEnabled: authoringEnabled,
+            editor: editor ?? accessEditors[source.id],
             preview: preview,
             previewStep: step,
             previewSession: session,
-            displayHints: named ? accessCanonicalLabels["answer:" + source.id] ?? [] : []
+            displayHints: accessCanonicalLabels["answer:" + source.id] ?? []
         ) { _ in }
     }
 }
@@ -548,6 +542,17 @@ extension PreviewMocks {
             policy: PreviewMocks.accessDrivePolicy,
             step: .matches,
             session: PreviewMocks.accessFolderSession
+        )
+    }.environment(AppStore.preview())
+}
+
+#Preview("Labels need a resync") {
+    NavigationStack {
+        PreviewMocks.accessFilterEditor(
+            PreviewMocks.accessGmail,
+            policy: nil,
+            step: .matches,
+            session: PreviewMocks.accessLabelSession
         )
     }.environment(AppStore.preview())
 }
@@ -571,7 +576,7 @@ extension PreviewMocks {
 
 #Preview("Account no longer connected") {
     NavigationStack {
-        PreviewMocks.accessFilterEditor(PreviewMocks.accessDisconnectedWhatsApp, policy: PreviewMocks.accessWhatsAppPolicy, named: false)
+        PreviewMocks.accessFilterEditor(PreviewMocks.accessDisconnectedWhatsApp, policy: PreviewMocks.accessWhatsAppPolicy)
     }.environment(AppStore.preview())
 }
 

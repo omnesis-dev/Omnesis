@@ -25,17 +25,15 @@ final class AccessFlowComparisonTests: XCTestCase {
     }
 
     func testRenamedParticipantRemainsOneMatchButDifferentIdentifiersRemainDistinct() {
-        let saved = ScopeRef(kind: "participant", label: "Jamie Lopez", identifiers: [.init(type: "email", value: "jamie@example.org")])
+        let saved = ScopeRef.person(label: "Jamie Lopez", identifiers: [.init(type: "email", value: "jamie@example.org")])
         var policy = ScopePolicy.empty(sourceId: "gmail:mail@example.org", levelId: "example", capability: "answer")
         policy.appendMatchIfMissing(saved)
-        policy.appendMatchIfMissing(.init(
-            kind: "participant",
+        policy.appendMatchIfMissing(.person(
             label: "Jamie renamed",
             identifiers: [.init(type: "email", value: "jamie@example.org")]
         ))
         XCTAssertEqual(policy.rules[0].match, [saved])
-        policy.appendMatchIfMissing(.init(
-            kind: "participant",
+        policy.appendMatchIfMissing(.person(
             label: "Jamie Lopez",
             identifiers: [.init(type: "email", value: "another@example.org")]
         ))
@@ -43,8 +41,7 @@ final class AccessFlowComparisonTests: XCTestCase {
         let before = policy
         policy.rules.append(.init(match: [saved], action: "hide"))
         let advanced = policy
-        policy.appendMatchIfMissing(.init(
-            kind: "participant",
+        policy.appendMatchIfMissing(.person(
             label: "Another contact",
             identifiers: [.init(type: "email", value: "third@example.org")]
         ))
@@ -55,8 +52,8 @@ final class AccessFlowComparisonTests: XCTestCase {
     func testParticipantIdentityUsesIdentifierSetsWithoutDiscardingDifferentIdentifiers() {
         let email = ScopeIdentifier(type: "email", value: "jamie@example.org")
         let domain = ScopeIdentifier(type: "domain", value: "example.org")
-        let original = ScopeRef(kind: "participant", label: "Jamie Lopez", identifiers: [email, domain])
-        let repeated = ScopeRef(kind: "participant", label: "Renamed", identifiers: [domain, email, email])
+        let original = ScopeRef.person(label: "Jamie Lopez", identifiers: [email, domain])
+        let repeated = ScopeRef.person(label: "Renamed", identifiers: [domain, email, email])
         XCTAssertTrue(scopeRefIdentityMatches(original, repeated))
         var policy = ScopePolicy.empty(sourceId: "gmail:mail@example.org", levelId: "example", capability: "answer")
         policy.appendMatchIfMissing(original)
@@ -66,7 +63,7 @@ final class AccessFlowComparisonTests: XCTestCase {
         var equivalent = before
         equivalent.rules[0].match = [repeated]
         XCTAssertEqual(canonicalAccessPolicy(before), canonicalAccessPolicy(equivalent))
-        XCTAssertFalse(scopeRefIdentityMatches(original, .init(kind: "participant", label: "Jamie Lopez", identifiers: [email])))
+        XCTAssertFalse(scopeRefIdentityMatches(original, .person(label: "Jamie Lopez", identifiers: [email])))
     }
 
     func testChangingOnlyRestrictionModeStillRequiresExplicitDiscard() {
@@ -81,11 +78,7 @@ final class AccessFlowComparisonTests: XCTestCase {
         XCTAssertFalse(scopePreviewCanRetry(GatewayClient.Error.unauthorized))
         XCTAssertFalse(scopePreviewCanRetry(GatewayClient.Error.notFound))
         XCTAssertTrue(scopePreviewCanRetry(GatewayClient.Error.invalidResponse))
-        XCTAssertEqual(
-            scopePreviewFailureMessage(GatewayClient.Error.invalidResponse, classifiedFallbackTitle: "Shared preview error"),
-            "Shared preview error. Your selections are kept."
-        )
-        XCTAssertTrue(scopePreviewFailureMessage(GatewayClient.Error.unauthorized, classifiedFallbackTitle: "Unused fallback")
-            .contains("gateway connection changed"))
+        XCTAssertEqual(scopePreviewFailureMessage(GatewayClient.Error.invalidResponse), "Counts could not be loaded.")
+        XCTAssertTrue(scopePreviewFailureMessage(GatewayClient.Error.unauthorized).contains("gateway connection changed"))
     }
 }

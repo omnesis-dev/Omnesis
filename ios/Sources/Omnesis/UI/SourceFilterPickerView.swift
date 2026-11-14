@@ -4,17 +4,26 @@
 #if canImport(SwiftUI) && canImport(UIKit)
 import SwiftUI
 
+/// The items of an account a filter can name, one tab per field the editor offers: a searchable list, or a tree
+/// to browse. A field that cannot be used yet shows why instead of its items.
 @available(iOS 17.0, *)
 struct SourceFilterPickerView: View {
     @Environment(AppStore.self) var store
     let source: AccessSourceInstance
+    /// The account's fields and their states; nil while the editor is loading them.
+    let editor: SourceFilterEditor?
     let selectedRefs: [ScopeRef]
     let selected: (ScopeRef) -> Void
     /// Opens the list of everything selected so far, when the host offers one.
     let manageSelection: (() -> Void)?
-    @State var kind = ""
+    /// Resyncs the account in place, for a field whose records predate it.
+    let resync: () -> Void
+    let resyncStarting: Bool
+    let resyncProblem: String?
+    @State var field = ""
     @State var query = ""
     @State var parentId: String?
+    @State var device: String?
     @State var ancestors: [ScopeOption] = []
     @State var options: ScopeOptions?
     @State var openedClient: AccessClient?
@@ -22,6 +31,8 @@ struct SourceFilterPickerView: View {
     @State var loading = false
     @State var identifierType = ""
     @State var typed = ""
+    @State var typedProblem: String?
+    @State var checkingIdentifier = false
     @State var positions: [ScopePickerLocation: ScopePickerPosition] = [:]
     @State var catalogues: [ScopePickerLocation: ScopeOptions] = [:]
     @State var optionsLocation: ScopePickerLocation?
@@ -37,71 +48,75 @@ struct SourceFilterPickerView: View {
     #endif
 
     var searchKey: String {
-        "\(source.id):\(kind):\(query):\(parentId ?? "")"
+        "\(source.id):\(field):\(query):\(device ?? ""):\(parentId ?? "")"
     }
 
-    var declaration: SourceScopes
-        .Item? {
-        source.scopes?.items.first { $0.kind == kind } ?? options?.scopes.items.first { $0.kind == kind }
+    var fields: [FilterEditorField] {
+        editor?.fields ?? []
     }
 
-    var ready: Bool {
-        if loading || error != nil { return false }
-        if let options, options.sourceId != source.id { return false }
-        return (options?.readiness ?? source.scopeReadiness ?? []).first { $0.kind == kind }?.ready == true
+    var declaration: FilterEditorField? {
+        editor?.field(field)
     }
 
-    /// Whether the list is shown while the gateway is still counting what each item matches.
-    var counting: Bool {
-        !loading && error == nil && !ready
+    /// The field's items can be listed and chosen.
+    var usable: Bool {
+        guard let editor, let declaration else { return false }
+        return editor.shownState(declaration).isReady
     }
 
     var identifierPlaceholder: String {
         identifierType == "phone" ? "International phone number" : identifierType == "domain" ? "example.org" : "person@example.org"
     }
 
-    var typedId: ScopeIdentifier? {
-        guard declaration?.identifiers?.contains(identifierType) == true else { return nil }
-        return scopeTypedIdentifier(typed, type: identifierType)
-    }
-
     init(
         source: AccessSourceInstance,
+        editor: SourceFilterEditor?,
         options: ScopeOptions? = nil,
         typedInput: String = "",
+        typedProblem: String? = nil,
         client: AccessClient? = nil,
         selectedRefs: [ScopeRef] = [],
         session: ScopePickerSession = .init(),
         sessionChanged: @escaping (ScopePickerSession) -> Void = { _ in },
         manageSelection: (() -> Void)? = nil,
+        resync: @escaping () -> Void = {},
+        resyncStarting: Bool = false,
+        resyncProblem: String? = nil,
         selected: @escaping (ScopeRef) -> Void
     ) {
         let session = session.retained(for: source.id)
-        let declarations = source.scopes?.items ?? options?.scopes.items ?? []
-        let defaultKind = typedInput.isEmpty ? declarations.first?.kind : declarations.first { !($0.identifiers ?? []).isEmpty }?.kind
-        let initialKind = session.kind.isEmpty ? defaultKind ?? "" : session.kind
+        let declarations = editor?.fields ?? []
+        let defaultField = typedInput.isEmpty ? declarations.first?.field
+            : declarations.first { !($0.identifiers ?? []).isEmpty }?.field
         var seed = session
-        seed.kind = initialKind
+        if seed.field.isEmpty { seed.field = defaultField ?? "" }
         let location = seed.location(for: source.id)
         let initialOptions = options ?? session.catalogues[location]
         _openedClient = State(initialValue: client)
         self.source = source
+        self.editor = editor
         self.manageSelection = manageSelection
         self.selectedRefs = selectedRefs
         self.selected = selected
         self.sessionChanged = sessionChanged
+        self.resync = resync
+        self.resyncStarting = resyncStarting
+        self.resyncProblem = resyncProblem
         _options = State(initialValue: initialOptions)
         _optionsLocation = State(initialValue: initialOptions == nil ? nil : location)
         _positions = State(initialValue: session.positions)
         _restoringLocation = State(initialValue: location)
         _catalogues = State(initialValue: session.catalogues)
-        _kind = State(initialValue: initialKind)
+        _field = State(initialValue: seed.field)
         _query = State(initialValue: session.query)
         _parentId = State(initialValue: session.parentId)
+        _device = State(initialValue: session.device)
         _ancestors = State(initialValue: session.ancestors)
-        _identifierType = State(initialValue: session.identifierType.isEmpty ? source.scopes?.items
-            .first(where: { !($0.identifiers ?? []).isEmpty })?.identifiers?.first ?? "" : session.identifierType)
+        _identifierType = State(initialValue: session.identifierType.isEmpty
+            ? declarations.first { $0.field == seed.field }?.identifiers?.first ?? "" : session.identifierType)
         _typed = State(initialValue: typedInput.isEmpty ? session.typed : typedInput)
+        _typedProblem = State(initialValue: typedProblem)
         _enteringIdentifier = State(initialValue: session.enteringIdentifier || !typedInput.isEmpty)
     }
 
@@ -110,9 +125,10 @@ struct SourceFilterPickerView: View {
 
     var session: ScopePickerSession {
         var saved = ScopePickerSession(
-            kind: kind,
+            field: field,
             query: query,
             parentId: parentId,
+            device: device,
             ancestors: ancestors,
             identifierType: identifierType,
             typed: typed,
@@ -134,12 +150,10 @@ struct SourceFilterPickerView: View {
                     AccessHeader(title: enteringIdentifier ? adding : "Choose matching content") { AccessAccountLine(source: source) }
                         .id(ScopePickerAnchor.top)
                     if enteringIdentifier { identifierEntry } else { catalogue }
-                    if loading {
-                        ProgressView().controlSize(.small).tint(AccessUI.secondary).frame(maxWidth: .infinity).padding(.vertical, 16)
-                    }
+                    if loading { SourceFilterLoadingLine().padding(.vertical, 8) }
                     if let error {
-                        GatewayErrorView(context: "load matching items", error: error, onRetry: { Task { await openLocation() } })
-                            .padding(.vertical, 12)
+                        SourceFilterRetryLine(message: GatewayErrorView.classify(error).title) { Task { await openLocation() } }
+                            .padding(.vertical, 8)
                     }
                 }
                 .scrollTargetLayout()
@@ -172,7 +186,8 @@ struct SourceFilterPickerView: View {
             .accessibilityIdentifier("scope-picker.results")
             .coordinateSpace(name: "scope-picker-scroll")
             .scrollPosition(id: scrollPosition, anchor: .top)
-            .task(id: key) {
+            .task(id: usable ? key : nil) {
+                guard usable else { return }
                 await openLocation()
                 await keepCountsCurrent()
             }
@@ -185,11 +200,15 @@ struct SourceFilterPickerView: View {
             .onChange(of: store.access?.baseURL.absoluteString) { _, _ in forgetCatalogues() }
             .onChange(of: store.access?.token) { _, _ in forgetCatalogues() }
             .onChange(of: source.id) { _, _ in options = nil }
-            .onChange(of: kind) { old, new in
+            .onChange(of: editor?.fields.map(\.field)) { _, _ in
+                if field.isEmpty || declaration == nil { field = fields.first?.field ?? "" }
+            }
+            .onChange(of: field) { old, new in
                 var updated = session
-                updated.kind = old
-                updated.changeKind(new, scopes: source.scopes ?? options?.scopes)
+                updated.field = old
+                updated.changeField(new, fields: fields)
                 parentId = updated.parentId
+                device = updated.device
                 ancestors = updated.ancestors
                 identifierType = updated.identifierType
                 options = nil
@@ -203,20 +222,29 @@ struct SourceFilterPickerView: View {
         positions = [:]
     }
 
-    var kinds: [SourceScopes.Item] {
-        source.scopes?.items ?? options?.scopes.items ?? []
+    /// The fields as tabs, then the open field's items or why they cannot be chosen yet.
+    @ViewBuilder var catalogue: some View {
+        if fields.count > 1, editor?.resyncCoversEveryField != true {
+            AccessKindTabs(tabs: fields.map { .init(id: $0.field, title: scopeFieldTabTitle($0)) }, selection: $field)
+                .padding(.bottom, 16)
+        }
+        if editor == nil {
+            SourceFilterLoadingLine()
+        } else if let declaration, let editor, !editor.shownState(declaration).isReady {
+            SourceFilterFieldStateView(
+                state: editor.shownState(declaration),
+                sourceName: accessSourceNameParts(source).source,
+                starting: resyncStarting,
+                problem: resyncProblem,
+                resync: resync
+            )
+        } else if declaration != nil {
+            items
+        }
     }
 
-    /// The kinds to match by, the search field, the selection count, and the list of items the account offers.
-    @ViewBuilder var catalogue: some View {
-        if kinds.count > 1 {
-            AccessKindTabs(
-                tabs: kinds.map { .init(id: $0.kind, title: ($0.noun?.many ?? "people").capitalized) },
-                selection: $kind
-            )
-            .padding(.bottom, 16)
-        }
-        AccessSearchField(prompt: "Search " + (declaration?.noun?.many ?? "people"), text: $query, accessibilityLabel: "Search matches")
+    @ViewBuilder private var items: some View {
+        AccessSearchField(prompt: scopeSearchPrompt(declaration), text: $query, accessibilityLabel: "Search matches")
         HStack {
             Text("\(selectedRefs.count) selected").accessText(.label)
             Spacer()
@@ -232,7 +260,7 @@ struct SourceFilterPickerView: View {
             }
         }
         .padding(.top, 8)
-        if declaration?.picker == "tree" { folderLocation }
+        if declaration?.isTree == true, query.isEmpty { folderLocation }
         let rows = pickerRows
         let offersIdentifier = !(declaration?.identifiers ?? []).isEmpty
         ForEach(Array(rows.enumerated()), id: \.element.id) { index, row in
@@ -246,7 +274,9 @@ struct SourceFilterPickerView: View {
             .disabled(loading)
         }
         if !loading, error == nil, options?.items.isEmpty == true {
-            Text("No matching options.").accessText(.rowSecondary, color: AccessUI.secondary).padding(.vertical, 12)
+            Text(scopePickerEmptyText(declaration?.noun.many ?? "items", searching: !query.isEmpty))
+                .accessText(.rowSecondary, color: AccessUI.secondary)
+                .padding(.vertical, 12)
         }
         if offersIdentifier {
             Button { enteringIdentifier = true } label: {
@@ -263,7 +293,8 @@ struct SourceFilterPickerView: View {
         }
     }
 
-    /// Where in the folder tree the list is: its ancestors lead back up, and the folder itself is plain text.
+    /// Where in the tree the list is: its ancestors lead back up, and the open item itself is plain text. Under it,
+    /// what choosing an item takes in; inside an item, its own row selects it.
     var folderLocation: some View {
         VStack(alignment: .leading, spacing: 4) {
             Text("Location").accessText(.caption, color: AccessUI.secondary).fontWeight(.regular)
@@ -284,12 +315,12 @@ struct SourceFilterPickerView: View {
             }
             .accessibilityElement(children: .contain)
             .accessibilityLabel("Current location: " + folderScopeText)
-            if let folder = ancestors.last {
-                let depth = ancestors.count - 1
-                let noun = scopeLevelNoun(declaration, depth: depth)?.one ?? declaration?.noun?.one ?? "folder"
+            if let inside = declaration?.insideText {
+                Text(inside).accessText(.rowSecondary, color: AccessUI.secondary).padding(.top, 4)
+            }
+            if let open = ancestors.last {
                 AccessRow(dividerInset: AccessUI.controlSize + AccessUI.iconGap) {
-                    checkButton("Select this " + noun, item: folder)
-                        .accessibilityHint(scopeNestingHint(declaration, depth: depth) ?? "")
+                    checkButton("Select this " + (scopeFieldNoun(open.ref, fields: fields, depth: open.depth) ?? "folder"), item: open)
                 }
             }
         }
@@ -297,14 +328,12 @@ struct SourceFilterPickerView: View {
     }
 
     func optionRow(_ item: ScopeOption, last: Bool) -> some View {
-        AccessRow(last: last, dividerInset: AccessUI.controlSize + AccessUI.iconGap) {
+        let title = scopePickerRowTitle(item, inTree: declaration?.isTree == true, searching: !query.isEmpty)
+        return AccessRow(last: last, dividerInset: AccessUI.controlSize + AccessUI.iconGap) {
             HStack(spacing: 12) {
-                checkButton(item.label, item: item).accessibilityLabel("Select \(item.label)")
-                if item.hasChildren == true {
-                    Button {
-                        ancestors.append(item)
-                        parentId = item.ref.id
-                    } label: {
+                checkButton(title, item: item).accessibilityLabel("Select \(title)")
+                if item.hasChildren == true, query.isEmpty {
+                    Button { open(item) } label: {
                         Image(systemName: "chevron.right")
                             .font(.system(size: 14, weight: .semibold))
                             .foregroundStyle(AccessUI.secondary)
@@ -312,7 +341,7 @@ struct SourceFilterPickerView: View {
                             .contentShape(.rect)
                     }
                     .buttonStyle(.plain)
-                    .accessibilityLabel("Browse inside \(item.label)")
+                    .accessibilityLabel("Browse inside \(title)")
                 }
             }
         }
@@ -325,7 +354,7 @@ struct SourceFilterPickerView: View {
                 AccessControlMark(kind: .checkbox, selected: isSelected(item.ref))
                 Text(title).accessText(.rowTitle).fontWeight(.regular).multilineTextAlignment(.leading)
                 Spacer(minLength: 0)
-                AccessMatchCount(count: ready ? item.count : nil, counting: counting)
+                AccessMatchCount(count: item.count, counting: item.count == nil)
             }
             .contentShape(.rect)
         }
@@ -337,15 +366,16 @@ struct SourceFilterPickerView: View {
         selectedRefs.contains { scopeRefIdentityMatches($0, ref) }
     }
 
-    /// A typed identifier is one deliberate addition, after which the list comes back.
-    func addIdentifier(_ ref: ScopeRef) {
-        if !isSelected(ref) { selected(ref) }
-        typed = ""
-        enteringIdentifier = false
+    func open(_ item: ScopeOption) {
+        var moved = session
+        moved.open(item)
+        ancestors = moved.ancestors
+        device = moved.device
+        parentId = moved.parentId
     }
 
     func load(cursor: String? = nil, quietly: Bool = false) async {
-        guard !kind.isEmpty else { return }
+        guard !field.isEmpty, usable else { return }
         openedClient = openedClient ?? store.access
         guard let client = try? openedClient?.authorized(for: store.access) else {
             if openedClient != nil { error = GatewayClient.Error.unauthorized }
@@ -354,14 +384,13 @@ struct SourceFilterPickerView: View {
         let requestKey = searchKey
         let requestedLocation = location
         let cachedCount = cursor == nil && optionsLocation == location ? options?.items.count ?? 0 : 0
-        let requestedKind = kind, requestedQuery = query, requestedParent = parentId
+        let request = ScopePickerRequest(sourceId: source.id, field: field, query: query, parentId: parentId, device: device)
         loadGeneration += 1
         let generation = loadGeneration
         if cursor == nil, optionsLocation != location { options = nil }
         if !quietly { loading = true }
         defer { if generation == loadGeneration { loading = false } }
         do {
-            let request = ScopePickerRequest(sourceId: source.id, kind: requestedKind, query: requestedQuery, parentId: requestedParent)
             let value = try await loadScopePickerPages(
                 client: client,
                 request: request,
@@ -392,15 +421,16 @@ extension SourceFilterPickerView {
     /// Asks for the list again while the gateway is still counting, so counts appear without a refresh control.
     func keepCountsCurrent() async {
         var attempt = 0
-        while !Task.isCancelled, counting, openedClient != nil {
+        while !Task.isCancelled, let wait = options?.retryAfterMs, openedClient != nil {
             attempt += 1
-            try? await Task.sleep(for: scopeCountRefreshDelay(attempt: attempt))
-            guard !Task.isCancelled, counting else { return }
+            try? await Task.sleep(for: scopeRetryDelay(retryAfterMs: wait, attempt: attempt))
+            guard !Task.isCancelled else { return }
             await load(quietly: true)
         }
     }
 
-    /// A typed phone number, email address or domain, for a person the list does not offer.
+    /// A typed phone number, email address or domain, for a person the list does not offer. The gateway reads it
+    /// and says what is wrong with it.
     @ViewBuilder var identifierEntry: some View {
         let types = declaration?.identifiers ?? []
         VStack(alignment: .leading, spacing: 12) {
@@ -416,20 +446,51 @@ extension SourceFilterPickerView {
                 .autocorrectionDisabled()
                 .keyboardType(identifierType == "phone" ? .phonePad : .emailAddress)
                 .modifier(AccessFieldChrome())
-            AccessProblemText(text: !typed.isEmpty && typedId == nil ? scopeTypedIdentifierProblem(identifierType) : nil, top: 0)
+                .onSubmit { Task { await addTyped() } }
+            AccessProblemText(text: typedProblem, top: 0)
             Text("Only content that matches exactly what you enter is matched.").accessText(.rowSecondary, color: AccessUI.secondary)
             HStack(spacing: 24) {
-                Button {
-                    if let typedId { addIdentifier(.init(kind: kind, label: typedId.value, identifiers: [typedId])) }
-                } label: {
-                    Text("Add").accessText(.button, color: typedId == nil ? AccessUI.muted : Theme.accent).frame(minHeight: 44)
+                Button { Task { await addTyped() } } label: {
+                    let enabled = !typed.trimmingCharacters(in: .whitespaces).isEmpty && !checkingIdentifier
+                    Text("Add").accessText(.button, color: enabled ? Theme.accent : AccessUI.muted).frame(minHeight: 44)
                 }
                 .buttonStyle(.plain)
-                .disabled(typedId == nil)
+                .disabled(typed.trimmingCharacters(in: .whitespaces).isEmpty || checkingIdentifier)
                 Button { enteringIdentifier = false } label: {
                     Text("Back to the list").accessText(.rowTitle, color: Theme.accent).frame(minHeight: 44)
                 }.buttonStyle(.plain)
             }
+        }
+        .onChange(of: typed) { _, _ in typedProblem = nil }
+        .onChange(of: identifierType) { _, _ in typedProblem = nil }
+    }
+
+    /// Has the gateway read what was typed, then adds it, or shows the gateway's sentence under the field.
+    func addTyped() async {
+        let value = typed
+        let type = identifierType
+        guard !value.trimmingCharacters(in: .whitespaces).isEmpty, !checkingIdentifier else { return }
+        openedClient = openedClient ?? store.access
+        guard let client = try? openedClient?.authorized(for: store.access) else {
+            typedProblem = GatewayErrorView.classify(GatewayClient.Error.unauthorized).title
+            return
+        }
+        checkingIdentifier = true
+        defer { checkingIdentifier = false }
+        do {
+            let check = try await client.checkIdentifier(type: type, value: value)
+            guard typed == value, identifierType == type else { return }
+            switch check {
+            case .identifier(let identifier):
+                let ref = ScopeRef.person(label: identifier.value, identifiers: [identifier])
+                if !isSelected(ref) { selected(ref) }
+                typed = ""
+                enteringIdentifier = false
+            case .problem(let sentence):
+                typedProblem = sentence
+            }
+        } catch {
+            typedProblem = GatewayErrorView.classify(error).title
         }
     }
 }
@@ -437,13 +498,20 @@ extension SourceFilterPickerView {
 #if DEBUG
 #Preview("Folders") {
     NavigationStack {
-        SourceFilterPickerView(source: PreviewMocks.accessDrive, options: PreviewMocks.accessRootFolderOptions) { _ in }
+        SourceFilterPickerView(
+            source: PreviewMocks.accessDrive, editor: PreviewMocks.accessDriveEditor, options: PreviewMocks.accessRootFolderOptions
+        ) { _ in }
     }.environment(AppStore.preview())
 }
 
-#Preview("Typed phone number") {
+#Preview("Typed phone number refused") {
     NavigationStack {
-        SourceFilterPickerView(source: PreviewMocks.accessWhatsApp, typedInput: "maya@example.org") { _ in }
+        SourceFilterPickerView(
+            source: PreviewMocks.accessWhatsApp,
+            editor: PreviewMocks.accessWhatsAppEditor,
+            typedInput: "+44 (0)7700 900123",
+            typedProblem: "Enter a valid phone number. Include the international country code."
+        ) { _ in }
     }.environment(AppStore.preview())
 }
 #endif

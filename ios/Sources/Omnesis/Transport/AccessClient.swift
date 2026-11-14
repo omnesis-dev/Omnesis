@@ -114,30 +114,66 @@ public final class AccessClient: Sendable {
         return try await decodeOrThrow(Reply.self, from: dispatch(method: method, path: path, body: body)).level
     }
 
+    /// The fields a filter on one account can use, each with its state. Returns at once: counts the gateway is
+    /// still working out come back pending with `retryAfterMs` set.
+    public func filterEditor(sourceId: String) async throws -> SourceFilterEditor {
+        let path = "/admin/access/source-filters/\(percentEncode(sourceId))"
+        return try await decodeOrThrow(SourceFilterEditor.self, from: scopeRead(method: "GET", path: path, body: nil))
+    }
+
+    /// One page of the items a field offers: a search, the top of its tree, the children of `parentId`, or one
+    /// device's tree for a field kept per device.
     public func scopeOptions(
         sourceId: String,
-        kind: String,
+        field: String,
         query: String = "",
         parentId: String? = nil,
+        device: String? = nil,
         cursor: String? = nil
     ) async throws
         -> ScopeOptions {
         var components = URLComponents()
         components.percentEncodedPath = "/admin/access/source-filters/\(percentEncode(sourceId))/options"
-        components.queryItems = [URLQueryItem(name: "kind", value: kind), URLQueryItem(name: "q", value: query)]
+        components.queryItems = [URLQueryItem(name: "field", value: field), URLQueryItem(name: "q", value: query)]
         if let parentId { components.queryItems?.append(URLQueryItem(name: "parentId", value: parentId)) }
+        if let device { components.queryItems?.append(URLQueryItem(name: "device", value: device)) }
         if let cursor { components.queryItems?.append(URLQueryItem(name: "cursor", value: cursor)) }
         return try await decodeOrThrow(ScopeOptions.self, from: scopeRead(method: "GET", path: components.string!, body: nil))
     }
 
-    public func scopePreview(_ policy: ScopePolicy) async throws -> ScopePreview {
+    public func scopePreview(_ policy: ScopePolicy) async throws -> ScopePreviewResponse {
         struct Body: Encodable { let policy: ScopePolicy }
         let path = "/admin/access/source-filters/\(percentEncode(policy.sourceId))/preview"
-        return try await decodeOrThrow(ScopePreview.self, from: scopeRead(
+        return try await decodeOrThrow(ScopePreviewResponse.self, from: scopeRead(
             method: "POST",
             path: path,
             body: encoder.encode(Body(policy: policy))
         ))
+    }
+
+    /// The gateway's reading of a typed phone number, email address or domain.
+    public func checkIdentifier(type: String, value: String) async throws -> ScopeIdentifierCheck {
+        struct Body: Encodable { let type: String
+            let value: String
+        }
+        let data = try await dispatch(
+            method: "POST",
+            path: "/admin/access/source-filters/identifiers",
+            body: encoder.encode(Body(type: type, value: value))
+        )
+        return try decodeOrThrow(ScopeIdentifierCheck.self, from: data)
+    }
+
+    /// What a filter can see on one document.
+    public func documentFilterDetails(documentId: String) async throws -> DocumentFilterDetails {
+        let data = try await dispatch(method: "GET", path: "/admin/documents/\(percentEncode(documentId))/filter-details", body: nil)
+        return try decodeOrThrow(DocumentFilterDetails.self, from: data)
+    }
+
+    /// Which access levels can read one document, and why.
+    public func documentAccess(documentId: String) async throws -> DocumentAccessAudit {
+        let data = try await dispatch(method: "GET", path: "/admin/documents/\(percentEncode(documentId))/access", body: nil)
+        return try decodeOrThrow(DocumentAccessAudit.self, from: data)
     }
 
     private func scopeRead(method: String, path: String, body: Data?) async throws -> Data {

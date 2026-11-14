@@ -325,6 +325,15 @@ struct AccessConnectionChoice: Equatable {
     /// The permissions the connection takes on as they stand: the existing
     /// level's, or those of the connection replaced. Nil for a new level,
     /// whose permissions this approval draws.
+    /// The existing level the connection will use, or nil for a new level.
+    func reviewedLevel(overview: AccessOverview) -> AccessLevelSummary? {
+        switch path {
+        case .newLevel: nil
+        case .existingLevel: selectedLevel(overview: overview)
+        case .replace: selectedConnection(overview: overview)?.level(in: overview)
+        }
+    }
+
     func existingRules(overview: AccessOverview) -> [AccessGrantRule]? {
         switch path {
         case .newLevel: nil

@@ -15,6 +15,10 @@ final class AccessSourceFilterClientTests: XCTestCase {
         }
     }
 
+    private func client(_ session: Session) throws -> AccessClient {
+        try AccessClient(baseURL: XCTUnwrap(URL(string: "https://gateway.example.org")), token: "fictional-owner", session: session)
+    }
+
     func testOldEditorCannotReadOptionsThroughChangedPairing() async throws {
         let oldSession = Session(), newSession = Session()
         let old = try AccessClient(baseURL: XCTUnwrap(URL(string: "https://old.example.org")), token: "old-owner", session: oldSession)
@@ -26,7 +30,8 @@ final class AccessSourceFilterClientTests: XCTestCase {
         let changedToken = AccessClient(baseURL: old.baseURL, token: "new-owner", session: newSession)
         for current in [changedGateway, changedToken] {
             do {
-                _ = try await old.authorized(for: current).scopeOptions(sourceId: "gmail:mail@example.org", kind: "label", query: "Design")
+                _ = try await old.authorized(for: current)
+                    .scopeOptions(sourceId: "gmail:mail@example.org", field: "extra.labelIds", query: "Design")
                 XCTFail("An old source draft must not cross a pairing boundary")
             } catch GatewayClient.Error.unauthorized {} catch { XCTFail("Unexpected error: \(error)") }
         }
@@ -35,95 +40,219 @@ final class AccessSourceFilterClientTests: XCTestCase {
         XCTAssertTrue(try old.authorized(for: old) === old)
     }
 
-    func testProviderPolicyPreviewPayloadsUseStrictWireReferencesAndSeparateDisplayNames() async throws {
-        let participant = ScopeRef(
-            kind: "participant",
-            label: "Jamie Lopez",
-            identifiers: [.init(type: "email", value: "jamie@example.org")]
-        )
+    func testPolicyPreviewPayloadsSendOnlyEachEntrysWireKeys() async throws {
+        let person = ScopeRef.person(label: "Jamie Lopez", identifiers: [.init(type: "email", value: "jamie@example.org")])
         let cases: [(String, [ScopeRef])] = [
-            ("gmail:mail@example.org", [.init(kind: "label", id: "Label_design"), participant]),
-            ("google-drive:files@example.org", [.init(kind: "folder", id: "projects")]),
-            ("whatsapp-messages:+15550100111", [.init(kind: "conversation", id: "conversation-example")]),
+            ("gmail:mail@example.org", [.tree(field: "extra.labelIds", id: "Label_design"), person]),
+            ("google-drive:files@example.org", [.tree(field: "extra.folderIds", id: "projects")]),
+            ("whatsapp-messages:+15550100111", [.membership(field: "extra.chatJid", id: "chat-workshop-planning")]),
+            ("claude-code:studio", [.tree(field: "extra.projectFolder", id: "", device: "device-studio-mac")]),
         ]
         for (sourceId, refs) in cases {
             let session = Session()
-            session.body = """
-            {"sourceId":"\(sourceId)","total":1,"visible":1,"hidden":0,"unknown":0,
-             "items":[],"samples":[],"readiness":[]}
-            """
-            let client = try AccessClient(
-                baseURL: XCTUnwrap(URL(string: "https://gateway.example.org")),
-                token: "fictional-owner",
-                session: session
-            )
+            session.body = #"{"status":"pending","retryAfterMs":1500}"#
             var policy = ScopePolicy.empty(sourceId: sourceId, levelId: "example-level", capability: "answer")
             policy.rules[0].match = refs
-            _ = try await client.scopePreview(policy)
+            let response = try await client(session).scopePreview(policy)
+            XCTAssertEqual(response, .pending(retryAfterMs: 1500))
             let body = try XCTUnwrap(session.requests.last?.httpBody)
             let root = try XCTUnwrap(JSONSerialization.jsonObject(with: body) as? [String: Any])
             let encodedPolicy = try XCTUnwrap(root["policy"] as? [String: Any])
+            XCTAssertNil(encodedPolicy["maxAge"])
             let rules = try XCTUnwrap(encodedPolicy["rules"] as? [[String: Any]])
             let matches = try XCTUnwrap(rules.first?["match"] as? [[String: Any]])
-            for ref in matches {
-                let participant = ref["kind"] as? String == "participant"
-                XCTAssertEqual(Set(ref.keys), participant ? ["kind", "label", "identifiers"] : ["kind", "id"])
+            for (ref, sent) in zip(refs, matches) {
+                let expected: Set<String> = ref.isPerson ? ["capability", "label", "identifiers"]
+                    : ref.device == nil ? ["capability", "field", "id"] : ["capability", "field", "id", "device"]
+                XCTAssertEqual(Set(sent.keys), expected)
             }
         }
-        // Deliberately invalid defensive input: the DTO must remain lossless rather than silently stripping fields.
-        let invalid = ScopeRef(kind: "folder", id: "opaque-invalid-example", label: "Invalid wire field")
-        let encodedInvalid = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(invalid)) as? [String: Any])
-        XCTAssertEqual(encodedInvalid["label"] as? String, "Invalid wire field")
     }
 
-    func testPickerEncodesAccountAndQueryAsSeparateComponents() async throws {
+    func testPickerEncodesAccountFieldQueryAndDeviceAsSeparateComponents() async throws {
         let session = Session()
         session.body = """
-        {"sourceId":"scope-chat:one/account","sourceType":"scope-chat",
-        "scopes":{"items":[]},"readiness":[],"items":[],"nextCursor":"next-page"}
+        {"sourceId":"scope-chat:one/account","field":"extra.projectFolder","nextCursor":"next-page","retryAfterMs":1500,
+         "items":[{"ref":{"capability":"tree","field":"extra.projectFolder","id":"~/work/ledger","device":"device-studio-mac"},
+                   "label":"~/work/ledger","shortLabel":"ledger","count":null,"parentId":"~/work","hasChildren":false,"depth":2}]}
         """
-        let client = try AccessClient(
-            baseURL: XCTUnwrap(URL(string: "https://gateway.example")),
-            token: "fictional-owner",
-            session: session
-        )
-        let value = try await client.scopeOptions(
+        let value = try await client(session).scopeOptions(
             sourceId: "scope-chat:one/account",
-            kind: "folder",
+            field: "extra.projectFolder",
             query: "Cedar & archive",
             parentId: "folder/one",
+            device: "device-studio-mac",
             cursor: "page+two"
         )
         XCTAssertEqual(value.nextCursor, "next-page")
+        XCTAssertEqual(value.retryAfterMs, 1500)
+        XCTAssertEqual(value.items.map(\.shortLabel), ["ledger"])
+        XCTAssertEqual(value.items.map(\.count), [nil])
+        XCTAssertEqual(value.items.first?.ref.device, "device-studio-mac")
         let request = try XCTUnwrap(session.requests.first)
         XCTAssertTrue(try XCTUnwrap(request.url?.absoluteString.contains("scope-chat%3Aone%2Faccount/options")))
         let query = try XCTUnwrap(try URLComponents(url: XCTUnwrap(request.url), resolvingAgainstBaseURL: false)?.queryItems)
+        XCTAssertEqual(query.first { $0.name == "field" }?.value, "extra.projectFolder")
         XCTAssertEqual(query.first { $0.name == "q" }?.value, "Cedar & archive")
         XCTAssertEqual(query.first { $0.name == "parentId" }?.value, "folder/one")
+        XCTAssertEqual(query.first { $0.name == "device" }?.value, "device-studio-mac")
+        XCTAssertEqual(query.first { $0.name == "cursor" }?.value, "page+two")
         XCTAssertEqual(request.value(forHTTPHeaderField: "Cache-Control"), "no-store")
         XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer fictional-owner")
     }
 
-    func testPreviewSendsCapturedIdentifiersAndKeepsUnknownCounts() async throws {
+    func testPreviewDecodesTheGatewaysSentencesForRecordsItCannotDecide() async throws {
         let session = Session()
         session.body = """
-        {"sourceId":"scope-chat:one","total":3,"visible":1,"hidden":2,"unknown":1,"items":[],"samples":[],"readiness":[]}
+        {"status":"ready","sourceId":"gmail:mail@example.org","total":1200,"visible":1061,"hidden":139,"tooOld":0,"unmatched":2,
+         "tooOldText":null,"unmatchedText":"2 records can't be matched to a person and stay hidden.",
+         "items":[{"ref":{"capability":"tree","field":"extra.labelIds","id":"Label_12"},"label":"Finance","count":131},
+                  {"ref":{"capability":"tree","field":"extra.labelIds","id":"Label_40"},"label":"Label_40","count":0,"missing":true}]}
         """
-        var policy = ScopePolicy.empty(sourceId: "scope-chat:one", levelId: "new", capability: "answer")
-        policy.rules[0].match = [.init(kind: "participant", label: "Maya", identifiers: [.init(type: "phone", value: "+15550100123")])]
-        let client = try AccessClient(
-            baseURL: XCTUnwrap(URL(string: "https://gateway.example")),
-            token: "fictional-owner",
-            session: session
-        )
-        let value = try await client.scopePreview(policy)
-        XCTAssertEqual(value.hidden, 2)
-        XCTAssertEqual(value.unknown, 1)
+        var policy = ScopePolicy.empty(sourceId: "gmail:mail@example.org", levelId: "new", capability: "answer")
+        policy.rules[0].match = [.person(label: "Maya", identifiers: [.init(type: "email", value: "maya@example.org")])]
+        let response = try await client(session).scopePreview(policy)
+        let value = try XCTUnwrap(response.ready)
+        XCTAssertEqual(value.hidden, 139)
+        XCTAssertEqual(value.undecidedLines, ["2 records can't be matched to a person and stay hidden."])
+        XCTAssertEqual(value.items.map(\.missing), [nil, true])
         let request = try XCTUnwrap(session.requests.first)
         XCTAssertEqual(request.httpMethod, "POST")
-        let body = try XCTUnwrap(try JSONSerialization.jsonObject(with: XCTUnwrap(request.httpBody)) as? [String: Any])
-        XCTAssertNotNil(body["policy"])
         XCTAssertFalse(try XCTUnwrap(try String(data: XCTUnwrap(request.httpBody), encoding: .utf8)?.contains("personId")))
+        let both = ScopePreview(
+            sourceId: "google-drive:files@example.org",
+            total: 120,
+            visible: 18,
+            hidden: 102,
+            tooOld: 6,
+            unmatched: 0,
+            tooOldText: "6 older items could not be resynced and stay hidden from agents using this filter.",
+            unmatchedText: "0 records can't be matched to a folder and stay hidden.",
+            items: []
+        )
+        XCTAssertEqual(both.undecidedLines, ["6 older items could not be resynced and stay hidden from agents using this filter."])
+    }
+
+    func testEditorDecodesEveryFieldStateAndCountsStillBeingWorkedOut() async throws {
+        let session = Session()
+        session.body = """
+        {"sourceId":"gmail:mail@example.org","sourceType":"gmail","devices":[{"id":"dev_studio","name":"Studio Mac"}],
+         "showDeviceLevel":false,"retryAfterMs":1500,
+         "resync":{"state":"needs-resync","fields":["$people","extra.labelIds"],
+                   "text":"Label and people filters need Gmail to be resynced. Your mail stays searchable meanwhile."},
+         "fields":[
+          {"field":"$people","capability":"person","noun":{"one":"person","many":"people"},"picker":"search","scope":"global",
+           "identifiers":["email","domain"],"state":{"status":"ready"},
+           "counts":{"status":"ready","tooOld":0,"unmatched":0,"tooOldText":null,"unmatchedText":null}},
+          {"field":"extra.labelIds","capability":"tree","noun":{"one":"label","many":"labels"},"picker":"tree","scope":"global",
+           "levels":[{"one":"label","many":"labels"}],"inside":{"one":"label","many":"labels"},"insideText":"Includes the labels inside.",
+           "state":{"status":"needs-resync","cost":"This reads about 95,000 messages a day.",
+                    "text":"Label filters need Gmail to be resynced."},"counts":{"status":"pending"}},
+          {"field":"a","capability":"tree","noun":{"one":"a","many":"as"},"picker":"tree","scope":"device",
+           "state":{"status":"resyncing","processed":212,"total":900,"text":"Resyncing Gmail: 212 of about 900."},
+           "counts":{"status":"pending"}},
+          {"field":"b","capability":"tree","noun":{"one":"b","many":"bs"},"picker":"tree","scope":"device",
+           "state":{"status":"collector-behind","devices":[{"id":"dev_studio","name":"Studio Mac"}],
+                    "text":"Update Omnesis on Studio Mac to use these filters."},"counts":{"status":"pending"}},
+          {"field":"c","capability":"membership","noun":{"one":"c","many":"cs"},"picker":"search","scope":"global",
+           "state":{"status":"gateway-behind","text":"Update this Omnesis gateway to use these filters."},"counts":{"status":"pending"}},
+          {"field":"d","capability":"membership","noun":{"one":"d","many":"ds"},"picker":"search","scope":"global",
+           "state":{"status":"list-pending","text":"Waiting for Gmail to send its list of labels."},"counts":{"status":"pending"}},
+          {"field":"e","capability":"membership","noun":{"one":"e","many":"es"},"picker":"search","scope":"global",
+           "state":{"status":"a-state-from-the-future"},"counts":{"status":"pending"}}
+         ]}
+        """
+        let editor = try await client(session).filterEditor(sourceId: "gmail:mail@example.org")
+        XCTAssertEqual(session.requests.first?.url?.path, "/admin/access/source-filters/gmail:mail@example.org")
+        XCTAssertEqual(editor.devices, [.init(id: "dev_studio", name: "Studio Mac")])
+        XCTAssertEqual(editor.resync?.fields, ["$people", "extra.labelIds"])
+        XCTAssertEqual(
+            editor.resync?.fieldState,
+            .needsResync(cost: nil, text: "Label and people filters need Gmail to be resynced. Your mail stays searchable meanwhile.")
+        )
+        XCTAssertEqual(editor.fields.map(\.state), [
+            .ready,
+            .needsResync(cost: "This reads about 95,000 messages a day.", text: "Label filters need Gmail to be resynced."),
+            .resyncing(processed: 212, total: 900, text: "Resyncing Gmail: 212 of about 900."),
+            .collectorBehind(
+                devices: [.init(id: "dev_studio", name: "Studio Mac")],
+                text: "Update Omnesis on Studio Mac to use these filters."
+            ),
+            .gatewayBehind(text: "Update this Omnesis gateway to use these filters."),
+            .listPending(text: "Waiting for Gmail to send its list of labels."),
+            .unsupported,
+        ])
+        XCTAssertEqual(editor.fields[0].counts, .ready(tooOld: 0, unmatched: 0, tooOldText: nil, unmatchedText: nil))
+        XCTAssertEqual(editor.fields[1].counts, .pending)
+        XCTAssertEqual(editor.fields[1].insideText, "Includes the labels inside.")
+        XCTAssertEqual(editor.fields.map(\.perDevice), [false, false, true, true, false, false, false])
+        XCTAssertEqual(editor.fields.map(\.state.isReady), [true, false, false, false, false, false, false])
+        XCTAssertEqual(editor.fields[6].state.text, "This version of Omnesis can't use this filter yet.")
+        XCTAssertTrue(editor.settling)
+        XCTAssertEqual(editor.field("extra.labelIds")?.noun.many, "labels")
+        let settled = SourceFilterEditor(sourceId: "x", sourceType: "x", fields: [editor.fields[0], editor.fields[1], editor.fields[3]])
+        XCTAssertFalse(settled.settling, "Nothing changes by itself without counts or a field on its way to ready")
+        XCTAssertTrue(SourceFilterEditor(sourceId: "x", sourceType: "x", fields: [editor.fields[2]]).settling)
+        XCTAssertTrue(SourceFilterEditor(sourceId: "x", sourceType: "x", fields: [editor.fields[5]]).settling)
+    }
+
+    func testTypedIdentifiersAreReadByTheGateway() async throws {
+        let session = Session()
+        session.body = #"{"identifier":{"type":"phone","value":"+15550100142"}}"#
+        let accepted = try await client(session).checkIdentifier(type: "phone", value: "00 1 (555) 010-0142")
+        XCTAssertEqual(accepted, .identifier(.init(type: "phone", value: "+15550100142")))
+        let request = try XCTUnwrap(session.requests.first)
+        XCTAssertEqual(request.url?.path, "/admin/access/source-filters/identifiers")
+        let body = try XCTUnwrap(JSONSerialization.jsonObject(with: XCTUnwrap(request.httpBody)) as? [String: String])
+        XCTAssertEqual(body, ["type": "phone", "value": "00 1 (555) 010-0142"])
+        session.body = #"{"error":"Enter a valid phone number. Include the international country code."}"#
+        let refused = try await client(session).checkIdentifier(type: "phone", value: "+44 (0)7700 900123")
+        XCTAssertEqual(refused, .problem("Enter a valid phone number. Include the international country code."))
+    }
+
+    func testDocumentFilterDetailsAndWhoCanReadItDecode() async throws {
+        let session = Session()
+        session.body = """
+        {"documentId":"doc_8d1e","sourceVersion":2,"fields":[
+          {"field":"extra.labelIds","noun":{"one":"label","many":"labels"},"state":"present","stateText":"",
+           "items":[{"id":"Label_12","label":"Finance","listed":true},{"id":"INBOX","label":"Inbox","listed":true}]},
+          {"field":"$people","noun":{"one":"person","many":"people"},"state":"present","stateText":"",
+           "items":[{"id":"maya.reeves@example.org","label":"Maya Reeves","listed":true}]},
+          {"field":"extra.folderIds","noun":{"one":"folder","many":"folders"},"state":"too-old",
+           "stateText":"Too old to carry its folders. Resync Google Drive to add them.","items":[]},
+          {"field":"extra.chatJid","noun":{"one":"chat","many":"chats"},"state":"present","stateText":"","items":[]}]}
+        """
+        let details = try await client(session).documentFilterDetails(documentId: "doc_8d1e")
+        XCTAssertEqual(session.requests.last?.url?.path, "/admin/documents/doc_8d1e/filter-details")
+        XCTAssertEqual(documentFilterDetailRows(details), [
+            .init(key: "Labels", value: "Finance, Inbox"),
+            .init(key: "Person", value: "Maya Reeves"),
+            .init(key: "Folders", value: "Too old to carry its folders. Resync Google Drive to add them."),
+            .init(key: "Chats", value: "None"),
+            .init(key: "Source version", value: "2"),
+        ])
+        session.body = """
+        {"documentId":"doc_8d1e","title":"Q4 budget review","sourceId":"gmail:maya.reeves@example.org",
+         "sourceName":"Gmail (maya.reeves@example.org)","sourceVersion":2,
+         "notes":{"answer":"For Answer, readable means within what Omnesis may use.","owner":"This page is for you, the owner."},
+         "levels":[{"id":"lvl_7c21","name":"Coding assistant",
+           "agents":[{"id":"grt_51aa","name":"Claude Code on Studio Mac","kind":"connection"},
+                     {"id":"dev_1","name":"Kitchen speaker","kind":"device"}],
+           "answer":{"readable":true,"code":"readable","text":"Readable"},
+           "direct":{"readable":false,"code":"hidden-by-item","text":"Hidden by: label Finance"}},
+          {"id":"lvl_90fe","name":"Travel planner","agents":[],
+           "answer":{"readable":false,"code":"account-not-shared","text":"This account is not shared"},
+           "direct":{"readable":false,"code":"permission-not-granted","text":"Direct is not granted on this level"}}]}
+        """
+        let audit = try await client(session).documentAccess(documentId: "doc_8d1e")
+        XCTAssertEqual(session.requests.last?.url?.path, "/admin/documents/doc_8d1e/access")
+        XCTAssertEqual(audit.levels.map(\.name), ["Coding assistant", "Travel planner"])
+        XCTAssertEqual(audit.levels[0].direct, .init(readable: false, code: "hidden-by-item", text: "Hidden by: label Finance"))
+        let usage = AccessLevelUsage(agents: audit.levels[0].agents)
+        XCTAssertEqual(usage.connections, ["Claude Code on Studio Mac"])
+        XCTAssertEqual(usage.integrations, ["Kitchen speaker"])
+        XCTAssertTrue(usage.inUse)
+        XCTAssertFalse(AccessLevelUsage(agents: audit.levels[1].agents).inUse)
     }
 
     func testLevelUpdateCarriesBothPreviousFilterRevisionsIncludingRemovedCapabilities() async throws {

@@ -8,34 +8,98 @@ import SwiftUI
 /// source accounts, their saved filters, and an agent asking to connect.
 @available(iOS 17.0, *)
 extension PreviewMocks {
-    /// Each contract mirrors one source-owned declaration; no provider combines these kinds.
-    static let scopeGmailContract = SourceScopes(revision: 2, items: [
-        .init(kind: "participant", identifiers: ["email", "domain"], link: "fixed"),
-        .init(kind: "label", noun: .init(one: "label", many: "labels"), picker: "search", link: "changes"),
-    ])
-    static let scopeWhatsappContract = SourceScopes(revision: 2, items: [
-        .init(kind: "conversation", noun: .init(one: "conversation", many: "conversations"), picker: "search", link: "fixed"),
-        .init(kind: "participant", identifiers: ["phone"], link: "changes"),
-    ])
-    static let scopeDriveContract = SourceScopes(revision: 3, items: [
-        .init(kind: "folder", noun: .init(one: "folder", many: "folders"), picker: "tree", link: "hierarchy"),
-    ])
+    /// The fields each canonical account offers, as each source declares them.
+    static let accessPeopleByPhone = FilterEditorField(
+        field: FilterEditorField.peopleField,
+        capability: "person",
+        noun: .init(one: "person", many: "people"),
+        picker: "search",
+        identifiers: ["phone"]
+    )
+    static let accessChatField = "extra.chatJid"
+    static let accessLabelField = "extra.labelIds"
+    static let accessFolderField = "extra.folderIds"
 
-    private static func account(_ id: String, _ name: String, type: String, scopes: SourceScopes) -> AccessSourceInstance {
+    /// A field shown as a tree whose every level is called the same: labels inside labels, folders inside folders.
+    private static func treeField(_ field: String, _ noun: FilterNoun, state: FilterFieldState = .ready) -> FilterEditorField {
+        FilterEditorField(
+            field: field,
+            capability: "tree",
+            noun: noun,
+            levels: [noun],
+            inside: noun,
+            insideText: "Includes the \(noun.many) inside.",
+            picker: "tree",
+            state: state
+        )
+    }
+
+    private static func account(_ id: String, _ name: String, type: String) -> AccessSourceInstance {
         var source = AccessSourceInstance(id: id, name: name)
         source.sourceType = type
-        source.scopes = scopes
-        source.scopeReadiness = scopes.items.map { .init(kind: $0.kind, ready: true) }
+        source.filterable = true
         return source
     }
 
-    static let accessGmail = account("gmail:reader@example.org", "Gmail · reader@example.org", type: "gmail", scopes: scopeGmailContract)
-    static let accessDrive = account(
-        "google-drive:reader@example.org", "Google Drive · reader@example.org", type: "google-drive", scopes: scopeDriveContract
+    static let accessGmail = account("gmail:reader@example.org", "Gmail · reader@example.org", type: "gmail")
+    static let accessDrive = account("google-drive:reader@example.org", "Google Drive · reader@example.org", type: "google-drive")
+    static let accessWhatsApp = account("whatsapp-messages:+15550100123", "WhatsApp · +1 (555) 010-0123", type: "whatsapp-messages")
+
+    private static let gmailCost = "This reads about 75,000 messages a day."
+
+    /// Gmail before a resync in place: both its people and its labels wait for it, and the gateway names them
+    /// together.
+    static let accessGmailEditor = SourceFilterEditor(
+        sourceId: accessGmail.id,
+        sourceType: "gmail",
+        fields: [
+            FilterEditorField(
+                field: FilterEditorField.peopleField,
+                capability: "person",
+                noun: .init(one: "person", many: "people"),
+                picker: "search",
+                identifiers: ["email", "domain"],
+                state: .needsResync(
+                    cost: gmailCost,
+                    text: "People filters need Gmail to be resynced. Your mail stays searchable meanwhile. " + gmailCost
+                )
+            ),
+            treeField(accessLabelField, .init(one: "label", many: "labels"), state: .needsResync(
+                cost: gmailCost,
+                text: "Label filters need Gmail to be resynced. Your mail stays searchable meanwhile. " + gmailCost
+            )),
+        ],
+        resync: .init(
+            state: "needs-resync",
+            fields: [FilterEditorField.peopleField, accessLabelField],
+            text: "Label and people filters need Gmail to be resynced. Your mail stays searchable meanwhile. " + gmailCost
+        )
     )
-    static let accessWhatsApp = account(
-        "whatsapp-messages:+15550100123", "WhatsApp · +1 (555) 010-0123", type: "whatsapp-messages", scopes: scopeWhatsappContract
+    static let accessDriveEditor = SourceFilterEditor(
+        sourceId: accessDrive.id, sourceType: "google-drive", fields: [treeField(accessFolderField, .init(one: "folder", many: "folders"))]
     )
+    /// Drive while it is resynced in place for its folders.
+    static let accessDriveResyncingEditor = SourceFilterEditor(
+        sourceId: accessDrive.id,
+        sourceType: "google-drive",
+        fields: [treeField(accessFolderField, .init(one: "folder", many: "folders"), state: .resyncing(
+            processed: 212, total: 900, text: "Resyncing Google Drive: 212 of about 900."
+        ))],
+        resync: .init(
+            state: "resyncing", fields: [accessFolderField], text: "Resyncing Google Drive: 212 of about 900.", processed: 212, total: 900
+        )
+    )
+    static let accessWhatsAppEditor = SourceFilterEditor(sourceId: accessWhatsApp.id, sourceType: "whatsapp-messages", fields: [
+        FilterEditorField(field: accessChatField, capability: "membership", noun: .init(one: "chat", many: "chats"), picker: "search"),
+        accessPeopleByPhone,
+    ])
+
+    static var accessEditors: [String: SourceFilterEditor] {
+        [
+            accessGmail.id: accessGmailEditor, accessDrive.id: accessDriveEditor, accessWhatsApp.id: accessWhatsAppEditor,
+            accessSessions.id: accessSessionsEditor, accessRepositories.id: accessRepositoriesEditor,
+        ]
+    }
 
     /// The WhatsApp account once the gateway no longer lists it.
     static var accessDisconnectedWhatsApp: AccessSourceInstance {
@@ -47,28 +111,43 @@ extension PreviewMocks {
     static let accessCanonicalLevelId = "level-research-assistant"
 
     static let accessConversations: [ScopeOption] = [
-        ("workshop", "Workshop planning", 24), ("hike", "Weekend hike", 12), ("books", "Book club", 7),
+        ("chat-workshop-planning", "Workshop planning", 24), ("chat-weekend-hike", "Weekend hike", 12),
+        ("chat-book-club", "Book club", 7),
     ]
-    .map { .init(ref: .init(kind: "conversation", id: "conversation-" + $0.0), label: $0.1, count: $0.2) }
+    .map { .init(ref: .membership(field: accessChatField, id: $0.0), label: $0.1, count: $0.2) }
 
     static let accessPeople: [ScopeOption] = [
         ("Maya Reeves", "141", 17), ("Jamie Lopez", "142", 9), ("David Lin", "143", 6), ("Sarah Mendez", "144", 3),
     ]
     .map { name, suffix, count in
         .init(
-            ref: .init(kind: "participant", label: name, identifiers: [.init(type: "phone", value: "+15550100" + suffix)]),
+            ref: .person(label: name, identifiers: [.init(type: "phone", value: "+15550100" + suffix)]),
             label: name,
             count: count
         )
     }
 
     static let accessRootFolders: [ScopeOption] = [
-        .init(ref: .init(kind: "folder", id: "projects"), label: "Projects", count: 18, hasChildren: true),
-        .init(ref: .init(kind: "folder", id: "archive"), label: "Archive", count: 9),
+        .init(ref: .tree(field: accessFolderField, id: "folder-projects"), label: "Projects", count: 18, hasChildren: true, depth: 0),
+        .init(ref: .tree(field: accessFolderField, id: "folder-archive"), label: "Archive", count: 9, depth: 0),
     ]
 
-    static let accessProjectFolders: [ScopeOption] = [("plans", "Plans", 11), ("budgets", "Budgets", 5), ("reference", "Reference", 2)]
-        .map { .init(ref: .init(kind: "folder", id: "projects-" + $0.0), label: $0.1, count: $0.2, parentId: "projects") }
+    static let accessProjectFolders: [ScopeOption] = [
+        ("plans", "Plans", 11),
+        ("budgets", "Budgets", 5),
+        ("reference", "Reference", 2),
+        ("drafts", "Drafts", 0),
+    ]
+    .map {
+        .init(
+            ref: .tree(field: accessFolderField, id: "folder-" + $0.0),
+            label: "Projects/" + $0.1,
+            shortLabel: $0.1,
+            count: $0.2,
+            parentId: "folder-projects",
+            depth: 1
+        )
+    }
 
     private static func policy(
         _ source: AccessSourceInstance,
@@ -98,16 +177,25 @@ extension PreviewMocks {
         total: 120,
         visible: 83,
         hidden: 37,
-        unknown: 4,
+        unmatched: 4,
+        unmatchedText: "4 records can't be matched to a chat and stay hidden.",
         items: [
             .init(ref: accessConversations[0].ref, label: "Workshop planning", count: 24),
             .init(ref: accessPeople[0].ref, label: "Maya Reeves", count: 17),
-        ],
-        samples: [
-            .init(documentId: "example-shared", title: "Weekend hike", visible: true, unknown: false),
-            .init(documentId: "example-hidden", title: "Workshop planning", visible: false, unknown: false),
-        ],
-        readiness: scopeWhatsappContract.items.map { .init(kind: $0.kind, ready: true) }
+        ]
+    )
+
+    /// Drive's Projects filter, with records too old for it and records it cannot place.
+    static let accessDrivePreview = ScopePreview(
+        sourceId: accessDrive.id,
+        total: 120,
+        visible: 18,
+        hidden: 102,
+        tooOld: 6,
+        unmatched: 2,
+        tooOldText: "6 older items could not be resynced and stay hidden from agents using this filter.",
+        unmatchedText: "2 records can't be matched to a folder and stay hidden.",
+        items: [.init(ref: accessRootFolders[0].ref, label: "Projects", count: 18)]
     )
 
     /// Answer's Drive and WhatsApp filters, as Direct holds them when it reads what Answer reads.
@@ -117,10 +205,10 @@ extension PreviewMocks {
     )
 
     /// Names and match counts for every item the fixtures select, keyed by capability and account.
-    static var accessCanonicalLabels: [String: [ScopePreview.Item]] {
-        let drive: [ScopePreview.Item] = [.init(ref: accessRootFolders[0].ref, label: "Projects", count: 18)]
-        let whatsApp: [ScopePreview.Item] = (accessConversations.prefix(1) + accessPeople.prefix(2))
-            .map { .init(ref: $0.ref, label: $0.label, count: $0.count) }
+    static var accessCanonicalLabels: [String: [ScopeItemHint]] {
+        let drive = [ScopeItemHint(ref: accessRootFolders[0].ref, label: "Projects", count: 18, noun: "folder")]
+        let whatsApp = [ScopeItemHint(ref: accessConversations[0].ref, label: "Workshop planning", count: 24, noun: "chat")]
+            + accessPeople.prefix(2).map { ScopeItemHint(ref: $0.ref, label: $0.label, count: $0.count, noun: "person") }
         return [
             "answer:" + accessDrive.id: drive, "answer:" + accessWhatsApp.id: whatsApp,
             "direct:" + accessDrive.id: drive, "direct:" + accessWhatsApp.id: whatsApp,
@@ -278,35 +366,41 @@ extension PreviewMocks {
         draft.setEnabled("direct", true, overview: overview)
     }
 
-    private static func options(_ source: AccessSourceInstance, _ items: [ScopeOption]) -> ScopeOptions {
-        ScopeOptions(
-            sourceId: source.id,
-            sourceType: source.sourceType ?? "",
-            scopes: source.scopes ?? .init(items: []),
-            readiness: (source.scopes?.items ?? []).map { .init(kind: $0.kind, ready: true) },
-            items: items
-        )
+    private static func options(_ source: AccessSourceInstance, field: String, _ items: [ScopeOption]) -> ScopeOptions {
+        ScopeOptions(sourceId: source.id, field: field, items: items)
     }
 
-    static let accessRootFolderOptions = options(accessDrive, accessRootFolders)
+    static let accessRootFolderOptions = options(accessDrive, field: accessFolderField, accessRootFolders)
 
     /// The folder picker opened one level down, inside Projects.
     static var accessFolderSession: ScopePickerSession {
-        var session = ScopePickerSession(kind: "folder", sourceId: accessDrive.id)
+        var session = ScopePickerSession(field: accessFolderField, sourceId: accessDrive.id)
         session.catalogues[session.location(for: accessDrive.id)] = accessRootFolderOptions
-        session.ancestors = [accessRootFolders[0]]
-        session.parentId = accessRootFolders[0].ref.id
-        session.catalogues[session.location(for: accessDrive.id)] = options(accessDrive, accessProjectFolders)
+        session.open(accessRootFolders[0])
+        session.catalogues[session.location(for: accessDrive.id)] = options(accessDrive, field: accessFolderField, accessProjectFolders)
         return session
     }
 
-    /// The picker listing the people of the messaging account, with its conversations one tab away.
+    /// The picker listing the people of the messaging account, with its chats one tab away.
     static var accessPeopleSession: ScopePickerSession {
-        var session = ScopePickerSession(kind: "conversation", sourceId: accessWhatsApp.id)
-        session.catalogues[session.location(for: accessWhatsApp.id)] = options(accessWhatsApp, accessConversations)
-        session.kind = "participant"
-        session.catalogues[session.location(for: accessWhatsApp.id)] = options(accessWhatsApp, accessPeople)
+        var session = ScopePickerSession(field: accessChatField, sourceId: accessWhatsApp.id)
+        session.catalogues[session.location(for: accessWhatsApp.id)] = options(accessWhatsApp, field: accessChatField, accessConversations)
+        session.field = FilterEditorField.peopleField
+        session.identifierType = "phone"
+        session.catalogues[session.location(for: accessWhatsApp.id)] = options(
+            accessWhatsApp, field: FilterEditorField.peopleField, accessPeople
+        )
         return session
+    }
+
+    /// The Gmail picker on its labels, which wait for a resync.
+    static var accessLabelSession: ScopePickerSession {
+        ScopePickerSession(field: accessLabelField, sourceId: accessGmail.id)
+    }
+
+    /// The Drive picker on its folders, while Drive resyncs.
+    static var accessDriveFolderSession: ScopePickerSession {
+        ScopePickerSession(field: accessFolderField, sourceId: accessDrive.id)
     }
 }
 #endif

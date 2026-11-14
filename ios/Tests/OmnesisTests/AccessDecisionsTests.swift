@@ -41,7 +41,7 @@ final class AccessDecisionsTests: XCTestCase {
         ScopePolicy(
             sourceId: sourceId,
             audience: .init(accessLevel: level, capability: "answer"),
-            rules: [.init(match: [.init(kind: "folder", id: "projects")], action: "share")],
+            rules: [.init(match: [.tree(field: "extra.folderIds", id: "projects")], action: "share")],
             otherwise: "hide"
         )
     }
@@ -94,6 +94,7 @@ final class AccessDecisionsTests: XCTestCase {
         XCTAssertEqual(flow(), [.permissions, .answerData, .directChoice, .future, .release, .review])
         XCTAssertEqual(decisions.newSourceCapabilities, ["answer"])
         XCTAssertEqual(decisions.newSourcesHeading("answer"), "Answer and Direct")
+        XCTAssertEqual(decisions.newSourcesSummary, "Answer: Blocked\nDirect: Blocked", "A summary names each capability")
         XCTAssertEqual(decisions.dataSummary("direct"), "Same sources and filters as Answer")
         XCTAssertEqual(decisions.decisionLines.map(\.step), [.permissions, .answerData, .directChoice, .future, .release])
 
@@ -166,12 +167,12 @@ final class AccessDecisionsTests: XCTestCase {
         XCTAssertEqual(AccessAccountStatus(allowed: true, policy: nil).text, "All content")
         let only = AccessAccountStatus(allowed: true, policy: filter(sources[1].id))
         XCTAssertEqual(only.kind, .only)
-        XCTAssertEqual(only.text, "Only 1 selected match")
+        XCTAssertEqual(only.text, "Share matching content · 1 item")
         var hidden = filter(sources[1].id)
-        hidden.rules = [.init(match: hidden.rules[0].match + [.init(kind: "folder", id: "archive")], action: "hide")]
+        hidden.rules = [.init(match: hidden.rules[0].match + [.tree(field: "extra.folderIds", id: "archive")], action: "hide")]
         hidden.otherwise = "share"
         XCTAssertEqual(AccessAccountStatus(allowed: true, policy: hidden).kind, .except)
-        XCTAssertEqual(AccessAccountStatus(allowed: true, policy: hidden).text, "Except 2 selected matches")
+        XCTAssertEqual(AccessAccountStatus(allowed: true, policy: hidden).text, "Hide matching content · 2 items")
     }
 
     func testALevelListsItsDecisionsInTheOrderTheFlowAsksThem() {
@@ -212,7 +213,7 @@ final class AccessDecisionsTests: XCTestCase {
         "scopeSources":{"mode":"allowlist","sourceIds":["scope-files:reader@example.org","scope-mail:reader@example.org"]},
         "release":{"mode":"unreviewed"},"filterRevision":3,
         "scopePolicies":[{"sourceId":"scope-files:reader@example.org","audience":{"accessLevel":"level-example","capability":"answer"},
-        "rules":[{"match":[{"kind":"folder","id":"projects"}],"action":"share"}],"otherwise":"hide"}]}
+        "rules":[{"match":[{"capability":"tree","field":"extra.folderIds","id":"projects"}],"action":"share"}],"otherwise":"hide"}]}
         """
         let rule = try JSONDecoder().decode(AccessGrantRule.self, from: Data(filtered.utf8))
         XCTAssertEqual(rule.boundary.sourceIds, ["scope-files:reader@example.org", "scope-mail:reader@example.org"])
@@ -230,29 +231,24 @@ final class AccessDecisionsTests: XCTestCase {
         XCTAssertEqual(Set(resent.keys), ["capability", "sources"], "A rule without filters sends neither a revision nor policies")
     }
 
-    func testCountsAreAskedForAgainUntilTheGatewayHasThemAndNeverAfterARefusal() {
-        var policy = filter(sources[1].id)
-        policy.rules[0].match.append(.init(kind: "label", id: "label-plans"))
-        let preview = { (readiness: [ScopeKindReadiness], sourceId: String) in
-            ScopePreview(sourceId: sourceId, total: 9, visible: 4, hidden: 5, unknown: 0, items: [], samples: [], readiness: readiness)
-        }
-        let ready = [ScopeKindReadiness(kind: "folder", ready: true), .init(kind: "label", ready: true)]
-        XCTAssertTrue(scopeCountsNeedRefresh(policy: policy, preview: nil, error: nil))
-        XCTAssertFalse(scopeCountsNeedRefresh(policy: policy, preview: preview(ready, policy.sourceId), error: nil))
-        XCTAssertTrue(scopeCountsNeedRefresh(policy: policy, preview: preview(ready, sources[0].id), error: nil))
-        let counting = [ScopeKindReadiness(kind: "folder", ready: true), .init(kind: "label", ready: false)]
-        XCTAssertTrue(scopeCountsNeedRefresh(policy: policy, preview: preview(counting, policy.sourceId), error: nil))
-        XCTAssertTrue(scopeCountsNeedRefresh(policy: policy, preview: nil, error: URLError(.timedOut)))
-        XCTAssertFalse(scopeCountsNeedRefresh(policy: policy, preview: nil, error: GatewayClient.Error.unauthorized))
-        let missing = GatewayClient.Error.notFound
-        XCTAssertFalse(scopeCountsNeedRefresh(policy: policy, preview: preview(counting, policy.sourceId), error: missing))
-        XCTAssertEqual([1, 2, 5, 40].map(scopeCountRefreshDelay), [.seconds(2), .seconds(4), .seconds(10), .seconds(15)])
-        XCTAssertEqual(scopeCountRefreshDelay(attempt: 0), .seconds(2))
+    func testTheGatewayIsAskedAgainAfterTheWaitItNamesWithinBounds() {
+        XCTAssertEqual(scopeRetryDelay(retryAfterMs: 1500, attempt: 1), .milliseconds(1500))
+        XCTAssertEqual(scopeRetryDelay(retryAfterMs: 10, attempt: 1), .milliseconds(500))
+        XCTAssertEqual(scopeRetryDelay(retryAfterMs: 60000, attempt: 1), .milliseconds(15000))
+        XCTAssertEqual(
+            [1, 2, 5, 40].map { scopeRetryDelay(retryAfterMs: nil, attempt: $0) },
+            [.seconds(2), .seconds(4), .seconds(10), .seconds(15)]
+        )
+        XCTAssertEqual(scopeRetryDelay(retryAfterMs: nil, attempt: 0), .seconds(2))
+        XCTAssertTrue(scopePreviewCanRetry(URLError(.timedOut)))
+        XCTAssertFalse(scopePreviewCanRetry(GatewayClient.Error.unauthorized))
+        XCTAssertFalse(scopePreviewCanRetry(GatewayClient.Error.notFound))
+        XCTAssertEqual(scopePreviewFailureMessage(URLError(.timedOut)), "Counts could not be loaded.")
     }
 
     func testAFilterOfAnAccountNoLongerConnectedAppliesOnlyOnceItLosesAnItem() {
         var saved = filter(sources[1].id)
-        saved.rules[0].match.append(.init(kind: "folder", id: "archive"))
+        saved.rules[0].match.append(.tree(field: "extra.folderIds", id: "archive"))
         XCTAssertEqual(scopeDisconnectedFilterCommit(mode: .only, policy: saved, initial: saved), .blocked)
         var shorter = saved
         shorter.rules[0].match.removeLast()
@@ -275,37 +271,86 @@ final class AccessDecisionsTests: XCTestCase {
         )
         XCTAssertEqual(accessLevelsByName(listed).map(\.name), ["Archive", "Notes capture", "research assistant"])
 
-        let conversation = ScopeRef(kind: "conversation", id: "conversation-workshop")
-        XCTAssertEqual(scopeDisplayLabel(conversation, previewItem: nil), "Saved conversation selection")
-        XCTAssertTrue(scopeNameUnavailable(conversation, previewItem: nil))
-        let scopes = SourceScopes(items: [.init(kind: "conversation", noun: .init(one: "chat", many: "chats"), link: "fixed")])
-        XCTAssertEqual(scopeDisplayLabel(conversation, previewItem: nil, scopes: scopes), "Saved chat selection")
-        let person = ScopeRef(kind: "participant", label: "Maya Reeves", identifiers: [.init(type: "phone", value: "+15550100141")])
-        XCTAssertEqual(scopeDisplayLabel(person, previewItem: nil), "Maya Reeves")
-        XCTAssertFalse(scopeNameUnavailable(person, previewItem: nil))
-        let named = ScopePreview.Item(ref: conversation, label: "Workshop planning", count: 24)
-        XCTAssertFalse(scopeNameUnavailable(conversation, previewItem: named))
+        let chat = ScopeRef.membership(field: "extra.chatJid", id: "chat-workshop")
+        XCTAssertEqual(scopeDisplayLabel(chat, hint: nil), "Saved item selection")
+        XCTAssertTrue(scopeNameUnavailable(chat, hint: nil))
+        let unnamed = ScopeItemHint(ref: chat, label: "chat-workshop", noun: "chat", missing: true)
+        XCTAssertEqual(scopeDisplayLabel(chat, hint: unnamed), "Saved chat selection")
+        let person = ScopeRef.person(label: "Maya Reeves", identifiers: [.init(type: "phone", value: "+15550100141")])
+        XCTAssertEqual(scopeDisplayLabel(person, hint: nil), "Maya Reeves")
+        XCTAssertFalse(scopeNameUnavailable(person, hint: nil))
+        let named = ScopeItemHint(ref: chat, label: "Workshop planning", count: 24, noun: "chat")
+        XCTAssertFalse(scopeNameUnavailable(chat, hint: named))
+        XCTAssertEqual(scopeDisplayLabel(chat, hint: named), "Workshop planning")
     }
 
-    func testFilterCopyNamesOnlyWhatASourceAcceptsAndCountsUncheckedRecords() {
+    func testFilterCopyNamesOnlyWhatASourceAcceptsAndEachKindOfItem() {
         XCTAssertEqual(scopeAddIdentifierTitle(["phone"]), "Add a phone number")
         XCTAssertEqual(scopeAddIdentifierTitle(["email", "domain"]), "Add an email or domain")
         XCTAssertEqual(scopeAddIdentifierTitle(["phone", "domain", "email"]), "Add an email, domain or phone number")
         XCTAssertEqual(scopeAddIdentifierTitle(["domain"]), "Add a domain")
         XCTAssertEqual(["phone", "domain", "email"].map(scopeIdentifierTypeName), ["Phone number", "Domain", "Email address"])
-        XCTAssertEqual(scopeTypedIdentifierProblem("phone"), "Enter a valid phone number. Include the international country code.")
-        XCTAssertEqual(scopeTypedIdentifierProblem("email"), "Enter a valid email address.")
-        XCTAssertEqual(scopeTypedIdentifierProblem("domain"), "Enter a valid domain.")
-        XCTAssertEqual(accessScopeKindName(.init(kind: "participant", id: "p"), scopes: nil), "Person")
-        XCTAssertEqual(accessScopeKindName(.init(kind: "folder", id: "f"), scopes: nil), "Folder")
-        let chats = SourceScopes(items: [.init(kind: "conversation", noun: .init(one: "chat", many: "chats"), link: "fixed")])
-        XCTAssertEqual(accessScopeKindName(.init(kind: "conversation", id: "c"), scopes: chats), "Chat")
+        let person = ScopeRef.person(label: "+15550100141", identifiers: [.init(type: "phone", value: "+15550100141")])
+        XCTAssertEqual(accessScopeKindName(person, hint: nil), "Person")
+        XCTAssertEqual(accessScopeKindName(.tree(field: "extra.folderIds", id: "f"), hint: nil, noun: "folder"), "Folder")
+        let chat = ScopeRef.membership(field: "extra.chatJid", id: "c")
+        XCTAssertEqual(accessScopeKindName(chat, hint: .init(ref: chat, label: "Book club", noun: "chat")), "Chat")
+        XCTAssertEqual(accessScopeKindName(chat, hint: nil), "Item")
+        XCTAssertEqual(accessScopeKindName(.tree(field: "extra.projectFolder", id: "", device: "device-studio"), hint: nil), "Device")
         XCTAssertEqual(
             accessNoConnectedAccountsMessage,
             "No connected accounts are available. Connect a source before granting data access."
         )
-        XCTAssertNil(scopeUncheckedRecordsLine(0))
-        XCTAssertEqual(scopeUncheckedRecordsLine(1), "1 record stays hidden until its details finish syncing.")
-        XCTAssertEqual(scopeUncheckedRecordsLine(4), "4 records stay hidden until their details finish syncing.")
+        XCTAssertEqual(scopeFilterLimitMessage, "A filter can include at most 256 items.")
+    }
+
+    func testAnExistingLevelInAnApprovalListsItsOwnDecisionsWithoutChange() {
+        let level = AccessLevelSummary(
+            id: "level-example",
+            name: "Research assistant",
+            revision: 2,
+            rules: [
+                .answer(sources: .init(mode: .allowlist, sourceIds: sources.map(\.id)), release: .unreviewed),
+                .direct(sources: .init(mode: .allowlist, sourceIds: [sources[0].id])),
+            ],
+            connectionCount: 2,
+            createdAt: 1,
+            updatedAt: 2
+        )
+        let lines = accessLevelSummaryLines(level, overview: overview)
+        XCTAssertEqual(lines.map(\.title), ["Answer data", "Direct data", "New sources", "Answer release"])
+        XCTAssertEqual(lines.map(\.value), [
+            "3 accounts selected · all content", "1 account selected · all content", "Answer: Blocked\nDirect: Blocked",
+            "No privacy review",
+        ])
+        XCTAssertTrue(lines.allSatisfy(\.fixed))
+    }
+
+    func testTheInspectorShowsTimesAsDatesAndKeepsAnythingElse() throws {
+        let zone = try XCTUnwrap(TimeZone(identifier: "Europe/Paris"))
+        XCTAssertEqual(inspectorTimestamp("2026-03-14T09:12:00", timeZone: zone), "14 March 2026, 09:12")
+        XCTAssertEqual(inspectorTimestamp("2026-03-14T08:12:00Z", timeZone: zone), "14 March 2026, 09:12")
+        XCTAssertEqual(inspectorTimestamp("2026-03-14T08:12:00.250Z", timeZone: zone), "14 March 2026, 09:12")
+        XCTAssertEqual(inspectorTimestamp("yesterday", timeZone: zone), "yesterday")
+    }
+
+    func testAPickerSearchNamesEveryLevelOfATreeWithNamedLevels() {
+        let repositories = FilterEditorField(
+            field: "extra.repositoryIds",
+            capability: "tree",
+            noun: .init(one: "repository", many: "repositories"),
+            levels: [.init(one: "owner", many: "owners"), .init(one: "repository", many: "repositories")],
+            picker: "tree"
+        )
+        XCTAssertEqual(scopeSearchPrompt(repositories), "Search repositories and owners")
+        let folders = FilterEditorField(
+            field: "extra.folderIds",
+            capability: "tree",
+            noun: .init(one: "folder", many: "folders"),
+            levels: [.init(one: "folder", many: "folders")],
+            picker: "tree"
+        )
+        XCTAssertEqual(scopeSearchPrompt(folders), "Search folders")
+        XCTAssertEqual(scopeSearchPrompt(nil), "Search people")
     }
 }

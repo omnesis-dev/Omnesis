@@ -10,7 +10,7 @@ import SwiftUI
 /// level it uses. A new level is followed by the decisions this approval made
 /// for it, each as the level editor lists it, and its Permissions row carries
 /// the capability pills; an existing level carries them on its own row and is
-/// not taken apart.
+/// followed by its own decisions, which this approval does not change.
 @available(iOS 17.0, *)
 struct AccessAuthorizationReviewSection: View {
     let connection: AccessConnectionReview
@@ -18,6 +18,8 @@ struct AccessAuthorizationReviewSection: View {
     let decisions: AccessDraftDecisions
     /// What the access level allows, as the pills under an existing level's name.
     let holdings: AccessCapabilityHoldings
+    /// An existing level's own decisions, listed under its row.
+    var levelLines: [AccessDecisionLine] = []
     /// Opens the screen that changes a decision. The connection's own rows
     /// name the step that asks for names.
     let change: (AccessFlowStep) -> Void
@@ -29,7 +31,7 @@ struct AccessAuthorizationReviewSection: View {
             lines.append(.init(title: "Access level", value: accessLevel, step: .name, holdings: pills))
         }
         if let replaces = connection.replaces { lines.append(.init(title: "Replaces", value: replaces, step: .name)) }
-        return connection.decidesPermissions ? lines + decisions.decisionLines : lines
+        return lines + (connection.decidesPermissions ? decisions.decisionLines : levelLines)
     }
 
     var body: some View {

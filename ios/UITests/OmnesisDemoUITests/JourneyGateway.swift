@@ -115,6 +115,9 @@ struct JourneyGateway {
         }
     }
 
+    /// The Drive field a folder filter matches on.
+    static let folderField = "extra.folderIds"
+
     /// Real collector metadata and owner API setup for the folder picker journey.
     func prepareFolderScrollLevel() throws -> (id: String, name: String, sourceId: String) {
         let deadline = Date().addingTimeInterval(90)
@@ -126,11 +129,15 @@ struct JourneyGateway {
             }
             let sources = overview["sources"] as? [[String: Any]] ?? []
             if let source = sources.first(where: { ($0["id"] as? String)?.hasPrefix("google-drive:") == true }),
-               let id = source["id"] as? String,
-               let readiness = source["scopeReadiness"] as? [[String: Any]],
-               readiness.contains(where: { $0["kind"] as? String == "folder" && $0["ready"] as? Bool == true }) {
-                sourceId = id
-                break
+               let id = source["id"] as? String, source["filterable"] as? Bool == true {
+                let editor = try request("GET", "/admin/access/source-filters/\(id)", body: nil)
+                let fields = editor["fields"] as? [[String: Any]] ?? []
+                if fields.contains(where: {
+                    $0["field"] as? String == Self.folderField && ($0["state"] as? [String: Any])?["status"] as? String == "ready"
+                }) {
+                    sourceId = id
+                    break
+                }
             }
             Thread.sleep(forTimeInterval: 0.2)
         }
@@ -145,7 +152,8 @@ struct JourneyGateway {
               second["nextCursor"] == nil else {
             throw JourneyGatewayError.unexpectedResponse("folder catalogue final15")
         }
-        guard (items + remaining).compactMap({ $0["label"] as? String }) == (0 ..< 65).map({ String(format: "Journey folder %03d", $0) })
+        guard (items + remaining).compactMap({ $0["shortLabel"] as? String }) == (0 ..< 65)
+            .map({ String(format: "Journey folder %03d", $0) })
         else {
             throw JourneyGatewayError.unexpectedResponse("ordered collector folder catalogue")
         }
@@ -176,13 +184,14 @@ struct JourneyGateway {
         let decisions = policy["rules"] as? [[String: Any]] ?? []
         let refs = decisions.flatMap { $0["match"] as? [[String: Any]] ?? [] }
         return policy["otherwise"] as? String == "hide" && decisions.count == 1 && decisions[0]["action"] as? String == "share"
-            && refs.count == 1 && refs[0].count == 2 && refs[0]["kind"] as? String == "folder" && refs[0]["id"] as? String == folderId
+            && refs.count == 1 && refs[0].count == 3 && refs[0]["capability"] as? String == "tree"
+            && refs[0]["field"] as? String == Self.folderField && refs[0]["id"] as? String == folderId
     }
 
     private func folderOptions(sourceId: String, cursor: String? = nil) throws -> [String: Any] {
         var components = URLComponents()
         components.path = "/admin/access/source-filters/\(sourceId)/options"
-        components.queryItems = [.init(name: "kind", value: "folder"), .init(name: "parentId", value: "journey-folders-root")]
+        components.queryItems = [.init(name: "field", value: Self.folderField), .init(name: "parentId", value: "journey-folders-root")]
         if let cursor { components.queryItems?.append(.init(name: "cursor", value: cursor)) }
         return try request("GET", components.string!, body: nil)
     }
