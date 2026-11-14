@@ -63,7 +63,12 @@ describe("resolveSubprocessEntry", () => {
         pathToFileURL(join(dir, "caller.ts")).href,
       );
 
-      const result = spawnSync(entry.command, entry.args, { cwd: dir, encoding: "utf8" });
+      const result = spawnSync(entry.command, entry.args, {
+        cwd: dir,
+        encoding: "utf8",
+        // Machine-readable fixture output must not inherit the runner's forced colors.
+        env: { ...process.env, FORCE_COLOR: "0" },
+      });
 
       expect(result.stderr).toBe("");
       expect(result.stdout).toBe("42");

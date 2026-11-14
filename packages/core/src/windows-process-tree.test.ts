@@ -67,6 +67,19 @@ describe("Windows process birth ownership", () => {
     expect(f.tree.alive).toBe(false);
   });
 
+  it("retains known orphans but never adopts an unknown child after its parent row exited", async () => {
+    const f = fixture([root, child]);
+    await f.tree.refresh();
+    f.setRootAlive(false);
+    f.set([
+      { ...child, parentPid: 1 },
+      { pid: 103, parentPid: root.pid, birth: "1003" },
+    ]);
+    await f.tree.kill();
+    expect(f.killed).toEqual([child.pid]);
+    expect(f.tree.alive).toBe(false);
+  });
+
   it("never targets a reused process PID or its unrelated children", async () => {
     const f = fixture([root, child]);
     await f.tree.refresh();
@@ -147,6 +160,90 @@ describe("Windows process birth ownership", () => {
     f.set([root, { ...child, birth: "3000" }]);
     await f.tree.kill();
     expect(f.killed).toEqual([child.pid, root.pid]);
+    expect(f.tree.alive).toBe(false);
+  });
+
+  it("coalesces exit-observer and explicit teardown while discovering racing children", async () => {
+    let rows = [root, child];
+    const killed: number[] = [];
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const tree = new WindowsProcessTree(root.pid, {
+      rootIsAlive: () => true,
+      snapshot: () => Promise.resolve(rows),
+      kill: async (pid) => {
+        killed.push(pid);
+        if (pid === child.pid) {
+          await gate;
+          rows = [root, { ...grandchild, parentPid: root.pid }];
+        } else rows = rows.filter((row) => row.pid !== pid);
+      },
+    });
+    const first = tree.kill();
+    const second = tree.kill();
+    expect(second).toBe(first);
+    release();
+    await Promise.all([first, second]);
+    expect(killed).toEqual([child.pid, grandchild.pid, root.pid]);
+    expect(tree.alive).toBe(false);
+  });
+
+  it("bounds native query seeds by current live identities across high process churn", async () => {
+    let rows = [root];
+    const requests: number[][] = [];
+    const backend = {
+      snapshotWindowsProcesses: (roots: readonly number[]) => {
+        requests.push([...roots]);
+        return Promise.resolve(rows);
+      },
+      snapshotWindowsProcessesSync: () => rows,
+      killWindowsProcesses: async () => {},
+      killWindowsProcessesSync: () => {},
+    };
+    const tree = new WindowsProcessTree(root.pid, { backend, rootIsAlive: () => true });
+    for (let index = 0; index < 8200; index++) {
+      rows = [root, { pid: index + 1000, parentPid: root.pid, birth: String(index + 1001) }];
+      await tree.refresh();
+    }
+    expect(requests[0]).toEqual([root.pid]);
+    expect(requests.every((roots) => roots.length <= 2)).toBe(true);
+    expect(requests.at(-1)).toEqual([root.pid, 9198]);
+  });
+
+  it("excludes an exited original root from native queries while retaining known orphan seeds", async () => {
+    let rows = [root, child];
+    let rootAlive = true;
+    const requests: number[][] = [];
+    const capture = (roots: readonly number[]) => {
+      requests.push([...roots]);
+      return rows;
+    };
+    const backend = {
+      snapshotWindowsProcesses: (roots: readonly number[]) => Promise.resolve(capture(roots)),
+      snapshotWindowsProcessesSync: capture,
+      killWindowsProcesses: async () => {},
+      killWindowsProcessesSync: () => {},
+    };
+    const tree = new WindowsProcessTree(root.pid, { backend, rootIsAlive: () => rootAlive });
+    await tree.refresh();
+    rootAlive = false;
+    rows = [{ ...child, parentPid: 1 }];
+    await tree.refresh();
+    expect(requests.at(-1)).toEqual([child.pid]);
+    tree.killSync();
+    expect(requests.slice(1).every((roots) => !roots.includes(root.pid))).toBe(true);
+    expect(tree.alive).toBe(true);
+  });
+
+  it("distinguishes births separated by one 100 ns tick", async () => {
+    const original = { ...root, birth: "638999999999999991" };
+    const f = fixture([original]);
+    await f.tree.refresh();
+    f.set([{ ...original, birth: "638999999999999992" }]);
+    await f.tree.kill();
+    expect(f.killed).toEqual([]);
     expect(f.tree.alive).toBe(false);
   });
 

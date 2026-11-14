@@ -31,6 +31,26 @@ import {
   waitForChild,
 } from "./run-e2e.mjs";
 
+test("raw Node check-runner imports do not require a TypeScript resolver", () => {
+  const helper = new URL("./lib/check-process.mjs", import.meta.url).href;
+  const result = spawnSync(
+    process.execPath,
+    [
+      "--input-type=module",
+      "-e",
+      `const adapter = await import(${JSON.stringify(helper)}); if (typeof adapter.waitForChild !== "function") throw new Error("missing runner");`,
+    ],
+    {
+      encoding: "utf8",
+      env: { ...process.env, NODE_OPTIONS: "" },
+      timeout: 10_000,
+    },
+  );
+  expect(result.error).toBeUndefined();
+  expect(result.stderr).not.toContain("ERR_MODULE_NOT_FOUND");
+  expect(result.status).toBe(0);
+});
+
 const GIB = 1024 ** 3;
 
 describe("memory-aware E2E worker selection", () => {

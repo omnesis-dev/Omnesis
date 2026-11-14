@@ -205,6 +205,8 @@ async function groupGoneWithin(proc: ChildProcess, ms: number): Promise<boolean>
   return true;
 }
 
+const terminations = new WeakMap<ChildProcess, Promise<void>>();
+
 /**
  * Terminate a detached child's process group, escalating if it does not go.
  *
@@ -218,8 +220,25 @@ async function groupGoneWithin(proc: ChildProcess, ms: number): Promise<boolean>
  *    native call may never run the requested graceful-stop handler, so an
  *    unbounded wait would hang the hook until the runner's timeout killed it —
  *    stranding the child.
+ * Concurrent lifecycle owners join the same cleanup and retain its ownership fence.
  */
-export async function killSubprocessGroup(
+export function killSubprocessGroup(
+  proc: ChildProcess,
+  opts: { initialSignal?: NodeJS.Signals; termGraceMs?: number; killGraceMs?: number } = {},
+): Promise<void> {
+  const existing = terminations.get(proc);
+  if (existing) return existing;
+  const pending = Promise.resolve().then(() => terminateSubprocessGroup(proc, opts));
+  terminations.set(proc, pending);
+  void pending
+    .finally(() => {
+      if (terminations.get(proc) === pending) terminations.delete(proc);
+    })
+    .catch(() => {});
+  return pending;
+}
+
+async function terminateSubprocessGroup(
   proc: ChildProcess,
   opts: { initialSignal?: NodeJS.Signals; termGraceMs?: number; killGraceMs?: number } = {},
 ): Promise<void> {

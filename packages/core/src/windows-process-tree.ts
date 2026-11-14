@@ -1,49 +1,16 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { execFile, execFileSync } from "node:child_process";
+import { execFile } from "node:child_process";
 import { win32 } from "node:path";
 import { promisify } from "node:util";
-import { windowsPowerShellExecutable } from "@omnesis/platform/windows-powershell";
+import { createRequire } from "node:module";
 export {
   windowsPowerShellExecutable,
   windowsProcessStart,
 } from "@omnesis/platform/windows-powershell";
 
 const execFileAsync = promisify(execFile);
-const PROCESS_QUERY = `
-$ErrorActionPreference = 'Stop'
-$rows = @(Get-CimInstance Win32_Process | ForEach-Object {
-  if ($null -ne $_.CreationDate) {
-    [pscustomobject]@{
-      pid = [int]$_.ProcessId
-      parentPid = [int]$_.ParentProcessId
-      birth = $_.CreationDate.ToUniversalTime().Ticks.ToString([System.Globalization.CultureInfo]::InvariantCulture)
-    }
-  }
-})
-ConvertTo-Json -Compress -InputObject $rows
-`;
-const QUERY_ARGS = ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", PROCESS_QUERY];
-const KILL_OWNED_PROCESS = `
-$ErrorActionPreference = 'Stop'
-$targetProcess = $null
-try {
-  try {
-    $targetProcess = [System.Diagnostics.Process]::GetProcessById([int]$env:OMNESIS_OWNED_PROCESS_PID)
-    $null = $targetProcess.Handle
-  } catch [System.ArgumentException] { exit 0 } catch [System.InvalidOperationException] { exit 0 }
-  $ticks = $targetProcess.StartTime.ToUniversalTime().Ticks
-  # CIM datetime records microseconds; compare creation time at that resolution.
-  $birth = ($ticks - ($ticks % 10)).ToString([System.Globalization.CultureInfo]::InvariantCulture)
-  if ($birth -ne $env:OMNESIS_OWNED_PROCESS_BIRTH -or $targetProcess.HasExited) { exit 0 }
-  $targetProcess.Kill()
-  if (-not $targetProcess.WaitForExit(5000)) { throw 'Owned Windows process did not exit' }
-} finally {
-  if ($null -ne $targetProcess) { $targetProcess.Dispose() }
-}
-`;
-const KILL_ARGS = ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", KILL_OWNED_PROCESS];
 const COMMAND_TIMEOUT_MS = 10_000;
 export interface WindowsProcessIdentity {
   pid: number;
@@ -51,7 +18,35 @@ export interface WindowsProcessIdentity {
   birth: string;
 }
 
+export type WindowsProcessBackend = Pick<
+  typeof import("@omnesis/platform/windows-process"),
+  | "snapshotWindowsProcesses"
+  | "snapshotWindowsProcessesSync"
+  | "killWindowsProcesses"
+  | "killWindowsProcessesSync"
+>;
+let nativeBackend: WindowsProcessBackend | undefined;
+let nativeLoading: Promise<WindowsProcessBackend> | undefined;
+const require = createRequire(import.meta.url);
+function backend(): Promise<WindowsProcessBackend> {
+  if (nativeBackend) return Promise.resolve(nativeBackend);
+  return (nativeLoading ??= import("@omnesis/platform/windows-process")
+    .then((loaded) => {
+      nativeBackend = loaded;
+      return loaded;
+    })
+    .catch((error) => {
+      nativeLoading = undefined;
+      throw error;
+    }));
+}
+function backendSync(): WindowsProcessBackend {
+  return (nativeBackend ??= require("@omnesis/platform/windows-process") as WindowsProcessBackend);
+}
+
 export interface WindowsProcessTreeOptions {
+  /** Raw Node check runners inject the existing narrowly bootstrapped platform facade. */
+  backend?: WindowsProcessBackend;
   snapshot?: () => Promise<WindowsProcessIdentity[]>;
   snapshotSync?: () => WindowsProcessIdentity[];
   kill?: (pid: number, birth: string) => Promise<void>;
@@ -80,102 +75,51 @@ export async function killWindowsProcessTree(pid: number): Promise<void> {
   });
 }
 
-function ownedProcessEnvironment(pid: number, birth: string): NodeJS.ProcessEnv {
-  taskkillArgs(pid);
-  if (!/^[0-9]+$/u.test(birth)) throw new Error("Invalid child process birth identity");
-  return {
-    ...process.env,
-    OMNESIS_OWNED_PROCESS_PID: String(pid),
-    OMNESIS_OWNED_PROCESS_BIRTH: birth,
-  };
-}
-
-/** Pin Process.Handle before comparing creation time; Kill reuses that handle. */
-function killWindowsProcessSync(pid: number, birth: string): void {
-  execFileSync(windowsPowerShellExecutable(), KILL_ARGS, {
-    windowsHide: true,
-    timeout: COMMAND_TIMEOUT_MS,
-    stdio: "ignore",
-    env: ownedProcessEnvironment(pid, birth),
-  });
-}
-
-async function killWindowsProcess(pid: number, birth: string): Promise<void> {
-  await execFileAsync(windowsPowerShellExecutable(), KILL_ARGS, {
-    windowsHide: true,
-    timeout: COMMAND_TIMEOUT_MS,
-    env: ownedProcessEnvironment(pid, birth),
-  });
-}
-
-function parseSnapshot(raw: string): WindowsProcessIdentity[] {
-  const rows: unknown = JSON.parse(raw.replace(/^\uFEFF/u, ""));
-  if (!Array.isArray(rows)) throw new Error("Invalid Windows process snapshot");
-  return rows.map((value: unknown) => {
-    if (typeof value !== "object" || value === null)
-      throw new Error("Invalid Windows process identity");
-    const row = value as Record<string, unknown>;
-    if (
-      !Number.isSafeInteger(row.pid) ||
-      Number(row.pid) < 0 ||
-      !Number.isSafeInteger(row.parentPid) ||
-      Number(row.parentPid) < 0 ||
-      typeof row.birth !== "string" ||
-      !/^[0-9]+$/u.test(row.birth)
-    )
-      throw new Error("Invalid Windows process identity");
-    return { pid: Number(row.pid), parentPid: Number(row.parentPid), birth: row.birth };
-  });
-}
-
-async function snapshot(): Promise<WindowsProcessIdentity[]> {
-  const result = await execFileAsync(windowsPowerShellExecutable(), QUERY_ARGS, {
-    encoding: "utf8",
-    windowsHide: true,
-    timeout: COMMAND_TIMEOUT_MS,
-    maxBuffer: 4 * 1024 * 1024,
-  });
-  return parseSnapshot(result.stdout);
-}
-
-function snapshotSync(): WindowsProcessIdentity[] {
-  return parseSnapshot(
-    execFileSync(windowsPowerShellExecutable(), QUERY_ARGS, {
-      encoding: "utf8",
-      windowsHide: true,
-      timeout: COMMAND_TIMEOUT_MS,
-      maxBuffer: 4 * 1024 * 1024,
-    }),
-  );
-}
-
 /**
  * Retain observed birth identities across a leader's exit and reparenting.
  * Ownership starts only after observing the live original ChildProcess. A numeric parent PID
  * alone cannot safely recover a tree whose root vanished before observation.
  * Refresh while the root is alive so teardown owns its detached descendants.
- * This file uses only erasable TypeScript and built-ins: Node check runners
- * also import it directly without the application's development loader.
+ * The class remains raw-Node importable without loading the platform's .js
+ * dependency graph; raw check runners inject that facade through their existing
+ * narrowly scoped source bootstrap. Normal app runtimes load the backend lazily.
  */
 export class WindowsProcessTree {
   private readonly rootPid: number;
-  private readonly options: Required<WindowsProcessTreeOptions>;
+  private readonly options: Required<Omit<WindowsProcessTreeOptions, "backend">>;
   private readonly births = new Map<number, string>();
   private current: WindowsProcessIdentity[] = [];
   private refreshing: Promise<void> | null = null;
+  private killing: Promise<void> | null = null;
 
   constructor(rootPid: number, options: WindowsProcessTreeOptions = {}) {
     if (!Number.isSafeInteger(rootPid) || rootPid <= 0)
       throw new Error("Invalid child process PID");
     this.rootPid = rootPid;
+    const { backend: suppliedBackend, ...overrides } = options;
     this.options = {
-      snapshot,
-      snapshotSync,
-      kill: killWindowsProcess,
-      killSync: killWindowsProcessSync,
+      snapshot: async () =>
+        (suppliedBackend ?? (await backend())).snapshotWindowsProcesses(this.queryRoots()),
+      snapshotSync: () =>
+        (suppliedBackend ?? backendSync()).snapshotWindowsProcessesSync(this.queryRoots()),
+      kill: async (pid, birth) =>
+        (suppliedBackend ?? (await backend())).killWindowsProcesses([{ pid, birth }]),
+      killSync: (pid, birth) =>
+        (suppliedBackend ?? backendSync()).killWindowsProcessesSync([{ pid, birth }]),
       rootIsAlive: () => false,
-      ...options,
+      ...overrides,
     };
+  }
+
+  private queryRoots(): number[] {
+    // Birth history prevents PID reuse from resetting ownership; it is not a
+    // list of processes that still warrant opening after they leave the tree.
+    return [
+      ...new Set([
+        ...(this.options.rootIsAlive() ? [this.rootPid] : []),
+        ...this.current.filter((row) => row.pid !== this.rootPid).map((row) => row.pid),
+      ]),
+    ];
   }
 
   get alive(): boolean {
@@ -218,14 +162,29 @@ export class WindowsProcessTree {
     });
   }
 
-  /** Verify each target's birth again; descendants go first while their roots exist. */
-  async kill(): Promise<void> {
-    await this.refresh();
-    const targets = [...this.current].reverse();
-    for (const target of targets) {
+  /** Share teardown work between exit observers and explicit lifecycle owners. */
+  kill(): Promise<void> {
+    if (this.killing) return this.killing;
+    const pending = Promise.resolve().then(() => this.killOwned());
+    this.killing = pending;
+    void pending
+      .finally(() => {
+        if (this.killing === pending) this.killing = null;
+      })
+      .catch(() => {});
+    return pending;
+  }
+
+  /** Refresh before every target, including children observed while cleanup runs. */
+  private async killOwned(): Promise<void> {
+    const attempted = new Set<string>();
+    for (;;) {
       await this.refresh();
-      if (!this.current.some((row) => row.pid === target.pid && row.birth === target.birth))
-        continue;
+      const target = [...this.current]
+        .reverse()
+        .find((row) => !attempted.has(`${row.pid}:${row.birth}`));
+      if (!target) return;
+      attempted.add(`${target.pid}:${target.birth}`);
       try {
         await this.options.kill(target.pid, target.birth);
       } catch (error) {
@@ -234,16 +193,18 @@ export class WindowsProcessTree {
           throw error;
       }
     }
-    await this.refresh();
   }
 
   /** Last-resort process-exit cleanup, when asynchronous work cannot run. */
   killSync(): void {
-    this.observe(this.options.snapshotSync());
-    for (const target of [...this.current].reverse()) {
+    const attempted = new Set<string>();
+    for (;;) {
       this.observe(this.options.snapshotSync());
-      if (!this.current.some((row) => row.pid === target.pid && row.birth === target.birth))
-        continue;
+      const target = [...this.current]
+        .reverse()
+        .find((row) => !attempted.has(`${row.pid}:${row.birth}`));
+      if (!target) return;
+      attempted.add(`${target.pid}:${target.birth}`);
       try {
         this.options.killSync(target.pid, target.birth);
       } catch (error) {
@@ -252,6 +213,5 @@ export class WindowsProcessTree {
           throw error;
       }
     }
-    this.observe(this.options.snapshotSync());
   }
 }

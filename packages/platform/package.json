@@ -10,7 +10,8 @@
     "./windows-job": "./src/windows-job.ts",
     "./windows-job-exec": "./src/windows-job-exec.ts",
     "./windows-private-file": "./src/windows-private-file.ts",
-    "./windows-powershell": "./src/windows-powershell.ts"
+    "./windows-powershell": "./src/windows-powershell.ts",
+    "./windows-process": "./src/windows-process.ts"
   },
   "files": [
     "dist"

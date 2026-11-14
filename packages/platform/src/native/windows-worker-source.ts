@@ -4,6 +4,7 @@
 import { WINDOWS_JOB_NATIVE_SOURCE } from "./windows-job-source.js";
 import { WINDOWS_PRIVATE_FILE_NATIVE_SOURCE } from "./windows-private-file-source.js";
 import { WINDOWS_REGULAR_FILE_NATIVE_SOURCE } from "./windows-regular-file-source.js";
+import { WINDOWS_PROCESS_NATIVE_SOURCE } from "./windows-process-source.js";
 
 export const WINDOWS_WORKER_CONFIG = `<?xml version="1.0" encoding="utf-8"?>
 <configuration><startup><supportedRuntime version="v4.0"/></startup><runtime><AppContextSwitchOverrides value="Switch.System.IO.UseLegacyPathHandling=false;Switch.System.IO.BlockLongPaths=false"/></runtime></configuration>`;
@@ -61,10 +62,27 @@ public static class WindowsWorker {
     object value; if(!data.TryGetValue(key,out value) || !(value is int || value is long || value is decimal)) throw new InvalidDataException();
     return Convert.ToInt64(value,System.Globalization.CultureInfo.InvariantCulture);
   }
+  static uint ProcessId(object value) {
+    if(!(value is int || value is long)) throw new InvalidDataException();
+    long pid=Convert.ToInt64(value);if(pid<=0 || pid>UInt32.MaxValue) throw new InvalidDataException();
+    return (uint)pid;
+  }
   static int Filesystem() {
     Dictionary<string,object> data=Object(Json().DeserializeObject(OmnesisPrivateFile.Configuration()));
     string action=Text(data,"action",null);
-    if(action=="create" || action=="atomic") {
+    if(action=="process-snapshot") {
+      object[] roots=data["roots"] as object[];if(roots==null || roots.Length>8192) throw new InvalidDataException();
+      uint[] ids=new uint[roots.Length];for(int index=0;index<roots.Length;index++) ids[index]=ProcessId(roots[index]);
+      OmnesisProcessMetadata.Snapshot(ids,delegate(List<Dictionary<string,object>> rows) {Console.Out.Write(Json().Serialize(rows));});
+    } else if(action=="process-kill") {
+      object[] targets=data["targets"] as object[];if(targets==null || targets.Length>8192) throw new InvalidDataException();
+      uint[] ids=new uint[targets.Length];long[] births=new long[targets.Length];
+      for(int index=0;index<targets.Length;index++) {
+        Dictionary<string,object> target=Object(targets[index]);ids[index]=ProcessId(target["pid"]);
+        if(!Int64.TryParse(Text(target,"birth",null),System.Globalization.NumberStyles.None,System.Globalization.CultureInfo.InvariantCulture,out births[index]) || births[index]<0) throw new InvalidDataException();
+      }
+      OmnesisProcessMetadata.Kill(ids,births);
+    } else if(action=="create" || action=="atomic") {
       OmnesisPrivateFile.Write(Text(data,"path",null),Number(data,"length"),action=="atomic",Flag(data,"readOnly",false),Text(data,"staging",""),Flag(data,"receipt",false),Flag(data,"replaceExisting",true));
     } else if(action=="regular-prefix") {
       OmnesisPrivateFile.ReadRegularPrefix(Text(data,"path",null),Number(data,"limit"));
@@ -129,4 +147,5 @@ export const WINDOWS_WORKER_SOURCE =
   namespace(WINDOWS_JOB_NATIVE_SOURCE) +
   namespace(WINDOWS_PRIVATE_FILE_NATIVE_SOURCE) +
   namespace(WINDOWS_REGULAR_FILE_NATIVE_SOURCE) +
+  namespace(WINDOWS_PROCESS_NATIVE_SOURCE) +
   namespace(ENTRY);

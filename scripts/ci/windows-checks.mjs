@@ -31,6 +31,8 @@ export const FOCUSED_UNIT_FILES = [
   "packages/platform/src/windows-job-stream.test.ts",
   "packages/platform/src/windows-worker-cache.test.ts",
   "packages/platform/src/windows-powershell.test.ts",
+  "packages/platform/src/windows-process.test.ts",
+  "packages/platform/src/windows-process.windows.test.ts",
   "packages/platform/src/windows-regular-file.test.ts",
   "packages/platform/src/windows-regular-file.windows.test.ts",
   "packages/platform/src/windows-worker-cache.windows.test.ts",

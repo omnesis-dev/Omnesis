@@ -11,6 +11,32 @@ import {
   signalChildTree as signalPosixChildTree,
 } from "./check-process-runtime.mjs";
 export { childGroupIsAlive } from "./check-process-runtime.mjs";
+import { bootstrapWindowsPlatform } from "./bootstrap-platform.mjs";
+
+let nativeProcessBackend;
+let nativeProcessLoading;
+function processBackend() {
+  return (nativeProcessLoading ??= bootstrapWindowsPlatform("windows-process.ts")
+    .then((backend) => {
+      nativeProcessBackend = backend;
+      return backend;
+    })
+    .catch((error) => {
+      nativeProcessLoading = undefined;
+      throw error;
+    }));
+}
+function synchronousBackend() {
+  if (!nativeProcessBackend) throw new Error("Owned process backend is not initialized");
+  return nativeProcessBackend;
+}
+const windowsBackend = {
+  snapshotWindowsProcesses: async (roots) =>
+    (await processBackend()).snapshotWindowsProcesses(roots),
+  snapshotWindowsProcessesSync: (roots) => synchronousBackend().snapshotWindowsProcessesSync(roots),
+  killWindowsProcesses: async (targets) => (await processBackend()).killWindowsProcesses(targets),
+  killWindowsProcessesSync: (targets) => synchronousBackend().killWindowsProcessesSync(targets),
+};
 
 async function signalChildTree(child, signal) {
   if (process.platform === "win32" && typeof child.pid === "number") {
@@ -27,6 +53,7 @@ export function waitForChild(child, opts = {}) {
     signalFn = signalChildTree,
     windowsTree = process.platform === "win32" && child.spawnfile && child.pid
       ? new WindowsProcessTree(child.pid, {
+          backend: windowsBackend,
           rootIsAlive: () => child.exitCode === null && child.signalCode === null,
         })
       : null,

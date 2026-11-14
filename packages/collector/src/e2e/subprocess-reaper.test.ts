@@ -65,6 +65,31 @@ describe("subprocess-reaper", () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
+  it("joins concurrent teardown requests before releasing the owned process", async () => {
+    const child = spawn(
+      process.execPath,
+      ["-e", "process.send('ready'); setInterval(() => {}, 1000)"],
+      {
+        detached: true,
+        stdio: ["ignore", "ignore", "ignore", "ipc"],
+      },
+    );
+    parentPid = child.pid;
+    await new Promise<void>((resolve, reject) => {
+      child.once("message", () => resolve());
+      child.once("error", reject);
+    });
+    await registerSubprocessGroup(child);
+    const exited = new Promise<void>((resolve) => child.once("exit", () => resolve()));
+    const first = killSubprocessGroup(child);
+    const second = killSubprocessGroup(child);
+    expect(second).toBe(first);
+    await Promise.all([first, second, exited]);
+    expect(isAlive(child.pid!)).toBe(false);
+    expect(liveGroupCountForTest()).toBe(0);
+    parentPid = undefined;
+  });
+
   it("reaps a detached child group when the runner is SIGTERM'd before cleanup", async () => {
     // A fixture process that mirrors what a harness does: register a
     // detached, long-lived grandchild and then idle. When this fixture is

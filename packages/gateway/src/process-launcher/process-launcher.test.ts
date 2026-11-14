@@ -64,7 +64,7 @@ function checkedHostPid(run: Awaited<ReturnType<ProcessLauncher["run"]>>): numbe
 const reportLauncherParent =
   process.platform === "win32"
     ? `const {execFileSync}=require('node:child_process'); process.stdout.write(execFileSync('powershell.exe',['-NoProfile','-NonInteractive','-Command','(Get-CimInstance Win32_Process -Filter "ProcessId='+process.ppid+'").ParentProcessId'],{encoding:'utf8'}).trim());`
-    : "console.log(process.ppid)";
+    : "process.stdout.write(String(process.ppid))";
 const processBudget = process.platform === "win32" ? 20_000 : 10_000;
 const timeoutBudget = process.platform === "win32" ? 5_000 : 1_000;
 
@@ -195,7 +195,7 @@ describe.each(launchers)("%s launcher", (_name, make) => {
         `
       const {spawn}=require('node:child_process');
       const child=spawn(process.execPath,['-e','setTimeout(()=>{},30000)'],{stdio:['ignore',1,2]});
-      console.log(child.pid);
+      process.stdout.write(String(child.pid)+'\\n');
       setTimeout(()=>{},30000);
     `,
       ],
@@ -205,7 +205,9 @@ describe.each(launchers)("%s launcher", (_name, make) => {
     if (process.platform !== "win32")
       expect(run).toMatchObject({ exitCode: null, signal: "SIGKILL" });
     expect(Date.now() - started).toBeLessThan(processBudget);
-    expect(await eventually(() => !alive(Number(text(run.stdout))))).toBe(true);
+    const childPid = Number(text(run.stdout));
+    expect(Number.isSafeInteger(childPid) && childPid > 0, text(run.stdout)).toBe(true);
+    expect(await eventually(() => !alive(childPid))).toBe(true);
   });
 
   it("kills a program when the caller aborts", async () => {

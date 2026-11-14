@@ -5,3 +5,4 @@ export * from "./windows-job.js";
 export * from "./windows-job-exec.js";
 export * from "./windows-private-file.js";
 export * from "./windows-powershell.js";
+export * from "./windows-process.js";
