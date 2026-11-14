@@ -9,7 +9,9 @@ import { randomUUID } from "node:crypto";
 import { beforeEach, afterEach, expect, test, vi } from "vitest";
 import { expiredCertificate } from "../test/expired-certificate.js";
 import { tlsFiles } from "../test/support.js";
+import { brokerHarness } from "../test/dns-broker-owner.js";
 import { acmeTrustedRoots, createGatewayAcmeController } from "./acme-integration.js";
+import { hostedGatewayHostname } from "./hosted-name.js";
 import type { AcmeDnsChallenges as AcmeDnsService } from "./acme-dns.js";
 
 let directory: string;
@@ -46,6 +48,7 @@ async function environment() {
 test("ACME absent or experimental disabled leaves all files, certificate contexts and provider activity untouched", async () => {
   const activate = vi.fn(async () => {}),
     fetch = vi.fn<typeof globalThis.fetch>();
+  const prepared = await environment();
   const before = await readdir(directory);
   expect(
     await createGatewayAcmeController({}, { configDir: directory, activate, fetch }),
@@ -57,6 +60,20 @@ test("ACME absent or experimental disabled leaves all files, certificate context
       { configDir: directory, activate, fetch },
     ),
   ).toBeUndefined();
+  // Without the flag, neither the official broker nor a configured one is ever asked anything.
+  for (const provider of [{}, { OMNESIS_ACME_DNS_PROVIDER: "broker" }])
+    expect(
+      await createGatewayAcmeController(
+        {
+          ...prepared,
+          OMNESIS_CLOUD_RELAY_ENABLED: "0",
+          OMNESIS_CLOUD_RELAY_URL: "https://relay.omnesis.app",
+          OMNESIS_ACME_DNS_BROKER_URL: "https://dns.example.test",
+          ...provider,
+        },
+        { configDir: directory, activate, fetch },
+      ),
+    ).toBeUndefined();
   expect(await readdir(directory)).toEqual(before);
   expect(activate).not.toHaveBeenCalled();
   expect(fetch).not.toHaveBeenCalled();
@@ -514,4 +531,144 @@ test("the operator's ACME CA file reaches renewal as trusted roots, and a non-CA
       { configDir: directory, activate: async () => {} },
     ),
   ).rejects.toThrow("non-CA");
+});
+
+/** A gateway of the given relay on its hosted name, with its owner key in place. */
+async function hostedEnvironment(relayUrl: string, extra: NodeJS.ProcessEnv = {}) {
+  const env = await environment();
+  const gatewayId = randomUUID();
+  const ownerKeyFile = join(directory, "owner.key");
+  const { readOrCreateGatewayOwnerKey } = await import("./gateway-key-client.js");
+  const owner = await readOrCreateGatewayOwnerKey(ownerKeyFile);
+  return {
+    owner,
+    gatewayId,
+    env: {
+      ...env,
+      OMNESIS_ACME_DNS_PROVIDER: undefined,
+      OMNESIS_ACME_DNS_ZONE_ID: undefined,
+      OMNESIS_ACME_DNS_ZONE_NAME: undefined,
+      OMNESIS_ACME_DNS_TOKEN_FILE: undefined,
+      OMNESIS_PUBLIC_BASE_URL: `https://${hostedGatewayHostname(gatewayId, new URL(relayUrl).hostname)}`,
+      OMNESIS_CLOUD_RELAY_URL: relayUrl,
+      OMNESIS_CLOUD_RELAY_GATEWAY_ID: gatewayId,
+      OMNESIS_CLOUD_RELAY_OWNER_KEY_FILE: ownerKeyFile,
+      ...extra,
+    },
+  };
+}
+
+test("until the official broker answers, the official relay's gateways publish DNS-01 through the relay", async () => {
+  const { env } = await hostedEnvironment("https://relay.omnesis.app");
+  const keys = await import("./gateway-key-client.js"),
+    client = await import("./dns-broker-client.js");
+  vi.spyOn(keys, "gatewayKeySessionSource").mockReturnValue(
+    Object.assign(() => Promise.resolve("fixture-owner"), { invalidate: vi.fn() }),
+  );
+  const presenters = vi.spyOn(client, "brokerOrRelayPresenter");
+  const id = randomUUID();
+  const transport = vi.fn<typeof fetch>(async (url) =>
+    String(url).startsWith("https://dns.omnesis.app/")
+      ? Promise.reject(new TypeError("fetch failed"))
+      : Response.json({ id }),
+  );
+  const controller = await createGatewayAcmeController(env, {
+    configDir: directory,
+    activate: () => Promise.resolve(),
+    fetch: transport,
+  });
+  try {
+    const presenter = presenters.mock.results[0]!.value as ReturnType<
+      typeof client.brokerOrRelayPresenter
+    >;
+    expect(await presenter.create("a".repeat(43), new AbortController().signal)).toEqual({ id });
+    expect(transport.mock.calls.map(([url]) => String(url))).toEqual([
+      "https://dns.omnesis.app/_dns/v2/health",
+      "https://relay.omnesis.app/_relay/v2/acme/challenge",
+    ]);
+  } finally {
+    await controller!.close();
+  }
+});
+
+test("a gateway with the broker provider issues through the broker only, and only for its hosted name", async () => {
+  const harness = await brokerHarness();
+  const { env } = await hostedEnvironment("https://relay.example.test", {
+    OMNESIS_ACME_DNS_PROVIDER: "broker",
+    OMNESIS_ACME_DNS_BROKER_URL: harness.origin,
+  });
+  const client = await import("./dns-broker-client.js");
+  const presenters = vi.spyOn(client, "brokerOrRelayPresenter");
+  const controller = await createGatewayAcmeController(env, {
+    configDir: directory,
+    activate: () => Promise.resolve(),
+    fetch: harness.fetch,
+  });
+  try {
+    const presenter = presenters.mock.results[0]!.value as ReturnType<
+      typeof client.brokerOrRelayPresenter
+    >;
+    const lease = await presenter.create("a".repeat(43), new AbortController().signal);
+    expect(harness.cloudflare.records.filter((record) => record.type === "TXT")).toHaveLength(1);
+    await presenter.remove(lease.id, new AbortController().signal);
+    expect(harness.calls).toEqual([
+      "/_dns/v2/health",
+      "/_dns/v2/challenge",
+      "/_dns/v2/complete",
+      "/_dns/v2/challenge",
+      "/_dns/v2/complete",
+      "/_dns/v2/challenge",
+      "/_dns/v2/complete",
+    ]);
+  } finally {
+    await controller!.close();
+  }
+  presenters.mockClear();
+  const custom = await createGatewayAcmeController(
+    {
+      ...env,
+      OMNESIS_PUBLIC_BASE_URL: "https://gateway.example.org",
+      OMNESIS_ACME_CERT_FILE: join(directory, "custom.crt"),
+    },
+    {
+      configDir: join(directory, "custom"),
+      activate: () => Promise.resolve(),
+      fetch: harness.fetch,
+    },
+  );
+  try {
+    await expect(custom!.renew(new AbortController().signal)).rejects.toThrow(
+      "only the gateway's hosted name",
+    );
+    expect(presenters).not.toHaveBeenCalled();
+  } finally {
+    await custom!.close();
+  }
+});
+
+test("the broker presenter signs with the owner key beside the session when none is configured", async () => {
+  const harness = await brokerHarness();
+  const { env } = await hostedEnvironment("https://relay.example.test", {
+    OMNESIS_ACME_DNS_PROVIDER: "broker",
+    OMNESIS_ACME_DNS_BROKER_URL: harness.origin,
+    OMNESIS_CLOUD_RELAY_OWNER_KEY_FILE: undefined,
+  });
+  const { readOrCreateGatewayOwnerKey } = await import("./gateway-key-client.js");
+  await readOrCreateGatewayOwnerKey(`${env.OMNESIS_CLOUD_RELAY_SESSION_FILE}.owner-key`);
+  const client = await import("./dns-broker-client.js");
+  const presenters = vi.spyOn(client, "brokerOrRelayPresenter");
+  const controller = await createGatewayAcmeController(env, {
+    configDir: directory,
+    activate: () => Promise.resolve(),
+    fetch: harness.fetch,
+  });
+  try {
+    const presenter = presenters.mock.results[0]!.value as ReturnType<
+      typeof client.brokerOrRelayPresenter
+    >;
+    await presenter.create("a".repeat(43), new AbortController().signal);
+    expect(harness.cloudflare.records.filter((record) => record.type === "TXT")).toHaveLength(1);
+  } finally {
+    await controller!.close();
+  }
 });

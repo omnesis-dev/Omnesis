@@ -9,6 +9,7 @@ import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { tlsFiles } from "../test/support.js";
 import { expiredCertificate } from "../test/expired-certificate.js";
 import { fakeSignupRelay } from "../test/fake-signup-relay.js";
+import { brokerCall, brokerHarness, brokerOwner } from "../test/dns-broker-owner.js";
 import { AccountEnrollmentAuthority } from "./account-enrollment-proof.js";
 import {
   GatewayCloudRelayManagement,
@@ -2103,4 +2104,128 @@ test("by default the gateway asks its relay's public signup path through its own
   await manager.refreshSignupAccess();
   expect(fetch).toHaveBeenCalledTimes(1);
   expect((await manager.status()).signup).toEqual({ inviteOnly: true, requestAccessUrl });
+});
+
+function brokerEnvironment(origin: string) {
+  return {
+    OMNESIS_CLOUD_RELAY_URL: "https://relay.example.test",
+    OMNESIS_ACME_DNS_PROVIDER: "broker",
+    OMNESIS_ACME_DNS_BROKER_URL: origin,
+  };
+}
+const hostedDiscovery = async (_url: string, gatewayId: string) => ({
+  protocol: 2 as const,
+  gatewayId,
+  publicOrigin: `https://${hostedGatewayHostname(gatewayId, "relay.example.test")}`,
+  invitationRequired: false,
+  dnsChallenges: true,
+});
+
+test("F3: a relay that knows a gateway's id cannot claim its name at the broker before the gateway does", async () => {
+  const harness = await brokerHarness({
+    fallback: async () => new Response(null, { status: 404 }),
+  });
+  const f = fixture({ env: brokerEnvironment(harness.origin), fetch: harness.fetch });
+  const races: unknown[] = [];
+  f.discover.mockImplementation(async (url, gatewayId) => {
+    // The relay learns the id here, and at once tries to take the name with a key of its own.
+    races.push(
+      await brokerCall(
+        (request) => harness.broker.handle(request),
+        brokerOwner("relay.example.test", gatewayId),
+        { type: "claim" },
+      ),
+    );
+    return hostedDiscovery(url, gatewayId);
+  });
+  manager = await GatewayCloudRelayManagement.open(f.options);
+  const status = await manager.configure(input);
+  expect(races).toEqual([{ status: 409, body: { error: "name-taken" } }]);
+  const owner = await readOrCreateGatewayOwnerKey(
+    join(directory, "cloud-relay", "owner.key"),
+    false,
+  );
+  const { createPublicKey } = await import("node:crypto");
+  expect(
+    harness.store.values.get(
+      `name:${hostedGatewayHostname(status.gatewayId!, "relay.example.test")}`,
+    ),
+  ).toMatchObject({
+    gatewayId: status.gatewayId,
+    ownerPublicKey: createPublicKey(owner)
+      .export({ type: "spki", format: "der" })
+      .toString("base64url"),
+  });
+});
+
+test("a name the broker binds to another key costs a new gateway a redraw, and a saved one its configure", async () => {
+  const harness = await brokerHarness({
+    fallback: async () => new Response(null, { status: 404 }),
+  });
+  let taken = 2;
+  const transport = vi.fn<typeof fetch>(async (input, init) =>
+    String(input).endsWith("/_dns/v2/complete") && taken-- > 0
+      ? new Response(JSON.stringify({ error: "name-taken" }), { status: 409 })
+      : harness.fetch(input, init),
+  );
+  const f = fixture({ env: brokerEnvironment(harness.origin), fetch: transport });
+  f.discover.mockImplementation(hostedDiscovery);
+  manager = await GatewayCloudRelayManagement.open(f.options);
+  const status = await manager.configure(input);
+  const claims = [...harness.store.values.keys()].filter((key) => key.startsWith("name:"));
+  expect(claims).toEqual([
+    `name:${hostedGatewayHostname(status.gatewayId!, "relay.example.test")}`,
+  ]);
+  expect(f.discover).toHaveBeenCalledExactlyOnceWith(
+    expect.anything(),
+    status.gatewayId,
+    expect.anything(),
+    expect.anything(),
+  );
+  taken = 1;
+  await expect(manager.configure(input)).rejects.toMatchObject({ code: "relay-unreachable" });
+  taken = 5;
+  await manager.close();
+  await rm(join(directory, "cloud-relay"), { recursive: true, force: true });
+  manager = await GatewayCloudRelayManagement.open(f.options);
+  f.discover.mockClear();
+  await expect(manager.configure(input)).rejects.toMatchObject({ code: "relay-unreachable" });
+  expect(f.discover).not.toHaveBeenCalled();
+});
+
+test("until the official broker answers, a new gateway connects as before", async () => {
+  const transport = vi.fn<typeof fetch>(async () => {
+    throw new TypeError("fetch failed");
+  });
+  const f = fixture({ env: {}, fetch: transport });
+  manager = await GatewayCloudRelayManagement.open(f.options);
+  await manager.configure({ relayUrl: "https://relay.omnesis.app", termsAccepted: true });
+  expect(transport.mock.calls.map(([url]) => String(url))).toEqual([
+    "https://dns.omnesis.app/_dns/v2/health",
+  ]);
+  expect(f.discover).toHaveBeenCalledOnce();
+});
+
+test("a broker the operator requires must answer, and a custom domain never asks it", async () => {
+  const harness = await brokerHarness({
+    fallback: async () => new Response(null, { status: 404 }),
+  });
+  const down = fixture({
+    env: brokerEnvironment(harness.origin),
+    fetch: async () => new Response(null, { status: 503 }),
+  });
+  manager = await GatewayCloudRelayManagement.open(down.options);
+  await expect(manager.configure(input)).rejects.toMatchObject({ code: "relay-unreachable" });
+  expect(down.discover).not.toHaveBeenCalled();
+  await manager.close();
+  const custom = fixture({ env: brokerEnvironment(harness.origin), fetch: harness.fetch });
+  manager = await GatewayCloudRelayManagement.open(custom.options);
+  await manager.configure({ ...input, publicOrigin: "https://gateway.example.test" });
+  expect(harness.calls).toEqual([]);
+  await manager.close();
+  const unset = fixture({
+    env: { ...brokerEnvironment(harness.origin), OMNESIS_ACME_DNS_BROKER_URL: undefined },
+  });
+  manager = await GatewayCloudRelayManagement.open(unset.options);
+  await expect(manager.configure(input)).rejects.toMatchObject({ code: "configuration-invalid" });
 });
