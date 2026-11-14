@@ -352,6 +352,9 @@ class AccountCloudPairingClientTest {
         verifier.update(DeviceEnrollmentContract.enrollmentSignatureTranscript(fixture.challenge.requestId, "android", "Fictional phone", pending.spkiFingerprint, gatewayChallenge, key.publicKey))
         assertTrue(verifier.verify(java.util.Base64.getUrlDecoder().decode(deviceKey["signature"]!!.jsonPrimitive.content)))
         assertFalse("A held request keeps the comparison", pending.joined)
+        // Its certificate passed the public checks, so an approval later continues on its own.
+        assertTrue(pending.gatewayVerified)
+        assertTrue(pending.expiresAtMillis > clock * 1000)
         assertFalse(fixture.calls.filter { it.startsWith(origin) }.any { it.endsWith("/devices/account/request") })
         fixture.client.close()
     }
@@ -404,6 +407,7 @@ class AccountCloudPairingClientTest {
         assertEquals(java.net.URI(candidate.publicOrigin).host, checked?.second)
         assertEquals(true, fixture.sent.last().body["requireApproval"]!!.jsonPrimitive.boolean)
         assertTrue(pending.approved); assertFalse(pending.joined)
+        assertFalse("An unverified gateway keeps the person's comparison", pending.gatewayVerified)
         assertThrows(CloudPairingException::class.java) { pending.pairingPayload(clock * 1000) }
         fixture.client.close()
     }

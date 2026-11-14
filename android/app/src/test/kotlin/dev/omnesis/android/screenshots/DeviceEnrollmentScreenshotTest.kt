@@ -113,6 +113,34 @@ class DeviceEnrollmentScreenshotTest {
         GatewayPairingApprovalContent(GatewayPairingApprovalController.State(requests = listOf(request)), NOW, {}, { _, _ -> }, {})
     }
 
+    /** A device the owner removed before is back: a red line above its code. */
+    @Test fun approval_of_a_device_removed_before() = capture("approval-removed-before") {
+        GatewayPairingApprovalContent(
+            GatewayPairingApprovalController.State(requests = listOf(request.copy(kind = "portal", name = "Studio MacBook", canTrustSignIn = false, revokedDevice = true))),
+            NOW, {}, { _, _ -> }, {},
+        )
+    }
+
+    /** The gateway wants the owner's passkey for this approval; the app has no ceremony, so its page takes it. */
+    @Test fun approval_needs_the_owner_to_confirm_its_them() = capture("approval-step-up") {
+        GatewayPairingApprovalContent(
+            GatewayPairingApprovalController.State(requests = listOf(request), stepUp = GatewayPairingApprovalController.StepUp(request.requestId, unavailable = false)),
+            NOW, {}, { _, _ -> }, {}, stepUpPage = { "https://g-1.relay.example.test/portal/approve#$it" },
+        )
+    }
+
+    @Test fun approval_during_a_security_lock() = capture("approval-security-lock") {
+        GatewayPairingApprovalContent(
+            GatewayPairingApprovalController.State(requests = listOf(request), stepUp = GatewayPairingApprovalController.StepUp(request.requestId, unavailable = true)),
+            NOW, {}, { _, _ -> }, {},
+        )
+    }
+
+    /** Right after a denial: one tap makes every new device ask first. */
+    @Test fun approval_denied_offers_to_ask_first() = capture("approval-denied") {
+        GatewayPairingApprovalContent(GatewayPairingApprovalController.State(denied = request), NOW, {}, { _, _ -> }, {}, onAskFirst = {})
+    }
+
     @Test fun approval_with_nothing_waiting() = capture("approval-empty") {
         GatewayPairingApprovalContent(GatewayPairingApprovalController.State(), NOW, {}, { _, _ -> }, {})
     }

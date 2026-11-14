@@ -5,6 +5,7 @@ package dev.omnesis.android.ui.common
 
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.AutoAwesome
+import androidx.compose.material.icons.outlined.Fingerprint
 import androidx.compose.material.icons.outlined.GppMaybe
 import androidx.compose.material.icons.outlined.WarningAmber
 import androidx.compose.material.icons.outlined.WifiOff
@@ -26,7 +27,7 @@ fun gatewayErrorDetail(t: Throwable): String? =
     (t as? GatewayException.ServerError)?.body?.trim()?.takeIf { it.isNotEmpty() }
 
 /** Turns a transport throwable into user-facing copy. Mirrors the iOS error classifier. */
-fun classifyGatewayError(t: Throwable): String = when (t) {
+fun classifyGatewayError(t: Throwable): String = stepUpRefusal(t)?.let { "${it.title}. ${it.message}" } ?: when (t) {
     is GatewayException.Unauthorized ->
         "This device isn't authorized anymore. Re-pair with your gateway."
     is GatewayException.Forbidden ->
@@ -58,6 +59,7 @@ fun inlineRefreshErrorText(t: Throwable): String = when (val kind = gatewayError
     GatewayErrorKind.AgentNotConfigured -> "Agent isn't configured — showing cached sources."
     is GatewayErrorKind.Server -> "Gateway returned ${kind.status} while refreshing."
     is GatewayErrorKind.Unknown -> kind.message
+    is GatewayErrorKind.StepUp -> kind.refusal.message
 }
 
 /**
@@ -74,6 +76,8 @@ sealed interface GatewayErrorKind {
     object AgentNotConfigured : GatewayErrorKind
     data class Server(val status: Int, val body: String) : GatewayErrorKind
     data class Unknown(val message: String) : GatewayErrorKind
+    /** The gateway wants the owner's passkey on its own page, or a security lock is on. */
+    data class StepUp(val refusal: StepUpRefusal) : GatewayErrorKind
 
     /** Material Outlined icon echoing the iOS SF Symbol for this kind. */
     val icon: ImageVector
@@ -85,6 +89,7 @@ sealed interface GatewayErrorKind {
             Unauthorized, Forbidden -> Icons.Outlined.GppMaybe
             AgentNotConfigured -> Icons.Outlined.AutoAwesome
             is Server, is Unknown -> Icons.Outlined.WarningAmber
+            is StepUp -> if (refusal == StepUpRefusal.REQUIRED) Icons.Outlined.Fingerprint else Icons.Outlined.GppMaybe
         }
 
     /** Per-kind tint, resolved from the active palette. */
@@ -92,7 +97,7 @@ sealed interface GatewayErrorKind {
         Unreachable -> c.textMuted
         Certificate -> c.warning
         AgentNotConfigured -> c.accent
-        Unauthorized, Forbidden, is Server, is Unknown -> c.warning
+        Unauthorized, Forbidden, is Server, is Unknown, is StepUp -> c.warning
     }
 
     /** Short, plain-English title. Copy ported verbatim from iOS. */
@@ -104,6 +109,7 @@ sealed interface GatewayErrorKind {
         AgentNotConfigured -> "Set up your agent"
         is Server -> "Gateway error"
         is Unknown -> "Something went wrong"
+        is StepUp -> refusal.title
     }
 
     /**
@@ -124,6 +130,7 @@ sealed interface GatewayErrorKind {
             message.ifEmpty {
                 "Something went wrong trying to $context. Retry, or open Settings to repair the connection."
             }
+        is StepUp -> refusal.message
     }
 }
 
@@ -161,7 +168,12 @@ private fun isAgentNotConfigured(body: String): Boolean {
  * `GatewayErrorView.classify`. A null/[GatewayException.Network] folds to [Unreachable] —
  * the user-visible cause is always "the gateway didn't answer".
  */
-fun gatewayErrorKind(t: Throwable): GatewayErrorKind = when (t) {
+fun gatewayErrorKind(t: Throwable): GatewayErrorKind = when {
+    stepUpRefusal(t) != null -> GatewayErrorKind.StepUp(stepUpRefusal(t)!!)
+    else -> transportErrorKind(t)
+}
+
+private fun transportErrorKind(t: Throwable): GatewayErrorKind = when (t) {
     is GatewayException.Network -> when (gatewayConnectionProblem(t)) {
         GatewayConnectionProblem.CERTIFICATE -> GatewayErrorKind.Certificate
         else -> GatewayErrorKind.Unreachable
@@ -180,4 +192,29 @@ fun gatewayErrorKind(t: Throwable): GatewayErrorKind = when (t) {
     is GatewayException.Decoding, is GatewayException.InvalidResponse ->
         GatewayErrorKind.Unknown("The gateway returned an invalid response.")
     else -> GatewayErrorKind.Unknown(t.message ?: "Something went wrong.")
+}
+
+/**
+ * A gateway refused a change from this phone until the owner confirms it's them
+ * (`packages/gateway/src/http/step-up.ts`). Once a passkey is confirmed on the gateway, a change
+ * that loosens it (approving a device, adding a device or a token, automatic joins) needs that
+ * passkey on the gateway's own page when it comes through the relay or from a device that joined
+ * by signing in. [REQUIRED] is 428 `STEP_UP_REQUIRED`: the gateway's page can confirm it.
+ * [UNAVAILABLE] is 403 `STEP_UP_UNAVAILABLE`: a security lock is on, or the gateway has no secure
+ * address of its own, so only the computer running Omnesis can make the change. Mirrors iOS.
+ */
+enum class StepUpRefusal(val title: String, val message: String) {
+    REQUIRED("Confirm it's you", "This change needs Face ID on your gateway's page."),
+    UNAVAILABLE("Security lock is on", "This change can only be made on the computer running Omnesis right now."),
+    ;
+
+    /** The button that opens the gateway's page; nothing to open while the lock is on. */
+    val action: String? get() = if (this == REQUIRED) "Open your gateway's page" else null
+}
+
+/** The step-up refusal [t] carries, if it is one. */
+fun stepUpRefusal(t: Throwable?): StepUpRefusal? = when {
+    t is GatewayException.ServerError && t.status == 428 && t.code == "STEP_UP_REQUIRED" -> StepUpRefusal.REQUIRED
+    t is GatewayException.Forbidden && t.code == "STEP_UP_UNAVAILABLE" -> StepUpRefusal.UNAVAILABLE
+    else -> null
 }

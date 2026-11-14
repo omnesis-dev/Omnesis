@@ -17,7 +17,8 @@ import dev.omnesis.android.transport.dto.GatewayPasskeyLocation
 import dev.omnesis.android.transport.dto.GatewayPairingApproving
 import dev.omnesis.android.transport.dto.GatewayPairingApprovalRequest
 import dev.omnesis.android.ui.devices.GatewayPairingApprovalContent
-import dev.omnesis.android.ui.devices.PAIRING_APPROVAL_TEXT
+import dev.omnesis.android.ui.devices.PAIRING_APPROVAL_EMPTY
+import dev.omnesis.android.ui.devices.pairingApprovalQuestion
 import dev.omnesis.android.ui.devices.GatewayPairingApprovalSheet
 import org.junit.Assert.*
 import org.junit.Rule
@@ -52,12 +53,14 @@ class GooglePairingApprovalPresentationTest {
         compose.onNodeWithTag("pairingApproval.code").performScrollTo().assertTextEquals(row.verificationCode)
         compose.onNodeWithTag("pairingApproval.compare").assertDoesNotExist()
         compose.onNodeWithTag("pairingApproval.approve").performScrollTo().assertIsEnabled().performClick()
-        compose.onNodeWithText("Approve").assertExists()
-        compose.onNodeWithText(PAIRING_APPROVAL_TEXT).assertExists()
+        compose.onNodeWithText("Yes, approve").assertExists()
+        compose.onNodeWithText("Test phone wants to connect").assertExists()
+        compose.onNodeWithText(pairingApprovalQuestion("android")).assertExists()
+        assertEquals("Does the phone show this code?", pairingApprovalQuestion("android"))
         // Nothing else explains the request: the one sentence, the code and the two actions.
         for (gone in listOf("Reject request", "Codes match — approve device", "Signed in to your Omnesis account with Google")) compose.onNodeWithText(gone).assertDoesNotExist()
         compose.onNodeWithText("Compare every code group", substring = true).assertDoesNotExist()
-        compose.onNodeWithText("Deny").performScrollTo().performClick()
+        compose.onNodeWithText("No, deny").performScrollTo().performClick()
         assertEquals(listOf(true, false), decisions)
         compose.runOnIdle { state.value = state.value.copy(busy = true) }
         compose.onNodeWithTag("pairingApproval.approve").assertIsNotEnabled()
@@ -73,10 +76,10 @@ class GooglePairingApprovalPresentationTest {
         compose.onNodeWithText("Approved").performScrollTo().assertExists() // cached trusted rows survive the refresh failure
         compose.runOnIdle { state.value = GatewayPairingApprovalController.State(busy = true) }
         compose.onNodeWithText("Updating…").performScrollTo().assertExists()
-        compose.onNodeWithText("No pending pairing requests.").assertDoesNotExist()
+        compose.onNodeWithText(PAIRING_APPROVAL_EMPTY).assertDoesNotExist()
         compose.runOnIdle { state.value = GatewayPairingApprovalController.State(error = connectivityError) }
         compose.onNodeWithText("Couldn't connect to gateway").performScrollTo().assertExists()
-        compose.onNodeWithText("No pending pairing requests.").assertDoesNotExist()
+        compose.onNodeWithText(PAIRING_APPROVAL_EMPTY).assertDoesNotExist()
         compose.onNodeWithText("Refresh").performScrollTo().performClick()
         compose.onNodeWithText("Done").performClick()
         assertEquals(1, refreshes)
@@ -102,8 +105,8 @@ class GooglePairingApprovalPresentationTest {
             .performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.OnClick) { it() }
         compose.waitUntil(timeoutMillis = 5000) { client.decisions == listOf(true) }
         compose.waitForIdle()
-        compose.onNodeWithTag("pairingApproval.list").performScrollToNode(hasText("No pending pairing requests."))
-        compose.onNodeWithText("No pending pairing requests.").assertExists()
+        compose.onNodeWithTag("pairingApproval.list").performScrollToNode(hasText(PAIRING_APPROVAL_EMPTY))
+        compose.onNodeWithText(PAIRING_APPROVAL_EMPTY).assertExists()
         compose.mainClock.advanceTimeBy(1100)
         compose.onNodeWithTag("pairingApproval.list").performScrollToNode(hasText("Refresh"))
         compose.onNodeWithText("Refresh").performClick()
@@ -112,7 +115,7 @@ class GooglePairingApprovalPresentationTest {
         compose.mainClock.advanceTimeByFrame()
         compose.waitForIdle()
         compose.runOnIdle { assertFalse(visible.value) }
-        compose.onNodeWithText("Pairing requests").assertDoesNotExist()
+        compose.onNodeWithText("Waiting for your OK").assertDoesNotExist()
     }
     @Test fun sheet_error_settings_action_dismisses_before_opening_settings() {
         val client = object : GatewayPairingApproving {

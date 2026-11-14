@@ -12,6 +12,8 @@ import dev.omnesis.android.designsystem.theme.OmnesisTheme
 import dev.omnesis.android.ui.pairing.AccountCloudPairingPane
 import dev.omnesis.android.ui.pairing.AccountPairingPhase
 import dev.omnesis.android.ui.pairing.AccountPairingState
+import dev.omnesis.android.ui.pairing.LocalPairingClock
+import dev.omnesis.android.ui.pairing.PREVIEW_PAIRING_NOW
 import dev.omnesis.android.ui.pairing.PairingContent
 import dev.omnesis.android.ui.pairing.PairingViewModel
 import dev.omnesis.android.ui.pairing.accountPairingPreviewState
@@ -28,7 +30,7 @@ class AccountCloudPairingScreenshotTest {
     @Test fun all_account_states_light_and_dark() {
         for (phase in AccountPairingPhase.entries) for (dark in listOf(false, true)) {
             captureRoboImage(filePath = "src/test/roborazzi/account-pairing-${phase.name.lowercase()}-${if (dark) "dark" else "light"}.png") {
-                CompositionLocalProvider(LocalInspectionMode provides true) {
+                CompositionLocalProvider(LocalInspectionMode provides true, LocalPairingClock provides { PREVIEW_PAIRING_NOW }) {
                     OmnesisTheme(darkTheme = dark) { AccountCloudPairingPane(accountPairingPreviewState(phase), true, true, {}, {}, {}, {}) }
                 }
             }
@@ -38,8 +40,20 @@ class AccountCloudPairingScreenshotTest {
         for (dark in listOf(false, true)) for (large in listOf(false, true)) {
             captureRoboImage(filePath = "src/test/roborazzi/account-pairing-approved-${if (large) "large" else "normal"}-${if (dark) "dark" else "light"}.png") {
                 val density = LocalDensity.current
-                CompositionLocalProvider(LocalInspectionMode provides true, LocalDensity provides Density(density.density, if (large) 1.6f else 1f)) {
+                CompositionLocalProvider(LocalInspectionMode provides true, LocalPairingClock provides { PREVIEW_PAIRING_NOW }, LocalDensity provides Density(density.density, if (large) 1.6f else 1f)) {
                     OmnesisTheme(darkTheme = dark) { AccountCloudPairingPane(accountPairingPreviewState(AccountPairingPhase.Comparing).copy(approved = true), true, true, {}, {}, {}, {}) }
+                }
+            }
+        }
+    }
+    /** M6: an approval from a gateway this phone verified continues by itself, with no button to press. */
+    @Test fun approved_on_a_verified_gateway_connects_on_its_own() {
+        for (dark in listOf(false, true)) {
+            captureRoboImage(filePath = "src/test/roborazzi/account-pairing-approved-continuing-${if (dark) "dark" else "light"}.png") {
+                CompositionLocalProvider(LocalInspectionMode provides true, LocalPairingClock provides { PREVIEW_PAIRING_NOW }) {
+                    OmnesisTheme(darkTheme = dark) {
+                        AccountCloudPairingPane(accountPairingPreviewState(AccountPairingPhase.Pairing).copy(continues = true), true, true, {}, {}, {}, {})
+                    }
                 }
             }
         }
@@ -48,7 +62,7 @@ class AccountCloudPairingScreenshotTest {
         for (dark in listOf(false, true)) for (large in listOf(false, true)) {
             captureRoboImage(filePath = "src/test/roborazzi/account-pairing-entry-${if (large) "large" else "normal"}-${if (dark) "dark" else "light"}.png") {
                 val density = LocalDensity.current
-                CompositionLocalProvider(LocalInspectionMode provides true, LocalDensity provides Density(density.density, if (large) 1.6f else 1f)) {
+                CompositionLocalProvider(LocalInspectionMode provides true, LocalPairingClock provides { PREVIEW_PAIRING_NOW }, LocalDensity provides Density(density.density, if (large) 1.6f else 1f)) {
                     OmnesisTheme(darkTheme = dark) {
                         PairingContent(
                             state = PairingViewModel.State(mode = PairingViewModel.Mode.Google, googleAvailable = true, account = AccountPairingState(), passkeyAvailable = true),

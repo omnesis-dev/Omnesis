@@ -18,10 +18,10 @@ import javax.inject.Singleton
  */
 data class PairingRequestBannerOffer(val count: Int) {
     val text: String
-        get() = if (count > 1) "$count devices are waiting for your approval to pair to this gateway." else ONE
+        get() = if (count > 1) "$count new devices are waiting for your OK." else ONE
 
     companion object {
-        const val ONE = "A device is waiting for your approval to pair to this gateway."
+        const val ONE = "A new device is waiting for your OK."
 
         /** The banner's action, which opens Pairing requests. */
         const val ACTION = "Review"

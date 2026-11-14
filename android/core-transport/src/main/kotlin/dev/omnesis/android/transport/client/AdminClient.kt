@@ -147,13 +147,22 @@ class AdminClient(private val http: GatewayHttp) : GatewayPairingApproving, Clou
         )
     }
 
-    /** A gateway without the feature or without an origin of its own offers no ceremony; neither is an error. */
+    /**
+     * A gateway without the feature or without an origin of its own offers no ceremony; neither is
+     * an error. Nor is one with no confirmed passkey (a Google-only owner) or a security lock on:
+     * its page would only refuse, so the plain approval stays the way (defect 6.1).
+     */
     override suspend fun pairingPasskeyLocation(): GatewayPasskeyLocation? =
         try {
-            http.getJson<GatewayAccountPairingConfig>("devices/account/config").gatewayPasskey
+            http.getJson<GatewayAccountPairingConfig>("devices/account/config").takeIf { it.passkeyApproval }?.gatewayPasskey
         } catch (_: GatewayException.NotFound) {
             null
         }
+
+    override fun approvalPage(requestId: String): String? {
+        if (!UUID_PATTERN.matches(requestId) || http.baseUrl.scheme != "https") return null
+        return http.baseUrl.newBuilder().encodedPath("/portal/approve").query(null).fragment(requestId).build().toString()
+    }
 
     override suspend fun pairingApprovalCeremony(requestId: String): GatewayPasskeyCeremony =
         http.postJson("devices/account/approval/options", GatewayPairingApprovalCeremonyRequest(requestId))
@@ -968,6 +977,7 @@ class AdminClient(private val http: GatewayHttp) : GatewayPairingApproving, Clou
     private companion object {
         val ROLE_SLUG = Regex("[a-z][a-z0-9-]*")
         val PROVIDER_SLUG = Regex("[a-z0-9][a-z0-9-]*")
+        val UUID_PATTERN = Regex("^[0-9a-fA-F]{8}(-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}$")
         /** Pretty-printer for the free-form debug payload (display only, never re-sent). */
         val DEBUG_PRETTY = Json(OmnesisJson) { prettyPrint = true }
 

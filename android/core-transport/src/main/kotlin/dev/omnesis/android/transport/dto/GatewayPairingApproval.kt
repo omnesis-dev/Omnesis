@@ -18,6 +18,8 @@ data class GatewayPairingApprovalRequest(
     val canTrustSignIn: Boolean = false,
     /** `google` or `passkey`, when the request carried a sign-in the gateway verified. */
     val signIn: String? = null,
+    /** Its device key belongs to a device the owner removed before. */
+    val revokedDevice: Boolean = false,
 )
 
 /**
@@ -49,8 +51,17 @@ data class GatewayPasskeyCeremony(
 interface GatewayPairingApproving {
     suspend fun pairingApprovalRequests(): List<GatewayPairingApprovalRequest>
     suspend fun decidePairingApproval(requestId: String, approve: Boolean, trustSignIn: Boolean = false)
-    /** Where this gateway runs passkey ceremonies, or null when it offers none. */
+    /**
+     * Where this gateway runs passkey ceremonies, or null when approving with a passkey can't work
+     * there: no origin of its own, no confirmed passkey yet, or a security lock.
+     */
     suspend fun pairingPasskeyLocation(): GatewayPasskeyLocation? = null
+    /**
+     * The gateway's own page that approves [requestId] with the owner's passkey, for a phone the
+     * gateway asks to confirm it's the owner first: `/portal/approve#<requestId>` on the address
+     * this phone reaches it at, which for such a phone is the gateway's secure address.
+     */
+    fun approvalPage(requestId: String): String? = null
     /** `POST /devices/account/approval/options`: an `approve-request` ceremony for one held request. */
     suspend fun pairingApprovalCeremony(requestId: String): GatewayPasskeyCeremony =
         throw UnsupportedOperationException("passkey approval is not available")
@@ -73,6 +84,10 @@ internal data class GatewayPairingPasskeyApproval(val requestId: String, val pro
 @Serializable
 internal data class GatewayPairingApprovalCeremonyRequest(val requestId: String)
 
-/** Only the field the app reads from `/devices/account/config`. */
+/**
+ * Only the fields the app reads from `/devices/account/config`. `gatewayPasskey` says where the
+ * gateway's page is; `passkeyApproval` says whether a passkey is confirmed there and no security
+ * lock is on, so that approving with it can work. A gateway that predates it sends nothing.
+ */
 @Serializable
-internal data class GatewayAccountPairingConfig(val gatewayPasskey: GatewayPasskeyLocation? = null)
+internal data class GatewayAccountPairingConfig(val gatewayPasskey: GatewayPasskeyLocation? = null, val passkeyApproval: Boolean = false)
