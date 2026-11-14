@@ -87,6 +87,31 @@ export async function gatewayPasskeyProof(
   };
 }
 
+/** The header a request carries its step-up id in (packages/gateway/src/http/step-up.ts). */
+export const STEP_UP_HEADER = "X-Omnesis-Step-Up";
+
+export const STEP_UP_UNAVAILABLE =
+  "This action needs your passkey, which can't be used on this gateway right now. Do it on the gateway itself.";
+
+/**
+ * The owner confirms one administrative action with a passkey on this gateway's page. The gateway
+ * refused the request with 428 and named it in `detail` (method, path and body hash); this runs
+ * the ceremony for exactly that request and returns the one-use id to send it again with.
+ * `post(path, body, signal)` sends a JSON body with this session's credentials.
+ */
+export async function stepUp(detail, { post, prove = gatewayPasskeyProof, signal } = {}) {
+  const target = { method: detail?.method, path: detail?.path, bodySha256: detail?.bodySha256 };
+  const options = await post("/admin/step-up/options", target, signal);
+  if (!options.ok) throw new GatewayPasskeyError(STEP_UP_UNAVAILABLE);
+  const proof = await prove(await options.json(), signal ? { signal } : {});
+  const response = await post("/admin/step-up", { ...target, proof }, signal);
+  if (!response.ok)
+    throw new GatewayPasskeyError(
+      "Your gateway didn't accept that passkey. Use a passkey you confirmed on this gateway.",
+    );
+  return (await response.json()).stepUpId;
+}
+
 /** Byte-for-byte approvalDeviceTranscript from packages/cloud-relay/src/device-enrollment.ts. */
 export function approvalDeviceTranscript(requestId, challenge) {
   return JSON.stringify(["omnesis-gateway-approval-device-v1", requestId, challenge]);

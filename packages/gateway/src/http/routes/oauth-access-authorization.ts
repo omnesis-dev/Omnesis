@@ -42,6 +42,7 @@ import {
 } from "../schemas/oauth-access.js";
 import { scope } from "../scope.js";
 import { validateJson } from "../validate.js";
+import { requireStepUp } from "../step-up.js";
 import { clientIp } from "./admin/internals.js";
 import {
   applyConsentHeaders,
@@ -660,6 +661,7 @@ export function mountOAuthAuthorizationRoutes(
     "/admin/access/devices/:id/level",
     noStore,
     scope.portalAdmin(),
+    requireStepUp(),
     validateJson(accessDeviceLevelBody),
     async (c) => {
       const deviceId = tryDeviceId(c.req.param("id") ?? "");

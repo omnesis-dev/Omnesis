@@ -256,6 +256,58 @@ official native client presented it: the Android release or test client as
 `azp` of a token for the web client, or the iOS client as both `aud` and `azp`.
 A token without `azp`, or from a client of unknown type, never does.
 
+### Step-up
+
+Once the owner has confirmed a passkey on the gateway, an administrative action
+that loosens it needs that passkey on the gateway's own page first, so an admin
+credential alone (a stolen portal cookie, a session a compromised relay rides on)
+cannot add a device. The gateway checks this in `gateway/src/http/step-up.ts`.
+
+- **Who steps up:** a request that arrived through the relay (the portal or an app
+  on the relay's name), and a device that joined by signing in on its own
+  (`enrollment_method = automatic`, or a portal session opened with such a
+  device's credential), wherever it connects from. The gateway's own host, the
+  local CLI, and devices paired by code, QR or approval never do.
+- **For:** approving a held request (`POST /admin/cloud-pairing/decision` with
+  `approve: true`, which also covers trusting its sign-in), choosing `automatic`
+  (`PUT /admin/cloud-relay/enrollment`), confirming a passkey
+  (`POST /admin/cloud-relay/passkeys/confirm`), minting a pairing code
+  (`POST /admin/devices/pair`), registering a device with its token
+  (`POST /admin/devices`), creating a token (`POST /admin/tokens`) and moving a
+  device to another access level (`PUT /admin/access/devices/:id/level`).
+- **Never for** what makes the gateway stricter: declining a request, `ask`,
+  removing a sign-in, revoking a device. Anything else sent to a guarded route
+  needs the step-up.
+- Nothing changes without `OMNESIS_CLOUD_RELAY_ENABLED`, before the owner confirms
+  a passkey, or for a gateway with no account.
+
+The exchange:
+
+1. The action is refused with `428` and
+   `{ code: "STEP_UP_REQUIRED", detail: { method, path, bodySha256, options:
+"/admin/step-up/options", header: "X-Omnesis-Step-Up" } }`. `path` includes the
+   query string; `bodySha256` is the lowercase hex SHA-256 of the exact body bytes
+   (of the empty string when there is none).
+2. `POST /admin/step-up/options` (admin) with `{ method, path, bodySha256 }`
+   returns a `step-up` ceremony bound to
+   `gatewayPasskeyStepUpBinding(method, path, bodySha256, device)`, where the
+   device is the caller's own (for a portal session, the device its credential
+   belongs to).
+3. The owner's passkey asserts on the gateway's own origin (or, for the Android
+   app, its compiled origin) and `POST /admin/step-up` with
+   `{ method, path, bodySha256, proof }` returns `{ stepUpId, expiresAt }`. Only a
+   passkey confirmed on this gateway counts; otherwise `403 STEP_UP_REFUSED`.
+4. The same request is sent again with `X-Omnesis-Step-Up: <stepUpId>`. The id is
+   good for that one request by that device, for sixty seconds, once: another
+   body, path, method or device, a second use, or a late one gets `428` again.
+
+While no step-up can start (a certificate incident hold, or a gateway with no
+origin of its own), a guarded action that needs one and the options route answer
+`403 STEP_UP_UNAVAILABLE`; the owner acts on the gateway itself. The portal runs
+the exchange inside its request helper: a guarded action prompts for the passkey
+and is sent again once. The native admin apps don't run it yet: through the relay,
+those actions answer `428 STEP_UP_REQUIRED` (or `403 STEP_UP_UNAVAILABLE`).
+
 ## Comparison code
 
 A held request shows a code on the new device and on the device that approves
@@ -589,7 +641,8 @@ gateway goes on an incident hold:
 - the owner's administrator phones get a generic notification;
 - the portal's Omnesis account page and `omnesis cloud status` say so;
 - a sign-in made on a page served under the gateway's own name proves nothing
-  while it lasts (`gatewayOriginAssertionsRefused`).
+  while it lasts (`gatewayOriginAssertionsRefused`), and no step-up starts or
+  counts, so an action that needs one is refused until the hold is lifted.
 
 The hold is saved with the owner's other local choices before the monitor
 records the incident, so it survives restarts, unlinking and linking again, and
@@ -864,6 +917,9 @@ What a compromised relay can no longer do:
 - Stockpile assertions: a `gateway-passkey` challenge is one-use, issued by the
   gateway, and lives three minutes; the confirmed passkey's signature counter is
   kept.
+- Add a device with an admin session it rides on: approving, minting a code or a
+  token and choosing `automatic` through the relay need the owner's passkey on the
+  gateway's page for that one action (step-up).
 
 What remains:
 

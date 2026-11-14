@@ -95,6 +95,8 @@ describe("sign-in enrollment with the cloud relay flag off", () => {
       ["POST", "/admin/cloud-relay/passkeys/confirm", { proof: {} }],
       ["GET", "/admin/cloud-pairing/requests"],
       ["POST", "/admin/cloud-pairing/decision", {}],
+      ["POST", "/admin/step-up/options", {}],
+      ["POST", "/admin/step-up", {}],
     ];
     const statuses = await Promise.all(
       routes.map(async ([method, path, body]) => {
@@ -217,6 +219,25 @@ describe("sign-in enrollment with the cloud relay flag off", () => {
     expect(mounts).toHaveLength(1);
     expect(app).toContain("${cloudRelay && html`<${CloudPairingLogin} />`}");
     expect(app).toContain("cloudRelay=${session.cloudRelay === true}");
+  });
+
+  test("no administrative action asks for a passkey step-up, even marked as relayed, and a step-up header changes nothing", async () => {
+    const relayed = { "x-omnesis-cloud-relay": "1" };
+    const pairing = await harness.gatewayFetch("/admin/devices/pair", {
+      method: "POST",
+      headers: relayed,
+      body: JSON.stringify({ kind: "cli", name: "Fictional relayed-mark CLI" }),
+    });
+    expect(pairing.status).toBe(200);
+    expect(await pairing.json()).toMatchObject({ pairingCode: expect.any(String) });
+    const devices = await harness.gatewayJson<{ items: Array<{ id: string }> }>("/admin/devices");
+    const token = await harness.gatewayFetch("/admin/tokens", {
+      method: "POST",
+      headers: { ...relayed, "x-omnesis-step-up": "fictional" },
+      body: JSON.stringify({ deviceId: devices.items[0]!.id, scopes: ["read"] }),
+    });
+    expect(token.status).toBe(200);
+    expect(JSON.stringify(await token.json())).not.toMatch(/step.?up/i);
   });
 
   test("the pairing QR refuses the strict trust modes as values it does not know", async () => {

@@ -85,6 +85,18 @@ export interface GatewayEnrollment {
   approvalCeremony?(binding: string): GatewayPasskeyCeremony | undefined;
   /** Whether a passkey the owner confirmed here signed that ceremony. Spends its challenge. */
   verifyApproval?(proof: unknown, binding: string): Promise<boolean>;
+  /**
+   * Whether an administrative action that loosens this gateway must first be confirmed with a
+   * passkey (a "step-up"): true once the owner confirmed a passkey here.
+   */
+  stepUpRequired?(): boolean;
+  /**
+   * A `step-up` ceremony for `binding` (`gatewayPasskeyStepUpBinding`), or undefined without an
+   * origin of its own, which includes the time a certificate incident holds the gateway.
+   */
+  stepUpCeremony?(binding: string): GatewayPasskeyCeremony | undefined;
+  /** Whether a passkey the owner confirmed here signed that ceremony. Spends its challenge. */
+  verifyStepUp?(proof: unknown, binding: string): Promise<boolean>;
 }
 
 /** A person approving a held request with a passkey on the gateway's own page. */

@@ -48,6 +48,7 @@ import {
   GatewayRefused,
   PasskeyBrowser,
   addSecondPasskey,
+  assertionOn,
   browserSuiteAvailable,
   chooseAccountMenu,
   clickFirst,
@@ -61,6 +62,7 @@ import {
   passkeyIds,
   printedConnectCode,
   runCli,
+  sha256Hex,
   approveHeld,
   confirmPasskeyHere,
   gatewayPasskeyJoin,
@@ -574,7 +576,7 @@ describe.skipIf(!browserReady)("devices join a gateway by signing in", () => {
     }
   }, 240_000);
 
-  test("trusted at once: a CLI that signs in with the confirmed passkey on the gateway's page joins with no comparison, the admin phone hears it joined, and the device removes another device, changes the policy, mints a pairing code and reads the corpus right away, and an older device can still remove it", async () => {
+  test("trusted at once: a CLI that signs in with the confirmed passkey on the gateway's page joins with no comparison, the admin phone hears it joined, and the device removes another device, changes the policy to ask, mints a pairing code after the owner's step-up and reads the corpus right away, and an older device can still remove it", async () => {
     await gateway.setPolicy("automatic");
     // An admin phone that can open pairing notifications.
     const phone = await gateway.json<{ token: string; device: { id: string } }>("/admin/devices", {
@@ -632,9 +634,38 @@ describe.skipIf(!browserReady)("devices join a gateway by signing in", () => {
     });
     expect(policy.ok, await policy.text()).toBe(true);
     expect((await gateway.status()).deviceEnrollment.policy).toBe("ask");
+    // Minting a code loosens the gateway, so a device that joined on its own needs the owner's
+    // passkey on the gateway's page first, even on the gateway's own address (step-up).
+    const pairBody = JSON.stringify({ kind: "cli", name: "Fictional new CLI" });
+    const unconfirmed = await asDevice(joined.token, "/admin/devices/pair", {
+      method: "POST",
+      body: pairBody,
+    });
+    expect(unconfirmed.status).toBe(428);
+    expect(await unconfirmed.json()).toMatchObject({ code: "STEP_UP_REQUIRED" });
+    const target = { method: "POST", path: "/admin/devices/pair", bodySha256: sha256Hex(pairBody) };
+    const ceremony = await (
+      await asDevice(joined.token, "/admin/step-up/options", {
+        method: "POST",
+        body: JSON.stringify(target),
+      })
+    ).json();
+    const issued = await asDevice(joined.token, "/admin/step-up", {
+      method: "POST",
+      body: JSON.stringify({
+        ...target,
+        proof: {
+          type: "gateway-passkey",
+          challenge: ceremony.challenge,
+          credential: await assertionOn(first, gateway.publicOrigin, ceremony.webauthnChallenge),
+        },
+      }),
+    });
+    expect(issued.status, await issued.clone().text()).toBe(200);
     const minted = await asDevice(joined.token, "/admin/devices/pair", {
       method: "POST",
-      body: JSON.stringify({ kind: "cli", name: "Fictional new CLI" }),
+      body: pairBody,
+      headers: { "x-omnesis-step-up": ((await issued.json()) as { stepUpId: string }).stepUpId },
     });
     expect(minted.ok, await minted.text()).toBe(true);
 
