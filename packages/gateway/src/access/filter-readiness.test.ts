@@ -51,11 +51,22 @@ function source(id: string, deviceId: string, mode = "exclusive", members: strin
   });
 }
 
+/** A page committed on one cursor row, by a host at `version`. */
 function cursor(sourceId: string, cursorRow: string, version: number): void {
   db.prepare(
-    `INSERT INTO sync_state (source_id, device_id, source_version) VALUES (?, ?, ?)
-     ON CONFLICT(source_id, device_id) DO UPDATE SET source_version = excluded.source_version`,
+    `INSERT INTO sync_state (source_id, device_id, source_version, last_synced_at)
+     VALUES (?, ?, ?, '2027-03-01T09:00:00.000Z')
+     ON CONFLICT(source_id, device_id) DO UPDATE SET
+       source_version = excluded.source_version, last_synced_at = excluded.last_synced_at`,
   ).run(sourceId, cursorRow, version);
+}
+
+/** A cursor row holding only what was stored before any page: display details, or a first sync's error. */
+function rowWithoutPage(sourceId: string, cursorRow: string): void {
+  db.prepare(
+    `INSERT INTO sync_state (source_id, device_id, label, last_error, errored_at)
+     VALUES (?, ?, 'maya@example.org', 'The first sync could not reach the server.', '2027-03-01T09:00:00.000Z')`,
+  ).run(sourceId, cursorRow);
 }
 
 /** Record a read of the account by one cursor row: under way, ended, or a read of everything. */
@@ -134,8 +145,36 @@ describe("an account hosted by one device", () => {
     });
   });
 
-  it("treats a device that has never synced as behind", () => {
-    expect(states()["extra.labelIds"]).toMatchObject({ status: "collector-behind" });
+  it("does not call a device behind before its first sync has stored a page", () => {
+    // No version reported yet: the account's first read is about to start.
+    const firstRead = {
+      "extra.labelIds": { status: "resyncing", processed: 0, total: null },
+      "extra.folderIds": { status: "resyncing", processed: 0, total: null },
+    };
+    expect(states()).toMatchObject(firstRead);
+    // The account's details or a first sync's error report no version either.
+    rowWithoutPage(LEDGER, "");
+    expect(states()).toMatchObject(firstRead);
+  });
+
+  it("names the device to update once a page shows its build writes no version", () => {
+    cursor(LEDGER, "", 0);
+    expect(states()["extra.labelIds"]).toEqual({
+      status: "collector-behind",
+      devices: [{ id: "dev-laptop", name: "Studio Mac" }],
+    });
+  });
+
+  it("reports a first read by the count alone: no earlier full read gives it a total", () => {
+    cursor(LEDGER, "", 3);
+    read(LEDGER, "", 3, "open");
+    for (let index = 0; index < 4; index++) {
+      insertDocument(db, { id: `doc-${index}`, sourceId: LEDGER, version: 3, metadata: {} });
+    }
+    expect(states()).toMatchObject({
+      "extra.labelIds": { status: "resyncing", processed: 4, total: null },
+      "extra.folderIds": { status: "resyncing", processed: 4, total: null },
+    });
   });
 
   it("asks for a resync, with the source's own sentence, once the device is new enough", () => {
@@ -153,7 +192,7 @@ describe("an account hosted by one device", () => {
     expect(states()["extra.labelIds"]).toEqual({ status: "needs-resync", cost: null });
   });
 
-  it("reports the resync under way, as records at the current version out of all", () => {
+  it("reports a resync of an account read in full before, as records at the current version out of all", () => {
     cursor(LEDGER, "", 3);
     read(LEDGER, "", 0, "full");
     read(LEDGER, "", 3, "open");
@@ -309,7 +348,19 @@ describe("an account whose devices each keep their own cursor", () => {
   it("does not let the shared cursor row stand in for a device's own", () => {
     cursor(LEDGER, "", 3);
     read(LEDGER, "", 3, "full");
-    expect(states()["extra.labelIds"]).toMatchObject({ status: "collector-behind" });
+    // Each device's own first read is still to come.
+    expect(states()["extra.labelIds"]).toMatchObject({ status: "resyncing", total: null });
+  });
+
+  it("reads a device that joined and has not synced yet as reading for the first time", () => {
+    cursor(LEDGER, "dev-laptop", 3);
+    read(LEDGER, "dev-laptop", 3, "full");
+    expect(states()["extra.labelIds"]).toEqual({ status: "resyncing", processed: 0, total: null });
+    cursor(LEDGER, "dev-desktop", 1);
+    expect(states()["extra.labelIds"]).toEqual({
+      status: "collector-behind",
+      devices: [{ id: "dev-desktop", name: "Workshop PC" }],
+    });
   });
 
   it("leaves out a device that was unpaired", () => {

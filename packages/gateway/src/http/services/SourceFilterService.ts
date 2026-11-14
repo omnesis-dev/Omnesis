@@ -77,6 +77,7 @@ export interface SourceFilterResync {
   fields: string[];
   text: string;
   processed?: number;
+  /** About how many records the read covers; absent on a first read, which has nothing to compare with. */
   total?: number;
 }
 
@@ -120,9 +121,10 @@ export function summarizeResync(
       sourceName,
       processed: first.processed,
       total: first.total,
+      contentNoun,
     }),
     processed: first.processed,
-    total: first.total,
+    ...(first.total === null ? {} : { total: first.total }),
   };
 }
 

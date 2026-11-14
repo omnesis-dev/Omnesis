@@ -89,8 +89,9 @@ val FilterRef.entryWeight: Int get() = if (isPerson) identifiers?.size ?: 0 else
     val text: String? = null,
     /** [NEEDS_RESYNC]: what a resync reads, from the source's package; null when it declares nothing. */
     val cost: String? = null,
-    /** [RESYNCING]: records read again so far, of about [total]. */
+    /** [RESYNCING]: records read so far, of about [total]. */
     val processed: Long? = null,
+    /** [RESYNCING]: null on a first read, which has no earlier size to compare with. */
     val total: Long? = null,
     /** [COLLECTOR_BEHIND]: the devices whose Omnesis must be updated. */
     val devices: List<FilterDevice>? = null,

@@ -539,7 +539,7 @@ function documentIdsIn(value: unknown): Set<string> {
 export type FieldState =
   | { status: "ready" }
   | { status: "needs-resync"; cost: string | null; text: string }
-  | { status: "resyncing"; processed: number; total: number; text: string }
+  | { status: "resyncing"; processed: number; total: number | null; text: string }
   | { status: "collector-behind"; devices: Array<{ id: string; name: string }>; text: string }
   | { status: "gateway-behind"; text: string }
   | { status: "list-pending"; text: string };

@@ -124,6 +124,19 @@ class SourceFilterEditorTest {
         compose.onNodeWithText("People").performClick()
         compose.onNodeWithContentDescription("Search people").assertExists()
     }
+    @Test fun aFieldOnAnAccountsFirstReadShowsTheGatewaysCountWithoutABarOrAResync() {
+        val first = FilterFieldState(FilterFieldState.RESYNCING, processed = 602, text = "Reading Cedar for the first time: 602 chats so far.")
+        val gateway = FakeFilterGateway(editorFor = { editorWith(chats.copy(state = first), people) })
+        compose.setContent { CompositionLocalProvider(LocalInspectionMode provides true) { OmnesisTheme {
+            SourceFilterPicker(source, gateway, onClose = {}, state = remember { SourceFilterPickerState("extra.chatId") }, nameFor = { "Cedar" }) {}
+        } } }
+        compose.waitForIdle()
+        compose.onNodeWithText("Reading Cedar for the first time: 602 chats so far.").assertExists()
+        compose.onNodeWithText("Resync Cedar").assertDoesNotExist()
+        compose.onNodeWithContentDescription("Search chats").assertDoesNotExist()
+        compose.onNode(hasProgressBarRangeInfo(ProgressBarRangeInfo(0f, 0f..1f))).assertDoesNotExist()
+        compose.onNode(hasProgressBarRangeInfo(ProgressBarRangeInfo(1f, 0f..1f))).assertDoesNotExist()
+    }
     @Test fun fieldsWaitingOnTheSameResyncAreStatedOnceNamingThemAll() {
         val needs = { name: String -> FilterFieldState(FilterFieldState.NEEDS_RESYNC, text = "$name filters need Cedar to be resynced. Your chats stay searchable meanwhile.") }
         val gateway = FakeFilterGateway(editorFor = {

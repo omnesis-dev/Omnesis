@@ -113,11 +113,31 @@ function capitalized(text: string): string {
   return text.charAt(0).toUpperCase() + text.slice(1);
 }
 
+/**
+ * How far a read of the whole account has got. A resync compares with the
+ * size of the account's previous full read: "Resyncing Gmail: 212 of about
+ * 900.". A first read has no such size, so it gives the count alone:
+ * "Reading Gmail for the first time: 602 emails so far.". `contentNoun` is
+ * the source's own word for what it holds; without it the count is of items.
+ */
+function readProgressText(
+  sourceName: string,
+  processed: number,
+  total: number | null,
+  contentNoun?: string,
+): string {
+  if (total !== null)
+    return `Resyncing ${sourceName}: ${count(processed)} of about ${count(total)}.`;
+  if (processed < 1) return `Reading ${sourceName} for the first time.`;
+  const noun = processed < 2 ? "item" : (contentNoun ?? "items");
+  return `Reading ${sourceName} for the first time: ${count(processed)} ${noun} so far.`;
+}
+
 /** The sentence a filter editor shows for a field that cannot be used yet. */
 export function filterFieldStateText(
   state:
     | { status: "needs-resync"; cost: string | null }
-    | { status: "resyncing"; processed: number; total: number }
+    | { status: "resyncing"; processed: number; total: number | null }
     | { status: "collector-behind"; devices: ReadonlyArray<{ name: string }> }
     | { status: "gateway-behind" }
     | { status: "list-pending" },
@@ -128,7 +148,7 @@ export function filterFieldStateText(
     case "needs-resync":
       return needsResyncText(kind, context.sourceName, state.cost);
     case "resyncing":
-      return `Resyncing ${context.sourceName}: ${count(state.processed)} of about ${count(state.total)}.`;
+      return readProgressText(context.sourceName, state.processed, state.total);
     case "collector-behind":
       return `Update Omnesis on ${nameList(state.devices.map((device) => device.name))} to use these filters.`;
     case "gateway-behind":
@@ -157,9 +177,9 @@ function needsResyncText(
 /**
  * The one sentence the editor shows for every field of an account that waits
  * on a resync: the fields named in the order given (people last), then what
- * stays available and what the resync costs. `contentNoun` is the source's
- * own word for what it holds ("emails"); without it the sentence stays
- * generic.
+ * stays available and what the resync costs. While the account is being
+ * read, how far the read has got. `contentNoun` is the source's own word
+ * for what it holds ("emails"); without it the sentence stays generic.
  */
 export function accountResyncText(
   input:
@@ -170,10 +190,16 @@ export function accountResyncText(
         cost: string | null;
         contentNoun?: string;
       }
-    | { status: "resyncing"; sourceName: string; processed: number; total: number },
+    | {
+        status: "resyncing";
+        sourceName: string;
+        processed: number;
+        total: number | null;
+        contentNoun?: string;
+      },
 ): string {
   if (input.status === "resyncing")
-    return `Resyncing ${input.sourceName}: ${count(input.processed)} of about ${count(input.total)}.`;
+    return readProgressText(input.sourceName, input.processed, input.total, input.contentNoun);
   const names = input.fields.map((field) => (field.person ? field.noun.many : field.noun.one));
   return needsResyncText(
     `${capitalized(nameList(names))} filters`,

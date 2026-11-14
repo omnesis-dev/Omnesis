@@ -455,6 +455,25 @@ test("Resync starts an in-place resync, shows it starting, then the gateway's pr
   expect(api.getSourceFilterEditor.mock.calls.length).toBeGreaterThan(reads);
 }, 10_000);
 
+test("an account's first read shows the gateway's count beside a spinner, with no bar and nothing to press", async () => {
+  const reading = {
+    status: "resyncing",
+    processed: 602,
+    total: null,
+    text: "Reading the room archive for the first time: 602 rooms so far.",
+  };
+  api.getSourceFilterEditor
+    .mockReset()
+    .mockResolvedValue(editorWith([{ ...roomField, state: reading }], { retryAfterMs: 200 }));
+  await mount();
+  expect(host.querySelector(".source-filter-state p")?.textContent).toBe(
+    "Reading the room archive for the first time: 602 rooms so far.",
+  );
+  expect(host.querySelector(".source-filter-state .source-filter-spinner")).not.toBeNull();
+  expect(host.querySelector("progress.source-filter-progress")).toBeNull();
+  expect(host.querySelector(".source-filter-state button")).toBeNull();
+});
+
 test("a resync that cannot start says so and offers the button again", async () => {
   const needs = { status: "needs-resync", cost: null, text: "Room filters need Fictional to be resynced." };
   api.getSourceFilterEditor.mockResolvedValue(editorWith([{ ...roomField, state: needs }]));

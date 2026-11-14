@@ -9,7 +9,7 @@
  * by a host new enough to write the field, and the list of what exists for
  * the field has arrived. Until then the state says what is missing, in the
  * order a person would fix it: update this gateway, update a device, wait for
- * a resync in progress, start a resync, wait for the list.
+ * a first read or a resync in progress, start a resync, wait for the list.
  *
  * This gate is for the editor only. What a saved filter shows never depends
  * on it: every record is checked on its own version and details at each read.
@@ -56,8 +56,15 @@ export type FilterFieldState =
   | { status: "gateway-behind" }
   /** A device hosting the account runs a build that does not write the field. */
   | { status: "collector-behind"; devices: FilterDevice[] }
-  /** A read of the whole account by a new enough host is under way. */
-  | { status: "resyncing"; processed: number; total: number }
+  /**
+   * A read of the whole account by a new enough host is under way, or about
+   * to start on an account whose first sync has stored nothing yet.
+   * `processed` counts the records at the current version; `total` counts
+   * every record of the account, the size its previous full read left it at.
+   * `total` is `null` on a first read: nothing has been read in full before,
+   * so there is no size to compare with.
+   */
+  | { status: "resyncing"; processed: number; total: number | null }
   /** The account must be resynced; `cost` is the source's own sentence about what that takes. */
   | { status: "needs-resync"; cost: string | null }
   /** The account is read; the list of what exists for the field has not arrived. */
@@ -125,10 +132,16 @@ export function readSourceFilterReadiness(db: Db, sourceId: string): SourceFilte
     const cursorRows = perDevice ? devices.map((device) => device.id) : [""];
     const rowDevices = (cursorRow: string): FilterDevice[] =>
       cursorRow === "" ? devices : devices.filter((device) => device.id === cursorRow);
+    // The version each cursor row's host reported with its last page. A row
+    // can exist before any page has been committed on it — the account's
+    // display details, or an error from its first sync, are stored there
+    // too — and its version then reads 0 without anyone having reported it.
+    // A row whose cursor was reset keeps the version its host last sent.
     const rowVersions = new Map(
       db
         .prepare<[string], { device_id: string; source_version: number }>(
-          "SELECT device_id, source_version FROM sync_state WHERE source_id = ?",
+          `SELECT device_id, source_version FROM sync_state
+            WHERE source_id = ? AND (last_synced_at IS NOT NULL OR source_version > 0)`,
         )
         .all(sourceId)
         .map((row) => [row.device_id, row.source_version]),
@@ -154,8 +167,14 @@ export function readSourceFilterReadiness(db: Db, sourceId: string): SourceFilte
 
     const stateFor = (minVersion: number, list: string | null): FilterFieldState => {
       if (minVersion > 0) {
+        // Only a version a host has reported says its build is too old. A
+        // cursor row with no reported version belongs to a host whose first
+        // sync has not stored a page yet: it is starting its first read.
         const behind = cursorRows
-          .filter((row) => (rowVersions.get(row) ?? 0) < minVersion)
+          .filter((row) => {
+            const version = rowVersions.get(row);
+            return version !== undefined && version < minVersion;
+          })
           .flatMap(rowDevices);
         if (behind.length > 0) {
           return { status: "collector-behind", devices: uniqueDevices(behind) };
@@ -163,12 +182,18 @@ export function readSourceFilterReadiness(db: Db, sourceId: string): SourceFilte
         const unread = cursorRows.filter((row) => (fullReads.get(row) ?? -1) < minVersion);
         if (unread.length > 0) {
           // Every row still to be read is being read now, by a host that
-          // writes the field: the resync the field needs is under way.
-          if (unread.every((row) => (openReads.get(row) ?? -1) >= minVersion)) {
+          // writes the field or by one whose first sync is starting: the
+          // read the field needs is under way.
+          if (
+            unread.every((row) => !rowVersions.has(row) || (openReads.get(row) ?? -1) >= minVersion)
+          ) {
             const processed = versionCounts
               .filter((row) => row.sourceVersion >= currentVersion)
               .reduce((sum, row) => sum + row.count, 0);
-            return { status: "resyncing", processed, total };
+            // The account's size is a total only when every row being read
+            // was read in full before; a first read has nothing to compare with.
+            const known = unread.every((row) => fullReads.has(row));
+            return { status: "resyncing", processed, total: known ? total : null };
           }
           cost ??= getSourceResyncCost(db, source.type);
           return { status: "needs-resync", cost };

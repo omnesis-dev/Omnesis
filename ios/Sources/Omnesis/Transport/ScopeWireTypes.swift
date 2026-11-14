@@ -147,7 +147,8 @@ public enum FilterFieldState: Equatable, Sendable {
     case ready
     /// The account's records predate the field: an in-place resync of the whole account adds it.
     case needsResync(cost: String?, text: String)
-    case resyncing(processed: Int, total: Int, text: String)
+    /// The whole account is being read. `total` is nil on a first read, which has no earlier size to compare with.
+    case resyncing(processed: Int, total: Int?, text: String)
     /// A device hosting the account runs an Omnesis too old to record the field.
     case collectorBehind(devices: [FilterDevice], text: String)
     case gatewayBehind(text: String)
@@ -192,7 +193,7 @@ extension FilterFieldState: Decodable {
         case "needs-resync": self = try .needsResync(cost: values.decodeIfPresent(String.self, forKey: .cost), text: text())
         case "resyncing": self = try .resyncing(
                 processed: values.decode(Int.self, forKey: .processed),
-                total: values.decode(Int.self, forKey: .total),
+                total: values.decodeIfPresent(Int.self, forKey: .total),
                 text: text()
             )
         case "collector-behind": self = try .collectorBehind(devices: values.decode([FilterDevice].self, forKey: .devices), text: text())
@@ -306,7 +307,7 @@ public struct FilterAccountResync: Equatable, Sendable, Decodable {
     public var fieldState: FilterFieldState? {
         switch state {
         case "needs-resync": .needsResync(cost: nil, text: text)
-        case "resyncing": .resyncing(processed: processed ?? 0, total: total ?? 0, text: text)
+        case "resyncing": .resyncing(processed: processed ?? 0, total: total, text: text)
         default: nil
         }
     }

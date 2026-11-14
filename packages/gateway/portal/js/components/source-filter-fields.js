@@ -230,10 +230,15 @@ export function FilterFieldState({ source, state, starting = false, error = "", 
       ${error ? html`<p class="access-field-error" role="alert">${error}</p>` : null}
       <button type="button" class="btn-secondary" onClick=${onResync}>Resync ${name}</button>
     </div>`;
+  // A first read has no total to measure against: its count is in the sentence.
+  if (state.status === "resyncing" && state.total == null)
+    return html`<div class="source-filter-state" role="status">
+      <p><span class="source-filter-spinner" aria-hidden="true"></span>${state.text}</p>
+    </div>`;
   if (state.status === "resyncing")
     return html`<div class="source-filter-state" role="status">
       <p>${state.text}</p>
-      <${ResyncProgress} processed=${state.processed} total=${state.total} label=${`Resyncing ${name}`} />
+      <${ResyncProgress} processed=${state.processed} total=${state.total} label=${state.text} />
     </div>`;
   if (state.status === "needs-resync")
     return html`<div class="source-filter-state" role="status">

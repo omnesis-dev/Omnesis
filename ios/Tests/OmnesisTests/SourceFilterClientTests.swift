@@ -175,7 +175,10 @@ final class AccessSourceFilterClientTests: XCTestCase {
           {"field":"e","capability":"membership","noun":{"one":"e","many":"es"},"picker":"search","scope":"global",
            "state":{"status":"a-state-from-the-future"},"counts":{"status":"pending"}},
           {"field":"f","capability":"membership","noun":{"one":"f","many":"fs"},"picker":"search","scope":"global",
-           "state":{"status":"disconnected","text":"This account is no longer connected."},"counts":{"status":"pending"}}
+           "state":{"status":"disconnected","text":"This account is no longer connected."},"counts":{"status":"pending"}},
+          {"field":"g","capability":"membership","noun":{"one":"g","many":"gs"},"picker":"search","scope":"global",
+           "state":{"status":"resyncing","processed":602,"total":null,"text":"Reading Gmail for the first time: 602 items so far."},
+           "counts":{"status":"pending"}}
          ]}
         """
         let editor = try await client(session).filterEditor(sourceId: "gmail:mail@example.org")
@@ -198,6 +201,7 @@ final class AccessSourceFilterClientTests: XCTestCase {
             .listPending(text: "Waiting for Gmail to send its list of labels."),
             .unsupported,
             .disconnected(text: "This account is no longer connected."),
+            .resyncing(processed: 602, total: nil, text: "Reading Gmail for the first time: 602 items so far."),
         ])
         XCTAssertEqual(editor.profile, "declared")
         XCTAssertNil(editor.profileText)
@@ -205,8 +209,8 @@ final class AccessSourceFilterClientTests: XCTestCase {
         XCTAssertEqual(editor.fields[0].counts, .ready(tooOld: 0, unmatched: 0, tooOldText: nil, unmatchedText: nil))
         XCTAssertEqual(editor.fields[1].counts, .pending)
         XCTAssertEqual(editor.fields[1].insideText, "Includes the labels inside.")
-        XCTAssertEqual(editor.fields.map(\.perDevice), [false, false, true, true, false, false, false, false])
-        XCTAssertEqual(editor.fields.map(\.state.isReady), [true, false, false, false, false, false, false, false])
+        XCTAssertEqual(editor.fields.map(\.perDevice), [false, false, true, true, false, false, false, false, false])
+        XCTAssertEqual(editor.fields.map(\.state.isReady), [true, false, false, false, false, false, false, false, false])
         XCTAssertEqual(editor.fields[6].state.text, "This version of Omnesis can’t use this filter yet.")
         XCTAssertEqual(editor.fields[7].state.text, "This account is no longer connected.")
         XCTAssertTrue(editor.settling)

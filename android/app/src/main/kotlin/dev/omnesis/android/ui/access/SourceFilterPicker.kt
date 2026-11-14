@@ -260,8 +260,8 @@ internal fun resyncActionLabel(source: String): String = "Resync $source"
 
 /**
  * Why a field cannot take new entries yet, in the gateway's words, where its choices would be: with the button that
- * resyncs the account when that is what it needs, a bar while the resync runs, and a spinner while the account's list
- * is on its way. A state this app does not know shows the gateway's text.
+ * resyncs the account when that is what it needs, a bar while the resync runs, and a spinner during an account's first
+ * read or while its list is on its way. A state this app does not know shows the gateway's text.
  */
 @Composable
 internal fun FilterFieldStateBlock(state: FilterFieldState, source: String, onResync: suspend () -> Unit) {
@@ -273,15 +273,16 @@ internal fun FilterFieldStateBlock(state: FilterFieldState, source: String, onRe
     val text = state.text ?: FIELD_UNAVAILABLE_MESSAGE
     Column(Modifier.fillMaxWidth().background(colors.surface, RoundedCornerShape(14.dp)).padding(16.dp).semantics { liveRegion = LiveRegionMode.Polite },
         verticalArrangement = Arrangement.spacedBy(14.dp)) {
-        when (state.status) {
-            FilterFieldState.LIST_PENDING -> Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        // A first read has no total to measure against: its count is in the sentence, beside a spinner.
+        val firstRead = state.status == FilterFieldState.RESYNCING && state.total == null
+        if (state.status == FilterFieldState.LIST_PENDING || firstRead) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 AccessSpinner(18.dp)
                 Text(text, style = AccessType.Subtitle, color = colors.primary, modifier = Modifier.weight(1f))
             }
-            else -> Text(text, style = AccessType.Subtitle, color = colors.primary)
-        }
-        if (state.status == FilterFieldState.RESYNCING) {
-            val total = state.total ?: 0
+        } else Text(text, style = AccessType.Subtitle, color = colors.primary)
+        val total = state.total
+        if (state.status == FilterFieldState.RESYNCING && total != null) {
             AccessProgressBar(if (total > 0) (state.processed ?: 0).toFloat() / total else 0f)
         }
         // Once asked for, the resync is shown starting until the gateway reports it running.

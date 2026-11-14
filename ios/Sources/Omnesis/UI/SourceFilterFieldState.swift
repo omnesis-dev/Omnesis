@@ -5,9 +5,9 @@
 import SwiftUI
 
 /// What the picker shows in place of a field's items while the field cannot be used, on one tinted block: the
-/// gateway's sentence, a
-/// button to resync the account when that is the remedy, progress while it resyncs, and a spinner while the
-/// account's list is on its way. The editor asks the gateway again by itself, so nothing here needs refreshing.
+/// gateway's sentence, a button to resync the account when that is the remedy, progress while it resyncs, and a
+/// spinner during its first read or while the account's list is on its way. The editor asks the gateway again by
+/// itself, so nothing here needs refreshing.
 struct SourceFilterFieldStateView: View {
     let state: FilterFieldState
     /// The source's name, as the resync button says it: "Gmail".
@@ -26,11 +26,18 @@ struct SourceFilterFieldStateView: View {
                     sentence(text)
                 }
                 .accessibilityElement(children: .combine)
-            case .resyncing(let processed, let total, let text):
+            case .resyncing(let processed, .some(let total), let text):
                 sentence(text)
                 ProgressView(value: Double(min(processed, max(total, 1))), total: Double(max(total, 1)))
                     .tint(Theme.accent)
                     .accessibilityLabel(text)
+            case .resyncing(_, .none, let text):
+                // A first read has no total to measure against: its count is in the sentence.
+                HStack(alignment: .firstTextBaseline, spacing: 10) {
+                    AccessCountingSpinner()
+                    sentence(text)
+                }
+                .accessibilityElement(children: .combine)
             case .needsResync where starting:
                 HStack(alignment: .firstTextBaseline, spacing: 10) {
                     AccessCountingSpinner()
@@ -128,6 +135,15 @@ struct SourceFilterRetryLine: View {
     SourceFilterFieldStateView(
         state: .resyncing(processed: 212, total: 900, text: "Resyncing Google Drive: 212 of about 900."),
         sourceName: "Google Drive"
+    ) {}
+        .padding(20)
+        .background(Theme.bgPrimary)
+}
+
+#Preview("First read") {
+    SourceFilterFieldStateView(
+        state: .resyncing(processed: 602, total: nil, text: "Reading Gmail for the first time: 602 emails so far."),
+        sourceName: "Gmail"
     ) {}
         .padding(20)
         .background(Theme.bgPrimary)

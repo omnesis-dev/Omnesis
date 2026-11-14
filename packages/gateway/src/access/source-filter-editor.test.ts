@@ -15,7 +15,7 @@ import {
   tag,
   type FilterFixture,
 } from "./filter-test-utils.js";
-import { accountResyncText } from "./filter-wording.js";
+import { accountResyncText, filterFieldStateText } from "./filter-wording.js";
 import {
   readSourceFilterEditor,
   readSourceFilterPreview,
@@ -223,5 +223,50 @@ describe("the account's resync sentence", () => {
     expect(
       summarizeResync("mailbox", [field("extra.labelIds", "label", { status: "ready" })]),
     ).toBeUndefined();
+  });
+
+  test("on a first read gives the count alone, with no total to compare it with", () => {
+    const reading = (processed: number) => ({
+      status: "resyncing" as const,
+      processed,
+      total: null,
+      text: "",
+    });
+    expect(
+      summarizeResync("mailbox", [field("extra.labelIds", "label", reading(602))], "emails"),
+    ).toEqual({
+      state: "resyncing",
+      fields: ["extra.labelIds"],
+      text: "Reading mailbox for the first time: 602 emails so far.",
+      processed: 602,
+    });
+    expect(summarizeResync("mailbox", [field("extra.labelIds", "label", reading(1_250))])).toEqual(
+      expect.objectContaining({ text: "Reading mailbox for the first time: 1,250 items so far." }),
+    );
+    expect(
+      summarizeResync("mailbox", [field("extra.labelIds", "label", reading(1))], "emails")?.text,
+    ).toBe("Reading mailbox for the first time: 1 item so far.");
+    // Before the first page has been stored there is nothing to count.
+    expect(
+      summarizeResync("mailbox", [field("extra.labelIds", "label", reading(0))], "emails")?.text,
+    ).toBe("Reading mailbox for the first time.");
+    expect(
+      filterFieldStateText(reading(602), {
+        sourceName: "mailbox",
+        noun: { one: "label", many: "labels" },
+      }),
+    ).toBe("Reading mailbox for the first time: 602 items so far.");
+  });
+
+  test("a resync of an account read in full before keeps its earlier size as the total", () => {
+    expect(
+      accountResyncText({
+        status: "resyncing",
+        sourceName: "mailbox",
+        processed: 212,
+        total: 900,
+        contentNoun: "emails",
+      }),
+    ).toBe("Resyncing mailbox: 212 of about 900.");
   });
 });
