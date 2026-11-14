@@ -194,6 +194,7 @@ describe("website docs", () => {
     const subnav = sidebar.match(/<ul class="side-sub">[\s\S]*?<\/ul>/)?.[0] ?? "";
     expect([...subnav.matchAll(/href="([^"]+)"/g)].map((m) => m[1])).toEqual([
       "#realtime-voice",
+      "#source-filters",
       "#browser-extension",
       "#brain",
       "#watch",
