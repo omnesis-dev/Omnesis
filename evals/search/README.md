@@ -69,10 +69,10 @@ hybrid mode refuses an embedder address that is not loopback, and the eval
 never assigns a chat or agent model.
 
 ```sh
-# Once: download MIRACL and build the pools (about 20 GB of download, 1.3 GB kept).
+# Once: stream the MIRACL corpus from the hub and build the pools (1.1 GB kept).
 npm run search-eval:prepare
 
-# Keyword search only. About two hours for all 18 languages.
+# Keyword search only. A little over an hour for all 18 languages on a fast machine.
 npm run search-eval:run -- --name my-change-lexical
 
 # Keyword + semantic search, with a local OpenAI-compatible embedder.

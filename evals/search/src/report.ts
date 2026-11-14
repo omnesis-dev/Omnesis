@@ -12,6 +12,7 @@
 
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
+import * as prettier from "prettier";
 
 import { LANGUAGE_NAMES, type Language } from "./dataset.js";
 import { mean, pairedBootstrap, percentile, seededRandom } from "./metrics.js";
@@ -209,7 +210,7 @@ export function renderComparison(
   ].join("\n");
 }
 
-function main(): void {
+async function main(): Promise<void> {
   const argv = process.argv.slice(2);
   if (argv[0] === "--compare") {
     const [, baseName, candidateName] = argv;
@@ -227,15 +228,18 @@ function main(): void {
     .map((name) => readSummary(name))
     .sort((a, b) => (a.startedAt < b.startedAt ? -1 : 1));
   const path = join(RESULTS_DIR, "..", "RESULTS.md");
-  writeFileSync(path, renderResults(summaries));
+  // The page goes through the repository's formatter so the format check accepts it as generated.
+  const config = await prettier.resolveConfig(path);
+  writeFileSync(
+    path,
+    await prettier.format(renderResults(summaries), { ...config, filepath: path }),
+  );
   process.stdout.write(`Wrote evals/search/RESULTS.md (${summaries.length} runs)\n`);
 }
 
 if (process.argv[1]?.endsWith("report.ts")) {
-  try {
-    main();
-  } catch (err) {
+  main().catch((err: unknown) => {
     process.stderr.write(`${err instanceof Error ? err.message : String(err)}\n`);
     process.exit(1);
-  }
+  });
 }
