@@ -5,7 +5,7 @@ import { spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { resolveSubprocessEntry } from "@omnesis/core";
+import { createLogger, resolveSubprocessEntry } from "@omnesis/core";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { EMBEDDING_DIM, purgeUsearchSidecars } from "./db.js";
 import { UsearchWriteHandle } from "./usearch-index.js";
@@ -122,26 +122,50 @@ describe("quarantineCorruptUsearch", () => {
       expect(warn.mock.calls.flat().join("\n")).toContain("ERR_MODULE_NOT_FOUND");
     });
 
-    test("a plain exit 1 is not a verdict on the file", () => {
+    test.each([1, 2, 3])("a plain exit %i is not a verdict on the file", (status) => {
       const dir = tmpDir();
       const path = join(dir, "index.usearch");
       writeFileSync(path, "contents the validator never looked at");
 
-      const validator = fakeValidator(dir, "process.exit(1);\n");
+      const validator = fakeValidator(dir, `process.exit(${status});\n`);
 
       expect(quarantineCorruptUsearch(path, EMBEDDING_DIM, validator)).toBe("inconclusive");
       expect(existsSync(path)).toBe(true);
     });
 
-    test("a native abort in the validator quarantines the file", () => {
+    test("a native abort quarantines only when the OS reports a recognized crash signal", () => {
       const dir = tmpDir();
       const path = join(dir, "index.usearch");
       writeFileSync(path, "bytes that made the loader abort");
 
-      const validator = fakeValidator(dir, 'process.kill(process.pid, "SIGABRT");\n');
+      const started = join(dir, "abort-entered");
+      const validator = fakeValidator(
+        dir,
+        `import { writeFileSync } from "node:fs";writeFileSync(${JSON.stringify(started)}, "ready");process.abort();\n`,
+      );
+      if (process.platform === "win32") {
+        // Record the actual CRT result without interpreting a numeric status
+        // as proof that a native file open found corruption.
+        const result = spawnSync(validator.command, validator.args, {
+          timeout: 5_000,
+          stdio: ["ignore", "ignore", "pipe"],
+          encoding: "utf8",
+        });
+        expect(result.error).toBeUndefined();
+        expect(existsSync(started)).toBe(true);
+        expect(result.status).not.toBe(0);
+        createLogger("gateway:usearch:boot-guard:test").info(
+          `Native abort probe: status=${result.status} signal=${result.signal}`,
+        );
+        rmSync(started);
+      }
 
-      expect(quarantineCorruptUsearch(path, EMBEDDING_DIM, validator)).toBe("quarantined");
-      expect(existsSync(path)).toBe(false);
+      // An exit status alone cannot distinguish a native file rejection from
+      // validator startup failure; Windows native recovery needs that proof.
+      const expected = process.platform === "win32" ? "inconclusive" : "quarantined";
+      expect(quarantineCorruptUsearch(path, EMBEDDING_DIM, validator)).toBe(expected);
+      expect(existsSync(started)).toBe(true);
+      expect(existsSync(path)).toBe(process.platform === "win32");
     });
 
     test("a validator killed from outside leaves the file in place", () => {

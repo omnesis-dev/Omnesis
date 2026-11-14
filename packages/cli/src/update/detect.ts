@@ -13,7 +13,7 @@
  */
 
 import { existsSync, readFileSync, readdirSync } from "node:fs";
-import { delimiter, dirname, join } from "node:path";
+import { delimiter, dirname, posix, win32 } from "node:path";
 import {
   COLLECTOR_PAIRING_STATE_FILE,
   GATEWAY_STORE_FILE,
@@ -1103,8 +1103,11 @@ export interface HostLayout {
 }
 
 /** Saved credentials `omnesis connect` writes under a harness home. */
-export function harnessIntegrationPath(home: string): string {
-  return join(home, "omnesis", "integration.json");
+export function harnessIntegrationPath(
+  home: string,
+  platform: NodeJS.Platform = process.platform,
+): string {
+  return (platform === "win32" ? win32 : posix).join(home, "omnesis", "integration.json");
 }
 
 /**
@@ -1124,8 +1127,8 @@ export function serviceUnitInstalled(
 
 /** Directory the platform's user-level service units live in. */
 function serviceUnitDir(platform: NodeJS.Platform, homeDir: string): string | null {
-  if (platform === "linux") return join(homeDir, ".config", "systemd", "user");
-  if (platform === "darwin") return join(homeDir, "Library", "LaunchAgents");
+  if (platform === "linux") return posix.join(homeDir, ".config", "systemd", "user");
+  if (platform === "darwin") return posix.join(homeDir, "Library", "LaunchAgents");
   return null;
 }
 
@@ -1223,6 +1226,7 @@ export function harnessNeedsAuthorization(integrationJson: string | null): boole
  */
 export function detectHostRoles(layout: HostLayout, fs: HostScanFs = nodeHostScanFs): HostRoles {
   const { platform, homeDir, configDir } = layout;
+  const paths = platform === "win32" ? win32 : posix;
 
   /**
    * One component, from three readings: does this host hold its state, does
@@ -1270,13 +1274,14 @@ export function detectHostRoles(layout: HostLayout, fs: HostScanFs = nodeHostSca
   // would mean skipping the backup on the one host that holds the corpus.
   const hardenedGateway =
     platform === "linux" &&
-    (fs.exists(HARDENED_UNIT_PATH) || fs.exists(join(HARDENED_CONFIG_DIR, GATEWAY_STORE_FILE)));
+    (fs.exists(HARDENED_UNIT_PATH) ||
+      fs.exists(posix.join(HARDENED_CONFIG_DIR, GATEWAY_STORE_FILE)));
   // Root moves a dedicated gateway to another release with its admin command.
   // A dedicated gateway set up before that command existed is moved by the
   // install, which reads the old unit's port and passphrase.
   const adminInstalled = hardenedGateway && fs.exists(HARDENED_ADMIN_PATH);
 
-  const detectedGateway = role("gateway", fs.exists(join(configDir, GATEWAY_STORE_FILE)));
+  const detectedGateway = role("gateway", fs.exists(paths.join(configDir, GATEWAY_STORE_FILE)));
   // The lock only speaks for a gateway using this config directory: a named
   // instance keeps its own, and a dedicated gateway keeps its under root's.
   const gateway =
@@ -1286,11 +1291,14 @@ export function detectHostRoles(layout: HostLayout, fs: HostScanFs = nodeHostSca
     serviceUnitInstanceNames(platform, homeDir, "gateway", fs).length === 0
       ? { ...detectedGateway, stopped: true }
       : detectedGateway;
-  const collector = role("collector", fs.exists(join(configDir, COLLECTOR_PAIRING_STATE_FILE)));
+  const collector = role(
+    "collector",
+    fs.exists(paths.join(configDir, COLLECTOR_PAIRING_STATE_FILE)),
+  );
 
   const harnesses: HarnessRole[] = [];
   for (const { harness, home } of layout.harnessHomes) {
-    const path = harnessIntegrationPath(home);
+    const path = harnessIntegrationPath(home, platform);
     if (!fs.exists(path)) continue;
     harnesses.push({
       harness,

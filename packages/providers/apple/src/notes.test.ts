@@ -610,6 +610,7 @@ describe("AppleNotesSource", () => {
     // Rebuild the store without ZFOLDERMODIFICATIONDATE, as an older macOS
     // schema would have it: the deletes window falls back to the modification
     // date alone rather than guessing at a column.
+    await provider.disconnect();
     testDb.close();
     rmSync(dbPath);
     testDb = new Database(dbPath);

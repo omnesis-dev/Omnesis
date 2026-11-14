@@ -41,7 +41,6 @@ import {
 } from "../indexer/db.js";
 import { SearchWorkerPool } from "../workers/search-pool.js";
 import { SearchPipeline } from "./pipeline.js";
-import { closeTempDb } from "./test-utils.js";
 import type Database from "better-sqlite3";
 
 type Db = Database.Database;
@@ -124,6 +123,12 @@ describe("search worker — finalize issues zero main-thread index.db reads", ()
   let configDir: string;
   let dbPath: string;
   let pool: SearchWorkerPool;
+  const mainHandles = new Set<Db>();
+
+  function ownDb(handle: Db): Db {
+    mainHandles.add(handle);
+    return handle;
+  }
 
   beforeEach(async () => {
     configDir = mkdtempSync(join(tmpdir(), "omnesis-swfin-"));
@@ -144,11 +149,13 @@ describe("search worker — finalize issues zero main-thread index.db reads", ()
 
   afterEach(async () => {
     await pool.dispose();
+    for (const handle of mainHandles) if (handle.open) handle.close();
+    mainHandles.clear();
     rmSync(configDir, { recursive: true, force: true });
   });
 
   test("worker path → main index.db handle is NOT read during the search", async () => {
-    const mainDb = openIndexDb(dbPath, { readonly: true });
+    const mainDb = ownDb(openIndexDb(dbPath, { readonly: true }));
     const pipeline = new SearchPipeline({ indexDb: mainDb });
     pipeline.setSearchPool(pool);
 
@@ -175,14 +182,14 @@ describe("search worker — finalize issues zero main-thread index.db reads", ()
     // map and the final hydrate was a no-op.
     expect(prepares.count).toBe(0);
 
-    closeTempDb(mainDb);
+    mainDb.close();
   });
 
   test("control: the inline (no-worker) path DOES read the main index.db handle", async () => {
     // Same query, same handle, but no pool wired → candidate-gen runs inline on
     // main, which MUST touch index.db (BM25 + hydrate). Proves the counter above
     // measures a real property, not a dead spy.
-    const mainDb = openIndexDb(dbPath, { readonly: true });
+    const mainDb = ownDb(openIndexDb(dbPath, { readonly: true }));
     const pipeline = new SearchPipeline({ indexDb: mainDb });
 
     const prepares = countPrepares(mainDb);
@@ -192,7 +199,7 @@ describe("search worker — finalize issues zero main-thread index.db reads", ()
     expect(res.results.length).toBe(2);
     expect(prepares.count).toBeGreaterThan(0);
 
-    closeTempDb(mainDb);
+    mainDb.close();
   });
 
   test("poisoned main handle → results still correct (finalize consumed the worker snapshot, not main's)", async () => {
@@ -202,7 +209,7 @@ describe("search worker — finalize issues zero main-thread index.db reads", ()
     // snippets would be empty. Correct results here prove main read nothing but
     // the worker's returned snapshot.
     const emptyPath = join(configDir, `empty-${randomUUID()}.db`);
-    const emptyMainDb = createIndexDatabase(emptyPath);
+    const emptyMainDb = ownDb(createIndexDatabase(emptyPath));
     const pipeline = new SearchPipeline({ indexDb: emptyMainDb });
     pipeline.setSearchPool(pool);
 
@@ -224,6 +231,6 @@ describe("search worker — finalize issues zero main-thread index.db reads", ()
       expect(text.length).toBeGreaterThan(0);
     }
 
-    closeTempDb(emptyMainDb);
+    emptyMainDb.close();
   });
 });

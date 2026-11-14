@@ -65,6 +65,12 @@ sibling differing only in case before reading its bytes, while accepting an
 alias for the same directory. This is narrow evidence: complete ARM64 native
 dependencies and product validation remain open, and the provider remains gated.
 
+Automatic vector-index recovery after a native crash remains an open Windows
+parity item. Ordinary child exit codes, including code 3, are inconclusive and
+must preserve the file. The native abort probe checks parent survival and file
+preservation on Windows; matching Unix recovery requires evidence from an actual
+corrupt-index open and a trustworthy native-open boundary.
+
 ## Broader failing baselines
 
 The complete Windows unit baseline at `3c076e8e3` recorded 35,642 passing tests,

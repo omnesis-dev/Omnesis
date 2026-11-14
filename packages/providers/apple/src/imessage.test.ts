@@ -495,6 +495,31 @@ describe("AppleIMessageSource", () => {
     expect(r2.documents[0].content).toContain("Second");
   });
 
+  async function removeChatFixtureForReplacement(path: string): Promise<void> {
+    if (process.platform === "win32") {
+      // Windows refuses replacement while SQLite retains its reader. Verify
+      // the refused operation preserves that reader and all original rows,
+      // then release ownership before exercising replacement/recovery.
+      const retained = provider.getIMessageDb();
+      expect(retained).not.toBeNull();
+      const rows = retained!.prepare("SELECT ROWID, text FROM message ORDER BY ROWID").all();
+      let refusal: unknown;
+      try {
+        rmSync(path, { force: true });
+      } catch (error) {
+        refusal = error;
+      }
+      expect(refusal).toMatchObject({ code: expect.stringMatching(/^(?:EPERM|EBUSY|EACCES)$/) });
+      expect(retained!.open).toBe(true);
+      expect(retained!.prepare("SELECT ROWID, text FROM message ORDER BY ROWID").all()).toEqual(
+        rows,
+      );
+      await provider.disconnect();
+      expect(retained!.open).toBe(false);
+    }
+    rmSync(path, { force: true });
+  }
+
   test("re-bootstraps when chat.db is rebuilt and ROWIDs regress", async () => {
     const dbPath = join(tmpDir, "chat.db");
     insertMessage(testDb, 5, 1, {
@@ -507,7 +532,7 @@ describe("AppleIMessageSource", () => {
     expect((first.cursor as { lastRowId: number }).lastRowId).toBe(5);
 
     testDb.close();
-    rmSync(dbPath, { force: true });
+    await removeChatFixtureForReplacement(dbPath);
     testDb = createTestDb(dbPath);
     insertHandle(testDb, 1, "+14085550123");
     insertHandle(testDb, 2, "friend@example.com");
@@ -541,7 +566,7 @@ describe("AppleIMessageSource", () => {
     expect((first.cursor as { lastRowId: number }).lastRowId).toBe(5);
 
     testDb.close();
-    rmSync(dbPath, { force: true });
+    await removeChatFixtureForReplacement(dbPath);
     testDb = createTestDb(dbPath);
     insertHandle(testDb, 1, "+14085550123");
     insertChat(testDb, 1, "+14085550123", { style: 43, handleIds: [1] });

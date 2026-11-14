@@ -12,6 +12,22 @@ import { AppleContactsSource } from "./contacts.js";
 import { AppleProvider } from "./provider.js";
 import { appleContactsDocumentProfile } from "./document-profiles.js";
 
+/** Release provider readers before removing their owned fixture directory. */
+async function closeFixture(provider: AppleProvider, path: string): Promise<void> {
+  const failures: unknown[] = [];
+  try {
+    await provider.disconnect();
+  } catch (error) {
+    failures.push(error);
+  }
+  try {
+    rmSync(path, { recursive: true, force: true });
+  } catch (error) {
+    failures.push(error);
+  }
+  if (failures.length) throw new AggregateError(failures, "Apple contacts fixture cleanup failed");
+}
+
 const CORE_DATA_EPOCH = new Date("2001-01-01T00:00:00Z").getTime();
 
 function toCoreData(date: Date): number {
@@ -364,8 +380,8 @@ describe("AppleContactsSource", () => {
     });
   });
 
-  afterAll(() => {
-    rmSync(tmpDir, { recursive: true, force: true });
+  afterAll(async () => {
+    await closeFixture(provider, tmpDir);
   });
 
   test("bootstrap sync returns all contacts", async () => {
@@ -774,21 +790,23 @@ describe("AppleContactsSource", () => {
       contactsDirPath: dirname(localDbPath),
       accountId: "skip@icloud.com",
     });
-    const localSource = new AppleContactsSource(localProvider, {
-      sourceId: "apple-contacts:skip@icloud.com",
-      providerId: "apple:skip@icloud.com",
-    });
-    const result = await localSource.sync(null);
+    try {
+      const localSource = new AppleContactsSource(localProvider, {
+        sourceId: "apple-contacts:skip@icloud.com",
+        providerId: "apple:skip@icloud.com",
+      });
+      const result = await localSource.sync(null);
 
-    // Empty non-me card was skipped — zero documents emitted.
-    expect(result.documents.length).toBe(0);
+      // Empty non-me card was skipped — zero documents emitted.
+      expect(result.documents.length).toBe(0);
 
-    // But the cursor MUST still advance over it, otherwise we'd loop
-    // forever re-fetching the same empty rows.
-    const cursor = result.cursor as { lastModifiedTimestamp?: number };
-    expect(cursor.lastModifiedTimestamp).toBeGreaterThan(0);
-
-    rmSync(localDir, { recursive: true, force: true });
+      // But the cursor MUST still advance over it, otherwise we'd loop
+      // forever re-fetching the same empty rows.
+      const cursor = result.cursor as { lastModifiedTimestamp?: number };
+      expect(cursor.lastModifiedTimestamp).toBeGreaterThan(0);
+    } finally {
+      await closeFixture(localProvider, localDir);
+    }
   });
 
   test("do NOT skip empty card when isMe=true", async () => {
@@ -811,16 +829,18 @@ describe("AppleContactsSource", () => {
       contactsDirPath: dirname(localDbPath),
       accountId: "skipme@icloud.com",
     });
-    const localSource = new AppleContactsSource(localProvider, {
-      sourceId: "apple-contacts:skipme@icloud.com",
-      providerId: "apple:skipme@icloud.com",
-    });
-    const result = await localSource.sync(null);
+    try {
+      const localSource = new AppleContactsSource(localProvider, {
+        sourceId: "apple-contacts:skipme@icloud.com",
+        providerId: "apple:skipme@icloud.com",
+      });
+      const result = await localSource.sync(null);
 
-    expect(result.documents.length).toBe(1);
-    expect(result.documents[0].metadata.extra!.isMe).toBe(true);
-
-    rmSync(localDir, { recursive: true, force: true });
+      expect(result.documents.length).toBe(1);
+      expect(result.documents[0].metadata.extra!.isMe).toBe(true);
+    } finally {
+      await closeFixture(localProvider, localDir);
+    }
   });
 
   test("do NOT skip card when there's at least one phone", async () => {
@@ -843,16 +863,18 @@ describe("AppleContactsSource", () => {
       contactsDirPath: dirname(localDbPath),
       accountId: "phone@icloud.com",
     });
-    const localSource = new AppleContactsSource(localProvider, {
-      sourceId: "apple-contacts:phone@icloud.com",
-      providerId: "apple:phone@icloud.com",
-    });
-    const result = await localSource.sync(null);
+    try {
+      const localSource = new AppleContactsSource(localProvider, {
+        sourceId: "apple-contacts:phone@icloud.com",
+        providerId: "apple:phone@icloud.com",
+      });
+      const result = await localSource.sync(null);
 
-    expect(result.documents.length).toBe(1);
-    expect(result.documents[0].title).toBe("Has Phone");
-
-    rmSync(localDir, { recursive: true, force: true });
+      expect(result.documents.length).toBe(1);
+      expect(result.documents[0].title).toBe("Has Phone");
+    } finally {
+      await closeFixture(localProvider, localDir);
+    }
   });
 
   test("missing aux tables (older macOS) degrade gracefully", async () => {
@@ -916,8 +938,8 @@ describe("AppleContactsSource — snapshot reconciliation", () => {
     });
   });
 
-  afterAll(() => {
-    rmSync(tmpDir, { recursive: true, force: true });
+  afterAll(async () => {
+    await closeFixture(provider, tmpDir);
   });
 
   /** Every id the page vouched for, in whichever shape it used. */
@@ -1061,8 +1083,8 @@ describe("AppleContactsSource — boundary-tied pagination", () => {
     });
   });
 
-  afterAll(() => {
-    rmSync(tmpDir, { recursive: true, force: true });
+  afterAll(async () => {
+    await closeFixture(provider, tmpDir);
   });
 
   test("emits every contact across pages when more than PAGE_SIZE share the boundary timestamp", async () => {
@@ -1133,8 +1155,8 @@ describe("AppleContactsSource — declared document profile", () => {
     });
   });
 
-  afterAll(() => {
-    rmSync(tmpDir, { recursive: true, force: true });
+  afterAll(async () => {
+    await closeFixture(provider, tmpDir);
   });
 
   test("emits every person role and metadata field the document profile declares", async () => {
@@ -1206,8 +1228,7 @@ describe("AppleContactsSource — partial address-book reads", () => {
   });
 
   afterEach(async () => {
-    await provider.disconnect();
-    rmSync(tmpDir, { recursive: true, force: true });
+    await closeFixture(provider, tmpDir);
   });
 
   function newSource(p: AppleProvider): AppleContactsSource {
@@ -1405,8 +1426,7 @@ describe("AppleContactsSource — what the cheap snapshot signature must notice"
   });
 
   afterEach(async () => {
-    await provider.disconnect();
-    rmSync(tmpDir, { recursive: true, force: true });
+    await closeFixture(provider, tmpDir);
   });
 
   const newSource = () =>

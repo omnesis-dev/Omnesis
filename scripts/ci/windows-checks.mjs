@@ -67,6 +67,7 @@ export const FOCUSED_UNIT_FILES = [
   "packages/gateway/src/ocr/tesseract-ocr.test.ts",
   "packages/gateway/src/ocr/gguf-ocr.test.ts",
   "packages/gateway/src/indexer/usearch-index.test.ts",
+  "packages/gateway/src/indexer/usearch-boot-guard.test.ts",
   "packages/gateway/src/indexer/embedder-scheduling.test.ts",
   "packages/gateway/src/search/generation-gate.test.ts",
   "packages/gateway/src/indexer/usearch-read-registry.test.ts",

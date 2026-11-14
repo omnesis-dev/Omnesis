@@ -45,7 +45,7 @@ describe("the Codex home setting", () => {
   });
 
   test("a leading tilde resolves against the running user's home directory", () => {
-    vi.stubEnv("HOME", dir);
+    vi.stubEnv("OMNESIS_HOST_HOME", dir);
     mkdirSync(join(dir, ".codex"));
     expect(issues("~/.codex")).toEqual([]);
   });

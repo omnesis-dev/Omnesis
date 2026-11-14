@@ -13,7 +13,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve, sep } from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
 import { assessSourceApplyEvidence, sourceManagedSpec, type CommandSpec } from "./detect.js";
 import {
@@ -26,7 +26,7 @@ import {
   type SourceAdoptionRunOutcome,
 } from "./source-adoption.js";
 
-const ROOT = "/srv/omnesis fixture;$safe";
+const ROOT = resolve(tmpdir(), "omnesis fixture;$safe");
 const GIT_DIR = join(ROOT, ".git");
 const GIT_CONFIG = join(GIT_DIR, "config");
 const HEAD = "1".repeat(40);
@@ -260,6 +260,16 @@ describe("source adoption origin policy", () => {
 });
 
 describe("adoptSourceCheckout", () => {
+  test.each(["fictional-source", `${ROOT}${sep}.`])(
+    "refuses a noncanonical host root before running Git: %s",
+    async (root) => {
+      const { deps, state } = fakeDeps();
+      await expect(adoptSourceCheckout(root, deps)).rejects.toThrow(/absolute canonical path/u);
+      expect(state.calls).toEqual([]);
+      expect(state.marker).toEqual([]);
+    },
+  );
+
   test("writes only the local marker after an annotated remote-tag proof", async () => {
     const { deps, state, logs } = fakeDeps();
     await adoptSourceCheckout(ROOT, deps);
