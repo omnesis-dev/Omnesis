@@ -11,6 +11,11 @@ import dev.omnesis.android.transport.dto.GatewayPairingApproving
 import dev.omnesis.android.transport.dto.GatewayPairingApprovalRequest
 import dev.omnesis.android.transport.dto.GatewayPairingApprovalRequests
 import dev.omnesis.android.transport.dto.GatewayPairingApprovalDecision
+import dev.omnesis.android.transport.dto.GatewayAccountPairingConfig
+import dev.omnesis.android.transport.dto.GatewayPairingApprovalCeremonyRequest
+import dev.omnesis.android.transport.dto.GatewayPairingPasskeyApproval
+import dev.omnesis.android.transport.dto.GatewayPasskeyCeremony
+import dev.omnesis.android.transport.dto.GatewayPasskeyLocation
 import dev.omnesis.android.transport.PermissionHealthSnapshot
 import dev.omnesis.android.transport.SourceMultiDeviceMode
 import dev.omnesis.android.transport.SourceModeTransitionNotConfirmed
@@ -139,6 +144,24 @@ class AdminClient(private val http: GatewayHttp) : GatewayPairingApproving, Clou
         http.postJson<GatewayPairingApprovalDecision, OkResponse>(
             "admin/cloud-pairing/decision",
             GatewayPairingApprovalDecision(requestId, approve, trustSignIn.takeIf { it }),
+        )
+    }
+
+    /** A gateway without the feature or without an origin of its own offers no ceremony; neither is an error. */
+    override suspend fun pairingPasskeyLocation(): GatewayPasskeyLocation? =
+        try {
+            http.getJson<GatewayAccountPairingConfig>("devices/account/config").gatewayPasskey
+        } catch (_: GatewayException.NotFound) {
+            null
+        }
+
+    override suspend fun pairingApprovalCeremony(requestId: String): GatewayPasskeyCeremony =
+        http.postJson("devices/account/approval/options", GatewayPairingApprovalCeremonyRequest(requestId))
+
+    override suspend fun approvePairingWithPasskey(requestId: String, proof: JsonObject, trustSignIn: Boolean) {
+        http.postJson<GatewayPairingPasskeyApproval, OkResponse>(
+            "devices/account/approval",
+            GatewayPairingPasskeyApproval(requestId, proof, trustSignIn.takeIf { it }),
         )
     }
 

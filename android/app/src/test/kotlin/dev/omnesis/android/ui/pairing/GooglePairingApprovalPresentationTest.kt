@@ -11,6 +11,9 @@ import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.unit.Density
 import dev.omnesis.android.designsystem.theme.OmnesisTheme
 import dev.omnesis.android.pairing.GatewayPairingApprovalController
+import dev.omnesis.android.pairing.GatewayPasskeySigner
+import dev.omnesis.android.transport.dto.GatewayPasskeyCeremony
+import dev.omnesis.android.transport.dto.GatewayPasskeyLocation
 import dev.omnesis.android.transport.dto.GatewayPairingApproving
 import dev.omnesis.android.transport.dto.GatewayPairingApprovalRequest
 import dev.omnesis.android.ui.devices.GatewayPairingApprovalContent
@@ -130,4 +133,34 @@ class GooglePairingApprovalPresentationTest {
         assertFalse(visible.value)
     }
 
+    @Test fun real_sheet_approves_an_app_request_with_a_passkey_signed_in_the_app() {
+        val row = request(System.currentTimeMillis() + 600_000)
+        val app = "android:apk-key-hash:" + "A".repeat(43)
+        val client = object : GatewayPairingApproving {
+            var rows = listOf(row)
+            val approvals = mutableListOf<kotlinx.serialization.json.JsonObject>()
+            override suspend fun pairingApprovalRequests() = rows
+            override suspend fun decidePairingApproval(requestId: String, approve: Boolean, trustSignIn: Boolean) = fail("Approved without the passkey")
+            override suspend fun pairingPasskeyLocation() = GatewayPasskeyLocation("relay.example.test", "https://g-abcdefgh.relay.example.test")
+            override suspend fun pairingApprovalCeremony(requestId: String) = GatewayPasskeyCeremony(
+                "approve-request", "relay.example.test", null, "c".repeat(43), "b".repeat(43), null, System.currentTimeMillis() + 120_000)
+            override suspend fun approvePairingWithPasskey(requestId: String, proof: kotlinx.serialization.json.JsonObject, trustSignIn: Boolean) {
+                assertEquals(row.requestId, requestId); approvals += proof; rows = emptyList()
+            }
+        }
+        val prompts = mutableListOf<String>()
+        val signer = GatewayPasskeySigner("relay.example.test", app) { options ->
+            prompts += options
+            val challenge = org.json.JSONObject(options).getString("challenge")
+            val clientData = java.util.Base64.getUrlEncoder().withoutPadding().encodeToString(
+                """{"type":"webauthn.get","challenge":"$challenge","origin":"$app"}""".toByteArray())
+            """{"id":"cred","rawId":"cred","type":"public-key","clientExtensionResults":{},"response":{"clientDataJSON":"$clientData","authenticatorData":"e30","signature":"e30","userHandle":"dXNlcg"}}"""
+        }
+        compose.setContent { OmnesisTheme { GatewayPairingApprovalSheet(client, passkey = signer) {} } }
+        compose.onNodeWithTag("pairingApproval.approveWithPasskey").performScrollTo().assertIsEnabled()
+            .performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.OnClick) { it() }
+        compose.waitUntil(timeoutMillis = 5000) { client.approvals.size == 1 }
+        assertEquals(1, prompts.size)
+        assertEquals("gateway-passkey", client.approvals.single()["type"].toString().trim('"'))
+    }
 }

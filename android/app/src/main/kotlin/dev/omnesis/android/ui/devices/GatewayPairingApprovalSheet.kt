@@ -34,6 +34,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.Role
@@ -49,6 +50,8 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.omnesis.android.ui.common.GatewayErrorView
 import dev.omnesis.android.ui.common.gatewayErrorKind
 import dev.omnesis.android.pairing.GatewayPairingApprovalController
+import dev.omnesis.android.pairing.GatewayPasskeySigner
+import dev.omnesis.android.ui.pairing.defaultGatewayPasskeySigner
 import dev.omnesis.android.transport.dto.GatewayPairingApproving
 import dev.omnesis.android.transport.dto.GatewayPairingApprovalRequest
 import kotlinx.coroutines.delay
@@ -66,9 +69,11 @@ fun GatewayPairingApprovalSheet(
     onOpenSettings: () -> Unit = {},
     /** Told what is still waiting after every read or decision, so a banner elsewhere stays current. */
     onRequests: (List<GatewayPairingApprovalRequest>) -> Unit = {},
+    /** Signs the gateway's passkey ceremony in this app; null in a build that can't. */
+    passkey: GatewayPasskeySigner? = LocalContext.current.let { context -> remember(context) { defaultGatewayPasskeySigner(context) } },
     onDismiss: () -> Unit,
 ) {
-    val controller = remember(client) { GatewayPairingApprovalController() }
+    val controller = remember(client, passkey) { GatewayPairingApprovalController(passkey = passkey) }
     val state by controller.state.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
     var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
@@ -85,7 +90,8 @@ fun GatewayPairingApprovalSheet(
             onRefresh = { scope.launch { controller.refresh(client) } },
             onDecide = { request, approve -> scope.launch { if (approve) controller.confirmAndApprove(request, client) else controller.decide(request, false, client) } },
             onDismiss = onDismiss, onOpenSettings = { onDismiss(); onOpenSettings() },
-            onTrustSignIn = controller::setTrustSignIn)
+            onTrustSignIn = controller::setTrustSignIn,
+            onApproveWithPasskey = { request -> scope.launch { controller.confirmAndApproveWithPasskey(request, client) } })
     }
 }
 
@@ -98,6 +104,7 @@ fun GatewayPairingApprovalContent(
     onDismiss: () -> Unit,
     onOpenSettings: () -> Unit = {},
     onTrustSignIn: (String, Boolean) -> Unit = { _, _ -> },
+    onApproveWithPasskey: (GatewayPairingApprovalRequest) -> Unit = {},
 ) {
     val c = OmTheme.colors
     LazyColumn(
@@ -151,6 +158,13 @@ fun GatewayPairingApprovalContent(
                             colors = ButtonDefaults.buttonColors(containerColor = c.accent, contentColor = Color.White),
                             modifier = Modifier.fillMaxWidth().testTag("pairingApproval.approve"),
                         ) { Text("Approve") }
+                        // As on the portal: the owner's passkey, confirmed on this gateway, approves
+                        // exactly this request. A portal's request is approved only in its browser.
+                        if (state.passkeyApproval && request.kind != "portal") OutlinedButton(
+                            onClick = { onApproveWithPasskey(request) },
+                            enabled = !state.busy,
+                            modifier = Modifier.fillMaxWidth().testTag("pairingApproval.approveWithPasskey"),
+                        ) { Text("Approve with passkey", color = if (state.busy) c.textMuted else c.accent) }
                         OutlinedButton(
                             onClick = { onDecide(request, false) },
                             enabled = !state.busy,

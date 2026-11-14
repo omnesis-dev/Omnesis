@@ -5,6 +5,10 @@ package dev.omnesis.android.pairing
 
 import dev.omnesis.android.transport.dto.GatewayPairingApproving
 import dev.omnesis.android.transport.dto.GatewayPairingApprovalRequest
+import dev.omnesis.android.transport.dto.GatewayPasskeyCeremony
+import dev.omnesis.android.transport.dto.GatewayPasskeyLocation
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.runBlocking
@@ -216,6 +220,74 @@ class GatewayPairingApprovalControllerTest {
         assertEquals(listOf(false), client.trusted)
     }
 
+    private val app = "android:apk-key-hash:TPfeOsd2u2Uq8rCtF9DeGgc1m50jt6fPpDJYcUvAaCo"
+    private val gatewayValue = "Y2hhbGxlbmdlY2hhbGxlbmdlY2hhbGxlbmdlY2hhbGw"
+    private val binding = "l0NtUMoLWQPEqbViKuTTcNl21YlGfRT9uywbHtmcvzg"
+    private inner class Passkeys(val answer: (String) -> String = { fakeAssertion(requestedChallenge(it), app) }) {
+        val prompts = mutableListOf<String>()
+        val signer = GatewayPasskeySigner("relay.example.test", app, { 1_000_000 }) { prompts += it; answer(it) }
+    }
+    private fun passkeyClient(row: GatewayPairingApprovalRequest, rpId: String? = "relay.example.test") = Client(listOf(row)).apply {
+        location = rpId?.let { GatewayPasskeyLocation(it, "https://g-abcdefgh.relay.example.test") }
+        ceremony = GatewayPasskeyCeremony("approve-request", "relay.example.test", "https://g-abcdefgh.relay.example.test", gatewayValue, binding, "s4TEruSndQL9XUX4vOZB8gLvPAjWmLWDn4hs6rqiev8", 1_100_000)
+    }
+
+    @Test fun `a passkey approval signs the gateway's ceremony for that request with the app's origin`() = runTest {
+        val row = request(kind = "android").copy(canTrustSignIn = true)
+        val client = passkeyClient(row)
+        val passkeys = Passkeys()
+        val model = GatewayPairingApprovalController({ 1_000_000 }, passkeys.signer)
+        model.refresh(client)
+        assertTrue(model.state.value.passkeyApproval); assertTrue(model.canApproveWithPasskey(row))
+        model.setTrustSignIn(row.requestId, true)
+        model.confirmAndApproveWithPasskey(row, client)
+        assertEquals(listOf(row.requestId), client.ceremonies)
+        assertEquals(DeviceEnrollmentContract.gatewayPasskeyChallenge("approve-request", app, gatewayValue, binding), requestedChallenge(passkeys.prompts.single()))
+        val (id, proof, trust) = client.passkeyApprovals.single()
+        assertEquals(row.requestId, id); assertTrue(trust)
+        assertEquals("gateway-passkey", proof["type"]!!.jsonPrimitive.content)
+        assertEquals(gatewayValue, proof["challenge"]!!.jsonPrimitive.content)
+        assertTrue(client.decisions.isEmpty())
+        assertTrue(model.state.value.requests.isEmpty()); assertNull(model.state.value.error)
+    }
+
+    @Test fun `no passkey approval without a signer, a ceremony for this relay, or for a portal's request`() = runTest {
+        val row = request(kind = "android")
+        for ((client, signer) in listOf(passkeyClient(row) to null, passkeyClient(row, rpId = null) to Passkeys().signer,
+            passkeyClient(row, rpId = "other.example.test") to Passkeys().signer, passkeyClient(row).apply { locationFails = true } to Passkeys().signer)) {
+            val model = GatewayPairingApprovalController({ 1_000_000 }, signer)
+            model.refresh(client)
+            assertNull(model.state.value.error); assertEquals(listOf(row), model.state.value.requests)
+            assertFalse(model.state.value.passkeyApproval); assertFalse(model.canApproveWithPasskey(row))
+            model.confirmAndApproveWithPasskey(row, client)
+            assertTrue(client.ceremonies.isEmpty())
+        }
+        val portal = request(kind = "portal")
+        val client = passkeyClient(portal)
+        val model = GatewayPairingApprovalController({ 1_000_000 }, Passkeys().signer)
+        model.refresh(client)
+        assertTrue(model.state.value.passkeyApproval); assertFalse(model.canApproveWithPasskey(portal))
+        model.confirmAndApproveWithPasskey(portal, client)
+        assertTrue(client.ceremonies.isEmpty())
+    }
+
+    @Test fun `a refused ceremony or assertion approves nothing and keeps the request`() = runTest {
+        val row = request(kind = "cli")
+        for ((client, passkeys) in listOf(
+            passkeyClient(row).apply { ceremony = ceremony!!.copy(purpose = "step-up") } to Passkeys(),
+            passkeyClient(row).apply { ceremony = ceremony!!.copy(rpId = "other.example.test") } to Passkeys(),
+            passkeyClient(row) to Passkeys { fakeAssertion(requestedChallenge(it), "https://g-abcdefgh.relay.example.test") },
+            passkeyClient(row).apply { approvalFails = true } to Passkeys(),
+        )) {
+            val model = GatewayPairingApprovalController({ 1_000_000 }, passkeys.signer)
+            model.refresh(client)
+            model.confirmAndApproveWithPasskey(row, client)
+            assertNotNull(model.state.value.error); assertFalse(model.state.value.busy)
+            assertEquals(listOf(row), model.state.value.requests)
+            assertTrue(client.decisions.isEmpty())
+        }
+    }
+
     private class Client(var rows: List<GatewayPairingApprovalRequest>) : GatewayPairingApproving {
         var failure = false
         var cancelled = false
@@ -229,5 +301,17 @@ class GatewayPairingApprovalControllerTest {
         }
         override suspend fun pairingApprovalRequests(): List<GatewayPairingApprovalRequest> { waitForResult(); return rows }
         override suspend fun decidePairingApproval(requestId: String, approve: Boolean, trustSignIn: Boolean) { decisions += approve; trusted += trustSignIn; waitForResult() }
+        var location: GatewayPasskeyLocation? = null
+        var locationFails = false
+        var ceremony: GatewayPasskeyCeremony? = null
+        var approvalFails = false
+        val ceremonies = mutableListOf<String>()
+        val passkeyApprovals = mutableListOf<Triple<String, JsonObject, Boolean>>()
+        override suspend fun pairingPasskeyLocation(): GatewayPasskeyLocation? { if (locationFails) throw java.io.IOException("synthetic offline"); return location }
+        override suspend fun pairingApprovalCeremony(requestId: String): GatewayPasskeyCeremony { ceremonies += requestId; return ceremony!! }
+        override suspend fun approvePairingWithPasskey(requestId: String, proof: JsonObject, trustSignIn: Boolean) {
+            if (approvalFails) throw java.io.IOException("synthetic refusal")
+            passkeyApprovals += Triple(requestId, proof, trustSignIn)
+        }
     }
 }

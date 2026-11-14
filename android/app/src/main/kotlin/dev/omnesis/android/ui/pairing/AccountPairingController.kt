@@ -8,6 +8,7 @@ import dev.omnesis.android.pairing.AccountCloudPairingClient
 import dev.omnesis.android.pairing.AccountGatewayChoice
 import dev.omnesis.android.pairing.AccountPairingException
 import dev.omnesis.android.pairing.CloudPairingChallenge
+import dev.omnesis.android.pairing.GatewayPasskeySigner
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -71,7 +72,8 @@ internal interface AccountPairingAttempt : AutoCloseable {
     suspend fun google(token: String): List<AccountGatewayChoice>
     suspend fun passkeyOptions(): AccountCloudPairingClient.PasskeyOptions
     suspend fun passkey(options: AccountCloudPairingClient.PasskeyOptions, assertion: String): List<AccountGatewayChoice>
-    suspend fun select(gatewayId: String)
+    /** [gatewayPasskey] signs the join on the gateway's own challenge after a passkey sign-in. */
+    suspend fun select(gatewayId: String, gatewayPasskey: GatewayPasskeySigner? = null)
     val code: String
     val host: String
     val approved: Boolean
@@ -88,6 +90,8 @@ internal class AccountPairingPorts(
     val createClient: () -> AccountPairingAttempt,
     val applyPairing: suspend (String) -> Unit,
     val now: () -> Long = System::currentTimeMillis,
+    /** Signs a gateway's passkey ceremony in this app; null where this install has no app origin to name. */
+    val gatewayPasskey: (Context) -> GatewayPasskeySigner? = { null },
 )
 
 internal class AccountPairingController(
@@ -100,6 +104,8 @@ internal class AccountPairingController(
     private var generation = 0L
     private var job: Job? = null
     private var client: AccountPairingAttempt? = null
+    /** Set for a passkey sign-in only: the join is then signed again, on the gateway's challenge. */
+    private var signer: GatewayPasskeySigner? = null
     private fun publish(value: AccountPairingState) { state = value; changed(value) }
     private fun active(id: Long) = id == generation
 
@@ -123,6 +129,7 @@ internal class AccountPairingController(
                         attempt.google(token)
                     }
                     Method.Passkey -> {
+                        signer = ports.gatewayPasskey(context)
                         val options = attempt.passkeyOptions()
                         if (!active(id)) return@launch
                         val assertion = ports.acquirePasskey(context, options.options)
@@ -154,7 +161,7 @@ internal class AccountPairingController(
 
     private suspend fun enroll(id: Long, attempt: AccountPairingAttempt, gatewayId: String) {
         publish(state.copy(phase = AccountPairingPhase.Connecting))
-        selectWhenOnline(id, attempt, gatewayId)
+        selectWhenOnline(id, attempt, gatewayId, signer)
         if (!active(id)) return
         if (attempt.joined) {
             publish(AccountPairingState(AccountPairingPhase.Pairing, host = attempt.host, approved = true, joined = true))
@@ -172,11 +179,11 @@ internal class AccountPairingController(
     }
 
     /** Keeps the sign-in alive through a gateway outage for as long as the gateway could still accept it. */
-    private suspend fun selectWhenOnline(id: Long, attempt: AccountPairingAttempt, gatewayId: String) {
+    private suspend fun selectWhenOnline(id: Long, attempt: AccountPairingAttempt, gatewayId: String, signer: GatewayPasskeySigner?) {
         var wait = FIRST_RETRY_MILLIS
         while (true) {
             try {
-                attempt.select(gatewayId)
+                attempt.select(gatewayId, signer)
                 return
             } catch (error: AccountPairingException) {
                 if (error.reason != AccountPairingException.Reason.GATEWAY_OFFLINE) throw error
@@ -206,13 +213,13 @@ internal class AccountPairingController(
         }
     }
     fun cancel() {
-        generation++; job?.cancel(); job = null; client?.close(); client = null
+        generation++; job?.cancel(); job = null; client?.close(); client = null; signer = null
         publish(AccountPairingState())
     }
     private fun fail(error: Exception) {
         if (error is AccountSignInDismissed) return cancel()
         if (error is AccountNoPasskey) {
-            client?.close(); client = null
+            client?.close(); client = null; signer = null
             return publish(AccountPairingState(AccountPairingPhase.Failed, notice = ACCOUNT_PAIRING_NO_PASSKEY_NOTICE))
         }
         val message = if (error is AccountPasskeyUnavailable) ACCOUNT_PAIRING_PASSKEY_UNAVAILABLE_MESSAGE
@@ -224,7 +231,7 @@ internal class AccountPairingController(
             AccountPairingException.Reason.EXPIRED -> ACCOUNT_PAIRING_EXPIRED_MESSAGE
             else -> ACCOUNT_PAIRING_FAILED_MESSAGE
         }
-        client?.close(); client = null
+        client?.close(); client = null; signer = null
         publish(AccountPairingState(AccountPairingPhase.Failed, error = message))
     }
 

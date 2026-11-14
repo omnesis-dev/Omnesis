@@ -104,6 +104,11 @@ class DeviceEnrollmentScreenshotTest {
         )
     }
 
+    /** The gateway offers its passkey ceremony: an app's request can also be approved with the owner's passkey. */
+    @Test fun approval_with_a_passkey() = capture("approval-with-passkey") {
+        GatewayPairingApprovalContent(GatewayPairingApprovalController.State(requests = listOf(request), passkeyApproval = true), NOW, {}, { _, _ -> }, {})
+    }
+
     @Test fun approval_with_large_text() = capture("approval-large", large = true) {
         GatewayPairingApprovalContent(GatewayPairingApprovalController.State(requests = listOf(request)), NOW, {}, { _, _ -> }, {})
     }

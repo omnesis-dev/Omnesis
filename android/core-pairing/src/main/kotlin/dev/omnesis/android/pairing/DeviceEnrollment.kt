@@ -33,6 +33,28 @@ object DeviceEnrollmentContract {
     fun passkeyProofChallenge(salt: String, issuedAt: String, nonce: String): String =
         cloudDigestUrl(cloudTranscript(listOf("omnesis-passkey-proof-v3", salt, issuedAt, nonce)))
 
+    /** What a `gateway-passkey` assertion is for (`gatewayPasskeyPurposeSchema`). */
+    val GATEWAY_PASSKEY_PURPOSES = setOf("device-enrollment", "approve-request", "pin-passkey", "step-up")
+
+    /**
+     * The WebAuthn challenge of a `gateway-passkey` assertion: the purpose, the origin the
+     * assertion is made from, the gateway's one-use value and what it approves. In this app the
+     * origin is always the app's own `android:apk-key-hash:` origin, never one a server names.
+     */
+    fun gatewayPasskeyChallenge(purpose: String, origin: String, gatewayChallenge: String, binding: String): String {
+        require(purpose in GATEWAY_PASSKEY_PURPOSES && OPAQUE.matches(gatewayChallenge))
+        return cloudDigestUrl(cloudTranscript(listOf("omnesis-gateway-passkey-v1", purpose, origin, gatewayChallenge, binding)))
+    }
+
+    /**
+     * The WebAuthn origin Credential Manager reports for passkeys used in an app signed with
+     * this certificate: `android:apk-key-hash:` and the base64url SHA-256 of its DER encoding.
+     */
+    fun androidApkKeyHashOrigin(signingCertificate: ByteArray): String =
+        "android:apk-key-hash:" + Base64.getUrlEncoder().withoutPadding().encodeToString(cloudSha256(signingCertificate))
+
+    private val OPAQUE = Regex("^[A-Za-z0-9_-]{43}$")
+
     fun enrollmentSignatureTranscript(
         requestId: String,
         kind: String,

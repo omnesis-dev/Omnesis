@@ -3,6 +3,7 @@
 
 package dev.omnesis.android.pairing
 
+import dev.omnesis.android.transport.dto.GatewayPasskeyLocation
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
@@ -62,7 +63,9 @@ class AccountCloudPairingClient(
     @Serializable private data class Discovery(val discoveryToken: String, val accountId: String, val expiresAt: Long, val credentialPublicKey: String? = null)
     @Serializable private data class Directory(val gateways: List<AccountGatewayChoice>, val nextCursor: String? = null)
     @Serializable private data class Selected(val binding: GoogleGatewayBinding, val accountId: String, val identityToken: String, val expiresAt: Long)
-    @Serializable private data class IssuedChallenge(val challenge: String)
+    @Serializable private data class IssuedChallenge(val challenge: String, val expiresAt: Long = 0)
+    /** Only what the app reads from the gateway's `/devices/account/config`. */
+    @Serializable private data class GatewayConfig(val gatewayPasskey: GatewayPasskeyLocation? = null)
     private class SignInEnrollment(val key: DeviceKey, val nonce: String)
     /** The one request this sign-in sends: the challenge it answers and its exact bytes. */
     private class SentRequest(val challenge: String, val body: String, val requireApproval: Boolean)
@@ -111,6 +114,9 @@ class AccountCloudPairingClient(
         val issuedAt = (value["issuedAt"] as? JsonPrimitive)?.contentOrNull ?: invalid()
         val nonce = enrollment?.nonce ?: invalid()
         if (!opaque(salt) || !ISSUED_AT.matches(issuedAt) || options.text("challenge") != DeviceEnrollmentContract.passkeyProofChallenge(salt, issuedAt, nonce)) invalid()
+        // The relay picks the time its challenge names; one far from now would let it reuse a
+        // ceremony or stretch how long the sign-in can be used.
+        if (kotlin.math.abs(issuedAt.toLong() - now()) > ISSUED_AT_TOLERANCE_SECONDS) invalid()
         passkeyBinding = PasskeyBinding(salt, issuedAt)
         return PasskeyOptions(ceremonyId, options.toString())
     }
@@ -128,7 +134,7 @@ class AccountCloudPairingClient(
         proof = buildJsonObject {
             put("type", "passkey"); put("salt", binding.salt); put("issuedAt", binding.issuedAt)
             publicKey?.let { put("credentialPublicKey", it) }
-            put("credential", proofCredential(credential))
+            put("credential", gatewayProofCredential(credential))
         }
         return authenticated(response)
     }
@@ -165,11 +171,18 @@ class AccountCloudPairingClient(
         return choices
     }
 
-    /** Throws GATEWAY_OFFLINE with the client ready to select again, once the gateway may be back. */
-    suspend fun select(gatewayId: String): CloudPairingConfirmation {
+    /**
+     * Throws GATEWAY_OFFLINE with the client ready to select again, once the gateway may be back.
+     *
+     * After a passkey sign-in, [gatewayPasskey] signs the join itself: the gateway's own one-use
+     * challenge, in this app, so the passkey assertion the gateway receives was never one the
+     * relay chose. Without it, or on a gateway that offers no passkey ceremony, the relay's
+     * ceremony is sent as evidence and the gateway holds the request for a person.
+     */
+    suspend fun select(gatewayId: String, gatewayPasskey: GatewayPasskeySigner? = null): CloudPairingConfirmation {
         transition("choosing", "selecting")
         try {
-            return enroll(gatewayId)
+            return enroll(gatewayId, gatewayPasskey)
         } catch (error: Exception) {
             if (!offline(error)) throw error
             synchronized(lifecycle) { checkOpen(); gateway.also { gateway = null } }?.close()
@@ -178,7 +191,7 @@ class AccountCloudPairingClient(
         }
     }
 
-    private suspend fun enroll(gatewayId: String): CloudPairingConfirmation {
+    private suspend fun enroll(gatewayId: String, gatewayPasskey: GatewayPasskeySigner?): CloudPairingConfirmation {
         val choice = choices.singleOrNull { it.gatewayId == gatewayId } ?: invalid()
         val session = discovery ?: invalid()
         if (session.expiresAt <= now() || proofExpiresAt <= now()) throw AccountPairingException(AccountPairingException.Reason.EXPIRED)
@@ -191,7 +204,7 @@ class AccountCloudPairingClient(
             if (closed.get()) { pinned.close(); invalid() }
             gateway = pinned
         }
-        val (progress, requireApproval) = sendEnrollment(pinned, pending, selected.identityToken)
+        val (progress, requireApproval) = sendEnrollment(pinned, pending, selected.identityToken, gatewayPasskey)
         checkOpen(); pending.receive(progress, now() * 1000)
         // A gateway that was asked to hold the request and still approves it gets compared by a person.
         if (progress.status == "approved" && !requireApproval) pending.acceptJoin()
@@ -199,14 +212,29 @@ class AccountCloudPairingClient(
         return pending
     }
 
-    private suspend fun sendEnrollment(pinned: CloudPairingTransport, pending: CloudPairingConfirmation, identityToken: String): Pair<CloudPairingProgress, Boolean> {
+    private suspend fun sendEnrollment(
+        pinned: CloudPairingTransport,
+        pending: CloudPairingConfirmation,
+        identityToken: String,
+        gatewayPasskey: GatewayPasskeySigner?,
+    ): Pair<CloudPairingProgress, Boolean> {
         val request = sent ?: run {
             val key = enrollment?.key ?: invalid()
-            val signIn = proof ?: invalid()
+            val nonce = enrollment?.nonce ?: invalid()
+            val relayProof = proof ?: invalid()
             val identity = pending.challenge
-            val challenge = decode<IssuedChallenge>(gatewayRequest(pinned, "${pending.origin}/devices/account/challenge", "{}", updateRequiredOn404 = true)).challenge
+            // Only a passkey sign-in is signed again on the gateway; a Google token is the app's own.
+            val signer = gatewayPasskey?.takeIf { relayProof.text("type") == "passkey" && offersPasskey(pinned, pending, it) }
+            // The gateway commits to its part of the comparison code before it learns anything
+            // about this request: the challenge is asked for with an empty body.
+            val issued = decode<IssuedChallenge>(gatewayRequest(pinned, "${pending.origin}/devices/account/challenge", "{}", updateRequiredOn404 = true))
+            val challenge = issued.challenge
             if (!opaque(challenge)) invalid()
             val requireApproval = publicCertificateCheck?.let { !it(pinned.peerCertificates, URI(pending.origin).host) } ?: false
+            // The join's passkey assertion answers this very challenge and names this device's
+            // own enrollment nonce (TM-01): nothing the relay chose is signed for the gateway.
+            val signIn = signer?.enrollment(challenge, issued.expiresAt, nonce) ?: relayProof
+            checkOpen()
             val signature = withContext(Dispatchers.Default) {
                 key.sign(DeviceEnrollmentContract.enrollmentSignatureTranscript(identity.requestId, identity.kind, identity.name, pending.spkiFingerprint, challenge, key.publicKey))
             }
@@ -229,7 +257,22 @@ class AccountCloudPairingClient(
         return decode<CloudPairingProgress>(gatewayRequest(pinned, "${pending.origin}/devices/account/request", request.body)) to request.requireApproval
     }
 
-    private suspend fun gatewayRequest(pinned: CloudPairingTransport, url: String, body: String, updateRequiredOn404: Boolean = false): String =
+    /**
+     * Whether this gateway checks a passkey assertion made for its own challenge, for the passkeys
+     * of this build's relay. A gateway that predates it, or has no origin of its own, says nothing.
+     */
+    private suspend fun offersPasskey(pinned: CloudPairingTransport, pending: CloudPairingConfirmation, signer: GatewayPasskeySigner): Boolean {
+        val response = try {
+            gatewayRequest(pinned, "${pending.origin}/devices/account/config", null)
+        } catch (error: CloudPairingException) {
+            if (error.statusCode == 404) return false
+            throw error
+        }
+        checkOpen()
+        return decode<GatewayConfig>(response).gatewayPasskey?.rpId == signer.rpId
+    }
+
+    private suspend fun gatewayRequest(pinned: CloudPairingTransport, url: String, body: String?, updateRequiredOn404: Boolean = false): String =
         try {
             pinned.request(url, body)
         } catch (error: CloudPairingException) {
@@ -275,6 +318,8 @@ class AccountCloudPairingClient(
     private fun invalid(): Nothing = throw AccountPairingException(AccountPairingException.Reason.INVALID_RESPONSE)
     companion object {
         private const val PROOF_LIFETIME_SECONDS = 600L
+        /** How far the relay's `issuedAt` may be from this phone's clock. */
+        private const val ISSUED_AT_TOLERANCE_SECONDS = 60L
         private const val NO_ACCOUNT_REFUSAL = "no-account"
         private val ISSUED_AT = Regex("^[1-9][0-9]{9,10}$")
         private val BASE64URL = Regex("^[A-Za-z0-9_-]+$")
@@ -286,16 +331,6 @@ class AccountCloudPairingClient(
             is SSLException -> false
             is IOException -> true
             else -> false
-        }
-
-        /** The gateway's proof schema is strict, so a provider's extra fields must not reach it. */
-        private fun proofCredential(credential: JsonObject): JsonObject = buildJsonObject {
-            for (field in listOf("id", "rawId", "type", "authenticatorAttachment")) credential[field]?.let { put(field, it) }
-            put("clientExtensionResults", credential["clientExtensionResults"] ?: JsonObject(emptyMap()))
-            val response = credential["response"] as? JsonObject ?: JsonObject(emptyMap())
-            putJsonObject("response") {
-                for (field in listOf("clientDataJSON", "authenticatorData", "signature", "userHandle")) response[field]?.let { put(field, it) }
-            }
         }
 
         private fun exactOrigin(value: String): String {
