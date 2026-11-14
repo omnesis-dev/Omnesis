@@ -92,6 +92,36 @@ function makeStub(name: string, body: string, signal?: AbortSignal): string {
   return path;
 }
 
+/** Model a confirmed joined timeout independently of OS helper startup time. */
+async function withJoinedDecoderTimeout(ffmpeg: string, check: () => Promise<void>): Promise<void> {
+  const launcher = await vi.importActual<typeof import("../process-launcher/index.js")>(
+    "../process-launcher/index.js",
+  );
+  const previous = launcher.processLauncher();
+  let observed = false;
+  launcher.setProcessLauncher({
+    run: (command, args, opts) => {
+      if (command !== process.execPath || args[0] !== ffmpeg)
+        return previous.run(command, args, opts);
+      observed = true;
+      expect(opts.timeoutMs).toBe(100);
+      return Promise.resolve({
+        exitCode: null,
+        signal: null,
+        stdout: new Uint8Array(),
+        stderr: "Invalid data found when processing input",
+        failure: "timeout",
+      });
+    },
+  });
+  try {
+    await check();
+    expect(observed).toBe(true);
+  } finally {
+    launcher.setProcessLauncher(previous);
+  }
+}
+
 /** Cancel only after this owned fixture has written its decoder diagnostic. */
 async function decoderCancellation() {
   const nonce = randomBytes(24).toString("hex"),
@@ -230,11 +260,13 @@ describe("decodeToPcm16kMono", () => {
     expect((err as AudioDecodeError).unreadable).toBe(true);
   });
 
-  test("a timed-out decoder is not unreadable audio", async () => {
+  test("a joined decoder timeout is not unreadable audio even with invalid-input stderr", async () => {
     const ffmpeg = makeStub("slow-ffmpeg", `setTimeout(() => process.exit(0), 10_000);`);
-    await expect(
-      decodeToPcm16kMono(new Uint8Array([1]), { ffmpegPath: ffmpeg, timeoutMs: 100 }),
-    ).rejects.toMatchObject({ unreadable: false, message: expect.stringMatching(/timed out/) });
+    await withJoinedDecoderTimeout(ffmpeg, async () => {
+      await expect(
+        decodeToPcm16kMono(new Uint8Array([1]), { ffmpegPath: ffmpeg, timeoutMs: 100 }),
+      ).rejects.toMatchObject({ unreadable: false, message: expect.stringMatching(/timed out/) });
+    });
   });
 
   test("a missing ffmpeg binary is not unreadable audio", async () => {
@@ -381,12 +413,14 @@ ${tail}`;
     expect(readdirSync(tempDir)).toEqual([]);
   });
 
-  test("removes the copy when the decoder times out", async () => {
+  test("removes the copy after a confirmed joined decoder timeout", async () => {
     const tempDir = mkdtempSync(join(dir, "seekable-slow-"));
     const ffmpeg = makeStub("seekable-slow-ffmpeg", `setTimeout(() => process.exit(0), 10_000);`);
-    await expect(
-      decodeToPcm16kMono(isoBmffHeader("M4A "), { ffmpegPath: ffmpeg, tempDir, timeoutMs: 100 }),
-    ).rejects.toMatchObject({ unreadable: false, message: expect.stringMatching(/timed out/) });
+    await withJoinedDecoderTimeout(ffmpeg, async () => {
+      await expect(
+        decodeToPcm16kMono(isoBmffHeader("M4A "), { ffmpegPath: ffmpeg, tempDir, timeoutMs: 100 }),
+      ).rejects.toMatchObject({ unreadable: false, message: expect.stringMatching(/timed out/) });
+    });
     expect(readdirSync(tempDir)).toEqual([]);
   });
 

@@ -12,6 +12,7 @@ import { once } from "node:events";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { createLocalJWKSet, exportJWK, generateKeyPair, SignJWT } from "jose";
 import * as core from "@omnesis/core";
+import { exposeOwnedFixtureRead } from "../test/owned-file-acl.js";
 import { fixture, echoGateway, localToken, tlsFiles } from "../test/support.js";
 import { loginRelay, runRelayCommand, startRelayDaemon } from "./runtime.js";
 import { readRelaySession, startGatewayCloudTunnel } from "./gateway-integration.js";
@@ -146,15 +147,6 @@ test("Windows login refuses private publication failure without replacing the pr
   ]);
 });
 
-async function grantPublicFixtureRead(path: string): Promise<void> {
-  await core.execWindowsJob(join(process.env.SystemRoot!, "System32", "icacls.exe"), [
-    path,
-    "/grant",
-    "*S-1-1-0:(R)",
-    "/Q",
-  ]);
-}
-
 test
   .skipIf(process.platform !== "win32")
   .each(["session", "mock-identity", "invitation", "identity-token"])(
@@ -172,8 +164,8 @@ test
     const previous = await readFile(deniedPath);
     const transport = vi.fn<typeof fetch>();
     vi.stubGlobal("fetch", transport);
+    const exposure = await exposeOwnedFixtureRead(deniedPath);
     try {
-      await grantPublicFixtureRead(deniedPath);
       expect(core.inspectWindowsPrivatePathSync(deniedPath, "file").private).toBe(false);
       const operation =
         kind === "invitation"
@@ -200,9 +192,11 @@ test
         code: "ENOENT",
       });
       await expect(files.stat(join(dir, "login.json"))).rejects.toMatchObject({ code: "ENOENT" });
+      expect(await exposure.snapshot()).toBe(exposure.exposed);
     } finally {
-      core.ensurePrivateFileSync(deniedPath);
+      await exposure.restore();
     }
+    expect(await core.readWindowsPrivateFile(deniedPath, 65_536)).toEqual(previous);
   },
 );
 
@@ -214,20 +208,24 @@ test.skipIf(process.platform !== "win32")(
     env.OMNESIS_CLOUD_RELAY_TLS_CERT_FILE = tls.certFile;
     env.OMNESIS_CLOUD_RELAY_TLS_KEY_FILE = tls.keyFile;
     let daemon: Awaited<ReturnType<typeof startRelayDaemon>> | undefined;
+    const certificateExposure = await exposeOwnedFixtureRead(tls.certFile);
+    let keyExposure: Awaited<ReturnType<typeof exposeOwnedFixtureRead>> | undefined;
     try {
-      await grantPublicFixtureRead(tls.certFile);
       expect(core.inspectWindowsPrivatePathSync(tls.certFile, "file").private).toBe(false);
       daemon = await startRelayDaemon(env);
       expect(daemon.url).toMatch(/^https:/);
       await daemon.close();
       daemon = undefined;
       const previous = await readFile(tls.keyFile, "utf8");
-      await grantPublicFixtureRead(tls.keyFile);
+      keyExposure = await exposeOwnedFixtureRead(tls.keyFile);
       await expect(startRelayDaemon(env)).rejects.toMatchObject({ code: "EPRIVATE" });
       expect(await readFile(tls.keyFile, "utf8")).toBe(previous);
+      expect(await keyExposure.snapshot()).toBe(keyExposure.exposed);
+      expect(await certificateExposure.snapshot()).toBe(certificateExposure.exposed);
     } finally {
       try {
-        core.ensurePrivateFileSync(tls.keyFile);
+        await keyExposure?.restore();
+        await certificateExposure.restore();
       } finally {
         await daemon?.close();
       }
@@ -389,9 +387,12 @@ describe("local daemon and credential files", () => {
       ).rejects.toThrow();
     }
     await writeFile(file, "x".repeat(65_537));
-    await expect(
-      runRelayCommand("client", { OMNESIS_CLOUD_RELAY_DEVICE_FILE: file }),
-    ).rejects.toThrow("too large");
+    if (process.platform === "win32")
+      expect(core.inspectWindowsPrivatePathSync(file, "file").private).toBe(true);
+    const oversized = runRelayCommand("client", { OMNESIS_CLOUD_RELAY_DEVICE_FILE: file });
+    if (process.platform === "win32")
+      await expect(oversized).rejects.toMatchObject({ code: "EPRIVATE", stage: "validate" });
+    else await expect(oversized).rejects.toThrow("too large");
   });
 
   test("dispatches interactive device pairing without starting a relay or adapter", async () => {

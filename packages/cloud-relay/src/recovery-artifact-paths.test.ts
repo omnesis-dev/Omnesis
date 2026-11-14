@@ -147,12 +147,16 @@ test("parent aliases and a configured owner leaf symlink cannot redirect exports
     OMNESIS_CLOUD_RELAY_OWNER_KEY_FILE: ownerLink,
   };
   for (const output of [ownerLink, actual, join(alias, "owner.key")]) {
-    await expect(
-      runRelayRecoveryCommand("recovery-request", {
-        ...env,
-        OMNESIS_CLOUD_RELAY_RECOVERY_OUTPUT_FILE: output,
-      }),
-    ).rejects.toThrow("cannot replace");
+    expect(() => assertRecoveryArtifactDestination(output, [ownerLink, actual])).toThrow(
+      "cannot replace",
+    );
+    const request = runRelayRecoveryCommand("recovery-request", {
+      ...env,
+      OMNESIS_CLOUD_RELAY_RECOVERY_OUTPUT_FILE: output,
+    });
+    if (process.platform === "win32")
+      await expect(request).rejects.toMatchObject({ code: "EPRIVATE" });
+    else await expect(request).rejects.toThrow("cannot replace");
     await expect(
       rotateRelaySessionKey({ ...env, OMNESIS_CLOUD_RELAY_KEY_FILE: output }),
     ).rejects.toThrow("cannot replace");
@@ -161,11 +165,37 @@ test("parent aliases and a configured owner leaf symlink cannot redirect exports
   }
   const outputLeaf = join(directory, "public-export-link");
   await symlink(actual, outputLeaf);
-  await runRelayRecoveryCommand("recovery-request", {
-    ...env,
-    OMNESIS_CLOUD_RELAY_RECOVERY_OUTPUT_FILE: outputLeaf,
-  });
-  expect(JSON.parse(await readFile(outputLeaf, "utf8")).ownerPublicKey).toBe(f.owner.publicKey);
+  if (process.platform === "win32") {
+    // A private Windows input must be canonical; neither input nor output reparse points authorize publication.
+    await expect(
+      runRelayRecoveryCommand("recovery-request", {
+        ...env,
+        OMNESIS_CLOUD_RELAY_RECOVERY_OUTPUT_FILE: outputLeaf,
+      }),
+    ).rejects.toMatchObject({ code: "EPRIVATE" });
+    expect(fs.lstatSync(outputLeaf).isSymbolicLink()).toBe(true);
+    await expect(
+      runRelayRecoveryCommand("recovery-request", {
+        ...env,
+        OMNESIS_CLOUD_RELAY_OWNER_KEY_FILE: actual,
+        OMNESIS_CLOUD_RELAY_RECOVERY_OUTPUT_FILE: outputLeaf,
+      }),
+    ).rejects.toMatchObject({ code: "EPRIVATE" });
+    expect(fs.lstatSync(outputLeaf).isSymbolicLink()).toBe(true);
+    const safeOutput = join(directory, "canonical-export.json");
+    await runRelayRecoveryCommand("recovery-request", {
+      ...env,
+      OMNESIS_CLOUD_RELAY_OWNER_KEY_FILE: actual,
+      OMNESIS_CLOUD_RELAY_RECOVERY_OUTPUT_FILE: safeOutput,
+    });
+    expect(JSON.parse(await readFile(safeOutput, "utf8")).ownerPublicKey).toBe(f.owner.publicKey);
+  } else {
+    await runRelayRecoveryCommand("recovery-request", {
+      ...env,
+      OMNESIS_CLOUD_RELAY_RECOVERY_OUTPUT_FILE: outputLeaf,
+    });
+    expect(JSON.parse(await readFile(outputLeaf, "utf8")).ownerPublicKey).toBe(f.owner.publicKey);
+  }
   expect(await readFile(actual, "utf8")).toBe(f.owner.privateKey);
 });
 

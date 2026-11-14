@@ -9,6 +9,7 @@ import { randomBytes } from "node:crypto";
 import * as core from "@omnesis/core";
 import { SignJWT } from "jose";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
+import { exposeOwnedFixtureRead } from "../test/owned-file-acl.js";
 import {
   savePrivateJson,
   saveGoogleCredentials,
@@ -359,23 +360,16 @@ test.skipIf(process.platform !== "win32")(
     const value = { token: "invented private credential" };
     await savePrivateJson(path, value);
     expect(await readPrivateJson(path)).toEqual(value);
+    const exposure = await exposeOwnedFixtureRead(path);
     try {
-      await core.execWindowsJob(join(process.env.SystemRoot!, "System32", "icacls.exe"), [
-        path,
-        "/grant",
-        "*S-1-1-0:(R)",
-        "/Q",
-      ]);
       expect(core.inspectWindowsPrivatePathSync(path, "file").private).toBe(false);
       await expect(readPrivateJson(path)).rejects.toMatchObject({ code: "EPRIVATE" });
       expect(JSON.parse(await readFile(path, "utf8"))).toEqual(value);
+      expect(await exposure.snapshot()).toBe(exposure.exposed);
     } finally {
-      const restored = await core.inspectWindowsPrivatePaths([{ path, kind: "file" }], {
-        repair: true,
-        protect: true,
-      });
-      expect(restored[0]?.private).toBe(true);
+      await exposure.restore();
     }
+    expect(await readPrivateJson(path)).toEqual(value);
   },
 );
 

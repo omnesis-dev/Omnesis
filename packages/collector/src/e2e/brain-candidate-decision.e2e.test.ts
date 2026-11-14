@@ -159,16 +159,44 @@ test.each([1, 8])(
         );
       });
       await bench.restartGateway();
-      await bench.clock.advance(2_000);
-      await expect
-        .poll(
-          () =>
-            bench.sql
-              .prepare("SELECT status FROM knowledge_candidates WHERE id=?")
-              .get(candidateId),
-          { timeout: 60_000 },
-        )
-        .toEqual({ status: "deferred" });
+      const afterRestartNow = await bench.clock.advance(2_000);
+      try {
+        await expect
+          .poll(
+            () =>
+              bench.sql
+                .prepare("SELECT status FROM knowledge_candidates WHERE id=?")
+                .get(candidateId),
+            { timeout: 60_000 },
+          )
+          .toEqual({ status: "deferred" });
+      } catch (error) {
+        let diagnostics: unknown;
+        try {
+          diagnostics = {
+            clock: afterRestartNow,
+            work: bench.sql
+              .prepare(
+                "SELECT subject_id,reason,status,due_at,last_error FROM knowledge_work ORDER BY due_at LIMIT 20",
+              )
+              .all(),
+            runs: bench.sql
+              .prepare(
+                "SELECT kind,status,attempts,last_error FROM cognition_runs ORDER BY enqueued_at DESC LIMIT 10",
+              )
+              .all(),
+            calls: bench.puppetCalls.slice(-20).map(({ kind, emitted }) => ({
+              kind,
+              emitted: emitted.kind === "tool" ? emitted.name : emitted.kind,
+            })),
+          };
+        } catch {
+          diagnostics = "Local fixture diagnostics unavailable";
+        }
+        throw new Error(`Candidate did not defer after restart: ${JSON.stringify(diagnostics)}`, {
+          cause: error,
+        });
+      }
       await bench.drainUntilQuiet({ includeUpcoming: false });
       const admissions = () =>
         bench.sql

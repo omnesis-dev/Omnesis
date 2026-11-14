@@ -52,6 +52,7 @@ export const FOCUSED_UNIT_FILES = [
   "packages/cloud-relay/src/runtime.test.ts",
   "packages/cloud-relay/src/runtime-key.test.ts",
   "packages/cloud-relay/src/runtime-acme.test.ts",
+  "packages/cli/src/command-display.test.ts",
   "packages/cli/src/commands/connect.test.ts",
   "packages/cli/src/commands/connect.integration.test.ts",
   "packages/gateway/src/workers/indexer-worker-boot.test.ts",

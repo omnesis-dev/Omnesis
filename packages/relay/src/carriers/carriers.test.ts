@@ -1,16 +1,15 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { execFileSync } from "node:child_process";
-
 import { generateKeyPairSync } from "node:crypto";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
-import { atomicWriteFileSync, ensurePrivateDirSync, ensurePrivateFileSync } from "@omnesis/core";
+import { atomicWriteFileSync, ensurePrivateDirSync } from "@omnesis/core";
 
 import { APNS_WAKE_JSON, FCM_WAKE_DATA } from "@omnesis/core/push";
 import { afterEach, describe, expect, it } from "vitest";
+import { exposeOwnedFixtureRead } from "../../test/owned-file-acl.js";
 
 import { ApnsRelayCarrier, type ApnsRequest, type ApnsRequestInput } from "./apns.js";
 import { FcmRelayCarrier } from "./fcm.js";
@@ -25,13 +24,6 @@ function writePrivateFixture(path: string, data: string, options?: { mode: numbe
     ensurePrivateDirSync(dirname(path));
     atomicWriteFileSync(path, data, { mode: 0o600 });
   } else writeFileSync(path, data, options);
-}
-function broadenRead(path: string): void {
-  execFileSync(
-    join(process.env.SystemRoot!, "System32", "icacls.exe"),
-    [path, "/grant", "*S-1-1-0:(R)"],
-    { windowsHide: true, timeout: 10_000 },
-  );
 }
 
 function privateKey(type: "ec" | "rsa"): string {
@@ -64,13 +56,17 @@ describe("ApnsRelayCarrier", () => {
     async () => {
       const { carrier, request, keyPath } = apnsFixture();
       const before = readFileSync(keyPath);
-      broadenRead(keyPath);
-      await expect(carrier.sendWake(iosTarget())).rejects.toMatchObject({
-        kind: "credential_mint_failed",
-      });
-      expect(request.received).toEqual([]);
-      expect(readFileSync(keyPath)).toEqual(before);
-      ensurePrivateFileSync(keyPath);
+      const exposure = await exposeOwnedFixtureRead(keyPath);
+      try {
+        await expect(carrier.sendWake(iosTarget())).rejects.toMatchObject({
+          kind: "credential_mint_failed",
+        });
+        expect(request.received).toEqual([]);
+        expect(readFileSync(keyPath)).toEqual(before);
+        expect(await exposure.snapshot()).toBe(exposure.exposed);
+      } finally {
+        await exposure.restore();
+      }
       await carrier.sendWake(iosTarget());
       expect(request.received).toHaveLength(1);
       expect(readFileSync(keyPath)).toEqual(before);
@@ -217,11 +213,15 @@ describe("FcmRelayCarrier", () => {
     async () => {
       const { carrier, calls, serviceAccountPath } = fixture();
       const before = readFileSync(serviceAccountPath);
-      broadenRead(serviceAccountPath);
-      await expect(carrier.sendWake(androidTarget())).rejects.toMatchObject({ kind: "other" });
-      expect(calls).toEqual([]);
-      expect(readFileSync(serviceAccountPath)).toEqual(before);
-      ensurePrivateFileSync(serviceAccountPath);
+      const exposure = await exposeOwnedFixtureRead(serviceAccountPath);
+      try {
+        await expect(carrier.sendWake(androidTarget())).rejects.toMatchObject({ kind: "other" });
+        expect(calls).toEqual([]);
+        expect(readFileSync(serviceAccountPath)).toEqual(before);
+        expect(await exposure.snapshot()).toBe(exposure.exposed);
+      } finally {
+        await exposure.restore();
+      }
       await carrier.sendWake(androidTarget());
       expect(calls).toHaveLength(2);
       expect(readFileSync(serviceAccountPath)).toEqual(before);

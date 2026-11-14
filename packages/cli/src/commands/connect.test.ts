@@ -704,8 +704,9 @@ describe("harness paths", () => {
   });
 
   it("honors an explicit --dir override over defaults", () => {
-    expect(harnessHome("openclaw", "/custom")).toBe(resolve("/custom"));
-    expect(harnessHome("hermes", "/custom")).toBe(resolve("/custom"));
+    const override = join(tmpdir(), "fictional-custom-harness");
+    expect(harnessHome("openclaw", override)).toBe(override);
+    expect(harnessHome("hermes", override)).toBe(override);
   });
 
   it("expands native tilde separators in an explicit harness directory", () => {
@@ -1952,7 +1953,7 @@ describe("connect credential wiring", () => {
   });
 
   it("resumes denied and expired OAuth without re-pairing or leaking credentials", async () => {
-    const home = mkdtempSync(join(tmpdir(), "omnesis-hermes-oauth-denied-"));
+    const home = mkdtempSync(join(tmpdir(), "omnesis-hermes-oauth-denied space's-"));
     tempHomes.push(home);
     writeFileSync(join(home, "config.yaml"), "display:\n  background_process_notifications: all\n");
     integrationMocks.authorizeOAuth.mockImplementationOnce(async (provider: unknown) => {
@@ -2018,7 +2019,7 @@ describe("connect credential wiring", () => {
     });
     expect(exitCode).toBe(EXIT_AUTH);
     expect(stderr).toEqual([
-      `OAuth approval expired. Run \`omnesis connect hermes --dir ${home}\` to request a new approval.\n`,
+      `OAuth approval expired. Run \`omnesis connect hermes --dir ${process.platform === "win32" ? `'${home.replaceAll("'", "''")}'` : `'${home.replaceAll("'", "'\\''")}'`}\` to request a new approval.\n`,
     ]);
     expect(loadPendingAuthorization(credentialsPath)).toBeNull();
     expect(loadIntegrationCredentials(credentialsPath).managementToken).toBe(

@@ -49,13 +49,60 @@ $acl.AddAccessRule($rule)
   return root;
 }
 
+/** Inspect or explicitly review only this fixture's deliberately inherited grant. */
+async function fixtureFileAcl(path: string, review = false): Promise<string> {
+  const { stdout } = await execWindowsJob(
+    windowsPowerShellExecutable(),
+    [
+      "-NoLogo",
+      "-NoProfile",
+      "-NonInteractive",
+      "-Command",
+      `
+$ErrorActionPreference='Stop'
+$path=$env:OMNESIS_ATOMIC_ACL_TEST
+$sections=[System.Security.AccessControl.AccessControlSections]::Access -bor [System.Security.AccessControl.AccessControlSections]::Owner -bor [System.Security.AccessControl.AccessControlSections]::Group
+$acl=[System.IO.File]::GetAccessControl($path,$sections)
+if($env:OMNESIS_ATOMIC_REVIEW -eq '1') {
+ $acl.SetAccessRuleProtection($true,$true)
+ $acl.PurgeAccessRules([System.Security.Principal.SecurityIdentifier]'S-1-1-0')
+ [System.IO.File]::SetAccessControl($path,$acl)
+ $acl=[System.IO.File]::GetAccessControl($path,$sections)
+}
+[Console]::Out.Write($acl.GetSecurityDescriptorSddlForm($sections))
+`,
+    ],
+    {
+      env: {
+        ...process.env,
+        OMNESIS_ATOMIC_ACL_TEST: path,
+        OMNESIS_ATOMIC_REVIEW: review ? "1" : "0",
+      },
+      timeout: 20_000,
+    },
+  );
+  expect(stdout.trim().length).toBeGreaterThan(10);
+  return stdout.trim();
+}
+
 describe.skipIf(process.platform !== "win32")("Windows private atomic publication", () => {
   test("protects binary secrets under a readable parent through both replacements", async () => {
     const root = await readableParent();
     const path = join(root, "secret & $() 雪.bin");
     writeFileSync(path, "invented existing content");
+    const before = statSync(path, { bigint: true });
+    const beforeAcl = await fixtureFileAcl(path);
     expect(inspectWindowsPrivatePathSync(path, "file").private).toBe(false);
+    expect(() => secureWindowsPrivatePathSync(path, "file")).toThrow(/cannot be repaired online/u);
+    expect(readFileSync(path, "utf8")).toBe("invented existing content");
+    expect(await fixtureFileAcl(path)).toBe(beforeAcl);
+    expect(statSync(path, { bigint: true })).toMatchObject({ dev: before.dev, ino: before.ino });
+    // The fixture operator reviews its invented Everyone grant explicitly;
+    // the product must never make this unsafe online permission change.
+    await fixtureFileAcl(path, true);
     secureWindowsPrivatePathSync(path, "file");
+    expect(readFileSync(path, "utf8")).toBe("invented existing content");
+    expect(statSync(path, { bigint: true })).toMatchObject({ dev: before.dev, ino: before.ino });
     const bytes = Buffer.alloc(1024 * 1024);
     for (let index = 0; index < bytes.length; index++) bytes[index] = index % 256;
     const syncLaunch = vi.spyOn(childProcess, "spawnSync");

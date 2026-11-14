@@ -491,7 +491,7 @@ export class MultiCollectorHarness {
     return (await res.json()) as { ingested: number };
   }
 
-  async destroy(): Promise<void> {
+  async destroy(opts: { retainFiles?: boolean } = {}): Promise<void> {
     for (const c of this.collectors) {
       try {
         c.ws.disconnect();
@@ -500,6 +500,7 @@ export class MultiCollectorHarness {
       }
     }
     await this.killGateway();
+    if (opts.retainFiles) return;
     try {
       rmSync(this.tempDir, { recursive: true, force: true });
     } catch {

@@ -66,7 +66,7 @@ import {
   warnOnVersionDrift,
 } from "../connect-gateway-facts.js";
 import { approveInteractive } from "../approve.js";
-import { shellQuote } from "../service/hardened-bootstrap.js";
+import { quoteCommandArgument } from "../command-display.js";
 import {
   reloadConnectedHarness,
   spawnHarnessCommand,
@@ -1670,7 +1670,7 @@ export const connectCommand = defineCommand({
       ...(dirFlag !== undefined ? ["--dir", home] : []),
       ...(refresh ? ["--refresh", "--interactive"] : []),
     ]
-      .map(shellQuote)
+      .map((word) => quoteCommandArgument(word))
       .join(" ");
     if (skillOnly && refresh) {
       throw new CliError("Use either --refresh or --skill-only, not both.", EXIT_USER_ERROR);

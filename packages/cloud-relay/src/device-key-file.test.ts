@@ -7,6 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import * as core from "@omnesis/core";
+import { exposeOwnedFixtureRead } from "../test/owned-file-acl.js";
 import { readOrCreateDeviceKey } from "./device-key-file.js";
 import { parseDevicePublicKey } from "./device-enrollment.js";
 
@@ -174,19 +175,17 @@ test.skipIf(process.platform !== "win32")(
     const path = join(directory, "device.key");
     await readOrCreateDeviceKey(path);
     const previous = await readFile(path, "utf8");
+    const exposure = await exposeOwnedFixtureRead(path);
     try {
-      await core.execWindowsJob(join(process.env.SystemRoot!, "System32", "icacls.exe"), [
-        path,
-        "/grant",
-        "*S-1-1-0:(R)",
-        "/Q",
-      ]);
       expect(core.inspectWindowsPrivatePathSync(path, "file").private).toBe(false);
       await expect(readOrCreateDeviceKey(path)).rejects.toThrow("device key could not be read");
       expect(await readFile(path, "utf8")).toBe(previous);
       expect(await readdir(directory)).toEqual(["device.key"]);
+      expect(await exposure.snapshot()).toBe(exposure.exposed);
     } finally {
-      core.ensurePrivateFileSync(path);
+      await exposure.restore();
     }
+    expect((await readOrCreateDeviceKey(path)).publicKey).toBeTruthy();
+    expect(await readFile(path, "utf8")).toBe(previous);
   },
 );

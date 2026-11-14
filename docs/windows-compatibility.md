@@ -259,3 +259,30 @@ validation and Obsidian case-sensitive containment proof remain required.
 At `c0d108019`, focused Windows coverage passed 1,725 unit tests across 117 files
 (25 conditional skips) and all 13 gateway E2E tests. The E2E phase completed in
 134 seconds, including the original synthetic-pipeline teardown bound.
+
+The native replay at `3b6a93d86` passed all 71 checks: filesystem and process
+lifetimes, private traversal, metadata and control probes, bounded 64MiB reads,
+and direct PowerShell regressions. Queue wait was zero seconds; execution took
+7 minutes 50 seconds, including clean guest shutdown. This validates the native
+foundation, not complete Gateway or Collector operation. The concurrent publisher
+fixture exercises modern Windows replacement semantics and separately proves
+legacy replacement refusal leaves the held file unchanged.
+
+At `ee42b7905`, hosted Windows focused coverage passed 3,640 tests and failed 19,
+with 38 conditional skips; its three smoke E2E files passed all 13 tests. The
+follow-up corrects fixtures that still expected unsafe file ACLs to be repaired
+online, native path and command quoting assumptions, and decoder-timeout tests
+that confused helper startup with confirmed process cleanup. Every portable
+suite still requires a passing fresh verdict.
+
+A targeted Windows run of 13 remaining E2E files passed 81 tests and failed eight,
+with 11 conditional skips. Remaining failures cover relay enrollment, candidate
+work after restart, independent updater ownership, Maildir fixture disposal and
+write/checkpoint latency. These are unresolved until their fixes pass Windows;
+performance budgets and durability requirements remain unchanged.
+
+The hosted Linux general unit phase at `ee42b7905` passed 39,941 tests, its script
+smoke phase passed 162, and its relay phase passed 1,999. The job nevertheless
+failed the strict per-file relay coverage gate in seven changed files. Passing
+assertions alone do not establish a passing lane; complete coverage and final
+Linux/macOS validation remain required.

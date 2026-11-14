@@ -15,6 +15,7 @@ import { once } from "node:events";
 import { dirname, join } from "node:path";
 import * as core from "@omnesis/core";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
+import { exposeOwnedFixtureRead } from "../test/owned-file-acl.js";
 import { tlsFiles, listen, until } from "../test/support.js";
 import {
   registerGatewayKey,
@@ -810,15 +811,9 @@ test.skipIf(process.platform !== "win32")(
   "Windows enrollment accepts a public certificate but refuses an unsafe private TLS key",
   async () => {
     const f = await fixture();
-    const acl = (path: string) =>
-      core.execWindowsJob(join(process.env.SystemRoot!, "System32", "icacls.exe"), [
-        path,
-        "/grant",
-        "*S-1-1-0:(R)",
-        "/Q",
-      ]);
+    const certificateExposure = await exposeOwnedFixtureRead(f.options.certificateFile);
+    let keyExposure: Awaited<ReturnType<typeof exposeOwnedFixtureRead>> | undefined;
     try {
-      await acl(f.options.certificateFile);
       expect(core.inspectWindowsPrivatePathSync(f.options.certificateFile, "file").private).toBe(
         false,
       );
@@ -826,7 +821,7 @@ test.skipIf(process.platform !== "win32")(
       expect(f.accounts.gatewayBinding(session.accountId)).toBeDefined();
       const saved = await readFile(f.options.sessionFile, "utf8");
       const key = await readFile(f.options.privateKeyFile, "utf8");
-      await acl(f.options.privateKeyFile);
+      keyExposure = await exposeOwnedFixtureRead(f.options.privateKeyFile);
       const transport = vi.fn<typeof fetch>();
       await expect(registerGatewayKey({ ...f.options, fetch: transport })).rejects.toMatchObject({
         code: "EPRIVATE",
@@ -834,16 +829,17 @@ test.skipIf(process.platform !== "win32")(
       expect(transport).not.toHaveBeenCalled();
       expect(await readFile(f.options.sessionFile, "utf8")).toBe(saved);
       expect(await readFile(f.options.privateKeyFile, "utf8")).toBe(key);
+      expect(await keyExposure.snapshot()).toBe(keyExposure.exposed);
+      expect(await certificateExposure.snapshot()).toBe(certificateExposure.exposed);
+      await keyExposure.restore();
+      keyExposure = undefined;
+      await expect(registerGatewayKey(f.options)).resolves.toMatchObject({
+        accountId: session.accountId,
+      });
     } finally {
       try {
-        const restored = await core.inspectWindowsPrivatePaths(
-          [
-            { path: f.options.certificateFile, kind: "file" },
-            { path: f.options.privateKeyFile, kind: "file" },
-          ],
-          { repair: true, protect: true },
-        );
-        expect(restored.every((entry) => entry.private)).toBe(true);
+        await keyExposure?.restore();
+        await certificateExposure.restore();
       } finally {
         await f.close();
       }

@@ -4,6 +4,7 @@
 /** Gateway restart and fleet dispatch through the portal's durable host operation. */
 
 import { existsSync, readFileSync } from "node:fs";
+import { spawn, type ChildProcess } from "node:child_process";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { atomicWriteFileSync, MINIMUM_CLIENT_VERSIONS, type FleetUpdatePlan } from "@omnesis/core";
@@ -13,6 +14,8 @@ import {
 } from "@omnesis/core/portal-fleet-update";
 import { loginPortal, type PortalSession } from "./mcp-oauth-helper.js";
 import { MultiCollectorHarness, waitForCondition } from "./multi-collector-harness.js";
+import { e2eTsxCommand } from "./gateway-env.js";
+import { killSubprocessGroup, registerSubprocessGroup } from "./subprocess-reaper.js";
 
 interface HostUpdateSnapshot {
   plan: FleetUpdatePlan & {
@@ -27,16 +30,15 @@ interface HostUpdateSnapshot {
 describe("portal gateway-first fleet update", () => {
   let harness: MultiCollectorHarness;
   let portal: PortalSession;
+  let updater: ChildProcess | undefined;
+  let updaterCode: number | null | undefined;
+  let updaterOutput = "";
 
   beforeAll(async () => {
     harness = new MultiCollectorHarness({
       extraGatewayEnv: {
         OMNESIS_SYNTHETIC: "1",
         OMNESIS_E2E_PORTAL_FLEET_UPDATE: "1",
-        OMNESIS_E2E_PORTAL_FLEET_UPDATE_CLI_ENTRY: join(
-          import.meta.dirname,
-          "../../../cli/src/index.ts",
-        ),
       },
     });
     await harness.start();
@@ -47,14 +49,36 @@ describe("portal gateway-first fleet update", () => {
   }, 180_000);
 
   afterAll(async () => {
+    const failures: unknown[] = [];
+    let updaterJoined = !updater;
+    let publisherJoined = true;
     if (harness) {
-      atomicWriteFileSync(
-        join(harness.gatewayConfigDir, "portal-updates", "e2e-host-updated"),
-        "continue\n",
-        { ensureDir: true, mode: 0o600 },
-      );
+      try {
+        atomicWriteFileSync(
+          join(harness.gatewayConfigDir, "portal-updates", "e2e-host-updated"),
+          "continue\n",
+          { ensureDir: true, mode: 0o600 },
+        );
+      } catch (error) {
+        if (error !== null && typeof error === "object" && Object.hasOwn(error, "cleanupFailure"))
+          publisherJoined = false;
+        failures.push(error);
+      }
     }
-    await harness?.destroy();
+    if (updater) {
+      try {
+        await killSubprocessGroup(updater);
+        updaterJoined = true;
+      } catch (error) {
+        failures.push(error);
+      }
+    }
+    try {
+      await harness?.destroy({ retainFiles: !updaterJoined || !publisherJoined });
+    } catch (error) {
+      failures.push(error);
+    }
+    if (failures.length) throw new AggregateError(failures, "Fleet update fixture cleanup failed");
   });
 
   async function portalJson<T>(
@@ -106,6 +130,42 @@ describe("portal gateway-first fleet update", () => {
       state: "queued",
     });
     expect(collector.updater.calls).toEqual([]);
+    // Own the updater beside the gateway, so restarting the gateway cannot
+    // terminate the independent operation on Windows.
+    const command = e2eTsxCommand(join(import.meta.dirname, "../../../cli/src/index.ts"));
+    const updaterEnv: NodeJS.ProcessEnv = {
+      ...harness.gatewayLaunchEnv,
+      OMNESIS_GATEWAY_URL: harness.gatewayUrl,
+      OMNESIS_TOKEN: harness.bootstrapToken,
+      NODE_EXTRA_CA_CERTS: join(harness.gatewayConfigDir, "tls", "cert.pem"),
+    };
+    delete updaterEnv.NODE_TLS_REJECT_UNAUTHORIZED;
+    updater = spawn(
+      command.command,
+      [
+        ...command.args,
+        "_portal-fleet-update-run",
+        `--operation-id=${started.operation.id}`,
+        `--config-dir=${harness.gatewayConfigDir}`,
+      ],
+      {
+        env: updaterEnv,
+        stdio: ["ignore", "pipe", "pipe", "ipc"],
+        detached: process.platform !== "win32",
+      },
+    );
+    updater.on("error", (error) => {
+      updaterOutput += error.message;
+    });
+    updater.once("exit", (code) => {
+      updaterCode = code;
+    });
+    const capture = (chunk: Buffer): void => {
+      updaterOutput = (updaterOutput + chunk.toString("utf8")).slice(-8_000);
+    };
+    updater.stdout?.on("data", capture);
+    updater.stderr?.on("data", capture);
+    await registerSubprocessGroup(updater);
     const readyPath = join(harness.gatewayConfigDir, "portal-updates", "e2e-updater-ready.json");
     await waitForCondition(() => existsSync(readyPath), 10_000, "the independent updater");
     const ready = JSON.parse(readFileSync(readyPath, "utf8")) as {
@@ -154,5 +214,12 @@ describe("portal gateway-first fleet update", () => {
     expect(await portalJson<HostUpdateSnapshot>("/admin/fleet/host-update")).toMatchObject({
       operation: { id: started.operation.id, state: "succeeded" },
     });
+    await waitForCondition(
+      () => updaterCode !== undefined,
+      10_000,
+      "the independent updater's exit",
+    );
+    expect(updaterCode, updaterOutput).toBe(0);
+    await killSubprocessGroup(updater);
   }, 180_000);
 });

@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import * as core from "@omnesis/core";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
+import { exposeOwnedFixtureRead } from "../test/owned-file-acl.js";
 import {
   identityArtifactPresent,
   readBoundedPrivateText,
@@ -123,22 +124,19 @@ test.skipIf(process.platform !== "win32")(
   async () => {
     const path = join(directory, "private.key");
     await core.atomicWriteFile(path, "invented private key", { mode: 0o600 });
+    const exposure = await exposeOwnedFixtureRead(path);
     try {
-      await core.execWindowsJob(join(process.env.SystemRoot!, "System32", "icacls.exe"), [
-        path,
-        "/grant",
-        "*S-1-1-0:(R)",
-        "/Q",
-      ]);
       expect(core.inspectWindowsPrivatePathSync(path, "file").private).toBe(false);
       await expect(readPrivateInput(path)).rejects.toMatchObject({ code: "EPRIVATE" });
       await expect(readBoundedPrivateText(path, 4096, "Invented bound")).rejects.toMatchObject({
         code: "EPRIVATE",
       });
       expect(await readFile(path, "utf8")).toBe("invented private key");
+      expect(await exposure.snapshot()).toBe(exposure.exposed);
     } finally {
-      core.ensurePrivateFileSync(path);
+      await exposure.restore();
     }
+    expect((await readPrivateInput(path)).toString()).toBe("invented private key");
   },
 );
 
@@ -156,7 +154,7 @@ test.skipIf(process.platform !== "win32")(
       code: "EPRIVATE",
     });
     await expect(identityArtifactPresent(join(alias, "private.key"))).rejects.toMatchObject({
-      code: "EPRIVATE",
+      code: "EACCES",
     });
   },
 );
