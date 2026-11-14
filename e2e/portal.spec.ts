@@ -917,6 +917,35 @@ test.describe("Assistant value copying", () => {
     );
   }
 
+  test("preserves the native context menu for selected answer text", async ({ page }) => {
+    await renderAnswer(page, true);
+    const fixture = page.locator("#copy-answer-fixture");
+    const result = await fixture
+      .locator(".agent-msg-body p")
+      .first()
+      .evaluate((paragraph) => {
+        const text = paragraph.firstChild!;
+        const range = document.createRange();
+        range.setStart(text, 4);
+        range.setEnd(text, 11);
+        const selection = window.getSelection()!;
+        selection.removeAllRanges();
+        selection.addRange(range);
+        const event = new MouseEvent("contextmenu", { bubbles: true, cancelable: true });
+        paragraph.dispatchEvent(event);
+        return { prevented: event.defaultPrevented, selected: selection.toString() };
+      });
+    expect(result).toEqual({ prevented: false, selected: "address" });
+    await expect(fixture.getByRole("menu")).toHaveCount(0);
+
+    await page.evaluate(() => window.getSelection()!.removeAllRanges());
+    await fixture.locator(".agent-msg-body p").first().click({ button: "right" });
+    await fixture.getByRole("menuitem", { name: "Copy", exact: true }).click();
+    expect(
+      await page.evaluate(() => (window as unknown as { copiedValue: string }).copiedValue),
+    ).toContain("The address is `42 Example Street`.");
+  });
+
   test("copies exact Markdown values with sanitized HTML and accessible controls", async ({
     page,
   }) => {
