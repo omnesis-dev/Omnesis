@@ -29,6 +29,8 @@ const OWNER = accountId({
   expiresAt: 1,
 });
 const opaque = () => randomBytes(32).toString("base64url");
+/** An official Android app's origin, as `OFFICIAL_ANDROID_PASSKEY_ORIGINS` compiles them in. */
+const ANDROID = `android:apk-key-hash:${opaque()}`;
 
 function setup(
   options: {
@@ -41,7 +43,7 @@ function setup(
   const verifier = new GatewaySignInVerifier({
     google: () => undefined,
     relayOrigin: () => RELAY,
-    passkeyOrigins: () => [],
+    passkeyOrigins: () => [ANDROID],
     trusted: () => [],
     gatewayOrigin: () => ("origin" in options ? options.origin : GATEWAY),
   });
@@ -218,6 +220,33 @@ describe("a device signs in with a passkey on the gateway's own page", () => {
       );
       expect(f.requests.list()).toEqual([]);
       expect(f.createPairing).not.toHaveBeenCalled();
+    }
+  });
+
+  // The app in android/core-pairing (GatewayPasskeySigner) relies on this: it asks for the
+  // request's `/challenge` with an empty body, so the gateway commits to its code nonce before it
+  // learns the request's secret, and signs that value in the app with its own origin.
+  test("the Android app answers its request's own /challenge, signed in the app, also without an origin of its own", async () => {
+    for (const origin of [GATEWAY, undefined]) {
+      const f = setup({ origin }),
+        d = device("cli");
+      const challenge = f.requests.issueChallenge().challenge;
+      const result = await f.requests.start({
+        ...d.value,
+        deviceKey: d.deviceKey(challenge),
+        proof: {
+          type: "gateway-passkey",
+          challenge,
+          credential: f.owner.authentication(
+            gatewayPasskeyChallenge("device-enrollment", ANDROID, challenge, d.nonce),
+            "dXNlcg",
+            0,
+            ANDROID,
+          ),
+        },
+      });
+      expect(result.status).toBe("approved");
+      expect(f.attest).not.toHaveBeenCalled();
     }
   });
 

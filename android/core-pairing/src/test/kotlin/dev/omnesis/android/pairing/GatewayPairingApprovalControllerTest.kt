@@ -236,7 +236,7 @@ class GatewayPairingApprovalControllerTest {
         val row = request(kind = "android").copy(canTrustSignIn = true)
         val client = passkeyClient(row)
         val passkeys = Passkeys()
-        val model = GatewayPairingApprovalController({ 1_000_000 }, passkeys.signer)
+        val model = GatewayPairingApprovalController(passkeys.signer) { 1_000_000 }
         model.refresh(client)
         assertTrue(model.state.value.passkeyApproval); assertTrue(model.canApproveWithPasskey(row))
         model.setTrustSignIn(row.requestId, true)
@@ -255,7 +255,7 @@ class GatewayPairingApprovalControllerTest {
         val row = request(kind = "android")
         for ((client, signer) in listOf(passkeyClient(row) to null, passkeyClient(row, rpId = null) to Passkeys().signer,
             passkeyClient(row, rpId = "other.example.test") to Passkeys().signer, passkeyClient(row).apply { locationFails = true } to Passkeys().signer)) {
-            val model = GatewayPairingApprovalController({ 1_000_000 }, signer)
+            val model = GatewayPairingApprovalController(signer) { 1_000_000 }
             model.refresh(client)
             assertNull(model.state.value.error); assertEquals(listOf(row), model.state.value.requests)
             assertFalse(model.state.value.passkeyApproval); assertFalse(model.canApproveWithPasskey(row))
@@ -264,7 +264,7 @@ class GatewayPairingApprovalControllerTest {
         }
         val portal = request(kind = "portal")
         val client = passkeyClient(portal)
-        val model = GatewayPairingApprovalController({ 1_000_000 }, Passkeys().signer)
+        val model = GatewayPairingApprovalController(Passkeys().signer) { 1_000_000 }
         model.refresh(client)
         assertTrue(model.state.value.passkeyApproval); assertFalse(model.canApproveWithPasskey(portal))
         model.confirmAndApproveWithPasskey(portal, client)
@@ -279,7 +279,7 @@ class GatewayPairingApprovalControllerTest {
             passkeyClient(row) to Passkeys { fakeAssertion(requestedChallenge(it), "https://g-abcdefgh.relay.example.test") },
             passkeyClient(row).apply { approvalFails = true } to Passkeys(),
         )) {
-            val model = GatewayPairingApprovalController({ 1_000_000 }, passkeys.signer)
+            val model = GatewayPairingApprovalController(passkeys.signer) { 1_000_000 }
             model.refresh(client)
             model.confirmAndApproveWithPasskey(row, client)
             assertNotNull(model.state.value.error); assertFalse(model.state.value.busy)

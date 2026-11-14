@@ -21,8 +21,8 @@ import kotlinx.coroutines.flow.asStateFlow
  * gateway: the gateway issues a ceremony for exactly that request, device key and code, over
  * the pinned connection, and this app signs it with its own origin. */
 class GatewayPairingApprovalController(
-    private val now: () -> Long = System::currentTimeMillis,
     private val passkey: GatewayPasskeySigner? = null,
+    private val now: () -> Long = System::currentTimeMillis,
 ) {
     data class State(
         val requests: List<GatewayPairingApprovalRequest> = emptyList(),
