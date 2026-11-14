@@ -419,6 +419,7 @@ extension AccountCloudPairingClientTests {
                 let data = try JSONSerialization.data(withJSONObject: [
                     "accountSignIn": true,
                     "gatewayPasskey": ["rpId": "relay.example.test", "origin": value.gateway.publicOrigin],
+                    "passkeyApproval": true,
                 ])
                 return try mutateGateway?(url, data) ?? data
             }
@@ -881,6 +882,43 @@ extension AccountCloudPairingClientTests {
             XCTFail("An oversized config was read")
         } catch { XCTAssertEqual(error as? AccountPairingError, .response) }
         await oversized.client.close()
+    }
+
+    /// Defect 6.1 (M4): `gatewayPasskey` says where the gateway's page is, not whether the owner has
+    /// a passkey confirmed there. A Google-only owner would be refused on that page, so the app opens
+    /// it only when the gateway says `passkeyApproval: true`. An older gateway that sends no such
+    /// field, and one that says false (no confirmed passkey, or a security lock), leave approval to
+    /// a device the owner already uses.
+    func testTheApprovalPageIsOfferedOnlyWhenTheGatewaySaysAPasskeyCanApprove() async throws {
+        for (name, fields) in [
+            ("no confirmed passkey", ["passkeyApproval": false] as [String: Any]),
+            ("an older gateway", ["passkeyApproval": NSNull()]),
+            ("a non-boolean", ["passkeyApproval": "true"]),
+        ] {
+            let setup = try fixture(mutateGateway: { url, data in
+                guard url.path == "/devices/account/config" else { return data }
+                var object = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+                for (key, value) in fields {
+                    if value is NSNull { object.removeValue(forKey: key) } else { object[key] = value }
+                }
+                return try JSONSerialization.data(withJSONObject: object)
+            })
+            let choices = try await passkeyChoices(setup)
+            _ = try await setup.client.select(gatewayId: choices[0].gatewayId)
+            do {
+                let page = try await setup.client.approvalPage()
+                XCTAssertNil(page, "The approval page was offered with \(name)")
+            } catch {
+                XCTAssertEqual(name, "a non-boolean", "\(name) failed: \(error)")
+            }
+            await setup.client.close()
+        }
+        let setup = try fixture()
+        let choices = try await passkeyChoices(setup)
+        _ = try await setup.client.select(gatewayId: choices[0].gatewayId)
+        let page = try await setup.client.approvalPage()
+        XCTAssertEqual(page, try approvalPage(setup))
+        await setup.client.close()
     }
 
     /// There is a page to open only for a request this sign-in holds at the gateway: none before one

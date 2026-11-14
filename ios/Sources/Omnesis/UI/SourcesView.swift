@@ -147,9 +147,8 @@ struct SourcesView: View {
         return humanName(for: sourceTypeOf(sourceId))
     }
 
-    /// Short one-liner for the inline refresh-failure banner. Routes
-    /// through the same classifier the full-screen view uses so the
-    /// vocabulary stays consistent across surfaces.
+    /// Short one-liner for the inline refresh-failure banner. Routes through the same classifier
+    /// the full-screen view uses so the vocabulary stays consistent across surfaces.
     private func inlineRefreshErrorText(_ error: Error) -> String {
         switch GatewayErrorView.classify(error) {
         case .offline: "This phone is offline — showing cached sources."
@@ -161,6 +160,7 @@ struct SourcesView: View {
         case .server(let status, _): "Gateway returned \(status) while refreshing."
         case .unknown(let message): message
         case .voice(let failure): failure.errorDescription ?? failure.title
+        case .stepUp(let refusal): refusal.message
         }
     }
 

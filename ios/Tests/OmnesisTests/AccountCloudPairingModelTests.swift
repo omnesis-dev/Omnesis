@@ -612,6 +612,52 @@ extension AccountCloudPairingModelTests {
         model.cancel()
     }
 
+    /// M6: held at a gateway this iPhone verified, the request continues on its own once the owner
+    /// approves it on a device they already use. The code was compared on the approving screen and
+    /// checked here against this device's own computation, so there is no button to press.
+    func testAnApprovalFromAVerifiedGatewayContinuesWithoutAComparisonButton() async throws {
+        let fixture = try fixture(), gate = AccountApprovalGate(), recorded = AccountRecorded()
+        let session = AccountModelSession(binding: fixture.gateway, clock: fixture.clock, gate: gate, single: true)
+        await session.setVerified()
+        let model = makeModel(session, fixture: fixture, recorded: recorded)
+        let passkey = try model.start(configuration: configuration(), method: .passkey)
+        await waitFor { model.phase == .comparing }
+        XCTAssertTrue(model.continuesOnApproval)
+        XCTAssertEqual(model.expiresAt, Date(timeIntervalSince1970: fixture.clock + 300))
+        XCTAssertNotNil(model.verificationCode)
+        var applied: [String] = []
+        await model.complete { applied.append($0)
+            return true
+        }
+        XCTAssertTrue(applied.isEmpty, "Connected before the owner approved")
+        await gate.release()
+        await passkey?.value
+        XCTAssertEqual(model.phase, .joining, "An approval did not continue by itself")
+        XCTAssertNotNil(model.verificationCode)
+        await model.complete { applied.append($0)
+            return true
+        }
+        XCTAssertEqual(applied.count, 1)
+        XCTAssertTrue(applied[0].contains("pinned-key-strict"))
+        XCTAssertEqual(recorded.values.count, 1)
+        XCTAssertEqual(model.phase, .idle)
+    }
+
+    /// A gateway this iPhone could not verify keeps the explicit comparison once approved.
+    func testAnApprovalFromAnUnverifiedGatewayStillWaitsForTheComparison() async throws {
+        let fixture = try fixture(), gate = AccountApprovalGate()
+        await gate.release()
+        let session = AccountModelSession(binding: fixture.gateway, clock: fixture.clock, gate: gate, single: true)
+        let model = makeModel(session, fixture: fixture)
+        try await model.start(configuration: configuration(), method: .passkey)?.value
+        XCTAssertEqual(model.phase, .comparing)
+        XCTAssertFalse(model.continuesOnApproval)
+        XCTAssertTrue(model.gatewayApproved)
+        model.cancel()
+        XCTAssertNil(model.expiresAt)
+        XCTAssertFalse(model.continuesOnApproval)
+    }
+
     /// A failed poll takes the page down with the code.
     func testAFailedPollClosesTheApprovalPage() async throws {
         let fixture = try fixture(), gate = AccountApprovalGate(), pages = AccountModelApprovalBrowser()
@@ -683,6 +729,8 @@ private actor AccountModelSession: AccountPairingSession {
     let joins: Bool
     let failure: AccountPairingError?
     let page: URL?
+    /// The request went to a gateway whose certificate passed the public checks.
+    var verified = false
     private(set) var pageReads = 0
     private var offlineAttempts: Int
     private var challenge: CloudPairingChallenge?
@@ -770,6 +818,7 @@ private actor AccountModelSession: AccountPairingSession {
             value.acceptAutomaticJoin()
         } else {
             try value.receive(value.reply(expiresAt: (clock + 300) * 1000), now: clock)
+            if verified { value.acceptAutomaticJoin() }
         }
         return value
     }
@@ -856,6 +905,12 @@ private struct AccountModelTokenTransport: CloudPairingTransport {
     }
 
     func close() {}
+}
+
+extension AccountModelSession {
+    func setVerified() {
+        verified = true
+    }
 }
 
 #endif

@@ -15,6 +15,8 @@ public struct GatewayPairingApprovalRequest: Decodable, Equatable, Identifiable,
     public var signIn: String?
     /// The gateway can add this request's sign-in to Trusted sign-ins.
     public var canTrustSignIn: Bool?
+    /// Its device key belongs to a device the owner removed before.
+    public var revokedDevice: Bool?
     public var id: String {
         requestId
     }
@@ -24,12 +26,25 @@ public protocol GatewayPairingApproving: Sendable {
     func pairingApprovalRequests() async throws -> [GatewayPairingApprovalRequest]
     func decidePairingApproval(requestId: String, approve: Bool) async throws
     func decidePairingApproval(requestId: String, approve: Bool, trustSignIn: Bool) async throws
+    /// The gateway's own page that approves `requestId` with the owner's passkey, for a phone the
+    /// gateway asks to confirm it's the owner first.
+    func approvalPage(requestId: String) -> URL?
 }
 
 extension GatewayPairingApproving {
     public func decidePairingApproval(requestId: String, approve: Bool, trustSignIn: Bool) async throws {
         try await decidePairingApproval(requestId: requestId, approve: approve)
     }
+
+    public func approvalPage(requestId _: String) -> URL? {
+        nil
+    }
+}
+
+/// An approval the gateway would not take from this phone until the owner confirms it's them.
+public struct PairingStepUp: Equatable, Sendable {
+    public let requestId: String
+    public let refusal: StepUpRefusal
 }
 
 /// The comparison belongs to this trusted phone and this exact pending SAS.
@@ -40,6 +55,12 @@ public final class GatewayPairingApprovalModel {
     public private(set) var requests: [GatewayPairingApprovalRequest] = []
     public private(set) var busy = false
     public private(set) var error: Error?
+    /// The approval the gateway asked to confirm on its own page. The request stays listed.
+    public private(set) var stepUp: PairingStepUp?
+    /// The device just denied, for the follow-up that offers to make every new device ask first.
+    public private(set) var denied: GatewayPairingApprovalRequest?
+    /// The follow-up was taken: new devices now always ask.
+    public private(set) var askingFirst = false
     private var compared: [String: String] = [:]
     private var trustedSignIns: Set<String> = []
     private var generation = UUID()
@@ -65,6 +86,7 @@ public final class GatewayPairingApprovalModel {
             requests = incoming.filter { $0.status == "pending" } + incoming.filter { $0.status == "approving" }
             compared = compared.filter { id, code in incoming.contains { $0.id == id && $0.verificationCode == code } }
             trustedSignIns = trustedSignIns.filter { id in incoming.contains { $0.id == id && $0.canTrustSignIn == true } }
+            if let stepUp, !requests.contains(where: { $0.id == stepUp.requestId }) { self.stepUp = nil }
         } catch {
             guard operation == generation else { return }
             self.error = error
@@ -106,6 +128,8 @@ public final class GatewayPairingApprovalModel {
         guard !busy, requests.contains(request), pending(request), !approve || isCompared(request) else { return }
         busy = true
         error = nil
+        stepUp = nil
+        denied = nil
         let operation = generation
         do {
             if approve, trustsSignIn(request) {
@@ -118,6 +142,30 @@ public final class GatewayPairingApprovalModel {
             requests.removeAll { $0.id == request.id }
             compared[request.id] = nil
             trustedSignIns.remove(request.id)
+            if !approve { denied = request }
+        } catch {
+            guard operation == generation else { return }
+            // The gateway keeps the request; its own page can approve it with the owner's passkey.
+            if approve, let refusal = StepUpRefusal(error) {
+                stepUp = PairingStepUp(requestId: request.id, refusal: refusal)
+            } else {
+                self.error = error
+            }
+        }
+        busy = false
+    }
+
+    /// After a denial: every new device asks first from now on. This only makes the gateway
+    /// stricter, so the gateway never asks to confirm it.
+    public func askFirst(client: any CloudRelayManaging) async {
+        guard !busy, denied != nil, !askingFirst else { return }
+        busy = true
+        error = nil
+        let operation = generation
+        do {
+            _ = try await client.cloudRelay(.setEnrollmentPolicy("ask"))
+            guard operation == generation else { return }
+            askingFirst = true
         } catch {
             guard operation == generation else { return }
             self.error = error
@@ -132,6 +180,9 @@ public final class GatewayPairingApprovalModel {
         compared = [:]
         trustedSignIns = []
         error = nil
+        stepUp = nil
+        denied = nil
+        askingFirst = false
     }
 
     private func pending(_ request: GatewayPairingApprovalRequest) -> Bool {

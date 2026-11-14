@@ -123,6 +123,10 @@ public struct CloudPairingConfirmation: Sendable {
     public private(set) var approved = false
     public private(set) var compared = false
     public private(set) var joinedAutomatically = false
+    /// The signed request went to a gateway whose certificate passed the public checks, the same
+    /// footing an automatic join stands on. An approval that gateway reports later is then as
+    /// bound as a join, so the app continues on its own; otherwise a person confirms the codes.
+    public private(set) var gatewayVerified = false
     private var pairingCode: String?
     private var expiresAt: TimeInterval
     private var committed: String?
@@ -176,6 +180,13 @@ public struct CloudPairingConfirmation: Sendable {
     /// passed the public checks. A later approval goes through `confirmComparison`.
     mutating func acceptAutomaticJoin() {
         joinedAutomatically = approved
+        gatewayVerified = true
+    }
+
+    /// When the gateway stops waiting for this request, as the earlier of its word and this
+    /// device's own limit. Seconds since 1970.
+    public var expiry: TimeInterval {
+        expiresAt
     }
 
     public func pairingPayload(now: TimeInterval = Date().timeIntervalSince1970) throws -> String {

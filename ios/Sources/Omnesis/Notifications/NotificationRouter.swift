@@ -82,7 +82,9 @@ public enum PushTarget: Equatable, Sendable {
     /// A generic MCP authorization request. It carries no request identifier
     /// or code: tapping it may only open the trusted short-code entry sheet.
     case accessAuthorization
-    case pairingRequests
+    /// Devices waiting for the owner's OK. A notification for one request names it, so the list
+    /// opens with that request first; the gateway's list is still what the owner decides on.
+    case pairingRequests(requestId: String? = nil)
     /// A device joined this gateway by signing in. Opens the device list, where it can be removed.
     case deviceJoined
     /// A finished agent turn whose answer outlived its spoken budget
@@ -114,7 +116,8 @@ public enum PushTarget: Equatable, Sendable {
 extension PushTarget {
     /// Targets whose destination is Settings → Devices.
     var opensDevices: Bool {
-        self == .pairingRequests || self == .deviceJoined
+        if case .pairingRequests = self { return true }
+        return self == .deviceJoined
     }
 
     /// Short kind label safe for `.public` log interpolation — the case
@@ -162,7 +165,7 @@ extension PushTarget {
             case "access-authorization":
                 return targetId == "access" ? .accessAuthorization : nil
             case "device-pairing":
-                return cloudRelayEnabled && targetId == "pairing" ? .pairingRequests : nil
+                return cloudRelayEnabled && targetId == "pairing" ? .pairingRequests(requestId: pairingRequestId(omnesis)) : nil
             default: break
             }
         }
@@ -297,5 +300,14 @@ func validPrivacyApprovalId(_ value: String) -> Bool {
         default:
             false
         }
+    }
+}
+
+extension PushTarget {
+    /// The request a pairing notification names, as `requestId` beside its kind. Only an id in
+    /// the gateway's own shape is kept: the list it opens still comes from the gateway.
+    static func pairingRequestId(_ payload: [String: Any]) -> String? {
+        guard let id = payload["requestId"] as? String, UUID(uuidString: id) != nil else { return nil }
+        return id
     }
 }
