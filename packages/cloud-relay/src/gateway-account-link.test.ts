@@ -20,6 +20,7 @@ import { accountId as identityDigest, googleIdentityProvider } from "./identity.
 import {
   gatewayPasskeyChallenge,
   gatewayPasskeyPinBinding,
+  gatewayPasskeyStepUpBinding,
   googleProofNonce,
   passkeyCountersignatureNonce,
   passkeyEndorsementNonce,
@@ -2777,6 +2778,83 @@ test("TM-01 (certificate incident, approval): while a rogue certificate may exis
       binding,
     ),
   ).toBe(false);
+});
+
+test("F21 (step-up): only a passkey confirmed here steps up, once, for the action it was asked for, and never during a certificate incident", async () => {
+  const f = await confirming();
+  const enrollment = f.manager.pairingIdentity()!.enrollment;
+  const owner = await passkeyDevice(),
+    listedOnly = await passkeyDevice();
+  f.list(
+    { id: owner.id, publicKey: owner.publicKey },
+    { id: listedOnly.id, publicKey: listedOnly.publicKey },
+  );
+  // Nothing to step up with until the owner confirms a passkey here.
+  expect(enrollment.stepUpRequired!()).toBe(false);
+  await f.manager.confirmPasskey(f.assert(owner, f.manager.passkeyConfirmation(), { counter: 1 }));
+  expect(enrollment.stepUpRequired!()).toBe(true);
+  const binding = gatewayPasskeyStepUpBinding({
+    method: "POST",
+    path: "/admin/devices/pair",
+    bodySha256: "0".repeat(64),
+    deviceId: "fictional-device",
+  });
+  const stepUp = (
+    device: PasskeyDevice,
+    ceremony: { challenge: string; webauthnChallenge: string },
+    options: { from?: string; counter?: number; binding?: string } = {},
+  ) =>
+    enrollment.verifyStepUp!(
+      {
+        type: "gateway-passkey",
+        challenge: ceremony.challenge,
+        credential: device.authenticator.authentication(
+          options.from
+            ? gatewayPasskeyChallenge("step-up", options.from, ceremony.challenge, binding)
+            : ceremony.webauthnChallenge,
+          "dXNlcg",
+          options.counter ?? 0,
+          options.from ?? f.own,
+        ),
+      },
+      options.binding ?? binding,
+    );
+  const ceremony = enrollment.stepUpCeremony!(binding)!;
+  expect(ceremony).toMatchObject({ purpose: "step-up", origin: f.own, binding });
+  // A passkey the relay lists but the owner never confirmed here; the attempt spends the challenge.
+  expect(await stepUp(listedOnly, ceremony)).toBe(false);
+  expect(await stepUp(owner, ceremony, { counter: 2 })).toBe(false);
+  // Made on the relay's page, or presented for another action.
+  expect(await stepUp(owner, enrollment.stepUpCeremony!(binding)!, { from: origin })).toBe(false);
+  expect(
+    await stepUp(owner, enrollment.stepUpCeremony!(binding)!, { counter: 2, binding: opaque() }),
+  ).toBe(false);
+  // An approval ceremony is no step-up, and a step-up no approval.
+  const approval = enrollment.approvalCeremony!(binding)!;
+  expect(
+    await enrollment.verifyStepUp!(
+      {
+        type: "gateway-passkey",
+        challenge: approval.challenge,
+        credential: owner.authenticator.authentication(
+          approval.webauthnChallenge,
+          "dXNlcg",
+          2,
+          f.own,
+        ),
+      },
+      binding,
+    ),
+  ).toBe(false);
+  expect(await enrollment.verifyStepUp!({ type: "passkey" }, binding)).toBe(false);
+  expect(await stepUp(owner, enrollment.stepUpCeremony!(binding)!, { counter: 3 })).toBe(true);
+  expect(f.manager.confirmedSignIns()).toEqual([expect.objectContaining({ counter: 3 })]);
+  // During a certificate incident no step-up starts, and one started before counts for nothing.
+  const early = enrollment.stepUpCeremony!(binding)!;
+  expect(await f.manager.holdForCertificateIncident([ROGUE])).toBe(true);
+  expect(enrollment.stepUpRequired!()).toBe(true);
+  expect(enrollment.stepUpCeremony!(binding)).toBeUndefined();
+  expect(await stepUp(owner, early, { counter: 4 })).toBe(false);
 });
 
 test("a Google account confirmed by approving an app's sign-in joins from the app afterwards, never from a web page", async () => {
