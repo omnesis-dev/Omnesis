@@ -189,3 +189,57 @@ test.skipIf(process.platform !== "win32")(
     expect(await readFile(path, "utf8")).toBe(previous);
   },
 );
+
+test.each([
+  ["ENOENT", "own", false],
+  ["ENOENT", "own", true],
+  ["ENOENT", "cause", false],
+  ["ENOENT", "cause", true],
+  ["EEXIST", "own", false],
+  ["EEXIST", "own", true],
+  ["EEXIST", "cause", false],
+  ["EEXIST", "cause", true],
+] as const)(
+  "Windows identity refuses %s with %s cleanup uncertainty (payload present: %s)",
+  async (code, placement, payload) => {
+    const { generateKeyPairSync } = await import("node:crypto");
+    const path = join(directory, "uncertain-identity.pem");
+    const winner = generateKeyPairSync("ec", { namedCurve: "prime256v1" }).privateKey.export({
+      type: "pkcs8",
+      format: "pem",
+    });
+    await core.atomicWriteFile(path, winner, { mode: 0o600 });
+    const before = await stat(path, { bigint: true });
+    const marker = { cleanupFailure: payload ? new Error("Invented unjoined helper") : undefined };
+    const failure = Object.assign(
+      new Error("Invented uncertain identity operation"),
+      { code },
+      placement === "own"
+        ? marker
+        : { cause: Object.assign(new Error("Invented inner receipt"), marker) },
+    );
+    const missing = Object.assign(new Error("Invented missing identity"), { code: "ENOENT" });
+    const read = vi
+      .spyOn(core, "readWindowsPrivateFile")
+      .mockRejectedValueOnce(code === "ENOENT" ? failure : missing)
+      .mockResolvedValueOnce(Buffer.from(winner));
+    const publish = vi.spyOn(core, "writeWindowsPrivateFileAtomicStream");
+    if (code === "EEXIST") publish.mockRejectedValueOnce(failure);
+    else publish.mockResolvedValueOnce(undefined);
+    const descriptor = Object.getOwnPropertyDescriptor(process, "platform")!;
+    Object.defineProperty(process, "platform", { ...descriptor, value: "win32" });
+    try {
+      const operation = readOrCreateDeviceKey(path);
+      if (code === "ENOENT") await expect(operation).rejects.toMatchObject({ cause: failure });
+      else await expect(operation).rejects.toBe(failure);
+      expect(read).toHaveBeenCalledExactlyOnceWith(path, 65_536);
+      if (code === "ENOENT") expect(publish).not.toHaveBeenCalled();
+      else expect(publish).toHaveBeenCalledOnce();
+      expect(await readFile(path, "utf8")).toBe(winner);
+      const after = await stat(path, { bigint: true });
+      expect([after.dev, after.ino]).toEqual([before.dev, before.ino]);
+    } finally {
+      Object.defineProperty(process, "platform", descriptor);
+    }
+  },
+);

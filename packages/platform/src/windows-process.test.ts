@@ -93,3 +93,57 @@ it("does not bootstrap or launch native code for empty ownership sets", async ()
   expect(mocks.run).not.toHaveBeenCalled();
   expect(mocks.sync).not.toHaveBeenCalled();
 });
+
+const operations = [
+  { name: "async snapshot", invoke: () => snapshotWindowsProcesses([123]) },
+  { name: "sync snapshot", invoke: () => snapshotWindowsProcessesSync([123]) },
+  { name: "async kill", invoke: () => killWindowsProcesses([row]) },
+  { name: "sync kill", invoke: () => killWindowsProcessesSync([row]) },
+];
+it.each(operations)(
+  "$name retains explicit cleanup uncertainty for every worker status",
+  async ({ invoke }) => {
+    for (const cleanupFailure of [undefined, new Error("private cleanup detail")]) {
+      for (const status of [
+        { exitCode: 0 },
+        { exitCode: 1 },
+        { exitCode: null, failure: "timeout" as const },
+      ]) {
+        const result = {
+          ...success(),
+          ...status,
+          stderr: "private detail EPRIVATE:process-snapshot:5 more private detail",
+          cleanupFailure,
+        };
+        mocks.run.mockResolvedValue(result);
+        mocks.sync.mockReturnValue(result);
+        const error: unknown = await Promise.resolve()
+          .then(invoke)
+          .then(
+            () => undefined,
+            (failure: unknown) => failure,
+          );
+        expect(error).toBeInstanceOf(Error);
+        expect((error as Error).message).toBe(
+          "Owned Windows process operation EPRIVATE:process-snapshot:5",
+        );
+        expect(Object.hasOwn(error as object, "cleanupFailure")).toBe(true);
+        expect((error as { cleanupFailure: unknown }).cleanupFailure).toBe(cleanupFailure);
+      }
+    }
+  },
+);
+it.each(operations)("$name keeps ordinary joined worker refusals unmarked", async ({ invoke }) => {
+  const result = { ...success(), exitCode: 1, stderr: "EPRIVATE:process-kill:5" };
+  mocks.run.mockResolvedValue(result);
+  mocks.sync.mockReturnValue(result);
+  const error: unknown = await Promise.resolve()
+    .then(invoke)
+    .then(
+      () => undefined,
+      (failure: unknown) => failure,
+    );
+  expect(error).toBeInstanceOf(Error);
+  expect((error as Error).message).toBe("Owned Windows process operation EPRIVATE:process-kill:5");
+  expect(Object.hasOwn(error as object, "cleanupFailure")).toBe(false);
+});
