@@ -44,7 +44,12 @@ public static partial class OmnesisPrivateFile {
     return info;
   }
   static SafeFileHandle Open(string path,bool directory,bool repair,uint share) {
-    SafeFileHandle handle=CreateFile(path,0x20080U|(repair?0x40000U:0U),share,IntPtr.Zero,3,0x200000U|(directory?0x2000000U:0U),IntPtr.Zero);
+    uint access=0x20080U|(repair?0x40000U:0U);
+    // Metadata-only handles do not participate in Windows delete-sharing
+    // checks. A directory pin needs FILE_TRAVERSE (the FILE_EXECUTE bit),
+    // without granting enumeration or changing metadata-only inspection.
+    if(directory && (share&4U)==0) access|=0x20U;
+    SafeFileHandle handle=CreateFile(path,access,share,IntPtr.Zero,3,0x200000U|(directory?0x2000000U:0U),IntPtr.Zero);
     if(handle.IsInvalid) { int code=Marshal.GetLastWin32Error(); handle.Dispose(); throw new Win32Exception(code); }
     try { Information(handle,directory); return handle; } catch { handle.Dispose(); throw; }
   }

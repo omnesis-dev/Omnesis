@@ -145,30 +145,39 @@ export function validateUsearchFile(
   path: string,
   dimensions: number,
   encoding: VectorEncoding = VECTOR_ENCODING,
+  beforeNativeOpen?: () => void,
 ): void {
-  // Map before loading: view() bounds the declared vector matrix against the
-  // file length, whereas load() allocates from its untrusted row/column counts
-  // first. Even a tiny garbage file can exhaust memory on the allocating path.
-  // The reader's search probe also catches graph corruption that only trips
-  // lazy traversal (such as "Linking to missing level"). Native failures still
-  // require subprocess isolation; a mapped view is not a complete validator.
+  // Mapping bounds the untrusted vector matrix before the allocating loader
+  // runs. The constructor is independent of the file and precedes the trusted
+  // native-open boundary the validation subprocess reports to its parent.
   const viewer = createIndex(dimensions, encoding);
-  viewer.view(path);
-  const viewed = viewer.dimensions();
-  if (viewed !== dimensions) {
-    throw new Error(`usearch file dimension ${viewed} != expected ${dimensions}`);
-  }
-  if (viewer.size() > 0) {
-    viewer.search(new Float32Array(dimensions), 1, 0);
-  }
+  let loader: InstanceType<typeof Index> | undefined;
+  try {
+    beforeNativeOpen?.();
+    viewer.view(path);
+    const viewed = viewer.dimensions();
+    if (viewed !== dimensions) {
+      throw new Error(`usearch file dimension ${viewed} != expected ${dimensions}`);
+    }
+    if (viewer.size() > 0) viewer.search(new Float32Array(dimensions), 1, 0);
 
-  // Also exercise the write handle's full deserialize path: a successful
-  // reader probe alone does not prove that a writable index can be loaded.
-  const loader = createIndex(dimensions, encoding);
-  loader.load(path);
-  const loaded = loader.dimensions();
-  if (loaded !== dimensions) {
-    throw new Error(`usearch file dimension ${loaded} != expected ${dimensions}`);
+    // Exercise the write handle's deserialize path as well as mapped reads.
+    loader = createIndex(dimensions, encoding);
+    loader.load(path);
+    const loaded = loader.dimensions();
+    if (loaded !== dimensions) {
+      throw new Error(`usearch file dimension ${loaded} != expected ${dimensions}`);
+    }
+  } finally {
+    // The rebuilt Windows binding releases native allocations and mappings
+    // before the subprocess may report that validation completed safely.
+    if (process.platform === "win32") {
+      try {
+        loader?.reset();
+      } finally {
+        viewer.reset();
+      }
+    }
   }
 }
 

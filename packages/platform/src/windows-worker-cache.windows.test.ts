@@ -284,6 +284,44 @@ process.stdout.write(JSON.stringify({redirected,secondExitCode:second.exitCode,s
       stdout: "still-owned",
     });
   });
+  it("pins every writable cache ancestor and the generation against rename", async () => {
+    const profile = join(root, "profile");
+    mkdirSync(profile);
+    const result = await run(
+      `
+import {runWindowsJob} from ${JSON.stringify(jobModule)};
+import {renameSync,readdirSync} from 'node:fs';
+import {join} from 'node:path';
+const profile=${JSON.stringify(profile)};
+const first=await runWindowsJob(process.execPath,['-e',''],{timeoutMs:15000});
+if(first.exitCode!==0 || first.failure) throw Error('Initial fixture failed');
+const cache=join(profile,'Omnesis','platform-native-v1');
+const names=readdirSync(cache);
+if(names.length!==1 || !/^[0-9a-f]{64}$/.test(names[0])) throw Error('Invalid fixture generation');
+const levels=[['profile',profile],['application',join(profile,'Omnesis')],['cache',cache],['generation',join(cache,names[0])]];
+const evidence=[];
+for(const [level,path] of levels) {
+ let denial,moved=false;
+ try {renameSync(path,path+'-moved');moved=true;}
+ catch(error) {if(error.code!=='EPERM' && error.code!=='EACCES' && error.code!=='EBUSY') throw error;denial=error.code;}
+ if(moved) renameSync(path+'-moved',path);
+ const next=await runWindowsJob(process.execPath,['-e','process.stdout.write("still-owned")'],{timeoutMs:5000});
+ evidence.push({level,blocked:denial!==undefined,exitCode:next.exitCode,stdout:Buffer.from(next.stdout).toString('utf8')});
+}
+process.stdout.write(JSON.stringify(evidence));
+`,
+      profile,
+    );
+    expect(result.code, result.stderr).toBe(0);
+    expect(JSON.parse(result.stdout)).toEqual(
+      ["profile", "application", "cache", "generation"].map((level) => ({
+        level,
+        blocked: true,
+        exitCode: 0,
+        stdout: "still-owned",
+      })),
+    );
+  });
   it("rejects an owner birth differing by one exact FILETIME tick without retaining pins", async () => {
     const profile = join(root, "profile");
     mkdirSync(profile);

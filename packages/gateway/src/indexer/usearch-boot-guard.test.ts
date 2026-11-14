@@ -2,14 +2,14 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createLogger, resolveSubprocessEntry } from "@omnesis/core";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { EMBEDDING_DIM, purgeUsearchSidecars } from "./db.js";
 import { UsearchWriteHandle } from "./usearch-index.js";
-import { quarantineCorruptUsearch } from "./usearch-boot-guard.js";
+import { quarantineCorruptUsearch, USEARCH_NATIVE_STAGE_PREFIX } from "./usearch-boot-guard.js";
 
 describe("quarantineCorruptUsearch", () => {
   const dirs: string[] = [];
@@ -44,6 +44,20 @@ describe("quarantineCorruptUsearch", () => {
     const script = join(dir, "fake-validator.mjs");
     writeFileSync(script, source);
     return { command: process.execPath, args: [script] };
+  }
+
+  function stagedValidator(dir: string, body: string): { command: string; args: string[] } {
+    return fakeValidator(
+      dir,
+      `
+import {writeSync} from "node:fs";
+const prefix=${JSON.stringify(USEARCH_NATIVE_STAGE_PREFIX)};
+const begin=prefix+':'+process.argv[4]+':begin'+String.fromCharCode(10);
+const complete=prefix+':'+process.argv[4]+':complete'+String.fromCharCode(10);
+writeSync(1,begin);
+${body}
+`,
+    );
   }
 
   function quarantinedCopies(dir: string): string[] {
@@ -190,13 +204,178 @@ describe("quarantineCorruptUsearch", () => {
     });
   });
 
+  describe("trusted native-open control channel", () => {
+    test.each([1, 2, 3, 17])(
+      "unknown exit %i after native open refuses in-process access",
+      (status) => {
+        const dir = tmpDir(),
+          path = join(dir, "index.usearch");
+        writeFileSync(path, "unverified graph");
+        expect(() =>
+          quarantineCorruptUsearch(
+            path,
+            EMBEDDING_DIM,
+            stagedValidator(dir, `process.exit(${status});`),
+          ),
+        ).toThrow("native validation did not complete");
+        expect(existsSync(path)).toBe(true);
+        expect(quarantinedCopies(dir)).toEqual([]);
+      },
+    );
+
+    test("external cancellation during native validation preserves the file and refuses opening", () => {
+      const dir = tmpDir(),
+        path = join(dir, "index.usearch");
+      writeFileSync(path, "unverified graph");
+      expect(() =>
+        quarantineCorruptUsearch(
+          path,
+          EMBEDDING_DIM,
+          stagedValidator(dir, 'process.kill(process.pid,"SIGKILL");'),
+        ),
+      ).toThrow("native validation did not complete");
+      expect(existsSync(path)).toBe(true);
+    });
+
+    test.each([0xc0000005, -1073741819, 0xc000001d, 0xc00000fd, 0xc0000374, 0xc0000409])(
+      "a documented Windows native status %i requires an unfinished trusted stage",
+      (status) => {
+        const dir = tmpDir(),
+          path = join(dir, "index.usearch");
+        writeFileSync(path, "unverified graph");
+        const validator = stagedValidator(dir, `process.exit(${status});`);
+        if (process.platform === "win32") {
+          expect(quarantineCorruptUsearch(path, EMBEDDING_DIM, validator)).toBe("quarantined");
+          expect(existsSync(path)).toBe(false);
+        } else {
+          expect(() => quarantineCorruptUsearch(path, EMBEDDING_DIM, validator)).toThrow(
+            "native validation did not complete",
+          );
+          expect(existsSync(path)).toBe(true);
+        }
+      },
+    );
+
+    test.each(["wrong nonce", "truncated", "duplicate", "complete only", "noise"])(
+      "%s control output cannot authorize file removal",
+      (variant) => {
+        const dir = tmpDir(),
+          path = join(dir, "index.usearch");
+        writeFileSync(path, "unverified graph");
+        const output = {
+          "wrong nonce":
+            'writeSync(1,prefix+":"+process.argv[4].replace(/^./,c=>c==="0"?"1":"0")+":begin"+String.fromCharCode(10));',
+          truncated: "writeSync(1,begin.slice(0,-1));",
+          duplicate: "writeSync(1,begin+begin);",
+          "complete only": "writeSync(1,complete);",
+          noise: 'writeSync(1,begin+"unexpected output");',
+        }[variant]!;
+        const validator = fakeValidator(
+          dir,
+          `import {writeSync} from "node:fs";const prefix=${JSON.stringify(USEARCH_NATIVE_STAGE_PREFIX)};const begin=prefix+':'+process.argv[4]+':begin'+String.fromCharCode(10),complete=prefix+':'+process.argv[4]+':complete'+String.fromCharCode(10);${output}process.exit(3);`,
+        );
+        expect(() => quarantineCorruptUsearch(path, EMBEDDING_DIM, validator)).toThrow(
+          "Invalid usearch validation control response",
+        );
+        expect(existsSync(path)).toBe(true);
+        expect(quarantinedCopies(dir)).toEqual([]);
+      },
+    );
+
+    test("a marker in diagnostics cannot authorize native crash quarantine", () => {
+      const dir = tmpDir(),
+        path = join(dir, "index.usearch");
+      writeFileSync(path, "unverified graph");
+      const validator = fakeValidator(
+        dir,
+        `import {writeSync} from "node:fs";writeSync(2,${JSON.stringify(USEARCH_NATIVE_STAGE_PREFIX)}+':'+process.argv[4]+':begin'+String.fromCharCode(10));process.exit(3);`,
+      );
+      expect(quarantineCorruptUsearch(path, EMBEDDING_DIM, validator)).toBe("inconclusive");
+      expect(existsSync(path)).toBe(true);
+      expect(quarantinedCopies(dir)).toEqual([]);
+    });
+
+    test("bounded output overflow cannot authorize an unverified native open", () => {
+      const dir = tmpDir(),
+        path = join(dir, "index.usearch");
+      writeFileSync(path, "unverified graph");
+      const validator = stagedValidator(
+        dir,
+        'writeSync(2,"x".repeat(70_000));setInterval(()=>{},1000);',
+      );
+      expect(() => quarantineCorruptUsearch(path, EMBEDDING_DIM, validator)).toThrow(
+        "refusing in-process open",
+      );
+      expect(existsSync(path)).toBe(true);
+      expect(quarantinedCopies(dir)).toEqual([]);
+    });
+
+    test("success without native completion is not proof that opening is safe", () => {
+      const dir = tmpDir(),
+        path = join(dir, "index.usearch");
+      writeFileSync(path, "unverified graph");
+      expect(() =>
+        quarantineCorruptUsearch(path, EMBEDDING_DIM, fakeValidator(dir, "process.exit(0);")),
+      ).toThrow("Missing usearch validation completion");
+      expect(existsSync(path)).toBe(true);
+    });
+
+    test("an exit after completed validation does not quarantine a validated graph", () => {
+      const dir = tmpDir(),
+        path = join(dir, "index.usearch");
+      writeFileSync(path, "validated graph");
+      const validator = stagedValidator(dir, "writeSync(1,complete);process.exit(3);");
+      expect(() => quarantineCorruptUsearch(path, EMBEDDING_DIM, validator)).toThrow(
+        "failed after native completion",
+      );
+      expect(existsSync(path)).toBe(true);
+      expect(quarantinedCopies(dir)).toEqual([]);
+    });
+
+    test("POSIX native destruction after completion retains native abort protection", () => {
+      const dir = tmpDir(),
+        path = join(dir, "index.usearch");
+      writeFileSync(path, "graph whose native destructor aborted");
+      const validator = stagedValidator(dir, "writeSync(1,complete);process.abort();");
+      if (process.platform === "win32") {
+        expect(() => quarantineCorruptUsearch(path, EMBEDDING_DIM, validator)).toThrow(
+          "failed after native completion",
+        );
+        expect(existsSync(path)).toBe(true);
+      } else {
+        expect(quarantineCorruptUsearch(path, EMBEDDING_DIM, validator)).toBe("quarantined");
+        expect(existsSync(path)).toBe(false);
+      }
+    });
+
+    test("failed quarantine refuses to open the unchanged corrupt sidecar", () => {
+      const dir = tmpDir(),
+        path = join(dir, "index.usearch");
+      writeFileSync(path, "bad graph");
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date("2026-03-01T12:00:00Z"));
+      const collision = path + ".corrupt-20260301T120000";
+      mkdirSync(collision);
+      writeFileSync(join(collision, "owned"), "block rename");
+      try {
+        expect(() =>
+          quarantineCorruptUsearch(path, EMBEDDING_DIM, fakeValidator(dir, "process.exit(65);")),
+        ).toThrow("Cannot quarantine corrupt usearch sidecar");
+        expect(existsSync(path)).toBe(true);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+  });
+
   test("the real validator reaches a verdict from outside the workspace, with npm unable to fetch", () => {
     const dir = tmpDir();
     const path = join(dir, "index.usearch");
     writeValidIndex(path);
 
     const entry = resolveSubprocessEntry("./usearch-validate-subprocess.ts", import.meta.url);
-    const result = spawnSync(entry.command, [...entry.args, path, String(EMBEDDING_DIM)], {
+    const nonce = "00112233445566778899aabbccddeeff";
+    const result = spawnSync(entry.command, [...entry.args, path, String(EMBEDDING_DIM), nonce], {
       cwd: dir,
       encoding: "utf8",
       env: {
@@ -207,6 +386,9 @@ describe("quarantineCorruptUsearch", () => {
     });
 
     expect(result.stderr).toBe("");
+    expect(result.stdout).toBe(
+      `${USEARCH_NATIVE_STAGE_PREFIX}:${nonce}:begin\n${USEARCH_NATIVE_STAGE_PREFIX}:${nonce}:complete\n`,
+    );
     expect(result.status).toBe(0);
   });
 

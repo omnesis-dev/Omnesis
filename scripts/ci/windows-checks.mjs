@@ -54,6 +54,7 @@ export const FOCUSED_UNIT_FILES = [
   "packages/config/src/load-dotenv.test.ts",
   "packages/config/src/dotenv-bootstrap.test.ts",
   "packages/source-sdk/src/path-probe-node.test.ts",
+  "packages/source-sdk/src/local-agent-sessions.test.ts",
   "packages/collector/src/e2e/gateway-env.test.ts",
   "packages/collector/src/e2e/subprocess-reaper.test.ts",
   "packages/collector/src/e2e/enrollment-browser-fixture.test.ts",

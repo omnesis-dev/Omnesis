@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { createReadStream } from "node:fs";
-import { mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { createHash, randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
@@ -49,6 +49,62 @@ describe.skipIf(process.platform !== "win32")("Windows authenticated private str
     } finally {
       source.destroy();
       await rm(dir, { recursive: true, force: true });
+    }
+  }, 60_000);
+
+  it("pins the publication parent while authenticated plaintext is still arriving", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "windows-private-parent-pin-"));
+    const movedPath = dir + "-moved";
+    const path = join(dir, "plain.bin");
+    const plaintext = Buffer.alloc(131072, 45);
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const source = Readable.from(
+      (async function* () {
+        yield plaintext.subarray(0, 65536);
+        await gate;
+        yield plaintext.subarray(65536);
+      })(),
+    );
+    await writeFile(path, "preserved original");
+    const pending = writeWindowsPrivateFileAtomicStream(path, source, plaintext.length).then(
+      () => ({ ok: true as const }),
+      (error: unknown) => ({ ok: false as const, error }),
+    );
+    let moved = false;
+    try {
+      expect(
+        await eventually(async () => {
+          const name = (await readdir(dir)).find((entry) => entry.includes(".omnesis-"));
+          return name !== undefined && (await stat(join(dir, name))).size === 65536;
+        }),
+      ).toBe(true);
+      expect(await readFile(path, "utf8")).toBe("preserved original");
+      let denial: unknown;
+      try {
+        await rename(dir, movedPath);
+        moved = true;
+      } catch (error) {
+        denial = error;
+      }
+      if (moved) {
+        await rename(movedPath, dir);
+        moved = false;
+      }
+      expect(denial).toMatchObject({ code: expect.stringMatching(/^(?:EPERM|EACCES|EBUSY)$/) });
+      expect(await readFile(path, "utf8")).toBe("preserved original");
+      release();
+      const result = await pending;
+      if (!result.ok) throw result.error;
+      expect(await readFile(path)).toEqual(plaintext);
+      expect(await readdir(dir)).toEqual(["plain.bin"]);
+    } finally {
+      release();
+      source.destroy();
+      await pending;
+      await rm(moved ? movedPath : dir, { recursive: true, force: true });
     }
   }, 60_000);
 

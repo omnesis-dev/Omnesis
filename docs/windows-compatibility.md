@@ -67,11 +67,23 @@ sibling differing only in case before reading its bytes, while accepting an
 alias for the same directory. This is narrow evidence: complete ARM64 native
 dependencies and product validation remain open, and the provider remains gated.
 
-Automatic vector-index recovery after a native crash remains an open Windows
-parity item. Ordinary child exit codes, including code 3, are inconclusive and
-must preserve the file. The native abort probe checks parent survival and file
-preservation on Windows; matching Unix recovery requires evidence from an actual
-corrupt-index open and a trustworthy native-open boundary.
+Native crash handling now reports an exact nonce-bound native-open stage. Known
+Windows fault statuses can trigger quarantine only inside that unfinished stage;
+unknown failures there refuse an in-process open while preserving the file.
+A failed quarantine also refuses the unsafe open. Ordinary startup exit codes,
+including code 3, remain inconclusive. Automatic recovery for a Windows CRT
+abort remains open until its actual native status contract is established;
+Linux signals and explicit file-rejection handling retain regression coverage.
+Fresh Windows control-channel and recovery proof are still required.
+
+A subsequent ARM64 current-module probe passed ownership metadata, cold helper
+compilation and cache reuse, then found that the cache generation could still be
+renamed. Metadata-only Windows handles do not participate in delete-sharing
+exclusion. Deny-delete directory pins now request traversal access; read-only
+metadata inspection keeps its existing access rights. Tests cover each cache
+ancestor and generation, plus the publication parent while streamed plaintext
+is still arriving. Fresh native verification is required before accepting this
+fix or the complete ARM64 facade result.
 
 ## Broader failing baselines
 
