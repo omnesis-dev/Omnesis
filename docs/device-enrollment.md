@@ -185,6 +185,29 @@ the relay's account page:
 The portal offers this as "Sign in with Passkey" when it is on the gateway's own
 origin; "Sign in on the Omnesis account page" keeps the relay's handoff.
 
+A held request can be approved with the owner's passkey on the gateway's page:
+
+- `GET /devices/account/approval/:requestId` (public) returns the request's name,
+  kind, comparison code, creation and expiry time, and whether the requesting
+  browser's own key is required (`deviceKeyRequired`, for a portal's request).
+  The portal renders it at `/portal/approve#<requestId>` with no login.
+- `POST /devices/account/approval/options` (`{ requestId }`) issues an
+  `approve-request` ceremony bound to `gatewayPasskeyApprovalBinding(requestId,
+device key, code)`.
+- `POST /devices/account/approval` (`{ requestId, proof, trustSignIn?,
+deviceSignature? }`) approves it as a person would. Only a passkey the owner
+  confirmed on this gateway counts; a key the relay lists is never enough. A
+  portal's request also needs `deviceSignature`, the requesting browser's
+  signature over `approvalDeviceTranscript(requestId, challenge)`, so only that
+  browser can approve it this way.
+
+These routes share a limit of ten calls a minute per address, and at most eight
+requests wait at once. A link to the approval page can be sent by anyone who
+holds a request, including a relay: the page shows the code and the time, and
+says to approve only a request one made oneself. The portal's held screen offers
+"Approve with your passkey" for its own request, and the devices page offers
+"Approve with passkey" for an app's request.
+
 A Google token counts as made in an official app (`native-google`) only when an
 official native client presented it: the Android release or test client as
 `azp` of a token for the web client, or the iOS client as both `aud` and `azp`.

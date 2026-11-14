@@ -2637,3 +2637,90 @@ test("TM-01 (certificate incident, join): while a rogue certificate may exist fo
     ),
   ).toBeUndefined();
 });
+
+test("TM-01 (approval): only a passkey confirmed here approves a held request, once, on the gateway's page", async () => {
+  const f = await confirming();
+  const enrollment = f.manager.pairingIdentity()!.enrollment;
+  const owner = await passkeyDevice(),
+    listedOnly = await passkeyDevice();
+  f.list(
+    { id: owner.id, publicKey: owner.publicKey },
+    { id: listedOnly.id, publicKey: listedOnly.publicKey },
+  );
+  await f.manager.confirmPasskey(f.assert(owner, f.manager.passkeyConfirmation(), { counter: 1 }));
+  const binding = opaque();
+  const approve = (
+    device: PasskeyDevice,
+    ceremony: { challenge: string; webauthnChallenge: string },
+    options: { from?: string; counter?: number } = {},
+  ) =>
+    enrollment.verifyApproval!(
+      {
+        type: "gateway-passkey",
+        challenge: ceremony.challenge,
+        credential: device.authenticator.authentication(
+          options.from
+            ? gatewayPasskeyChallenge("approve-request", options.from, ceremony.challenge, binding)
+            : ceremony.webauthnChallenge,
+          "dXNlcg",
+          options.counter ?? 0,
+          options.from ?? f.own,
+        ),
+      },
+      binding,
+    );
+  const ceremony = enrollment.approvalCeremony!(binding)!;
+  expect(ceremony).toMatchObject({ purpose: "approve-request", origin: f.own, binding });
+  // A passkey the relay lists but the owner never confirmed here.
+  expect(await approve(listedOnly, ceremony)).toBe(false);
+  // Spent by that attempt.
+  expect(await approve(owner, ceremony, { counter: 2 })).toBe(false);
+  expect(await approve(owner, enrollment.approvalCeremony!(binding)!, { from: origin })).toBe(
+    false,
+  );
+  expect(await approve(owner, enrollment.approvalCeremony!(opaque())!)).toBe(false);
+  expect(await enrollment.verifyApproval!({ type: "passkey" }, binding)).toBe(false);
+  expect(await approve(owner, enrollment.approvalCeremony!(binding)!, { counter: 3 })).toBe(true);
+  expect(f.manager.confirmedSignIns()).toEqual([expect.objectContaining({ counter: 3 })]);
+  // A synced passkey that always presents 0 keeps working once it was confirmed at 0.
+  await writeFile(
+    f.options.metadataFile,
+    JSON.stringify({
+      ...(await f.saved()),
+      confirmedSignIns: [{ ...f.manager.confirmedSignIns()[0], counter: 0 }],
+    }) + "\n",
+    { mode: 0o600 },
+  );
+  await f.manager.initialize();
+  expect(await approve(owner, enrollment.approvalCeremony!(binding)!)).toBe(true);
+  // Without an origin of its own there is no approval page, and unlinked nothing approves.
+  f.env.OMNESIS_CLOUD_RELAY_GATEWAY_ORIGIN = origin;
+  expect(enrollment.approvalCeremony!(binding)).toBeUndefined();
+  f.env.OMNESIS_CLOUD_RELAY_GATEWAY_ORIGIN = f.own;
+  const last = enrollment.approvalCeremony!(binding)!;
+  await f.manager.unlink();
+  expect(await approve(owner, last, { counter: 9 })).toBe(false);
+});
+
+test("TM-01 (certificate incident, approval): while a rogue certificate may exist for the gateway's name, no held request is approved on its page", async () => {
+  const f = await confirming();
+  const enrollment = f.manager.pairingIdentity()!.enrollment;
+  const owner = await passkeyDevice();
+  f.list({ id: owner.id, publicKey: owner.publicKey });
+  await f.manager.confirmPasskey(f.assert(owner, f.manager.passkeyConfirmation()));
+  const binding = opaque();
+  // A ceremony issued before the monitor saw the rogue certificate.
+  const early = enrollment.approvalCeremony!(binding)!;
+  expect(await f.manager.holdForCertificateIncident([ROGUE])).toBe(true);
+  expect(enrollment.approvalCeremony!(binding)).toBeUndefined();
+  expect(
+    await enrollment.verifyApproval!(
+      {
+        type: "gateway-passkey",
+        challenge: early.challenge,
+        credential: owner.authenticator.authentication(early.webauthnChallenge, "dXNlcg", 5, f.own),
+      },
+      binding,
+    ),
+  ).toBe(false);
+});

@@ -452,6 +452,18 @@ export class GatewayAccountLink {
       trustSignIn: (signIn, source) => this.trustSignIn(signIn, source),
       verifyGatewayPasskey: (proof, challenge, nonce) =>
         this.verifyGatewayEnrollment(proof, challenge, nonce),
+      approvalCeremony: (binding) => {
+        const origin = this.gatewayOrigin();
+        return origin
+          ? this.ceremony(
+              "approve-request",
+              origin,
+              this.ceremonies.issue("approve-request", binding),
+              binding,
+            )
+          : undefined;
+      },
+      verifyApproval: (proof, binding) => this.verifyApproval(proof, binding),
       gatewayPasskey: () => {
         const origin = this.gatewayOrigin();
         return origin
@@ -510,6 +522,35 @@ export class GatewayAccountLink {
         addedAt: Math.floor(Date.now() / 1000),
       },
     };
+  }
+  /**
+   * Whether a passkey the owner confirmed here approved a held request on this gateway's page.
+   * Only a confirmed key counts: a key the relay lists could be the relay's own.
+   */
+  private async verifyApproval(input: unknown, binding: string): Promise<boolean> {
+    const record = this.record?.linked && this.verifiedAccountId() ? this.record : undefined;
+    const parsed = gatewayPasskeySignInProofSchema.safeParse(input);
+    if (
+      !record ||
+      !parsed.success ||
+      !this.ceremonies.take("approve-request", parsed.data.challenge, binding)
+    )
+      return false;
+    const confirmed = (id: string) =>
+      record.confirmedSignIns.find(
+        (value): value is Extract<ConfirmedSignIn, { type: "passkey" }> =>
+          value.type === "passkey" && value.id === id,
+      );
+    const verified = await this.verifier.verifyGatewayPasskey(parsed.data, {
+      purpose: "approve-request",
+      challenge: parsed.data.challenge,
+      binding,
+      key: (id) => confirmed(id),
+    });
+    if (!verified) return false;
+    if (verified.counter !== confirmed(verified.id)!.counter)
+      await this.recordCounter(record, verified.id, verified.counter);
+    return true;
   }
   /**
    * Keeps the signature counter a confirmed passkey last presented. A record that changed in the

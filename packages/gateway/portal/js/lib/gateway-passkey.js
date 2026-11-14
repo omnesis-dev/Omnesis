@@ -86,3 +86,60 @@ export async function gatewayPasskeyProof(
     },
   };
 }
+
+/** Byte-for-byte approvalDeviceTranscript from packages/cloud-relay/src/device-enrollment.ts. */
+export function approvalDeviceTranscript(requestId, challenge) {
+  return JSON.stringify(["omnesis-gateway-approval-device-v1", requestId, challenge]);
+}
+
+async function postJson(path, body, signal) {
+  return fetch(path, {
+    method: "POST",
+    credentials: "same-origin",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+    ...(signal ? { signal } : {}),
+  });
+}
+
+/**
+ * Approves a held request with the owner's passkey on this gateway's page. A portal's request
+ * also needs `deviceKey`, the private key of the browser that asked, which signs the challenge.
+ */
+export async function approveWithPasskey(
+  { requestId, trustSignIn, deviceKey, signal },
+  { prove = gatewayPasskeyProof, sign = signApproval } = {},
+) {
+  const options = await postJson("/devices/account/approval/options", { requestId }, signal);
+  if (!options.ok)
+    throw new GatewayPasskeyError("This request can't be approved here anymore. It may have expired.");
+  const ceremony = await options.json();
+  const proof = await prove(ceremony, { ...(signal ? { signal } : {}) });
+  const response = await postJson(
+    "/devices/account/approval",
+    {
+      requestId,
+      proof,
+      ...(trustSignIn === undefined ? {} : { trustSignIn }),
+      ...(deviceKey ? { deviceSignature: await sign(deviceKey, requestId, ceremony.challenge) } : {}),
+    },
+    signal,
+  );
+  if (response.status === 403)
+    throw new GatewayPasskeyError(
+      deviceKey === undefined
+        ? "Your gateway didn't accept that passkey. Use a passkey you confirmed on this gateway."
+        : "Your gateway didn't accept this approval. Use a passkey you confirmed on this gateway, in the browser that asked to join.",
+    );
+  if (!response.ok) throw new GatewayPasskeyError("Couldn't approve this request. Try again.");
+}
+
+/** ECDSA P-256 over the approval transcript, base64url IEEE P1363 as WebCrypto returns it. */
+export async function signApproval(privateKey, requestId, challenge) {
+  const signature = await crypto.subtle.sign(
+    { name: "ECDSA", hash: "SHA-256" },
+    privateKey,
+    new TextEncoder().encode(approvalDeviceTranscript(requestId, challenge)),
+  );
+  return base64url(signature);
+}
