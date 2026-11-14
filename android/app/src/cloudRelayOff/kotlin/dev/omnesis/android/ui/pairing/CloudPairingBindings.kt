@@ -3,6 +3,8 @@
 
 package dev.omnesis.android.ui.pairing
 
+import android.content.Context
+import dev.omnesis.android.pairing.GatewayPasskeySigner
 import dev.omnesis.android.session.SessionManager
 
 private fun absent(): Nothing = error("cloud connectivity is not part of this build")
@@ -14,3 +16,6 @@ internal fun defaultGooglePairingPorts(session: SessionManager): GooglePairingPo
 
 @Suppress("UNUSED_PARAMETER")
 internal fun defaultAccountPairingPorts(session: SessionManager): AccountPairingPorts? = null
+
+@Suppress("UNUSED_PARAMETER")
+internal fun defaultGatewayPasskeySigner(context: Context): GatewayPasskeySigner? = null

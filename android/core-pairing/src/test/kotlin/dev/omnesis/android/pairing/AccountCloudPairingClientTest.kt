@@ -42,6 +42,8 @@ class AccountCloudPairingClientTest {
         gatewayStatus: String = "pending",
         /** What a dishonest gateway answers instead: the nonce and the code for a reply to [url]. */
         forge: ((url: String, honestCode: String) -> Pair<String, String>)? = null,
+        /** The gateway's `/devices/account/config`; null for a gateway without the route. */
+        val gatewayConfig: String? = json { putJsonObject("gatewayPasskey") { put("rpId", "relay.example.test"); put("origin", candidate.publicOrigin) } },
     ) {
         val challenge = CloudPairingChallenge.create("Fictional phone")
         val nonce = DeviceEnrollmentContract.enrollmentNonce(challenge.requestId, "android", "Fictional phone", challenge.secret, key.publicKey)
@@ -89,9 +91,10 @@ class AccountCloudPairingClientTest {
         private val originalPinned = Transport { url, raw, bearer ->
             calls.add(url)
             assertNull(bearer)
-            val body = Json.parseToJsonElement(raw!!).jsonObject
+            val body = raw?.let { Json.parseToJsonElement(it).jsonObject } ?: JsonObject(emptyMap())
             sent.add(Sent(url, body))
-            if (url.endsWith("/challenge")) json { put("challenge", gatewayChallenge); put("expiresAt", (clock + 120) * 1000) }
+            if (url.endsWith("/config")) { assertNull("the configuration is read, not posted", raw); gatewayConfig ?: throw CloudPairingException(404) }
+            else if (url.endsWith("/challenge")) json { put("challenge", gatewayChallenge); put("expiresAt", (clock + 120) * 1000) }
             else {
                 assertEquals(challenge.secret, body["secret"]!!.jsonPrimitive.content)
                 if (url.endsWith("/request")) assertEquals("opaque-gateway-scoped-proof", body["identityToken"]!!.jsonPrimitive.content)
@@ -527,5 +530,131 @@ class AccountCloudPairingClientTest {
         assertNull(pending.verificationCode); assertFalse(pending.approved)
         assertThrows(CloudPairingException::class.java) { pending.pairingPayload(clock * 1000) }
         fixture.client.close()
+    }
+    private val app = "android:apk-key-hash:TPfeOsd2u2Uq8rCtF9DeGgc1m50jt6fPpDJYcUvAaCo"
+    /** This app's passkey provider: every prompt it opens, answered from the app's origin. */
+    private class AppPasskeys(val app: String, val answer: (String) -> String = { fakeAssertion(requestedChallenge(it), app) }) {
+        val prompts = mutableListOf<String>()
+        var onPrompt: () -> Unit = {}
+        fun signer(now: Long) = GatewayPasskeySigner("relay.example.test", app, { now }) { options -> prompts += options; onPrompt(); answer(options) }
+    }
+    private suspend fun passkeyJoin(fixture: Fixture, passkeys: AppPasskeys): CloudPairingConfirmation {
+        fixture.client.begin(fixture.challenge)
+        val choices = fixture.client.passkey(fixture.client.passkeyOptions(), assertion)
+        return fixture.client.select(choices.single().gatewayId, passkeys.signer(clock * 1000))
+    }
+
+    @Test fun `TM-01 an Android passkey join signs only a gateway-issued challenge`(): Unit = runBlocking {
+        val fixture = Fixture()
+        val passkeys = AppPasskeys(app)
+        passkeyJoin(fixture, passkeys)
+        // The join's one prompt asks to sign the gateway's own challenge for this device's own
+        // nonce, from this app's origin: no value the relay picked is in it.
+        assertEquals(DeviceEnrollmentContract.gatewayPasskeyChallenge("device-enrollment", app, gatewayChallenge, fixture.nonce), requestedChallenge(passkeys.prompts.single()))
+        val body = fixture.sent.last().body
+        assertEquals("${candidate.publicOrigin}/devices/account/request", fixture.sent.last().url)
+        val proof = body["proof"]!!.jsonObject
+        assertEquals(setOf("type", "challenge", "credential"), proof.keys)
+        assertEquals("gateway-passkey", proof["type"]!!.jsonPrimitive.content)
+        assertEquals(gatewayChallenge, proof["challenge"]!!.jsonPrimitive.content)
+        assertEquals(gatewayChallenge, body["deviceKey"]!!.jsonObject["challenge"]!!.jsonPrimitive.content)
+        // The relay's ceremony stays with the relay: its salt, time, challenge and key never reach the gateway.
+        val sent = body.toString()
+        for (relayValue in listOf(passkeySalt, DeviceEnrollmentContract.passkeyProofChallenge(passkeySalt, issued, fixture.nonce), "cHVibGlj"))
+            assertFalse(relayValue, sent.contains(relayValue))
+        // The gateway committed to its challenge before it learned anything about this request.
+        assertEquals(listOf("config", "challenge", "request"), fixture.sent.map { it.url.substringAfterLast('/') })
+        assertTrue(fixture.sent.take(2).all { it.body.isEmpty() })
+        fixture.client.close()
+    }
+
+    @Test fun `the gateway's origin never enters the challenge, even when it names the relay`(): Unit = runBlocking {
+        for (named in listOf("https://relay.example.test", candidate.publicOrigin)) {
+            val fixture = Fixture(gatewayConfig = json { putJsonObject("gatewayPasskey") { put("rpId", "relay.example.test"); put("origin", named) } })
+            val passkeys = AppPasskeys(app)
+            passkeyJoin(fixture, passkeys)
+            assertEquals(DeviceEnrollmentContract.gatewayPasskeyChallenge("device-enrollment", app, gatewayChallenge, fixture.nonce), requestedChallenge(passkeys.prompts.single()))
+            fixture.client.close()
+        }
+    }
+
+    @Test fun `a gateway without a passkey ceremony for this relay gets the relay's evidence and no second prompt`(): Unit = runBlocking {
+        for (config in listOf(null, "{}", json { putJsonObject("gatewayPasskey") { put("rpId", "other.example.test"); put("origin", candidate.publicOrigin) } })) {
+            val fixture = Fixture(gatewayConfig = config)
+            val passkeys = AppPasskeys(app)
+            passkeyJoin(fixture, passkeys)
+            assertTrue(passkeys.prompts.isEmpty())
+            assertEquals("passkey", fixture.sent.last().body["proof"]!!.jsonObject["type"]!!.jsonPrimitive.content)
+            fixture.client.close()
+        }
+        // Nor without a signer, as in a build that can't name its own origin.
+        val fixture = Fixture()
+        fixture.client.begin(fixture.challenge)
+        fixture.client.select(fixture.client.passkey(fixture.client.passkeyOptions(), assertion).single().gatewayId)
+        assertEquals(listOf("challenge", "request"), fixture.sent.map { it.url.substringAfterLast('/') })
+        fixture.client.close()
+    }
+
+    @Test fun `a Google sign-in never asks the gateway for a passkey ceremony`(): Unit = runBlocking {
+        val fixture = Fixture()
+        val passkeys = AppPasskeys(app)
+        val nonce = fixture.client.begin(fixture.challenge)
+        fixture.client.select(fixture.client.google(EphemeralGoogleSigner.token(nonce, clientId, clock)).single().gatewayId, passkeys.signer(clock * 1000))
+        assertTrue(passkeys.prompts.isEmpty())
+        assertEquals(listOf("challenge", "request"), fixture.sent.map { it.url.substringAfterLast('/') })
+        assertEquals("google", fixture.sent.last().body["proof"]!!.jsonObject["type"]!!.jsonPrimitive.content)
+        fixture.client.close()
+    }
+
+    @Test fun `an assertion made elsewhere is refused before the request reveals the secret`(): Unit = runBlocking {
+        for (answer in listOf<(String) -> String>(
+            { fakeAssertion(requestedChallenge(it), "https://relay.example.test") },
+            { fakeAssertion(DeviceEnrollmentContract.passkeyProofChallenge(passkeySalt, issued, "n".repeat(43)), app) },
+        )) {
+            val fixture = Fixture()
+            try { passkeyJoin(fixture, AppPasskeys(app, answer)); fail("Foreign assertion sent") } catch (_: GatewayPasskeyRefused) {}
+            assertFalse(fixture.attempts.any { it.first.endsWith("/request") })
+            fixture.client.close()
+        }
+    }
+
+    @Test fun `closing during the join's prompt sends nothing`(): Unit = runBlocking {
+        val fixture = Fixture()
+        val passkeys = AppPasskeys(app).apply { onPrompt = { fixture.client.close() } }
+        try { passkeyJoin(fixture, passkeys); fail("Closed client sent a request") } catch (_: AccountPairingException) {}
+        assertFalse(fixture.attempts.any { it.first.endsWith("/request") })
+    }
+
+    @Test fun `a retry after an outage resends the signed join without a second prompt`(): Unit = runBlocking {
+        var outages = 1
+        val fixture = Fixture(beforeGateway = { url -> if (url.endsWith("/request") && outages-- > 0) throw CloudPairingException(503) })
+        val passkeys = AppPasskeys(app)
+        fixture.client.begin(fixture.challenge)
+        val gatewayId = fixture.client.passkey(fixture.client.passkeyOptions(), assertion).single().gatewayId
+        try { fixture.client.select(gatewayId, passkeys.signer(clock * 1000)); fail("Offline gateway accepted") }
+        catch (e: AccountPairingException) { assertEquals(AccountPairingException.Reason.GATEWAY_OFFLINE, e.reason) }
+        fixture.client.select(gatewayId, passkeys.signer(clock * 1000))
+        assertEquals(1, passkeys.prompts.size)
+        assertEquals(1, fixture.attempts.count { it.first.endsWith("/challenge") })
+        assertEquals(1, fixture.attempts.filter { it.first.endsWith("/request") }.map { it.second }.distinct().size)
+        fixture.client.close()
+    }
+
+    @Test fun `the relay's ceremony time must be within a minute of the phone's clock`(): Unit = runBlocking {
+        for ((offset, accepted) in listOf(-61L to false, -60L to true, 0L to true, 60L to true, 61L to false)) {
+            val at = (clock + offset).toString()
+            lateinit var fixture: Fixture
+            fixture = Fixture(mutateControl = { url, response ->
+                if (!url.endsWith("/passkeys/options")) response else json {
+                    put("ceremonyId", "c".repeat(43)); put("salt", passkeySalt); put("issuedAt", at)
+                    putJsonObject("options") { put("rpId", "relay.example.test"); put("challenge", DeviceEnrollmentContract.passkeyProofChallenge(passkeySalt, at, fixture.nonce)); put("userVerification", "required") }
+                }
+            })
+            fixture.client.begin(fixture.challenge)
+            val result = runCatching { fixture.client.passkeyOptions() }
+            assertEquals("issuedAt offset $offset", accepted, result.isSuccess)
+            if (!accepted) assertEquals(AccountPairingException.Reason.INVALID_RESPONSE, (result.exceptionOrNull() as AccountPairingException).reason)
+            fixture.client.close()
+        }
     }
 }

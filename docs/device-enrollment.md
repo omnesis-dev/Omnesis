@@ -198,6 +198,36 @@ the relay's account page:
 The portal offers this as "Sign in with Passkey" when it is on the gateway's own
 origin; "Sign in on the Omnesis account page" keeps the relay's handoff.
 
+The Android app joins the same way after a passkey sign-in, with one more
+passkey prompt. The relay's ceremony only finds the account's gateways; the
+join is signed again, in the app, for the gateway's own challenge:
+
+1. Over the pinned connection, the app reads `/devices/account/config`. Only a
+   gateway that advertises `gatewayPasskey` with the build's relay host as
+   `rpId` gets an assertion; any other gets the relay's ceremony as evidence and
+   holds the request for a person.
+2. It asks for `/devices/account/challenge` with an empty body, so the gateway
+   commits to its part of the comparison code before it learns the request's
+   secret, as for every app request. (`/devices/account/passkey/options` needs
+   the secret first, so the app does not use it.)
+3. It computes `gatewayPasskeyChallenge("device-enrollment", appOrigin,
+challenge, enrollmentNonce)` with its own `android:apk-key-hash:` origin (the
+   SHA-256 of its signing certificate), never an origin a server names, and
+   refuses an assertion whose client data names another origin, challenge or
+   type, or a cross-site frame.
+4. It sends `/devices/account/request` with that `challenge` in `deviceKey` and
+   the `gateway-passkey` proof.
+
+A Google sign-in is not signed again. The relay's `issuedAt` must be within a
+minute of the phone's clock.
+
+The Android approval sheet offers "Approve with passkey" for an app's request
+when the gateway advertises `gatewayPasskey` for the build's relay: it gets the
+`approve-request` ceremony from `/devices/account/approval/options`, signs it
+with the app's origin (the gateway's `origin` and `webauthnChallenge` are for its
+web page and are ignored), and posts `/devices/account/approval` with `{
+requestId, proof, trustSignIn? }`.
+
 A held request can be approved with the owner's passkey on the gateway's page:
 
 - `GET /devices/account/approval/:requestId` (public) returns the request's name,

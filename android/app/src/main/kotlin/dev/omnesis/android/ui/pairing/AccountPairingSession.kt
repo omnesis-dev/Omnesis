@@ -7,6 +7,7 @@ import dev.omnesis.android.pairing.AccountCloudPairingClient
 import dev.omnesis.android.pairing.CloudPairingChallenge
 import dev.omnesis.android.pairing.CloudPairingConfirmation
 import dev.omnesis.android.pairing.CloudPairingException
+import dev.omnesis.android.pairing.GatewayPasskeySigner
 import java.net.URI
 
 internal class AccountPairingSession(private val client: AccountCloudPairingClient) : AccountPairingAttempt {
@@ -15,7 +16,7 @@ internal class AccountPairingSession(private val client: AccountCloudPairingClie
     override suspend fun google(token: String) = client.google(token)
     override suspend fun passkeyOptions() = client.passkeyOptions()
     override suspend fun passkey(options: AccountCloudPairingClient.PasskeyOptions, assertion: String) = client.passkey(options, assertion)
-    override suspend fun select(gatewayId: String) { pending = client.select(gatewayId) }
+    override suspend fun select(gatewayId: String, gatewayPasskey: GatewayPasskeySigner?) { pending = client.select(gatewayId, gatewayPasskey) }
     override val code get() = pending.verificationCode ?: throw CloudPairingException()
     override val host get() = URI(pending.origin).host
     override val approved get() = pending.approved

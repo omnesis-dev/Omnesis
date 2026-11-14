@@ -5,6 +5,9 @@ package dev.omnesis.android.ui.pairing
 
 import android.content.Context
 import android.content.MutableContextWrapper
+import android.content.pm.PackageInfo
+import android.content.pm.Signature
+import android.content.pm.SigningInfo
 import android.util.Log
 import androidx.credentials.Credential
 import androidx.credentials.CredentialManager
@@ -21,6 +24,8 @@ import androidx.credentials.exceptions.domerrors.NotAllowedError
 import androidx.credentials.exceptions.domerrors.SecurityError
 import androidx.credentials.exceptions.publickeycredential.GetPublicKeyCredentialDomException
 import androidx.test.core.app.ApplicationProvider
+import dev.omnesis.android.pairing.DeviceEnrollmentContract
+import dev.omnesis.android.pairing.GatewayPasskeySigner
 import java.lang.reflect.Proxy
 import kotlin.coroutines.Continuation
 import kotlin.coroutines.intrinsics.COROUTINE_SUSPENDED
@@ -33,7 +38,9 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import org.robolectric.shadow.api.Shadow
 import org.robolectric.shadows.ShadowLog
+import org.robolectric.shadows.ShadowSigningInfo
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
@@ -119,5 +126,44 @@ class PasskeyCredentialTokenTest {
             assertFalse(logged.msg.contains("a".repeat(43)))
             assertNull(logged.throwable)
         }
+    }
+    private val certificate = "fictional signing certificate".toByteArray()
+
+    @Test fun `the app's origin names its one signing certificate`() {
+        val info = PackageInfo().apply {
+            signingInfo = SigningInfo().also { Shadow.extract<ShadowSigningInfo>(it).setSignatures(arrayOf(Signature(certificate))) }
+        }
+        val origin = PasskeyCredentialToken.appOrigin(info)
+        assertEquals(DeviceEnrollmentContract.androidApkKeyHashOrigin(certificate), origin)
+        assertTrue(origin!!.matches(Regex("^android:apk-key-hash:[A-Za-z0-9_-]{43}$")))
+        // Several signers, or none, name no single origin: the join then falls back to a person's approval.
+        val several = PackageInfo().apply {
+            signingInfo = SigningInfo().also { Shadow.extract<ShadowSigningInfo>(it).setSignatures(arrayOf(Signature(certificate), Signature("other".toByteArray()))) }
+        }
+        assertNull(PasskeyCredentialToken.appOrigin(several))
+        assertNull(PasskeyCredentialToken.appOrigin(PackageInfo()))
+        // The installed app is read without failing, whatever this test runtime reports for it.
+        PasskeyCredentialToken.appOrigin(context)?.let { assertTrue(it.startsWith("android:apk-key-hash:")) }
+    }
+
+    @Suppress("DEPRECATION")
+    @Config(sdk = [26])
+    @Test fun `before Android 9 the origin comes from the package's signature`() {
+        val info = PackageInfo().apply { signatures = arrayOf(Signature(certificate)) }
+        assertEquals(DeviceEnrollmentContract.androidApkKeyHashOrigin(certificate), PasskeyCredentialToken.appOrigin(info))
+    }
+
+    @Test fun `a gateway signer prompts with the gateway's challenge for the build's relay`() = runTest {
+        val signer = GatewayPasskeySigner(rpId, "android:apk-key-hash:" + "A".repeat(43)) { requestOptions ->
+            PasskeyCredentialToken.acquire(context, rpId, requestOptions, manager { _, request ->
+                val option = request.credentialOptions.single() as GetPublicKeyCredentialOption
+                assertEquals(requestOptions, option.requestJson)
+                assertNull("the platform supplies the origin", option.clientDataHash)
+                PasswordCredential("fixture", "fixture")
+            })
+        }
+        // The options pass the token's own checks before a picker opens; only the answer is wrong here.
+        try { signer.enrollment("c".repeat(43), System.currentTimeMillis() + 60_000, "n".repeat(43)); fail("Password accepted") }
+        catch (_: IllegalArgumentException) { }
     }
 }
