@@ -235,14 +235,17 @@ extension PreviewMocks {
         ]
     }
 
-    /// What each fixture filter leaves shared and hidden.
+    /// What each fixture filter leaves shared and hidden, with the gateway's sentences for the records each
+    /// keeps hidden whatever it says, as its preview gives them.
     static var accessCanonicalTotals: [ScopePolicy: AccessFilterTotals] {
-        [
-            canonicalAccessPolicy(accessDrivePolicy): .init(shared: 18, hidden: 102),
-            canonicalAccessPolicy(accessWhatsAppPolicy): .init(shared: 83, hidden: 37),
-            canonicalAccessPolicy(accessWhatsAppChangedPolicy): .init(shared: 98, hidden: 22),
-            canonicalAccessPolicy(accessDirectDrivePolicy): .init(shared: 18, hidden: 102),
-            canonicalAccessPolicy(accessDirectWhatsAppPolicy): .init(shared: 83, hidden: 37),
+        let drive = accessDrivePreview.undecidedLines
+        let whatsApp = accessWhatsAppPreview.undecidedLines
+        return [
+            canonicalAccessPolicy(accessDrivePolicy): .init(shared: 18, hidden: 102, undecided: drive),
+            canonicalAccessPolicy(accessWhatsAppPolicy): .init(shared: 83, hidden: 37, undecided: whatsApp),
+            canonicalAccessPolicy(accessWhatsAppChangedPolicy): .init(shared: 98, hidden: 22, undecided: whatsApp),
+            canonicalAccessPolicy(accessDirectDrivePolicy): .init(shared: 18, hidden: 102, undecided: drive),
+            canonicalAccessPolicy(accessDirectWhatsAppPolicy): .init(shared: 83, hidden: 37, undecided: whatsApp),
         ]
     }
 

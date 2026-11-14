@@ -79,7 +79,8 @@ class AccessLevelScreenshotTest {
         private val people = listOf(option(maya, "Maya Reeves", 17), option(jamie, "Jamie Lopez", 9), option(person("David Lin", "+15550100188"), "David Lin", 6), option(person("Sarah Mendez", "+15550100191"), "Sarah Mendez", 3))
         private val rootFolders = listOf(projects, option(folder("folder-archive"), "Archive", 9))
         private val projectFolders = listOf(option(folder("folder-plans"), "Projects/Plans", 11, "Plans", parent = "folder-projects"),
-            option(folder("folder-budgets"), "Projects/Budgets", 5, "Budgets", parent = "folder-projects"), option(folder("folder-reference"), "Projects/Reference", 2, "Reference", parent = "folder-projects"))
+            option(folder("folder-budgets"), "Projects/Budgets", 5, "Budgets", parent = "folder-projects"), option(folder("folder-reference"), "Projects/Reference", 2, "Reference", parent = "folder-projects"),
+            option(folder("folder-drafts"), "Projects/Drafts", 0, "Drafts", parent = "folder-projects"))
         private val mailLabels = listOf(option(FilterRef.item(FilterRef.TREE, GMAIL_LABELS, "Label_41"), "Project", 12), option(FilterRef.item(FilterRef.TREE, GMAIL_LABELS, "Label_42"), "Receipts", 7))
         private val mailPeople = listOf(option(FilterRef.person("reader@example.org", listOf(FilterIdentifier("email", "reader@example.org"))), "reader@example.org", 17))
 

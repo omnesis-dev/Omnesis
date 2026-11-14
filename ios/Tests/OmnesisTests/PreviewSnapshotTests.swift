@@ -9426,9 +9426,9 @@ final class PreviewSnapshotTests: XCTestCase {
 
     func testAccessGalleryReviews() {
         accessGallery("review-changes") { accessGalleryEditor(.review, change: PreviewMocks.accessNameChange) }
-        accessGallery("review-changed-filter", height: 1100) { accessGalleryEditor(.review, change: PreviewMocks.accessFilterChange) }
+        accessGallery("review-changed-filter", height: 1200) { accessGalleryEditor(.review, change: PreviewMocks.accessFilterChange) }
         accessGallery("review-new-level") { accessGalleryEditor(.review, new: true, change: PreviewMocks.accessNewLevel) }
-        accessGallery("review-direct-removed", height: 1460) {
+        accessGallery("review-direct-removed", height: 1600) {
             accessGalleryEditor(.review, overview: PreviewMocks.accessDirectAsAnswerOverview, change: PreviewMocks.accessDirectRemoved)
         }
     }
@@ -9438,7 +9438,7 @@ final class PreviewSnapshotTests: XCTestCase {
         accessGalleryApproval("approval-permissions", mode: .requestedPermissions)
         accessGalleryApproval("approval-sources", mode: .requestedSources)
         accessGalleryApproval("approval-review", mode: .requestedReview, height: 915)
-        accessGalleryApproval("approval-review-existing", mode: .requestedExistingReview)
+        accessGalleryApproval("approval-review-existing", mode: .requestedExistingReview, height: 960)
     }
 
     private func accessGalleryApproval(_ slug: String, mode: AccessAuthorizationPreviewMode, height: CGFloat = 852) {

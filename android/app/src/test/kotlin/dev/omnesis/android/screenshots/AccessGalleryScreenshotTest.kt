@@ -133,9 +133,9 @@ class AccessGalleryScreenshotTest {
     fun reviewChangedFilterDark() = render("review_changed_filter", dark = true) { reviewChangedFilter() }
     @Test @Config(sdk = [34], qualifiers = "w393dp-h1040dp-xxhdpi")
     fun reviewChangedFilterLight() = render("review_changed_filter", dark = false) { reviewChangedFilter() }
-    @Test @Config(sdk = [34], qualifiers = "w393dp-h1450dp-xxhdpi")
+    @Test @Config(sdk = [34], qualifiers = "w393dp-h1560dp-xxhdpi")
     fun reviewDirectRemovedDark() = render("review_direct_removed", dark = true) { reviewDirectRemoved() }
-    @Test @Config(sdk = [34], qualifiers = "w393dp-h1450dp-xxhdpi")
+    @Test @Config(sdk = [34], qualifiers = "w393dp-h1560dp-xxhdpi")
     fun reviewDirectRemovedLight() = render("review_direct_removed", dark = false) { reviewDirectRemoved() }
     @Test @Config(sdk = [34], qualifiers = "w393dp-h852dp-xxhdpi")
     fun reviewNewLevelDark() = render("review_new_level", dark = true) { newLevel(steps = 5) }
