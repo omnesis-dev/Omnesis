@@ -79,6 +79,8 @@ function signatureOf(resolved: ResolvedAssignment): string {
       return `claude-code:${resolved.model}:${resolved.available}:${resolved.allowRemoteInference}`;
     case "typesafe":
       return `typesafe:${resolved.model}:${resolved.available}`;
+    case "decision":
+      return `decision:${resolved.backendKey}:${resolved.model}:${resolved.available}`;
     case "disabled":
       return "disabled";
     case "unresolved":

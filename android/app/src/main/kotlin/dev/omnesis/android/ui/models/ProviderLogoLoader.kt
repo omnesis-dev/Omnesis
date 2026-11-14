@@ -17,7 +17,7 @@ internal object ProviderLogoLoader {
     private val NON_PROVIDER_IDS = setOf("local", "http", "none", "replay", "unresolved")
 
     fun providers(overview: ModelsOverview): Set<String> = buildSet {
-        overview.presets.mapTo(this) { it.id }
+        addAll(presetLogoSources(overview).values)
         overview.assignmentDisplays.values.mapTo(this) { it.providerId }
         overview.modelControls.forEach { (_, info) ->
             if (info.providerId.isNotBlank()) {
@@ -28,6 +28,21 @@ internal object ProviderLogoLoader {
         it !in NON_PROVIDER_IDS && it.matches(Regex("[a-z0-9][a-z0-9-]*"))
     }
 
+    /**
+     * Presets by id, mapped to the id their logo is served under: the
+     * models.dev provider id when the preset (or its decision API) names one.
+     * TypeSafe's built-in slot is left out; "Other server" is no preset at all.
+     */
+    fun presetLogoSources(overview: ModelsOverview): Map<String, String> =
+        overview.providers
+            .filter { it.builtIn == null && it.id.isNotBlank() }
+            .associate { it.id to it.logoId }
+
+    /**
+     * Fetch the logos not yet in [cached]. A provider the gateway has no logo
+     * for is recorded as an empty entry, so it is not asked for again; the
+     * icon then shows its neutral glyph.
+     */
     suspend fun load(
         admin: AdminClient,
         ids: Set<String>,
@@ -39,17 +54,22 @@ internal object ProviderLogoLoader {
         val fetched = missing.map { id ->
             async {
                 semaphore.withPermit {
-                    runCatching { id to checkedSvg(admin.providerLogo(id)) }.getOrNull()
+                    id to (runCatching { checkedSvg(admin.providerLogo(id)) }.getOrNull() ?: MISSING)
                 }
             }
-        }.awaitAll().filterNotNull().toMap()
+        }.awaitAll().toMap()
         val merged = cached + fetched
         val aliases = overview?.modelControls?.mapNotNull { (assignment, info) ->
             val backend = assignment.substringBefore('/', missingDelimiterValue = "")
             merged[info.providerId]?.let { logo -> backend.takeIf { it.isNotBlank() }?.let { it to logo } }
         }?.toMap().orEmpty()
-        merged + aliases
+        val presetAliases = overview?.let(::presetLogoSources).orEmpty()
+            .mapNotNull { (presetId, source) -> merged[source]?.let { presetId to it } }
+            .toMap()
+        merged + aliases + presetAliases
     }
+
+    private const val MISSING = ""
 
     private fun checkedSvg(svg: String): String {
         require(svg.trimStart().startsWith("<svg")) { "gateway response was not SVG" }

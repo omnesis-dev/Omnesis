@@ -4,7 +4,6 @@
 import type { DecisionQuestion } from "@omnesis/core";
 
 export const PROFILE_DISTILLATION_QUESTION_ID = "profile_distillation";
-export const PROFILE_DISTILLATION_THRESHOLD = 1.5;
 export const PROFILE_DISTILLATION_QUESTIONS: Readonly<Record<string, DecisionQuestion>> = {
   [PROFILE_DISTILLATION_QUESTION_ID]: {
     type: "score",

@@ -63,6 +63,7 @@ export function decideKnowledgeReview(
   signals: ReturnType<typeof knowledgeReviewSignals>,
   score: number | null,
   cfg: ResolvedBrainSettings["knowledge"],
+  thresholds: Pick<ResolvedBrainSettings["thresholds"], "reviewNow" | "reviewDormant">,
 ): { decision: "now" | "defer" | "dormant"; nextReviewAt: number; reason: string } {
   const now = signals.now;
   const bound = (proposedAt: number | null) =>
@@ -85,7 +86,7 @@ export function decideKnowledgeReview(
     signals.validity === "stale" ||
     score === null ||
     !Number.isFinite(score) ||
-    score >= 0.75
+    score >= thresholds.reviewNow
   )
     return {
       decision: "now",
@@ -99,7 +100,7 @@ export function decideKnowledgeReview(
               ? "decision_unavailable"
               : "decision_review",
     };
-  if (score < 0.25)
+  if (score < thresholds.reviewDormant)
     return { decision: "dormant", nextReviewAt: maximum, reason: "decision_dormant_with_backstop" };
   const importance = Math.max(0, Math.min(1, signals.importance));
   const volatility = Math.max(0, Math.min(1, signals.metadata.volatility ?? 0));

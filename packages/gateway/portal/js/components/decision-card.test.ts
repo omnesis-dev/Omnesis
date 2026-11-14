@@ -175,7 +175,7 @@ describe("run-ledger decisions", () => {
   });
 
   it("reads the suggestion gate's three tiers from the verdict and score, and links the task", () => {
-    const propose = (over) => DecisionCard({ decision: ledger({ purpose: "task-propose", lane: "tier", threshold: 1, recordId: "loop_new", documentId: null, subjectDocumentId: null, subjectDoc: null, ...over }) });
+    const propose = (over) => DecisionCard({ decision: ledger({ purpose: "task-propose", lane: "tier", rubricVersion: "task-propose-v2", threshold: 1.5, recordId: "loop_new", documentId: null, subjectDocumentId: null, subjectDoc: null, ...over }) });
     const adopted = flat(propose({ verdict: "pass", score: 2 }));
     expect(adopted).toContain("Suggestion gate");
     expect(adopted).toContain("adopted");
@@ -186,6 +186,12 @@ describe("run-ledger decisions", () => {
     expect(flat(propose({ verdict: "skip", score: 0 }))).toContain("kept out of the Tasks views");
     expect(flat(propose({ verdict: "skip", score: 0, enforced: false }))).toContain("would withhold");
     expect(flat(propose({ verdict: "unavailable", score: null }))).toContain("Not judged; offered as a suggestion");
+    // The adoption cut is the row's own threshold, whatever the operator set it to.
+    expect(flat(propose({ verdict: "pass", score: 1.7, threshold: 1.8 }))).not.toContain("adopted");
+    expect(flat(propose({ verdict: "pass", score: 1.3, threshold: 1.2 }))).toContain("adopted");
+    // Rows of the first rubric recorded 1 and adopted at 1.5.
+    expect(flat(propose({ verdict: "pass", score: 1.2, threshold: 1, rubricVersion: "task-propose-v1" }))).not.toContain("adopted");
+    expect(flat(propose({ verdict: "pass", score: 1.6, threshold: 1, rubricVersion: "task-propose-v1" }))).toContain("adopted");
     const link = hosts(propose({ verdict: "pass", score: 2 })).find((n) => n.type === "a" && String(n.props.href).includes("loop_new"));
     expect(link).toBeDefined();
     // A record-check pass scored high is still only allowed: no other table reads a score as adoption.

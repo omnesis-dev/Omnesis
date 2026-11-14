@@ -77,7 +77,8 @@ enum ModelsPreviewData {
             catalog: catalog(),
             installed: [ManifestEntry(id: "nomic-embed-text-v1.5.Q8_0")],
             activeDownloads: activeDownloads(),
-            presets: BackendsPreviewData.presets(),
+            presets: DecisionPreviewData.presets,
+            decisionProviders: DecisionPreviewData.decisionProviders,
             modelControls: ["openai/gpt-example-frontier": PreviewMocks.modelReasoningControls],
             modelSettings: [
                 "agent": ModelSettings(
@@ -88,8 +89,9 @@ enum ModelsPreviewData {
         )
     }
 
-    /// An ordinary role beside one only a special backend family serves, so
-    /// the read-only card sits in view next to a tappable one.
+    /// An ordinary role beside the Decision card of a gateway that predates
+    /// decision models (no preset describes a decision API), so the read-only
+    /// card sits in view next to a tappable one.
     static func overviewWithReadOnlyRole() -> ModelsOverview {
         let base = overview()
         return ModelsOverview(
@@ -99,7 +101,7 @@ enum ModelsPreviewData {
             catalog: base.catalog,
             installed: base.installed,
             activeDownloads: base.activeDownloads,
-            presets: base.presets,
+            presets: BackendsPreviewData.presets(),
             modelControls: base.modelControls,
             modelSettings: base.modelSettings
         )
@@ -115,6 +117,7 @@ enum ModelsPreviewData {
             installed: base.installed,
             activeDownloads: base.activeDownloads,
             presets: base.presets,
+            decisionProviders: base.decisionProviders,
             modelControls: [:],
             modelSettings: [
                 "agent": ModelSettings(
@@ -234,6 +237,7 @@ enum ModelsPreviewData {
                 "ocr": ResolvedAssignment(kind: "http", available: false, reason: "Backend unreachable"),
                 "background-agent": ResolvedAssignment(kind: "codex", available: true),
                 "entailment-verifier": ResolvedAssignment(kind: "unresolved"),
+                "decision": ResolvedAssignment(kind: "typesafe", available: true, model: "jev-example", hasApiKey: true),
             ]
         )
     }

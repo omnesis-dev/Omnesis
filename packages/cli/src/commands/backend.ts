@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { defineCommand } from "citty";
-import { PROVIDER_PRESETS, getPreset, classifyModelRoles } from "@omnesis/core";
+import { PROVIDER_PRESETS, classifyModelRoles } from "@omnesis/core";
 import {
   c,
   gatewayJson,
@@ -13,6 +13,7 @@ import {
   EXIT_USER_ERROR,
   pickGatewayExitCode,
 } from "../utils.js";
+import { backendServes, buildBackendAddPatch, parseParams } from "./backend-patch.js";
 import type { ModelsOverview } from "@omnesis/core";
 
 interface OverviewResponse extends ModelsOverview {
@@ -53,19 +54,24 @@ const backendListCommand = defineCommand({
 
     console.log();
     console.log(
-      `${c.bold}${"NAME".padEnd(20)} ${"TYPE".padEnd(12)} ${"URL".padEnd(40)} ${"STATUS".padEnd(14)} ${"KEY".padEnd(6)} MODELS${c.reset}`,
+      `${c.bold}${"NAME".padEnd(20)} ${"TYPE".padEnd(12)} ${"SERVES".padEnd(16)} ${"URL".padEnd(40)} ${"STATUS".padEnd(14)} ${"KEY".padEnd(6)} MODELS${c.reset}`,
     );
     for (const key of keys) {
       const b = backends[key];
-      const url = b.url ?? "—";
+      // A backend that serves only decision models shows its decision URL.
+      const url = b.url ?? b.decision?.url ?? "—";
       const statusColor =
         b.status === "ok" ? c.green : b.status === "unreachable" ? c.red : c.yellow;
       const status = `${statusColor}${b.status}${c.reset}`;
+      const statusWidth = 14 + statusColor.length + c.reset.length;
       const keyStatus = b.hasApiKey ? "yes" : "—";
       const models = b.models?.join(", ") ?? "—";
+      const serves = b.type === "http" ? backendServes(b) : "—";
       console.log(
-        `${key.padEnd(20)} ${b.type.padEnd(12)} ${url.padEnd(40)} ${status.padEnd(14 + statusColor.length + c.reset.length)} ${keyStatus.padEnd(6)} ${models}`,
+        `${key.padEnd(20)} ${b.type.padEnd(12)} ${serves.padEnd(16)} ${url.padEnd(40)} ${status.padEnd(statusWidth)} ${keyStatus.padEnd(6)} ${models}`,
       );
+      if (b.decision && b.url)
+        console.log(`${"".padEnd(50)} ${c.dim}decision: ${b.decision.url}${c.reset}`);
     }
     console.log();
   },
@@ -74,11 +80,15 @@ const backendListCommand = defineCommand({
 // ── backend add ──────────────────────────────────────────────────────
 
 const backendAddCommand = defineCommand({
-  meta: { name: "add", description: "Add an HTTP inference backend" },
+  meta: {
+    name: "add",
+    description:
+      "Add an inference backend: an OpenAI-compatible API, a decision API, or both with one key",
+  },
   args: {
     name: {
       type: "positional",
-      description: "Backend name (or a preset id like 'openai')",
+      description: "Backend name (or a preset id like 'openai' or 'ollaya')",
       required: true,
     },
     url: {
@@ -86,12 +96,20 @@ const backendAddCommand = defineCommand({
       description: "OpenAI-compatible base URL (auto-filled from preset if omitted)",
       required: false,
     },
-    key: { type: "string", description: "API key for the backend (Bearer token)" },
-    preset: { type: "string", description: "Use a provider preset to auto-fill URL" },
+    key: { type: "string", description: "API key for the backend, used by both of its APIs" },
+    preset: { type: "string", description: "Use a provider preset to auto-fill the URLs" },
     prefix: {
       type: "string",
       description:
         "API path prefix (e.g. /v1beta/openai); defaults to /v1, auto-filled from preset",
+    },
+    "decision-url": {
+      type: "string",
+      description: "Decision endpoint URL, for a decision server no preset describes",
+    },
+    param: {
+      type: "string",
+      description: "A preset's decision URL value, key=value, e.g. account=…",
     },
     "allow-remote": {
       type: "boolean",
@@ -107,35 +125,33 @@ const backendAddCommand = defineCommand({
       );
     }
 
-    // Resolve URL: explicit arg > --preset > auto-detect from name
-    let url = ctx.args.url as string | undefined;
-    const urlExplicit = !!url;
-    const presetId = (ctx.args.preset as string | undefined) ?? name;
-    const preset = getPreset(presetId);
-    if (!url && preset) {
-      url = preset.defaultUrl;
-    }
-
-    if (!url) {
+    let built;
+    try {
+      built = buildBackendAddPatch({
+        name,
+        ...(ctx.args.preset ? { presetId: String(ctx.args.preset) } : {}),
+        ...(ctx.args.url ? { url: String(ctx.args.url) } : {}),
+        ...(ctx.args.prefix ? { apiPathPrefix: String(ctx.args.prefix) } : {}),
+        ...(ctx.args["decision-url"] ? { decisionUrl: String(ctx.args["decision-url"]) } : {}),
+        params: parseParams(ctx.args.param as string | string[] | undefined),
+        ...(ctx.args.key ? { apiKey: String(ctx.args.key) } : {}),
+        allowRemote: ctx.args["allow-remote"] === true,
+      });
+    } catch (err) {
       throw new CliError(
-        `${c.red}Usage: backend add <name> <url> [--key <apiKey>]\n` +
-          `No URL provided and "${name}" is not a known preset.\n` +
-          `Known presets: ${PROVIDER_PRESETS.map((p) => p.id).join(", ")}${c.reset}`,
-        EXIT_USER_ERROR,
-      );
-    }
-
-    const RESERVED_BACKEND_NAMES = ["local", "anthropic", "codex", "claude-code", "replay"];
-    if (RESERVED_BACKEND_NAMES.includes(name) || name.includes("/")) {
-      throw new CliError(
-        `${c.red}Backend name "${name}" is reserved or contains '/'.${c.reset}`,
+        `${c.red}${err instanceof Error ? err.message : String(err)}\n` +
+          `Known presets: ${PROVIDER_PRESETS.filter((p) => !p.builtIn)
+            .map((p) => p.id)
+            .join(", ")}${c.reset}`,
         EXIT_USER_ERROR,
       );
     }
 
     const apiKey = ctx.args.key as string | undefined;
     const allowRemote = ctx.args["allow-remote"] === true;
-    const remoteUrl = !isLoopbackInferenceUrl(url);
+    const remoteUrl = [built.url, built.decisionUrl].some(
+      (u) => u !== undefined && !isLoopbackInferenceUrl(u),
+    );
     let remoteAlreadyAllowed = false;
     if (remoteUrl && !allowRemote) {
       try {
@@ -144,22 +160,10 @@ const backendAddCommand = defineCommand({
         remoteAlreadyAllowed = false;
       }
     }
-    const cfg: Record<string, unknown> = { type: "http", url };
-    if (apiKey) cfg.apiKey = apiKey;
-    // Carry the API path prefix from --prefix, else from the preset (but only
-    // when the URL also came from the preset — an explicit URL is taken as-is).
-    const apiPathPrefix =
-      (ctx.args.prefix as string | undefined) ?? (urlExplicit ? undefined : preset?.apiPathPrefix);
-    if (apiPathPrefix) cfg.apiPathPrefix = apiPathPrefix;
-
-    const inferencePatch: Record<string, unknown> = { backends: { [name]: cfg } };
-    if (allowRemote) inferencePatch.allowRemoteInference = true;
 
     const res = await gatewayFetch("/admin/config", {
       method: "PATCH",
-      body: JSON.stringify({
-        inference: inferencePatch,
-      }),
+      body: JSON.stringify(built.patch),
     });
     if (!res.ok) {
       const txt = await res.text().catch(() => "");
@@ -169,8 +173,11 @@ const backendAddCommand = defineCommand({
       );
     }
 
+    const serves = [built.url, built.decisionUrl && `decision models at ${built.decisionUrl}`]
+      .filter(Boolean)
+      .join(", ");
     console.log(
-      `${c.green}✔${c.reset} Backend ${c.bold}${name}${c.reset} added (${url})${apiKey ? " with API key" : ""}`,
+      `${c.green}✔${c.reset} Backend ${c.bold}${name}${c.reset} added (${serves})${apiKey ? " with API key" : ""}`,
     );
     if (remoteUrl && allowRemote) {
       console.log(
@@ -181,7 +188,19 @@ const backendAddCommand = defineCommand({
         `${c.yellow}Remote HTTP inference is still disabled.${c.reset} This backend will not be probed or used until you set ${c.cyan}inference.allowRemoteInference=true${c.reset} or re-run with ${c.cyan}--allow-remote${c.reset}.`,
       );
     }
-    console.log(`Test connectivity: ${c.cyan}cli backend test ${name}${c.reset}`);
+    const decision = built.preset?.decision;
+    if (decision?.keyRequired && !apiKey) {
+      console.log(
+        `${c.yellow}${built.preset!.name} needs an API key for decisions:${c.reset} re-run with --key${decision.keyUrl ? ` (create one at ${decision.keyUrl})` : ""}.`,
+      );
+    }
+    if (built.url)
+      console.log(`Test connectivity: ${c.cyan}omnesis backend test ${name}${c.reset}`);
+    if (built.decisionUrl) {
+      console.log(
+        `Decision models: ${c.cyan}omnesis decision verify ${name} <model>${c.reset}, then ${c.cyan}omnesis model assign decision ${name}/<model>${c.reset}.`,
+      );
+    }
   },
 });
 

@@ -724,18 +724,170 @@ Gateway 1.4.0  <span class="t-dim">·</span>  <span class="t-dim">devices: 3 cur
         </ul>
         <p>
           Assigning a decision model does not enable every use automatically; each flow keeps its
-          own controls. It is served by TypeSafe Jev, a cloud model, and requires
-          <strong>Allow cloud inference</strong>. Add its key under
-          <strong>Settings → Models → Decision model</strong> or with
-          <code>omnesis backend key set typesafe</code>, then assign
-          <code>omnesis model assign decision typesafe/jev-1.13.0</code>. To use a
-          TypeSafe-compatible deployment of your own, set <code>inference.typesafe.url</code> to its
-          endpoint. An endpoint on the gateway host (a loopback address or <code>localhost</code>)
-          needs neither a key nor <strong>Allow cloud inference</strong>; one elsewhere on your
-          network needs <strong>Allow cloud inference</strong> but no key. Any endpoint under
-          <code>typesafe.ai</code> is TypeSafe's own and needs its key. The iPhone and Android apps
-          show the assignment; change it from the portal or terminal.
+          own controls. Set it up under <strong>Settings → Models → Decision model</strong> in the
+          portal or the iPhone and Android apps: pick the backend that runs the model, then a model.
+          The model is asked one test question when you save it, so a model the server does not have
+          or a refused key is reported then rather than by decisions that fail later.
         </p>
+        <h4 id="decision-model-providers">Where the decision model runs</h4>
+        <p>
+          A decision model is not a chat model: it answers typed questions from probabilities over
+          fixed answers, through a decision API. A provider's decision API belongs to the same
+          backend as its OpenAI-compatible API, under <code>inference.backends</code>, with the same
+          API key: a backend can serve chat models, decision models, or both. Its decision API is
+          the backend's <code>decision</code> block, and the assignment names the backend and the
+          model, <code>&lt;backend&gt;/&lt;model&gt;</code>. Adding a backend from a provider that
+          has a decision API sets up both; for a backend you already have, such as Fireworks AI set
+          up for the agent, the Decision model card offers its decision models and adds them with
+          the key the backend already holds.
+        </p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Provider</th>
+                <th>Endpoint</th>
+                <th>Notes</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Ollaya, on this machine</td>
+                <td><code>http://127.0.0.1:11435/v1/systemone</code></td>
+                <td>
+                  Open decision models (Kev, Laya, d1, Strands Decider and others) pulled with
+                  <code>ollaya pull &lt;model&gt;</code>. No key, no cloud inference.
+                </td>
+              </tr>
+              <tr>
+                <td>Ollama, on this machine</td>
+                <td><code>http://127.0.0.1:11434/v1/systemone</code></td>
+                <td>
+                  Pull a decision model such as <code>d3:4b</code> first. No key, no cloud
+                  inference.
+                </td>
+              </tr>
+              <tr>
+                <td>TypeSafe</td>
+                <td><code>https://api.typesafe.ai/v1/systemone</code></td>
+                <td>
+                  Jev, the model every threshold was tuned on. Built in: its key is set with
+                  <code>omnesis backend key set typesafe</code> and the assignment is
+                  <code>typesafe/&lt;model&gt;</code>. Setting <code>inference.typesafe.url</code>
+                  points it at a deployment of your own, which needs no key; any endpoint under
+                  <code>typesafe.ai</code> is TypeSafe's and needs its key.
+                </td>
+              </tr>
+              <tr>
+                <td>OpenRouter, Fireworks AI</td>
+                <td>Each provider's own decision endpoint</td>
+                <td>
+                  The same backend and key as the provider's chat models. OpenRouter alone serves
+                  most hosted decision models, including Jev, Perplexity Decider, d1, Clef,
+                  Microsoft-Decision-1, Drex and GPT-6 Luna.
+                </td>
+              </tr>
+              <tr>
+                <td>Ollama Cloud, Perplexity, Baseten, DeepInfra, Vercel AI Gateway, AI/ML API</td>
+                <td>Each provider's own decision endpoint</td>
+                <td>Hosted decision models with an API key; the backend serves only them.</td>
+              </tr>
+              <tr>
+                <td>Cloudflare Workers AI</td>
+                <td>
+                  <code>https://api.cloudflare.com/client/v4/accounts/&lt;account&gt;/ai/run</code>
+                </td>
+                <td>
+                  Clef and Clef-Flash; asks for your account ID. Workers AI shortens long text to
+                  fit the model without saying so.
+                </td>
+              </tr>
+              <tr>
+                <td>OpenAI</td>
+                <td><code>https://api.openai.com/v1/decisions</code></td>
+                <td>
+                  GPT-6 Luna through OpenAI's own Decisions API, with the key of the OpenAI backend.
+                </td>
+              </tr>
+              <tr>
+                <td>Google AI (Gemini)</td>
+                <td><code>https://generativelanguage.googleapis.com/v1beta/decisions</code></td>
+                <td>
+                  Gemini Decision 1 through Google's own Decisions API, with the key of the Google
+                  backend.
+                </td>
+              </tr>
+              <tr>
+                <td>Microsoft Foundry</td>
+                <td>
+                  <code
+                    >https://&lt;resource&gt;.services.ai.azure.com/providers/microsoft/v1/systemone</code
+                  >
+                </td>
+                <td>Microsoft-Decision-1; the model is your deployment's name.</td>
+              </tr>
+              <tr>
+                <td>Fastino</td>
+                <td><code>https://api.fastino.ai/v1/systemone</code></td>
+                <td>GLiDE.</td>
+              </tr>
+              <tr>
+                <td>Another decision server</td>
+                <td>Its System One URL</td>
+                <td>
+                  Any server that accepts TypeSafe's System One request, such as a model's own
+                  <code>serve</code> command on your network.
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p>
+          A provider off the gateway host sends the content being judged to that provider, so it
+          needs <strong>Allow cloud inference</strong>; one on the gateway host does not, and needs
+          a key only if the server asks for one. Keys are kept in the gateway's secret store, never
+          in <code>omnesis.json</code>. The model lists come from each provider's preset and from
+          the <a href="https://models.dev">models.dev</a> decision catalog; for Ollaya, Ollama and
+          other servers on your network the gateway also lists the models installed there.
+        </p>
+        <h4 id="decision-model-thresholds">Thresholds</h4>
+        <p>
+          A decision compares the model's score with a threshold. The defaults were chosen on
+          TypeSafe Jev's scores; another model may score the same email higher or lower, and so keep
+          more or less than Jev would. Each threshold is a setting you can move. For email dates,
+          <code>enrichment.dates.worthThreshold</code> is the worth an email must reach, on the
+          question's 0–3 scale, for its dates to stay in time queries (1.08 by default). A change
+          re-sorts the emails already judged from the scores they were given, without asking the
+          model again, and the decision ledger records the threshold each judgement used. Change it
+          under <strong>Settings → Config</strong> in the portal or with
+          <code>omnesis config</code>.
+        </p>
+        <div class="term">
+          <div class="term-bar"><span></span><span></span><span></span></div>
+          <div class="term-body">
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd">omnesis backend add ollaya</span>
+            </p>
+            <pre>
+✔ Backend ollaya added (decision models at http://127.0.0.1:11435/v1/systemone)</pre>
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd">omnesis decision enable fireworks</span>
+            </p>
+            <pre>
+✔ fireworks serves decision models at https://api.fireworks.ai/inference/v1/systemone, with its own key</pre>
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd">omnesis decision verify ollaya winnow:e4b</span>
+            </p>
+            <pre>✔ ollaya/winnow:e4b answered in 310 ms</pre>
+            <p>
+              <span class="t-prompt">❯</span>
+              <span class="t-cmd">omnesis model assign decision ollaya/winnow:e4b</span>
+            </p>
+          </div>
+        </div>
         <p>Backend support depends on the capability. Available backend families are:</p>
 
         <ul>
@@ -747,7 +899,9 @@ Gateway 1.4.0  <span class="t-dim">·</span>  <span class="t-dim">devices: 3 cur
           <li>
             <strong>Any OpenAI-compatible HTTP server</strong>, with presets for OpenAI, Google,
             Mistral, Groq, Cerebras, Together, Fireworks, DeepSeek, NVIDIA, xAI, Meta, Moonshot AI,
-            Regolo AI and OpenRouter.
+            Regolo AI and OpenRouter. The same backend can also serve decision models through the
+            provider's decision API, and some backends serve only those; see
+            <a href="#decision-model-providers">Where the decision model runs</a>.
           </li>
           <li>
             <strong>Anthropic</strong>, assigned as <code>anthropic/&lt;model&gt;</code>. Add the
@@ -1584,6 +1738,14 @@ Gateway 1.4.0  <span class="t-dim">·</span>  <span class="t-dim">devices: 3 cur
                 </td>
                 <td>Assign models, add inference backends, rebuild the vector index</td>
                 <td><a href="#models">Models</a></td>
+              </tr>
+              <tr>
+                <td><code>decision</code></td>
+                <td>
+                  List the providers with decision models, enable or disable a backend's decision
+                  API, list its models, verify the Decision model
+                </td>
+                <td><a href="#decision-model">Decision model</a></td>
               </tr>
               <tr>
                 <td><code>secure</code>, <code>keyring</code>, <code>tls</code></td>

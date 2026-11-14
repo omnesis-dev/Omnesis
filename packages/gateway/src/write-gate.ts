@@ -308,6 +308,7 @@ import { applyExtractedDates as applyExtractedDatesToDb } from "./enrichment/dat
 import {
   applyMentionJudgements as applyMentionJudgementsToDb,
   requeueStaleMentionJudgements as requeueStaleMentionJudgementsInDb,
+  resettleMentionJudgements as resettleMentionJudgementsInDb,
   type MentionJudgementDeferral,
   type MentionJudgementRecord,
 } from "./enrichment/dates/mention-judgements.js";
@@ -1212,6 +1213,8 @@ export interface WriteGate extends KnowledgeWriteGate {
   ): Promise<number>;
   /** Return up to `limit` judgements made under another rubric version to the gate's queue. */
   requeueStaleMentionJudgements(rubricVersion: string, limit: number): Promise<number>;
+  /** Move up to `limit` scored judgements to the side of `threshold` their score is on. */
+  resettleMentionJudgements(threshold: number, modelId: string, limit: number): Promise<number>;
   /**
    * Drain the `pending_edges` backlog: promote forward-reference
    * source-declared edges whose target has since been ingested, and TTL-drop
@@ -2564,6 +2567,8 @@ export function writeGateFromCall(call: WriterCallFn): WriteGate {
       call("db.applyMentionJudgements", [records, deferrals, answers, decisions]),
     requeueStaleMentionJudgements: (rubricVersion, limit) =>
       call("db.requeueStaleMentionJudgements", [rubricVersion, limit]),
+    resettleMentionJudgements: (threshold, modelId, limit) =>
+      call("db.resettleMentionJudgements", [threshold, modelId, limit]),
     drainPendingEdges: (limit) => call("edges.drainPending", [limit]),
     upsertExtractedLinksBatch: (rows) => call("links.upsertExtractedLinksBatch", [rows]),
     advanceTranscriptionVocabularyRebuild: (settings) =>
@@ -3178,6 +3183,8 @@ export function directWriteGate(db: Db): WriteGate {
       applyMentionJudgementsToDb(db, records, deferrals, answers, decisions),
     requeueStaleMentionJudgements: async (rubricVersion, limit) =>
       requeueStaleMentionJudgementsInDb(db, rubricVersion, limit),
+    resettleMentionJudgements: async (threshold, modelId, limit) =>
+      resettleMentionJudgementsInDb(db, threshold, modelId, limit),
     drainPendingEdges: async (limit) => drainPendingEdges(db, { limit }),
     upsertExtractedLinksBatch: async (rows) => upsertExtractedLinksBatch(db, rows),
     advanceTranscriptionVocabularyRebuild: async (settings) =>

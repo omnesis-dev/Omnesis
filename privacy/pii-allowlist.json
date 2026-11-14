@@ -11963,7 +11963,8 @@
       "paths": [
         "packages/collector/src/e2e/brain-bench/bench.ts",
         "packages/collector/src/e2e/brain-bench/decision-server.ts",
-        "packages/collector/src/e2e/brain-decision-gate.e2e.test.ts"
+        "packages/collector/src/e2e/brain-decision-gate.e2e.test.ts",
+        "packages/collector/src/e2e/decision-backends.e2e.test.ts"
       ],
       "reason": "invented worth-gate fixture"
     },
@@ -12787,6 +12788,14 @@
       "value": "Rate Limit Exceeded",
       "paths": ["packages/providers/google/src/broker.test.ts"],
       "reason": "Google API error message text."
+    },
+    {
+      "value": "Cloudflare Workers",
+      "paths": [
+        "packages/core/src/models/provider-presets.test.ts",
+        "packages/core/src/models/provider-brands.test.ts"
+      ],
+      "reason": "Product name of a decision model provider preset, not a person's name."
     },
     {
       "value": "Omnesis Lab",

@@ -6,26 +6,40 @@
 //
 //   • ModelConfigModal   — "Choose a <capability> model": a grid of backend
 //                          options (Local, presets, custom HTTP backends,
-//                          Codex, Claude Code, Anthropic, + a custom backend;
-//                          for the Decision model, TypeSafe first and no
-//                          cloud chat runtime), each leading to the
+//                          Codex, Claude Code, Anthropic, + Other server;
+//                          for the Decision model, the picker of
+//                          `decision-models.js` instead), each leading to the
 //                          model selection (configuring the backend inline
 //                          first when it isn't set up yet).
-//   • AddBackendModal    — "Add a backend": the same grid in configure-only
-//                          mode (no Local, no model selection at the end).
+//   • AddBackendModal    — "Add a backend": every provider, whatever it
+//                          serves, in configure-only mode (no Local, no model
+//                          selection at the end).
+//   • BackendForm        — one provider's form, shared by both: name, URLs,
+//                          the one key, and for the Decision model its model.
 //
 // Backends are global, so both flows read and write the same backend set: a
 // backend you add anywhere is immediately available to every capability.
 
 import { html } from "htm/preact";
 import { useEffect, useState } from "preact/hooks";
-import { getModelCredentialsStatus, getRecentModels } from "../api.js";
+import { getModelCredentialsStatus, getRecentModels, probeBackendDecisionModels, probeDecisionEndpoint } from "../api.js";
 import { CloudInferenceConsentModal } from "../components/cloud-inference-consent.js";
 import { CopyValue } from "../components/copy-button.js";
-import { isLoopbackInferenceUrl } from "../lib/cloud-inference.js";
+import { endpointConsent } from "../lib/cloud-inference.js";
 import { Modal } from "../components/modal.js";
 import { ProviderIcon } from "../components/provider-icon.js";
-import { CapabilityIcon } from "../components/capability-icon.js";
+import { BackendOptionCard, Monogram, ProviderLogo, LOCAL_GLYPH, TYPESAFE_GLYPH, ADD_GLYPH } from "../components/backend-option-card.js";
+import {
+  backendNameError,
+  decisionUrlPlaceholders,
+  fillDecisionUrl,
+  freeBackendName,
+  newBackendPatch,
+  presetLogoId,
+  presetServes,
+  SERVES_LABEL,
+} from "../lib/backend-setup.js";
+import { canProbeDecisionModels, newDecisionPresets } from "../lib/decision-models.js";
 import { filterBackendModels } from "../lib/backend-model-filter.js";
 import { fuzzyMatchFields } from "../lib/fuzzy-match.js";
 import {
@@ -37,10 +51,18 @@ import {
   TYPESAFE_DEFAULT_MODEL,
   isClaudeCodeReady,
   httpBackendModelSummary,
+  isDecisionRole,
 } from "../lib/backend-options.js";
+import {
+  DecisionCheckLine,
+  DecisionModelField,
+  DecisionModelPane,
+  DecisionProviderPicker,
+  PresetMark,
+  PresetNote,
+  useDecisionModelProbe,
+} from "./decision-models.js";
 import { formatBytes, fit } from "../lib/model-format.js";
-
-const RESERVED_BACKEND_NAMES = ["local", "anthropic", "codex", "claude-code", "replay", "typesafe"];
 
 const plural = (n, noun) => `${n} ${noun}${n !== 1 ? "s" : ""}`;
 
@@ -192,29 +214,19 @@ export function CodexRuntimePanel({ overview, update, loginPending = false, swit
 
 // ── Backend option grid ─────────────────────────────────────────────────────
 
-function BackendOptionCard({ providerId, fallbackGlyph, title, subtitle, muted, onClick }) {
-  return html`
-    <button class="backend-opt ${muted ? "backend-opt--muted" : ""}" onClick=${onClick}>
-      <span class="backend-opt-icon">
-        ${providerId ? html`<${ProviderIcon} providerId=${providerId} size=${22} />` : null}
-        ${fallbackGlyph ?? null}
-      </span>
-      <span class="backend-opt-title">${title}</span>
-      <span class="backend-opt-sub">${subtitle}</span>
-    </button>
-  `;
+/** One short line under a preset in the Decision model's "Add a provider" grid. */
+function decisionPresetSubtitle(preset) {
+  const count = preset.decision?.models?.length ?? 0;
+  if (count > 0) return plural(count, "model");
+  return preset.kind === "local" ? "Local server" : "Hosted API";
 }
 
-// A neutral "stack" glyph for the Local-model card (no provider brand).
-const LOCAL_GLYPH = html`<svg aria-hidden="true" viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="6" rx="1" /><rect x="3" y="14" width="18" height="6" rx="1" /></svg>`;
-// TypeSafe has no served provider logo; its card wears the Decision model's
-// own capability glyph.
-const TYPESAFE_GLYPH = html`<${CapabilityIcon} icon="scale" size=${22} />`;
-// A "plus" glyph for the add-custom card.
-const ADD_GLYPH = html`<svg aria-hidden="true" viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14" /></svg>`;
-
-/** Render one option as a card. `mode` is "pick" (capability picker) or "configure". */
-function renderOption(opt, mode, onSelect) {
+/**
+ * Render one option as a card. `mode` is "pick" (capability picker),
+ * "configure" (Add backend) or "decision" (the Decision model's "Add a
+ * provider"); `compact` lays it out as one row, for grids with many providers.
+ */
+function renderOption(opt, mode, onSelect, compact = false) {
   const pick = () => onSelect(opt);
   switch (opt.kind) {
     case "local":
@@ -222,12 +234,16 @@ function renderOption(opt, mode, onSelect) {
     case "preset":
       return html`<${BackendOptionCard}
         key=${`preset-${opt.id}`}
-        providerId=${opt.providerId ?? opt.id}
+        compact=${compact}
+        providerId=${opt.providerId ?? presetLogoId(opt.preset) ?? opt.id}
+        fallbackGlyph=${compact ? html`<${Monogram} name=${opt.preset.name} />` : null}
         title=${opt.preset.name}
-        subtitle=${mode === "configure"
+        subtitle=${mode === "decision"
+          ? decisionPresetSubtitle(opt.preset)
+          : mode === "configure"
           ? opt.configured
             ? "Configured"
-            : "Set up this provider"
+            : SERVES_LABEL[presetServes(opt.preset)]
           : opt.configured
           ? httpBackendModelSummary(opt)
           : "Needs configuration"}
@@ -239,6 +255,7 @@ function renderOption(opt, mode, onSelect) {
     case "anthropic":
       return html`<${BackendOptionCard}
         key="anthropic"
+        compact=${compact}
         providerId="anthropic"
         title="Anthropic"
         subtitle=${mode === "configure"
@@ -254,6 +271,7 @@ function renderOption(opt, mode, onSelect) {
     case "codex":
       return html`<${BackendOptionCard}
         key="codex"
+        compact=${compact}
         providerId="codex"
         title="Codex"
         subtitle=${mode === "configure"
@@ -273,6 +291,7 @@ function renderOption(opt, mode, onSelect) {
     case "claude-code":
       return html`<${BackendOptionCard}
         key="claude-code"
+        compact=${compact}
         providerId="claude-code"
         title="Claude Code"
         subtitle=${opt.configured
@@ -288,7 +307,14 @@ function renderOption(opt, mode, onSelect) {
     case "typesafe":
       return html`<${BackendOptionCard} key="typesafe" fallbackGlyph=${TYPESAFE_GLYPH} title="TypeSafe" subtitle="Judges whether an email is worth recording" onClick=${pick} />`;
     case "add-custom":
-      return html`<${BackendOptionCard} key="add-custom" fallbackGlyph=${ADD_GLYPH} title="Custom HTTP backend" subtitle="Any OpenAI-compatible server" onClick=${pick} />`;
+      return html`<${BackendOptionCard}
+        key="add-custom"
+        compact=${compact}
+        fallbackGlyph=${ADD_GLYPH}
+        title="Other server"
+        subtitle=${mode === "pick" ? "Any OpenAI-compatible server" : "Your own URL"}
+        onClick=${pick}
+      />`;
     default:
       return null;
   }
@@ -298,78 +324,255 @@ function BackendGrid({ options, mode, onSelect }) {
   return html`<div class="backend-opt-grid">${options.map((opt) => renderOption(opt, mode, onSelect))}</div>`;
 }
 
-// ── HTTP backend form (preset-prefilled or blank) ───────────────────────────
+/**
+ * A provider grid with many providers: servers on this machine (with Other
+ * server last), then the cloud, each a titled grid of one-row cards.
+ */
+function ProviderGrid({ options, mode, onSelect }) {
+  const local = options.filter((opt) => opt.preset?.kind === "local" || opt.kind === "add-custom");
+  const cloud = options.filter((opt) => !local.includes(opt));
+  const group = (title, entries) =>
+    entries.length
+      ? html`<section class="decision-provider-group">
+          <h3 class="decision-provider-heading">${title}</h3>
+          <div class="backend-opt-grid">${entries.map((opt) => renderOption(opt, mode, onSelect, true))}</div>
+        </section>`
+      : null;
+  return html`<div class="decision-provider-picker">${group("On this machine", local)}${group("Cloud", cloud)}</div>`;
+}
 
-function HttpBackendForm({ preset, submit, onSuccess, onBack, allowRemoteInference }) {
-  const [name, setName] = useState(preset?.id ?? "");
+/** The Decision model's "Add a provider" options: presets with decisions no backend uses yet, then Other server. */
+function decisionProviderOptions(overview) {
+  return [
+    ...newDecisionPresets(overview).map((preset) => ({ kind: "preset", id: preset.id, preset })),
+    { kind: "add-custom" },
+  ];
+}
+
+// ── Backend form (a provider, or Other server) ──────────────────────────────
+
+/** How long typing in a new server's URL or key pauses before its models are listed. */
+const ENDPOINT_PROBE_DEBOUNCE_MS = 600;
+
+/** Why a URL cannot be saved, or null. */
+function urlProblem(url) {
+  if (!url) return null;
+  try {
+    new URL(url);
+  } catch {
+    return "Enter a full URL, e.g. http://127.0.0.1:8080.";
+  }
+  return decisionUrlPlaceholders(url).length ? "The URL still has a {placeholder}." : null;
+}
+
+const OTHER_SERVER_NOTE = {
+  pick: "Point Omnesis at any OpenAI-compatible server you run or pay for.",
+  configure: "Point Omnesis at a server you run or pay for: its OpenAI-compatible URL, its decision URL, or both.",
+  decision: "Any server that answers System One decision requests.",
+};
+
+/**
+ * Add one backend: a provider preset, or Other server (`preset` null). The
+ * key is asked once and serves every API the provider offers, so a preset
+ * with both an OpenAI-compatible and a decision API configures both.
+ *
+ * `mode` "pick" adds a backend for a chat capability (Other server asks only
+ * its OpenAI-compatible URL), "configure" adds one from the Backends page, and
+ * "decision" also picks the Decision model and assigns it in the same write,
+ * then shows a test decision's answer. `onSave(patch, {key, decisionModel})`
+ * resolves to `{ok, error?}`; `onSuccess(key)` follows a save outside
+ * "decision" mode.
+ */
+function BackendForm({ overview, preset = null, mode = "configure", checks = {}, onSave, onSuccess, onVerify, onBack, onDone }) {
+  const decisionMode = mode === "decision";
+  const decision = preset?.decision ?? null;
+  const urlParams = decision?.urlParams ?? [];
+  // A preset's decision URL is shown only for a server on this machine, whose
+  // port may differ; a hosted one is fixed, or filled from `urlParams`.
+  const showBaseUrl = !decisionMode && (preset ? !!preset.defaultUrl : true);
+  const showDecisionUrl = preset ? !!decision && preset.kind === "local" && !urlParams.length : mode !== "pick";
+
+  const [name, setName] = useState(() => freeBackendName(preset?.id ?? (decisionMode ? "decision-server" : ""), overview));
   const [url, setUrl] = useState(preset?.defaultUrl ?? "");
+  const [decisionUrl, setDecisionUrl] = useState(decision && !urlParams.length ? decision.url : "");
+  const [params, setParams] = useState({});
+  const [paramsTouched, setParamsTouched] = useState(false);
   const [apiKey, setApiKey] = useState("");
-  const [apiPathPrefix] = useState(preset?.apiPathPrefix ?? "");
-  const [showConsent, setShowConsent] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState(null);
+  const [model, setModel] = useState("");
+  const [phase, setPhase] = useState("edit"); // edit | saving | saved
+  const [savedKey, setSavedKey] = useState(null);
+  const [error, setError] = useState(null);
+  const [consent, setConsent] = useState(null);
+  const { probe, run, reset } = useDecisionModelProbe();
 
-  const nameValid = name.trim() && !RESERVED_BACKEND_NAMES.includes(name.trim()) && !name.includes("/");
-  const needsRemoteApproval =
-    url.trim() && !allowRemoteInference && !isLoopbackInferenceUrl(url.trim());
-  const canAdd = nameValid && url.trim() && !busy;
+  const base = showBaseUrl ? url.trim() : preset?.defaultUrl ?? "";
+  const filled = urlParams.length ? fillDecisionUrl(decision, params) : { url: decisionUrl.trim() };
+  const decUrl = filled.url ?? "";
+  const nameError = savedKey ? null : backendNameError(name, overview);
+  const baseError = urlProblem(base);
+  const decisionError = urlProblem(decUrl);
+  const keyRequired = decision?.keyRequired === true;
+  const trimmedModel = model.trim();
+  const hasEndpoint = decisionMode ? !!decUrl : !!(base || decUrl);
+  const canSave =
+    phase !== "saving" && !nameError && hasEndpoint && !baseError && !decisionError &&
+    (!keyRequired || !!apiKey.trim() || !!savedKey) && (!decisionMode || !!trimmedModel);
+  const consentAsk = endpointConsent(overview, [base, decUrl], { providerLabel: preset?.name, modelName: decisionMode ? trimmedModel : undefined });
+  const assignment = savedKey && trimmedModel ? `${savedKey}/${trimmedModel}` : null;
+  const check = assignment ? checks[assignment] : null;
 
-  const onSubmit = async (e) => {
-    e.preventDefault();
-    if (!canAdd || showConsent) return;
-    if (needsRemoteApproval) { setShowConsent(true); return; }
-    await addBackend(false);
+  // A new local or Other server is asked for its models once typing pauses.
+  const canProbe = decisionMode && canProbeDecisionModels(preset);
+  const endpointKey = canProbe && !savedKey && decUrl && !decisionError ? JSON.stringify([decUrl, apiKey.trim()]) : null;
+  useEffect(() => {
+    if (!endpointKey) {
+      if (!savedKey) reset();
+      return undefined;
+    }
+    const timer = setTimeout(() => {
+      void run(() => probeDecisionEndpoint({
+        url: decUrl,
+        auth: decision?.auth,
+        apiKey: apiKey.trim() || undefined,
+        protocol: decision?.protocol,
+        preset: preset?.id,
+      }));
+    }, ENDPOINT_PROBE_DEBOUNCE_MS);
+    return () => clearTimeout(timer);
+  }, [endpointKey]);
+
+  const edit = (setter) => (value) => {
+    setter(value);
+    if (phase === "saved") setPhase("edit");
+    setError(null);
   };
 
-  const addBackend = async (enableRemote) => {
-    setShowConsent(false);
-    setBusy(true);
-    setErr(null);
-    const res = await submit(
-      name.trim(),
-      url.trim(),
-      apiKey.trim() || undefined,
-      apiPathPrefix || undefined,
-      enableRemote,
-    );
-    if (res && res.ok === false) {
-      setErr(res.error ?? "Failed to add backend.");
-      setBusy(false);
+  const save = async (enableRemote) => {
+    setConsent(null);
+    setPhase("saving");
+    setError(null);
+    const key = savedKey ?? name.trim();
+    // Once saved, a changed model is only a new assignment.
+    const patch = savedKey
+      ? { inference: { assignments: { decision: `${key}/${trimmedModel}` } } }
+      : newBackendPatch({
+          key,
+          preset,
+          url: base,
+          apiPathPrefix: preset?.apiPathPrefix,
+          decisionUrl: decUrl,
+          apiKey,
+          decisionModel: decisionMode ? trimmedModel : undefined,
+          enableRemote,
+        });
+    const res = await onSave(patch, { key, decisionModel: decisionMode ? trimmedModel : undefined });
+    if (!res?.ok) {
+      setPhase("edit");
+      setError(res?.error ?? "Could not add the backend.");
       return;
     }
-    onSuccess(name.trim());
+    if (!decisionMode) { onSuccess?.(key); return; }
+    setApiKey("");
+    setSavedKey(key);
+    setPhase("saved");
+    if (canProbe) void run(() => probeBackendDecisionModels(key));
   };
 
+  const onSubmit = (e) => {
+    e?.preventDefault?.();
+    if (phase === "saved") { onDone?.(); return; }
+    if (!canSave) {
+      if (filled.error) setError(filled.error);
+      return;
+    }
+    if (consentAsk && !savedKey) { setConsent(consentAsk); return; }
+    void save(false);
+  };
+
+  const title = preset?.name ?? "Other server";
   return html`
-    <form class="backend-form" onSubmit=${onSubmit}>
+    <form class="backend-form decision-form" onSubmit=${onSubmit}>
+      <div class="picker-pane-head">
+        ${onBack ? html`<button type="button" class="btn-back" onClick=${onBack}>← Back</button>` : null}
+        <div class="picker-pane-title">
+          ${preset ? html`<${PresetMark} preset=${preset} />` : LOCAL_GLYPH}
+          ${title}
+        </div>
+      </div>
       ${preset
-        ? html`<p class="field-note"><${ProviderIcon} providerId=${preset.id} /> Configuring <strong>${preset.name}</strong>. Add your API key below; the URL is pre-filled.</p>`
-        : html`<p class="field-note">Point Omnesis at any OpenAI-compatible server you run or pay for.</p>`}
+        ? html`${preset.defaultUrl && decision ? html`<p class="field-note">Sets up its OpenAI-compatible and decision APIs with one key.</p>` : null}
+            <${PresetNote} decision=${decision} />`
+        : html`<p class="field-note">${OTHER_SERVER_NOTE[mode]}</p>`}
+
+      ${urlParams.map((param) => html`<label class="field" key=${param.key}>
+        <span class="field-label">${param.label}</span>
+        <input
+          class="field-input"
+          type="text"
+          placeholder=${param.placeholder}
+          value=${params[param.key] ?? ""}
+          aria-label=${param.label}
+          disabled=${!!savedKey}
+          onInput=${(e) => { const v = e.target.value; setParams((p) => ({ ...p, [param.key]: v })); setParamsTouched(true); setError(null); }}
+        />
+      </label>`)}
+      ${urlParams.length && paramsTouched && filled.error ? html`<span class="field-error">${filled.error}</span>` : null}
+      ${showBaseUrl
+        ? html`<label class="field">
+            <span class="field-label">Base URL ${preset || mode === "pick" ? null : html`<span class="field-opt">(OpenAI-compatible)</span>`}</span>
+            <input class="field-input" type="text" aria-label="Base URL" placeholder="https://api.example.com" value=${url} onInput=${(e) => edit(setUrl)(e.target.value)} />
+            ${baseError ? html`<span class="field-error">${baseError}</span>` : null}
+          </label>`
+        : null}
+      ${showDecisionUrl
+        ? html`<label class="field">
+            <span class="field-label">Decision URL ${preset || decisionMode ? null : html`<span class="field-opt">(optional)</span>`}</span>
+            <input class="field-input field-input--mono" type="text" aria-label="Decision URL" placeholder="http://127.0.0.1:8080/v1/systemone" value=${decisionUrl} disabled=${!!savedKey} onInput=${(e) => edit(setDecisionUrl)(e.target.value)} />
+            ${decisionError ? html`<span class="field-error">${decisionError}</span>` : null}
+          </label>`
+        : null}
       <label class="field">
-        <span class="field-label">Name</span>
-        <input class="field-input" type="text" placeholder="e.g. vllm" value=${name} onInput=${(e) => setName(e.target.value)} disabled=${!!preset} />
-        ${name.trim() && !nameValid ? html`<span class="field-error">Name can't be a reserved word or contain "/".</span>` : null}
+        <span class="field-label decision-field-label">
+          <span>API key ${keyRequired ? null : html`<span class="field-opt">(optional)</span>`}</span>
+          ${decision?.keyUrl ? html`<a href=${decision.keyUrl} target="_blank" rel="noreferrer">Get a key</a>` : null}
+        </span>
+        <input
+          class="field-input"
+          type="password"
+          autocomplete="off"
+          aria-label="API key"
+          disabled=${!!savedKey}
+          placeholder=${keyRequired ? "Paste your key" : "Leave blank for a keyless local server"}
+          value=${apiKey}
+          onInput=${(e) => edit(setApiKey)(e.target.value)}
+        />
       </label>
+      ${decisionMode
+        ? html`<${DecisionModelField} preset=${preset} value=${model} probe=${probe} quiet=${check?.state === "fail"} onChange=${edit(setModel)} />`
+        : null}
       <label class="field">
-        <span class="field-label">Base URL</span>
-        <input class="field-input" type="text" placeholder="https://api.example.com" value=${url} onInput=${(e) => setUrl(e.target.value)} />
+        <span class="field-label">Backend name</span>
+        <input class="field-input" type="text" aria-label="Backend name" placeholder="e.g. vllm" value=${name} disabled=${!!savedKey} onInput=${(e) => edit(setName)(e.target.value)} />
+        ${nameError && name.trim() ? html`<span class="field-error">${nameError}</span>` : null}
       </label>
-      <label class="field">
-        <span class="field-label">API key <span class="field-opt">(optional)</span></span>
-        <input class="field-input" type="password" placeholder="Leave blank for a keyless local server" value=${apiKey} onInput=${(e) => setApiKey(e.target.value)} />
-      </label>
-      ${apiPathPrefix ? html`<p class="field-note">API path prefix: <code>${apiPathPrefix}</code></p>` : null}
-      ${needsRemoteApproval ? html`<p class="field-note">Adding this remote backend requires permission for cloud inference. You will be asked to confirm before it is saved. The API key is sent to this backend.</p>` : null}
+      ${consentAsk && !savedKey ? html`<p class="field-note">It runs off this machine: you'll be asked to allow cloud inference before it is saved.</p>` : null}
+
+      <${DecisionCheckLine} check=${check} model=${trimmedModel} />
+      ${error ? html`<div class="modal-error" role="alert">${error}</div>` : null}
       <${CloudInferenceConsentModal}
-        open=${showConsent}
-        providerLabel=${url.trim()}
-        onConfirm=${() => addBackend(true)}
-        onCancel=${() => setShowConsent(false)}
+        open=${!!consent}
+        modelName=${consent?.modelName}
+        providerLabel=${consent?.providerLabel}
+        onConfirm=${() => save(true)}
+        onCancel=${() => setConsent(null)}
       />
-      ${err ? html`<div class="modal-error">${err}</div>` : null}
       <div class="modal-actions">
-        <button type="button" class="btn-secondary" onClick=${onBack}>Back</button>
-        <button type="submit" class="btn-primary" disabled=${!canAdd}>${busy ? "Adding…" : "Add backend"}</button>
+        ${decisionMode && savedKey
+          ? html`<button type="button" class="btn-secondary" disabled=${!trimmedModel || check?.state === "checking"} onClick=${() => onVerify?.(savedKey, trimmedModel)}>Verify</button>`
+          : null}
+        <button type="submit" class="btn-primary" disabled=${phase === "saved" ? false : !canSave}>
+          ${phase === "saving" ? "Saving…" : phase === "saved" ? "Done" : decisionMode ? "Save and use" : "Add backend"}
+        </button>
       </div>
     </form>
   `;
@@ -987,7 +1190,7 @@ function RecentModels({ role, onPick }) {
           (entry) => html`<div class="picker-row" key=${entry.assignment}>
             <div class="picker-row-info">
               <div class="picker-row-name">
-                <${ProviderIcon} providerId=${entry.providerId} />
+                <${ProviderLogo} providerId=${entry.providerId} fallback=${html`<${Monogram} name=${entry.providerLabel} />`} />
                 <span>${entry.modelName}</span>
                 <span class="picker-row-meta"><span>${entry.providerLabel}</span></span>
               </div>
@@ -1002,11 +1205,14 @@ function RecentModels({ role, onPick }) {
 
 // ── Choose-model flow ───────────────────────────────────────────────────────
 
-export function ModelConfigModal({ role, capTitle, overview, sys, codexLoginFlow, codexRefreshing, codexRuntimeUpdate, claudeCodeRefreshing, onClose, onAddHttp, onPickHttp, onPickLocal, onPickAnthropic, onPickCodex, onPickClaudeCode, onRefreshClaudeCode, onPickTypeSafe, onConfigureTypeSafeKey, onPickRecent, onStartCodexLogin, onCancelCodexLogin, onRefreshCodex, onCodexRuntimeUpdate, onCancelCodexRuntimeUpdate, onDismissCodexRuntimeResult, onInstall, onUninstall, onCancelDownload }) {
-  // step.name: "grid" | "http" | "select" | "local" | "anthropic" | "codex" | "claude-code" | "typesafe"
-  // A decision role has one backend, so its picker opens on it directly.
+export function ModelConfigModal({ role, capTitle, overview, sys, codexLoginFlow, codexRefreshing, codexRuntimeUpdate, claudeCodeRefreshing, decisionChecks, onClose, onSaveBackend, onPickHttp, onPickLocal, onPickAnthropic, onPickCodex, onPickClaudeCode, onRefreshClaudeCode, onPickTypeSafe, onConfigureTypeSafeKey, onPickRecent, onVerifyDecision, onStartCodexLogin, onCancelCodexLogin, onRefreshCodex, onCodexRuntimeUpdate, onCancelCodexRuntimeUpdate, onDismissCodexRuntimeResult, onInstall, onUninstall, onCancelDownload }) {
+  // step.name: "grid" | "http" | "select" | "local" | "anthropic" | "codex" |
+  // "claude-code" | "typesafe", and for the Decision model "decision-backend"
+  // (one existing backend), "decision-add" (the providers with decisions) and
+  // "decision-new" (one provider's form).
   const [step, setStep] = useState({ name: "grid" });
   const toGrid = () => setStep({ name: "grid" });
+  const decisionPicker = isDecisionRole(role);
 
   const onSelect = (opt) => {
     if (opt.kind === "local") setStep({ name: "local" });
@@ -1020,14 +1226,69 @@ export function ModelConfigModal({ role, capTitle, overview, sys, codexLoginFlow
   };
 
   let body;
-  if (step.name === "grid") {
+  if (step.name === "grid" && decisionPicker) {
+    const chatOptions = overview.inference?.decisionChatModels === true
+      ? buildModelPickerOptions(overview, role).filter((opt) => opt.kind !== "typesafe")
+      : [];
+    body = html`
+      <${RecentModels} role=${role} onPick=${onPickRecent} />
+      <${DecisionProviderPicker}
+        overview=${overview}
+        chatGrid=${chatOptions.length ? html`<${BackendGrid} options=${chatOptions} mode="pick" onSelect=${onSelect} />` : null}
+        onPickBackend=${(key) => setStep({ name: "decision-backend", backendKey: key })}
+        onPickTypeSafe=${() => setStep({ name: "typesafe" })}
+        onAddProvider=${() => setStep({ name: "decision-add" })}
+      />
+    `;
+  } else if (step.name === "grid") {
     body = html`
       <${RecentModels} role=${role} onPick=${onPickRecent} />
       <${BackendGrid} options=${buildModelPickerOptions(overview, role)} mode="pick" onSelect=${onSelect} />
-
     `;
+  } else if (step.name === "decision-backend") {
+    body = html`<${DecisionModelPane}
+      key=${step.backendKey}
+      overview=${overview}
+      backendKey=${step.backendKey}
+      checks=${decisionChecks}
+      onVerify=${onVerifyDecision}
+      onSave=${onSaveBackend}
+      onBack=${toGrid}
+      onDone=${onClose}
+    />`;
+  } else if (step.name === "decision-add") {
+    body = html`<div class="picker-pane">
+      <div class="picker-pane-head">
+        <button type="button" class="btn-back" onClick=${toGrid}>← Back</button>
+        <div class="picker-pane-title">Add a provider</div>
+      </div>
+      <${ProviderGrid}
+        options=${decisionProviderOptions(overview)}
+        mode="decision"
+        onSelect=${(opt) => setStep({ name: "decision-new", preset: opt.preset ?? null })}
+      />
+    </div>`;
+  } else if (step.name === "decision-new") {
+    body = html`<${BackendForm}
+      key=${step.preset?.id ?? "other"}
+      overview=${overview}
+      preset=${step.preset}
+      mode="decision"
+      checks=${decisionChecks}
+      onVerify=${onVerifyDecision}
+      onSave=${onSaveBackend}
+      onBack=${() => setStep({ name: "decision-add" })}
+      onDone=${onClose}
+    />`;
   } else if (step.name === "http") {
-    body = html`<${HttpBackendForm} preset=${step.preset} submit=${onAddHttp} onSuccess=${(key) => setStep({ name: "select", backendKey: key })} onBack=${toGrid} allowRemoteInference=${overview.inference?.allowRemoteInference === true} />`;
+    body = html`<${BackendForm}
+      overview=${overview}
+      preset=${step.preset}
+      mode="pick"
+      onSave=${onSaveBackend}
+      onSuccess=${(key) => setStep({ name: "select", backendKey: key })}
+      onBack=${toGrid}
+    />`;
   } else if (step.name === "select") {
     body = html`<${BackendModelSelect} backendKey=${step.backendKey} role=${role} overview=${overview} onPick=${onPickHttp} onBack=${toGrid} />`;
   } else if (step.name === "local") {
@@ -1169,7 +1430,7 @@ export function CodexConfigModal({ overview, loginFlow, refreshing, runtimeUpdat
   `;
 }
 
-export function AddBackendModal({ overview, onClose, onAddHttp, onConfigureAnthropic, onConfigureCodex, onConfigureClaudeCode }) {
+export function AddBackendModal({ overview, onClose, onSaveBackend, onConfigureAnthropic, onConfigureCodex, onConfigureClaudeCode }) {
   const [step, setStep] = useState({ name: "grid" });
 
   const onSelect = (opt) => {
@@ -1183,19 +1444,26 @@ export function AddBackendModal({ overview, onClose, onAddHttp, onConfigureAnthr
       onConfigureClaudeCode();
       onClose();
     } else if (opt.kind === "add-custom") {
-      setStep({ name: "http", preset: null });
+      setStep({ name: "form", preset: null });
     } else if (opt.kind === "preset") {
-      setStep({ name: "http", preset: opt.preset });
+      setStep({ name: "form", preset: opt.preset });
     }
   };
 
   const body =
     step.name === "grid"
-      ? html`<${BackendGrid} options=${buildAddBackendOptions(overview)} mode="configure" onSelect=${onSelect} />`
-      : html`<${HttpBackendForm} preset=${step.preset} submit=${onAddHttp} onSuccess=${() => onClose()} onBack=${() => setStep({ name: "grid" })} allowRemoteInference=${overview.inference?.allowRemoteInference === true} />`;
+      ? html`<${ProviderGrid} options=${buildAddBackendOptions(overview)} mode="configure" onSelect=${onSelect} />`
+      : html`<${BackendForm}
+          overview=${overview}
+          preset=${step.preset}
+          mode="configure"
+          onSave=${onSaveBackend}
+          onSuccess=${() => onClose()}
+          onBack=${() => setStep({ name: "grid" })}
+        />`;
 
   return html`
-    <${Modal} open onClose=${onClose} title="Add a backend" subtitle=${step.name === "grid" ? "Pick a provider or point Omnesis at any OpenAI-compatible server." : null} size="md">
+    <${Modal} open onClose=${onClose} title="Add a backend" subtitle=${step.name === "grid" ? "Pick a provider, or point Omnesis at a server of your own." : null} size="md">
       ${body}
     <//>
   `;

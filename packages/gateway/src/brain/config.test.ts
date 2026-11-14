@@ -79,6 +79,25 @@ describe("resolveBrainSettings", () => {
       provenanceRecheck: { enabled: true },
       mergeAdjudication: { enabled: true },
       tasks: { autoApply: true, proposeGate: "shadow" },
+      thresholds: {
+        worthGate: 1.08,
+        discovery: 0.25,
+        impact: 0.25,
+        reviewNow: 0.75,
+        reviewDormant: 0.25,
+        recordBelongs: 0.81,
+        documentRecordValue: 1.5,
+        personRecordValue: 1.5,
+        personWithdrawal: 1.5,
+        profileDistillation: 1.5,
+        wikiRepair: 1.5,
+        outcomeIntegrity: 1.5,
+        outcomeDeadline: 1.5,
+        sameTask: 2,
+        taskNoteNew: 1,
+        taskAdopt: 1.5,
+        taskWithhold: 0.5,
+      },
       interest: { enabled: true, lookup: { perPolarity: 4, cosineFloor: 0.55, overlapFloor: 0.2 } },
       observations: {
         minConsequence: 2,
@@ -150,6 +169,24 @@ describe("resolveBrainSettings", () => {
     });
     expect(r.conversationMaxDeferMs).toBe(60 * 60 * 1000);
     expect(r.documentMaxDeferMs).toBe(30 * 60 * 1000);
+  });
+
+  it("resolves each decision threshold on its own, the Jev defaults filling the rest", () => {
+    expect(resolveBrainSettings(undefined).thresholds).toEqual(BRAIN_DEFAULTS.thresholds);
+    expect(BRAIN_DEFAULTS.thresholds).toMatchObject({
+      worthGate: 1.08,
+      recordBelongs: 0.81,
+      sameTask: 2,
+      taskAdopt: 1.5,
+    });
+    const resolved = resolveBrainSettings({ thresholds: { worthGate: 2, taskWithhold: 0.2 } });
+    expect(resolved.thresholds).toEqual({
+      ...BRAIN_DEFAULTS.thresholds,
+      worthGate: 2,
+      taskWithhold: 0.2,
+    });
+    // A threshold of 0 is a value, not an absence.
+    expect(resolveBrainSettings({ thresholds: { discovery: 0 } }).thresholds.discovery).toBe(0);
   });
 
   it("partial decay overrides fall back per-field", () => {

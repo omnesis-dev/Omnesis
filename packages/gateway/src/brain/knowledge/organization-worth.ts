@@ -4,12 +4,7 @@
 import { cognitionBudgetVerdict } from "../cognition/budget.js";
 import { decisionPayloadErasureGeneration } from "../decision-payload.js";
 import { knowledgeSelectionReads } from "./selection-reads.js";
-import {
-  DISCOVERY_WORTH_THRESHOLD,
-  discoveryDecisionState,
-  judgeKnowledge,
-  knowledgeRubricVersion,
-} from "./decision.js";
+import { discoveryDecisionState, judgeKnowledge, knowledgeRubricVersion } from "./decision.js";
 import { knowledgeHash } from "./storage-validation.js";
 import type { KnowledgeEngineDeps } from "./engine.js";
 
@@ -66,13 +61,14 @@ export async function lowWorthOrganizationSources(
     const erasureGeneration = decisionPayloadErasureGeneration(deps.db);
     const current = source(id);
     if (!current || current.sourceRevision !== revision) continue;
+    const threshold = deps.getSettings().thresholds.discovery;
     let score: number | null | undefined = currentDiscoveryVerdict(deps.db, id, current);
     if (score === undefined) {
       if (!deps.decisions.getDecision?.()) continue;
       if (cognitionBudgetVerdict(deps.db, deps.getSettings().budget, deps.clock()).exhausted) break;
       score = await judgeKnowledge(deps.decisions, "discovery", discoveryDecisionState(current), {
         nodeId: `source:${id}`,
-        threshold: DISCOVERY_WORTH_THRESHOLD,
+        threshold,
         payloadCapture:
           (await knowledgeSelectionReads(deps).knowledgeDecisionPayloadSubjects(
             { sourceIds: [id], nodeIds: [] },
@@ -80,7 +76,7 @@ export async function lowWorthOrganizationSources(
           )) ?? undefined,
       });
     }
-    if (score !== null && score < DISCOVERY_WORTH_THRESHOLD) low[id] = revision;
+    if (score !== null && score < threshold) low[id] = revision;
   }
   return low;
 }

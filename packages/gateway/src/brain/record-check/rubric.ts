@@ -15,6 +15,7 @@
  * the threshold changes.
  */
 
+import { BRAIN_DEFAULTS, type BrainThresholds } from "../config.js";
 import { PERSON_PROFILE_UTILITY_GUIDANCE } from "./person-profile-utility.js";
 import type { WikiRecordContext } from "./wiki-context.js";
 import type { DecisionQuestion } from "@omnesis/core";
@@ -24,40 +25,96 @@ import type { OutcomeRecordContext } from "./outcome-context.js";
 
 export const RECORD_CHECK_RUBRIC_VERSION = "record-value-v14";
 
-/** Threshold/question changes must bump the rubric; model identity is exposed by the backend. */
-export function recordCheckPolicyKey(mode: string, modelId: string | null): string {
-  return JSON.stringify([RECORD_CHECK_RUBRIC_VERSION, mode, modelId]);
+/** The cut-offs a record check compares scores with (`brain.thresholds`). */
+export type RecordCheckThresholds = Pick<
+  BrainThresholds,
+  | "recordBelongs"
+  | "documentRecordValue"
+  | "personRecordValue"
+  | "personWithdrawal"
+  | "profileDistillation"
+  | "wikiRepair"
+  | "outcomeIntegrity"
+  | "outcomeDeadline"
+>;
+
+/**
+ * The policy key's parts: version, mode and model, then the thresholds named,
+ * only when any differs from its default. Keys reached at the defaults are
+ * the ones stored before thresholds were settings, so they stay valid.
+ */
+function policyKey(
+  version: string,
+  mode: string,
+  modelId: string | null,
+  thresholds: RecordCheckThresholds,
+  names: ReadonlyArray<keyof RecordCheckThresholds>,
+): string {
+  const values = names.map((name) => thresholds[name]);
+  const moved = names.some((name) => thresholds[name] !== BRAIN_DEFAULTS.thresholds[name]);
+  return JSON.stringify([version, mode, modelId, ...(moved ? [values] : [])]);
 }
 
-/** Bump for outcome questions, thresholds or evidence semantics, not other record types. */
+/**
+ * The policy a record-check verdict was reached under. A question change bumps
+ * the rubric; a moved threshold shows here, and model identity is exposed by
+ * the backend.
+ */
+export function recordCheckPolicyKey(
+  mode: string,
+  modelId: string | null,
+  thresholds: RecordCheckThresholds,
+): string {
+  return policyKey(RECORD_CHECK_RUBRIC_VERSION, mode, modelId, thresholds, [
+    "recordBelongs",
+    "wikiRepair",
+  ]);
+}
+
+/** Whether `policy` is a record-check policy enforced for `modelId`, whatever its thresholds. */
+export function isEnforcedRecordCheckPolicy(policy: string, modelId: string | null): boolean {
+  try {
+    const parsed: unknown = JSON.parse(policy);
+    return (
+      Array.isArray(parsed) &&
+      parsed[0] === RECORD_CHECK_RUBRIC_VERSION &&
+      parsed[1] === "enforce" &&
+      parsed[2] === modelId
+    );
+  } catch {
+    return false;
+  }
+}
+
+/** Bump for outcome questions or evidence semantics, not other record types. */
 export const OUTCOME_RECORD_POLICY_VERSION = "record-value-v13";
 
-export function outcomeRecordPolicyKey(mode: string, modelId: string | null): string {
-  return JSON.stringify([OUTCOME_RECORD_POLICY_VERSION, mode, modelId]);
+/** The policy an outcome's assessment was reached under; only outcome thresholds take part. */
+export function outcomeRecordPolicyKey(
+  mode: string,
+  modelId: string | null,
+  thresholds: RecordCheckThresholds,
+): string {
+  return policyKey(OUTCOME_RECORD_POLICY_VERSION, mode, modelId, thresholds, [
+    "recordBelongs",
+    "outcomeIntegrity",
+    "outcomeDeadline",
+  ]);
 }
 
 /** Spend mechanism the check's decision-model tokens are recorded under. */
 export const RECORD_CHECK_SPEND_MECHANISM = "record-check";
 
-/** Keep when the score is at or above this (levels run 0–3). */
-export const RECORD_BELONGS_THRESHOLD = 0.81;
-
-/** Document notes must add meaningful value; the original remains retrievable. */
-export const DOCUMENT_RECORD_VALUE_THRESHOLD = 1.5;
-
-/** Person profiles reserve their limited space for meaningfully useful facts. */
-export const PERSON_RECORD_VALUE_THRESHOLD = 1.5;
-
-export function recordCheckThreshold(type: RecordType): number {
-  if (type === "doc-fact") return DOCUMENT_RECORD_VALUE_THRESHOLD;
-  if (type === "person-fact") return PERSON_RECORD_VALUE_THRESHOLD;
-  return RECORD_BELONGS_THRESHOLD;
+/** The threshold a record of `type` must reach on its primary question. */
+export function recordCheckThreshold(type: RecordType, thresholds: RecordCheckThresholds): number {
+  if (type === "doc-fact") return thresholds.documentRecordValue;
+  if (type === "person-fact") return thresholds.personRecordValue;
+  return thresholds.recordBelongs;
 }
 
 export const RECORD_BELONGS_QUESTION_ID = "belongs";
 
 export const OUTCOME_INTEGRITY_QUESTION_ID = "transition_integrity";
-export const OUTCOME_INTEGRITY_THRESHOLD = 1.5;
 
 /** Relevance cannot compensate for a destructive edit to an existing outcome. */
 export const OUTCOME_INTEGRITY_QUESTIONS: Readonly<Record<string, DecisionQuestion>> = {

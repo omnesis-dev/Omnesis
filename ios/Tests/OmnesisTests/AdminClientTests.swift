@@ -640,7 +640,7 @@ final class AdminClientTests: XCTestCase {
     }
 
     func testModelOverviewDecodesProviderPresets() async throws {
-        // The add-backend grid reads `presets`: id/name/defaultUrl always,
+        // The add-backend grid reads `presets`: id/name always, defaultUrl,
         // apiPathPrefix + knownModels + capabilities when present.
         let session = MockSession()
         session.responder = { [weak self] req in
@@ -803,12 +803,12 @@ final class AdminClientTests: XCTestCase {
             self!.makeResponse(status: 200, body: "{\"ok\":true}", url: req.url!)
         }
         let client = AdminClient(baseURL: base, token: "omn_t", session: session)
-        try await client.addHttpBackend(
+        try await client.addHttpBackend(NewHttpBackend(
             key: "my-vllm",
             url: "https://backend.example/v1",
             apiKey: "sk-example-secret",
             apiPathPrefix: "/v1beta/openai"
-        )
+        ))
         XCTAssertEqual(session.requests[0].httpMethod, "PATCH")
         XCTAssertTrue(try XCTUnwrap(session.requests[0].url?.absoluteString.hasSuffix("/admin/config")))
         let decoded = try JSONSerialization.jsonObject(with: XCTUnwrap(session.requests[0].httpBody)) as? [String: Any]
@@ -826,7 +826,7 @@ final class AdminClientTests: XCTestCase {
             self!.makeResponse(status: 200, body: "{\"ok\":true}", url: req.url!)
         }
         let client = AdminClient(baseURL: base, token: "omn_t", session: session)
-        try await client.addHttpBackend(key: "local-srv", url: "http://192.0.2.5:8000/v1")
+        try await client.addHttpBackend(NewHttpBackend(key: "local-srv", url: "http://192.0.2.5:8000/v1"))
         let decoded = try JSONSerialization.jsonObject(with: XCTUnwrap(session.requests[0].httpBody)) as? [String: Any]
         let cfg = ((decoded?["inference"] as? [String: Any])?["backends"] as? [String: Any])?["local-srv"] as? [String: Any]
         // A keyless local server sends no apiKey / apiPathPrefix keys at all.

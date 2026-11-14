@@ -6,7 +6,6 @@ import type { DecisionQuestion } from "@omnesis/core";
 
 export const PERSON_WITHDRAWAL_VERSION = "person-withdrawal-v2";
 export const PERSON_WITHDRAWAL_QUESTION = "withdrawal_preservation";
-export const PERSON_WITHDRAWAL_THRESHOLD = 1.5;
 export const PERSON_WITHDRAWAL_QUESTIONS: Readonly<Record<string, DecisionQuestion>> = {
   [PERSON_WITHDRAWAL_QUESTION]: {
     type: "score",

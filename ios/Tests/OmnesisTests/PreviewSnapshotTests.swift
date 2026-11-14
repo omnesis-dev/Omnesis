@@ -6916,6 +6916,243 @@ final class PreviewSnapshotTests: XCTestCase {
         snapshot(view, name: "111b-models-loading")
     }
 
+    /// Every Decision model screen in one test, so one filtered run renders
+    /// the whole flow: the Models list's Decision card, the sheet in each
+    /// verify state, the provider list, and each kind of form.
+    func testDecisionModelScreens() {
+        let store = AppStore.preview()
+        decisionCardAndProviderSnapshots(store)
+        decisionSheetSnapshots(store)
+        decisionFormSnapshots(store)
+        decisionFormErrorSnapshots(store)
+        decisionUnifiedBackendSnapshots(store)
+    }
+
+    private static let decisionTallCanvas = CGSize(width: 393, height: 1100)
+
+    private func decisionCardAndProviderSnapshots(_ store: AppStore) {
+        let tall = Self.decisionTallCanvas
+        snapshot(
+            NavigationStack {
+                ModelsContent(overview: DecisionPreviewData.localOverview())
+                    .background(Theme.bgPrimary.ignoresSafeArea())
+                    .navigationTitle("Models")
+                    .navigationBarTitleDisplayMode(.inline)
+            }
+            .environment(store),
+            name: "111c-models-decision-card",
+            size: tall
+        )
+        snapshot(
+            NavigationStack { DecisionProviderList(overview: DecisionPreviewData.hostedOverview()) }
+                .environment(store),
+            name: "111j-decision-providers",
+            size: tall
+        )
+    }
+
+    private func decisionSheetSnapshots(_ store: AppStore) {
+        snapshot(
+            DecisionModelSheet(
+                overview: DecisionPreviewData.typesafeOverview(),
+                previewVerify: DecisionVerifyResult(ok: true, answeredBy: "jev-1.14.0", latencyMs: 240)
+            )
+            .environment(store),
+            name: "111d-decision-typesafe-verified"
+        )
+        snapshot(
+            DecisionModelSheet(
+                overview: DecisionPreviewData.localOverview(),
+                previewVerify: DecisionVerifyResult(
+                    ok: false,
+                    reason: "Nothing answered at http://127.0.0.1:11435/v1/systemone. Is the server running? (fetch failed)"
+                )
+            )
+            .environment(store),
+            name: "111e-decision-local-verify-failed"
+        )
+        snapshot(
+            DecisionModelSheet(
+                overview: DecisionPreviewData.hostedOverview(),
+                previewVerify: DecisionVerifyResult(ok: true, latencyMs: 310)
+            )
+            .environment(store),
+            name: "111g-decision-hosted-verified"
+        )
+        snapshot(
+            DecisionModelSheet(overview: DecisionPreviewData.unconfiguredOverview(), previewVerify: nil).environment(store),
+            name: "111i-decision-not-set-up"
+        )
+    }
+
+    private func decisionFormSnapshots(_ store: AppStore) {
+        let tall = Self.decisionTallCanvas
+        snapshot(
+            NavigationStack {
+                DecisionBackendForm(choice: .preset(DecisionPreviewData.ollama), overview: DecisionPreviewData.typesafeOverview())
+            }
+            .environment(store),
+            name: "111k-decision-form-local",
+            size: tall
+        )
+        snapshot(
+            NavigationStack {
+                DecisionBackendForm(
+                    choice: .preset(DecisionPreviewData.cloudflare),
+                    overview: DecisionPreviewData.localOverview(),
+                    previewParams: ["account": "4f1c2a9e7b3d4c5e8a6f0b1c2d3e4f5a"],
+                    previewApiKey: "example-key"
+                )
+            }
+            .environment(store),
+            name: "111l-decision-form-cloud-url-params",
+            size: tall
+        )
+        snapshot(
+            NavigationStack {
+                DecisionBackendForm(
+                    choice: .existing(DecisionPreviewData.existingOllaya),
+                    overview: DecisionPreviewData.localOverview(),
+                    previewProbed: ["kev", "winnow:e4b"]
+                )
+            }
+            .environment(store),
+            name: "111m-decision-form-existing-local",
+            size: tall
+        )
+    }
+
+    private func decisionFormErrorSnapshots(_ store: AppStore) {
+        snapshot(
+            NavigationStack {
+                DecisionBackendForm(
+                    choice: .preset(DecisionPreviewData.typesafe),
+                    overview: DecisionPreviewData.typesafeOverview(),
+                    previewTypeSafeListed: true
+                )
+            }
+            .environment(store),
+            name: "111n-decision-form-typesafe"
+        )
+        snapshot(
+            NavigationStack {
+                DecisionBackendForm(
+                    choice: .preset(DecisionPreviewData.openRouter),
+                    overview: DecisionPreviewData.unconfiguredOverview(),
+                    previewError: "Could not save: inference.backends.openrouter.decision.url: Invalid url"
+                )
+            }
+            .environment(store),
+            name: "111o-decision-form-save-error",
+            size: Self.decisionTallCanvas
+        )
+        snapshot(
+            NavigationStack {
+                DecisionBackendForm(
+                    choice: .custom,
+                    overview: DecisionPreviewData.typesafeOverview(),
+                    previewURL: "http://127.0.0.1:8080/v1/systemone",
+                    previewModel: "",
+                    previewProbed: ["studio-decider-small", "studio-decider-large"]
+                )
+            }
+            .environment(store),
+            name: "111p-decision-form-other-server",
+            size: Self.decisionTallCanvas
+        )
+        snapshot(
+            NavigationStack {
+                DecisionBackendForm(
+                    choice: .existing(DecisionPreviewData.existingOpenRouterUnreadableKey),
+                    overview: DecisionPreviewData.hostedOverview()
+                )
+            }
+            .environment(store),
+            name: "111q-decision-form-unreadable-key",
+            size: Self.decisionTallCanvas
+        )
+        snapshot(
+            NavigationStack {
+                DecisionBackendForm(
+                    choice: .existing(DecisionPreviewData.existingOllaya),
+                    overview: DecisionPreviewData.localOverview(),
+                    previewProbeNote: "Could not reach http://127.0.0.1:11435/v1/systemone: fetch failed"
+                )
+            }
+            .environment(store),
+            name: "111r-decision-form-probe-failed",
+            size: Self.decisionTallCanvas
+        )
+    }
+
+    /// One backend per provider: adding decisions to a backend with the key
+    /// it has, a new provider with both APIs, a decision-only provider, and a
+    /// chat backend whose decisions can be turned off.
+    private func decisionUnifiedBackendSnapshots(_ store: AppStore) {
+        let tall = Self.decisionTallCanvas
+        snapshot(
+            NavigationStack {
+                DecisionProviderList(overview: DecisionPreviewData.typesafeOverview())
+            }
+            .environment(store),
+            name: "111da-decision-providers-existing-key",
+            size: tall
+        )
+        snapshot(
+            NavigationStack {
+                DecisionBackendForm(
+                    choice: .enable(DecisionPreviewData.fireworksForDecisions),
+                    overview: DecisionPreviewData.typesafeOverview()
+                )
+            }
+            .environment(store),
+            name: "111db-decision-form-existing-key",
+            size: tall
+        )
+        snapshot(
+            NavigationStack {
+                DecisionBackendForm(
+                    choice: .enable(DecisionPreviewData.openRouterLabForDecisions),
+                    overview: DecisionPreviewData.typesafeOverview()
+                )
+            }
+            .environment(store),
+            name: "111df-decision-form-existing-backend-needs-key",
+            size: tall
+        )
+        snapshot(
+            NavigationStack {
+                DecisionBackendForm(
+                    choice: .preset(DecisionPreviewData.openRouter),
+                    overview: DecisionPreviewData.typesafeOverview(),
+                    previewApiKey: "example-key"
+                )
+            }
+            .environment(store),
+            name: "111dc-decision-form-both-apis",
+            size: tall
+        )
+        snapshot(
+            NavigationStack {
+                DecisionBackendForm(choice: .preset(DecisionPreviewData.fastino), overview: DecisionPreviewData.typesafeOverview())
+            }
+            .environment(store),
+            name: "111dd-decision-form-decision-only",
+            size: tall
+        )
+        snapshot(
+            NavigationStack {
+                DecisionBackendForm(
+                    choice: .existing(DecisionPreviewData.existingOpenRouter),
+                    overview: DecisionPreviewData.hostedOverview()
+                )
+            }
+            .environment(store),
+            name: "111de-decision-form-chat-backend",
+            size: tall
+        )
+    }
+
     func testModelBehaviorEditorSavedOverrides() {
         let view = ModelBehaviorEditor(
             assignment: "openai/gpt-example-frontier",
@@ -7961,10 +8198,22 @@ final class PreviewSnapshotTests: XCTestCase {
     }
 
     func testAddBackendSheet() {
-        // The add-backend preset grid (first step): one card per provider preset
-        // plus the "Custom" card.
-        let view = AddBackendSheet(presets: BackendsPreviewData.presets())
+        // The add-backend preset grid (first step): one card per provider in
+        // `presets` — those with decision models say so — plus the "Custom" card.
+        let view = AddBackendSheet(presets: DecisionPreviewData.presets)
         snapshot(view.environment(AppStore.preview()), name: "112c-add-backend-preset-grid")
+    }
+
+    func testBackendsServingChatAndDecisionModels() {
+        // One list: each row says whether it serves chat models, decision
+        // models or both; a decision-only row has no Test button.
+        let view = NavigationStack {
+            BackendsContent(backends: DecisionPreviewData.backendRows(), presets: DecisionPreviewData.presets)
+                .background(Theme.bgPrimary.ignoresSafeArea())
+                .navigationTitle("Backends")
+                .navigationBarTitleDisplayMode(.inline)
+        }
+        snapshot(view.environment(AppStore.preview()), name: "112z-backends-chat-and-decision", size: CGSize(width: 393, height: 1400))
     }
 
     func testBackendsWithProviderCredentials() {

@@ -102,6 +102,8 @@ export interface StatusRoutesDeps {
   vetAssignment?: (
     role: CapabilityRole,
     value: AssignmentValue,
+    /** The whole config write, so a check can tell what else it changes. */
+    body: unknown,
   ) => Promise<{ ok: true } | { ok: false; reason: string }>;
   /**
    * The gateway's whole on-disk footprint, by store. When omitted, `/status`
@@ -158,7 +160,7 @@ export function mountStatusRoutes(app: RouteApp, deps: StatusRoutesDeps): void {
     for (const [role, value] of Object.entries(assignments as Record<string, unknown>)) {
       if (!CAPABILITY_ROLES.includes(role as CapabilityRole)) continue;
       if (value !== null && typeof value !== "string") continue;
-      const verdict = await vetAssignment(role as CapabilityRole, value);
+      const verdict = await vetAssignment(role as CapabilityRole, value, body);
       if (!verdict.ok) {
         throw new ValidationError(verdict.reason, [
           { path: `/inference/assignments/${role}`, message: verdict.reason },
