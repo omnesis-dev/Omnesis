@@ -20,7 +20,7 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { mkdirSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 
 import {
@@ -52,6 +52,7 @@ const SOURCE_ID = "synthetic:search-eval";
 const PASSAGE_DATE = "2020-01-01T00:00:00.000Z";
 const PUSH_BATCH = 500;
 const QUERY_CONCURRENCY = 4;
+const REQUEST_ATTEMPTS = 6;
 /** Recall is measured over the first hundred results; the default pool is 50. */
 const RESULT_DEPTH = 100;
 const GATEWAY_CONFIG = { search: { params: { candidateLimit: RESULT_DEPTH } } };
@@ -179,8 +180,24 @@ async function main(): Promise<void> {
   });
 
   const stop = async (): Promise<void> => {
-    if (process.env.SEARCH_EVAL_KEEP === "1") return;
     await harness.destroy();
+  };
+  /**
+   * One request to the gateway. A dropped connection is retried: a run is
+   * hours of work, and a gateway that is briefly not accepting must not end
+   * it. A gateway that has gone away fails every attempt.
+   */
+  const request = async <T>(path: string, init?: RequestInit): Promise<T> => {
+    for (let attempt = 1; ; attempt += 1) {
+      try {
+        return await harness.gatewayJson<T>(path, init);
+      } catch (err) {
+        const dropped = err instanceof TypeError && err.message === "fetch failed";
+        if (!dropped || attempt === REQUEST_ATTEMPTS) throw err;
+        say(`Request to ${path} failed (${String(err.cause ?? err.message)}); retrying`);
+        await new Promise((resolve) => setTimeout(resolve, 10_000));
+      }
+    }
   };
   process.once("SIGINT", () => void stop().finally(() => process.exit(130)));
   process.once("SIGTERM", () => void stop().finally(() => process.exit(143)));
@@ -228,7 +245,7 @@ async function main(): Promise<void> {
     let stats: IndexStats = {};
     let lastReport = 0;
     for (;;) {
-      stats = await harness.gatewayJson<IndexStats>("/index/stats");
+      stats = await request<IndexStats>("/index/stats");
       const indexed = stats.totalIndexed ?? 0;
       const semanticReady = mode === "lexical" || stats.semanticSearch?.state === "ready";
       if (indexed >= pushed && semanticReady) break;
@@ -268,7 +285,7 @@ async function main(): Promise<void> {
           );
           if (relevant.size === 0) continue;
           const sent = Date.now();
-          const res = await harness.gatewayJson<SearchResponse>("/search", {
+          const res = await request<SearchResponse>("/search", {
             method: "POST",
             body: JSON.stringify({ text: query.text, limit: RESULT_DEPTH }),
           });
@@ -338,6 +355,15 @@ async function main(): Promise<void> {
         `${summary.macro.recall100.toFixed(4)}  MRR@10 ${summary.macro.mrr10.toFixed(4)}`,
     );
     say(`Wrote evals/search/results/${name}.json`);
+  } catch (err) {
+    // The gateway's log goes with its temp directory; keep it for the post-mortem.
+    const log = harness.getGatewayLogPath();
+    if (existsSync(log)) {
+      const kept = join(dataDir, `failed-${name}.gateway.log`);
+      copyFileSync(log, kept);
+      say(`The run failed; the gateway log is kept at ${kept}`);
+    }
+    throw err;
   } finally {
     await stop();
   }
