@@ -37,6 +37,9 @@ import {
 } from "@omnesis/agent";
 import {
   codexPaths,
+  atomicWriteFile,
+  ensurePrivateDirs,
+  inspectWindowsPrivatePaths,
   execWindowsJob,
   nodeCommandInvocation,
   resolveNpmInvocation,
@@ -187,7 +190,7 @@ export class CodexRuntimeInstaller {
     try {
       await this.recoverActive();
       await mkdir(stagingDir, { recursive: false, mode: 0o700 });
-      await chmod(stagingDir, 0o700);
+      await ensurePrivateDirs([stagingDir]);
       await writeFile(
         join(stagingDir, "package.json"),
         `${JSON.stringify(
@@ -211,6 +214,7 @@ export class CodexRuntimeInstaller {
       const npmCache = join(stagingDir, ".npm-cache");
       await mkdir(npmHome, { mode: 0o700 });
       await mkdir(npmCache, { mode: 0o700 });
+      if (process.platform === "win32") await ensurePrivateDirs([npmHome, npmCache]);
       onPhase?.("downloading");
       const npm = await resolveNpmInvocation(
         ["ci", "--prefix", stagingDir, "--ignore-scripts", "--omit=dev", "--no-audit", "--no-fund"],
@@ -400,19 +404,15 @@ export class CodexRuntimeInstaller {
   }
 
   private async ensureStore(): Promise<void> {
-    for (const path of [
-      this.paths.runtimeStore,
-      this.paths.runtimeVersions,
-      this.paths.runtimeStaging,
-    ]) {
+    const paths = [this.paths.runtimeStore, this.paths.runtimeVersions, this.paths.runtimeStaging];
+    for (const path of paths) {
       const before = await lstatOrNull(path);
       if (before?.isSymbolicLink())
         throw new Error(`Refusing symlinked Codex runtime path ${path}.`);
       if (before && !before.isDirectory())
         throw new Error(`Codex runtime path ${path} is not a directory.`);
-      await mkdir(path, { recursive: true, mode: 0o700 });
-      await chmod(path, 0o700);
     }
+    await ensurePrivateDirs(paths);
   }
 
   private async acquireLock(id: string): Promise<void> {
@@ -429,7 +429,7 @@ export class CodexRuntimeInstaller {
           if (held) held.compromised = err;
         },
       });
-      await chmod(this.paths.runtimeUpdateLock, 0o700);
+      await ensurePrivateDirs([this.paths.runtimeUpdateLock]);
       held = { release, compromised: null };
       this.heldLocks.set(id, held);
     } catch (err) {
@@ -488,6 +488,12 @@ export class CodexRuntimeInstaller {
     const pointerId = this.id();
     if (!isSafeOperationId(pointerId)) {
       throw new Error("Codex runtime pointer id contains unsafe path characters.");
+    }
+    if (process.platform === "win32") {
+      await atomicWriteFile(this.paths.runtimeCurrent, `${JSON.stringify(pointer, null, 2)}\n`, {
+        mode: 0o600,
+      });
+      return;
     }
     const temporary = join(this.paths.runtimeStore, `.current-${pointerId}.tmp`);
     const handle = await open(temporary, "wx", 0o600);
@@ -709,7 +715,11 @@ async function assertRealPathWithin(root: string, candidate: string): Promise<vo
   throw new Error(`Codex runtime path escapes its owner-only store: ${candidate}.`);
 }
 
-async function hardenRuntimeTree(root: string): Promise<void> {
+type RuntimePrivatePath = Parameters<typeof inspectWindowsPrivatePaths>[0][number];
+
+async function hardenRuntimeTree(root: string, windowsPaths?: RuntimePrivatePath[]): Promise<void> {
+  const paths = windowsPaths ?? [];
+  if (process.platform === "win32") paths.push({ path: root, kind: "directory" });
   const entries = await readdir(root, { withFileTypes: true });
   for (const entry of entries) {
     const path = join(root, entry.name);
@@ -717,15 +727,27 @@ async function hardenRuntimeTree(root: string): Promise<void> {
       throw new Error(`Installed Codex runtime contains an unexpected symlink: ${path}.`);
     }
     if (entry.isDirectory()) {
-      await chmod(path, 0o700);
-      await hardenRuntimeTree(path);
+      if (process.platform !== "win32") await chmod(path, 0o700);
+      await hardenRuntimeTree(path, paths);
       continue;
     }
     if (!entry.isFile()) {
       throw new Error(`Installed Codex runtime contains an unsupported filesystem entry: ${path}.`);
     }
-    const fileStat = await lstat(path);
-    await chmod(path, (fileStat.mode & 0o111) === 0 ? 0o600 : 0o700);
+    if (process.platform === "win32") paths.push({ path, kind: "file" });
+    else {
+      const fileStat = await lstat(path);
+      await chmod(path, (fileStat.mode & 0o111) === 0 ? 0o600 : 0o700);
+    }
   }
-  await chmod(root, 0o700);
+  if (process.platform !== "win32") await chmod(root, 0o700);
+  else if (windowsPaths === undefined) {
+    // The native inspector accepts bounded batches and pins each entry before repairing it.
+    for (let offset = 0; offset < paths.length; offset += 5000) {
+      const batch = paths.slice(offset, offset + 5000);
+      const results = await inspectWindowsPrivatePaths(batch, { repair: true, protect: true });
+      if (results.length !== batch.length || results.some((entry) => !entry.private))
+        throw new Error("Installed Codex runtime access controls are not private.");
+    }
+  }
 }

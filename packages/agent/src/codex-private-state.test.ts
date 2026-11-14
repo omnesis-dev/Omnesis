@@ -53,8 +53,10 @@ it("secures roots before bounded preorder inspection and preserves existing byte
     native.inspect.mock.invocationCallOrder[0]!,
   );
   const batches = native.inspect.mock.calls.map(([paths, options]) => {
-    expect(options).toEqual({ repair: true, protect: true });
-    return paths as Array<{ path: string; kind: string }>;
+    const batch = paths as Array<{ path: string; kind: string }>;
+    expect(batch.every((entry) => entry.kind === batch[0]!.kind)).toBe(true);
+    expect(options).toEqual({ repair: true, protect: batch[0]!.kind === "directory" });
+    return batch;
   });
   expect(batches.length).toBeGreaterThan(1);
   expect(batches.every((paths) => paths.length <= 512)).toBe(true);

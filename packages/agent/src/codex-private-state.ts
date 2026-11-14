@@ -54,9 +54,19 @@ export async function prepareCodexPrivateState(
     bytes = 0;
   const flush = async (): Promise<void> => {
     if (paths.length === 0) return;
-    const result = await inspectWindowsPrivatePaths(paths, { repair: true, protect: true });
-    if (result.length !== paths.length || result.some((status) => !status.private))
-      throw new Error("Codex runtime state could not be verified as private");
+    // Seal directories before inspecting files so future third-party writes
+    // inherit private access. Codex keeps SQLite/log handles open: effectively
+    // private inherited file ACLs are sufficient and need no DACL mutation.
+    for (const kind of ["directory", "file"] as const) {
+      const batch = paths.filter((entry) => entry.kind === kind);
+      if (batch.length === 0) continue;
+      const result = await inspectWindowsPrivatePaths(batch, {
+        repair: true,
+        protect: kind === "directory",
+      });
+      if (result.length !== batch.length || result.some((status) => !status.private))
+        throw new Error("Codex runtime state could not be verified as private");
+    }
     paths = [];
     bytes = 0;
   };

@@ -20,14 +20,15 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import Database from "better-sqlite3";
-import { describe, test, expect, beforeEach, afterEach } from "vitest";
 import {
+  inspectWindowsPrivatePathSync,
   decryptArtifactFileToBuffer,
   ensureInstallRootKey,
   isEncryptedArtifactFile,
   markSecretFileEncryptionRequiredSync,
 } from "@omnesis/core";
+import Database from "better-sqlite3";
+import { describe, test, expect, beforeEach, afterEach } from "vitest";
 import { GATEWAY_VERSION } from "../../version.js";
 import { ConflictError, HttpError } from "../errors.js";
 import { BackupService, backupManifestSchema, type BackupServiceOptions } from "./BackupService.js";
@@ -206,8 +207,20 @@ describe("BackupService", () => {
       "fake-wrapped-key",
     );
     // A copied tree is owner-only, directories and files alike.
-    expect(statSync(join(dir, "keyring", "storage-keys")).mode & 0o777).toBe(0o700);
-    expect(statSync(join(dir, "keyring", "storage-keys", "main-db.json")).mode & 0o777).toBe(0o600);
+    if (process.platform === "win32")
+      expect(
+        inspectWindowsPrivatePathSync(join(dir, "keyring", "storage-keys"), "directory").private,
+      ).toBe(true);
+    else expect(statSync(join(dir, "keyring", "storage-keys")).mode & 0o777).toBe(0o700);
+    if (process.platform === "win32")
+      expect(
+        inspectWindowsPrivatePathSync(join(dir, "keyring", "storage-keys", "main-db.json"), "file")
+          .private,
+      ).toBe(true);
+    else
+      expect(statSync(join(dir, "keyring", "storage-keys", "main-db.json")).mode & 0o777).toBe(
+        0o600,
+      );
     // The root-key recovery envelope is bundled byte-identical to the source.
     expect(
       readFileSync(join(dir, "keyring", "recovery-envelope.json")).equals(

@@ -6,6 +6,15 @@ import { waitForChild } from "../lib/check-process.mjs";
 
 /** Installation is outside the Windows runtime compatibility contract. */
 export const INSTALLER_TEST_EXCLUSIONS = [
+  {
+    pattern: "packages/cli/src/update/build-heap-install-shell.test.ts",
+    reason: "POSIX installer shell parity; portable build policy remains covered",
+  },
+  {
+    pattern: "packages/cli/src/update/source-launcher-install-shell.test.ts",
+    reason:
+      "POSIX installer/frontdoor execution; portable renderer and Node lock logic remain covered",
+  },
   { pattern: "scripts/install-e2e/**", reason: "Installer acceptance harness and its fixtures" },
   { pattern: "scripts/release/install-sh-*.test.mjs", reason: "POSIX shell installer behavior" },
   { pattern: "scripts/release/install-e2e-gate.test.mjs", reason: "Installer release gate" },
@@ -21,6 +30,24 @@ export const INSTALLER_TEST_EXCLUSIONS = [
 ];
 
 export const FOCUSED_UNIT_FILES = [
+  "packages/cli/src/update/source-launcher.test.ts",
+  "packages/cli/src/update/build-heap.test.ts",
+  "packages/cli/src/commands/secure-docker.test.ts",
+  "packages/agent/src/codex-private-state.test.ts",
+  "packages/platform/src/windows-private-traversal.windows.test.ts",
+  "packages/agent/src/codex-runtime-pool.test.ts",
+  "packages/core/src/backup-layout.test.ts",
+  "packages/gateway/src/http/services/BackupService.test.ts",
+  "packages/gateway/src/privacy/policy-store.test.ts",
+  "packages/gateway/src/instructions/store.test.ts",
+  "packages/gateway/src/models/codex-runtime-installer.test.ts",
+  "packages/gateway/src/http/routes/push.test.ts",
+  "packages/gateway/src/http/services/PushAdminService.test.ts",
+  "packages/gateway/src/workers/worker-module-graph.test.ts",
+  "packages/gateway/src/observability/stall-monitor.test.ts",
+  "packages/gateway/src/observability/flight-recorder.test.ts",
+  "packages/core/src/subpath/subpath.test.ts",
+  "packages/gateway/src/config-store.test.ts",
   "packages/collector/src/source-host-builder.test.ts",
   "packages/collector/src/auth-subprocess-session.test.ts",
   "packages/cloud-relay/src/client-defaults.test.ts",

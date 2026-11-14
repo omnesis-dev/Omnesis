@@ -18,7 +18,12 @@ import { basename, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { CODEX_RUNTIME_COMPAT } from "@omnesis/agent";
-import { codexPaths } from "@omnesis/core";
+import {
+  codexPaths,
+  execWindowsJob,
+  inspectWindowsPrivatePathSync,
+  inspectWindowsPrivatePaths,
+} from "@omnesis/core";
 
 import {
   CodexRuntimeInstaller,
@@ -121,10 +126,36 @@ writeFileSync(join(pkg, 'bin', 'codex.js'), ${JSON.stringify(`#!/usr/bin/env nod
   it("installs the single compiled target with argv execution and atomically selects it", async () => {
     const configDir = await tempConfig();
     const calls: Array<{ command: string; args: readonly string[] }> = [];
+    if (process.platform === "win32") {
+      const grant = await execWindowsJob(join(process.env.SystemRoot!, "System32", "icacls.exe"), [
+        configDir,
+        "/grant",
+        "*S-1-1-0:(OI)(CI)(R)",
+        "/Q",
+      ]);
+      expect(grant.stderr).toBe("");
+    }
+    const run = fakeRunner(calls);
     const installer = new CodexRuntimeInstaller({
       configDir,
       npmCommand: "synthetic-npm",
-      runner: fakeRunner(calls),
+      runner: async (command, args, options) => {
+        if (process.platform === "win32" && args[0] === "ci") {
+          const staging = args[args.indexOf("--prefix") + 1]!;
+          const evidence = await inspectWindowsPrivatePaths([
+            { path: staging, kind: "directory" },
+            { path: join(staging, ".npm-home"), kind: "directory" },
+            { path: join(staging, ".npm-cache"), kind: "directory" },
+            { path: join(staging, "package.json"), kind: "file" },
+            { path: join(staging, "package-lock.json"), kind: "file" },
+          ]);
+          expect(
+            evidence.every((entry) => entry.private),
+            "runtime must be private before downloading package bytes",
+          ).toBe(true);
+        }
+        return run(command, args, options);
+      },
       compatibilityProbe: async () => {},
       id: (() => {
         let n = 0;
@@ -167,8 +198,19 @@ writeFileSync(join(pkg, 'bin', 'codex.js'), ${JSON.stringify(`#!/usr/bin/env nod
       ),
       activatedAt: "2026-09-03T12:00:00.000Z",
     });
-    // Windows exposes its ACL through a different API, not POSIX permission bits.
-    if (process.platform !== "win32") {
+    if (process.platform === "win32") {
+      const evidence = await inspectWindowsPrivatePaths([
+        { path: codexPaths(configDir).runtimeStore, kind: "directory" },
+        { path: installed.installDir, kind: "directory" },
+        { path: installed.command, kind: "file" },
+        {
+          path: join(installed.installDir, "node_modules/@openai/codex/package.json"),
+          kind: "file",
+        },
+        { path: codexPaths(configDir).runtimeCurrent, kind: "file" },
+      ]);
+      expect(evidence.every((entry) => entry.private)).toBe(true);
+    } else {
       expect((await lstat(installed.installDir)).mode & 0o777).toBe(0o700);
       expect((await lstat(installed.command)).mode & 0o777).toBe(0o700);
       expect(
@@ -375,7 +417,11 @@ writeFileSync(join(pkg, 'bin', 'codex.js'), ${JSON.stringify(`#!/usr/bin/env nod
       id: () => "second",
     });
     const prepared = await first.prepare();
-    expect((await lstat(codexPaths(configDir).runtimeUpdateLock)).mode & 0o777).toBe(0o700);
+    if (process.platform === "win32")
+      expect(
+        inspectWindowsPrivatePathSync(codexPaths(configDir).runtimeUpdateLock, "directory").private,
+      ).toBe(true);
+    else expect((await lstat(codexPaths(configDir).runtimeUpdateLock)).mode & 0o777).toBe(0o700);
 
     await expect(second.prepare()).rejects.toThrow("already in progress");
     await first.discard(prepared);

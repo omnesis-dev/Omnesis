@@ -155,6 +155,11 @@ Files that follow this shape: `packages/gateway/src/analytics-db.ts`, `packages/
 
 `@omnesis/core` is bisected two ways. First, `exports` subpaths (`/protocol`, `/config`, `/sources`, …) let a consumer import a narrow slice. Second, `@omnesis/types`, `@omnesis/config`, and `@omnesis/source-sdk` are physically separate workspace packages, so providers don't pull the gateway-only surface, and the HTTP/WS client lives in `@omnesis/gateway-client`. Re-export shims in `@omnesis/core` still preserve the old import paths for back-compat.
 
+Stall and diagnostic workers use `@omnesis/core/private-files` for canonical
+private atomic writes and directory protection. Its transitive module graph
+contains only Node built-ins and the platform filesystem bootstrap; importing
+the broad Core barrel into these workers is prohibited by the worker graph test.
+
 **New code should import from the narrowest package**, not `@omnesis/core`: branded IDs / document model / device + pagination from `@omnesis/types`; the zod config schema + `OmnesisConfig` + `*Settings` from `@omnesis/config`; `defineSource` / `Source` / `Provider` / `GatewayClient` + the source-descriptor surface from `@omnesis/source-sdk`; `HttpGatewayClient` / `GatewayWsClient` from `@omnesis/gateway-client`. Reserve `@omnesis/core` for genuinely cross-cutting helpers (`createLogger`, `computeContentHash`, the WS-envelope protocol, TOFU). When you add a type or helper, place it in the _smallest_ package that satisfies its consumers — don't default to `@omnesis/core`.
 
 Re-export shims must use **explicit named re-exports** (`export { X } from …`), never `export *` — vite/vitest can't follow `export *` across workspace-package boundaries, so a `export *` shim type-checks but resolves to `undefined` at vitest runtime.

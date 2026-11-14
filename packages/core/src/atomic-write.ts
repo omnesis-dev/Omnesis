@@ -204,7 +204,7 @@ export function fsyncDirSync(dir: string, opts: { strict?: boolean } = {}): void
   }
 }
 
-async function fsyncDir(dir: string): Promise<void> {
+export async function fsyncDir(dir: string): Promise<void> {
   if (process.platform === "win32") return;
   let handle: Awaited<ReturnType<typeof open>>;
   try {

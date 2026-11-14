@@ -4,6 +4,7 @@
 import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { inspectWindowsPrivatePathSync } from "@omnesis/core";
 
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -39,7 +40,9 @@ describe("PrivacyPolicyStore", () => {
     expect(document.policy).toContain(
       "| Schedule availability | Allow | Allow | Approval required |",
     );
-    expect((await stat(store.path)).mode & 0o777).toBe(0o600);
+    if (process.platform === "win32")
+      expect(inspectWindowsPrivatePathSync(store.path, "file").private).toBe(true);
+    else expect((await stat(store.path)).mode & 0o777).toBe(0o600);
   });
 
   it("preserves an existing policy that explicitly denies sensitive details", async () => {

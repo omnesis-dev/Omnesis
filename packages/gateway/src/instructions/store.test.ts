@@ -2,7 +2,6 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import {
-  chmodSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -13,6 +12,8 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { inspectWindowsPrivatePathSync } from "@omnesis/core";
+import { canDenyFixtureReads, setFixtureMode } from "@omnesis/source-sdk/testing";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 
 import {
@@ -58,7 +59,9 @@ describe("OperatorInstructionsStore", () => {
     const written = store.write("# House rules\n\nAlways answer in metric units.\n");
     expect(written.exists).toBe(true);
     expect(readFileSync(file, "utf8")).toContain("metric units");
-    expect(statSync(file).mode & 0o777).toBe(0o600);
+    if (process.platform === "win32")
+      expect(inspectWindowsPrivatePathSync(file, "file").private).toBe(true);
+    else expect(statSync(file).mode & 0o777).toBe(0o600);
     expect(store.promptText()).toBe("# House rules\n\nAlways answer in metric units.");
   });
 
@@ -127,18 +130,25 @@ describe("OperatorInstructionsStore", () => {
     expect(store.promptText()).toBe("");
   });
 
-  test("reports an unreadable file as a problem, not as absent", () => {
-    // Reporting "no file" for a file that plainly exists would leave the
-    // operator with nothing to act on but a log line — and would let the
-    // portal offer to create the file that is already there.
-    writeFileSync(file, "secret instructions", { encoding: "utf8", mode: 0o000 });
-    const current = store.read();
-    expect(current.exists).toBe(true);
-    expect(current.problem).toBe("unreadable");
-    expect(current.content).toBe("");
-    expect(store.promptText()).toBe("");
-    chmodSync(file, 0o600);
-  });
+  test.skipIf(!canDenyFixtureReads)(
+    "reports an unreadable file as a problem, not as absent",
+    () => {
+      // Reporting "no file" for a file that plainly exists would leave the
+      // operator with nothing to act on but a log line — and would let the
+      // portal offer to create the file that is already there.
+      writeFileSync(file, "secret instructions", { encoding: "utf8", mode: 0o600 });
+      setFixtureMode(file, 0o000);
+      try {
+        const current = store.read();
+        expect(current.exists).toBe(true);
+        expect(current.problem).toBe("unreadable");
+        expect(current.content).toBe("");
+        expect(store.promptText()).toBe("");
+      } finally {
+        setFixtureMode(file, 0o600);
+      }
+    },
+  );
 
   test("refuses to write over something that is not a regular file", () => {
     rmSync(file, { force: true });

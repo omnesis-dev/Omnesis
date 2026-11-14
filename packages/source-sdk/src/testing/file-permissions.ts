@@ -1,12 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { chmodSync } from "node:fs";
+import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { execFileSync } from "node:child_process";
-import { win32 } from "node:path";
+import { join, win32 } from "node:path";
 
-/** Root bypasses POSIX modes; Windows fixtures deny their own user's read access. */
-export const canDenyFixtureReads = process.platform === "win32" || process.getuid?.() !== 0;
 let currentSid: string | undefined;
 function ownSid(): string {
   if (currentSid) return currentSid;
@@ -40,3 +39,49 @@ export function setFixtureMode(path: string, mode: number): void {
     { encoding: "utf8", timeout: 10_000, windowsHide: true },
   );
 }
+
+/** Probe only owned data: backup privilege can bypass Windows read-denial DACLs. */
+export function probeFixtureReadDenial(
+  read: (path: string) => unknown = readFileSync,
+  setMode: (path: string, mode: number) => void = setFixtureMode,
+): boolean {
+  const root = mkdtempSync(join(tmpdir(), "owned-read-capability-"));
+  const file = join(root, "probe.txt");
+  const errors: unknown[] = [];
+  let created = false;
+  let denied = false;
+  try {
+    writeFileSync(file, "Invented permission probe", { mode: 0o600 });
+    created = true;
+    setMode(file, 0o000);
+    try {
+      read(file);
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code !== "EACCES" && code !== "EPERM") throw error;
+      denied = true;
+    }
+  } catch (error) {
+    errors.push(error);
+  } finally {
+    if (created) {
+      try {
+        setMode(file, 0o600);
+      } catch (error) {
+        errors.push(error);
+      }
+    }
+    try {
+      rmSync(root, { recursive: true });
+    } catch (error) {
+      errors.push(error);
+    }
+  }
+  if (errors.length === 1) throw errors[0];
+  if (errors.length > 1) throw new AggregateError(errors, "Permission capability probe failed");
+  return denied;
+}
+
+/** Root bypasses POSIX modes; Windows tests require an effective owned-file denial. */
+export const canDenyFixtureReads =
+  process.platform === "win32" ? probeFixtureReadDenial() : process.getuid?.() !== 0;

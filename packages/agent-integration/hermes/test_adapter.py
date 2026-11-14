@@ -7328,12 +7328,15 @@ class WindowsPersistenceRoutingTests(unittest.TestCase):
     def test_secret_reads_and_writes_use_the_canonical_bridge(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "invented.json"
-            with patch.object(adapter_module, "_uses_windows_files", return_value=True), patch.object(adapter_module, "_windows_bridge", return_value=b'{"invented":true}') as bridge:
+            # The native bridge owns no-follow validation. Preserve the lexical
+            # absolute path, including macOS /var aliases, rather than resolving it.
+            expected = str(path.absolute())
+            with patch.object(Path, "resolve", side_effect=AssertionError("Bridge routing must not resolve aliases")), patch.object(adapter_module, "_uses_windows_files", return_value=True), patch.object(adapter_module, "_windows_bridge", return_value=b'{"invented":true}') as bridge:
                 self.assertEqual(adapter_module._read_private_text(path), '{"invented":true}')
-                bridge.assert_called_with("read", str(path.resolve()))
+                bridge.assert_called_with("read", expected)
                 adapter_module._write_private_json(path, {"invented": True})
                 operation, target, data = bridge.call_args.args
-                self.assertEqual((operation, target), ("write", str(path.resolve())))
+                self.assertEqual((operation, target), ("write", expected))
                 self.assertEqual(json.loads(data), {"invented": True})
                 self.assertFalse(path.exists())
 

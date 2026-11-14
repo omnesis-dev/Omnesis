@@ -1,10 +1,19 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { chmodSync, copyFileSync, existsSync, mkdirSync } from "node:fs";
+import { constants, existsSync } from "node:fs";
+import { randomUUID } from "node:crypto";
+import { chmod, copyFile, open, rename, rm } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
 
-import { createLogger } from "@omnesis/core";
+import {
+  createLogger,
+  copyWindowsPrivateFile,
+  ensurePrivateDirs,
+  inspectWindowsPrivatePaths,
+} from "@omnesis/core";
+
+import { fsyncDir } from "@omnesis/core/private-files";
 
 import { DEFAULT_PUSH_RELAY_URL, type OmnesisConfig } from "@omnesis/config";
 import { getDevice, listDevices } from "../../data/repositories/DeviceRepository.js";
@@ -245,7 +254,7 @@ export class PushAdminService {
     return result;
   }
 
-  importCredential(input: PushCredentialImport): string {
+  async importCredential(input: PushCredentialImport): Promise<string> {
     if (!this.deps.configDir) throw new BadRequestError("config dir is not available");
     if (!existsSync(input.sourcePath)) throw new BadRequestError(`no file at ${input.sourcePath}`);
     const expectedExtension = input.platform === "ios" ? ".p8" : ".json";
@@ -253,11 +262,37 @@ export class PushAdminService {
       throw new BadRequestError(`expected a ${expectedExtension} file`);
     }
     const destinationDir = join(this.deps.configDir, input.platform === "ios" ? "apns" : "fcm");
-    mkdirSync(destinationDir, { recursive: true });
+    await ensurePrivateDirs([destinationDir]);
     const destination = join(destinationDir, basename(input.sourcePath));
-    if (resolve(input.sourcePath) !== resolve(destination))
-      copyFileSync(input.sourcePath, destination);
-    chmodSync(destination, 0o600);
+    if (process.platform === "win32") {
+      if (resolve(input.sourcePath) !== resolve(destination))
+        await copyWindowsPrivateFile(input.sourcePath, destination);
+      else {
+        const [status] = await inspectWindowsPrivatePaths([{ path: destination, kind: "file" }], {
+          repair: true,
+          protect: true,
+        });
+        if (!status?.private) throw new Error("Push credential access controls are not private");
+      }
+    } else {
+      if (resolve(input.sourcePath) !== resolve(destination)) {
+        const scratch = join(destinationDir, `.credential-import-${randomUUID()}.tmp`);
+        try {
+          await copyFile(input.sourcePath, scratch, constants.COPYFILE_EXCL);
+          await chmod(scratch, 0o600);
+          const file = await open(scratch, "r+");
+          try {
+            await file.sync();
+          } finally {
+            await file.close();
+          }
+          await rename(scratch, destination);
+          await fsyncDir(destinationDir);
+        } finally {
+          await rm(scratch, { force: true });
+        }
+      } else await chmod(destination, 0o600);
+    }
     log.info(`${input.platform} push credential imported into config dir: ${destination}`);
     return destination;
   }

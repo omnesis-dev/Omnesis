@@ -141,11 +141,12 @@ function valueImports(file: string): string[] {
 }
 
 /** Every library an entry reaches through static value imports, with the path that reaches it. */
-function librariesReached(entry: string): Map<string, string[]> {
+function librariesReached(entry: string, visited?: Set<string>): Map<string, string[]> {
   const parent = new Map<string, string | null>([[entry, null]]);
   const libraries = new Map<string, string>();
   const queue = [entry];
   for (let file = queue.shift(); file; file = queue.shift()) {
+    visited?.add(file);
     for (const specifier of valueImports(file)) {
       const resolved = resolveSpecifier(specifier, file);
       if (!resolved) continue;
@@ -226,6 +227,28 @@ describe("worker module graphs", () => {
       expect(offending).toEqual([]);
     },
   );
+
+  it("keeps private-file and stall-worker graphs builtin-only without broad gateway/agent barrels", () => {
+    const allowedCore = new Set([
+      "packages/core/src/subpath/private-files.ts",
+      "packages/core/src/atomic-write.ts",
+      "packages/core/src/security-files.ts",
+      "packages/core/src/windows-private-file.ts",
+    ]);
+    for (const entry of [
+      join(REPO, "packages/core/src/subpath/private-files.ts"),
+      join(GATEWAY_SRC, "workers/stall-watchdog-worker.ts"),
+    ]) {
+      const visited = new Set<string>();
+      expect([...librariesReached(entry, visited).keys()]).toEqual([]);
+      const paths = [...visited].map((file) => relative(REPO, file).split(sep).join("/"));
+      expect(
+        paths.filter((file) => file.startsWith("packages/core/") && !allowedCore.has(file)),
+      ).toEqual([]);
+      expect(paths.some((file) => file.startsWith("packages/agent/"))).toBe(false);
+      expect(paths).not.toContain("packages/gateway/src/server.ts");
+    }
+  });
 
   it("sees a static import of a deferred library", () => {
     // The graph reader itself: `recognizer.ts` defers the recognizer through

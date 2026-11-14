@@ -3,6 +3,11 @@
 
 import {
   existsSync,
+  closeSync,
+  ftruncateSync,
+  openSync,
+  readdirSync,
+  readSync,
   lstatSync,
   mkdirSync,
   mkdtempSync,
@@ -18,7 +23,7 @@ import { join } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { createLogger } from "@omnesis/core";
+import { atomicWriteFileSync, createLogger, ensurePrivateDirs } from "@omnesis/core";
 import {
   CodexRuntimePool,
   reconcileMemberAuth,
@@ -28,13 +33,19 @@ import type { AgentEvent } from "@omnesis/core";
 
 vi.mock("node:fs", async (original) => {
   const fs = await original<typeof import("node:fs")>();
-  return { ...fs, symlinkSync: vi.fn(fs.symlinkSync) };
+  return { ...fs, symlinkSync: vi.fn(fs.symlinkSync), readSync: vi.fn(fs.readSync) };
+});
+vi.mock("@omnesis/core", async (original) => {
+  const core = await original<typeof import("@omnesis/core")>();
+  return { ...core, atomicWriteFileSync: vi.fn(core.atomicWriteFileSync) };
 });
 const log = createLogger("test:codex-pool");
 
 let dir: string;
-beforeEach(() => {
+beforeEach(async () => {
   dir = mkdtempSync(join(tmpdir(), "codex-pool-"));
+  // Direct reconciliation fixtures have the same private parent as prepared pool members.
+  if (process.platform === "win32") await ensurePrivateDirs([dir]);
 });
 afterEach(() => {
   vi.restoreAllMocks();
@@ -300,6 +311,67 @@ describe("reconcileMemberAuth", () => {
     expect(readFileSync(owner(), "utf8")).toBe('{"token":"fresh"}');
     expect(lstatSync(memberAuth()).isSymbolicLink()).toBe(true);
     expect(readFileSync(memberAuth(), "utf8")).toBe('{"token":"fresh"}');
+  });
+
+  it("a partial staging failure preserves both owner and refreshed member authentication", () => {
+    writeFileSync(owner(), '{"token":"old"}');
+    writeFileSync(memberAuth(), '{"token":"refreshed"}');
+    const older = Date.now() / 1000 - 100;
+    utimesSync(owner(), older, older);
+    const warning = vi.spyOn(log, "warn").mockImplementation(() => {});
+    const scratch = join(dir, "owner", "owned-partial-stage.tmp");
+    vi.mocked(atomicWriteFileSync).mockImplementationOnce((path, data) => {
+      expect(path).toBe(owner());
+      try {
+        writeFileSync(scratch, Buffer.from(data).subarray(0, 5), { mode: 0o600 });
+        expect(readFileSync(scratch, "utf8")).toBe('{"tok');
+        throw new Error("Invented staging write failure");
+      } finally {
+        rmSync(scratch);
+      }
+    });
+    reconcileMemberAuth(member(), owner(), log);
+    expect(warning).toHaveBeenCalledWith(expect.stringContaining("staging write failure"));
+    expect(readFileSync(owner(), "utf8")).toBe('{"token":"old"}');
+    expect(lstatSync(memberAuth()).isFile()).toBe(true);
+    expect(readFileSync(memberAuth(), "utf8")).toBe('{"token":"refreshed"}');
+    expect(readdirSync(join(dir, "owner"))).toEqual(["auth.json"]);
+  });
+
+  it("atomic owner promotion updates existing symlink readers", () => {
+    writeFileSync(owner(), '{"token":"old"}');
+    const sibling = join(dir, "sibling-auth.json");
+    symlinkSync(owner(), sibling);
+    writeFileSync(memberAuth(), '{"token":"fresh"}');
+    const older = Date.now() / 1000 - 100;
+    utimesSync(owner(), older, older);
+    reconcileMemberAuth(member(), owner(), log);
+    expect(lstatSync(sibling).isSymbolicLink()).toBe(true);
+    expect(readlinkSync(sibling)).toBe(owner());
+    expect(readFileSync(sibling, "utf8")).toBe('{"token":"fresh"}');
+    expect(lstatSync(memberAuth()).isSymbolicLink()).toBe(true);
+    expect(readFileSync(memberAuth(), "utf8")).toBe('{"token":"fresh"}');
+  });
+
+  it("rejects oversized member authentication without reading it or removing either login", () => {
+    writeFileSync(owner(), '{"token":"old"}');
+    const fd = openSync(memberAuth(), "w", 0o600);
+    try {
+      ftruncateSync(fd, 16 * 1024 * 1024 + 1);
+    } finally {
+      closeSync(fd);
+    }
+    const older = Date.now() / 1000 - 100;
+    utimesSync(owner(), older, older);
+    vi.mocked(readSync).mockClear();
+    const warning = vi.spyOn(log, "warn").mockImplementation(() => {});
+    reconcileMemberAuth(member(), owner(), log);
+    expect(warning).toHaveBeenCalledOnce();
+    if (process.platform !== "win32") expect(readSync).not.toHaveBeenCalled();
+    expect(readFileSync(owner(), "utf8")).toBe('{"token":"old"}');
+    expect(lstatSync(memberAuth()).isFile()).toBe(true);
+    expect(lstatSync(memberAuth()).size).toBe(16 * 1024 * 1024 + 1);
+    expect(readdirSync(join(dir, "owner"))).toEqual(["auth.json"]);
   });
 
   it("keeps the shared token when it is newer than a member's stale file", () => {

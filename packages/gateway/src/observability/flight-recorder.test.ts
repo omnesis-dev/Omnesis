@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readdirSync, rmSync, writeFileSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { inspectWindowsPrivatePathSync } from "@omnesis/core";
 
 import { afterEach, describe, expect, test } from "vitest";
 
@@ -46,6 +47,14 @@ describe("the profile summary ring", () => {
     for (let i = 0; i < 4; i++) writeProfileSummary(dir, summaryAt(t0 + i * 60_000), 2);
 
     expect(readdirSync(dir)).toHaveLength(2);
+    const keptFile = join(dir, `${profileIdAt(t0 + 3 * 60_000)}.json`);
+    if (process.platform === "win32") {
+      expect(inspectWindowsPrivatePathSync(dir, "directory").private).toBe(true);
+      expect(inspectWindowsPrivatePathSync(keptFile, "file").private).toBe(true);
+    } else {
+      expect(statSync(dir).mode & 0o777).toBe(0o700);
+      expect(statSync(keptFile).mode & 0o777).toBe(0o600);
+    }
     const listed = await listProfileSummaries(dir);
     expect(listed.map((s) => s.capturedAt)).toEqual([
       new Date(t0 + 3 * 60_000).toISOString(),

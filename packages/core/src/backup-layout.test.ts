@@ -193,7 +193,9 @@ describe("writeOfflineBackup", () => {
         restoreRead = () => chmodSync(token, 0o600);
       }
       try {
-        expect(() => readFileSync(token)).toThrow();
+        // Windows backup privilege can let Node read through a deny DACL; the
+        // native copy must still refuse it without publishing a partial backup.
+        if (process.platform !== "win32") expect(() => readFileSync(token)).toThrow();
         const backup = () =>
           writeOfflineBackup({
             configDir,

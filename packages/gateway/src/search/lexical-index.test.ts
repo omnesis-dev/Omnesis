@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { randomUUID } from "node:crypto";
-import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import type Database from "better-sqlite3";
 type Db = Database.Database;
 import {
@@ -18,13 +20,17 @@ import { LexicalIndex } from "./lexical-index.js";
 import { closeTempDb } from "./test-utils.js";
 
 let db: Db;
+let directory: string;
 
 beforeEach(() => {
-  db = createIndexDatabase(`/tmp/omnesis-lexical-index-${randomUUID()}.db`);
+  directory = mkdtempSync(join(tmpdir(), "omnesis-lexical-index-"));
+  db = createIndexDatabase(join(directory, "index.db"));
 });
 
 afterEach(() => {
+  vi.restoreAllMocks();
   closeTempDb(db);
+  rmSync(directory, { recursive: true, force: true });
 });
 
 function chunk(
@@ -306,6 +312,28 @@ describe("LexicalIndex", () => {
     expect(index.stats(db)!.chunkCount()).toBe(1);
   });
 
+  test("a scheduling pause exhausts the query budget without losing pending changes", () => {
+    upsertChunks(db, [chunk({ id: "c1", documentId: "d1", content: "budget review" })]);
+    const index = new LexicalIndex(LexicalIndex.build(db).data, {
+      changesBatch: 1,
+      changesBudgetMs: 25,
+    });
+    upsertChunks(db, [
+      chunk({ id: "c2", documentId: "d2", content: "budget review" }),
+      chunk({ id: "c3", documentId: "d3", content: "budget review" }),
+    ]);
+    const clock = vi.spyOn(Date, "now").mockReturnValue(1_026);
+    clock.mockImplementationOnce(() => 1_000);
+    expect(index.rank(db, "budget", 10)).toBeNull();
+    expect(index.follow(db, 25)).toBe(false);
+    expect(
+      index
+        .rank(db, "budget", 10)!
+        .map((row) => row.rowid)
+        .sort(),
+    ).toEqual([1, 2, 3]);
+  });
+
   test("past its time budget it declines, then resumes where it stopped", () => {
     upsertChunks(db, [chunk({ id: "c1", documentId: "d1", content: "budget review" })]);
     const index = new LexicalIndex(LexicalIndex.build(db).data, {
@@ -477,6 +505,10 @@ describe("LexicalIndex", () => {
   ])(
     "matches what FTS5 matches through a seeded stream of inserts, rewrites and deletes, compacting $compaction",
     ({ deltaCompactMinRetired }) => {
+      // Ranking parity is independent of host scheduling. Budget exhaustion
+      // has its own controlled-clock coverage.
+      const clock = Date.now();
+      vi.spyOn(Date, "now").mockReturnValue(clock);
       const vocabulary = [
         "budget",
         "review",

@@ -138,14 +138,29 @@ describe("Windows CI coverage", () => {
 
   test("full units are discovered normally and exclude only explicitly documented installation tests", () => {
     const [unit, smoke, adapter, hermes] = windowsCheckTasks("unit");
+    for (const file of [
+      "packages/cli/src/update/build-heap.test.ts",
+      "packages/cli/src/update/source-launcher.test.ts",
+    ])
+      expect(INSTALLER_TEST_EXCLUSIONS.some(({ pattern }) => pattern === file)).toBe(false);
+    for (const file of [
+      "packages/cli/src/update/build-heap-install-shell.test.ts",
+      "packages/cli/src/update/source-launcher-install-shell.test.ts",
+    ])
+      expect(INSTALLER_TEST_EXCLUSIONS.some(({ pattern }) => pattern === file)).toBe(true);
+
     expect(unit.slice(0, 2)).toEqual(["scripts/run-check.mjs", "unit"]);
     expect(unit.slice(2)).toEqual(
       INSTALLER_TEST_EXCLUSIONS.flatMap(({ pattern }) => ["--exclude", pattern]),
     );
     for (const { pattern, reason } of INSTALLER_TEST_EXCLUSIONS) {
-      expect(pattern).toMatch(/^scripts\/(?:install-e2e|release)\//u);
       expect(reason).toMatch(/install/iu);
-      expect(pattern).not.toContain("packages");
+      if (pattern.startsWith("packages/")) {
+        expect([
+          "packages/cli/src/update/build-heap-install-shell.test.ts",
+          "packages/cli/src/update/source-launcher-install-shell.test.ts",
+        ]).toContain(pattern);
+      } else expect(pattern).toMatch(/^scripts\/(?:install-e2e|release)\//u);
     }
     expect(smoke).toEqual(["scripts/run-check.mjs", "smoke"]);
     expect(adapter).toEqual(["packages/agent-integration/test/openclaw_gateway_probe.mjs"]);

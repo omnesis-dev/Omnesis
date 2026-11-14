@@ -200,14 +200,15 @@ public static partial class OmnesisPrivateFile {
   }
   static string Hash(byte[] bytes) {using(SHA256 hash=SHA256.Create()) return BitConverter.ToString(hash.ComputeHash(bytes)).Replace("-","").ToLowerInvariant();}
   static void CacheWrite(string path,byte[] bytes) {
-    using(FileStream file=new FileStream(path,FileMode.CreateNew,FileSystemRights.FullControl,FileShare.Read|FileShare.Delete,4096,FileOptions.None,FileAcl())) {
+    using(PinnedParent parent=Parent(path))
+    using(SafeFileHandle created=RelativeOpen(parent.Handle,parent.Leaf,false,0x1F01FFU,5U,2U,FileAcl().GetSecurityDescriptorBinaryForm()))
+    using(FileStream file=new FileStream(created,FileAccess.ReadWrite,4096,false)) {
       RequirePrivate(file.SafeFileHandle,true);file.Write(bytes,0,bytes.Length);file.Flush(true);
     }
   }
   static byte[] CacheRead(string path,int maximum) {
-    using(SafeFileHandle parent=Parent(path))
-    using(SafeFileHandle handle=CreateFile(path,0x80020000,5,IntPtr.Zero,3,0x200000,IntPtr.Zero)) {
-      if(handle.IsInvalid) throw new Win32Exception(Marshal.GetLastWin32Error());
+    using(PinnedParent parent=Parent(path))
+    using(SafeFileHandle handle=RelativeOpen(parent.Handle,parent.Leaf,false,0x80120000U,5U)) {
       Info info=Information(handle,false);RequirePrivate(handle,true);
       if(info.sizeHigh!=0 || info.sizeLow>maximum) throw new InvalidDataException();
       using(FileStream file=new FileStream(handle,FileAccess.Read)) {
@@ -219,7 +220,7 @@ public static partial class OmnesisPrivateFile {
   }
   static string Winner(string directory,string sourceHash,string config) {
     Stage="cache-verify";
-    using(SafeFileHandle parent=Parent(directory))
+    using(PinnedParent parent=Parent(directory))
     using(SafeFileHandle handle=Open(directory,true,false,3)) {RequirePrivate(handle,true);}
     string executable=Path.Combine(directory,"worker.exe");
     byte[] binary=CacheRead(executable,16777216),recordBytes=CacheRead(Path.Combine(directory,"manifest.json"),16384);
@@ -245,7 +246,7 @@ public static partial class OmnesisPrivateFile {
       if(!Directory.Exists(root)) Directory.CreateDirectory(root,CacheDirectoryAcl());
     }
     using(CachePins ancestors=new CachePins(root,root,false))
-    using(SafeFileHandle rootParent=Parent(root))
+    using(PinnedParent rootParent=Parent(root))
     using(SafeFileHandle rootHandle=Open(root,true,false,3)) {
       RequirePrivate(rootHandle,true);
       string winner=Path.Combine(root,sourceHash);
@@ -276,11 +277,7 @@ public static partial class OmnesisPrivateFile {
           }
           finally {options.TempFiles.Delete();}
         }
-        using(SafeFileHandle handle=Open(executable,false,true,7)) {
-          RawSecurityDescriptor descriptor=Security(handle);
-          if(descriptor.Owner==null || !Trusted(descriptor.Owner.Value)) throw new UnauthorizedAccessException();
-          Repair(handle,false);
-        }
+        Inspect(executable,false,true,true);
         File.Delete(manifestPath);
         CacheWrite(executable+".config",Encoding.UTF8.GetBytes(config));
         string binaryHash=Hash(CacheRead(executable,16777216));
