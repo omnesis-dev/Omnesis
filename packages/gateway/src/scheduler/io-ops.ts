@@ -567,7 +567,8 @@ const COMPUTE_OP_DEFS: readonly IoOpDef[] = [
   { name: "io.knowledgeDocumentsReadable", priority: "user", latencyBudgetMs: HEAVY_BUDGET_MS },
   { name: "io.agentSearchProvenance", priority: "user", latencyBudgetMs: HEAVY_BUDGET_MS },
   { name: "io.graphContextProvenance", priority: "user", latencyBudgetMs: HEAVY_BUDGET_MS },
-  { name: "io.searchResultLinks", priority: "user", latencyBudgetMs: HEAVY_BUDGET_MS },
+  // A few pages per result: past the default budget, the disk is what it waited on.
+  { name: "io.searchResultLinks", priority: "user" },
   // The Privacy page's exchange pages: a person is waiting on each.
   { name: "io.privacyExchangeFeed", priority: "user" },
   { name: "io.privacyConversationExchanges", priority: "user" },
