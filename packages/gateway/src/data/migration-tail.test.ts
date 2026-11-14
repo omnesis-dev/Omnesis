@@ -91,7 +91,7 @@ const WOUND_BACK = [
   218,
   // 219 adds an enumeration's full-read time, which undoSourceVersion drops.
   219,
-  // 220 source authority and Answer proofs are removed by undoSourceScopes.
+  // 220 source authority and Answer proofs are removed by undoSourceFilters.
   220,
 ];
 
@@ -113,7 +113,7 @@ interface ScopeTailObject {
 }
 
 /** These namespaces are introduced by the source-scope migration tail. */
-function sourceScopeObjects(db: Db): ScopeTailObject[] {
+function sourceFilterObjects(db: Db): ScopeTailObject[] {
   const tables = (column: string) =>
     ["scope_policy_*", "access_scope_*", "answer_task_scope*"]
       .map((pattern) => `${column} GLOB '${pattern}'`)
@@ -129,8 +129,8 @@ function sourceScopeObjects(db: Db): ScopeTailObject[] {
 }
 
 /** Undo migration 220: its tables, and the triggers it put on the access tables. */
-function undoSourceScopes(db: Db): void {
-  const objects = sourceScopeObjects(db);
+function undoSourceFilters(db: Db): void {
+  const objects = sourceFilterObjects(db);
   const foreignKeys = db.pragma("foreign_keys", { simple: true });
   db.pragma("foreign_keys = OFF");
   try {
@@ -351,7 +351,7 @@ function undoSourceVersion(db: Db): void {
 }
 
 function windBack(db: Db): void {
-  undoSourceScopes(db);
+  undoSourceFilters(db);
   undoSourceVersion(db);
   db.exec("DROP TABLE source_filter_item_members");
   db.exec("DROP TABLE source_filter_items");
@@ -719,7 +719,7 @@ describe("an install several versions behind, upgrading", () => {
 
   test("the source filter migration recreates its entire schema instead of replaying over it", () => {
     const head = createDatabase(dbPath) as unknown as Db;
-    const expected = sourceScopeObjects(head);
+    const expected = sourceFilterObjects(head);
     try {
       expect(expected).toEqual(
         expect.arrayContaining([
@@ -733,13 +733,13 @@ describe("an install several versions behind, upgrading", () => {
         ]),
       );
       windBack(head);
-      expect(sourceScopeObjects(head)).toEqual([]);
+      expect(sourceFilterObjects(head)).toEqual([]);
     } finally {
       (head as unknown as Database.Database).close();
     }
     const upgraded = upgrade();
     try {
-      expect(sourceScopeObjects(upgraded)).toEqual(expected);
+      expect(sourceFilterObjects(upgraded)).toEqual(expected);
       expect(
         upgraded.prepare("SELECT name FROM pragma_table_info('answer_task_scope')").all(),
       ).toEqual([{ name: "task_id" }, { name: "authorization" }, { name: "complete" }]);
@@ -750,7 +750,7 @@ describe("an install several versions behind, upgrading", () => {
 
   test("the tail runs in order and lands on the head version", () => {
     seedOlderInstall((old) => {
-      expect(sourceScopeObjects(old)).toEqual([]);
+      expect(sourceFilterObjects(old)).toEqual([]);
       expect(
         old.prepare("SELECT name FROM sqlite_master WHERE name='knowledge_nodes'").get(),
       ).toBeUndefined();
