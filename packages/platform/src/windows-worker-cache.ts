@@ -3,6 +3,7 @@
 
 import { createHash } from "node:crypto";
 import { win32 } from "node:path";
+import { getEnvironmentData, setEnvironmentData } from "node:worker_threads";
 import {
   windowsPowerShellExecutable,
   windowsProcessStart,
@@ -25,6 +26,7 @@ const sourceHash = createHash("sha256")
     WINDOWS_WORKER_SOURCE + "\0" + WINDOWS_WORKER_CONFIG + "\0" + WINDOWS_WORKER_MANIFEST + "\0v1",
   )
   .digest("hex");
+const seedKey = `@omnesis/platform/native-worker-cache/v1:${sourceHash}`;
 let verifiedExecutable: string | undefined;
 let initializationFailed = false;
 let initializationFailure: unknown;
@@ -80,6 +82,33 @@ function cacheRoot(): string {
   return win32.join(local, "Omnesis", "platform-native-v1");
 }
 
+function inheritedExecutable(root: string): string | undefined {
+  const seed: unknown = getEnvironmentData(seedKey);
+  const expected = win32.join(root, sourceHash, "worker.exe");
+  if (
+    seed &&
+    typeof seed === "object" &&
+    !Array.isArray(seed) &&
+    Object.keys(seed).length === 4 &&
+    "format" in seed &&
+    seed.format === 1 &&
+    "ownerPid" in seed &&
+    seed.ownerPid === process.pid &&
+    "sourceHash" in seed &&
+    seed.sourceHash === sourceHash &&
+    "executable" in seed &&
+    seed.executable === expected
+  )
+    return expected;
+  return undefined;
+}
+function invocationFor(mode: "job" | "filesystem", executable: string): WindowsOwnedInvocation {
+  return {
+    command: executable,
+    args: mode === "job" ? ["job"] : ["filesystem", String(process.pid)],
+  };
+}
+
 /** Validate or compile one protected generation using the uncached trusted runner. */
 export function windowsWorkerInvocation(
   mode: "job" | "filesystem",
@@ -90,6 +119,11 @@ export function windowsWorkerInvocation(
   if (verifiedExecutable === undefined) {
     try {
       const root = cacheRoot();
+      const inherited = inheritedExecutable(root);
+      if (inherited !== undefined) {
+        verifiedExecutable = inherited;
+        return invocationFor(mode, inherited);
+      }
       // Original Node receives these UTC ticks while still alive, before any
       // nested bootstrap can start. Normalize year-1 .NET ticks to FILETIME's
       // 1601 epoch with exact integers, never Date/Number rounding.
@@ -172,6 +206,18 @@ export function windowsWorkerInvocation(
       // The uncached bootstrap checked owner, protected DACL, reparse metadata,
       // source generation and binary hash before returning this executable.
       verifiedExecutable = expected;
+      // Native directory/marker handles live in this Node process, not an
+      // isolate. Only fully verified metadata is cloned to future Workers;
+      // no environment variable, task payload or secret supplies this seed.
+      setEnvironmentData(
+        seedKey,
+        Object.freeze({
+          format: 1,
+          ownerPid: process.pid,
+          sourceHash,
+          executable: expected,
+        }),
+      );
     } catch (error) {
       // A failed/truncated reply may follow successful handle transfer. Never
       // repeat initialization and accumulate ambiguous retained handles.
@@ -180,8 +226,5 @@ export function windowsWorkerInvocation(
       throw error;
     }
   }
-  return {
-    command: verifiedExecutable,
-    args: mode === "job" ? ["job"] : ["filesystem", String(process.pid)],
-  };
+  return invocationFor(mode, verifiedExecutable);
 }

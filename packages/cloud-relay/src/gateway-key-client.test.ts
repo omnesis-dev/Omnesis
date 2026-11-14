@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { randomBytes, randomUUID, createPublicKey } from "node:crypto";
+import { randomBytes, randomUUID, createPublicKey, X509Certificate } from "node:crypto";
 import { mkdtemp, readFile, rm, stat, writeFile, mkdir, readdir } from "node:fs/promises";
 import * as files from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -142,10 +142,14 @@ test("a Google-free relay registers both key proofs, stores only public metadata
 test("local full-chain and CRLF files publish only the canonical public leaf", async () => {
   const f = await fixture();
   try {
-    const leaf = await readFile(f.options.certificateFile, "utf8");
-    await writeFile(f.options.certificateFile, (leaf + leaf).replaceAll("\n", "\r\n"));
+    const leaf = (await readFile(f.options.certificateFile, "utf8")).replace(/\r?\n/g, "\r\n");
+    const fullChain = leaf + leaf;
+    await writeFile(f.options.certificateFile, fullChain);
     const session = await registerGatewayKey(f.options);
-    expect(f.accounts.gatewayBinding(session.accountId)!.certificate).toBe(leaf);
+    expect(f.accounts.gatewayBinding(session.accountId)!.certificate).toBe(
+      new X509Certificate(leaf).toString(),
+    );
+    expect(await readFile(f.options.certificateFile, "utf8")).toBe(fullChain);
   } finally {
     await f.close();
   }
@@ -345,18 +349,25 @@ test("offline owner preparation returns canonical public DNS details and shares 
 test("a certificate/key changed during delayed enrollment is re-registered before persisting a session, with at most one retry", async () => {
   const f = await fixture();
   let completions = 0;
+  let rotatedCertificate = "";
   const transport = vi.fn<typeof fetch>(async (url, init) => {
     const response = await fetch(url, init);
-    if (String(url).endsWith("/complete") && ++completions === 1)
-      tlsFiles(directory, "gateway.example.test");
+    if (String(url).endsWith("/complete") && ++completions === 1) {
+      const rotated = tlsFiles(directory, "gateway.example.test");
+      const certificate = await readFile(rotated.certFile, "utf8");
+      rotatedCertificate = certificate.replace(/\r?\n/g, "\r\n");
+      await writeFile(rotated.certFile, rotatedCertificate);
+    }
     return response;
   });
   try {
     const session = await registerGatewayKey({ ...f.options, fetch: transport });
     expect(transport).toHaveBeenCalledTimes(4);
+    expect(rotatedCertificate).toContain("\r\n");
     expect(f.accounts.gatewayBinding(session.accountId)!.certificate).toBe(
-      await readFile(f.options.certificateFile, "utf8"),
+      new X509Certificate(rotatedCertificate).toString(),
     );
+    expect(await readFile(f.options.certificateFile, "utf8")).toBe(rotatedCertificate);
     const original = await readFile(f.options.sessionFile, "utf8");
     const continuous = vi.fn<typeof fetch>(async (url, init) => {
       const response = await fetch(url, init);

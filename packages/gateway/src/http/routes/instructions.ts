@@ -121,8 +121,7 @@ export function mountInstructionsRoutes(app: RouteApp, deps: InstructionsRoutesD
     await next();
   };
 
-  const view = (store: OperatorInstructionsStore) => {
-    const current = store.read();
+  const view = (store: OperatorInstructionsStore, current = store.read()) => {
     return {
       path: store.path,
       exists: current.exists,
@@ -135,12 +134,12 @@ export function mountInstructionsRoutes(app: RouteApp, deps: InstructionsRoutesD
     };
   };
 
-  // Translate the store's two refusals into the HTTP vocabulary the portal
+  // Translate the store's mutation refusals into the HTTP vocabulary the portal
   // already understands, so an editor open on a stale copy gets a 409 it can
   // explain rather than a 500 it cannot.
-  const written = <T>(fn: () => T): T => {
+  const written = async <T>(fn: () => Promise<T>): Promise<T> => {
     try {
-      return fn();
+      return await fn();
     } catch (err) {
       if (err instanceof OperatorInstructionsConflictError) {
         throw new ConflictError(
@@ -163,17 +162,20 @@ export function mountInstructionsRoutes(app: RouteApp, deps: InstructionsRoutesD
     return c.json(view(requireStore()));
   });
 
-  app.put("/admin/instructions", noStore, scope.admin(), validateJson(writeBody), (c) => {
+  app.put("/admin/instructions", noStore, scope.admin(), validateJson(writeBody), async (c) => {
     const store = requireStore();
     const body = c.req.valid("json");
-    written(() => store.write(body.content, expectedVersion(body)));
-    return c.json(view(store));
+    const current = await written(() => store.write(body.content, expectedVersion(body)));
+    return c.json(view(store, current));
   });
 
   app.delete("/admin/instructions", noStore, scope.admin(), async (c) => {
     const store = requireStore();
     const body = await deleteClaim(c.req.raw);
-    const removed = written(() => store.remove(expectedVersion(body)));
-    return c.json({ ...view(store), removed });
+    const result = await written(async () => {
+      const removed = await store.remove(expectedVersion(body));
+      return { ...view(store), removed };
+    });
+    return c.json(result);
   });
 }

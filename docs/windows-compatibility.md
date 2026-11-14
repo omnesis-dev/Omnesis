@@ -104,10 +104,16 @@ fresh Windows validation.
 
 Actual x64 dependency preparation, encrypted keyring initialization, the compiled
 CLI and all six compiled gateway worker entrypoints passed in the ARM64 guest.
-Both source and compiled manual Gateway runs reached a 90-second observation
-limit during encrypted-storage initialization, before Collector startup. Bounded
-public storage/key diagnostics are investigating this phase; no complete manual
-Gateway/Collector success is claimed.
+Initial source and compiled manual Gateway observations ended during encrypted
+storage initialization. Separate public storage diagnostics subsequently
+initialized all seven host keys and resolved the configured encrypted storage.
+A longer diagnostic then exposed a concrete Gateway failure while its writer
+initialized the protected native helper for bootstrap-token publication; the
+Collector never launched. The bootstrap operation now rolls back its SQLite
+rows when private-file publication fails, so retry does not strand the install.
+Native worker initialization and complete manual Gateway/Collector validation
+remain open; isolated main-thread and Worker initialization passed without
+reproducing the full startup failure. No product deadlines were raised.
 
 ## Broader failing baselines
 
@@ -123,6 +129,11 @@ That unit phase took about 122 minutes. E2E shard one passed 712 tests and faile
 ten; shard two passed 620 and failed five. These results precede the current
 fixture, privacy and lifecycle corrections and require a new broad run.
 
+The broad unit run at `11f70451d` passed 38,121 tests and failed 239, with
+123 skips: 2,564 files passed, 66 failed and six were skipped. Its unit phase
+took about 90 minutes. The portal lane passed; both E2E shards remain pending.
+This run precedes the subsequent runtime and fixture corrections.
+
 Those baselines identified Unix-only process control, npm/shebang execution,
 Windows filesystem flushing, private-file protection, mapped-index publication,
 temporary paths, certificate line endings and resource lifecycles. Fixes and
@@ -134,12 +145,17 @@ required. Skipping portable tests is not an acceptable resolution.
 The frozen Linux checkpoint at `d396be7ca` passed 39,307 general unit tests,
 161 script smoke tests and 1,828 relay tests, with 100% relay statement, branch,
 function and line coverage. Source/test typechecks passed. Unit-all waited
-17 seconds and ran for 46 minutes 10 seconds; its affected gate continues into
-E2E/native bundles. The macOS sweep passed 39,154 general tests and failed four
-across two fixture files because of canonical `/var` aliases and mock paths.
-Those fixtures are corrected in `11f70451d`; current macOS validation remains
-required. The new checkpoint also passed its supported build, source and test
-typechecks, 1,664 focused Linux tests and 67 follow-up fixture tests.
+17 seconds and ran for 46 minutes 10 seconds. Its affected gate subsequently
+passed its selected E2E and native bundles. This frozen checkpoint predates
+newer fixes and main-branch changes, so it does not validate the final tree.
+
+The hosted macOS run at `11f70451d` passed all 39,217 TypeScript unit tests;
+one Python fixture incorrectly expected symlink-canonicalized temporary paths.
+The hosted Linux run passed 39,368 unit tests and failed one lexical-ranking
+fixture whose parity assertion depended on completing within a real 25 ms
+budget under load. The follow-up uses a controlled clock for parity and retains
+explicit deadline/fallback coverage, and corrects the Python path expectation.
+Both native operating-system lanes must validate the final tree.
 
 Four live embedding transition cases pass on Linux with real CPU inference:
 HTTP-to-HTTP, HTTP-to-local, local-to-HTTP and local-to-local. The latest frozen
@@ -189,10 +205,3 @@ validation and Obsidian case-sensitive containment proof remain required.
 At `c0d108019`, focused Windows coverage passed 1,725 unit tests across 117 files
 (25 conditional skips) and all 13 gateway E2E tests. The E2E phase completed in
 134 seconds, including the original synthetic-pipeline teardown bound.
-
-The broader Windows run at `bbc97b2ac` passed 37,227 unit tests and failed 584,
-with 86 skips across 2,428 passing, 152 failing and four skipped files. Its unit
-phase took 122 minutes. One gateway E2E shard passed 712 tests and failed ten,
-with ten skips across 120 passing and eight failing files, in 131 minutes. The
-other shard remains pending. These older-source results identify further
-portability work; they do not override the newer focused verdict.

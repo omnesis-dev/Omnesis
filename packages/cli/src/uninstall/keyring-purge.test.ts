@@ -1,12 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import { join } from "node:path";
 import { describe, expect, test } from "vitest";
 import { purgeConfigDirKeyring, type KeyringPurgeDeps } from "./keyring-purge.js";
 
-const HOME = "/Users/maya";
-const COLLECTOR = `${HOME}/.config/omnesis-collector`;
-const DOCKER = `${HOME}/.config/omnesis`;
+const HOME = process.platform === "win32" ? String.raw`C:\AuditFixture\Home` : "/Users/maya";
+const COLLECTOR = join(HOME, ".config", "omnesis-collector");
+const DOCKER = join(HOME, ".config", "omnesis");
 
 function deps(files: Record<string, string>, entries = ["omnesis", "omnesis-collector", "other"]) {
   const calls: string[] = [];
@@ -31,10 +32,10 @@ describe("purgeConfigDirKeyring", () => {
   // (passphrase keyring in its own directory) and the native collector.
   test("deletes the collector's markers and the root key, never counting the Docker install", async () => {
     const { d, calls } = deps({
-      [`${DOCKER}/omnesis.json`]: "{}",
-      [`${DOCKER}/keyring`]: "",
-      [`${DOCKER}/install-method`]: "docker\n",
-      [`${COLLECTOR}/keyring`]: "",
+      [join(DOCKER, "omnesis.json")]: "{}",
+      [join(DOCKER, "keyring")]: "",
+      [join(DOCKER, "install-method")]: "docker\n",
+      [join(COLLECTOR, "keyring")]: "",
     });
     const result = await purgeConfigDirKeyring(HOME, COLLECTOR, d);
     expect(result.rootKey).toBe("deleted");
@@ -46,11 +47,11 @@ describe("purgeConfigDirKeyring", () => {
   });
 
   test("keeps the root key while another native install uses it", async () => {
-    const native = `${HOME}/.config/omnesis-lab`;
-    const { d, calls } = deps({ [`${native}/omnesis.db`]: "", [`${COLLECTOR}/keyring`]: "" }, [
-      "omnesis-lab",
-      "omnesis-collector",
-    ]);
+    const native = join(HOME, ".config", "omnesis-lab");
+    const { d, calls } = deps(
+      { [join(native, "omnesis.db")]: "", [join(COLLECTOR, "keyring")]: "" },
+      ["omnesis-lab", "omnesis-collector"],
+    );
     const result = await purgeConfigDirKeyring(HOME, COLLECTOR, d);
     expect(result).toMatchObject({ rootKey: "kept", keptFor: [native] });
     expect(calls).not.toContain("root-key");

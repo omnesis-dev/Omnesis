@@ -6,6 +6,15 @@ import { win32 } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { windowsProcessStart } from "./windows-powershell.js";
 import type { WindowsBootstrapRequest } from "./windows-worker-cache.js";
+const inherited = vi.hoisted(() => ({ data: new Map<string, unknown>() }));
+vi.mock("node:worker_threads", async (original) => ({
+  ...(await original<typeof import("node:worker_threads")>()),
+  getEnvironmentData: (key: string) => inherited.data.get(key),
+  setEnvironmentData: (key: string, value?: unknown) => {
+    if (value === undefined) inherited.data.delete(key);
+    else inherited.data.set(key, value);
+  },
+}));
 vi.mock("./windows-powershell.js", async (original) => ({
   ...(await original<typeof import("./windows-powershell.js")>()),
   windowsProcessStart: vi.fn(() => "638000000000000001"),
@@ -13,6 +22,8 @@ vi.mock("./windows-powershell.js", async (original) => ({
 
 beforeEach(() => {
   vi.resetModules();
+  inherited.data.clear();
+  vi.mocked(windowsProcessStart).mockClear();
   vi.mocked(windowsProcessStart).mockReturnValue("638000000000000001");
   vi.stubEnv("SystemRoot", "C:\\Windows");
   vi.stubEnv("LOCALAPPDATA", "C:\\example folder\\literal & $()\\Local");
@@ -133,6 +144,14 @@ describe("Windows native worker cache boundary", () => {
       args: ["filesystem", String(process.pid)],
     });
     expect(bootstrap).toHaveBeenCalledOnce();
+    expect([...inherited.data.values()]).toEqual([
+      {
+        format: 1,
+        ownerPid: process.pid,
+        sourceHash: payload.metadata.sourceHash,
+        executable: job.command,
+      },
+    ]);
   });
   it.each([
     "wrong-executable",
@@ -164,6 +183,7 @@ describe("Windows native worker cache boundary", () => {
     expect(() => windowsWorkerInvocation("job", bootstrap)).toThrow(/native worker/u);
     expect(() => windowsWorkerInvocation("job", bootstrap)).toThrow(/native worker/u);
     expect(bootstrap).toHaveBeenCalledOnce();
+    expect(inherited.data.size).toBe(0);
   });
   it.each(["relative-cache", "\\drive-relative-cache"])(
     "rejects cwd-dependent cache directory %s before initialization",
@@ -177,4 +197,81 @@ describe("Windows native worker cache boundary", () => {
       expect(bootstrap).not.toHaveBeenCalled();
     },
   );
+});
+
+async function primedSeed() {
+  const cache = await import("./windows-worker-cache.js");
+  const invocation = cache.windowsWorkerInvocation("job", verified);
+  const [key, value] = [...inherited.data.entries()][0]!;
+  const seed = value as Record<string, unknown>;
+  vi.resetModules();
+  vi.mocked(windowsProcessStart).mockClear();
+  return { key, seed, invocation };
+}
+
+describe("process-local verified cache inheritance", () => {
+  it("reuses verified metadata in a fresh isolate without process lookup or bootstrap", async () => {
+    const { invocation, seed } = await primedSeed();
+    const { windowsWorkerInvocation } = await import("./windows-worker-cache.js");
+    const bootstrap = vi.fn(() => {
+      throw new Error("Unexpected repeated bootstrap");
+    });
+    expect(windowsWorkerInvocation("filesystem", bootstrap)).toEqual({
+      command: invocation.command,
+      args: ["filesystem", String(process.pid)],
+    });
+    expect(windowsWorkerInvocation("job", bootstrap)).toEqual(invocation);
+    expect(windowsProcessStart).not.toHaveBeenCalled();
+    expect(bootstrap).not.toHaveBeenCalled();
+    expect([...inherited.data.values()]).toEqual([seed]);
+  });
+
+  it.each([
+    "pid",
+    "hash",
+    "root",
+    "relative",
+    "format",
+    "shape",
+    "missing",
+    "extra",
+    "array",
+    "null",
+  ])("ignores an invalid inherited %s and performs full trusted verification", async (variant) => {
+    const { key, seed, invocation } = await primedSeed();
+    const invalid = { ...seed };
+    if (variant === "pid") invalid.ownerPid = process.pid + 1;
+    if (variant === "hash") invalid.sourceHash = "b".repeat(64);
+    if (variant === "root") invalid.executable = "C:\\unverified\\worker.exe";
+    if (variant === "relative") invalid.executable = "worker.exe";
+    if (variant === "format") invalid.format = 2;
+    if (variant === "shape") invalid.ownerPid = String(process.pid);
+    if (variant === "missing") delete invalid.ownerPid;
+    if (variant === "extra") invalid.unexpected = "invented task input";
+    inherited.data.set(key, variant === "null" ? null : variant === "array" ? [invalid] : invalid);
+    const { windowsWorkerInvocation } = await import("./windows-worker-cache.js");
+    const bootstrap = vi.fn(verified);
+    expect(windowsWorkerInvocation("job", bootstrap)).toEqual(invocation);
+    expect(bootstrap).toHaveBeenCalledOnce();
+    expect(windowsProcessStart).toHaveBeenCalledOnce();
+    expect(inherited.data.get(key)).toEqual(seed);
+  });
+
+  it("never bypasses a sticky local initialization failure with a later valid seed", async () => {
+    const { key, seed } = await primedSeed();
+    inherited.data.clear();
+    const { windowsWorkerInvocation } = await import("./windows-worker-cache.js");
+    const bootstrap = vi.fn(() => ({
+      exitCode: 1,
+      signal: null,
+      stdout: Buffer.alloc(0),
+      stderr: "EPRIVATE",
+    }));
+    expect(() => windowsWorkerInvocation("job", bootstrap)).toThrow("native worker");
+    expect(inherited.data.size).toBe(0);
+    inherited.data.set(key, seed);
+    expect(() => windowsWorkerInvocation("job", bootstrap)).toThrow("native worker");
+    expect(bootstrap).toHaveBeenCalledOnce();
+    expect(windowsProcessStart).toHaveBeenCalledOnce();
+  });
 });

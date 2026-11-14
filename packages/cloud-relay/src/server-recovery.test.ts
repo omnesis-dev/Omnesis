@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { createPrivateKey, randomBytes, randomUUID, sign } from "node:crypto";
-import { readFile, mkdtemp, rm } from "node:fs/promises";
+import { createPrivateKey, randomBytes, randomUUID, sign, X509Certificate } from "node:crypto";
+import { readFile, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { createServer as createHttpsServer, request as httpsRequest } from "node:https";
@@ -356,12 +356,21 @@ test("recovery owner sessions cannot publish legacy Google-only replacement bind
     [false, 404],
     [true, 403],
   ] as const) {
-    const f = await setup(undefined, { legacyRoutes }),
-      response = await f.complete(f.receipt());
+    const f = await setup(undefined, { legacyRoutes });
+    const certificate = f.registration.certificate.replace(/\r?\n/g, "\r\n");
+    f.registration.certificate = certificate;
+    f.binding.certificate = certificate;
+    await writeFile(f.files.certFile, certificate);
+    const response = await f.complete(f.receipt());
     expect(response.status).toBe(200);
     const session = await response.json();
     expect((await f.request("/_relay/v2/gateway", f.binding, session.token)).status).toBe(status);
-    expect(f.accounts.gatewayBinding(f.account)).toEqual(f.binding);
+    expect(f.accounts.gatewayBinding(f.account)).toEqual({
+      ...f.binding,
+      certificate: new X509Certificate(certificate).toString(),
+    });
+    expect(f.registration.certificate).toBe(certificate);
+    expect(await readFile(f.files.certFile, "utf8")).toBe(certificate);
   }
 });
 test("fresh Google aliases allow multiple gateways across independent owner sessions and unlink does not affect another owner", async () => {

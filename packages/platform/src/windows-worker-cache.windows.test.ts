@@ -65,29 +65,34 @@ const fixtureFrame=(value)=>{const bytes=Buffer.from(JSON.stringify(value)),leng
 function fixtureBootstrap(request) {
  return runWindowsOwnedProcessSync({command:windowsPowerShellExecutable(),args:['-NoLogo','-NoProfile','-NonInteractive','-EncodedCommand',Buffer.from(WINDOWS_JOB_POWERSHELL_SCRIPT,'utf16le').toString('base64')]},fixtureFrame({command:request.invocation.command,args:request.invocation.args,parentPid:process.pid}),{input:request.input,timeoutMs:15000,maxBuffer:65536});
 }
-let fixturePinKey;
+let fixturePinKey,fixtureSourceHash;
 windowsWorkerInvocation('job',request=>{
  const result=fixtureBootstrap(request);
  if(result.failure || result.exitCode!==0) throw Error('Fixture verification failed: '+result.stderr);
- fixturePinKey=JSON.parse(Buffer.from(result.stdout).toString('utf8')).pinKey;
+ const record=JSON.parse(Buffer.from(result.stdout).toString('utf8'));fixturePinKey=record.pinKey;fixtureSourceHash=record.sourceHash;
  return result;
 });
 `;
-const threadFixture = `
-import {Worker} from 'node:worker_threads';
-import {execFileSync} from 'node:child_process';
-const threadCode=${JSON.stringify(`
+const threadProgram = `
 const {parentPort,workerData}=require('node:worker_threads');
 import(${JSON.stringify(tsxWorkerApi)}).then(({register})=>{
  register();return import(${JSON.stringify(jobModule)});
 }).then(async({runWindowsJob})=>{
  if(workerData.importOnly) {parentPort.postMessage({imported:typeof runWindowsJob});parentPort.close();return;}
+ if(workerData.requireSeed) {
+  const {windowsWorkerInvocation}=await import(${JSON.stringify(new URL("./windows-worker-cache.ts", import.meta.url).href)});
+  windowsWorkerInvocation('job',()=>{throw Error('Worker repeated trusted bootstrap instead of reusing verified seed');});
+ }
  const result=await runWindowsJob(process.execPath,['-e',''],{timeoutMs:15000});
- parentPort.postMessage({failure:result.failure,exitCode:result.exitCode});parentPort.close();
+ parentPort.postMessage({failure:result.failure,exitCode:result.exitCode,...(workerData.requireSeed?{reused:true}:{})});parentPort.close();
 }).catch(error=>{parentPort.postMessage({error:String(error)});parentPort.close();});
-`)};
-async function fixtureThread(importOnly=false) {
- const worker=new Worker(threadCode,{eval:true,workerData:{importOnly},execArgv:[]});
+`;
+const threadFixture = `
+import {Worker,setEnvironmentData} from 'node:worker_threads';
+import {execFileSync} from 'node:child_process';
+const threadCode=${JSON.stringify(threadProgram)};
+async function fixtureThread(importOnly=false,requireSeed=false) {
+ const worker=new Worker(threadCode,{eval:true,workerData:{importOnly,requireSeed},execArgv:[]});
  let result;
  await new Promise((resolve,reject)=>{worker.once('message',value=>result=value);worker.once('error',reject);worker.once('exit',code=>code===0?resolve():reject(Error('Fixture thread failed')));});
  await new Promise(resolve=>setImmediate(resolve));return result;
@@ -355,10 +360,10 @@ process.stdout.write(JSON.stringify({refused}));
       bootstrapFixture +
         threadFixture +
         `
-const parallel=await Promise.all([fixtureThread(),fixtureThread()]);
+const parallel=await Promise.all([fixtureThread(false,true),fixtureThread(false,true)]);
 const baseline=fixtureHandleCount(),counts=[];
 const churn=[];
-for(let index=0;index<3;index++) {churn.push(await fixtureThread());counts.push(fixtureHandleCount());}
+for(let index=0;index<3;index++) {churn.push(await fixtureThread(false,true));counts.push(fixtureHandleCount());}
 process.stdout.write(JSON.stringify({parallel,churn,baseline,counts}));
 `,
     );
@@ -370,10 +375,49 @@ process.stdout.write(JSON.stringify({parallel,churn,baseline,counts}));
       counts: number[];
     };
     for (const item of [...evidence.parallel, ...evidence.churn])
-      expect(item).toEqual({ exitCode: 0 });
+      expect(item).toEqual({ exitCode: 0, reused: true });
     expect(Number.isFinite(evidence.baseline)).toBe(true);
     expect(evidence.counts).toHaveLength(3);
     expect(Math.max(...evidence.counts)).toBeLessThanOrEqual(evidence.baseline + 8);
+  });
+  it("keeps process-owned pins after their originating Worker exits and lets its child reuse verified state", async () => {
+    const origin = `
+const {Worker,parentPort}=require('node:worker_threads');
+import(${JSON.stringify(tsxWorkerApi)}).then(async({register})=>{
+ register();
+ const {runWindowsJob}=await import(${JSON.stringify(jobModule)});
+ const first=await runWindowsJob(process.execPath,['-e',''],{timeoutMs:15000});
+ if(first.exitCode!==0 || first.failure) throw Error('Origin worker verification failed');
+ const child=new Worker(${JSON.stringify(threadProgram)},{eval:true,execArgv:[],workerData:{requireSeed:true}});
+ let result;
+ await new Promise((resolve,reject)=>{child.once('message',value=>result=value);child.once('error',reject);child.once('exit',code=>code===0?resolve():reject(Error('Child worker failed')));});
+ parentPort.postMessage({firstExitCode:first.exitCode,child:result});parentPort.close();
+}).catch(error=>{parentPort.postMessage({error:String(error)});parentPort.close();});
+`;
+    const result = await run(`
+import {Worker} from 'node:worker_threads';
+import {renameSync,readdirSync} from 'node:fs';
+import {join} from 'node:path';
+const origin=new Worker(${JSON.stringify(origin)},{eval:true,execArgv:[]});
+let record;
+await new Promise((resolve,reject)=>{origin.once('message',value=>record=value);origin.once('error',reject);origin.once('exit',code=>code===0?resolve():reject(Error('Origin worker failed')));});
+const profile=${JSON.stringify(root)},cache=join(profile,'Omnesis','platform-native-v1');
+const generations=readdirSync(cache);
+if(generations.length!==1)throw Error('Expected one fixture generation');
+const pins=[];
+for(const path of [profile,join(cache,generations[0])]) {
+ let blocked=false;
+ try {renameSync(path,path+'-moved');renameSync(path+'-moved',path);}
+ catch(error){if(!['EPERM','EACCES','EBUSY'].includes(error.code))throw error;blocked=true;}
+ pins.push(blocked);
+}
+process.stdout.write(JSON.stringify({record,pins}));
+`);
+    expect(result.code, result.stderr).toBe(0);
+    expect(JSON.parse(result.stdout)).toEqual({
+      record: { firstExitCode: 0, child: { exitCode: 0, reused: true } },
+      pins: [true, true],
+    });
   });
   it("refuses a stranded incomplete marker without adding another pin set", async () => {
     const result = await run(
@@ -381,6 +425,8 @@ process.stdout.write(JSON.stringify({parallel,churn,baseline,counts}));
         threadFixture +
         `
 execFileSync(windowsPowerShellExecutable(),['-NoLogo','-NoProfile','-NonInteractive','-Command',"$marker=[Threading.EventWaitHandle]::OpenExisting($env:OMNESIS_FIXTURE_PIN_KEY+'.ready');try{$null=$marker.Reset()}finally{$marker.Dispose()}"],{env:{...process.env,OMNESIS_FIXTURE_PIN_KEY:fixturePinKey},windowsHide:true,timeout:10000});
+// Force new verification rather than inheriting the parent's already-verified state.
+setEnvironmentData('@omnesis/platform/native-worker-cache/v1:'+fixtureSourceHash,undefined);
 const baseline=fixtureHandleCount();
 const failures=[];
 for(let index=0;index<2;index++) failures.push(await fixtureThread());
@@ -410,6 +456,8 @@ const poison=spawn(windowsPowerShellExecutable(),['-NoLogo','-NoProfile','-NonIn
 const closed=new Promise(resolve=>poison.once('close',resolve));
 try {
  await new Promise((resolve,reject)=>{poison.once('error',reject);poison.stdout.once('data',bytes=>String(bytes)==='ready'?resolve():reject(Error('Fixture mutex unavailable')));poison.once('exit',()=>reject(Error('Fixture mutex exited')));});
+ // Force the native mutex trust boundary rather than reuse verified parent state.
+ setEnvironmentData('@omnesis/platform/native-worker-cache/v1:'+fixtureSourceHash,undefined);
  process.stdout.write(JSON.stringify(await fixtureThread()));
 } finally {poison.stdin.end();await closed;}
 `,
