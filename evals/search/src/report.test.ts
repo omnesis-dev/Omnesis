@@ -22,7 +22,7 @@ function summary(name: string, ndcg: number, languages: Language[] = ["ko"]): Ru
     limits: { maxPassages: null, maxQueries: null },
     embedder: null,
     gatewayConfig: {},
-    macro: { ndcg10: ndcg, recall100: 0.5, mrr10: 0.4 },
+    macro: { hit10: 0.75, ndcg10: ndcg, recall100: 0.5, mrr10: 0.4 },
     languages: languages.map((language) => ({
       language,
       queries: 3,
@@ -30,6 +30,7 @@ function summary(name: string, ndcg: number, languages: Language[] = ["ko"]): Ru
       emptyResults: 0,
       lexicalEngines: { memory: 2, fts5: 1 },
       pool: "0123456789abcdef",
+      hit10: 0.75,
       ndcg10: ndcg,
       recall100: 0.5,
       mrr10: 0.4,
@@ -43,6 +44,7 @@ function rows(values: readonly number[], language: Language = "ko"): QueryRow[] 
   return values.map((v, i) => ({
     language,
     queryId: `q${i}`,
+    hit10: v > 0 ? 1 : 0,
     ndcg10: v,
     recall100: v,
     mrr10: v,
@@ -76,7 +78,7 @@ describe("renderResults", () => {
   test("lists each run and each language's score", () => {
     const text = renderResults([summary("base", 0.25), summary("next", 0.5)]);
     expect(text).toContain(
-      "| base | lexical | 012345678 | 100 | 3 | 0.250 | 0.500 | 0.400 | 67% | 9 ms |",
+      "| base | lexical | 012345678 | 100 | 3 | 0.750 | 0.250 | 0.500 | 0.400 | 67% | 9 ms |",
     );
     expect(text).toContain("| Korean | 0.250 | 0.500 |");
   });

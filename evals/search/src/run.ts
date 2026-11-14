@@ -434,13 +434,15 @@ async function main(): Promise<void> {
         emptyResults,
         lexicalEngines,
         pool: poolFingerprint(manifest.languages.find((l) => l.language === language)!),
+        hit10: mean(scored.map((s) => s.hit10)),
         ndcg10: mean(scored.map((s) => s.ndcg10)),
         recall100: mean(scored.map((s) => s.recall100)),
         mrr10: mean(scored.map((s) => s.mrr10)),
       };
       languageResults.push(result);
       say(
-        `${LANGUAGE_NAMES[language].padEnd(11)} nDCG@10 ${result.ndcg10.toFixed(3)}  ` +
+        `${LANGUAGE_NAMES[language].padEnd(11)} Hit@10 ${result.hit10.toFixed(3)}  ` +
+          `nDCG@10 ${result.ndcg10.toFixed(3)}  ` +
           `Recall@100 ${result.recall100.toFixed(3)}  (${result.queries} queries, ` +
           `${emptyResults} empty, ${lexicalEngines.memory ?? 0} by the in-memory ranker)`,
       );
@@ -460,6 +462,7 @@ async function main(): Promise<void> {
       embedder: runMode === "hybrid" ? embedderModel : null,
       gatewayConfig: GATEWAY_CONFIG,
       macro: {
+        hit10: mean(languageResults.map((l) => l.hit10)),
         ndcg10: mean(languageResults.map((l) => l.ndcg10)),
         recall100: mean(languageResults.map((l) => l.recall100)),
         mrr10: mean(languageResults.map((l) => l.mrr10)),
@@ -476,7 +479,7 @@ async function main(): Promise<void> {
     };
     writeRun(summary, rows);
     say(
-      `Macro nDCG@10 ${summary.macro.ndcg10.toFixed(4)}  Recall@100 ` +
+      `Macro Hit@10 ${summary.macro.hit10.toFixed(4)}  nDCG@10 ${summary.macro.ndcg10.toFixed(4)}  Recall@100 ` +
         `${summary.macro.recall100.toFixed(4)}  MRR@10 ${summary.macro.mrr10.toFixed(4)}`,
     );
     say(`Wrote evals/search/results/${name}.json`);

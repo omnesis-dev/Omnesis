@@ -7,6 +7,8 @@
  */
 
 export interface QueryScore {
+  /** 1 when a relevant passage is anywhere in the first ten, else 0. */
+  hit10: number;
   /** Rewards relevant passages near the top of the first ten; 1 is ideal. */
   ndcg10: number;
   /** Share of the query's relevant passages found in the first hundred. */
@@ -40,7 +42,12 @@ export function scoreQuery(ranked: readonly string[], relevant: ReadonlySet<stri
   }
   let ideal = 0;
   for (let i = 0; i < Math.min(relevant.size, 10); i += 1) ideal += 1 / Math.log2(i + 2);
-  return { ndcg10: dcg / ideal, recall100: found / relevant.size, mrr10 };
+  return {
+    hit10: mrr10 > 0 ? 1 : 0,
+    ndcg10: dcg / ideal,
+    recall100: found / relevant.size,
+    mrr10,
+  };
 }
 
 export function mean(values: readonly number[]): number {

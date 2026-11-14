@@ -5,12 +5,35 @@ See [README.md](README.md) for what is measured and how to read it.
 
 ## Runs
 
-| Run              |    Mode |    Commit |  Passages | Queries | nDCG@10 | Recall@100 | MRR@10 | In-memory ranker | p95 query |
-| ---------------- | ------: | --------: | --------: | ------: | ------: | ---------: | -----: | ---------------: | --------: |
-| baseline-lexical | lexical | 08f05e41a | 1,749,043 |  13,495 |   0.400 |      0.722 |  0.415 |             100% |     44 ms |
+| Run              |    Mode |    Commit |  Passages | Queries | Hit@10 | nDCG@10 | Recall@100 | MRR@10 | In-memory ranker | p95 query |
+| ---------------- | ------: | --------: | --------: | ------: | -----: | ------: | ---------: | -----: | ---------------: | --------: |
+| baseline-lexical | lexical | 08f05e41a | 1,749,043 |  13,495 |  0.642 |   0.400 |      0.722 |  0.415 |             100% |     44 ms |
 
-The three scores are macro averages: every language counts equally. "In-memory ranker" is the
+The four scores are macro averages: every language counts equally. "In-memory ranker" is the
 share of queries the default keyword ranker served; the FTS5 fallback served the rest.
+
+## Hit@10 by language
+
+| Language   | baseline-lexical |
+| ---------- | ---------------: |
+| Arabic     |            0.807 |
+| Bengali    |            0.633 |
+| Chinese    |            0.015 |
+| English    |            0.880 |
+| Finnish    |            0.786 |
+| French     |            0.784 |
+| German     |            0.702 |
+| Hindi      |            0.471 |
+| Indonesian |            0.869 |
+| Japanese   |            0.219 |
+| Korean     |            0.573 |
+| Persian    |            0.720 |
+| Russian    |            0.637 |
+| Spanish    |            0.917 |
+| Swahili    |            0.726 |
+| Telugu     |            0.364 |
+| Thai       |            0.701 |
+| Yoruba     |            0.748 |
 
 ## nDCG@10 by language
 
