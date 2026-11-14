@@ -1,6 +1,11 @@
 name: Windows ownership and filesystem diagnosis
 on:
   workflow_dispatch:
+    inputs:
+      lanes:
+        type: choice
+        options: [all, linux]
+        default: linux
 permissions:
   contents: read
 env:
@@ -25,29 +30,31 @@ jobs:
         run: |
           git rev-parse HEAD
           sha256sum packages/core/src/secret-store-files.ts packages/core/src/secret-store-entry.ts packages/core/src/sqlite-snapshot.ts packages/core/src/backup-layout.ts packages/platform/src/windows-process.ts packages/cloud-relay/src/device-key-file.ts packages/cloud-relay/src/gateway-key-client.ts
-      - name: Rerun the six original ownership regression suites
-        run: >-
-          node scripts/run-check.mjs unit
-          packages/core/src/secret-store-files.test.ts
-          packages/core/src/sqlite-snapshot-windows-retry.test.ts
-          packages/core/src/backup-layout-cleanup.test.ts
-          packages/platform/src/windows-process.test.ts
-          packages/cloud-relay/src/device-key-file.test.ts
-          packages/cloud-relay/src/gateway-key-client.test.ts
-      - name: Verify cause markers and durable snapshot retention
-        if: ${{ !cancelled() }}
-        run: >-
-          node scripts/run-check.mjs unit
-          packages/core/src/owned-process-cleanup.test.ts
-          packages/core/src/private-scratch.test.ts
-          packages/core/src/sqlite-snapshot-cleanup-retention.test.ts
-      - name: Diagnose unconfirmed doctor reads before repair against unchanged doctor production
-        if: ${{ !cancelled() }}
+      - name: Verify the two doctor guards against the six reproduced failures
         run: >-
           node scripts/run-check.mjs unit
           packages/core/src/doctor/security-cleanup.test.ts
           packages/core/src/doctor/windows-permissions-cleanup.test.ts
+      - name: Diagnose sibling security-key operation join and marker precedence
+        if: ${{ !cancelled() }}
+        run: node scripts/run-check.mjs unit packages/core/src/doctor/security-key-batch-cleanup.test.ts
+      - name: Diagnose broader private-operation producer boundaries
+        if: ${{ !cancelled() }}
+        run: node scripts/ci/relay-producer-baseline.mjs
+      - name: Diagnose ACME DNS initial and recovery journal ownership
+        if: ${{ !cancelled() }}
+        run: node scripts/run-check.mjs unit packages/cloud-relay/src/acme-dns-cleanup.test.ts
+      - name: Diagnose DNS owner adoption and controller admission
+        if: ${{ !cancelled() }}
+        run: node scripts/run-check.mjs unit packages/cloud-relay/src/acme-controller-dns-cleanup.test.ts
+      - name: Diagnose doctor worker and service retained cleanup ownership
+        if: ${{ !cancelled() }}
+        run: >-
+          node scripts/run-check.mjs unit
+          packages/core/src/doctor/security-worker-lifecycle.test.ts
+          packages/gateway/src/http/services/DoctorService-cleanup.test.ts
   windows-filesystem:
+    if: ${{ inputs.lanes != 'linux' }}
     runs-on: windows-latest
     timeout-minutes: 35
     steps:

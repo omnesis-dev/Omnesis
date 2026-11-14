@@ -7,6 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ensurePrivateDirs } from "@omnesis/core";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
+import { markedFileError } from "../test/private-operation-fixture.js";
 import { createRecoveryAuthority, signRecoveryReceipt } from "./recovery-authority.js";
 import { gatewayRecoveryDraft, readGatewayRecoveryReceipt } from "./gateway-recovery.js";
 import {
@@ -182,3 +183,13 @@ test("real sockets recover absent heartbeats, abrupt resets and transient sessio
     vi.unstubAllEnvs();
   }
 });
+
+test.each(["own", "cause"] as const)(
+  "marked recovery-receipt absence cannot authorize receipt-free enrollment (%s)",
+  async (placement) => {
+    const f = await fixture(),
+      failure = markedFileError("ENOENT", placement);
+    vi.spyOn(credentials, "readPrivateJson").mockRejectedValueOnce(failure);
+    await expect(readGatewayRecoveryReceipt(f.options, f.identity)).rejects.toBe(failure);
+  },
+);

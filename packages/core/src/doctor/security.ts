@@ -68,6 +68,7 @@ import {
   systemdUnitPath,
 } from "../service-paths.js";
 import { collectWindowsPermissionData } from "./windows-permissions.js";
+import { ownedProcessCleanupReceipt } from "../owned-process-cleanup.js";
 import type {
   SecurityData,
   SecurityDiskEncryptionStatus,
@@ -182,6 +183,7 @@ export async function collectSecurityData(opts: CollectSecurityOptions): Promise
   // records why instead of throwing the collection away.
   let keyringAccess: SecurityKeyringAccess = { readable: true };
   const noteUnreadable = (err: unknown): void => {
+    if (ownedProcessCleanupReceipt(err) !== undefined) throw err;
     if (!(err instanceof SecretPathUnreadableError)) throw err;
     if (keyringAccess.readable) {
       keyringAccess = { readable: false, path: err.path, detail: err.message };

@@ -6,8 +6,11 @@ import { once } from "node:events";
 import { mkdtemp, mkdir, readFile, rm, stat, truncate, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import * as core from "@omnesis/core";
 import { ensurePrivateDirs, execWindowsJob, inspectWindowsPrivatePathSync } from "@omnesis/core";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
+import { markedFileError, onWindowsBoundary } from "../test/private-operation-fixture.js";
+import * as privateCredentials from "./google-credentials.js";
 import { savePrivateJson } from "./google-credentials.js";
 import { FileBrokerStore, createDnsBrokerServer } from "./dns-broker-node.js";
 import type { AddressInfo } from "node:net";
@@ -280,6 +283,62 @@ test.skipIf(process.platform !== "win32")(
     expect(inspectWindowsPrivatePathSync(file, "file").private).toBe(false);
     await expect(FileBrokerStore.open(file)).rejects.toMatchObject({
       code: "EPRIVATE",
+    });
+  },
+);
+
+test("Windows registry state uses a bounded private read and only genuine absence creates an empty store", async () => {
+  const path = join(directory, "private-registry.json");
+  const refused = Object.assign(new Error("Invented unsafe registry"), { code: "EPRIVATE" });
+  const read = vi
+    .spyOn(core, "readWindowsPrivateFile")
+    .mockResolvedValueOnce(Buffer.from('{"name:a":{"owner":1}}'))
+    .mockRejectedValueOnce(
+      Object.assign(new Error("Invented missing registry"), { code: "ENOENT" }),
+    )
+    .mockRejectedValueOnce(refused)
+    .mockResolvedValueOnce(Buffer.from("[]"));
+  const descriptor = Object.getOwnPropertyDescriptor(process, "platform")!;
+  Object.defineProperty(process, "platform", { ...descriptor, value: "win32" });
+  try {
+    expect(await (await FileBrokerStore.open(path)).get("name:a")).toEqual({ owner: 1 });
+    expect(await (await FileBrokerStore.open(path)).list("")).toEqual(new Map());
+    await expect(FileBrokerStore.open(path)).rejects.toBe(refused);
+    await expect(FileBrokerStore.open(path)).rejects.toThrow("Invalid DNS broker registry");
+    expect(read.mock.calls).toEqual(Array.from({ length: 4 }, () => [path, 64 * 1024 * 1024]));
+  } finally {
+    Object.defineProperty(process, "platform", descriptor);
+  }
+});
+
+test("a request delivered after the server closes admission receives 503 without dispatch", async () => {
+  const { served, broker } = await serve();
+  await served.close();
+  const response = { writeHead: vi.fn(), end: vi.fn() };
+  served.server.emit("request", { url: "/_dns/v2/import", method: "POST" }, response);
+  expect(response.writeHead).toHaveBeenCalledExactlyOnceWith(503, { "cache-control": "no-store" });
+  expect(response.end).toHaveBeenCalledOnce();
+  expect(broker.handle).not.toHaveBeenCalled();
+});
+
+test.each(["own", "cause"] as const)(
+  "marked registry absence cannot become empty state and persist (%s)",
+  async (placement) => {
+    const path = join(directory, "uncertain-registry.json");
+    const failure = markedFileError("ENOENT", placement);
+    const read = vi.spyOn(core, "readWindowsPrivateFile").mockRejectedValueOnce(failure);
+    const publish = vi
+      .spyOn(privateCredentials, "savePrivateJson")
+      .mockResolvedValueOnce(undefined);
+    await onWindowsBoundary(async () => {
+      await expect(
+        (async () => {
+          const store = await FileBrokerStore.open(path);
+          await store.put("name:invented", { owner: "invented-key" });
+        })(),
+      ).rejects.toBe(failure);
+      expect(read).toHaveBeenCalledExactlyOnceWith(path, 64 * 1024 * 1024);
+      expect(publish).not.toHaveBeenCalled();
     });
   },
 );
