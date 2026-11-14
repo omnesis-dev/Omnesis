@@ -76,7 +76,7 @@ describe("helperEnvironment", () => {
         LC_ALL: "C.UTF-8",
         HTTPS_PROXY: "http://proxy.example.com:3128",
         SSL_CERT_FILE: "/etc/ssl/ca.pem",
-        TS_AUTHKEY: "tskey-x",
+        TS_AUTHKEY: "test-auth-key",
         TS_CLIENT_SECRET: "y",
         ANTHROPIC_API_KEY: "sk-example",
         OMNESIS_KEYRING_PASSPHRASE: "hunter2",
@@ -94,7 +94,10 @@ describe("helperEnvironment", () => {
 describe("HelperSupervisor", () => {
   test("starts the helper with its launch flags, without TS_ variables, and reports its status", async () => {
     const { spawner, seen } = nodeSpawner({ OMNESIS_FAKE_TAILNET_SCENARIO: "connected" });
-    const sup = make(spawner, { PATH: process.env.PATH, TS_AUTHKEY: "tskey-should-not-leak" });
+    const sup = make(spawner, {
+      PATH: process.env.PATH,
+      TS_AUTHKEY: "test-auth-key-should-not-pass",
+    });
     sup.send({ type: "configure", public: { enabled: true, paths: ["/mcp"] } });
     await sup.start({ ...launch, controlUrl: "http://127.0.0.1:1" });
     const running = await until(sup, (s) => s.status?.public.state === "on");
