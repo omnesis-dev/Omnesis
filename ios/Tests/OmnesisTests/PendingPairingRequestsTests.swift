@@ -147,8 +147,8 @@ final class PendingPairingRequestsTests: XCTestCase {
     /// A pairing request notification, tapped, asks for the Pairing requests list.
     func testThePairingNotificationRoutesToPairingRequests() {
         let payload: [AnyHashable: Any] = ["omnesis": ["kind": "device-pairing", "targetId": "pairing"]]
-        XCTAssertEqual(PushTarget.fromUserInfo(payload, cloudRelayEnabled: true), .pairingRequests)
-        XCTAssertTrue(PushTarget.pairingRequests.opensDevices)
+        XCTAssertEqual(PushTarget.fromUserInfo(payload, cloudRelayEnabled: true), .pairingRequests(requestId: nil))
+        XCTAssertTrue(PushTarget.pairingRequests().opensDevices)
         XCTAssertNil(PushTarget.fromUserInfo(payload, cloudRelayEnabled: false))
     }
 }
