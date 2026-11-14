@@ -24,6 +24,7 @@ import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { createDatabase } from "../db.js";
+import { FILTER_VALUE_TABLES } from "../access/filter-values.js";
 import { createLegacyBriefClaimsTables, createLegacyBriefTables } from "./legacy-brief-tables.js";
 import { CURSOR_COMPAT_SCHEMA_VERSION, LATEST_SCHEMA_VERSION } from "./migrations.js";
 import { retractAliasAssertions } from "./repositories/PersonAliasRepository.js";
@@ -356,20 +357,13 @@ function undoSourceVersion(db: Db): void {
 function undoFilterValues(db: Db): void {
   for (const { name } of db
     .prepare<[], { name: string }>(
-      "SELECT name FROM sqlite_master WHERE type = 'trigger' AND name LIKE 'document_filter_value%'",
+      `SELECT name FROM sqlite_master WHERE type = 'trigger'
+          AND (name LIKE 'document_filter_value%' OR name LIKE 'document_filter_record%')`,
     )
     .all()) {
     db.exec(`DROP TRIGGER "${name}"`);
   }
-  for (const table of [
-    "document_filter_values",
-    "document_filter_value_counts",
-    "document_filter_value_sources",
-    "document_filter_value_queue",
-    "document_filter_slots",
-  ]) {
-    db.exec(`DROP TABLE IF EXISTS ${table}`);
-  }
+  for (const table of FILTER_VALUE_TABLES) db.exec(`DROP TABLE IF EXISTS ${table}`);
 }
 
 function windBack(db: Db): void {

@@ -7,25 +7,32 @@
  * index lookups rather than a read of every record's metadata.
  *
  * **What a record's rows say.** A record of an account whose source declares
- * a filterable detail has:
+ * a filterable detail has a row in `document_filter_records`, which numbers
+ * it (`seq`, in the order records are first cut) and says how it is decided:
+ * `S` on its own details, `D` as an attachment decided through the record it
+ * was attached to, `U` when it cannot be decided (its metadata cannot be
+ * read, or it is an attachment whose record is missing, unreadable or itself
+ * an attachment). It then has one posting per value it carries:
  *
- * - one `[record]` row: `S` when the record is decided on its own details,
- *   `D` when it is an attachment decided through the record it was attached
- *   to, `U` when it cannot be decided (its metadata cannot be read, or it is
- *   an attachment whose record is missing, unreadable or itself an
- *   attachment);
- * - for `S` and `D`, one row per value of each declared field it carries (the
- *   field's path), one per people-key (`[people]`, an address stored under
- *   its domain, see {@link storedPersonValue}), for a field whose ids belong
- *   to a device one row with the value `''` saying the field is known there,
- *   and for a list field holding more than one id one `[many]` row;
+ * - for `S` and `D`, one per value of each declared field (the field's path),
+ *   one per people-key (`[people]`, an address stored under its domain, see
+ *   {@link storedPersonValue}), for a field whose ids belong to a device one
+ *   with the value `''` saying the field is known there, and for a list field
+ *   holding more than one id one `[many]` posting;
  * - for an attachment naming the record it was attached to, one `[parent]`
- *   row holding that record's external id, by which the attachment is found
- *   when that record changes.
+ *   posting holding that record's external id, by which the attachment is
+ *   found when that record changes.
  *
- * Every row carries the version of the record it was decided through and a
- * bitmask of the declared details known on that record, so a count asks only
- * the rows it reads. An attachment's rows are copies of its record's. Which
+ * A value is stored once, numbered, in `document_filter_terms`, so a posting
+ * is a few bytes: term, record number, and the version and bitmask of
+ * declared details known of the record it is decided through, so a count
+ * asks only the postings it reads. Postings are keyed by term then record
+ * number, and record numbers only grow, so a new record's postings land at
+ * the end of each term's run rather than at a random point of a large table:
+ * a sync page dirties a few pages per term it touches, not one per row.
+ * Records are counted by state, version and known details in
+ * `document_filter_record_counts`. An attachment's postings are copies of its
+ * record's. Which
  * record an attachment is decided through, when a detail is "known", and how
  * people are read are the rules `filter-sql.ts` applies to the metadata; the
  * equivalence tests hold the two to the same answer. The rows only ever
@@ -57,6 +64,7 @@
  * build that does not know the rows still queues every change it makes.
  */
 
+import { createHash } from "node:crypto";
 import { filterIdentifierDomain } from "@omnesis/core";
 import { sourceTypeOf } from "@omnesis/types";
 import { filterFieldsFor, type SourceFilterFields } from "./filter-fields.js";
@@ -64,8 +72,6 @@ import { filterPeopleSpec, projectFilterPeople, type FilterPeopleSpec } from "./
 import { filterDeclarationDigest, filterFieldJsonPath } from "./filter-sql.js";
 import type { Db } from "../data/types.js";
 
-/** Field name of the row saying how a record is decided. */
-export const FILTER_VALUE_RECORD = "[record]";
 /** Field name of an attachment's row naming the record it was attached to. */
 export const FILTER_VALUE_PARENT = "[parent]";
 /** Field name of the rows holding a record's people-keys. */
@@ -85,6 +91,17 @@ export const RECORD_SELF = "S";
 export const RECORD_DERIVED = "D";
 export const RECORD_UNKNOWN = "U";
 
+/** The tables {@link createDocumentFilterValueTables} creates, children first. */
+export const FILTER_VALUE_TABLES = [
+  "document_filter_postings",
+  "document_filter_record_counts",
+  "document_filter_records",
+  "document_filter_terms",
+  "document_filter_slots",
+  "document_filter_value_sources",
+  "document_filter_value_queue",
+] as const;
+
 export function createDocumentFilterValueTables(db: Db): void {
   // Every trigger below names `documents.source_version`; on an upgrade that
   // predates it, the migration that adds the column creates them later.
@@ -99,54 +116,80 @@ export function createDocumentFilterValueTables(db: Db): void {
   // The attachments waiting on a record of this key.
   const queueAttachments = (row: "OLD" | "NEW") =>
     `INSERT INTO document_filter_value_queue (document_id, source_id, revision)
-       SELECT v.document_id, ${row}.source_id, 1
+       SELECT r.document_id, ${row}.source_id, 1
          FROM document_filter_slots s
-         JOIN document_filter_values v ON v.slot = s.slot AND v.value = ${row}.external_id
+         JOIN document_filter_terms t ON t.slot = s.slot AND t.value = ${row}.external_id
+         JOIN document_filter_postings p ON p.term = t.term
+         JOIN document_filter_records r ON r.seq = p.seq
         WHERE s.source_id = ${row}.source_id AND s.field = '${FILTER_VALUE_PARENT}'
-          AND s.device_id = ${row}.stream_id AND v.document_id <> ${row}.id
+          AND s.device_id = ${row}.stream_id AND r.document_id <> ${row}.id
        ON CONFLICT(document_id) DO UPDATE SET revision = revision + 1;`;
+  const forget = (id: string) => `
+    DELETE FROM document_filter_postings
+     WHERE seq = (SELECT seq FROM document_filter_records WHERE document_id = ${id});
+    DELETE FROM document_filter_records WHERE document_id = ${id};`;
   const countKey = (row: "OLD" | "NEW") =>
-    `slot = ${row}.slot AND value = ${row}.value AND source_version = ${row}.source_version AND known = ${row}.known`;
+    `source_id = ${row}.source_id AND state = ${row}.state AND source_version = ${row}.source_version AND known = ${row}.known`;
   const countAdd = `
-    INSERT INTO document_filter_value_counts (slot, value, source_version, known, records)
-    VALUES (NEW.slot, NEW.value, NEW.source_version, NEW.known, 1)
-    ON CONFLICT(slot, value, source_version, known) DO UPDATE SET records = records + 1;`;
+    INSERT INTO document_filter_record_counts (source_id, state, source_version, known, records)
+    VALUES (NEW.source_id, NEW.state, NEW.source_version, NEW.known, 1)
+    ON CONFLICT(source_id, state, source_version, known) DO UPDATE SET records = records + 1;`;
   const countRemove = `
-    UPDATE document_filter_value_counts SET records = records - 1 WHERE ${countKey("OLD")};
-    DELETE FROM document_filter_value_counts WHERE ${countKey("OLD")} AND records <= 0;`;
+    UPDATE document_filter_record_counts SET records = records - 1 WHERE ${countKey("OLD")};
+    DELETE FROM document_filter_record_counts WHERE ${countKey("OLD")} AND records <= 0;`;
   db.exec(`
     CREATE TABLE IF NOT EXISTS document_filter_slots (
       slot INTEGER PRIMARY KEY,
       source_id TEXT NOT NULL,
-      -- A declared path, or one of '${FILTER_VALUE_RECORD}', '${FILTER_VALUE_PARENT}', '${FILTER_VALUE_PEOPLE}'.
+      -- A declared path, '${FILTER_VALUE_PARENT}', '${FILTER_VALUE_PEOPLE}' or a '[many]' name.
       field TEXT NOT NULL,
       -- The record's stream for a field whose ids belong to a device, and for
       -- '${FILTER_VALUE_PARENT}'; '' otherwise.
       device_id TEXT NOT NULL DEFAULT '',
       UNIQUE (source_id, field, device_id)
     );
-    CREATE TABLE IF NOT EXISTS document_filter_values (
+    -- Every value a slot has held, numbered, so a posting is two small integers.
+    CREATE TABLE IF NOT EXISTS document_filter_terms (
+      term INTEGER PRIMARY KEY,
       slot INTEGER NOT NULL,
       value TEXT NOT NULL,
-      document_id TEXT NOT NULL,
-      -- Of the record the document is decided through.
+      UNIQUE (slot, value)
+    );
+    -- One row per record with filter rows, numbered in the order records are
+    -- first cut, with how it is decided (the state is '${RECORD_SELF}', '${RECORD_DERIVED}'
+    -- or '${RECORD_UNKNOWN}') and the version and known details of the record it is
+    -- decided through.
+    CREATE TABLE IF NOT EXISTS document_filter_records (
+      seq INTEGER PRIMARY KEY,
+      document_id TEXT NOT NULL UNIQUE,
+      source_id TEXT NOT NULL,
+      state TEXT NOT NULL,
       source_version INTEGER NOT NULL,
-      -- One bit per declared detail known on that record.
-      known INTEGER NOT NULL,
-      PRIMARY KEY (slot, value, document_id)
-    ) WITHOUT ROWID;
-    CREATE INDEX IF NOT EXISTS idx_document_filter_values_document
-      ON document_filter_values(document_id);
-    -- How many records hold each value, at each version and set of known
-    -- details: kept by the triggers below.
-    CREATE TABLE IF NOT EXISTS document_filter_value_counts (
-      slot INTEGER NOT NULL,
-      value TEXT NOT NULL,
+      known INTEGER NOT NULL
+    );
+    -- How many records of an account are in each state, version and set of
+    -- known details: kept by the triggers below.
+    CREATE TABLE IF NOT EXISTS document_filter_record_counts (
+      source_id TEXT NOT NULL,
+      state TEXT NOT NULL,
       source_version INTEGER NOT NULL,
       known INTEGER NOT NULL,
       records INTEGER NOT NULL,
-      PRIMARY KEY (slot, value, source_version, known)
+      PRIMARY KEY (source_id, state, source_version, known)
     ) WITHOUT ROWID;
+    -- One posting per value a record carries, with the record's version and
+    -- known details copied so a count reads nothing else. Keyed by term, then
+    -- by record number: a new record's postings land at the end of each
+    -- term's run, not at a random point of the table.
+    CREATE TABLE IF NOT EXISTS document_filter_postings (
+      term INTEGER NOT NULL,
+      seq INTEGER NOT NULL,
+      source_version INTEGER NOT NULL,
+      known INTEGER NOT NULL,
+      PRIMARY KEY (term, seq)
+    ) WITHOUT ROWID;
+    CREATE INDEX IF NOT EXISTS idx_document_filter_postings_record
+      ON document_filter_postings(seq);
     -- The declaration an account's rows were cut under, and the pass that
     -- queues its records again: the rowid it has reached, NULL once done.
     CREATE TABLE IF NOT EXISTS document_filter_value_sources (
@@ -164,15 +207,16 @@ export function createDocumentFilterValueTables(db: Db): void {
     CREATE INDEX IF NOT EXISTS idx_document_filter_value_queue_source
       ON document_filter_value_queue(source_id);
 
-    CREATE TRIGGER IF NOT EXISTS document_filter_value_counts_insert
-      AFTER INSERT ON document_filter_values BEGIN${countAdd}
+    CREATE TRIGGER IF NOT EXISTS document_filter_record_counts_insert
+      AFTER INSERT ON document_filter_records BEGIN${countAdd}
     END;
-    CREATE TRIGGER IF NOT EXISTS document_filter_value_counts_delete
-      AFTER DELETE ON document_filter_values BEGIN${countRemove}
+    CREATE TRIGGER IF NOT EXISTS document_filter_record_counts_delete
+      AFTER DELETE ON document_filter_records BEGIN${countRemove}
     END;
-    CREATE TRIGGER IF NOT EXISTS document_filter_value_counts_update
-      AFTER UPDATE OF source_version, known ON document_filter_values
-      WHEN OLD.source_version IS NOT NEW.source_version OR OLD.known IS NOT NEW.known
+    CREATE TRIGGER IF NOT EXISTS document_filter_record_counts_update
+      AFTER UPDATE OF source_id, state, source_version, known ON document_filter_records
+      WHEN OLD.source_id IS NOT NEW.source_id OR OLD.state IS NOT NEW.state
+        OR OLD.source_version IS NOT NEW.source_version OR OLD.known IS NOT NEW.known
     BEGIN${countRemove}${countAdd}
     END;
 
@@ -194,13 +238,11 @@ export function createDocumentFilterValueTables(db: Db): void {
       AFTER UPDATE OF source_id, stream_id, external_id, provider_id ON documents
       WHEN OLD.source_id IS NOT NEW.source_id OR OLD.stream_id IS NOT NEW.stream_id
         OR OLD.external_id IS NOT NEW.external_id OR OLD.provider_id IS NOT NEW.provider_id
-    BEGIN
-      DELETE FROM document_filter_values WHERE document_id = NEW.id;
+    BEGIN${forget("NEW.id")}
       ${queueAttachments("OLD")}
     END;
     CREATE TRIGGER IF NOT EXISTS document_filter_values_document_delete
-      AFTER DELETE ON documents BEGIN
-      DELETE FROM document_filter_values WHERE document_id = OLD.id;
+      AFTER DELETE ON documents BEGIN${forget("OLD.id")}
       DELETE FROM document_filter_value_queue WHERE document_id = OLD.id;
       ${queueAttachments("OLD")}
     END;
@@ -220,11 +262,16 @@ export type FilterValueDetail =
       array: boolean;
       /** The field's ids belong to a device: its rows are kept per stream. */
       device: boolean;
+      /** A tree, whose counts over several ids need the `[many]` posting. */
+      tree: boolean;
     }
   | { kind: "person"; name: typeof FILTER_VALUE_PEOPLE; bit: number; spec: FilterPeopleSpec };
 
 export interface FilterValueDeclaration {
-  /** {@link filterDeclarationDigest} of the declaration. */
+  /**
+   * {@link filterDeclarationDigest} of the declaration, with which fields are
+   * trees: everything a record's rows depend on.
+   */
   digest: string;
   /** Every detail rows are written for. Empty: the source has nothing to filter on, and no rows. */
   details: FilterValueDetail[];
@@ -264,7 +311,15 @@ export function filterValueDeclaration(fields: SourceFilterFields): FilterValueD
       segments: path.split("."),
       array: field.type === "string-array",
       device: field.filter.scope === "device",
+      tree: field.filter.capability === "tree",
     });
+  }
+  const trees = declaration.details.filter((detail) => detail.kind === "field" && detail.tree);
+  if (trees.length > 0) {
+    declaration.digest = createHash("sha256")
+      .update(JSON.stringify([declaration.digest, trees.map((detail) => detail.name)]))
+      .digest("hex")
+      .slice(0, 32);
   }
   if (fields.person?.state === "ready") {
     declaration.details.push({
@@ -412,7 +467,7 @@ export function cutFilterValues(
     if (ids === null) continue;
     known |= 1 << detail.bit;
     if (detail.device) values.push([detail.name, ""]);
-    if (ids.length > 1) values.push([manyValuesField(detail.name), ""]);
+    if (detail.tree && ids.length > 1) values.push([manyValuesField(detail.name), ""]);
     for (const id of ids) values.push([detail.name, id]);
   }
   return { kind: "self", known, values };
@@ -431,23 +486,42 @@ export interface FilterValueDocument {
   metadata: string;
 }
 
-interface Row {
-  slot: number;
-  value: string;
+/** What a record's rows are: its state, and the slot and value of each posting. */
+interface Cut {
+  state: string;
   version: number;
+  known: number;
+  postings: Array<{ slot: number; value: string }>;
+}
+
+interface RecordRow {
+  seq: number;
+  state: string;
+  source_version: number;
   known: number;
 }
 
 /** Statements and caches for one batch of writes. */
 class RowWriter {
   private readonly slots = new Map<string, number>();
+  private readonly terms = new Map<string, number>();
+  /** Postings to insert, as `[term, seq, version, known]`, and the records they belong to. */
+  private readonly pending: Array<[number, number, number, number]> = [];
+  private readonly pendingRecords = new Set<number>();
   readonly declarations = new Map<string, FilterValueDeclaration>();
   private readonly findSlot;
   private readonly createSlot;
-  private readonly readRows;
-  private readonly insertRow;
-  private readonly deleteRow;
-  private readonly updateRow;
+  private readonly findTerm;
+  private readonly createTerm;
+  private readonly findRecord;
+  private readonly createRecord;
+  private readonly updateRecord;
+  private readonly deleteRecord;
+  private readonly readPostings;
+  private readonly readTerms;
+  private readonly insertPosting;
+  private readonly deletePosting;
+  private readonly updatePostings;
   private readonly dequeue;
   private readonly attachments;
   private readonly parent;
@@ -461,26 +535,48 @@ class RowWriter {
     this.createSlot = db.prepare<[string, string, string]>(
       "INSERT INTO document_filter_slots (source_id, field, device_id) VALUES (?, ?, ?)",
     );
-    this.readRows = db.prepare<
-      [string],
-      { slot: number; value: string; source_version: number; known: number }
-    >(
-      "SELECT slot, value, source_version, known FROM document_filter_values WHERE document_id = ?",
+    this.findTerm = db.prepare<[number, string], { term: number }>(
+      "SELECT term FROM document_filter_terms WHERE slot = ? AND value = ?",
     );
-    this.insertRow = db.prepare<[number, string, string, number, number]>(
-      "INSERT INTO document_filter_values (slot, value, document_id, source_version, known) VALUES (?, ?, ?, ?, ?)",
+    this.createTerm = db.prepare<[number, string]>(
+      "INSERT INTO document_filter_terms (slot, value) VALUES (?, ?)",
     );
-    this.deleteRow = db.prepare<[number, string, string]>(
-      "DELETE FROM document_filter_values WHERE slot = ? AND value = ? AND document_id = ?",
+    this.findRecord = db.prepare<[string], RecordRow>(
+      "SELECT seq, state, source_version, known FROM document_filter_records WHERE document_id = ?",
     );
-    this.updateRow = db.prepare<[number, number, number, string, string]>(
-      "UPDATE document_filter_values SET source_version = ?, known = ? WHERE slot = ? AND value = ? AND document_id = ?",
+    this.createRecord = db.prepare<[string, string, string, number, number]>(
+      `INSERT INTO document_filter_records (document_id, source_id, state, source_version, known)
+       VALUES (?, ?, ?, ?, ?)`,
+    );
+    this.updateRecord = db.prepare<[string, string, number, number, number]>(
+      "UPDATE document_filter_records SET source_id = ?, state = ?, source_version = ?, known = ? WHERE seq = ?",
+    );
+    this.deleteRecord = db.prepare<[number]>("DELETE FROM document_filter_records WHERE seq = ?");
+    this.readPostings = db.prepare<[number], { term: number }>(
+      "SELECT term FROM document_filter_postings WHERE seq = ?",
+    );
+    this.readTerms = db.prepare<[number], { slot: number; value: string }>(
+      `SELECT t.slot, t.value FROM document_filter_postings p
+         JOIN document_filter_terms t ON t.term = p.term WHERE p.seq = ?`,
+    );
+    this.insertPosting = db.prepare<[number, number, number, number]>(
+      "INSERT INTO document_filter_postings (term, seq, source_version, known) VALUES (?, ?, ?, ?)",
+    );
+    this.deletePosting = db.prepare<[number, number]>(
+      "DELETE FROM document_filter_postings WHERE term = ? AND seq = ?",
+    );
+    this.updatePostings = db.prepare<[number, number, number, number, number]>(
+      `UPDATE document_filter_postings SET source_version = ?, known = ?
+        WHERE seq = ? AND (source_version IS NOT ? OR known IS NOT ?)`,
     );
     this.dequeue = db.prepare<[string]>(
       "DELETE FROM document_filter_value_queue WHERE document_id = ?",
     );
     this.attachments = db.prepare<[number, string, string], { document_id: string }>(
-      "SELECT document_id FROM document_filter_values WHERE slot = ? AND value = ? AND document_id <> ?",
+      `SELECT r.document_id FROM document_filter_terms t
+         JOIN document_filter_postings p ON p.term = t.term
+         JOIN document_filter_records r ON r.seq = p.seq
+        WHERE t.slot = ? AND t.value = ? AND r.document_id <> ?`,
     );
     this.parent = db.prepare<[string, string, string, string, string], { id: string }>(
       `SELECT id FROM documents
@@ -512,28 +608,66 @@ class RowWriter {
     return slot;
   }
 
-  /** Make the document's rows exactly `rows`, touching only what differs. */
-  replace(documentId: string, rows: readonly Row[]): void {
-    const wanted = new Map(rows.map((row) => [`${row.slot}\n${row.value}`, row]));
-    for (const existing of this.readRows.all(documentId)) {
-      const key = `${existing.slot}\n${existing.value}`;
-      const row = wanted.get(key);
-      if (!row) {
-        this.deleteRow.run(existing.slot, existing.value, documentId);
-        continue;
-      }
-      wanted.delete(key);
-      if (row.version !== existing.source_version || row.known !== existing.known) {
-        this.updateRow.run(row.version, row.known, row.slot, row.value, documentId);
-      }
+  term(slot: number, value: string): number {
+    const key = `${slot}\n${value}`;
+    let term = this.terms.get(key);
+    if (term === undefined) {
+      term = this.findTerm.get(slot, value)?.term;
+      if (term === undefined) term = Number(this.createTerm.run(slot, value).lastInsertRowid);
+      this.terms.set(key, term);
     }
-    for (const row of wanted.values()) {
-      this.insertRow.run(row.slot, row.value, documentId, row.version, row.known);
+    return term;
+  }
+
+  /**
+   * Make the record's rows exactly `cut`, touching only what differs: a
+   * record whose details did not change writes nothing, and one whose version
+   * rose rewrites only the copies of its version.
+   */
+  replace(document: { id: string; sourceId: string }, cut: Cut): void {
+    let record = this.findRecord.get(document.id);
+    if (!record) {
+      const seq = Number(
+        this.createRecord.run(document.id, document.sourceId, cut.state, cut.version, cut.known)
+          .lastInsertRowid,
+      );
+      record = { seq, state: cut.state, source_version: cut.version, known: cut.known };
+    } else if (
+      record.state !== cut.state ||
+      record.source_version !== cut.version ||
+      record.known !== cut.known
+    ) {
+      this.updateRecord.run(document.sourceId, cut.state, cut.version, cut.known, record.seq);
+      this.updatePostings.run(cut.version, cut.known, record.seq, cut.version, cut.known);
     }
+    if (this.pendingRecords.has(record.seq)) this.flush();
+    const wanted = new Set(cut.postings.map((posting) => this.term(posting.slot, posting.value)));
+    for (const { term } of this.readPostings.all(record.seq)) {
+      if (!wanted.delete(term)) this.deletePosting.run(term, record.seq);
+    }
+    for (const term of wanted) this.pending.push([term, record.seq, cut.version, cut.known]);
+    if (wanted.size > 0) this.pendingRecords.add(record.seq);
+  }
+
+  /**
+   * Insert the postings held back so far, in key order: the records of one
+   * transaction that share a term then add to its run together.
+   */
+  flush(): void {
+    this.pending.sort((left, right) => left[0] - right[0] || left[1] - right[1]);
+    for (const posting of this.pending) this.insertPosting.run(...posting);
+    this.pending.length = 0;
+    this.pendingRecords.clear();
   }
 
   forget(documentId: string): void {
-    this.replace(documentId, []);
+    const record = this.findRecord.get(documentId);
+    if (!record) return;
+    if (this.pendingRecords.has(record.seq)) this.flush();
+    for (const { term } of this.readPostings.all(record.seq)) {
+      this.deletePosting.run(term, record.seq);
+    }
+    this.deleteRecord.run(record.seq);
   }
 
   done(documentId: string): void {
@@ -550,16 +684,12 @@ class RowWriter {
       this.forget(document.id);
       return;
     }
-    const record = this.slot(document.sourceId, FILTER_VALUE_RECORD, "");
-    const unknown: Row = { slot: record, value: RECORD_UNKNOWN, version: 0, known: 0 };
+    const unknown: Cut = { state: RECORD_UNKNOWN, version: 0, known: 0, postings: [] };
     if (cut.kind === "unreadable") {
-      this.replace(document.id, [unknown]);
+      this.replace(document, unknown);
       return;
     }
     if (cut.kind === "self") {
-      const rows: Row[] = [
-        { slot: record, value: RECORD_SELF, version: document.sourceVersion, known: cut.known },
-      ];
       // A device's field keeps its rows, and its `[many]` row, per stream.
       const devices = new Map<string, string>();
       for (const detail of declaration.details) {
@@ -567,22 +697,26 @@ class RowWriter {
         devices.set(detail.name, document.streamId);
         devices.set(manyValuesField(detail.name), document.streamId);
       }
-      for (const [field, value] of cut.values) {
-        rows.push({
+      this.replace(document, {
+        state: RECORD_SELF,
+        version: document.sourceVersion,
+        known: cut.known,
+        postings: cut.values.map(([field, value]) => ({
           slot: this.slot(document.sourceId, field, devices.get(field) ?? ""),
           value,
-          version: document.sourceVersion,
-          known: cut.known,
-        });
-      }
-      this.replace(document.id, rows);
+        })),
+      });
       return;
     }
-    const rows: Row[] = [];
-    const parentSlot = this.slot(document.sourceId, FILTER_VALUE_PARENT, document.streamId);
-    if (cut.parentExternalId !== null) {
-      rows.push({ slot: parentSlot, value: cut.parentExternalId, version: 0, known: 0 });
-    }
+    const own =
+      cut.parentExternalId === null
+        ? []
+        : [
+            {
+              slot: this.slot(document.sourceId, FILTER_VALUE_PARENT, document.streamId),
+              value: cut.parentExternalId,
+            },
+          ];
     const parentId =
       cut.parentExternalId === null
         ? undefined
@@ -593,28 +727,21 @@ class RowWriter {
             document.streamId,
             document.id,
           )?.id;
-    const copied = parentId === undefined ? [] : this.readRows.all(parentId);
-    const parentRecord = copied.find((row) => row.slot === record);
-    if (parentRecord?.value !== RECORD_SELF) {
-      this.replace(document.id, [...rows, unknown]);
+    const parent = parentId === undefined ? undefined : this.findRecord.get(parentId);
+    if (parent?.state !== RECORD_SELF) {
+      this.replace(document, { ...unknown, postings: own });
       return;
     }
-    rows.push({
-      slot: record,
-      value: RECORD_DERIVED,
-      version: parentRecord.source_version,
-      known: parentRecord.known,
+    // A record decided on its own has no `[parent]` posting, so its postings
+    // are exactly the details the attachment is decided by.
+    if (this.pendingRecords.has(parent.seq)) this.flush();
+    const copied = this.readTerms.all(parent.seq);
+    this.replace(document, {
+      state: RECORD_DERIVED,
+      version: parent.source_version,
+      known: parent.known,
+      postings: [...own, ...copied],
     });
-    for (const row of copied) {
-      if (row.slot === record || row.slot === parentSlot) continue;
-      rows.push({
-        slot: row.slot,
-        value: row.value,
-        version: row.source_version,
-        known: row.known,
-      });
-    }
-    this.replace(document.id, rows);
   }
 
   /**
@@ -712,6 +839,7 @@ export function writeDocumentFilterValues(db: Db, documents: readonly FilterValu
       writer.done(document.id);
     }
     for (const document of documents) writer.refreshAttachments(document, written);
+    writer.flush();
     markNewAccountsCut(db, documents, writer);
   })();
 }
@@ -846,6 +974,7 @@ export function applyFilterValueWork(
         writer.refreshAttachments(item.document);
         applied++;
       }
+      writer.flush();
     })();
   }
   return { applied, remaining: [] };
@@ -931,9 +1060,16 @@ export function advanceFilterValuePasses(
     for (const sourceId of states.keys()) {
       if (present.has(sourceId)) continue;
       db.prepare("DELETE FROM document_filter_value_sources WHERE source_id = ?").run(sourceId);
+      // The account's records are gone, and with them every posting: its
+      // terms and slots name nothing.
+      db.prepare(
+        `DELETE FROM document_filter_terms
+          WHERE slot IN (SELECT slot FROM document_filter_slots WHERE source_id = ?)
+            AND NOT EXISTS (SELECT 1 FROM document_filter_postings p WHERE p.term = document_filter_terms.term)`,
+      ).run(sourceId);
       db.prepare(
         `DELETE FROM document_filter_slots WHERE source_id = ?
-           AND NOT EXISTS (SELECT 1 FROM document_filter_values v WHERE v.slot = document_filter_slots.slot)`,
+           AND NOT EXISTS (SELECT 1 FROM document_filter_terms t WHERE t.slot = document_filter_slots.slot)`,
       ).run(sourceId);
       changed = true;
     }

@@ -29,6 +29,7 @@ import {
 } from "./filter-test-utils.js";
 import {
   FILTER_VALUE_PEOPLE,
+  FILTER_VALUE_TABLES,
   advanceFilterValuePasses,
   applyFilterValueWork,
   createDocumentFilterValueTables,
@@ -114,13 +115,26 @@ function queued(): string[] {
     .map((row) => row.document_id);
 }
 
-/** Every row, named by its account, field and device rather than its slot. */
+/**
+ * Every record's rows, named by account, field, device and value rather than
+ * by number: its state as a `[record]` row, then each posting.
+ */
+const ROWS = `
+  SELECT r.document_id AS document_id, r.source_id AS source_id, '[record]' AS field, '' AS device_id,
+         r.state AS value, r.source_version AS source_version, r.known AS known
+    FROM document_filter_records r
+  UNION ALL
+  SELECT r.document_id, s.source_id, s.field, s.device_id, t.value, p.source_version, p.known
+    FROM document_filter_postings p
+    JOIN document_filter_records r ON r.seq = p.seq
+    JOIN document_filter_terms t ON t.term = p.term
+    JOIN document_filter_slots s ON s.slot = t.slot`;
+
 function rows(): string[] {
   return db
     .prepare<[], { line: string }>(
-      `SELECT json_array(s.source_id, s.field, s.device_id, v.value, v.document_id, v.source_version, v.known) AS line
-         FROM document_filter_values v JOIN document_filter_slots s ON s.slot = v.slot
-        ORDER BY line`,
+      `SELECT json_array(source_id, field, device_id, value, document_id, source_version, known) AS line
+         FROM (${ROWS}) ORDER BY line`,
     )
     .all()
     .map((row) => row.line);
@@ -129,11 +143,19 @@ function rows(): string[] {
 function rowsOf(externalId: string): Array<[field: string, value: string]> {
   return db
     .prepare<[string], { field: string; value: string }>(
-      `SELECT s.field, v.value FROM document_filter_values v JOIN document_filter_slots s ON s.slot = v.slot
-        WHERE v.document_id = ? ORDER BY s.field, v.value`,
+      `SELECT field, value FROM (${ROWS}) WHERE document_id = ? ORDER BY field, value`,
     )
     .all(idOf(externalId))
     .map((row) => [row.field, row.value]);
+}
+
+function versionsOf(externalId: string): number[] {
+  return db
+    .prepare<[string], { v: number }>(
+      `SELECT DISTINCT source_version AS v FROM (${ROWS}) WHERE document_id = ? ORDER BY v`,
+    )
+    .all(idOf(externalId))
+    .map((row) => row.v);
 }
 
 function ready(sourceId: string): boolean {
@@ -148,21 +170,31 @@ function ready(sourceId: string): boolean {
 function expectConsistent(): void {
   const counts = db
     .prepare<[], { line: string }>(
-      `SELECT json_array(slot, value, source_version, known, records) AS line
-         FROM document_filter_value_counts ORDER BY line`,
+      `SELECT json_array(source_id, state, source_version, known, records) AS line
+         FROM document_filter_record_counts ORDER BY line`,
     )
     .all()
     .map((row) => row.line);
   const aggregated = db
     .prepare<[], { line: string }>(
-      `SELECT json_array(slot, value, source_version, known, count(*)) AS line
-         FROM document_filter_values GROUP BY slot, value, source_version, known ORDER BY line`,
+      `SELECT json_array(source_id, state, source_version, known, count(*)) AS line
+         FROM document_filter_records GROUP BY source_id, state, source_version, known ORDER BY line`,
     )
     .all()
     .map((row) => row.line);
   expect(counts).toEqual(aggregated);
+  // Every posting belongs to a record that has a row.
+  expect(
+    db
+      .prepare(
+        `SELECT count(*) AS n FROM document_filter_postings p
+          WHERE NOT EXISTS (SELECT 1 FROM document_filter_records r WHERE r.seq = p.seq)`,
+      )
+      .get(),
+  ).toEqual({ n: 0 });
   const before = rows();
-  db.exec(`DELETE FROM document_filter_values;
+  db.exec(`DELETE FROM document_filter_postings;
+           DELETE FROM document_filter_records;
            DELETE FROM document_filter_value_sources;
            DELETE FROM document_filter_value_queue;`);
   settleFilterValues(db);
@@ -171,17 +203,22 @@ function expectConsistent(): void {
 
 describe("a sync page", () => {
   it("writes the rows of what it stores in the same transaction", () => {
-    write([mail("m-1", { labelIds: ["l-1", "l-2"], folderIds: ["f-1"] }), mail("m-2", {})], 3);
+    write(
+      [mail("m-1", { labelIds: ["l-1", "l-2"], folderIds: ["f-1", "f-2"] }), mail("m-2", {})],
+      3,
+    );
 
     expect(queued()).toEqual([]);
     // An address is stored under its domain, so a domain is a range of rows.
     expect(rowsOf("m-1")).toEqual([
-      // Two labels: a count over several labels must not count it twice.
-      ["[many]extra.labelIds", ""],
+      // Two folders of a tree: a count over a folder and what is inside it
+      // must not count the record twice. Labels are not a tree.
+      ["[many]extra.folderIds", ""],
       ["[people]", "email:example.com\u001fjamie@example.com"],
       ["[people]", "email:example.org\u001fmaya@example.org"],
       ["[record]", "S"],
       ["extra.folderIds", "f-1"],
+      ["extra.folderIds", "f-2"],
       ["extra.labelIds", "l-1"],
       ["extra.labelIds", "l-2"],
     ]);
@@ -219,13 +256,7 @@ describe("a sync page", () => {
     // The same record re-read by a newer host: only its version moves.
     write([mail("m-1", { labelIds: ["l-3"] }, "sarah@example.net")], 4);
     expect(queued()).toEqual([]);
-    expect(
-      db
-        .prepare<[string], { v: number }>(
-          "SELECT DISTINCT source_version AS v FROM document_filter_values WHERE document_id = ?",
-        )
-        .all(idOf("m-1")),
-    ).toEqual([{ v: 4 }]);
+    expect(versionsOf("m-1")).toEqual([4]);
     expectConsistent();
   });
 
@@ -235,9 +266,8 @@ describe("a sync page", () => {
     expect(
       db
         .prepare<[], { field: string; device_id: string; value: string }>(
-          `SELECT s.field, s.device_id, v.value FROM document_filter_values v
-             JOIN document_filter_slots s ON s.slot = v.slot
-            WHERE s.field IN ('extra.directory', 'extra.tagIds') ORDER BY s.field, v.value`,
+          `SELECT field, device_id, value FROM (${ROWS})
+            WHERE field IN ('extra.directory', 'extra.tagIds') ORDER BY field, value`,
         )
         .all(),
     ).toEqual([
@@ -290,13 +320,7 @@ describe("deletion and resync", () => {
     write([mail("m-1", { labelIds: ["l-1"] }), mail("m-2", { labelIds: ["l-1"] })], 3);
     const gone = idOf("m-1");
     deleteDocuments(db, LEDGER, LEDGER, ["m-1"]);
-    expect(
-      db
-        .prepare<[string], { n: number }>(
-          "SELECT count(*) AS n FROM document_filter_values WHERE document_id = ?",
-        )
-        .get(gone)!.n,
-    ).toBe(0);
+    expect(rows().filter((row) => row.includes(gone))).toEqual([]);
     expectConsistent();
   });
 
@@ -339,9 +363,14 @@ describe("deletion and resync", () => {
         )
         .get(LEDGER, LEDGER)!.n,
     ).toBe(0);
-    expect(db.prepare("SELECT count(*) AS n FROM document_filter_value_counts").get()).toEqual({
-      n: 0,
-    });
+    for (const table of [
+      "document_filter_terms",
+      "document_filter_records",
+      "document_filter_record_counts",
+      "document_filter_postings",
+    ]) {
+      expect(db.prepare(`SELECT count(*) AS n FROM ${table}`).get(), table).toEqual({ n: 0 });
+    }
   });
 });
 
@@ -416,20 +445,13 @@ describe("an upgrade", () => {
   it("cuts the rows of the records already stored in the background, not in the migration", () => {
     for (const trigger of db
       .prepare<[], { name: string }>(
-        "SELECT name FROM sqlite_master WHERE type = 'trigger' AND name LIKE 'document_filter_value%'",
+        `SELECT name FROM sqlite_master WHERE type = 'trigger'
+            AND (name LIKE 'document_filter_value%' OR name LIKE 'document_filter_record%')`,
       )
       .all()) {
       db.exec(`DROP TRIGGER "${trigger.name}"`);
     }
-    for (const table of [
-      "document_filter_values",
-      "document_filter_value_counts",
-      "document_filter_value_sources",
-      "document_filter_value_queue",
-      "document_filter_slots",
-    ]) {
-      db.exec(`DROP TABLE ${table}`);
-    }
+    for (const table of FILTER_VALUE_TABLES) db.exec(`DROP TABLE ${table}`);
     // Chat records stored before any row existed: their people filter works
     // from the chat's members at once, so their rows must exist after upgrade.
     for (let index = 0; index < 5; index++) {
@@ -446,7 +468,7 @@ describe("an upgrade", () => {
     }
 
     createDocumentFilterValueTables(db);
-    expect(db.prepare("SELECT count(*) AS n FROM document_filter_values").get()).toEqual({ n: 0 });
+    expect(rows()).toEqual([]);
     expect(queued()).toEqual([]);
     expect(ready(PARLEY)).toBe(false);
 
