@@ -45,8 +45,6 @@ export OMNESIS_EXPERIMENTAL=1
 # suite's requests take.
 export OMNESIS_E2E_DISABLE_ICON_FETCH=1
 export OMNESIS_E2E_DISABLE_RELEASE_CHECK=1
-# This isolated gateway exercises experimental filter authoring explicitly.
-export OMNESIS_EXPERIMENTAL=1
 
 # Resolve before starting the gateway: runtime download/boot can take minutes.
 # CI may supply a destination it has already prepared on this runner.
