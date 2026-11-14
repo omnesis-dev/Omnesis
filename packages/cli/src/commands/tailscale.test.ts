@@ -76,9 +76,11 @@ describe("describeState", () => {
         {
           id: "r1",
           name: "maya-laptop",
+          kind: "collector",
           machine: "maya-laptop",
           login: "maya@example.com",
           requestedAt: "",
+          expiresAt: "",
         },
       ],
     });

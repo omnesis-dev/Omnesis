@@ -20,7 +20,8 @@ import { createDatabase } from "../db.js";
 import { createDevice, getDevice, listDevices } from "../data/repositories/DeviceRepository.js";
 import { createToken } from "../data/repositories/TokenRepository.js";
 import { createServer } from "../server.js";
-import { TailscaleEmbedService, type TailscaleAdminState } from "./service.js";
+import { TailscaleEmbedService } from "./service.js";
+import type { TailscaleAdminState } from "@omnesis/core";
 import type { TailnetCaller } from "./caller.js";
 
 const FAKE = fileURLToPath(new URL("./testing/fake-helper.mjs", import.meta.url));
