@@ -681,7 +681,6 @@ class RowWriter {
     const held = record.found === null ? [] : (JSON.parse(record.terms!) as number[]);
     const added = new Set(terms);
     const changed =
-      record.found === null ||
       record.state !== cut.state ||
       record.source_version !== cut.version ||
       record.known !== cut.known;
