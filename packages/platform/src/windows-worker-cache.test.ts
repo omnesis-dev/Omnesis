@@ -4,6 +4,7 @@
 import { createHash } from "node:crypto";
 import { win32 } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { windowsProcessStart } from "./windows-powershell.js";
 import type { WindowsBootstrapRequest } from "./windows-worker-cache.js";
 vi.mock("./windows-powershell.js", async (original) => ({
   ...(await original<typeof import("./windows-powershell.js")>()),
@@ -12,6 +13,7 @@ vi.mock("./windows-powershell.js", async (original) => ({
 
 beforeEach(() => {
   vi.resetModules();
+  vi.mocked(windowsProcessStart).mockReturnValue("638000000000000001");
   vi.stubEnv("SystemRoot", "C:\\Windows");
   vi.stubEnv("LOCALAPPDATA", "C:\\example folder\\literal & $()\\Local");
 });
@@ -58,6 +60,39 @@ function verified(request: WindowsBootstrapRequest) {
   };
 }
 describe("Windows native worker cache boundary", () => {
+  it.each([
+    ["504911232000000001", "1"],
+    ["621355968000000001", "116444736000000001"],
+  ])(
+    "converts reference .NET epoch ticks %s to FILETIME %s without dropping a 100ns tick",
+    async (ticks, expected) => {
+      // Calendar anchors: 1601-01-01 and 1970-01-01. Expected values are
+      // independent of the implementation's epoch constant.
+      vi.mocked(windowsProcessStart).mockReturnValue(ticks);
+      const { windowsWorkerInvocation } = await import("./windows-worker-cache.js");
+      const bootstrap = vi.fn(verified);
+      windowsWorkerInvocation("job", bootstrap);
+      expect(decode(bootstrap.mock.calls[0]![0]).metadata.ownerBirth).toBe(expected);
+    },
+  );
+
+  it("returns bounded native stage/compiler diagnostics without echoing arbitrary bootstrap output", async () => {
+    const { windowsWorkerInvocation } = await import("./windows-worker-cache.js");
+    expect(() =>
+      windowsWorkerInvocation("job", () => ({
+        exitCode: 1,
+        signal: null,
+        stdout: Buffer.alloc(0),
+        stderr:
+          "invented-private-input\nOMNESIS_NATIVE_COMPILE:CS1002:17:3\nEPRIVATE:cache-owner:5",
+      })),
+    ).toThrow("EPRIVATE:cache-owner:5; OMNESIS_NATIVE_COMPILE:CS1002:17:3");
+    try {
+      windowsWorkerInvocation("job", verified);
+    } catch (error) {
+      expect(String(error)).not.toContain("invented-private-input");
+    }
+  });
   it("frames exact public sources and verifies once before reusing the generation", async () => {
     const { windowsWorkerInvocation } = await import("./windows-worker-cache.js");
     const bootstrap = vi.fn(verified);
@@ -68,7 +103,7 @@ describe("Windows native worker cache boundary", () => {
       "C:\\example folder\\literal & $()\\Local\\Omnesis\\platform-native-v1",
     );
     expect(payload.metadata.ownerPid).toBe(process.pid);
-    expect(payload.metadata.ownerBirth).toBe("521555264000000001");
+    expect(payload.metadata.ownerBirth).toBe("133088768000000001");
     expect(payload.program).toContain("CompileAssemblyFromSource");
     expect(payload.source).toContain("class WindowsWorker");
     expect(
@@ -117,7 +152,7 @@ describe("Windows native worker cache boundary", () => {
       if (variant === "wrong-generation") record.sourceHash = "b".repeat(64);
       if (variant === "invalid-binary-hash") record.binaryHash = "not-a-hash";
       if (variant === "wrong-owner") record.ownerPid = process.pid + 1;
-      if (variant === "wrong-birth") record.ownerBirth = "521555264000000000";
+      if (variant === "wrong-birth") record.ownerBirth = "133088768000000000";
       if (variant === "untransferred-pins") record.pinsTransferred = false;
       return {
         ...result,

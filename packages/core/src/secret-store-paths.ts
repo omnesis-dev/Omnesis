@@ -52,7 +52,10 @@ function entryPaths(
   // An interior dot keeps canonical files outside the legacy base64url stem alphabet.
   return {
     path: join(directory, `key.sha256-${digest("secret-entry", name)}${extension}`),
-    ...(legacyComponent(legacyParent) && legacyComponent(legacy)
+    ...(name.isWellFormed() &&
+    legacyParent.isWellFormed() &&
+    legacyComponent(legacyParent) &&
+    legacyComponent(legacy)
       ? {
           legacy: {
             path: join(legacyDirectory, legacy),

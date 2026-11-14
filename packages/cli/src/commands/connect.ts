@@ -4,7 +4,6 @@
 import { execFileSync, spawnSync } from "node:child_process";
 import { randomBytes, randomUUID, X509Certificate } from "node:crypto";
 import {
-  cpSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -12,7 +11,6 @@ import {
   readdirSync,
   renameSync,
   rmSync,
-  writeFileSync,
 } from "node:fs";
 import { isIP } from "node:net";
 import { homedir, tmpdir } from "node:os";
@@ -73,6 +71,11 @@ import {
   spawnHarnessCommand,
   type HarnessInvocation,
 } from "../harness-restart.js";
+import {
+  integrationSourceCommit,
+  prepareIntegrationPackageRuntime as materializeIntegrationPackageRuntime,
+  prepareHermesRuntimeAssets as materializeHermesRuntimeAssets,
+} from "./integration-runtime.js";
 import { AuthorizationExpiredError, authorizeHarness } from "./connect-oauth.js";
 import { AgentPairingRefusedError, redeemAgentIntegrationPairingCode } from "./devices.js";
 import {
@@ -654,148 +657,28 @@ function integrationPackageRoot(): string {
   return dirname(dirname(integrationPackageEntry()));
 }
 
-/** Exact clean checkout represented by a locally packed integration plugin. */
-export function integrationSourceCommit(packageRoot: string): string | undefined {
-  try {
-    const repository = execFileSync("git", ["-C", packageRoot, "rev-parse", "--show-toplevel"], {
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "ignore"],
-    }).trim();
-    const dirty = execFileSync("git", ["-C", repository, "status", "--porcelain"], {
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "ignore"],
-    }).trim();
-    if (dirty) return undefined;
-    const commit = execFileSync("git", ["-C", repository, "rev-parse", "HEAD^{commit}"], {
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "ignore"],
-    }).trim();
-    return /^[0-9a-f]{40}$/u.test(commit) ? commit : undefined;
-  } catch {
-    return undefined;
-  }
+export { integrationSourceCommit, publishManifestForLocalInstall } from "./integration-runtime.js";
+
+export function prepareIntegrationPackageRuntime(
+  sourceOverride = { packageRoot: integrationPackageRoot(), entry: integrationPackageEntry() },
+): ReturnType<typeof materializeIntegrationPackageRuntime> {
+  return materializeIntegrationPackageRuntime(sourceOverride);
+}
+export function prepareHermesRuntimeAssets(
+  sourceOverride = { packageRoot: integrationPackageRoot(), entry: integrationPackageEntry() },
+  platform = process.platform,
+): ReturnType<typeof materializeHermesRuntimeAssets> {
+  return materializeHermesRuntimeAssets(sourceOverride, platform);
 }
 
-export function publishManifestForLocalInstall(
-  manifest: Record<string, unknown>,
-  sourceCommit?: string,
-): Record<string, unknown> {
-  return {
-    ...manifest,
-    ...(sourceCommit ? { omnesisSourceCommit: sourceCommit } : {}),
-    main: "./dist/index.js",
-    types: "./dist/index.d.ts",
-    exports: {
-      ".": { types: "./dist/index.d.ts", default: "./dist/index.js" },
-      "./openclaw": {
-        types: "./dist/openclaw.d.ts",
-        default: "./dist/openclaw.js",
-      },
-    },
-    files: [
-      "dist",
-      "openclaw.plugin.json",
-      "openclaw-entry.mjs",
-      "hermes/__init__.py",
-      "hermes/adapter.py",
-      "hermes/plugin.yaml",
-    ],
-    devDependencies: undefined,
-    scripts: undefined,
-  };
-}
-
-/**
- * Build a fresh npm-pack artifact when running from a source checkout. A local
- * OpenClaw path install only copies files and does not install runtime
- * dependencies, while an archive install does both. Published installs are
- * packed as-is; source installs compile into an isolated temp directory and
- * never read the checkout's possibly absent or stale dist/.
- */
 export async function prepareOpenClawInstallArchive(
   sourceOverride: { packageRoot: string; entry: string } | undefined = undefined,
-): Promise<{
-  archivePath: string;
-  cleanup(): void;
-}> {
-  const packageRoot = sourceOverride?.packageRoot ?? integrationPackageRoot();
-  const entry = sourceOverride?.entry ?? integrationPackageEntry();
-  const sourceCommit = integrationSourceCommit(packageRoot);
+): Promise<{ archivePath: string; cleanup(): void }> {
   const tempRoot = mkdtempSync(join(tmpdir(), "omnesis-openclaw-plugin-"));
-  let packRoot = packageRoot;
+  let runtime: ReturnType<typeof prepareIntegrationPackageRuntime> | undefined;
   try {
-    if (entry.endsWith(join("src", "index.ts"))) {
-      packRoot = join(tempRoot, "package");
-      mkdirSync(join(packRoot, "dist"), { recursive: true });
-      const typescriptEntry = fileURLToPath(import.meta.resolve("typescript"));
-      const tsc = join(dirname(typescriptEntry), "..", "bin", "tsc");
-      const platformEntry = fileURLToPath(import.meta.resolve("@omnesis/platform"));
-      const platformRoot = dirname(dirname(platformEntry));
-      execFileSync(
-        process.execPath,
-        [
-          tsc,
-          "--project",
-          join(platformRoot, "tsconfig.json"),
-          "--outDir",
-          join(packRoot, "dist", "private-platform"),
-          "--composite",
-          "false",
-          "--declaration",
-          "false",
-          "--declarationMap",
-          "false",
-          "--sourceMap",
-          "false",
-        ],
-        { stdio: ["ignore", "pipe", "pipe"] },
-      );
-      execFileSync(
-        process.execPath,
-        [
-          tsc,
-          "--project",
-          join(packageRoot, "tsconfig.json"),
-          "--outDir",
-          join(packRoot, "dist"),
-          "--tsBuildInfoFile",
-          join(tempRoot, "agent-integration.tsbuildinfo"),
-          "--composite",
-          "false",
-          "--declaration",
-          "--declarationMap",
-          "false",
-          "--sourceMap",
-          "false",
-        ],
-        { stdio: ["ignore", "pipe", "pipe"] },
-      );
-      // Enumerated, not the whole `hermes` directory: the adapter's test suite
-      // lives beside it and has no business on an operator's machine. The
-      // published tarball's own asset list (`scripts/release/stage-packages.mjs`)
-      // names the same three files.
-      for (const asset of [
-        "openclaw-entry.mjs",
-        "openclaw.plugin.json",
-        join("hermes", "__init__.py"),
-        join("hermes", "adapter.py"),
-        join("hermes", "plugin.yaml"),
-      ]) {
-        const destination = join(packRoot, asset);
-        mkdirSync(dirname(destination), { recursive: true });
-        cpSync(join(packageRoot, asset), destination);
-      }
-      const sourceManifest = JSON.parse(
-        readFileSync(join(packageRoot, "package.json"), "utf8"),
-      ) as Record<string, unknown>;
-      const publishManifest = publishManifestForLocalInstall(sourceManifest, sourceCommit);
-      delete publishManifest.devDependencies;
-      delete publishManifest.scripts;
-      writeFileSync(
-        join(packRoot, "package.json"),
-        JSON.stringify(publishManifest, null, 2) + "\n",
-      );
-    }
+    runtime = prepareIntegrationPackageRuntime(sourceOverride);
+    const packRoot = runtime.packageRoot;
     const npm = await resolveNpmInvocation([
       "pack",
       "--ignore-scripts",
@@ -812,9 +695,13 @@ export async function prepareOpenClawInstallArchive(
     }
     return {
       archivePath: archives[0]!,
-      cleanup: () => rmSync(tempRoot, { recursive: true, force: true }),
+      cleanup: () => {
+        runtime?.cleanup();
+        rmSync(tempRoot, { recursive: true, force: true });
+      },
     };
   } catch (error) {
+    runtime?.cleanup();
     rmSync(tempRoot, { recursive: true, force: true });
     throw new CliError(
       `${c.red}Could not build the current OpenClaw integration artifact: ${
@@ -1019,16 +906,14 @@ async function prepareHarnessPlugin(
       };
     }
     case "hermes": {
-      const source = join(packageRoot, "hermes");
+      const runtime = prepareHermesRuntimeAssets({ packageRoot, entry: integrationPackageEntry() });
       const destination = join(home, "plugins", "omnesis-integration");
-      const files = ["__init__.py", "adapter.py", "plugin.yaml"].map((file) => ({
+      const files = runtime.files.map(({ file, content }) => ({
         file,
         content:
           file === "plugin.yaml" && sourceCommit
-            ? Buffer.from(
-                `${readFileSync(join(source, file), "utf8").trimEnd()}\nsource_commit: ${sourceCommit}\n`,
-              )
-            : readFileSync(join(source, file)),
+            ? Buffer.from(`${content.toString("utf8").trimEnd()}\nsource_commit: ${sourceCommit}\n`)
+            : content,
       }));
       const hermesCommand = hermesHomeExecutable(home);
       return {
@@ -1051,7 +936,7 @@ async function prepareHarnessPlugin(
           // has actually been enabled.
           retireLegacyHermesPlugin(home);
         },
-        cleanup: () => {},
+        cleanup: runtime.cleanup,
       };
     }
     default:

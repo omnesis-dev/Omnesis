@@ -561,6 +561,15 @@ build from source, so the gateway cannot run there however long you wait.
 `better-sqlite3` and `usearch` additionally compile from source on musl. Windows
 is unsupported.
 
+Windows source-runtime validation uses an explicit native preparation step after
+`node scripts/ci/npm-ci.mjs`: run `node scripts/ci/build-windows-usearch.mjs`
+with the MSVC C++ toolchain available. This compiles the patched USearch binding
+against the running Node's headers and proves atomic publication with live
+mapped readers, Unicode paths, 64-bit file lengths and deterministic disposal.
+The Windows wrapper rejects the unmodified prebuilt binding. This preparation
+is separate from package installation; it does not provide a Windows installer
+or change the supported package-release matrix above.
+
 `@mtcute/node` (the experimental Telegram provider) declares `better-sqlite3@^12`.
 A root `overrides` entry resolves it to the workspace's 13, so the lockfile holds
 one `better-sqlite3` and no second native build; mtcute only calls

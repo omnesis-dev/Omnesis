@@ -117,3 +117,20 @@ A frozen Linux run at the same revision passed 38,573 tests in 2,582 files, with
 two Windows-workflow policy checks: cancellation forwarding and running-Node
 header preparation. The overall job is therefore failed; corrections and a
 fresh complete validation remain required.
+
+The next hosted focused run stopped during dependency preparation before any
+tests ran. Review found an incorrect .NET-to-FILETIME epoch conversion in the
+compiled-helper owner check; the conversion now uses the year-1-to-1601 offset,
+with independent calendar anchors in its regression tests. Native initialization
+also reports bounded stage/code diagnostics without exposing input or secrets.
+A new hosted run is required to establish the startup result.
+
+The vector-index changes include an explicitly invoked Windows source build and
+native publication proof. They cover Unicode paths, mapped-reader replacement,
+read-only targets, failed publication, deterministic disposal and a sparse file
+over 4 GiB. This preparation is separate from installer support. Its Linux
+regression slice passes; MSVC compilation and Windows execution remain pending.
+Windows Hermes persistence now uses the same canonical private-file runtime as
+the TypeScript integration, with a retained refresh-lease bridge and protected
+SQLite directory inheritance. Its adapter and packaging regressions pass on
+Linux; native Windows validation remains required.

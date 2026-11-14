@@ -16,6 +16,7 @@ test("source private filesystem helpers load under Node without compiled sibling
 const first = privateWindowsFiles();
 if (typeof first.readWindowsPrivateFileContentsSync !== 'function' ||
     typeof first.writeWindowsPrivateFileAtomicSync !== 'function' ||
+    typeof first.secureWindowsPrivatePathSync !== 'function' ||
     first !== privateWindowsFiles()) throw new Error('Invalid source private filesystem runtime');
 console.log('source helpers ready');`,
     ],

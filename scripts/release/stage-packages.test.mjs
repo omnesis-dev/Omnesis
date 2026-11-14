@@ -327,6 +327,7 @@ describe("release package runtime assets", () => {
       { from: "hermes/__init__.py", to: "hermes/__init__.py" },
       { from: "hermes/adapter.py", to: "hermes/adapter.py" },
       { from: "hermes/plugin.yaml", to: "hermes/plugin.yaml" },
+      { from: "hermes/windows-files.mjs", to: "hermes/windows-files.mjs" },
     ]);
     for (const asset of assets) {
       expect(

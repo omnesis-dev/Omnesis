@@ -2,13 +2,15 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { createServer, type Server } from "node:http";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { createMcpHandler, McpServer } from "@modelcontextprotocol/server";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { z } from "zod/v4";
+import { writePrivateFixture as writeFileSync } from "../test/private-fixtures.js";
+
 
 import {
   FICTIONAL_LARGE_RESULT_BYTES,

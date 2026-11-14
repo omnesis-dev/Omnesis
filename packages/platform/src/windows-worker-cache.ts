@@ -17,6 +17,9 @@ import {
 import type { WindowsJobResult, WindowsOwnedInvocation } from "./windows-owned-process.js";
 
 const COMMIT = Buffer.from("\0OMNESIS_PRIVATE_COMMIT_V1\0", "ascii");
+// .NET starts at year 1; FILETIME starts at 1601 (584388 Gregorian days later).
+// The 1601-to-1970 Unix offset is a different epoch conversion.
+const DOTNET_TO_FILETIME_TICKS = 504911232000000000n;
 const sourceHash = createHash("sha256")
   .update(
     WINDOWS_WORKER_SOURCE + "\0" + WINDOWS_WORKER_CONFIG + "\0" + WINDOWS_WORKER_MANIFEST + "\0v1",
@@ -91,9 +94,9 @@ export function windowsWorkerInvocation(
       // nested bootstrap can start. Normalize year-1 .NET ticks to FILETIME's
       // 1601 epoch with exact integers, never Date/Number rounding.
       const ticks = windowsProcessStart(process.pid, opts.timeoutMs);
-      if (ticks === null || BigInt(ticks) <= 116444736000000000n)
+      if (ticks === null || BigInt(ticks) <= DOTNET_TO_FILETIME_TICKS)
         throw new Error("Cannot verify Windows native worker owner");
-      const ownerBirth = (BigInt(ticks) - 116444736000000000n).toString();
+      const ownerBirth = (BigInt(ticks) - DOTNET_TO_FILETIME_TICKS).toString();
       const program = Buffer.from(WINDOWS_CACHE_BOOTSTRAP_SCRIPT, "utf8");
       const source = Buffer.from(WINDOWS_WORKER_SOURCE, "utf8");
       if (program.length > 1048576 || source.length > 1048576)
@@ -124,7 +127,21 @@ export function windowsWorkerInvocation(
         input: Buffer.concat([frame(program), frame(metadata), source, COMMIT]),
       });
       if (result.failure || result.exitCode !== 0 || result.stdout.length > 65536) {
-        throw new Error("Cannot initialize the protected Windows native worker");
+        // Only fixed native stage/code or compiler locations leave this trust
+        // boundary; never echo a command, input frame, path or source payload.
+        const diagnostic = /^EPRIVATE:[a-z-]{1,60}:[0-9]{1,10}\r?$/mu
+          .exec(result.stderr)?.[0]
+          ?.trim();
+        const compilation = result.stderr
+          .match(/^OMNESIS_NATIVE_COMPILE:CS[0-9]+:[0-9]+:[0-9]+\r?$/gmu)
+          ?.slice(0, 5)
+          .map((line) => line.trim())
+          .join(", ");
+        const details = [diagnostic, compilation].filter(Boolean).join("; ");
+        throw new Error(
+          "Cannot initialize the protected Windows native worker" +
+            (details ? ` (${details})` : ""),
+        );
       }
       let record: unknown;
       try {

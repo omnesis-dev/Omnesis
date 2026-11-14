@@ -7,6 +7,8 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 interface PrivateWindowsFiles {
   readWindowsPrivateFileContentsSync(path: string): Buffer;
+  secureWindowsPrivatePathSync(path: string, kind: "file" | "directory"): void;
+  inspectWindowsPrivatePathSync(path: string, kind: "file" | "directory"): { private: boolean };
   writeWindowsPrivateFileAtomicSync(path: string, bytes: Uint8Array): void;
 }
 
@@ -55,7 +57,9 @@ export function privateWindowsFiles(): PrivateWindowsFiles {
   }
   if (
     typeof candidate?.readWindowsPrivateFileContentsSync !== "function" ||
-    typeof candidate.writeWindowsPrivateFileAtomicSync !== "function"
+    typeof candidate.writeWindowsPrivateFileAtomicSync !== "function" ||
+    typeof candidate.secureWindowsPrivatePathSync !== "function" ||
+    typeof candidate.inspectWindowsPrivatePathSync !== "function"
   )
     throw new Error("This Windows integration archive has an invalid private filesystem runtime");
   files = candidate as PrivateWindowsFiles;

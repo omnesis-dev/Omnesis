@@ -36,6 +36,16 @@ describe("secret store filesystem identities", () => {
     expect(paths.legacy).toBeUndefined();
   });
 
+  test("Windows never guesses an ambiguous UTF8 legacy identity", () => {
+    const first = fileSecretEntryPaths("example", "dev.omnesis", "\uD800", "win32");
+    const second = fileSecretEntryPaths("example", "dev.omnesis", "\uD801", "win32");
+    expect(first.path).not.toBe(second.path);
+    expect(first.legacy).toBeUndefined();
+    expect(second.legacy).toBeUndefined();
+    expect(fileSecretEntryPaths("example", "\uD800", "key", "win32").legacy).toBeUndefined();
+    expect(passphraseSecretEntryPaths("example", "\uD800", "win32").legacy).toBeUndefined();
+  });
+
   test.each(["linux", "darwin"] as const)("preserves every existing %s path", (platform) => {
     expect(fileSecretEntryPaths("example", "Example", 'A" ', platform)).toEqual({
       path: join("example", "keyring", "Example", "QSIg.secret"),

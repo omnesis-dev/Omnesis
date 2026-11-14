@@ -249,6 +249,9 @@ describe("UsearchReadHandle", () => {
       const vector = deterministicVector(publication);
       writer.add(BigInt(publication), vector);
       writer.save();
+      // Publication preserves the old generation until this reader refreshes.
+      expect(reader.size()).toBe(publication - 1);
+      expect(reader.search(first, 1)[0]?.key).toBe(1n);
       reader.maybeRefresh();
 
       expect(reader.size()).toBe(publication);
@@ -261,6 +264,19 @@ describe("UsearchReadHandle", () => {
     }
 
     reader.close();
+    writer.close();
+  });
+
+  it.runIf(process.platform === "win32")("releases the native map before close returns", () => {
+    const writer = new UsearchWriteHandle(path, DIMS);
+    writer.add(1n, deterministicVector(1));
+    writer.save();
+    const reader = UsearchReadHandle.open(path, DIMS);
+    reader.close();
+    reader.close();
+    expect(reader.size()).toBe(0);
+    rmSync(path);
+    expect(existsSync(path)).toBe(false);
     writer.close();
   });
 

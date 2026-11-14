@@ -86,6 +86,25 @@ describe("Windows CI coverage", () => {
     expect(FOCUSED_E2E_FILES).toContain("packages/collector/src/e2e/gateway-lifecycle.e2e.test.ts");
   });
 
+  test("every Windows lane proves the rebuilt vector binding before running source checks", () => {
+    const config = workflow();
+    expect(config.on.pull_request.paths).toContain("patches/**");
+    const steps = config.jobs.windows.steps;
+    const dependencies = steps.findIndex(({ id }) => id === "dependencies");
+    const prepare = steps.findIndex(
+      ({ run }) => run === "node scripts/ci/build-windows-usearch.mjs",
+    );
+    expect(prepare).toBe(dependencies + 1);
+    expect(steps[prepare]).not.toHaveProperty("if");
+    expect(steps[prepare]).not.toHaveProperty("continue-on-error");
+    for (const file of [
+      "packages/gateway/src/indexer/usearch-index.test.ts",
+      "packages/gateway/src/indexer/usearch-read-registry.test.ts",
+      "packages/gateway/src/indexer/usearch-sidecar-integration.test.ts",
+    ])
+      expect(FOCUSED_UNIT_FILES).toContain(file);
+  });
+
   test("focused checks retain shutdown ownership and generic Local Files coverage", () => {
     for (const file of [
       "packages/core/src/parent-shutdown.test.ts",

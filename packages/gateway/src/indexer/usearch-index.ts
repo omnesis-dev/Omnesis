@@ -247,7 +247,8 @@ export class UsearchWriteHandle {
    */
   release(): void {
     if (this.detached) return;
-    if (existsSync(this.path)) this.index.view(this.path);
+    if (process.platform === "win32") this.index.reset();
+    else if (existsSync(this.path)) this.index.view(this.path);
     this.index = createIndex(this.dimensions, this.encoding);
     this.detached = true;
     this.dirty = false;
@@ -311,7 +312,12 @@ export class UsearchWriteHandle {
     this.index.save(tmp);
     try {
       if (durable) fsyncFileSync(tmp);
-      renameSync(tmp, this.path);
+      if (process.platform === "win32") {
+        // POSIX replacement keeps the reader's old mmap alive until it refreshes.
+        usearch.atomicReplaceFile(tmp, this.path);
+      } else {
+        renameSync(tmp, this.path);
+      }
     } catch (err) {
       try {
         unlinkSync(tmp);
@@ -337,6 +343,7 @@ export class UsearchWriteHandle {
   }
 
   clear(): void {
+    if (process.platform === "win32") this.index.reset();
     try {
       unlinkSync(this.path);
     } catch {
@@ -783,9 +790,12 @@ export class UsearchReadHandle implements VectorReadSource {
   }
 
   close(): void {
-    // The upstream JS binding exposes no explicit disposal method. Re-views
-    // are released deterministically by reusing this.index; final shutdown
-    // still relies on the native wrapper's destructor with the process/isolate.
+    // Windows holds a delete-shared native file handle for the life of the
+    // view. Release it before retiring generations or purging plaintext.
+    if (process.platform === "win32") {
+      this.index.reset();
+      this.viewedSignature = null;
+    }
   }
 
   size(): number {

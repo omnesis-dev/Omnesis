@@ -45,6 +45,7 @@
     "openclaw-entry.mjs",
     "hermes/__init__.py",
     "hermes/adapter.py",
-    "hermes/plugin.yaml"
+    "hermes/plugin.yaml",
+    "hermes/windows-files.mjs"
   ]
 }

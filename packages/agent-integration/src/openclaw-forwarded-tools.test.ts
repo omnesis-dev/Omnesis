@@ -6,11 +6,12 @@
  * transport whose tool set follows a grant the test controls.
  */
 
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { isToolResultError } from "openclaw/plugin-sdk/agent-harness-runtime";
 import { afterEach, describe, expect, test, vi } from "vitest";
+import { writePrivateFixture as writeFileSync } from "../test/private-fixtures.js";
 
 import {
   FICTIONAL_ADD_NOTE_DESCRIPTION,

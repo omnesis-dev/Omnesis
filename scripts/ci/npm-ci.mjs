@@ -80,7 +80,10 @@ async function runNode(args, { env, cwd, signal, timeoutMs }) {
       stdout: "inherit",
       onStderr: (bytes) => process.stderr.write(bytes),
     });
-    if (result.failure) throw new Error(`Dependency subprocess ${result.failure}`);
+    if (result.failure)
+      throw new Error(
+        `Dependency subprocess ${result.failure}${result.failureMessage ? `: ${result.failureMessage}` : ""}`,
+      );
     return result.exitCode ?? 1;
   }
   const child = spawn(process.execPath, args, { env, cwd, stdio: "inherit", detached: true });
