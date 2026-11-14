@@ -78,6 +78,7 @@ import type { LikeSearchArgs, LikeSearchRow } from "../search/like-search.js";
 import type { TemporalStoreReads } from "../enrichment/temporal/temporal-store-window.js";
 import type { KnowledgeReadabilityReads } from "../brain/knowledge/retrieval-fence.js";
 import type { AgentProvenanceReads } from "../search/agent-provenance.js";
+import type { SearchResultLinkReads } from "../search/result-links.js";
 import type { PrivacyExchangeReads } from "../privacy/exchange-reads.js";
 import type {
   PersonSummary as LookupPersonSummary,
@@ -221,6 +222,8 @@ export interface IoGate extends ReadPort<typeof IO_READS>, KnowledgeSelectionRea
   agentSearchProvenance: AgentProvenanceReads["agentSearchProvenance"];
   /** Graph context for search's top hits, each on its own; see `enrichGraphContextHits`. */
   graphContextProvenance: AgentProvenanceReads["graphContextProvenance"];
+  /** The links of the results a search returns; see `readSearchResultLinks`. */
+  searchResultLinks: SearchResultLinkReads["searchResultLinks"];
   /** One page of the Privacy page's exchange feed; see `listPrivacyExchangeFeed`. */
   privacyExchangeFeed: PrivacyExchangeReads["privacyExchangeFeed"];
   /** One page of a privacy conversation's exchanges; see `listPrivacyExchangePresentations`. */
@@ -564,6 +567,8 @@ const COMPUTE_OP_DEFS: readonly IoOpDef[] = [
   { name: "io.knowledgeDocumentsReadable", priority: "user", latencyBudgetMs: HEAVY_BUDGET_MS },
   { name: "io.agentSearchProvenance", priority: "user", latencyBudgetMs: HEAVY_BUDGET_MS },
   { name: "io.graphContextProvenance", priority: "user", latencyBudgetMs: HEAVY_BUDGET_MS },
+  // A few pages per result: past the default budget, the disk is what it waited on.
+  { name: "io.searchResultLinks", priority: "user" },
   // The Privacy page's exchange pages: a person is waiting on each.
   { name: "io.privacyExchangeFeed", priority: "user" },
   { name: "io.privacyConversationExchanges", priority: "user" },
@@ -713,6 +718,7 @@ export function ioGateFromScheduler(scheduler: Scheduler): IoGate {
       call("io.agentSearchProvenance", [[...results], options]),
     graphContextProvenance: (hits, options) =>
       call("io.graphContextProvenance", [[...hits], options]),
+    searchResultLinks: (documentIds) => call("io.searchResultLinks", [[...documentIds]]),
     privacyExchangeFeed: (request, now) => call("io.privacyExchangeFeed", [request, now]),
     privacyConversationExchanges: (request, now) =>
       call("io.privacyConversationExchanges", [request, now]),

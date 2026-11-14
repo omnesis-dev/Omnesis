@@ -69,6 +69,11 @@ import {
   type AgentProvenanceReads,
   type ExternalDocumentKey,
 } from "./agent-provenance.js";
+import {
+  readSearchResultLinks,
+  type SearchResultLinkReads,
+  type SearchResultLinks,
+} from "./result-links.js";
 import { getUrlTraversalHubSources } from "../url-graph-roles.js";
 import {
   resolveSearchSettings,
@@ -171,6 +176,8 @@ export class SearchPipeline {
   private knowledgeReadability?: KnowledgeReadabilityReads;
   /** Where agent search provenance is walked; without it, on {@link gatewayDb} on this thread. */
   private provenanceReads?: AgentProvenanceReads;
+  /** Where results' links are read; without it, on {@link gatewayDb} on this thread. */
+  private resultLinkReads?: SearchResultLinkReads;
   private embeddingModelId?: string;
   private queryEnricher?: QueryEnricher;
   private linkRefSource?: LinkRefSource;
@@ -262,6 +269,14 @@ export class SearchPipeline {
    */
   setProvenanceReads(reads: AgentProvenanceReads): void {
     this.provenanceReads = reads;
+  }
+
+  /**
+   * Read the returned results' links on a read worker instead of the gateway
+   * database's own thread. Each read walks its document's whole text.
+   */
+  setResultLinkReads(reads: SearchResultLinkReads): void {
+    this.resultLinkReads = reads;
   }
 
   /**
@@ -803,7 +818,6 @@ export class SearchPipeline {
         this.gatewayDb &&
         (!authorization || authorization.graphContext === "unrestricted")
       ) {
-        this.hydrateMetadataFields(ctx.results);
         const results = ctx.results;
         ctx.results = await this.provenance(this.gatewayDb, (reads) =>
           reads.agentSearchProvenance(results, {
@@ -818,7 +832,6 @@ export class SearchPipeline {
         );
       } else {
         ctx.results = dedupeByContentHashWith(cg.contentHashByDoc, ctx.results, ctx.limit);
-        this.hydrateMetadataFields(ctx.results);
         if (
           options?.graphContext &&
           v2.enabled &&
@@ -851,6 +864,9 @@ export class SearchPipeline {
       await this.hydrateBoundRows(ctx.results);
       await finalizeVisibleResults();
     }
+    // Links are read for the results being returned, once the pool is limited
+    // and grouped: nothing before this point reads them.
+    await this.hydrateMetadataFields(ctx.results);
 
     const facets = buildFacets(ctx.results);
     ctx.timing.totalMs = Date.now() - startMs;
@@ -1137,29 +1153,30 @@ export class SearchPipeline {
   }
 
   /**
-   * Batch-hydrate the openable links (`sourceUrl`, `appUrl`) and `mimeType`
-   * from the gateway DB's `documents.metadata` JSON blob onto search
-   * results, in a single query over the final result set. The denormalized
-   * `chunks` table carries no `appUrl`, and its `source_url` can hold the
-   * canonical form used for link matching (lowercased deep links, Gmail's
-   * `#message/` key), which is not a link a client can open.
+   * Put each result's openable links and file type, read from its document,
+   * onto it (see `readSearchResultLinks`). A failed read on the worker is
+   * retried on this thread rather than failing the search.
    */
-  private hydrateMetadataFields(results: import("./types.js").SearchResultItem[]): void {
-    if (!this.gatewayDb || results.length === 0) return;
-    const ids = results.map((r) => r.documentId);
-    const placeholders = ids.map(() => "?").join(",");
-    const rows = this.gatewayDb
-      .prepare<
-        string[],
-        { id: string; source_url: string | null; app_url: string | null; mime_type: string | null }
-      >(
-        `SELECT id,
-                json_extract(metadata, '$.sourceUrl') as source_url,
-                json_extract(metadata, '$.appUrl') as app_url,
-                json_extract(metadata, '$.extra.mimeType') as mime_type
-         FROM documents WHERE id IN (${placeholders})`,
-      )
-      .all(...ids);
+  private async hydrateMetadataFields(
+    results: import("./types.js").SearchResultItem[],
+  ): Promise<void> {
+    const db = this.gatewayDb;
+    if (!db || results.length === 0) return;
+    const ids = [...new Set(results.map((r) => r.documentId))];
+    let rows: SearchResultLinks[];
+    try {
+      rows = this.resultLinkReads
+        ? await this.resultLinkReads.searchResultLinks(ids)
+        : readSearchResultLinks(db, ids);
+    } catch (err) {
+      if (!this.resultLinkReads) throw err;
+      log.warn(
+        `Search result links read failed, reading on main: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+      rows = readSearchResultLinks(db, ids);
+    }
     const map = new Map(rows.map((r) => [r.id, r]));
     for (const result of results) {
       const row = map.get(result.documentId);

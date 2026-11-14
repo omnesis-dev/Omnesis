@@ -52,6 +52,7 @@ import {
   type AgentSearchProvenanceOptions,
   type GraphContextProvenanceOptions,
 } from "../search/agent-provenance.js";
+import { readSearchResultLinks } from "../search/result-links.js";
 import {
   readPrivacyConversationExchanges,
   readPrivacyExchangeFeed,
@@ -316,6 +317,10 @@ export const ioHandlers = {
     hits: SearchResultItem[],
     options: GraphContextProvenanceOptions,
   ) => enrichGraphContextHits(db, hits, options),
+
+  // The links of the results a search returns. They sit in a document's
+  // metadata, after its text, so each read walks the whole text.
+  "io.searchResultLinks": (db: Db, documentIds: string[]) => readSearchResultLinks(db, documentIds),
 
   // The Privacy page's exchange pages. Each joins its exchanges with their
   // release, approval and audit records, reads the agent transcripts a
