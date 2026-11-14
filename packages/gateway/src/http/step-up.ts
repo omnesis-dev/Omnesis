@@ -182,18 +182,12 @@ export function mountStepUp(app: RouteApp, source: StepUpSource): void {
   });
   const bounded = bodyLimit({ maxSize: 16_384 });
   // The ceremony for one request, run on the gateway's own page.
-  app.post(
-    "/admin/step-up/options",
-    scope.admin(),
-    bounded,
-    validateJson(stepUpRequest),
-    async (c) => {
-      c.header("Cache-Control", "no-store");
-      const ceremony = source.enrollment()?.stepUpCeremony?.(binding(c, c.req.valid("json")));
-      if (!ceremony) throw unavailable();
-      return c.json(ceremony);
-    },
-  );
+  app.post("/admin/step-up/options", scope.admin(), bounded, validateJson(stepUpRequest), (c) => {
+    c.header("Cache-Control", "no-store");
+    const ceremony = source.enrollment()?.stepUpCeremony?.(binding(c, c.req.valid("json")));
+    if (!ceremony) throw unavailable();
+    return c.json(ceremony);
+  });
   // The assertion for it, exchanged for an id the request then carries.
   app.post("/admin/step-up", scope.admin(), bounded, validateJson(stepUpAssertion), async (c) => {
     c.header("Cache-Control", "no-store");
