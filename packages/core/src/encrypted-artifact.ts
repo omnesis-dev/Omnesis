@@ -132,18 +132,19 @@ async function publishWindowsArtifact(
         failed = true;
         failure = error;
       }
+      // Either side may fail before the writer begins consuming. Cancel the
+      // shared stream so its peer cannot remain blocked behind backpressure.
+      body.destroy();
       throw error;
     });
   const publishing = observe(
     writeWindowsPrivateFileAtomicStream(path, body, length, { replaceExisting }),
   );
   const producing = observe(
-    Promise.resolve()
-      .then(() => produce(body))
-      .catch((error: unknown) => {
-        body.destroy();
-        throw error;
-      }),
+    Promise.resolve().then(() => {
+      if (failed) throw failure;
+      return produce(body);
+    }),
   );
   // A failed producer must join the native writer and its cleanup before returning.
   await Promise.allSettled([producing, publishing]);

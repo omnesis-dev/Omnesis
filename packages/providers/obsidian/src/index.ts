@@ -12,7 +12,7 @@ import {
   statSync,
 } from "node:fs";
 import { createHash } from "node:crypto";
-import { basename, isAbsolute, join, relative, sep } from "node:path";
+import { basename, join, relative, sep } from "node:path";
 import picomatch from "picomatch";
 import { createLogger, computeContentHash } from "@omnesis/core";
 import {
@@ -25,6 +25,11 @@ import {
   type SourceInstance,
   type SyncProgress,
 } from "@omnesis/source-sdk";
+import {
+  containsCanonicalPath,
+  createUnsafePathMatcher,
+  sameCanonicalPath,
+} from "@omnesis/source-sdk/node-path-boundary";
 import { SyncError, type DocumentInput } from "@omnesis/types";
 import { exactNoteIdentity, noteIdentityKey } from "./identity.js";
 import { obsidianIconUrl } from "./icons.js";
@@ -149,10 +154,8 @@ export default defineSource({
 
     const vaultName = basename(vaultPath);
     const canonicalVaultPath = realpathSync(vaultPath);
-    const isInsideVault = (path: string): boolean => {
-      const fromVault = relative(canonicalVaultPath, path);
-      return fromVault !== ".." && !fromVault.startsWith(`..${sep}`) && !isAbsolute(fromVault);
-    };
+    const isInsideVault = (path: string): boolean =>
+      containsCanonicalPath(canonicalVaultPath, path);
     const excludeMatchers = (config?.exclude ?? []).map((p) => picomatch(p));
 
     function isExcluded(relPath: string): boolean {
@@ -208,6 +211,7 @@ export default defineSource({
       files: FileEntry[],
       visited: Set<string>,
       unreadable: string[],
+      unsafePaths: string[],
       isRoot = false,
     ): void {
       let entries;
@@ -236,6 +240,7 @@ export default defineSource({
             const resolvedTarget = realpathSync(fullPath);
             if (!isInsideVault(resolvedTarget)) {
               log.debug(`Skipping symlink outside vault: ${relPath}`);
+              unsafePaths.push(relPath);
               continue;
             }
             isDir = statSync(resolvedTarget).isDirectory();
@@ -275,13 +280,14 @@ export default defineSource({
             continue;
           }
           visited.add(resolved);
-          walkDir(fullPath, files, visited, unreadable);
+          walkDir(fullPath, files, visited, unreadable, unsafePaths);
         } else if (isFile && entry.name.endsWith(".md")) {
           if (isExcluded(relPath)) continue;
           try {
             const resolvedPath = realpathSync(fullPath);
             if (!isInsideVault(resolvedPath)) {
               log.debug(`Skipping note outside vault: ${relPath}`);
+              unsafePaths.push(relPath);
               continue;
             }
             const stat = statSync(resolvedPath);
@@ -319,19 +325,28 @@ export default defineSource({
     interface VaultWalk {
       files: FileEntry[];
       unreadable: string[];
+      unsafePaths: string[];
     }
 
     function walkVault(): VaultWalk {
       const files: FileEntry[] = [];
       const unreadable: string[] = [];
+      const unsafePaths: string[] = [];
       const visited = new Set<string>();
+      let currentRoot: string;
       try {
-        visited.add(realpathSync(vaultPath));
-      } catch {
-        visited.add(vaultPath);
+        currentRoot = realpathSync(vaultPath);
+      } catch (error) {
+        throw vaultReadError(error, vaultPath);
       }
-      walkDir(vaultPath, files, visited, unreadable, true);
-      return { files, unreadable };
+      if (!sameCanonicalPath(canonicalVaultPath, currentRoot, "directory"))
+        throw new SyncError(
+          "permission",
+          "The configured Obsidian vault resolves to a different location. Restore its original folder or update the source's vault path.",
+        );
+      visited.add(currentRoot);
+      walkDir(vaultPath, files, visited, unreadable, unsafePaths, true);
+      return { files, unreadable, unsafePaths };
     }
 
     interface ReadNoteResult {
@@ -340,6 +355,8 @@ export default defineSource({
     }
 
     function readNote(file: FileEntry): ReadNoteResult {
+      if (!isInsideVault(realpathSync(file.absolutePath)))
+        throw new Error("Obsidian note moved outside the declared vault");
       const fd = openSync(file.absolutePath, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW);
       let rawContent: string;
       try {
@@ -498,6 +515,15 @@ export default defineSource({
 
         // Walk vault and collect all .md files
         const walk = walkVault();
+        // A refused alias replacing a known note is uncertainty about that
+        // note, not deletion evidence. Deliberate exclusions still remove it.
+        const hasUnsafeAncestor = createUnsafePathMatcher(
+          walk.unsafePaths.map((alias) => join(vaultPath, alias)),
+        );
+        for (const path of Object.keys(previousFileMap)) {
+          if (!isExcluded(path) && hasUnsafeAncestor(join(vaultPath, path)))
+            walk.unreadable.push(path);
+        }
         // Unknown paths protect their own previous entries. Readable siblings
         // still provide deletion and rename evidence.
         let withholding = walk.unreadable.length > 0;

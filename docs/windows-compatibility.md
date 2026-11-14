@@ -74,10 +74,11 @@ A failed quarantine also refuses the unsafe open. Ordinary startup exit codes,
 including code 3, remain inconclusive. Node abort status 134 is recognized only inside the trusted native-open stage,
 with explicit Node out-of-memory diagnostics refused without quarantine on both
 Windows and POSIX. Controlled abort and exit fixtures cover this distinction.
-Automatic recovery for a Windows CRT abort remains open until its actual native
-status contract is established;
-Linux signals and explicit file-rejection handling retain regression coverage.
-Fresh Windows control-channel and recovery proof are still required.
+On the actual Windows x64 Node 24.22.2 runner, both the MSVC abort and terminate
+diagnostics returned `0xc0000409`, one of the guard's recognized native fault
+statuses. The focused control-channel tests passed. Ordinary code 3 remains
+unclassified. Linux signals and explicit file-rejection handling retain
+regression coverage.
 
 An ARM64 current-module probe found that metadata-only directory handles did
 not enforce delete-sharing exclusion. Deny-delete directory pins now request
@@ -152,3 +153,14 @@ retain their separate identities. All 115 provider tests passed. Windows Arc
 discovery now checks the vendor package family and requires an actual Chromium
 history layout; 91 browser-provider tests passed. Actual installed Arc profile
 validation and Obsidian case-sensitive containment proof remain required.
+
+At `c0d108019`, focused Windows coverage passed 1,725 unit tests across 117 files
+(25 conditional skips) and all 13 gateway E2E tests. The E2E phase completed in
+134 seconds, including the original synthetic-pipeline teardown bound.
+
+The broader Windows run at `bbc97b2ac` passed 37,227 unit tests and failed 584,
+with 86 skips across 2,428 passing, 152 failing and four skipped files. Its unit
+phase took 122 minutes. One gateway E2E shard passed 712 tests and failed ten,
+with ten skips across 120 passing and eight failing files, in 131 minutes. The
+other shard remains pending. These older-source results identify further
+portability work; they do not override the newer focused verdict.

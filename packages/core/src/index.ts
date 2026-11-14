@@ -1439,6 +1439,7 @@ export { cloudRelayEnabled } from "./cloud-relay-enabled.js";
 export { execWindowsJob } from "./windows-job-exec.js";
 
 export {
+  inspectWindowsPrivatePathSync,
   readWindowsPrivateFile,
   createWindowsPrivateFile,
   readWindowsRegularFilePrefix,

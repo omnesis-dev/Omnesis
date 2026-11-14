@@ -1387,6 +1387,7 @@ When you set out to write code that matches one of the patterns above, open the 
 | Secret-store abstraction           | `packages/core/src/secret-store.ts`, `packages/core/src/secret-file.ts`                                               |
 | Host update serialization          | `packages/core/src/update-lock.ts` + `packages/cli/src/update/source-launcher.ts`                                     |
 | Transient-buffer                   | `packages/providers/whatsapp/src/message-store.ts`                                                                    |
+| Canonical local path boundaries    | `packages/source-sdk/src/node-path-boundary.ts`                                                                       |
 | Local coding-agent transcripts     | `packages/source-sdk/src/local-agent-sessions.ts` + `packages/providers/pi/src/index.ts`                              |
 | Per-source write epochs            | `packages/collector/src/source-sync-runner.ts` + `packages/gateway/src/data/repositories/DocumentRepository.ts`       |
 | Routes only call services          | `packages/gateway/src/http/routes/admin/devices.ts` + `packages/gateway/src/http/services/`                           |
