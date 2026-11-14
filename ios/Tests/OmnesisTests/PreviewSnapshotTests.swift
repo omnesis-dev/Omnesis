@@ -6498,6 +6498,24 @@ final class PreviewSnapshotTests: XCTestCase {
         )
     }
 
+    func testCitationSourceActions() {
+        let store = AppStore.preview()
+        let view = ZStack {
+            Theme.bgPrimary.ignoresSafeArea()
+            CitationsDrawer(
+                trailAnnotations: PreviewMocks.citationSourceLinks,
+                isOpen: .constant(true)
+            )
+        }
+        .environment(store)
+        snapshot(view.preferredColorScheme(.dark), name: "citation-source-actions-dark")
+        snapshot(view.preferredColorScheme(.light), name: "citation-source-actions-light")
+        snapshot(
+            view.preferredColorScheme(.dark).dynamicTypeSize(.accessibility3),
+            name: "citation-source-actions-large-text"
+        )
+    }
+
     /// Drawer open on the unified Timeline. Voucher-journey fixture
     /// exercises every annotation shape (event-level note + doc quote
     /// + doc note + doc note-only) across Gmail and WhatsApp spine
@@ -6656,6 +6674,7 @@ final class PreviewSnapshotTests: XCTestCase {
         snapshot(view, name: "105-trail-timeline-long")
     }
 
+    /// Narrow titles and a file attachment keep their source actions inline.
     func testTrailTimelineViewUrlRepresentations() {
         let store = AppStore.preview()
         let view = ScrollView {

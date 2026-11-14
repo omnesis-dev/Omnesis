@@ -25,7 +25,7 @@ import {
   phraseForLinkType,
   groupPeopleByBucket,
 } from "../lib/graph-timeline.js";
-import { sourceIcon, sourceAccentColor } from "../lib/format.js";
+import { sourceIcon, sourceAccentColor, isOpenableExternalUrl } from "../lib/format.js";
 import { FileTypeIcon } from "../lib/file-type-icons.js";
 
 // Doc types that warrant a file-type icon (mirrors the rule in
@@ -321,6 +321,20 @@ function EventBody({ event, isAttachment, annotations, hideRelations, visibleDoc
           ? truncateFilename(doc.title || "(untitled)", 38)
           : truncate(doc.title || "(untitled)", 90)}
       </a>
+      ${isOpenableExternalUrl(doc.sourceUrl)
+        ? html`<a
+            class="graph-debug-event-source"
+            href=${doc.sourceUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            title="Open in source"
+            aria-label=${`Open ${doc.title || "document"} in source`}
+          ><svg aria-hidden="true" viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M9 2h5v5" />
+            <path d="M14 2L7 9" />
+            <path d="M12 9.5V13a1.5 1.5 0 0 1-1.5 1.5h-7A1.5 1.5 0 0 1 2 13V6a1.5 1.5 0 0 1 1.5-1.5H7" />
+          </svg></a>`
+        : null}
     </div>
     ${!isAttachment
       ? html`
