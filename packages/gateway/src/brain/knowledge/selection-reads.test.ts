@@ -5,7 +5,7 @@ import Database from "better-sqlite3";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { createLogger } from "@omnesis/core";
 import { createBriefsStorageTables } from "../storage/schema.js";
-import { resolveBrainSettings } from "../config.js";
+import { BRAIN_DEFAULTS, resolveBrainSettings } from "../config.js";
 import { outcomeRecordPolicyKey } from "../record-check/rubric.js";
 import {
   COGNITION_RUN_STALE_MS,
@@ -145,7 +145,7 @@ it("asks for outcome-policy revalidation only when record checks are enforced wi
   );
   await upkeep.reviews();
   expect(reads.knowledgeDueReviews.mock.calls[0]![0]).toMatchObject({
-    outcomePolicy: outcomeRecordPolicyKey("enforce", "scripted"),
+    outcomePolicy: outcomeRecordPolicyKey("enforce", "scripted", BRAIN_DEFAULTS.thresholds),
   });
 });
 

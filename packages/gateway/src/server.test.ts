@@ -65,6 +65,7 @@ import {
   resetConnectedCollectorDeclarations,
 } from "./collector-declaration-roster.js";
 import { ConfigStore } from "./config-store.js";
+import { portalCsrfToken } from "./http/cookies.js";
 import { authorizeInteractiveAccess } from "./access/test-utils.js";
 import { MCP_ACCESS_SCOPE } from "./access/types.js";
 import { STALE_DEVICE_REVOCATION_IMPACT_ERROR } from "./access/agent-device-authorization.js";
@@ -5066,6 +5067,45 @@ describe("sync state endpoints", () => {
     expect(meta["example-browser"].icon).not.toBe(meta["example-browser:one"].icon);
   });
 
+  test("attack: a relayed caller that has not signed in cannot read account ids from the public source map", async () => {
+    await req("/sync-state/example-browser:maya@example.com", {
+      method: "POST",
+      body: JSON.stringify({
+        cursor: { phase: "done" },
+        label: "Maya's browser",
+        family: { label: "Browsers" },
+      }),
+    });
+    const full = await (await req("/portal/source-meta.json")).json();
+    expect(full["example-browser:maya@example.com"]).toMatchObject({ label: "Maya's browser" });
+
+    vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "1");
+    try {
+      const relayed = { "x-omnesis-cloud-relay": "1" };
+      for (const path of ["/portal/source-meta.json", "/portal/icons.json"]) {
+        const res = await app.request(path, { headers: relayed });
+        expect(res.status).toBe(200);
+        const text = await res.text();
+        expect(JSON.parse(text)).toEqual({ "example-browser": { label: "Browsers" } });
+        expect(text).not.toContain("maya@example.com");
+        expect(text).not.toContain("Maya's browser");
+      }
+      // Signed in through the relay, or on the local network: exactly as before.
+      expect(await (await req("/portal/source-meta.json", { headers: relayed })).json()).toEqual(
+        full,
+      );
+      expect(await (await app.request("/portal/source-meta.json")).json()).toEqual(full);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+    // Without the cloud relay opt-in a relay header changes nothing.
+    expect(
+      await (
+        await app.request("/portal/source-meta.json", { headers: { "x-omnesis-cloud-relay": "1" } })
+      ).json(),
+    ).toEqual(full);
+  });
+
   test("legacy cursor writes cannot regress a claimed source", async () => {
     await req("/sync-state/gmail", {
       method: "POST",
@@ -7907,6 +7947,130 @@ describe("POST /documents/delete-all/provider/:providerId", () => {
     const countRes = await req("/documents/count/whatsapp-messages");
     const countData = await countRes.json();
     expect(countData.count).toBe(1);
+  });
+});
+
+describe("portal session cookies and cross-site writes", () => {
+  const seed = () =>
+    req("/documents", {
+      method: "POST",
+      body: JSON.stringify({ documents: [makeDocPayload("msg-1")] }),
+    });
+  const remaining = async () =>
+    ((await (await req("/documents/count/gmail")).json()) as { count: number }).count;
+  const adminSession = () => {
+    const dev = createDevice(db, { name: `portal-${randomUUID()}`, kind: "portal" });
+    const { id: tokenId } = createToken(db, dev.id, [SCOPE_ADMIN, SCOPE_READ]);
+    const sessionId = createSession(db, tokenId, [SCOPE_ADMIN, SCOPE_READ]);
+    return { cookie: `__omnesis_session=${sessionId}`, csrf: portalCsrfToken(sessionId) };
+  };
+  const wipe = (headers: Record<string, string>) =>
+    app.request("/documents/delete-all/provider/google", {
+      method: "POST",
+      headers: { Host: "gateway.example.test", ...headers },
+    });
+
+  test("attack: a page on a sibling gateway cannot make the owner's signed-in browser wipe a provider", async () => {
+    // The owner is signed in to their gateway's portal. They open a page on
+    // another gateway served under the same parent domain, which runs
+    //   fetch("https://g-owner.relay.example.test/documents/delete-all/provider/google",
+    //         { method: "POST", mode: "no-cors", credentials: "include" })
+    // `SameSite=Lax` does not stop it (same site), and a no-cors request needs
+    // no preflight. These are the headers the browser sends with it.
+    await seed();
+    const { cookie } = adminSession();
+    const res = await app.request("/documents/delete-all/provider/google", {
+      method: "POST",
+      headers: {
+        Host: "g-owner.relay.example.test",
+        Cookie: cookie,
+        Origin: "https://g-attacker.relay.example.test",
+        "Sec-Fetch-Site": "same-site",
+        "Sec-Fetch-Mode": "no-cors",
+        "Sec-Fetch-Dest": "empty",
+        "Content-Length": "0",
+      },
+    });
+    expect(res.status).toBe(403);
+    expect(await remaining()).toBe(1);
+  });
+
+  test("a body-less request another page makes with the session cookie is refused and deletes nothing", async () => {
+    await seed();
+    const { cookie } = adminSession();
+    for (const headers of [
+      // A sibling gateway under the same parent domain: same site, other origin.
+      { "Sec-Fetch-Site": "same-site", Origin: "https://g-other.relay.example.test" },
+      { "Sec-Fetch-Site": "cross-site", Origin: "https://attacker.example.test" },
+      // A browser that sends no fetch metadata still names the page's origin.
+      { Origin: "https://g-other.relay.example.test" },
+      { Origin: "null" },
+      // No proof of origin at all.
+      {},
+      // Neither a stale nor a guessed synchronizer token proves anything.
+      { "X-Omnesis-CSRF": "0".repeat(64), "Sec-Fetch-Site": "same-site" },
+    ]) {
+      const res = await wipe({ Cookie: cookie, ...headers });
+      expect(res.status).toBe(403);
+      expect(((await res.json()) as { code: string }).code).toBe("FORBIDDEN");
+    }
+    expect(await remaining()).toBe(1);
+  });
+
+  test("the portal's own writes pass: synchronizer token, same-origin fetch metadata, or its own Origin", async () => {
+    const { cookie, csrf } = adminSession();
+    for (const headers of [
+      { "X-Omnesis-CSRF": csrf },
+      { "Sec-Fetch-Site": "same-origin" },
+      { "Sec-Fetch-Site": "none" },
+      { Origin: "https://gateway.example.test" },
+      { Origin: "https://gateway.example.test", Host: "gateway.example.test:443" },
+    ]) {
+      await seed();
+      const res = await wipe({ Cookie: cookie, ...headers });
+      expect(res.status).toBe(200);
+      expect(await remaining()).toBe(0);
+    }
+  });
+
+  test("reads with the session cookie and bearer-token writes are unaffected", async () => {
+    await seed();
+    const { cookie } = adminSession();
+    const read = await app.request("/portal/api/session", {
+      headers: { Cookie: cookie, "Sec-Fetch-Site": "same-site" },
+    });
+    expect(((await read.json()) as { authenticated: boolean }).authenticated).toBe(true);
+    // A bearer token is never attached by the browser on another page's behalf.
+    const bearer = await req("/documents/delete-all/provider/google", { method: "POST" });
+    expect(bearer.status).toBe(200);
+    expect(await remaining()).toBe(0);
+  });
+
+  test("an origin the operator allowed for credentialed CORS may write with the cookie", async () => {
+    const cors = { allowedOrigins: ["https://app.example.test"], allowCredentials: true };
+    const corsApp = createServer(db, undefined, {
+      configStore: { get: () => ({ gateway: { cors } }) } as unknown as ConfigStore,
+    });
+    await seed();
+    const { cookie } = adminSession();
+    const allowed = await corsApp.request("/documents/delete-all/provider/google", {
+      method: "POST",
+      headers: {
+        Cookie: cookie,
+        "Sec-Fetch-Site": "same-site",
+        Origin: "https://app.example.test",
+      },
+    });
+    expect(allowed.status).toBe(200);
+    const other = await corsApp.request("/documents/delete-all/provider/google", {
+      method: "POST",
+      headers: {
+        Cookie: cookie,
+        "Sec-Fetch-Site": "same-site",
+        Origin: "https://other.example.test",
+      },
+    });
+    expect(other.status).toBe(403);
   });
 });
 

@@ -137,3 +137,46 @@ describe("resolveModelDisplay", () => {
     expect(d.modelName).toBe("nomic-embed-text-v1.5.Q8_0");
   });
 });
+
+describe("resolveModelDisplay — decision backends", () => {
+  const base = {
+    role: "decision" as const,
+    kind: "decision" as const,
+    backendKey: "clef",
+    model: "@cf/cloudflare/clef-flash",
+    url: "https://api.cloudflare.com/client/v4/accounts/abc/ai/run",
+    protocol: "workers-ai" as const,
+    onHost: false,
+    allowRemoteInference: true,
+    hasApiKey: true,
+    available: true,
+  };
+
+  it("labels a preset backend by its brand and finds its logo by its models.dev id", () => {
+    expect(resolveModelDisplay({ ...base, preset: "cloudflare" })).toEqual({
+      providerId: "cloudflare-workers-ai",
+      providerLabel: "Cloudflare Workers AI",
+      modelName: "@cf/cloudflare/clef-flash",
+      available: true,
+      configured: true,
+    });
+    expect(
+      resolveModelDisplay({
+        ...base,
+        backendKey: "box",
+        preset: "ollaya",
+        url: "http://127.0.0.1:11435/v1/systemone",
+      }),
+    ).toMatchObject({ providerId: "ollaya", providerLabel: "Ollaya" });
+  });
+
+  it("names a hand-added server by its backend key", () => {
+    expect(
+      resolveModelDisplay({
+        ...base,
+        backendKey: "h2o",
+        url: "http://192.0.2.7:8000/v1/systemone",
+      }),
+    ).toMatchObject({ providerId: "http", providerLabel: "h2o" });
+  });
+});

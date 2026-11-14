@@ -22,7 +22,7 @@
  * address the relay reported for them instead (`relayedClientBucket`).
  */
 
-import { relayedClientAddress } from "@omnesis/cloud-relay";
+import { isRelayTunnelPeer, relayedClientAddress } from "@omnesis/cloud-relay";
 import { cloudRelayEnabled } from "@omnesis/core";
 
 const exposedRequests = new WeakMap<object, number>();
@@ -112,6 +112,22 @@ export function clientAddress(header: HeaderReader, env: unknown): string {
 }
 
 /**
+ * Whether a request may have reached the gateway through its cloud relay,
+ * and so from the open internet: the tunnel recorded its client, the relay
+ * marked it, or the gateway was exposing itself when it arrived. Off without
+ * the cloud relay opt-in. Use it only to withhold something; a client can
+ * claim to be relayed but never claim not to be.
+ */
+export function isRelayedRequest(header: HeaderReader, env: unknown): boolean {
+  if (!cloudRelayEnabled()) return false;
+  return (
+    (typeof env === "object" && env !== null && exposedRequests.has(env)) ||
+    relayedClientBucket(env) !== undefined ||
+    header("x-omnesis-cloud-relay") === "1"
+  );
+}
+
+/**
  * Whether an address is loopback: IPv4 `127.0.0.0/8`, IPv6 `::1`, and the
  * IPv4-mapped `::ffff:127.x` forms.
  */
@@ -148,4 +164,23 @@ export function isLoopbackClient(header: HeaderReader, env: unknown): boolean {
   if (peer === undefined || !isLoopbackIp(peer)) return false;
   const forwarded = forwardedClientAddress(header);
   return forwarded === undefined || isLoopbackIp(forwarded);
+}
+
+/**
+ * Whether this request came through the gateway's cloud relay: its socket is
+ * one the relay tunnel in this process dialled, or it carries the relay's
+ * forwarding header. Unlike `isRelayedRequest`, which also counts every
+ * request while the gateway is exposed, this is false for a local or
+ * home-network request while remote access is on, so it can gate what only
+ * the owner on the gateway itself may do. A relay can't make its requests
+ * look local: the tunnel's sockets are recorded here, not by the relay.
+ */
+export function arrivedThroughRelay(header: HeaderReader, env: unknown): boolean {
+  if (!cloudRelayEnabled()) return false;
+  const socket = (
+    env as { incoming?: { socket?: { remoteAddress?: string; remotePort?: number } } }
+  )?.incoming?.socket;
+  return (
+    (socket !== undefined && isRelayTunnelPeer(socket)) || header("x-omnesis-cloud-relay") === "1"
+  );
 }

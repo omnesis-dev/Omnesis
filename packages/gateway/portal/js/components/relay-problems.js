@@ -48,7 +48,11 @@ export function relayProblems(status, phase) {
     messages.push(
       `The certificate for this gateway's address expires on ${relayDate(status.certificate.expiresAt) || "a date soon"}. The gateway renews it by itself. If this message stays for more than a day, ask for help.`,
     );
-  if (status.certificateMonitor?.incidents?.length > 0)
+  if (status.incidentHold)
+    messages.push(
+      "A certificate for this gateway's address was issued with a key this gateway does not hold, so someone else may be able to pose as this gateway. Until you deal with it, every new device waits for your approval, whatever you chose for new devices. Don't sign in or approve anything from a link you didn't expect. Copy the details and ask for help. Once it is resolved, run omnesis cloud incidents ack on the gateway host.",
+    );
+  else if (status.certificateMonitor?.incidents?.length > 0)
     messages.push(
       "A certificate for this gateway's address was issued with a key this gateway does not hold. Someone else may be able to pose as this gateway. Copy the details and ask for help before you add new devices.",
     );
@@ -80,6 +84,7 @@ export function relayDiagnostics(status, { phase, version, now = new Date() } = 
   const monitor = status.certificateMonitor;
   const incidents = Array.isArray(monitor?.incidents) ? monitor.incidents : [];
   if (incidents.length > 0) codes.push("unexpected-certificate (certificate monitor)");
+  if (status.incidentHold) codes.push("incident-hold (new devices)");
   const direct = status.identities?.find((identity) => identity.id === "direct");
   const account = status.account;
   const address = status.publicMcp;
@@ -103,6 +108,11 @@ export function relayDiagnostics(status, { phase, version, now = new Date() } = 
     ),
     `Account: ${account?.linked || status.google?.linked ? "linked" : account?.pendingUnlink ? "unlinked here, account not updated yet" : "not linked"}`,
     `New devices: ${plain(status.deviceEnrollment?.policy, "not reported")}, ${status.deviceEnrollment?.trustedSignIns?.length ?? 0} trusted sign-ins`,
+    ...(status.incidentHold
+      ? [
+          `Incident hold: since ${iso(status.incidentHold.since)}, ${Array.isArray(status.incidentHold.certificates) ? status.incidentHold.certificates.length : 0} certificates`,
+        ]
+      : []),
     ...(status.recovery
       ? [`Recovery receipt: ${plain(status.recovery.receipt)}, expires ${iso(status.recovery.expiresAt)}`]
       : []),

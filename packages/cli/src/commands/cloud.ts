@@ -8,6 +8,7 @@ import { z } from "zod";
 import { formatPairingCode, pairingCodeSchema } from "@omnesis/cloud-relay";
 import { cloudManagementCommands } from "./cloud-management.js";
 import { cloudRecoveryCommands } from "./cloud-recovery.js";
+import { cloudIncidentCommands } from "./cloud-incidents.js";
 
 function requireCloudRelay(): void {
   if (!cloudRelayEnabled())
@@ -148,6 +149,7 @@ export const cloudCommand = defineCommand({
   subCommands: {
     ...cloudManagementCommands,
     ...cloudRecoveryCommands,
+    ...cloudIncidentCommands,
     login: defineCommand({
       meta: { name: "login", description: "Sign in with Google to find your gateways" },
       run: () => runCloudIdentityCommand("google-login"),

@@ -285,6 +285,7 @@ export function WatchHistoryPane({
   lineage = {},
   documents = {},
   exchanges = [],
+  auditHref = null,
   onClose,
 }) {
   if (!path) return null;
@@ -341,7 +342,7 @@ export function WatchHistoryPane({
               how it was reached.
             </p>
           <//>`}
-      <${Firings} path=${path} lineage=${lineage} documents=${documents} />
+      <${Firings} path=${path} lineage=${lineage} documents=${documents} auditHref=${auditHref} />
       <${JudgeExchanges} path=${path} exchanges=${exchanges} />
       <${WatchRawJson} value=${path} />
     </div>
@@ -546,7 +547,7 @@ function unnamed(firing, documentFields) {
 }
 
 /** What the event said, what it was read out of, and where it went. */
-function Firings({ path, lineage = {}, documents = {} }) {
+function Firings({ path, lineage = {}, documents = {}, auditHref = null }) {
   if (path.firings.length === 0) {
     return html`<${Section} title="What it said">
       <p class="privacy-empty">
@@ -598,6 +599,7 @@ function Firings({ path, lineage = {}, documents = {} }) {
             </div>`}
         <${Delivery}
           delivery=${firing.delivery}
+          auditHref=${auditHref}
           suppressed=${path.nodes.some((node) =>
             node.steps.some((step) => step.transition === "suppressed"),
           )}
@@ -615,7 +617,7 @@ function Firings({ path, lineage = {}, documents = {} }) {
  * delivery block, a channel never wired, an outcome the write lost — so with
  * this false the sentence below states the absence and stops there.
  */
-function Delivery({ delivery, suppressed = false }) {
+export function Delivery({ delivery, suppressed = false, auditHref = null }) {
   if (!delivery) {
     return html`<p class="watch-pane-note">
       ${suppressed
@@ -627,15 +629,15 @@ function Delivery({ delivery, suppressed = false }) {
   }
   const reached = delivery.delivered > 0;
   return html`
-    <span class=${`privacy-item-status ${reached ? "success" : "error"}`}>
-      ${reached
-        ? delivery.kind === "agent-wake"
-          ? "Woke an agent"
-          : "Notified your devices"
-        : "Not delivered"}
-    </span>
     <${Rows}
       rows=${[
+        ["Delivery", reached
+          ? delivery.kind === "agent-wake"
+            ? auditHref
+              ? html`<a class="watch-delivery-audit" href=${auditHref}>Woke an agent</a>`
+              : "Woke an agent"
+            : "Notified your devices"
+          : html`<span class="watch-delivery-failed">Not delivered</span>`],
         ["Channel", html`<code>${delivery.kind}</code>`],
         [
           "Reached",

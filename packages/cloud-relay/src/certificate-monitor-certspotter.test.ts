@@ -182,3 +182,14 @@ test("caller cancellation and transport errors do not expose nested secret-beari
     code: "ct-provider-unavailable",
   });
 });
+test("another service with the same API is asked at its own base path", async () => {
+  const transport = vi.fn<typeof fetch>().mockResolvedValue(Response.json([]));
+  const provider = new CertSpotterProvider({
+    fetch: transport,
+    baseUrl: "https://ct-mirror.example.test/search/",
+  });
+  await provider.page("gateway.example.test", undefined, signal());
+  expect(String(transport.mock.calls[0]![0])).toBe(
+    "https://ct-mirror.example.test/search/v1/issuances?domain=gateway.example.test&match_wildcards=true&expand=cert_der",
+  );
+});

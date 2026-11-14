@@ -38,7 +38,6 @@ import { findWorthAnswer } from "../../worth/answers.js";
 import {
   EMAIL_WORTH_QUESTIONS,
   EMAIL_WORTH_QUESTION_ID,
-  EMAIL_WORTH_THRESHOLD,
   WORTH_GATED_DOCUMENT_TYPE,
   WORTH_GATE_RUBRIC_VERSION,
   emailWorthState,
@@ -60,6 +59,8 @@ export interface WorthGateDeps {
   db: Db;
   /** The live decision backend, or null when the capability is absent. */
   getDecision: () => DecisionCapability | null;
+  /** The worth score an email must reach for a run (`brain.thresholds.worthGate`). */
+  getThreshold: () => number;
   recordDecision: (record: CognitionDecisionRecord) => Promise<void>;
   recordSpend: (modelId: string, inputTokens: number) => Promise<void>;
   clock: () => number;
@@ -144,6 +145,9 @@ export class WorthGate {
       metadata: subjectMeta,
     });
     const contentHash = subject.content_hash;
+    const threshold = this.deps.getThreshold();
+    const verdictFor = (score: number): "pass" | "skip" =>
+      passesWorthThreshold(score, threshold) ? "pass" : "skip";
 
     const base = {
       runId: run.id,
@@ -154,7 +158,7 @@ export class WorthGate {
       rubricVersion: WORTH_GATE_RUBRIC_VERSION,
       contentHash,
       requestedModelId: decision.modelId,
-      threshold: EMAIL_WORTH_THRESHOLD,
+      threshold,
     };
 
     // The email's stored worth answer, whichever gate asked for it.
@@ -187,7 +191,7 @@ export class WorthGate {
         verdict,
         decisionId: record.id,
         score: reusable.score,
-        threshold: EMAIL_WORTH_THRESHOLD,
+        threshold,
         modelId: reusable.modelId,
       };
     }
@@ -232,7 +236,7 @@ export class WorthGate {
       verdict: record.verdict,
       decisionId: record.id,
       score: record.score,
-      threshold: EMAIL_WORTH_THRESHOLD,
+      threshold,
       modelId: record.modelId,
     };
   }
@@ -260,10 +264,6 @@ export class WorthGate {
         .get(id) ?? null
     );
   }
-}
-
-function verdictFor(score: number): "pass" | "skip" {
-  return passesWorthThreshold(score) ? "pass" : "skip";
 }
 
 function parseMetadata(doc: DocRow): Record<string, unknown> {

@@ -45,6 +45,7 @@
 import {
   CATALOG_ROLE_CAPABILITY,
   CAPABILITY_ROLES,
+  splitPresetViews,
   type ModelRole,
   type CapabilityRole,
   type InferenceOverview,
@@ -67,6 +68,7 @@ import type { ModelManager } from "./manager.js";
 import type { SystemInfo } from "../system-info.js";
 import type { RouteApp } from "../http/routes/types.js";
 import type { ModelsDevCatalog } from "./models-dev-catalog.js";
+import type { ModelsDevDecisionCatalog } from "./models-dev-decisions.js";
 /**
  * Catalog roles describe what a model can do; capability roles identify the
  * independent assignment being changed. `capability` is optional on the route
@@ -89,6 +91,8 @@ export const CAPABILITY_TO_CATALOG: Partial<Record<CapabilityRole, ModelRole>> =
 interface RegisterOptions {
   modelManager: ModelManager;
   modelsDevCatalog?: ModelsDevCatalog;
+  /** Adds the models.dev decision catalog's models to the presets' decision APIs. */
+  decisionCatalog?: ModelsDevDecisionCatalog;
   configStore: ConfigStore;
   getSystemInfo: () => SystemInfo;
   getInferenceOverview: () => InferenceOverview;
@@ -215,9 +219,14 @@ export function registerModelRoutes(app: RouteApp, opts: RegisterOptions): void 
   app.get("/admin/system-info", scope.admin(), (c) => c.json(sysInfo()));
 
   app.get("/admin/models", scope.admin(), async (c) => {
-    await opts.modelsDevCatalog?.refreshIfStale();
+    await Promise.all([
+      opts.modelsDevCatalog?.refreshIfStale(),
+      opts.decisionCatalog?.refreshIfStale(),
+    ]);
     const inference = modelInferenceOverview();
     const overview = modelManager.getOverview(inference);
+    if (opts.decisionCatalog)
+      Object.assign(overview, splitPresetViews(opts.decisionCatalog.presets()));
     const behavior = opts.modelsDevCatalog?.overview(inference, configStore.get());
     const getRecentModels = opts.getRecentModels;
     const recentModels = getRecentModels
@@ -448,6 +457,11 @@ export function registerModelRoutes(app: RouteApp, opts: RegisterOptions): void 
     if (!backend) throw new BadRequestError(`unknown backend: ${key}`);
     if (backend.type !== "http")
       throw new BadRequestError(`cannot probe a ${backend.type} backend`);
+    if (!backend.url) {
+      throw new BadRequestError(
+        `backend "${key}" serves only decision models; probe its decision API at /admin/inference/backends/${key}/decision/probe`,
+      );
+    }
     // Probe through the registry so the request carries the backend's
     // configured API key and the cached status the row reads is updated in
     // the same pass — the result the "Test" button sees can't disagree with
@@ -472,6 +486,11 @@ export function registerModelRoutes(app: RouteApp, opts: RegisterOptions): void 
     if (!backend) throw new BadRequestError(`unknown backend: ${key}`);
     if (backend.type !== "http")
       throw new BadRequestError(`cannot verify a ${backend.type} backend`);
+    if (!backend.url) {
+      throw new BadRequestError(
+        `backend "${key}" serves only decision models; verify one at /admin/inference/backends/${key}/decision/verify`,
+      );
+    }
 
     const body = (await c.req.json().catch(() => null)) as {
       model?: unknown;

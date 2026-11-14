@@ -162,6 +162,8 @@ import { indexDocumentsBySourceExternalId } from "./migration-187-documents-sour
 import { indexDocumentsBySourceCreatedRevision } from "./migration-208-documents-source-created-revision-index.js";
 import { addAnnotationRecheckQueuedAt } from "./migration-213-annotation-recheck-queued.js";
 import { addDeviceEnrollment } from "./migration-214-device-enrollment.js";
+import { indexDocumentsByIdAndType } from "./migration-216-documents-id-type-index.js";
+import { addStickyDeviceRevocation } from "./migration-217-sticky-revocation.js";
 import { LATEST_SCHEMA_VERSION } from "./schema-version.js";
 import type { Db } from "./types.js";
 
@@ -4993,6 +4995,17 @@ export const MIGRATIONS: readonly Migration[] = [
       db.exec(`INSERT OR IGNORE INTO lab_features (id, enabled)
         VALUES ('tasks', EXISTS(SELECT 1 FROM open_loops UNION ALL SELECT 1 FROM open_loop_ledger LIMIT 1));`);
     },
+  },
+  {
+    version: 216,
+    description: "index documents by id and type so a person's channel counts never read content",
+    up: indexDocumentsByIdAndType,
+  },
+  {
+    version: 217,
+    description:
+      "keep revoked device keys from joining automatically; record each device's sign-in",
+    up: addStickyDeviceRevocation,
   },
 ];
 

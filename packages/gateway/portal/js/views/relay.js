@@ -13,6 +13,10 @@ import { html } from "htm/preact";
 import { CopyIconButton } from "../components/copy-button.js";
 import { useState } from "preact/hooks";
 import { RelayProblems, relayProblems, relayDiagnostics } from "../components/relay-problems.js";
+import {
+  GatewayPasskeyConfirm,
+  passkeyConfirmationNeeded,
+} from "../components/gateway-passkey-confirm.js";
 import { useRelayManagement } from "../lib/use-relay-management.js";
 import {
   relayError,
@@ -559,17 +563,81 @@ function PolicyChoices({ name, value, disabled, onChange }) {
   </div>`;
 }
 
-function NewDevices({ enrollment, busy, run }) {
-  const disabled = Boolean(busy) && busy !== "refresh";
+/** Where a trusted sign-in came from, in the words `omnesis cloud trusted-sign-ins` uses. */
+const SIGN_IN_SOURCES = {
+  "link-page": "Used to connect this gateway",
+  approval: "Trusted when you approved a device",
+  "native-app": "Trusted when you approved a device that signed in in the app",
+  endorsed: "Added to your account later, vouched for by a sign-in trusted here",
+  countersigned: "Already on your account, vouched for by a passkey added later",
+};
+const CONFIRMED_VIA = {
+  "gateway-origin": "Confirmed on this gateway",
+  "android-app": "Confirmed in the Android app",
+  "native-google-approval": "Confirmed when you approved a device",
+  "admin-app-google": "Confirmed from an Omnesis app",
+};
+
+/** The sign-ins this gateway trusts: what each is, where it came from, and whether it's confirmed. */
+function TrustedSignIns({ enrollment }) {
+  const pinned = enrollment.trustedSignIns ?? [];
+  const confirmed = enrollment.confirmedSignIns ?? [];
+  const rows = [
+    ...pinned.map((signIn) => ({
+      ...signIn,
+      via: confirmed.find((value) => value.type === signIn.type && value.id === signIn.id)?.via,
+    })),
+    ...confirmed
+      .filter((value) => !pinned.some((signIn) => signIn.type === value.type && signIn.id === value.id))
+      .map((value) => ({ ...value, confirmed: true })),
+  ];
+  if (rows.length === 0) return null;
+  return html`<div class="relay-sign-ins">
+    <p class="relay-row-value relay-strong">Trusted sign-ins</p>
+    <ul class="relay-sign-in-list">
+      ${rows.map((signIn) => {
+        const source = signIn.source
+          ? (SIGN_IN_SOURCES[signIn.source] ?? "Source not recorded")
+          : undefined;
+        const confirmation = signIn.via
+          ? (CONFIRMED_VIA[signIn.via] ?? "Confirmed")
+          : "Not confirmed on this gateway";
+        return html`<li class="relay-sign-in" key=${`${signIn.type}:${signIn.id}`}>
+          <span class="relay-row-value">
+            ${`${signIn.type === "passkey" ? "Passkey" : "Google account"} `}
+            <span class="relay-mono">${String(signIn.id).slice(0, 12)}</span>
+          </span>
+          <span class="relay-hint">${[source, confirmation].filter(Boolean).join(" · ")}</span>
+        </li>`;
+      })}
+    </ul>
+  </div>`;
+}
+
+function NewDevices({ enrollment, held, busy, run }) {
+  // While a certificate incident holds the gateway, the choice can't take effect, so it waits.
+  const disabled = held || (Boolean(busy) && busy !== "refresh");
   return html`<section class="relay-section" aria-labelledby="relay-new-devices-title">
     <h3 class="relay-section-title" id="relay-new-devices-title">New devices</h3>
+    ${
+      passkeyConfirmationNeeded(enrollment) &&
+      !held &&
+      html`<${GatewayPasskeyConfirm} enrollment=${enrollment} busy=${busy} run=${run} />`
+    }
     <p class="relay-hint">What happens when a new device signs in to your Omnesis account.</p>
+    ${
+      held &&
+      html`<p class="relay-hint">
+        Every new device waits for your approval until the certificate problem above is dealt with.
+      </p>`
+    }
     <${PolicyChoices}
       name="relay-policy"
       value=${enrollment.policy}
       disabled=${disabled}
       onChange=${(policy) => policy !== enrollment.policy && run("enrollment", { policy }, "PUT")}
     />
+    <${TrustedSignIns} enrollment=${enrollment} />
   </section>`;
 }
 
@@ -631,6 +699,14 @@ export function RelayView() {
     }
     ${established && html`<${AccountSection} status=${status} busy=${busy} run=${run} />`}
     ${established && html`<${RemoteAccess} status=${status} busy=${busy} run=${run} />`}
-    ${enrollment && html`<${NewDevices} enrollment=${enrollment} busy=${busy} run=${run} />`}
+    ${
+      enrollment &&
+      html`<${NewDevices}
+        enrollment=${enrollment}
+        held=${Boolean(status.incidentHold)}
+        busy=${busy}
+        run=${run}
+      />`
+    }
   </div>`;
 }

@@ -10,6 +10,13 @@ import { HttpError, errorResponse } from "../../errors.js";
 import { mountCloudRelayManagementRoutes } from "./cloud-relay.js";
 import type { AppEnv, AuthContext } from "../types.js";
 import type { CloudRelayManagement, CloudRelayManagementStatus } from "@omnesis/cloud-relay";
+// Which sockets the relay tunnel dialled is the tunnel client's own record; it is tested there.
+const tunnelSockets = vi.hoisted(() => new Set<string>());
+vi.mock("@omnesis/cloud-relay", async (original) => ({
+  ...(await original<typeof import("@omnesis/cloud-relay")>()),
+  isRelayTunnelPeer: (peer: { remoteAddress?: string; remotePort?: number }) =>
+    tunnelSockets.has(`${peer.remoteAddress}|${peer.remotePort}`),
+}));
 const status: CloudRelayManagementStatus = {
   revision: 1,
   enabled: false,
@@ -29,7 +36,11 @@ const bearer: AuthContext = {
   scopes: [SCOPE_ADMIN],
 };
 let service: CloudRelayManagement;
+let devices:
+  | { revokeJoinedWith: ReturnType<typeof vi.fn<(signInId: string) => Promise<string[]>>> }
+  | undefined;
 beforeEach(() => {
+  devices = { revokeJoinedWith: vi.fn(async (_signInId: string): Promise<string[]> => []) };
   vi.stubEnv("OMNESIS_EXPERIMENTAL", "0");
   vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "1");
   service = {
@@ -53,7 +64,7 @@ function app(auth: AuthContext | null = bearer, configured = true) {
     if (auth) c.set("auth", auth);
     await next();
   });
-  mountCloudRelayManagementRoutes(router, configured ? service : undefined);
+  mountCloudRelayManagementRoutes(router, configured ? service : undefined, devices);
   return router;
 }
 const post = (body: unknown = {}, headers = {}) => ({
@@ -361,6 +372,19 @@ test("connecting by sign-in, its cancellation, the enrollment policy and trusted
   });
   expect(removed.status).toBe(200);
   expect(service.removeTrustedSignIn).toHaveBeenCalledExactlyOnceWith("fictional-pin");
+  // Devices that joined with it stay unless the owner asks.
+  expect(await removed.json()).not.toHaveProperty("revokedDevices");
+  expect(
+    (
+      await router.request(
+        "/admin/cloud-relay/trusted-sign-ins/fictional-pin?revokeDevices=false",
+        {
+          method: "DELETE",
+        },
+      )
+    ).status,
+  ).toBe(200);
+  expect(devices!.revokeJoinedWith).not.toHaveBeenCalled();
   vi.mocked(service.connect!).mockRejectedValueOnce(
     new CloudRelayManagementFailure(409, "operation-in-progress"),
   );
@@ -380,6 +404,56 @@ test("connecting by sign-in, its cancellation, the enrollment policy and trusted
   ).toBe(403);
 });
 
+test("removing a sign-in can also revoke the devices that joined with it, only after the sign-in is gone", async () => {
+  const order: string[] = [];
+  service.removeTrustedSignIn = vi.fn(async (id: string) => {
+    order.push(`remove ${id}`);
+    return status;
+  });
+  devices!.revokeJoinedWith.mockImplementation(async (id: string) => {
+    order.push(`revoke ${id}`);
+    return ["device-one", "device-two"];
+  });
+  const router = app();
+  const removed = await router.request(
+    "/admin/cloud-relay/trusted-sign-ins/fictional-pin?revokeDevices=true",
+    { method: "DELETE" },
+  );
+  expect(removed.status).toBe(200);
+  expect(await removed.json()).toMatchObject({
+    revision: 1,
+    revokedDevices: ["device-one", "device-two"],
+  });
+  expect(order).toEqual(["remove fictional-pin", "revoke fictional-pin"]);
+
+  // A refused removal revokes nothing, and the query is validated.
+  vi.mocked(service.removeTrustedSignIn!).mockRejectedValueOnce(
+    new CloudRelayManagementFailure(409, "configuration-invalid"),
+  );
+  expect(
+    (
+      await router.request("/admin/cloud-relay/trusted-sign-ins/other?revokeDevices=true", {
+        method: "DELETE",
+      })
+    ).status,
+  ).toBe(409);
+  for (const query of ["revokeDevices=yes", "other=true"])
+    expect(
+      (
+        await router.request(`/admin/cloud-relay/trusted-sign-ins/other?${query}`, {
+          method: "DELETE",
+        })
+      ).status,
+    ).toBe(400);
+  expect(devices!.revokeJoinedWith).toHaveBeenCalledTimes(1);
+
+  // Without device access the removal is not offered at all.
+  devices = undefined;
+  expect(
+    (await app().request("/admin/cloud-relay/trusted-sign-ins/other", { method: "DELETE" })).status,
+  ).toBe(503);
+});
+
 test("sign-in connection controls are explicitly unavailable when the service has no account support", async () => {
   const router = app();
   for (const [path, init] of [
@@ -387,6 +461,9 @@ test("sign-in connection controls are explicitly unavailable when the service ha
     ["/admin/cloud-relay/connect/cancel", post()],
     ["/admin/cloud-relay/enrollment", { ...post({ policy: "ask" }), method: "PUT" }],
     ["/admin/cloud-relay/trusted-sign-ins/fictional-pin", { method: "DELETE" }],
+    ["/admin/cloud-relay/passkeys/confirm/options", post()],
+    ["/admin/cloud-relay/passkeys/confirm", post({ proof: gatewayProof })],
+    ["/admin/cloud-relay/trusted-sign-ins", { method: "GET" }],
   ] as const) {
     const response = await router.request(path, init);
     expect(response.status).toBe(503);
@@ -422,4 +499,175 @@ test("reading the status lets the service ask its relay about signup first, and 
   service.refreshSignupAccess = vi.fn(async () => {});
   expect((await app().request("/admin/cloud-relay")).status).toBe(404);
   expect(service.refreshSignupAccess).not.toHaveBeenCalled();
+});
+
+test("a certificate incident is acknowledged only by an admin request that didn't come through the relay", async () => {
+  const held = {
+    ...status,
+    incidentHold: { since: "2028-01-02T00:00:00.000Z", certificates: ["e".repeat(64)] },
+  };
+  const acknowledgeIncidentHold = vi.fn().mockResolvedValue(status);
+  service = { ...service, acknowledgeIncidentHold, status: vi.fn().mockResolvedValue(held) };
+  const router = app();
+  const socket = (remotePort: number) => ({
+    incoming: { socket: { remoteAddress: "127.0.0.1", remotePort } },
+  });
+  tunnelSockets.add("127.0.0.1|40300");
+  try {
+    // Through the tunnel, with or without the relay's own marker, an admin token is not enough.
+    for (const [headers, env] of [
+      [{}, socket(40300)],
+      [{ "x-omnesis-cloud-relay": "1" }, socket(40301)],
+    ] as const) {
+      const refused = await router.request(
+        "/admin/cloud-relay/incidents/ack",
+        post({}, headers),
+        env,
+      );
+      expect(refused.status).toBe(403);
+      expect(await refused.json()).toMatchObject({ code: "local-request-required" });
+    }
+    expect(acknowledgeIncidentHold).not.toHaveBeenCalled();
+    expect(await (await router.request("/admin/cloud-relay")).json()).toMatchObject({
+      incidentHold: held.incidentHold,
+    });
+    // The CLI on the gateway host.
+    const local = await router.request("/admin/cloud-relay/incidents/ack", post(), socket(40302));
+    expect(local.status).toBe(200);
+    expect(await local.json()).toEqual(status);
+    expect(acknowledgeIncidentHold).toHaveBeenCalledOnce();
+  } finally {
+    tunnelSockets.clear();
+  }
+  // Admin only, a body of nothing, and unavailable without account support.
+  expect(
+    (
+      await app({ ...bearer, scopes: [SCOPE_READ] }).request(
+        "/admin/cloud-relay/incidents/ack",
+        post(),
+      )
+    ).status,
+  ).toBe(403);
+  expect(
+    (await router.request("/admin/cloud-relay/incidents/ack", post({ force: true }))).status,
+  ).toBe(400);
+  delete service.acknowledgeIncidentHold;
+  const unavailable = await app().request("/admin/cloud-relay/incidents/ack", post());
+  expect(unavailable.status).toBe(503);
+  expect(await unavailable.json()).toMatchObject({ code: "account-unavailable" });
+  // Without the opt-in the route doesn't exist.
+  vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "0");
+  expect((await app().request("/admin/cloud-relay/incidents/ack", post())).status).toBe(404);
+});
+
+const gatewayProof = {
+  type: "gateway-passkey",
+  challenge: "Y2hhbGxlbmdlY2hhbGxlbmdlY2hhbGxlbmdlY2hhbGw",
+  credential: {
+    id: "Y3JlZGVudGlhbA",
+    rawId: "Y3JlZGVudGlhbA",
+    type: "public-key",
+    clientExtensionResults: {},
+    response: {
+      clientDataJSON: "e30",
+      authenticatorData: "YXV0aA",
+      signature: "c2ln",
+      userHandle: "dXNlcg",
+    },
+  },
+};
+
+test("confirming a passkey on the gateway's page and listing sign-ins are admin-only and validated", async () => {
+  const ceremony = {
+    purpose: "pin-passkey" as const,
+    rpId: "relay.example.test",
+    origin: "https://g-abcdefgh.relay.example.test",
+    challenge: gatewayProof.challenge,
+    binding: "binding",
+    webauthnChallenge: "webauthn-challenge",
+    expiresAt: 1,
+  };
+  service.passkeyConfirmation = vi.fn().mockResolvedValue(ceremony);
+  service.confirmPasskey = vi.fn().mockResolvedValue(status);
+  const router = app();
+  expect(
+    (await router.request("/admin/cloud-relay/passkeys/confirm/options", post({ x: 1 }))).status,
+  ).toBe(400);
+  const options = await router.request("/admin/cloud-relay/passkeys/confirm/options", post());
+  expect(options.status).toBe(200);
+  expect(options.headers.get("cache-control")).toBe("no-store");
+  expect(await options.json()).toEqual(ceremony);
+  // Only a gateway-passkey assertion is accepted: no relay-page proof, nothing extra.
+  for (const body of [
+    {},
+    { proof: { ...gatewayProof, type: "passkey" } },
+    { proof: { ...gatewayProof, issuedAt: "1794240000" } },
+    { proof: gatewayProof, extra: true },
+  ])
+    expect((await router.request("/admin/cloud-relay/passkeys/confirm", post(body))).status).toBe(
+      400,
+    );
+  expect(service.confirmPasskey).not.toHaveBeenCalled();
+  expect(
+    (await router.request("/admin/cloud-relay/passkeys/confirm", post({ proof: gatewayProof })))
+      .status,
+  ).toBe(200);
+  expect(service.confirmPasskey).toHaveBeenCalledExactlyOnceWith(gatewayProof);
+  vi.mocked(service.confirmPasskey!).mockRejectedValueOnce(
+    new CloudRelayManagementFailure(403, "passkey-not-confirmed"),
+  );
+  const refused = await router.request(
+    "/admin/cloud-relay/passkeys/confirm",
+    post({ proof: gatewayProof }),
+  );
+  expect(refused.status).toBe(403);
+  expect(await refused.json()).toMatchObject({ code: "passkey-not-confirmed" });
+  for (const [path, init] of [
+    ["/admin/cloud-relay/passkeys/confirm/options", post()],
+    ["/admin/cloud-relay/passkeys/confirm", post({ proof: gatewayProof })],
+    ["/admin/cloud-relay/trusted-sign-ins", { method: "GET" }],
+  ] as const)
+    expect((await app({ ...bearer, scopes: [SCOPE_READ] }).request(path, init)).status).toBe(403);
+
+  // The list names each pin's source and whether it was confirmed here, and adds confirmations
+  // of sign-ins that are not pinned.
+  vi.mocked(service.status).mockResolvedValue({
+    ...status,
+    deviceEnrollment: {
+      policy: "automatic",
+      trustedSignIns: [
+        { type: "passkey", id: "p1", addedAt: 1, source: "link-page", confirmed: true },
+        { type: "google", id: "g1", addedAt: 2, source: "countersigned", confirmed: false },
+      ],
+      confirmedSignIns: [
+        { type: "passkey", id: "p1", at: 3, via: "gateway-origin" },
+        { type: "passkey", id: "p2", at: 4, via: "android-app" },
+      ],
+      confirmOrigin: ceremony.origin,
+    },
+  });
+  const listed = await router.request("/admin/cloud-relay/trusted-sign-ins");
+  expect(listed.status).toBe(200);
+  expect(await listed.json()).toEqual({
+    items: [
+      {
+        type: "passkey",
+        id: "p1",
+        addedAt: 1,
+        source: "link-page",
+        confirmed: true,
+        via: "gateway-origin",
+      },
+      { type: "google", id: "g1", addedAt: 2, source: "countersigned", confirmed: false },
+      { type: "passkey", id: "p2", addedAt: 4, confirmed: true, via: "android-app" },
+    ],
+    confirmOrigin: ceremony.origin,
+  });
+  vi.mocked(service.status).mockResolvedValue({
+    ...status,
+    deviceEnrollment: { policy: "ask", trustedSignIns: [], confirmedSignIns: [] },
+  });
+  expect(await (await router.request("/admin/cloud-relay/trusted-sign-ins")).json()).toEqual({
+    items: [],
+  });
 });

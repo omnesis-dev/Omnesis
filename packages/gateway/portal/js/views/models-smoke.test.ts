@@ -22,7 +22,6 @@ vi.mock("../api.js", () => ({
   getModelCredentialsStatus: vi.fn(),
   setModelProviderCredentials: vi.fn(),
   assignCapability: vi.fn(),
-  addHttpBackend: vi.fn(),
   removeHttpBackend: vi.fn(),
   probeBackend: vi.fn(),
   refreshCodexBackend: vi.fn(),

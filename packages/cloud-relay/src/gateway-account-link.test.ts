@@ -15,6 +15,8 @@ import { OFFICIAL_ANDROID_PASSKEY_ORIGINS } from "./google-browser-trust.js";
 import { hostedGatewayHostname } from "./hosted-name.js";
 import { accountId as identityDigest, googleIdentityProvider } from "./identity.js";
 import {
+  gatewayPasskeyChallenge,
+  gatewayPasskeyPinBinding,
   googleProofNonce,
   passkeyCountersignatureNonce,
   passkeyEndorsementNonce,
@@ -480,8 +482,15 @@ test("the link callback pins its own sign-in, and enrollment choices stay local 
   expect(f.manager.enrollmentStatus()).toEqual({
     policy: "automatic",
     trustedSignIns: [
-      { type: "passkey", id: device.id, addedAt: expect.any(Number), source: "link-page" },
+      {
+        type: "passkey",
+        id: device.id,
+        addedAt: expect.any(Number),
+        source: "link-page",
+        confirmed: false,
+      },
     ],
+    confirmedSignIns: [],
   });
   const enrollment = f.manager.pairingIdentity()!.enrollment;
   expect(enrollment.policy()).toBe("automatic");
@@ -552,9 +561,21 @@ test("the link callback pins its own sign-in, and enrollment choices stay local 
   await enrollment.trustSignIn(offered, "approval");
   delete (f.browser as AccountBrowserPort).credentials;
   expect(f.manager.enrollmentStatus().trustedSignIns).toEqual([
-    { type: "passkey", id: device.id, addedAt: expect.any(Number), source: "link-page" },
-    { type: "google", id: google.id, addedAt: 1, source: "native-app" },
-    { type: "passkey", id: second.id, addedAt: expect.any(Number), source: "approval" },
+    {
+      type: "passkey",
+      id: device.id,
+      addedAt: expect.any(Number),
+      source: "link-page",
+      confirmed: false,
+    },
+    { type: "google", id: google.id, addedAt: 1, source: "native-app", confirmed: false },
+    {
+      type: "passkey",
+      id: second.id,
+      addedAt: expect.any(Number),
+      source: "approval",
+      confirmed: false,
+    },
   ]);
   // Trusting the same sign-in again replaces its pin rather than adding one.
   await f.manager.trustSignIn(google, "approval");
@@ -572,7 +593,11 @@ test("the link callback pins its own sign-in, and enrollment choices stay local 
   await f.manager.removeTrustedSignIn(device.id);
   expect(f.manager.enrollmentStatus().trustedSignIns.map(({ id }) => id)).toEqual([google.id]);
   await f.manager.unlink();
-  expect(f.manager.enrollmentStatus()).toEqual({ policy: "ask", trustedSignIns: [] });
+  expect(f.manager.enrollmentStatus()).toEqual({
+    policy: "ask",
+    trustedSignIns: [],
+    confirmedSignIns: [],
+  });
   await expect(f.manager.removeTrustedSignIn(google.id)).rejects.toMatchObject({ status: 409 });
 });
 
@@ -830,6 +855,7 @@ test("a listed passkey is pinned once a sign-in pinned here vouched for it, and 
     id: first.id,
     addedAt: expect.any(Number),
     source: "endorsed",
+    confirmed: false,
   });
   // Pinning on a vouching sign-in is not the owner declining anything.
   expect((await f.saved()).declinedPasskeys).toEqual([]);
@@ -1708,7 +1734,11 @@ test("ask and the owner's refusals survive linking again, unlinking and a lost a
   // in case the same account comes back.
   await restarted.forget();
   expect(restarted.status()).toMatchObject({ activated: false, linked: false });
-  expect(restarted.enrollmentStatus()).toEqual({ policy: "ask", trustedSignIns: [] });
+  expect(restarted.enrollmentStatus()).toEqual({
+    policy: "ask",
+    trustedSignIns: [],
+    confirmedSignIns: [],
+  });
   const forgotten = await f.saved();
   expect(forgotten).toMatchObject({ linked: false, dormant: true, ...choices });
   expect(forgotten).not.toHaveProperty("trustedSignIns");
@@ -1948,7 +1978,11 @@ test("forgetting a deleted account leaves the gateway as if it never had one, wi
   expect(f.manager.accountModeActivated()).toBe(false);
   expect(f.manager.verifiedAccountId()).toBeUndefined();
   expect(f.manager.pairingIdentity()).toBeUndefined();
-  expect(f.manager.enrollmentStatus()).toEqual({ policy: "ask", trustedSignIns: [] });
+  expect(f.manager.enrollmentStatus()).toEqual({
+    policy: "ask",
+    trustedSignIns: [],
+    confirmedSignIns: [],
+  });
   // The account is gone on the relay, so there is nothing to unlink there.
   expect(f.browser.unlink).not.toHaveBeenCalled();
   expect(f.browser.cancel).toHaveBeenCalledOnce();
@@ -2097,4 +2131,381 @@ test("the official Android app's passkey origins are compiled in", async () => {
   expect(await enrollment.verifyProof(assertionProof(device, nonce), nonce)).toMatchObject({
     channel: "relay-page",
   });
+});
+const ROGUE = "e".repeat(64),
+  SECOND_ROGUE = "9".repeat(64);
+test("a certificate incident holds every new device until the owner acknowledges it, across restarts and whatever the relay lists", async () => {
+  const f = await passkeyLinked();
+  expect(f.manager.enrollmentPolicy()).toBe("automatic");
+  expect(f.manager.incidentHold()).toBeUndefined();
+  expect(f.manager.gatewayOriginAssertionsRefused()).toBe(false);
+  vi.useFakeTimers({ now: Date.UTC(2028, 0, 2), toFake: ["Date"] });
+  // Anything that isn't a certificate fingerprint is ignored.
+  expect(await f.manager.holdForCertificateIncident(["not-a-digest"])).toBe(false);
+  expect(await f.manager.holdForCertificateIncident([ROGUE, ROGUE])).toBe(true);
+  expect(f.manager.enrollmentPolicy()).toBe("ask");
+  expect(f.manager.pairingIdentity()!.enrollment.policy()).toBe("ask");
+  expect(f.manager.gatewayOriginAssertionsRefused()).toBe(true);
+  expect(f.manager.incidentHold()).toEqual({
+    since: "2028-01-02T00:00:00.000Z",
+    certificates: [ROGUE],
+  });
+  // The owner's own choice is untouched, and saving it doesn't lift the hold.
+  await f.manager.setEnrollmentPolicy("automatic");
+  expect(f.manager.enrollmentPolicy()).toBe("ask");
+  expect(await f.saved()).toMatchObject({
+    enrollmentPolicy: "automatic",
+    incidentHold: { since: Date.UTC(2028, 0, 2) / 1000, certificates: [ROGUE] },
+  });
+  // The same certificate again changes nothing; another one joins the same hold.
+  vi.setSystemTime(Date.UTC(2028, 0, 3));
+  expect(await f.manager.holdForCertificateIncident([ROGUE])).toBe(false);
+  expect(await f.manager.holdForCertificateIncident([ROGUE, SECOND_ROGUE])).toBe(true);
+  expect(f.manager.incidentHold()).toEqual({
+    since: "2028-01-02T00:00:00.000Z",
+    certificates: [ROGUE, SECOND_ROGUE],
+  });
+
+  // The relay's listing changes and the gateway saves the change: the hold stays.
+  f.credentials.mockResolvedValue({ google: [], passkeys: [] });
+  await f.manager.refresh();
+  expect(f.pins()).toEqual([]);
+  expect(await f.saved()).toMatchObject({ incidentHold: { certificates: [ROGUE, SECOND_ROGUE] } });
+
+  // A restart reads it back.
+  const restarted = new GatewayAccountLink(f.options);
+  await restarted.initialize();
+  expect(restarted.enrollmentPolicy()).toBe("ask");
+  expect(restarted.gatewayOriginAssertionsRefused()).toBe(true);
+
+  // Unlinking, linking again and the relay saying the account is gone all keep it.
+  await restarted.unlink();
+  expect(await f.saved()).toMatchObject({
+    linked: false,
+    incidentHold: { certificates: [ROGUE, SECOND_ROGUE] },
+  });
+  const nonce = opaque();
+  await restarted.completeSignup({
+    accountId: f.accountId,
+    nonce,
+    proof: assertionProof(f.passkey.authenticator, linkNonce(nonce)),
+    credentialPublicKey: f.passkey.publicKey,
+    signal: new AbortController().signal,
+  });
+  expect(restarted.enrollmentPolicy()).toBe("ask");
+  await restarted.forget();
+  expect(await f.saved()).toMatchObject({
+    dormant: true,
+    incidentHold: { certificates: [ROGUE, SECOND_ROGUE] },
+  });
+  await restarted.completeSignup({
+    accountId: "c".repeat(64),
+    nonce,
+    signal: new AbortController().signal,
+  });
+  expect(restarted.enrollmentPolicy()).toBe("ask");
+
+  // Only the owner's acknowledgement lifts it, and the owner's choice applies again.
+  await restarted.acknowledgeIncidentHold();
+  expect(restarted.enrollmentPolicy()).toBe("automatic");
+  expect(restarted.incidentHold()).toBeUndefined();
+  expect(restarted.gatewayOriginAssertionsRefused()).toBe(false);
+  const acknowledged = await f.saved();
+  expect(acknowledged).not.toHaveProperty("incidentHold");
+  expect(acknowledged).toMatchObject({ acknowledgedIncidents: [ROGUE, SECOND_ROGUE] });
+  // Acknowledging with nothing held is a no-op.
+  await restarted.acknowledgeIncidentHold();
+  // The monitor reporting the same certificates again after a restart doesn't hold again.
+  const again = new GatewayAccountLink(f.options);
+  await again.initialize();
+  expect(await again.holdForCertificateIncident([ROGUE, SECOND_ROGUE])).toBe(false);
+  expect(again.enrollmentPolicy()).toBe("automatic");
+  // A new certificate does, and acknowledging it keeps the earlier ones acknowledged once each.
+  const third = "8".repeat(64);
+  expect(await again.holdForCertificateIncident([ROGUE, third])).toBe(true);
+  expect(again.incidentHold()!.certificates).toEqual([third]);
+  await again.acknowledgeIncidentHold();
+  expect(await f.saved()).toHaveProperty("acknowledgedIncidents", [ROGUE, SECOND_ROGUE, third]);
+});
+
+test("a gateway with no account saves a hold without turning account mode on, and forgetting keeps it", async () => {
+  const f = await fixture();
+  expect(await f.manager.holdForCertificateIncident([ROGUE])).toBe(true);
+  expect(f.manager.accountModeActivated()).toBe(false);
+  expect(JSON.parse(await readFile(f.options.metadataFile, "utf8"))).toMatchObject({
+    version: 1,
+    linked: false,
+    dormant: true,
+    incidentHold: { certificates: [ROGUE] },
+  });
+  const restarted = new GatewayAccountLink(f.options);
+  await restarted.initialize();
+  expect(restarted.accountModeActivated()).toBe(false);
+  expect(restarted.enrollmentPolicy()).toBe("ask");
+  // Forgetting an account keeps it.
+  await restarted.forget();
+  expect(await stat(f.options.metadataFile)).toBeDefined();
+  // With only acknowledged certificates left, forgetting still keeps the file.
+  await restarted.acknowledgeIncidentHold();
+  await restarted.forget();
+  expect(JSON.parse(await readFile(f.options.metadataFile, "utf8"))).toMatchObject({
+    dormant: true,
+    acknowledgedIncidents: [ROGUE],
+  });
+});
+
+test("a hold on a link file this version can't read applies at once and leaves the file alone", async () => {
+  const f = await fixture();
+  await mkdir(dirname(f.options.metadataFile), { recursive: true });
+  await writeFile(f.options.metadataFile, "unreadable");
+  const restored = new GatewayAccountLink(f.options);
+  await restored.initialize();
+  expect(await restored.holdForCertificateIncident([ROGUE])).toBe(true);
+  expect(restored.enrollmentPolicy()).toBe("ask");
+  expect(await readFile(f.options.metadataFile, "utf8")).toBe("unreadable");
+  await restored.acknowledgeIncidentHold();
+  expect(restored.incidentHold()).toBeUndefined();
+  expect(await readFile(f.options.metadataFile, "utf8")).toBe("unreadable");
+  // Writing the file again, as unlinking does, carries the hold state with it from then on.
+  await restored.holdForCertificateIncident([SECOND_ROGUE]);
+  await restored.unlink();
+  expect(JSON.parse(await readFile(f.options.metadataFile, "utf8"))).toMatchObject({
+    incidentHold: { certificates: [SECOND_ROGUE] },
+    acknowledgedIncidents: [ROGUE],
+  });
+  await restored.acknowledgeIncidentHold();
+  expect(JSON.parse(await readFile(f.options.metadataFile, "utf8"))).not.toHaveProperty(
+    "incidentHold",
+  );
+});
+
+test("an acknowledgement that can't be saved leaves the hold on", async () => {
+  const f = await fixture();
+  await f.link();
+  await f.manager.holdForCertificateIncident([ROGUE]);
+  filesystem.afterMkdir = () => Promise.reject(new Error("disk full"));
+  await expect(f.manager.acknowledgeIncidentHold()).rejects.toThrow("disk full");
+  expect(f.manager.enrollmentPolicy()).toBe("ask");
+  expect(f.manager.incidentHold()!.certificates).toEqual([ROGUE]);
+  filesystem.afterMkdir = undefined;
+  // At most 64 certificates are named, the newest kept.
+  const many = Array.from({ length: 70 }, (_, index) => index.toString(16).padStart(64, "0"));
+  await f.manager.holdForCertificateIncident(many);
+  expect(f.manager.incidentHold()!.certificates).toEqual(many.slice(-64));
+  await f.manager.acknowledgeIncidentHold();
+  const saved = JSON.parse(await readFile(f.options.metadataFile, "utf8")) as {
+    acknowledgedIncidents: string[];
+  };
+  expect(saved.acknowledgedIncidents).toEqual(many.slice(-64));
+});
+
+/** A linked gateway whose saved public origin is its own hosted name, with a readable listing. */
+async function confirming() {
+  const f = await endorsing();
+  const own = `https://${hostedGatewayHostname(f.gatewayId, "relay.example.test")}`;
+  f.env.OMNESIS_CLOUD_RELAY_GATEWAY_ORIGIN = own;
+  /** What the owner's browser sends after the passkey prompt on `from`. */
+  const assert = (
+    device: PasskeyDevice,
+    ceremony: { challenge: string; webauthnChallenge: string; binding: string },
+    options: { from?: string; counter?: number } = {},
+  ) => ({
+    type: "gateway-passkey" as const,
+    challenge: ceremony.challenge,
+    credential: device.authenticator.authentication(
+      options.from && options.from !== own
+        ? gatewayPasskeyChallenge("pin-passkey", options.from, ceremony.challenge, ceremony.binding)
+        : ceremony.webauthnChallenge,
+      "dXNlcg",
+      options.counter ?? 0,
+      options.from ?? own,
+    ),
+  });
+  return { ...f, own, assert };
+}
+
+test("the owner confirms a listed passkey on the gateway's own page, and nowhere else", async () => {
+  const f = await confirming();
+  const owner = await passkeyDevice();
+  f.list({ id: owner.id, publicKey: owner.publicKey });
+  const ceremony = f.manager.passkeyConfirmation();
+  expect(ceremony).toEqual({
+    purpose: "pin-passkey",
+    rpId: "relay.example.test",
+    origin: f.own,
+    challenge: expect.stringMatching(/^[A-Za-z0-9_-]{43}$/),
+    binding: gatewayPasskeyPinBinding({ gatewayId: f.gatewayId, accountId: f.accountId }),
+    webauthnChallenge: gatewayPasskeyChallenge(
+      "pin-passkey",
+      f.own,
+      ceremony.challenge,
+      gatewayPasskeyPinBinding({ gatewayId: f.gatewayId, accountId: f.accountId }),
+    ),
+    expiresAt: expect.any(Number),
+  });
+  expect(f.manager.enrollmentStatus()).toMatchObject({ confirmOrigin: f.own });
+  await f.manager.confirmPasskey(f.assert(owner, ceremony, { counter: 4 }));
+  expect(f.manager.confirmedSignIns()).toEqual([
+    {
+      type: "passkey",
+      id: owner.id,
+      publicKey: owner.publicKey,
+      counter: 4,
+      at: expect.any(Number),
+      via: "gateway-origin",
+    },
+  ]);
+  expect(f.manager.enrollmentStatus().confirmedSignIns).toEqual([
+    { type: "passkey", id: owner.id, at: expect.any(Number), via: "gateway-origin" },
+  ]);
+  // Its challenge was spent.
+  await expect(
+    f.manager.confirmPasskey(f.assert(owner, ceremony, { counter: 5 })),
+  ).rejects.toMatchObject({ status: 409, code: "passkey-not-confirmed" });
+  // A counter that went backwards is a cloned authenticator or a replay.
+  const again = f.manager.passkeyConfirmation();
+  await expect(
+    f.manager.confirmPasskey(f.assert(owner, again, { counter: 3 })),
+  ).rejects.toMatchObject({ status: 403, code: "passkey-not-confirmed" });
+  // In the official Android app it is confirmed as made there.
+  const app = f.manager.passkeyConfirmation();
+  await f.manager.confirmPasskey(
+    f.assert(owner, app, { from: OFFICIAL_ANDROID_PASSKEY_ORIGINS[0], counter: 9 }),
+  );
+  expect(f.manager.confirmedSignIns()).toEqual([
+    expect.objectContaining({ id: owner.id, counter: 9, via: "android-app" }),
+  ]);
+  // Survives a restart.
+  const restored = new GatewayAccountLink(f.options);
+  await restored.initialize();
+  expect(restored.confirmedSignIns()).toHaveLength(1);
+});
+
+test("TM-01: a relay page, another gateway's page or a relay-chosen origin cannot confirm a passkey", async () => {
+  const f = await confirming();
+  const owner = await passkeyDevice();
+  f.list({ id: owner.id, publicKey: owner.publicKey });
+  // The page the relay serves, and a sibling gateway's page under the same relay domain.
+  for (const from of [
+    origin,
+    `https://${hostedGatewayHostname(randomUUID(), "relay.example.test")}`,
+  ]) {
+    await expect(
+      f.manager.confirmPasskey(f.assert(owner, f.manager.passkeyConfirmation(), { from })),
+    ).rejects.toMatchObject({ status: 403, code: "passkey-not-confirmed" });
+  }
+  // A public origin the relay chose for this gateway (here its own host) leaves no origin to
+  // confirm on at all.
+  f.env.OMNESIS_CLOUD_RELAY_GATEWAY_ORIGIN = origin;
+  expect(() => f.manager.passkeyConfirmation()).toThrow(
+    expect.objectContaining({ status: 409, code: "passkey-origin-unavailable" }),
+  );
+  expect(f.manager.enrollmentStatus()).not.toHaveProperty("confirmOrigin");
+  expect(f.manager.confirmedSignIns()).toEqual([]);
+});
+
+test("a passkey is confirmed only against the key the account lists for it, for this account", async () => {
+  const f = await confirming();
+  const owner = await passkeyDevice(),
+    relayOwn = await passkeyDevice();
+  // A relay that lists its own key under the owner's credential id only makes it fail.
+  f.list({ id: owner.id, publicKey: relayOwn.publicKey });
+  await expect(
+    f.manager.confirmPasskey(f.assert(owner, f.manager.passkeyConfirmation())),
+  ).rejects.toMatchObject({ status: 403 });
+  // A passkey the account does not list can't be confirmed.
+  f.list({ id: relayOwn.id, publicKey: relayOwn.publicKey });
+  await expect(
+    f.manager.confirmPasskey(f.assert(owner, f.manager.passkeyConfirmation())),
+  ).rejects.toMatchObject({ status: 403 });
+  // A listing for another account, or none at all, confirms nothing.
+  f.credentials.mockResolvedValueOnce({
+    accountId: "b".repeat(64),
+    google: [],
+    passkeys: [{ id: owner.id, publicKey: owner.publicKey }],
+  });
+  await expect(
+    f.manager.confirmPasskey(f.assert(owner, f.manager.passkeyConfirmation())),
+  ).rejects.toMatchObject({ status: 503, code: "account-unavailable" });
+  f.credentials.mockRejectedValueOnce(new Error("offline"));
+  await expect(
+    f.manager.confirmPasskey(f.assert(owner, f.manager.passkeyConfirmation())),
+  ).rejects.toMatchObject({ status: 503 });
+  // A malformed proof, or one for a challenge this gateway never issued, is refused unread.
+  await expect(f.manager.confirmPasskey({ type: "passkey" })).rejects.toMatchObject({
+    status: 409,
+  });
+  await expect(
+    f.manager.confirmPasskey(
+      f.assert(owner, { ...f.manager.passkeyConfirmation(), challenge: opaque() }),
+    ),
+  ).rejects.toMatchObject({ status: 409 });
+  expect(f.credentials).toHaveBeenCalledTimes(4);
+  f.credentials.mockResolvedValue({
+    accountId: f.accountId,
+    google: [f.google],
+    passkeys: [{ id: owner.id, publicKey: owner.publicKey }],
+  });
+  await f.manager.confirmPasskey(f.assert(owner, f.manager.passkeyConfirmation()));
+  expect(f.manager.confirmedSignIns()).toHaveLength(1);
+});
+
+test("confirming lifts the owner's decline, and the account withdrawing a passkey drops its confirmation", async () => {
+  const f = await confirming();
+  const owner = await passkeyDevice();
+  f.list({ id: owner.id, publicKey: owner.publicKey });
+  await f.manager.removeTrustedSignIn(owner.id);
+  expect((await f.saved()).declinedPasskeys).toEqual([owner.id]);
+  await f.manager.confirmPasskey(f.assert(owner, f.manager.passkeyConfirmation(), { counter: 1 }));
+  expect((await f.saved()).declinedPasskeys).toEqual([]);
+  // While the account lists it, a sync keeps it.
+  await f.manager.refresh();
+  expect(f.manager.confirmedSignIns()).toHaveLength(1);
+  expect(f.manager.enrollmentStatus().trustedSignIns).toEqual([
+    expect.objectContaining({ id: f.google, confirmed: false }),
+  ]);
+  // The account stops listing it: its confirmation goes, and it is remembered as withdrawn.
+  // That happens even with no pin left to sync for.
+  await f.manager.removeTrustedSignIn(f.google);
+  f.credentials.mockResolvedValue({ google: [], passkeys: [] });
+  await f.manager.refresh();
+  expect(f.manager.confirmedSignIns()).toEqual([]);
+  const withdrawn = signInDigest({ type: "passkey", id: owner.id, publicKey: owner.publicKey });
+  expect((await f.saved()).withdrawnSignIns).toContain(withdrawn);
+  // Confirming it again, once listed, is the owner's own act and clears the withdrawal.
+  f.list({ id: owner.id, publicKey: owner.publicKey });
+  await f.manager.confirmPasskey(f.assert(owner, f.manager.passkeyConfirmation(), { counter: 2 }));
+  expect((await f.saved()).withdrawnSignIns).not.toContain(withdrawn);
+});
+
+test("an unlinked gateway can't start or finish a confirmation", async () => {
+  const f = await fixture();
+  expect(() => f.manager.passkeyConfirmation()).toThrow(
+    expect.objectContaining({ status: 409, code: "configuration-invalid" }),
+  );
+  await expect(f.manager.confirmPasskey({})).rejects.toMatchObject({ status: 409 });
+});
+
+test("TM-01 (certificate incident): while a rogue certificate may exist for the gateway's name, no passkey is confirmed on its page", async () => {
+  const f = await confirming();
+  const owner = await passkeyDevice();
+  f.list({ id: owner.id, publicKey: owner.publicKey });
+  // A ceremony issued before the monitor saw the rogue certificate.
+  const ceremony = f.manager.passkeyConfirmation();
+  expect(await f.manager.holdForCertificateIncident([ROGUE])).toBe(true);
+  // Whoever holds that certificate can serve a page on the gateway's own name.
+  await expect(f.manager.confirmPasskey(f.assert(owner, ceremony))).rejects.toMatchObject({
+    status: 403,
+    code: "passkey-not-confirmed",
+  });
+  expect(() => f.manager.passkeyConfirmation()).toThrow(
+    expect.objectContaining({ status: 409, code: "passkey-origin-unavailable" }),
+  );
+  expect(f.manager.gatewayOrigin()).toBeUndefined();
+  expect(f.manager.enrollmentStatus()).not.toHaveProperty("confirmOrigin");
+  expect(f.manager.confirmedSignIns()).toEqual([]);
+  // Once the owner acknowledges it, the gateway's page counts again.
+  await f.manager.acknowledgeIncidentHold();
+  await f.manager.confirmPasskey(f.assert(owner, f.manager.passkeyConfirmation()));
+  expect(f.manager.confirmedSignIns()).toHaveLength(1);
 });

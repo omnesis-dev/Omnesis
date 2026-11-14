@@ -42,6 +42,7 @@ import { isStaleDeviceRevocationImpactError } from "../../../access/agent-device
 import { deviceVersionState } from "../../../device-version.js";
 import { FleetUpdateService } from "../../services/FleetUpdateService.js";
 import { browserExtensionTrust } from "../../../tls-lifecycle/browser-trust.js";
+import { devicesJoinedWithSignIn } from "../../../data/repositories/DeviceRepository.js";
 import { log, type AdminRoutesDeps } from "./internals.js";
 import type { RouteApp, AuthContext } from "../types.js";
 
@@ -121,6 +122,29 @@ function requireSelfBearer(auth: AuthContext, id: DeviceId): void {
 /** The refusal for a grant wider than an integration may hold. */
 const INTEGRATION_SCOPES =
   "an integration can hold only the answer scope (and write scopes); what it may read is decided by its access level";
+
+/**
+ * Revoke every live device that joined by signing in with `signInId`, as the
+ * device route revokes one: tokens go, live sockets close, sync leases are
+ * released. The owner asks for it when they stop trusting that sign-in.
+ */
+export async function revokeDevicesJoinedWithSignIn(
+  deps: Pick<AdminRoutesDeps, "db" | "writeGate" | "wsServer" | "sourceService" | "statusCache">,
+  signInId: string,
+): Promise<DeviceId[]> {
+  const revoked: DeviceId[] = [];
+  for (const id of devicesJoinedWithSignIn(deps.db, signInId)) {
+    if (!(await deps.writeGate.revokeDevice(id))) continue;
+    deps.wsServer?.disconnectDevice(id);
+    await deps.sourceService.releaseDeviceLeases(id);
+    revoked.push(id);
+  }
+  if (revoked.length > 0) {
+    log.info(`Revoked ${revoked.length} device(s) that joined with a removed sign-in`);
+    deps.statusCache.bump();
+  }
+  return revoked;
+}
 
 export function mountDeviceRoutes(app: RouteApp, deps: AdminRoutesDeps): void {
   const {

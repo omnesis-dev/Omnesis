@@ -47,6 +47,8 @@ import {
   resolveTypeSafeApiKey,
 } from "./model-credentials.js";
 import { DecisionService } from "./inference/decision/decision-service.js";
+import { DecisionClients } from "./inference/decision/decision-clients.js";
+import { ModelsDevDecisionCatalog } from "./models/models-dev-decisions.js";
 import {
   closeDrainingWal,
   createDatabase,
@@ -125,6 +127,7 @@ import { RealtimeService } from "./realtime/service.js";
 import { mountRealtimeRoutes } from "./realtime/route.js";
 import { lookupToken, listDeviceIdsWithActiveScope } from "./data/repositories/TokenRepository.js";
 import { PairingNotifier } from "./push/pairing-notifier.js";
+import { CertificateIncidentNotifier } from "./push/certificate-incident-notifier.js";
 import { WsEventHandler } from "./http/services/WsEventHandler.js";
 import { FleetUpdateService } from "./http/services/FleetUpdateService.js";
 import { HostFleetUpdateService } from "./http/services/HostFleetUpdateService.js";
@@ -480,6 +483,7 @@ ensureModelsDir(MODELS_DIR);
 // config block, probes HTTP backends, and resolves assignments.
 const manifestPath = join(MODELS_DIR, "manifest.json");
 const modelsDevCatalog = new ModelsDevCatalog({ configDir });
+const decisionCatalog = new ModelsDevDecisionCatalog({ configDir });
 const anthropicCatalogService = new AnthropicCatalogService({
   readApiKey: () => resolveAnthropicApiKey(configDir),
   credentialSource: () => resolveAnthropicCredential(configDir)?.source,
@@ -817,6 +821,11 @@ const mobilePermissionNotifier = new SourcePermissionNotifier({
 });
 
 const pairingNotifier = new PairingNotifier(
+  pushBroadcaster,
+  () => listDevices(db),
+  () => listDeviceIdsWithActiveScope(db, SCOPE_ADMIN),
+);
+const certificateIncidentNotifier = new CertificateIncidentNotifier(
   pushBroadcaster,
   () => listDevices(db),
   () => listDeviceIdsWithActiveScope(db, SCOPE_ADMIN),
@@ -1409,11 +1418,20 @@ await subscriptionsPolicyStore.get();
 // worth gate whether an email's date mentions belong in time queries; unset,
 // both gates are absent. Re-resolved per use, so assigning a model or pasting
 // a key from the portal takes effect without a restart.
+// Every client of a backend's decision API — the live model, verify, the
+// assignment check — comes from here, sharing each backend's
+// concurrency limit.
+const decisionClients = new DecisionClients({
+  getDecisionEndpoint: (key) => inferenceRegistry.getDecisionEndpoint(key),
+  readTypeSafeApiKey: () => resolveTypeSafeApiKey(configDir),
+});
 const decisionService = new DecisionService({
   health: inferenceRegistry.health,
   resolveAssignment: () => inferenceRegistry.resolve("decision"),
   readTypeSafeApiKey: () => resolveTypeSafeApiKey(configDir),
   getBackendApiKey: (key) => inferenceRegistry.getBackendApiKey(key),
+  getDecisionEndpoint: (key) => inferenceRegistry.getDecisionEndpoint(key),
+  clients: decisionClients,
   defaultReplayFixture: () => process.env.OMNESIS_DECISION_FIXTURE || undefined,
 });
 
@@ -1632,6 +1650,11 @@ const watchJudgeReadiness = (): { loadable: boolean; reason: string | null } => 
       };
     case "typesafe":
       return { loadable: false, reason: "TypeSafe cannot serve single-shot Watch completions" };
+    case "decision":
+      return {
+        loadable: false,
+        reason: "A decision model cannot serve single-shot Watch completions",
+      };
     default:
       return assertNever(resolved);
   }
@@ -1697,6 +1720,18 @@ const mentionWorthGate = bootMentionWorthGate({
   countPending: () => countPendingMentionJudgements(db),
   active: mentionWorthGateActive,
   log: log.child("enrichment:mention-worth-gate"),
+});
+// Turning the gate on, assigning a decision model or moving the threshold
+// kicks the gate, so an idle gate does not wait out its idle period before
+// judging or re-sorting.
+configStore.onChange((before, after) => {
+  const inputs = (c: OmnesisConfig) =>
+    JSON.stringify([
+      c.enrichment?.dates?.worthGate,
+      c.enrichment?.dates?.worthThreshold,
+      c.inference?.assignments?.decision,
+    ]);
+  if (inputs(before) !== inputs(after)) mentionWorthGate.kick();
 });
 
 // Date-enrichment pass: extract dates from every document, resolved against
@@ -1941,6 +1976,7 @@ try {
         },
         directCertificateCoversHostname: (hostname) => tlsLifecycle.coversHostname(hostname),
         publicSpkiFingerprint: cloudPublicSpkiFingerprint,
+        onIncidentHold: () => void certificateIncidentNotifier.notify(),
         activate: async (material, signal) => {
           signal.throwIfAborted();
           publicSni.activate(material);
@@ -2787,6 +2823,15 @@ const app = createServer(db, DB_PATH, {
   },
   modelManager,
   modelsDevCatalog,
+  decisionCatalog,
+  decisionRoutes: {
+    allowRemoteInference: () => configStore.get().inference?.allowRemoteInference === true,
+    getDecisionEndpoint: (key) => inferenceRegistry.getDecisionEndpoint(key),
+    hasBackend: (key) => inferenceRegistry.hasBackend(key),
+    getBackendApiKeyForUrl: (key, url) => inferenceRegistry.getBackendApiKeyForUrl(key, url),
+    resolveDecision: (assignment) => inferenceRegistry.resolveValue("decision", assignment),
+    clients: decisionClients,
+  },
   getSystemInfo: () => getSystemInfo(MODELS_DIR),
   getInferenceOverview: inferenceOverviewWithRuntimes,
   getRecentModels: (capability) =>
@@ -2864,7 +2909,15 @@ const app = createServer(db, DB_PATH, {
   },
   probeBackend: (key: string) => inferenceRegistry.probeBackend(key),
   verifyModel: (key, model, role, vopts) => inferenceRegistry.verifyModel(key, model, role, vopts),
-  vetAssignment: (role, value) => inferenceRegistry.vetAssignment(role, value),
+  vetAssignment: async (role, value, body) => {
+    const verdict = await inferenceRegistry.vetAssignment(role, value);
+    if (!verdict.ok || role !== "decision") return verdict;
+    return decisionClients.vetAssignment(value, {
+      current: inferenceRegistry.assignmentValue("decision"),
+      resolve: (v) => inferenceRegistry.resolveValue("decision", v),
+      body,
+    });
+  },
   transcribeService,
   transcriptionVocabularyService,
   ocrService,

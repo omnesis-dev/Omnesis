@@ -5,13 +5,16 @@ import { cloudRelayEnabled } from "@omnesis/core";
 import { bodyLimit } from "hono/body-limit";
 import { CloudRelayManagementFailure } from "@omnesis/cloud-relay";
 import { scope } from "../../scope.js";
-import { validateJson } from "../../validate.js";
+import { validateJson, validateQuery } from "../../validate.js";
+import { arrivedThroughRelay } from "../../client-ip.js";
 import {
   cloudRelayConfigureBody,
   cloudRelayEnableBody,
   cloudRelayActionBody,
   cloudRelayEnrollmentBody,
   cloudRelayConnectBody,
+  cloudRelayRemoveSignInQuery,
+  cloudRelayConfirmPasskeyBody,
 } from "../../schemas/cloud-relay.js";
 import type { CloudRelayManagement } from "@omnesis/cloud-relay";
 import type { Context } from "hono";
@@ -20,6 +23,10 @@ import type { AppEnv, RouteApp } from "../types.js";
 export function mountCloudRelayManagementRoutes(
   app: RouteApp,
   service?: CloudRelayManagement,
+  devices?: {
+    /** Revokes the live devices that joined with this sign-in and returns their ids. */
+    revokeJoinedWith(signInId: string): Promise<string[]>;
+  },
 ): void {
   if (!cloudRelayEnabled() || !service) return;
   app.use("/admin/cloud-relay*", async (c, next) => {
@@ -108,12 +115,93 @@ export function mountCloudRelayManagementRoutes(
         return service.setEnrollmentPolicy(c.req.valid("json").policy);
       }),
   );
-  app.delete("/admin/cloud-relay/trusted-sign-ins/:id", scope.admin(), async (c) =>
+  app.post(
+    "/admin/cloud-relay/incidents/ack",
+    scope.admin(),
+    bounded,
+    validateJson(cloudRelayActionBody),
+    async (c) => {
+      // While someone else may hold a certificate for the gateway's name, a relayed request may
+      // come from a page posing as the gateway, so only the owner on the gateway itself may lift
+      // the hold: the local CLI, or an admin request that didn't come through the relay.
+      if (arrivedThroughRelay((name) => c.req.header(name), c.env))
+        return c.json(
+          {
+            error:
+              "Certificate incidents can only be acknowledged on the gateway itself: run `omnesis cloud incidents ack` on the gateway host.",
+            code: "local-request-required",
+          },
+          403,
+        );
+      return respond(c, async () => {
+        if (!service.acknowledgeIncidentHold)
+          throw new CloudRelayManagementFailure(503, "account-unavailable");
+        return service.acknowledgeIncidentHold();
+      });
+    },
+  );
+  app.delete(
+    "/admin/cloud-relay/trusted-sign-ins/:id",
+    scope.admin(),
+    validateQuery(cloudRelayRemoveSignInQuery),
+    async (c) =>
+      respond(c, async () => {
+        if (!service.removeTrustedSignIn || !devices)
+          throw new CloudRelayManagementFailure(503, "account-unavailable");
+        const id = c.req.param("id");
+        // The sign-in goes first, so no device can join with it while its devices are revoked.
+        const status = await service.removeTrustedSignIn(id);
+        if (c.req.valid("query").revokeDevices !== "true") return status;
+        return { ...status, revokedDevices: await devices.revokeJoinedWith(id) };
+      }),
+  );
+  // The sign-ins this gateway trusts, where each came from and whether the owner confirmed it
+  // here. Read-only: the same facts as the status, listed for the portal and the CLI.
+  app.get("/admin/cloud-relay/trusted-sign-ins", scope.admin(), async (c) =>
     respond(c, async () => {
-      if (!service.removeTrustedSignIn)
-        throw new CloudRelayManagementFailure(503, "account-unavailable");
-      return service.removeTrustedSignIn(c.req.param("id"));
+      const enrollment = (await service.status()).deviceEnrollment;
+      if (!enrollment) throw new CloudRelayManagementFailure(503, "account-unavailable");
+      const pinned = new Set(enrollment.trustedSignIns.map(({ type, id }) => `${type}:${id}`));
+      return {
+        items: [
+          ...enrollment.trustedSignIns.map((signIn) => ({
+            ...signIn,
+            via: enrollment.confirmedSignIns.find(
+              ({ type, id }) => type === signIn.type && id === signIn.id,
+            )?.via,
+          })),
+          ...enrollment.confirmedSignIns
+            .filter(({ type, id }) => !pinned.has(`${type}:${id}`))
+            .map(({ type, id, at, via }) => ({ type, id, addedAt: at, confirmed: true, via })),
+        ],
+        ...(enrollment.confirmOrigin ? { confirmOrigin: enrollment.confirmOrigin } : {}),
+      };
     }),
+  );
+  // Confirming a passkey runs on the gateway's own page: options, then the assertion.
+  app.post(
+    "/admin/cloud-relay/passkeys/confirm/options",
+    scope.admin(),
+    bounded,
+    validateJson(cloudRelayActionBody),
+    async (c) =>
+      respond(c, async () => {
+        if (!service.passkeyConfirmation)
+          throw new CloudRelayManagementFailure(503, "account-unavailable");
+        return service.passkeyConfirmation();
+      }),
+  );
+  app.post(
+    "/admin/cloud-relay/passkeys/confirm",
+    scope.admin(),
+    bounded,
+    validateJson(cloudRelayConfirmPasskeyBody),
+    async (c) =>
+      respond(c, async () => {
+        if (!service.confirmPasskey)
+          throw new CloudRelayManagementFailure(503, "account-unavailable");
+        return service.confirmPasskey(c.req.valid("json").proof);
+      }),
   );
   app.get("/admin/cloud-relay/account/callback", scope.admin(), async (c) => {
     try {
@@ -177,12 +265,7 @@ export function mountCloudRelayManagementRoutes(
   }
 }
 
-async function respond(
-  c: Context<AppEnv>,
-  operation: () => Promise<
-    import("@omnesis/cloud-relay").CloudRelayManagementStatus | { authorizeUrl: string }
-  >,
-) {
+async function respond(c: Context<AppEnv>, operation: () => Promise<object>) {
   try {
     return c.json(await operation());
   } catch (error) {

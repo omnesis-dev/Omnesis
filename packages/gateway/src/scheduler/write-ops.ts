@@ -306,6 +306,7 @@ const WRITE_OP_DEFS: readonly WriteOpDef[] = [
   // document, a few dozen per call; the rubric requeue is batched by its caller.
   { name: "db.applyMentionJudgements", priority: "background" },
   { name: "db.requeueStaleMentionJudgements", priority: "background" },
+  { name: "db.resettleMentionJudgements", priority: "background" },
   { name: "edges.drainPending", priority: "background", latencyBudgetMs: HEAVY_BUDGET_MS },
   {
     name: "links.upsertExtractedLinksBatch",

@@ -31,7 +31,6 @@ import {
   getModelCredentialsStatus,
   setModelProviderCredentials,
   assignCapability,
-  addHttpBackend,
   removeHttpBackend,
   probeBackend,
   verifyBackendModel,
@@ -49,6 +48,8 @@ import {
   getAdminConfig,
   patchAdminConfig,
   getStatus,
+  verifyBackendDecision,
+  verifyTypeSafeDecision,
 } from "../api.js";
 import { CredentialsWizard } from "./credentials-wizard.js";
 import { CloudInferenceConsentModal } from "../components/cloud-inference-consent.js";
@@ -57,6 +58,7 @@ import { ConfirmModal } from "../components/confirm-modal.js";
 import { CapabilityIcon } from "../components/capability-icon.js";
 import { useVisiblePoll } from "../lib/use-visible-poll.js";
 import { ProviderIcon } from "../components/provider-icon.js";
+import { Monogram, ProviderLogo } from "../components/backend-option-card.js";
 import { navigate } from "../lib/router.js";
 import { isEnabled, isConfigured, capabilityCardState } from "../lib/capability-state.js";
 import { CAPABILITY_TO_CATALOG, isAnthropicConfigured, catalogProviderForBackend, isDecisionRole } from "../lib/backend-options.js";
@@ -74,6 +76,16 @@ import {
 import { ModelBehaviorEditor, modelBehaviorSummary } from "./model-behavior.js";
 import { ModelHealthWarnings, WarningTriangle } from "../components/model-health.js";
 import { noteAgentSettingPatch } from "../lib/note-agent.js";
+import { DecisionCheckLine } from "./decision-models.js";
+import { assignedDecisionBackend, decisionWhere } from "../lib/decision-models.js";
+import {
+  backendDisplayName,
+  backendPreset,
+  backendServes,
+  disableDecisionPatch,
+  presetLogoId,
+  SERVES_LABEL,
+} from "../lib/backend-setup.js";
 
 // ── Capability grid (the tab's landing view) ──────────────────────────────
 
@@ -114,7 +126,10 @@ function CapabilityCard({ cap, assignment, display, behaviorSummary, warning, on
       <div class="cap-card-foot">
         ${enabled && display
           ? html`<span class="cap-card-model">
-              <${ProviderIcon} providerId=${display.providerId} /> ${display.modelName}
+              ${assignment.kind === "decision"
+                ? html`<${ProviderLogo} providerId=${display.providerId} fallback=${html`<${Monogram} name=${display.providerLabel} />`} />`
+                : html`<${ProviderIcon} providerId=${display.providerId} />`}
+              ${display.modelName}
               <span class="cap-card-provider">${display.providerLabel}</span>
             </span>`
           : warn
@@ -204,7 +219,94 @@ export function claudeCodeBackendRow(overview) {
   return signedIn || cliBackendAssignments(overview, "claude-code").length > 0 ? claudeCode : null;
 }
 
-function BackendsDetail({ overview, anthropicRefreshBusy, codexRefreshBusy, codexRuntimeUpdate, codexLoginPending, claudeCodeRefreshBusy, onAddBackend, onConfigureAnthropic, onConfigureCodex, onConfigureClaudeCode, onRefreshAnthropic, onRefreshCodex, onRefreshClaudeCode, onUpdateCodexRuntime, onRemoveBackend, onRemoveCodex, onTestBackend, testStates }) {
+const plural = (n, noun) => `${n} ${noun}${n !== 1 ? "s" : ""}`;
+
+/**
+ * One HTTP backend on the Backends page: what it serves (chat models,
+ * decision models or both), where, its key and models, and for its decision
+ * API the Decision model it serves. A backend serving
+ * both can drop its decision API alone; one serving only decisions is removed
+ * whole. "Change key" replaces the one key both APIs use, in place.
+ */
+function HttpBackendRow({ backendKey: key, status, overview, testButton, onChangeKey, onDisableDecisions, onRemove }) {
+  const [editingKey, setEditingKey] = useState(false);
+  const preset = backendPreset(overview, status);
+  const serves = backendServes(status);
+  const decision = status.decision;
+  const logo = catalogProviderForBackend(overview, key) ?? (preset ? presetLogoId(preset) : null);
+  const assigned = assignedDecisionBackend(overview);
+  const decisionModel = assigned?.key === key ? assigned.model : null;
+  const keyError = decision?.apiKeySecretError;
+  return html`<div class="backend-item">
+    <div class="backend-item-main">
+      <div class="backend-item-title">
+        <${ProviderLogo} providerId=${logo} fallback=${preset ? html`<${Monogram} name=${preset.name} />` : null} />
+        ${backendDisplayName(key, preset)}
+        <span class="backend-serves">${SERVES_LABEL[serves]}</span>
+      </div>
+      <div class="backend-item-meta">
+        <code>${status.url ?? decision?.url ?? "—"}</code>
+        ${status.url ? html`<span style="color: ${backendStatusColor(status.status)}">${backendStatusLabel(status.status)}</span>` : null}
+        ${status.url && status.status === "reachable" ? html`<span title=${status.reason ?? ""}>reachable — assign a model id manually${status.reason ? html` (${status.reason})` : null}</span>` : null}
+        ${!status.url && status.status === "unreachable" && status.reason && !keyError ? html`<span class="decision-note-danger">${status.reason}</span>` : null}
+        ${status.hasApiKey || decision?.hasApiKey ? html`<span class="backend-pill">Key set</span>` : null}
+        ${status.models && status.models.length > 0 ? html`<span>${plural(status.models.length, "model")}</span>` : null}
+        ${decisionModel ? html`<span>Decision model: ${decisionModel}</span>` : null}
+        ${keyError ? html`<span class="decision-note-danger">${keyError}</span>` : null}
+      </div>
+      ${editingKey
+        ? html`<${BackendKeyForm} backendKey=${key} onSave=${onChangeKey} onDone=${() => setEditingKey(false)} />`
+        : null}
+    </div>
+    <div class="backend-item-actions">
+      ${testButton}
+      ${editingKey
+        ? null
+        : html`<button class="btn-tiny" aria-label=${`Change key for ${key}`} onClick=${() => setEditingKey(true)}>Change key</button>`}
+      ${serves === "both"
+        ? html`<button class="btn-tiny" aria-label=${`Disable decisions on ${key}`} onClick=${() => onDisableDecisions(key)}>Disable decisions</button>`
+        : null}
+      <button class="btn-tiny danger" aria-label=${`Remove backend ${key}`} onClick=${() => onRemove(key)}>Remove</button>
+    </div>
+  </div>`;
+}
+
+/**
+ * Replace one backend's API key in place. `onSave(key, apiKey)` resolves to
+ * `{ok, error?}`; the backend's URLs and decision API are left as they are.
+ */
+function BackendKeyForm({ backendKey, onSave, onDone }) {
+  const [apiKey, setApiKey] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+  const submit = async (e) => {
+    e?.preventDefault?.();
+    if (!apiKey.trim() || busy) return;
+    setBusy(true);
+    setError(null);
+    const res = await onSave(backendKey, apiKey.trim());
+    setBusy(false);
+    if (res?.ok) onDone();
+    else setError(res?.error ?? "Could not change the key.");
+  };
+  return html`<form class="backend-key-form" onSubmit=${submit}>
+    <input
+      class="field-input"
+      type="password"
+      autocomplete="off"
+      aria-label=${`New API key for ${backendKey}`}
+      placeholder="New API key"
+      value=${apiKey}
+      onInput=${(e) => { setApiKey(e.target.value); setError(null); }}
+      autofocus
+    />
+    <button type="submit" class="btn-tiny" disabled=${!apiKey.trim() || busy}>${busy ? "Saving…" : "Save"}</button>
+    <button type="button" class="btn-tiny" disabled=${busy} onClick=${onDone}>Cancel</button>
+    ${error ? html`<span class="field-error" role="alert">${error}</span>` : null}
+  </form>`;
+}
+
+function BackendsDetail({ overview, anthropicRefreshBusy, codexRefreshBusy, codexRuntimeUpdate, codexLoginPending, claudeCodeRefreshBusy, onAddBackend, onConfigureAnthropic, onConfigureCodex, onConfigureClaudeCode, onRefreshAnthropic, onRefreshCodex, onRefreshClaudeCode, onUpdateCodexRuntime, onRemoveBackend, onRemoveCodex, onTestBackend, onChangeKey, onDisableDecisions, testStates }) {
   const inference = overview.inference;
   const httpBackends = Object.entries(inference.backends).filter(([, s]) => s.type === "http");
   const hasAnthropic = !!inference.backends.anthropic;
@@ -250,24 +352,16 @@ function BackendsDetail({ overview, anthropicRefreshBusy, codexRefreshBusy, code
           ? html`<p class="detail-empty">No external backends yet. Add an HTTP server or the Anthropic API to use cloud or self-hosted models.</p>`
           : null}
 
-        ${httpBackends.map(([key, status]) => {
-          return html`<div class="backend-item" key=${key}>
-            <div class="backend-item-main">
-              <div class="backend-item-title"><${ProviderIcon} providerId=${catalogProviderForBackend(overview, key) ?? (overview.presets?.some((preset) => preset.id === key) ? key : null)} /> HTTP · ${key}</div>
-              <div class="backend-item-meta">
-                <code>${status.url ?? "—"}</code>
-                <span style="color: ${backendStatusColor(status.status)}">${backendStatusLabel(status.status)}</span>
-                ${status.status === "reachable" ? html`<span title=${status.reason ?? ""}>reachable — assign a model id manually${status.reason ? html` (${status.reason})` : null}</span>` : null}
-                ${status.hasApiKey ? html`<span class="backend-pill">Key set</span>` : null}
-                ${status.models && status.models.length > 0 ? html`<span>${status.models.length} model${status.models.length !== 1 ? "s" : ""}</span>` : null}
-              </div>
-            </div>
-            <div class="backend-item-actions">
-              ${testBtn(key)}
-              <button class="btn-tiny danger" onClick=${() => onRemoveBackend(key)}>Remove</button>
-            </div>
-          </div>`;
-        })}
+        ${httpBackends.map(([key, status]) => html`<${HttpBackendRow}
+          key=${key}
+          backendKey=${key}
+          status=${status}
+          overview=${overview}
+          testButton=${status.url ? testBtn(key) : null}
+          onChangeKey=${onChangeKey}
+          onDisableDecisions=${onDisableDecisions}
+          onRemove=${onRemoveBackend}
+        />`)}
 
         ${hasAnthropic
           ? html`<div class="backend-item">
@@ -359,7 +453,24 @@ function capabilityFor(overview, role) {
   return (overview.capabilities ?? []).find((c) => c.role === role);
 }
 
-export function CapabilityDetail({ role, overview, onOpenPicker, onAddBackend, onDisable, onSaveBehavior }) {
+/**
+ * The Decision model's check inside its active card: a Verify button and
+ * its answer.
+ */
+function DecisionActiveStatus({ assignment, checks, onVerify }) {
+  const key = assignment.kind === "typesafe" ? "typesafe" : assignment.backendKey;
+  const check = checks?.[`${key}/${assignment.model}`];
+  return html`
+    <div class="decision-active-status">
+      ${check
+        ? html`<${DecisionCheckLine} check=${check} model=${assignment.model} />`
+        : html`<span class="decision-verify-hint">Send one test decision to check that it answers.</span>`}
+      <button class="btn-tiny" disabled=${check?.state === "checking"} onClick=${() => onVerify(key, assignment.model)}>Verify</button>
+    </div>
+  `;
+}
+
+export function CapabilityDetail({ role, overview, decisionChecks, onOpenPicker, onAddBackend, onDisable, onSaveBehavior, onVerifyDecision }) {
   const cap = capabilityFor(overview, role);
   const assignment = overview.inference.assignments[role];
   const display = overview.assignmentDisplays?.[role];
@@ -371,6 +482,10 @@ export function CapabilityDetail({ role, overview, onOpenPicker, onAddBackend, o
   const behaviorEditor = hasBehaviorControls(role, assignment) && settings?.assignment
     ? html`<${ModelBehaviorEditor} key=${`${role}:${settings.assignment}`} settings=${settings} model=${model} onSave=${onSaveBehavior} />`
     : null;
+  const decisionStatus = isDecisionRole(role) && enabled && (assignment.kind === "decision" || assignment.kind === "typesafe") && onVerifyDecision
+    ? html`<${DecisionActiveStatus} assignment=${assignment} checks=${decisionChecks} onVerify=${onVerifyDecision} />`
+    : null;
+  const decisionLocation = assignment?.kind === "decision" ? decisionWhere(overview.inference.backends?.[assignment.backendKey]?.decision) : null;
 
   return html`
     <div class="cap-detail">
@@ -388,11 +503,17 @@ export function CapabilityDetail({ role, overview, onOpenPicker, onAddBackend, o
               <div class="cap-detail-active-head">
                 ${runtimeWarning ? html`<${WarningTriangle} label="Repeated model failures" />` : html`<span class="cap-detail-tick">✓</span>`}
                 <div>
-                  <div class="cap-detail-active-model"><${ProviderIcon} providerId=${display.providerId} /> ${display.modelName}</div>
-                  <div class="cap-detail-active-provider">${display.providerLabel}</div>
+                  <div class="cap-detail-active-model">
+                    ${assignment.kind === "decision"
+                      ? html`<${ProviderLogo} providerId=${display.providerId} fallback=${html`<${Monogram} name=${display.providerLabel} />`} />`
+                      : html`<${ProviderIcon} providerId=${display.providerId} />`}
+                    ${display.modelName}
+                  </div>
+                  <div class="cap-detail-active-provider">${[display.providerLabel, decisionLocation].filter(Boolean).join(" · ")}</div>
                 </div>
               </div>
               ${behaviorEditor}
+              ${decisionStatus}
             </div>`
           : configured
           ? html`<div class="cap-detail-warn">
@@ -635,6 +756,8 @@ export function ModelsView({ section, onModelsRefresh }) {
   const [codexRuntimeError, setCodexRuntimeError] = useState(null);
   const [dismissedCodexOperation, setDismissedCodexOperation] = useState(null);
   const [anthropicRefreshBusy, setAnthropicRefreshBusy] = useState(false);
+  // Test decisions by assignment ("<backend>/<model>"): {state, result?}.
+  const [decisionChecks, setDecisionChecks] = useState({});
   const refreshSequence = useRef(0);
 
   const validRoles = (overview?.capabilities ?? []).map((c) => c.role);
@@ -688,8 +811,9 @@ export function ModelsView({ section, onModelsRefresh }) {
   useEffect(() => {
     if (probed || !overview) return;
     setProbed(true);
+    // A backend serving only decision models has no model list to probe.
     const httpKeys = Object.entries(overview.inference.backends)
-      .filter(([, s]) => s.type === "http")
+      .filter(([, s]) => s.type === "http" && backendServes(s) !== "decision")
       .map(([k]) => k);
     if (httpKeys.length === 0) return;
     Promise.allSettled(httpKeys.map((k) => probeBackend(k))).then(() => refresh());
@@ -733,28 +857,29 @@ export function ModelsView({ section, onModelsRefresh }) {
 
   // ── Backend management ──────────────────────────────────────────────────
 
-  const onAddHttp = async (name, url, apiKey, apiPathPrefix, allowRemoteInference = false) => {
+  /**
+   * Write one backend patch from a setup form — a new backend, a backend's
+   * decision API, a Decision model assignment — then refresh. A new backend
+   * with an OpenAI-compatible URL is probed so its models populate the
+   * pickers; with `decisionModel`, the Decision model is checked. A null patch
+   * only checks the model again.
+   */
+  const saveBackend = async (patch, { key, decisionModel } = {}) => {
     try {
-      const res = await addHttpBackend(name, url, apiKey, apiPathPrefix, allowRemoteInference);
-      if (!res.ok) {
-        const msg = res.body?.errors?.[0]?.message ?? res.body?.error ?? "Failed to add backend.";
-        flashErr(msg);
-        await refresh();
-        return { ok: false, error: msg };
+      if (patch) {
+        const res = await patchAdminConfig(patch);
+        if (!res.ok) return { ok: false, error: res.body?.errors?.[0]?.message ?? res.body?.error ?? "Failed to save the backend." };
       }
-      flashOk(
-        allowRemoteInference
-          ? `Added HTTP backend "${name}" and enabled remote inference.`
-          : `Added HTTP backend "${name}".`,
-      );
       await refresh();
-      // Probe immediately so its models populate the picker.
-      probeBackend(name).then(() => refresh()).catch(() => {});
+      const saved = patch?.inference?.backends?.[key];
+      if (saved?.url) probeBackend(key).then(() => refresh()).catch(() => {});
+      if (decisionModel) void verifyDecision(key, decisionModel);
+      else if (saved?.type === "http") {
+        flashOk(patch.inference.allowRemoteInference ? `Added backend "${key}" and enabled cloud inference.` : `Added backend "${key}".`);
+      }
       return { ok: true };
     } catch (e) {
-      const msg = e?.message ?? String(e);
-      flashErr(msg);
-      return { ok: false, error: msg };
+      return { ok: false, error: e?.message ?? String(e) };
     }
   };
 
@@ -907,6 +1032,59 @@ export function ModelsView({ section, onModelsRefresh }) {
     setTimeout(() => setTestStates((s) => ({ ...s, [key]: "idle" })), 3000);
   };
 
+  // ── Decision model ──────────────────────────────────────────────────────
+
+  /** Send one test decision to `backendKey/model` and keep its answer. */
+  const verifyDecision = async (backendKey, model) => {
+    const assignment = `${backendKey}/${model}`;
+    setDecisionChecks((all) => ({ ...all, [assignment]: { state: "checking" } }));
+    let result;
+    try {
+      result = backendKey === "typesafe"
+        ? await verifyTypeSafeDecision(model)
+        : await verifyBackendDecision(backendKey, model);
+    } catch (e) {
+      result = { ok: false, reason: e?.serverMessage ?? e?.message ?? String(e) };
+    }
+    setDecisionChecks((all) => ({ ...all, [assignment]: { state: result?.ok ? "ok" : "fail", result } }));
+    return result;
+  };
+
+  /** Replace a backend's API key; its URLs and decision API stay. */
+  const changeBackendKey = async (key, apiKey) => {
+    try {
+      const res = await patchAdminConfig({ inference: { backends: { [key]: { apiKey } } } });
+      if (!res.ok) return { ok: false, error: res.body?.errors?.[0]?.message ?? res.body?.error ?? "Could not change the key." };
+      flashOk(`Changed the key for "${key}".`);
+      await refresh();
+      return { ok: true };
+    } catch (e) {
+      return { ok: false, error: e?.message ?? String(e) };
+    }
+  };
+
+  const onDisableDecisions = (key) => {
+    const inUse = assignedDecisionBackend(overview)?.key === key;
+    setConfirmState({
+      title: `Disable decisions on "${key}"?`,
+      body: inUse
+        ? "The Decision model uses it and will be turned off. Its chat models stay."
+        : "Its chat models stay; only its decision API is removed.",
+      confirmLabel: "Disable decisions",
+      destructive: true,
+      onConfirm: async () => {
+        try {
+          const res = await patchAdminConfig(disableDecisionPatch(key, overview));
+          if (!res.ok) flashErr(res.body?.errors?.[0]?.message ?? res.body?.error ?? "Failed to disable decisions.");
+          else flashOk(`"${key}" no longer serves decision models.`);
+          await refresh();
+        } catch (e) {
+          flashErr(e?.message ?? String(e));
+        }
+      },
+    });
+  };
+
   const onRemoveBackend = (key) => {
     setConfirmState({
       title: `Remove backend "${key}"?`,
@@ -1004,7 +1182,7 @@ export function ModelsView({ section, onModelsRefresh }) {
   };
 
   const saveAssignment = async (targetRole, backendKey, model) => {
-    const consent = remoteAssignmentConsent(overview, backendKey, model);
+    const consent = remoteAssignmentConsent(overview, backendKey, model, targetRole);
     if (consent && !await requestCloudConsent(consent)) return null;
     return patchAdminConfig(inferenceAssignmentPatch(targetRole, `${backendKey}/${model}`, !!consent));
   };
@@ -1063,6 +1241,7 @@ export function ModelsView({ section, onModelsRefresh }) {
           flashOk(`Switched ${role} to ${model} on "${backendKey}".`);
         }
         await refresh();
+        if (isDecisionRole(role) && overview.inference.backends?.[backendKey]?.decision) void verifyDecision(backendKey, model);
       } catch (e) {
         flashErr(e?.message ?? String(e));
       }
@@ -1204,6 +1383,7 @@ export function ModelsView({ section, onModelsRefresh }) {
       }
       flashOk(`${targetTitle} now uses ${model} on TypeSafe.`);
       await refresh();
+      void verifyDecision("typesafe", model);
     } catch (e) {
       flashErr(e?.message ?? String(e));
     }
@@ -1379,6 +1559,8 @@ export function ModelsView({ section, onModelsRefresh }) {
             onRemoveBackend=${onRemoveBackend}
             onRemoveCodex=${onRemoveCodex}
             onTestBackend=${onTestBackend}
+            onChangeKey=${changeBackendKey}
+            onDisableDecisions=${onDisableDecisions}
           />`
         : null}
 
@@ -1390,6 +1572,8 @@ export function ModelsView({ section, onModelsRefresh }) {
             onAddBackend=${() => setShowAddBackend(true)}
             onDisable=${onDisable}
             onSaveBehavior=${onSaveBehavior}
+            decisionChecks=${decisionChecks}
+            onVerifyDecision=${verifyDecision}
           />`
         : null}
 
@@ -1397,7 +1581,7 @@ export function ModelsView({ section, onModelsRefresh }) {
         ? html`<${AddBackendModal}
             overview=${overview}
             onClose=${() => setShowAddBackend(false)}
-            onAddHttp=${onAddHttp}
+            onSaveBackend=${saveBackend}
             onConfigureAnthropic=${onConfigureAnthropic}
             onConfigureCodex=${() => setShowCodexConfig(true)}
             onConfigureClaudeCode=${() => setShowClaudeCodeConfig(true)}
@@ -1443,7 +1627,7 @@ export function ModelsView({ section, onModelsRefresh }) {
             codexRuntimeUpdate=${visibleCodexRuntimeUpdate}
             claudeCodeRefreshing=${claudeCodeRefreshBusy}
             onClose=${() => setShowPicker(false)}
-            onAddHttp=${onAddHttp}
+            onSaveBackend=${saveBackend}
             onPickLocal=${pickLocal}
             onPickAnthropic=${pickAnthropic}
             onPickHttp=${pickHttp}
@@ -1453,6 +1637,8 @@ export function ModelsView({ section, onModelsRefresh }) {
             onPickTypeSafe=${pickTypeSafe}
             onConfigureTypeSafeKey=${onConfigureTypeSafeKey}
             onPickRecent=${pickRecent}
+            decisionChecks=${decisionChecks}
+            onVerifyDecision=${verifyDecision}
             onStartCodexLogin=${onStartCodexLogin}
             onCancelCodexLogin=${onCancelCodexLogin}
             onRefreshCodex=${onRefreshCodex}

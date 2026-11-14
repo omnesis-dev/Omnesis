@@ -18,6 +18,7 @@ import { CloudRelayManagementFailure } from "./management.js";
 import { HostedNameTaken } from "./relay-configuration.js";
 import { googleBrowserTrust } from "./google-browser-trust.js";
 import { hostedGatewayHostname } from "./hosted-name.js";
+import { GatewayAccountLink } from "./gateway-account-link.js";
 import { GatewayUnregistered, readOrCreateGatewayOwnerKey } from "./gateway-key-client.js";
 
 let directory: string, manager: GatewayCloudRelayManagement | undefined;
@@ -977,6 +978,80 @@ test("opted-in default observer sends nothing before setup or local public-key r
   );
 });
 
+test("a certificate for the public name with a key the gateway doesn't serve holds new devices until the owner acknowledges it, across a restart", async () => {
+  const { X509Certificate } = await import("node:crypto");
+  const { tlsSpkiFingerprint } = await import("./pinned-key.js");
+  await mkdir(join(directory, "served"));
+  await mkdir(join(directory, "rogue"));
+  const served = await readFile(
+    tlsFiles(join(directory, "served"), "gateway.example.test").certFile,
+    "utf8",
+  );
+  const rogue = new X509Certificate(
+    await readFile(tlsFiles(join(directory, "rogue"), "gateway.example.test").certFile),
+  );
+  const rogueFingerprint = rogue.fingerprint256.replaceAll(":", "").toLowerCase();
+  const transport = vi
+    .fn<typeof fetch>()
+    .mockResolvedValueOnce(
+      Response.json([
+        // The certificate the gateway serves, though not one it manages: no incident.
+        { id: "1", cert_der: new X509Certificate(served).raw.toString("base64") },
+        { id: "2", cert_der: rogue.raw.toString("base64") },
+      ]),
+    )
+    .mockResolvedValue(Response.json([]));
+  vi.stubGlobal("fetch", transport);
+  const onIncidentHold = vi.fn();
+  const f = fixture({
+    env: {
+      OMNESIS_CLOUD_RELAY_URL: input.relayUrl,
+      OMNESIS_CLOUD_RELAY_CERTIFICATE_MONITOR_ENABLED: "1",
+    },
+    publicSpkiFingerprint: () => tlsSpkiFingerprint(served),
+    onIncidentHold,
+  });
+  manager = await GatewayCloudRelayManagement.open(f.options);
+  await manager.configure(input);
+  await manager.enable();
+  await idle();
+  const held = await vi.waitFor(async () => {
+    const status = await manager!.status();
+    expect(status.incidentHold).toBeDefined();
+    return status;
+  });
+  expect(held.incidentHold!.certificates).toEqual([rogueFingerprint]);
+  expect(held.certificateMonitor!.incidents.map((incident) => incident.providerEntryId)).toEqual([
+    "2",
+  ]);
+  expect(held.deviceEnrollment!.policy).toBe("ask");
+  expect(onIncidentHold).toHaveBeenCalledOnce();
+
+  // After a restart the hold is read back, and the journal's report of the same certificate is
+  // not news to anyone.
+  await manager.close();
+  manager = await GatewayCloudRelayManagement.open(f.options);
+  manager.start();
+  await vi.waitFor(async () =>
+    expect((await manager!.status()).certificateMonitor?.incidents).toHaveLength(1),
+  );
+  expect((await manager.status()).incidentHold!.certificates).toEqual([rogueFingerprint]);
+  expect(onIncidentHold).toHaveBeenCalledOnce();
+
+  const before = (await manager.status()).revision;
+  const acknowledged = await manager.acknowledgeIncidentHold();
+  expect(acknowledged).not.toHaveProperty("incidentHold");
+  expect(acknowledged.revision).toBeGreaterThan(before);
+  await manager.close();
+  manager = await GatewayCloudRelayManagement.open(f.options);
+  manager.start();
+  await vi.waitFor(async () =>
+    expect((await manager!.status()).certificateMonitor?.incidents).toHaveLength(1),
+  );
+  expect(await manager.status()).not.toHaveProperty("incidentHold");
+  expect(onIncidentHold).toHaveBeenCalledOnce();
+});
+
 test("managed Google capabilities are fetched only after enrollment and expose a server-only port without user OAuth setup", async () => {
   const capabilities = {
     protocol: "omnesis-google-browser-v1",
@@ -1341,6 +1416,20 @@ test(
       code: "configuration-invalid",
     });
     expect(removed.revision).toBeGreaterThan(automatic.revision);
+    // Confirming a passkey goes to the account link, and the status after it is a new revision.
+    const ceremony = { purpose: "pin-passkey" } as ReturnType<
+      GatewayAccountLink["passkeyConfirmation"]
+    >;
+    const options = vi
+      .spyOn(GatewayAccountLink.prototype, "passkeyConfirmation")
+      .mockReturnValue(ceremony);
+    const confirm = vi.spyOn(GatewayAccountLink.prototype, "confirmPasskey").mockResolvedValue();
+    expect(await manager.passkeyConfirmation()).toBe(ceremony);
+    const confirmed = await manager.confirmPasskey({ type: "gateway-passkey" });
+    expect(confirm).toHaveBeenCalledExactlyOnceWith({ type: "gateway-passkey" });
+    expect(confirmed.revision).toBeGreaterThan(removed.revision);
+    options.mockRestore();
+    confirm.mockRestore();
   },
 );
 

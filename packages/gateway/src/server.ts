@@ -34,7 +34,7 @@ import { httpActivityName, withActivity } from "./observability/main-activity.js
 type Db = Database.Database;
 import { join } from "node:path";
 import { lookupToken, lookupSession } from "./data/repositories/TokenRepository.js";
-import { getDevice } from "./data/repositories/DeviceRepository.js";
+import { getDevice, isRevokedDeviceKey } from "./data/repositories/DeviceRepository.js";
 import {
   CLIENT_VERSION_PARAM,
   createReportedVersionRecorder,
@@ -73,6 +73,7 @@ import { cognitionTranscriptsDir } from "./brain/transcripts.js";
 import { mountPushRoutes } from "./http/routes/push.js";
 import { type EventBus } from "./events.js";
 import { registerModelRoutes } from "./models/routes.js";
+import { registerDecisionRoutes } from "./models/decision-routes.js";
 import { CaptureRoutingService } from "./dictation/capture-routing.js";
 import { WatchRoutingService } from "./dictation/watch-routing.js";
 import { mountCaptureRoutes, mountWatchCaptureRoutes } from "./http/routes/watch-capture.js";
@@ -81,7 +82,8 @@ import { mountTranscriptionVocabularyRoutes } from "./http/routes/transcription-
 import { mountVoiceNoteRoutes } from "./http/routes/voice-notes.js";
 import { VoiceNoteService, pendingVoiceNoteIds } from "./voice-notes/index.js";
 import { mountOcrRoutes } from "./http/routes/ocr.js";
-import { HttpError, errorResponse } from "./http/errors.js";
+import { ForbiddenError, HttpError, errorResponse } from "./http/errors.js";
+import { credentialedCorsOrigins, portalSessionMayAct } from "./http/session-origin.js";
 import { requestIdMiddleware } from "./http/middleware/request-id.js";
 import { requestContextMiddleware } from "./http/middleware/request-context.js";
 import { corsMiddleware } from "./http/middleware/cors.js";
@@ -433,6 +435,9 @@ export function createServer(
     modelManager?: ModelManager;
     /** Bundled and gateway-refreshed Models.dev model metadata and provider logos. */
     modelsDevCatalog?: import("./models/models-dev-catalog.js").ModelsDevCatalog;
+    decisionCatalog?: import("./models/models-dev-decisions.js").ModelsDevDecisionCatalog;
+    /** Decision model setup routes (probe, verify). */
+    decisionRoutes?: import("./models/decision-routes.js").DecisionRouteOptions;
     /** Snapshot getter for `/admin/system-info`. Required when modelManager is provided. */
     getSystemInfo?: () => SystemInfo;
     /** Inference overview getter — used by model routes. */
@@ -498,6 +503,8 @@ export function createServer(
     vetAssignment?: (
       role: import("@omnesis/core").CapabilityRole,
       value: import("@omnesis/core").AssignmentValue,
+      /** The whole config write, so a check can tell what else it changes. */
+      body: unknown,
     ) => Promise<{ ok: true } | { ok: false; reason: string }>;
     /** Built-in Codex backend status and device-login hooks, mounted with model routes. */
     getCodexStatus?: () => import("@omnesis/core").CodexBackendStatus;
@@ -1105,13 +1112,26 @@ export function createServer(
       if (sessionId) {
         const { info: session, expired } = lookupSession(db, sessionId);
         if (session) {
+          const csrfToken = portalCsrfToken(sessionId);
+          // A cookie alone does not show the portal sent a state-changing
+          // request: a page on a sibling site can make the browser attach it.
+          // See `http/session-origin.ts`.
+          if (
+            !portalSessionMayAct(
+              { method: c.req.method, header: (name) => c.req.header(name) },
+              csrfToken,
+              credentialedCorsOrigins(opts?.configStore?.get().gateway?.cors),
+            )
+          ) {
+            throw new ForbiddenError("Forbidden: cross-site request refused");
+          }
           auth = {
             authMethod: "portal-session",
             deviceId: null,
             credentialDeviceId: session.credentialDeviceId,
             tokenId: session.tokenId,
             scopes: session.scopes,
-            csrfToken: portalCsrfToken(sessionId),
+            csrfToken,
           };
           // A paired Portal has its own device and its cookie traffic is useful
           // activity evidence for that row. A raw-token login instead borrows a
@@ -1430,6 +1450,7 @@ export function createServer(
     registerModelRoutes(app, {
       modelManager: opts.modelManager,
       modelsDevCatalog: opts.modelsDevCatalog,
+      decisionCatalog: opts.decisionCatalog,
       configStore: opts.configStore,
       getSystemInfo: opts.getSystemInfo,
       getInferenceOverview: opts.getInferenceOverview,
@@ -1451,6 +1472,8 @@ export function createServer(
       getRecentModels: opts.getRecentModels,
     });
   }
+
+  if (opts?.decisionRoutes) registerDecisionRoutes(app, opts.decisionRoutes);
 
   // Speech-to-text route for source audio from the collector. Mounted only
   // when a transcribe service was wired.
@@ -1678,6 +1701,8 @@ export function createServer(
       : undefined,
     opts?.onCloudPairingRequest,
     opts?.cloudTlsSpkiFingerprintSha256,
+    // A device the owner revoked waits for a person when its key signs in again.
+    (devicePublicKey) => isRevokedDeviceKey(db, devicePublicKey),
   );
 
   // Documents core (CRUD, count/stats/recent, list/ids/exists).

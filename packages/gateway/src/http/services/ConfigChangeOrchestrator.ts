@@ -242,5 +242,7 @@ function resolvedModelIdentity(r: ResolvedAssignment): string {
       return "replay";
     case "typesafe":
       return `typesafe:${r.model}`;
+    case "decision":
+      return `decision:${r.backendKey}:${r.url}:${r.model}`;
   }
 }

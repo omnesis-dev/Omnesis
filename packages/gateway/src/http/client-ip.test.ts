@@ -3,6 +3,7 @@
 
 import { afterEach, describe, expect, test, vi } from "vitest";
 import {
+  arrivedThroughRelay,
   clientAddress,
   forwardedClientAddress,
   isLoopbackClient,
@@ -12,9 +13,12 @@ import {
 
 // The gateway only reads what its own tunnel client recorded; the table itself is tested there.
 const relayed = vi.hoisted(() => new Map<string, string>());
+const tunnelSockets = vi.hoisted(() => new Set<string>());
 vi.mock("@omnesis/cloud-relay", () => ({
   relayedClientAddress: (peer: { remoteAddress?: string; remotePort?: number }) =>
     relayed.get(`${peer.remoteAddress}|${peer.remotePort}`),
+  isRelayTunnelPeer: (peer: { remoteAddress?: string; remotePort?: number }) =>
+    tunnelSockets.has(`${peer.remoteAddress}|${peer.remotePort}`),
 }));
 
 function headers(map: Record<string, string>): (name: string) => string | undefined {
@@ -219,5 +223,43 @@ describe("a request through this gateway's relay tunnel", () => {
       if (priorEnabled === undefined) delete process.env.OMNESIS_CLOUD_RELAY_ENABLED;
       else process.env.OMNESIS_CLOUD_RELAY_ENABLED = priorEnabled;
     }
+  });
+});
+
+describe("whether a request came through the relay", () => {
+  const socket = (remoteAddress: string, remotePort: number) => ({
+    incoming: { socket: { remoteAddress, remotePort } },
+  });
+  afterEach(() => {
+    tunnelSockets.clear();
+    vi.unstubAllEnvs();
+  });
+
+  test("a socket the tunnel dialled is the relay's whatever its headers say, and a local one is not", () => {
+    vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "1");
+    tunnelSockets.add("127.0.0.1|40200");
+    // The relay left out its forwarding header and named no client: still relayed.
+    expect(arrivedThroughRelay(headers({}), socket("127.0.0.1", 40200))).toBe(true);
+    // The CLI on the gateway host, and a home-network client, while remote access is on.
+    expect(arrivedThroughRelay(headers({}), socket("127.0.0.1", 40201))).toBe(false);
+    expect(arrivedThroughRelay(headers({}), socket("198.51.100.20", 40200))).toBe(false);
+    expect(arrivedThroughRelay(headers({}), undefined)).toBe(false);
+    expect(arrivedThroughRelay(headers({}), {})).toBe(false);
+    // The relay's own forwarding marker counts; a client can only claim to be relayed.
+    expect(
+      arrivedThroughRelay(headers({ "x-omnesis-cloud-relay": "1" }), socket("198.51.100.20", 1)),
+    ).toBe(true);
+    // Exposure alone doesn't make a local request relayed.
+    const local = socket("127.0.0.1", 40202) as object;
+    const release = markRelayRequestExposure(local);
+    expect(arrivedThroughRelay(headers({}), local)).toBe(false);
+    release();
+  });
+
+  test("is never true without the cloud relay opt-in", () => {
+    vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "0");
+    tunnelSockets.add("127.0.0.1|40200");
+    expect(arrivedThroughRelay(headers({}), socket("127.0.0.1", 40200))).toBe(false);
+    expect(arrivedThroughRelay(headers({ "x-omnesis-cloud-relay": "1" }), undefined)).toBe(false);
   });
 });

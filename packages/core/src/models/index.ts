@@ -26,6 +26,8 @@ export type {
   Manifest,
   ManifestEntry,
   ModelsOverview,
+  DecisionModelOption,
+  ProviderPresetView,
 } from "./types.js";
 
 export { MODEL_ROLES, CATALOG_ROLE_CAPABILITY } from "./types.js";
@@ -94,6 +96,9 @@ export type {
   ResolvedCodex,
   ResolvedClaudeCode,
   ResolvedTypeSafe,
+  ResolvedDecisionBackend,
+  BackendDecisionStatus,
+  HttpBackendDecisionConfig,
   BackendStatus,
   CodexBackendStatus,
   ClaudeCodeBackendStatus,
@@ -164,8 +169,23 @@ export {
   parseDecisionCassette,
 } from "./decision-cassette.js";
 
-export type { ProviderPreset } from "./provider-presets.js";
-export { PROVIDER_PRESETS, getPreset, getPresetByUrl } from "./provider-presets.js";
+export type {
+  DecisionAuth,
+  DecisionPresetUrlParam,
+  DecisionProtocol,
+  DecisionScoreField,
+} from "./decision-api.js";
+export { decisionUrlPlaceholders, isWorkersAiModelId } from "./decision-api.js";
+export type { ProviderDecisionPreset, ProviderPreset } from "./provider-presets.js";
+export {
+  PROVIDER_PRESETS,
+  fillDecisionPresetUrl,
+  findPreset,
+  getPreset,
+  getPresetByUrl,
+  providerPresetView,
+  splitPresetViews,
+} from "./provider-presets.js";
 
 export {
   BACKGROUND_RATE_LIMIT_PATIENCE,

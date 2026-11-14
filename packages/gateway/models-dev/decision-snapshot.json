@@ -1,0 +1,7 @@
+{
+  "source": "https://models.dev/api.json?type=decision",
+  "fetchedAt": "2026-11-10T18:04:00+00:00",
+  "sha256": "7bc9ab8b1af9fffe5bba68d99b22a8f762d731bf57b55b25c0ecaac801393425",
+  "providerCount": 9,
+  "providerModelCount": 66
+}

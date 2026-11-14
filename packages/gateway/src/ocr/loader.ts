@@ -188,6 +188,7 @@ async function loadProvider(
       });
     case "disabled":
     case "unresolved":
+    case "decision":
     case "typesafe":
       return null;
     default:

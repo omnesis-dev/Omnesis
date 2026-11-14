@@ -7,7 +7,7 @@ import { createLogger } from "@omnesis/core";
 import { createDecisionPayloadTables } from "../decision-payload.js";
 import { recordCheckPolicyKey } from "../record-check/rubric.js";
 import { WIKI_REPAIR_RUBRIC_VERSION } from "../record-check/wiki-rubric.js";
-import { resolveBrainSettings } from "../config.js";
+import { BRAIN_DEFAULTS, resolveBrainSettings } from "../config.js";
 import { createKnowledgeTables, getKnowledgeNode } from "./storage.js";
 import { createKnowledgeWorkTables } from "./work-schema.js";
 import { snapshotClaimMaintenance } from "./claim-maintenance.js";
@@ -21,7 +21,7 @@ import type { SaveKnowledgeNodeInput } from "./types.js";
 let db: Database.Database;
 let service: KnowledgeService;
 let verdict: "entailment" | "neutral" | "unavailable";
-const policy = recordCheckPolicyKey("enforce", "fixture");
+const policy = recordCheckPolicyKey("enforce", "fixture", BRAIN_DEFAULTS.thresholds);
 const original =
   '<claim id="humidity" refs="source:manual">## Storage\nStore samples below 80% humidity.</claim>\n\n<claim id="sealed" refs="source:manual">Containers stay sealed.</claim>';
 const proposal = (): SaveKnowledgeNodeInput => ({
@@ -213,7 +213,11 @@ it.each(["source", "privacy", "policy"] as const)(
         if (change === "privacy")
           db.exec("UPDATE knowledge_decision_privacy SET generation=generation+1");
         if (change === "policy")
-          currentPolicy = recordCheckPolicyKey("enforce", "replacement-model");
+          currentPolicy = recordCheckPolicyKey(
+            "enforce",
+            "replacement-model",
+            BRAIN_DEFAULTS.thresholds,
+          );
         return {
           save: true,
           assessment: { policy, decisionId: "decision", rubricVersion: WIKI_REPAIR_RUBRIC_VERSION },

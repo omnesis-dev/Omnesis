@@ -37,6 +37,7 @@ export function mountCloudPairingRoutes(
   account?: ConstructorParameters<typeof CloudPairingRuntime>[0]["account"],
   onPending?: ConstructorParameters<typeof CloudPairingRuntime>[0]["onPending"],
   spkiFingerprint?: () => string | undefined,
+  revokedDeviceKey?: ConstructorParameters<typeof CloudPairingRuntime>[0]["revokedDeviceKey"],
 ): void {
   if (!cloudRelayEnabled()) return;
   const clientId = process.env.OMNESIS_CLOUD_RELAY_GOOGLE_CLIENT_ID;
@@ -48,6 +49,7 @@ export function mountCloudPairingRoutes(
     broker,
     account,
     onPending,
+    revokedDeviceKey,
     publicOrigin: publicOriginSource ?? (() => publicBaseUrl),
     webConfiguration: (origin) =>
       webGooglePairingConfiguration(
@@ -147,11 +149,11 @@ export function mountCloudPairingRoutes(
       return result;
     });
   for (const base of ["/devices/google", "/devices/account"]) {
+    // `__Host-` binds the sign-in state to this exact origin: unlike a
+    // `__Secure-` cookie, no sibling under the same parent domain can plant
+    // one alongside it. The prefix requires `Path=/` and no `Domain`.
     const cookieName =
-      base === "/devices/account"
-        ? "__Host-omnesis-account-login"
-        : "__Secure-omnesis-google-login";
-    const cookiePath = base === "/devices/account" ? "/" : base;
+      base === "/devices/account" ? "__Host-omnesis-account-login" : "__Host-omnesis-google-login";
     if (
       account ||
       broker ||
@@ -188,7 +190,7 @@ export function mountCloudPairingRoutes(
             new URL(authorization.authorizationUrl).searchParams.get("state")!;
           c.header(
             "Set-Cookie",
-            `${cookieName}=${state}; Path=${cookiePath}; HttpOnly; Secure; SameSite=Lax; Max-Age=300`,
+            `${cookieName}=${state}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=300`,
           );
           return c.json({ authorizationUrl: authorization.authorizationUrl });
         },
@@ -196,10 +198,7 @@ export function mountCloudPairingRoutes(
       app.get(`${base}/callback`, scope.public(), async (c) => {
         c.header("Cache-Control", "no-store");
         c.header("Referrer-Policy", "no-referrer");
-        c.header(
-          "Set-Cookie",
-          `${cookieName}=; Path=${cookiePath}; HttpOnly; Secure; SameSite=Lax; Max-Age=0`,
-        );
+        c.header("Set-Cookie", `${cookieName}=; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=0`);
         try {
           const { web: authorizations, origin: fixedOrigin, account: usesAccount } = currentWeb();
           if (Boolean(usesAccount) !== (base === "/devices/account"))

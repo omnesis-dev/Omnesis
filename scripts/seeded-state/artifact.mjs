@@ -86,6 +86,9 @@ const FORBIDDEN_TABLES = new Set([
   "tokens",
   "sessions",
   "device_pairings",
+  // Device keys this installation's owner revoked: like `devices.enrollment_public_key`,
+  // they belong to this installation's devices, and a clone starts with none.
+  "revoked_device_keys",
   "notifications",
   "notification_deliveries",
   "mobile_permission_health",

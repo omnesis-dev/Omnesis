@@ -144,6 +144,26 @@ how it was confirmed (`via`). The field is top-level so that a gateway version
 that predates it drops it on save, which leaves nothing confirmed; an entry the
 running version can't read is dropped the same way. A new link starts with none.
 
+The owner confirms a passkey on the account page of the gateway's own origin
+(Settings → Omnesis account, where linking returns to). The card appears while
+the gateway has an origin of its own and no confirmed passkey:
+
+1. `POST /admin/cloud-relay/passkeys/confirm/options` (admin) issues a
+   `pin-passkey` ceremony: `{ purpose, rpId, origin, challenge, binding,
+webauthnChallenge, expiresAt }`. The binding is `gatewayPasskeyPinBinding(gatewayId,
+accountId)`.
+2. The page asks for any of the account's passkeys (discoverable credentials).
+3. `POST /admin/cloud-relay/passkeys/confirm` (`{ proof }`) verifies the assertion
+   against the public key the relay lists for that credential id on the linked
+   account. A wrong key in the listing only makes the check fail: the private key
+   never leaves the owner's authenticator. Confirming lifts the owner's own decline
+   or a withdrawal of that passkey.
+
+A confirmation goes away when the account stops listing the sign-in, or when the
+owner removes it. `GET /admin/cloud-relay/trusted-sign-ins` lists each pin with
+its source and whether it is confirmed (and how); the portal's New devices section
+and `omnesis cloud trusted-sign-ins` show the same.
+
 A Google token counts as made in an official app (`native-google`) only when an
 official native client presented it: the Android release or test client as
 `azp` of a token for the web client, or the iOS client as both `aud` and `azp`.
@@ -261,7 +281,29 @@ Android approval sheets, and `omnesis cloud requests`. `omnesis cloud approve
 A sign-in enrollment creates a new row. It adopts an existing row only when that
 row's stored device key equals `K`, which the signature has just proved; install
 IDs, previous IDs and names never select a row for these pairings. The row records
-key, method (`automatic` or `approved`), sign-in kind and join time.
+key, method (`automatic` or `approved`), sign-in kind, the id of the sign-in it
+joined with (`enrollment.signInId`: the id `omnesis cloud trusted-sign-ins` shows,
+so a passkey id or a Google account's digest) and join time. The portal shows the
+sign-in in the device's details.
+
+### Revocation sticks
+
+Revoking or forgetting a device that joined by signing in records its device key
+in `revoked_device_keys`. A request signed by that key never joins automatically,
+whatever the sign-in and the policy: it is held with a comparison code and
+`revokedDevice: true` in `GET /admin/cloud-pairing/requests`, so whoever holds the
+lost device cannot bring it back by signing in again. One approval restores it:
+the redemption adopts the revoked row (same id, sources and cursors), clears
+`revoked_at` and releases the key. Only an approval does; an automatic redemption
+that meets a revoked row or key is refused, so joining automatically never clears
+`revoked_at`. Installing the app again makes a new key, and that request is judged
+on its sign-in like any other device; removing the sign-in (below) covers that.
+
+`omnesis cloud remove-sign-in <id> --revoke-devices` (the route's
+`?revokeDevices=true`) also revokes every paired device that joined with that
+sign-in, after the sign-in is removed. Without the flag those devices stay paired.
+The portal's revoke dialog for a device that joined by signing in offers to stop
+trusting that sign-in as well, unticked by default.
 
 ## Trusted sign-ins
 
@@ -397,7 +439,8 @@ between the removal and a later compromise of the relay can't tell a sign-in the
 account removed from one it still has, and a compromised relay can list it again
 with the evidence it kept. When a sign-in is removed because it may be in the
 wrong hands, also remove it on each gateway (`omnesis cloud remove-sign-in <id>`,
-with the id `omnesis cloud trusted-sign-ins` shows on a gateway that trusts it) so
+with the id `omnesis cloud trusted-sign-ins` shows on a gateway that trusts it,
+and `--revoke-devices` to revoke the devices that joined with it) so
 that gateway declines it whatever it is told later. A gateway that never trusted
 it declines it in advance. The same applies to Google
 pins removed on a gateway before `declinedGoogle` existed: that removal was not
@@ -408,7 +451,8 @@ recorded, so remove them again.
 Under `automatic`, a verified sign-in is held for approval with a comparison code
 when the gateway can't tie it to a sign-in it already trusts:
 
-1. The gateway's owner chose `ask`, or the request set `requireApproval`.
+1. The gateway's owner chose `ask`, the request set `requireApproval`, or the
+   gateway is on a certificate incident hold (below).
 2. The sign-in is new to the account, and nothing the gateway trusts vouched for it.
 3. The gateway was linked with a passkey that was added before passkeys
    countersigned, or that was the account's first one, and the sign-in is one the
@@ -421,6 +465,8 @@ when the gateway can't tie it to a sign-in it already trusts:
    it in either direction, so each gateway learns it by one approval.
 5. A passkey vouched for by Google with a signing key Google has since retired,
    or a sign-in the gateway's owner removed there.
+6. The device key belongs to a device the owner revoked or forgot (Revocation
+   sticks, above).
 
 Each pin records its `source`: `link-page` (the relay's link or signup page),
 `approval` (approving a request signed in on a relay page: desktop or portal),
@@ -430,8 +476,31 @@ page) or
 `native-app` (approving a request signed in in the iOS or Android app).
 `omnesis cloud trusted-sign-ins` lists each pin with its source, and
 `omnesis cloud remove-sign-in <id>` drops and declines one, or declines in advance
-one the gateway does not trust; the portal does not list them. See
+one the gateway does not trust, and with `--revoke-devices` revokes the devices that
+joined with it; the portal does not list them. See
 Limits of automatic mode for why the source matters.
+
+### Certificate incident hold
+
+The gateway's certificate monitor watches Certificate Transparency for
+certificates issued for its public name. One whose key is not the key the
+gateway serves means someone else may be able to pose as the gateway, so the
+gateway goes on an incident hold:
+
+- every new device waits for approval, whatever the owner chose;
+- the owner's administrator phones get a generic notification;
+- the portal's Omnesis account page and `omnesis cloud status` say so;
+- a sign-in made on a page served under the gateway's own name proves nothing
+  while it lasts (`gatewayOriginAssertionsRefused`).
+
+The hold is saved with the owner's other local choices before the monitor
+records the incident, so it survives restarts, unlinking and linking again, and
+the account being deleted. Nothing the relay sends lifts it. The owner lifts it,
+after looking into the certificate, with `omnesis cloud incidents ack` on the
+gateway host (`omnesis cloud incidents list` shows what is held). The gateway
+refuses the acknowledgement when it arrives through its relay, however it is
+authenticated. A certificate already acknowledged does not put the hold back;
+another one does.
 
 ## Relay surfaces
 
@@ -701,8 +770,8 @@ another key.
 
 A compromised relay can also show one brand-new device a fake gateway. That fake
 cannot reach the real gateway; first contact requires a publicly trusted, logged
-certificate, which the gateway's certificate monitor reports; and `ask` mode
-blocks it.
+certificate, which the gateway's certificate monitor reports when it is for the
+gateway's own name (and holds new devices, above); and `ask` mode blocks it.
 
 Operators who do not trust the relay with joining devices switch to `ask`, in
 the Omnesis account settings of the portal or the iOS and Android apps, or with

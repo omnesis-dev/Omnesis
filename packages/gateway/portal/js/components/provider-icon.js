@@ -16,6 +16,11 @@ export function providerBrand(id) {
 // Runtimes the models.dev catalog carries no logo for.
 const WITHOUT_LOGO = new Set(["local", "replay", "typesafe", "http", "none"]);
 
+/** Whether a provider id can have a served logo at all (built-in runtimes never do). */
+export function mayHaveServedLogo(providerId) {
+  return !!providerId && !WITHOUT_LOGO.has(providerId);
+}
+
 /** A provider SVG served by this gateway as a theme-colored mask. */
 export function ProviderIcon({ providerId, size }) {
   if (!providerId || WITHOUT_LOGO.has(providerId)) return null;

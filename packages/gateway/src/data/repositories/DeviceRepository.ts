@@ -211,7 +211,9 @@ export function createDevice(
  * and `sources.device_id` are kept as well: the sources go dormant, and a
  * re-pair finds them still attached. Principal credentials whose execution
  * identity is this device are revoked in the same transaction, so an agent
- * unpair also ends that installation's corpus access. Returns false when the
+ * unpair also ends that installation's corpus access. The device key it
+ * signed in with, if any, is remembered as revoked: signing in with it again
+ * waits for the owner, whatever the enrollment policy. Returns false when the
  * device doesn't exist.
  */
 export function revokeDevice(db: Db, id: DeviceId): boolean {
@@ -239,6 +241,7 @@ export function revokeDevice(db: Db, id: DeviceId): boolean {
               update_detail = NULL, update_state_at = NULL
         WHERE id = ?`,
     ).run(revokedAt, id);
+    holdDeviceKey(db, id, revokedAt);
     // An integration-bound principal credential is meaningful only while its
     // operational device is trusted. Revocation and deletion must therefore
     // have the same effect on corpus authority.
@@ -251,6 +254,43 @@ export function revokeDevice(db: Db, id: DeviceId): boolean {
     return true;
   });
   return tx.immediate();
+}
+
+/**
+ * Remember the device key a row signed in with as revoked. Only an approval by
+ * a person releases it (`writeEnrolledDevice`); deleting the row does not.
+ */
+function holdDeviceKey(db: Db, id: DeviceId, revokedAt: number): void {
+  db.prepare(
+    `INSERT INTO revoked_device_keys (public_key, revoked_at)
+       SELECT enrollment_public_key, ? FROM devices
+        WHERE id = ? AND enrollment_public_key IS NOT NULL
+     ON CONFLICT(public_key) DO NOTHING`,
+  ).run(revokedAt, id);
+}
+
+/**
+ * Whether the owner revoked or forgot a device that signed in with this key
+ * and has not approved it since. Such a key never joins automatically.
+ */
+export function isRevokedDeviceKey(db: Db, devicePublicKey: string): boolean {
+  return (
+    db
+      .prepare<[string], { found: number }>(
+        "SELECT 1 AS found FROM revoked_device_keys WHERE public_key = ?",
+      )
+      .get(devicePublicKey) !== undefined
+  );
+}
+
+/** The live devices that joined by signing in with this trusted sign-in. */
+export function devicesJoinedWithSignIn(db: Db, signInId: string): DeviceId[] {
+  return db
+    .prepare<[string], { id: string }>(
+      "SELECT id FROM devices WHERE enrollment_sign_in_id = ? AND revoked_at IS NULL ORDER BY id",
+    )
+    .all(signInId)
+    .map((row) => DeviceId(row.id));
 }
 
 interface DeviceRow {
@@ -287,6 +327,7 @@ interface DeviceRow {
   update_state_at: number | null;
   enrollment_method: string | null;
   enrollment_sign_in: string | null;
+  enrollment_sign_in_id: string | null;
   enrolled_at: number | null;
 }
 
@@ -298,7 +339,7 @@ const DEVICE_SELECT_COLS =
   "notification_delivery_health, notification_delivery_health_updated_at, " +
   "version, version_seen_at, protocol_version, " +
   "desired_version, update_state, update_detail, update_state_at, " +
-  "enrollment_method, enrollment_sign_in, enrolled_at";
+  "enrollment_method, enrollment_sign_in, enrollment_sign_in_id, enrolled_at";
 
 export function getDevice(db: Db, id: DeviceId): DeviceRecord | null {
   const row = db
@@ -426,7 +467,7 @@ export function replaceDeviceForRepair(
               desired_version = NULL, update_state = NULL,
               update_detail = NULL, update_state_at = NULL,
               enrollment_public_key = NULL, enrollment_method = NULL,
-              enrollment_sign_in = NULL, enrolled_at = NULL
+              enrollment_sign_in = NULL, enrollment_sign_in_id = NULL, enrolled_at = NULL
         WHERE id = ?`,
     ).run(
       opts.name,
@@ -488,6 +529,8 @@ export function listDevices(db: Db): DeviceRecord[] {
  */
 export function deleteDevice(db: Db, id: DeviceId): boolean {
   return db.transaction(() => {
+    // Forgetting a device is at least as final as revoking it.
+    holdDeviceKey(db, id, now());
     db.prepare("DELETE FROM reauth_reminders WHERE device_id = ?").run(id);
     return db.prepare("DELETE FROM devices WHERE id = ?").run(id).changes > 0;
   })();
@@ -705,6 +748,7 @@ function rowEnrollment(row: DeviceRow): DeviceEnrollment | null {
   return {
     method: row.enrollment_method as DeviceEnrollmentMethod,
     signIn: row.enrollment_sign_in as DeviceEnrollmentSignIn | null,
+    ...(row.enrollment_sign_in_id ? { signInId: row.enrollment_sign_in_id } : {}),
     joinedAt: row.enrolled_at,
   };
 }
@@ -1153,6 +1197,8 @@ export interface PendingPairing {
 export interface PairingEnrollment {
   method: DeviceEnrollmentMethod;
   signIn?: DeviceEnrollmentSignIn | null;
+  /** The id of the sign-in the gateway verified; see `DeviceEnrollment.signInId`. */
+  signInId?: string | null;
   devicePublicKey: string;
 }
 
@@ -1213,8 +1259,8 @@ export function createPairing(
     `INSERT INTO device_pairings
        (pairing_code, name, kind, scopes, created_at, expires_at, self_emails, self_phones,
         repair_device_id, access_level_id,
-        enrollment_public_key, enrollment_method, enrollment_sign_in)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        enrollment_public_key, enrollment_method, enrollment_sign_in, enrollment_sign_in_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     pairingCode,
     storedName,
@@ -1229,6 +1275,7 @@ export function createPairing(
     opts.enrollment?.devicePublicKey ?? null,
     opts.enrollment?.method ?? null,
     opts.enrollment?.signIn ?? null,
+    opts.enrollment?.signInId ?? null,
   );
 
   return {
@@ -1244,7 +1291,11 @@ export function createPairing(
     accessLevelId: opts.accessLevelId ?? null,
     tlsFingerprint: opts.tlsFingerprintSha256 ?? "",
     enrollment: opts.enrollment
-      ? { ...opts.enrollment, signIn: opts.enrollment.signIn ?? null }
+      ? {
+          ...opts.enrollment,
+          signIn: opts.enrollment.signIn ?? null,
+          signInId: opts.enrollment.signInId ?? null,
+        }
       : null,
   };
 }
@@ -1405,6 +1456,12 @@ export function getDeviceEnrollmentPublicKey(db: Db, id: DeviceId): string | nul
  * proven by signature: that is a reinstall. Everything else in the request is an
  * unproven claim, so a name collision makes a fresh suffixed row, and an install
  * id another row holds is dropped rather than taken from it.
+ *
+ * Revocation sticks: a key the owner revoked or forgot lands only through a
+ * person's approval, which restores its row and releases the key. Joining
+ * automatically never clears `revoked_at`; the gateway already holds such a
+ * request, and this refuses one that was approved automatically as the owner
+ * revoked the device.
  */
 function writeEnrolledDevice(
   db: Db,
@@ -1413,6 +1470,15 @@ function writeEnrolledDevice(
   input: { capabilities: DeviceCapability; onlineDeviceIds?: readonly DeviceId[] },
 ): { device: DeviceRecord; replacedDeviceId?: DeviceId } {
   const candidate = findDeviceByEnrollmentPublicKey(db, pending.kind, enrollment.devicePublicKey);
+  if (
+    enrollment.method !== "approved" &&
+    ((candidate && candidate.revokedAt !== null) ||
+      isRevokedDeviceKey(db, enrollment.devicePublicKey))
+  ) {
+    throw new DevicePairingConflict(
+      "This device was revoked. It can join again once the gateway's owner approves it.",
+    );
+  }
   if (candidate && input.onlineDeviceIds?.includes(candidate.id)) {
     throw new DevicePairingConflict(
       `This ${candidate.kind} device ("${candidate.name}") is currently online. Disconnect or revoke it before pairing it again.`,
@@ -1442,9 +1508,20 @@ function writeEnrolledDevice(
       });
   db.prepare(
     `UPDATE devices
-        SET enrollment_public_key = ?, enrollment_method = ?, enrollment_sign_in = ?, enrolled_at = ?
+        SET enrollment_public_key = ?, enrollment_method = ?, enrollment_sign_in = ?,
+            enrollment_sign_in_id = ?, enrolled_at = ?
       WHERE id = ?`,
-  ).run(enrollment.devicePublicKey, enrollment.method, enrollment.signIn ?? null, now(), device.id);
+  ).run(
+    enrollment.devicePublicKey,
+    enrollment.method,
+    enrollment.signIn ?? null,
+    enrollment.signInId ?? null,
+    now(),
+    device.id,
+  );
+  db.prepare("DELETE FROM revoked_device_keys WHERE public_key = ?").run(
+    enrollment.devicePublicKey,
+  );
   return { device, ...(candidate ? { replacedDeviceId: candidate.id } : {}) };
 }
 
@@ -1728,9 +1805,10 @@ export function peekPairing(db: Db, pairingCode: string): PendingPairing | null 
         enrollment_public_key: string | null;
         enrollment_method: string | null;
         enrollment_sign_in: string | null;
+        enrollment_sign_in_id: string | null;
       }
     >(
-      "SELECT pairing_code, name, kind, scopes, created_at, expires_at, self_emails, self_phones, repair_device_id, access_level_id, enrollment_public_key, enrollment_method, enrollment_sign_in FROM device_pairings WHERE pairing_code = ?",
+      "SELECT pairing_code, name, kind, scopes, created_at, expires_at, self_emails, self_phones, repair_device_id, access_level_id, enrollment_public_key, enrollment_method, enrollment_sign_in, enrollment_sign_in_id FROM device_pairings WHERE pairing_code = ?",
     )
     .get(pairingCode);
 
@@ -1755,6 +1833,7 @@ export function peekPairing(db: Db, pairingCode: string): PendingPairing | null 
         ? {
             method: row.enrollment_method as DeviceEnrollmentMethod,
             signIn: row.enrollment_sign_in as DeviceEnrollmentSignIn | null,
+            signInId: row.enrollment_sign_in_id,
             devicePublicKey: row.enrollment_public_key,
           }
         : null,

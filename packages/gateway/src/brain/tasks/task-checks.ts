@@ -23,6 +23,7 @@ import { askScore } from "../decision-call.js";
 import { captureOwnerDecisionPayload, type DecisionPayloadCapture } from "../decision-payload.js";
 import { taskSubjectText } from "../storage/interest.js";
 import type { DecisionCapability, DecisionQuestion, Logger } from "@omnesis/core";
+import type { BrainThresholds } from "../config.js";
 import type { CognitionDecisionRecord, DecisionVerdict } from "../storage/decisions.js";
 import type { InterestLookup } from "../interest/engine.js";
 import type { OwnerInterest } from "../interest/lookup.js";
@@ -32,9 +33,7 @@ export const TASK_CHECK_SPEND_MECHANISM = "task-check";
 export const TASK_CHECK_RUBRIC_VERSION = "task-check-v2";
 
 const SAME_TASK_QUESTION_ID = "same_task";
-const SAME_TASK_THRESHOLD = 2;
 const NEW_NOTE_QUESTION_ID = "adds_new";
-const NEW_NOTE_THRESHOLD = 1;
 
 /** The task's latest notes a new note is compared with. */
 export const TASK_NOTE_HISTORY = 8;
@@ -43,7 +42,7 @@ export const TASK_NOTE_HISTORY = 8;
 const TIMEOUT_MS = 15_000;
 const MAX_TEXT = 2_000;
 
-const SAME_TASK_QUESTIONS: Readonly<Record<string, DecisionQuestion>> = {
+export const SAME_TASK_QUESTIONS: Readonly<Record<string, DecisionQuestion>> = {
   [SAME_TASK_QUESTION_ID]: {
     type: "score",
     instructions:
@@ -57,7 +56,7 @@ const SAME_TASK_QUESTIONS: Readonly<Record<string, DecisionQuestion>> = {
   },
 };
 
-const NEW_NOTE_QUESTIONS: Readonly<Record<string, DecisionQuestion>> = {
+export const NEW_NOTE_QUESTIONS: Readonly<Record<string, DecisionQuestion>> = {
   [NEW_NOTE_QUESTION_ID]: {
     type: "score",
     instructions:
@@ -78,6 +77,8 @@ export type SameTaskVerdict = "same" | "different" | "unavailable" | "unchecked"
 interface TaskChecksDeps {
   /** The live decision backend, or null when the capability is absent. */
   getDecision: () => DecisionCapability | null;
+  /** The cut-offs (`brain.thresholds.sameTask` and `taskNoteNew`), read per check. */
+  getThresholds: () => Pick<BrainThresholds, "sameTask" | "taskNoteNew">;
   recordDecision: (record: CognitionDecisionRecord) => Promise<void>;
   recordSpend: (modelId: string, inputTokens: number) => Promise<void>;
   /**
@@ -144,7 +145,7 @@ export class TaskChecks {
       },
       SAME_TASK_QUESTIONS,
       SAME_TASK_QUESTION_ID,
-      SAME_TASK_THRESHOLD,
+      this.deps.getThresholds().sameTask,
       signal,
     );
     return verdict === "pass" ? "same" : verdict === "skip" ? "different" : "unavailable";
@@ -169,7 +170,7 @@ export class TaskChecks {
       },
       NEW_NOTE_QUESTIONS,
       NEW_NOTE_QUESTION_ID,
-      NEW_NOTE_THRESHOLD,
+      this.deps.getThresholds().taskNoteNew,
       signal,
     );
     return verdict !== "skip";

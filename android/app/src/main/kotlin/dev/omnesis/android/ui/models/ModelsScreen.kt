@@ -79,6 +79,7 @@ import dev.omnesis.android.designsystem.theme.OmSpacing
 import dev.omnesis.android.designsystem.theme.OmTheme
 import dev.omnesis.android.designsystem.theme.OmnesisTheme
 import dev.omnesis.android.transport.dto.ActiveDownload
+import dev.omnesis.android.transport.dto.BackendConfig
 import dev.omnesis.android.transport.dto.BackendStatus
 import dev.omnesis.android.transport.dto.CapabilityMeta
 import dev.omnesis.android.transport.dto.CatalogEntry
@@ -107,6 +108,7 @@ fun ModelsScreen(
     onOpenSettings: () -> Unit = {},
     onOpenBackends: () -> Unit = {},
     vm: ModelsViewModel = hiltViewModel(),
+    decisionVm: DecisionSetupViewModel = hiltViewModel(),
 ) {
     BackHandler(onBack = onBack)
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -128,6 +130,18 @@ fun ModelsScreen(
     val behaviorError by vm.behaviorError.collectAsStateWithLifecycle()
     val behaviorStatus by vm.behaviorStatus.collectAsStateWithLifecycle()
     val behaviorEpoch by vm.behaviorEpoch.collectAsStateWithLifecycle()
+    val decision by decisionVm.state.collectAsStateWithLifecycle()
+    LaunchedEffect(decisionVm) { decisionVm.changes.collect { vm.refresh() } }
+    val decisionActions = remember(decisionVm, vm) {
+        DecisionActions(
+            onOpened = decisionVm::opened,
+            onSave = decisionVm::save,
+            onVerify = decisionVm::verify,
+            onProbe = decisionVm::probe,
+            onRemove = decisionVm::remove,
+            onClear = { vm.clear(DecisionSetup.ROLE) },
+        )
+    }
     ProviderLogos(logos) { ModelsContent(
         state = state,
         connection = connection,
@@ -154,6 +168,8 @@ fun ModelsScreen(
         behaviorStatus = behaviorStatus?.takeIf { it.role == picker }?.text,
         behaviorEpoch = behaviorEpoch,
         onDismissNotice = vm::dismissNotice,
+        decision = decision,
+        decisionActions = decisionActions,
     ) }
 }
 
@@ -185,15 +201,18 @@ fun ModelsContent(
     onInstall: (String) -> Unit = {},
     onCancelDownload: (String) -> Unit = {},
     onUninstall: (String) -> Unit = {},
-    onAddBackend: (String, String, String?, String?) -> Unit = { _, _, _, _ -> },
+    onAddBackend: (String, BackendConfig) -> Unit = { _, _ -> },
     onSaveBehavior: (String, String, ModelBehaviorValues) -> Unit = { _, _, _ -> },
     onBudgetBehavior: (String, String, ModelBehaviorValues?) -> Unit = { _, _, _ -> },
     behaviorError: String? = null,
     behaviorStatus: String? = null,
     behaviorEpoch: Int = 0,
     onDismissNotice: () -> Unit = {},
+    decision: DecisionUiState = DecisionUiState(),
+    decisionActions: DecisionActions = DecisionActions(),
 ) {
     val c = OmTheme.colors
+    var decisionOpen by remember { mutableStateOf(false) }
     Scaffold(
         topBar = {
             CenterAlignedTopAppBar(
@@ -231,6 +250,10 @@ fun ModelsContent(
                     busy = busy,
                     onOpenBackends = onOpenBackends,
                     onOpenPicker = onOpenPicker,
+                    onOpenDecision = {
+                        decisionOpen = true
+                        decisionActions.onOpened()
+                    },
                     onDismissNotice = onDismissNotice,
                 )
             }
@@ -261,6 +284,22 @@ fun ModelsContent(
             onDismiss = onClosePicker,
         )
     }
+
+    val decisionCap = overview?.let { o -> o.capabilities.firstOrNull { DecisionSetup.isConfigurable(it, o) } }
+    if (decisionOpen && overview != null && decisionCap != null) {
+        DecisionSetupSheet(
+            cap = decisionCap,
+            overview = overview,
+            ui = decision,
+            actions = decisionActions.copy(
+                onClear = {
+                    decisionOpen = false
+                    decisionActions.onClear()
+                },
+            ),
+            onDismiss = { decisionOpen = false },
+        )
+    }
 }
 
 @Composable
@@ -270,6 +309,7 @@ private fun CapabilityList(
     busy: Boolean,
     onOpenBackends: () -> Unit,
     onOpenPicker: (String) -> Unit,
+    onOpenDecision: () -> Unit,
     onDismissNotice: () -> Unit,
 ) {
     Column(
@@ -305,7 +345,11 @@ private fun CapabilityList(
                         .takeIf { canEditBehavior },
                     state = if (warning != null) ModelManagement.CapabilityState.WARN else ModelManagement.state(overview.inference.assignments[cap.role]),
                     reason = overview.inference.assignments[cap.role]?.reason,
-                    onTap = { onOpenPicker(cap.role) }.takeIf { cap.configurableOnDevice },
+                    onTap = when {
+                        cap.configurableOnDevice -> ({ onOpenPicker(cap.role) })
+                        DecisionSetup.isConfigurable(cap, overview) -> onOpenDecision
+                        else -> null
+                    },
                     disabled = busy,
                 )
             }
@@ -455,7 +499,7 @@ private fun ModelPickerSheet(
     onInstall: (String) -> Unit,
     onCancelDownload: (String) -> Unit,
     onUninstall: (String) -> Unit,
-    onAddBackend: (String, String, String?, String?) -> Unit,
+    onAddBackend: (String, BackendConfig) -> Unit,
     onSaveBehavior: (String, ModelBehaviorValues) -> Unit,
     onBudgetBehavior: (String, ModelBehaviorValues?) -> Unit = { _, _ -> },
     behaviorError: String? = null,
@@ -516,7 +560,7 @@ fun ModelPickerContent(
     onInstall: (String) -> Unit = {},
     onCancelDownload: (String) -> Unit = {},
     onUninstall: (String) -> Unit = {},
-    onAddBackend: (String, String, String?, String?) -> Unit = { _, _, _, _ -> },
+    onAddBackend: (String, BackendConfig) -> Unit = { _, _ -> },
     onSaveBehavior: (String, ModelBehaviorValues) -> Unit = { _, _ -> },
     onBudgetBehavior: (String, ModelBehaviorValues?) -> Unit = { _, _ -> },
     behaviorError: String? = null,
@@ -640,10 +684,11 @@ fun ModelPickerContent(
 
     if (showAddSheet) {
         AddBackendSheet(
+            // A model role is served by an OpenAI-compatible API: `presets` holds only providers with one.
             presets = overview.presets,
-            onAdd = { name, url, apiKey, prefix ->
+            onAdd = { name, config ->
                 showAddSheet = false
-                onAddBackend(name, url, apiKey, prefix)
+                onAddBackend(name, config)
             },
             onDismiss = { showAddSheet = false },
         )

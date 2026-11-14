@@ -20,7 +20,12 @@ export function cloudProviderLabel(providerId, fallbackLabel) {
   return CLOUD_PROVIDER_LABELS[providerId] ?? fallbackLabel;
 }
 
-export function remoteAssignmentConsent(overview, backendKey, modelName) {
+/**
+ * The cloud-inference question to ask before assigning `backendKey/modelName`
+ * to `role`, or null when none is needed. A backend's decision API answers
+ * the Decision model, so for that role its location decides.
+ */
+export function remoteAssignmentConsent(overview, backendKey, modelName, role = null) {
   if (overview.inference.allowRemoteInference === true) return null;
   // TypeSafe at an endpoint of the operator's own: on this host it needs no
   // consent, elsewhere the consent names that endpoint rather than TypeSafe.
@@ -30,9 +35,23 @@ export function remoteAssignmentConsent(overview, backendKey, modelName) {
   }
   const builtIn = cloudProviderLabel(backendKey, null);
   if (builtIn) return { modelName, providerLabel: builtIn };
-  const backend = overview.inference.backends[backendKey];
+  const backend = overview.inference.backends?.[backendKey];
+  if (role === "decision" && backend?.decision) {
+    return backend.decision.onHost ? null : { modelName, providerLabel: backend.decision.url };
+  }
   if (backend?.url && isLoopbackInferenceUrl(backend.url)) return null;
   return { modelName, providerLabel: backend?.url ?? backendKey };
+}
+
+/**
+ * The cloud-inference question to ask before saving a backend that will
+ * reach `urls`, or null when cloud inference is allowed or every URL is on
+ * this host. `providerLabel` names the provider; else the first off-host URL.
+ */
+export function endpointConsent(overview, urls, { providerLabel, modelName } = {}) {
+  if (overview.inference.allowRemoteInference === true) return null;
+  const offHost = urls.filter(Boolean).find((url) => !isLoopbackInferenceUrl(url));
+  return offHost ? { modelName, providerLabel: providerLabel ?? offHost } : null;
 }
 
 export function inferenceAssignmentPatch(role, assignment, enableRemote = false) {

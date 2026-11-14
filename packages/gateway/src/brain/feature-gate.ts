@@ -474,6 +474,7 @@ export async function bootBriefs(deps: {
       const taskChecks = rq.getDecision
         ? new TaskChecks({
             getDecision: () => (labFeatureEnabled(rq.db, "tasks") ? rq.getDecision!() : null),
+            getThresholds: () => rq.getSettings().thresholds,
             recordDecision: (record) => deps.writeGate.recordCognitionDecision(record),
             capturePayload: (input) => taskCheckPayloadCapture(rq.db, input),
             recordSpend: (modelId, inputTokens) =>
@@ -495,6 +496,7 @@ export async function bootBriefs(deps: {
           ? new TaskProposeGate({
               getDecision: () => (labFeatureEnabled(rq.db, "tasks") ? rq.getDecision!() : null),
               getMode: () => rq.getSettings().tasks.proposeGate,
+              getThresholds: () => rq.getSettings().thresholds,
               interest: rq.interest,
               recordDecision: (record) => deps.writeGate.recordCognitionDecision(record),
               // The loop's node does not exist yet, so the subjects are its documents.
@@ -543,6 +545,7 @@ export async function bootBriefs(deps: {
               recordCheck: new RecordCheck({
                 getDecision: rq.getDecision,
                 getMode: () => rq.getSettings().annotations.recordCheck,
+                getThresholds: () => rq.getSettings().thresholds,
                 recordDecision: (record) => deps.writeGate.recordCognitionDecision(record),
                 recordSpend: (modelId, inputTokens) =>
                   recordDecisionSpend(
@@ -686,6 +689,7 @@ export async function bootBriefs(deps: {
               worthGate: new WorthGate({
                 db: rq.db,
                 getDecision: rq.getDecision,
+                getThreshold: () => rq.getSettings().thresholds.worthGate,
                 recordDecision: (record) => deps.writeGate.recordCognitionDecision(record),
                 recordSpend: (modelId, inputTokens) =>
                   recordDecisionSpend(

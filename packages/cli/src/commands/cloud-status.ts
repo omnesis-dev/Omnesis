@@ -14,6 +14,8 @@ export type CloudStatus = Partial<Omit<CloudRelayManagementStatus, "deviceEnroll
   deviceEnrollment?: {
     policy?: string;
     trustedSignIns?: { type?: string; id?: string; addedAt?: number; source?: string }[];
+    /** Absent from a gateway that predates confirming sign-ins on its own page. */
+    confirmedSignIns?: { type?: string; id?: string; at?: number; via?: string }[];
   };
 };
 
@@ -66,14 +68,60 @@ const SIGN_IN_SOURCES: Record<string, string> = {
     "already on the account when a passkey trusted here was added, signed for by that passkey",
 };
 
-/** One line per trusted sign-in. The id is what `omnesis cloud remove-sign-in` takes. */
+const CONFIRMED_VIA: Record<string, string> = {
+  "gateway-origin": "confirmed on this gateway's own page",
+  "android-app": "confirmed in the Android app",
+  "native-google-approval": "confirmed when a device that signed in in the app was approved",
+  "admin-app-google": "confirmed from an Omnesis app paired with this gateway",
+};
+
+/**
+ * One line per trusted sign-in, and per sign-in the owner confirmed on this gateway without it
+ * being pinned. The id is what `omnesis cloud remove-sign-in` takes.
+ */
 export function trustedSignInLines(status: CloudStatus): string[] {
-  return (status.deviceEnrollment?.trustedSignIns ?? []).map((signIn) => {
-    const source = Object.hasOwn(SIGN_IN_SOURCES, signIn.source ?? "")
-      ? SIGN_IN_SOURCES[signIn.source!]
-      : "source not recorded";
-    return `${plain(signIn.id)}  ${signIn.type === "passkey" ? "passkey" : "Google account"}, ${source}, added ${iso(signIn.addedAt)}`;
-  });
+  const enrollment = status.deviceEnrollment;
+  const confirmations = enrollment?.confirmedSignIns;
+  const confirmation = (signIn: { type?: string; id?: string }) => {
+    if (!confirmations) return "";
+    const found = confirmations.find(
+      (value) => value.type === signIn.type && value.id === signIn.id,
+    );
+    if (!found) return ", not confirmed on this gateway";
+    return `, ${Object.hasOwn(CONFIRMED_VIA, found.via ?? "") ? CONFIRMED_VIA[found.via!] : "confirmed"} ${iso(found.at)}`;
+  };
+  const kind = (type: string | undefined) => (type === "passkey" ? "passkey" : "Google account");
+  const pinned = enrollment?.trustedSignIns ?? [];
+  return [
+    ...pinned.map((signIn) => {
+      const source = Object.hasOwn(SIGN_IN_SOURCES, signIn.source ?? "")
+        ? SIGN_IN_SOURCES[signIn.source!]
+        : "source not recorded";
+      return `${plain(signIn.id)}  ${kind(signIn.type)}, ${source}, added ${iso(signIn.addedAt)}${confirmation(signIn)}`;
+    }),
+    ...(confirmations ?? [])
+      .filter(
+        (value) => !pinned.some((signIn) => signIn.type === value.type && signIn.id === value.id),
+      )
+      .map((value) => `${plain(value.id)}  ${kind(value.type)}${confirmation(value)}`),
+  ];
+}
+
+/** The incident hold and each certificate behind it, as `omnesis cloud incidents list` prints them. */
+export function incidentLines(status: CloudStatus): string[] {
+  const hold = status.incidentHold;
+  const incidents = status.certificateMonitor?.incidents ?? [];
+  return [
+    ...(hold
+      ? [
+          `New devices are held for approval since ${iso(hold.since)}: ${hold.certificates?.length ?? 0} unexpected certificates. Run \`omnesis cloud incidents ack\` on the gateway host once you have looked into them.`,
+        ]
+      : []),
+    ...incidents.map(
+      (incident) =>
+        `name ${plain(incident.hostname)}, public key ${plain(incident.spkiFingerprint)}, certificate ${plain(incident.certificateFingerprint)}, issuer ${plain(incident.issuer)}, serial ${plain(incident.serial)}, valid ${iso(incident.validFrom)} to ${iso(incident.validTo)}, seen ${iso(incident.observedAt)}, log entry ${plain(incident.providerEntryId)}${hold?.certificates?.includes(incident.certificateFingerprint) ? ", holding new devices" : ""}`,
+    ),
+  ];
 }
 
 /** Every error code the gateway reports, with where it came from. */
@@ -96,6 +144,7 @@ function errors(status: CloudStatus): string[] {
   if (status.certificate?.state === "expiring") codes.push("certificate-expiring (certificate)");
   if ((status.certificateMonitor?.incidents?.length ?? 0) > 0)
     codes.push("unexpected-certificate (certificate monitor)");
+  if (status.incidentHold) codes.push("incident-hold (new devices)");
   return codes;
 }
 
@@ -146,6 +195,14 @@ export function formatCloudStatus(status: CloudStatus, version?: string): string
           ? "unlinked here, account not updated yet"
           : "not linked",
     ],
+    ...(status.incidentHold
+      ? [
+          [
+            "Incident hold",
+            `since ${iso(status.incidentHold.since)}: every new device waits for approval until \`omnesis cloud incidents ack\` on the gateway host`,
+          ] as [string, string],
+        ]
+      : []),
     [
       "New devices",
       status.deviceEnrollment?.policy === "ask"

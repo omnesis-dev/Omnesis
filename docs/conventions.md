@@ -530,7 +530,12 @@ IN (…)`, `LENGTH(content)`) does work proportional to the table, not to the
 batch, however small the batch is. Resolve the batch to concrete ids first and
 read through an index. Where the plan is load-bearing, pin it (`CROSS JOIN`,
 `INDEXED BY`) and assert it in a test: both shapes return the same rows, and
-only the plan says what it cost.
+only the plan says what it cost. A column stored after a document's `content`
+(`metadata` and every later one) costs a walk through that content's overflow
+pages; when a query needs only such a value for many rows, keep it in an
+index on an expression. SQLite reads an expression index as covering only
+when the query names it with `INDEXED BY` and does not also group by the
+expression in the same `SELECT` (`PERSON_CHANNEL_COUNTS_SQL`).
 
 The gateway can keep `sqlite_stat1` current (`data/planner-statistics.ts`, off
 unless `gateway.backfill.plannerStatistics.interval` is set): `PRAGMA optimize`

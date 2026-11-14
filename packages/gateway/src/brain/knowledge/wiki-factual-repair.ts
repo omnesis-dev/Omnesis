@@ -4,7 +4,7 @@
 import { isDeepStrictEqual } from "node:util";
 import { marked } from "marked";
 import { decisionPayloadErasureGeneration } from "../decision-payload.js";
-import { recordCheckPolicyKey } from "../record-check/rubric.js";
+import { isEnforcedRecordCheckPolicy } from "../record-check/rubric.js";
 import { WIKI_REPAIR_RUBRIC_VERSION } from "../record-check/wiki-rubric.js";
 import { parseClaimMarkup } from "./claims.js";
 import { getKnowledgeClaims, getKnowledgeDependencies, getKnowledgeNode } from "./storage-read.js";
@@ -239,7 +239,7 @@ export function assertWikiRepairAssessment(
     decision.rubric_version !== WIKI_REPAIR_RUBRIC_VERSION ||
     decision.enforced !== 1 ||
     decision.verdict !== "pass" ||
-    receipt.policy !== recordCheckPolicyKey("enforce", decision.requested_model_id) ||
+    !isEnforcedRecordCheckPolicy(receipt.policy, decision.requested_model_id) ||
     receipt.rubricVersion !== WIKI_REPAIR_RUBRIC_VERSION ||
     !receipt.decisionId ||
     !receipt.policy ||

@@ -24,8 +24,10 @@ import {
   portalCsrfToken,
   SESSION_COOKIE_BASE,
 } from "../cookies.js";
+import { isRelayedRequest } from "../client-ip.js";
 import { clientIp, isLoopbackRequest } from "./admin/internals.js";
-import type { AuthContext, RouteApp } from "./types.js";
+import type { Context } from "hono";
+import type { AppEnv, AuthContext, RouteApp } from "./types.js";
 import type { SourceService } from "../services/SourceService.js";
 import type { AuthService } from "../services/AuthService.js";
 import type Database from "better-sqlite3";
@@ -284,8 +286,16 @@ export function mountPortalRoutes(app: RouteApp, deps: PortalRoutesDeps): void {
     return c.redirect(`/portal/${query}`);
   });
 
-  app.get("/portal/source-meta.json", scope.public(), (c) => c.json(sourceService.getMeta()));
-  app.get("/portal/icons.json", scope.public(), (c) => c.json(sourceService.getMeta()));
+  // Public so a client can draw icons from its first paint. Per-source keys
+  // name accounts (`<type>:<address>`), so a caller that reached a relayed
+  // gateway from the open internet without signing in is shown only the
+  // families' own entries. The portal asks again once signed in.
+  const sourceMeta = (c: Context<AppEnv>) =>
+    c.get("auth") || !isRelayedRequest((name) => c.req.header(name), c.env)
+      ? sourceService.getMeta()
+      : sourceService.getFamilyMeta();
+  app.get("/portal/source-meta.json", scope.public(), (c) => c.json(sourceMeta(c)));
+  app.get("/portal/icons.json", scope.public(), (c) => c.json(sourceMeta(c)));
 
   app.get("/portal/widget-renderers.json", scope.public(), (c) => {
     const meta: Record<string, string> = {};

@@ -352,7 +352,7 @@ describe("a downgrade across migrations that leave cursors alone", () => {
  */
 describe("the cursor-compatibility version", () => {
   /** Every migration through this version has been decided on. */
-  const REVIEWED_THROUGH = 215;
+  const REVIEWED_THROUGH = 217;
   const FLAGGED = [131, 133, 134, 139, 141, 146, 178];
 
   test("every migration has been decided on", () => {
