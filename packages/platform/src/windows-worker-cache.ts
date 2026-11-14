@@ -133,7 +133,7 @@ export function windowsWorkerInvocation(
           .exec(result.stderr)?.[0]
           ?.trim();
         const compilation = result.stderr
-          .match(/^OMNESIS_NATIVE_COMPILE:CS[0-9]+:[0-9]+:[0-9]+\r?$/gmu)
+          .match(/^OMNESIS_NATIVE_COMPILE:CS[0-9]{4,6}:[0-9]{1,10}:[0-9]{1,10}\r?$/gmu)
           ?.slice(0, 5)
           .map((line) => line.trim())
           .join(", ");

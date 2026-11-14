@@ -84,14 +84,14 @@ describe("Windows native worker cache boundary", () => {
         signal: null,
         stdout: Buffer.alloc(0),
         stderr:
-          "invented-private-input\nOMNESIS_NATIVE_COMPILE:CS1002:17:3\nEPRIVATE:cache-owner:5",
+          "invented-private-input\nOMNESIS_NATIVE_COMPILE:CS1002:17:3\n" +
+          `OMNESIS_NATIVE_COMPILE:CS1002:${"1".repeat(10000)}:3\n` +
+          "EPRIVATE:cache-owner:5",
       })),
     ).toThrow("EPRIVATE:cache-owner:5; OMNESIS_NATIVE_COMPILE:CS1002:17:3");
-    try {
-      windowsWorkerInvocation("job", verified);
-    } catch (error) {
-      expect(String(error)).not.toContain("invented-private-input");
-    }
+    expect(() => windowsWorkerInvocation("job", verified)).toThrow(
+      /^Cannot initialize the protected Windows native worker \(EPRIVATE:cache-owner:5; OMNESIS_NATIVE_COMPILE:CS1002:17:3\)$/u,
+    );
   });
   it("frames exact public sources and verifies once before reusing the generation", async () => {
     const { windowsWorkerInvocation } = await import("./windows-worker-cache.js");
