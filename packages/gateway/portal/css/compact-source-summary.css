@@ -80,14 +80,9 @@
 .compact-filter-value {
   overflow-wrap: anywhere;
 }
-.compact-filter-identifiers,
 .compact-filter-value small {
   color: var(--text-secondary);
   font-size: 11px;
-}
-.compact-filter-identifiers {
-  display: inline;
-  margin-left: 6px;
 }
 .compact-filter-value small {
   display: block;
@@ -236,35 +231,10 @@ tr.is-removed .compact-filter-diff {
   padding: 3px 8px;
   font-size: 12px;
 }
-.compact-setting-values {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px 20px;
-  margin: 0;
-}
-.compact-setting-values > div {
-  display: flex;
-  gap: 6px;
-  align-items: baseline;
-}
-.compact-setting-values dt {
-  color: var(--text-secondary);
-}
-.compact-setting-values dd {
+/* A setting's value in one line: "Answer: Blocked / Direct: Blocked", "Privacy review · Everyday privacy". */
+.compact-setting-value {
   margin: 0;
   font-weight: 500;
-}
-.compact-release-summary {
-  display: flex;
-  align-items: baseline;
-  flex-wrap: wrap;
-  gap: 6px 12px;
-}
-.compact-release-summary > strong {
-  font-weight: 500;
-}
-.compact-release-summary > span {
-  color: var(--text-secondary);
 }
 .compact-topic-count {
   margin: 0 !important;
@@ -303,21 +273,14 @@ tr.is-removed .compact-filter-diff {
   font-size: 13px;
   font-weight: 500;
 }
-.compact-unchanged-settings .compact-setting-values dd,
-.compact-unchanged-settings .compact-release-summary > strong {
+.compact-unchanged-settings .compact-setting-value {
   color: var(--text-secondary);
+  font-weight: 400;
 }
 .compact-retained-account {
   display: grid;
   gap: 2px;
   margin-top: 5px;
-}
-.guided-unchanged-accounts {
-  margin: 0;
-  padding: 8px 14px;
-  border-top: 1px solid var(--border-light);
-  color: var(--text-secondary);
-  font-size: 12px;
 }
 .guided-choice-row {
   display: flex;
@@ -388,10 +351,6 @@ tr.is-removed .compact-filter-diff {
   }
   .compact-filter-kind {
     width: 72px;
-  }
-  .compact-filter-identifiers {
-    display: block;
-    margin-left: 0;
   }
   .compact-source-summary .compact-policy-summary {
     padding-left: 0;

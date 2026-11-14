@@ -48,9 +48,6 @@ p > .source-filter-spinner,
 .source-filter-unchecked p {
   margin: 0;
 }
-.source-filter-unchecked .source-filter-unchecked-detail {
-  color: var(--text-secondary);
-}
 .source-filter-search {
   display: grid;
   font-size: 13px;
@@ -125,20 +122,6 @@ p > .source-filter-spinner,
 }
 .source-filter-typed legend {
   font-size: 12px;
-}
-.source-filter-proposals {
-  display: grid;
-  gap: 6px;
-}
-.source-filter-proposals > div {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  font-size: 12px;
-}
-.source-filter-proposals span {
-  overflow-wrap: anywhere;
 }
 .source-filter-actions {
   display: flex;
@@ -449,4 +432,55 @@ p > .source-filter-spinner,
   .guided-filter-editor select {
     font-size: 16px;
   }
+}
+
+/* A field a filter cannot use yet: why, in the gateway's words, and the one thing to do about it. */
+.source-filter-field-state {
+  display: grid;
+  gap: 5px;
+  font-size: 13px;
+}
+.source-filter-field-state > strong {
+  font-weight: 400;
+}
+.source-filter-state {
+  display: grid;
+  justify-items: start;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-tertiary);
+}
+.source-filter-state p {
+  color: var(--text-primary);
+}
+.source-filter-progress {
+  width: 100%;
+  height: 6px;
+  appearance: none;
+  border: 0;
+  border-radius: 3px;
+  overflow: hidden;
+  background: var(--bg-primary);
+  color: var(--accent);
+}
+.source-filter-progress::-webkit-progress-bar {
+  background: var(--bg-primary);
+}
+.source-filter-progress::-webkit-progress-value {
+  background: var(--accent);
+  border-radius: 3px;
+}
+.source-filter-progress::-moz-progress-bar {
+  background: var(--accent);
+  border-radius: 3px;
+}
+.source-filter-select-location > span {
+  flex: 1;
+}
+.source-filter-select-location > small {
+  color: var(--text-secondary);
+  font-size: 11px;
+  white-space: nowrap;
 }

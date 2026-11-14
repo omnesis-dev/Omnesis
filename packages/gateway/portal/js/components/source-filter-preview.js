@@ -5,34 +5,45 @@ import { html } from "htm/preact";
 import { useEffect, useRef, useState } from "preact/hooks";
 import { readFilterPreview } from "./source-filter-requests.js";
 import { useScopeLabelGeneration } from "./source-filter-labels.js";
-import { CountingRecords, RETRY_COUNTS_LABEL } from "./source-filter-table.js";
-import { unreadyKinds } from "./source-filter-state.js";
+import { CountingRecords } from "./source-filter-table.js";
+import { filterApiError } from "./source-filter-fields.js";
 
-export function filterApiError(error, fallback) {
-  return error?.serverMessage || fallback;
-}
+/** How long to wait before asking again for counts, when the gateway names no time. */
+const COUNT_POLL_MS = 2000;
 
-/** How long to wait before asking again for counts that are still being worked out. */
-export const COUNT_POLL_MS = 2000;
+/** What a failed count reads, wherever counts are shown. */
+export const COUNTS_UNAVAILABLE = "Counts could not be loaded.";
 
+/** The button that asks again for counts that could not be loaded. */
+export const RETRY_COUNTS_LABEL = "Try again";
+
+/**
+ * The whole-account counts of `policy`. While the gateway is still counting
+ * it answers `pending`, and the same draft is sent again after the time it
+ * names; `pending` stays true until real counts arrive. Counts never decide
+ * whether a filter can be applied or saved.
+ */
 export function useSourceFilterPreview(sourceId, policy) {
   const [attempt, setAttempt] = useState(0);
   const generation = useScopeLabelGeneration();
-  const identity = JSON.stringify([generation, sourceId, policy, attempt]);
+  const identity = JSON.stringify([generation, sourceId, policy]);
   const current = useRef(identity);
   current.current = identity;
   const [state, setState] = useState({ identity, pending: Boolean(policy), data: null, error: "" });
   useEffect(() => {
     const controller = new AbortController();
-    setState({ identity, pending: Boolean(policy), data: null, error: "" });
+    setState((old) =>
+      old.identity === identity && old.data
+        ? old
+        : { identity, pending: Boolean(policy), data: null, error: "" },
+    );
     if (policy)
       readFilterPreview(sourceId, policy, controller.signal)
         .then((data) => {
-          if (
-            !controller.signal.aborted &&
-            current.current === identity &&
-            data.sourceId === sourceId
-          )
+          if (controller.signal.aborted || current.current !== identity) return;
+          if (data?.status === "pending")
+            setState({ identity, pending: true, data: null, error: "", retryAfterMs: data.retryAfterMs });
+          else if (data?.sourceId === sourceId)
             setState({ identity, pending: false, data, error: "" });
         })
         .catch((error) => {
@@ -41,10 +52,7 @@ export function useSourceFilterPreview(sourceId, policy) {
               identity,
               pending: false,
               data: null,
-              error: filterApiError(
-                error,
-                "The filter preview is unavailable. Your selection is retained.",
-              ),
+              error: filterApiError(error, COUNTS_UNAVAILABLE),
             });
         });
     return () => controller.abort();
@@ -53,50 +61,52 @@ export function useSourceFilterPreview(sourceId, policy) {
     state.identity === identity
       ? state
       : { identity, pending: Boolean(policy), data: null, error: "" };
-  // Counts that are still being worked out are asked for again until they arrive.
-  const counting = unreadyKinds(policy, currentState.data?.readiness).length > 0;
+  const waiting = currentState.pending && Number.isFinite(currentState.retryAfterMs);
   useEffect(() => {
-    if (!counting) return;
-    const timer = setTimeout(() => setAttempt((value) => value + 1), COUNT_POLL_MS);
+    if (!waiting) return;
+    const timer = setTimeout(
+      () => setAttempt((value) => value + 1),
+      Math.max(250, currentState.retryAfterMs || COUNT_POLL_MS),
+    );
     return () => clearTimeout(timer);
-  }, [identity, counting]);
+  }, [identity, waiting, currentState.retryAfterMs]);
   return { ...currentState, retry: () => setAttempt((value) => value + 1) };
 }
 
-const COUNTING = html`<p class="source-filter-pending" role="status"><${CountingRecords} /></p>`;
+/** Counts that could not be loaded, with the one way to ask again. */
+export function CountsUnavailable({ onRetry }) {
+  return html`<span class="source-filter-count-error" role="status"
+    ><span>${COUNTS_UNAVAILABLE}</span
+    ><button type="button" class="btn-secondary" onClick=${onRetry}>${RETRY_COUNTS_LABEL}</button></span
+  >`;
+}
 
 /**
- * Records a filter cannot be compared with yet: the gateway does not have, or
- * is still updating, the details a filter on their source matches them
- * on, so they stay hidden until those details arrive.
+ * The gateway's sentences about records a filter keeps hidden whatever it
+ * says: those too old to carry what the filter needs, and those whose detail
+ * is unknown. Each appears only when its count is not zero.
  */
-function uncheckedLine(count) {
-  return count === 1
-    ? "1 record stays hidden until its details finish syncing."
-    : `${count.toLocaleString()} records stay hidden until their details finish syncing.`;
+export function HiddenRecordLines({ data }) {
+  const lines = [data?.tooOldText, data?.unmatchedText].filter(
+    (line) => typeof line === "string" && line.trim(),
+  );
+  return lines.length
+    ? html`<div class="source-filter-unchecked">${lines.map((line) => html`<p key=${line}>${line}</p>`)}</div>`
+    : null;
 }
-const UNCHECKED_DETAIL =
-  "Omnesis doesn’t have the details it needs to check them yet. Nothing is shared by mistake while they sync.";
 
-/** The result of `policy`: how much it shares and hides, once the counts are in. */
-export function FilterPreview({ preview, policy }) {
-  if (preview.pending) return COUNTING;
-  if (preview.error)
-    return html`<div class="source-filter-count-error" role="status">
-      <p>Counts are unavailable. Your selection is retained.</p>
-      <button type="button" class="btn-secondary" onClick=${preview.retry}>${RETRY_COUNTS_LABEL}</button>
-    </div>`;
-  if (!preview.data) return null;
+/** The result of a draft filter: how much it shares and hides, and what stays hidden regardless. */
+export function FilterPreview({ preview }) {
+  if (preview.pending)
+    return html`<p class="source-filter-pending" role="status"><${CountingRecords} /></p>`;
+  if (preview.error) return html`<${CountsUnavailable} onRetry=${preview.retry} />`;
   const data = preview.data;
-  if (unreadyKinds(policy, data.readiness).length) return COUNTING;
+  if (!data) return null;
   return html`<section class="source-filter-preview" aria-label="Filter preview">
     <div class="source-filter-counts" role="status">
       <span><strong>${data.visible.toLocaleString()}</strong> shared</span
       ><span><strong>${data.hidden.toLocaleString()}</strong> hidden</span>
     </div>
-    ${data.unknown > 0 ? html`<div class="source-filter-unchecked">
-          <p>${uncheckedLine(data.unknown)}</p>
-          <p class="source-filter-unchecked-detail">${UNCHECKED_DETAIL}</p>
-        </div>` : null}
+    <${HiddenRecordLines} data=${data} />
   </section>`;
 }

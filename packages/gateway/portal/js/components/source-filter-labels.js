@@ -44,7 +44,7 @@ export function rememberScopeLabels(sourceId, items = [], expectedGeneration = g
     const key = JSON.stringify([sourceId, scopeRefKey(item.ref)]);
     const prior = labels.get(key);
     const opaqueMissing =
-      item.missing === true && item.ref.kind !== "participant" && item.label === item.ref.id;
+      item.missing === true && item.ref.capability !== "person" && item.label === item.ref.id;
     const depth = Number.isInteger(item.depth) ? item.depth : prior?.depth;
     const value = {
       label: opaqueMissing ? (prior?.label ?? "Saved selection") : item.label,
@@ -59,49 +59,22 @@ export function rememberScopeLabels(sourceId, items = [], expectedGeneration = g
   while (labels.size > LIMIT) labels.delete(labels.keys().next().value);
   if (changed) notify();
 }
-/** What a source calls one kind of filter item: "conversation", "person", "label", "folder". */
-export function scopeKindNoun(source, kind, many = false) {
-  const noun = source?.scopes?.items?.find((item) => item.kind === kind)?.noun;
-  if (kind === "participant") return (many ? noun?.many : noun?.one) || (many ? "people" : "person");
-  return (many ? noun?.many : noun?.one) || kind;
-}
-/** The nouns a source gives the levels of a kind's tree, roots first; null when one noun names every item. */
-function scopeLevels(source, kind) {
-  const levels = source?.scopes?.items?.find((item) => item.kind === kind)?.levels;
-  return Array.isArray(levels) && levels.length ? levels : null;
-}
 /**
- * What a source calls an item `depth` levels down a kind's tree. A source that
- * names its levels has a word for each ("shelf", then "binder"), the last
- * one standing for every deeper level; any other source, and an item whose
- * depth is not known, gets the kind's own noun.
+ * The name to show for a filter entry: the one the gateway last gave it, a
+ * person's own label, or a placeholder in the field's words until a name
+ * arrives. `noun` is what the field calls one item, when the field is known.
  */
-export function scopeLevelNoun(source, kind, depth, many = false) {
-  const levels = scopeLevels(source, kind);
-  const noun =
-    levels && Number.isInteger(depth) && depth >= 0
-      ? levels[Math.min(depth, levels.length - 1)]
-      : null;
-  return (many ? noun?.many : noun?.one) || scopeKindNoun(source, kind, many);
-}
-/** What choosing an item `depth` levels down a tree also takes in, in the source's words; null when nothing lies beneath it. */
-export function scopeNestingHint(source, kind, depth) {
-  const levels = scopeLevels(source, kind);
-  if (!levels) return `Includes the ${scopeKindNoun(source, kind, true)} inside.`;
-  if (!Number.isInteger(depth) || depth < 0 || depth + 1 >= levels.length) return null;
-  return `Selecting ${levels[depth].many} includes their ${levels[depth + 1].many}.`;
-}
-export function scopeDisplayLabel(sourceId, ref, source) {
+export function scopeDisplayLabel(sourceId, ref, noun = null) {
   const saved = labels.get(JSON.stringify([sourceId, scopeRefKey(ref)]));
   if (saved) return saved;
-  if (ref.kind === "participant")
+  if (ref.capability === "person")
     return {
       label:
         ref.label ||
         ref.identifiers?.map((id) => id.value).join(" or ") ||
-        "Saved person selection",
+        (noun ? `Saved ${noun} selection` : "Saved selection"),
     };
-  return { label: `Saved ${scopeKindNoun(source, ref.kind) || "item"} selection`, unavailable: true };
+  return { label: noun ? `Saved ${noun} selection` : "Saved selection", unavailable: true };
 }
 export function clearScopeLabels() {
   generation++;

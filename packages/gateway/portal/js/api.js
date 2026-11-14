@@ -958,8 +958,28 @@ export const revokeTokenById = (id) =>
 export const getAccessOverview = (signal) =>
   request("GET", "/admin/access", { cache: "no-store", signal });
 
+/**
+ * One account's filter editor: its devices, and per filterable field the
+ * nouns, the picker, whether a filter can use it yet and its counts.
+ */
+export const getSourceFilterEditor = (sourceId, signal) =>
+  request("GET", `/admin/access/source-filters/${encodeURIComponent(sourceId)}`, { signal, cache: "no-store" });
+
+/** One page of a field's items: `{ field, q?, parentId?, device?, cursor? }`. */
 export const getSourceFilterOptions = (sourceId, query, signal) =>
   request("GET", `/admin/access/source-filters/${encodeURIComponent(sourceId)}/options`, { query, signal, cache: "no-store" });
+
+/** A typed phone number, email or domain: `{ identifier }` in the gateway's spelling, or the `{ error }` sentence to show. */
+export const checkFilterIdentifier = (type, value, signal) =>
+  request("POST", "/admin/access/source-filters/identifiers", { body: { type, value }, signal });
+
+/** The labels, folders, chats and people a filter would decide this document by, and the source version that wrote it. */
+export const getDocumentFilterDetails = (id, signal) =>
+  request("GET", `/admin/documents/${encodeURIComponent(id)}/filter-details`, { signal, cache: "no-store" });
+
+/** Every access level, its agents, and whether each can read this document through Answer and Direct, and why. */
+export const getDocumentAccess = (id, signal) =>
+  request("GET", `/admin/documents/${encodeURIComponent(id)}/access`, { signal, cache: "no-store" });
 
 export const previewSourceFilter = (sourceId, policy, signal) =>
   request("POST", `/admin/access/source-filters/${encodeURIComponent(sourceId)}/preview`, { body: { policy }, signal });

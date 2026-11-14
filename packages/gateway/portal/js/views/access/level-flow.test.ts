@@ -9,8 +9,11 @@ const api = vi.hoisted(() => ({
   createAccessLevel: vi.fn(),
   updateAccessLevel: vi.fn(),
   getAccessOverview: vi.fn(),
+  getSourceFilterEditor: vi.fn(),
   getSourceFilterOptions: vi.fn(),
   previewSourceFilter: vi.fn(),
+  checkFilterIdentifier: vi.fn(),
+  resyncSource: vi.fn(),
 }));
 vi.mock("../../api.js", () => api);
 // @ts-expect-error — Portal modules are JavaScript.
@@ -21,8 +24,24 @@ const source = {
   id: "fictional:one",
   displayName: "Invented source",
   available: true,
-  scopes: { items: [{ kind: "label", noun: { one: "label", many: "Labels" }, picker: "search" }] },
-  scopeReadiness: [{ kind: "label", ready: true }],
+  filterable: true,
+};
+const editor = {
+  sourceId: source.id,
+  sourceType: "fictional",
+  devices: [],
+  showDeviceLevel: false,
+  fields: [
+    {
+      field: "extra.labelIds",
+      capability: "membership",
+      noun: { one: "label", many: "labels" },
+      picker: "search",
+      scope: "global",
+      state: { status: "ready" },
+      counts: { status: "ready", tooOld: 0, unmatched: 0, tooOldText: null, unmatchedText: null },
+    },
+  ],
 };
 const overview = {
   sources: [source],
@@ -48,14 +67,18 @@ beforeEach(() => {
   for (const fn of Object.values(api)) fn.mockReset();
   api.createAccessLevel.mockResolvedValue({ level: { name: "Project assistant" } });
   api.updateAccessLevel.mockResolvedValue({});
+  api.getSourceFilterEditor.mockResolvedValue(editor);
   api.previewSourceFilter.mockImplementation(async (sourceId: string) => ({
+    status: "ready",
     sourceId,
     items: [],
-    readiness: source.scopeReadiness,
+    total: 6,
     visible: 4,
     hidden: 2,
-    unknown: 0,
-    samples: [],
+    tooOld: 0,
+    unmatched: 0,
+    tooOldText: null,
+    unmatchedText: null,
   }));
 });
 afterEach(() => {
@@ -208,7 +231,7 @@ test("a targeted release edit shows only its before/after delta and preserves so
   const filter = {
     sourceId: source.id,
     audience: { accessLevel: "invented-level", capability: "answer" },
-    rules: [{ action: "share", match: [{ kind: "label", id: "invented-label" }] }],
+    rules: [{ action: "share", match: [{ capability: "membership", field: "extra.labelIds", id: "invented-label" }] }],
     otherwise: "hide",
   };
   const answer = {
@@ -272,7 +295,7 @@ test("a release edit on a level whose Direct is linked to Answer changes nothing
   const filter = (capability: string) => ({
     sourceId: source.id,
     audience: { accessLevel: "invented-level", capability },
-    rules: [{ action: "hide", match: [{ kind: "label", id: "invented-label" }] }],
+    rules: [{ action: "hide", match: [{ capability: "membership", field: "extra.labelIds", id: "invented-label" }] }],
     otherwise: "share",
   });
   const sources = { mode: "allowlist", sourceIds: [source.id] };
@@ -363,7 +386,7 @@ test("adding Direct from create review visits only newly required decisions and 
   await click("Continue");
   expect(host.textContent).toContain("Ready to create this access level?");
   expect(host.querySelector(".compact-release-summary")?.textContent).toBe(
-    "Privacy reviewInvented policy",
+    "Privacy review · Invented policy",
   );
 });
 test("data change review pairs only the changed account and keeps unchanged count visible", async () => {
@@ -398,9 +421,7 @@ test("data change review pairs only the changed account and keeps unchanged coun
   expect(host.querySelector(".guided-account-delta")?.textContent).toContain(
     "BeforeAll contentAfterNot shared",
   );
-  expect(host.querySelector(".guided-unchanged-accounts")?.textContent).toContain(
-    "1 account unchanged",
-  );
+  expect(host.querySelector(".guided-unchanged-accounts")).toBeNull();
 });
 
 test("a delayed creation freezes review navigation, the name and dismissal until the request settles", async () => {
@@ -479,16 +500,16 @@ test("a delayed save keeps all review controls frozen and closes only the submit
   await change([...host.querySelectorAll<HTMLInputElement>(".grant-builder-release input")][1]!);
   await click("Done");
   await click("Review changes");
+  // The review of an edit goes Back to the level page; it has no Cancel of its own.
+  expect([...host.querySelectorAll("button")].some((item) => item.textContent?.trim() === "Cancel")).toBe(false);
   const changeButton = host.querySelector<HTMLButtonElement>(".guided-review-decision button")!,
-    back = button("Back"),
-    cancel = button("Cancel");
+    back = button("Back");
   await act(async () => {
     button("Save changes").click();
     changeButton.click();
     back.click();
-    cancel.click();
   });
-  expect(changeButton.disabled && back.disabled && cancel.disabled).toBe(true);
+  expect(changeButton.disabled && back.disabled).toBe(true);
   expect(host.textContent).toContain("Review your changes");
   expect(host.querySelector(".grant-builder-release")).toBeNull();
   expect(onSaved).not.toHaveBeenCalled();
@@ -502,8 +523,7 @@ test("a delayed save keeps all review controls frozen and closes only the submit
 test("linked Direct correction opens its reuse choice and saves independent refs without changing Answer", async () => {
   api.getSourceFilterOptions.mockResolvedValue({
     sourceId: source.id,
-    readiness: source.scopeReadiness,
-    items: [{ ref: { kind: "label", id: "direct-only" }, label: "Independent label", count: 1 }],
+    items: [{ ref: { capability: "membership", field: "extra.labelIds", id: "direct-only" }, label: "Independent label", count: 1 }],
   });
   await act(async () =>
     render(h(NewLevelPage, { overview, onCreated: vi.fn(), onClose: vi.fn() }), host),
@@ -549,7 +569,7 @@ test("linked Direct correction opens its reuse choice and saves independent refs
   expect(
     rules.find((rule: { capability: string }) => rule.capability === "direct").scopePolicies[0]
       .rules[0].match,
-  ).toEqual([{ kind: "label", id: "direct-only" }]);
+  ).toEqual([{ capability: "membership", field: "extra.labelIds", id: "direct-only" }]);
 });
 
 test("an unavailable unfiltered account remains visible in the overview, data decision and review", async () => {
@@ -612,7 +632,7 @@ test("applying an unchanged filter on the first of two accounts keeps review dis
   const policies = [source, second].map((item, index) => ({
     sourceId: item.id,
     audience: { accessLevel: "invented-level", capability: "answer" },
-    rules: [{ action: "share", match: [{ kind: "label", id: `invented-label-${index}` }] }],
+    rules: [{ action: "share", match: [{ capability: "membership", field: "extra.labelIds", id: `invented-label-${index}` }] }],
     otherwise: "hide",
   }));
   const answer = {
@@ -777,9 +797,9 @@ test("choosing separate Direct data after a copy restores the boundary the copy 
   // Direct's own list opens editable, with the one action that links it to Answer above it.
   expect(host.querySelector(".guided-direct-link p")).toBeNull();
   expect(sourceChecks().map((input) => input.disabled)).toEqual([false, false]);
-  await click("Use same sources and filters as Answer mode");
+  await click("Use same sources and filters as Answer");
   expect(host.querySelector(".guided-direct-link p")?.textContent).toBe(
-    "Uses the same sources and filters as Answer mode.",
+    "Uses the same sources and filters as Answer.",
   );
   expect(sourceChecks().map((input) => [ticked(input), input.disabled])).toEqual([
     [true, true],
@@ -810,7 +830,7 @@ test("a saved Direct that mirrors Answer opens linked, follows Answer's edits an
   ]);
   await openDecision("Direct data");
   expect(host.querySelector(".guided-direct-link p")?.textContent).toBe(
-    "Uses the same sources and filters as Answer mode.",
+    "Uses the same sources and filters as Answer.",
   );
   // The frozen list shows each account's status but offers no checkbox or filter to change.
   expect(sourceChecks().every((input) => input.disabled)).toBe(true);
@@ -872,7 +892,7 @@ test("switching Answer on beside Direct's own accounts keeps them and leaves Dir
   await openDecision("Direct data");
   // Direct opens on its own list, not on Answer's.
   expect(host.querySelector(".guided-source-list.is-frozen")).toBeNull();
-  expect(button("Use same sources and filters as Answer mode")).toBeTruthy();
+  expect(button("Use same sources and filters as Answer")).toBeTruthy();
   expect(sourceChecks().map((input) => [ticked(input), input.disabled])).toEqual([
     [true, false],
     [false, false],
@@ -905,7 +925,7 @@ test("switching Direct on while editing goes on to the Direct data screen", asyn
 });
 
 test("Direct switched on while editing starts linked to Answer, filters included", async () => {
-  const label = { kind: "label", id: "invented-design-label" };
+  const label = { capability: "membership", field: "extra.labelIds", id: "invented-design-label" };
   const filter = {
     sourceId: source.id,
     audience: { accessLevel: "invented-level", capability: "answer" },
@@ -924,7 +944,7 @@ test("Direct switched on while editing starts linked to Answer, filters included
   await change(preset("Direct"));
   await click("Done");
   // Direct never reads an account more widely than Answer does.
-  expect(host.textContent).toContain("Uses the same sources and filters as Answer mode.");
+  expect(host.textContent).toContain("Uses the same sources and filters as Answer.");
   expect(host.querySelector(".guided-source-list.is-frozen")).not.toBeNull();
   await click("Done");
   await click("Review changes");
@@ -936,4 +956,86 @@ test("Direct switched on while editing starts linked to Answer, filters included
   expect(direct.scopePolicies).toEqual([
     { ...filter, audience: { accessLevel: "invented-level", capability: "direct" } },
   ]);
+});
+
+test("the name is a decision of the level: renamed alone, it is reviewed and saved without the rules", async () => {
+  const answer = {
+    ...newGrantRule("answer", "invented-policy"),
+    sources: { mode: "allowlist", sourceIds: [source.id] },
+  };
+  const onClose = vi.fn();
+  await act(async () =>
+    render(
+      h(LevelEditorPage, {
+        level: { id: "invented-level", name: "Project assistant", revision: 4, rules: [answer] },
+        connections: [],
+        overview: {
+          ...overview,
+          levels: [{ id: "invented-other", name: "Taken name", revision: 1, rules: [answer] }],
+        },
+        onSaved: vi.fn(),
+        onClose,
+        onConflict: vi.fn(),
+        onGone: vi.fn(),
+      }),
+      host,
+    ),
+  );
+  const rows = () => [...host.querySelectorAll<HTMLElement>(".guided-overview-decision")];
+  expect(rows()[0]!.querySelector("h4")?.textContent).toBe("Name");
+  expect(rows()[0]!.querySelector(".compact-setting-value")?.textContent).toBe("Project assistant");
+  expect(button("Review changes").disabled).toBe(true);
+  await act(async () => rows()[0]!.querySelector<HTMLButtonElement>("button")!.click());
+  expect(host.querySelector(".guided-question h3")?.textContent).toBe(
+    "What should this access level be called?",
+  );
+  const field = host.querySelector<HTMLInputElement>("#access-edit-level-name")!;
+  await change(field, "Taken name");
+  expect(button("Done").disabled).toBe(true);
+  await change(field, "Renamed assistant");
+  await click("Done");
+  expect(rows()[0]!.querySelector(".compact-setting-value")?.textContent).toBe("Renamed assistant");
+  await click("Review changes");
+  const review = host.querySelector(".compact-review-name")!;
+  expect(review.textContent).toContain("BeforeProject assistant");
+  expect(review.textContent).toContain("AfterRenamed assistant");
+  expect(
+    [...host.querySelectorAll(".compact-unchanged-settings h5")].map((heading) => heading.textContent),
+  ).not.toContain("Name");
+  await click("Save changes");
+  expect(api.updateAccessLevel).toHaveBeenCalledWith("invented-level", {
+    expectedRevision: 4,
+    name: "Renamed assistant",
+  });
+});
+
+test("an unchanged name is listed with what the review leaves alone", async () => {
+  const answer = {
+    ...newGrantRule("answer", "invented-policy"),
+    sources: { mode: "allowlist", sourceIds: [source.id] },
+  };
+  await act(async () =>
+    render(
+      h(LevelEditorPage, {
+        level: { id: "invented-level", name: "Project assistant", revision: 4, rules: [answer] },
+        connections: [],
+        overview,
+        onSaved: vi.fn(),
+        onClose: vi.fn(),
+        onConflict: vi.fn(),
+        onGone: vi.fn(),
+      }),
+      host,
+    ),
+  );
+  const release = [...host.querySelectorAll<HTMLElement>(".guided-overview-decision")].find(
+    (row) => row.querySelector("h4")?.textContent === "Answer release",
+  )!;
+  await act(async () => release.querySelector<HTMLButtonElement>("button")!.click());
+  await change([...host.querySelectorAll<HTMLInputElement>(".grant-builder-release input")][1]!);
+  await click("Done");
+  await click("Review changes");
+  const unchanged = [...host.querySelectorAll(".compact-unchanged-settings section > section, .compact-unchanged-settings > div > section")];
+  expect(unchanged[0]?.textContent).toBe("NameProject assistant");
+  expect(host.querySelector(".compact-review-release")?.textContent).toContain("No privacy review");
 });

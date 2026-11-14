@@ -113,7 +113,7 @@ export function ApprovalWizard({
           : step === REVIEW_STEP
             ? html`
                 <div class="access-wizard-copy">
-                  <h3 ref=${stepHeadingRef} tabindex="-1">Review and allow</h3>
+                  <h3 ref=${stepHeadingRef} tabindex="-1">Review access</h3>
                 </div>
                 ${review}
               `

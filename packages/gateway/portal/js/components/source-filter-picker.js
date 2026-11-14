@@ -3,34 +3,41 @@
 
 import { html } from "htm/preact";
 import { useEffect, useId, useLayoutEffect, useRef, useState } from "preact/hooks";
-import {
-  scopeKindNoun,
-  scopeLevelNoun,
-  scopeNestingHint,
-  useScopeLabelGeneration,
-} from "./source-filter-labels.js";
+import { checkFilterIdentifier } from "../api.js";
+import { useScopeLabelGeneration } from "./source-filter-labels.js";
 import { readFilterOptions } from "./source-filter-requests.js";
-import { COUNT_POLL_MS, filterApiError } from "./source-filter-preview.js";
-import { CountSpinner, CountingRecords } from "./source-filter-table.js";
+import {
+  fieldLevelNoun,
+  fieldNoun,
+  filterApiError,
+} from "./source-filter-fields.js";
+import { CountSpinner } from "./source-filter-table.js";
 import { sourceId as accountIdOf } from "./grant-builder-state.js";
-import { requestIdentity, scopeRefKey, typedParticipant } from "./source-filter-state.js";
+import { identifierRef, isDeviceRef, scopeRefKey } from "./source-filter-state.js";
 
+/** Pages of one field's items kept per picker, so going back up a tree is instant. */
+const RETAINED_PAGES = 16;
+
+/**
+ * One field's items, to tick into a filter: searched, or browsed level by
+ * level when the field is a tree. A field whose items belong to a device
+ * starts at the devices when the account has several. Inside a tree a row
+ * shows its own short name; a search result shows its full name.
+ */
 export function SourceFilterPicker({
   source,
-  kind,
+  editor,
+  field,
   selected,
   onToggle,
   disabled = false,
   active = true,
   scrollContainer,
   memory,
-  readiness,
-  onReadiness,
   overlay = false,
   open = false,
   onOpen,
   onClose,
-  showExact = true,
 }) {
   const root = useRef(null);
   const results = useRef(null);
@@ -38,22 +45,25 @@ export function SourceFilterPicker({
   const resultsId = useId();
   const visibleActive = active && (!overlay || open);
   const sourceId = accountIdOf(source);
-  const sourceKey = `${sourceId}:${kind}`;
+  const sourceKey = `${sourceId}:${field.field}`;
   const saved = memory?.get(sourceKey);
   const [query, setQuery] = useState(saved?.query ?? "");
   const [trail, setTrail] = useState(saved?.trail ?? []);
   const positions = useRef(saved?.positions ?? new Map());
-  // Option pages belong to this child draft. They never validate Apply: that
-  // always requires a fresh exact-policy preview.
   const catalogues = useRef(saved?.catalogues ?? new Map());
-  const parentId = query ? undefined : trail.at(-1)?.id;
+  const deviceLevel = Boolean(editor?.showDeviceLevel) && field.scope === "device";
+  const browsable = field.picker === "tree" || deviceLevel;
+  const location = trail.at(-1);
+  const device = deviceLevel ? trail[0]?.ref.device : undefined;
+  const parentId = query || !location || isDeviceRef(location.ref) ? undefined : location.ref.id;
+  const request = {
+    field: field.field,
+    ...(query ? { q: query } : {}),
+    ...(parentId !== undefined ? { parentId } : {}),
+    ...(device ? { device } : {}),
+  };
   const generation = useScopeLabelGeneration();
-  const identity = JSON.stringify([
-    generation,
-    requestIdentity(sourceId, kind, query, parentId),
-    trail.map((item) => item.id),
-  ]);
-  const scrollKey = identity;
+  const identity = JSON.stringify([generation, sourceId, request]);
   const current = useRef(identity);
   current.current = identity;
   const requests = useRef(new Set());
@@ -64,8 +74,6 @@ export function SourceFilterPicker({
       ? { ...retained, retained: true }
       : { identity, items: [], pending: true, nextCursor: null, error: "" };
   });
-  const declaration = source.scopes?.items?.find((item) => item.kind === kind);
-  const identifierTypes = declaration?.identifiers ?? [];
 
   // A quiet load replaces the list it shows without a loading state in between.
   async function load(cursor, append, quiet = false) {
@@ -83,7 +91,7 @@ export function SourceFilterPicker({
     try {
       const result = await readFilterOptions(
         sourceId,
-        { kind, q: query || undefined, parentId, cursor: cursor || undefined },
+        { ...request, ...(cursor ? { cursor } : {}) },
         controller.signal,
       );
       if (
@@ -98,28 +106,27 @@ export function SourceFilterPicker({
           items:
             append && old.identity === identity ? [...old.items, ...result.items] : result.items,
           nextCursor: result.nextCursor,
-          readiness: result.readiness,
+          retryAfterMs: result.retryAfterMs,
           pending: false,
           error: "",
           retained: false,
         };
         catalogues.current.delete(identity);
         catalogues.current.set(identity, next);
-        while (catalogues.current.size > 16) {
+        while (catalogues.current.size > RETAINED_PAGES) {
           const oldest = catalogues.current.keys().next().value;
           catalogues.current.delete(oldest);
           positions.current.delete(oldest);
         }
         return next;
       });
-      if (Array.isArray(result.readiness)) onReadiness?.(result.readiness);
     } catch (error) {
       if (!quiet && !controller.signal.aborted && current.current === requestKey)
         setState((old) => ({
           ...old,
           identity,
           pending: false,
-          error: filterApiError(error, "Options are unavailable. Saved selections are retained."),
+          error: filterApiError(error, "This list could not be loaded. Your selection is kept."),
         }));
     } finally {
       requests.current.delete(controller);
@@ -141,16 +148,12 @@ export function SourceFilterPicker({
       inFlight.current = false;
     };
   }, [identity, visibleActive]);
-  // Keep each search and folder location at its own scroll position.
-  // Option pages remain hints; only the exact-policy preview authorizes Apply.
+  // Keep each search and tree location at its own scroll position.
   useLayoutEffect(() => {
     const element = scrollContainer?.current ?? results.current;
     if (!element || !visibleActive) return;
-    const restore = () => {
-      element.scrollTop = positions.current.get(scrollKey) ?? 0;
-    };
-    restore();
-    const remember = () => positions.current.set(scrollKey, element.scrollTop);
+    element.scrollTop = positions.current.get(identity) ?? 0;
+    const remember = () => positions.current.set(identity, element.scrollTop);
     element.addEventListener("scroll", remember);
     return () => {
       element.removeEventListener("scroll", remember);
@@ -161,12 +164,12 @@ export function SourceFilterPicker({
         catalogues: catalogues.current,
       });
     };
-  }, [scrollKey, visibleActive]);
+  }, [identity, visibleActive]);
   useLayoutEffect(() => {
     const element = scrollContainer?.current ?? results.current;
     if (visibleActive && state.identity === identity && !state.pending && element)
-      element.scrollTop = positions.current.get(scrollKey) ?? 0;
-  }, [scrollKey, visibleActive, state.pending]);
+      element.scrollTop = positions.current.get(identity) ?? 0;
+  }, [identity, visibleActive, state.pending]);
   useEffect(() => {
     if (!overlay || !open) return;
     const dismiss = (event) => {
@@ -182,7 +185,12 @@ export function SourceFilterPicker({
       : retained
         ? { ...retained, retained: true }
         : { items: [], pending: true };
-  const currentReadiness = readiness ?? visible.readiness ?? source.scopeReadiness;
+  // Counts the gateway is still working out are asked for again when it says.
+  useEffect(() => {
+    if (!visibleActive || visible.pending || visible.error || !visible.retryAfterMs) return;
+    const timer = setTimeout(() => load(null, false, true), visible.retryAfterMs);
+    return () => clearTimeout(timer);
+  }, [identity, visibleActive, visible.pending, visible.error, visible.items]);
   const focusSearch = () =>
     root.current?.querySelector("input[type=search]")?.focus({ preventScroll: true });
   const navigate = (next) => {
@@ -190,30 +198,14 @@ export function SourceFilterPicker({
     setQuery("");
     setTrail(next);
   };
-  const counting = Boolean(currentReadiness?.some((item) => item.kind === kind && !item.ready));
-  // While the account's counts are still being worked out, the first page is
-  // read again until they arrive; pages loaded after it wait for the next search.
-  useEffect(() => {
-    if (!visibleActive || !counting || visible.pending || visible.error) return;
-    const timer = setTimeout(() => load(null, false, true), COUNT_POLL_MS);
-    return () => clearTimeout(timer);
-  }, [identity, visibleActive, counting, visible.pending, visible.error, visible.items]);
-  const location = trail.at(-1);
-  const locationRef = location ? { kind: "folder", id: location.id } : null;
-  // A source that names the levels of its tree has a word for each; the
-  // picker says which level a location, a list and a search result are at.
-  const leveled = Array.isArray(declaration?.levels) && declaration.levels.length > 0;
-  const allRoots = `All ${scopeLevelNoun(source, kind, 0, true)}`;
-  const nestingHint = scopeNestingHint(source, kind, query ? undefined : trail.length);
-  const levelPrefix = (item) => {
-    if (!leveled || !Number.isInteger(item.depth)) return "";
-    const noun = scopeLevelNoun(source, kind, item.depth);
-    return `${noun.charAt(0).toLocaleUpperCase()}${noun.slice(1)} · `;
-  };
+  const levelNoun = (ref, depth) => (isDeviceRef(ref) ? "device" : fieldLevelNoun(field, depth));
+  const rootLabel = deviceLevel ? "All devices" : `All ${fieldLevelNoun(field, 0, true)}`;
+  const many = fieldNoun(field, true);
   const keys = new Set(selected.map(scopeRefKey));
+  const openable = (item) => browsable && !query && (item.hasChildren || isDeviceRef(item.ref));
   return html`<section
     class=${`source-filter-picker${overlay ? " source-filter-picker-overlay" : ""}`}
-    aria-label=${`Choose ${scopeKindNoun(source, kind, true)}`}
+    aria-label=${`Choose ${many}`}
     ref=${root}
     onFocusOut=${(event) => {
       if (overlay && open && event.relatedTarget && !root.current?.contains(event.relatedTarget))
@@ -226,7 +218,7 @@ export function SourceFilterPicker({
         event.stopPropagation();
         restoringFocus.current = true;
         onClose?.();
-        root.current?.querySelector("input[type=search]")?.focus();
+        focusSearch();
         restoringFocus.current = false;
       }
       if (["ArrowDown", "ArrowUp"].includes(event.key)) {
@@ -247,7 +239,7 @@ export function SourceFilterPicker({
     }}
   >
     <label class="source-filter-search"
-      >Search ${scopeKindNoun(source, kind, kind === "participant")}<input
+      >Search ${many}<input
         type="search"
         value=${query}
         maxlength="256"
@@ -263,19 +255,19 @@ export function SourceFilterPicker({
     /></label>
     <div class="source-filter-results" id=${resultsId} hidden=${overlay && !open} ref=${results}>
       ${
-        kind === "folder"
+        browsable && !query
           ? html`<nav class="source-filter-breadcrumbs" aria-label="Location">
                 <span class="source-filter-location">Location</span>
-                ${location ? html`<button type="button" onClick=${() => navigate([])}>${allRoots}</button>` : html`<span aria-current="location">${allRoots}</span>`}${trail.map((item, index) => (index === trail.length - 1 ? html`<span aria-current="location">${item.label}</span>` : html`<button type="button" onClick=${() => navigate(trail.slice(0, index + 1))}>${item.label}</button>`))}
+                ${location ? html`<button type="button" onClick=${() => navigate([])}>${rootLabel}</button>` : html`<span aria-current="location">${rootLabel}</span>`}${trail.map((item, index) => (index === trail.length - 1 ? html`<span aria-current="location">${item.label}</span>` : html`<button type="button" onClick=${() => navigate(trail.slice(0, index + 1))}>${item.label}</button>`))}
               </nav>
-              ${locationRef ? html`<label class="source-filter-select-location"><input type="checkbox" checked=${keys.has(scopeRefKey(locationRef))} disabled=${disabled} onChange=${() => onToggle(locationRef, { ref: locationRef, label: location.label, ...(leveled ? { depth: trail.length - 1 } : {}) })} />Select this ${scopeLevelNoun(source, kind, trail.length - 1)}</label>` : null}
-              ${nestingHint ? html`<p class="filter-option-hint">${nestingHint}</p>` : null}`
+              ${field.insideText ? html`<p class="filter-option-hint">${field.insideText}</p>` : null}
+              ${location ? html`<label class="source-filter-select-location"><input type="checkbox" checked=${keys.has(scopeRefKey(location.ref))} disabled=${disabled} onChange=${() => onToggle(location.ref, location.item)} /><span>Select this ${levelNoun(location.ref, location.item.depth)}</span>${Number.isFinite(location.item.count) ? html`<small>${location.item.count.toLocaleString()} matching</small>` : null}</label>` : null}`
           : null
       }
-      ${visible.pending ? html`<p role="status">Loading source options…</p>` : null}
+      ${visible.pending ? html`<p role="status">Loading…</p>` : null}
       ${
         visible.error
-          ? html`<div role="status">
+          ? html`<div role="status" class="source-filter-count-error">
               <p>${visible.error}</p>
               <button
                 type="button"
@@ -285,28 +277,28 @@ export function SourceFilterPicker({
                   load(null, false);
                 }}
               >
-                Retry options
+                Try again
               </button>
             </div>`
           : null
       }
       <ul class="source-filter-options">
-        ${visible.items.map(
-          (item) =>
-            html`<li key=${scopeRefKey(item.ref)}>
-              <label
-                ><input
-                  type="checkbox"
-                  checked=${keys.has(scopeRefKey(item.ref))}
-                  disabled=${disabled}
-                  onChange=${() => onToggle(item.ref, item)}
-                /><span>${item.label}</span>${Number.isFinite(item.count) ? html`<small>${levelPrefix(item)}${item.count.toLocaleString()} matching</small>` : html`<${CountSpinner} />`}</label
-              >
-              ${kind === "folder" && item.hasChildren ? html`<button type="button" class="btn-tiny" aria-label=${`Open ${item.label}`} onClick=${() => navigate([...trail, { id: item.ref.id, label: item.label }])}><span aria-hidden="true">›</span></button>` : null}
-            </li>`,
-        )}
+        ${visible.items.map((item) => {
+          const label = browsable && !query ? item.shortLabel || item.label : item.label;
+          return html`<li key=${scopeRefKey(item.ref)}>
+            <label
+              ><input
+                type="checkbox"
+                checked=${keys.has(scopeRefKey(item.ref))}
+                disabled=${disabled}
+                onChange=${() => onToggle(item.ref, item)}
+              /><span>${label}</span>${Number.isFinite(item.count) ? html`<small>${item.count.toLocaleString()} matching</small>` : html`<${CountSpinner} />`}</label
+            >
+            ${openable(item) ? html`<button type="button" class="btn-tiny" aria-label=${`Open ${label}`} onClick=${() => navigate([...trail, { ref: item.ref, label, item }])}><span aria-hidden="true">›</span></button>` : null}
+          </li>`;
+        })}
       </ul>
-      ${!visible.pending && !visible.error && !visible.items.length ? (counting ? html`<p role="status"><${CountingRecords} /></p>` : html`<p>No matching options.</p>`) : null}
+      ${!visible.pending && !visible.error && !visible.items.length ? html`<p>${query ? `No ${many} match this search.` : `No ${many} here.`}</p>` : null}
       ${
         visible.nextCursor
           ? html`<button
@@ -323,40 +315,55 @@ export function SourceFilterPicker({
           : null
       }
     </div>
-    ${showExact && kind === "participant" && identifierTypes.length ? html`<${ExactIdentifierInput} types=${identifierTypes} selected=${selected} onToggle=${onToggle} disabled=${disabled} />` : null}
   </section>`;
 }
 
-/** What a typed address that names no address of the chosen type is told. */
-const INVALID_ADDRESS_MESSAGES = {
-  phone: "Enter a valid phone number. Include the international country code.",
-  email: "Enter a valid email address.",
-  domain: "Enter a valid domain.",
+/** Each address type: its option label, placeholder, noun and the article the noun takes. */
+const IDENTIFIER_CHOICES = {
+  email: ["Email address", "person@example.com", "email", "an"],
+  domain: ["Domain", "example.com", "domain", "a"],
+  phone: ["Phone number", "+15550100123", "phone number", "a"],
 };
 
+/**
+ * An email, domain or phone number typed by hand. The gateway reads it into
+ * its own spelling, or answers the sentence to show under the field.
+ */
 export function ExactIdentifierInput({
   types: declaredTypes,
   selected = [],
   onToggle,
   disabled = false,
 }) {
-  const types = ["email", "phone", "domain"].filter((item) => declaredTypes.includes(item));
-  const nouns = ["email", "domain", "phone"]
-    .filter((item) => types.includes(item))
-    .map((item) => (item === "phone" ? "phone number" : item));
-  const prompt = `Add ${nouns[0] === "email" ? "an" : "a"} ${nouns.length > 1 ? `${nouns.slice(0, -1).join(", ")} or ${nouns.at(-1)}` : nouns[0]}`;
+  const types = ["email", "domain", "phone"].filter((item) => declaredTypes.includes(item));
+  const nouns = types.map((item) => IDENTIFIER_CHOICES[item][2]);
+  const article = types.length ? IDENTIFIER_CHOICES[types[0]][3] : "";
+  const prompt = `Add ${article} ${nouns.length > 1 ? `${nouns.slice(0, -1).join(", ")} or ${nouns.at(-1)}` : nouns[0]}`;
   const [type, setType] = useState(types[0]);
   const [typed, setTyped] = useState("");
   const [error, setError] = useState("");
+  const [checking, setChecking] = useState(false);
+  // One check at a time: a second press while the gateway reads the first is ignored.
+  const inFlight = useRef(false);
   const typedType = types.includes(type) ? type : types[0];
-  const add = () => {
-    const ref = typedParticipant(typedType, typed);
-    if (!ref) {
-      setError(INVALID_ADDRESS_MESSAGES[typedType]);
-      return;
+  const add = async () => {
+    if (inFlight.current || !typed.trim()) return;
+    inFlight.current = true;
+    setChecking(true);
+    setError("");
+    try {
+      const result = await checkFilterIdentifier(typedType, typed);
+      if (result?.identifier) {
+        const ref = identifierRef(result.identifier);
+        if (!selected.some((item) => scopeRefKey(item) === scopeRefKey(ref))) onToggle(ref);
+        setTyped("");
+      } else setError(result?.error || "This could not be checked. Try again.");
+    } catch (failure) {
+      setError(filterApiError(failure, "This could not be checked. Try again."));
+    } finally {
+      inFlight.current = false;
+      setChecking(false);
     }
-    if (!selected.some((item) => scopeRefKey(item) === scopeRefKey(ref))) onToggle(ref);
-    setTyped("");
   };
   if (!types.length) return null;
   return html`<div class="source-filter-exact">
@@ -371,13 +378,13 @@ export function ExactIdentifierInput({
           setError("");
         }}
       >
-        ${types.map((item) => html`<option value=${item}>${item === "phone" ? "Phone number" : item === "email" ? "Email address" : "Domain"}</option>`)}
+        ${types.map((item) => html`<option value=${item}>${IDENTIFIER_CHOICES[item][0]}</option>`)}
       </select>
       <input
         aria-label="Value"
         value=${typed}
         maxlength="512"
-        placeholder=${typedType === "phone" ? "+15550100123" : typedType === "domain" ? "example.com" : "person@example.com"}
+        placeholder=${IDENTIFIER_CHOICES[typedType][1]}
         onInput=${(event) => {
           setTyped(event.currentTarget.value);
           setError("");
@@ -389,7 +396,7 @@ export function ExactIdentifierInput({
           }
         }}
       />
-      <button type="button" class="btn-secondary" onClick=${add}>Add</button>
+      <button type="button" class="btn-secondary" disabled=${checking} onClick=${add}>Add</button>
     </fieldset>
     ${error ? html`<p class="access-field-error" role="alert">${error}</p>` : null}
   </div>`;

@@ -7,12 +7,11 @@ import {
   FilterModePill,
   filterModeLabel,
 } from "../../components/access-pills.js";
-import { useSourceFilterPreview } from "../../components/source-filter-preview.js";
 import {
-  CountingRecords,
-  RETRY_COUNTS_LABEL,
-  SourceFilterTable,
-} from "../../components/source-filter-table.js";
+  CountsUnavailable,
+  useSourceFilterPreview,
+} from "../../components/source-filter-preview.js";
+import { CountingRecords, SourceFilterTable } from "../../components/source-filter-table.js";
 import { SourceAccountHeader } from "../../components/source-account-header.js";
 import {
   blocksNewSources,
@@ -28,7 +27,6 @@ import {
   editableSourcePolicy,
   scopeRefKey,
   sourcePolicy,
-  unreadyKinds,
 } from "../../components/source-filter-state.js";
 import {
   changedLevelDecisions,
@@ -40,6 +38,7 @@ import {
 } from "./level-flow-state.js";
 
 export const DECISION_TITLES = {
+  name: "Name",
   permissions: "Permissions",
   "answer-data": "Answer data",
   "direct-data": "Direct data",
@@ -53,8 +52,23 @@ function NotGranted() {
   return html`<p class="guided-not-granted">${NOT_GRANTED}</p>`;
 }
 
-export function ReadableBoundary({ rule, source }) {
-  return html`<span class="guided-readable-boundary"
+/**
+ * An account's status in an account list, as a toned pill: "All content",
+ * "Share matching content · 1 item" in the share tone, "Hide matching
+ * content · 2 items" in the hide tone, "Not shared" muted.
+ */
+export function AccountStatusPill({ rule, source }) {
+  const id = sourceId(source);
+  const shared = Boolean(rule && isSourceAllowed(rule, id));
+  const policy = shared ? sourcePolicy(rule, id) : null;
+  const tone = !shared
+    ? "off"
+    : !policy
+      ? "all"
+      : editableSourcePolicy(policy) && policy.rules[0].action === "hide"
+        ? "hide"
+        : "only";
+  return html`<span class=${`guided-readable-boundary access-pill is-${tone}`}
     >${rule ? sourceBoundarySummary(rule, source) : NOT_GRANTED}</span
   >`;
 }
@@ -80,28 +94,26 @@ function useAccountPolicy(rule, source) {
   const policy = active ? sourcePolicy(rule, id) : null;
   // An account that is no longer connected has nothing to count.
   const preview = useSourceFilterPreview(id, source.available === false ? null : policy);
-  const ready = unreadyKinds(policy, preview.data?.readiness).length === 0;
   return {
     policy,
     preview,
     active,
     editable: Boolean(policy && editableSourcePolicy(policy)),
     refs: (policy?.rules ?? []).flatMap((item) => item.match ?? []),
-    items: ready ? (preview.data?.items ?? []) : [],
-    ready,
+    items: preview.data?.items ?? [],
   };
 }
 
 /** The status line of a boundary: its counts when filtered, then its pill. */
 function BoundaryLine({ rule, source, state, header = null }) {
-  const { policy, preview, active, ready, editable } = state;
+  const { policy, preview, active, editable } = state;
   return html`<div class="compact-account-line">
     ${header}
     <span class="compact-account-state">
       ${
         policy
           ? html`<span class="compact-policy-impact" role="status">
-              ${preview.pending || (!preview.error && !ready) ? html`<${CountingRecords} />` : preview.error ? html`<span>Counts unavailable</span><button type="button" class="btn-secondary" onClick=${preview.retry}>${RETRY_COUNTS_LABEL}</button>` : Number.isFinite(preview.data?.visible) && Number.isFinite(preview.data?.hidden) ? html`<span><strong>${preview.data.visible.toLocaleString()}</strong> shared</span><span><strong>${preview.data.hidden.toLocaleString()}</strong> hidden</span>` : null}
+              ${preview.pending ? html`<${CountingRecords} />` : preview.error ? html`<${CountsUnavailable} onRetry=${preview.retry} />` : Number.isFinite(preview.data?.visible) && Number.isFinite(preview.data?.hidden) ? html`<span><strong>${preview.data.visible.toLocaleString()}</strong> shared</span><span><strong>${preview.data.hidden.toLocaleString()}</strong> hidden</span>` : null}
               ${!editable ? html`<span>Other content: ${policy.otherwise === "share" ? "shared" : "hidden"}</span>` : null}
             </span>`
           : null
@@ -222,7 +234,7 @@ export function LevelTopicSummary({ decision, rules, sources, policies, linked =
       : [];
     return html`<div class="compact-topic-summary">
       <p class="compact-topic-count">${dataSelectionLabel(rule, sources)}</p>
-      ${retained.map((source) => html`<div class="compact-retained-account"><${SourceAccountHeader} source=${source} /><${ReadableBoundary} rule=${rule} source=${source} /></div>`)}
+      ${retained.map((source) => html`<div class="compact-retained-account"><${SourceAccountHeader} source=${source} /><${AccountStatusPill} rule=${rule} source=${source} /></div>`)}
     </div>`;
   }
   return html`<${LevelDecisionSummary}
@@ -244,15 +256,31 @@ function AccountDelta({ decision, before, after, sources }) {
   const boundary = (rule, id) =>
     rule && isSourceAllowed(rule, id) ? scopePolicyIntent(sourcePolicy(rule, id)) : false;
   const changed = [...ids].filter((id) => !sameDecision(boundary(left, id), boundary(right, id)));
-  const unchanged = ids.size - changed.length;
   return html`<div class="guided-account-deltas">
     ${changed.map((id) => {
       const source = inventory.find((item) => sourceId(item) === id);
       return html`<${AccountChange} key=${id} before=${left} after=${right} source=${source} />`;
     })}
     ${!changed.length ? html`<p>Account availability changed.</p>` : null}
-    ${unchanged ? html`<p class="guided-unchanged-accounts">${unchanged} ${unchanged === 1 ? "account" : "accounts"} unchanged</p>` : null}
   </div>`;
+}
+
+/** "Answer: Blocked / Direct: Automatic": what happens to new sources, per reading capability. */
+export function newSourcesSummary(rules) {
+  return ["answer", "direct"]
+    .filter((capability) => rules[capability])
+    .map(
+      (capability) =>
+        `${capabilityName(capability)}: ${blocksNewSources(rules[capability]) ? "Blocked" : "Automatic"}`,
+    )
+    .join(" / ");
+}
+
+/** "Privacy review · Everyday privacy" or "No privacy review". */
+export function releaseSummary(answer, policies) {
+  return answer.release.mode === "unreviewed"
+    ? "No privacy review"
+    : `Privacy review · ${policyFamilyName(findPolicyFamily(policies, answer.release.policyFamilyId))}`;
 }
 
 export function LevelDecisionSummary({ decision, rules, sources, policies }) {
@@ -260,23 +288,12 @@ export function LevelDecisionSummary({ decision, rules, sources, policies }) {
   if (decision === "future" && !rules.answer && !rules.direct)
     return html`<${NotGranted} />`;
   if (decision === "future")
-    return html`<dl class="compact-setting-values">
-      ${["answer", "direct"].map((capability) =>
-        rules[capability]
-          ? html`<div>
-              <dt>${capabilityName(capability)}</dt>
-              <dd>${blocksNewSources(rules[capability]) ? "Blocked" : "Automatic"}</dd>
-            </div>`
-          : null,
-      )}
-    </dl>`;
+    return html`<p class="compact-setting-value">${newSourcesSummary(rules)}</p>`;
   if (decision === "release") {
     if (!rules.answer) return html`<${NotGranted} />`;
-    const release = rules.answer.release;
-    return html`<div class="compact-release-summary">
-      <strong>${release.mode === "unreviewed" ? "No privacy review" : "Privacy review"}</strong
-      >${release.mode === "unreviewed" ? null : html`<span>${policyFamilyName(findPolicyFamily(policies, release.policyFamilyId))}</span>`}
-    </div>`;
+    return html`<p class="compact-setting-value compact-release-summary">
+      ${releaseSummary(rules.answer, policies)}
+    </p>`;
   }
   const rule = rules[dataDecisionCapability(decision)];
   if (!rule) return html`<${NotGranted} />`;
@@ -318,12 +335,22 @@ export function LevelReview({
   isNew = false,
   disabled = false,
   linked = false,
+  name = null,
 }) {
-  const all = levelDecisions(rules, initial);
-  const changes = isNew ? all : changedLevelDecisions(initial, rules, sources);
+  // An edit reviews the level's name with its decisions; a new level names itself above them.
+  const named = !isNew && name;
+  const all = [...(named ? ["name"] : []), ...levelDecisions(rules, initial)];
+  const changes = isNew
+    ? all
+    : [
+        ...(named && name.before !== name.after ? ["name"] : []),
+        ...changedLevelDecisions(initial, rules, sources),
+      ];
   const unchanged = all.filter((key) => !changes.includes(key));
-  const summary = (key, values) =>
-    html`<${LevelDecisionSummary}
+  const summary = (key, values, before = false) =>
+    key === "name"
+      ? html`<p class="compact-setting-value">${before ? name.before : name.after}</p>`
+      : html`<${LevelDecisionSummary}
       decision=${key}
       rules=${values}
       sources=${sources}
@@ -364,7 +391,7 @@ export function LevelReview({
                     sources=${sources}
                   />`
                 : html`<div class="guided-change-pair">
-                    <section><strong>Before</strong>${summary(key, initial)}</section>
+                    <section><strong>Before</strong>${summary(key, initial, true)}</section>
                     <section><strong>After</strong>${summary(key, rules)}</section>
                   </div>`
           }
@@ -382,13 +409,17 @@ export function LevelReview({
                 (key) =>
                   html`<section>
                     <h5>${DECISION_TITLES[key]}</h5>
-                    <${LevelTopicSummary}
-                      decision=${key}
-                      rules=${rules}
-                      sources=${sources}
-                      policies=${policies}
-                      linked=${linked}
-                    />
+                    ${
+                      key === "name"
+                        ? html`<p class="compact-setting-value">${name.after}</p>`
+                        : html`<${LevelTopicSummary}
+                            decision=${key}
+                            rules=${rules}
+                            sources=${sources}
+                            policies=${policies}
+                            linked=${linked}
+                          />`
+                    }
                   </section>`,
               )}
             </div>

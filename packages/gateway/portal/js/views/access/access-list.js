@@ -135,7 +135,7 @@ export function shortConnectionId(id) {
 function ConnectionFacts({ entry, signIns }) {
   return html`<dl class="access-connection-facts">
     <div class="access-fact-id">
-      <dt>Connection ID</dt>
+      <dt>Connection</dt>
       <dd>
         <code title=${entry.id}>${shortConnectionId(entry.id)}</code>
         <${CopyIconButton} text=${entry.id} class="btn-icon access-copy" title="Copy connection ID" />
@@ -212,7 +212,7 @@ function ConnectionRow({ entry, actions }) {
         </div>
         <div class="access-connection-meta">
           <span class="access-status-dot" aria-hidden="true"></span>
-          ${app ? html`<span class="access-app-cell">Signed in from ${app}</span><span aria-hidden="true"> · </span>` : null}
+          ${app ? html`<span class="access-app-cell">Signed in from ${app}</span>` : null}
           <span class="access-used-cell">${entry.lastUsedAt ? `Last used ${timeAgo(entry.lastUsedAt)}` : "Never used"}</span>
         </div>
       </div>

@@ -61,7 +61,7 @@ export function CapabilityPicker({ value, onChange, policies = [], disabled = fa
     },
     {
       id: "direct",
-      detail: "Search and read raw matching records from allowed sources.",
+      detail: "Search and read matching original records from allowed sources.",
       // Sits inside the card's own description and turns red once the card is
       // chosen, so the consequence is loudest exactly when it applies.
       warning: "Direct is not protected by a privacy policy.",

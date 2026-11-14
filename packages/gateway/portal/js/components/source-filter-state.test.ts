@@ -2,7 +2,6 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { expect, test } from "vitest";
-import { canonicalFilterIdentifier } from "@omnesis/core";
 // @ts-expect-error — portal modules are plain JavaScript.
 import * as filters from "./source-filter-state.js";
 // @ts-expect-error — portal modules are plain JavaScript.
@@ -11,7 +10,7 @@ import * as grants from "./grant-builder-state.js";
 const policy = {
   sourceId: "fictional:one",
   audience: { accessLevel: "saved-level", capability: "answer" },
-  rules: [{ action: "share", match: [{ kind: "conversation", id: "stable-room" }] }],
+  rules: [{ action: "share", match: [{ capability: "membership", field: "extra.roomId", id: "stable-room" }] }],
   otherwise: "hide",
 };
 const answer = {
@@ -65,7 +64,7 @@ test("source boundary linking never copies filters, and explicit filter copy ret
 
 test("new policies bind the creation sentinel and revision zero only when intentionally added", () => {
   const draft = filters.newSourcePolicy("fictional:one", "direct");
-  draft.rules[0].match.push({ kind: "conversation", id: "stable-room" });
+  draft.rules[0].match.push({ capability: "membership", field: "extra.roomId", id: "stable-room" });
   const direct = filters.setSourcePolicy(grants.newGrantRule("direct"), "fictional:one", draft);
   expect(direct.filterRevision).toBe(0);
   expect(direct.scopePolicies[0].audience).toEqual({ accessLevel: "new", capability: "direct" });
@@ -113,12 +112,13 @@ test("revision fencing includes removed original capabilities independently of p
   });
 });
 
-test("mixed kinds use one OR bucket and only/exclude switches preserve exact selected values", () => {
+test("mixed fields use one OR bucket and only/exclude switches preserve exact selected values", () => {
   let draft = filters.newSourcePolicy("fictional:one", "answer");
   for (const ref of [
-    { kind: "conversation", id: "room" },
-    { kind: "label", id: "label-id" },
-    { kind: "folder", id: "folder-id" },
+    { capability: "membership", field: "extra.roomId", id: "room" },
+    { capability: "membership", field: "extra.labelIds", id: "label-id" },
+    { capability: "tree", field: "extra.folder", id: "~/work", device: "dev-one" },
+    { capability: "person", label: "Maya Reeves", identifiers: [{ type: "email", value: "maya@example.org" }] },
   ])
     draft = filters.toggleScopeRef(draft, ref);
   const except = filters.setFilterMode(draft, "except");
@@ -127,111 +127,97 @@ test("mixed kinds use one OR bucket and only/exclude switches preserve exact sel
   expect(filters.setFilterMode(except, "only")).toEqual(draft);
 });
 
-const typedValue = (type: string, input: string) =>
-  filters.typedParticipant(type, input)?.identifiers[0].value ?? null;
-
-test("a typed address becomes one participant item named by its saved spelling", () => {
-  expect(filters.typedParticipant("phone", "+1 (555) 010-0123")).toEqual({
-    kind: "participant",
-    label: "+15550100123",
-    identifiers: [{ type: "phone", value: "+15550100123" }],
-  });
-  expect(filters.typedParticipant("name", "Fictional Person")).toBeNull();
-  expect(filters.typedParticipant("email", `${"a".repeat(600)}@example.org`)).toBeNull();
-});
-
-const TYPED: Array<["phone" | "email" | "domain", string]> = [
-  ["phone", "+15550100123"],
-  ["phone", "+1 (555) 010-0123"],
-  ["phone", "+1.555.010.0123"],
-  ["phone", "+1 555\u2011010\u20130123"],
-  ["phone", "0015550100123"],
-  ["phone", "00 1 555 010 0123"],
-  ["phone", "tel:+1-555-010-0123"],
-  ["phone", "\uFF0B\uFF11\uFF15\uFF15\uFF15\uFF10\uFF11\uFF10\uFF10\uFF11\uFF12\uFF13"],
-  ["phone", "5550100123"],
-  ["phone", "(555) 010-0123"],
-  ["phone", "+44 (0)7700 900123"],
-  ["phone", "+12"],
-  ["phone", "+1 555 010 CALL"],
-  ["phone", "maya@example.org"],
-  ["phone", ""],
-  ["email", "maya@example.org"],
-  ["email", "  Maya@Example.ORG "],
-  ["email", "<maya@example.org>"],
-  ["email", "Maya <Maya@example.org>"],
-  ["email", '"Reeves, Maya" <maya@example.org>'],
-  ["email", "mailto:maya@example.org"],
-  ["email", "maya@example.org."],
-  ["email", "maya+receipts@example.org"],
-  ["email", "maya"],
-  ["email", "@example.org"],
-  ["email", "maya@"],
-  ["email", "maya@localhost"],
-  ["email", "maya reeves@example.org"],
-  ["email", ""],
-  ["domain", "example.org"],
-  ["domain", "EXAMPLE.Org"],
-  ["domain", "@example.org"],
-  ["domain", " example.org. "],
-  ["domain", "mail.example.org"],
-  ["domain", "localhost"],
-  ["domain", "*.example.org"],
-  ["domain", "example.org/path"],
-  ["domain", "https://example.org"],
-  ["domain", "maya@example.org"],
-  ["domain", "example..org"],
-  ["domain", "-example.org"],
-  ["domain", "example.123"],
-  ["domain", ""],
-];
-
-test.each(TYPED)("a typed %s written as %j is read exactly as the gateway reads it", (type, raw) => {
-  expect(typedValue(type, raw)).toBe(canonicalFilterIdentifier(type, raw)?.value ?? null);
+test("an entry is keyed by its field, device and item, or by a person's identifiers", () => {
+  const key = filters.scopeRefKey;
+  const folder = { capability: "tree", field: "extra.folder", id: "~/work", device: "dev-one" };
+  // The same path on another device, or in another field, is another entry.
+  expect(key({ ...folder, device: "dev-two" })).not.toBe(key(folder));
+  expect(key({ ...folder, field: "extra.other" })).not.toBe(key(folder));
+  // A membership and a tree entry naming the same item of a field are one entry.
+  expect(key({ ...folder, capability: "membership" })).toBe(key(folder));
+  // A person is its identifiers, in any order, whatever it is called.
+  const maya = {
+    capability: "person",
+    label: "Maya Reeves",
+    identifiers: [
+      { type: "email", value: "maya@example.org" },
+      { type: "phone", value: "+15550100142" },
+    ],
+  };
+  expect(key({ ...maya, label: "M. Reeves", identifiers: [...maya.identifiers].reverse() })).toBe(
+    key(maya),
+  );
+  expect(key({ ...maya, identifiers: maya.identifiers.slice(1) })).not.toBe(key(maya));
 });
 
 test.each([
-  ["email", "maya@b\u00FCcher.example"],
-  ["domain", "b\u00FCcher.example"],
-] as const)("a typed %s the gateway respells, %j, is still accepted", (type, raw) => {
-  expect(typedValue(type, raw)).toBe(raw);
-  expect(canonicalFilterIdentifier(type, raw)).not.toBeNull();
+  [{ capability: "membership", field: "extra.labelIds", id: "Label_12" }, true],
+  [{ capability: "tree", field: "extra.folder", id: "", device: "dev-one" }, true],
+  [{ capability: "tree", field: "extra.folder", id: "" }, false],
+  [{ capability: "tree", field: "", id: "x" }, false],
+  [{ capability: "tree", field: "extra.folder", id: "x", device: "" }, false],
+  [{ capability: "range", field: "extra.date", id: "x" }, false],
+  [{ capability: "membership", field: "extra.labelIds", id: "x", extra: true }, false],
+  [{ kind: "label", id: "x" }, false],
+  [{ capability: "person", label: "Maya", identifiers: [{ type: "phone", value: "+15550100142" }] }, true],
+  [{ capability: "person", label: " ", identifiers: [{ type: "phone", value: "+15550100142" }] }, false],
+  [{ capability: "person", label: "Maya", identifiers: [] }, false],
+  [{ capability: "person", label: "Maya", identifiers: [{ type: "fax", value: "1" }] }, false],
+])("the editor changes only the entries it can show: %j → %s", (ref, editable) => {
+  expect(
+    filters.editableSourcePolicy({ ...policy, rules: [{ action: "share", match: [ref] }] }),
+  ).toBe(editable);
 });
 
-test("newly proposed person identifiers are added only by an explicit immutable update", () => {
-  const draft = {
-    ...policy,
+test("a whole device is an entry with no item, on a field whose items belong to a device", () => {
+  expect(filters.isDeviceRef({ capability: "tree", field: "f", id: "", device: "dev-one" })).toBe(true);
+  expect(filters.isDeviceRef({ capability: "tree", field: "f", id: "~", device: "dev-one" })).toBe(false);
+  expect(filters.isDeviceRef({ capability: "person", label: "", identifiers: [] })).toBe(false);
+});
+
+test("an entry finds its field in the editor, a person by the person field", () => {
+  const editor = {
+    fields: [
+      { field: "$people", capability: "person" },
+      { field: "extra.labelIds", capability: "membership" },
+    ],
+  };
+  expect(filters.refField(editor, { capability: "person", label: "x", identifiers: [] }).field).toBe(
+    "$people",
+  );
+  expect(
+    filters.refField(editor, { capability: "membership", field: "extra.labelIds", id: "x" }).field,
+  ).toBe("extra.labelIds");
+  expect(filters.refField(editor, { capability: "tree", field: "gone", id: "x" })).toBeUndefined();
+});
+
+test("an address the gateway read becomes one person entry named by its spelling", () => {
+  expect(filters.identifierRef({ type: "phone", value: "+15550100123" })).toEqual({
+    capability: "person",
+    label: "+15550100123",
+    identifiers: [{ type: "phone", value: "+15550100123" }],
+  });
+});
+
+test("a draft needs at least one entry and at most 256, and never counts on counts", () => {
+  const draft = filters.newSourcePolicy("fictional:one", "answer");
+  expect(filters.filterDraftError(draft)).toBe("Select at least one item.");
+  const entries = (count: number) => ({
+    ...draft,
     rules: [
       {
         action: "share",
-        match: [
-          {
-            kind: "participant",
-            label: "Fictional person",
-            identifiers: [{ type: "email", value: "person@example.com" }],
-          },
-        ],
+        match: Array.from({ length: count }, (_, index) => ({
+          capability: "membership",
+          field: "extra.labelIds",
+          id: `label-${index}`,
+        })),
       },
     ],
-  };
-  const expanded = filters.addProposedIdentifiers(draft, {
-    itemIndex: 0,
-    identifiers: [{ type: "phone", value: "+15550100123" }],
   });
-  expect(draft.rules[0].match[0].identifiers).toHaveLength(1);
-  expect(expanded.rules[0].match[0].identifiers).toHaveLength(2);
-  expect(expanded.rules[0].match[0]).not.toHaveProperty("personId");
-});
-
-test("request identity binds every source, kind, search and folder location", () => {
-  const key = filters.requestIdentity("fictional:one", "folder", "project", "root");
-  for (const values of [
-    ["fictional:two", "folder", "project", "root"],
-    ["fictional:one", "label", "project", "root"],
-    ["fictional:one", "folder", "changed", "root"],
-    ["fictional:one", "folder", "project", "elsewhere"],
-  ])
-    expect(filters.requestIdentity(...values)).not.toBe(key);
+  expect(filters.filterDraftError(entries(256))).toBeNull();
+  expect(filters.filterDraftError(entries(257))).toBe("A filter can include at most 256 items.");
+  expect(filters.filterDraftError({ ...draft, otherwise: "share" })).toMatch(/cannot change/);
 });
 
 test("closed authoring guards candidate boundaries without pruning policies or freezing ordinary choices", () => {

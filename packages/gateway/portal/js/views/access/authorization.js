@@ -38,7 +38,15 @@ import { directFollowsAnswer, directMirrorsAnswer } from "./level-flow-state.js"
 import { LevelReview } from "./level-review.js";
 import { LEVEL_NAME_TAKEN_MESSAGE, NEW_LEVEL } from "./name-fields.js";
 import { PageHeader } from "./page-header.js";
-import { errorMessage, expiresInLabel, overviewPolicies, useExpiryClock } from "./shared.js";
+import {
+  connectionEntries,
+  errorMessage,
+  expiresInLabel,
+  isLiveConnection,
+  levelDevices,
+  overviewPolicies,
+  useExpiryClock,
+} from "./shared.js";
 
 /**
  * The selection the gateway receives for what the owner approved:
@@ -180,15 +188,22 @@ function PhoneHandoff({ userCode, disabled }) {
 }
 
 /**
- * How many connections besides the one being approved already use the level
- * the approval lands on: all of an existing level's, and all but the replaced
- * connection itself for a replacement.
+ * Who else already uses the level the approval lands on, by name: its
+ * connections — all but the replaced one for a replacement — then its
+ * integrations. Empty for a new level.
  */
-function otherConnectionsOnLevel(approval) {
-  if (approval.kind === "existing-level") return approval.level.connectionCount ?? 0;
-  if (approval.kind === "replace" && approval.level)
-    return Math.max((approval.level.connectionCount ?? 1) - 1, 0);
-  return 0;
+export function otherUsersOnLevel(approval, overview) {
+  if (approval.kind !== "existing-level" && !(approval.kind === "replace" && approval.level))
+    return [];
+  const level = approval.level;
+  const replaced = approval.kind === "replace" ? approval.connection.id : null;
+  const connections = connectionEntries(overview)
+    .filter((entry) => entry.levelId === level.id && isLiveConnection(entry) && entry.id !== replaced)
+    .map((entry) => entry.name);
+  const devices = levelDevices(
+    (overview.levels ?? []).find((candidate) => candidate.id === level.id) ?? level,
+  ).map((device) => device.name);
+  return [...connections, ...devices];
 }
 
 /**
@@ -196,14 +211,13 @@ function otherConnectionsOnLevel(approval) {
  * level, then `decisions` — the level's permissions, drawn by the level
  * editor's review.
  */
-function ConnectionReview({ approval, decisions }) {
+function ConnectionReview({ approval, decisions, others = [] }) {
   const connectionName =
     approval.kind === "replace" ? approval.connection.name : approval.name.trim();
   const levelName =
     approval.kind === "new-level"
       ? `${approval.levelName.trim()} (new)`
       : (approval.level?.name ?? null);
-  const others = otherConnectionsOnLevel(approval);
   return html`
     <dl class="access-review-rows" aria-label="Access to approve">
       <div>
@@ -229,9 +243,9 @@ function ConnectionReview({ approval, decisions }) {
     </dl>
     <section class="guided-level-flow access-review-decisions">${decisions}</section>
     ${
-      others > 0
+      others.length
         ? html`<p class="access-review-note">
-            ${`Also used by ${others} other connection${others === 1 ? "" : "s"}. Changing this access level later changes all of them.`}
+            ${`Also used by ${others.length > 1 ? `${others.slice(0, -1).join(", ")} and ${others.at(-1)}` : others[0]}. Changing this access level later changes ${others.length > 1 ? "them" : "it"} too.`}
           </p>`
         : null
     }
@@ -353,13 +367,18 @@ export function RequestReview({
           : next,
     }));
 
+  /** "Allow Answer and Direct access": the button names what it grants. */
   function capabilityAction() {
     const permissions = [
       effectiveRules.answer && "Answer",
-      effectiveRules.direct && "raw Direct access",
+      effectiveRules.direct && "Direct",
       effectiveRules.notes && "Notes",
     ].filter(Boolean);
-    return `Allow ${permissions.join(" + ")}`;
+    const named =
+      permissions.length > 1
+        ? `${permissions.slice(0, -1).join(", ")} and ${permissions.at(-1)}`
+        : permissions[0];
+    return `Allow ${named} access`;
   }
 
   /**
@@ -420,7 +439,7 @@ export function RequestReview({
       if (REFRESH_REFUSALS.has(refusal)) {
         setStale(true);
         setError(
-          "The access choices changed. Your draft is retained. Reload the latest choices before approving.",
+          "The access choices changed. Your changes are kept. Load the latest choices before approving.",
         );
         setBusy(false);
         return;
@@ -468,20 +487,17 @@ export function RequestReview({
       onClose=${onClose}
       headingRef=${headingRef}
     >
-      <p>
-        <strong>${request.clientName}</strong> is the client-reported name ·
-        ${expiresInLabel(request.expiresAt, now)}
-      </p>
-      <dl class="access-request-facts" aria-label="Connection destinations">
+      <dl class="access-request-facts" aria-label="Connection request">
         <div>
-          <dt>Omnesis gateway</dt>
-          <dd>${authorizationEndpointLabel(request.resource, "This gateway")}</dd>
+          <dt>Client name, self-reported</dt>
+          <dd><strong>${request.clientName}</strong></dd>
         </div>
         <div>
           <dt>Returns to</dt>
           <dd>${authorizationEndpointLabel(request.redirectOrigin)}</dd>
         </div>
       </dl>
+      <p class="access-request-expiry">${expiresInLabel(request.expiresAt, now)}.</p>
       ${request.userCode && html`<${PhoneHandoff} userCode=${request.userCode} disabled=${busy} />`}
     <//>
     <${ApprovalWizard}
@@ -504,6 +520,7 @@ export function RequestReview({
         approval
           ? html`<${ConnectionReview}
               approval=${approval}
+              others=${otherUsersOnLevel(approval, overview)}
               decisions=${html`<${LevelReview}
                 rules=${effectiveRules}
                 sources=${sources}
@@ -516,8 +533,8 @@ export function RequestReview({
             />`
           : null
       }
-      leadAction=${html`<span><button type="button" class="btn-ghost danger" disabled=${busy} onClick=${() => decide("deny")}>Deny request</button>${stale ? html`<button type="button" class="btn-secondary" disabled=${busy} onClick=${reloadChoices}>Reload choices and discard draft</button>` : null}</span>`}
-      finalAction=${html`<button type="button" class=${effectiveRules.direct ? "btn-primary access-risk-action" : "btn-primary"} disabled=${busy || stale || !valid} onClick=${() => decide("approve")}>${busy ? "Saving…" : capabilityAction()}</button>`}
+      leadAction=${html`<span><button type="button" class="btn-ghost danger" disabled=${busy} onClick=${() => decide("deny")}>Deny request</button>${stale ? html`<button type="button" class="btn-secondary" disabled=${busy} onClick=${reloadChoices}>Load the latest choices and discard my changes</button>` : null}</span>`}
+      finalAction=${html`<button type="button" class="btn-primary" disabled=${busy || stale || !valid} onClick=${() => decide("approve")}>${busy ? "Saving…" : capabilityAction()}</button>`}
     />
   </div>`;
 }

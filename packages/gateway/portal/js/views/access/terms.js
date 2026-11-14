@@ -25,24 +25,23 @@ import { overviewPolicies } from "./shared.js";
  * The policy a reviewed capability runs under, as a link to its editor.
  *
  * Rules can name a policy the overview does not carry — one deleted out from
- * under them, or an overview that answered without it. Naming it anyway would
- * print a placeholder over a live link, so that case is plain text instead.
+ * under them, or an overview that answered without it. That case reads as the
+ * editor reads it, in plain text instead of a link.
  *
  * A list of links reads out its names alone, and "Household" three times over
  * says nothing about what each one is, so the word "Policy" travels inside the
- * accessible name as well as in the words beside it, unless the name already
- * ends in it.
+ * accessible name.
  */
 function policySummary(policyId, policies) {
   const named = findPolicyFamily(policies, policyId);
-  if (!named) return "Policy unavailable";
+  if (!named) return policyFamilyName(named);
   const name = policyFamilyName(named);
   const href = policyEditorPath(policyId);
   return html`<a
     href=${href}
     aria-label=${`Policy: ${name}`}
     onClick=${(event) => { event.preventDefault(); navigate(href); }}
-  >${name}</a>${/\bpolicy$/i.test(name) ? null : " policy"}`;
+  >${name}</a>`;
 }
 
 /**
@@ -75,7 +74,7 @@ export function reachSummary(rules, overview) {
 export function answerPrivacySummary(rule, policies) {
   if (rule.release.mode === "unreviewed") return "No privacy review";
   const policy = findPolicyFamily(policies, rule.release.policyFamilyId);
-  return policy ? policyFamilyName(policy) : "Privacy policy";
+  return policyFamilyName(policy);
 }
 
 // Lucide "circle-check" and "circle-minus" (https://lucide.dev, ISC-licensed).
@@ -85,19 +84,22 @@ function PermissionGlyph({ granted }) {
   </svg>`;
 }
 
-/** What one granted reading capability runs under: its reach, its review and whether new sources join. */
+/**
+ * What one granted reading capability runs under: its reach, its review and
+ * whether new sources join, in the words the level editor uses.
+ */
 function readingDetails(capability, rule, overview) {
   const retained = (overview.sources ?? []).filter((source) => source.available === false);
   const retainedAllowed = retained.filter((source) => isSourceAllowed(rule, sourceId(source))).length;
   const unreviewed = capability === "answer" && rule.release.mode === "unreviewed";
   return html`
-    <span class="access-reach-cell"><span class="sr-only">Sources: </span>${laneReach(rule, overview)}</span>${" · "}
+    <span class="access-reach-cell"><span class="sr-only">Sources: </span>${laneReach(rule, overview)}</span>
     ${capability === "direct"
-      ? "Raw access"
+      ? null
       : unreviewed
-        ? html`<span class="access-unreviewed">No privacy review</span>`
-        : policySummary(rule.release.policyFamilyId, overviewPolicies(overview))}
-    ${" · "}${blocksNewSources(rule) ? "New sources blocked" : "New sources allowed"}
+        ? html`${" · "}<span class="access-unreviewed">No privacy review</span>`
+        : html`${" · "}Privacy review: ${policySummary(rule.release.policyFamilyId, overviewPolicies(overview))}`}
+    ${" · "}New sources: ${blocksNewSources(rule) ? "Blocked" : "Automatic"}
     ${retained.length > 0
       ? ` · Retained: ${retainedAllowed} allowed, ${retained.length - retainedAllowed} blocked`
       : null}`;

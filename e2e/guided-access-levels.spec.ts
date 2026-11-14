@@ -4,8 +4,7 @@
 import { readFileSync, writeFileSync, mkdirSync, chmodSync } from "node:fs";
 import { join } from "node:path";
 import { test, expect, type Page } from "@playwright/test";
-
-// Invented account and content data.
+// The fields the real providers declare, with independently invented account and content data.
 const levelId = "00000000-0000-4000-8000-000000000093";
 const policyId = "00000000-0000-4000-8000-000000000094";
 const baseSources = [
@@ -15,10 +14,6 @@ const baseSources = [
     displayName: "Gmail",
     available: true,
     filterable: true,
-    scopeReadiness: [
-      { kind: "participant", ready: true },
-      { kind: "label", ready: true },
-    ],
   },
   {
     id: "google-drive:owner@example.com",
@@ -26,13 +21,73 @@ const baseSources = [
     displayName: "Google Drive",
     available: true,
     filterable: true,
-    scopeReadiness: [{ kind: "folder", ready: true }],
   },
 ];
+const noun = (one: string, many: string) => ({ one, many });
+const counted = { status: "ready", tooOld: 0, unmatched: 0, tooOldText: null, unmatchedText: null };
+const people = (identifiers: string[]) => ({
+  field: "$people",
+  capability: "person",
+  noun: noun("person", "people"),
+  picker: "search",
+  scope: "global",
+  identifiers,
+  state: { status: "ready" },
+  counts: counted,
+});
+/** Each source type's filterable fields, as its package declares them. */
+const FIELDS: Record<string, unknown[]> = {
+  gmail: [
+    people(["email", "domain"]),
+    {
+      field: "extra.labelIds",
+      capability: "membership",
+      noun: noun("label", "labels"),
+      picker: "tree",
+      scope: "global",
+      levels: [noun("label", "labels")],
+      insideText: "Includes the labels inside.",
+      state: { status: "ready" },
+      counts: counted,
+    },
+  ],
+  "google-drive": [
+    {
+      field: "extra.folderId",
+      capability: "tree",
+      noun: noun("folder", "folders"),
+      picker: "tree",
+      scope: "global",
+      levels: [noun("folder", "folders")],
+      insideText: "Includes the folders inside.",
+      state: { status: "ready" },
+      counts: counted,
+    },
+  ],
+  "whatsapp-messages": [
+    {
+      field: "extra.chatJid",
+      capability: "membership",
+      noun: noun("chat", "chats"),
+      picker: "search",
+      scope: "global",
+      state: { status: "ready" },
+      counts: counted,
+    },
+    people(["phone"]),
+  ],
+};
+/** A field's items carry the capability its declaration names. */
+const FIELD_CAPABILITY: Record<string, string> = {
+  "extra.labelIds": "membership",
+  "extra.folderId": "tree",
+  "extra.chatJid": "membership",
+};
+const LABEL = { capability: "membership", field: "extra.labelIds", id: "planning" };
 const savedPolicy = {
   sourceId: baseSources[0]!.id,
   audience: { accessLevel: levelId, capability: "answer" },
-  rules: [{ action: "share", match: [{ kind: "label", id: "planning" }] }],
+  rules: [{ action: "share", match: [LABEL] }],
   otherwise: "hide",
 };
 const answer = {
@@ -52,16 +107,17 @@ const direct = {
   scopePolicies: [],
 };
 const nameFor = (ref: {
-  kind: string;
+  capability: string;
+  field?: string;
   id?: string;
   label?: string;
   identifiers?: Array<{ value: string }>;
 }) =>
   ref.id?.match(/-item-(\d+)$/)
-    ? `${ref.kind === "folder" ? "Folder" : "Label"} ${String(Number(ref.id.match(/-item-(\d+)$/)![1]) + 1).padStart(2, "0")} — Independently invented catalogue entry`
-    : ref.kind === "label"
+    ? `${ref.field === "extra.folderId" ? "Folder" : "Label"} ${String(Number(ref.id.match(/-item-(\d+)$/)![1]) + 1).padStart(2, "0")} — Independently invented catalogue entry`
+    : ref.field === "extra.labelIds"
       ? "Planning"
-      : ref.kind === "folder"
+      : ref.field === "extra.folderId"
         ? "Comet notes"
         : ref.label || ref.identifiers?.map((item) => item.value).join(" or ") || "Maya Reeves";
 async function assertPrimaryContrast(page: Page) {
@@ -174,9 +230,9 @@ async function capture(
   captureScale = 1,
 ) {
   // Wait for ordinary summary reads as well as finite layout transitions.
-  await expect(
-    page.locator(".compact-policy-impact").filter({ hasText: "Counting matching records…" }),
-  ).toHaveCount(0);
+  await expect(page.locator(".compact-policy-impact").filter({ hasText: "Counting…" })).toHaveCount(
+    0,
+  );
   // Leave deliberate preparation and progress states visible in their captures.
   await page.evaluate(async () => {
     await Promise.allSettled(
@@ -278,18 +334,21 @@ for (const theme of ["dark", "light"])
           return;
         }
         const url = new URL(route.request().url()),
-          kind = url.searchParams.get("kind"),
+          field = url.searchParams.get("field")!,
           parent = url.searchParams.get("parentId");
         const sourceId = decodeURIComponent(url.pathname.split("/").at(-2)!);
-        const participant = sources
-          .find((source) => source.id === sourceId)!
-          .scopes.items.find((item) => item.kind === "participant");
+        const declared = FIELDS[sources.find((source) => source.id === sourceId)!.sourceType]!;
         const phoneOnly =
-          participant && "identifiers" in participant && !participant.identifiers.includes("email");
+          (
+            declared.find((item) => (item as { field: string }).field === "$people") as
+              { identifiers: string[] } | undefined
+          )?.identifiers.includes("email") === false;
+        const capability = FIELD_CAPABILITY[field];
+        const folder = field === "extra.folderId";
         const ref =
-          kind === "participant"
+          field === "$people"
             ? {
-                kind,
+                capability: "person",
                 label: "Maya Reeves",
                 identifiers: [
                   phoneOnly
@@ -298,9 +357,10 @@ for (const theme of ["dark", "light"])
                 ],
               }
             : {
-                kind,
+                capability,
+                field,
                 id:
-                  kind === "label"
+                  field === "extra.labelIds"
                     ? sameNameCatalogue
                       ? "planning-replacement"
                       : "planning"
@@ -308,27 +368,31 @@ for (const theme of ["dark", "light"])
                       ? "folder-child"
                       : "folder-root",
               };
+        const label = (text: string) => ({ label: text, shortLabel: text.split("/").at(-1) });
         const items =
-          longCatalogue && kind !== "participant"
+          longCatalogue && field !== "$people"
             ? Array.from({ length: 65 }, (_, index) => ({
-                ref: { kind, id: `${parent || kind}-item-${index}` },
-                label: `${kind === "folder" ? "Folder" : "Label"} ${String(index + 1).padStart(2, "0")} — Independently invented catalogue entry`,
+                ref: { capability, field, id: `${parent || field}-item-${index}` },
+                ...label(
+                  `${folder ? "Folder" : "Label"} ${String(index + 1).padStart(2, "0")} — Independently invented catalogue entry`,
+                ),
                 count: 6,
-                hasChildren: kind === "folder" && !parent,
+                hasChildren: folder && !parent,
               }))
             : [
                 {
                   ref,
-                  label:
-                    kind === "folder"
+                  ...label(
+                    folder
                       ? parent
                         ? "Comet notes"
                         : "Dawn archive"
-                      : kind === "label"
+                      : field === "extra.labelIds"
                         ? "Planning"
                         : "Maya Reeves",
+                  ),
                   count: 6,
-                  hasChildren: kind === "folder" && !parent,
+                  hasChildren: folder && !parent,
                 },
               ];
         const cursor = url.searchParams.get("cursor");
@@ -336,8 +400,7 @@ for (const theme of ["dark", "light"])
         await route.fulfill({
           json: {
             sourceId,
-            scopes: sources.find((source) => source.id === sourceId)!.scopes,
-            readiness: sources.find((source) => source.id === sourceId)!.scopeReadiness,
+            field,
             items: items.slice(offset, offset + 50),
             nextCursor:
               offset + 50 < items.length
@@ -370,39 +433,82 @@ for (const theme of ["dark", "light"])
         const only = body.policy.rules[0].action === "share";
         active--;
         await route.fulfill({
+          json:
+            previews === "counting"
+              ? { status: "pending", retryAfterMs: 60_000 }
+              : {
+                  status: "ready",
+                  sourceId,
+                  total: 20,
+                  visible: only ? 6 : 12,
+                  hidden: only ? 14 : 8,
+                  tooOld: 0,
+                  unmatched: 2,
+                  tooOldText: null,
+                  unmatchedText: "2 records can't be matched to a label and stay hidden.",
+                  items: body.policy.rules.flatMap(
+                    (rule: { match: Array<{ capability: string; field?: string; id?: string }> }) =>
+                      rule.match.map((ref) => ({
+                        ref,
+                        label:
+                          previews === "missing" && ref.capability !== "person"
+                            ? ref.id
+                            : nameFor(ref),
+                        count: previews === "missing" && ref.capability !== "person" ? 0 : 6,
+                        missing: previews === "missing" && ref.capability !== "person",
+                      })),
+                  ),
+                },
+        });
+      });
+      // An account's editor: the fields its source declares, all ready.
+      const editorPath = (url: URL) =>
+        /^\/admin\/access\/source-filters\/[^/]+$/.test(url.pathname) &&
+        !url.pathname.endsWith("/identifiers");
+      await page.route(editorPath, async (route) => {
+        const sourceId = decodeURIComponent(
+          new URL(route.request().url()).pathname.split("/").at(-1)!,
+        );
+        const source = sources.find((item) => item.id === sourceId);
+        if (!source || source.available === false) {
+          await route.fulfill({ status: 404, json: { error: "Unknown source." } });
+          return;
+        }
+        await route.fulfill({
           json: {
             sourceId,
-            total: 20,
-            visible: only ? 6 : 12,
-            hidden: only ? 14 : 8,
-            unknown: 2,
-            readiness: sources
-              .find((source) => source.id === sourceId)!
-              .scopeReadiness.map((item) => ({
-                ...item,
-                ready:
-                  previews !== "preparing" &&
-                  !(previews === "unused-preparing" && item.kind === "label"),
-              })),
-            items: body.policy.rules.flatMap(
-              (rule: { match: Array<{ kind: string; id?: string }> }) =>
-                rule.match.map((ref) => ({
-                  ref,
-                  label:
-                    previews === "missing" && ref.kind !== "participant" ? ref.id : nameFor(ref),
-                  count: previews === "missing" && ref.kind !== "participant" ? 0 : 6,
-                  missing: previews === "missing" && ref.kind !== "participant",
-                })),
-            ),
-            samples: [
-              {
-                documentId: "invented-sample",
-                title: "Project outline",
-                visible: true,
-                unknown: false,
-              },
-            ],
+            sourceType: source.sourceType,
+            devices: [{ id: "dev-invented", name: "Invented laptop" }],
+            showDeviceLevel: false,
+            fields: FIELDS[source.sourceType] ?? [],
           },
+        });
+      });
+      await page.route("**/admin/access/source-filters/identifiers", async (route) => {
+        const { type, value } = route.request().postDataJSON();
+        const digits = String(value)
+          .replace(/[^0-9+]/g, "")
+          .replace(/^00/, "+");
+        await route.fulfill({
+          json:
+            type === "phone"
+              ? /^\+[1-9][0-9]{6,14}$/.test(digits)
+                ? { identifier: { type, value: digits } }
+                : { error: "Enter a valid phone number. Include the international country code." }
+              : String(value).includes(".")
+                ? {
+                    identifier: {
+                      type,
+                      value: String(value)
+                        .trim()
+                        .toLowerCase()
+                        .replace(/^mailto:/, ""),
+                    },
+                  }
+                : {
+                    error:
+                      type === "email" ? "Enter a valid email address." : "Enter a valid domain.",
+                  },
         });
       });
       await page.route("**/admin/access/levels", async (route) => {
@@ -453,7 +559,7 @@ for (const theme of ["dark", "light"])
         await modal().getByRole("searchbox").first().focus();
       };
       const openPicker = async (scopeKind: string) => {
-        const kind = scopeKind === "participant" ? "people" : scopeKind;
+        const kind = scopeKind === "participant" ? "people" : `${scopeKind}s`;
         await modal()
           .getByRole("searchbox", { name: `Search ${kind}`, exact: true })
           .focus();
@@ -686,6 +792,11 @@ for (const theme of ["dark", "light"])
       ).toContainText("Planning");
       await expect(page.locator(".guided-account-delta")).not.toContainText("Google Drive");
       await shot("edit-03-data-delta");
+      // The review goes Back to the level page, which holds Cancel.
+      await expect(
+        page.locator(".guided-task-footer").getByRole("button", { name: "Cancel" }),
+      ).toHaveCount(0);
+      await page.getByRole("button", { name: "Back", exact: true }).click();
       await page.getByRole("button", { name: "Cancel", exact: true }).click();
       await expect(page.getByRole("button", { name: "Keep editing", exact: true })).toBeFocused();
       await shot("edit-03b-discard-confirmation");
@@ -694,19 +805,22 @@ for (const theme of ["dark", "light"])
       await expect(
         page.getByRole("dialog", { name: "Discard this draft?", exact: true }),
       ).toHaveCount(0);
+      await page.getByRole("button", { name: "Review changes", exact: true }).click();
       await expect(page.locator(".guided-account-delta")).toContainText("Hide matching content");
       await expect(
         page.locator(".guided-account-delta .compact-filter-table").last(),
       ).toContainText("Planning");
       await page.getByRole("button", { name: "Save changes", exact: true }).click();
-      await expect(page.getByRole("alert")).toContainText("Your draft is retained");
+      await expect(page.getByRole("alert")).toContainText("Your changes are kept");
       await expect(page.getByRole("alert")).toBeInViewport();
       await shot("edit-04-conflict");
-      await expect(page.locator(".guided-task-footer")).not.toContainText("Reload latest");
+      await expect(page.locator(".guided-task-footer")).not.toContainText(
+        "Load the latest version",
+      );
       if (width === 390) {
         await page.setViewportSize({ width: width / 2, height: 422 });
         const recovery = page.getByRole("button", {
-          name: "Reload latest and discard draft",
+          name: "Load the latest version and discard my changes",
           exact: true,
         });
         await recovery.scrollIntoViewIfNeeded();
@@ -742,7 +856,10 @@ for (const theme of ["dark", "light"])
         await page.setViewportSize({ width, height: 844 });
       }
       await page
-        .getByRole("button", { name: "Reload latest and discard draft", exact: true })
+        .getByRole("button", {
+          name: "Load the latest version and discard my changes",
+          exact: true,
+        })
         .click();
       await expect(
         page.getByRole("heading", { name: "What would you like to change?", exact: true }),
@@ -759,7 +876,6 @@ for (const theme of ["dark", "light"])
       await expect.poll(() => Boolean(releaseWrite)).toBe(true);
       await expect(page.locator(".guided-review-decision button")).toBeDisabled();
       await expect(page.getByRole("button", { name: "Back", exact: true })).toBeDisabled();
-      await expect(page.getByRole("button", { name: "Cancel", exact: true })).toBeDisabled();
       await shot("edit-05b-saving");
       holdWrite = false;
       releaseWrite!();
@@ -790,7 +906,7 @@ for (const theme of ["dark", "light"])
       await expect(modal().getByRole("button", { name: "Done", exact: true })).toBeFocused();
       await pickMatches();
       await openPicker("label");
-      const search = modal().getByRole("searchbox", { name: "Search label", exact: true });
+      const search = modal().getByRole("searchbox", { name: "Search labels", exact: true });
       await search.fill("invented");
       await expect(
         modal().locator(".source-filter-results:not([hidden]) .source-filter-options li"),
@@ -860,7 +976,7 @@ for (const theme of ["dark", "light"])
       await refreshBuilder();
       await modal().getByRole("button", { name: "Apply filter", exact: true }).click();
       await expect(account.locator(".guided-readable-boundary")).toContainText(
-        "Only 20 selected matches",
+        "Share matching content · 20 items",
       );
       await account.scrollIntoViewIfNeeded();
       await shot("stress-04-compact-boundary-row");
@@ -907,11 +1023,11 @@ for (const theme of ["dark", "light"])
         )
         .toBeCloseTo(folderOffset, 0);
       await shot("stress-05-folder-return");
-      await modal().getByRole("searchbox", { name: "Search folder", exact: true }).focus();
+      await modal().getByRole("searchbox", { name: "Search folders", exact: true }).focus();
       await page.keyboard.press("Escape");
       await expect(modal()).toBeVisible();
       await expect(
-        modal().getByRole("searchbox", { name: "Search folder", exact: true }),
+        modal().getByRole("searchbox", { name: "Search folders", exact: true }),
       ).toHaveAttribute("aria-expanded", "false");
       await page.keyboard.press("Escape");
       await expect(
@@ -935,7 +1051,7 @@ for (const theme of ["dark", "light"])
       await page.getByRole("button", { name: "Keep editing", exact: true }).click();
       await expect(page.getByRole("button", { name: "Cancel", exact: true })).toBeFocused();
       await expect(account.locator(".guided-readable-boundary")).toContainText(
-        "Only 20 selected matches",
+        "Share matching content · 20 items",
       );
       await page.getByRole("button", { name: "Cancel", exact: true }).click();
       await page.getByRole("button", { name: "Discard draft", exact: true }).click();
@@ -947,10 +1063,6 @@ for (const theme of ["dark", "light"])
         icon: fixtureIcons["whatsapp-messages"],
         available: true,
         filterable: true,
-        scopeReadiness: [
-          { kind: "conversation", ready: true },
-          { kind: "participant", ready: true },
-        ],
       } as (typeof sources)[number]);
       await page.goto("/portal/settings/access/levels/new");
       const permission = (name: string) =>
@@ -977,7 +1089,7 @@ for (const theme of ["dark", "light"])
       await expect(
         modal()
           .locator(".source-filter-results:not([hidden])")
-          .getByText("Loading source options…", { exact: true }),
+          .getByText("Loading…", { exact: true }),
       ).toHaveCount(0);
       await shot("supplement-03-whatsapp-phone");
       await refreshBuilder();
@@ -1019,36 +1131,28 @@ for (const theme of ["dark", "light"])
       await shot("supplement-07-gmail-email-domain");
       options = "error";
       await openPicker("label");
-      await expect(
-        modal().getByRole("button", { name: "Retry options", exact: true }),
-      ).toBeVisible();
+      await expect(modal().getByText("Options are temporarily unavailable.")).toBeVisible();
+      await expect(modal().getByRole("button", { name: "Try again", exact: true })).toBeVisible();
       await shot("supplement-08-options-unavailable");
       options = "ready";
-      await modal().getByRole("button", { name: "Retry options", exact: true }).click();
+      await modal().getByRole("button", { name: "Try again", exact: true }).click();
+      // Counts that cannot be loaded, or are still being counted, never hold back Apply.
       previews = "error";
       await refreshBuilder();
-      await expect(
-        modal().getByRole("button", { name: "Apply filter", exact: true }),
-      ).toBeDisabled();
-      await expect(modal().getByRole("button", { name: /Retry/ })).toBeVisible();
-      await shot("supplement-09-preview-unavailable");
-      previews = "preparing";
-      await modal().getByRole("button", { name: /Retry/ }).click();
-      await expect(
-        modal().getByRole("button", { name: "Apply filter", exact: true }),
-      ).toBeDisabled();
-      await expect(modal().getByText("Counting matching records…").first()).toBeVisible();
-      await expect(modal().getByRole("button", { name: /refresh/i })).toHaveCount(0);
-      await shot("supplement-10-preparing");
-      await modal().getByRole("button", { name: "Back", exact: true }).click();
-      previews = "unused-preparing";
-      await refreshBuilder();
+      await expect(modal().getByText("Counts could not be loaded.")).toBeVisible();
       await expect(
         modal().getByRole("button", { name: "Apply filter", exact: true }),
       ).toBeEnabled();
-      await expect(modal()).not.toContainText("Provisional counts");
-      await expect(modal()).not.toContainText("Counting matching records…");
-      await shot("supplement-10a-unused-metadata-preparing");
+      await shot("supplement-09-preview-unavailable");
+      previews = "counting";
+      await modal().getByRole("button", { name: "Try again", exact: true }).click();
+      await expect(modal().getByText("Counting…").first()).toBeVisible();
+      await expect(
+        modal().getByRole("button", { name: "Apply filter", exact: true }),
+      ).toBeEnabled();
+      await expect(modal().getByRole("button", { name: /refresh/i })).toHaveCount(0);
+      await shot("supplement-10-counting");
+      previews = "ready";
       await openPicker("label");
       await modal()
         .getByRole("checkbox", { name: /Planning/ })
@@ -1090,6 +1194,7 @@ for (const theme of ["dark", "light"])
       await page.getByRole("button", { name: "Done", exact: true }).click();
       await page.getByRole("button", { name: "Review changes", exact: true }).click();
       await shot("supplement-14b-edit-future-delta");
+      await page.getByRole("button", { name: "Back", exact: true }).click();
       await page.getByRole("button", { name: "Cancel", exact: true }).click();
       await page.getByRole("button", { name: "Discard draft", exact: true }).click();
       await page.goto("/portal/settings/access/levels/new");
@@ -1154,15 +1259,15 @@ for (const theme of ["dark", "light"])
       expect(
         independent.rules.find((rule) => rule.capability === "answer")!.scopePolicies[0]!.rules[0]!
           .match,
-      ).toEqual([{ kind: "label", id: "planning" }]);
+      ).toEqual([LABEL]);
       expect(
         independent.rules.find((rule) => rule.capability === "direct")!.scopePolicies[0]!.rules[0]!
           .match,
       ).toEqual(
         expect.arrayContaining([
-          { kind: "label", id: "planning" },
+          LABEL,
           {
-            kind: "participant",
+            capability: "person",
             label: "independent@example.org",
             identifiers: [{ type: "email", value: "independent@example.org" }],
           },
@@ -1207,6 +1312,7 @@ for (const theme of ["dark", "light"])
       await expect(page.getByRole("alert")).toContainText("would not be able to read any source");
       await expect(page.getByRole("button", { name: "Save changes", exact: true })).toBeDisabled();
       await shot("supplement-21-unavailable-account-review");
+      await page.getByRole("button", { name: "Back", exact: true }).click();
       await page.getByRole("button", { name: "Cancel", exact: true }).click();
       await page.getByRole("button", { name: "Discard draft", exact: true }).click();
       // Create genuine app-owned history destinations before editing the draft.

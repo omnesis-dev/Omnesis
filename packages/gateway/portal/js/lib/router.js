@@ -44,6 +44,12 @@ export function parseRoute() {
     return { view: "agent", convoId: null };
   }
 
+  // A document's "Who can read this?" page sits under the document itself.
+  const docAccessMatch = path.match(/^\/portal\/doc\/(.+)\/access\/?$/);
+  if (docAccessMatch) {
+    return { view: "document-access", id: decodeURIComponent(docAccessMatch[1]) };
+  }
+
   const docMatch = path.match(/^\/portal\/doc\/(.+)$/);
   if (docMatch) {
     return { view: "document", id: decodeURIComponent(docMatch[1]) };

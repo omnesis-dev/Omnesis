@@ -14,6 +14,7 @@ import {
   sourcePolicy,
   editableSourcePolicy,
 } from "../../components/source-filter-state.js";
+import { filterModeLabel } from "../../components/access-pills.js";
 import { sourceLabel as sourceTypeLabel } from "../../lib/format.js";
 
 /**
@@ -85,7 +86,7 @@ export function sourceBoundarySummary(rule, source) {
   if (!policy) return "All content";
   if (!editableSourcePolicy(policy)) return SAVED_FILTER_LABEL;
   const count = policy.rules[0].match?.length ?? 0;
-  return `${policy.rules[0].action === "share" ? "Only" : "Except"} ${count} selected ${count === 1 ? "match" : "matches"}`;
+  return `${filterModeLabel(policy.rules[0].action)} · ${count.toLocaleString()} ${count === 1 ? "item" : "items"}`;
 }
 export const sameDecision = sameGrantIntent;
 /** Whether Direct reads exactly what Answer uses: the same accounts under the same filters. */

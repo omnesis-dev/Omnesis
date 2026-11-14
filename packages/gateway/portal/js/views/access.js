@@ -629,7 +629,7 @@ export function AccessView({
         <div>
           <h2 ref=${accessHeadingRef} tabIndex="-1">Agent access</h2>
           <p>
-            Who may read the corpus or save notes over MCP, and under which policy.
+            Who may read your data or save notes, and under which policy.
             ${" "}${activeConnectionCount} active connection${activeConnectionCount === 1 ? "" : "s"}.
           </p>
         </div>

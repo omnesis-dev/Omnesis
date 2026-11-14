@@ -49,7 +49,7 @@ test("options and previews share bounded admission while exact in-flight preview
   const readers = Array.from({ length: 8 }, (_, i) =>
     readFilterPreview(`fictional:${i}`, { ...policy, sourceId: `fictional:${i}` }),
   );
-  readers.push(readFilterOptions("fictional:options", { kind: "label" }));
+  readers.push(readFilterOptions("fictional:options", { field: "extra.labelIds" }));
   const duplicate = readFilterPreview("fictional:0", { ...policy, sourceId: "fictional:0" });
   await flush();
   expect(pages).toHaveLength(2);
@@ -128,23 +128,23 @@ test("an auth change rejects old reads, skips queued old work, and cannot repopu
   expect(api.previewSourceFilter).toHaveBeenCalledTimes(2);
   oldA.resolve({
     sourceId: "fictional:one",
-    items: [{ ref: { kind: "label", id: "shared" }, label: "Old credential label" }],
+    items: [{ ref: { capability: "membership", field: "extra.labelIds", id: "shared" }, label: "Old credential label" }],
   });
   await flush();
   expect(api.previewSourceFilter).toHaveBeenCalledTimes(3);
-  expect(scopeDisplayLabel("fictional:one", { kind: "label", id: "shared" }).label).not.toBe(
+  expect(scopeDisplayLabel("fictional:one", { capability: "membership", field: "extra.labelIds", id: "shared" }).label).not.toBe(
     "Old credential label",
   );
   oldB.resolve({ sourceId: "fictional:two", items: [] });
   fresh.resolve({
     sourceId: "fictional:one",
-    items: [{ ref: { kind: "label", id: "shared" }, label: "Current credential label" }],
+    items: [{ ref: { capability: "membership", field: "extra.labelIds", id: "shared" }, label: "Current credential label" }],
   });
   expect(await a).toMatchObject({ name: "AbortError" });
   expect(await b).toMatchObject({ name: "AbortError" });
   expect(await queued).toMatchObject({ name: "AbortError" });
   await current;
-  expect(scopeDisplayLabel("fictional:one", { kind: "label", id: "shared" }).label).toBe(
+  expect(scopeDisplayLabel("fictional:one", { capability: "membership", field: "extra.labelIds", id: "shared" }).label).toBe(
     "Current credential label",
   );
 });
@@ -159,12 +159,12 @@ test("an identical request immediately after awaiting completion starts a fresh 
 });
 
 test("a deleted catalogue reference keeps its resolved name without displaying an opaque ID", async () => {
-  const ref = { kind: "label", id: "opaque-label-17" };
+  const ref = { capability: "membership", field: "extra.labelIds", id: "opaque-label-17" };
   api.getSourceFilterOptions.mockResolvedValue({
     sourceId: policy.sourceId,
     items: [{ ref, label: "Invented planning label" }],
   });
-  await readFilterOptions(policy.sourceId, { kind: "label" });
+  await readFilterOptions(policy.sourceId, { field: "extra.labelIds" });
   api.previewSourceFilter.mockResolvedValue({
     sourceId: policy.sourceId,
     items: [{ ref, label: ref.id, missing: true, count: 0 }],
@@ -177,7 +177,7 @@ test("a deleted catalogue reference keeps its resolved name without displaying a
     label: "Invented planning label",
     missing: true,
   });
-  const unknown = { kind: "folder", id: "opaque-folder-81" };
+  const unknown = { capability: "tree", field: "extra.folder", id: "opaque-folder-81" };
   api.previewSourceFilter.mockResolvedValue({
     sourceId: policy.sourceId,
     items: [{ ref: unknown, label: unknown.id, missing: true, count: 0 }],

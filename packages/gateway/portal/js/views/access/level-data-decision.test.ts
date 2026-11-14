@@ -61,13 +61,12 @@ test("bulk selection reaches only the accounts the search shows and keeps a reta
 test.each([false, null, undefined])(
   "closed filter editing (%s) keeps a filtered account selected and leaves the rest free to change",
   async (enabled) => {
-    const scopes = { items: [{ kind: "conversation", noun: { one: "conversation", many: "conversations" } }] };
-    const filtered = { ...sources[0]!, scopes };
-    const whole = { ...sources[1]!, scopes };
+    const filtered = { ...sources[0]!, filterable: true };
+    const whole = { ...sources[1]!, filterable: true };
     const policy = {
       sourceId: filtered.id,
       audience: { accessLevel: "saved-level", capability: "answer" },
-      rules: [{ action: "share", match: [{ kind: "conversation", id: "invented-room" }] }],
+      rules: [{ action: "share", match: [{ capability: "membership", field: "extra.roomId", id: "invented-room" }] }],
       otherwise: "hide",
     };
     const rule = {
