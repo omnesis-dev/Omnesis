@@ -60,7 +60,7 @@ final class AdminCoordinatorInternalSourcesTests: XCTestCase {
         for action in [
             { try await coord.triggerSync(sourceId: "example-internal") },
             { try await coord.setEnabled(sourceId: "example-internal", enabled: false) },
-            { try await coord.resync(sourceId: "example-internal") },
+            { try await coord.resync(sourceId: "example-internal", mode: .fromScratch) },
             { try await coord.removeSource(sourceId: "example-internal") },
         ] {
             do {

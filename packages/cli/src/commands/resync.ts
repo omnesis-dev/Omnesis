@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { defineCommand } from "citty";
-import { hasPerDeviceCursor, type MultiDeviceMode } from "@omnesis/types";
+import { hasPerDeviceCursor, memberResyncModes, type ResyncMode } from "@omnesis/types";
 import {
   c,
   gatewayFetch,
@@ -26,22 +26,31 @@ import {
   type AdminSourceEntry,
 } from "./members.js";
 
-const USAGE = "Usage: omnesis sources resync <pattern> [pattern...] [--device <name|id>] [--yes]";
+const USAGE =
+  "Usage: omnesis sources resync <pattern> [pattern...] [--from-scratch] [--device <name|id>] [--yes]";
 
 /**
- * What the gateway wiped before it sent the sync: the whole source, one
- * device's stream (a partitioned source), or one device's cursor alone (a
- * replicated source, whose members all hold the same documents).
+ * The slice the gateway sent back to the start before it sent the sync: the
+ * whole source, one device's stream (a partitioned source), or one device's
+ * cursor alone (a replicated source, whose members all hold the same
+ * documents).
  */
 export type ResyncScope = "source" | "stream" | "cursor";
 
 /**
- * The body of a successful `POST /admin/sources/:id/resync`: what was wiped,
- * then each online member's answer to the sync that followed. A member in
- * none of the lists was offline; it syncs on its own schedule.
+ * The body of a successful `POST /admin/sources/:id/resync`: the mode that
+ * was applied and the slice it applied to, then each online member's answer
+ * to the sync that followed. A member in none of the lists was offline; it
+ * syncs on its own schedule.
  */
 export interface ResyncBody {
   ok: true;
+  /**
+   * `from-scratch` deleted the slice first; `in-place` deleted nothing.
+   * Absent from a gateway that only resyncs from scratch — read it through
+   * `appliedMode`.
+   */
+  mode?: ResyncMode;
   scope: ResyncScope;
   /** The members that started a fresh sync. */
   deviceIds: string[];
@@ -52,8 +61,6 @@ export interface ResyncBody {
   /** The members on which the source is paused; it re-syncs there once resumed. */
   disabled: string[];
 }
-
-/** The modes whose members each keep a sync position of their own. */
 
 /** The way out of a refused per-device resync, appended to every refusal that has one. */
 const RESYNC_WITHOUT_DEVICE = "Resync it without --device.";
@@ -80,33 +87,79 @@ export function notMemberRefusal(
 }
 
 /**
- * The confirmation question. Without a device it is the whole source; with
- * one, what happens depends on the mode: a partitioned member's stream is
- * removed and re-fetched, a replicated member only starts over.
+ * The refusal for `--from-scratch --device` on a replicated source: the
+ * member shares its documents with its siblings, so there is nothing of its
+ * own to delete.
  */
-export function confirmMessage(
-  target: string,
-  perDevice?: { device: Pick<AdminDeviceEntry, "name">; mode: MultiDeviceMode },
+export function replicatedFromScratchRefusal(
+  source: Pick<AdminSourceEntry, "id">,
+  device: Pick<AdminDeviceEntry, "name">,
 ): string {
-  if (!perDevice) {
-    return `This will delete all data for ${target} and re-sync from scratch. Continue?`;
+  return (
+    `${device.name} shares the documents of ${source.id} with the other members, so there is nothing of its own to delete.\n` +
+    `Resync it in place (drop --from-scratch), or resync the whole source from scratch (drop --device).`
+  );
+}
+
+/**
+ * The refusal for an in-place resync against a gateway whose source listing
+ * names no resync modes: that gateway wipes on every resync, whatever it is
+ * asked, so the request is never sent.
+ */
+export function inPlaceUnsupportedRefusal(source: Pick<AdminSourceEntry, "id">): string {
+  return (
+    `This gateway can only resync ${source.id} from scratch, which deletes its data first.\n` +
+    `Update the gateway to resync in place, or re-run with --from-scratch.`
+  );
+}
+
+/**
+ * The confirmation question a from-scratch resync asks: the whole source
+ * without a device, that member's contribution with one. An in-place resync
+ * deletes nothing and asks nothing.
+ */
+export function confirmMessage(target: string, device?: Pick<AdminDeviceEntry, "name">): string {
+  if (!device) {
+    return `This will delete all data for ${target} and import it again from scratch. Continue?`;
   }
-  const name = perDevice.device.name;
-  if (perDevice.mode === "partitioned") {
-    return (
-      `This removes everything ${name} contributed to ${target} and re-syncs it from that device; ` +
-      `the other members' data stays. Continue?`
-    );
+  return (
+    `This removes everything ${device.name} contributed to ${target} and imports it again from that device; ` +
+    `the other members' data stays. Continue?`
+  );
+}
+
+/**
+ * The mode a resync was carried out in. A gateway that names none wiped the
+ * slice, except a replicated member's cursor, which has nothing to wipe.
+ */
+export function appliedMode(body: Pick<ResyncBody, "mode" | "scope">): ResyncMode {
+  return body.mode ?? (body.scope === "cursor" ? "in-place" : "from-scratch");
+}
+
+/** What the gateway did before it sent the sync, in one sentence. */
+function resyncSummary(body: ResyncBody, device?: Pick<AdminDeviceEntry, "name">): string {
+  const name = device?.name;
+  if (appliedMode(body) === "from-scratch") {
+    return body.scope === "source"
+      ? "Every document of the source was deleted."
+      : `Everything ${name ?? "the device"} contributed was removed; the other members' data stays.`;
   }
-  return `This resets ${name}'s sync position for ${target} and re-syncs; nothing is deleted. Continue?`;
+  switch (body.scope) {
+    case "source":
+      return "Nothing was deleted; the source is read again and updates the records already here.";
+    case "stream":
+      return `Nothing was deleted; ${name ?? "the device"} reads the source again and updates what it contributed.`;
+    case "cursor":
+      return `${name ?? "The device"}'s sync position was reset; nothing was deleted.`;
+  }
 }
 
 /**
  * The lines printed once a resync went through: what each member did with
  * the sync — started it, is restarting the one it had in flight, was already
  * syncing and skipped it, or has the source paused and re-syncs it once
- * resumed — then what was wiped in plain words. `device` is the member the
- * resync was scoped to, when it was.
+ * resumed — then what the gateway did first in plain words. `device` is the
+ * member the resync was scoped to, when it was.
  */
 export function renderResync(
   body: ResyncBody,
@@ -137,47 +190,41 @@ export function renderResync(
     head = `${c.yellow}Resync queued; ${verdicts.join("; ")}`;
   }
   const lines = [`${head}:${c.reset} ${idLabel}`];
-  switch (body.scope) {
-    case "source":
-      lines.push(`${c.dim}Every document of the source was deleted.${c.reset}`);
-      break;
-    case "stream":
-      lines.push(
-        `${c.dim}Everything ${device?.name ?? "the device"} contributed was removed; the other members' data stays.${c.reset}`,
-      );
-      break;
-    case "cursor":
-      lines.push(
-        `${c.dim}${device?.name ?? "The device"}'s sync position was reset; nothing was deleted.${c.reset}`,
-      );
-      break;
-  }
+  lines.push(`${c.dim}${resyncSummary(body, device)}${c.reset}`);
   return lines;
 }
 
 /**
- * `omnesis sources resync <pattern...> [--device <name|id>]` — wipe and
- * re-sync matching sources through `POST /admin/sources/:id/resync`, one
- * request per source. Without `--device` the whole source is wiped. With
- * one, the resync is scoped to that member, which only a mode with
- * per-device cursors allows: a device that is not a member, or a source
- * whose members share one cursor, is refused before any request, and the
- * gateway's own refusals are rendered the same way. `--device` takes one
- * source, since what it does depends on that source's mode. With `--json`,
- * each source's result is printed as one JSON line.
+ * `omnesis sources resync <pattern...> [--from-scratch] [--device <name|id>]`
+ * — resync matching sources through `POST /admin/sources/:id/resync`, one
+ * request per source. In place unless `--from-scratch`: nothing is deleted,
+ * each source is read again from the start and every item updates the record
+ * it already has. `--from-scratch` deletes the source's data first and asks
+ * for confirmation. With `--device` the resync is scoped to that member,
+ * which only a mode with per-device cursors allows: a device that is not a
+ * member, a source whose members share one cursor, or a from-scratch resync
+ * of a replicated member is refused before any request, and the gateway's
+ * own refusals are rendered the same way. `--device` takes one source, since
+ * what it does depends on that source's mode. With `--json`, each source's
+ * result is printed as one JSON line.
  */
 export const resyncCommand = defineCommand({
   meta: {
     name: "resync",
-    description: "Delete all data for matching sources and re-sync from scratch",
+    description:
+      "Read matching sources again from the start (in place; --from-scratch deletes their data first)",
   },
   args: {
+    "from-scratch": {
+      type: "boolean",
+      description:
+        "Delete the source's data first, then import everything again (new records; individually deleted items come back)",
+    },
     device: {
       type: "string",
-      description:
-        "Resync one member only (a partitioned member's contribution is removed; a replicated member's sync position is reset)",
+      description: "Resync one member only (with --from-scratch, a partitioned member only)",
     },
-    yes: { type: "boolean", alias: "y", description: "Skip the confirmation prompt" },
+    yes: { type: "boolean", alias: "y", description: "Skip the --from-scratch confirmation" },
     json: { type: "boolean", description: "Print JSON" },
   },
   async run(ctx) {
@@ -185,18 +232,23 @@ export const resyncCommand = defineCommand({
     if (patterns.length === 0) {
       throw new CliError(
         `${c.red}${USAGE}${c.reset}\n\n` +
-          `Deletes all data for matching sources and re-syncs from scratch. With --device, only\n` +
-          `that member is resynced: a partitioned member's contribution is removed, a replicated\n` +
-          `member's sync position is reset.\n\n` +
+          `Reads matching sources again from the start and updates the records already indexed.\n` +
+          `Nothing is deleted: records keep their ids, items you deleted stay deleted, and search\n` +
+          `keeps working meanwhile. It does not clear duplicate or stray records.\n\n` +
+          `With --from-scratch, everything indexed from the source is deleted first and imported\n` +
+          `again: search for it is empty until that finishes, and items you had deleted one by one\n` +
+          `come back.\n\n` +
+          `With --device, only that member is resynced.\n\n` +
           `Examples:\n` +
-          `  ${c.cyan}omnesis sources resync gmail:user@gmail.com${c.reset}      Resync a specific source\n` +
-          `  ${c.cyan}omnesis sources resync gmail:${c.reset}                    Resync all Gmail accounts\n` +
-          `  ${c.cyan}omnesis sources resync apple: chrome:${c.reset}            Resync multiple types\n` +
-          `  ${c.cyan}omnesis sources resync health:me --device Phone${c.reset}   Resync one member only\n\n` +
+          `  ${c.cyan}omnesis sources resync gmail:user@gmail.com${c.reset}        Resync a source in place\n` +
+          `  ${c.cyan}omnesis sources resync gmail:${c.reset}                      Resync all Gmail accounts\n` +
+          `  ${c.cyan}omnesis sources resync apple: --from-scratch${c.reset}       Delete and import again\n` +
+          `  ${c.cyan}omnesis sources resync health:me --device Phone${c.reset}    Resync one member only\n\n` +
           `Run ${c.cyan}omnesis sources${c.reset} to see available source IDs.`,
         EXIT_USER_ERROR,
       );
     }
+    const mode: ResyncMode = ctx.args["from-scratch"] === true ? "from-scratch" : "in-place";
     const json = ctx.args.json === true;
 
     const { sources, devices } = await loadSourcesAndDevices();
@@ -239,6 +291,21 @@ export const resyncCommand = defineCommand({
           EXIT_USER_ERROR,
         );
       }
+      if (!memberResyncModes(sourceMode(source)).includes(mode)) {
+        throw new CliError(
+          `${c.red}${replicatedFromScratchRefusal(source, device)}${c.reset}`,
+          EXIT_USER_ERROR,
+        );
+      }
+    }
+    if (mode === "in-place") {
+      const wipesOnly = targets.find((source) => source.resyncModes === undefined);
+      if (wipesOnly) {
+        throw new CliError(
+          `${c.red}${inPlaceUnsupportedRefusal(wipesOnly)}${c.reset}`,
+          EXIT_USER_ERROR,
+        );
+      }
     }
 
     const fx = await buildCliFx();
@@ -249,11 +316,11 @@ export const resyncCommand = defineCommand({
 
     // Confirm before a wipe — unless `--yes`. A non-interactive run (piped or
     // `--json`) never blocks on a prompt: it needs `--yes` so a script cannot
-    // hang.
-    if (ctx.args.yes !== true) {
+    // hang. An in-place resync deletes nothing, so it runs unasked.
+    if (mode === "from-scratch" && ctx.args.yes !== true) {
       if (isJSON || !process.stdout.isTTY) {
         throw new CliError(
-          `${c.red}Refusing to resync without confirmation. Re-run with --yes.${c.reset}`,
+          `${c.red}Refusing to resync from scratch without confirmation. Re-run with --yes.${c.reset}`,
           EXIT_USER_ERROR,
         );
       }
@@ -263,10 +330,7 @@ export const resyncCommand = defineCommand({
       const target = sourceIds.length === 1 ? sourceIds[0]! : `these ${sourceIds.length} sources`;
       const prompts = await import("@clack/prompts");
       const answer = await prompts.confirm({
-        message: confirmMessage(
-          target,
-          device ? { device, mode: sourceMode(targets[0]!) } : undefined,
-        ),
+        message: confirmMessage(target, device),
         initialValue: false,
       });
       if (prompts.isCancel(answer) || answer !== true) {
@@ -281,7 +345,7 @@ export const resyncCommand = defineCommand({
       const res = await withSpinner(`Resyncing ${source.id}`, () =>
         gatewayFetch(`/admin/sources/${encodeURIComponent(source.id)}/resync`, {
           method: "POST",
-          body: JSON.stringify(device ? { deviceId: device.id } : {}),
+          body: JSON.stringify(device ? { deviceId: device.id, mode } : { mode }),
         }),
       );
       if (!res.ok) {

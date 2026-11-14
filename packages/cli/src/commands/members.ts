@@ -11,7 +11,7 @@
 import { defineCommand } from "citty";
 import { c, gatewayJson, withSpinner, formatTimeAgo, CliError, EXIT_USER_ERROR } from "../utils.js";
 import { matchDevice } from "../device-picker.js";
-import type { MultiDeviceMode, SourceNotice, SyncRemediation } from "@omnesis/types";
+import type { MultiDeviceMode, ResyncMode, SourceNotice, SyncRemediation } from "@omnesis/types";
 
 /** One row of `GET /admin/sources`, with the fields the membership commands read. */
 export interface AdminSourceEntry {
@@ -37,6 +37,11 @@ export interface AdminSourceEntry {
    * an exclusive source. Absent from an older gateway's listing.
    */
   joinCandidates?: string[];
+  /**
+   * The modes a resync of the whole source offers; empty when it cannot be
+   * resynced. Absent from a gateway that only resyncs from scratch.
+   */
+  resyncModes?: ResyncMode[];
 }
 
 /** One row of `GET /admin/devices`. */

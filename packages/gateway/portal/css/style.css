@@ -9384,6 +9384,78 @@ div.source-activity-popover-link:hover {
   color: var(--text-muted);
 }
 
+/* Resync dialog — the two modes as radio cards under the optional scope list. */
+.confirm-modal.resync-modal { width: 500px; }
+.resync-section-label {
+  margin: 10px 0 6px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+.resync-mode-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 6px 0 12px;
+}
+.resync-mode {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.resync-mode:hover { border-color: var(--text-muted); }
+.resync-mode.selected {
+  border-color: var(--accent, #58a6ff);
+  background: rgba(88, 166, 255, 0.08);
+}
+.resync-mode-dot {
+  flex-shrink: 0;
+  width: 12px;
+  height: 12px;
+  margin-top: 3px;
+  border: 1.5px solid var(--text-muted);
+  border-radius: 50%;
+}
+.resync-mode.selected .resync-mode-dot {
+  border-color: var(--accent, #58a6ff);
+  background: radial-gradient(circle, var(--accent, #58a6ff) 0 3px, transparent 3.5px);
+}
+.resync-mode-text {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+.resync-mode-title {
+  font-size: 13px;
+  font-weight: 600;
+}
+.resync-mode-body,
+.resync-mode-note {
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+.resync-mode-note { color: var(--warning, #d29922); }
+.confirm-modal-body.resync-single-mode { margin-bottom: 12px; }
+.resync-footnote {
+  margin-bottom: 18px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-muted);
+}
+
 .sources-actions-col,
 .portal-table-actions-col { width: 1%; }
 .sources-actions-v2 {

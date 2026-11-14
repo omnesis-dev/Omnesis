@@ -19,8 +19,10 @@ import {
   upsertDocuments,
   upsertWithCursor,
   getDocumentCount,
+  getSyncState,
   getWipeEpoch,
   setSourceMeta,
+  setSyncState,
 } from "../../db.js";
 import {
   addSourceMember,
@@ -922,7 +924,7 @@ describe("SourceService.resync", () => {
   test("a member that answers skipped is reported as skipped, not as sent", async () => {
     const { device, source, service } = collectorSource({ ok: true, triggered: 0, skipped: 1 });
 
-    const result = await service.resync(source.id);
+    const result = await service.resync(source.id, undefined, "from-scratch");
 
     expect(result.deviceIds).toEqual([]);
     expect(result.skipped).toEqual([device.id]);
@@ -940,7 +942,7 @@ describe("SourceService.resync", () => {
       disabled: 1,
     });
 
-    const result = await service.resync(source.id);
+    const result = await service.resync(source.id, undefined, "from-scratch");
 
     expect(result).toMatchObject({
       deviceIds: [],
@@ -960,7 +962,7 @@ describe("SourceService.resync", () => {
       restarting: 1,
     });
 
-    const result = await service.resync(source.id);
+    const result = await service.resync(source.id, undefined, "from-scratch");
 
     expect(sendCommand).toHaveBeenCalledWith(device.id, "source.sync", {
       sourceId: source.id,
@@ -974,7 +976,9 @@ describe("SourceService.resync", () => {
 
   test("a member that started the sync is reported under deviceIds, as an answer without counts is", async () => {
     const started = collectorSource({ ok: true, triggered: 1, skipped: 0 });
-    expect(await started.service.resync(started.source.id)).toMatchObject({
+    expect(
+      await started.service.resync(started.source.id, undefined, "from-scratch"),
+    ).toMatchObject({
       deviceIds: [started.device.id],
       restarting: [],
       skipped: [],
@@ -982,7 +986,9 @@ describe("SourceService.resync", () => {
     started.service.dispose();
 
     const uncounted = collectorSource({ ok: true }, { account: "jamie@example.com" });
-    expect(await uncounted.service.resync(uncounted.source.id)).toMatchObject({
+    expect(
+      await uncounted.service.resync(uncounted.source.id, undefined, "from-scratch"),
+    ).toMatchObject({
       deviceIds: [uncounted.device.id],
       restarting: [],
       skipped: [],
@@ -1022,7 +1028,7 @@ describe("SourceService.resync", () => {
 
     for (const id of [captured.id, hosted.source.id]) {
       const before = docs(id);
-      await expect(hosted.service.resync(id)).rejects.toMatchObject({
+      await expect(hosted.service.resync(id, undefined, "from-scratch")).rejects.toMatchObject({
         status: 400,
         code: "RESYNC_PUSH_ONLY",
       });
@@ -1054,14 +1060,16 @@ describe("SourceService.resync", () => {
       wsServer: { sendCommand, isConnected: () => true } as unknown as DeviceWsServer,
     });
 
-    await expect(service.resync(source.id, pusher.id)).rejects.toMatchObject({
+    await expect(service.resync(source.id, pusher.id, "from-scratch")).rejects.toMatchObject({
       status: 400,
       code: "RESYNC_PUSH_ONLY",
     });
     expect(resetMemberCursor, "nothing was reset").not.toHaveBeenCalled();
     expect(sendCommand).not.toHaveBeenCalled();
 
-    await expect(service.resync(source.id, owner.id)).resolves.toMatchObject({
+    // A replicated member has nothing of its own to wipe: it is reset in place.
+    await expect(service.resync(source.id, owner.id, "from-scratch")).resolves.toMatchObject({
+      mode: "in-place",
       scope: "cursor",
       deviceIds: [owner.id],
     });
@@ -1091,11 +1099,82 @@ describe("SourceService.resync", () => {
       wsServer: { sendCommand, isConnected: () => true } as unknown as DeviceWsServer,
     });
 
-    await expect(service.resync(source.id)).resolves.toMatchObject({
+    await expect(service.resync(source.id, undefined, "from-scratch")).resolves.toMatchObject({
       scope: "source",
       deviceIds: [phone.id],
     });
     service.dispose();
+  });
+
+  test("in place resets the cursors through the writer and wipes nothing", async () => {
+    const { device, source, sendCommand, service } = collectorSource({ ok: true, triggered: 1 });
+    setSyncState(db, source.id, { page: 3 });
+
+    const result = await service.resync(source.id, undefined, "in-place");
+
+    expect(result).toEqual({
+      mode: "in-place",
+      scope: "source",
+      deviceIds: [device.id],
+      restarting: [],
+      skipped: [],
+      disabled: [],
+    });
+    expect(sendCommand).toHaveBeenCalledWith(device.id, "source.sync", {
+      sourceId: source.id,
+      restart: true,
+    });
+    expect(getDocumentCount(db, source.id), "nothing was deleted").toBe(1);
+    expect(getSyncState(db, source.id)).toMatchObject({ cursor: "{}", last_synced_at: null });
+    service.dispose();
+  });
+
+  test("in place names the member rows only for a source whose members sync on their own", async () => {
+    const owner = createDevice(db, { name: "Maya-Laptop", kind: "collector", capabilities: {} });
+    const seed = (type: string, multiDeviceMode?: "handoff" | "replicated" | "partitioned") => {
+      const source = createSource(db, {
+        type: SourceType(type),
+        accountId: AccountId("local"),
+        deviceId: owner.id,
+        ...(multiDeviceMode ? { multiDeviceMode } : {}),
+      });
+      if (!source) throw new Error("fixture source was not created");
+      return source;
+    };
+    const resetSourceCursors = vi.fn(async () => {});
+    const service = makeService({
+      writeGate: { ...directWriteGate(db), resetSourceCursors },
+      wsServer: {
+        sendCommand: vi.fn(() => Promise.resolve({ ok: true, triggered: 1 })),
+        isConnected: () => true,
+      } as unknown as DeviceWsServer,
+    });
+
+    for (const [type, mode, memberRows] of [
+      ["mail-synth", undefined, false],
+      ["notes-synth", "handoff", false],
+      ["tasks-synth", "replicated", true],
+      ["health-synth", "partitioned", true],
+    ] as const) {
+      const source = seed(type, mode);
+      await service.resync(source.id, undefined, "in-place");
+      expect(resetSourceCursors).toHaveBeenLastCalledWith(source.id, memberRows);
+    }
+    service.dispose();
+  });
+
+  test("in place refuses a source that is only pushed to, as from scratch does", async () => {
+    const hosted = collectorSource(
+      { ok: true, triggered: 1 },
+      { capabilities: { pushBasedSourceTypes: [SourceType("mail-synth")] } },
+    );
+
+    await expect(
+      hosted.service.resync(hosted.source.id, undefined, "in-place"),
+    ).rejects.toMatchObject({ status: 400, code: "RESYNC_PUSH_ONLY" });
+    expect(getSyncState(db, hosted.source.id), "no cursor row was written").toBeNull();
+    expect(hosted.sendCommand).not.toHaveBeenCalled();
+    hosted.service.dispose();
   });
 });
 
