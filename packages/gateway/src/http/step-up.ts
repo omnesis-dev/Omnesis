@@ -52,25 +52,30 @@ export interface StepUpSource {
 }
 
 /** The device a request speaks for: its own, or the one a portal session was opened with. */
-function requestingDevice(auth: AuthContext | undefined): string | null {
-  if (!auth) return null;
+function requestingDevice(auth: AuthContext): string | null {
   return auth.deviceId ?? (auth.authMethod === "portal-session" ? auth.credentialDeviceId : null);
 }
 
 /** What a step-up is bound to on the requester's side: its device, else its credential. */
-function requester(auth: AuthContext | undefined): string {
-  return requestingDevice(auth) ?? auth?.tokenId ?? "";
+function requester(auth: AuthContext): string {
+  return requestingDevice(auth) ?? `token:${auth.tokenId}`;
 }
+
+/** Declining a held request only makes the gateway stricter. */
+export const declines = (body: unknown): boolean =>
+  (body as { approve?: unknown } | null | undefined)?.approve === false;
+/** So does choosing "ask me first". */
+export const asksFirst = (body: unknown): boolean =>
+  (body as { policy?: unknown } | null | undefined)?.policy === "ask";
 
 const sha256Hex = (bytes: Uint8Array) => createHash("sha256").update(bytes).digest("hex");
 
 /** Step-up ids this gateway handed out, each for one request, for one minute, used once. */
 export class StepUps {
   private readonly issued = new Map<string, { binding: string; expiresAt: number }>();
-  constructor(readonly source: StepUpSource) {}
-
-  private now(): number {
-    return this.source.now?.() ?? Date.now();
+  private readonly now: () => number;
+  constructor(readonly source: StepUpSource) {
+    this.now = source.now ?? Date.now;
   }
 
   /** Whether this request must carry a step-up before it may loosen the gateway. */

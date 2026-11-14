@@ -9,7 +9,14 @@ import { SCOPE_ADMIN } from "@omnesis/types";
 import { gatewayPasskeyStepUpBinding, type GatewayEnrollment } from "@omnesis/cloud-relay";
 import { scope, strictRoute } from "./scope.js";
 import { HttpError, errorResponse } from "./errors.js";
-import { STEP_UP_TTL_MS, mountStepUp, requireStepUp } from "./step-up.js";
+import {
+  STEP_UP_TTL_MS,
+  StepUps,
+  asksFirst,
+  declines,
+  mountStepUp,
+  requireStepUp,
+} from "./step-up.js";
 import type { AppEnv, AuthContext } from "./routes/types.js";
 import type { DeviceId, TokenId } from "@omnesis/types";
 
@@ -85,7 +92,7 @@ function app(auth: AuthContext | null = bearer) {
   router.put(
     "/admin/cloud-relay/enrollment",
     scope.admin(),
-    requireStepUp((body) => (body as { policy?: unknown } | null)?.policy === "ask"),
+    requireStepUp(asksFirst),
     async (c) => {
       handled(await c.req.json());
       return c.json({ ok: true });
@@ -414,4 +421,78 @@ test("at most 64 step-ups wait at once; the oldest goes first", async () => {
       )
     ).status,
   ).toBe(200);
+});
+
+test("only a recognised stricter body is exempt", () => {
+  expect(declines({ approve: false })).toBe(true);
+  expect(asksFirst({ policy: "ask" })).toBe(true);
+  for (const body of [undefined, null, {}, { approve: true }, { approve: "false" }, "false"])
+    expect(declines(body), JSON.stringify(body)).toBe(false);
+  for (const body of [undefined, null, {}, { policy: "automatic" }, "ask"])
+    expect(asksFirst(body), JSON.stringify(body)).toBe(false);
+});
+
+test("an exempt-looking body without a JSON content type still needs a step-up", async () => {
+  const router = app();
+  const response = await router.request("/admin/cloud-relay/enrollment", {
+    method: "PUT",
+    headers: RELAYED,
+    body: new Blob(['{"policy":"ask"}']),
+  });
+  expect(response.status).toBe(428);
+});
+
+test("an id is bound to the credential when the request speaks for no device", async () => {
+  const deviceless: AuthContext = {
+    authMethod: "portal-session",
+    deviceId: null,
+    credentialDeviceId: null,
+    tokenId: "tok_fictional_session" as TokenId,
+    scopes: [SCOPE_ADMIN],
+    csrfToken: "x",
+  };
+  const router = app(deviceless);
+  const headers = { ...RELAYED, ...CSRF };
+  const target = { method: "POST", path: PAIR.path, bodySha256: sha256(PAIR.body) };
+  await router.request("/admin/step-up/options", json("POST", JSON.stringify(target), headers));
+  expect(linked!.enrollment.stepUpCeremony).toHaveBeenCalledWith(
+    gatewayPasskeyStepUpBinding({ ...target, deviceId: "token:tok_fictional_session" }),
+  );
+  // A bearer token with no device row behind it.
+  await app({ ...bearer, deviceId: null }).request(
+    "/admin/step-up/options",
+    json("POST", JSON.stringify(target), RELAYED),
+  );
+  expect(linked!.enrollment.stepUpCeremony).toHaveBeenLastCalledWith(
+    gatewayPasskeyStepUpBinding({ ...target, deviceId: "token:tok_fictional" }),
+  );
+});
+
+test("an account that offers no step-up methods asks for none, and starts none", async () => {
+  linked = { enrollment: {} as GatewayEnrollment, state: account().state };
+  const router = app();
+  expect((await router.request(PAIR.path, json("POST", PAIR.body, RELAYED))).status).toBe(200);
+  // One that requires a step-up but can't run one refuses, at every step.
+  linked = {
+    enrollment: { stepUpRequired: () => true } as unknown as GatewayEnrollment,
+    state: account().state,
+  };
+  expect((await router.request(PAIR.path, json("POST", PAIR.body, RELAYED))).status).toBe(403);
+  const target = { method: "POST", path: PAIR.path, bodySha256: sha256(PAIR.body) };
+  expect(
+    (await router.request("/admin/step-up/options", json("POST", JSON.stringify(target), RELAYED)))
+      .status,
+  ).toBe(403);
+  const assertion = await router.request(
+    "/admin/step-up",
+    json("POST", JSON.stringify({ ...target, proof: proof(opaque()) }), RELAYED),
+  );
+  expect(await assertion.json()).toMatchObject({ code: "STEP_UP_REFUSED" });
+});
+
+test("ids keep the real clock when no other is given", () => {
+  const stepUps = new StepUps({ enrollment: () => undefined, enrollmentMethod: () => undefined });
+  const { stepUpId, expiresAt } = stepUps.issue("binding");
+  expect(expiresAt).toBeGreaterThan(Date.now());
+  expect(stepUps.take(stepUpId, "binding")).toBe(true);
 });
