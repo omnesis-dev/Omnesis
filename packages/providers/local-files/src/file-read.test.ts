@@ -306,7 +306,7 @@ test("an in-root alias cannot expose a protected configuration subtree", async (
   const read = vi.spyOn(fs, "readFileSync");
   const page = await source.sync(null);
   expect(page.documents.map(({ title }) => title)).toEqual(["note.txt"]);
-  expect(page.documents[0]!.content).not.toContain("private");
+  expect(page.documents[0]!.content).not.toContain('{"fictional":"private"}');
   expect(read).toHaveBeenCalledOnce();
 });
 

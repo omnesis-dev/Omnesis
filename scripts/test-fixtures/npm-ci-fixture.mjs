@@ -2,12 +2,13 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { spawn } from "node:child_process";
-import { constants, copyFileSync, cpSync, mkdirSync, writeFileSync } from "node:fs";
+import { constants, copyFileSync, cpSync, mkdirSync, realpathSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { finished } from "node:stream/promises";
 
 /** Actual child processes, no shell shims and no preinstalled workspace aliases. */
 export function npmCiFixture(root, actions = ["ok"], { clean = false } = {}) {
+  root = realpathSync(root);
   const checkout = clean ? join(root, "checkout") : join(import.meta.dirname, "..", "..");
   if (clean) {
     for (const file of [

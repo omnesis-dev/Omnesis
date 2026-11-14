@@ -13,7 +13,7 @@
  */
 
 import { readdirSync, readFileSync } from "node:fs";
-import { join, relative } from "node:path";
+import { join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, test } from "vitest";
 
@@ -47,7 +47,7 @@ describe("brain clock discipline", () => {
   test("bare Date.now() appears only in whitelisted files", () => {
     const offenders: string[] = [];
     for (const file of walk(BRAIN_ROOT)) {
-      const rel = relative(BRAIN_ROOT, file);
+      const rel = relative(BRAIN_ROOT, file).split(sep).join("/");
       if (!readFileSync(file, "utf8").includes("Date.now()")) continue;
       if (!(rel in WHITELIST)) offenders.push(rel);
     }

@@ -94,6 +94,6 @@ runtime architectures, Docker smoke tests and integration harnesses passed.
 The broader unit and E2E results remain under review. The macOS typecheck passed,
 but its unit lane failed: failures include temporary-directory aliases, an
 incomplete installer fixture export and a private-content assertion matching a
-system directory name. These are being corrected before claiming regression
-safety. A final frozen-source Linux and macOS verdict, alongside Windows, remains
-mandatory.
+system directory name. Corrections pass 655 focused Linux regressions, including all affected installer
+files; native macOS validation is still required. A final frozen-source Linux
+and macOS verdict, alongside Windows, remains mandatory.

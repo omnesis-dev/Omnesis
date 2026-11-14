@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { readdirSync, readFileSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { join, relative as relativePath, sep } from "node:path";
 import { describe, expect, test } from "vitest";
 import { activeAccessTokenPredicate } from "./active-access-token.js";
 
@@ -66,7 +66,7 @@ describe("the active access token predicate", () => {
     for (const file of sourceFiles(root)) {
       const text = readFileSync(file, "utf8");
       if (!text.includes("oauth_access_tokens")) continue;
-      const relative = file.slice(root.length + 1);
+      const relative = relativePath(root, file).split(sep).join("/");
       if (relative === "access/active-access-token.ts") continue;
       const usesPredicate = text.includes("activeAccessTokenPredicate(");
       const listed = relative in READS_THAT_DECIDE_NOTHING;

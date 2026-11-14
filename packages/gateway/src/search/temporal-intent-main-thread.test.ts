@@ -17,7 +17,7 @@
 
 import { mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, relative } from "node:path";
+import { join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, expect, it, vi } from "vitest";
 import { createIndexDatabase, EMBEDDING_DIM, openIndexDb, upsertChunks } from "../indexer/db.js";
@@ -146,7 +146,8 @@ it("leaves the recognizer to the modules that run it off the main thread", () =>
           "parseTemporalIntent(",
           "DateTimeRecognizer(",
         ])
-          if (text.includes(fn)) callers.set(fn, [...(callers.get(fn) ?? []), relative(SRC, path)]);
+          if (text.includes(fn))
+            callers.set(fn, [...(callers.get(fn) ?? []), relative(SRC, path).split(sep).join("/")]);
       }
     }
   };

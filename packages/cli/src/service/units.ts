@@ -8,7 +8,7 @@
  * unit-testable.
  */
 
-import { dirname, join } from "node:path";
+import { posix } from "node:path";
 import {
   PASSPHRASE_CREDENTIAL_NAME,
   PASSPHRASE_FILE_ENV,
@@ -35,7 +35,7 @@ export {
 
 /** Directory launchd units write their stdout/stderr log files into. */
 export function darwinLogsDir(home: string): string {
-  return join(home, "Library", "Logs", "Omnesis");
+  return posix.join(home, "Library", "Logs", "Omnesis");
 }
 
 /** Stdout/stderr log file paths for a launchd unit. */
@@ -45,7 +45,7 @@ export function launchdLogPaths(
   instance?: string,
 ): { out: string; err: string } {
   const label = launchdLabel(component, instance);
-  return { out: join(logsDir, `${label}.log`), err: join(logsDir, `${label}.err.log`) };
+  return { out: posix.join(logsDir, `${label}.log`), err: posix.join(logsDir, `${label}.err.log`) };
 }
 
 // ── Spec construction ──────────────────────────────────────────────────
@@ -178,7 +178,7 @@ export function buildServiceSpec(input: BuildServiceSpecInput): ServiceSpec {
   const logsDir =
     input.platform === "darwin"
       ? darwinLogsDir(input.homeDir)
-      : join(input.homeDir, ".local", "state", "omnesis", "logs");
+      : posix.join(input.homeDir, ".local", "state", "omnesis", "logs");
   const spec: ServiceSpec = {
     component: input.component,
     configDir,
@@ -295,7 +295,7 @@ export function systemdWritablePaths(spec: ServiceSpec): string[] {
   const paths = new Set<string>([spec.configDir, spec.logsDir]);
   for (const key of SYSTEMD_WRITABLE_FILE_ENV_KEYS) {
     const value = spec.env[key];
-    if (value?.startsWith("/")) paths.add(dirname(value));
+    if (value?.startsWith("/")) paths.add(posix.dirname(value));
   }
   return [...paths];
 }

@@ -2,7 +2,16 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { spawn, execFile } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -229,5 +238,56 @@ test("npm CLI resolution never depends on the node_modules tree npm ci will remo
   }
   expect(
     await npmJavaScriptEntry({ npm_execpath: unstable }, join(root, "runtime/node.exe"), root),
-  ).toBe(stable);
+  ).toBe(realpathSync(stable));
+});
+
+test("a checkout directory alias cannot hide a removable npm CLI", async () => {
+  const root = temporary();
+  const actual = join(root, "actual");
+  const alias = join(root, "alias");
+  const unstable = join(actual, "node_modules/npm/bin/npm-cli.js");
+  const stable = join(root, "runtime/node_modules/npm/bin/npm-cli.js");
+  for (const entry of [unstable, stable]) {
+    mkdirSync(dirname(entry), { recursive: true });
+    writeFileSync(entry, "// synthetic CLI");
+  }
+  symlinkSync(actual, alias, "junction");
+  expect(
+    await npmJavaScriptEntry({ npm_execpath: unstable }, join(root, "runtime/node.exe"), alias),
+  ).toBe(realpathSync(stable));
+});
+
+test("the bootstrap executes when invoked through a directory alias", async () => {
+  const f = fixture(["ok"], { clean: true });
+  const alias = join(f.root, "checkout-alias");
+  symlinkSync(f.checkout, alias, "junction");
+  const result = await new Promise((resolve, reject) =>
+    execFile(
+      f.nodePath,
+      [join(alias, "scripts/ci/npm-ci.mjs"), "--no-audit"],
+      { cwd: f.root, env: { ...process.env, npm_execpath: f.npmCli } },
+      (error, stdout, stderr) =>
+        error ? reject(Object.assign(error, { stdout, stderr })) : resolve({ stdout, stderr }),
+    ),
+  );
+  expect(result.stderr).not.toContain("Cannot locate");
+  expect(records(f.events).map(({ stage }) => stage)).toEqual(["headers", "ci"]);
+}, 60_000);
+
+test("importing bootstrap with a nonexistent caller argv never starts installation", async () => {
+  const root = temporary();
+  const script = `process.argv[1] = ${JSON.stringify(join(root, "missing-caller.mjs"))};
+    await import(${JSON.stringify(new URL("./npm-ci.mjs", import.meta.url).href)});
+    process.stdout.write("imported without installation");`;
+  const result = await new Promise((resolve, reject) =>
+    execFile(
+      process.execPath,
+      ["--input-type=module", "-e", script],
+      { cwd: root },
+      (error, stdout, stderr) =>
+        error ? reject(Object.assign(error, { stdout, stderr })) : resolve({ stdout, stderr }),
+    ),
+  );
+  expect(result.stdout).toBe("imported without installation");
+  expect(result.stderr).toBe("");
 });

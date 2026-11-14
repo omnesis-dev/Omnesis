@@ -7,7 +7,7 @@ import { EventEmitter } from "node:events";
 import { copyFile, mkdir, mkdtemp, readFile, readdir, realpath, rm, stat } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { constants, tmpdir } from "node:os";
-import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { bootstrapWindowsPlatform } from "../lib/bootstrap-platform.mjs";
@@ -25,15 +25,24 @@ export async function npmJavaScriptEntry(
     join(dirname(nodePath), "node_modules", "npm", "bin", "npm-cli.js"),
     resolve(dirname(nodePath), "..", "lib", "node_modules", "npm", "bin", "npm-cli.js"),
   ];
+  // Compare physical paths on both sides: macOS temporary directories and
+  // source checkouts can be reached through directory aliases.
+  let removableRoot = join(await realpath(cwd), "node_modules");
+  try {
+    removableRoot = await realpath(removableRoot);
+  } catch (error) {
+    if (!["ENOENT", "ENOTDIR"].includes(error.code)) throw error;
+  }
   for (const candidate of candidates) {
     if (!candidate || !isAbsolute(candidate) || !/\.[cm]?js$/iu.test(candidate)) continue;
     try {
       if (!(await stat(candidate)).isFile()) continue;
       const entry = await realpath(candidate);
-      const local = relative(resolve(cwd, "node_modules"), entry);
+      const local = relative(removableRoot, entry);
       // npm ci removes this tree before running scripts. A CLI inside it
       // cannot safely install itself or survive a retry.
-      if (local === "" || (!local.startsWith("..") && !isAbsolute(local))) continue;
+      if (local === "" || (local !== ".." && !local.startsWith(`..${sep}`) && !isAbsolute(local)))
+        continue;
       return entry;
     } catch (error) {
       if (!["ENOENT", "ENOTDIR"].includes(error.code)) throw error;
@@ -259,7 +268,18 @@ export async function npmCi(
   }
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+/** Older Node 24 releases do not expose import.meta.main. */
+async function legacyMainEntry() {
+  if (!process.argv[1]) return false;
+  try {
+    return (await realpath(process.argv[1])) === (await realpath(fileURLToPath(import.meta.url)));
+  } catch (error) {
+    if (["ENOENT", "ENOTDIR"].includes(error.code)) return false;
+    throw error;
+  }
+}
+
+if (import.meta.main ?? (await legacyMainEntry())) {
   const controller = new AbortController();
   let interruptedSignal = "SIGTERM";
   const removeParentShutdown = installParentShutdownHandler(() =>
