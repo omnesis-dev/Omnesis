@@ -170,9 +170,14 @@ func (n *Node) Login(ctx context.Context) error {
 	n.loginAsked = true
 	n.mu.Unlock()
 	defer n.poke()
-	// Signing out resets the device's preferences, so a later sign-in would
-	// go to Tailscale's default coordination server under the machine's own
-	// hostname. Apply what tsnet applies at start before asking for a link.
+	return n.startSignIn(ctx)
+}
+
+// startSignIn asks Tailscale for a fresh sign-in link. Signing out resets the
+// device's preferences, so a sign-in after it would go to Tailscale's default
+// coordination server under the machine's own hostname; what tsnet applies
+// at start is applied again first.
+func (n *Node) startSignIn(ctx context.Context) error {
 	prefs := ipn.NewPrefs()
 	prefs.Hostname = n.cfg.Hostname
 	prefs.WantRunning = true
@@ -240,7 +245,7 @@ func (n *Node) reconcile(ctx context.Context) {
 	}
 	n.mu.Unlock()
 	if needLogin {
-		if err := n.lc.StartLoginInteractive(ctx); err != nil {
+		if err := n.startSignIn(ctx); err != nil {
 			n.cfg.Logf("tailnet: start sign-in: %v", err)
 		}
 	}

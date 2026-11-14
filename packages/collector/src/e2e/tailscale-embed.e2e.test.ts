@@ -174,7 +174,10 @@ describe.skipIf(!tools)("the gateway's own Tailscale device", () => {
       // The credential works, over the tailnet, as a collector's.
       const whoami = await fromLaptop("/whoami", { headers: { authorization: `Bearer ${token}` } });
       expect(whoami.status).toBe(200);
-      expect(whoami.json).toMatchObject({ device: { kind: "collector", name: "maya-laptop" } });
+      expect(whoami.json).toMatchObject({
+        deviceName: "maya-laptop",
+        scopes: expect.arrayContaining(["read", "write:*"]),
+      });
     },
   );
 
