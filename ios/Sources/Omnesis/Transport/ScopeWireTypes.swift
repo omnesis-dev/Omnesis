@@ -94,9 +94,17 @@ public struct ScopePolicy: Codable, Equatable, Hashable, Sendable {
             && rules[0].match.allSatisfy { ["membership", "tree", "person"].contains($0.capability) }
     }
 
+    /// How many entries the gateway counts against `scopeFilterMaxEntries`: each of a person's identifiers, and
+    /// every other entry once.
+    public var entryCount: Int {
+        rules.reduce(0) { total, rule in
+            total + rule.match.reduce(0) { $0 + ($1.capability == "person" ? $1.identifiers?.count ?? 0 : 1) }
+        }
+    }
+
     /// The gateway holds at most `scopeFilterMaxEntries` entries in a filter.
     public var withinLimits: Bool {
-        rules.count == 1 && rules[0].match.count <= scopeFilterMaxEntries
+        rules.count == 1 && entryCount <= scopeFilterMaxEntries
     }
 
     public static func empty(sourceId: String, levelId: String, capability: String) -> Self {
@@ -145,6 +153,8 @@ public enum FilterFieldState: Equatable, Sendable {
     case gatewayBehind(text: String)
     /// The account has not sent the list of items the field can name yet.
     case listPending(text: String)
+    /// The account is gone; its saved entries are kept until the owner removes them.
+    case disconnected(text: String)
     /// A state this app does not know, from a newer gateway.
     case unsupported
 
@@ -157,8 +167,8 @@ public enum FilterFieldState: Equatable, Sendable {
         switch self {
         case .ready: nil
         case .needsResync(_, let text), .resyncing(_, _, let text), .collectorBehind(_, let text),
-             .gatewayBehind(let text), .listPending(let text): text
-        case .unsupported: "This version of Omnesis can't use this filter yet."
+             .gatewayBehind(let text), .listPending(let text), .disconnected(let text): text
+        case .unsupported: "This version of Omnesis can’t use this filter yet."
         }
     }
 
@@ -188,6 +198,7 @@ extension FilterFieldState: Decodable {
         case "collector-behind": self = try .collectorBehind(devices: values.decode([FilterDevice].self, forKey: .devices), text: text())
         case "gateway-behind": self = try .gatewayBehind(text: text())
         case "list-pending": self = try .listPending(text: text())
+        case "disconnected": self = try .disconnected(text: text())
         default: self = .unsupported
         }
     }
@@ -308,6 +319,12 @@ public struct SourceFilterEditor: Equatable, Sendable, Decodable {
     public var devices: [FilterDevice]
     /// Whether a per-device field's tree starts at the devices; false for an account on one device.
     public var showDeviceLevel: Bool
+    /// "declared", "no-profile" or "collector-behind": whether the account's source has said what can be filtered.
+    public var profile: String
+    /// The gateway's sentence about the account as a whole: why it has no fields, or that it is no longer connected.
+    public var profileText: String?
+    /// False for an account that is gone while a saved filter still names it: its entries can only be removed.
+    public var connected: Bool
     public var fields: [FilterEditorField]
     /// The resync several fields share, when they do: shown once for all of them.
     public var resync: FilterAccountResync?
@@ -319,6 +336,9 @@ public struct SourceFilterEditor: Equatable, Sendable, Decodable {
         sourceType: String,
         devices: [FilterDevice] = [],
         showDeviceLevel: Bool = false,
+        profile: String = "declared",
+        profileText: String? = nil,
+        connected: Bool = true,
         fields: [FilterEditorField],
         resync: FilterAccountResync? = nil,
         retryAfterMs: Int? = nil
@@ -327,9 +347,32 @@ public struct SourceFilterEditor: Equatable, Sendable, Decodable {
         self.sourceType = sourceType
         self.devices = devices
         self.showDeviceLevel = showDeviceLevel
+        self.profile = profile
+        self.profileText = profileText
+        self.connected = connected
         self.fields = fields
         self.resync = resync
         self.retryAfterMs = retryAfterMs
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case sourceId, sourceType, devices, showDeviceLevel, profile, profileText, connected, fields, resync, retryAfterMs
+    }
+
+    public init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        try self.init(
+            sourceId: values.decode(String.self, forKey: .sourceId),
+            sourceType: values.decode(String.self, forKey: .sourceType),
+            devices: values.decodeIfPresent([FilterDevice].self, forKey: .devices) ?? [],
+            showDeviceLevel: values.decodeIfPresent(Bool.self, forKey: .showDeviceLevel) ?? false,
+            profile: values.decodeIfPresent(String.self, forKey: .profile) ?? "declared",
+            profileText: values.decodeIfPresent(String.self, forKey: .profileText),
+            connected: values.decodeIfPresent(Bool.self, forKey: .connected) ?? true,
+            fields: values.decode([FilterEditorField].self, forKey: .fields),
+            resync: values.decodeIfPresent(FilterAccountResync.self, forKey: .resync),
+            retryAfterMs: values.decodeIfPresent(Int.self, forKey: .retryAfterMs)
+        )
     }
 
     public func field(_ path: String) -> FilterEditorField? {
@@ -417,14 +460,18 @@ public struct ScopePreview: Codable, Equatable, Sendable {
         public var count: Int
         /// The item is gone from the account's list.
         public var missing: Bool?
+        /// Why the name may be missing: "not-in-list" when the list no longer holds the item, "list-gone" when the
+        /// account has no list for the field at all.
+        public var reason: String?
         /// How many nodes lie above the item in its tree, for a tree field.
         public var depth: Int?
 
-        public init(ref: ScopeRef, label: String, count: Int, missing: Bool? = nil, depth: Int? = nil) {
+        public init(ref: ScopeRef, label: String, count: Int, missing: Bool? = nil, reason: String? = nil, depth: Int? = nil) {
             self.ref = ref
             self.label = label
             self.count = count
             self.missing = missing
+            self.reason = reason
             self.depth = depth
         }
     }
@@ -437,6 +484,8 @@ public struct ScopePreview: Codable, Equatable, Sendable {
     public var unmatched: Int
     public var tooOldText: String?
     public var unmatchedText: String?
+    /// False for an account that is gone while a saved filter names it: every count is 0 and is not shown.
+    public var connected: Bool
     public var items: [Item]
 
     public init(
@@ -448,6 +497,7 @@ public struct ScopePreview: Codable, Equatable, Sendable {
         unmatched: Int = 0,
         tooOldText: String? = nil,
         unmatchedText: String? = nil,
+        connected: Bool = true,
         items: [Item]
     ) {
         self.sourceId = sourceId
@@ -458,7 +508,28 @@ public struct ScopePreview: Codable, Equatable, Sendable {
         self.unmatched = unmatched
         self.tooOldText = tooOldText
         self.unmatchedText = unmatchedText
+        self.connected = connected
         self.items = items
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case sourceId, total, visible, hidden, tooOld, unmatched, tooOldText, unmatchedText, connected, items
+    }
+
+    public init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        try self.init(
+            sourceId: values.decode(String.self, forKey: .sourceId),
+            total: values.decode(Int.self, forKey: .total),
+            visible: values.decode(Int.self, forKey: .visible),
+            hidden: values.decode(Int.self, forKey: .hidden),
+            tooOld: values.decodeIfPresent(Int.self, forKey: .tooOld) ?? 0,
+            unmatched: values.decodeIfPresent(Int.self, forKey: .unmatched) ?? 0,
+            tooOldText: values.decodeIfPresent(String.self, forKey: .tooOldText),
+            unmatchedText: values.decodeIfPresent(String.self, forKey: .unmatchedText),
+            connected: values.decodeIfPresent(Bool.self, forKey: .connected) ?? true,
+            items: values.decode([Item].self, forKey: .items)
+        )
     }
 
     /// The gateway's sentences for records the filter cannot decide, each present only when its count is not zero.

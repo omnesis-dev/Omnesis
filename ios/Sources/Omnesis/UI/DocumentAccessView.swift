@@ -92,7 +92,7 @@ private struct DocumentAccessSubject: View {
                 .padding(.top, 1)
             VStack(alignment: .leading, spacing: 2) {
                 Text(audit.title).accessText(.subtitle).fixedSize(horizontal: false, vertical: true)
-                Text(audit.sourceName).accessText(.subtitle, color: AccessUI.secondary).lineLimit(1).truncationMode(.middle)
+                Text(audit.sourceLine).accessText(.subtitle, color: AccessUI.secondary).lineLimit(1).truncationMode(.middle)
             }
         }
         .accessibilityElement(children: .combine)

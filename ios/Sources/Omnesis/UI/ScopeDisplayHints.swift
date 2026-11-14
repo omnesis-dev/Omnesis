@@ -13,6 +13,8 @@ struct ScopeItemHint: Equatable {
     /// "chat", "label", "owner", "device": what the source calls the item.
     var noun: String?
     var missing = false
+    /// Why a missing item may have no name: "not-in-list" or "list-gone", as the gateway says.
+    var reason: String?
 }
 
 func scopeLabelHint(for ref: ScopeRef, in hints: [ScopeItemHint]) -> ScopeItemHint? {
@@ -34,7 +36,10 @@ func mergingScopeLabelHints(_ existing: [ScopeItemHint], _ incoming: [ScopeItemH
         }
         var value = item
         let earlier = result[index]
-        if preserveMissing, earlier.missing { value.missing = true }
+        if preserveMissing, earlier.missing {
+            value.missing = true
+            if value.reason == nil { value.reason = earlier.reason }
+        }
         if value.noun == nil { value.noun = earlier.noun }
         if item.missing, !earlier.label.isEmpty, earlier.label != item.ref.id { value.label = earlier.label }
         result[index] = value
@@ -56,15 +61,16 @@ func scopeFieldNoun(_ ref: ScopeRef, fields: [FilterEditorField], depth: Int? = 
     return scopeLevelNoun(field, depth: depth)?.one ?? field?.noun.one ?? (ref.isPerson ? "person" : nil)
 }
 
-/// The names a filter's counts give its items.
+/// The names a filter's counts give its items. A gone account's preview names them but counts nothing.
 func scopeItemHints(_ preview: ScopePreview, fields: [FilterEditorField]) -> [ScopeItemHint] {
     preview.items.map {
         ScopeItemHint(
             ref: $0.ref,
             label: $0.label,
-            count: $0.count,
+            count: preview.connected ? $0.count : nil,
             noun: scopeFieldNoun($0.ref, fields: fields, depth: $0.depth),
-            missing: $0.missing == true
+            missing: $0.missing == true,
+            reason: $0.reason
         )
     }
 }
@@ -99,15 +105,21 @@ func scopeNameUnavailable(_ ref: ScopeRef, hint: ScopeItemHint?) -> Bool {
 /// The line under an item whose name cannot be loaded.
 let scopeNameUnavailableNote = "Name unavailable"
 
+/// The line under an item the account's list no longer holds.
+let scopeNoLongerListedNote = "No longer in this account"
+
+/// The one line under a saved item that says something is wrong with it, the same on every Omnesis app: that the
+/// account's list no longer holds it, or that its name is unavailable. Nil for an item the list holds.
+func scopeItemNote(_ ref: ScopeRef, hint: ScopeItemHint?) -> String? {
+    if let hint, hint.missing { return hint.reason == "not-in-list" ? scopeNoLongerListedNote : scopeNameUnavailableNote }
+    return scopeNameUnavailable(ref, hint: hint) ? scopeNameUnavailableNote : nil
+}
+
 func scopeDisplayLabel(_ ref: ScopeRef, hint: ScopeItemHint?) -> String {
     let saved = ref.label ?? ref.identifiers?.map(\.value).joined(separator: ", ")
         ?? "Saved \(scopeSavedItemNoun(ref, hint: hint)) selection"
     guard let hint else { return saved }
-    if hint.missing {
-        if scopeNameUnavailable(ref, hint: hint) { return saved }
-        let known = hint.label.isEmpty || hint.label == ref.id ? saved : hint.label
-        return known + " (unavailable)"
-    }
+    if hint.missing { return hint.label.isEmpty || hint.label == ref.id ? saved : hint.label }
     return hint.label
 }
 

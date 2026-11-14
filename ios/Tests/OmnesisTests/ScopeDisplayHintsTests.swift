@@ -38,7 +38,7 @@ final class AccessScopeDisplayHintsTests: XCTestCase {
         let known = ScopeItemHint(ref: ref, label: "Projects", count: 8, noun: "folder")
         let missing = ScopeItemHint(ref: ref, label: "opaque-folder", count: 0, missing: true)
         let retained = mergingScopeLabelHints([known], [missing])
-        XCTAssertEqual(scopeDisplayLabel(ref, hint: scopeLabelHint(for: ref, in: retained)), "Projects (unavailable)")
+        XCTAssertEqual(scopeDisplayLabel(ref, hint: scopeLabelHint(for: ref, in: retained)), "Projects")
         XCTAssertEqual(retained.first?.missing, true)
         XCTAssertEqual(retained.first?.count, 0)
         XCTAssertEqual(retained.first?.noun, "folder")
@@ -83,5 +83,38 @@ final class AccessScopeDisplayHintsTests: XCTestCase {
         XCTAssertEqual(hints.map(\.noun), ["chat", "person", "chat"])
         XCTAssertEqual(hints.map(\.missing), [false, false, true])
         XCTAssertEqual(hints.map(\.count), [24, 17, 0])
+    }
+
+    /// A missing entry says one thing, the same on every Omnesis app: that the account's list no longer holds it,
+    /// or that its name is unavailable.
+    func testAMissingEntrysNoteFollowsTheGatewaysReason() {
+        let ref = ScopeRef.membership(field: "extra.labelIds", id: "Label_40")
+        let named = ScopeItemHint(ref: ref, label: "Finance", count: 4, noun: "label")
+        XCTAssertNil(scopeItemNote(ref, hint: named))
+        let gone = ScopeItemHint(ref: ref, label: "Finance", noun: "label", missing: true, reason: "not-in-list")
+        XCTAssertEqual(scopeItemNote(ref, hint: gone), "No longer in this account")
+        XCTAssertEqual(scopeDisplayLabel(ref, hint: gone), "Finance")
+        let noList = ScopeItemHint(ref: ref, label: "Label_40", noun: "label", missing: true, reason: "list-gone")
+        XCTAssertEqual(scopeItemNote(ref, hint: noList), "Name unavailable")
+        XCTAssertEqual(scopeDisplayLabel(ref, hint: noList), "Saved label selection")
+        let noReason = ScopeItemHint(ref: ref, label: "Label_40", missing: true)
+        XCTAssertEqual(scopeItemNote(ref, hint: noReason), "Name unavailable")
+        XCTAssertEqual(scopeItemNote(ref, hint: nil), "Name unavailable", "An id nothing has named yet")
+        let retained = mergingScopeLabelHints([gone], [ScopeItemHint(ref: ref, label: "Finance", count: 9)], preserveMissing: true)
+        XCTAssertEqual(retained.first?.reason, "not-in-list")
+    }
+
+    func testAGoneAccountsPreviewNamesItsEntriesWithoutCounts() {
+        let chat = ScopeRef.membership(field: "extra.chatJid", id: "chat-workshop-planning")
+        let preview = ScopePreview(
+            sourceId: "whatsapp-messages:+15550100123",
+            total: 0,
+            visible: 0,
+            hidden: 0,
+            connected: false,
+            items: [.init(ref: chat, label: "Workshop planning", count: 0)]
+        )
+        XCTAssertEqual(scopeItemHints(preview, fields: []).map(\.label), ["Workshop planning"])
+        XCTAssertEqual(scopeItemHints(preview, fields: []).map(\.count), [nil])
     }
 }

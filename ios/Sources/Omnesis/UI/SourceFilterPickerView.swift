@@ -190,6 +190,7 @@ struct SourceFilterPickerView: View {
                 guard usable else { return }
                 await openLocation()
                 await keepCountsCurrent()
+                await keepOpenCountCurrent()
             }
         }
         .background(Theme.bgPrimary)
@@ -230,6 +231,15 @@ struct SourceFilterPickerView: View {
         }
         if editor == nil {
             SourceFilterLoadingLine()
+        } else if let editor, editor.fields.isEmpty {
+            if let text = editor.profileText {
+                Text(text)
+                    .accessText(.subtitle)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(AccessUI.cardPadding)
+                    .background(AccessUI.surface, in: .rect(cornerRadius: AccessUI.cardRadius))
+            }
         } else if let declaration, let editor, !editor.shownState(declaration).isReady {
             SourceFilterFieldStateView(
                 state: editor.shownState(declaration),
@@ -426,6 +436,37 @@ extension SourceFilterPickerView {
             try? await Task.sleep(for: scopeRetryDelay(retryAfterMs: wait, attempt: attempt))
             guard !Task.isCancelled else { return }
             await load(quietly: true)
+        }
+    }
+
+    /// Asks the open item's parent list again while the gateway is still counting the open item, so the count on
+    /// its "Select this" row arrives like every other.
+    func keepOpenCountCurrent() async {
+        var attempt = 0
+        var wait: Int?
+        while !Task.isCancelled, let open = ancestors.last, open.count == nil, query.isEmpty {
+            guard let client = try? openedClient?.authorized(for: store.access) else { return }
+            attempt += 1
+            try? await Task.sleep(for: scopeRetryDelay(retryAfterMs: wait, attempt: attempt))
+            var parent = session
+            parent.openAncestor(depth: ancestors.count - 1)
+            let parentLocation = parent.location(for: source.id)
+            let request = ScopePickerRequest(
+                sourceId: source.id, field: field, query: "", parentId: parent.parentId, device: parent.device
+            )
+            guard !Task.isCancelled,
+                  let page = try? await loadScopePickerPages(
+                      client: client,
+                      request: request,
+                      previous: nil,
+                      cursor: nil,
+                      restoreCount: catalogues[parentLocation]?.items.count ?? 0
+                  ),
+                  ancestors.last.map({ scopeRefIdentityMatches($0.ref, open.ref) }) == true else { return }
+            catalogues[parentLocation] = page
+            wait = page.retryAfterMs
+            guard let fresh = page.items.first(where: { scopeRefIdentityMatches($0.ref, open.ref) }) else { return }
+            ancestors[ancestors.count - 1].count = fresh.count
         }
     }
 

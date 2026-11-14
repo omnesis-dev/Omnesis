@@ -23,6 +23,8 @@ struct AccessLevelEditorView: View {
     @State var scopeLabels: [String: [ScopeItemHint]] = [:]
     @State var scopeTotals: [ScopePolicy: AccessFilterTotals] = [:]
     @State var error: Error?
+    /// The gateway's sentence for a save it refused for a reason the owner can act on.
+    @State var refusal: String?
     @State var nameTaken = false
     @State var levelInUse = false
     @State var conflict = false
@@ -106,6 +108,7 @@ struct AccessLevelEditorView: View {
                 )
                 .accessibilityFocused($questionFocused)
                 stepContent
+                AccessProblemText(text: refusal, top: 16)
                 if let error, !conflict {
                     GatewayErrorView(context: "save this access level", error: error, onRetry: {
                         navigation.step = .review
@@ -124,6 +127,7 @@ struct AccessLevelEditorView: View {
         .onAppear { if openedClient == nil { openedClient = store.access } }
         .task(id: labelContextKey) { await resolveLabels() }
         .onChange(of: draft.name) { _, _ in nameTaken = false }
+        .onChange(of: draft) { _, _ in refusal = nil }
         .onChange(of: draft.rule("answer") != nil) { _, enabled in if enabled { levelInUse = false } }
         .onChange(of: current) { _, _ in questionFocused = true }
         .alert("Discard your changes?", isPresented: $confirmExit) {
@@ -285,7 +289,10 @@ struct AccessLevelEditorView: View {
                     scopeLabels[key] ?? [],
                     scopeItemHints(preview, fields: fields[policy.sourceId] ?? [])
                 )
-                scopeTotals[canonicalAccessPolicy(policy)] = .init(shared: preview.visible, hidden: preview.hidden)
+                // A gone account's preview names its entries but counts nothing.
+                if preview.connected {
+                    scopeTotals[canonicalAccessPolicy(policy)] = .init(shared: preview.visible, hidden: preview.hidden)
+                }
             } catch { /* Saved labels remain readable when optional lookup fails. */ }
         }
     }
@@ -305,6 +312,7 @@ extension AccessLevelEditorView {
             return
         }
         saving = true
+        refusal = nil
         defer { saving = false }
         do {
             if let revision = draft.expectedRevision {
@@ -329,6 +337,7 @@ extension AccessLevelEditorView {
             case .nameTaken: nameTaken = true
             case .levelInUse: levelInUse = true
             case .missingLevel: missingLevel = true
+            case .refused(let sentence): refusal = sentence
             case .revisionConflict, .other: break
             }
             self.error = failure == .revisionConflict || failure == .other ? error : nil

@@ -128,6 +128,15 @@ final class AccessLevelDraftFilterTests: XCTestCase {
         var tooLong = hiding
         tooLong.rules[0].match = (0 ... scopeFilterMaxEntries).map { .membership(field: "extra.chatJid", id: "chat-\($0)") }
         XCTAssertEqual(decision(.except, tooLong), .blocked)
+        // The gateway counts each of a person's identifiers against the limit, and every other entry once.
+        let identifiers = (0 ..< scopeFilterMaxEntries).map { ScopeIdentifier(type: "email", value: "person\($0)@example.org") }
+        var people = hiding
+        people.rules[0].match = [.person(label: "Maya Reeves", identifiers: identifiers)]
+        XCTAssertEqual(people.entryCount, scopeFilterMaxEntries)
+        XCTAssertTrue(people.withinLimits)
+        people.rules[0].match.append(.membership(field: "extra.chatJid", id: "chat-one"))
+        XCTAssertEqual(people.entryCount, scopeFilterMaxEntries + 1)
+        XCTAssertEqual(decision(.except, people), .blocked)
     }
 
     func testRefusedSavesAreClassifiedForTheStateTheEditorShows() {
@@ -138,6 +147,17 @@ final class AccessLevelDraftFilterTests: XCTestCase {
         XCTAssertEqual(accessLevelSaveFailure(refusal("level-name-taken"), isEditing: true), .nameTaken)
         XCTAssertEqual(accessLevelSaveFailure(refusal("level-in-use"), isEditing: true), .levelInUse)
         XCTAssertEqual(accessLevelSaveFailure(refusal("invalid-selection"), isEditing: true), .other)
+        let sentence = "Label filters need Gmail to be resynced. Search keeps working meanwhile."
+        let withSentence = GatewayClient.Error.serverError(
+            status: 409, body: #"{"error":"invalid-selection","message":"\#(sentence)"}"#
+        )
+        XCTAssertEqual(accessLevelSaveFailure(withSentence, isEditing: true), .refused(sentence))
+        XCTAssertEqual(accessLevelSaveFailure(withSentence, isEditing: false), .refused(sentence))
+        // A sentence that happens to mention a revision is not a revision conflict.
+        let mentionsRevision = GatewayClient.Error.serverError(
+            status: 409, body: #"{"error":"invalid-selection","message":"Resync it first; the revision is old."}"#
+        )
+        XCTAssertEqual(accessLevelSaveFailure(mentionsRevision, isEditing: true), .refused("Resync it first; the revision is old."))
         XCTAssertEqual(accessLevelSaveFailure(GatewayClient.Error.serverError(status: 503, body: "unavailable"), isEditing: true), .other)
     }
 }

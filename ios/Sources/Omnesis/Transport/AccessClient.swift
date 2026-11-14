@@ -138,6 +138,9 @@ public final class AccessClient: Sendable {
         if let parentId { components.queryItems?.append(URLQueryItem(name: "parentId", value: parentId)) }
         if let device { components.queryItems?.append(URLQueryItem(name: "device", value: device)) }
         if let cursor { components.queryItems?.append(URLQueryItem(name: "cursor", value: cursor)) }
+        // URLComponents leaves "+" as it is, and the gateway reads a bare "+" in a query as a space: "+44 7700…"
+        // and "c++" must arrive as typed.
+        components.percentEncodedQuery = components.percentEncodedQuery?.replacingOccurrences(of: "+", with: "%2B")
         return try await decodeOrThrow(ScopeOptions.self, from: scopeRead(method: "GET", path: components.string!, body: nil))
     }
 

@@ -522,18 +522,19 @@ func accessLevelMutationCode(_ error: Error) -> String? {
     return accessRefusalCode(error)
 }
 
-/// How a refused access-level save is presented.
-enum AccessLevelSaveFailure: Equatable { case nameTaken, levelInUse, missingLevel, revisionConflict, other }
+/// How a refused access-level save is presented. `refused` carries the gateway's sentence for a refusal the owner
+/// can act on, such as a filter entry on a field that is not ready.
+enum AccessLevelSaveFailure: Equatable { case nameTaken, levelInUse, missingLevel, revisionConflict, refused(String), other }
 
 func accessLevelSaveFailure(_ error: Error, isEditing: Bool) -> AccessLevelSaveFailure {
     if isEditing, error as? GatewayClient.Error == .notFound { return .missingLevel }
     switch accessLevelMutationCode(error) {
     case "level-name-taken": return .nameTaken
     case "level-in-use": return .levelInUse
-    default: break
+    case "stale-revision": return .revisionConflict
+    case .some: if let sentence = (error as? GatewayClient.Error)?.gatewaySentence { return .refused(sentence) }
+    case nil: break
     }
-    if case GatewayClient.Error.serverError(let status, let body) = error, status == 409,
-       body.contains("stale") || body.contains("revision") { return .revisionConflict }
     return .other
 }
 

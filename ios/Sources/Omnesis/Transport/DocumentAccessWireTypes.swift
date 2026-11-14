@@ -135,3 +135,11 @@ public struct DocumentAccessAudit: Decodable, Equatable, Sendable {
         self.levels = levels
     }
 }
+
+extension DocumentAccessAudit {
+    /// The account line under the title: the source's name, then the account it comes from, as the other clients show it.
+    public var sourceLine: String {
+        let account = sourceId.firstIndex(of: ":").map { String(sourceId[sourceId.index(after: $0)...]) } ?? ""
+        return [sourceName, account].filter { !$0.isEmpty }.joined(separator: " · ")
+    }
+}

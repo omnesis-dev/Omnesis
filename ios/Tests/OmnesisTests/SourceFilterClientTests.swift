@@ -79,8 +79,8 @@ final class AccessSourceFilterClientTests: XCTestCase {
         let value = try await client(session).scopeOptions(
             sourceId: "scope-chat:one/account",
             field: "extra.projectFolder",
-            query: "Cedar & archive",
-            parentId: "folder/one",
+            query: "+44 7700 900123 & archive",
+            parentId: "folder/c++",
             device: "device-studio-mac",
             cursor: "page+two"
         )
@@ -93,8 +93,13 @@ final class AccessSourceFilterClientTests: XCTestCase {
         XCTAssertTrue(try XCTUnwrap(request.url?.absoluteString.contains("scope-chat%3Aone%2Faccount/options")))
         let query = try XCTUnwrap(try URLComponents(url: XCTUnwrap(request.url), resolvingAgainstBaseURL: false)?.queryItems)
         XCTAssertEqual(query.first { $0.name == "field" }?.value, "extra.projectFolder")
-        XCTAssertEqual(query.first { $0.name == "q" }?.value, "Cedar & archive")
-        XCTAssertEqual(query.first { $0.name == "parentId" }?.value, "folder/one")
+        XCTAssertEqual(query.first { $0.name == "q" }?.value, "+44 7700 900123 & archive")
+        XCTAssertEqual(query.first { $0.name == "parentId" }?.value, "folder/c++")
+        // The gateway reads a bare "+" in a query as a space, so every "+" is sent encoded.
+        let raw = try XCTUnwrap(request.url?.query)
+        XCTAssertFalse(raw.contains("+"), raw)
+        XCTAssertTrue(raw.contains("q=%2B44"), raw)
+        XCTAssertTrue(raw.contains("cursor=page%2Btwo"), raw)
         XCTAssertEqual(query.first { $0.name == "device" }?.value, "device-studio-mac")
         XCTAssertEqual(query.first { $0.name == "cursor" }?.value, "page+two")
         XCTAssertEqual(request.value(forHTTPHeaderField: "Cache-Control"), "no-store")
@@ -105,17 +110,26 @@ final class AccessSourceFilterClientTests: XCTestCase {
         let session = Session()
         session.body = """
         {"status":"ready","sourceId":"gmail:mail@example.org","total":1200,"visible":1061,"hidden":139,"tooOld":0,"unmatched":2,
-         "tooOldText":null,"unmatchedText":"2 records can't be matched to a person and stay hidden.",
-         "items":[{"ref":{"capability":"tree","field":"extra.labelIds","id":"Label_12"},"label":"Finance","count":131},
-                  {"ref":{"capability":"tree","field":"extra.labelIds","id":"Label_40"},"label":"Label_40","count":0,"missing":true}]}
+         "tooOldText":null,"unmatchedText":"2 records can’t be matched to a person and stay hidden.","connected":true,
+         "items":[{"ref":{"capability":"tree","field":"extra.labelIds","id":"Label_12"},"label":"Finance","count":131,"depth":0},
+                  {"ref":{"capability":"tree","field":"extra.labelIds","id":"Label_40"},"label":"Label_40","count":0,"missing":true,
+                   "reason":"not-in-list"},
+                  {"ref":{"capability":"tree","field":"extra.labelIds","id":"Label_41"},"label":"Label_41","count":0,"missing":true,
+                   "reason":"list-gone"}]}
         """
         var policy = ScopePolicy.empty(sourceId: "gmail:mail@example.org", levelId: "new", capability: "answer")
         policy.rules[0].match = [.person(label: "Maya", identifiers: [.init(type: "email", value: "maya@example.org")])]
         let response = try await client(session).scopePreview(policy)
         let value = try XCTUnwrap(response.ready)
         XCTAssertEqual(value.hidden, 139)
-        XCTAssertEqual(value.undecidedLines, ["2 records can't be matched to a person and stay hidden."])
-        XCTAssertEqual(value.items.map(\.missing), [nil, true])
+        XCTAssertEqual(value.undecidedLines, ["2 records can’t be matched to a person and stay hidden."])
+        XCTAssertTrue(value.connected)
+        XCTAssertEqual(value.items.map(\.missing), [nil, true, true])
+        XCTAssertEqual(value.items.map(\.reason), [nil, "not-in-list", "list-gone"])
+        XCTAssertEqual(
+            scopeItemHints(value, fields: []).map { scopeItemNote($0.ref, hint: $0) },
+            [nil, "No longer in this account", "Name unavailable"]
+        )
         let request = try XCTUnwrap(session.requests.first)
         XCTAssertEqual(request.httpMethod, "POST")
         XCTAssertFalse(try XCTUnwrap(try String(data: XCTUnwrap(request.httpBody), encoding: .utf8)?.contains("personId")))
@@ -127,7 +141,7 @@ final class AccessSourceFilterClientTests: XCTestCase {
             tooOld: 6,
             unmatched: 0,
             tooOldText: "6 older items could not be resynced and stay hidden from agents using this filter.",
-            unmatchedText: "0 records can't be matched to a folder and stay hidden.",
+            unmatchedText: "0 records can’t be matched to a folder and stay hidden.",
             items: []
         )
         XCTAssertEqual(both.undecidedLines, ["6 older items could not be resynced and stay hidden from agents using this filter."])
@@ -137,9 +151,9 @@ final class AccessSourceFilterClientTests: XCTestCase {
         let session = Session()
         session.body = """
         {"sourceId":"gmail:mail@example.org","sourceType":"gmail","devices":[{"id":"dev_studio","name":"Studio Mac"}],
-         "showDeviceLevel":false,"retryAfterMs":1500,
+         "showDeviceLevel":false,"profile":"declared","profileText":null,"connected":true,"retryAfterMs":1500,
          "resync":{"state":"needs-resync","fields":["$people","extra.labelIds"],
-                   "text":"Label and people filters need Gmail to be resynced. Your mail stays searchable meanwhile."},
+                   "text":"Label and people filters need Gmail to be resynced. Your emails stay searchable meanwhile."},
          "fields":[
           {"field":"$people","capability":"person","noun":{"one":"person","many":"people"},"picker":"search","scope":"global",
            "identifiers":["email","domain"],"state":{"status":"ready"},
@@ -159,7 +173,9 @@ final class AccessSourceFilterClientTests: XCTestCase {
           {"field":"d","capability":"membership","noun":{"one":"d","many":"ds"},"picker":"search","scope":"global",
            "state":{"status":"list-pending","text":"Waiting for Gmail to send its list of labels."},"counts":{"status":"pending"}},
           {"field":"e","capability":"membership","noun":{"one":"e","many":"es"},"picker":"search","scope":"global",
-           "state":{"status":"a-state-from-the-future"},"counts":{"status":"pending"}}
+           "state":{"status":"a-state-from-the-future"},"counts":{"status":"pending"}},
+          {"field":"f","capability":"membership","noun":{"one":"f","many":"fs"},"picker":"search","scope":"global",
+           "state":{"status":"disconnected","text":"This account is no longer connected."},"counts":{"status":"pending"}}
          ]}
         """
         let editor = try await client(session).filterEditor(sourceId: "gmail:mail@example.org")
@@ -168,7 +184,7 @@ final class AccessSourceFilterClientTests: XCTestCase {
         XCTAssertEqual(editor.resync?.fields, ["$people", "extra.labelIds"])
         XCTAssertEqual(
             editor.resync?.fieldState,
-            .needsResync(cost: nil, text: "Label and people filters need Gmail to be resynced. Your mail stays searchable meanwhile.")
+            .needsResync(cost: nil, text: "Label and people filters need Gmail to be resynced. Your emails stay searchable meanwhile.")
         )
         XCTAssertEqual(editor.fields.map(\.state), [
             .ready,
@@ -181,19 +197,73 @@ final class AccessSourceFilterClientTests: XCTestCase {
             .gatewayBehind(text: "Update this Omnesis gateway to use these filters."),
             .listPending(text: "Waiting for Gmail to send its list of labels."),
             .unsupported,
+            .disconnected(text: "This account is no longer connected."),
         ])
+        XCTAssertEqual(editor.profile, "declared")
+        XCTAssertNil(editor.profileText)
+        XCTAssertTrue(editor.connected)
         XCTAssertEqual(editor.fields[0].counts, .ready(tooOld: 0, unmatched: 0, tooOldText: nil, unmatchedText: nil))
         XCTAssertEqual(editor.fields[1].counts, .pending)
         XCTAssertEqual(editor.fields[1].insideText, "Includes the labels inside.")
-        XCTAssertEqual(editor.fields.map(\.perDevice), [false, false, true, true, false, false, false])
-        XCTAssertEqual(editor.fields.map(\.state.isReady), [true, false, false, false, false, false, false])
-        XCTAssertEqual(editor.fields[6].state.text, "This version of Omnesis can't use this filter yet.")
+        XCTAssertEqual(editor.fields.map(\.perDevice), [false, false, true, true, false, false, false, false])
+        XCTAssertEqual(editor.fields.map(\.state.isReady), [true, false, false, false, false, false, false, false])
+        XCTAssertEqual(editor.fields[6].state.text, "This version of Omnesis can’t use this filter yet.")
+        XCTAssertEqual(editor.fields[7].state.text, "This account is no longer connected.")
         XCTAssertTrue(editor.settling)
         XCTAssertEqual(editor.field("extra.labelIds")?.noun.many, "labels")
         let settled = SourceFilterEditor(sourceId: "x", sourceType: "x", fields: [editor.fields[0], editor.fields[1], editor.fields[3]])
         XCTAssertFalse(settled.settling, "Nothing changes by itself without counts or a field on its way to ready")
         XCTAssertTrue(SourceFilterEditor(sourceId: "x", sourceType: "x", fields: [editor.fields[2]]).settling)
         XCTAssertTrue(SourceFilterEditor(sourceId: "x", sourceType: "x", fields: [editor.fields[5]]).settling)
+    }
+}
+
+/// What the gateway says about an account a filter cannot be edited on: one that is gone, or one whose source has
+/// not said what can be filtered yet.
+extension AccessSourceFilterClientTests {
+    func testAGoneAccountsEditorAndPreviewSayItIsNoLongerConnected() async throws {
+        let gone = "This account is no longer connected. Its saved filter entries are kept until you remove them."
+        let session = Session()
+        session.body = """
+        {"sourceId":"whatsapp-messages:+15550100123","sourceType":"whatsapp-messages","devices":[],"showDeviceLevel":false,
+         "profile":"declared","profileText":"\(gone)","connected":false,
+         "fields":[{"field":"extra.chatJid","capability":"membership","noun":{"one":"chat","many":"chats"},"picker":"search",
+                    "scope":"global","state":{"status":"disconnected","text":"\(gone)"},
+                    "counts":{"status":"ready","tooOld":0,"unmatched":0,"tooOldText":null,"unmatchedText":null}}]}
+        """
+        let editor = try await client(session).filterEditor(sourceId: "whatsapp-messages:+15550100123")
+        XCTAssertFalse(editor.connected)
+        XCTAssertEqual(editor.profileText, gone)
+        XCTAssertEqual(editor.fields.first?.state, .disconnected(text: gone))
+        XCTAssertFalse(editor.settling)
+        session.body = """
+        {"status":"ready","sourceId":"whatsapp-messages:+15550100123","connected":false,"total":0,"visible":0,"hidden":0,
+         "tooOld":0,"unmatched":0,"tooOldText":null,"unmatchedText":null,
+         "items":[{"ref":{"capability":"membership","field":"extra.chatJid","id":"chat-1"},"label":"Workshop planning","count":0}]}
+        """
+        var policy = ScopePolicy.empty(sourceId: "whatsapp-messages:+15550100123", levelId: "level", capability: "answer")
+        policy.rules[0].match = [.membership(field: "extra.chatJid", id: "chat-1")]
+        let response = try await client(session).scopePreview(policy)
+        let preview = try XCTUnwrap(response.ready)
+        XCTAssertFalse(preview.connected)
+        // A gone account's entries keep their last known names, and nothing is counted for them.
+        let hints = scopeItemHints(preview, fields: editor.fields)
+        XCTAssertEqual(hints.map(\.label), ["Workshop planning"])
+        XCTAssertEqual(hints.map(\.count), [nil])
+    }
+
+    func testAnEditorWithoutAProfileCarriesTheGatewaysReason() throws {
+        let body = """
+        {"sourceId":"notes:one","sourceType":"notes","devices":[],"showDeviceLevel":false,"profile":"no-profile",
+         "profileText":"Filters for this account are available after its first sync.","connected":true,"fields":[]}
+        """
+        let editor = try JSONDecoder().decode(SourceFilterEditor.self, from: Data(body.utf8))
+        XCTAssertEqual(editor.profile, "no-profile")
+        XCTAssertEqual(editor.profileText, "Filters for this account are available after its first sync.")
+        XCTAssertTrue(editor.fields.isEmpty)
+        let older = try JSONDecoder().decode(SourceFilterEditor.self, from: Data(#"{"sourceId":"a","sourceType":"b","fields":[]}"#.utf8))
+        XCTAssertEqual(older.profile, "declared")
+        XCTAssertTrue(older.connected)
     }
 
     func testTypedIdentifiersAreReadByTheGateway() async throws {
@@ -234,11 +304,12 @@ final class AccessSourceFilterClientTests: XCTestCase {
         session.body = """
         {"documentId":"doc_8d1e","title":"Q4 budget review","sourceId":"gmail:maya.reeves@example.org",
          "sourceName":"Gmail (maya.reeves@example.org)","sourceVersion":2,
-         "notes":{"answer":"For Answer, readable means within what Omnesis may use.","owner":"This page is for you, the owner."},
+         "notes":{"answer":"“Can read” under Answer means Omnesis may use this document when answering that agent.",
+                  "owner":"This page is for you, the owner."},
          "levels":[{"id":"lvl_7c21","name":"Coding assistant",
            "agents":[{"id":"grt_51aa","name":"Claude Code on Studio Mac","kind":"connection"},
                      {"id":"dev_1","name":"Kitchen speaker","kind":"device"}],
-           "answer":{"readable":true,"code":"readable","text":"Readable"},
+           "answer":{"readable":true,"code":"readable","text":"This account is shared with all content"},
            "direct":{"readable":false,"code":"hidden-by-item","text":"Hidden by: label Finance"}},
           {"id":"lvl_90fe","name":"Travel planner","agents":[],
            "answer":{"readable":false,"code":"account-not-shared","text":"This account is not shared"},
@@ -403,5 +474,18 @@ extension AccessSourceFilterClientTests {
         _ = try await current.value
         let starts = await probe.starts
         XCTAssertEqual(starts, 3)
+    }
+}
+
+extension AccessSourceFilterClientTests {
+    func testTheAuditsAccountLineIsTheSourceNameThenTheAccount() throws {
+        let json = """
+        {"documentId":"doc_1","title":"Workshop planning","sourceId":"whatsapp-messages:+15550100123",
+         "sourceName":"WhatsApp","sourceVersion":1,"notes":{"answer":"","owner":""},"levels":[]}
+        """
+        var audit = try JSONDecoder().decode(DocumentAccessAudit.self, from: Data(json.utf8))
+        XCTAssertEqual(audit.sourceLine, "WhatsApp · +15550100123")
+        audit.sourceId = "notes"
+        XCTAssertEqual(audit.sourceLine, "WhatsApp")
     }
 }

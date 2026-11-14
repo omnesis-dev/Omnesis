@@ -90,9 +90,10 @@ struct SourceFilterEditorView: View {
         scopeFilterHasChanges(initial: initialPolicy, policy: policy, mode: mode)
     }
 
-    /// The account is no longer connected: its saved filter can be reviewed and shortened, nothing else.
+    /// The account is no longer connected: its saved filter can be reviewed and shortened, nothing else. The
+    /// gateway's editor says so once loaded; the access overview says so before.
     private var disconnected: Bool {
-        writable && !source.available
+        writable && (!source.available || editor?.connected == false)
     }
 
     private var commit: ScopeFilterCommit {
@@ -115,7 +116,7 @@ struct SourceFilterEditorView: View {
 
     /// The list of items to choose from, which stands in for the page while matches are being chosen.
     private var showsPicker: Bool {
-        step == .matches && writable && source.available && !managing
+        step == .matches && writable && !disconnected && !managing
     }
 
     /// The selected items listed for removal, when asked for from the list of items to choose from.
@@ -215,7 +216,7 @@ struct SourceFilterEditorView: View {
         .onChange(of: displayHints) { _, hints in
             if (try? openedClient?.authorized(for: store.access)) != nil { labelHints = mergingScopeLabelHints(labelHints, hints) }
         }
-        .task(id: editorGeneration) { if source.available, authoringEnabled { await keepEditorCurrent() } }
+        .task(id: editorGeneration) { if authoringEnabled { await keepEditorCurrent() } }
         .task(id: step == .review ? nil : policy) { if step != .review { await resolveDisplayHints() } }
         .onChange(of: policy) { _, _ in previewedPolicy = nil }
         .id(step)
@@ -354,13 +355,15 @@ struct SourceFilterEditorView: View {
 
     /// The saved filter of an account that is no longer connected: what it does and what it names, each removable.
     @ViewBuilder private var disconnectedContent: some View {
-        Text("This account is no longer connected. You can remove its saved entries.")
-            .accessText(.rowSecondary, color: AccessUI.secondary)
-            .fixedSize(horizontal: false, vertical: true)
-            .padding(AccessUI.cardPadding)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(AccessUI.surface, in: .rect(cornerRadius: AccessUI.cardRadius))
-            .padding(.bottom, 16)
+        if let notice = editor?.profileText {
+            Text(notice)
+                .accessText(.rowSecondary, color: AccessUI.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(AccessUI.cardPadding)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(AccessUI.surface, in: .rect(cornerRadius: AccessUI.cardRadius))
+                .padding(.bottom, 16)
+        }
         modePill
         AccessSectionHeading(Self.selectedFiltersHeading)
         VStack(spacing: 0) { selectedRows(removable: true) }.padding(.top, -AccessUI.rowPadding)
@@ -408,9 +411,8 @@ struct SourceFilterEditorView: View {
             ref: ref,
             hint: hint(for: ref),
             noun: scopeFieldNoun(ref, fields: editor?.fields ?? []),
-            count: item?.missing == true ? nil : item?.count,
+            count: item?.missing == true || disconnected || currentPreview?.connected == false ? nil : item?.count,
             counting: counting,
-            status: item?.missing == true ? "No longer available" : nil,
             last: last
         ) {
             if removable {
@@ -439,7 +441,7 @@ extension SourceFilterEditorView {
                 self.error = nil
                 countsGeneration += 1
             }
-        } else if let preview = currentPreview {
+        } else if let preview = currentPreview, preview.connected {
             AccessStatPair(shared: preview.visible, hidden: preview.hidden)
             let lines = preview.undecidedLines
             if !lines.isEmpty {
@@ -576,7 +578,11 @@ extension PreviewMocks {
 
 #Preview("Account no longer connected") {
     NavigationStack {
-        PreviewMocks.accessFilterEditor(PreviewMocks.accessDisconnectedWhatsApp, policy: PreviewMocks.accessWhatsAppPolicy)
+        PreviewMocks.accessFilterEditor(
+            PreviewMocks.accessDisconnectedWhatsApp,
+            policy: PreviewMocks.accessWhatsAppPolicy,
+            editor: PreviewMocks.accessDisconnectedWhatsAppEditor
+        )
     }.environment(AppStore.preview())
 }
 

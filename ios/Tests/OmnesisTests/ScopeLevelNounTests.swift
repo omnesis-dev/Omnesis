@@ -78,11 +78,11 @@ final class ScopeLevelNounTests: XCTestCase {
     }
 
     func testFieldsCoveredByTheAccountsResyncShowItsOneSentenceAndNoTabs() {
-        let rest = " filters need Gmail to be resynced. Your mail stays searchable meanwhile."
-        let combined = "Label and people" + rest
+        let rest = " filters need Gmail to be resynced. Search keeps working meanwhile."
+        let combined = "Label and people filters need Gmail to be resynced. Your emails stay searchable meanwhile."
         let editor = gmail(
             .needsResync(cost: nil, text: "Label" + rest),
-            .needsResync(cost: nil, text: "People" + rest),
+            .needsResync(cost: nil, text: "Person" + rest),
             resync: .init(state: "needs-resync", fields: [FilterEditorField.peopleField, "extra.labelIds"], text: combined)
         )
         XCTAssertEqual(

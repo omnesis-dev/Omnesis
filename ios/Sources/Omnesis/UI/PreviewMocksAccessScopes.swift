@@ -61,18 +61,18 @@ extension PreviewMocks {
                 identifiers: ["email", "domain"],
                 state: .needsResync(
                     cost: gmailCost,
-                    text: "People filters need Gmail to be resynced. Your mail stays searchable meanwhile. " + gmailCost
+                    text: "Person filters need Gmail to be resynced. Search keeps working meanwhile. " + gmailCost
                 )
             ),
             treeField(accessLabelField, .init(one: "label", many: "labels"), state: .needsResync(
                 cost: gmailCost,
-                text: "Label filters need Gmail to be resynced. Your mail stays searchable meanwhile. " + gmailCost
+                text: "Label filters need Gmail to be resynced. Search keeps working meanwhile. " + gmailCost
             )),
         ],
         resync: .init(
             state: "needs-resync",
             fields: [FilterEditorField.peopleField, accessLabelField],
-            text: "Label and people filters need Gmail to be resynced. Your mail stays searchable meanwhile. " + gmailCost
+            text: "Label and people filters need Gmail to be resynced. Your emails stay searchable meanwhile. " + gmailCost
         )
     )
     static let accessDriveEditor = SourceFilterEditor(
@@ -100,6 +100,26 @@ extension PreviewMocks {
             accessSessions.id: accessSessionsEditor, accessRepositories.id: accessRepositoriesEditor,
         ]
     }
+
+    /// What the gateway says about the WhatsApp account once it is gone while a saved filter still names it.
+    static var accessDisconnectedWhatsAppEditor: SourceFilterEditor {
+        let gone = FilterFieldState.disconnected(text: accessDisconnectedText)
+        var fields = accessWhatsAppEditor.fields
+        for index in fields.indices {
+            fields[index].state = gone
+            fields[index].counts = .ready(tooOld: 0, unmatched: 0, tooOldText: nil, unmatchedText: nil)
+        }
+        return SourceFilterEditor(
+            sourceId: accessWhatsApp.id,
+            sourceType: "whatsapp-messages",
+            profileText: accessDisconnectedText,
+            connected: false,
+            fields: fields
+        )
+    }
+
+    private static let accessDisconnectedText =
+        "This account is no longer connected. Its saved filter entries are kept until you remove them."
 
     /// The WhatsApp account once the gateway no longer lists it.
     static var accessDisconnectedWhatsApp: AccessSourceInstance {
@@ -178,7 +198,7 @@ extension PreviewMocks {
         visible: 83,
         hidden: 37,
         unmatched: 4,
-        unmatchedText: "4 records can't be matched to a chat and stay hidden.",
+        unmatchedText: "4 records can’t be matched to a chat and stay hidden.",
         items: [
             .init(ref: accessConversations[0].ref, label: "Workshop planning", count: 24),
             .init(ref: accessPeople[0].ref, label: "Maya Reeves", count: 17),
@@ -194,7 +214,7 @@ extension PreviewMocks {
         tooOld: 6,
         unmatched: 2,
         tooOldText: "6 older items could not be resynced and stay hidden from agents using this filter.",
-        unmatchedText: "2 records can't be matched to a folder and stay hidden.",
+        unmatchedText: "2 records can’t be matched to a folder and stay hidden.",
         items: [.init(ref: accessRootFolders[0].ref, label: "Projects", count: 18)]
     )
 

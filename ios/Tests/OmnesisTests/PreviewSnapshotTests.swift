@@ -9416,7 +9416,11 @@ final class PreviewSnapshotTests: XCTestCase {
             )
         }
         accessGallery("filter-account-not-connected") {
-            PreviewMocks.accessFilterEditor(PreviewMocks.accessDisconnectedWhatsApp, policy: saved)
+            PreviewMocks.accessFilterEditor(
+                PreviewMocks.accessDisconnectedWhatsApp,
+                policy: saved,
+                editor: PreviewMocks.accessDisconnectedWhatsAppEditor
+            )
         }
     }
 

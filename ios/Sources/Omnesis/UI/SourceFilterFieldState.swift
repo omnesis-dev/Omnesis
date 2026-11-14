@@ -94,7 +94,7 @@ struct SourceFilterRetryLine: View {
 #if DEBUG
 #Preview("Needs a resync") {
     SourceFilterFieldStateView(
-        state: .needsResync(cost: nil, text: "Label filters need Gmail to be resynced. Your mail stays searchable meanwhile."),
+        state: .needsResync(cost: nil, text: "Label filters need Gmail to be resynced. Search keeps working meanwhile."),
         sourceName: "Gmail"
     ) {}
         .padding(20)

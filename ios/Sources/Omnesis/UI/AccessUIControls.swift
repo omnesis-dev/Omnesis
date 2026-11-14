@@ -350,7 +350,7 @@ struct AccessCapabilityPill: View {
 struct AccessFilterItemRow<Trailing: View>: View {
     let kind: String
     let label: String
-    /// A line under the name, for an item whose name could not be loaded.
+    /// A line under the name, for an item the account's list no longer holds or whose name could not be loaded.
     var note: String?
     var count: Int?
     var counting = false
@@ -403,7 +403,7 @@ extension AccessFilterItemRow {
         self.init(
             kind: accessScopeKindName(ref, hint: hint, noun: noun),
             label: scopeDisplayLabel(ref, hint: hint),
-            note: scopeNameUnavailable(ref, hint: hint) ? scopeNameUnavailableNote : nil,
+            note: scopeItemNote(ref, hint: hint),
             count: count,
             counting: counting,
             status: status,

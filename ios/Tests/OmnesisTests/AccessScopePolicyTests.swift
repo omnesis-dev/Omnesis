@@ -589,7 +589,8 @@ extension AccessScopePolicyTests {
     func testMissingSelectionKeepsParticipantNameAndUsesSeparateNonparticipantDisplayHints() {
         let participant = ScopeRef.person(label: "Jamie Lopez", identifiers: [.init(type: "email", value: "jamie@example.org")])
         let missingParticipant = ScopeItemHint(ref: participant, label: "Jamie Lopez", count: 0, noun: "person", missing: true)
-        XCTAssertEqual(scopeDisplayLabel(participant, hint: missingParticipant), "Jamie Lopez (unavailable)")
+        XCTAssertEqual(scopeDisplayLabel(participant, hint: missingParticipant), "Jamie Lopez")
+        XCTAssertEqual(scopeItemNote(participant, hint: missingParticipant), "Name unavailable")
         let folder = ScopeRef.tree(field: "extra.folderIds", id: "opaque-selection-key")
         let missingFolder = ScopeItemHint(ref: folder, label: "opaque-selection-key", count: 0, noun: "folder", missing: true)
         XCTAssertEqual(scopeDisplayLabel(folder, hint: missingFolder), "Saved folder selection")
