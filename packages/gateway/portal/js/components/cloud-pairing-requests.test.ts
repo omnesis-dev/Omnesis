@@ -234,3 +234,14 @@ test("no trust choice for an unverified or already trusted sign-in, and passkeys
   expect(host.querySelector(".devices-muted")?.textContent?.trim()).toBe("watch");
   expect(host.querySelector("button")).toBeNull();
 });
+
+test("a request from a device the owner revoked says so before the code", async () => {
+  await show({ ...request, revokedDevice: true } as typeof request);
+  const note = host.querySelector(".cloud-pairing-revoked");
+  expect(norm(note?.textContent).trim()).toBe(
+    "You revoked this device earlier. Approve only if it is back in your hands.",
+  );
+  expect(note?.nextElementSibling?.className).toBe("cloud-pairing-code");
+  await show();
+  expect(host.querySelector(".cloud-pairing-revoked")).toBeNull();
+});

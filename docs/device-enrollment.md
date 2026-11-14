@@ -261,7 +261,29 @@ Android approval sheets, and `omnesis cloud requests`. `omnesis cloud approve
 A sign-in enrollment creates a new row. It adopts an existing row only when that
 row's stored device key equals `K`, which the signature has just proved; install
 IDs, previous IDs and names never select a row for these pairings. The row records
-key, method (`automatic` or `approved`), sign-in kind and join time.
+key, method (`automatic` or `approved`), sign-in kind, the id of the sign-in it
+joined with (`enrollment.signInId`: the id `omnesis cloud trusted-sign-ins` shows,
+so a passkey id or a Google account's digest) and join time. The portal shows the
+sign-in in the device's details.
+
+### Revocation sticks
+
+Revoking or forgetting a device that joined by signing in records its device key
+in `revoked_device_keys`. A request signed by that key never joins automatically,
+whatever the sign-in and the policy: it is held with a comparison code and
+`revokedDevice: true` in `GET /admin/cloud-pairing/requests`, so whoever holds the
+lost device cannot bring it back by signing in again. One approval restores it:
+the redemption adopts the revoked row (same id, sources and cursors), clears
+`revoked_at` and releases the key. Only an approval does; an automatic redemption
+that meets a revoked row or key is refused, so joining automatically never clears
+`revoked_at`. Installing the app again makes a new key, and that request is judged
+on its sign-in like any other device; removing the sign-in (below) covers that.
+
+`omnesis cloud remove-sign-in <id> --revoke-devices` (the route's
+`?revokeDevices=true`) also revokes every paired device that joined with that
+sign-in, after the sign-in is removed. Without the flag those devices stay paired.
+The portal's revoke dialog for a device that joined by signing in offers to stop
+trusting that sign-in as well, unticked by default.
 
 ## Trusted sign-ins
 
@@ -397,7 +419,8 @@ between the removal and a later compromise of the relay can't tell a sign-in the
 account removed from one it still has, and a compromised relay can list it again
 with the evidence it kept. When a sign-in is removed because it may be in the
 wrong hands, also remove it on each gateway (`omnesis cloud remove-sign-in <id>`,
-with the id `omnesis cloud trusted-sign-ins` shows on a gateway that trusts it) so
+with the id `omnesis cloud trusted-sign-ins` shows on a gateway that trusts it,
+and `--revoke-devices` to revoke the devices that joined with it) so
 that gateway declines it whatever it is told later. A gateway that never trusted
 it declines it in advance. The same applies to Google
 pins removed on a gateway before `declinedGoogle` existed: that removal was not
@@ -422,6 +445,8 @@ when the gateway can't tie it to a sign-in it already trusts:
    it in either direction, so each gateway learns it by one approval.
 5. A passkey vouched for by Google with a signing key Google has since retired,
    or a sign-in the gateway's owner removed there.
+6. The device key belongs to a device the owner revoked or forgot (Revocation
+   sticks, above).
 
 Each pin records its `source`: `link-page` (the relay's link or signup page),
 `approval` (approving a request signed in on a relay page: desktop or portal),
@@ -431,7 +456,8 @@ page) or
 `native-app` (approving a request signed in in the iOS or Android app).
 `omnesis cloud trusted-sign-ins` lists each pin with its source, and
 `omnesis cloud remove-sign-in <id>` drops and declines one, or declines in advance
-one the gateway does not trust; the portal does not list them. See
+one the gateway does not trust, and with `--revoke-devices` revokes the devices that
+joined with it; the portal does not list them. See
 Limits of automatic mode for why the source matters.
 
 ### Certificate incident hold

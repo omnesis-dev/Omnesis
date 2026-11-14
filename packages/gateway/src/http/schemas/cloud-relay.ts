@@ -16,6 +16,10 @@ export const cloudRelayEnableBody = z
   .strict();
 export const cloudRelayActionBody = z.object({}).strict();
 export const cloudRelayEnrollmentBody = z.object({ policy: z.enum(["automatic", "ask"]) }).strict();
+/** `revokeDevices=true` also revokes every device that joined with the sign-in. */
+export const cloudRelayRemoveSignInQuery = z
+  .object({ revokeDevices: z.enum(["true", "false"]).optional() })
+  .strict();
 export const cloudRelayConnectBody = z
   .object({ termsAccepted: z.literal(true), intent: z.enum(["create", "existing"]).optional() })
   .strict();

@@ -36,7 +36,11 @@ const bearer: AuthContext = {
   scopes: [SCOPE_ADMIN],
 };
 let service: CloudRelayManagement;
+let devices:
+  | { revokeJoinedWith: ReturnType<typeof vi.fn<(signInId: string) => Promise<string[]>>> }
+  | undefined;
 beforeEach(() => {
+  devices = { revokeJoinedWith: vi.fn(async (_signInId: string): Promise<string[]> => []) };
   vi.stubEnv("OMNESIS_EXPERIMENTAL", "0");
   vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "1");
   service = {
@@ -60,7 +64,7 @@ function app(auth: AuthContext | null = bearer, configured = true) {
     if (auth) c.set("auth", auth);
     await next();
   });
-  mountCloudRelayManagementRoutes(router, configured ? service : undefined);
+  mountCloudRelayManagementRoutes(router, configured ? service : undefined, devices);
   return router;
 }
 const post = (body: unknown = {}, headers = {}) => ({
@@ -368,6 +372,19 @@ test("connecting by sign-in, its cancellation, the enrollment policy and trusted
   });
   expect(removed.status).toBe(200);
   expect(service.removeTrustedSignIn).toHaveBeenCalledExactlyOnceWith("fictional-pin");
+  // Devices that joined with it stay unless the owner asks.
+  expect(await removed.json()).not.toHaveProperty("revokedDevices");
+  expect(
+    (
+      await router.request(
+        "/admin/cloud-relay/trusted-sign-ins/fictional-pin?revokeDevices=false",
+        {
+          method: "DELETE",
+        },
+      )
+    ).status,
+  ).toBe(200);
+  expect(devices!.revokeJoinedWith).not.toHaveBeenCalled();
   vi.mocked(service.connect!).mockRejectedValueOnce(
     new CloudRelayManagementFailure(409, "operation-in-progress"),
   );
@@ -385,6 +402,56 @@ test("connecting by sign-in, its cancellation, the enrollment policy and trusted
       )
     ).status,
   ).toBe(403);
+});
+
+test("removing a sign-in can also revoke the devices that joined with it, only after the sign-in is gone", async () => {
+  const order: string[] = [];
+  service.removeTrustedSignIn = vi.fn(async (id: string) => {
+    order.push(`remove ${id}`);
+    return status;
+  });
+  devices!.revokeJoinedWith.mockImplementation(async (id: string) => {
+    order.push(`revoke ${id}`);
+    return ["device-one", "device-two"];
+  });
+  const router = app();
+  const removed = await router.request(
+    "/admin/cloud-relay/trusted-sign-ins/fictional-pin?revokeDevices=true",
+    { method: "DELETE" },
+  );
+  expect(removed.status).toBe(200);
+  expect(await removed.json()).toMatchObject({
+    revision: 1,
+    revokedDevices: ["device-one", "device-two"],
+  });
+  expect(order).toEqual(["remove fictional-pin", "revoke fictional-pin"]);
+
+  // A refused removal revokes nothing, and the query is validated.
+  vi.mocked(service.removeTrustedSignIn!).mockRejectedValueOnce(
+    new CloudRelayManagementFailure(409, "configuration-invalid"),
+  );
+  expect(
+    (
+      await router.request("/admin/cloud-relay/trusted-sign-ins/other?revokeDevices=true", {
+        method: "DELETE",
+      })
+    ).status,
+  ).toBe(409);
+  for (const query of ["revokeDevices=yes", "other=true"])
+    expect(
+      (
+        await router.request(`/admin/cloud-relay/trusted-sign-ins/other?${query}`, {
+          method: "DELETE",
+        })
+      ).status,
+    ).toBe(400);
+  expect(devices!.revokeJoinedWith).toHaveBeenCalledTimes(1);
+
+  // Without device access the removal is not offered at all.
+  devices = undefined;
+  expect(
+    (await app().request("/admin/cloud-relay/trusted-sign-ins/other", { method: "DELETE" })).status,
+  ).toBe(503);
 });
 
 test("sign-in connection controls are explicitly unavailable when the service has no account support", async () => {

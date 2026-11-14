@@ -84,6 +84,8 @@ const WOUND_BACK = [
   215,
   // 216 indexes documents by id and type; windBack drops the index.
   216,
+  // 217 adds the sign-in id columns and the revoked key table, which undoStickyRevocation drops.
+  217,
 ];
 
 let dir: string;
@@ -286,7 +288,15 @@ function undoDeviceEnrollment(db: Db): void {
   }
 }
 
+/** Undo migration 217: the sign-in id columns and the revoked key table. */
+function undoStickyRevocation(db: Db): void {
+  db.exec("DROP TABLE revoked_device_keys");
+  db.exec("ALTER TABLE devices DROP COLUMN enrollment_sign_in_id");
+  db.exec("ALTER TABLE device_pairings DROP COLUMN enrollment_sign_in_id");
+}
+
 function windBack(db: Db): void {
+  undoStickyRevocation(db);
   db.exec("DROP INDEX idx_documents_id_document_type");
   db.exec("DROP TABLE lab_features");
   undoDeviceEnrollment(db);

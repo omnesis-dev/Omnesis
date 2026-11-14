@@ -627,6 +627,12 @@ export type DeviceEnrollmentSignIn = "google" | "passkey";
 export interface DeviceEnrollment {
   method: DeviceEnrollmentMethod;
   signIn: DeviceEnrollmentSignIn | null;
+  /**
+   * The trusted sign-in it joined with: the id `omnesis cloud trusted-sign-ins`
+   * lists for it (a passkey id, or a Google account's digest). Absent for a
+   * device that joined before it was recorded.
+   */
+  signInId?: string;
   joinedAt: number;
 }
 

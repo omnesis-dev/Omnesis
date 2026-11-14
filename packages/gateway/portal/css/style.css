@@ -19463,6 +19463,7 @@ summary.decision-card-head {
 .cloud-pairing-trust { display: flex; align-items: flex-start; gap: 10px; margin: 14px 0 0; font-size: 13px; line-height: 1.5; color: var(--text-primary); cursor: pointer; }
 .cloud-pairing-trust input { flex: none; margin: 3px 0 0; accent-color: var(--accent); }
 .cloud-pairing-trust small { display: block; color: var(--text-secondary); font-size: 12px; }
+.cloud-pairing-revoked { margin: 12px 0 0; padding: 10px 14px; border-radius: 8px; font-size: 13px; color: var(--text-primary); border: 1px solid color-mix(in srgb, var(--warning) 45%, var(--border)); background: color-mix(in srgb, var(--warning) 8%, transparent); }
 .cloud-pairing-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 16px; }
 /* The waiting strip above every page. It is part of the page flow, so it never covers content. */
 .cloud-pairing-notice { flex: none; }

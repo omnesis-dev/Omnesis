@@ -34,7 +34,7 @@ import { httpActivityName, withActivity } from "./observability/main-activity.js
 type Db = Database.Database;
 import { join } from "node:path";
 import { lookupToken, lookupSession } from "./data/repositories/TokenRepository.js";
-import { getDevice } from "./data/repositories/DeviceRepository.js";
+import { getDevice, isRevokedDeviceKey } from "./data/repositories/DeviceRepository.js";
 import {
   CLIENT_VERSION_PARAM,
   createReportedVersionRecorder,
@@ -1701,6 +1701,8 @@ export function createServer(
       : undefined,
     opts?.onCloudPairingRequest,
     opts?.cloudTlsSpkiFingerprintSha256,
+    // A device the owner revoked waits for a person when its key signs in again.
+    (devicePublicKey) => isRevokedDeviceKey(db, devicePublicKey),
   );
 
   // Documents core (CRUD, count/stats/recent, list/ids/exists).

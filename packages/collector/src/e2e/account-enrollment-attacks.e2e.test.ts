@@ -543,4 +543,84 @@ describe.skipIf(!browserReady)("a relay cannot enroll devices on its own", () =>
     },
     gatewayBootBudgetMs() * 3 + 420_000,
   );
+
+  test("F5/A2: a revoked device whose key signs in again with a trusted sign-in is held for the owner, and its row stays revoked until the owner approves", async () => {
+    const name = "Fictional stolen CLI";
+    const keyFile = join(directory, "stolen", "device.key");
+    const joined = await (await pairBySignIn({ gateway: logged, name, keyFile })).result;
+    const row = async () =>
+      (await logged.devices()).find((device) => device.id === joined.deviceId);
+    expect((await row())?.enrollment).toMatchObject({ method: "automatic" });
+    // The owner revokes the lost device.
+    await logged.json(`/admin/devices/${joined.deviceId}`, { method: "DELETE" });
+    const revokedAt = (await row())?.revokedAt;
+    expect(revokedAt).toEqual(expect.any(Number));
+
+    // Whoever holds it signs in again: the policy is automatic, the passkey is
+    // pinned and the leaf is logged, so only the revocation can hold it.
+    const { requests, transport } = recordingTransport();
+    const again = await pairBySignIn({ gateway: logged, name, keyFile, gatewayJson: transport });
+    // The first join's request is still listed, as approved; this one must wait.
+    const held = await waitFor(
+      async () =>
+        (await logged.pendingRequests()).find(
+          (request) => request.name === name && request.status === "pending",
+        ),
+      "the held request",
+    );
+    expect(requests[0]!.body.requireApproval).toBeUndefined();
+    await waitFor(() => requests[0]!.reply !== undefined, "the device to read the reply");
+    expect(requests[0]!.reply).toMatchObject({ status: "pending" });
+    expect(requests[0]!.reply).not.toHaveProperty("pairingCode");
+    expect(held).toMatchObject({ signIn: "passkey", revokedDevice: true });
+    expect((await row())?.revokedAt).toBe(revokedAt);
+
+    // One approval brings the same device back.
+    await waitFor(() => again.comparisons.length === 1, "the comparison code");
+    expect(again.comparisons[0]).toBe(held.verificationCode);
+    await logged.decide(held.requestId, true);
+    const restored = await again.result;
+    expect(restored.deviceId).toBe(joined.deviceId);
+    expect((await row())?.revokedAt ?? null).toBeNull();
+    expect((await row())?.enrollment).toMatchObject({ method: "approved", signIn: "passkey" });
+  }, 300_000);
+
+  // Removes the passkey pin, so it runs last.
+  test("F24/TM-10: each device records the sign-in it joined with, and removing that sign-in can revoke every device that joined with it", async () => {
+    const pinned = (await logged.status()).deviceEnrollment.trustedSignIns;
+    expect(pinned).toHaveLength(1);
+    const signIn = pinned[0]!;
+    const joined = await (
+      await pairBySignIn({
+        gateway: logged,
+        name: "Fictional rogue CLI",
+        keyFile: join(directory, "rogue", "device.key"),
+      })
+    ).result;
+    const bystander = await logged.json<{ device: { id: string } }>("/admin/devices", {
+      method: "POST",
+      body: JSON.stringify({
+        name: "Fictional bystander CLI",
+        kind: "cli",
+        scopes: ["read"],
+        capabilities: { platform: "cli" },
+      }),
+    });
+    const row = async (id: string) => (await logged.devices()).find((device) => device.id === id);
+    expect((await row(joined.deviceId))?.enrollment).toMatchObject({
+      method: "automatic",
+      signIn: "passkey",
+      signInId: signIn.id,
+    });
+
+    const removed = await logged.json<{ revokedDevices?: string[] }>(
+      `/admin/cloud-relay/trusted-sign-ins/${encodeURIComponent(signIn.id)}?revokeDevices=true`,
+      { method: "DELETE" },
+    );
+    expect(removed.revokedDevices).toContain(joined.deviceId);
+    expect(removed.revokedDevices).not.toContain(bystander.device.id);
+    expect((await row(joined.deviceId))?.revokedAt).toEqual(expect.any(Number));
+    expect((await row(bystander.device.id))?.revokedAt ?? null).toBeNull();
+    expect((await logged.status()).deviceEnrollment.trustedSignIns).toEqual([]);
+  }, 300_000);
 });

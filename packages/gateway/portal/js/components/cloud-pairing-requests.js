@@ -71,6 +71,12 @@ export function CloudPairingRequest({ request, onDecision }) {
           A device signed in to your Omnesis account and is waiting for your approval to pair to this
           gateway. Approve if the code below matches the code shown on the device.
         </p>
+        ${
+          request.revokedDevice &&
+          html`<p class="cloud-pairing-revoked">
+            You revoked this device earlier. Approve only if it is back in your hands.
+          </p>`
+        }
         <code class="cloud-pairing-code">${request.verificationCode}</code>
         ${
           request.canTrustSignIn &&

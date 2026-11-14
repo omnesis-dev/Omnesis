@@ -37,7 +37,13 @@ import { CHROME_WEB_STORE_URL } from "../lib/extension-links.js";
 import { KindIcon, PairKindIcon } from "../lib/device-kind-icon.js";
 import { useVisiblePoll } from "../lib/use-visible-poll.js";
 import { CloudPairingRequests } from "../components/cloud-pairing-requests.js";
-import { deviceJoinedLabel } from "../components/relay-device-enrollment.js";
+import {
+  deviceJoinedLabel,
+  deviceSignIn,
+  DeviceSignIn,
+  StopTrustingSignIn,
+} from "../components/relay-device-enrollment.js";
+import { stopTrustingSignIn } from "../lib/cloud-relay-api.js";
 import { DoctorReportView } from "./doctor.js";
 import {
   currentDeviceIdForKind,
@@ -985,6 +991,7 @@ export function DeviceCard({
             <span>Last activity ${isThis ? "now" : d.lastSeenAt ? relativeTime(d.lastSeenAt) : "not recorded"}</span>
             <code class="devices-card-id">${d.id}</code>
           </div>
+          ${cloudRelay && html`<${DeviceSignIn} enrollment=${d.enrollment} />`}
           ${needsPairing && html`
             <div class="devices-card-repair">
               This device still hosts sources. Bring it back with its identity, sources and cursors intact:
@@ -1600,18 +1607,30 @@ export function DevicesView({ pairKindRequest = null, focusDeviceId = null, clou
 
   function handleRevokeDevice(device) {
     const corpusImpact = deviceCorpusCredentialImpact(device);
+    // A device that joined by signing in can also take its sign-in's trust with it.
+    const signIn = cloudRelay && !device.revokedAt ? deviceSignIn(device.enrollment) : null;
+    const choice = { stopTrusting: false };
     setConfirmState({
       title: `Revoke device "${device.name}"?`,
-      body: html`<${DeviceRevocationImpact} device=${device} />`,
+      body: html`<${DeviceRevocationImpact} device=${device} />
+        ${signIn && html`<${StopTrustingSignIn} signIn=${signIn} choice=${choice} />`}`,
       confirmLabel: "Revoke",
       destructive: true,
       onConfirm: async () => {
         try {
           await revokeDevice(device.id, corpusImpact.fingerprint);
-          await refresh();
         } catch (e) {
           setError(String(e.message || e));
+          return;
         }
+        if (signIn && choice.stopTrusting) {
+          try {
+            await stopTrustingSignIn(signIn.id);
+          } catch (e) {
+            setError(`The device was revoked, but this gateway still trusts its ${signIn.label}. ${e.message || e}`);
+          }
+        }
+        await refresh();
       },
     });
   }

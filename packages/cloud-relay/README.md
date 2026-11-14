@@ -1032,7 +1032,7 @@ omnesis cloud renew
 omnesis cloud disable
 omnesis cloud policy ask
 omnesis cloud trusted-sign-ins
-omnesis cloud remove-sign-in <id>
+omnesis cloud remove-sign-in <id> [--revoke-devices]
 omnesis cloud disconnect
 ```
 

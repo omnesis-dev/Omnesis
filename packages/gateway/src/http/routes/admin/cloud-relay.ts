@@ -5,7 +5,7 @@ import { cloudRelayEnabled } from "@omnesis/core";
 import { bodyLimit } from "hono/body-limit";
 import { CloudRelayManagementFailure } from "@omnesis/cloud-relay";
 import { scope } from "../../scope.js";
-import { validateJson } from "../../validate.js";
+import { validateJson, validateQuery } from "../../validate.js";
 import { arrivedThroughRelay } from "../../client-ip.js";
 import {
   cloudRelayConfigureBody,
@@ -13,6 +13,7 @@ import {
   cloudRelayActionBody,
   cloudRelayEnrollmentBody,
   cloudRelayConnectBody,
+  cloudRelayRemoveSignInQuery,
 } from "../../schemas/cloud-relay.js";
 import type { CloudRelayManagement } from "@omnesis/cloud-relay";
 import type { Context } from "hono";
@@ -21,6 +22,10 @@ import type { AppEnv, RouteApp } from "../types.js";
 export function mountCloudRelayManagementRoutes(
   app: RouteApp,
   service?: CloudRelayManagement,
+  devices?: {
+    /** Revokes the live devices that joined with this sign-in and returns their ids. */
+    revokeJoinedWith(signInId: string): Promise<string[]>;
+  },
 ): void {
   if (!cloudRelayEnabled() || !service) return;
   app.use("/admin/cloud-relay*", async (c, next) => {
@@ -134,12 +139,20 @@ export function mountCloudRelayManagementRoutes(
       });
     },
   );
-  app.delete("/admin/cloud-relay/trusted-sign-ins/:id", scope.admin(), async (c) =>
-    respond(c, async () => {
-      if (!service.removeTrustedSignIn)
-        throw new CloudRelayManagementFailure(503, "account-unavailable");
-      return service.removeTrustedSignIn(c.req.param("id"));
-    }),
+  app.delete(
+    "/admin/cloud-relay/trusted-sign-ins/:id",
+    scope.admin(),
+    validateQuery(cloudRelayRemoveSignInQuery),
+    async (c) =>
+      respond(c, async () => {
+        if (!service.removeTrustedSignIn || !devices)
+          throw new CloudRelayManagementFailure(503, "account-unavailable");
+        const id = c.req.param("id");
+        // The sign-in goes first, so no device can join with it while its devices are revoked.
+        const status = await service.removeTrustedSignIn(id);
+        if (c.req.valid("query").revokeDevices !== "true") return status;
+        return { ...status, revokedDevices: await devices.revokeJoinedWith(id) };
+      }),
   );
   app.get("/admin/cloud-relay/account/callback", scope.admin(), async (c) => {
     try {
@@ -206,7 +219,9 @@ export function mountCloudRelayManagementRoutes(
 async function respond(
   c: Context<AppEnv>,
   operation: () => Promise<
-    import("@omnesis/cloud-relay").CloudRelayManagementStatus | { authorizeUrl: string }
+    | import("@omnesis/cloud-relay").CloudRelayManagementStatus
+    | { authorizeUrl: string }
+    | { revokedDevices: string[] }
   >,
 ) {
   try {

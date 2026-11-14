@@ -27,6 +27,11 @@ export async function relayManagement(operation, input, signal, method = "POST")
   return response.json();
 }
 
+/** Stop trusting one sign-in, by the id a device's enrollment records. */
+export function stopTrustingSignIn(id) {
+  return relayManagement(`trusted-sign-ins/${encodeURIComponent(id)}`, undefined, undefined, "DELETE");
+}
+
 /** The gateway's version, or "" when it cannot be read. Never throws. */
 export async function gatewayVersion() {
   try {

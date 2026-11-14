@@ -37,6 +37,7 @@ export function mountCloudPairingRoutes(
   account?: ConstructorParameters<typeof CloudPairingRuntime>[0]["account"],
   onPending?: ConstructorParameters<typeof CloudPairingRuntime>[0]["onPending"],
   spkiFingerprint?: () => string | undefined,
+  revokedDeviceKey?: ConstructorParameters<typeof CloudPairingRuntime>[0]["revokedDeviceKey"],
 ): void {
   if (!cloudRelayEnabled()) return;
   const clientId = process.env.OMNESIS_CLOUD_RELAY_GOOGLE_CLIENT_ID;
@@ -48,6 +49,7 @@ export function mountCloudPairingRoutes(
     broker,
     account,
     onPending,
+    revokedDeviceKey,
     publicOrigin: publicOriginSource ?? (() => publicBaseUrl),
     webConfiguration: (origin) =>
       webGooglePairingConfiguration(
