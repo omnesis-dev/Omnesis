@@ -528,6 +528,7 @@ extension GatewayRoutingProxyTests {
                 listenPort: port,
                 recoverInitialListener: true,
                 transport: factory.transport,
+                clock: ScriptedGatewayClock().clock,
                 verifyTrust: { trust, host in pin.resolve(trust, challengeHost: host) == .pinned(systemTrusted: false) }
             )
             defer { proxy.close() }
@@ -643,12 +644,15 @@ extension GatewayRoutingProxyTests {
         ))
         let factory = RepairableLiveListenerFactory()
         let pin = PinnedSession(spkiFingerprint: peer.info.spkiFingerprint, host: route.host)
+        // Candidate deadlines run on a scripted clock: a verification slower than the attempt budget, as on a
+        // busy runner, must still select the loopback candidate, since the relay name resolves nowhere here.
         let stall = FirstTrustStall()
         let proxy = try GatewayRoutingProxy(
             route: route,
             limits: .production,
             listenPort: 0,
             transport: factory.transport,
+            clock: ScriptedGatewayClock().clock,
             verifyTrust: { trust, host in
                 stall.once()
                 return pin.resolve(trust, challengeHost: host) == .pinned(systemTrusted: false)
