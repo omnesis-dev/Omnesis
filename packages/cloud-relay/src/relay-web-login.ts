@@ -32,6 +32,11 @@ export interface RelayWebLoginOptions {
     ): Promise<{ cookie?: string; location: string }>;
     /** Where to resume after a failure, so a sign-in that fails doesn't lose its operation. */
     failed(context: string | undefined): string;
+    /**
+     * Where a start the browser didn't vouch for goes instead: the page that offers the same sign-in
+     * again, so one more press continues it.
+     */
+    retry(req: IncomingMessage): string;
   };
   fetch?: typeof fetch;
   /** Test-only: a loopback stand-in for Google's authorization endpoint. */
@@ -77,12 +82,17 @@ export class RelayWebLogin {
       return true;
     }
     if (path === "/_relay/web/start" && ["GET", "POST"].includes(req.method!)) {
-      if (
-        req.method === "POST"
-          ? req.headers.origin !== this.origin
-          : req.headers["sec-fetch-site"] !== "same-origin"
-      )
+      if (req.method === "POST" && req.headers.origin !== this.origin)
         throw new RelayError(403, "Same-origin sign-in required");
+      // Only a press on the relay's own page goes on to Google (login CSRF). Safari can label that
+      // press "none" or "cross-site", for example in a tab another site opened, so anything else goes
+      // back to that page, where the next press continues, instead of ending on a blank refusal.
+      if (req.method === "GET" && req.headers["sec-fetch-site"] !== "same-origin") {
+        req.resume();
+        res.writeHead(303, { location: this.options.accountBrowser.retry(req) });
+        res.end();
+        return true;
+      }
       req.resume();
       await this.admission.run(async () => {
         const { context, nonce, email } = await this.options.accountBrowser.begin(req);

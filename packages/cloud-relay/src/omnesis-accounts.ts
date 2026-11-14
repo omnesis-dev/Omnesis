@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { z } from "zod";
 import {
   passkeyCountersignatureSchema,
@@ -87,7 +87,8 @@ export class OmnesisAccounts {
     CREATE TABLE IF NOT EXISTS omnesis_passkey_countersignatures (
       credential_id TEXT PRIMARY KEY, countersignature TEXT NOT NULL
     );
-    CREATE INDEX IF NOT EXISTS omnesis_passkeys_account ON omnesis_passkeys(account_id);`);
+    CREATE INDEX IF NOT EXISTS omnesis_passkeys_account ON omnesis_passkeys(account_id);
+    CREATE TABLE IF NOT EXISTS omnesis_deleted_passkeys (credential_digest TEXT PRIMARY KEY);`);
   }
 
   /** Aggregate operator counters never expose account identifiers or credential material. */
@@ -224,6 +225,18 @@ export class OmnesisAccounts {
             JSON.stringify(passkeyCountersignatureSchema.parse(countersignature)),
           );
     })();
+  }
+
+  /**
+   * Whether this passkey belonged to an account that was deleted here. A passkey this relay never
+   * stored is not one: it may still belong to a live account elsewhere.
+   */
+  passkeyDeleted(id: string): boolean {
+    return (
+      this.db
+        .prepare("SELECT 1 FROM omnesis_deleted_passkeys WHERE credential_digest=?")
+        .get(credentialDigest(id)) !== undefined
+    );
   }
 
   passkey(id: string): StoredPasskey | undefined {
@@ -662,7 +675,15 @@ export class OmnesisAccounts {
     );
   }
   /** Removes an account nothing uses any more, with every way to sign in to it. */
+  /** Removes an account for good, remembering only a digest of each passkey it had. */
   private discard(account: string): void {
+    const passkeys = this.db
+      .prepare("SELECT credential_id FROM omnesis_passkeys WHERE account_id=?")
+      .all(account) as { credential_id: string }[];
+    const remember = this.db.prepare(
+      "INSERT OR IGNORE INTO omnesis_deleted_passkeys (credential_digest) VALUES (?)",
+    );
+    for (const { credential_id: id } of passkeys) remember.run(credentialDigest(id));
     for (const table of [
       "omnesis_passkey_endorsements WHERE credential_id IN (SELECT credential_id FROM omnesis_passkeys WHERE account_id=?)",
       "omnesis_passkey_countersignatures WHERE credential_id IN (SELECT credential_id FROM omnesis_passkeys WHERE account_id=?)",
@@ -736,4 +757,8 @@ export class OmnesisAccounts {
     if (this.credentialCount(account) >= MAX_CREDENTIALS)
       throw new RelayError(409, "Account credential limit reached");
   }
+}
+
+function credentialDigest(id: string): string {
+  return createHash("sha256").update(id).digest("hex");
 }
