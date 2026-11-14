@@ -11,7 +11,6 @@ import { useEffect, useState } from "preact/hooks";
 import { getDocumentAccess } from "../api.js";
 import { navigate } from "../lib/router.js";
 import { sourceIcon } from "../lib/format.js";
-import { sourceAccountOf } from "../lib/source-id.js";
 import { CapabilityPill } from "../components/access-pills.js";
 
 /** The two ways an agent reads, in the order the page lists them. */
@@ -83,7 +82,7 @@ export function DocumentAccessReport({ audit, documentId }) {
       >${audit.title || "Untitled"}</a>
       <span class="doc-access-source">
         <span class="doc-access-source-icon" aria-hidden="true">${sourceIcon(audit.sourceId)}</span>
-        ${[audit.sourceName, sourceAccountOf(audit.sourceId)].filter(Boolean).join(" · ")}
+        ${[audit.sourceName, audit.accountLabel].filter(Boolean).join(" · ")}
       </span>
     </p>
     <div class="doc-access-notes">

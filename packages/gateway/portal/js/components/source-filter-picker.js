@@ -9,6 +9,7 @@ import { readFilterOptions } from "./source-filter-requests.js";
 import {
   fieldLevelNoun,
   fieldNoun,
+  fieldSearchPrompt,
   filterApiError,
 } from "./source-filter-fields.js";
 import { CountSpinner } from "./source-filter-table.js";
@@ -250,7 +251,7 @@ export function SourceFilterPicker({
     }}
   >
     <label class="source-filter-search"
-      >Search ${many}<input
+      >${fieldSearchPrompt(field)}<input
         type="search"
         value=${query}
         maxlength="256"

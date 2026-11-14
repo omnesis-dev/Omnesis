@@ -199,7 +199,7 @@ internal fun SourceFilterPicker(
                     field == null -> editor.profileText?.let { AccessNotice(it) }
                     !ready -> FilterFieldStateBlock(field.state, account.source, onResync = resync)
                     else -> {
-                        AccessTextField(picker.query, { picker.query = it }, label = "Search ${field.title.lowercase()}", search = true)
+                        AccessTextField(picker.query, { picker.query = it }, label = field.searchPrompt, search = true)
                         AccessGap(8.dp)
                         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                             Text("${refs.size} selected", style = AccessType.RowSecondary.copy(fontWeight = FontWeight.SemiBold), color = colors.primary, modifier = Modifier.weight(1f))

@@ -327,13 +327,46 @@ describe("what the routes return", () => {
     });
     expect(details).not.toHaveProperty("sourceId");
     const audit = (await (await send(target, ROUTES[5]!)).json()) as Record<string, any>;
-    expect(audit).toMatchObject({ documentId: "team-day", sourceId: SOURCE, levels: [] });
+    expect(audit).toMatchObject({
+      documentId: "team-day",
+      sourceId: SOURCE,
+      sourceName: "parley",
+      accountLabel: "studio",
+      levels: [],
+    });
     expect(audit.notes.owner).toContain("never available to an external agent");
     for (const path of [
       "/admin/documents/no-such-document/filter-details",
       "/admin/documents/no-such-document/access",
     ])
       expect((await send(target, { method: "GET", path })).status).toBe(404);
+  });
+
+  test("who can read a document names its account the way the account's source labels it", async () => {
+    const phoneAccount = "parley:+15550100123";
+    db.prepare(
+      "INSERT INTO sources(id,type,account_id,device_id,created_at,updated_at) VALUES(?,'parley','+15550100123',?,1,1)",
+    ).run(phoneAccount, COLLECTOR);
+    db.prepare(
+      "INSERT INTO source_family_meta (source_type, label, updated_at) VALUES ('parley', 'Parley', 'now')",
+    ).run();
+    db.prepare("INSERT INTO sync_state (source_id, device_id, label) VALUES (?, '', ?)").run(
+      phoneAccount,
+      "+1 (555) 010-0123",
+    );
+    insertDocument(db as unknown as Db, {
+      id: "phone-day",
+      sourceId: phoneAccount,
+      metadata: { documentType: "day", people: [], extra: { chatId: "c-team" } },
+    });
+    const audit = (await (
+      await send(app(native), { method: "GET", path: "/admin/documents/phone-day/access" })
+    ).json()) as Record<string, any>;
+    expect(audit).toMatchObject({
+      sourceId: phoneAccount,
+      sourceName: "Parley",
+      accountLabel: "+1 (555) 010-0123",
+    });
   });
 
   test("a request is checked before anything is read", async () => {

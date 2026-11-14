@@ -11,6 +11,8 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   countUnmatchedRecords,
+  filterAccountLabel,
+  filterSourceName,
   readSourceFilterReadiness,
   type FilterFieldState,
 } from "./filter-readiness.js";
@@ -461,5 +463,53 @@ describe("the two counts", () => {
   it("has no count for a field that cannot be applied", () => {
     expect(countUnmatchedRecords(db, LEDGER, "extra.threadId")).toBeNull();
     expect(countUnmatchedRecords(db, "almanac:home", "$people")).toBeNull();
+  });
+});
+
+describe("what an account is called beside its source's name", () => {
+  const PHONE_ACCOUNT = "parley:+15550100123";
+
+  beforeEach(() => {
+    source(PHONE_ACCOUNT, "dev-laptop");
+    db.prepare(
+      "INSERT INTO source_family_meta (source_type, label, updated_at) VALUES ('parley', 'Parley', 'now')",
+    ).run();
+  });
+
+  function reported(label: string): void {
+    db.prepare("INSERT INTO sync_state (source_id, device_id, label) VALUES (?, '', ?)").run(
+      PHONE_ACCOUNT,
+      label,
+    );
+  }
+
+  function declared(account: unknown): void {
+    db.prepare("UPDATE sources SET account = ? WHERE id = ?").run(
+      JSON.stringify(account),
+      PHONE_ACCOUNT,
+    );
+  }
+
+  it("is the label the source reports for the account, not its raw id", () => {
+    reported("+1 (555) 010-0123");
+    expect(filterSourceName(db, PHONE_ACCOUNT, "parley")).toBe("Parley");
+    expect(filterAccountLabel(db, PHONE_ACCOUNT, "Parley")).toBe("+1 (555) 010-0123");
+  });
+
+  it("is the label the source declared when nothing reports one yet", () => {
+    declared({ id: "+15550100123", label: "+1 (555) 010-0123" });
+    expect(filterAccountLabel(db, PHONE_ACCOUNT, "Parley")).toBe("+1 (555) 010-0123");
+  });
+
+  it("skips a reported label that only repeats the source's name", () => {
+    reported("Parley");
+    declared({ id: "+15550100123", label: "Studio line" });
+    expect(filterAccountLabel(db, PHONE_ACCOUNT, "Parley")).toBe("Studio line");
+  });
+
+  it("falls back to the account part of the id, and is null for an id without one", () => {
+    reported("Parley");
+    expect(filterAccountLabel(db, PHONE_ACCOUNT, "Parley")).toBe("+15550100123");
+    expect(filterAccountLabel(db, "almanac", "Almanac")).toBeNull();
   });
 });

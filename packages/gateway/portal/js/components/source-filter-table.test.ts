@@ -19,7 +19,7 @@ import { SourceAccountHeader, sourceInstanceIcon } from "./source-account-header
 // @ts-expect-error — Portal modules are JavaScript.
 import { clearScopeLabels, rememberScopeLabels } from "./source-filter-labels.js";
 // @ts-expect-error — Portal modules are JavaScript.
-import { fieldLevelNoun, refTypeLabel } from "./source-filter-fields.js";
+import { fieldLevelNoun, fieldSearchPrompt, refTypeLabel } from "./source-filter-fields.js";
 
 const source = {
   id: "invented:maya@example.com",
@@ -158,6 +158,21 @@ test("same-name items expose their id only when the name is ambiguous", async ()
   );
   await show({ refs: [after], comparisonRefs: [after] });
   expect(host.querySelector(".compact-filter-ref")).toBeNull();
+});
+
+test("a search names every named level of a tree from the deepest up, and otherwise the field's items", () => {
+  expect(fieldSearchPrompt(editor.fields[3])).toBe("Search binders and shelves");
+  expect(fieldSearchPrompt(editor.fields[2])).toBe("Search folders");
+  expect(fieldSearchPrompt(editor.fields[1])).toBe("Search labels");
+  expect(
+    fieldSearchPrompt({
+      noun: noun("repository", "repositories"),
+      levels: [noun("owner", "owners"), noun("repository", "repositories")],
+    }),
+  ).toBe("Search repositories and owners");
+  expect(
+    fieldSearchPrompt({ noun: noun("folder", "folders"), levels: [noun("folder", "folders")] }),
+  ).toBe("Search folders");
 });
 
 test("a tree item is typed by its level's noun, from the row's own depth or the one remembered with its name", async () => {

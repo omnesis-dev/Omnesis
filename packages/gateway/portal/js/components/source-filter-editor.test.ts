@@ -778,6 +778,8 @@ test("a tree whose levels have their own names says which level a saved entry an
   // The saved owner is named by the level the preview gives it.
   expect([...host.querySelectorAll(".compact-filter-kind")].map((cell) => cell.textContent)).toEqual(["Owner"]);
   const search = searchOf("repositories");
+  // A search reaches every level, so it names each, from the deepest up.
+  expect(search.closest("label")?.textContent).toBe("Search repositories and owners");
   await act(async () => {
     search.dispatchEvent(new window.Event("input", { bubbles: true }));
   });

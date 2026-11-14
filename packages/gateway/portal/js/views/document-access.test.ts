@@ -19,8 +19,10 @@ import { parseRoute } from "../lib/router.js";
 const audit = {
   documentId: "doc-invented",
   title: "Workshop planning — 14 March",
-  sourceId: "whatsapp-messages:+1 (555) 010-0123",
+  // A raw E.164 id and the gateway's label for it: the page shows the label, never a parsed id.
+  sourceId: "whatsapp-messages:+15550100123",
   sourceName: "WhatsApp",
+  accountLabel: "+1 (555) 010-0123",
   sourceVersion: 1,
   notes: {
     answer: "“Can read” under Answer means Omnesis may use this document when answering that agent. Whether an answer is then released is decided by the privacy policy’s review.",
@@ -121,6 +123,14 @@ describe("Who can read this?", () => {
     await act(async () => retry.click());
     await act(async () => {});
     expect(text(".doc-access-level h2")).toEqual(["Family helper", "Research assistant"]);
+  });
+
+  test("an account the gateway names no way is shown by its source's name alone", async () => {
+    api.getDocumentAccess.mockResolvedValue({ ...audit, sourceId: "almanac", sourceName: "Almanac", accountLabel: null });
+    await show();
+    const line = host.querySelector(".doc-access-source")?.textContent?.trim();
+    expect(line).toMatch(/Almanac$/);
+    expect(line).not.toContain("·");
   });
 
   test("a gateway with no levels says that no agent can read anything", async () => {

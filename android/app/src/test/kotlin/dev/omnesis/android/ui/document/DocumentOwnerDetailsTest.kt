@@ -92,7 +92,7 @@ class DocumentOwnerDetailsTest {
         } } }
         compose.onNodeWithText(WHO_CAN_READ_TITLE).assertExists()
         compose.onNodeWithText("Workshop planning — 14 March").assertExists()
-        compose.onNodeWithText("WhatsApp · +15550100123").assertExists()
+        compose.onNodeWithText("WhatsApp · +1 (555) 010-0123").assertExists()
         listOf("Family helper", "Notes capture", "Research assistant").forEach { compose.onNodeWithText(it).performScrollTo().assertExists() }
         compose.onNodeWithContentDescription("Answer: Can read. This account is shared with all content").performScrollTo().assertExists()
         compose.onNodeWithContentDescription("Answer: Can’t read. Hidden by: chat Workshop planning").performScrollTo().assertExists()
@@ -110,8 +110,12 @@ class DocumentOwnerDetailsTest {
         assertEquals(1, retries)
     }
 
-    @Test fun theAuditsAccountLineIsTheSourceNameThenTheAccountItsIdNames() {
-        assertEquals("WhatsApp · +15550100123", auditAccountName("WhatsApp", "whatsapp-messages:+15550100123").line)
-        assertEquals("WhatsApp", auditAccountName("WhatsApp", "notes").line)
+    @Test fun theAuditsAccountLineIsTheSourceNameThenTheGatewaysAccountLabel() {
+        // The raw id is E.164; the formatted label can only have come from the gateway.
+        val audit = DocumentFixtures.audit
+        assertEquals("whatsapp-messages:+15550100123", audit.sourceId)
+        assertEquals("WhatsApp · +1 (555) 010-0123", audit.accountName().line)
+        assertEquals("WhatsApp", audit.copy(accountLabel = null).accountName().line)
+        assertEquals("Notes", audit.copy(sourceId = "notes", sourceName = "Notes", accountLabel = " ").accountName().line)
     }
 }

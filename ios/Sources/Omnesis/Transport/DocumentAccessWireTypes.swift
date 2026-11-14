@@ -112,6 +112,8 @@ public struct DocumentAccessAudit: Decodable, Equatable, Sendable {
     public var title: String
     public var sourceId: String
     public var sourceName: String
+    /// What the gateway calls the account beside `sourceName`; nil when nothing names it.
+    public var accountLabel: String?
     public var sourceVersion: Int
     public var notes: Notes
     /// In the gateway's order.
@@ -122,6 +124,7 @@ public struct DocumentAccessAudit: Decodable, Equatable, Sendable {
         title: String,
         sourceId: String,
         sourceName: String,
+        accountLabel: String?,
         sourceVersion: Int,
         notes: Notes,
         levels: [Level]
@@ -130,6 +133,7 @@ public struct DocumentAccessAudit: Decodable, Equatable, Sendable {
         self.title = title
         self.sourceId = sourceId
         self.sourceName = sourceName
+        self.accountLabel = accountLabel
         self.sourceVersion = sourceVersion
         self.notes = notes
         self.levels = levels
@@ -137,9 +141,8 @@ public struct DocumentAccessAudit: Decodable, Equatable, Sendable {
 }
 
 extension DocumentAccessAudit {
-    /// The account line under the title: the source's name, then the account it comes from, as the other clients show it.
+    /// The account line under the title, in the gateway's words: the source's name, then the account's label.
     public var sourceLine: String {
-        let account = sourceId.firstIndex(of: ":").map { String(sourceId[sourceId.index(after: $0)...]) } ?? ""
-        return [sourceName, account].filter { !$0.isEmpty }.joined(separator: " · ")
+        [sourceName, accountLabel ?? ""].filter { !$0.isEmpty }.joined(separator: " · ")
     }
 }

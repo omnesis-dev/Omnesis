@@ -66,6 +66,7 @@ extension PreviewMocks {
         title: "Workshop planning — 14 March",
         sourceId: "whatsapp-messages:+15550100123",
         sourceName: "WhatsApp",
+        accountLabel: "+1 (555) 010-0123",
         sourceVersion: 1,
         notes: .init(
             answer: "“Can read” under Answer means Omnesis may use this document when answering that agent. "

@@ -48,6 +48,7 @@ import {
 import { FILTER_PEOPLE_FIELD, filterDeclarationDigest } from "./filter-sql.js";
 import {
   countUnmatchedRecords,
+  filterAccountLabel,
   filterSourceName,
   readSourceFilterReadiness,
   type FilterDevice,
@@ -526,6 +527,8 @@ export interface DocumentAccessAudit {
   title: string;
   sourceId: string;
   sourceName: string;
+  /** What the account is called beside `sourceName`; null when nothing names it. */
+  accountLabel: string | null;
   sourceVersion: number;
   notes: { answer: string; owner: string };
   levels: Array<{
@@ -642,15 +645,17 @@ export function readDocumentAccessAudit(
         answer: verdict(db, levelGrant(db, level, "answer"), documentId, "answer"),
         direct: verdict(db, levelGrant(db, level, "direct"), documentId, "direct"),
       }));
+    const sourceName = filterSourceName(
+      db,
+      document.source_id,
+      document.type ?? sourceTypeOf(document.source_id),
+    );
     return {
       documentId: document.id,
       title: document.title,
       sourceId: document.source_id,
-      sourceName: filterSourceName(
-        db,
-        document.source_id,
-        document.type ?? sourceTypeOf(document.source_id),
-      ),
+      sourceName,
+      accountLabel: filterAccountLabel(db, document.source_id, sourceName),
       sourceVersion: document.source_version,
       notes: { answer: ACCESS_AUDIT_ANSWER_NOTE, owner: ACCESS_AUDIT_OWNER_NOTE },
       levels,

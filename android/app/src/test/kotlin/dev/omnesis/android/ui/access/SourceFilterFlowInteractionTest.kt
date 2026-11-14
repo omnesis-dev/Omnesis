@@ -290,8 +290,11 @@ class SourceFilterFlowInteractionTest {
         compose.onNode(hasText("Renamed folder") and isToggleable()).assertIsOn().performClick()
         compose.onNodeWithText("0 selected").assertExists()
         compose.onNodeWithText("Review filter").assertIsNotEnabled()
+        // Nothing to view while nothing is selected, as on the other clients.
+        compose.onNodeWithText("View selected").assertIsNotEnabled()
         compose.onNode(hasText("Renamed folder") and isToggleable()).performClick()
         compose.onNodeWithText("1 selected").assertExists()
+        compose.onNodeWithText("View selected").assertIsEnabled()
         compose.onNodeWithText("Review filter").performClick()
         assertEquals(listOf(before), selection)
     }

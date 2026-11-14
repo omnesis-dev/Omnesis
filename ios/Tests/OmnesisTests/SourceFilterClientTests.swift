@@ -484,14 +484,21 @@ extension AccessSourceFilterClientTests {
 }
 
 extension AccessSourceFilterClientTests {
-    func testTheAuditsAccountLineIsTheSourceNameThenTheAccount() throws {
+    func testTheAuditsAccountLineIsTheSourceNameThenTheGatewaysAccountLabel() throws {
         let json = """
         {"documentId":"doc_1","title":"Workshop planning","sourceId":"whatsapp-messages:+15550100123",
-         "sourceName":"WhatsApp","sourceVersion":1,"notes":{"answer":"","owner":""},"levels":[]}
+         "sourceName":"WhatsApp","accountLabel":"+1 (555) 010-0123","sourceVersion":1,
+         "notes":{"answer":"","owner":""},"levels":[]}
         """
         var audit = try JSONDecoder().decode(DocumentAccessAudit.self, from: Data(json.utf8))
-        XCTAssertEqual(audit.sourceLine, "WhatsApp · +15550100123")
-        audit.sourceId = "notes"
+        // The label comes from the gateway; the raw id is never parsed for it.
+        XCTAssertEqual(audit.sourceLine, "WhatsApp · +1 (555) 010-0123")
+        audit.accountLabel = nil
         XCTAssertEqual(audit.sourceLine, "WhatsApp")
+        let unlabelled = """
+        {"documentId":"doc_2","title":"Errands","sourceId":"notes","sourceName":"Notes","accountLabel":null,
+         "sourceVersion":1,"notes":{"answer":"","owner":""},"levels":[]}
+        """
+        XCTAssertEqual(try JSONDecoder().decode(DocumentAccessAudit.self, from: Data(unlabelled.utf8)).sourceLine, "Notes")
     }
 }

@@ -7,7 +7,7 @@ import { test, expect, type Page } from "@playwright/test";
 
 // Invented document, people and access levels throughout.
 const documentId = "doc-invented-workshop";
-const sourceId = "fictional-chat:+1 (555) 010-0123";
+const sourceId = "fictional-chat:+15550100123";
 const document = {
   id: documentId,
   source_id: sourceId,
@@ -44,6 +44,7 @@ const audit = {
   title: document.title,
   sourceId,
   sourceName: "Fictional chat",
+  accountLabel: "+1 (555) 010-0123",
   sourceVersion: 1,
   notes: {
     answer:
@@ -131,6 +132,10 @@ test("a document shows its filter details and opens who can read it", async ({ p
   await expect(page.getByRole("status")).toContainText("Checking each access level…");
   release();
   await expect(page.getByRole("heading", { name: "Research assistant" })).toBeVisible();
+  // The account is named by the gateway's label, not by the raw id.
+  await expect(page.locator(".doc-access-source")).toHaveText(
+    /Fictional chat · \+1 \(555\) 010-0123$/,
+  );
   await expect(page.locator(".doc-access-level h2")).toHaveText([
     "Family helper",
     "Research assistant",

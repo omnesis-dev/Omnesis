@@ -120,8 +120,17 @@ internal const val NAME_UNAVAILABLE = "Name unavailable"
 internal const val NO_LONGER_IN_ACCOUNT = "No longer in this account"
 /** The line under a saved item the account's list does not hold, by the gateway's [reason]. */
 internal fun missingEntryNote(reason: String?): String = if (reason == FilterPreviewItem.NOT_IN_LIST) NO_LONGER_IN_ACCOUNT else NAME_UNAVAILABLE
-/** A field's name as its tab and its search say it: "Labels". */
+/** A field's name as its tab says it: "Labels". */
 internal val FilterEditorField.title: String get() = noun.many.replaceFirstChar { it.uppercase() }
+/**
+ * What a field's search says it looks through. A search reaches every level of a tree, so a tree whose levels have
+ * names of their own names each, from the deepest up: "Search repositories and owners". Any other field names its
+ * items: "Search labels".
+ */
+internal val FilterEditorField.searchPrompt: String get() {
+    val names = levels.orEmpty().asReversed().map { it.many }.distinct()
+    return "Search " + if (names.size > 1) names.joinToString(" and ") else noun.many
+}
 /**
  * What a field calls an item [depth] levels down its tree. A field that names its levels has a word for each, the last
  * standing for every deeper level; null for any other field and for an item whose depth is not known.

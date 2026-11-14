@@ -36,6 +36,16 @@ class FilterNounTest {
         assertEquals("Saved selection", savedSelectionName(null))
         assertEquals("Labels", labels.title)
     }
+    @Test fun aSearchNamesEveryNamedLevelOfATreeFromTheDeepestUpAndOtherwiseTheFieldsItems() {
+        val repositories = readyField("extra.repositoryIds", FilterRef.TREE, "repository", "repositories", picker = "tree",
+            levels = listOf(FilterNoun("owner", "owners"), FilterNoun("repository", "repositories")))
+        assertEquals("Search repositories and owners", repositories.searchPrompt)
+        assertEquals("Search binders and shelves", shelves.searchPrompt)
+        assertEquals("Search project folders", folders.searchPrompt)
+        assertEquals("Search labels", labels.searchPrompt)
+        val oneLevel = readyField("extra.folderId", FilterRef.TREE, "folder", "folders", picker = "tree", levels = listOf(FilterNoun("folder", "folders")))
+        assertEquals("Search folders", oneLevel.searchPrompt)
+    }
     @Test fun anAccountRowSaysWhatItsFilterDoesAndHowManyItemsItHolds() {
         fun filter(action: String, count: Int) = SourceFilter("mail:reader@example.org", FilterAudience("level", "answer"),
             listOf(FilterRule(List(count) { ref(labels, "Label_$it") }, action)), if (action == "share") "hide" else "share")

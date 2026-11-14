@@ -43,6 +43,19 @@ export function fieldLevelNoun(field, depth, many = false) {
   return (many ? noun?.many : noun?.one) || fieldNoun(field, many);
 }
 
+/**
+ * What a field's search says it looks through. A search reaches every level
+ * of a tree, so a tree whose levels have names of their own names each, from
+ * the deepest up: "Search repositories and owners". Any other field names its
+ * items: "Search labels".
+ */
+export function fieldSearchPrompt(field) {
+  const names = [];
+  for (const level of [...(Array.isArray(field?.levels) ? field.levels : [])].reverse())
+    if (level?.many && !names.includes(level.many)) names.push(level.many);
+  return `Search ${names.length > 1 ? names.join(" and ") : fieldNoun(field, true)}`;
+}
+
 /** The typed address a person entry is, when it is one address shown as itself. */
 export function exactIdentifier(ref) {
   const identifier =

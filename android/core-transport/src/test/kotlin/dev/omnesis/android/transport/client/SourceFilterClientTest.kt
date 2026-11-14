@@ -125,7 +125,7 @@ class SourceFilterClientTest {
         server.enqueue(MockResponse().setBody("""{"documentId":"doc_8d1e","sourceVersion":2,"fields":[
             {"field":"extra.labelIds","noun":{"one":"label","many":"labels"},"state":"present","stateText":"","items":[{"id":"Label_12","label":"Finance","listed":true},{"id":"Label_99","label":"Label_99","listed":false}]},
             {"field":"extra.folderId","noun":{"one":"folder","many":"folders"},"state":"too-old","stateText":"Written before this source recorded its folders. Resync the source to add them.","items":[]}]}"""))
-        server.enqueue(MockResponse().setBody("""{"documentId":"doc_8d1e","title":"Q4 budget review","sourceId":"gmail:one","sourceName":"Gmail (maya.reeves@example.org)","sourceVersion":2,
+        server.enqueue(MockResponse().setBody("""{"documentId":"doc_8d1e","title":"Q4 budget review","sourceId":"whatsapp-messages:+15550100123","sourceName":"WhatsApp","accountLabel":"+1 (555) 010-0123","sourceVersion":2,
             "notes":{"answer":"“Can read” under Answer means Omnesis may use this document when answering that agent.","owner":"This page is for you, the owner."},
             "levels":[{"id":"lvl_7c21","name":"Coding assistant","agents":[{"id":"grt_51aa","name":"Claude Code on Studio Mac","kind":"connection"},{"id":"dev_1","name":"Kitchen speaker","kind":"device"}],
               "answer":{"readable":true,"code":"readable","text":"This account is shared with all content"},"direct":{"readable":false,"code":"hidden-by-item","text":"Hidden by: label Finance"}},
@@ -138,6 +138,7 @@ class SourceFilterClientTest {
         assertEquals(DocumentFilterField.TOO_OLD, details.fields.last().state)
         val audit = client().documentAccess("doc_8d1e")
         assertTrue(server.takeRequest().path!!.endsWith("/admin/documents/doc_8d1e/access"))
+        assertEquals("+1 (555) 010-0123", audit.accountLabel)
         assertEquals(listOf("Coding assistant", "Travel planner"), audit.levels.map { it.name })
         assertEquals(listOf(false, true), audit.levels.first().agents.map { it.integration })
         assertEquals("Hidden by: label Finance", audit.levels.first().direct.text)

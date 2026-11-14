@@ -258,6 +258,8 @@ describe("who can read a document, against what agents really read", () => {
       documentId: record("atlas-issue").id,
       title: expect.stringContaining("zqfilter TITLE_ATLAS_ISSUE"),
       sourceId: THREADS,
+      // The synthetic account declares no label of its own, so it is named by its id.
+      accountLabel: "maya-reeves",
       sourceVersion: 2,
       notes: {
         answer:

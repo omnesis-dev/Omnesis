@@ -60,6 +60,8 @@ import kotlinx.serialization.Serializable
     val title: String,
     val sourceId: String,
     val sourceName: String,
+    /** What the gateway calls the account beside [sourceName]; null when nothing names it. */
+    val accountLabel: String? = null,
     val sourceVersion: Int = 0,
     val notes: AuditNotes,
     val levels: List<AuditLevel> = emptyList(),

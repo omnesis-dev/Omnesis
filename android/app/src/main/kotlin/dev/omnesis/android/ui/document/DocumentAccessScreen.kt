@@ -140,7 +140,7 @@ fun DocumentAccessContent(
             AccessQuestionHeader(
                 WHO_CAN_READ_TITLE,
                 subtitle = audit?.title,
-                account = audit?.let { { AccessAccountLine(auditAccountName(it.sourceName, it.sourceId), iconFor(it.sourceId)) } },
+                account = audit?.let { { AccessAccountLine(it.accountName(), iconFor(it.sourceId)) } },
             )
             AccessGap(AccessUi.ContentGap)
             when (state) {
@@ -210,6 +210,6 @@ private fun AuditVerdictRow(capability: AccessCapability, verdict: AuditVerdict,
     }
 }
 
-/** The audit's account line: the source's name, then the account its id names, as the other clients show it. */
-internal fun auditAccountName(sourceName: String, sourceId: String): AccessAccountName =
-    AccessAccountName(sourceName, sourceId.substringAfter(':', "").ifBlank { null })
+/** The audit's account line, in the gateway's words: the source's name, then the account's label. */
+internal fun DocumentAccessAudit.accountName(): AccessAccountName =
+    AccessAccountName(sourceName, accountLabel?.takeIf { it.isNotBlank() })

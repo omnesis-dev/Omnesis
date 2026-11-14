@@ -28,6 +28,7 @@
 
 import {
   hasPerDeviceCursor,
+  sourceAccountOf,
   sourceTypeOf,
   type DocumentFieldFilterSpec,
   type FilterIdentifierType,
@@ -307,4 +308,29 @@ export function filterSourceName(db: Db, sourceId: string, sourceType: string): 
     )
     .get(sourceType, sourceId);
   return row?.family?.trim() || row?.account?.trim() || sourceType;
+}
+
+/**
+ * What to call an account beside its source's name ({@link filterSourceName}):
+ * the label its source reports for it, else the label the source declared
+ * when the account was connected, else the account part of its id. A label
+ * that only repeats the source's name says nothing about the account and is
+ * skipped. Null for an id without an account part whose source named it no
+ * other way.
+ */
+export function filterAccountLabel(db: Db, sourceId: string, sourceName: string): string | null {
+  const row = db
+    .prepare<[string, string], { reported: string | null; declared: string | null }>(
+      `SELECT (SELECT label FROM sync_state WHERE source_id = ? AND label IS NOT NULL
+                ORDER BY device_id LIMIT 1) AS reported,
+              (SELECT json_extract(account, '$.label') FROM sources
+                WHERE id = ? AND json_valid(account)) AS declared`,
+    )
+    .get(sourceId, sourceId);
+  const name = sourceName.trim().toLowerCase();
+  for (const candidate of [row?.reported, row?.declared, sourceAccountOf(sourceId)]) {
+    const label = typeof candidate === "string" ? candidate.trim() : "";
+    if (label && label.toLowerCase() !== name) return label;
+  }
+  return null;
 }

@@ -127,7 +127,7 @@ internal object DocumentFixtures {
     private val directNotGranted = verdict(false, "permission-not-granted", "Direct is not granted on this level")
 
     val audit = DocumentAccessAudit(
-        documentId = workshopDay.id, title = workshopDay.title, sourceId = SOURCE_ID, sourceName = "WhatsApp", sourceVersion = 1,
+        documentId = workshopDay.id, title = workshopDay.title, sourceId = SOURCE_ID, sourceName = "WhatsApp", accountLabel = "+1 (555) 010-0123", sourceVersion = 1,
         notes = AuditNotes(
             answer = "“Can read” under Answer means Omnesis may use this document when answering that agent. Whether an answer is then released is decided by the privacy policy’s review.",
             owner = "This page is for you, the owner. It is never available to an external agent.",

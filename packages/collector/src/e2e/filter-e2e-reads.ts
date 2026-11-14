@@ -672,6 +672,7 @@ export interface DocumentAudit {
   title: string;
   sourceId: string;
   sourceName: string;
+  accountLabel: string | null;
   sourceVersion: number;
   notes: { answer: string; owner: string };
   levels: Array<{
