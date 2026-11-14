@@ -220,6 +220,29 @@ test("a draft needs at least one entry and at most 256, and never counts on coun
   expect(filters.filterDraftError({ ...draft, otherwise: "share" })).toMatch(/cannot change/);
 });
 
+test("a person counts against the limit once per address, as the gateway counts it", () => {
+  const draft = filters.newSourcePolicy("fictional:one", "answer");
+  const person = (addresses: number) => ({
+    capability: "person",
+    label: "Maya Reeves",
+    identifiers: Array.from({ length: addresses }, (_, index) => ({
+      type: "email",
+      value: `maya.${index}@example.org`,
+    })),
+  });
+  const labels = Array.from({ length: 250 }, (_, index) => ({
+    capability: "membership",
+    field: "extra.labelIds",
+    id: `label-${index}`,
+  }));
+  const with_ = (addresses: number) => ({
+    ...draft,
+    rules: [{ action: "share", match: [...labels, person(addresses)] }],
+  });
+  expect(filters.filterDraftError(with_(6))).toBeNull();
+  expect(filters.filterDraftError(with_(7))).toBe("A filter can include at most 256 items.");
+});
+
 test("closed authoring guards candidate boundaries without pruning policies or freezing ordinary choices", () => {
   const blocked = grants.setSourceAllowed(answer, policy.sourceId, false);
   expect(grants.sourceBoundaryBlocksSavedFilter(blocked, false)).toBe(true);

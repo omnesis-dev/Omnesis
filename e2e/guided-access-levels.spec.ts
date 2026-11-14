@@ -445,7 +445,8 @@ for (const theme of ["dark", "light"])
                   tooOld: 0,
                   unmatched: 2,
                   tooOldText: null,
-                  unmatchedText: "2 records can't be matched to a label and stay hidden.",
+                  unmatchedText: "2 records can’t be matched to a label and stay hidden.",
+                  connected: true,
                   items: body.policy.rules.flatMap(
                     (rule: { match: Array<{ capability: string; field?: string; id?: string }> }) =>
                       rule.match.map((ref) => ({
@@ -455,7 +456,9 @@ for (const theme of ["dark", "light"])
                             ? ref.id
                             : nameFor(ref),
                         count: previews === "missing" && ref.capability !== "person" ? 0 : 6,
-                        missing: previews === "missing" && ref.capability !== "person",
+                        ...(previews === "missing" && ref.capability !== "person"
+                          ? { missing: true, reason: "not-in-list" }
+                          : {}),
                       })),
                   ),
                 },
@@ -480,6 +483,9 @@ for (const theme of ["dark", "light"])
             sourceType: source.sourceType,
             devices: [{ id: "dev-invented", name: "Invented laptop" }],
             showDeviceLevel: false,
+            profile: "declared",
+            profileText: null,
+            connected: true,
             fields: FIELDS[source.sourceType] ?? [],
           },
         });
@@ -1160,9 +1166,7 @@ for (const theme of ["dark", "light"])
       previews = "missing";
       await refreshBuilder();
       await expect(
-        modal()
-          .getByText(/Unavailable.*selection retained/)
-          .first(),
+        modal().getByText("No longer in this account", { exact: true }).first(),
       ).toBeVisible();
       await shot("supplement-11-missing");
       await page.keyboard.press("Escape");

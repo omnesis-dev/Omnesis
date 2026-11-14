@@ -29,6 +29,24 @@ const editor = (labels: Record<string, unknown>) => ({
   sourceType: source.sourceType,
   devices: [{ id: "dev-one", name: "Fictional laptop" }],
   showDeviceLevel: false,
+  profile: "declared",
+  profileText: null,
+  connected: true,
+  // The account's one resync sentence, for every field that waits on it: here only labels.
+  ...(labels.status === "needs-resync" || labels.status === "resyncing"
+    ? {
+        resync: {
+          state: labels.status,
+          fields: ["extra.labelIds"],
+          text: labels.text,
+          ...(labels.status === "resyncing"
+            ? { processed: labels.processed, total: labels.total }
+            : {}),
+        },
+      }
+    : {}),
+  // The labels field's counts are still being taken.
+  retryAfterMs: 1500,
   fields: [
     {
       field: "extra.roomId",
@@ -126,7 +144,7 @@ test("owner reviews mixed source filters, copies independently and keeps a stale
   let labels: Record<string, unknown> = {
     status: "needs-resync",
     cost: "This reads about 900 messages a day.",
-    text: "Label filters need Fictional project account to be resynced. Your rooms stay searchable meanwhile. This reads about 900 messages a day.",
+    text: "Label filters need Fictional project account to be resynced. Search keeps working meanwhile. This reads about 900 messages a day.",
   };
   await page.route(`**/admin/sources/${encodeURIComponent(sourceId)}/resync`, async (route) => {
     resyncs.push(route.request().postDataJSON());
@@ -163,7 +181,8 @@ test("owner reviews mixed source filters, copies independently and keeps a stale
           unmatched: 1,
           tooOldText:
             "2 older items could not be resynced and stay hidden from agents using this filter.",
-          unmatchedText: "1 record can't be matched to a room and stays hidden.",
+          unmatchedText: "1 record can’t be matched to a room and stays hidden.",
+          connected: true,
           items: body.policy.rules.flatMap(
             (rule: { match: Array<{ field?: string; label?: string }> }) =>
               rule.match.map((ref) => ({
@@ -298,7 +317,7 @@ test("owner reviews mixed source filters, copies independently and keeps a stale
   await expect(dialog.locator(".source-filter-counts")).toContainText("6 shared");
   await expect(dialog.locator(".source-filter-unchecked p")).toHaveText([
     "2 older items could not be resynced and stay hidden from agents using this filter.",
-    "1 record can't be matched to a room and stays hidden.",
+    "1 record can’t be matched to a room and stays hidden.",
   ]);
   const mode = dialog.locator(".filter-task-context .access-pill");
   await expect(mode).toHaveText("Hide matching content");

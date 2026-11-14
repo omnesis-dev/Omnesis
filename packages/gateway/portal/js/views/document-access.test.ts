@@ -136,7 +136,9 @@ describe("Who can read this?", () => {
     await show("doc/with slash");
     const back = host.querySelector<HTMLAnchorElement>(".doc-back")!;
     expect(back.getAttribute("href")).toBe("/portal/doc/doc%2Fwith%20slash");
-    await act(async () => back.dispatchEvent(new window.Event("click", { bubbles: true, cancelable: true })));
+    await act(async () => {
+      back.dispatchEvent(new window.Event("click", { bubbles: true, cancelable: true }));
+    });
     expect(router.navigate).toHaveBeenCalledWith("/portal/doc/doc%2Fwith%20slash");
   });
 });

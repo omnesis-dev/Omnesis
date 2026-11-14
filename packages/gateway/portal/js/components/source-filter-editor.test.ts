@@ -70,9 +70,26 @@ const editorWith = (fields: unknown[], extra: Record<string, unknown> = {}) => (
   sourceType: source.sourceType,
   devices: [{ id: "dev-one", name: "Studio Mac" }],
   showDeviceLevel: false,
+  profile: "declared",
+  profileText: null,
+  connected: true,
   fields,
   ...extra,
 });
+const GONE_TEXT =
+  "This account is no longer connected. Its saved filter entries are kept until you remove them.";
+/** The editor of an account that is gone while a saved filter still names it. */
+const goneEditor = () =>
+  editorWith(
+    [
+      {
+        ...roomField,
+        state: { status: "disconnected", text: "This account is no longer connected." },
+        counts: zero,
+      },
+    ],
+    { devices: [], connected: false, profileText: GONE_TEXT },
+  );
 const room = (id: string) => ({ capability: "membership", field: "extra.roomId", id });
 const policy = {
   sourceId: source.id,
@@ -89,12 +106,15 @@ const readyPreview = (id: string, p: typeof policy, extra: Record<string, unknow
   tooOld: 0,
   unmatched: 3,
   tooOldText: null,
-  unmatchedText: "3 records can't be matched to a room and stay hidden.",
+  unmatchedText: "3 records can’t be matched to a room and stay hidden.",
+  connected: true,
   items: p.rules.flatMap((rule) =>
     rule.match.map((ref) => ({
       ref,
       label: (ref as { id?: string }).id === "missing-room" ? "Retired room" : "Fictional room",
-      missing: (ref as { id?: string }).id === "missing-room",
+      ...((ref as { id?: string }).id === "missing-room"
+        ? { missing: true, reason: "not-in-list" }
+        : {}),
       count: (ref as { id?: string }).id === "missing-room" ? 0 : 4,
     })),
   ),
@@ -223,11 +243,11 @@ test("the selected table, counts and the gateway's hidden-record sentence, with 
   const saved = { ...policy, rules: [{ action: "share", match: [room("missing-room")] }] };
   await mount({ savedPolicy: saved });
   expect(host.textContent).toContain("Retired room");
-  expect(host.textContent).toContain("Unavailable · selection retained");
+  expect(host.textContent).toContain("No longer in this account");
   expect(host.querySelector(".source-filter-counts")?.textContent).toContain("12 shared8 hidden");
   expect(
     [...host.querySelectorAll(".source-filter-unchecked p")].map((line) => line.textContent),
-  ).toEqual(["3 records can't be matched to a room and stay hidden."]);
+  ).toEqual(["3 records can’t be matched to a room and stay hidden."]);
   expect(host.textContent).not.toContain("Review this filter");
   expect(host.textContent).not.toMatch(/finish syncing|couldn.t be checked|Preparing/u);
   expect(host.querySelectorAll("details")).toHaveLength(0);
@@ -245,7 +265,7 @@ test("both hidden-record sentences show when both counts are not zero, and neith
     [...host.querySelectorAll(".source-filter-unchecked p")].map((line) => line.textContent),
   ).toEqual([
     "312 older items could not be resynced and stay hidden from agents using this filter.",
-    "3 records can't be matched to a room and stay hidden.",
+    "3 records can’t be matched to a room and stay hidden.",
   ]);
   act(() => render(null, host));
   api.previewSourceFilter.mockImplementation(async (id: string, p: typeof policy) =>
@@ -624,7 +644,9 @@ test("the picker of a tree browses level by level, short names inside, full name
   );
   await mount();
   const search = searchOf("folders");
-  await act(async () => search.dispatchEvent(new window.Event("input", { bubbles: true })));
+  await act(async () => {
+    search.dispatchEvent(new window.Event("input", { bubbles: true }));
+  });
   await waitOptions();
   const picker = search.closest(".source-filter-picker")!;
   expect(picker.querySelector(".source-filter-breadcrumbs")?.textContent).toContain("All folders");
@@ -673,18 +695,24 @@ test("a field whose items belong to a device starts at the devices when the acco
   const onApply = vi.fn();
   await mount({ savedPolicy: null, onApply });
   const only = [...host.querySelectorAll<HTMLInputElement>(".source-filter-mode input")][1]!;
-  await act(async () => only.dispatchEvent(new window.Event("change", { bubbles: true })));
+  await act(async () => {
+    only.dispatchEvent(new window.Event("change", { bubbles: true }));
+  });
   await act(async () => button("Continue").click());
   await flushUI();
   await waitOptions();
   const search = searchOf("project folders");
-  await act(async () => search.dispatchEvent(new window.Event("input", { bubbles: true })));
+  await act(async () => {
+    search.dispatchEvent(new window.Event("input", { bubbles: true }));
+  });
   await waitOptions();
   const picker = search.closest(".source-filter-picker")!;
   expect(api.getSourceFilterOptions).toHaveBeenLastCalledWith(source.id, { field: "extra.project" }, expect.any(AbortSignal));
   expect(picker.querySelector(".source-filter-breadcrumbs")?.textContent).toContain("All devices");
   const travel = [...picker.querySelectorAll<HTMLInputElement>(".source-filter-options input")][1]!;
-  await act(async () => travel.dispatchEvent(new window.Event("change", { bubbles: true })));
+  await act(async () => {
+    travel.dispatchEvent(new window.Event("change", { bubbles: true }));
+  });
   await act(async () => picker.querySelector<HTMLButtonElement>('button[aria-label="Open Studio Mac"]')!.click());
   await waitOptions();
   expect(api.getSourceFilterOptions).toHaveBeenLastCalledWith(
@@ -727,7 +755,9 @@ test("a tree whose levels have their own names says which level a saved entry an
   // The saved owner is named by the level the preview gives it.
   expect([...host.querySelectorAll(".compact-filter-kind")].map((cell) => cell.textContent)).toEqual(["Owner"]);
   const search = searchOf("repositories");
-  await act(async () => search.dispatchEvent(new window.Event("input", { bubbles: true })));
+  await act(async () => {
+    search.dispatchEvent(new window.Event("input", { bubbles: true }));
+  });
   await waitOptions();
   const picker = search.closest(".source-filter-picker")!;
   expect(picker.querySelector(".source-filter-breadcrumbs")?.textContent).toContain("All owners");
@@ -820,7 +850,9 @@ test("saved rule summaries keep missing entries without showing their opaque ids
   await flushUI();
   await waitOptions();
   expect(host.textContent).toContain("Saved selection");
-  expect(host.textContent).toContain("Unavailable · selection retained");
+  // With no reason from the gateway, the entry only says its name is not known.
+  expect(host.textContent).toContain("Name unavailable");
+  expect(host.textContent).not.toContain("No longer in this account");
   expect(host.textContent).not.toContain(ref.id);
 });
 
@@ -844,10 +876,11 @@ test("an account that is no longer connected lists its saved entries by name, co
   const kept = room("kept-room");
   const saved = { ...policy, rules: [{ action: "share", match: [...policy.rules[0]!.match, kept] }] };
   const onApply = vi.fn();
+  api.getSourceFilterEditor.mockResolvedValue(goneEditor());
   await mount({ source: { id: source.id, displayName: "Fictional", available: false }, savedPolicy: saved, onApply });
-  expect(host.querySelector(".source-filter-notice")?.textContent).toBe(
-    "This account is no longer connected. You can remove its saved entries.",
-  );
+  expect(host.querySelector(".source-filter-notice")?.textContent).toBe(GONE_TEXT);
+  // The gateway's notice stands for every field; no field explains itself again.
+  expect(host.querySelector(".source-filter-field-state")).toBeNull();
   expect(host.querySelector("input[type=search]")).toBeNull();
   const removals = () => [...host.querySelectorAll<HTMLButtonElement>(".compact-filter-remove")];
   expect(removals()).toHaveLength(2);
@@ -860,6 +893,24 @@ test("an account that is no longer connected lists its saved entries by name, co
   // Its saved entries keep the names the gateway last knew; no count is shown.
   expect(host.querySelector(".source-filter-counts")).toBeNull();
   expect([...host.querySelectorAll("tbody .compact-filter-count")].map((cell) => cell.textContent)).toEqual(["—"]);
+});
+
+test("an account the gateway reports gone is edited like one the overview reports gone", async () => {
+  api.getSourceFilterEditor.mockResolvedValue(goneEditor());
+  await mount();
+  expect(host.querySelector(".source-filter-notice")?.textContent).toBe(GONE_TEXT);
+  expect(host.querySelector("input[type=search]")).toBeNull();
+  expect(host.querySelector(".source-filter-counts")).toBeNull();
+});
+
+test("an account whose fields cannot be offered shows the gateway's reason instead of pickers", async () => {
+  const reason = "Update Omnesis on Studio Mac to use filters on this account.";
+  api.getSourceFilterEditor.mockResolvedValue(
+    editorWith([], { profile: "collector-behind", profileText: reason }),
+  );
+  await mount();
+  expect(host.querySelector(".source-filter-notice")?.textContent).toBe(reason);
+  expect(host.querySelector("input[type=search]")).toBeNull();
 });
 
 test("removing every saved filter of an account that is no longer connected leaves nothing to apply", async () => {
@@ -993,3 +1044,43 @@ test("removing and restoring a capability preserves its own filtered draft witho
   expect(onChange.mock.lastCall![0].direct).toBe(direct);
 });
 
+
+test("rows still being counted are counted again without losing the pages already loaded", async () => {
+  const item = (id: string, count: number | null) => ({
+    ref: room(id),
+    label: id,
+    shortLabel: id,
+    count,
+  });
+  let counted = false;
+  api.getSourceFilterOptions.mockImplementation(
+    async (id: string, query: { field: string; cursor?: string }) =>
+      query.cursor === "page-2"
+        ? {
+            sourceId: id,
+            field: query.field,
+            items: [item("second-page-room", counted ? 7 : null)],
+            ...(counted ? {} : { retryAfterMs: 60 }),
+          }
+        : { sourceId: id, field: query.field, items: [item("first-page-room", 3)], nextCursor: "page-2" },
+  );
+  await mount();
+  const search = searchOf("rooms");
+  await act(async () => {
+    search.dispatchEvent(new window.Event("input", { bubbles: true }));
+  });
+  await waitOptions();
+  const picker = search.closest(".source-filter-picker")!;
+  await act(async () => button("Load more").click());
+  await flushUI();
+  const rows = () =>
+    [...picker.querySelectorAll(".source-filter-options li")].map((row) => row.textContent?.trim());
+  expect(rows()).toEqual(["first-page-room3 matching", "second-page-room"]);
+  counted = true;
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 120));
+  });
+  await flushUI();
+  expect(rows()).toEqual(["first-page-room3 matching", "second-page-room7 matching"]);
+  expect(picker.querySelector(".source-filter-spinner")).toBeNull();
+});

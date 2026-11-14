@@ -458,8 +458,21 @@ describe("a filter's items show under the side that holds them", () => {
     });
   });
 
-  test("an account that is no longer connected shows its filter change without asking for counts", async () => {
+  test("an account that is no longer connected shows its filter change by name, without counts", async () => {
     const gone = { id: "invented:gone@example.com", available: false };
+    api.previewSourceFilter.mockImplementation(async (_sourceId: string, draft: typeof policy) => ({
+      status: "ready",
+      sourceId: gone.id,
+      connected: false,
+      total: 0,
+      visible: 0,
+      hidden: 0,
+      tooOld: 0,
+      unmatched: 0,
+      tooOldText: null,
+      unmatchedText: null,
+      items: draft.rules[0]!.match.map((item) => ({ ref: item, label: "Last known name", count: 0 })),
+    }));
     await act(async () =>
       render(
         h(LevelReview, {
@@ -474,10 +487,14 @@ describe("a filter's items show under the side that holds them", () => {
         host,
       ),
     );
-    expect(api.previewSourceFilter).not.toHaveBeenCalled();
+    await vi.waitFor(() => expect(host.textContent).toContain("Last known name"));
     expect(
       [...host.querySelectorAll(".compact-policy-impact")].map((item) => item.textContent?.trim()),
     ).toEqual(["", ""]);
+    expect(host.textContent).toContain("Last known name");
+    expect(
+      [...host.querySelectorAll("tbody .compact-filter-count")].every((cell) => cell.textContent === "—"),
+    ).toBe(true);
     expect(host.querySelectorAll(".guided-change-filters .is-removed")).toHaveLength(1);
   });
 

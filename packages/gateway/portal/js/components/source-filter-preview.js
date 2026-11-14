@@ -101,7 +101,8 @@ export function FilterPreview({ preview }) {
     return html`<p class="source-filter-pending" role="status"><${CountingRecords} /></p>`;
   if (preview.error) return html`<${CountsUnavailable} onRetry=${preview.retry} />`;
   const data = preview.data;
-  if (!data) return null;
+  // A gone account has nothing to count; its preview only names the saved entries.
+  if (!data || data.connected === false) return null;
   return html`<section class="source-filter-preview" aria-label="Filter preview">
     <div class="source-filter-counts" role="status">
       <span><strong>${data.visible.toLocaleString()}</strong> shared</span

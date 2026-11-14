@@ -92,15 +92,18 @@ function useAccountPolicy(rule, source) {
   const id = sourceId(source);
   const active = Boolean(rule && isSourceAllowed(rule, id));
   const policy = active ? sourcePolicy(rule, id) : null;
-  // An account that is no longer connected has nothing to count.
-  const preview = useSourceFilterPreview(id, source.available === false ? null : policy);
+  // An account that is no longer connected has nothing to count, but its preview still
+  // names the saved entries.
+  const preview = useSourceFilterPreview(id, policy);
   return {
     policy,
     preview,
     active,
     editable: Boolean(policy && editableSourcePolicy(policy)),
     refs: (policy?.rules ?? []).flatMap((item) => item.match ?? []),
-    items: preview.data?.items ?? [],
+    items: (preview.data?.items ?? []).map((item) =>
+      preview.data.connected === false ? { ...item, count: null } : item,
+    ),
   };
 }
 
@@ -113,7 +116,7 @@ function BoundaryLine({ rule, source, state, header = null }) {
       ${
         policy
           ? html`<span class="compact-policy-impact" role="status">
-              ${preview.pending ? html`<${CountingRecords} />` : preview.error ? html`<${CountsUnavailable} onRetry=${preview.retry} />` : Number.isFinite(preview.data?.visible) && Number.isFinite(preview.data?.hidden) ? html`<span><strong>${preview.data.visible.toLocaleString()}</strong> shared</span><span><strong>${preview.data.hidden.toLocaleString()}</strong> hidden</span>` : null}
+              ${preview.pending ? html`<${CountingRecords} />` : preview.error ? html`<${CountsUnavailable} onRetry=${preview.retry} />` : preview.data?.connected !== false && Number.isFinite(preview.data?.visible) && Number.isFinite(preview.data?.hidden) ? html`<span><strong>${preview.data.visible.toLocaleString()}</strong> shared</span><span><strong>${preview.data.hidden.toLocaleString()}</strong> hidden</span>` : null}
               ${!editable ? html`<span>Other content: ${policy.otherwise === "share" ? "shared" : "hidden"}</span>` : null}
             </span>`
           : null

@@ -7,6 +7,7 @@ import { isDeviceRef, refField, scopeRefKey } from "./source-filter-state.js";
 import {
   exactIdentifier,
   fieldNoun,
+  missingEntryNote,
   refTypeLabel,
   useSourceFilterEditor,
 } from "./source-filter-fields.js";
@@ -97,7 +98,7 @@ export function SourceFilterTable({
           return html`<tr key=${scopeRefKey(ref)} class=${mark ? `is-${mark}` : undefined}>
             <td class="compact-filter-kind">${refTypeLabel(refField(editor, ref), ref, knownDepth(ref))}</td>
             <td class="compact-filter-value">
-              <span class="compact-filter-name">${label}</span>${mark ? html`<span class="compact-filter-diff">${mark === "added" ? "Added" : "Removed"}</span>` : null}${ambiguous ? html`<small class="compact-filter-ref">Selection ID: ${ref.id}</small>` : null}${item?.missing ? html`<small>Unavailable · selection retained</small>` : display.unavailable ? html`<small>${pending ? "Loading name…" : "Name unavailable · saved selection"}</small>` : null}
+              <span class="compact-filter-name">${label}</span>${mark ? html`<span class="compact-filter-diff">${mark === "added" ? "Added" : "Removed"}</span>` : null}${ambiguous ? html`<small class="compact-filter-ref">Selection ID: ${ref.id}</small>` : null}${item?.missing ? html`<small>${missingEntryNote(item)}</small>` : display.unavailable ? html`<small>${pending ? "Loading name…" : "Name unavailable · saved selection"}</small>` : null}
             </td>
             <td
               class="compact-filter-count"

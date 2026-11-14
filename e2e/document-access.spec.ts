@@ -47,7 +47,7 @@ const audit = {
   sourceVersion: 1,
   notes: {
     answer:
-      'For Answer, "readable" means the document is within what Omnesis may use when answering that agent. Whether a given answer is then released is decided separately, by the privacy policy\'s review.',
+      "“Can read” under Answer means Omnesis may use this document when answering that agent. Whether an answer is then released is decided by the privacy policy’s review.",
     owner: "This page is for you, the owner. It is never available to an external agent.",
   },
   levels: [
@@ -58,7 +58,7 @@ const audit = {
       answer: {
         readable: true,
         code: "readable",
-        text: "Readable: this account is shared with all content",
+        text: "This account is shared with all content",
       },
       direct: {
         readable: false,

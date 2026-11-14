@@ -62,14 +62,19 @@ export function SourceFilterEditor({
   const selected = editable
     ? draft.rules[0].match
     : (draft.rules ?? []).flatMap((rule) => rule.match ?? []);
-  // An account that is no longer connected has no fields to pick from and shows no counts;
-  // the gateway still names its saved entries.
-  const connected = source.available !== false;
-  const fields = useSourceFilterEditor(connected ? sourceId : null, {
+  const fields = useSourceFilterEditor(sourceId, {
     watch: true,
     expectChange: resync.starting,
   });
   const editor = fields.data;
+  // An account that is no longer connected has no fields to pick from and shows no counts;
+  // the gateway still names its saved entries.
+  const connected = source.available !== false && editor?.connected !== false;
+  // The gateway's sentence for an account whose fields cannot be offered: gone, never
+  // synced, or kept by a device whose Omnesis is too old.
+  const profileNotice = editor?.profileText
+    ? html`<p class="source-filter-notice" role="status">${editor.profileText}</p>`
+    : null;
   const preview = useSourceFilterPreview(
     sourceId,
     currentSource && mode !== "all" && selected.length && (step === "builder" || readOnly)
@@ -77,7 +82,8 @@ export function SourceFilterEditor({
       : null,
   );
   const error = mode === "all" ? null : filterDraftError(draft);
-  const waiting = waitingFieldGroups(editor);
+  // A gone account's fields wait on nothing the owner can do; its notice says so once.
+  const waiting = connected ? waitingFieldGroups(editor) : [];
   const covered = new Set(waiting.flatMap((group) => group.fields.map((field) => field.field)));
   const ready = (editor?.fields ?? []).filter(
     (field) => fieldReady(field) && !covered.has(field.field),
@@ -178,12 +184,12 @@ export function SourceFilterEditor({
                 ${!readOnly ? html`<div class="filter-builder-inputs">
                       ${
                         !connected
-                          ? html`<p class="source-filter-notice" role="status">This account is no longer connected. You can remove its saved entries.</p>`
+                          ? profileNotice
                           : fields.error
                             ? html`<div class="source-filter-count-error" role="status"><p>${fields.error}</p><button type="button" class="btn-secondary" onClick=${fields.reload}>${RETRY_COUNTS_LABEL}</button></div>`
                             : !editor
                               ? html`<p role="status">Loading…</p>`
-                              : null
+                              : profileNotice
                       }
                       ${
                         ready.length

@@ -3,13 +3,10 @@
 
 import { describe, test, expect } from "vitest";
 // @ts-expect-error — sibling .js module, no .d.ts in the portal tree.
-import {
-  documentTypeLabel,
-  formatExtractedDate,
-  formatIsoDate,
-  formatTimestamp,
-  MetadataPanel,
-} from "./metadata-panel.js";
+import * as metadataPanel from "./metadata-panel.js";
+
+const { documentTypeLabel, formatExtractedDate, formatIsoDate, formatTimestamp, MetadataPanel } =
+  metadataPanel;
 
 // `formatExtractedDate` turns one Omnesis-extracted date (as returned by
 // GET /documents/:id/dates) into the string shown in the "Enriched by Omnesis"

@@ -222,6 +222,8 @@ async function request(method, path, opts = {}) {
       // The gateway's own sentence about what went wrong, for surfaces that
       // show the operator a message rather than the request line.
       if (typeof envelope?.error === "string") err.serverMessage = envelope.error;
+      // A sentence that goes with that code, e.g. why a refused level save was refused.
+      if (typeof envelope?.message === "string") err.serverDetail = envelope.message;
     } catch {
       // Non-JSON error bodies still use the status/message contract above.
     }

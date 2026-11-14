@@ -179,11 +179,19 @@ export function toggleScopeRef(policy, ref) {
   return { ...policy, rules: [{ ...policy.rules[0], match }] };
 }
 
+/** Entries as the gateway counts them against its limit: each address of a person, and every other entry once. */
+function filterEntryCount(match) {
+  return match.reduce(
+    (count, ref) => count + (ref.capability === "person" ? (ref.identifiers?.length ?? 0) : 1),
+    0,
+  );
+}
+
 export function filterDraftError(policy) {
   if (!editableSourcePolicy(policy))
     return "This filter uses settings this editor cannot change. Its saved policy is preserved.";
   if (!policy.rules[0].match.length) return "Select at least one item.";
-  if (policy.rules[0].match.length > MAX_FILTER_ENTRIES)
+  if (filterEntryCount(policy.rules[0].match) > MAX_FILTER_ENTRIES)
     return `A filter can include at most ${MAX_FILTER_ENTRIES} items.`;
   return null;
 }

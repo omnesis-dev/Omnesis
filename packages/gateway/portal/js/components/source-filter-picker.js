@@ -75,8 +75,9 @@ export function SourceFilterPicker({
       : { identity, items: [], pending: true, nextCursor: null, error: "" };
   });
 
-  // A quiet load replaces the list it shows without a loading state in between.
-  async function load(cursor, append, quiet = false) {
+  // A quiet load replaces the list it shows without a loading state in between,
+  // reading as many pages as it takes to list `upTo` rows again.
+  async function load(cursor, append, quiet = false, upTo = 0) {
     if ((append || quiet) && inFlight.current) return;
     inFlight.current = true;
     const controller = new AbortController();
@@ -89,24 +90,31 @@ export function SourceFilterPicker({
         error: "",
       }));
     try {
-      const result = await readFilterOptions(
-        sourceId,
-        { ...request, ...(cursor ? { cursor } : {}) },
-        controller.signal,
-      );
-      if (
-        controller.signal.aborted ||
-        current.current !== requestKey ||
-        result.sourceId !== sourceId
-      )
-        return;
+      const items = [];
+      let nextCursor = cursor;
+      let retryAfterMs;
+      do {
+        const result = await readFilterOptions(
+          sourceId,
+          { ...request, ...(nextCursor ? { cursor: nextCursor } : {}) },
+          controller.signal,
+        );
+        if (
+          controller.signal.aborted ||
+          current.current !== requestKey ||
+          result.sourceId !== sourceId
+        )
+          return;
+        items.push(...result.items);
+        nextCursor = result.nextCursor;
+        retryAfterMs ??= result.retryAfterMs;
+      } while (nextCursor && items.length < upTo);
       setState((old) => {
         const next = {
           identity,
-          items:
-            append && old.identity === identity ? [...old.items, ...result.items] : result.items,
-          nextCursor: result.nextCursor,
-          retryAfterMs: result.retryAfterMs,
+          items: append && old.identity === identity ? [...old.items, ...items] : items,
+          nextCursor,
+          retryAfterMs,
           pending: false,
           error: "",
           retained: false,
@@ -188,7 +196,10 @@ export function SourceFilterPicker({
   // Counts the gateway is still working out are asked for again when it says.
   useEffect(() => {
     if (!visibleActive || visible.pending || visible.error || !visible.retryAfterMs) return;
-    const timer = setTimeout(() => load(null, false, true), visible.retryAfterMs);
+    const timer = setTimeout(
+      () => load(null, false, true, visible.items.length),
+      visible.retryAfterMs,
+    );
     return () => clearTimeout(timer);
   }, [identity, visibleActive, visible.pending, visible.error, visible.items]);
   const focusSearch = () =>

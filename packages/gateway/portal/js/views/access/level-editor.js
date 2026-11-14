@@ -46,6 +46,9 @@ function useDraftLock(busy) {
 
 const CHANGED_ELSEWHERE_MESSAGE =
   "This access level changed elsewhere. Your changes are kept. Load the latest version before saving.";
+/** Shown for a refused selection when the gateway does not say why. */
+const INVALID_SELECTION_MESSAGE =
+  "These permissions cannot be saved as chosen. A saved source filter must stay with a source this access level allows.";
 
 /**
  * @param {object} props
@@ -188,9 +191,7 @@ export function LevelEditorPage({
     } catch (error) {
       if (!mounted.current) return;
       if (error?.serverMessage === "invalid-selection") {
-        setError(
-          "These permissions cannot be saved as chosen. A saved source filter must stay with a source this access level allows.",
-        );
+        setError(error.serverDetail || INVALID_SELECTION_MESSAGE);
       } else if (error?.status === 409 && error?.serverMessage !== "level-in-use") {
         setStale(true);
         setError(CHANGED_ELSEWHERE_MESSAGE);
@@ -343,7 +344,9 @@ export function NewLevelPage({ overview, onCreated, onClose, headingRef }) {
       setError(
         error?.serverMessage === "level-name-taken"
           ? LEVEL_NAME_TAKEN_MESSAGE
-          : errorMessage(error, "The access level could not be created."),
+          : error?.serverMessage === "invalid-selection"
+            ? error.serverDetail || INVALID_SELECTION_MESSAGE
+            : errorMessage(error, "The access level could not be created."),
       );
     } finally {
       inFlightRef.current = false;

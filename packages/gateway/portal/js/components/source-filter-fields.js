@@ -66,6 +66,14 @@ export function refTypeLabel(field, ref, depth) {
   );
 }
 
+/**
+ * Why a saved entry has no name from the account: the account no longer has
+ * it, or the gateway has no list to name it from.
+ */
+export function missingEntryNote(item) {
+  return item?.reason === "not-in-list" ? "No longer in this account" : "Name unavailable";
+}
+
 /** Whether a field can take new entries. */
 export const fieldReady = (field) => field?.state?.status === "ready";
 

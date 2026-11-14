@@ -2222,6 +2222,29 @@ describe("AccessView", () => {
       );
     });
 
+    test("says why a selection was refused in the gateway's words, or in its own when it gives none", async () => {
+      api.getAccessOverview.mockResolvedValue(levelOverview);
+      await mount({ levelId: "level-research" });
+      await addNotesAndReview();
+      const why = "Folder filters need Fictional files to be resynced. Search keeps working meanwhile.";
+      api.updateAccessLevel.mockRejectedValueOnce(
+        Object.assign(new Error("Conflict"), { status: 409, serverMessage: "invalid-selection", serverDetail: why }),
+      );
+      await act(async () => {
+        saveButton().click();
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+      expect(host.textContent).toContain(why);
+      api.updateAccessLevel.mockRejectedValueOnce(
+        Object.assign(new Error("Conflict"), { status: 409, serverMessage: "invalid-selection" }),
+      );
+      await act(async () => {
+        saveButton().click();
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+      expect(host.textContent).toContain("These permissions cannot be saved as chosen.");
+    });
+
     test("will not continue past permissions with no capability selected", async () => {
       api.getAccessOverview.mockResolvedValue(levelOverview);
       await mount({ levelId: "level-notes" });
@@ -2349,6 +2372,18 @@ describe("AccessView", () => {
         rules: [{ capability: "notes", sources: { mode: "all", sourceIds: [] } }],
       });
       expect(host.querySelector(".access-editor-page .access-error")?.textContent).toBe("An access level already uses this name. Choose another.");
+      expect(router.replaceRoute).not.toHaveBeenCalled();
+
+      // A refused selection shows the gateway's own sentence about it.
+      const why = "Label filters need Gmail to be resynced. Search keeps working meanwhile.";
+      api.createAccessLevel.mockRejectedValueOnce(
+        Object.assign(new Error("refused"), { status: 409, serverMessage: "invalid-selection", serverDetail: why }),
+      );
+      await act(async () => {
+        create().click();
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+      expect(host.querySelector(".access-editor-page .access-error")?.textContent).toBe(why);
       expect(router.replaceRoute).not.toHaveBeenCalled();
 
       api.createAccessLevel.mockResolvedValueOnce({ level: { id: "level-travel", name: "Fictional travel" } });
