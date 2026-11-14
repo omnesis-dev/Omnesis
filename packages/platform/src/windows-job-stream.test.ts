@@ -537,6 +537,36 @@ describe("synchronous Windows job framing", () => {
     expect(result.stderr).toBe("");
     expect(Object.hasOwn(result, "cleanupFailure")).toBe(false);
   });
+  it.each(["joined", "missing", "mismatched"] as const)(
+    "preserves an input EOF failure with %s cleanup evidence",
+    (kind) => {
+      mocks.spawnSync.mockImplementation((_command, _args, options: { input: Buffer }) => {
+        const length = options.input.readUInt32LE();
+        const config = JSON.parse(options.input.subarray(4, length + 4).toString());
+        const nonce = kind === "mismatched" ? "f".repeat(64) : config.syncReceipt;
+        return {
+          pid: 12345,
+          status: 1,
+          signal: null,
+          error: Object.assign(new Error("Input pipe EOF"), { code: "EOF" }),
+          stdout: Buffer.alloc(0),
+          stderr: Buffer.from(
+            "native creation diagnostic" +
+              (kind === "missing" ? "" : `\nOMNESIS_JOB_JOINED:${nonce}\n`),
+          ),
+        };
+      });
+      const result = runWindowsJobSync("fixture", [], { input: Buffer.alloc(128 * 1024) });
+      expect(result.failure).toBe("spawn");
+      expect(result.exitCode).toBeNull();
+      expect(result.failureMessage).toContain("Input pipe EOF");
+      expect(Object.hasOwn(result, "cleanupFailure")).toBe(kind !== "joined");
+      if (kind === "joined") {
+        expect(result.failureMessage).toBe("Input pipe EOF");
+        expect(result.stderr).toBe("native creation diagnostic");
+      }
+    },
+  );
   it("does not demand a child-Job receipt for self-contained filesystem refusals", () => {
     mocks.spawnSync.mockReturnValue({
       pid: 12345,

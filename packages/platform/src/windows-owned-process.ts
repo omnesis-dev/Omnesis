@@ -443,9 +443,10 @@ export function runWindowsOwnedProcessSync(
       : stderr || "Windows process helper exited before starting the program";
   }
   const helperCreated = run.pid > 0 || run.status !== null;
+  // A positive native receipt proves the tree drained independently of an
+  // input/output transport failure; that failure still remains the result.
   const cleanupFailed =
-    helperCreated &&
-    (Boolean(run.error || run.signal) || (receipt !== undefined && !receiptJoined));
+    helperCreated && (receipt !== undefined ? !receiptJoined : Boolean(run.error || run.signal));
   if (cleanupFailed) {
     failure ??= "spawn";
     failureMessage = failureMessage

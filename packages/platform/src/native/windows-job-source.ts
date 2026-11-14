@@ -252,6 +252,11 @@ public static partial class OmnesisProcessJob {
   public static int Run(string command,string[] args,int parentPid,string completion) {
     return Run(command,args,parentPid,completion,null,null,null,0);
   }
+  // PowerShell coerces null arguments at the managed boundary; keep control
+  // nulls inside C# for the synchronous, non-cooperative entrypoint.
+  public static int RunSync(string command,string[] args,int parentPid,string completion,string syncReceipt) {
+    return Run(command,args,parentPid,completion,null,null,null,0,syncReceipt);
+  }
   static string completedSyncReceipt;
   public static void WriteSyncReceipt() {
     string nonce=System.Threading.Interlocked.Exchange(ref completedSyncReceipt,null);
@@ -379,9 +384,11 @@ Add-Type -ReferencedAssemblies @('System.dll','System.Core.dll') -TypeDefinition
 $config = [OmnesisProcessJob]::ReadConfiguration() | ConvertFrom-Json
 $completion = 'tree'
 if ($null -ne $config.PSObject.Properties['completion']) { $completion = [string]$config.completion }
-$receipt = $null
-if ($null -ne $config.PSObject.Properties['syncReceipt']) { $receipt = [string]$config.syncReceipt }
-$code = [OmnesisProcessJob]::Run([string]$config.command, [string[]]$config.args, [int]$config.parentPid, $completion, $null, $null, $null, 0, $receipt)
+if ($null -ne $config.PSObject.Properties['syncReceipt']) {
+  $code = [OmnesisProcessJob]::RunSync([string]$config.command, [string[]]$config.args, [int]$config.parentPid, $completion, [string]$config.syncReceipt)
+} else {
+  $code = [OmnesisProcessJob]::Run([string]$config.command, [string[]]$config.args, [int]$config.parentPid, $completion)
+}
 } catch {
   [Console]::Error.WriteLine($_.Exception.Message)
   $code = 1

@@ -53,6 +53,8 @@ test("register-key runtime carries only explicit configuration to the key client
     .mockResolvedValue({ token: "private", accountId: "a".repeat(64), expiresAt: 4_000_000_000 });
   const uuid = randomUUID();
   const env = {
+    OMNESIS_CONFIG_DIR: directory,
+    OMNESIS_CLOUD_RELAY_RECOVERY_RECEIPT_FILE: join(directory, "recovery.json"),
     OMNESIS_CLOUD_RELAY_URL: "https://relay.example.test",
     OMNESIS_CLOUD_RELAY_SESSION_FILE: "/synthetic/session",
     OMNESIS_CLOUD_RELAY_GATEWAY_ID: uuid,
@@ -64,6 +66,8 @@ test("register-key runtime carries only explicit configuration to the key client
   };
   await runRelayCommand("register-key", env);
   expect(register).toHaveBeenCalledExactlyOnceWith({
+    configDir: directory,
+    recoveryReceiptFile: join(directory, "recovery.json"),
     relayUrl: env.OMNESIS_CLOUD_RELAY_URL,
     sessionFile: env.OMNESIS_CLOUD_RELAY_SESSION_FILE,
     gatewayId: uuid,
