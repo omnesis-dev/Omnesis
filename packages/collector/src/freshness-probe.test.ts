@@ -2,7 +2,12 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { spawn } from "node:child_process";
-import { describe, test, expect, vi } from "vitest";
+import { copyFileSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { once } from "node:events";
+import { execWindowsJob } from "@omnesis/core";
+import { beforeAll, describe, test, expect, vi } from "vitest";
 import { FreshnessProbe, PROBE_CACHE_TTL_MS, defaultIsProcessRunning } from "./freshness-probe.js";
 import type { SourceFreshness } from "@omnesis/source-sdk";
 
@@ -115,19 +120,38 @@ describe("FreshnessProbe", () => {
 // here: invert it and every healthy source is reported stale while every
 // stalled one looks fine. These drive the actual `pgrep`.
 describe("defaultIsProcessRunning", () => {
+  beforeAll(async () => {
+    // Native job bootstrap is a prerequisite; each measured process probe keeps its 2s deadline.
+    if (process.platform === "win32")
+      await execWindowsJob(process.execPath, ["-e", ""], { timeout: 30_000 });
+  });
+  async function withRunningProcess(check: (name: string) => Promise<void>): Promise<void> {
+    const directory =
+      process.platform === "win32" ? mkdtempSync(join(tmpdir(), "omnesis-feed-probe-")) : undefined;
+    const name = directory ? "omnesis-feed-probe" : "sleep";
+    const executable = directory ? join(directory, `${name}.exe`) : "sleep";
+    if (directory) copyFileSync(process.execPath, executable);
+    const child = spawn(executable, directory ? ["-e", "setInterval(()=>{},1000)"] : ["30"], {
+      stdio: "ignore",
+    });
+    const closed = new Promise<void>((resolve) => child.once("close", () => resolve()));
+    try {
+      await once(child, "spawn");
+      await check(name);
+    } finally {
+      child.kill("SIGKILL");
+      await closed;
+      if (directory) rmSync(directory, { recursive: true, force: true });
+    }
+  }
   test("reports true for a process that is certainly running — one it starts", async () => {
     // A child with a known name, rather than Node itself: a test runner may
     // retitle its own processes, so "node" is not guaranteed to be present.
-    const child = spawn("sleep", ["30"], { stdio: "ignore" });
-    try {
-      await new Promise<void>((resolve, reject) => {
-        child.once("spawn", resolve);
-        child.once("error", reject);
-      });
-      expect(await defaultIsProcessRunning("sleep")).toBe(true);
-    } finally {
-      child.kill();
-    }
+    await withRunningProcess(async (name) => {
+      expect(await defaultIsProcessRunning(name)).toBe(true);
+      if (process.platform === "win32")
+        expect(await defaultIsProcessRunning(`${name}.EXE`)).toBe(true);
+    });
   });
 
   test("reports false — not an error — for a name that matches nothing", async () => {
@@ -138,6 +162,8 @@ describe("defaultIsProcessRunning", () => {
   // process name that merely contains it, or a source would look healthy
   // because something unrelated happens to be running.
   test("does not match on a prefix of a running process name", async () => {
-    expect(await defaultIsProcessRunning("nod")).toBe(false);
+    await withRunningProcess(async (name) => {
+      expect(await defaultIsProcessRunning(name.slice(0, -1))).toBe(false);
+    });
   });
 });

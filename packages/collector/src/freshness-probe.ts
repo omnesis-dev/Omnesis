@@ -4,6 +4,7 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { createLogger } from "@omnesis/core";
+import { windowsIsProcessRunning } from "./windows-process-probe.js";
 import type { SourceFreshness } from "@omnesis/source-sdk";
 
 const execFileAsync = promisify(execFile);
@@ -12,25 +13,17 @@ const log = createLogger("collector:freshness");
 /**
  * How long a probe result is reused before the process table is consulted
  * again. Results are cached per process NAME, not per source, so several
- * sources fed by the same program share one `pgrep`. An app does not come and
- * go on a second-by-second basis, so a window this size costs nothing in
- * accuracy.
+ * sources fed by the same program share one process-table query. An app does
+ * not come and go on a second-by-second basis, so a window this size costs
+ * nothing in accuracy.
  */
 export const PROBE_CACHE_TTL_MS = 30_000;
 
 /**
- * Timeout for a single probe. `pgrep` against a local process table returns in
- * single-digit milliseconds; anything approaching this bound means the host is
- * in trouble, and a hung probe must never wedge the status pipeline.
+ * Timeout for a single local process-table query. A hung probe must never
+ * wedge the status pipeline; reaching this bound leaves the reading unknown.
  */
 const PROBE_TIMEOUT_MS = 2_000;
-
-/**
- * Whether this platform can be asked which processes are running. Evaluated
- * once: on an unsupported platform every probe would otherwise fail identically
- * and log identically, once per source per sync, forever.
- */
-const PROCESS_PROBING_SUPPORTED = process.platform !== "win32";
 
 /**
  * Probes whether the process a source declared as its data feed is currently
@@ -42,8 +35,8 @@ const PROCESS_PROBING_SUPPORTED = process.platform !== "win32";
  * package that owns it.
  *
  * The three-valued return is the crux. `undefined` means *could not determine*
- * — no process was declared, the platform has no `pgrep`, or the probe itself
- * failed — and is emphatically not the same as `false`. The gateway only ever
+ * — no process was declared or the probe failed — and is emphatically not the
+ * same as `false`. The gateway only ever
  * warns on a definite `false`, so an environment we can't inspect stays silent
  * rather than accusing a healthy source of being stale.
  */
@@ -69,7 +62,6 @@ export class FreshnessProbe {
   ): Promise<boolean | undefined> {
     const processName = freshness?.requiresProcess?.processName;
     if (!processName) return undefined;
-    if (!PROCESS_PROBING_SUPPORTED) return undefined;
 
     const cached = opts.fresh ? undefined : this.cache.get(processName);
     if (cached && this.now() - cached.at < PROBE_CACHE_TTL_MS) return cached.running;
@@ -90,17 +82,12 @@ export class FreshnessProbe {
 }
 
 /**
- * `pgrep -x` matches the executable name exactly, so a declared process name
- * cannot be satisfied by an unrelated process that merely contains the string.
- * Argument vector (never a shell string) so a process name can't be read as
- * shell syntax. Callers gate on `PROCESS_PROBING_SUPPORTED`; there is no
- * `pgrep` on Windows, and a source declaring a process dependency there needs a
- * `tasklist` branch rather than a wrong answer.
- *
- * Exit code 1 is `pgrep`'s documented "no process matched" — a definite answer,
- * not an error. Any other non-zero exit throws and surfaces as "unknown".
+ * Query exact executable names without a shell. Windows uses the native image
+ * name (case-insensitive, optional .exe suffix); POSIX uses pgrep -x. A failed
+ * query throws so the caller reports unknown rather than inventing absence.
  */
 export async function defaultIsProcessRunning(name: string): Promise<boolean> {
+  if (process.platform === "win32") return windowsIsProcessRunning(name, PROBE_TIMEOUT_MS);
   try {
     await execFileAsync("pgrep", ["-x", name], { timeout: PROBE_TIMEOUT_MS });
     return true;

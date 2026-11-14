@@ -5,6 +5,7 @@
 import { writeFileSync } from "node:fs";
 import { defineCommand, runMain } from "citty";
 import Database from "better-sqlite3";
+import { defaultCorpusDbPath, defaultComparisonOutputPath } from "../paths.js";
 import { CorpusReader } from "../corpus/reader.js";
 import { DupeStore, defaultDupeDbPath } from "../store/repository.js";
 import { DfTable } from "../algo/idf.js";
@@ -12,8 +13,7 @@ import { computeExclusivity } from "../algo/sketcher.js";
 import { normalizeText, shingles } from "../algo/shingle.js";
 import { connectedComponents } from "./clusters.js";
 
-const HOME = process.env.HOME ?? "";
-const DEFAULT_OMNESIS_DB = `${HOME}/.config/omnesis/omnesis.db`;
+const DEFAULT_OMNESIS_DB = defaultCorpusDbPath();
 const ALGO_A = "mh128-k5-b16-r8-v1";
 const ALGO_B = "ciws128-k5-b16-r8-idf-v1";
 const ALGO_C = "ciws128-k5-b16-r8-idf-excl-v1";
@@ -175,7 +175,7 @@ const report = defineCommand({
     dupesDb: { type: "string", default: defaultDupeDbPath() },
     omnesisDb: { type: "string", default: DEFAULT_OMNESIS_DB },
     minJ: { type: "string", default: "0.75" },
-    out: { type: "string", default: "/tmp/near-dupes-study/comparison.md" },
+    out: { type: "string", default: defaultComparisonOutputPath() },
   },
   run({ args }) {
     const store = new DupeStore(args.dupesDb);

@@ -3,12 +3,12 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { defineCommand, runMain } from "citty";
+import { defaultCorpusDbPath } from "../paths.js";
 import { DupeStore, defaultDupeDbPath } from "../store/repository.js";
 import { CorpusReader } from "../corpus/reader.js";
 import { connectedComponents } from "./clusters.js";
 
-const HOME = process.env.HOME ?? "";
-const DEFAULT_OMNESIS_DB = `${HOME}/.config/omnesis/omnesis.db`;
+const DEFAULT_OMNESIS_DB = defaultCorpusDbPath();
 
 interface PairRowDb {
   doc_a: string;

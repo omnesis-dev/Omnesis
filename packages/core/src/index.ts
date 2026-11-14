@@ -1442,6 +1442,7 @@ export { execWindowsJob } from "./windows-job-exec.js";
 export {
   inspectWindowsPrivatePathSync,
   inspectWindowsPrivatePaths,
+  copyWindowsPrivateFile,
   copyWindowsPrivateFileSync,
   readWindowsPrivateFile,
   readWindowsPrivateFileSync,

@@ -2,6 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 export {
+  copyWindowsPrivateFile,
   copyWindowsPrivateFileSync,
   readWindowsPrivateFile,
   readWindowsPrivateFileSync,

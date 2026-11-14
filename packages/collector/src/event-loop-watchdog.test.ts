@@ -61,13 +61,18 @@ function runChild(
         onArmed(child);
       }
     });
+    let failure: Error | undefined;
+    child.once("error", (error) => {
+      failure = error;
+    });
     const guard = setTimeout(() => {
+      failure = new Error(`child still running after ${timeoutMs}ms:\n${stderr}`);
       child.kill("SIGKILL");
-      reject(new Error(`child still running after ${timeoutMs}ms:\n${stderr}`));
     }, timeoutMs);
-    child.on("exit", (code, signal) => {
+    child.once("close", (code, signal) => {
       clearTimeout(guard);
-      resolve({ code, signal, stderr });
+      if (failure) reject(failure);
+      else resolve({ code, signal, stderr });
     });
   });
 }
@@ -82,7 +87,10 @@ describe("the event-loop watchdog", () => {
         `setTimeout(walkPages, 1_000);\n`,
       () => {},
     );
-    expect(result.signal).toBe("SIGKILL");
+    if (process.platform === "win32") {
+      expect(result.signal).toBeNull();
+      expect(result.code).toBeGreaterThan(0);
+    } else expect(result.signal).toBe("SIGKILL");
     expect(result.stderr).toMatch(/Event loop stalled for \d+s; restarting the collector/);
     expect(result.stderr).toContain("Main thread stack:");
     expect(result.stderr).toMatch(/at walkPages \(.*child\.ts:\d+:\d+\)/);
@@ -97,18 +105,23 @@ describe("the event-loop watchdog", () => {
     expect(result.stderr).not.toContain("Event loop stalled");
   }, 40_000);
 
-  test("leaves a process alone after it was suspended for longer than the limit", async () => {
-    // A sleeping laptop or a stopped process: no thread ran, so nothing stalled.
-    const result = await runChild(`setInterval(() => {}, 1_000);\n`, (child) => {
-      child.kill("SIGSTOP");
-      after(2_500, () => {
-        child.kill("SIGCONT");
-        after(2_500, () => child.kill("SIGTERM"));
+  // Windows has no SIGSTOP/SIGCONT; the portable StallJudge suspension model stays covered below.
+  test.skipIf(process.platform === "win32")(
+    "leaves a process alone after it was suspended for longer than the limit",
+    async () => {
+      // A sleeping laptop or a stopped process: no thread ran, so nothing stalled.
+      const result = await runChild(`setInterval(() => {}, 1_000);\n`, (child) => {
+        child.kill("SIGSTOP");
+        after(2_500, () => {
+          child.kill("SIGCONT");
+          after(2_500, () => child.kill("SIGTERM"));
+        });
       });
-    });
-    expect(result.signal).toBe("SIGTERM");
-    expect(result.stderr).not.toContain("Event loop stalled");
-  }, 40_000);
+      expect(result.signal).toBe("SIGTERM");
+      expect(result.stderr).not.toContain("Event loop stalled");
+    },
+    40_000,
+  );
 });
 
 describe("StallJudge", () => {

@@ -128,8 +128,12 @@ function resultBytes(result: WindowsJobResult): Buffer {
   }
   return Buffer.from(result.stdout);
 }
-async function operate(operation: Operation, input?: Uint8Array): Promise<Buffer> {
-  const run = invocation(operation, input);
+async function operate(
+  operation: Operation,
+  input?: Uint8Array,
+  budget: number | null = 30_000,
+): Promise<Buffer> {
+  const run = invocation(operation, input, true, budget);
   return resultBytes(await runWindowsOwnedProcess(run, run.input, { timeoutMs: run.timeoutMs }));
 }
 
@@ -177,13 +181,20 @@ function operateSync(
     }),
   );
 }
-/** Copy without buffering file contents in JavaScript; protect bytes before atomic publication. */
-export function copyWindowsPrivateFileSync(source: string, destination: string): void {
+function privateCopyOperation(source: string, destination: string): Operation {
   if (win32.normalize(source) === win32.normalize(destination))
     throw new Error("Private copy source and destination must differ");
+  return { action: "copy-private", path: destination, source };
+}
+/** Copy without buffering file contents in JavaScript; protect bytes before atomic publication. */
+export async function copyWindowsPrivateFile(source: string, destination: string): Promise<void> {
+  await operate(privateCopyOperation(source, destination), undefined, null);
+}
+/** Worker and offline counterpart of the owned asynchronous copy. */
+export function copyWindowsPrivateFileSync(source: string, destination: string): void {
   // Like copyFileSync, a filesystem copy has no size-dependent wall-clock cap.
   // The native process remains bound to its owner and streams a fixed buffer.
-  operateSync({ action: "copy-private", path: destination, source }, undefined, null);
+  operateSync(privateCopyOperation(source, destination), undefined, null);
 }
 /** Read a bounded regular file through the handle whose owner and DACL are verified. */
 export function readWindowsPrivateFile(path: string, limit = MAX_BYTES): Promise<Buffer> {

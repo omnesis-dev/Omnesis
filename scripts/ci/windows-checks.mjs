@@ -21,6 +21,24 @@ export const INSTALLER_TEST_EXCLUSIONS = [
 ];
 
 export const FOCUSED_UNIT_FILES = [
+  "packages/collector/src/source-host-builder.test.ts",
+  "packages/collector/src/auth-subprocess-session.test.ts",
+  "packages/cloud-relay/src/client-defaults.test.ts",
+  "packages/cloud-relay/src/google-desktop.test.ts",
+  "packages/watch/src/runtime/adversarial.test.ts",
+  "packages/platform/src/windows-private-copy.test.ts",
+  "packages/near-dupes/src/runner/runner.boundary.test.ts",
+  "packages/near-dupes/src/runner/runner.test.ts",
+  "packages/near-dupes/src/paths.test.ts",
+  "packages/collector/src/service-restart.test.ts",
+  "packages/collector/src/event-loop-watchdog.test.ts",
+  "packages/collector/src/windows-process-probe.test.ts",
+  "packages/collector/src/freshness-probe.test.ts",
+  "packages/near-dupes/src/store/repository.paths.test.ts",
+  "packages/near-dupes/src/filters/annotate.boundary.test.ts",
+  "packages/near-dupes/src/filters/annotate.test.ts",
+  "packages/gateway/portal/js/views/portal-entities.test.ts",
+  "packages/gateway/src/transcribe/audio-decode.test.ts",
   "packages/core/src/tls-material.test.ts",
   "packages/core/src/tls-distrust.test.ts",
   "packages/gateway/src/storage-encryption.test.ts",
@@ -168,6 +186,22 @@ export function windowsCheckTasks(lane, shard) {
   }
 }
 
+/** Independent suites still run after a failure, and the first failure remains the verdict. */
+export async function runWindowsCheckTasks(tasks) {
+  let exitCode = 0;
+  for (const task of tasks) {
+    const code = await waitForChild(
+      spawn(process.execPath, task, {
+        stdio: "inherit",
+        env: process.env,
+        detached: process.platform !== "win32",
+      }),
+    );
+    if (code !== 0 && exitCode === 0) exitCode = code;
+  }
+  return exitCode;
+}
+
 async function main(args) {
   const [lane, ...options] = args;
   if (options.some((option) => option !== "--list" && !option.startsWith("--shard="))) {
@@ -182,17 +216,7 @@ async function main(args) {
     process.stdout.write(`${JSON.stringify(tasks, null, 2)}\n`);
     return 0;
   }
-  for (const task of tasks) {
-    const code = await waitForChild(
-      spawn(process.execPath, task, {
-        stdio: "inherit",
-        env: process.env,
-        detached: process.platform !== "win32",
-      }),
-    );
-    if (code !== 0) return code;
-  }
-  return 0;
+  return runWindowsCheckTasks(tasks);
 }
 
 if (import.meta.main) process.exitCode = await main(process.argv.slice(2));

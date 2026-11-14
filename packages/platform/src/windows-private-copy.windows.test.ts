@@ -20,6 +20,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, test } from "vitest";
 import {
+  copyWindowsPrivateFile,
   copyWindowsPrivateFileSync,
   inspectWindowsPrivatePathSync,
   secureWindowsPrivatePathSync,
@@ -30,9 +31,11 @@ afterEach(() => {
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
 
-test.runIf(process.platform === "win32")(
-  "copies bytes privately, replaces prior content, and preserves it after failed source validation",
-  () => {
+test.runIf(process.platform === "win32").each(["sync", "async"] as const)(
+  "%s copy protects bytes before publication and preserves them after failed source validation",
+  async (mode) => {
+    const copy: (source: string, destination: string) => void | Promise<void> =
+      mode === "sync" ? copyWindowsPrivateFileSync : copyWindowsPrivateFile;
     const root = mkdtempSync(join(tmpdir(), "private-copy-"));
     roots.push(root);
     const privateDir = join(root, "private");
@@ -48,15 +51,15 @@ test.runIf(process.platform === "win32")(
       { windowsHide: true },
     );
     expect(inspectWindowsPrivatePathSync(source, "file").private).toBe(false);
-    copyWindowsPrivateFileSync(source, destination);
+    await copy(source, destination);
     expect(readFileSync(destination)).toEqual(bytes);
     expect(inspectWindowsPrivatePathSync(destination, "file").private).toBe(true);
     writeFileSync(source, "new invented snapshot");
-    copyWindowsPrivateFileSync(source, destination);
+    await copy(source, destination);
     expect(readFileSync(destination, "utf8")).toBe("new invented snapshot");
     expect(inspectWindowsPrivatePathSync(destination, "file").private).toBe(true);
-    expect(() => copyWindowsPrivateFileSync(join(root, "missing.db"), destination)).toThrow();
-    expect(() => copyWindowsPrivateFileSync(root, destination)).toThrow();
+    await expect(async () => copy(join(root, "missing.db"), destination)).rejects.toThrow();
+    await expect(async () => copy(root, destination)).rejects.toThrow();
     expect(readFileSync(destination, "utf8")).toBe("new invented snapshot");
     expect(readdirSync(privateDir)).toEqual(["backup.db"]);
   },

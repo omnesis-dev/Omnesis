@@ -26,7 +26,7 @@ describe("the account state directory", () => {
         accountId: "person@example.com",
         configDir: "/cfg",
       }),
-    ).toBe("/cfg/acme/person@example.com");
+    ).toBe(join("/cfg", "acme", "person@example.com"));
   });
 
   it("refuses a path-shaped account rather than escaping the config root", () => {

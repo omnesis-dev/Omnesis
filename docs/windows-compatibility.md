@@ -40,12 +40,12 @@ those failures.
 
 ## Native Windows evidence
 
-The focused x64 run at revision `7229de62e` passed all 1,657 unit tests across
-112 files, with 25 conditional skips. All 13 gateway E2E tests passed, including
-gateway ownership, replacement during drain and stale-lock recovery. The earlier
-synthetic pipeline teardown failure did not recur in this run; process cleanup
-is still being improved and requires fresh native validation. The full Windows
-portal run at `456dffb02` passed all 70 tests.
+The focused x64 run at revision `11f70451d` passed all 1,889 unit tests across
+137 files, with 27 conditional skips. All 13 gateway E2E tests passed in about
+100 seconds, including gateway ownership, replacement during drain, stale-lock
+recovery and synthetic collector sync. This includes native private-copy,
+permission, Codex-state and harness process tests. The full Windows portal run
+at `456dffb02` passed all 70 tests. Broad compatibility remains unproven.
 
 The vector proof exercised Unicode paths, replacement with an old mapped reader
 still open, dimensionality changes, read-only targets, failed publication
@@ -93,6 +93,22 @@ cancellation and parent death. Wait was zero seconds; execution took 4 minutes
 x64 native dependency preparation and the MSVC vector publication proof also
 passed. Full Gateway/Collector runtime validation remains separate.
 
+A subsequent process/helper probe passed all 33 groups, including exact process
+birth matching, parent handle lifetime and raw Node descendant/port cleanup.
+An extended private-copy probe passed 40 of 41 groups. Its remaining fixture
+incorrectly assumed that an RD-only ACL denial would also make Node's ordinary
+reader fail. A separate native diagnostic confirmed that private copy refuses
+that source, preserves previous destination bytes and leaves no scratch file.
+The corrected complete probe and current native inspection changes still need
+fresh Windows validation.
+
+Actual x64 dependency preparation, encrypted keyring initialization, the compiled
+CLI and all six compiled gateway worker entrypoints passed in the ARM64 guest.
+Both source and compiled manual Gateway runs reached a 90-second observation
+limit during encrypted-storage initialization, before Collector startup. Bounded
+public storage/key diagnostics are investigating this phase; no complete manual
+Gateway/Collector success is claimed.
+
 ## Broader failing baselines
 
 The complete Windows unit baseline at `3c076e8e3` recorded 35,642 passing tests,
@@ -101,6 +117,12 @@ It also reported 16 unhandled errors. Both Windows gateway E2E shards completed:
 102 files passed and 26 failed in one; 100 passed, 26 failed and one skipped in
 the other. The portal exposed excessive native-helper startup overhead.
 
+The later broad Windows baseline at `bbc97b2ac` passed 37,227 unit tests and
+failed 584, with 86 skips: 2,428 files passed, 152 failed and four were skipped.
+That unit phase took about 122 minutes. E2E shard one passed 712 tests and failed
+ten; shard two passed 620 and failed five. These results precede the current
+fixture, privacy and lifecycle corrections and require a new broad run.
+
 Those baselines identified Unix-only process control, npm/shebang execution,
 Windows filesystem flushing, private-file protection, mapped-index publication,
 temporary paths, certificate line endings and resource lifecycles. Fixes and
@@ -108,6 +130,16 @@ focused regressions cover these areas, but a fresh complete Windows verdict is
 required. Skipping portable tests is not an acceptable resolution.
 
 ## Regression evidence
+
+The frozen Linux checkpoint at `d396be7ca` passed 39,307 general unit tests,
+161 script smoke tests and 1,828 relay tests, with 100% relay statement, branch,
+function and line coverage. Source/test typechecks passed. Unit-all waited
+17 seconds and ran for 46 minutes 10 seconds; its affected gate continues into
+E2E/native bundles. The macOS sweep passed 39,154 general tests and failed four
+across two fixture files because of canonical `/var` aliases and mock paths.
+Those fixtures are corrected in `11f70451d`; current macOS validation remains
+required. The new checkpoint also passed its supported build, source and test
+typechecks, 1,664 focused Linux tests and 67 follow-up fixture tests.
 
 Four live embedding transition cases pass on Linux with real CPU inference:
 HTTP-to-HTTP, HTTP-to-local, local-to-HTTP and local-to-local. The latest frozen

@@ -33,13 +33,13 @@ test("client defaults are private local paths and public installation metadata, 
   });
   expect(collector.OMNESIS_CLOUD_RELAY_DEVICE_NAME).toBe("Omnesis collector");
   expect(collector.OMNESIS_CLOUD_RELAY_DEVICE_FILE).toBe(
-    "/synthetic/config/cloud-relay/collector-device.json",
+    join("/synthetic/config", "cloud-relay", "collector-device.json"),
   );
   expect(collector.OMNESIS_CLOUD_RELAY_SESSION_FILE).toBe(
-    "/synthetic/config/cloud-relay/client-session.json",
+    join("/synthetic/config", "cloud-relay", "client-session.json"),
   );
   expect(collector.OMNESIS_CLOUD_RELAY_GOOGLE_CREDENTIALS_FILE).toBe(
-    "/synthetic/config/cloud-relay/google-client.json",
+    join("/synthetic/config", "cloud-relay", "google-client.json"),
   );
   const explicit = {
     OMNESIS_CONFIG_DIR: "/synthetic/config",

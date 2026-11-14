@@ -16,6 +16,7 @@ import {
   FOCUSED_UNIT_FILES,
   INSTALLER_TEST_EXCLUSIONS,
   windowsCheckTasks,
+  runWindowsCheckTasks,
 } from "./windows-checks.mjs";
 
 const workflow = () =>
@@ -221,4 +222,24 @@ test("Hermes adapter tests use native Python and preserve argument boundaries on
     readFileSync(new URL("../../package.json", import.meta.url), "utf8"),
   ).scripts;
   expect(scripts["test:hermes"]).toBe("node scripts/test-hermes.mjs");
+});
+
+test("independent Windows suites run after a failure and preserve the first nonzero verdict", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "omnesis-windows-suite-status-"));
+  const receipt = join(directory, "phase receipt.txt");
+  const script =
+    "require('node:fs').appendFileSync(process.argv[1],process.argv[2]+'\\n');process.exit(Number(process.argv[3]));";
+  try {
+    const tasks = [
+      ["unit", 7],
+      ["smoke", 0],
+      ["adapter", 3],
+      ["hermes", 0],
+    ].map(([name, code]) => ["-e", script, receipt, name, String(code)]);
+    expect(await runWindowsCheckTasks(tasks)).toBe(7);
+    expect(readFileSync(receipt, "utf8")).toBe("unit\nsmoke\nadapter\nhermes\n");
+    expect(await runWindowsCheckTasks([["-e", "process.exit(0)"]])).toBe(0);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
 });

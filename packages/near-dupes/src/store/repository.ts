@@ -2,7 +2,8 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { mkdirSync } from "node:fs";
-import { dirname } from "node:path";
+import { dirname, join } from "node:path";
+import { homedir } from "node:os";
 import Database from "better-sqlite3";
 import { packSignature, unpackSignature } from "../algo/minhash.js";
 import { SCHEMA } from "./schema.js";
@@ -280,7 +281,7 @@ export class DupeStore {
 }
 
 export function defaultDupeDbPath(): string {
-  const home = process.env.HOME;
+  const home = process.env.HOME || homedir();
   if (!home) throw new Error("HOME not set");
-  return `${home}/.config/omnesis/omnesis-dupes/dupes.db`;
+  return join(home, ".config", "omnesis", "omnesis-dupes", "dupes.db");
 }

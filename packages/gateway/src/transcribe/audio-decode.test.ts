@@ -1,11 +1,14 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import { randomBytes } from "node:crypto";
+import { createServer } from "node:net";
 import { spawnSync } from "node:child_process";
-import { readFileSync, readdirSync, mkdtempSync, writeFileSync, chmodSync, rmSync } from "node:fs";
-import { join } from "node:path";
+import { readFileSync, readdirSync, mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
-import { describe, test, expect, beforeAll, afterAll } from "vitest";
+import { describe, test, expect, beforeAll, afterAll, vi } from "vitest";
+import { inspectWindowsPrivatePathSync } from "@omnesis/core";
 import {
   decodeToPcm16kMono,
   AudioDecodeError,
@@ -14,17 +17,124 @@ import {
   PCM_SAMPLE_RATE,
 } from "./audio-decode.js";
 import { streamableCaf } from "./caf-stream.js";
+import type { Socket } from "node:net";
 
-// A stub "ffmpeg" is a tiny executable script (shebanged to this Node binary,
-// so it doesn't depend on `node` being on PATH) that ignores its args/stdin and
-// emits a scripted result — letting us exercise the spawn + PCM-parse path
-// without ffmpeg-static installed.
+const preparation = vi.hoisted(() => ({
+  failure: undefined as Error | undefined,
+  entries: [] as string[][],
+}));
+vi.mock("@omnesis/core", async (original) => {
+  const actual = await original<typeof import("@omnesis/core")>();
+  return {
+    ...actual,
+    ensurePrivateDirs: async (paths: readonly string[]) => {
+      preparation.entries = paths.map((path) => readdirSync(path));
+      if (preparation.failure) throw preparation.failure;
+      await actual.ensurePrivateDirs(paths);
+    },
+  };
+});
+
+const fixtureCommands = vi.hoisted(
+  () =>
+    new Map<
+      string,
+      {
+        entry: string;
+        signal?: AbortSignal;
+        lastStderr?: string;
+        privateInput?: { file: boolean; directory: boolean };
+      }
+    >(),
+);
+vi.mock("../process-launcher/index.js", async (original) => {
+  const actual = await original<typeof import("../process-launcher/index.js")>();
+  return {
+    ...actual,
+    processLauncher: () => ({
+      run: (
+        command: string,
+        args: readonly string[],
+        opts: import("../process-launcher/index.js").RunProcessOptions,
+      ) => {
+        const fixture = fixtureCommands.get(command);
+        const input = args[args.indexOf("-i") + 1];
+        if (fixture && process.platform === "win32" && input?.startsWith("file:")) {
+          const path = input.slice(5);
+          fixture.privateInput = {
+            file: inspectWindowsPrivatePathSync(path, "file").private,
+            directory: inspectWindowsPrivatePathSync(dirname(path), "directory").private,
+          };
+        }
+        if (!fixture) return actual.processLauncher().run(command, args, opts);
+        return actual
+          .processLauncher()
+          .run(process.execPath, [fixture.entry, ...args], {
+            ...opts,
+            ...(fixture.signal ? { signal: fixture.signal } : {}),
+          })
+          .then((result) => {
+            fixture.lastStderr = result.stderr;
+            return result;
+          });
+      },
+    }),
+  };
+});
+
+// Only registered fixtures are rewritten to literal Node argv. Real ffmpeg
+// still executes through the unmodified production launcher and deadlines.
 let dir: string;
-function makeStub(name: string, body: string): string {
-  const path = join(dir, name);
-  writeFileSync(path, `#!${process.execPath}\n${body}\n`, "utf8");
-  chmodSync(path, 0o755);
+function makeStub(name: string, body: string, signal?: AbortSignal): string {
+  const path = join(dir, `${name}.cjs`);
+  writeFileSync(path, `${body}\n`, "utf8");
+  fixtureCommands.set(path, { entry: path, signal });
   return path;
+}
+
+/** Cancel only after this owned fixture has written its decoder diagnostic. */
+async function decoderCancellation() {
+  const nonce = randomBytes(24).toString("hex"),
+    abort = new AbortController();
+  const sockets = new Set<Socket>();
+  let received = false;
+  const server = createServer((socket) => {
+    sockets.add(socket);
+    socket.once("close", () => sockets.delete(socket));
+    let frame = "";
+    socket.on("error", () => abort.abort());
+    socket.on("data", (chunk) => {
+      frame += chunk.toString("utf8");
+      if (frame.length > 128) {
+        socket.destroy();
+        abort.abort();
+        return;
+      }
+      if (frame.includes("\n")) {
+        received = frame === nonce + "\n";
+        socket.end();
+        abort.abort();
+      }
+    });
+  });
+  await new Promise<void>((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", resolve);
+  });
+  const address = server.address();
+  if (!address || typeof address === "string") throw new Error("Missing decoder fixture port");
+  return {
+    signal: abort.signal,
+    received: () => received,
+    notify: `const socket=require('node:net').connect({host:'127.0.0.1',port:${address.port}},()=>socket.end(${JSON.stringify(nonce + "\n")}));`,
+    close: async () => {
+      abort.abort();
+      for (const socket of sockets) socket.destroy();
+      await new Promise<void>((resolve, reject) =>
+        server.close((error) => (error ? reject(error) : resolve())),
+      );
+    },
+  };
 }
 
 beforeAll(() => {
@@ -79,6 +189,28 @@ describe("decodeToPcm16kMono", () => {
   });
 
   test("a killed decoder is not unreadable audio, whatever it printed", async () => {
+    if (process.platform === "win32") {
+      // Windows external termination is an ordinary exit code, not a POSIX
+      // signal. Exercise the observable owned cancellation boundary instead.
+      const cancellation = await decoderCancellation();
+      try {
+        const ffmpeg = makeStub(
+          "cancelled-ffmpeg",
+          `process.stderr.write("Invalid data found when processing input", () => {${cancellation.notify}}); setInterval(()=>{},1000);`,
+          cancellation.signal,
+        );
+        await expect(
+          decodeToPcm16kMono(new Uint8Array([1]), { ffmpegPath: ffmpeg }),
+        ).rejects.toMatchObject({ unreadable: false, message: expect.stringMatching(/aborted/) });
+        expect(cancellation.received()).toBe(true);
+        expect(fixtureCommands.get(ffmpeg)?.lastStderr).toContain(
+          "Invalid data found when processing input",
+        );
+      } finally {
+        await cancellation.close();
+      }
+      return;
+    }
     const ffmpeg = makeStub(
       "killed-ffmpeg",
       `process.stderr.write("Invalid data found when processing input", () => process.kill(process.pid, "SIGKILL"));`,
@@ -179,7 +311,9 @@ ${tail}`;
     };
     expect(seen.arg.startsWith(`file:${tempDir}`)).toBe(true);
     expect(seen.nostdin).toBe(true);
-    expect(seen.mode).toBe(0o600);
+    if (process.platform === "win32") {
+      expect(fixtureCommands.get(ffmpeg)?.privateInput).toEqual({ file: true, directory: true });
+    } else expect(seen.mode).toBe(0o600);
     expect(seen.size).toBe(bytes.byteLength);
     expect(readdirSync(tempDir)).toEqual([]);
   });
@@ -196,7 +330,13 @@ ${tail}`;
     await expect(
       decodeToPcm16kMono(isoBmffHeader("M4A "), { ffmpegPath: ffmpeg, tempDir }),
     ).rejects.toMatchObject({ name: "AudioDecodeError", unreadable });
-    expect(JSON.parse(readFileSync(record, "utf8"))).toMatchObject({ mode: 0o600 });
+    expect(JSON.parse(readFileSync(record, "utf8"))).toMatchObject({
+      size: isoBmffHeader("M4A ").byteLength,
+      nostdin: true,
+    });
+    if (process.platform !== "win32")
+      expect(JSON.parse(readFileSync(record, "utf8"))).toMatchObject({ mode: 0o600 });
+    else expect(fixtureCommands.get(ffmpeg)?.privateInput).toEqual({ file: true, directory: true });
     expect(readdirSync(tempDir)).toEqual([]);
   });
 
@@ -208,6 +348,32 @@ ${tail}`;
     ).rejects.toMatchObject({ unreadable: false, message: expect.stringMatching(/timed out/) });
     expect(readdirSync(tempDir)).toEqual([]);
   });
+
+  test.runIf(process.platform === "win32")(
+    "does not write corpus bytes if private-directory preparation fails",
+    async () => {
+      const tempDir = mkdtempSync(join(dir, "private-preparation-refusal-"));
+      const record = join(dir, "private-preparation-refusal.json");
+      const ffmpeg = makeStub(
+        "private-preparation-refusal",
+        recordInput(record, "process.exit(0)"),
+      );
+      preparation.failure = new Error("invented native access-control refusal");
+      try {
+        await expect(
+          decodeToPcm16kMono(isoBmffHeader("M4A "), { ffmpegPath: ffmpeg, tempDir }),
+        ).rejects.toMatchObject({
+          unreadable: false,
+          message: expect.stringContaining("could not protect"),
+        });
+        expect(preparation.entries).toEqual([[]]);
+        expect(readdirSync(tempDir)).toEqual([]);
+        expect(() => readFileSync(record)).toThrow();
+      } finally {
+        preparation.failure = undefined;
+      }
+    },
+  );
 
   test("a temporary folder that cannot be made is not unreadable audio", async () => {
     const ffmpeg = makeStub("never-run-ffmpeg", `process.exit(0);`);
