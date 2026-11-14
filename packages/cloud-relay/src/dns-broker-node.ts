@@ -10,6 +10,7 @@ import { createServer, type IncomingMessage, type Server } from "node:http";
 import { createServer as createHttpsServer } from "node:https";
 import { open } from "node:fs/promises";
 import { z } from "zod";
+import { readWindowsPrivateFile } from "@omnesis/core";
 import { LoginAdmission, type LoginLimits } from "./admission.js";
 import { savePrivateJson } from "./google-credentials.js";
 import { RelayError } from "./tunnels.js";
@@ -27,13 +28,17 @@ export class FileBrokerStore implements BrokerStore {
   static async open(file: string): Promise<FileBrokerStore> {
     let text: string;
     try {
-      const handle = await open(file, "r");
-      try {
-        if ((await handle.stat()).size > MAX_STORE_BYTES)
-          throw new Error("The DNS broker registry is too large");
-        text = await handle.readFile("utf8");
-      } finally {
-        await handle.close();
+      if (process.platform === "win32") {
+        text = (await readWindowsPrivateFile(file, MAX_STORE_BYTES)).toString("utf8");
+      } else {
+        const handle = await open(file, "r");
+        try {
+          if ((await handle.stat()).size > MAX_STORE_BYTES)
+            throw new Error("The DNS broker registry is too large");
+          text = await handle.readFile("utf8");
+        } finally {
+          await handle.close();
+        }
       }
     } catch (error) {
       if (error && typeof error === "object" && "code" in error && error.code === "ENOENT")
@@ -104,40 +109,58 @@ export function createDnsBrokerServer(options: {
     socket.once("close", () => sockets.delete(socket));
     socket.on("error", () => socket.destroy());
   });
+  let accepting = true;
+  const pending = new Set<Promise<unknown>>();
+  const track = <T>(work: Promise<T>): Promise<T> => {
+    pending.add(work);
+    void work.then(
+      () => pending.delete(work),
+      () => pending.delete(work),
+    );
+    return work;
+  };
   server.on("request", (req, res) => {
+    if (!accepting) {
+      res.writeHead(503, { "cache-control": "no-store" });
+      res.end();
+      return;
+    }
     const path = req.url!.split("?")[0]!;
     if (options.legacy && (path === "/healthz" || path.startsWith("/_dns/v1/"))) {
       options.legacy.emit("request", req, res);
       return;
     }
-    void admission
-      .run(async () => {
-        const payload = req.method === "GET" || req.method === "HEAD" ? undefined : await body(req);
-        const response = await options.broker.handle(
-          new Request(new URL(req.url!, "http://dns-broker.invalid"), {
-            method: req.method,
-            headers: {
-              "content-type": req.headers["content-type"] ?? "",
-              authorization: req.headers.authorization ?? "",
-            },
-            body: payload && new Uint8Array(payload),
-          }),
-        );
-        res.writeHead(response.status, Object.fromEntries(response.headers));
-        res.end(Buffer.from(await response.arrayBuffer()));
-      }, req)
-      .catch((error: unknown) => {
-        res.shouldKeepAlive = false;
-        if (!res.headersSent)
-          res.writeHead(error instanceof RelayError ? error.status : 400, {
-            "cache-control": "no-store",
-          });
-        res.end(undefined, () => req.destroy());
-      });
+    void track(
+      admission
+        .run(async () => {
+          const payload =
+            req.method === "GET" || req.method === "HEAD" ? undefined : await body(req);
+          const response = await options.broker.handle(
+            new Request(new URL(req.url!, "http://dns-broker.invalid"), {
+              method: req.method,
+              headers: {
+                "content-type": req.headers["content-type"] ?? "",
+                authorization: req.headers.authorization ?? "",
+              },
+              body: payload && new Uint8Array(payload),
+            }),
+          );
+          res.writeHead(response.status, Object.fromEntries(response.headers));
+          res.end(Buffer.from(await response.arrayBuffer()));
+        }, req)
+        .catch((error: unknown) => {
+          res.shouldKeepAlive = false;
+          if (!res.headersSent)
+            res.writeHead(error instanceof RelayError ? error.status : 400, {
+              "cache-control": "no-store",
+            });
+          res.end(undefined, () => req.destroy());
+        }),
+    );
   });
   // Expired leases are removed even while no gateway asks for anything.
   const timer = setInterval(() => {
-    void options.broker.expire().catch(() => {});
+    if (accepting) void track(options.broker.expire()).catch(() => {});
   }, 30_000);
   timer.unref();
   let closing: Promise<void> | undefined;
@@ -145,12 +168,15 @@ export function createDnsBrokerServer(options: {
     server,
     close(): Promise<void> {
       return (closing ??= (async () => {
+        accepting = false;
         clearInterval(timer);
         const stopped = server.listening
           ? new Promise<Error | undefined>((resolve) => server.close((error) => resolve(error)))
           : Promise.resolve(undefined);
         for (const socket of sockets) socket.destroy();
         const error = await stopped;
+        // Closed admission makes this the complete set of accepted broker mutations.
+        await Promise.allSettled([...pending]);
         if (error) throw error;
       })());
     },

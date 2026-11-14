@@ -12,6 +12,7 @@ import {
 } from "./windows-owned-process.js";
 
 const MAX_BYTES = 16_384;
+const MAX_EXPLICIT_READ_BYTES = 64 * 1024 * 1024;
 const COMMIT = Buffer.from("\0OMNESIS_PRIVATE_COMMIT_V1\0", "ascii");
 
 // Security descriptors are inspected on the open handle, not on a second path
@@ -160,7 +161,7 @@ export async function readWindowsRegularFilePrefix(
   path: string,
   limit: number,
 ): Promise<{ bytes: Buffer; size: bigint }> {
-  if (!Number.isSafeInteger(limit) || limit < 0 || limit > 32 * 1024 * 1024)
+  if (!Number.isSafeInteger(limit) || limit < 0 || limit > MAX_EXPLICIT_READ_BYTES)
     throw new Error("Invalid regular-file prefix limit");
   let result: Buffer;
   try {
@@ -219,13 +220,13 @@ export function copyWindowsPrivateFileSync(source: string, destination: string):
 }
 /** Read a bounded regular file through the handle whose owner and DACL are verified. */
 export function readWindowsPrivateFile(path: string, limit = MAX_BYTES): Promise<Buffer> {
-  if (!Number.isSafeInteger(limit) || limit < 0 || limit > 16 * 1024 * 1024)
+  if (!Number.isSafeInteger(limit) || limit < 0 || limit > MAX_EXPLICIT_READ_BYTES)
     throw new Error("Invalid private file read bound");
   return operate({ action: "read", path, limit });
 }
 /** Synchronous bounded read for preflight paths that cannot defer credential validation. */
 export function readWindowsPrivateFileSync(path: string, limit = MAX_BYTES): Buffer {
-  if (!Number.isSafeInteger(limit) || limit < 0 || limit > 16 * 1024 * 1024)
+  if (!Number.isSafeInteger(limit) || limit < 0 || limit > MAX_EXPLICIT_READ_BYTES)
     throw new Error("Invalid private file read bound");
   return operateSync({ action: "read", path, limit });
 }

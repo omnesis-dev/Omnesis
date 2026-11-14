@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
-const mocks = vi.hoisted(() => ({ run: vi.fn() }));
+const mocks = vi.hoisted(() => ({ run: vi.fn(), sync: vi.fn() }));
 vi.mock("./windows-worker-cache.js", () => ({
   windowsWorkerInvocation: () => ({
     command: "C:\\Windows\\native-worker.exe",
@@ -12,8 +12,13 @@ vi.mock("./windows-worker-cache.js", () => ({
 vi.mock("./windows-owned-process.js", async (original) => ({
   ...(await original<typeof import("./windows-owned-process.js")>()),
   runWindowsOwnedProcess: mocks.run,
+  runWindowsOwnedProcessSync: mocks.sync,
 }));
-import { readWindowsRegularFilePrefix } from "./windows-private-file.js";
+import {
+  readWindowsRegularFilePrefix,
+  readWindowsPrivateFile,
+  readWindowsPrivateFileSync,
+} from "./windows-private-file.js";
 
 function frame(size: bigint, bytes = Buffer.alloc(0)): Buffer {
   const header = Buffer.alloc(8);
@@ -22,6 +27,9 @@ function frame(size: bigint, bytes = Buffer.alloc(0)): Buffer {
 }
 beforeEach(() => {
   vi.stubEnv("SystemRoot", "C:\\Windows");
+  mocks.sync
+    .mockReset()
+    .mockReturnValue({ exitCode: 0, signal: null, stdout: Buffer.alloc(0), stderr: "" });
   mocks.run
     .mockReset()
     .mockResolvedValue({ exitCode: 0, signal: null, stdout: frame(0n), stderr: "" });
@@ -57,7 +65,56 @@ test("full supported messages retain their existing 32 MiB limit", async () => {
   });
 });
 
-test.each([-1, 0.5, NaN, Infinity, 32 * 1024 * 1024 + 1])(
+test("frames an explicit 64 MiB prefix limit unchanged", async () => {
+  await readWindowsRegularFilePrefix("C:\\example\\registry", 64 * 1024 * 1024);
+  const input = mocks.run.mock.calls[0]![1] as Buffer;
+  expect(JSON.parse(input.subarray(4, 4 + input.readUInt32LE()).toString())).toEqual({
+    action: "regular-prefix",
+    path: "C:\\example\\registry",
+    limit: 64 * 1024 * 1024,
+  });
+});
+
+test("private reads preserve 16 KiB defaults and accept 64 MiB only when explicitly requested", async () => {
+  const path = "C:\\example\\private-registry",
+    bytes = Buffer.from([0, 255]);
+  mocks.run.mockResolvedValue({ exitCode: 0, signal: null, stdout: bytes, stderr: "" });
+  mocks.sync.mockReturnValue({ exitCode: 0, signal: null, stdout: bytes, stderr: "" });
+  const metadata = (input: Buffer) =>
+    JSON.parse(input.subarray(4, 4 + input.readUInt32LE()).toString());
+  expect(await readWindowsPrivateFile(path)).toEqual(bytes);
+  expect(metadata(mocks.run.mock.calls.at(-1)![1])).toEqual({ action: "read", path, limit: 16384 });
+  expect(readWindowsPrivateFileSync(path)).toEqual(bytes);
+  expect(metadata(mocks.sync.mock.calls.at(-1)![1])).toEqual({
+    action: "read",
+    path,
+    limit: 16384,
+  });
+  expect(await readWindowsPrivateFile(path, 64 * 1024 * 1024)).toEqual(bytes);
+  expect(metadata(mocks.run.mock.calls.at(-1)![1])).toEqual({
+    action: "read",
+    path,
+    limit: 64 * 1024 * 1024,
+  });
+  expect(readWindowsPrivateFileSync(path, 64 * 1024 * 1024)).toEqual(bytes);
+  expect(metadata(mocks.sync.mock.calls.at(-1)![1])).toEqual({
+    action: "read",
+    path,
+    limit: 64 * 1024 * 1024,
+  });
+});
+
+test.each([-1, 0.5, NaN, Infinity, 64 * 1024 * 1024 + 1])(
+  "private bound %s refuses before either native read launches",
+  (limit) => {
+    expect(() => readWindowsPrivateFile("C:\\example\\registry", limit)).toThrow("read bound");
+    expect(() => readWindowsPrivateFileSync("C:\\example\\registry", limit)).toThrow("read bound");
+    expect(mocks.run).not.toHaveBeenCalled();
+    expect(mocks.sync).not.toHaveBeenCalled();
+  },
+);
+
+test.each([-1, 0.5, NaN, Infinity, 64 * 1024 * 1024 + 1])(
   "rejects invalid prefix size %s before a native launch",
   async (limit) => {
     await expect(readWindowsRegularFilePrefix("C:\\example\\message", limit)).rejects.toThrow(

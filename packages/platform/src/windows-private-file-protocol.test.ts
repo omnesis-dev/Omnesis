@@ -98,7 +98,7 @@ describe("Windows private native protocol", () => {
     expect(readWindowsPrivateFileSync(path, 65536)).toEqual(Buffer.alloc(0));
     expect(frame().metadata).toEqual({ action: "read", path, limit: 65536 });
     const calls = mocks.spawnSync.mock.calls.length;
-    for (const limit of [-1, Infinity, 16 * 1024 * 1024 + 1])
+    for (const limit of [-1, Infinity, 64 * 1024 * 1024 + 1])
       expect(() => readWindowsPrivateFileSync(path, limit)).toThrow("read bound");
     expect(mocks.spawnSync).toHaveBeenCalledTimes(calls);
   });

@@ -33,6 +33,8 @@ export const INSTALLER_TEST_EXCLUSIONS = [
 export const FOCUSED_UNIT_FILES = [
   "packages/platform/src/windows-private-repair-streams.windows.test.ts",
   "packages/cloud-relay/src/private-inputs.test.ts",
+  "packages/cloud-relay/src/dns-broker-node.test.ts",
+  "packages/cloud-relay/src/dns-broker-registry.test.ts",
   "packages/cloud-relay/src/management-service.test.ts",
   "packages/cloud-relay/src/gateway-integration.test.ts",
   "packages/cloud-relay/src/recovery-authority.test.ts",

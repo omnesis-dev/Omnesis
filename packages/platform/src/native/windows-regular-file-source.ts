@@ -24,7 +24,7 @@ public static partial class OmnesisPrivateFile {
     }
   }
   public static void ReadRegularPrefix(string path,long maximum) {
-    if(maximum<0 || maximum>33554432) throw new InvalidDataException();
+    if(maximum<0 || maximum>67108864) throw new InvalidDataException();
     WithRegularRead(path,5U,delegate(FileStream file,Info info) {
       if(info.sizeHigh>Int32.MaxValue) throw new InvalidDataException();
       long size=((long)info.sizeHigh<<32)|info.sizeLow;
