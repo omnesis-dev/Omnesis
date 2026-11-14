@@ -67,6 +67,7 @@ import dev.omnesis.android.ui.devannotate.ShakeToAnnotate
 import dev.omnesis.android.ui.devannotate.devTargetForRoute
 import dev.omnesis.android.ui.devices.DevicesScreen
 import dev.omnesis.android.ui.devices.GatewayPairingApprovalSheet
+import dev.omnesis.android.ui.devices.TailscaleJoinRequestsSheet
 import dev.omnesis.android.ui.document.DocumentDetailScreen
 import dev.omnesis.android.ui.models.BackendDetailScreen
 import dev.omnesis.android.ui.models.BackendsScreen
@@ -136,6 +137,8 @@ fun HomeScaffold(
     val pairingPending by vm.pairingPending.collectAsStateWithLifecycle()
     val pairingPendingNudge by vm.pairingPendingNudge.collectAsStateWithLifecycle()
     var showPairingRequests by rememberSaveable { mutableStateOf(false) }
+    val tailscaleJoinRequest by vm.tailscaleJoinRequestsRequest.collectAsStateWithLifecycle()
+    var showTailscaleJoins by rememberSaveable { mutableStateOf(false) }
     val pendingNotes by vm.pendingNotes.collectAsStateWithLifecycle()
     val permissionHealth by vm.permissionHealthState.collectAsStateWithLifecycle()
     val notificationHealth by vm.notificationHealth.collectAsStateWithLifecycle()
@@ -304,7 +307,7 @@ fun HomeScaffold(
             accessAuthorizationRequest != null ||
             agentConversationRequest != null || watchFiringRequest != null ||
             sourcePermissionRequest != null || remoteSourcePermissionRequest != null || devicesRequest != null ||
-            pairingRequestsRequest != null,
+            pairingRequestsRequest != null || tailscaleJoinRequest != null,
     )
     val latestAgentRouteActive by rememberUpdatedState(currentRoute == "agent")
     val latestRestoreForeground by rememberUpdatedState(
@@ -473,6 +476,19 @@ fun HomeScaffold(
         vm.recordExplicitLaunch()
         openPairingRequests()
         vm.consumePairingRequestsRequest()
+    }
+
+    // A tap on a Tailscale join notification: the waiting devices, over the Devices they join.
+    LaunchedEffect(tailscaleJoinRequest, setupPresenting) {
+        if (vm.setupPresenting.value || tailscaleJoinRequest == null) return@LaunchedEffect
+        vm.recordExplicitLaunch()
+        closeDrawer()
+        focusedSourcePermissionId = null
+        focusedDeviceId = null
+        openSettingsChild(DEVICES_ROUTE)
+        // A phone that may not read the requests still lands on Devices.
+        showTailscaleJoins = vm.canReviewTailscaleJoins()
+        vm.consumeTailscaleJoinRequestsRequest()
     }
 
     LaunchedEffect(devicesRequest, setupPresenting) {
@@ -1119,6 +1135,13 @@ fun HomeScaffold(
                     },
                 )
             }
+        }
+
+        if (showTailscaleJoins) {
+            TailscaleJoinRequestsSheet(
+                onDismiss = { showTailscaleJoins = false },
+                onOpenSettings = openSettings,
+            )
         }
 
         if (pendingSheetOpen && pendingNotes.isNotEmpty()) {

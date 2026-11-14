@@ -255,6 +255,13 @@ class HomeViewModel @Inject constructor(
     val pairingRequestsRequest: StateFlow<NotificationLaunchBus.PairingRequests?> = notificationLaunchBus.pairingRequests
     fun consumePairingRequestsRequest() = notificationLaunchBus.consumePairingRequests()
 
+    val tailscaleJoinRequestsRequest: StateFlow<NotificationLaunchBus.TailscaleJoinRequests?> =
+        notificationLaunchBus.tailscaleJoinRequests
+    fun consumeTailscaleJoinRequestsRequest() = notificationLaunchBus.consumeTailscaleJoinRequests()
+
+    /** Only an administrator's phone reads and decides the devices waiting to join through Tailscale. */
+    fun canReviewTailscaleJoins(): Boolean = session.session?.pairing?.scopes?.contains("admin") == true
+
     /** The pairing a banner tap opens the wizard for, so a re-pair in between is refused. */
     fun accessAuthorizationPairing(): AccessAuthorizationPairingIdentity? =
         session.session?.pairing?.accessAuthorizationIdentity()

@@ -240,18 +240,22 @@ class MainActivityLaunchReplayTest {
             .apply { deviceId?.let { putExtra(MainActivity.EXTRA_DEVICES_DEVICE_ID, it) } }
 
     @Test
-    fun a_devices_notification_tap_opens_devices_once_and_only_with_cloud_connectivity() {
+    fun a_devices_notification_tap_opens_devices_once_and_pairing_requests_only_with_cloud_connectivity() {
         val first = devicesTap(stamp = 1_000, deviceId = "device-joined")
         val activity = created(first)
-        if (!BuildConfig.CLOUD_RELAY_ENABLED) {
-            // As on a build without the feature: nothing opens and the intent is left as it came.
-            assertNull(notifications.devices.value)
-            assertNull(notifications.pairingRequests.value)
-            assertEquals(MainActivity.ACTION_DEVICES, activity.get().intent.action)
-            return
-        }
+        // A device that joined opens Devices in every build.
         assertEquals("device-joined", notifications.devices.value?.deviceId)
         notifications.consumeDevices()
+        if (!BuildConfig.CLOUD_RELAY_ENABLED) {
+            // As on a build without the feature: a pairing request opens nothing and the intent is left as it came.
+            activity.newIntent(devicesTap(stamp = 2_000, pairingRequests = true))
+            assertNull(notifications.pairingRequests.value)
+            assertNull(notifications.devices.value)
+            assertEquals(MainActivity.ACTION_DEVICES, activity.get().intent.action)
+            activity.killedAndRebuiltWith(first)
+            assertNull(notifications.devices.value)
+            return
+        }
         activity.newIntent(devicesTap(stamp = 2_000, pairingRequests = true))
         assertNotNull(notifications.pairingRequests.value)
         assertNull(notifications.devices.value)
@@ -261,5 +265,26 @@ class MainActivityLaunchReplayTest {
 
         assertNull(notifications.devices.value)
         assertNull(notifications.pairingRequests.value)
+    }
+
+    private fun tailscaleJoinTap(stamp: Long) =
+        shortcut(MainActivity.ACTION_TAILSCALE_JOIN_REQUESTS)
+            .putExtra(MainActivity.EXTRA_TAILSCALE_JOIN_LAUNCH_STAMP, stamp)
+
+    @Test
+    fun a_tailscale_join_tap_opens_the_waiting_requests_once_in_every_build() {
+        val first = tailscaleJoinTap(stamp = 1_000)
+        val activity = created(first)
+        assertNotNull(notifications.tailscaleJoinRequests.value)
+        assertNull(notifications.devices.value)
+        assertNull(notifications.pairingRequests.value)
+        notifications.consumeTailscaleJoinRequests()
+        activity.newIntent(tailscaleJoinTap(stamp = 2_000))
+        assertNotNull(notifications.tailscaleJoinRequests.value)
+        notifications.consumeTailscaleJoinRequests()
+
+        activity.killedAndRebuiltWith(first)
+
+        assertNull(notifications.tailscaleJoinRequests.value)
     }
 }

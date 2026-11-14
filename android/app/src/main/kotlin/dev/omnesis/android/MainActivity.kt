@@ -156,6 +156,7 @@ class MainActivity : ComponentActivity() {
             ACTION_SOURCE_PERMISSION -> handleSourcePermission(launchIntent, delivery)
             ACTION_REMOTE_SOURCE_PERMISSION -> handleRemoteSourcePermission(launchIntent, delivery)
             ACTION_DEVICES -> handleDevices(launchIntent, delivery)
+            ACTION_TAILSCALE_JOIN_REQUESTS -> handleTailscaleJoinRequests(launchIntent, delivery)
             ACTION_SEARCH -> handleSearch(launchIntent, delivery)
             Intent.ACTION_VIEW ->
                 handleTaskWidgetDeepLink(launchIntent, delivery) || handleAccessAuthorizationDeepLink(launchIntent)
@@ -270,19 +271,28 @@ class MainActivity : ComponentActivity() {
     }
 
     /**
-     * A device-joined or pairing-request notification opens Devices. It exists only in a
-     * cloud-relay build; without the flag the action is not handled at all, as on a build
-     * without the feature.
+     * A device-joined or pairing-request notification opens Devices. A pairing request exists
+     * only in a cloud-relay build; without the flag that launch is not handled at all, as on a
+     * build without the feature. A device that joined opens Devices in every build.
      */
     private fun handleDevices(launchIntent: Intent, delivery: LaunchDelivery): Boolean {
-        if (!BuildConfig.CLOUD_RELAY_ENABLED) return false
+        val pairingRequests = launchIntent.getBooleanExtra(EXTRA_DEVICES_PAIRING_REQUESTS, false)
+        if (pairingRequests && !BuildConfig.CLOUD_RELAY_ENABLED) return false
         val stamp = launchIntent.getLongExtra(EXTRA_DEVICES_LAUNCH_STAMP, 0L)
         if (!launches.accept(KIND_DEVICES, launchIntent, stamp, delivery)) return false
-        if (launchIntent.getBooleanExtra(EXTRA_DEVICES_PAIRING_REQUESTS, false)) {
+        if (pairingRequests) {
             notificationLaunchBus.postPairingRequests()
         } else {
             notificationLaunchBus.postDevices(launchIntent.getStringExtra(EXTRA_DEVICES_DEVICE_ID))
         }
+        return true
+    }
+
+    /** A `tailscale-join` notification opens the devices waiting to join through Tailscale. */
+    private fun handleTailscaleJoinRequests(launchIntent: Intent, delivery: LaunchDelivery): Boolean {
+        val stamp = launchIntent.getLongExtra(EXTRA_TAILSCALE_JOIN_LAUNCH_STAMP, 0L)
+        if (!launches.accept(KIND_TAILSCALE_JOIN, launchIntent, stamp, delivery)) return false
+        notificationLaunchBus.postTailscaleJoinRequests()
         return true
     }
 
@@ -335,6 +345,8 @@ class MainActivity : ComponentActivity() {
         const val EXTRA_DEVICES_DEVICE_ID = "devices_device_id"
         const val EXTRA_DEVICES_PAIRING_REQUESTS = "devices_pairing_requests"
         const val EXTRA_DEVICES_LAUNCH_STAMP = "devices_launch_stamp"
+        const val ACTION_TAILSCALE_JOIN_REQUESTS = "dev.omnesis.android.action.TAILSCALE_JOIN_REQUESTS"
+        const val EXTRA_TAILSCALE_JOIN_LAUNCH_STAMP = "tailscale_join_launch_stamp"
 
         /** How long after a tile tap the capture screen may still open for it. */
         const val CAPTURE_LAUNCH_FRESHNESS_MS = 30_000L
@@ -349,6 +361,7 @@ class MainActivity : ComponentActivity() {
         private const val KIND_SOURCE_PERMISSION = "source_permission"
         private const val KIND_REMOTE_SOURCE_PERMISSION = "remote_source_permission"
         private const val KIND_DEVICES = "devices"
+        private const val KIND_TAILSCALE_JOIN = "tailscale_join"
 
         /** [intent] with the request it carried removed: no action, no link, no extras. */
         internal fun consumedLaunchIntent(intent: Intent): Intent = Intent(intent).apply {

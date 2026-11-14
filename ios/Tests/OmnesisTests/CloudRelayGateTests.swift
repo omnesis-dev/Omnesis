@@ -30,11 +30,13 @@ final class CloudRelayGateTests: XCTestCase {
         XCTAssertFalse(try CloudRelayFeature.isEnabled(in: bundle([:])))
     }
 
-    func testNotificationsAreIgnoredWithTheFlagOff() {
+    /// A device that joined is routed in every build: a Tailscale join sends it too, with
+    /// no cloud relay involved. See `TailscaleJoinNotificationTests`.
+    func testPairingRequestNotificationsAreIgnoredWithTheFlagOff() {
         let joined: [AnyHashable: Any] = ["omnesis": ["kind": "device-joined", "targetId": "dev-1"]]
         let pairing: [AnyHashable: Any] = ["omnesis": ["kind": "device-pairing", "targetId": "pairing"]]
-        XCTAssertNil(PushTarget.fromUserInfo(joined, cloudRelayEnabled: false))
         XCTAssertNil(PushTarget.fromUserInfo(pairing, cloudRelayEnabled: false))
+        XCTAssertEqual(PushTarget.fromUserInfo(pairing, cloudRelayEnabled: true), .pairingRequests)
         XCTAssertEqual(PushTarget.fromUserInfo(joined, cloudRelayEnabled: true), .deviceJoined)
         XCTAssertEqual(PushTarget.fromUserInfo(["omnesis": ["kind": "device-joined"]], cloudRelayEnabled: true), .deviceJoined)
         XCTAssertEqual(PushTarget.deviceJoined.kindName, "device-joined")

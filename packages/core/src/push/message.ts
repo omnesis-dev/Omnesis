@@ -74,6 +74,9 @@ export const notificationMessageSchema = z.discriminatedUnion("kind", [
   message("device-pairing", z.object({}).strict()),
   // The name is in the banner only: a tap opens Devices, and the row is found there.
   message("device-joined", z.object({}).strict()),
+  // Carries no request id: a tap opens the list of waiting Tailscale join
+  // requests, which only an authenticated administrator can read.
+  message("tailscale-join", z.object({}).strict()),
 ]);
 
 export type NotificationMessage = z.infer<typeof notificationMessageSchema>;
@@ -124,6 +127,7 @@ export const notificationRouteSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("access-authorization") }).strict(),
   z.object({ kind: z.literal("device-pairing") }).strict(),
   z.object({ kind: z.literal("device-joined") }).strict(),
+  z.object({ kind: z.literal("tailscale-join") }).strict(),
 ]);
 
 export type NotificationRoute = z.infer<typeof notificationRouteSchema>;
@@ -147,6 +151,7 @@ export const claimedNotificationSchema = z
       "access-authorization",
       "device-pairing",
       "device-joined",
+      "tailscale-join",
     ]),
     targetId: z.string().min(1).max(512),
     /** Device that owns the condition, when a reminder may be claimed elsewhere. */
@@ -187,6 +192,8 @@ export function notificationTargetId(message: NotificationMessage): string {
       return "pairing";
     case "device-joined":
       return "devices";
+    case "tailscale-join":
+      return "tailscale-join";
     default:
       return assertNever(message);
   }
@@ -231,6 +238,7 @@ export function notificationRoute(message: NotificationMessage): NotificationRou
     case "access-authorization":
     case "device-pairing":
     case "device-joined":
+    case "tailscale-join":
       return { kind: message.kind };
     default:
       return assertNever(message);

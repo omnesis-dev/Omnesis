@@ -288,6 +288,8 @@ function App() {
   const [labAvailable, setLabAvailable] = useState(false);
   const [lab, setLab] = useState({ brain: false, tasks: false, watches: false });
   const [cloudRelay, setCloudRelay] = useState(false);
+  // Whether the gateway runs its own Tailscale device (OMNESIS_TAILSCALE_EMBED_ENABLED=1).
+  const [tailscaleEmbed, setTailscaleEmbed] = useState(false);
 
   // Whether the gateway runs in developer mode (OMNESIS_DEV_MODE=1). Separate
   // from experimental; reveals the floating developer-annotation button. Stays
@@ -380,6 +382,7 @@ function App() {
       setLabAvailable(status?.labAvailable === true);
       setLab({ brain: status?.lab?.brain === true, tasks: status?.lab?.tasks === true, watches: status?.lab?.watches === true });
       setCloudRelay(status?.cloudRelay === true);
+      setTailscaleEmbed(status?.tailscaleEmbed === true);
       setDeveloper(status?.developer === true);
       setDemo(status?.demo === true);
       setTestInstance(status?.testInstance ?? null);
@@ -820,6 +823,7 @@ function App() {
               policyId=${route.policyId}
               completeAccessInPortal=${route.completeAccessInPortal}
               cloudRelay=${cloudRelay}
+              tailscaleEmbed=${tailscaleEmbed}
               experimental=${experimental}
               lab=${lab}
               labAvailable=${labAvailable}

@@ -17,8 +17,10 @@
 
     <!-- Package visibility (API 30+): SpeechRecognizer.isRecognitionAvailable needs to
          see the device's recognition service, and a document's "Open in source" action
-         shows only when some installed app opens its link, whatever the link's scheme. -->
+         shows only when some installed app opens its link, whatever the link's scheme.
+         Pairing with a gateway's Tailscale address opens the Tailscale app when it is installed. -->
     <queries>
+        <package android:name="com.tailscale.ipn" />
         <intent>
             <action android:name="android.speech.RecognitionService" />
         </intent>

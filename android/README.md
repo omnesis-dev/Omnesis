@@ -131,7 +131,9 @@ a certificate that isn't asks the gateway to hold the request for approval. Set
 debug build; a release build always checks, and `:app:verifyPlayReleasePolicy` fails if
 it would not.
 Without `OMNESIS_CLOUD_RELAY_ENABLED=1` none of this exists in the build: no key,
-settings, device details, notifications or token rotation.
+settings, device details, pairing-request notifications or token rotation. (A
+`device-joined` notification still opens Devices: a gateway also sends it for a
+device that joined through Tailscale, which needs no build flag.)
 The same value decides whether the sign-in libraries are packaged: the code that
 needs them lives in `app/src/cloudRelay` and joins the app only when it is set.
 Otherwise the app's manifest gains nothing from them, a QR naming a strict trust

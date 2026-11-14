@@ -25,6 +25,8 @@ internal sealed interface NotificationTarget {
     data class Devices(val deviceId: String?) : NotificationTarget
     /** The Pairing requests list, where a device that signed in waits for approval. */
     data object PairingRequests : NotificationTarget
+    /** The devices on the owner's Tailscale network that wait to join the gateway. */
+    data object TailscaleJoinRequests : NotificationTarget
     data object App : NotificationTarget
 }
 
@@ -44,14 +46,21 @@ internal enum class NotificationRenderOutcome(val shouldConfirm: Boolean) {
     DeferredUnknownKind(false),
 }
 
-private val cloudNotificationKinds = setOf("device-pairing", "device-joined")
+/**
+ * Only a cloud-relay build routes a pairing request. `device-joined` is routed by every build:
+ * the gateway sends it only for a feature that produces it (the cloud relay, or a device that
+ * joined through Tailscale) and only to an app that said it can route it.
+ */
+private const val CLOUD_ONLY_KIND = "device-pairing"
 
-/** A build without cloud connectivity defers the cloud kinds like any kind it has never heard of. */
+/** A build without cloud connectivity defers a pairing request like any kind it has never heard of. */
 internal fun knownNotificationKind(kind: String, cloudEnabled: Boolean = BuildConfig.CLOUD_RELAY_ENABLED): Boolean = kind in setOf(
     "diagnostic", "agent-answer", "conversation", "watch", "needs-auth", "privacy-approval",
     "source-permission",
     "access-authorization",
-) || (cloudEnabled && kind in cloudNotificationKinds)
+    "device-joined",
+    "tailscale-join",
+) || (cloudEnabled && kind == CLOUD_ONLY_KIND)
 
 /** Strict local routing for shared notification kinds. Unknown/malformed content is ignored. */
 internal fun notificationAction(
@@ -59,7 +68,7 @@ internal fun notificationAction(
     localDeviceId: String? = null,
     cloudEnabled: Boolean = BuildConfig.CLOUD_RELAY_ENABLED,
 ): ClaimedPushAction? {
-    if (!cloudEnabled && notification.kind in cloudNotificationKinds) return null
+    if (!cloudEnabled && notification.kind == CLOUD_ONLY_KIND) return null
     val route = notification.route?.takeIf {
         it.string("kind") == notification.kind
     }
@@ -72,6 +81,10 @@ internal fun notificationAction(
             notification.kind,
             NotificationTarget.Devices(route?.string("deviceId")?.takeIf(::validOpaqueTarget)),
         )
+        // Content-free: the waiting requests are read from the gateway by an administrator.
+        "tailscale-join" -> if (notification.route == null || route != null) {
+            ClaimedPushAction(notification.kind, NotificationTarget.TailscaleJoinRequests)
+        } else null
         "agent-answer", "conversation" ->
             (route?.string("conversationId") ?: notification.targetId)
                 .takeIf(::validNotificationId)?.let {

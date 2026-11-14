@@ -83,8 +83,12 @@ public enum PushTarget: Equatable, Sendable {
     /// or code: tapping it may only open the trusted short-code entry sheet.
     case accessAuthorization
     case pairingRequests
-    /// A device joined this gateway by signing in. Opens the device list, where it can be removed.
+    /// A device joined this gateway, by signing in or through Tailscale. Opens the device
+    /// list, where it can be removed.
     case deviceJoined
+    /// Devices wait to join this gateway through Tailscale. Opens the device list with the
+    /// waiting devices over it; the push names none of them.
+    case tailscaleJoinRequests
     /// A finished agent turn whose answer outlived its spoken budget
     /// (a Siri ask handed off to the push channel) — deep-links into
     /// that conversation on the Agent surface.
@@ -114,7 +118,7 @@ public enum PushTarget: Equatable, Sendable {
 extension PushTarget {
     /// Targets whose destination is Settings → Devices.
     var opensDevices: Bool {
-        self == .pairingRequests || self == .deviceJoined
+        self == .pairingRequests || self == .deviceJoined || self == .tailscaleJoinRequests
     }
 
     /// Short kind label safe for `.public` log interpolation — the case
@@ -126,6 +130,7 @@ extension PushTarget {
         case .accessAuthorization: "access-authorization"
         case .pairingRequests: "device-pairing"
         case .deviceJoined: "device-joined"
+        case .tailscaleJoinRequests: "tailscale-join"
         case .agentAnswer: "agent-answer"
         case .watchFiring: "watch-firing"
         case .watch: "watch"
@@ -148,7 +153,10 @@ extension PushTarget {
         -> PushTarget? {
         guard let omnesis = userInfo["omnesis"] as? [String: Any] else { return nil }
         let kind = omnesis["kind"] as? String
-        if kind == "device-joined" { return cloudRelayEnabled ? .deviceJoined : nil }
+        // Neither carries anything to act on: the gateway sends them only while a
+        // feature that produces them is on, so every build routes them.
+        if kind == "device-joined" { return .deviceJoined }
+        if kind == "tailscale-join" { return .tailscaleJoinRequests }
         if let targetId = omnesis["targetId"] as? String, !targetId.isEmpty {
             switch kind {
             case "privacy-approval":

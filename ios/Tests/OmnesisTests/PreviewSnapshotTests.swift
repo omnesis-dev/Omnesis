@@ -291,6 +291,65 @@ final class PreviewSnapshotTests: XCTestCase {
         )
     }
 
+    /// The pairing state for a Tailscale gateway address this phone cannot reach: on its own,
+    /// retrying, after a retry failed differently, at a large text size, and as the sheet it is.
+    func testTailnetPairingUnreachable() {
+        func state(isPairing: Bool = false, retryError: String? = nil) -> TailnetPairingUnreachableView {
+            TailnetPairingUnreachableView(
+                host: PreviewMocks.tailnetGatewayHost,
+                isPairing: isPairing,
+                retryError: retryError,
+                onOpenTailscale: {},
+                onTryAgain: {},
+                onCancel: {}
+            )
+        }
+        snapshot(state(), name: "tailnet-pairing-unreachable")
+        snapshot(state(isPairing: true), name: "tailnet-pairing-retrying")
+        snapshot(state(retryError: PairingErrorMessage.usedOrExpiredCode), name: "tailnet-pairing-retry-failed")
+        snapshot(state().dynamicTypeSize(.accessibility2), name: "tailnet-pairing-unreachable-large")
+        snapshotPresented(
+            Theme.bgPrimary.ignoresSafeArea().sheet(isPresented: .constant(true)) { state() },
+            name: "tailnet-pairing-in-sheet"
+        )
+    }
+
+    /// Waiting to join: two devices, none, a request gone by its decision, an unreachable
+    /// gateway, two devices at a large text size, and two devices as the sheet Devices opens.
+    func testTailscaleWaitingToJoin() async {
+        func loaded(_ client: PreviewMocks.PreviewTailscaleJoinRequests) async -> TailscaleJoinRequestsModel {
+            let model = TailscaleJoinRequestsModel()
+            await model.refresh(client: client)
+            return model
+        }
+        let two = await loaded(PreviewMocks.tailscaleJoinRequestsTwo)
+        snapshot(TailscaleJoinRequestsView(client: nil, model: two), name: "tailscale-join-two")
+        let none = await loaded(PreviewMocks.PreviewTailscaleJoinRequests(rows: []))
+        snapshot(TailscaleJoinRequestsView(client: nil, model: none), name: "tailscale-join-empty")
+
+        let rows = PreviewMocks.tailscaleJoinRows
+        let gone = await loaded(PreviewMocks.PreviewTailscaleJoinRequests(rows: rows))
+        await gone.decide(rows[0], approve: true, client: PreviewMocks.PreviewTailscaleJoinRequests(rows: [rows[1]], decisionGone: true))
+        snapshot(TailscaleJoinRequestsView(client: nil, model: gone), name: "tailscale-join-request-gone")
+
+        let unavailable = await loaded(PreviewMocks.PreviewTailscaleJoinRequests(rows: [], unavailable: true))
+        snapshot(TailscaleJoinRequestsView(client: nil, model: unavailable), name: "tailscale-join-unavailable")
+
+        let large = await loaded(PreviewMocks.tailscaleJoinRequestsTwo)
+        snapshot(
+            TailscaleJoinRequestsView(client: nil, model: large).dynamicTypeSize(.accessibility2),
+            name: "tailscale-join-two-large",
+            size: CGSize(width: 393, height: 1500)
+        )
+        let presented = await loaded(PreviewMocks.tailscaleJoinRequestsTwo)
+        snapshotPresented(
+            Theme.bgPrimary.ignoresSafeArea().sheet(isPresented: .constant(true)) {
+                TailscaleJoinRequestsView(client: nil, model: presented)
+            },
+            name: "tailscale-join-in-sheet"
+        )
+    }
+
     /// The two sign-in buttons are the same rounded rectangle at the same height, stretched
     /// or not, and the pairing code reads large at any length.
     func testSignInButtonsShareOneShape() {

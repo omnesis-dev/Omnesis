@@ -61,6 +61,22 @@ describe("Settings header actions", () => {
     expect([...host.querySelectorAll(".config-tab")].map((tab) => tab.textContent)).toContain("Omnesis account");
   });
 
+  test("the Tailscale tab appears only when the gateway runs its own Tailscale device", async () => {
+    const labels = () => [...host.querySelectorAll(".config-tab")].map((tab) => tab.textContent?.trim());
+    await act(async () => { render(h(SettingsView, { tab: "tailscale" }), host); });
+    expect(labels()).not.toContain("Tailscale");
+    // A link into the tab with the feature off lands on the default tab, with no Tailscale page.
+    expect(host.querySelector(".config-tab.active")?.textContent).toBe("Config");
+    expect(host.querySelector(".settings-view")?.getAttribute("class")).toBe("settings-view");
+    await act(async () => { render(h(SettingsView, { tab: "tailscale", tailscaleEmbed: true }), host); });
+    expect(labels().at(-1)).toBe("Tailscale");
+    expect(host.querySelector(".config-tab.active")?.textContent).toBe("Tailscale");
+    expect(host.querySelector(".settings-view")?.getAttribute("class")).toBe("settings-view");
+    const tab = [...host.querySelectorAll(".config-tab")].find((t) => t.textContent?.trim() === "Devices") as HTMLButtonElement;
+    await act(async () => { tab.click(); });
+    expect(router.replaceRoute).toHaveBeenCalledWith("/portal/settings/devices");
+  });
+
   test("renders logout in the settings header and invokes the app handler", async () => {
     const onLogout = vi.fn();
     await act(async () => {

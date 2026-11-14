@@ -57,6 +57,47 @@ class AdminClientTest {
     }
 
 
+    @Test fun tailscale_join_requests_are_listed_and_decided_on_admin_routes() = runTest {
+        server.enqueue(MockResponse().setBody(
+            """{"requests":[{"id":"join-1","name":"maya-laptop","kind":"collector","machine":"maya-laptop","os":"macOS","login":"maya@example.com","requestedAt":"2026-11-14T18:00:00.000Z","expiresAt":"2026-11-14T18:10:00.000Z","futureField":1},""" +
+                """{"id":"join-2","name":"build-box","requestedAt":"2026-11-14T18:01:00.000Z","expiresAt":"2026-11-14T18:11:00.000Z"}]}""",
+        ))
+        val requests = client().tailscaleJoinRequests()
+        assertEquals(listOf("join-1", "join-2"), requests.map { it.id })
+        assertEquals("maya@example.com", requests[0].login)
+        assertEquals("collector", requests[0].kind)
+        assertNull(requests[1].machine)
+        server.takeRequest().also {
+            assertEquals("GET", it.method)
+            assertEquals("/admin/tailscale/join-requests", it.path)
+            assertEquals("Bearer tok", it.getHeader("Authorization"))
+            assertEquals("no-store", it.getHeader("Cache-Control"))
+        }
+
+        server.enqueue(MockResponse().setBody("""{"status":"approved"}"""))
+        assertEquals("approved", client().decideTailscaleJoin("join/1", true))
+        server.takeRequest().also {
+            assertEquals("POST", it.method)
+            // The id stays one path segment, whatever it holds.
+            assertEquals("/admin/tailscale/join-requests/join%2F1/decision", it.path)
+            assertEquals("""{"approve":true}""", it.body.readUtf8())
+        }
+        server.enqueue(MockResponse().setBody("""{"status":"denied"}"""))
+        assertEquals("denied", client().decideTailscaleJoin("join-2", false))
+        assertEquals("""{"approve":false}""", server.takeRequest().body.readUtf8())
+    }
+
+    @Test fun a_join_request_that_is_gone_is_not_found() = runTest {
+        server.enqueue(MockResponse().setResponseCode(404).setBody("""{"error":"join request not found","code":"NOT_FOUND"}"""))
+        val error = runCatching { client().decideTailscaleJoin("join-1", true) }.exceptionOrNull()
+        assertTrue(error.toString(), error is GatewayException.NotFound)
+    }
+
+    @Test fun no_waiting_join_requests_is_an_empty_list() = runTest {
+        server.enqueue(MockResponse().setBody("""{"requests":[]}"""))
+        assertTrue(client().tailscaleJoinRequests().isEmpty())
+    }
+
     private lateinit var server: MockWebServer
 
     @Before fun setUp() { server = MockWebServer(); server.start() }

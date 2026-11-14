@@ -33,6 +33,7 @@ struct DevicesView: View {
     @State private var loadError: Error?
     @State private var showPairSheet = false
     @State private var showPairingRequests = false
+    @State private var showTailscaleJoins = false
     @State private var repairTarget: DeviceRecord?
 
     /// Every sign-in enrollment surface below sits behind the cloud build flag.
@@ -93,6 +94,13 @@ struct DevicesView: View {
             .refreshable { await load() }
             .task { await load() }
             .task(id: PendingPairingRequests.shared.openRequests) { await openRequestedPairingRequests() }
+            .task(id: TailscaleJoinRequestOpener.shared.openRequests) { await openRequestedTailscaleJoins() }
+            .sheet(
+                isPresented: $showTailscaleJoins,
+                // A device approved here is in the list underneath once the sheet closes.
+                onDismiss: { Task { await load() } },
+                content: { TailscaleJoinRequestsView(client: store.admin).omnesisColorScheme() }
+            )
             .sheet(isPresented: $showPairSheet) {
                 PairDeviceView(cloudRelayEnabled: cloudRelayEnabled)
                     .environment(store)
@@ -140,6 +148,15 @@ struct DevicesView: View {
         // Devices is itself still arriving; a sheet asked for mid-transition is dropped.
         guard await (try? Task.sleep(for: .milliseconds(450))) != nil else { return }
         showPairingRequests = true
+    }
+
+    /// A `tailscale-join` notification tap asked for Waiting to join. Used once, like a
+    /// pairing request's, and only on a phone that may read the waiting devices.
+    private func openRequestedTailscaleJoins() async {
+        guard TailscaleJoinRequestOpener.shared.consumeOpen(),
+              TailscaleJoinRequestOpener.eligible(scopes: store.pairing?.scopes) else { return }
+        guard await (try? Task.sleep(for: .milliseconds(450))) != nil else { return }
+        showTailscaleJoins = true
     }
 
     /// Revoke one token, then refresh that device's token list. Throws so the

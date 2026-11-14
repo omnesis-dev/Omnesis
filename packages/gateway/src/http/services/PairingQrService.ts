@@ -16,6 +16,7 @@ import {
   pairingReachRank,
   relayPairingAddressOption,
   swapHost,
+  tailscaleEmbedEnabled,
   type HostNetwork,
   type NetworkIdentity,
   type PairingAddressOption,
@@ -39,6 +40,16 @@ export type PairingQrTrustMode =
 export interface RelayPairingAddress {
   origin: string;
   ready: boolean;
+}
+
+/**
+ * The gateway's own address on the owner's tailnet, while its Tailscale
+ * device is connected. `trusted` says it presents Tailscale's publicly
+ * trusted certificate rather than the gateway's own.
+ */
+export interface TailnetPairingAddress {
+  origin: string;
+  trusted: boolean;
 }
 
 /** The part of the cloud relay's status that decides `RelayPairingAddress`. */
@@ -129,6 +140,11 @@ export interface PairingQrServiceOptions {
    * offered as soon as the launcher has seen it. Consulted only in a container.
    */
   hostNetwork?: () => HostNetwork | null;
+  /**
+   * The gateway's own tailnet address, read on every request. Absent without
+   * the embedded Tailscale opt-in.
+   */
+  tailnetAddress?: () => TailnetPairingAddress | null;
 }
 
 const IDENTITY_LABELS: Record<NetworkIdentity["kind"], string> = {
@@ -229,7 +245,22 @@ export class PairingQrService {
   private trustCheck(relayOrigin: string | null): (origin: string, host: string) => boolean {
     const origins = this.allowlistedOrigins();
     const hosts = new Set((this.options.publiclyTrustedHosts?.() ?? []).map(normalizeHost));
-    return (origin, host) => origins.has(origin) || hosts.has(host) || origin === relayOrigin;
+    const tailnet = this.tailnetAddress();
+    const tailnetOrigin = tailnet?.trusted ? tailnet.origin : null;
+    return (origin, host) =>
+      origins.has(origin) || hosts.has(host) || origin === relayOrigin || origin === tailnetOrigin;
+  }
+
+  /** The gateway's own tailnet address for this request, its origin canonical, or null. */
+  private tailnetAddress(): TailnetPairingAddress | null {
+    if (!tailscaleEmbedEnabled() || !this.options.tailnetAddress) return null;
+    const address = this.options.tailnetAddress();
+    if (!address) return null;
+    try {
+      return { origin: canonicalOrigin(address.origin), trusted: address.trusted };
+    } catch {
+      return null;
+    }
   }
 
   /**
@@ -268,7 +299,9 @@ export class PairingQrService {
 
   /** A Tailscale name phones verify through platform trust, when there is one. */
   private trustedTailnetName(): string | null {
+    const tailnet = this.tailnetAddress();
     const hosts = [
+      ...(tailnet?.trusted ? [pairingHost(new URL(tailnet.origin))] : []),
       ...(this.options.publiclyTrustedHosts?.() ?? []).map(normalizeHost),
       ...[...this.allowlistedOrigins()].map((origin) => pairingHost(new URL(origin))),
     ];
@@ -387,6 +420,10 @@ export class PairingQrService {
     };
 
     const candidates = new Map<string, string>();
+    // The gateway's own tailnet address reaches every device on the owner's
+    // tailnet, wherever it is, so it leads among equally ranked addresses.
+    const tailnet = this.tailnetAddress();
+    if (tailnet) candidates.set(tailnet.origin, "Tailscale (this gateway's own device)");
     for (const origin of this.allowlistedOrigins()) {
       candidates.set(origin, labelFor(new URL(origin).hostname, "Public address"));
     }
@@ -507,6 +544,25 @@ export class PairingQrService {
     },
     relay: RelayPairingAddress | null = null,
   ): string {
+    const payload = this.encodePayload(input, relay);
+    const tailnet = this.tailnetAddress();
+    // The mark tells the phone this address is on the owner's tailnet, so a
+    // failure to reach it can be explained as Tailscale not being connected.
+    return JSON.stringify(
+      tailnet && sameOrigin(tailnet.origin, input.gatewayUrl)
+        ? { ...payload, tailnet: true }
+        : payload,
+    );
+  }
+
+  private encodePayload(
+    input: {
+      pairingCode: string;
+      gatewayUrl: string;
+      trustMode?: PairingQrTrustMode;
+    },
+    relay: RelayPairingAddress | null,
+  ): object {
     const platform = this.platformFor(input.pairingCode);
     const isRelay = relay !== null && sameOrigin(relay.origin, input.gatewayUrl);
     if (isRelay && !relay.ready && !this.allowlistedOrigins().has(relay.origin)) {
@@ -556,59 +612,49 @@ export class PairingQrService {
       case "pinned-key-strict":
         if (!spki || !/^[a-f0-9]{64}$/.test(spki))
           throw new BadRequestError("pinned-key TLS trust requires a gateway SPKI fingerprint");
-        return JSON.stringify(
-          buildPairingPayloadV4({
-            gatewayUrl: canonicalOrigin(input.gatewayUrl),
-            pairingCode: input.pairingCode,
-            tls: { mode: "pinned-key-strict", spkiFingerprint: spki },
-          }),
-        );
+        return buildPairingPayloadV4({
+          gatewayUrl: canonicalOrigin(input.gatewayUrl),
+          pairingCode: input.pairingCode,
+          tls: { mode: "pinned-key-strict", spkiFingerprint: spki },
+        });
       case "pinned-leaf":
       case "pinned-leaf-strict": {
         const fingerprint = this.tlsFingerprintSha256;
         if (!fingerprint) {
           throw new BadRequestError("pinned-leaf TLS trust requires a gateway fingerprint");
         }
-        return JSON.stringify(
-          buildPairingPayloadV4({
-            gatewayUrl: canonicalOrigin(input.gatewayUrl),
-            pairingCode: input.pairingCode,
-            tls: { mode: trustMode, fingerprint },
-          }),
-        );
+        return buildPairingPayloadV4({
+          gatewayUrl: canonicalOrigin(input.gatewayUrl),
+          pairingCode: input.pairingCode,
+          tls: { mode: trustMode, fingerprint },
+        });
       }
       default:
         return assertNever(trustMode);
     }
   }
 
-  private systemTrustPayload(input: { pairingCode: string; gatewayUrl: string }): string {
-    return JSON.stringify(
-      buildPairingPayloadV4({
-        gatewayUrl: canonicalOrigin(input.gatewayUrl),
-        pairingCode: input.pairingCode,
-        tls: { mode: "system" },
-      }),
-    );
+  private systemTrustPayload(input: { pairingCode: string; gatewayUrl: string }): object {
+    return buildPairingPayloadV4({
+      gatewayUrl: canonicalOrigin(input.gatewayUrl),
+      pairingCode: input.pairingCode,
+      tls: { mode: "system" },
+    });
   }
 
   /** V3 pinned to the served leaf, or V2 when the gateway has no fingerprint. */
-  private compatibilityPayload(input: { pairingCode: string; gatewayUrl: string }): string {
+  private compatibilityPayload(input: { pairingCode: string; gatewayUrl: string }): object {
     const fingerprint = this.tlsFingerprintSha256;
     return fingerprint
-      ? JSON.stringify(
-          buildPairingPayloadV3({
-            gatewayUrl: input.gatewayUrl,
-            pairingCode: input.pairingCode,
-            fingerprint,
-          }),
-        )
-      : JSON.stringify(
-          buildPairingPayloadV2({
-            gatewayUrl: input.gatewayUrl,
-            pairingCode: input.pairingCode,
-          }),
-        );
+      ? buildPairingPayloadV3({
+          gatewayUrl: input.gatewayUrl,
+          pairingCode: input.pairingCode,
+          fingerprint,
+        })
+      : buildPairingPayloadV2({
+          gatewayUrl: input.gatewayUrl,
+          pairingCode: input.pairingCode,
+        });
   }
 
   /** The phone a pending code was minted for; refuses a code that is not pending. */

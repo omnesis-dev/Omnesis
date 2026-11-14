@@ -270,6 +270,10 @@ class FcmPushManager @Inject constructor(
                     putExtra(MainActivity.EXTRA_DEVICES_PAIRING_REQUESTS, true)
                     putExtra(MainActivity.EXTRA_DEVICES_LAUNCH_STAMP, System.nanoTime())
                 }
+                NotificationTarget.TailscaleJoinRequests -> {
+                    action = MainActivity.ACTION_TAILSCALE_JOIN_REQUESTS
+                    putExtra(MainActivity.EXTRA_TAILSCALE_JOIN_LAUNCH_STAMP, System.nanoTime())
+                }
                 NotificationTarget.App -> Unit
             }
         }
