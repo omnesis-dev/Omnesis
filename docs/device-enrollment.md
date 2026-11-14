@@ -164,6 +164,27 @@ owner removes it. `GET /admin/cloud-relay/trusted-sign-ins` lists each pin with
 its source and whether it is confirmed (and how); the portal's New devices section
 and `omnesis cloud trusted-sign-ins` show the same.
 
+A device joins with a passkey on the gateway's own page the same way, without
+the relay's account page:
+
+1. `POST /devices/account/passkey/options` (public, rate-limited like
+   `/challenge`) takes `{ requestId, kind, name, secret, devicePublicKey }` and
+   returns a `device-enrollment` ceremony: a fresh `/devices/account/challenge`
+   value and the WebAuthn challenge bound to the request's `enrollmentNonce`.
+   `/devices/account/config` advertises `gatewayPasskey: { rpId, origin }` when
+   the gateway has an origin of its own.
+2. The device signs `enrollmentSignatureTranscript` for that same challenge and
+   sends `/devices/account/request` with `proof: { type: "gateway-passkey", … }`.
+   The proof's `challenge` must be the one its `deviceKey` answers.
+3. The gateway checks the assertion against the key the owner confirmed here,
+   else the key pinned here, else the key the account lists. The first two are
+   trusted; a listed key only lets the request wait for a person, with no relay
+   attestation needed, since the passkey itself signed on the gateway's page. An
+   assertion that does not verify is refused outright.
+
+The portal offers this as "Sign in with Passkey" when it is on the gateway's own
+origin; "Sign in on the Omnesis account page" keeps the relay's handoff.
+
 A Google token counts as made in an official app (`native-google`) only when an
 official native client presented it: the Android release or test client as
 `azp` of a token for the web client, or the iOS client as both `aud` and `azp`.

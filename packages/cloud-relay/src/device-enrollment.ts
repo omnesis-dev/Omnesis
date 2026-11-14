@@ -428,3 +428,15 @@ export const deviceKeyEvidenceSchema = z
   })
   .strict();
 export type DeviceKeyEvidence = z.infer<typeof deviceKeyEvidenceSchema>;
+
+/**
+ * What a device's request to join may carry: a sign-in made on the relay's account page or in an
+ * app, or a passkey assertion made on the gateway's own page.
+ */
+export const enrollmentProofSchema = z.discriminatedUnion("type", [
+  googleSignInProofSchema,
+  passkeySignInProofSchema,
+  passkeyRegistrationProofSchema,
+  gatewayPasskeySignInProofSchema,
+]);
+export type EnrollmentProof = z.infer<typeof enrollmentProofSchema>;

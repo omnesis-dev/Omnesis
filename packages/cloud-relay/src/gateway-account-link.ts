@@ -40,6 +40,7 @@ import {
   gatewayPasskeyPinBinding,
   gatewayPasskeySignInProofSchema,
   signInDigest,
+  type GatewayPasskeySignInProof,
   type GatewayPasskeyPurpose,
   type SignInProof,
 } from "./device-enrollment.js";
@@ -449,7 +450,86 @@ export class GatewayAccountLink {
       verifyProof: (proof, nonce, key) => this.verifyProof(proof, nonce, key),
       canTrust: (signIn) => this.canTrust(signIn),
       trustSignIn: (signIn, source) => this.trustSignIn(signIn, source),
+      verifyGatewayPasskey: (proof, challenge, nonce) =>
+        this.verifyGatewayEnrollment(proof, challenge, nonce),
+      gatewayPasskey: () => {
+        const origin = this.gatewayOrigin();
+        return origin
+          ? { rpId: bindingOrigin(installationRelayUrl(this.options.env())!).hostname, origin }
+          : undefined;
+      },
     };
+  }
+  /**
+   * A device's passkey sign-in on this gateway's page. The key is the one the owner confirmed
+   * here, else the one pinned here, else the one the account lists: a listed key only lets the
+   * request be held for a person, since the relay chose it. Only a confirmed or pinned key makes
+   * the sign-in trusted.
+   */
+  private async verifyGatewayEnrollment(
+    proof: GatewayPasskeySignInProof,
+    challenge: string,
+    nonce: string,
+  ): Promise<VerifiedSignIn | undefined> {
+    const record = this.record?.linked && this.verifiedAccountId() ? this.record : undefined;
+    if (!record) return undefined;
+    const id = proof.credential.id;
+    const confirmed = record.confirmedSignIns.find(
+      (value): value is Extract<ConfirmedSignIn, { type: "passkey" }> =>
+        value.type === "passkey" && value.id === id,
+    );
+    const pinned = record.trustedSignIns.find(
+      (value): value is Extract<TrustedSignIn, { type: "passkey" }> =>
+        value.type === "passkey" && value.id === id,
+    );
+    let publicKey = confirmed?.publicKey ?? pinned?.publicKey;
+    if (!publicKey) {
+      const listing = await this.browser.credentials?.(this.abort.signal).catch(() => undefined);
+      if (listing?.accountId === undefined || listing.accountId === record.accountId)
+        publicKey = listing?.passkeys.find((value) => value.id === id)?.publicKey;
+    }
+    if (!publicKey) return undefined;
+    const verified = await this.verifier.verifyGatewayPasskey(proof, {
+      purpose: "device-enrollment",
+      challenge,
+      binding: nonce,
+      key: () => ({ publicKey: publicKey, counter: confirmed?.counter ?? 0 }),
+    });
+    if (!verified) return undefined;
+    if (confirmed && verified.counter !== confirmed.counter)
+      await this.recordCounter(record, id, verified.counter);
+    return {
+      type: "passkey",
+      id,
+      trusted: Boolean(confirmed || pinned),
+      channel: verified.channel,
+      pin: {
+        type: "passkey",
+        id,
+        publicKey: verified.publicKey,
+        addedAt: Math.floor(Date.now() / 1000),
+      },
+    };
+  }
+  /**
+   * Keeps the signature counter a confirmed passkey last presented. A record that changed in the
+   * meantime is left as it is: the next use records the counter again.
+   */
+  private async recordCounter(
+    record: Extract<Record, { linked: true }>,
+    id: string,
+    counter: number,
+  ): Promise<void> {
+    await this.save(
+      {
+        ...record,
+        confirmedSignIns: record.confirmedSignIns.map((value) =>
+          value.type === "passkey" && value.id === id ? { ...value, counter } : value,
+        ),
+      },
+      this.abort.signal,
+      record,
+    ).catch(() => undefined);
   }
   /**
    * A passkey added moments ago may carry a vouching sign-in this gateway has not fetched yet, and

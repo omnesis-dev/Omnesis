@@ -77,6 +77,7 @@ describe("sign-in enrollment with the cloud relay flag off", () => {
       ["POST", "/devices/account/request", {}],
       ["POST", "/devices/account/poll", {}],
       ["GET", "/devices/account/config"],
+      ["POST", "/devices/account/passkey/options", {}],
       ["POST", "/devices/token/challenge", {}],
       ["POST", "/devices/token/rotate", {}],
       ["GET", "/admin/cloud-relay"],

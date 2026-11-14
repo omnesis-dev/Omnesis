@@ -50,6 +50,7 @@ import {
   EnrollmentWorld,
   GatewayRefused,
   PasskeyBrowser,
+  assertionOn,
   runCli,
   browserSuiteAvailable,
   certificateSwapProxy,
@@ -58,6 +59,7 @@ import {
   signInOnThisMachine,
   signedInAccount,
   waitFor,
+  type GatewayPasskeyCeremony,
   type PasskeySession,
 } from "./account-enrollment-harness.js";
 import { gatewayBootBudgetMs } from "./gateway-env.js";
@@ -454,6 +456,39 @@ describe.skipIf(!browserReady)("a relay cannot enroll devices on its own", () =>
         expect(observing.deviceEnrollment.policy).toBe("automatic");
         expect(observing).not.toHaveProperty("incidentHold");
 
+        // The owner confirms the passkey on the gateway's own page, so a passkey sign-in made
+        // there joins on its own; and a second ceremony starts before anyone else holds a
+        // certificate for the name.
+        const confirm = async (ceremony: GatewayPasskeyCeremony) =>
+          gateway.confirmPasskey({
+            type: "gateway-passkey",
+            challenge: ceremony.challenge,
+            credential: await assertionOn(
+              session,
+              gateway.publicOrigin,
+              ceremony.webauthnChallenge,
+            ),
+          });
+        expect((await confirm(await gateway.passkeyConfirmation())).status).toBe(200);
+        const early = await gateway.passkeyConfirmation();
+        const joinOptions = () => {
+          const devicePublicKey = generateKeyPairSync("ec", { namedCurve: "prime256v1" })
+            .publicKey.export({ type: "spki", format: "der" })
+            .toString("base64url");
+          return gateway.fetch("/devices/account/passkey/options", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({
+              requestId: randomUUID(),
+              kind: "cli",
+              name: "Fictional incident-page CLI",
+              secret: randomBytes(32).toString("hex"),
+              devicePublicKey,
+            }),
+          });
+        };
+        expect((await joinOptions()).status).toBe(200);
+
         // Someone obtains a publicly trusted, logged certificate for the gateway's name
         // with a key of their own.
         const rogue = await world.pki.leaf("rogue", [gateway.hostname], { sct: true });
@@ -474,6 +509,23 @@ describe.skipIf(!browserReady)("a relay cannot enroll devices on its own", () =>
           held.certificateMonitor!.incidents.map((incident) => incident.certificateFingerprint),
         ).toEqual([rogueFingerprint]);
         expect(held.deviceEnrollment.policy).toBe("ask");
+
+        // TM-01 (certificate incident): whoever holds that certificate can serve a page on the
+        // gateway's own name, so nothing signed there counts while the hold is on. The ceremony
+        // from before the hold confirms nothing, no new one starts, and no passkey join starts.
+        const steered = await confirm(early);
+        expect(steered.status).toBe(403);
+        expect(await steered.json()).toMatchObject({ code: "passkey-not-confirmed" });
+        const noCeremony = await gateway.fetch("/admin/cloud-relay/passkeys/confirm/options", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: "{}",
+        });
+        expect(noCeremony.status).toBe(409);
+        expect(await noCeremony.json()).toMatchObject({ code: "passkey-origin-unavailable" });
+        expect((await joinOptions()).status).toBe(404);
+        expect(held.deviceEnrollment).not.toHaveProperty("confirmOrigin");
+        expect(held.deviceEnrollment.confirmedSignIns).toHaveLength(1);
 
         // A sign-in the gateway trusts, which joined with no approval before, now waits for one.
         const name = "Fictional held-by-incident CLI";
@@ -527,6 +579,8 @@ describe.skipIf(!browserReady)("a relay cannot enroll devices on its own", () =>
         const acknowledged = await gateway.status();
         expect(acknowledged).not.toHaveProperty("incidentHold");
         expect(acknowledged.deviceEnrollment.policy).toBe("automatic");
+        // The gateway's page counts again.
+        expect((await joinOptions()).status).toBe(200);
         // The incident itself stays on record, and doesn't hold again after another restart.
         expect(acknowledged.certificateMonitor!.incidents).toHaveLength(1);
         await gateway.restart();

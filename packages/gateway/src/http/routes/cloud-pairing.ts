@@ -3,7 +3,7 @@
 
 import { cloudRelayEnabled } from "@omnesis/core";
 import { defaultScopesForDeviceKind } from "@omnesis/types";
-import { googlePairingRequestSchema } from "@omnesis/cloud-relay";
+import { gatewayPasskeyOptionsSchema, googlePairingRequestSchema } from "@omnesis/cloud-relay";
 import { z } from "zod";
 import { bodyLimit } from "hono/body-limit";
 import { CloudPairingRuntime } from "../services/CloudPairingRuntime.js";
@@ -96,6 +96,10 @@ export function mountCloudPairingRoutes(
         ...(active.account ? { accountSignIn: true } : {}),
         ...(active.account && spkiFingerprint?.()
           ? { automaticEnrollment: true, gatewaySpkiFingerprint: spkiFingerprint() }
+          : {}),
+        // Where a page on this gateway's own origin can sign in with a passkey, when it has one.
+        ...(active.account && active.pairing.gatewayPasskey()
+          ? { gatewayPasskey: active.pairing.gatewayPasskey() }
           : {}),
         ...(active.managedClient
           ? {
@@ -241,6 +245,21 @@ export function mountCloudPairingRoutes(
       c.header("Cache-Control", "no-store");
       return c.json(await operate(({ pairing }) => pairing.issueChallenge()));
     });
+    if (base === "/devices/account")
+      app.post(
+        `${base}/passkey/options`,
+        scope.public(),
+        boundedBody,
+        validateJson(gatewayPasskeyOptionsSchema),
+        async (c) => {
+          if (limiter.consume(clientIp(c)))
+            return c.json({ error: "Too many pairing requests" }, 429);
+          c.header("Cache-Control", "no-store");
+          return c.json(
+            await operate(({ pairing }) => pairing.passkeyCeremony(c.req.valid("json"))),
+          );
+        },
+      );
     app.post(`${base}/poll`, scope.public(), boundedBody, validateJson(poll), async (c) => {
       if (pollLimiter.consume(clientIp(c)))
         return c.json({ error: "Too many pairing requests" }, 429);

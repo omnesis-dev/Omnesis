@@ -2507,3 +2507,133 @@ test("TM-01 (certificate incident): while a rogue certificate may exist for the 
   await f.manager.confirmPasskey(f.assert(owner, f.manager.passkeyConfirmation()));
   expect(f.manager.confirmedSignIns()).toHaveLength(1);
 });
+
+test("a device's passkey sign-in on the gateway's page uses the confirmed, pinned or listed key, and only the first two trust it", async () => {
+  const f = await confirming();
+  const enrollment = f.manager.pairingIdentity()!.enrollment;
+  expect(enrollment.gatewayPasskey!()).toEqual({ rpId: "relay.example.test", origin: f.own });
+  const signIn = (device: PasskeyDevice, options: { from?: string; counter?: number } = {}) => {
+    const challenge = opaque(),
+      nonce = opaque(),
+      from = options.from ?? f.own;
+    return enrollment.verifyGatewayPasskey!(
+      {
+        type: "gateway-passkey",
+        challenge,
+        credential: device.authenticator.authentication(
+          gatewayPasskeyChallenge("device-enrollment", from, challenge, nonce),
+          "dXNlcg",
+          options.counter ?? 0,
+          from,
+        ) as never,
+      },
+      challenge,
+      nonce,
+    );
+  };
+  const confirmed = await passkeyDevice(),
+    listed = await passkeyDevice(),
+    stranger = await passkeyDevice();
+  f.list(
+    { id: confirmed.id, publicKey: confirmed.publicKey },
+    { id: listed.id, publicKey: listed.publicKey },
+  );
+  await f.manager.confirmPasskey(
+    f.assert(confirmed, f.manager.passkeyConfirmation(), { counter: 2 }),
+  );
+  // Confirmed: trusted, and its counter moves on with each use.
+  expect(await signIn(confirmed, { counter: 5 })).toMatchObject({
+    id: confirmed.id,
+    trusted: true,
+    channel: "gateway-origin",
+  });
+  expect(f.manager.confirmedSignIns()).toEqual([expect.objectContaining({ counter: 5 })]);
+  expect(await signIn(confirmed, { counter: 5 })).toBeUndefined();
+  // With a second confirmed passkey, only the one used moves on; a failed save is not fatal.
+  await f.manager.confirmPasskey(f.assert(listed, f.manager.passkeyConfirmation(), { counter: 1 }));
+  expect(await signIn(confirmed, { counter: 6 })).toMatchObject({ trusted: true });
+  expect(
+    f.manager.confirmedSignIns().map((value) => (value.type === "passkey" ? value.counter : -1)),
+  ).toEqual([6, 1]);
+  const save = vi
+    .spyOn(GatewayAccountLink.prototype as unknown as { save(): Promise<void> }, "save")
+    .mockRejectedValueOnce(new Error("disk full"));
+  expect(await signIn(confirmed, { counter: 7 })).toMatchObject({ trusted: true });
+  save.mockRestore();
+  // Listed again as unconfirmed for the next checks.
+  await f.manager.removeTrustedSignIn(listed.id);
+  // Listed only: verified, so it can be held for the owner, but not trusted.
+  expect(await signIn(listed)).toMatchObject({ id: listed.id, trusted: false });
+  // Pinned but not confirmed: trusted as a pin is today.
+  const pinnedOnly = await passkeyDevice();
+  await writeFile(
+    f.options.metadataFile,
+    JSON.stringify({
+      ...(await f.saved()),
+      trustedSignIns: [
+        {
+          type: "passkey",
+          id: pinnedOnly.id,
+          publicKey: pinnedOnly.publicKey,
+          addedAt: 1,
+          source: "link-page",
+        },
+      ],
+    }) + "\n",
+    { mode: 0o600 },
+  );
+  await f.manager.initialize();
+  expect(await signIn(pinnedOnly)).toMatchObject({ id: pinnedOnly.id, trusted: true });
+  // Not listed, made on the relay's page, or listed for another account: nothing.
+  expect(await signIn(stranger)).toBeUndefined();
+  expect(await signIn(listed, { from: origin })).toBeUndefined();
+  f.credentials.mockResolvedValueOnce({
+    accountId: "b".repeat(64),
+    google: [],
+    passkeys: [{ id: listed.id, publicKey: listed.publicKey }],
+  });
+  expect(await signIn(listed)).toBeUndefined();
+  f.credentials.mockResolvedValueOnce({
+    accountId: f.accountId,
+    google: [],
+    passkeys: [{ id: listed.id, publicKey: listed.publicKey }],
+  });
+  expect(await signIn(listed)).toMatchObject({ trusted: false });
+  f.credentials.mockRejectedValueOnce(new Error("offline"));
+  expect(await signIn(listed)).toBeUndefined();
+  // Without an origin of its own the gateway offers no ceremony.
+  f.env.OMNESIS_CLOUD_RELAY_GATEWAY_ORIGIN = origin;
+  expect(enrollment.gatewayPasskey!()).toBeUndefined();
+  // Unlinked, nothing verifies.
+  await f.manager.unlink();
+  expect(await signIn(confirmed)).toBeUndefined();
+});
+
+test("TM-01 (certificate incident, join): while a rogue certificate may exist for the gateway's name, a passkey sign-in on its page joins nothing", async () => {
+  const f = await confirming();
+  const enrollment = f.manager.pairingIdentity()!.enrollment;
+  const owner = await passkeyDevice();
+  f.list({ id: owner.id, publicKey: owner.publicKey });
+  await f.manager.confirmPasskey(f.assert(owner, f.manager.passkeyConfirmation()));
+  expect(await f.manager.holdForCertificateIncident([ROGUE])).toBe(true);
+  expect(enrollment.gatewayPasskey!()).toBeUndefined();
+  const challenge = opaque(),
+    nonce = opaque();
+  // Made on the gateway's name, which whoever holds that certificate can serve.
+  expect(
+    await enrollment.verifyGatewayPasskey!(
+      {
+        type: "gateway-passkey",
+        challenge,
+        credential: owner.authenticator.authentication(
+          gatewayPasskeyChallenge("device-enrollment", f.own, challenge, nonce),
+          "dXNlcg",
+          1,
+          f.own,
+        ) as never,
+      },
+      challenge,
+      nonce,
+    ),
+  ).toBeUndefined();
+});

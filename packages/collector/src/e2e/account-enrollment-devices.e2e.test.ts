@@ -787,7 +787,8 @@ describe.skipIf(!browserReady)("devices join a gateway by signing in", () => {
     await gateway.pace(3);
     const page = session.page;
     await page.goto(`${gateway.publicOrigin}/portal/`);
-    await clickFirst(page, ["Sign in with Passkey"]);
+    // The relay's account page; signing in on the gateway's own page is the other button.
+    await clickFirst(page, ["Sign in on the Omnesis account page"]);
     await clickFirst(page, ["Sign in with Passkey", "Verify with Passkey"]);
     await waitFor(
       () => new URL(page.url()).origin === new URL(gateway.publicOrigin).origin,
