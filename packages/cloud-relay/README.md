@@ -105,8 +105,10 @@ unlinking. Native clients and `omnesis cloud pair --kind cli` or `--kind collect
 let the user sign in, explicitly choose a gateway, and request enrollment. By
 default a trusted gateway device must approve the request, and the requesting
 device must confirm the comparison code. A gateway whose owner chose
-automatic enrollment lets a device-bound sign-in it has pinned join without that
-step ([docs/device-enrollment.md](../../docs/device-enrollment.md)). The resulting
+automatic enrollment lets a device join without that step only with a sign-in the
+owner confirmed on the gateway itself, made where no relay page could make it: a
+passkey on the gateway's own page or in the Android app, or Google in an Omnesis
+app ([docs/device-enrollment.md](../../docs/device-enrollment.md)). The resulting
 pinned device credential is independent of Google, passkeys, and the chosen LAN
 or relay connection path. QR/manual pairing and independently configured direct
 access remain available.
@@ -118,8 +120,9 @@ Android Google sign-in uses Credential Manager with a server-issued nonce.
 
 The desktop also listens once on `127.0.0.1` (RFC 8252 loopback redirect). After
 the browser confirms, the relay sends it there with a one-use completion secret,
-and only a desktop presenting that secret receives the sign-in proof that can
-join automatically. A link phished to someone else ends on their own machine. A
+and only a desktop presenting that secret receives the sign-in proof. That proof
+was made on a relay page, so the request waits for approval on the gateway. A link
+phished to someone else ends on their own machine. A
 connect code typed on another device never yields a proof, so the CLI says that
 signing in elsewhere needs approval on the owner's phone or another paired
 device; over SSH it prints the comparison code and waits for that approval.
@@ -170,26 +173,25 @@ the same address ([docs/device-enrollment.md](../../docs/device-enrollment.md)).
 
 ### What the relay is trusted with
 
-Sign-ins on pages the relay hosts (portal enrollment, desktop sign-in, the owner
+Sign-ins on pages the relay hosts (portal handoff, desktop sign-in, the owner
 link, signup and the account page) are only as trustworthy as the relay: their
-script computes the WebAuthn challenge and Google nonce, so a compromised relay
-could bind the owner's sign-in to a device key of its own, and at link time could
-have the gateway pin its own Google account or passkey and keep listing it.
-Sign-ins in the iOS and Android apps compute the nonce on the device from its own
-key and are not exposed to that. Each sign-in is bound to its purpose: one made
-to link a gateway (signup or the owner link) commits to the gateway's nonce under
-a link label, so the gateway never accepts it as a device's enrollment sign-in,
-nor an enrollment sign-in as a link. The gateway records each trusted sign-in's
-origin and its portal shows "Signed in on the Omnesis account page" or "Signed in in the
-app". A passkey's public key arrives with the request, so the gateway trusts a
-passkey on approval only when the relay's credential list for the linked account
-holds that id with that key, and drops a pin whose listed key changes. A passkey
-added to an account later is stored only once a sign-in the account already has
-vouches for it, and the new passkey itself countersigns the sign-ins the account
-already had; gateways verify both themselves, so a gateway that trusts either
-side comes to trust the other without an approval
-(`docs/device-enrollment.md`, Passkeys added later). Gateways
-that do not trust the relay with joining devices keep the default `ask` policy.
+script computes the WebAuthn challenge and Google nonce. So no such sign-in ever
+joins a device by itself: the gateway holds it for a person with a comparison
+code, and approving it confirms nothing. Only sign-ins the owner confirmed on the
+gateway join automatically, and only when made where the relay cannot steer them:
+a passkey assertion on the gateway's own origin (`g-….relay.omnesis.app`, the RP
+ID still being the relay's host) over a one-use challenge the gateway issued, a
+passkey in the Android app (its compiled `android:apk-key-hash:` origins), or a
+Google token an official app client presented. The gateway derives its own origin
+from its id and refuses that trust when the public origin the relay returned is
+anything else. What the relay's listing and stored evidence (endorsements and
+countersignatures, the link page's sign-in) pin is shown to the owner as a
+suggestion and never trusted. Each sign-in is also bound to its purpose: one made
+to link a gateway commits to the gateway's nonce under a link label, so it is never
+accepted as a device's enrollment sign-in, nor the reverse. This relies on the relay
+being unable to obtain a certificate for a gateway's hosted name; that isolation is
+separate from this package's enrollment checks. Gateways that want every device
+approved by a person choose the `ask` policy.
 
 Account services require `OMNESIS_CLOUD_RELAY_PUBLIC_ORIGIN` to name the public
 HTTPS control origin. A routing-only relay may omit it and does not initialize

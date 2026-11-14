@@ -187,7 +187,8 @@ describe.skipIf(!browserReady)("leave an Omnesis account", () => {
       return done;
     };
     /**
-     * A CLI joins by signing in, through the relay. Like the phone apps, it then knows the
+     * A CLI joins by signing in, through the relay. Its sign-in is made on the relay's page, so
+     * the gateway holds it and the owner approves it. Like the phone apps, it then knows the
      * gateway by its public name and holds the key of the certificate it was shown.
      */
     const joinDevice = async (person: PasskeySession, deviceName: string) => {
@@ -216,6 +217,19 @@ describe.skipIf(!browserReady)("leave an Omnesis account", () => {
       );
       pairing.catch(() => undefined);
       await signInOnThisMachine(person, await launchUrl);
+      const held = await waitFor(
+        async () =>
+          (
+            await gateway.gatewayJson<{
+              items: Array<{ requestId: string; name: string; status: string }>;
+            }>("/admin/cloud-pairing/requests")
+          ).items.find((request) => request.name === deviceName && request.status === "pending"),
+        `the held request from ${deviceName}`,
+      );
+      await gateway.gatewayJson("/admin/cloud-pairing/decision", {
+        method: "POST",
+        body: JSON.stringify({ requestId: held.requestId, approve: true }),
+      });
       const paired = await pairing;
       const origin = new URL(paired.gatewayUrl),
         pin = spki(new X509Certificate(paired.gatewayCertificate));

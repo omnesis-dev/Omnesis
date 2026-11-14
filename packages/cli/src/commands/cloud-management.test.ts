@@ -340,6 +340,16 @@ test("trusted sign-ins say whether, and how, the owner confirmed each on this ga
     "",
   ]);
 });
+test("status says whether new devices can join yet: only once a sign-in is confirmed here", () => {
+  expect(
+    formatCloudStatus({ deviceEnrollment: { policy: "automatic", confirmationNeeded: true } }),
+  ).toContain(
+    "  New devices:            join automatically once a sign-in is confirmed here; until then each waits for approval\n",
+  );
+  expect(
+    formatCloudStatus({ deviceEnrollment: { policy: "automatic", confirmationNeeded: false } }),
+  ).toContain("  New devices:            join automatically with a sign-in confirmed here\n");
+});
 test("every new command refuses before any gateway call unless cloud relay is enabled", async () => {
   vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "0");
   for (const [name, rawArgs] of [

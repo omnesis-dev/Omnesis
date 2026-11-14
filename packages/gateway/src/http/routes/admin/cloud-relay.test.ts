@@ -635,6 +635,7 @@ test("confirming a passkey on the gateway's page and listing sign-ins are admin-
     ...status,
     deviceEnrollment: {
       policy: "automatic",
+      confirmationNeeded: false,
       trustedSignIns: [
         { type: "passkey", id: "p1", addedAt: 1, source: "link-page", confirmed: true },
         { type: "google", id: "g1", addedAt: 2, source: "countersigned", confirmed: false },
@@ -665,7 +666,12 @@ test("confirming a passkey on the gateway's page and listing sign-ins are admin-
   });
   vi.mocked(service.status).mockResolvedValue({
     ...status,
-    deviceEnrollment: { policy: "ask", trustedSignIns: [], confirmedSignIns: [] },
+    deviceEnrollment: {
+      policy: "ask",
+      confirmationNeeded: true,
+      trustedSignIns: [],
+      confirmedSignIns: [],
+    },
   });
   expect(await (await router.request("/admin/cloud-relay/trusted-sign-ins")).json()).toEqual({
     items: [],

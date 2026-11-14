@@ -15,8 +15,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { generateKeyPairSync, randomBytes, randomUUID } from "node:crypto";
 import {
+  ManagedAccountBrowser,
+  enrollmentNonce,
   enrollmentSignatureTranscript,
   gatewayPasskeyChallenge,
+  passkeyProofChallenge,
   hostedGatewayHostname,
   signDeviceTranscript,
 } from "@omnesis/cloud-relay";
@@ -34,6 +37,7 @@ import {
   syncPasskey,
   expectText,
   passkeyIds,
+  signedInAccount,
   waitFor,
   type PasskeySession,
 } from "./account-enrollment-harness.js";
@@ -59,14 +63,16 @@ describe.skipIf(!browserReady)("passkeys on the gateway's own page", () => {
   const priorCaFile = process.env.OMNESIS_CLOUD_RELAY_GATEWAY_CA_FILE;
   const priorEnabled = process.env.OMNESIS_CLOUD_RELAY_ENABLED;
 
-  /** Opens the portal on the gateway's public name and signs in through the account page. */
-  async function portalSignIn(session: PasskeySession) {
-    await gateway.pace(3);
+  /**
+   * Opens the portal on the gateway's public name, logged in with the owner's admin token. A
+   * sign-in through the relay's account page would now wait for approval, since nothing is
+   * confirmed yet.
+   */
+  async function ownerPortal(session: PasskeySession) {
     const page = session.page;
-    await page.goto(`${gateway.publicOrigin}/portal/`);
-    // The relay's account page; signing in on the gateway's own page is the other button.
-    await clickFirst(page, ["Sign in on the Omnesis account page"]);
-    await clickFirst(page, ["Sign in with Passkey", "Verify with Passkey"]);
+    await page.goto(
+      `${gateway.publicOrigin}/portal/?token=${encodeURIComponent(gateway.harness.apiKey)}`,
+    );
     await page.locator("nav.sidebar-nav").waitFor({ timeout: 30_000 });
     return page;
   }
@@ -102,6 +108,8 @@ describe.skipIf(!browserReady)("passkeys on the gateway's own page", () => {
     const status = await gateway.status();
     expect(status.deviceEnrollment.confirmOrigin).toBe(gateway.publicOrigin);
     expect(status.deviceEnrollment.confirmedSignIns).toEqual([]);
+    // Until the owner confirms a sign-in here, every new device waits for a person.
+    expect(status.deviceEnrollment).toMatchObject({ confirmationNeeded: true });
     expect(status.deviceEnrollment.trustedSignIns).toEqual([
       expect.objectContaining({ type: "passkey", source: "link-page", confirmed: false }),
     ]);
@@ -143,7 +151,7 @@ describe.skipIf(!browserReady)("passkeys on the gateway's own page", () => {
   }, 120_000);
 
   test("right after linking, the owner confirms the passkey from the card on the gateway's own page", async () => {
-    const page = await portalSignIn(owner);
+    const page = await ownerPortal(owner);
     await page.goto(`${gateway.publicOrigin}/portal/settings/account`);
     await expectText(page, "Confirm your passkey on this gateway");
     await expectText(page, "Not confirmed on this gateway");
@@ -373,4 +381,190 @@ describe.skipIf(!browserReady)("passkeys on the gateway's own page", () => {
     await gateway.decide(body.requestId, false);
     await gateway.setPolicy("automatic");
   }, 180_000);
+
+  test("TM-01: a compromised relay steering the owner's confirmed passkey on its own page, with its own attestation, gets only a held request", async () => {
+    await gateway.setPolicy("automatic");
+    // The owner confirmed this passkey on the gateway's page earlier in this suite.
+    expect((await gateway.status()).deviceEnrollment.confirmedSignIns).toHaveLength(1);
+    const before = (await gateway.devices()).length;
+    // The attacker's device and request.
+    const key = generateKeyPairSync("ec", { namedCurve: "prime256v1" });
+    const devicePublicKey = key.publicKey
+      .export({ type: "spki", format: "der" })
+      .toString("base64url");
+    const request = {
+      requestId: randomUUID(),
+      kind: "cli" as const,
+      name: "Fictional relay-steered CLI",
+      secret: randomBytes(32).toString("hex"),
+    };
+    const nonce = enrollmentNonce({ ...request, devicePublicKey });
+    // The relay's page asks the owner's passkey, the one confirmed on this gateway, to sign the
+    // attacker's nonce, and the relay mints its attestation for the same nonce.
+    const salt = randomBytes(32).toString("base64url"),
+      issuedAt = String(Math.floor(Date.now() / 1000));
+    const credential = await assertionOn(
+      owner,
+      world.relayOrigin,
+      passkeyProofChallenge(salt, issuedAt, nonce),
+    );
+    const account = await signedInAccount(world, owner);
+    const identityToken = await (
+      await world.accountAuthority()
+    ).issue({
+      accountId: account.accountId,
+      gatewayId: gateway.gatewayId,
+      ownerAccountId: await gateway.ownerAccountId(),
+      nonce,
+    });
+    await gateway.pace(2);
+    const config = await (await gateway.fetch("/devices/account/config")).json();
+    const { challenge } = await (
+      await gateway.fetch("/devices/account/challenge", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: "{}",
+      })
+    ).json();
+    const reply = await (
+      await gateway.fetch("/devices/account/request", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          ...request,
+          identityToken,
+          proof: { type: "passkey", salt, issuedAt, credential },
+          deviceKey: {
+            publicKey: devicePublicKey,
+            challenge,
+            signature: signDeviceTranscript(
+              key.privateKey,
+              enrollmentSignatureTranscript({
+                ...request,
+                gatewaySpkiFingerprint: config.gatewaySpkiFingerprint,
+                challenge,
+                devicePublicKey,
+              }),
+            ),
+          },
+        }),
+      })
+    ).json();
+    // The passkey is confirmed and the policy automatic, yet a relay page made this sign-in.
+    expect(reply.status).toBe("pending");
+    expect(reply.pairingCode).toBeUndefined();
+    const held = (await gateway.pendingRequests()).find(
+      (value) => value.requestId === request.requestId,
+    );
+    expect(held).toMatchObject({ signIn: "passkey", canTrustSignIn: false });
+    expect((await gateway.devices()).length).toBe(before);
+    await gateway.decide(request.requestId, false);
+  }, 180_000);
+
+  test("TM-01 (pairing on another gateway): a gateway the owner was tricked into linking cannot turn the owner's sign-in on its pairing page into a device at the owner's real gateway", async () => {
+    await gateway.setPolicy("automatic");
+    const devicesBefore = (await gateway.devices()).map((row) => row.id).sort();
+    // The attacker's gateway, which the owner linked to their account.
+    const rogue = await EnrollmentGateway.start(world, "rogue");
+    try {
+      const linked = await connectGatewayBySignIn(rogue, owner, "existing");
+      if (linked.connect?.state !== "done") throw new Error("The rogue gateway did not link");
+      // Its own device, and a "Pair this browser" operation for the account with that device's
+      // nonce, started from the rogue gateway's files, as its owner can.
+      const key = generateKeyPairSync("ec", { namedCurve: "prime256v1" });
+      const devicePublicKey = key.publicKey
+        .export({ type: "spki", format: "der" })
+        .toString("base64url");
+      const request = {
+        requestId: randomUUID(),
+        kind: "cli" as const,
+        name: "Fictional rogue-paired CLI",
+        secret: randomBytes(32).toString("hex"),
+      };
+      const account = (await signedInAccount(world, owner)).accountId;
+      const handoff = new ManagedAccountBrowser({
+        accountId: () => account,
+        env: () => ({
+          OMNESIS_CLOUD_RELAY_ENABLED: "1",
+          OMNESIS_CLOUD_RELAY_URL: world.relayOrigin,
+          OMNESIS_CLOUD_RELAY_SESSION_FILE: rogue.sessionFile,
+          OMNESIS_CLOUD_RELAY_OWNER_KEY_FILE: rogue.ownerKeyFile,
+          OMNESIS_CLOUD_RELAY_ENROLLMENT_TOKEN_FILE: join(rogue.directory, "invitation.json"),
+          OMNESIS_CLOUD_RELAY_GATEWAY_ID: rogue.gatewayId,
+          OMNESIS_CLOUD_RELAY_GATEWAY_ORIGIN: rogue.publicOrigin,
+          OMNESIS_TLS_CERT: rogue.leaf.certFile,
+          OMNESIS_TLS_KEY: rogue.leaf.keyFile,
+        }),
+      });
+      const pending = await handoff.begin({
+        purpose: "device-enrollment",
+        nonce: enrollmentNonce({ ...request, devicePublicKey }),
+        callbackUrl: `${rogue.publicOrigin}/devices/account/callback`,
+        browserState: randomBytes(32).toString("base64url"),
+      });
+      // The owner signs in on that page; it goes on by itself to the rogue gateway's callback.
+      const page = owner.page;
+      const seen: { url?: URL } = {};
+      await page.route(
+        (url) => url.pathname === "/devices/account/callback",
+        (route) => {
+          seen.url = new URL(route.request().url());
+          return route.fulfill({ status: 200, contentType: "text/html", body: "<p>Done</p>" });
+        },
+      );
+      try {
+        await page.goto(pending.authorizeUrl);
+        await clickFirst(page, ["Sign in with Passkey", "Verify with Passkey"]);
+        await waitFor(() => seen.url !== undefined, "the page to return to the rogue gateway");
+      } finally {
+        await page.unrouteAll({ behavior: "ignoreErrors" });
+      }
+      const redeemed = await handoff.redeem(pending, seen.url!.searchParams.get("result")!);
+      expect(redeemed.signInProof).toMatchObject({ type: "passkey" });
+      // The owner's confirmed passkey signed the rogue device's nonce on a relay page.
+      expect((redeemed.signInProof as { credential: { id: string } }).credential.id).toBe(
+        (await passkeyIds(owner))[0],
+      );
+      // Offered at the owner's real gateway, with the rogue gateway's attestation.
+      await gateway.pace(2);
+      const config = await (await gateway.fetch("/devices/account/config")).json();
+      const { challenge } = await (
+        await gateway.fetch("/devices/account/challenge", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: "{}",
+        })
+      ).json();
+      const response = await gateway.fetch("/devices/account/request", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          ...request,
+          identityToken: redeemed.identityToken,
+          proof: redeemed.signInProof,
+          deviceKey: {
+            publicKey: devicePublicKey,
+            challenge,
+            signature: signDeviceTranscript(
+              key.privateKey,
+              enrollmentSignatureTranscript({
+                ...request,
+                gatewaySpkiFingerprint: config.gatewaySpkiFingerprint,
+                challenge,
+                devicePublicKey,
+              }),
+            ),
+          },
+        }),
+      });
+      // A relay page's sign-in is never trusted, and that attestation names another gateway.
+      expect(response.status).toBe(401);
+      expect((await gateway.devices()).map((row) => row.id).sort()).toEqual(devicesBefore);
+      expect(
+        (await gateway.pendingRequests()).some((value) => value.requestId === request.requestId),
+      ).toBe(false);
+    } finally {
+      await rogue.close();
+    }
+  }, 300_000);
 });

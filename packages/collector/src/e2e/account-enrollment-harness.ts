@@ -26,6 +26,7 @@ import {
   generateKeyPairSync,
   randomBytes,
   randomUUID,
+  type KeyObject,
 } from "node:crypto";
 import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { once } from "node:events";
@@ -1822,4 +1823,144 @@ export async function certificateSwapProxy(world: EnrollmentWorld, leaf: Leaf, h
       await new Promise<void>((resolve) => server.close(() => resolve()));
     },
   };
+}
+
+/**
+ * The owner confirms the passkey `session` holds on the gateway's own page, as the portal's
+ * account card does: the gateway's challenge, an assertion on its origin, and the confirmation.
+ * Returns the status after it.
+ */
+export async function confirmPasskeyHere(
+  gateway: EnrollmentGateway,
+  session: PasskeySession,
+): Promise<CloudRelayStatus> {
+  const ceremony = await gateway.passkeyConfirmation();
+  const response = await gateway.confirmPasskey({
+    type: "gateway-passkey",
+    challenge: ceremony.challenge,
+    credential: await assertionOn(session, gateway.publicOrigin, ceremony.webauthnChallenge),
+  });
+  if (!response.ok)
+    throw new Error(`Confirming the passkey failed: ${response.status} ${await response.text()}`);
+  return (await response.json()) as CloudRelayStatus;
+}
+
+/** The owner approves the pending request from `name` on the gateway, once it is held. */
+export async function approveHeld(
+  gateway: EnrollmentGateway,
+  name: string,
+  trustSignIn?: boolean,
+): Promise<{ requestId: string; verificationCode: string; canTrustSignIn: boolean }> {
+  const held = await waitFor(
+    async () =>
+      (await gateway.pendingRequests()).find(
+        (request) => request.name === name && request.status === "pending",
+      ),
+    `a held request from ${name}`,
+  );
+  await gateway.decide(held.requestId, true, trustSignIn);
+  return held;
+}
+
+/**
+ * A CLI or collector that signs in with a passkey on the gateway's own page, as a device of the
+ * owner's would through the relay: it asks the gateway for the ceremony, the owner's browser
+ * (`session`) makes the assertion on the gateway's origin, and the device signs for the same
+ * challenge and sends its request. When the gateway joins it at once, the device redeems its
+ * pairing code; otherwise it returns the gateway's answer for a held request.
+ */
+export async function gatewayPasskeyJoin(
+  gateway: EnrollmentGateway,
+  session: PasskeySession,
+  device: {
+    kind: "cli" | "collector";
+    name: string;
+    key?: { privateKey: KeyObject; publicKey: KeyObject };
+  },
+): Promise<{
+  reply: { status: string; verificationCode: string; pairingCode?: string };
+  requestId: string;
+  secret: string;
+  joined?: { deviceId: string; token: string };
+}> {
+  const target = { publicOrigin: gateway.publicOrigin, certificate: gateway.leaf.cert };
+  const { tlsSpkiFingerprint, enrollmentSignatureTranscript, signDeviceTranscript } =
+    await import("@omnesis/cloud-relay");
+  const key = device.key ?? generateKeyPairSync("ec", { namedCurve: "prime256v1" });
+  const devicePublicKey = key.publicKey
+    .export({ type: "spki", format: "der" })
+    .toString("base64url");
+  const fields = {
+    requestId: randomUUID(),
+    kind: device.kind,
+    name: device.name,
+    secret: randomBytes(32).toString("hex"),
+  };
+  await gateway.pace(3);
+  const ceremony = (await devicePinnedJson(target, "/devices/account/passkey/options", {
+    ...fields,
+    devicePublicKey,
+  })) as { challenge: string; webauthnChallenge: string };
+  const reply = (await devicePinnedJson(target, "/devices/account/request", {
+    ...fields,
+    deviceKey: {
+      publicKey: devicePublicKey,
+      challenge: ceremony.challenge,
+      signature: signDeviceTranscript(
+        key.privateKey,
+        enrollmentSignatureTranscript({
+          ...fields,
+          gatewaySpkiFingerprint: tlsSpkiFingerprint(gateway.leaf.cert),
+          challenge: ceremony.challenge,
+          devicePublicKey,
+        }),
+      ),
+    },
+    proof: {
+      type: "gateway-passkey",
+      challenge: ceremony.challenge,
+      credential: await assertionOn(session, gateway.publicOrigin, ceremony.webauthnChallenge),
+    },
+  })) as { status: string; verificationCode: string; pairingCode?: string };
+  if (reply.status !== "approved" || !reply.pairingCode)
+    return { reply, requestId: fields.requestId, secret: fields.secret };
+  return {
+    reply,
+    requestId: fields.requestId,
+    secret: fields.secret,
+    joined: await redeemPairing(gateway, device, reply.pairingCode),
+  };
+}
+
+/** Redeems a pairing code the way the device does, over its pinned connection. */
+async function redeemPairing(
+  gateway: EnrollmentGateway,
+  device: { kind: "cli" | "collector"; name: string },
+  pairingCode: string,
+): Promise<{ deviceId: string; token: string }> {
+  const target = { publicOrigin: gateway.publicOrigin, certificate: gateway.leaf.cert };
+  const paired = (await devicePinnedJson(target, "/devices/pair", {
+    pairingCode,
+    capabilities: { platform: device.kind, suggestedName: device.name },
+  })) as { token: string; device: { id: string } };
+  return { deviceId: paired.device.id, token: paired.token };
+}
+
+/** Once the owner approved a held request, the device polls for its code and redeems it. */
+export async function joinAfterApproval(
+  gateway: EnrollmentGateway,
+  device: { kind: "cli" | "collector"; name: string },
+  request: { requestId: string; secret: string },
+): Promise<{ deviceId: string; token: string }> {
+  const target = { publicOrigin: gateway.publicOrigin, certificate: gateway.leaf.cert };
+  const polled = (await devicePinnedJson(target, "/devices/account/poll", {
+    requestId: request.requestId,
+    secret: request.secret,
+  })) as {
+    status: string;
+    pairingCode?: string;
+  };
+  if (polled.status !== "approved" || !polled.pairingCode)
+    throw new Error(`The request was not approved: ${JSON.stringify(polled)}`);
+  return redeemPairing(gateway, device, polled.pairingCode);
 }
