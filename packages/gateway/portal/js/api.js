@@ -61,7 +61,38 @@ export async function apiFetch(input, init = {}) {
   };
   const res = await fetch(input, merged);
   if (res.status === 401) fireSessionExpired();
+  if ((res.status === 428 || res.status === 403) && unsafe && isSameOriginInput(input))
+    return stepUpAndRetry(input, init, res, headers);
   return res;
+}
+
+/**
+ * Some administrative actions need the owner's passkey on this gateway's page first (a
+ * "step-up", see packages/gateway/src/http/step-up.ts). The gateway says so with 428
+ * `STEP_UP_REQUIRED`; this runs the passkey prompt for that one request and sends it again,
+ * once. While no step-up can start it answers 403 `STEP_UP_UNAVAILABLE`, which becomes an error
+ * a person can act on. Any other answer goes back to the caller unchanged.
+ */
+async function stepUpAndRetry(input, init, res, headers) {
+  if (Object.keys(headers).some((name) => name.toLowerCase() === "x-omnesis-step-up")) return res;
+  let refusal;
+  try {
+    refusal = await res.clone().json();
+  } catch {
+    return res;
+  }
+  if (refusal?.code === "STEP_UP_UNAVAILABLE") {
+    const { GatewayPasskeyError, STEP_UP_UNAVAILABLE } = await import("./lib/gateway-passkey.js");
+    throw new GatewayPasskeyError(STEP_UP_UNAVAILABLE);
+  }
+  if (res.status !== 428 || refusal?.code !== "STEP_UP_REQUIRED") return res;
+  const { stepUp, STEP_UP_HEADER } = await import("./lib/gateway-passkey.js");
+  const stepUpId = await stepUp(refusal.detail, {
+    post: (path, body, signal) =>
+      apiFetch(path, { method: "POST", body: JSON.stringify(body), ...(signal ? { signal } : {}) }),
+    ...(init.signal ? { signal: init.signal } : {}),
+  });
+  return apiFetch(input, { ...init, headers: { ...(init.headers || {}), [STEP_UP_HEADER]: stepUpId } });
 }
 
 function isSameOriginInput(input) {

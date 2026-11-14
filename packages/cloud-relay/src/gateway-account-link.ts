@@ -459,7 +459,19 @@ export class GatewayAccountLink {
             )
           : undefined;
       },
-      verifyApproval: (proof, binding) => this.verifyApproval(proof, binding),
+      verifyApproval: (proof, binding) => this.verifyConfirmed("approve-request", proof, binding),
+      stepUpRequired: () => this.confirmedSignIns().some((value) => value.type === "passkey"),
+      stepUpCeremony: (binding) => {
+        const origin = this.gatewayOrigin();
+        return origin
+          ? this.ceremony("step-up", origin, this.ceremonies.issue("step-up", binding), binding)
+          : undefined;
+      },
+      // While a rogue certificate may exist for this name, no step-up counts, whatever its origin:
+      // the owner acts on the gateway itself until the hold is acknowledged.
+      verifyStepUp: async (proof, binding) =>
+        !this.gatewayOriginAssertionsRefused() &&
+        (await this.verifyConfirmed("step-up", proof, binding)),
       gatewayPasskey: () => {
         const origin = this.gatewayOrigin();
         return origin
@@ -522,16 +534,21 @@ export class GatewayAccountLink {
     };
   }
   /**
-   * Whether a passkey the owner confirmed here approved a held request on this gateway's page.
-   * Only a confirmed key counts: a key the relay lists could be the relay's own.
+   * Whether a passkey the owner confirmed here signed a ceremony on this gateway's page: approving
+   * a held request, or stepping up for one administrative action. Only a confirmed key counts: a
+   * key the relay lists could be the relay's own. Spends the ceremony's challenge.
    */
-  private async verifyApproval(input: unknown, binding: string): Promise<boolean> {
+  private async verifyConfirmed(
+    purpose: "approve-request" | "step-up",
+    input: unknown,
+    binding: string,
+  ): Promise<boolean> {
     const record = this.record?.linked && this.verifiedAccountId() ? this.record : undefined;
     const parsed = gatewayPasskeySignInProofSchema.safeParse(input);
     if (
       !record ||
       !parsed.success ||
-      !this.ceremonies.take("approve-request", parsed.data.challenge, binding)
+      !this.ceremonies.take(purpose, parsed.data.challenge, binding)
     )
       return false;
     const confirmed = (id: string) =>
@@ -540,7 +557,7 @@ export class GatewayAccountLink {
           value.type === "passkey" && value.id === id,
       );
     const verified = await this.verifier.verifyGatewayPasskey(parsed.data, {
-      purpose: "approve-request",
+      purpose,
       challenge: parsed.data.challenge,
       binding,
       key: (id) => confirmed(id),

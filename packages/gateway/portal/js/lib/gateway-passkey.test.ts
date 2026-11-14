@@ -10,6 +10,8 @@ import {
   gatewayPasskeyProof,
   onGatewayOrigin,
   passkeysSupported,
+  STEP_UP_HEADER,
+  stepUp,
   // @ts-expect-error portal JS
 } from "./gateway-passkey.js";
 
@@ -207,5 +209,55 @@ describe("approving a held request with a passkey", () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(ok({ ...ceremony })));
     vi.stubGlobal("location", { origin: "https://elsewhere.example.test" });
     await expect(approveWithPasskey({ requestId: REQUEST })).rejects.toThrow("Open this page at");
+  });
+});
+
+describe("stepping up for one administrative action", () => {
+  const detail = {
+    method: "POST",
+    path: "/admin/devices/pair",
+    bodySha256: "a".repeat(64),
+    options: "/admin/step-up/options",
+    header: "X-Omnesis-Step-Up",
+  };
+  const target = { method: "POST", path: "/admin/devices/pair", bodySha256: "a".repeat(64) };
+  const ok = (body: unknown) => new Response(JSON.stringify(body));
+
+  test("asks for the ceremony of exactly the refused request, prompts, and returns the id", async () => {
+    const proof = { type: "gateway-passkey", challenge: CHALLENGE };
+    const prove = vi.fn().mockResolvedValue(proof);
+    const post = vi
+      .fn()
+      .mockResolvedValueOnce(ok({ ...ceremony, purpose: "step-up" }))
+      .mockResolvedValueOnce(ok({ stepUpId: "step-up-id", expiresAt: 1 }));
+    const signal = new AbortController().signal;
+    expect(await stepUp(detail, { post, prove, signal })).toBe("step-up-id");
+    expect(STEP_UP_HEADER).toBe("X-Omnesis-Step-Up");
+    expect(post.mock.calls).toEqual([
+      ["/admin/step-up/options", target, signal],
+      ["/admin/step-up", { ...target, proof }, signal],
+    ]);
+    expect(prove).toHaveBeenCalledWith({ ...ceremony, purpose: "step-up" }, { signal });
+  });
+
+  test("no ceremony, a refused passkey and a closed prompt each say what to do", async () => {
+    const prove = vi.fn().mockResolvedValue({ type: "gateway-passkey" });
+    await expect(
+      stepUp(detail, { post: vi.fn().mockResolvedValue(new Response("{}", { status: 403 })), prove }),
+    ).rejects.toThrow("can't be used on this gateway right now");
+    await expect(
+      stepUp(detail, {
+        post: vi
+          .fn()
+          .mockResolvedValueOnce(ok(ceremony))
+          .mockResolvedValueOnce(new Response("{}", { status: 403 })),
+        prove,
+      }),
+    ).rejects.toThrow("Use a passkey you confirmed on this gateway.");
+    // With the real prompt, a page off the gateway's origin is sent there.
+    vi.stubGlobal("location", { origin: "https://elsewhere.example.test" });
+    await expect(
+      stepUp(detail, { post: vi.fn().mockResolvedValue(ok(ceremony)) }),
+    ).rejects.toBeInstanceOf(GatewayPasskeyError);
   });
 });

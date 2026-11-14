@@ -903,7 +903,7 @@ export class EnrollmentGateway {
    */
   async throughRelay(
     path: string,
-    init: { method?: string; body?: string; token?: string } = {},
+    init: { method?: string; body?: string; token?: string; headers?: Record<string, string> } = {},
   ): Promise<{ status: number; body: string }> {
     const { request } = await import("node:https");
     return new Promise((resolve, reject) => {
@@ -919,6 +919,7 @@ export class EnrollmentGateway {
             host: `${this.hostname}:${this.world.dataPort}`,
             "content-type": "application/json",
             ...(init.token ? { authorization: `Bearer ${init.token}` } : {}),
+            ...init.headers,
           },
           timeout: 30_000,
         },
