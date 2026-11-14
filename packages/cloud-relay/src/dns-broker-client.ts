@@ -7,8 +7,10 @@
  * never by anything the relay says.
  */
 import { createPublicKey, sign, type KeyObject } from "node:crypto";
-import { existsSync } from "node:fs";
-import { readBoundedJson, savePrivateJson } from "./google-credentials.js";
+import { setTimeout as delay } from "node:timers/promises";
+import { z } from "zod";
+import { readBoundedJson, readPrivateJson, savePrivateJson } from "./google-credentials.js";
+import { caaBinding, lookupCaa, type CaaLookup } from "./acme-caa.js";
 import { challengeIsFresh, relayOrigin } from "./network.js";
 import { DEFAULT_INSTALLATION_RELAY_URL, OFFICIAL_DNS_BROKER_URL } from "./installation-relay.js";
 import { hostedGatewayHostname } from "./hosted-name.js";
@@ -164,32 +166,81 @@ export function dnsBrokerClient(options: {
   };
 }
 
+const markerSchema = z
+  .object({ claimedAt: z.number().int().nonnegative(), accountUri: z.string().optional() })
+  .strict();
+
+/** What the gateway recorded of its use of the broker; undefined before it first used it. */
+export async function readBrokerMarker(
+  file: string,
+): Promise<z.infer<typeof markerSchema> | undefined> {
+  try {
+    return markerSchema.parse(await readPrivateJson(file));
+  } catch (error) {
+    if (error && typeof error === "object" && "code" in error && error.code === "ENOENT")
+      return undefined;
+    throw error;
+  }
+}
+
 /**
  * DNS-01 cooperation through the broker when it serves this gateway, else through the relay as
  * before the broker existed. Once the gateway has used the broker it never goes back: a broker
  * that can't be reached then fails the renewal instead of handing challenges to the relay.
+ *
+ * Before each order, a gateway on the broker has its name's CAA record bind issuance to its own
+ * ACME account (for the broker's CA only, so a staging account publishes nothing), and waits
+ * a bounded time for DNS to show it.
  */
 export function brokerOrRelayPresenter(options: {
   broker: DnsBrokerClient;
   required: boolean;
   relay?: AcmeDnsPresenter;
   markerFile: string;
-}): AcmeDnsPresenter & { brokered(signal: AbortSignal): Promise<boolean> } {
+  caaLookup?: CaaLookup;
+  /** Pause between CAA lookups while the record propagates. */
+  delay?: (ms: number, signal: AbortSignal) => Promise<void>;
+}): AcmeDnsPresenter & {
+  brokered(signal: AbortSignal): Promise<boolean>;
+  beforeOrder(accountUri: string, signal: AbortSignal): Promise<void>;
+} {
   const routes = new Map<string, AcmeDnsPresenter>();
   const viaBroker = options.broker.presenter();
   const brokered = async (signal: AbortSignal): Promise<boolean> => {
-    const sticky = existsSync(options.markerFile);
+    const marker = await readBrokerMarker(options.markerFile);
     if (!(await options.broker.health(signal))) {
-      if (options.required || sticky || !options.relay)
+      if (options.required || marker || !options.relay)
         throw new Error("The DNS broker is unavailable");
       return false;
     }
     await options.broker.claim(signal);
-    if (!sticky) await savePrivateJson(options.markerFile, { claimedAt: Date.now() });
+    if (!marker) await savePrivateJson(options.markerFile, { claimedAt: Date.now() });
     return true;
   };
   return {
     brokered,
+    async beforeOrder(accountUri, signal) {
+      if (!(await brokered(signal))) return;
+      const health = (await options.broker.health(signal))!;
+      const prefix = health.caa.accountUriPrefix;
+      if (!accountUri.startsWith(prefix) || accountUri.length === prefix.length) return;
+      const marker = (await readBrokerMarker(options.markerFile))!;
+      if (marker.accountUri !== accountUri) {
+        await options.broker.publishCaa(accountUri, signal);
+        await savePrivateJson(options.markerFile, { ...marker, accountUri });
+      }
+      const lookup = options.caaLookup ?? lookupCaa;
+      for (let count = 0; count < 60; count++) {
+        const issue = await lookup(options.broker.hostname, signal);
+        if (issue && caaBinding(issue, accountUri) === "bound") return;
+        await (options.delay ?? ((ms, abort) => delay(ms, undefined, { signal: abort })))(
+          1000,
+          signal,
+        );
+      }
+      // Still not visible here: the CA reads the authoritative answer, and the order is
+      // checked again against what DNS shows before it is placed.
+    },
     async create(value, signal) {
       const use = (await brokered(signal)) ? viaBroker : options.relay!;
       const lease = await use.create(value, signal);

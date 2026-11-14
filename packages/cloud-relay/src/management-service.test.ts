@@ -2229,3 +2229,50 @@ test("a broker the operator requires must answer, and a custom domain never asks
   manager = await GatewayCloudRelayManagement.open(unset.options);
   await expect(manager.configure(input)).rejects.toMatchObject({ code: "configuration-invalid" });
 });
+
+test("CAA drift raises the incident hold, which the owner acknowledges on the gateway", async () => {
+  const account = "https://acme-v02.api.letsencrypt.org/acme/acct/42";
+  let issue = [`letsencrypt.org; validationmethods=dns-01; accounturi=${account}`];
+  const held = vi.fn();
+  const f = fixture({
+    env: {
+      OMNESIS_CLOUD_RELAY_URL: "https://relay.example.test",
+      OMNESIS_CLOUD_RELAY_CERTIFICATE_MONITOR_ENABLED: "1",
+      // The certificate transparency side of the monitor fails fast on loopback.
+      OMNESIS_CLOUD_RELAY_CERTSPOTTER_URL: "https://127.0.0.1:9/",
+    },
+    caaLookup: async () => issue,
+    onIncidentHold: held,
+  });
+  f.options.controller = vi.fn(async () => ({
+    close: f.close,
+    renew: f.renew,
+    fingerprintSha256: () => "b".repeat(64),
+    spkiFingerprintSha256: () => "c".repeat(64),
+    expectedCaa: async () => account,
+  }));
+  manager = await GatewayCloudRelayManagement.open(f.options);
+  const monitor = (manager as unknown as { monitor: { checkCaa(): Promise<void> } }).monitor;
+  // Before the gateway publishes anything, there is nothing to drift from.
+  await monitor.checkCaa();
+  await manager.configure(input);
+  await manager.enable();
+  await idle();
+  await monitor.checkCaa();
+  expect((await manager.status()).incidentHold).toBeUndefined();
+  // Someone with write access to the zone points the name at another ACME account.
+  issue = ["letsencrypt.org; accounturi=https://acme-v02.api.letsencrypt.org/acme/acct/666"];
+  await monitor.checkCaa();
+  expect((await manager.status()).incidentHold).toMatchObject({
+    certificates: [expect.stringMatching(/^[a-f0-9]{64}$/)],
+  });
+  expect(held).toHaveBeenCalledOnce();
+  await manager.acknowledgeIncidentHold();
+  // The same records don't hold again once acknowledged; different ones do.
+  await monitor.checkCaa();
+  expect((await manager.status()).incidentHold).toBeUndefined();
+  issue = [];
+  await monitor.checkCaa();
+  expect((await manager.status()).incidentHold).toBeDefined();
+  expect(held).toHaveBeenCalledTimes(2);
+});

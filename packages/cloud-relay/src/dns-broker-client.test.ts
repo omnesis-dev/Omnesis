@@ -13,6 +13,7 @@ import {
   brokerOrRelayPresenter,
   dnsBrokerClient,
   dnsBrokerSelection,
+  readBrokerMarker,
 } from "./dns-broker-client.js";
 import { hostedGatewayHostname } from "./hosted-name.js";
 import type { AcmeDnsPresenter } from "./acme-client.js";
@@ -249,4 +250,125 @@ test("the platform fetch is used when none is given", async () => {
   } finally {
     vi.unstubAllGlobals();
   }
+});
+
+test("before each order a gateway on the broker binds its name's CAA to its own account, once", async () => {
+  const g = await gateway({ accountUriPrefix: "https://ca.example.test/acct/" });
+  const markerFile = join(directory, "broker.json");
+  const published: string[][] = [];
+  const caaLookup = vi.fn(async (hostname: string) => {
+    const issue = g.cloudflare.records
+      .filter((record) => record.type === "CAA" && record.name === hostname)
+      .map((record) => record.data!.value);
+    published.push(issue);
+    // DNS shows the record one lookup late.
+    return published.length === 1 ? [] : issue;
+  });
+  const waits = vi.fn(async () => {});
+  const presenter = brokerOrRelayPresenter({
+    broker: g.client,
+    required: true,
+    markerFile,
+    caaLookup,
+    delay: waits,
+  });
+  await presenter.beforeOrder("https://ca.example.test/acct/1", signal());
+  expect(
+    g.cloudflare.records.filter((record) => record.type === "CAA").map((r) => r.data!.value),
+  ).toEqual([
+    "letsencrypt.org; validationmethods=dns-01; accounturi=https://ca.example.test/acct/1",
+  ]);
+  expect(waits).toHaveBeenCalledOnce();
+  expect(await readBrokerMarker(markerFile)).toMatchObject({
+    accountUri: "https://ca.example.test/acct/1",
+  });
+  // The next renewal with the same account publishes nothing new.
+  g.cloudflare.writes.length = 0;
+  await presenter.beforeOrder("https://ca.example.test/acct/1", signal());
+  expect(g.cloudflare.writes).toEqual([]);
+  // A new account replaces the record first.
+  await presenter.beforeOrder("https://ca.example.test/acct/2", signal());
+  expect(
+    g.cloudflare.records.filter((record) => record.type === "CAA").map((r) => r.data!.value),
+  ).toEqual([
+    "letsencrypt.org; validationmethods=dns-01; accounturi=https://ca.example.test/acct/2",
+  ]);
+});
+
+test("a staging account, a broker-less gateway and a record DNS never shows publish or wait nothing more", async () => {
+  const g = await gateway({ accountUriPrefix: "https://ca.example.test/acct/" });
+  const markerFile = join(directory, "broker.json");
+  const caaLookup = vi.fn(async () => [] as string[]);
+  const waits = vi.fn(async () => {});
+  const presenter = brokerOrRelayPresenter({
+    broker: g.client,
+    required: true,
+    markerFile,
+    caaLookup,
+    delay: waits,
+  });
+  for (const account of ["https://staging.example.test/acct/1", "https://ca.example.test/acct/"])
+    await presenter.beforeOrder(account, signal());
+  expect(g.cloudflare.records.filter((record) => record.type === "CAA")).toEqual([]);
+  expect(caaLookup).not.toHaveBeenCalled();
+  // Published, but DNS never shows it here: bounded, and the order goes on to its own check.
+  await presenter.beforeOrder("https://ca.example.test/acct/3", signal());
+  expect(caaLookup).toHaveBeenCalledTimes(60);
+  expect(waits).toHaveBeenCalledTimes(60);
+  // On the relay, before the broker serves the gateway, nothing is published at all.
+  const relay = relayPresenter();
+  const before = brokerOrRelayPresenter({
+    broker: dnsBrokerClient({
+      brokerUrl: g.origin,
+      relayUrl: "https://relay.example.test",
+      gatewayId: randomUUID(),
+      owner: async () => g.owner.privateKey,
+      fetch: async () => new Response(null, { status: 503 }),
+    }),
+    required: false,
+    relay,
+    markerFile: join(directory, "other.json"),
+    caaLookup,
+  });
+  await before.beforeOrder("https://ca.example.test/acct/4", signal());
+  expect(caaLookup).toHaveBeenCalledTimes(60);
+});
+
+test("the CAA wait pauses with the caller's signal, and an unreadable marker is an error", async () => {
+  const g = await gateway({ accountUriPrefix: "https://ca.example.test/acct/" });
+  const markerFile = join(directory, "broker.json");
+  const controller = new AbortController();
+  const presenter = brokerOrRelayPresenter({
+    broker: g.client,
+    required: true,
+    markerFile,
+    caaLookup: async () => {
+      controller.abort();
+      return [];
+    },
+  });
+  await expect(
+    presenter.beforeOrder("https://ca.example.test/acct/5", controller.signal),
+  ).rejects.toThrow();
+  const { writeFile } = await import("node:fs/promises");
+  await writeFile(markerFile, "{}");
+  await expect(readBrokerMarker(markerFile)).rejects.toThrow();
+});
+
+test("the CAA wait reads DNS itself when no lookup is given", async () => {
+  const caa = await import("./acme-caa.js");
+  const g = await gateway({ accountUriPrefix: "https://ca.example.test/acct/" });
+  const lookups = vi
+    .spyOn(caa, "lookupCaa")
+    .mockImplementation(async (hostname) =>
+      g.cloudflare.records
+        .filter((record) => record.type === "CAA" && record.name === hostname)
+        .map((record) => record.data!.value),
+    );
+  await brokerOrRelayPresenter({
+    broker: g.client,
+    required: true,
+    markerFile: join(directory, "broker.json"),
+  }).beforeOrder("https://ca.example.test/acct/6", signal());
+  expect(lookups).toHaveBeenCalledOnce();
 });
