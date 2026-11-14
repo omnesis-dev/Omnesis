@@ -128,7 +128,7 @@ describe("local daemon and credential files", () => {
     const value = {
       gatewayUrl: f.gatewayUrl,
       gatewayFingerprint: gateway.fingerprint,
-      gatewayCertificate: gateway.certificate,
+      gatewayCertificate: gateway.certificate.replace(/\r?\n/g, "\r\n"),
       token: "fixture-token",
       deviceId: randomUUID(),
       kind: "cli",

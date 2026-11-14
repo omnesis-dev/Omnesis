@@ -32,7 +32,13 @@ import { pathToFileURL } from "node:url";
 import { lstatSync, readFileSync, realpathSync, rmSync, existsSync } from "node:fs";
 import { constants as osConstants } from "node:os";
 import { dirname, isAbsolute, join } from "node:path";
-import { assertNever, atomicWriteFileSync, UPDATE_LOCK_ENV, type UpdateLock } from "@omnesis/core";
+import {
+  assertNever,
+  atomicWriteFileSync,
+  spawnWindowsJob,
+  UPDATE_LOCK_ENV,
+  type UpdateLock,
+} from "@omnesis/core";
 import { c, CliError, EXIT_FAILURE } from "../utils.js";
 import {
   assertImageTag,
@@ -669,14 +675,28 @@ export async function launchContinuation(opts: {
     writeContinuation(configDir, doc);
     const exit = await new Promise<{ code: number; signal: NodeJS.Signals | null }>(
       (resolve, reject) => {
-        const child = spawnProcess(command.command, command.args, {
-          stdio: "inherit",
+        const windowsJob = process.platform === "win32" && !opts.spawn;
+        const childOptions = {
           env: { ...process.env, ...command.env },
           ...(command.cwd ? { cwd: command.cwd } : {}),
-        });
+        };
+        const child = windowsJob
+          ? spawnWindowsJob(command.command, command.args, childOptions)
+          : spawnProcess(command.command, command.args, { ...childOptions, stdio: "inherit" });
+        let creationError: unknown;
+        if ("jobReady" in child) {
+          child.stdout?.pipe(process.stdout, { end: false });
+          child.stderr?.pipe(process.stderr, { end: false });
+          // The continuing CLI is unattended. Closing its binary input also lets
+          // the helper's stdin forwarder finish when the job exits.
+          child.stdin?.end();
+          (child.jobReady as Promise<void>).catch((error: unknown) => {
+            creationError = error;
+          });
+        }
         relay.deliver = (signal) => {
           try {
-            child.kill(signal);
+            child.kill(windowsJob ? "SIGKILL" : signal);
           } catch {
             // The child already exited.
           }
@@ -692,6 +712,10 @@ export async function launchContinuation(opts: {
           if (!running) reject(err);
         });
         child.once("close", (code, signal) => {
+          if (creationError) {
+            reject(creationError);
+            return;
+          }
           resolve({
             code: code ?? (signal ? 128 + (osConstants.signals[signal] ?? 0) : 1),
             signal,

@@ -18,6 +18,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
 import { parse } from "yaml";
+import { npmJavaScriptEntry } from "./npm-ci.mjs";
+import { npmCiFixture } from "../test-fixtures/npm-ci-fixture.mjs";
 
 const SCRIPT = join(import.meta.dirname, "npm-ci.sh");
 const dirs = [];
@@ -40,11 +42,12 @@ afterEach(() => {
  * smart-whisper and the dependency nested under it the way npm does when its
  * native build fails, "both" records all four, and "fail" exits 1.
  */
-function run({ installs, args = [], env = {} }) {
+function runShell({ installs, args = [], env = {} }) {
   const dir = scratch();
   writeFileSync(
     join(dir, "npm"),
     `#!/bin/sh
+printf '%s|%s' "$npm_package_config_node_gyp_nodedir" "$npm_config_nodedir" > header-env
 n=$(($(cat count 2>/dev/null || echo 0) + 1)); echo "$n" > count
 logs=; prev=
 for arg in "$@"; do [ "$prev" = --logs-dir ] && logs="$arg"; prev="$arg"; done
@@ -55,7 +58,7 @@ echo "1 verbose cli ci" > "$log"
 kind="$(sed -n "\${n}p" script)"
 case "$kind" in
   dropped|both)
-    echo "2 verbose reify failed optional dependency $PWD/node_modules/@scope/binding-linux-x64" >> "$log"
+    echo "2 verbose reify failed optional dependency $PWD/node_modules/@scope/binding" >> "$log"
     echo "3 verbose reify failed optional dependency $PWD/node_modules/ffmpeg-static" >> "$log" ;;
   fail) exit 1 ;;
 esac
@@ -73,50 +76,76 @@ esac
     encoding: "utf8",
     env: { ...process.env, PATH: `${dir}:${process.env.PATH}`, NPM_CI_RETRY_SECONDS: "0", ...env },
   });
+  const [headers, legacy] = readFileSync(join(dir, "header-env"), "utf8").split("|");
+  expect(existsSync(join(headers, "include", "node", "common.gypi"))).toBe(true);
+  expect(legacy).toBe("");
   const calls = readFileSync(join(dir, "calls"), "utf8").trim().split("\n");
   return { status: result.status, stderr: result.stderr, calls };
 }
 
-describe("npm-ci.sh", () => {
-  test("a clean install runs once", () => {
-    const { status, calls, stderr } = run({ installs: ["ok"], args: ["--no-audit"] });
+const runtimes = [
+  [
+    "portable Node",
+    async ({ installs, args = [], env = {} }) => {
+      const f = npmCiFixture(
+        scratch(),
+        installs.map((kind) => ({ dropped: "drop", uncompiled: "whisper" })[kind] ?? kind),
+      );
+      const outcome = await f.start(args, env).result;
+      const calls = readFileSync(f.events, "utf8")
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line))
+        .filter((row) => row.stage === "ci")
+        .map((row) => [row.args[0], ...row.args.slice(3)].join(" "));
+      return { status: outcome.code, stderr: outcome.stderr, calls };
+    },
+  ],
+  // This implementation targets Docker's POSIX environment and bundled headers;
+  // every policy assertion also runs through the native Node implementation.
+  ...(process.platform === "win32" ? [] : [["POSIX shell", runShell]]),
+];
+
+describe.each(runtimes)("%s dependency bootstrap", (_name, run) => {
+  test("a clean install runs once", async () => {
+    const { status, calls, stderr } = await run({ installs: ["ok"], args: ["--no-audit"] });
     expect(status).toBe(0);
     expect(calls).toEqual(["ci --no-audit"]);
     expect(stderr).toBe("");
   });
 
-  test("installs again when npm dropped optional packages, and stops once they are back", () => {
-    const { status, calls, stderr } = run({ installs: ["dropped", "dropped", "ok"] });
+  test("installs again when npm dropped optional packages, and stops once they are back", async () => {
+    const { status, calls, stderr } = await run({ installs: ["dropped", "dropped", "ok"] });
     expect(status).toBe(0);
     expect(calls).toHaveLength(3);
     expect(stderr).toContain(
-      "npm ci dropped optional packages that failed to install: @scope/binding-linux-x64 ffmpeg-static (attempt 1 of 3)",
+      "npm ci dropped optional packages that failed to install: @scope/binding ffmpeg-static (attempt 1 of 3)",
     );
     expect(stderr).not.toContain("::warning::");
   });
 
-  test("warns and carries on when the packages stay dropped", () => {
-    const { status, calls, stderr } = run({ installs: ["dropped", "dropped", "dropped"] });
+  test("warns and carries on when the packages stay dropped", async () => {
+    const { status, calls, stderr } = await run({ installs: ["dropped", "dropped", "dropped"] });
     expect(status).toBe(0);
     expect(calls).toHaveLength(3);
     expect(stderr).toContain("::warning::npm ci dropped optional packages");
     expect(stderr).toContain("after 3 attempts; this tree lacks them");
   });
 
-  test("fails a build that requires its optional packages when they stay dropped", () => {
-    const { status, calls, stderr } = run({
+  test("fails a build that requires its optional packages when they stay dropped", async () => {
+    const { status, calls, stderr } = await run({
       installs: ["dropped", "dropped", "dropped"],
       env: { NPM_CI_REQUIRE_OPTIONAL: "1" },
     });
     expect(status).toBe(1);
     expect(calls).toHaveLength(3);
-    expect(stderr).toContain("@scope/binding-linux-x64 ffmpeg-static, after 3 attempts");
+    expect(stderr).toContain("@scope/binding ffmpeg-static, after 3 attempts");
     expect(stderr).toContain("this build requires them");
     expect(stderr).not.toContain("::warning::");
   });
 
-  test("a build that requires its optional packages passes once they are back", () => {
-    const { status, calls } = run({
+  test("a build that requires its optional packages passes once they are back", async () => {
+    const { status, calls } = await run({
       installs: ["dropped", "ok"],
       env: { NPM_CI_REQUIRE_OPTIONAL: "1" },
     });
@@ -124,8 +153,8 @@ describe("npm-ci.sh", () => {
     expect(calls).toHaveLength(2);
   });
 
-  test("a package that failed to compile is reported once and never retried", () => {
-    const { status, calls, stderr } = run({ installs: ["uncompiled"] });
+  test("a package that failed to compile is reported once and never retried", async () => {
+    const { status, calls, stderr } = await run({ installs: ["uncompiled"] });
     expect(status).toBe(0);
     expect(calls).toHaveLength(1);
     expect(stderr).toBe(
@@ -133,20 +162,20 @@ describe("npm-ci.sh", () => {
     );
   });
 
-  test("retries only for the packages that can come back", () => {
-    const { status, calls, stderr } = run({ installs: ["both", "uncompiled"] });
+  test("retries only for the packages that can come back", async () => {
+    const { status, calls, stderr } = await run({ installs: ["both", "uncompiled"] });
     expect(status).toBe(0);
     expect(calls).toHaveLength(2);
     expect(stderr).toContain(
-      "npm ci dropped optional packages that failed to install: @scope/binding-linux-x64 ffmpeg-static (attempt 1 of 3)",
+      "npm ci dropped optional packages that failed to install: @scope/binding ffmpeg-static (attempt 1 of 3)",
     );
     expect(stderr).not.toContain("node-addon-api");
     expect(stderr).not.toContain("::warning::");
     expect(stderr).toContain("::notice::npm ci could not build smart-whisper on this host");
   });
 
-  test("a build that requires its optional packages requires that one too", () => {
-    const { status, calls, stderr } = run({
+  test("a build that requires its optional packages requires that one too", async () => {
+    const { status, calls, stderr } = await run({
       installs: ["uncompiled", "uncompiled", "uncompiled"],
       env: { NPM_CI_REQUIRE_OPTIONAL: "1" },
     });
@@ -158,15 +187,15 @@ describe("npm-ci.sh", () => {
     expect(stderr).not.toContain("::notice::");
   });
 
-  test("still fails when npm ci keeps failing", () => {
-    const { status, calls, stderr } = run({ installs: ["fail", "fail", "fail"] });
+  test("still fails when npm ci keeps failing", async () => {
+    const { status, calls, stderr } = await run({ installs: ["fail", "fail", "fail"] });
     expect(status).toBe(1);
     expect(calls).toHaveLength(3);
     expect(stderr).toContain("npm ci failed after 3 attempts");
   });
 
-  test("recovers from a failed install followed by a good one", () => {
-    const { status, calls } = run({ installs: ["fail", "ok"] });
+  test("recovers from a failed install followed by a good one", async () => {
+    const { status, calls } = await run({ installs: ["fail", "ok"] });
     expect(status).toBe(0);
     expect(calls).toHaveLength(2);
   });
@@ -178,7 +207,11 @@ function packTarball(dir, manifest) {
   mkdirSync(join(source, "package"), { recursive: true });
   writeFileSync(join(source, "package", "package.json"), JSON.stringify(manifest));
   const file = join(dir, `${manifest.name}.tgz`);
-  const tar = spawnSync("tar", ["-czf", file, "-C", source, "package"], { encoding: "utf8" });
+  const tar = spawnSync(
+    process.platform === "win32" ? join(process.env.SystemRoot, "System32", "tar.exe") : "tar",
+    ["-czf", file, "-C", source, "package"],
+    { encoding: "utf8" },
+  );
   if (tar.status !== 0) throw new Error(`tar failed: ${tar.stderr}`);
   return readFileSync(file);
 }
@@ -252,7 +285,7 @@ async function exec(command, args, options) {
   return { status, stderr };
 }
 
-describe("npm-ci.sh against the real npm", () => {
+describe("portable Node bootstrap against the real npm", () => {
   const npmArgs = (fixture) => [
     "--no-audit",
     "--no-fund",
@@ -269,7 +302,11 @@ describe("npm-ci.sh against the real npm", () => {
   test("npm ci exits 0 without an optional package whose tarball failed", async () => {
     const fixture = await projectWithFlakyOptional(Infinity);
     try {
-      const result = await exec("npm", ["ci", ...npmArgs(fixture)], { cwd: fixture.project, env });
+      const result = await exec(
+        process.execPath,
+        [await npmJavaScriptEntry(env), "ci", ...npmArgs(fixture)],
+        { cwd: fixture.project, env },
+      );
       expect(result.status).toBe(0);
       expect(existsSync(join(fixture.project, "node_modules/kept/package.json"))).toBe(true);
       expect(existsSync(join(fixture.project, "node_modules/binding"))).toBe(false);
@@ -281,10 +318,14 @@ describe("npm-ci.sh against the real npm", () => {
   test("the wrapper installs again and gets the optional package back", async () => {
     const fixture = await projectWithFlakyOptional(1);
     try {
-      const result = await exec("sh", [SCRIPT, ...npmArgs(fixture)], {
-        cwd: fixture.project,
-        env: { ...env, NPM_CI_REQUIRE_OPTIONAL: "1" },
-      });
+      const result = await exec(
+        process.execPath,
+        [join(import.meta.dirname, "npm-ci.mjs"), ...npmArgs(fixture)],
+        {
+          cwd: fixture.project,
+          env: { ...env, NPM_CI_REQUIRE_OPTIONAL: "1" },
+        },
+      );
       expect(result.stderr).toContain(
         "npm ci dropped optional packages that failed to install: binding (attempt 1 of 3)",
       );
@@ -298,10 +339,14 @@ describe("npm-ci.sh against the real npm", () => {
   test("the wrapper fails a build that requires it when the package stays missing", async () => {
     const fixture = await projectWithFlakyOptional(Infinity);
     try {
-      const result = await exec("sh", [SCRIPT, ...npmArgs(fixture)], {
-        cwd: fixture.project,
-        env: { ...env, NPM_CI_ATTEMPTS: "2", NPM_CI_REQUIRE_OPTIONAL: "1" },
-      });
+      const result = await exec(
+        process.execPath,
+        [join(import.meta.dirname, "npm-ci.mjs"), ...npmArgs(fixture)],
+        {
+          cwd: fixture.project,
+          env: { ...env, NPM_CI_ATTEMPTS: "2", NPM_CI_REQUIRE_OPTIONAL: "1" },
+        },
+      );
       expect(result.status).toBe(1);
       expect(result.stderr).toContain("binding, after 2 attempts, and this build requires them");
     } finally {

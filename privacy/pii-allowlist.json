@@ -12890,6 +12890,21 @@
       "value": "Local Files",
       "paths": ["scripts/ci/windows-checks.test.mjs"],
       "reason": "Public source product name, not a person"
+    },
+    {
+      "value": "Git Bash",
+      "paths": ["scripts/ci/test-shell.test.mjs"],
+      "reason": "Public Windows tool or standard installation directory name; not a person or corpus identifier."
+    },
+    {
+      "value": "Program Files",
+      "paths": ["scripts/ci/test-shell.test.mjs"],
+      "reason": "Public Windows tool or standard installation directory name; not a person or corpus identifier."
+    },
+    {
+      "value": "Windows Bash",
+      "paths": ["scripts/ci/test-shell.test.mjs"],
+      "reason": "Public Windows tool or standard installation directory name; not a person or corpus identifier."
     }
   ],
   "secretFixtures": [
@@ -12938,6 +12953,11 @@
       "path": "packages/cloud-relay/src/google-commands.test.ts",
       "kind": "private-key",
       "reason": "Synthetic PEM header with non-key placeholder text verifies rejection of mixed certificate/private-key input; contains no private key."
+    },
+    {
+      "path": "packages/cloud-relay/src/gateway-binding.test.ts",
+      "kind": "private-key",
+      "reason": "Synthetic PEM delimiters with invented non-key placeholder text verify rejection of mixed certificate and private-key input; contains no private key."
     }
   ]
 }

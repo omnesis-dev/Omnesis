@@ -1,8 +1,17 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import { createRequire } from "node:module";
+import { pathToFileURL } from "node:url";
 import { expect, test } from "@playwright/test";
-import { buildPortalCsp, inlineScriptHashes } from "../packages/gateway/src/http/routes/portal.js";
+
+// Playwright does not remap a package-qualified .js subpath to its workspace
+// TypeScript source. Resolve that source through the package boundary instead.
+const { buildPortalCsp, inlineScriptHashes } = (await import(
+  pathToFileURL(
+    createRequire(import.meta.url).resolve("@omnesis/gateway/src/http/routes/portal.ts"),
+  ).href
+)) as typeof import("@omnesis/gateway/src/http/routes/portal.js");
 
 // Browsers normalize CRLF and lone CR in HTML before checking inline-script
 // hashes. Windows checkouts must authorize that same text, while arbitrary

@@ -1360,7 +1360,12 @@ export {
   MAX_SYNC_ISSUES,
 } from "./sync-issues.js";
 
-export { createPrivateScratch, type PrivateScratch } from "./private-scratch.js";
+export {
+  createPrivateScratch,
+  createPrivateScratchAsync,
+  type PrivateScratch,
+  type AsyncPrivateScratch,
+} from "./private-scratch.js";
 export {
   localGatewayRequestUrl,
   resolveHostToLoopback,
@@ -1417,4 +1422,8 @@ export { cloudRelayEnabled } from "./cloud-relay-enabled.js";
 
 export { execWindowsJob } from "./windows-job-exec.js";
 
-export { readWindowsPrivateFile, createWindowsPrivateFile } from "./windows-private-file.js";
+export {
+  readWindowsPrivateFile,
+  createWindowsPrivateFile,
+  readWindowsRegularFilePrefix,
+} from "./windows-private-file.js";

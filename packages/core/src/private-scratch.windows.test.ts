@@ -4,7 +4,7 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, expect, test, vi } from "vitest";
-import { createPrivateScratch } from "./private-scratch.js";
+import { createPrivateScratch, createPrivateScratchAsync } from "./private-scratch.js";
 import { inspectWindowsPrivatePaths } from "./windows-private-file.js";
 import { execWindowsJob } from "./windows-job-exec.js";
 import { windowsPowerShellExecutable } from "./windows-process-tree.js";
@@ -47,18 +47,24 @@ $acl.AddAccessRule([System.Security.AccessControl.FileSystemAccessRule]::new([Sy
       (await inspectWindowsPrivatePaths([{ path: root, kind: "directory" }]))[0]?.private,
     ).toBe(false);
     const scratch = createPrivateScratch("snapshot");
+    const asyncScratch = await createPrivateScratchAsync("ocr");
     try {
       const snapshot = join(scratch.path, "snapshot.db");
       writeFileSync(snapshot, "invented plaintext snapshot");
+      const image = join(asyncScratch.path, "image.png");
+      writeFileSync(image, "invented image bytes");
       const results = await inspectWindowsPrivatePaths([
         { path: root, kind: "directory" },
         { path: scratch.path, kind: "directory" },
         { path: snapshot, kind: "file" },
+        { path: asyncScratch.path, kind: "directory" },
+        { path: image, kind: "file" },
       ]);
-      expect(results).toHaveLength(3);
+      expect(results).toHaveLength(5);
       expect(results.every((entry) => entry.private && !entry.fixed)).toBe(true);
     } finally {
       scratch.cleanup();
+      await asyncScratch.cleanup();
     }
   },
   60_000,

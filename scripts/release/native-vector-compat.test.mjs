@@ -293,21 +293,18 @@ test("cleanup failure preserves the original numeric failure and fails closed", 
   }
 });
 
-test.skipIf(process.platform !== "linux")(
-  "actual installed native vectors succeed without touching dependency files or invoking npm",
-  async () => {
-    const result = await ensureNativeVectorCompatibility({
-      packageDir: resolve("packages/gateway"),
-      platform: "darwin",
-      arch: "x64",
-      run: (command, args, setup) => {
-        expect(command).toBe(process.execPath);
-        return runOwned(command, args, setup);
-      },
-    });
-    expect(result).toEqual({ repaired: false, applicable: true });
-  },
-);
+test("actual installed native vectors succeed without touching dependency files or invoking npm", async () => {
+  const result = await ensureNativeVectorCompatibility({
+    packageDir: resolve("packages/gateway"),
+    platform: "darwin",
+    arch: "x64",
+    run: (command, args, setup) => {
+      expect(command).toBe(process.execPath);
+      return runOwned(command, args, setup);
+    },
+  });
+  expect(result).toEqual({ repaired: false, applicable: true });
+});
 
 test.each(["published-hoisted", "published-nested", "source-workspace", "global-nested"])(
   "real npm rebuild targets only resolved usearch in %s with special path characters",

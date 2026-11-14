@@ -96,3 +96,24 @@ expectation, a missing test binary, and tests that overlapped active source
 changes. Focused reruns of the corrected areas pass; this baseline does not
 replace a final frozen-source regression run. Windows portal and complete
 spawned-gateway validation remain in progress.
+
+The focused Windows unit run at revision `3c076e8e3` completed with 926 passing
+tests, one failure and 20 skips. Its remaining failure is a Local Files race
+fixture attempting a directory rename that Windows refuses while a file is
+open. The replacement fixture must preserve the containment assertion for both
+OS-refused and successful substitutions. Native atomic secret replacement now
+passes that hosted run.
+
+The broad Windows E2E baseline completed both shards: 102 files passed and 26
+failed in the first; 100 passed, 26 failed and one skipped in the second.
+Failures include command shims, temporary paths, CRLF-sensitive certificate and
+extension processing, integration credential flushing, and replacing a
+memory-mapped vector index. These are being fixed rather than excluded. The
+portal rerun also exposed excessive native-helper startup overhead. A protected
+compiled helper cache is under native security and lifecycle validation.
+
+A frozen Linux run at the same revision passed 38,573 tests in 2,582 files, with
+12 files skipped. The subsequent script smoke phase passed 159 tests and failed
+two Windows-workflow policy checks: cancellation forwarding and running-Node
+header preparation. The overall job is therefore failed; corrections and a
+fresh complete validation remain required.

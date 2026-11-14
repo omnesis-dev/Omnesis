@@ -5,7 +5,10 @@ import { execFile, execFileSync } from "node:child_process";
 import { win32 } from "node:path";
 import { promisify } from "node:util";
 import { windowsPowerShellExecutable } from "@omnesis/platform/windows-powershell";
-export { windowsPowerShellExecutable } from "@omnesis/platform/windows-powershell";
+export {
+  windowsPowerShellExecutable,
+  windowsProcessStart,
+} from "@omnesis/platform/windows-powershell";
 
 const execFileAsync = promisify(execFile);
 const PROCESS_QUERY = `
@@ -42,37 +45,6 @@ try {
 `;
 const KILL_ARGS = ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", KILL_OWNED_PROCESS];
 const COMMAND_TIMEOUT_MS = 10_000;
-let ownBirth: string | undefined;
-
-/** Exact UTC creation ticks for durable ownership records; only this process is cached. */
-export function windowsProcessStart(pid: number): string | null {
-  if (!Number.isSafeInteger(pid) || pid <= 0) return null;
-  if (pid === process.pid && ownBirth !== undefined) return ownBirth;
-  try {
-    const birth = execFileSync(
-      windowsPowerShellExecutable(),
-      [
-        "-NoLogo",
-        "-NoProfile",
-        "-NonInteractive",
-        "-Command",
-        `$ErrorActionPreference = 'Stop'; [Console]::Out.Write((Get-Process -Id ${pid}).StartTime.ToUniversalTime().Ticks.ToString([System.Globalization.CultureInfo]::InvariantCulture))`,
-      ],
-      {
-        encoding: "utf8",
-        windowsHide: true,
-        timeout: COMMAND_TIMEOUT_MS,
-        stdio: ["ignore", "pipe", "ignore"],
-      },
-    ).trim();
-    if (!/^[0-9]+$/u.test(birth)) return null;
-    if (pid === process.pid) ownBirth = birth;
-    return birth;
-  } catch {
-    return null;
-  }
-}
-
 export interface WindowsProcessIdentity {
   pid: number;
   parentPid: number;

@@ -146,22 +146,48 @@ test("a configured root redirected to its case-distinct sibling is a root gap", 
   });
 });
 
-test("post-read checks reject a root redirected to a case-distinct sibling", (context) => {
+test("a post-read root replacement is refused by the filesystem or detected by the guard", (context) => {
   const { parent, declared, outside } = pair(context);
   const path = join(declared, "note.txt");
   fs.writeFileSync(path, "Fictional allowed original note");
   fs.writeFileSync(join(outside, "note.txt"), "Fictional outside replacement note");
   const file = entry(path),
-    nativeRead = fs.readFileSync;
+    nativeRead = fs.readFileSync,
+    rootIdentity = exactFileIdentity(fs.lstatSync(declared, { bigint: true }));
+  let renameRefused = false;
   const read = vi.spyOn(fs, "readFileSync").mockImplementationOnce(((...args) => {
     const bytes = Reflect.apply(nativeRead, fs, args);
     expect(bytes.toString()).toBe("Fictional allowed original note");
-    fs.renameSync(declared, join(parent, "old-location"));
+    try {
+      fs.renameSync(declared, join(parent, "old-location"));
+    } catch (error) {
+      // Windows may refuse moving a directory while its child's FD is open.
+      // That refusal already prevents the attempted substitution.
+      if (
+        process.platform !== "win32" ||
+        !["EPERM", "EACCES"].includes((error as NodeJS.ErrnoException).code ?? "")
+      )
+        throw error;
+      renameRefused = true;
+      return bytes;
+    }
     fs.symlinkSync(outside, declared, "junction");
     return bytes;
   }) as typeof fs.readFileSync);
-  expect(() => readLocalFileBytes(file, { roots: [declared], platform: "win32", env: {} })).toThrow(
-    /changed|outside/,
-  );
+  let bytes: Uint8Array | undefined, failure: unknown;
+  try {
+    bytes = readLocalFileBytes(file, { roots: [declared], platform: "win32", env: {} });
+  } catch (error) {
+    failure = error;
+  }
+  if (renameRefused) {
+    expect(failure).toBeUndefined();
+    expect(new TextDecoder().decode(bytes)).toBe("Fictional allowed original note");
+    expect(exactFileIdentity(fs.lstatSync(declared, { bigint: true }))).toBe(rootIdentity);
+  } else {
+    expect(failure).toBeInstanceOf(Error);
+    expect(String(failure)).toMatch(/changed|outside/);
+    expect(bytes).toBeUndefined();
+  }
   expect(read).toHaveBeenCalledOnce();
 });

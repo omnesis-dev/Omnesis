@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import {
   existsSync,
   mkdirSync,
@@ -19,6 +19,11 @@ import {
   prepareNodeGypHeaders,
   type HeaderCommandRunner,
 } from "./node-gyp-headers.js";
+
+vi.mock("node:child_process", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:child_process")>();
+  return { ...actual, spawn: vi.fn(actual.spawn) };
+});
 
 const VERSION = process.versions.node;
 const FILES = [
@@ -261,36 +266,43 @@ describe("prepareNodeGypHeaders", () => {
     expect(calls[1]).toEqual(["node", "-e", NODE_GYP_HEADERS_SCRIPT, ""]);
   });
 
-  test.skipIf(process.platform === "win32")(
-    "runs npm and the header fetch with the preload that keeps distrusted roots out",
-    async () => {
-      // Stand-ins on PATH that record the NODE_OPTIONS node-gyp would inherit.
-      const bin = mkdtempSync(join(tmpdir(), "omnesis-node-gyp-trust-"));
-      scratch.push(bin);
-      const log = join(bin, "log");
-      for (const tool of ["npm", "node"]) {
-        writeFileSync(
-          join(bin, tool),
-          `#!/bin/sh\nprintf '%s %s\\n' ${tool} "$NODE_OPTIONS" >> '${log}'\n`,
-          { mode: 0o755 },
-        );
-      }
-      vi.stubEnv("PATH", `${bin}:${process.env.PATH ?? ""}`);
-      vi.stubEnv("NODE_OPTIONS", "--max-old-space-size=512");
-      try {
-        await prepareNodeGypHeaders(bin);
-      } finally {
-        vi.unstubAllEnvs();
-      }
-      const lines = readFileSync(log, "utf8").trim().split("\n");
-      expect(lines).toHaveLength(2);
-      for (const line of lines) {
-        expect(line).toMatch(
-          /^(npm|node) --max-old-space-size=512 --import=file:\/\/\S+\/distrust-roots\.mjs$/u,
-        );
-      }
-    },
-  );
+  test("runs npm and the header fetch with the preload that keeps distrusted roots out", async () => {
+    const bin = mkdtempSync(join(tmpdir(), "omnesis-node-gyp-trust-"));
+    scratch.push(bin);
+    const log = join(bin, "log");
+    const { spawn: actualSpawn } =
+      await vi.importActual<typeof import("node:child_process")>("node:child_process");
+    // Replace only executable discovery: both real Node subprocesses still
+    // consume NODE_OPTIONS and import the production trust preload.
+    for (const tool of ["npm", "node"]) {
+      vi.mocked(spawn).mockImplementationOnce((_command, _args, options) =>
+        actualSpawn(
+          process.execPath,
+          [
+            "-e",
+            `require("node:fs").appendFileSync(process.argv[1], process.argv[2]+" "+process.env.NODE_OPTIONS+"\\n")`,
+            log,
+            tool,
+          ],
+          options,
+        ),
+      );
+    }
+    vi.stubEnv("NODE_OPTIONS", "--max-old-space-size=512");
+    try {
+      await prepareNodeGypHeaders(bin);
+    } finally {
+      vi.unstubAllEnvs();
+      vi.mocked(spawn).mockReset();
+    }
+    const lines = readFileSync(log, "utf8").trim().split("\n");
+    expect(lines).toHaveLength(2);
+    for (const line of lines) {
+      expect(line).toMatch(
+        /^(npm|node) --max-old-space-size=512 --import=file:\/\/\S+\/distrust-roots\.mjs$/u,
+      );
+    }
+  });
 });
 
 describe("the installer's copies", () => {

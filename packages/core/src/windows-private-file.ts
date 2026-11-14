@@ -1,4 +1,24 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-export * from "@omnesis/platform/windows-private-file";
+export {
+  readWindowsPrivateFile,
+  readWindowsPrivateFileContents,
+  readWindowsPrivateFileContentsSync,
+  readWindowsRegularFilePrefix,
+  deleteWindowsPrivateFileExact,
+  deleteWindowsPrivateFileExactSync,
+  createWindowsPrivateFile,
+  createWindowsPrivateFileSync,
+  writeWindowsPrivateFileAtomic,
+  writeWindowsPrivateFileAtomicSync,
+  inspectWindowsPrivatePaths,
+  inspectWindowsPrivatePathSync,
+  secureWindowsPrivatePathSync,
+  writeWindowsPrivateFileAtomicStream,
+} from "@omnesis/platform/windows-private-file";
+export type {
+  WindowsPrivateExactNames,
+  WindowsPrivatePath,
+  WindowsPrivatePathStatus,
+} from "@omnesis/platform/windows-private-file";

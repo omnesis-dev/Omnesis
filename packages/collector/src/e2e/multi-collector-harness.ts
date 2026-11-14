@@ -532,7 +532,8 @@ export class MultiCollectorHarness {
     delete env.NODE_EXTRA_CA_CERTS;
     delete env.OMNESIS_INSECURE_TLS;
     try {
-      const { stdout, stderr } = await execFileAsync("npx", ["tsx", CLI_ENTRY, ...args], {
+      const cli = e2eTsxCommand(CLI_ENTRY);
+      const { stdout, stderr } = await execFileAsync(cli.command, [...cli.args, ...args], {
         cwd: REPO_ROOT,
         env,
         timeout: opts.timeoutMs ?? 30_000,

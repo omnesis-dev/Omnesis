@@ -5,7 +5,7 @@
  * CLI end-to-end coverage.
  *
  * Boots a real gateway against the `e2e-minimal` universe, syncs every
- * source, then execs `npx tsx packages/cli/src/index.ts <cmd>` against
+ * source, then runs the CLI with Node and its tsx loader against
  * it and asserts on exit code + stdout shape. Covers the dozen most-used
  * read + admin commands so a refactor of the CLI router, an HTTP-route
  * rename, or an auth/scope regression surfaces before it ships.
@@ -27,6 +27,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { describe, test, expect, beforeAll, afterAll } from "vitest";
+import { e2eTsxCommand } from "./gateway-env.js";
 import { SyntheticE2EHarness } from "./synth-harness.js";
 
 const execFileAsync = promisify(execFile);
@@ -483,7 +484,8 @@ async function execCli(
     NO_COLOR: "1",
     CI: "1",
   };
-  const { stdout, stderr } = await execFileAsync("npx", ["tsx", CLI_ENTRY, ...args], {
+  const cli = e2eTsxCommand(CLI_ENTRY);
+  const { stdout, stderr } = await execFileAsync(cli.command, [...cli.args, ...args], {
     cwd: REPO_ROOT,
     env,
     timeout: CLI_TIMEOUT_MS,

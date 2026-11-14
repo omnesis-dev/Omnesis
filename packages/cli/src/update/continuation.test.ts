@@ -543,7 +543,7 @@ describe("finding the installed build", () => {
   });
 });
 
-describe.skipIf(process.platform === "win32")("running the installed build on an offer", () => {
+describe("running the installed build on an offer", () => {
   test("a build that accepts reports its own exit status, with the lock id it was handed", async () => {
     const configDir = tempDir();
     const seen = join(configDir, "seen-lock");
@@ -572,9 +572,11 @@ describe.skipIf(process.platform === "win32")("running the installed build on an
     expect(existsSync(continuationPath(configDir))).toBe(false);
   });
 
-  test("a build that accepts and is then killed reports the kill, as accepted", async () => {
-    const configDir = tempDir();
-    const script = `
+  test.skipIf(process.platform === "win32")(
+    "a build that accepts and is then killed reports the kill, as accepted",
+    async () => {
+      const configDir = tempDir();
+      const script = `
       const fs = require("node:fs");
       const path = process.argv[1];
       const doc = JSON.parse(fs.readFileSync(path, "utf8"));
@@ -582,15 +584,16 @@ describe.skipIf(process.platform === "win32")("running the installed build on an
       fs.writeFileSync(path, JSON.stringify(doc));
       process.kill(process.pid, "SIGKILL");
     `;
-    const outcome = await launchContinuation({
-      configDir,
-      doc: offer(),
-      relay: {},
-      command: { command: process.execPath, args: ["-e", script, continuationPath(configDir)] },
-    });
-    expect(outcome).toEqual({ accepted: true, code: 137, signal: "SIGKILL" });
-    expect(existsSync(continuationPath(configDir))).toBe(false);
-  });
+      const outcome = await launchContinuation({
+        configDir,
+        doc: offer(),
+        relay: {},
+        command: { command: process.execPath, args: ["-e", script, continuationPath(configDir)] },
+      });
+      expect(outcome).toEqual({ accepted: true, code: 137, signal: "SIGKILL" });
+      expect(existsSync(continuationPath(configDir))).toBe(false);
+    },
+  );
 
   test("a build that exits without accepting leaves the offer untaken", async () => {
     const configDir = tempDir();
@@ -620,6 +623,48 @@ describe.skipIf(process.platform === "win32")("running the installed build on an
     expect(existsSync(continuationPath(configDir))).toBe(false);
   });
 
+  test.runIf(process.platform === "win32")(
+    "cancellation stops the accepted build's descendants after its wrapper exits",
+    async () => {
+      const configDir = tempDir();
+      const ready = join(configDir, "descendant.pid");
+      const relay: SignalRelay = {};
+      const descendant = `require("node:fs").writeFileSync(process.argv[1], String(process.pid)); setInterval(() => {}, 1000)`;
+      const wrapper = `
+      const fs = require("node:fs");
+      const [offer, marker, descendant] = process.argv.slice(1);
+      const doc = JSON.parse(fs.readFileSync(offer, "utf8"));
+      doc.state = "accepted";
+      fs.writeFileSync(offer, JSON.stringify(doc));
+      require("node:child_process").spawn(process.execPath, ["-e", descendant, marker], { stdio: "inherit", detached: true }).unref();
+    `;
+      const run = launchContinuation({
+        configDir,
+        doc: offer(),
+        relay,
+        command: {
+          command: process.execPath,
+          args: ["-e", wrapper, continuationPath(configDir), ready, descendant],
+        },
+      });
+      try {
+        await vi.waitFor(() => expect(existsSync(ready)).toBe(true), { timeout: 30_000 });
+        const pid = Number(readFileSync(ready, "utf8"));
+        expect(pid).toBeGreaterThan(0);
+        process.kill(pid, 0);
+        relay.deliver?.("SIGTERM");
+        expect(await run).toMatchObject({ accepted: true });
+        await vi.waitFor(() => expect(() => process.kill(pid, 0)).toThrow(), { timeout: 10_000 });
+        expect(relay.deliver).toBeUndefined();
+        expect(existsSync(continuationPath(configDir))).toBe(false);
+      } finally {
+        relay.deliver?.("SIGTERM");
+        await run;
+      }
+    },
+    60_000,
+  );
+
   test("a signal this process receives reaches the build while it runs", async () => {
     const configDir = tempDir();
     const ready = join(configDir, "ready");
@@ -634,9 +679,18 @@ describe.skipIf(process.platform === "win32")("running the installed build on an
       relay,
       command: { command: process.execPath, args: ["-e", script, ready] },
     });
-    await vi.waitFor(() => expect(existsSync(ready)).toBe(true));
+    await vi.waitFor(() => expect(existsSync(ready)).toBe(true), {
+      timeout: process.platform === "win32" ? 30_000 : 1000,
+    });
     relay.deliver?.("SIGTERM");
-    await expect(run).resolves.toMatchObject({ accepted: false, code: 143, signal: "SIGTERM" });
+    if (process.platform === "win32") {
+      // Windows terminates the job owner; it does not deliver POSIX signals.
+      await expect(run).resolves.toMatchObject({ accepted: false });
+      const outcome = await run;
+      expect(outcome.code).not.toBe(0);
+    } else {
+      await expect(run).resolves.toMatchObject({ accepted: false, code: 143, signal: "SIGTERM" });
+    }
     expect(relay.deliver).toBeUndefined();
   });
 });

@@ -86,24 +86,19 @@ jobs:
 
       - name: Install dependencies
         id: dependencies
-        run: |
-          for ($attempt = 1; $attempt -le 3; $attempt++) {
-            npm ci --no-audit --no-fund
-            if ($LASTEXITCODE -eq 0) { break }
-            if ($attempt -eq 3) { throw 'npm ci failed after three attempts' }
-            Start-Sleep -Seconds (10 * $attempt)
-          }
+        run: node scripts/ci/npm-ci.mjs --no-audit --no-fund
 
       - name: Typecheck all TypeScript source and test projects
         if: ${{ matrix.lane == 'unit' }}
-        run: node scripts/run-check.mjs types-tests
+        shell: bash
+        run: exec node scripts/run-check.mjs types-tests
 
       - name: Install spawned-gateway Chromium
         if: ${{ matrix.lane == 'e2e' }}
         run: npm exec --workspace packages/collector -- playwright install chromium
 
-      - name: Install portal Chromium
-        if: ${{ matrix.lane == 'portal' }}
+      - name: Install portal and runtime-smoke Chromium
+        if: ${{ matrix.lane == 'portal' || matrix.lane == 'unit' }}
         run: node node_modules/@playwright/test/cli.js install chromium
 
       - name: Restore the reference embedding model

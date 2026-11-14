@@ -44,7 +44,7 @@ describe("descriptor", () => {
   test("names an account by its folder and keeps the id of an already configured one", () => {
     const mail = join(scratch, "Mail");
     mkdirSync(mail);
-    symlinkSync(mail, join(scratch, "alias"));
+    symlinkSync(mail, join(scratch, "alias"), "junction");
     const id = definition.resolveAccountId!({ path: mail }, []);
     expect(id).toMatch(/^Mail-[0-9a-f]{16}$/);
     expect(definition.resolveAccountId!({ path: join(scratch, "alias") }, [])).toBe(id);

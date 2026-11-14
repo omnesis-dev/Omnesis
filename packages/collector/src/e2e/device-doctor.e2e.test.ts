@@ -5,6 +5,7 @@ import { execFile } from "node:child_process";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
+import { e2eTsxCommand } from "./gateway-env.js";
 import { MultiCollectorHarness } from "./multi-collector-harness.js";
 import type { DoctorReport } from "@omnesis/core/doctor";
 
@@ -31,24 +32,21 @@ async function runDoctorCli(
   args: string[],
 ): Promise<{ stdout: string; exitCode: number }> {
   try {
-    const { stdout } = await execFileAsync(
-      "npx",
-      ["tsx", "packages/cli/src/index.ts", "doctor", ...args],
-      {
-        cwd: REPO_ROOT,
-        env: {
-          ...process.env,
-          OMNESIS_GATEWAY_URL: harness.gatewayUrl,
-          OMNESIS_TOKEN: harness.bootstrapToken,
-          OMNESIS_CONFIG_DIR: harness.gatewayConfigDir,
-          NODE_TLS_REJECT_UNAUTHORIZED: "0",
-          NO_COLOR: "1",
-          CI: "1",
-        },
-        timeout: 120_000,
-        maxBuffer: 8 * 1024 * 1024,
+    const cli = e2eTsxCommand("packages/cli/src/index.ts");
+    const { stdout } = await execFileAsync(cli.command, [...cli.args, "doctor", ...args], {
+      cwd: REPO_ROOT,
+      env: {
+        ...process.env,
+        OMNESIS_GATEWAY_URL: harness.gatewayUrl,
+        OMNESIS_TOKEN: harness.bootstrapToken,
+        OMNESIS_CONFIG_DIR: harness.gatewayConfigDir,
+        NODE_TLS_REJECT_UNAUTHORIZED: "0",
+        NO_COLOR: "1",
+        CI: "1",
       },
-    );
+      timeout: 120_000,
+      maxBuffer: 8 * 1024 * 1024,
+    });
     return { stdout, exitCode: 0 };
   } catch (err) {
     const failure = err as { stdout?: string; code?: number };

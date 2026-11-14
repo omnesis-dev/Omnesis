@@ -11,10 +11,10 @@ import {
   symlinkSync,
   writeFileSync,
 } from "node:fs";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createPrivateScratch } from "./private-scratch.js";
+import { createPrivateScratch, createPrivateScratchAsync } from "./private-scratch.js";
 import { openSqliteSnapshot } from "./sqlite-snapshot.js";
 
 const state = vi.hoisted(() => ({ base: "", originalTmpdir: "" }));
@@ -35,6 +35,32 @@ afterEach(() => {
 });
 
 describe("private scratch", () => {
+  it("asynchronously prepares private independent children and idempotent cleanup", async () => {
+    const root = setup();
+    const [first, second] = await Promise.all([
+      createPrivateScratchAsync("ocr"),
+      createPrivateScratchAsync("ocr"),
+    ]);
+    expect(first.path).not.toBe(second.path);
+    if (process.platform !== "win32") {
+      expect(statSync(root).mode & 0o777).toBe(0o700);
+      expect(statSync(first.path).mode & 0o777).toBe(0o700);
+    }
+    writeFileSync(join(first.path, "plaintext"), "invented image bytes");
+    await first.cleanup();
+    await first.cleanup();
+    expect(existsSync(second.path)).toBe(true);
+    await second.cleanup();
+    expect(readdirSync(root)).toEqual([]);
+  });
+
+  it("asynchronous preparation refuses a linked root before creating plaintext scratch", async () => {
+    const root = setup();
+    symlinkSync(state.base, root, "junction");
+    await expect(createPrivateScratchAsync("ocr")).rejects.toThrow("Unsafe private scratch");
+    expect(readdirSync(state.base)).toEqual([basename(root)]);
+  });
+
   it("isolates concurrent operations and restricts directory permissions", () => {
     const root = setup();
     const first = createPrivateScratch("snapshot");

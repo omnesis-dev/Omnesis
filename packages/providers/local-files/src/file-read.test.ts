@@ -92,6 +92,39 @@ describe("Windows guarded local file reads", () => {
     ).toBe("Allowed fictional note");
   });
 
+  test("post-read checks reject a simulated case-only root substitution on every filesystem", () => {
+    const file = original();
+    const alternateRoot = join(dirname(root), "docs");
+    const alternateFile = join(alternateRoot, "note.txt");
+    const replacement = join(directory, "outside-note.txt");
+    writeFileSync(replacement, "Fictional excluded replacement");
+    const nativeRead = fs.readFileSync,
+      nativeRealpath = fs.realpathSync,
+      nativeLstat = fs.lstatSync;
+    let readComplete = false;
+    vi.spyOn(fs, "realpathSync").mockImplementation(((path, opts) =>
+      readComplete && String(path) === file.absolutePath
+        ? alternateFile
+        : Reflect.apply(nativeRealpath, fs, [path, opts])) as typeof fs.realpathSync);
+    vi.spyOn(fs, "lstatSync").mockImplementation(((path, opts) => {
+      const observed =
+        readComplete && String(path) === alternateFile
+          ? replacement
+          : readComplete && String(path) === alternateRoot
+            ? root
+            : path;
+      return nativeLstat(observed, opts);
+    }) as typeof fs.lstatSync);
+    const read = vi.spyOn(fs, "readFileSync").mockImplementationOnce(((...args) => {
+      const bytes = Reflect.apply(nativeRead, fs, args);
+      expect(bytes.toString()).toBe("Allowed fictional note");
+      readComplete = true;
+      return bytes;
+    }) as typeof fs.readFileSync);
+    expect(() => readLocalFileBytes(file, options())).toThrow(/changed|outside/);
+    expect(read).toHaveBeenCalledOnce();
+  });
+
   test.each([undefined, "", "1:0", "not-an-identity"])(
     "refuses unverifiable exact identity %s before opening or reading",
     (fileIdentity) => {

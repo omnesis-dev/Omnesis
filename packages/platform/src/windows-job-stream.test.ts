@@ -5,8 +5,9 @@ import { EventEmitter } from "node:events";
 import { PassThrough, Readable } from "node:stream";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const mocks = vi.hoisted(() => ({ spawn: vi.fn(), spawnSync: vi.fn() }));
+const mocks = vi.hoisted(() => ({ spawn: vi.fn(), spawnSync: vi.fn(), workerInvocation: vi.fn() }));
 vi.mock("node:child_process", () => ({ spawn: mocks.spawn, spawnSync: mocks.spawnSync }));
+vi.mock("./windows-worker-cache.js", () => ({ windowsWorkerInvocation: mocks.workerInvocation }));
 import {
   killWindowsJob,
   runWindowsJob,
@@ -48,11 +49,18 @@ class Helper extends EventEmitter {
 let helper: Helper;
 beforeEach(() => {
   vi.stubEnv("SystemRoot", "C:\\Windows");
+  mocks.workerInvocation.mockReset().mockImplementation((mode: string) => ({
+    command: "C:\\Windows\\native-worker.exe",
+    args: [mode],
+  }));
   helper = new Helper();
   mocks.spawn.mockReset().mockReturnValue(helper);
 });
 
-afterEach(() => vi.unstubAllEnvs());
+afterEach(() => {
+  vi.unstubAllEnvs();
+  vi.restoreAllMocks();
+});
 
 describe("Windows job stream protocol", () => {
   it("queues literal configuration before immediate binary RPC input and strips split status", async () => {
@@ -151,6 +159,40 @@ describe("Windows job exec capture", () => {
     expect(helper.kill).toHaveBeenCalledOnce();
   });
 
+  it("times out cold initialization before starting a target beyond the probe deadline", async () => {
+    const clock = vi.spyOn(Date, "now").mockReturnValue(1000);
+    mocks.workerInvocation.mockImplementationOnce(() => {
+      clock.mockReturnValue(1100);
+      return { command: "C:\\Windows\\native-worker.exe", args: ["job"] };
+    });
+    await expect(execWindowsJob("fixture", [], { timeout: 100 })).rejects.toMatchObject({
+      code: "ETIMEDOUT",
+      killed: true,
+      stdout: "",
+      stderr: "",
+    });
+    expect(mocks.spawn).not.toHaveBeenCalled();
+  });
+  it("uses only the remaining execution budget after native initialization", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const clock = vi.spyOn(Date, "now").mockReturnValue(1000);
+    mocks.workerInvocation.mockImplementationOnce(() => {
+      clock.mockReturnValue(1040);
+      return { command: "C:\\Windows\\native-worker.exe", args: ["job"] };
+    });
+    try {
+      const run = execWindowsJob("fixture", [], { timeout: 100 });
+      const rejected = expect(run).rejects.toMatchObject({ code: "ETIMEDOUT", killed: true });
+      helper.rawStderr.write("OMNESIS_JOB:0\n");
+      vi.advanceTimersByTime(59);
+      expect(helper.kill).not.toHaveBeenCalled();
+      vi.advanceTimersByTime(1);
+      await rejected;
+      expect(helper.kill).toHaveBeenCalledOnce();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
   it("aborts the whole job through its held helper handle", async () => {
     const signal = new AbortController();
     const run = execWindowsJob("fixture", [], { signal: signal.signal });
@@ -191,7 +233,35 @@ describe("synchronous Windows job framing", () => {
     });
     expect(options.input.subarray(length + 4)).toEqual(Buffer.from([255, 0]));
     expect(options.killSignal).toBe("SIGKILL");
-    expect(options.timeout).toBe(1000);
+    expect(options.timeout).toBeGreaterThan(0);
+    expect(options.timeout).toBeLessThanOrEqual(1000);
+  });
+  it("charges native initialization time against the caller deadline", async () => {
+    vi.spyOn(Date, "now").mockReturnValue(1040).mockReturnValueOnce(1000).mockReturnValueOnce(1000);
+    mocks.spawnSync.mockReturnValue({
+      status: 0,
+      signal: null,
+      stdout: Buffer.alloc(0),
+      stderr: Buffer.from("OMNESIS_JOB:0\n"),
+    });
+    runWindowsJobSync("fixture", [], { timeoutMs: 100 });
+    expect(mocks.spawnSync.mock.calls.at(-1)![2].timeout).toBe(60);
+    mocks.spawn.mockClear();
+    vi.mocked(Date.now).mockReturnValue(1100).mockReturnValueOnce(1000).mockReturnValueOnce(1000);
+    expect(await runWindowsJob("fixture", [], { timeoutMs: 100 })).toMatchObject({
+      failure: "timeout",
+      exitCode: null,
+    });
+    expect(mocks.spawn).not.toHaveBeenCalled();
+  });
+  it("does not initialize a helper for an already-aborted request", async () => {
+    const controller = new AbortController();
+    controller.abort();
+    expect(await runWindowsJob("fixture", [], { signal: controller.signal })).toMatchObject({
+      failure: "aborted",
+    });
+    expect(mocks.workerInvocation).not.toHaveBeenCalled();
+    expect(mocks.spawn).not.toHaveBeenCalled();
   });
   it("classifies native creation failure and timeout separately", () => {
     mocks.spawnSync.mockReturnValue({
@@ -217,9 +287,7 @@ describe("synchronous Windows job framing", () => {
 
 describe("private streaming commit gate", () => {
   function privateBody(): { metadata: Record<string, unknown>; body: Buffer } {
-    const frame = Buffer.concat(helper.input),
-      outer = frame.readUInt32LE();
-    const input = frame.subarray(outer + 4),
+    const input = Buffer.concat(helper.input),
       size = input.readUInt32LE();
     return {
       metadata: JSON.parse(input.subarray(4, size + 4).toString("utf8")) as Record<string, unknown>,

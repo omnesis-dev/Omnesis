@@ -729,6 +729,27 @@ export async function prepareOpenClawInstallArchive(
       mkdirSync(join(packRoot, "dist"), { recursive: true });
       const typescriptEntry = fileURLToPath(import.meta.resolve("typescript"));
       const tsc = join(dirname(typescriptEntry), "..", "bin", "tsc");
+      const platformEntry = fileURLToPath(import.meta.resolve("@omnesis/platform"));
+      const platformRoot = dirname(dirname(platformEntry));
+      execFileSync(
+        process.execPath,
+        [
+          tsc,
+          "--project",
+          join(platformRoot, "tsconfig.json"),
+          "--outDir",
+          join(packRoot, "dist", "private-platform"),
+          "--composite",
+          "false",
+          "--declaration",
+          "false",
+          "--declarationMap",
+          "false",
+          "--sourceMap",
+          "false",
+        ],
+        { stdio: ["ignore", "pipe", "pipe"] },
+      );
       execFileSync(
         process.execPath,
         [

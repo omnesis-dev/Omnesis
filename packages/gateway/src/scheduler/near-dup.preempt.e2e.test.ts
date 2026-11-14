@@ -23,6 +23,8 @@
  * search filter ingestion or a portal action would queue behind it.
  */
 
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
 import { existsSync, unlinkSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
@@ -45,7 +47,7 @@ const WORKER_URL = new URL("../workers/writer-worker.ts", import.meta.url);
 const LOADER_URL = new URL("../workers/register-tsx.mjs", import.meta.url).href;
 
 function testDbPath(): string {
-  return `/tmp/omnesis-near-dup-preempt-${randomUUID()}.db`;
+  return join(tmpdir(), `omnesis-near-dup-preempt-${randomUUID()}.db`);
 }
 
 function cleanupDb(path: string): void {

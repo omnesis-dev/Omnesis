@@ -7,12 +7,9 @@
  * backends (clean printed text is fine; handwriting / dense tables are not),
  * so it's the last resort, not the recommended path.
  *
- * `node-tesseract-ocr` shells out to the system `tesseract` binary, so both the
- * npm package AND the binary must be present. The package is an OPTIONAL
- * dependency loaded through a non-literal specifier, so a build that didn't
- * install it still type-checks and boots; the loader probes for it and reports
- * the backend unavailable when it (or the binary) is missing. The module is
- * injectable so unit tests run without it.
+ * The system binary receives image bytes on stdin through the shared process
+ * launcher, with literal arguments and owned timeout/cancellation cleanup.
+ * The module loader remains injectable for deterministic callers and tests.
  */
 
 import { createLogger } from "@omnesis/core";
@@ -21,18 +18,42 @@ import type { OcrCapability, OcrResult } from "@omnesis/core";
 
 const log = createLogger("gateway:ocr:tesseract");
 
-const TESSERACT_SPECIFIER = "node-tesseract-ocr";
-
-/** The slice of `node-tesseract-ocr` we use. */
+/** Compatibility seam for injected OCR engines; no external wrapper is loaded. */
 interface TesseractModule {
   recognize(input: Buffer | string, config?: Record<string, unknown>): Promise<string>;
 }
 
 export type TesseractModuleLoader = () => Promise<TesseractModule>;
 
-/** Default loader: import the optional `node-tesseract-ocr` module. */
-const defaultTesseractLoader: TesseractModuleLoader = () =>
-  import(TESSERACT_SPECIFIER) as Promise<TesseractModule>;
+export interface TesseractRunArgs {
+  image: Uint8Array;
+  language: string;
+  oem: number;
+  psm: number;
+  timeoutMs: number;
+  signal?: AbortSignal;
+}
+
+export type TesseractRunner = (args: TesseractRunArgs) => Promise<string>;
+
+const defaultTesseractRunner: TesseractRunner = async (args) => {
+  const result = await processLauncher().run(
+    "tesseract",
+    ["stdin", "stdout", "-l", args.language, "--oem", String(args.oem), "--psm", String(args.psm)],
+    {
+      input: args.image,
+      timeoutMs: args.timeoutMs,
+      ...(args.signal ? { signal: args.signal } : {}),
+    },
+  );
+  if (result.failure === "timeout")
+    throw new Error(`Tesseract OCR timed out after ${args.timeoutMs}ms`);
+  if (result.failure === "aborted")
+    throw new Error("Tesseract OCR stopped: the caller stopped waiting");
+  if (result.failure) throw new Error("Tesseract OCR failed to start");
+  if (result.exitCode !== 0) throw new Error(`Tesseract OCR exited ${result.exitCode}`);
+  return Buffer.from(result.stdout).toString("utf8");
+};
 
 /** Whether the `tesseract` binary is on PATH (resolves quickly via `--version`). */
 async function tesseractBinaryPresent(): Promise<boolean> {
@@ -44,15 +65,12 @@ async function tesseractBinaryPresent(): Promise<boolean> {
 }
 
 /**
- * Whether Tesseract is usable: the optional module resolves AND the binary is
- * on PATH. When a loader is injected (tests) the binary check is skipped —
- * the fake module stands in for the whole path.
+ * Whether Tesseract is usable: the system binary is on PATH. An injected
+ * loader stands in for the engine and skips the binary check.
  */
 export async function tesseractAvailable(loader?: TesseractModuleLoader): Promise<boolean> {
   try {
-    const mod = await (loader ?? defaultTesseractLoader)();
-    if (typeof mod?.recognize !== "function") return false;
-    if (loader) return true;
+    if (loader) return typeof (await loader())?.recognize === "function";
     return await tesseractBinaryPresent();
   } catch {
     return false;
@@ -60,8 +78,10 @@ export async function tesseractAvailable(loader?: TesseractModuleLoader): Promis
 }
 
 export interface TesseractOcrOptions {
-  /** Injectable for tests; defaults to importing `node-tesseract-ocr`. */
+  /** Optional injected engine; defaults to the owned system binary runner. */
   loadModule?: TesseractModuleLoader;
+  runTesseract?: TesseractRunner;
+  timeoutMs?: number;
   /** Tesseract OCR engine mode / page-seg mode overrides. */
   oem?: number;
   psm?: number;
@@ -70,18 +90,23 @@ export interface TesseractOcrOptions {
 export class TesseractOcr implements OcrCapability {
   readonly name = "tesseract-ocr";
   readonly modelId = "tesseract";
-  private readonly loadModule: TesseractModuleLoader;
+  private readonly loadModule?: TesseractModuleLoader;
+  private readonly runTesseract: TesseractRunner;
+  private readonly timeoutMs: number;
   private readonly oem: number;
   private readonly psm: number;
   private module: TesseractModule | null = null;
 
   constructor(opts: TesseractOcrOptions = {}) {
-    this.loadModule = opts.loadModule ?? defaultTesseractLoader;
+    this.loadModule = opts.loadModule;
+    this.runTesseract = opts.runTesseract ?? defaultTesseractRunner;
+    this.timeoutMs = opts.timeoutMs ?? 120_000;
     this.oem = opts.oem ?? 1;
     this.psm = opts.psm ?? 3;
   }
 
   private async getModule(): Promise<TesseractModule> {
+    if (!this.loadModule) throw new Error("No injected Tesseract engine");
     if (!this.module) this.module = await this.loadModule();
     return this.module;
   }
@@ -89,14 +114,25 @@ export class TesseractOcr implements OcrCapability {
   async recognize(
     image: Uint8Array,
     _mimeType: string,
-    opts?: { language?: string },
+    opts?: { language?: string; signal?: AbortSignal },
   ): Promise<OcrResult> {
-    const mod = await this.getModule();
     // ISO-639-1 hint → tesseract's 3-letter code for the common cases; default
     // to English. Unknown hints fall back to English rather than failing.
-    const lang = TESSERACT_LANG[opts?.language ?? ""] ?? "eng";
+    const hint = opts?.language ?? "";
+    const lang = Object.hasOwn(TESSERACT_LANG, hint) ? TESSERACT_LANG[hint]! : "eng";
     const text = (
-      await mod.recognize(Buffer.from(image), { lang, oem: this.oem, psm: this.psm })
+      this.loadModule
+        ? await (
+            await this.getModule()
+          ).recognize(Buffer.from(image), { lang, oem: this.oem, psm: this.psm })
+        : await this.runTesseract({
+            image,
+            language: lang,
+            oem: this.oem,
+            psm: this.psm,
+            timeoutMs: this.timeoutMs,
+            signal: opts?.signal,
+          })
     ).trim();
     log.debug(`Tesseract OCR (${lang}): ${image.byteLength} bytes → ${text.length} chars`);
     return { text, language: opts?.language };

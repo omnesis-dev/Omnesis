@@ -262,7 +262,7 @@ describe("context-window V1 acceptance", () => {
   test("a queued background payload makes one attempt and settles context failure", async () => {
     const endpoint = await startFakeResponsesEndpoint();
     openEndpoints.push(endpoint);
-    const dbPath = `/tmp/omnesis-test-${randomUUID()}.db`;
+    const dbPath = join(tmpdir(), `omnesis-test-${randomUUID()}.db`);
     cleanupPaths.push(dbPath);
     const db = createDatabase(dbPath);
     const dir = mkdtempSync(join(tmpdir(), "omnesis-context-queue-e2e-"));

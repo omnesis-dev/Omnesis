@@ -102,7 +102,8 @@ describe("Windows CI coverage", () => {
       ({ name }) => name === "Typecheck all TypeScript source and test projects",
     );
     expect(step.if).toBe("${{ matrix.lane == 'unit' }}");
-    expect(step.run).toBe("node scripts/run-check.mjs types-tests");
+    expect(step.shell).toBe("bash");
+    expect(step.run).toBe("exec node scripts/run-check.mjs types-tests");
     expect(step).not.toHaveProperty("continue-on-error");
     const dependencyStep = workflow().jobs.windows.steps.find(({ id }) => id === "dependencies");
     expect(dependencyStep.name).toBe("Install dependencies");

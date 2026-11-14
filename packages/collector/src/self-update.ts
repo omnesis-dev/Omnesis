@@ -41,6 +41,8 @@ import {
   createLogger,
   DEFAULT_CONFIG_DIR,
   getUpdateLockProcessGroup,
+  nodeCommandInvocation,
+  spawnWindowsJob,
   summarizeCommandFailure,
   UPDATE_LOCK_ENV,
   UpdateLockBusyError,
@@ -178,7 +180,7 @@ export function updateInvocation(
         : {}),
     };
   }
-  return { command: cliPath, args };
+  return nodeCommandInvocation(cliPath, args, platform);
 }
 
 /**
@@ -256,13 +258,15 @@ function signalUpdaterTree(child: ReturnType<typeof spawn>, signal: NodeJS.Signa
 }
 
 function signalPublishedApplyGroup(configDir: string, signal: NodeJS.Signals): boolean {
-  if (process.platform === "win32") return true;
   const group = getUpdateLockProcessGroup(configDir);
   if (group.state === "none") {
     log.warn("The unresponsive updater published no apply process group");
     return false;
   }
   if (group.state === "gone") return true;
+  // A published PID from another process is insufficient authority to kill
+  // it on Windows. The retained outer job owns only this updater subtree.
+  if (process.platform === "win32") return false;
   if (group.state === "unverified") {
     log.warn(`Refusing to signal reused or unverifiable update process group ${group.pid}`);
     return false;
@@ -322,11 +326,21 @@ export function createCliUpdater(
           lockWaitMinutes(limitMs),
         );
         log.info(`Running ${invocation.command} ${invocation.args.join(" ")}`);
-        const child = spawnProcess(invocation.command, invocation.args, {
-          stdio: ["ignore", "pipe", "pipe"],
-          env,
-          detached: invocation.command !== "systemd-run" && platform !== "win32",
-        });
+        const ownedWindowsJob = platform === "win32" && !opts.spawnFn;
+        const child = ownedWindowsJob
+          ? spawnWindowsJob(invocation.command, invocation.args, { env })
+          : spawnProcess(invocation.command, invocation.args, {
+              stdio: ["ignore", "pipe", "pipe"],
+              env,
+              detached: invocation.command !== "systemd-run" && platform !== "win32",
+            });
+        let creationError: unknown;
+        if ("jobReady" in child) {
+          child.stdin?.end();
+          (child.jobReady as Promise<void>).catch((error: unknown) => {
+            creationError = error;
+          });
+        }
         let confirmStopped!: () => void;
         const stopped = new Promise<void>((resolveStopped) => {
           confirmStopped = resolveStopped;
@@ -398,8 +412,15 @@ export function createCliUpdater(
             });
             escalation = setTimeout(force, stopGraceMs);
           } else {
-            signalUpdaterTree(child, "SIGTERM");
+            if (ownedWindowsJob) child.kill("SIGKILL");
+            else signalUpdaterTree(child, "SIGTERM");
             escalation = setTimeout(() => {
+              if (ownedWindowsJob) {
+                // Closing this retained helper closes the kernel job, including
+                // nested apply jobs. Publication evidence is checked after close.
+                child.kill("SIGKILL");
+                return;
+              }
               if (!signalPublishedApplyGroup(configDir, "SIGKILL")) {
                 settle({
                   state: "failed",
@@ -454,6 +475,13 @@ export function createCliUpdater(
             settle({
               state: "failed",
               detail: `The update did not finish within ${limitMinutes} minutes and was stopped.`,
+            });
+            return;
+          }
+          if (creationError) {
+            settle({
+              state: "failed",
+              detail: `Could not start the update CLI: ${creationError instanceof Error ? creationError.message : String(creationError)}`,
             });
             return;
           }

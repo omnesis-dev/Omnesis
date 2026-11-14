@@ -473,7 +473,9 @@
             and unsent messages, messages marked deleted, and any folder matching the
             <em>Exclude folders</em> setting, which takes folder names such as
             <code>[Gmail]/All Mail</code>; <code>*</code> matches within a folder name and
-            <code>**</code> across folders.
+            <code>**</code> across folders. Symbolic links are skipped. On Windows, message paths
+            through a junction or symbolic link are refused; choose the actual folder rather than a
+            linked path.
           </li>
           <li>
             <strong>A folder it cannot read.</strong> An unreadable folder, or a Maildir that is not

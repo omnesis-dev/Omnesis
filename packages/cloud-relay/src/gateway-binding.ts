@@ -37,13 +37,19 @@ export function certificateFingerprint(certificate: string): string {
   return createHash("sha256").update(new X509Certificate(certificate).raw).digest("hex");
 }
 
+/** Accept one public PEM leaf with native text line endings, never a chain or key. */
+export function publicLeafCertificate(pem: string): X509Certificate {
+  const certificate = new X509Certificate(pem);
+  if (certificate.toString().trim() !== pem.replace(/\r\n/g, "\n").trim())
+    throw new Error("Only a public leaf certificate may be published");
+  return certificate;
+}
+
 /** Google signs this nonce during owner sign-in; a directory cannot substitute its own key. */
 export function gatewayBindingNonce(binding: Omit<GatewayBinding, "identityToken">): string {
   const origin = bindingOrigin(binding.publicOrigin);
   z.string().uuid().parse(binding.gatewayId);
-  const certificate = new X509Certificate(binding.certificate);
-  if (certificate.toString().trim() !== binding.certificate.trim())
-    throw new Error("Only a public leaf certificate may be published");
+  const certificate = publicLeafCertificate(binding.certificate);
   if (!certificate.checkHost(origin.hostname))
     throw new Error("Certificate does not cover gateway host");
   return createHash("sha256")

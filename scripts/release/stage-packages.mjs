@@ -39,6 +39,9 @@ const EXCLUDED = new Set();
 const EXTRA_ASSETS = {
   "@omnesis/cloud-relay": [{ from: "src/account-browser.js", to: "dist/account-browser.js" }],
   "@omnesis/agent-integration": [
+    // Canonical builtin-only helpers keep the standalone runtime manifest
+    // independent of other Omnesis packages.
+    { from: "../platform/dist", to: "dist/private-platform" },
     { from: "openclaw-entry.mjs", to: "openclaw-entry.mjs" },
     { from: "openclaw.plugin.json", to: "openclaw.plugin.json" },
     { from: "hermes/__init__.py", to: "hermes/__init__.py" },

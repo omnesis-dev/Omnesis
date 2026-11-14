@@ -3,6 +3,7 @@
 
 import { execFileSync } from "node:child_process";
 import {
+  cpSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -320,6 +321,7 @@ describe("release package runtime assets", () => {
   test("ships both agent harness entry points with the shared integration package", () => {
     const assets = runtimeAssetsFor("@omnesis/agent-integration");
     expect(assets).toEqual([
+      { from: "../platform/dist", to: "dist/private-platform" },
       { from: "openclaw-entry.mjs", to: "openclaw-entry.mjs" },
       { from: "openclaw.plugin.json", to: "openclaw.plugin.json" },
       { from: "hermes/__init__.py", to: "hermes/__init__.py" },
@@ -388,6 +390,46 @@ describe("release package runtime assets", () => {
       expect(manifest.dependencies).toEqual(entry.pkg.dependencies);
       expect(manifest.engines).toEqual({ node: ">=24.0.0" });
       expect(manifest.dependencies).not.toHaveProperty("@omnesis/core");
+      expect(manifest.dependencies).not.toHaveProperty("@omnesis/platform");
+      expect(existsSync(join(staged, "dist", "private-platform", "windows-private-file.js"))).toBe(
+        true,
+      );
+      expect(
+        existsSync(join(staged, "dist", "private-platform", "native", "windows-worker-source.js")),
+      ).toBe(true);
+      // This process has no workspace ancestor or Omnesis node_modules aliases.
+      // A Linux import proves closure; Windows also exercises the bundled native
+      // credential read/write boundary against a real protected file.
+      const standalone = mkdtempSync(join(tmpdir(), "omnesis-standalone-runtime-"));
+      try {
+        cpSync(join(staged, "dist", "windows-files.js"), join(standalone, "windows-files.js"));
+        cpSync(join(staged, "dist", "private-platform"), join(standalone, "private-platform"), {
+          recursive: true,
+        });
+        writeFileSync(join(standalone, "package.json"), '{"type":"module"}');
+        execFileSync(
+          process.execPath,
+          [
+            "--input-type=module",
+            "-e",
+            `import { privateWindowsFiles } from './windows-files.js';
+const files = privateWindowsFiles();
+if (typeof files.readWindowsPrivateFileContentsSync !== 'function' ||
+    typeof files.writeWindowsPrivateFileAtomicSync !== 'function') throw new Error('Missing standalone helpers');
+if (process.platform === 'win32') {
+  const path = new URL('./invented-credentials.json', import.meta.url);
+  const { fileURLToPath } = await import('node:url');
+  const target = fileURLToPath(path);
+  files.writeWindowsPrivateFileAtomicSync(target, Buffer.from('invented-private-bytes'));
+  if (files.readWindowsPrivateFileContentsSync(target).toString() !== 'invented-private-bytes')
+    throw new Error('Standalone native private file round trip failed');
+}`,
+          ],
+          { cwd: standalone, stdio: ["ignore", "pipe", "pipe"], timeout: 60_000 },
+        );
+      } finally {
+        rmSync(standalone, { recursive: true, force: true });
+      }
       const loaded = await import(`${join(staged, "openclaw-entry.mjs")}?smoke=${Date.now()}`);
       expect(loaded.default).toMatchObject({
         id: "omnesis-integration",

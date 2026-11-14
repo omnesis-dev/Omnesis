@@ -3,7 +3,7 @@
 
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
-import { randomUUID, X509Certificate } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { once } from "node:events";
 import { z } from "zod";
 import { DEFAULT_CONFIG_DIR, resolveTlsMaterial } from "@omnesis/core";
@@ -29,7 +29,7 @@ import { AcmeDnsChallenges } from "./acme-dns.js";
 import { cloudflareDnsProvider, fixtureDnsApiUrl } from "./cloudflare-dns.js";
 import { DEFAULT_TUNNEL_LIMITS } from "./tunnels.js";
 import { runGoogleRelayLogin, runAccountDevicePairing } from "./google-commands.js";
-import { bindingOrigin, certificateFingerprint } from "./gateway-binding.js";
+import { bindingOrigin, certificateFingerprint, publicLeafCertificate } from "./gateway-binding.js";
 import { readPrivateJson, savePrivateJson } from "./google-credentials.js";
 import { runGatewayGoogleLink } from "./gateway-google-link.js";
 import { registerGatewayKey, prepareGatewayOwner } from "./gateway-key-client.js";
@@ -545,9 +545,8 @@ export async function runRelayCommand(
         .parse(await readPrivateJson(env.OMNESIS_CLOUD_RELAY_DEVICE_FILE))
     : undefined;
   if (paired) {
-    const certificate = new X509Certificate(paired.gatewayCertificate);
+    const certificate = publicLeafCertificate(paired.gatewayCertificate);
     if (
-      certificate.toString().trim() !== paired.gatewayCertificate.trim() ||
       !certificate.checkHost(bindingOrigin(paired.gatewayUrl).hostname) ||
       certificateFingerprint(paired.gatewayCertificate) !== paired.gatewayFingerprint ||
       (paired.tlsSpkiFingerprint !== undefined &&

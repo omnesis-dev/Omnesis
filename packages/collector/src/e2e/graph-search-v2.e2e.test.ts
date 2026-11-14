@@ -13,6 +13,7 @@ import { ProviderId, SourceId } from "@omnesis/types";
 import { normalizeFile } from "@omnesis/provider-local-files/src/normalizer.js";
 import { serializeToolResultForModel } from "@omnesis/agent";
 import { authorizeMcpClient, type AuthorizedMcpClient } from "./mcp-oauth-helper.js";
+import { e2eTsxCommand } from "./gateway-env.js";
 import { SyntheticE2EHarness } from "./synth-harness.js";
 import type { DocRef, SearchProvenance, ToolResult } from "@omnesis/core";
 
@@ -962,7 +963,8 @@ async function runCli(
   harness: SyntheticE2EHarness,
   args: string[],
 ): Promise<{ stdout: string; stderr: string }> {
-  return execFileAsync("npx", ["tsx", "packages/cli/src/index.ts", ...args], {
+  const cli = e2eTsxCommand("packages/cli/src/index.ts");
+  return execFileAsync(cli.command, [...cli.args, ...args], {
     cwd: REPO_ROOT,
     env: {
       ...process.env,

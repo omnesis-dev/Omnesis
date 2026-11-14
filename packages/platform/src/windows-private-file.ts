@@ -4,10 +4,12 @@
 import { randomUUID } from "node:crypto";
 import { win32 } from "node:path";
 import { Readable } from "node:stream";
-import { gzipSync } from "node:zlib";
-import { runWindowsJob, runWindowsJobSync, type WindowsJobResult } from "./windows-job.js";
-import { windowsPowerShellExecutable } from "./windows-powershell.js";
-import { WINDOWS_PRIVATE_FILE_POWERSHELL_SCRIPT as SCRIPT } from "./native/windows-private-file-source.js";
+import { windowsFilesystemInvocation } from "./windows-job.js";
+import {
+  runWindowsOwnedProcess,
+  runWindowsOwnedProcessSync,
+  type WindowsJobResult,
+} from "./windows-owned-process.js";
 
 const MAX_BYTES = 16_384;
 const COMMIT = Buffer.from("\0OMNESIS_PRIVATE_COMMIT_V1\0", "ascii");
@@ -39,26 +41,18 @@ type Operation =
       replaceExisting?: boolean;
     }
   | { action: "cleanup"; path: string; identity: string }
+  | { action: "regular-prefix"; path: string; limit: number }
   | ({ action: "read"; path: string; limit: number } & WindowsPrivateExactNames)
   | ({ action: "delete"; path: string } & WindowsPrivateExactNames)
   | { action: "inspect"; paths: readonly WindowsPrivatePath[]; repair: boolean; protect?: boolean };
-
-let program: string | undefined;
-function encodedProgram(): string {
-  if (program !== undefined) return program;
-  // Only this constant public program is decompressed in memory. The reader
-  // never touches stdin, whose metadata and secret bytes use exact native reads.
-  const source = gzipSync(Buffer.from(SCRIPT, "utf8")).toString("base64");
-  const bootstrap = `$memory=[IO.MemoryStream]::new([Convert]::FromBase64String('${source}'),$false);$gzip=[IO.Compression.GZipStream]::new($memory,[IO.Compression.CompressionMode]::Decompress);$reader=[IO.StreamReader]::new($gzip,[Text.Encoding]::UTF8);try { & ([scriptblock]::Create($reader.ReadToEnd())) } finally { $reader.Dispose();$memory.Dispose() }`;
-  program = Buffer.from(bootstrap, "utf16le").toString("base64");
-  return program;
-}
 
 function invocation(
   operation: Operation,
   input?: Uint8Array,
   complete = true,
-): { command: string; args: string[]; input: Buffer } {
+  budget: number | null = 30_000,
+): { command: string; args: readonly string[]; input: Buffer; timeoutMs: number | undefined } {
+  const started = Date.now();
   const paths =
     operation.action === "inspect" ? operation.paths.map((entry) => entry.path) : [operation.path];
   if (paths.length > 5000 || paths.some((path) => path.includes("\0")))
@@ -67,8 +61,17 @@ function invocation(
   if (metadata.length > 2097152) throw new Error("Private file operation is too large");
   const length = Buffer.alloc(4);
   length.writeUInt32LE(metadata.length);
-  const command = windowsPowerShellExecutable();
-  const args = ["-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", encodedProgram()];
+  const { command, args } = windowsFilesystemInvocation(budget ?? undefined);
+  const timeoutMs = budget === null ? undefined : budget - (Date.now() - started);
+  if (timeoutMs !== undefined && timeoutMs <= 0) {
+    resultBytes({
+      exitCode: null,
+      signal: null,
+      stdout: Buffer.alloc(0),
+      stderr: "",
+      failure: "timeout",
+    });
+  }
   // The native Job launcher quotes each argument, including the executable.
   if (command.length + 3 + args.reduce((size, arg) => size + arg.length + 3, 0) > 32767) {
     throw new Error("Windows private helper command line is too large");
@@ -80,6 +83,7 @@ function invocation(
   return {
     command,
     args,
+    timeoutMs,
     input: Buffer.concat([length, metadata, Buffer.from(input ?? []), commit]),
   };
 }
@@ -121,16 +125,45 @@ function resultBytes(result: WindowsJobResult): Buffer {
 }
 async function operate(operation: Operation, input?: Uint8Array): Promise<Buffer> {
   const run = invocation(operation, input);
-  return resultBytes(
-    await runWindowsJob(run.command, run.args, { input: run.input, timeoutMs: 30_000 }),
-  );
+  return resultBytes(await runWindowsOwnedProcess(run, run.input, { timeoutMs: run.timeoutMs }));
+}
+
+/** Read a source file without following any path component, retaining native parents through the read. */
+export async function readWindowsRegularFilePrefix(
+  path: string,
+  limit: number,
+): Promise<{ bytes: Buffer; size: bigint }> {
+  if (!Number.isSafeInteger(limit) || limit < 0 || limit > 32 * 1024 * 1024)
+    throw new Error("Invalid regular-file prefix limit");
+  let result: Buffer;
+  try {
+    result = await operate({ action: "regular-prefix", path, limit });
+  } catch (error) {
+    const native = error as NodeJS.ErrnoException & { nativeCode?: number };
+    throw Object.assign(
+      new Error("Could not safely read the Windows regular file", { cause: error }),
+      {
+        code:
+          native.code === "ENOENT"
+            ? "ENOENT"
+            : native.nativeCode === 5 || native.nativeCode === 32
+              ? "EACCES"
+              : "EUNSAFEPATH",
+      },
+    );
+  }
+  if (result.length < 8 || result.length > 8 + limit)
+    throw new Error("Invalid Windows regular-file prefix response");
+  const size = result.readBigUInt64LE();
+  if (size > 0x7fffffffffffffffn || BigInt(result.length - 8) > size)
+    throw new Error("Invalid Windows regular-file prefix response");
+  return { bytes: result.subarray(8), size };
 }
 function operateSync(operation: Operation, input?: Uint8Array): Buffer {
   const run = invocation(operation, input);
   return resultBytes(
-    runWindowsJobSync(run.command, run.args, {
-      input: run.input,
-      timeoutMs: 30_000,
+    runWindowsOwnedProcessSync(run, run.input, {
+      timeoutMs: run.timeoutMs,
       maxBuffer: Number.MAX_SAFE_INTEGER,
     }),
   );
@@ -302,6 +335,7 @@ export async function writeWindowsPrivateFileAtomicStream(
 ): Promise<void> {
   if (!Number.isSafeInteger(declaredLength) || declaredLength < 0)
     throw new Error("Invalid private file length");
+  opts.signal?.throwIfAborted();
   const staging = win32.basename(path) + ".omnesis-" + process.pid + "-" + randomUUID() + ".tmp";
   const scratch = win32.join(win32.dirname(path), staging);
   const run = invocation(
@@ -316,6 +350,7 @@ export async function writeWindowsPrivateFileAtomicStream(
     },
     undefined,
     false,
+    opts.timeoutMs ?? null,
   );
   let sourceFailed = false,
     sourceError: unknown,
@@ -358,10 +393,10 @@ export async function writeWindowsPrivateFileAtomicStream(
     failure: unknown;
   const cleanupErrors: unknown[] = [];
   try {
-    const result = await runWindowsJob(run.command, run.args, {
+    const result = await runWindowsOwnedProcess(run, Buffer.alloc(0), {
       inputStream: input,
       signal: opts.signal,
-      timeoutMs: opts.timeoutMs,
+      timeoutMs: run.timeoutMs,
       onStderr(bytes) {
         stderr += Buffer.from(bytes).toString("utf8");
         const lines = stderr.split("\n");

@@ -2,12 +2,13 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-const mocks = vi.hoisted(() => ({ spawn: vi.fn(), spawnSync: vi.fn() }));
+const mocks = vi.hoisted(() => ({ spawn: vi.fn(), spawnSync: vi.fn(), workerInvocation: vi.fn() }));
 vi.mock("node:child_process", async (original) => ({
   ...(await original<typeof import("node:child_process")>()),
   spawn: mocks.spawn,
   spawnSync: mocks.spawnSync,
 }));
+vi.mock("./windows-worker-cache.js", () => ({ windowsWorkerInvocation: mocks.workerInvocation }));
 import {
   createWindowsPrivateFileSync,
   readWindowsPrivateFileContentsSync,
@@ -19,6 +20,10 @@ import {
 
 beforeEach(() => {
   vi.stubEnv("SystemRoot", "C:\\Windows");
+  mocks.workerInvocation.mockReset().mockImplementation((mode: string) => ({
+    command: "C:\\Windows\\native-worker.exe",
+    args: [mode],
+  }));
   mocks.spawnSync.mockReset().mockReturnValue({
     status: 0,
     signal: null,
@@ -29,17 +34,12 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllEnvs());
 function frame(): { metadata: unknown; bytes: Buffer; command: string; args: string[] } {
   const options = mocks.spawnSync.mock.calls.at(-1)![2] as { input: Buffer };
-  const outerLength = options.input.readUInt32LE();
-  const outer = JSON.parse(options.input.subarray(4, outerLength + 4).toString("utf8")) as {
-    command: string;
-    args: string[];
-  };
-  const input = options.input.subarray(outerLength + 4),
-    length = input.readUInt32LE();
+  const length = options.input.readUInt32LE();
   return {
-    metadata: JSON.parse(input.subarray(4, length + 4).toString("utf8")),
-    bytes: input.subarray(length + 4),
-    ...outer,
+    metadata: JSON.parse(options.input.subarray(4, length + 4).toString("utf8")),
+    bytes: options.input.subarray(length + 4),
+    command: mocks.spawnSync.mock.calls.at(-1)![0] as string,
+    args: mocks.spawnSync.mock.calls.at(-1)![1] as string[],
   };
 }
 describe("Windows private native protocol", () => {

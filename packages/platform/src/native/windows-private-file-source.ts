@@ -48,9 +48,9 @@ public static partial class OmnesisPrivateFile {
     if(handle.IsInvalid) { int code=Marshal.GetLastWin32Error(); handle.Dispose(); throw new Win32Exception(code); }
     try { Information(handle,directory); return handle; } catch { handle.Dispose(); throw; }
   }
-  static RawSecurityDescriptor Security(SafeFileHandle handle) {
+  static RawSecurityDescriptor Security(SafeFileHandle handle,int kind=1) {
     IntPtr owner,group,dacl,sacl,descriptor;
-    CheckCode(GetSecurityInfo(handle,1,5,out owner,out group,out dacl,out sacl,out descriptor));
+    CheckCode(GetSecurityInfo(handle,kind,5,out owner,out group,out dacl,out sacl,out descriptor));
     try {
       uint length=GetSecurityDescriptorLength(descriptor);
       if(length==0 || length>1048576) throw new UnauthorizedAccessException();
@@ -298,10 +298,15 @@ if ($config.action -eq 'create' -or $config.action -eq 'atomic') {
 } else { [OmnesisPrivateFile]::Read([string]$config.path,[long]$config.limit,[string]$config.exactBasename,[string]$config.exactParentBasename) }
 } catch {
   $cause=$_.Exception
-  while ($cause.InnerException) { $cause=$cause.InnerException }
+  $cleanupCode=$null
+  while ($null -ne $cause) {
+    if ($cause.Data.Contains('PrivateCleanupCode')) { $cleanupCode=$cause.Data['PrivateCleanupCode'] }
+    if ($null -eq $cause.InnerException) { break }
+    $cause=$cause.InnerException
+  }
   $code=$cause.HResult -band 65535
   if ($cause -is [System.ComponentModel.Win32Exception]) { $code=$cause.NativeErrorCode }
-  if ($cause.Data.Contains('PrivateCleanupCode')) { [Console]::Error.WriteLine('OMNESIS_PRIVATE_CLEANUP_FAILED:'+[string]$cause.Data['PrivateCleanupCode']) }
+  if ($null -ne $cleanupCode) { [Console]::Error.WriteLine('OMNESIS_PRIVATE_CLEANUP_FAILED:'+[string]$cleanupCode) }
   $stage='bootstrap'
   if ('OmnesisPrivateFile' -as [type]) { $stage=[OmnesisPrivateFile]::Stage }
   $category='EPRIVATE'
