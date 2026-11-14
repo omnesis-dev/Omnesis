@@ -56,12 +56,15 @@ function invocation(operation: Operation) {
   return { ...native, input: Buffer.concat([length, metadata]), timeoutMs };
 }
 function bytes(result: WindowsJobResult): Buffer {
-  if (result.failure || result.exitCode !== 0) {
+  const cleanupUncertain = Object.hasOwn(result, "cleanupFailure");
+  if (result.failure || result.exitCode !== 0 || cleanupUncertain) {
     const code =
       /EPRIVATE:process-(?:snapshot|kill):[0-9]+/u.exec(result.stderr)?.[0] ??
       result.failure ??
       "failed";
-    throw new Error(`Owned Windows process operation ${code}`);
+    const error = new Error(`Owned Windows process operation ${code}`);
+    if (cleanupUncertain) Object.assign(error, { cleanupFailure: result.cleanupFailure });
+    throw error;
   }
   if (result.stdout.length > 4 * 1024 * 1024)
     throw new Error("Windows process snapshot exceeded its limit");

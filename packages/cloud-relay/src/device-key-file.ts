@@ -6,6 +6,7 @@ import { link, mkdir, open, readFile, rm } from "node:fs/promises";
 import { dirname } from "node:path";
 import { Readable } from "node:stream";
 import { readWindowsPrivateFile, writeWindowsPrivateFileAtomicStream } from "@omnesis/core";
+import { isJoinedPrivateFileError } from "./private-file-errors.js";
 import type { KeyObject } from "node:crypto";
 
 export interface DeviceKey {
@@ -35,7 +36,7 @@ export async function readOrCreateDeviceKey(path: string): Promise<DeviceKey> {
   try {
     return toDeviceKey(await readDeviceKey(path));
   } catch (error) {
-    if (!(error && typeof error === "object" && "code" in error && error.code === "ENOENT"))
+    if (!isJoinedPrivateFileError(error, "ENOENT"))
       throw new Error("The saved device key could not be read", { cause: error });
   }
   await mkdir(dirname(path), { recursive: true, mode: 0o700 });
@@ -49,8 +50,7 @@ export async function readOrCreateDeviceKey(path: string): Promise<DeviceKey> {
         timeoutMs: 30_000,
       });
     } catch (error) {
-      if (!(error && typeof error === "object" && "code" in error && error.code === "EEXIST"))
-        throw error;
+      if (!isJoinedPrivateFileError(error, "EEXIST")) throw error;
     }
     return toDeviceKey(await readDeviceKey(path));
   }

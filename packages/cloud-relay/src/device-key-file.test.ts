@@ -243,3 +243,36 @@ test.each([
     }
   },
 );
+
+test.each([null, "interrupted", {}, { code: "EPERM" }])(
+  "Windows device publication refuses non-winner failure %j without rereading or leaving a key",
+  async (failure) => {
+    const path = join(directory, "publication-refused.key");
+    const read = vi
+      .spyOn(core, "readWindowsPrivateFile")
+      .mockRejectedValueOnce(Object.assign(new Error("Invented absent key"), { code: "ENOENT" }));
+    const publish = vi
+      .spyOn(core, "writeWindowsPrivateFileAtomicStream")
+      .mockRejectedValueOnce(failure);
+    const descriptor = Object.getOwnPropertyDescriptor(process, "platform")!;
+    Object.defineProperty(process, "platform", { ...descriptor, value: "win32" });
+    try {
+      await expect(readOrCreateDeviceKey(path)).rejects.toBe(failure);
+      expect(read).toHaveBeenCalledTimes(1);
+      expect(publish).toHaveBeenCalledOnce();
+      expect(await readdir(directory)).toEqual([]);
+    } finally {
+      Object.defineProperty(process, "platform", descriptor);
+    }
+  },
+);
+
+test.skipIf(process.platform === "win32")(
+  "a refused POSIX staging open creates no key or cleanup target",
+  async () => {
+    const failure = new Error("Invented staging open refusal");
+    vi.spyOn(files, "open").mockRejectedValueOnce(failure);
+    await expect(readOrCreateDeviceKey(join(directory, "open-refused.key"))).rejects.toBe(failure);
+    expect(await readdir(directory)).toEqual([]);
+  },
+);

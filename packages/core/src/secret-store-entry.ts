@@ -6,6 +6,7 @@ import { unlink } from "node:fs/promises";
 import { basename } from "node:path";
 import { readPrivateSecretText, readPrivateSecretTextSync } from "./secret-store-files.js";
 import { SecretPathUnreadableError } from "./security-files.js";
+import { ownedProcessCleanupReceipt } from "./owned-process-cleanup.js";
 import {
   deleteWindowsPrivateFileExact,
   deleteWindowsPrivateFileExactSync,
@@ -32,7 +33,10 @@ async function removeExact(
   try {
     await deleteWindowsPrivateFileExact(path, { exactBasename, exactParentBasename });
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "ENOENT")
+    if (
+      ownedProcessCleanupReceipt(error) !== undefined ||
+      (error as NodeJS.ErrnoException).code !== "ENOENT"
+    )
       throw new SecretPathUnreadableError(path, error);
   }
 }
@@ -60,7 +64,10 @@ export function retireLegacySecretEntrySync(paths: SecretEntryPaths): void {
   try {
     deleteWindowsPrivateFileExactSync(path, { exactBasename, exactParentBasename });
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "ENOENT")
+    if (
+      ownedProcessCleanupReceipt(error) !== undefined ||
+      (error as NodeJS.ErrnoException).code !== "ENOENT"
+    )
       throw new SecretPathUnreadableError(path, error);
   }
 }
@@ -72,7 +79,10 @@ export function deleteSecretEntrySync(paths: SecretEntryPaths): void {
   try {
     deleteWindowsPrivateFileExactSync(paths.path, { exactBasename: basename(paths.path) });
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "ENOENT")
+    if (
+      ownedProcessCleanupReceipt(error) !== undefined ||
+      (error as NodeJS.ErrnoException).code !== "ENOENT"
+    )
       throw new SecretPathUnreadableError(paths.path, error);
   }
   retireLegacySecretEntrySync(paths);

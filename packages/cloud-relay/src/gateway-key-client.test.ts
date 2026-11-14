@@ -10,6 +10,7 @@ import {
 } from "node:crypto";
 import { mkdtemp, readFile, rm, stat, writeFile, mkdir, readdir, symlink } from "node:fs/promises";
 import * as files from "node:fs/promises";
+import * as crypto from "node:crypto";
 import { tmpdir } from "node:os";
 import { once } from "node:events";
 import { dirname, join } from "node:path";
@@ -36,6 +37,8 @@ vi.mock("node:fs/promises", async (original) => {
   const module = await original<typeof import("node:fs/promises")>();
   return { ...module, link: vi.fn(module.link) };
 });
+
+vi.mock("node:crypto", { spy: true });
 
 let directory: string;
 beforeEach(async () => {
@@ -944,6 +947,58 @@ test.each([
       expect(await readFile(path, "utf8")).toBe(winner);
       const after = await stat(path, { bigint: true });
       expect([after.dev, after.ino]).toEqual([before.dev, before.ino]);
+    } finally {
+      Object.defineProperty(process, "platform", descriptor);
+    }
+  },
+);
+
+test("Windows recovery presence errors cannot authorize a replacement owner", async () => {
+  const path = join(directory, "refused-recovery-session.json");
+  const failure = Object.assign(new Error("Invented metadata refusal"), { code: "EACCES" });
+  const read = vi.spyOn(core, "readWindowsRegularFilePrefix").mockRejectedValueOnce(failure);
+  const publish = vi.spyOn(core, "writeWindowsPrivateFileAtomicStream");
+  const descriptor = Object.getOwnPropertyDescriptor(process, "platform")!;
+  Object.defineProperty(process, "platform", { ...descriptor, value: "win32" });
+  try {
+    await expect(prepareGatewayOwner({ sessionFile: path, gatewayId: randomUUID() })).rejects.toBe(
+      failure,
+    );
+    expect(read).toHaveBeenCalledExactlyOnceWith(`${path}.recovery.json`, 0);
+    expect(publish).not.toHaveBeenCalled();
+    expect(await readdir(directory)).toEqual([]);
+  } finally {
+    Object.defineProperty(process, "platform", descriptor);
+  }
+});
+
+test.each([null, "interrupted", {}, { code: "EPERM" }])(
+  "Windows owner publication preserves a non-winner failure %j without rereading",
+  async (failure) => {
+    const path = join(directory, "refused-owner.pem");
+    const pair = generateKeyPairSync("ed25519");
+    const pem = pair.privateKey.export({ type: "pkcs8", format: "pem" });
+    Object.defineProperty(pair.privateKey, "export", {
+      configurable: true,
+      value: () => Buffer.from(pem),
+    });
+    vi.mocked(crypto.generateKeyPairSync).mockReturnValueOnce(pair);
+    const read = vi
+      .spyOn(core, "readWindowsPrivateFile")
+      .mockRejectedValueOnce(
+        Object.assign(new Error("Invented missing owner"), { code: "ENOENT" }),
+      );
+    const publish = vi
+      .spyOn(core, "writeWindowsPrivateFileAtomicStream")
+      .mockRejectedValueOnce(failure);
+    const descriptor = Object.getOwnPropertyDescriptor(process, "platform")!;
+    Object.defineProperty(process, "platform", { ...descriptor, value: "win32" });
+    try {
+      await expect(readOrCreateGatewayOwnerKey(path)).rejects.toBe(failure);
+      expect(read).toHaveBeenCalledExactlyOnceWith(path, 65_536);
+      expect(publish).toHaveBeenCalledOnce();
+      expect(publish.mock.calls[0]![2]).toBe(Buffer.byteLength(pem));
+      expect(await readdir(directory)).toEqual([]);
     } finally {
       Object.defineProperty(process, "platform", descriptor);
     }

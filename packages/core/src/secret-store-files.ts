@@ -6,6 +6,7 @@ import { lstat, readFile, readdir } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileSecretDirectory, fileSecretEntryPaths } from "./secret-store-paths.js";
 import { SecretPathUnreadableError, secretPathExists } from "./security-files.js";
+import { ownedProcessCleanupReceipt } from "./owned-process-cleanup.js";
 import {
   inspectWindowsPrivatePaths,
   readWindowsPrivateFileContents,
@@ -25,7 +26,11 @@ export async function readPrivateSecretText(
   try {
     return (await readWindowsPrivateFileContents(path, opts)).toString("utf8");
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    if (
+      ownedProcessCleanupReceipt(error) === undefined &&
+      (error as NodeJS.ErrnoException).code === "ENOENT"
+    )
+      return null;
     throw new SecretPathUnreadableError(path, error);
   }
 }
@@ -41,7 +46,11 @@ export function readPrivateSecretTextSync(
   try {
     return readWindowsPrivateFileContentsSync(path, opts).toString("utf8");
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    if (
+      ownedProcessCleanupReceipt(error) === undefined &&
+      (error as NodeJS.ErrnoException).code === "ENOENT"
+    )
+      return null;
     throw new SecretPathUnreadableError(path, error);
   }
 }

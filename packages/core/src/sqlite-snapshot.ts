@@ -13,6 +13,7 @@ import {
 import { basename, join } from "node:path";
 import { copyWindowsPrivateFileSync } from "./windows-private-file.js";
 import { createPrivateScratch } from "./private-scratch.js";
+import { ownedProcessCleanupReceipt } from "./owned-process-cleanup.js";
 
 /**
  * Snapshot of a SQLite DB plus its sidecars in a temp directory. The caller
@@ -85,7 +86,9 @@ function fingerprint(path: string): string | null {
 }
 
 function copyStableSnapshot(sourcePath: string, namespace: string): SqliteSnapshot {
-  const scratch = createPrivateScratch(namespace);
+  const scratch = createPrivateScratch(namespace, {
+    requiresProcessJoin: process.platform === "win32",
+  });
   const tmpDir = scratch.path;
   try {
     const snapshotPath = join(tmpDir, basename(sourcePath));
@@ -102,6 +105,7 @@ function copyStableSnapshot(sourcePath: string, namespace: string): SqliteSnapsh
             chmodSync(snapshotPath + suffix, 0o600);
           }
         } catch (error) {
+          if (ownedProcessCleanupReceipt(error) !== undefined) throw error;
           const reason = error as NodeJS.ErrnoException & { stage?: string };
           if (reason.code === "ENOENT" || reason.stage === "copy-source-changed")
             throw new SqliteSnapshotChangedError();
@@ -116,7 +120,7 @@ function copyStableSnapshot(sourcePath: string, namespace: string): SqliteSnapsh
       cleanup: scratch.cleanup,
     };
   } catch (error) {
-    scratch.cleanup();
+    if (ownedProcessCleanupReceipt(error) === undefined) scratch.cleanup();
     throw error;
   }
 }

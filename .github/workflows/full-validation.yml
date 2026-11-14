@@ -1,4 +1,4 @@
-name: Windows ownership regression diagnosis
+name: Windows ownership and filesystem diagnosis
 on:
   workflow_dispatch:
 permissions:
@@ -7,14 +7,13 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
   TZ: UTC
 jobs:
-  regression-baseline:
+  ownership-green:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           ref: ${{ github.sha }}
-          fetch-depth: 2
           persist-credentials: false
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
         with:
@@ -22,9 +21,11 @@ jobs:
           cache: npm
       - name: Install locked dependencies
         run: scripts/ci/npm-ci.sh
-      - name: Record exact test and unchanged production inputs
-        run: git rev-parse HEAD && git diff --stat 391fc2566a1efd3c4fcaf86a812374a194fcfeab -- packages/core/src/secret-store-files.ts packages/core/src/secret-store-entry.ts packages/core/src/sqlite-snapshot.ts packages/core/src/backup-layout.ts packages/platform/src/windows-process.ts packages/cloud-relay/src/device-key-file.ts packages/cloud-relay/src/gateway-key-client.ts
-      - name: Run portable ownership regression baseline
+      - name: Record exact revision and changed production inputs
+        run: |
+          git rev-parse HEAD
+          sha256sum packages/core/src/secret-store-files.ts packages/core/src/secret-store-entry.ts packages/core/src/sqlite-snapshot.ts packages/core/src/backup-layout.ts packages/platform/src/windows-process.ts packages/cloud-relay/src/device-key-file.ts packages/cloud-relay/src/gateway-key-client.ts
+      - name: Rerun the six original ownership regression suites
         run: >-
           node scripts/run-check.mjs unit
           packages/core/src/secret-store-files.test.ts
@@ -33,3 +34,38 @@ jobs:
           packages/platform/src/windows-process.test.ts
           packages/cloud-relay/src/device-key-file.test.ts
           packages/cloud-relay/src/gateway-key-client.test.ts
+      - name: Verify cause markers and durable snapshot retention
+        if: ${{ !cancelled() }}
+        run: >-
+          node scripts/run-check.mjs unit
+          packages/core/src/owned-process-cleanup.test.ts
+          packages/core/src/private-scratch.test.ts
+          packages/core/src/sqlite-snapshot-cleanup-retention.test.ts
+      - name: Diagnose unconfirmed doctor reads before repair against unchanged doctor production
+        if: ${{ !cancelled() }}
+        run: >-
+          node scripts/run-check.mjs unit
+          packages/core/src/doctor/security-cleanup.test.ts
+          packages/core/src/doctor/windows-permissions-cleanup.test.ts
+  windows-filesystem:
+    runs-on: windows-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: "24"
+          cache: npm
+      - name: Install locked dependencies
+        id: dependencies
+        run: node scripts/ci/npm-ci.mjs
+      - name: Verify the immutable synthetic WAL probe
+        run: node -e 'const fs=require("node:fs"),crypto=require("node:crypto"),assert=require("node:assert/strict");assert.equal(crypto.createHash("sha256").update(fs.readFileSync("scripts/ci/windows-wal-diagnostic.mjs")).digest("hex"),"7b603d71772fe977d7cf50d2c06048979ebc462d2d7e9bda893a4b35b5d51891")'
+      - name: Measure identical plain and encrypted WAL workloads
+        run: node scripts/ci/windows-wal-diagnostic.mjs .
+      - name: Observe the actual generated Hermes private-file and Python bridge artifact
+        if: ${{ !cancelled() && steps.dependencies.outcome == 'success' }}
+        run: node scripts/run-check.mjs unit packages/cli/src/commands/integration-runtime.test.ts

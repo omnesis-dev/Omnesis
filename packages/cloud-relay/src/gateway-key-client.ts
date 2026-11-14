@@ -22,6 +22,7 @@ import {
   writeWindowsPrivateFileAtomicStream,
 } from "@omnesis/core";
 import { z } from "zod";
+import { isJoinedPrivateFileError } from "./private-file-errors.js";
 import {
   keyChallengeSchema,
   keyAuthenticationTranscript,
@@ -99,8 +100,7 @@ async function hasRecoveryArtifact(path: string): Promise<boolean> {
     else await lstat(path);
     return true;
   } catch (error) {
-    if (error && typeof error === "object" && "code" in error && error.code === "ENOENT")
-      return false;
+    if (isJoinedPrivateFileError(error, "ENOENT")) return false;
     throw error;
   }
 }
@@ -114,13 +114,7 @@ export async function readOrCreateGatewayOwnerKey(
   try {
     material = await readPrivateKeyText(path);
   } catch (error) {
-    if (!(
-      typeof error === "object" &&
-      error !== null &&
-      "code" in error &&
-      error.code === "ENOENT"
-    ))
-      throw error;
+    if (!isJoinedPrivateFileError(error, "ENOENT")) throw error;
     if (!allowCreate) {
       // Keep private identity paths out of recursively rendered error causes.
       // eslint-disable-next-line preserve-caught-error
@@ -136,8 +130,7 @@ export async function readOrCreateGatewayOwnerKey(
           timeoutMs: 30_000,
         });
       } catch (error) {
-        if (!(error && typeof error === "object" && "code" in error && error.code === "EEXIST"))
-          throw error;
+        if (!isJoinedPrivateFileError(error, "EEXIST")) throw error;
       }
     } else {
       const temporary = `${path}.${randomUUID()}.tmp`;
@@ -181,13 +174,7 @@ async function readOwnerIdentity(
       stored.authentication === "gateway-key-v2"
     );
   } catch (error) {
-    if (!(
-      typeof error === "object" &&
-      error !== null &&
-      "code" in error &&
-      error.code === "ENOENT"
-    ))
-      throw error;
+    if (!isJoinedPrivateFileError(error, "ENOENT")) throw error;
   }
   const owner = await readOrCreateGatewayOwnerKey(
     options.ownerKeyFile ?? `${options.sessionFile}.owner-key`,
@@ -298,13 +285,7 @@ async function exchange(
         .object({ enrollmentToken: z.string().min(1).max(4096) })
         .parse(await readPrivateJson(options.enrollmentTokenFile)).enrollmentToken;
     } catch (error) {
-      if (!(
-        typeof error === "object" &&
-        error !== null &&
-        "code" in error &&
-        error.code === "ENOENT"
-      ))
-        throw error;
+      if (!isJoinedPrivateFileError(error, "ENOENT")) throw error;
     }
   }
   const recoveryReceipt = await readGatewayRecoveryReceipt(options, material.registration);
