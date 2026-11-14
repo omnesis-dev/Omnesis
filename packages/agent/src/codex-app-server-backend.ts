@@ -201,6 +201,28 @@ export interface CodexDynamicToolSpec {
   inputSchema: Record<string, unknown>;
 }
 
+function unconfirmedCodexCleanup(
+  cleanupFailure: unknown,
+  primaryFailure?: unknown,
+): Error & { cleanupFailure: unknown } {
+  return Object.assign(
+    new Error("Codex process cleanup was not confirmed; runtime reuse is blocked", {
+      cause:
+        primaryFailure === undefined
+          ? cleanupFailure
+          : new AggregateError(
+              [primaryFailure, cleanupFailure],
+              "Codex process failed and cleanup was not confirmed",
+            ),
+    }),
+    { cleanupFailure },
+  );
+}
+
+function hasCodexCleanupFailure(error: unknown): error is { cleanupFailure: unknown } {
+  return error !== null && typeof error === "object" && "cleanupFailure" in error;
+}
+
 export class CodexAppServerRuntime {
   readonly codexHome: string;
   readonly workspaceDir: string;
@@ -220,6 +242,9 @@ export class CodexAppServerRuntime {
   private commandInfo: CodexRuntimeCommandInfo | null = null;
   private activeTurn: ActiveCodexTurn | null = null;
   private turnQueue: Promise<void> = Promise.resolve();
+  private cleanupFailure: unknown;
+  private retiringClient: Promise<void> | undefined;
+  private disposal: Promise<void> | undefined;
   private disposed = false;
 
   constructor(opts: CodexAppServerRuntimeOptions) {
@@ -238,7 +263,14 @@ export class CodexAppServerRuntime {
     this.log = opts.logger ?? log;
   }
 
+  private assertCleanupConfirmed(): void {
+    if (this.cleanupFailure !== undefined) throw unconfirmedCodexCleanup(this.cleanupFailure);
+  }
+
   async resolveCommandInfo(): Promise<CodexRuntimeCommandInfo> {
+    this.assertCleanupConfirmed();
+    if (this.retiringClient) await this.retiringClient.catch(() => {});
+    this.assertCleanupConfirmed();
     if (!this.commandInfo) {
       this.commandInfo =
         this.configuredCommandInfo ??
@@ -250,13 +282,32 @@ export class CodexAppServerRuntime {
   }
 
   async probeRuntime(timeoutMs = this.startupTimeoutMs): Promise<CodexRuntimeProbe> {
+    const started = Date.now();
     const commandInfo = await this.resolveCommandInfo();
-    return assertSupportedCodexRuntime({
-      command: commandInfo.command,
-      args: this.versionArgs,
-      env: buildCodexEnv(this.env, this.codexHome),
-      timeoutMs,
-    });
+    if (this.retiringClient) await this.retiringClient.catch(() => {});
+    this.assertCleanupConfirmed();
+    const remaining = timeoutMs - (Date.now() - started);
+    if (remaining <= 0)
+      throw Object.assign(new Error("Codex runtime probe timed out"), { code: "ETIMEDOUT" });
+    return this.probeCommandRuntime(commandInfo, remaining);
+  }
+
+  private async probeCommandRuntime(
+    commandInfo: CodexRuntimeCommandInfo,
+    timeoutMs: number,
+  ): Promise<CodexRuntimeProbe> {
+    this.assertCleanupConfirmed();
+    try {
+      return await assertSupportedCodexRuntime({
+        command: commandInfo.command,
+        args: this.versionArgs,
+        env: buildCodexEnv(this.env, this.codexHome),
+        timeoutMs,
+      });
+    } catch (error) {
+      if (hasCodexCleanupFailure(error)) this.cleanupFailure = error;
+      throw error;
+    }
   }
 
   async listModels(timeoutMs = this.requestTimeoutMs): Promise<unknown[]> {
@@ -264,11 +315,22 @@ export class CodexAppServerRuntime {
     const models: unknown[] = [];
     let cursor: string | undefined;
     for (let page = 0; page < 20; page += 1) {
-      const result = await client.request(
-        "model/list",
-        { cursor, includeHidden: false, limit: 100 },
-        timeoutMs,
-      );
+      let result: unknown;
+      try {
+        result = await client.request(
+          "model/list",
+          { cursor, includeHidden: false, limit: 100 },
+          timeoutMs,
+        );
+      } catch (error) {
+        try {
+          await client.joinIfExited();
+        } catch (cleanupError) {
+          this.cleanupFailure = cleanupError;
+          throw unconfirmedCodexCleanup(cleanupError, error);
+        }
+        throw error;
+      }
       const record = asRecord(result);
       const data = Array.isArray(record?.data) ? record.data : [];
       models.push(...data);
@@ -497,13 +559,28 @@ export class CodexAppServerRuntime {
       // Never hand the runtime/pool lease onward while an admitted mutation or
       // this turn's timed-out child is still alive. Cancellation is not rollback.
       await Promise.allSettled([...state.pendingTools]);
-      await state.idleCleanup;
-      if (this.activeTurn === state) this.activeTurn = null;
-      queue.close();
+      await this.releaseTurn(state);
     }
   }
 
-  async dispose(): Promise<void> {
+  private async releaseTurn(state: ActiveCodexTurn): Promise<void> {
+    try {
+      await state.idleCleanup;
+      await state.client.joinIfExited();
+    } catch (cleanupError) {
+      this.cleanupFailure = cleanupError;
+      throw unconfirmedCodexCleanup(cleanupError);
+    } finally {
+      if (this.activeTurn === state) this.activeTurn = null;
+      state.queue.close();
+    }
+  }
+
+  dispose(): Promise<void> {
+    return (this.disposal ??= this.disposeRuntime());
+  }
+
+  private async disposeRuntime(): Promise<void> {
     this.disposed = true;
     const active = this.activeTurn;
     this.completeActiveTurn("canceled");
@@ -513,14 +590,26 @@ export class CodexAppServerRuntime {
     await Promise.allSettled([...(active?.pendingTools ?? [])]);
     await active?.idleCleanup;
     if (starting) {
+      let startedClient: CodexJsonRpcClient | undefined;
       try {
-        const started = await starting;
-        if (started !== client) await started.dispose();
-      } catch {
-        /* startup was already failing; dispose remains best-effort */
+        startedClient = await starting;
+        if (startedClient !== client) await startedClient.dispose();
+      } catch (error) {
+        if (startedClient || this.cleanupFailure !== undefined) {
+          this.cleanupFailure ??= error;
+          throw unconfirmedCodexCleanup(this.cleanupFailure, error);
+        }
+        // A startup failure whose child was positively joined is already
+        // reported to the starter. It does not make disposal fail a second time.
       }
     }
-    await client?.dispose();
+    try {
+      await client?.dispose();
+    } catch (error) {
+      this.cleanupFailure = error;
+      throw unconfirmedCodexCleanup(error);
+    }
+    this.assertCleanupConfirmed();
   }
 
   private async acquireTurnSlot(signal?: AbortSignal): Promise<() => void> {
@@ -558,6 +647,9 @@ export class CodexAppServerRuntime {
   }
 
   private async ensureClient(): Promise<CodexJsonRpcClient> {
+    this.assertCleanupConfirmed();
+    if (this.retiringClient) await this.retiringClient.catch(() => {});
+    this.assertCleanupConfirmed();
     if (this.disposed) throw new Error("Codex backend has been disposed");
     if (this.client) return this.client;
     if (this.startingClient) return this.startingClient;
@@ -582,12 +674,7 @@ export class CodexAppServerRuntime {
     if (process.platform === "win32" && owner) await prepareCodexPrivateState([owner.home]);
     await ensureRuntimeDirs(this.codexHome, this.workspaceDir, owner?.path);
     const commandInfo = await this.resolveCommandInfo();
-    await assertSupportedCodexRuntime({
-      command: commandInfo.command,
-      args: this.versionArgs,
-      env: buildCodexEnv(this.env, this.codexHome),
-      timeoutMs: this.startupTimeoutMs,
-    });
+    await this.probeCommandRuntime(commandInfo, this.startupTimeoutMs);
 
     const client = new CodexJsonRpcClient({
       command: commandInfo.command,
@@ -604,7 +691,7 @@ export class CodexAppServerRuntime {
           return Promise.reject(new Error("Codex client is no longer active"));
         return this.handleServerRequest(method, params);
       },
-      onExit: (code, sig) => this.handleClientExit(client, code, sig),
+      onExit: (code, sig, cleanupError) => this.handleClientExit(client, code, sig, cleanupError),
     });
     client.start();
     this.client = client;
@@ -636,8 +723,13 @@ export class CodexAppServerRuntime {
       );
       client.notify("initialized", {});
     } catch (err) {
-      if (this.client === client) this.client = null;
-      await client.dispose().catch(() => {});
+      try {
+        await client.dispose();
+        if (this.client === client) this.client = null;
+      } catch (cleanupError) {
+        this.cleanupFailure = cleanupError;
+        throw unconfirmedCodexCleanup(cleanupError, err);
+      }
       throw err;
     }
     return client;
@@ -979,7 +1071,20 @@ export class CodexAppServerRuntime {
         "Codex stopped making progress while waiting for model output. The idle runtime was stopped; this turn was not replayed.",
       );
       if (this.client === state.client) this.client = null;
-      state.idleCleanup = state.client.dispose();
+      state.idleCleanup = state.client.dispose().catch((error: unknown) => {
+        this.cleanupFailure = error;
+        throw error;
+      });
+      const retiring = state.idleCleanup;
+      this.retiringClient = retiring;
+      void retiring.then(
+        () => {
+          if (this.retiringClient === retiring) this.retiringClient = undefined;
+        },
+        () => {
+          /* Keep the sticky rejection and block every probe/reuse path. */
+        },
+      );
     }, this.turnIdleTimeoutMs);
   }
 
@@ -987,14 +1092,16 @@ export class CodexAppServerRuntime {
     client: CodexJsonRpcClient,
     code: number | null,
     sig: NodeJS.Signals | null,
+    cleanupError?: unknown,
   ): void {
+    if (cleanupError !== undefined) this.cleanupFailure = cleanupError;
     // An idle exit must also invalidate reuse. A late exit from a disposed
     // predecessor must never clear its replacement or fail the replacement's turn.
     if (this.client !== client) return;
-    this.client = null;
+    if (cleanupError === undefined) this.client = null;
     if (!this.activeTurn || this.activeTurn.completed) return;
     this.failActiveTurn(
-      "codex_process_exited",
+      cleanupError === undefined ? "codex_process_exited" : "codex_cleanup_unconfirmed",
       `Codex app-server exited before the turn completed (${sig ?? code ?? "unknown"})`,
     );
   }
@@ -1278,6 +1385,7 @@ export async function assertSupportedCodexRuntime(opts: {
     );
     stdout = `${result.stdout}${result.stderr}`;
   } catch (err) {
+    if (hasCodexCleanupFailure(err)) throw err;
     const permissionFailure = codexSpawnPermissionFailure(err);
     if (permissionFailure) throw permissionFailure;
     const e = err as ExecFileException;
@@ -1367,6 +1475,8 @@ class CodexJsonRpcClient {
   private exited = false;
   private pending = new Map<RequestId, PendingRequest>();
   private disposed = false;
+  private joined: Promise<void> | undefined;
+  private disposal: Promise<void> | undefined;
 
   constructor(
     private readonly opts: {
@@ -1378,7 +1488,7 @@ class CodexJsonRpcClient {
       log: Logger;
       onNotification(method: string, params: unknown): void;
       onServerRequest(method: string, params: unknown): Promise<unknown>;
-      onExit(code: number | null, sig: NodeJS.Signals | null): void;
+      onExit(code: number | null, sig: NodeJS.Signals | null, cleanupError?: unknown): void;
     },
   ) {}
 
@@ -1401,6 +1511,22 @@ class CodexJsonRpcClient {
         windowsHide: true,
       });
 
+    this.joined = job?.jobClosed.catch((error: unknown) => {
+      // Undefined is a valid rejection reason, never a successful join receipt.
+      throw error === undefined ? unconfirmedCodexCleanup(error) : error;
+    });
+    void this.joined?.catch(() => {});
+    const notifyExit = (code: number | null, sig: NodeJS.Signals | null): void => {
+      if (!job) {
+        this.opts.onExit(code, sig);
+        return;
+      }
+      void this.joined!.then(
+        () => this.opts.onExit(code, sig),
+        (error: unknown) => this.opts.onExit(code, sig, error),
+      );
+    };
+
     readJsonRpcLines(this.proc.stdout, (line) =>
       markActivity("agent.codex.message", () => this.handleLine(line)),
     );
@@ -1417,7 +1543,7 @@ class CodexJsonRpcClient {
         codexSpawnPermissionFailure(err) ??
           new Error(`Codex app-server failed to start: ${err.message}`),
       );
-      this.opts.onExit(null, null);
+      notifyExit(null, null);
     };
     this.proc.once("error", startFailed);
     void job?.jobReady.catch((err: unknown) =>
@@ -1428,7 +1554,7 @@ class CodexJsonRpcClient {
       this.exited = true;
       if (!this.disposed && !alreadyExited) {
         this.rejectAll(new Error(`Codex app-server exited (${sig ?? code ?? "unknown"})`));
-        this.opts.onExit(code, sig);
+        notifyExit(code, sig);
       }
     });
   }
@@ -1462,29 +1588,33 @@ class CodexJsonRpcClient {
     this.send({ method, params });
   }
 
-  async dispose(): Promise<void> {
+  async joinIfExited(): Promise<void> {
+    if (this.disposal) await this.disposal;
+    else if (this.exited && this.joined) await this.joined;
+  }
+
+  dispose(): Promise<void> {
+    // Every caller shares the same completion or uncertainty, including calls
+    // arriving after raw exit or while another dispose is already draining.
+    return (this.disposal ??= this.disposeProcess());
+  }
+
+  private async disposeProcess(): Promise<void> {
     this.disposed = true;
     const proc = this.proc;
     this.proc = null;
     this.rejectAll(new Error("Codex app-server disposed"));
     if (!proc) return;
+    if (this.joined) {
+      proc.kill("SIGKILL");
+      await this.joined;
+      return;
+    }
     // A spawn failure emits error/close without exit and never owns a live PID.
     if (proc.pid === undefined) return;
     if (proc.exitCode !== null || proc.signalCode !== null) return;
-
-    if (process.platform === "win32") {
-      // The Node CLI wrapper may own a native Codex child holding these pipes.
-      const closed = new Promise<void>((resolve) => proc.once("close", () => resolve()));
-      proc.kill("SIGKILL");
-      await closed;
-      return;
-    }
-
     await new Promise<void>((resolve) => {
-      const killTimer = setTimeout(() => {
-        proc.kill("SIGKILL");
-        // Keep waiting for the actual exit before the runtime can be reused.
-      }, 2_000);
+      const killTimer = setTimeout(() => proc.kill("SIGKILL"), 2_000);
       proc.once("exit", () => {
         clearTimeout(killTimer);
         resolve();

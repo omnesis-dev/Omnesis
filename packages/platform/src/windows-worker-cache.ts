@@ -28,6 +28,7 @@ const sourceHash = createHash("sha256")
   .digest("hex");
 const seedKey = `@omnesis/platform/native-worker-cache/v1:${sourceHash}`;
 let verifiedExecutable: string | undefined;
+let verifiedParentBirth: string | undefined;
 let initializationFailed = false;
 let initializationFailure: unknown;
 // Product dotenv and target environments never redirect the host helper cache.
@@ -82,30 +83,42 @@ function cacheRoot(): string {
   return win32.join(local, "Omnesis", "platform-native-v1");
 }
 
-function inheritedExecutable(root: string): string | undefined {
+function inheritedExecutable(
+  root: string,
+): { executable: string; parentBirth: string } | undefined {
   const seed: unknown = getEnvironmentData(seedKey);
   const expected = win32.join(root, sourceHash, "worker.exe");
   if (
     seed &&
     typeof seed === "object" &&
     !Array.isArray(seed) &&
-    Object.keys(seed).length === 4 &&
+    Object.keys(seed).length === 5 &&
     "format" in seed &&
-    seed.format === 1 &&
+    seed.format === 2 &&
     "ownerPid" in seed &&
     seed.ownerPid === process.pid &&
+    "ownerBirth" in seed &&
+    typeof seed.ownerBirth === "string" &&
+    /^[0-9]{1,19}$/u.test(seed.ownerBirth) &&
+    BigInt(seed.ownerBirth) > 0n &&
+    BigInt(seed.ownerBirth) <= 9223372036854775807n &&
     "sourceHash" in seed &&
     seed.sourceHash === sourceHash &&
     "executable" in seed &&
     seed.executable === expected
   )
-    return expected;
+    return { executable: expected, parentBirth: seed.ownerBirth };
   return undefined;
 }
-function invocationFor(mode: "job" | "filesystem", executable: string): WindowsOwnedInvocation {
+function invocationFor(
+  mode: "job" | "filesystem",
+  executable: string,
+  parentBirth: string,
+): WindowsOwnedInvocation {
   return {
     command: executable,
     args: mode === "job" ? ["job"] : ["filesystem", String(process.pid)],
+    ...(mode === "job" ? { parentBirth } : {}),
   };
 }
 
@@ -121,8 +134,9 @@ export function windowsWorkerInvocation(
       const root = cacheRoot();
       const inherited = inheritedExecutable(root);
       if (inherited !== undefined) {
-        verifiedExecutable = inherited;
-        return invocationFor(mode, inherited);
+        verifiedExecutable = inherited.executable;
+        verifiedParentBirth = inherited.parentBirth;
+        return invocationFor(mode, inherited.executable, inherited.parentBirth);
       }
       // Original Node receives these UTC ticks while still alive, before any
       // nested bootstrap can start. Normalize year-1 .NET ticks to FILETIME's
@@ -206,14 +220,16 @@ export function windowsWorkerInvocation(
       // The uncached bootstrap checked owner, protected DACL, reparse metadata,
       // source generation and binary hash before returning this executable.
       verifiedExecutable = expected;
+      verifiedParentBirth = ownerBirth;
       // Native directory/marker handles live in this Node process, not an
       // isolate. Only fully verified metadata is cloned to future Workers;
       // no environment variable, task payload or secret supplies this seed.
       setEnvironmentData(
         seedKey,
         Object.freeze({
-          format: 1,
+          format: 2,
           ownerPid: process.pid,
+          ownerBirth,
           sourceHash,
           executable: expected,
         }),
@@ -226,5 +242,5 @@ export function windowsWorkerInvocation(
       throw error;
     }
   }
-  return invocationFor(mode, verifiedExecutable);
+  return invocationFor(mode, verifiedExecutable, verifiedParentBirth!);
 }

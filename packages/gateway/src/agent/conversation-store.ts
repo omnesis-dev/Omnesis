@@ -42,6 +42,7 @@ import {
   agentConversationTerminalFailureSchema,
   agentTerminalFailureSchema,
   assertNever,
+  atomicWriteFile,
   createLogger,
   pMap,
   type AgentConversationTerminalFailure,
@@ -408,9 +409,7 @@ export class FsConversationStore implements ConversationStore {
       const index = await this.loadedIndex();
       await mkdir(this.dir, { recursive: true });
       const path = this.pathFor(rec.id);
-      const tmp = `${path}.tmp-${process.pid}-${randomUUID()}`;
-      await writeFile(tmp, body, "utf8");
-      await rename(tmp, path);
+      await this.publish(path, body);
       try {
         index.set(rec.id, { fileIdentity: await this.fileIdentityOf(rec.id), summary });
       } catch (err) {
@@ -644,6 +643,17 @@ export class FsConversationStore implements ConversationStore {
     }
   }
 
+  /** Transcript contents and summaries have the same private publication boundary. */
+  private async publish(path: string, body: string): Promise<void> {
+    if (process.platform === "win32") {
+      await atomicWriteFile(path, body, { mode: 0o600 });
+    } else {
+      const tmp = `${path}.tmp-${process.pid}-${randomUUID()}`;
+      await writeFile(tmp, body, "utf8");
+      await rename(tmp, path);
+    }
+  }
+
   private async persistIndex(index: Map<string, SummaryIndexEntry>): Promise<void> {
     try {
       const conversations: PersistedSummaryIndexEntry[] = [];
@@ -651,9 +661,7 @@ export class FsConversationStore implements ConversationStore {
       const body = JSON.stringify({ version: 4, conversations } satisfies ConversationSummaryIndex);
       await mkdir(this.dir, { recursive: true });
       const path = this.indexPath();
-      const tmp = `${path}.tmp-${process.pid}-${randomUUID()}`;
-      await writeFile(tmp, body, "utf8");
-      await rename(tmp, path);
+      await this.publish(path, body);
     } catch (err) {
       // The in-memory index stays authoritative; a start that reads an older
       // file repairs the entries that differ.

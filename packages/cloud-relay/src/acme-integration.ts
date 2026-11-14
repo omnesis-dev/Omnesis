@@ -20,6 +20,7 @@ import { independentDnsPresenter } from "./independent-dns-client.js";
 import { publicGatewayOrigin } from "./gateway-certificate.js";
 import { publicKeyFingerprint } from "./gateway-key-auth.js";
 import { bindingOrigin } from "./gateway-binding.js";
+import { readPrivateText } from "./private-inputs.js";
 
 const schema = z.object({
   OMNESIS_ACME_DIRECTORY_URL: z.string().url(),
@@ -108,6 +109,7 @@ export async function createGatewayAcmeController(
   )
     throw new Error("Public ACME requires a separate stable private key path");
   const keyOptions = {
+    configDir: options.configDir,
     relayUrl: config.OMNESIS_CLOUD_RELAY_URL,
     sessionFile: config.OMNESIS_CLOUD_RELAY_SESSION_FILE,
     gatewayId: config.OMNESIS_CLOUD_RELAY_GATEWAY_ID,
@@ -136,7 +138,7 @@ export async function createGatewayAcmeController(
   const activate = async (signal: AbortSignal) => {
     signal.throwIfAborted();
     const cert = await readFile(config.OMNESIS_ACME_CERT_FILE, "utf8"),
-      key = await readFile(publicKeyFile, "utf8");
+      key = await readPrivateText(publicKeyFile);
     signal.throwIfAborted();
     await options.activate({ hostname: bindingOrigin(publicOrigin).hostname, cert, key }, signal);
     const certificate = new X509Certificate(cert);

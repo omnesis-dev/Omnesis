@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import { execFileSync } from "node:child_process";
 import {
   existsSync,
   mkdirSync,
@@ -297,7 +298,173 @@ describe("Claude Code wire parsing", () => {
   });
 });
 
+function claudeOwnerCrashWrapper(crashed: string): string {
+  return `
+import {spawn} from 'node:child_process';
+import {createInterface} from 'node:readline';
+import {writeFileSync} from 'node:fs';
+const child=spawn(process.execPath,[${JSON.stringify(fakeClaude)},...process.argv.slice(2)],{stdio:['pipe','pipe','inherit']});
+process.stdin.pipe(child.stdin);
+child.once('exit',code=>process.exit(code??1));
+createInterface({input:child.stdout}).on('line',line=>{
+  if(line.includes('"models"')) {
+    writeFileSync(${JSON.stringify(crashed)},'requested');
+    process.kill(process.ppid,'SIGKILL');
+  } else process.stdout.write(line+String.fromCharCode(10));
+});
+`;
+}
+
 describe("Claude Code JavaScript executable portability", () => {
+  it("retains a deferred undefined session join failure before any later probe or turn", async () => {
+    const { EventEmitter } = await import("node:events"),
+      { PassThrough } = await import("node:stream");
+    const core = await import("@omnesis/core");
+    let refuseJoin!: (error: unknown) => void;
+    const jobClosed = new Promise<void>((_resolve, reject) => {
+      refuseJoin = reject;
+    });
+    const child = Object.assign(new EventEmitter(), {
+      pid: 12345,
+      stdin: new PassThrough(),
+      stdout: new PassThrough(),
+      stderr: new PassThrough(),
+      exitCode: null as number | null,
+      signalCode: null,
+      jobReady: Promise.resolve(),
+      jobClosed,
+      kill: vi.fn(() => true),
+    });
+    child.stdin.on("data", (bytes: Buffer) => {
+      for (const line of bytes.toString().trim().split("\n")) {
+        const request = JSON.parse(line);
+        child.stdout.write(
+          JSON.stringify({
+            type: "control_response",
+            response: {
+              subtype: "success",
+              request_id: request.request_id,
+              response: request.request?.subtype === "list_models" ? { models: [] } : {},
+            },
+          }) + "\n",
+        );
+      }
+    });
+    const spawn = vi
+      .spyOn(core, "spawnWindowsJob")
+      .mockReturnValue(child as unknown as ReturnType<typeof core.spawnWindowsJob>);
+    const execute = vi.spyOn(core, "execWindowsJob");
+    const platform = Object.getOwnPropertyDescriptor(process, "platform")!;
+    const runtime = new ClaudeCodeRuntime({
+      command: process.execPath,
+      workspaceDir: join(scratch(), "workspace"),
+      managedSettingsDirs: [],
+    });
+    Object.defineProperty(process, "platform", { ...platform, value: "win32" });
+    try {
+      const listing = runtime.listModels();
+      void listing.catch(() => {});
+      await vi.waitFor(() => expect(child.stdin.writableEnded).toBe(true));
+      child.exitCode = 0;
+      child.emit("exit", 0, null);
+      child.emit("close", 0, null);
+      refuseJoin(undefined);
+      await expect(listing).rejects.toMatchObject({ cleanupFailure: undefined });
+      await expect(runtime.resolveCommand()).rejects.toThrow(/cleanup/u);
+      await expect(runtime.probeVersion()).rejects.toThrow(/cleanup/u);
+      await expect(runtime.authStatus()).rejects.toThrow(/cleanup/u);
+      await expect(runtime.listModels()).rejects.toThrow(/cleanup/u);
+      const events = await collect(
+        runtime.runTurn({
+          input: input(),
+          model: "invented-model",
+          toolTimeoutMs: 1000,
+          maxToolIterations: 1,
+        }),
+      );
+      expect(events).toContainEqual(expect.objectContaining({ type: "agent.error" }));
+      expect(events).toContainEqual(
+        expect.objectContaining({
+          type: "agent.message.end",
+          payload: expect.objectContaining({ stopReason: "error" }),
+        }),
+      );
+      expect(spawn).toHaveBeenCalledOnce();
+      expect(execute).not.toHaveBeenCalled();
+    } finally {
+      refuseJoin(undefined);
+      Object.defineProperty(process, "platform", platform);
+      vi.restoreAllMocks();
+      child.stdin.destroy();
+      child.stdout.destroy();
+      child.stderr.destroy();
+    }
+  });
+
+  it.each(["version", "auth"] as const)(
+    "does not turn unjoined %s output into a result or admit a fresh helper",
+    async (operation) => {
+      const dir = scratch();
+      const runtime = new ClaudeCodeRuntime({
+        command: process.execPath,
+        workspaceDir: join(dir, "workspace"),
+        env: process.env,
+        managedSettingsDirs: [],
+      });
+      const command = vi.spyOn(runtime, "resolveCommand").mockResolvedValue(process.execPath);
+      const core = await import("@omnesis/core");
+      const failure = Object.assign(new Error("invented probe failure"), {
+        code: "ETIMEDOUT",
+        stdout: JSON.stringify({ loggedIn: true }),
+        cleanupFailure: new Error("invented missing join"),
+      });
+      const execute = vi.spyOn(core, "execWindowsJob").mockRejectedValue(failure);
+      const platform = Object.getOwnPropertyDescriptor(process, "platform")!;
+      Object.defineProperty(process, "platform", { ...platform, value: "win32" });
+      try {
+        await expect(
+          operation === "version" ? runtime.probeVersion() : runtime.authStatus(),
+        ).rejects.toBe(failure);
+        command.mockRestore();
+        await expect(runtime.resolveCommand()).rejects.toThrow(/cleanup/u);
+        await expect(runtime.probeVersion()).rejects.toThrow(/cleanup/u);
+        await expect(runtime.authStatus()).rejects.toThrow(/cleanup/u);
+        await expect(runtime.listModels()).rejects.toThrow(/cleanup/u);
+        expect(execute).toHaveBeenCalledOnce();
+      } finally {
+        Object.defineProperty(process, "platform", platform);
+        vi.restoreAllMocks();
+      }
+    },
+  );
+
+  it("syntax-checks the native crash fixture at the actual Node boundary", () => {
+    const file = join(scratch(), "owned-crash-wrapper.mjs");
+    writeFileSync(file, claudeOwnerCrashWrapper(join(scratch(), "invented-marker")));
+    expect(() =>
+      execFileSync(process.execPath, ["--check", file], { stdio: "pipe" }),
+    ).not.toThrow();
+  });
+
+  it.runIf(process.platform === "win32")(
+    "refuses another session after native cleanup is unconfirmed",
+    async () => {
+      const dir = scratch();
+      const command = join(dir, "owned-crash-wrapper.mjs");
+      const crashed = join(dir, "helper-crash-requested");
+      writeFileSync(command, claudeOwnerCrashWrapper(crashed));
+      const runtime = new ClaudeCodeRuntime({
+        command,
+        workspaceDir: join(dir, "workspace"),
+        env: process.env,
+        managedSettingsDirs: [],
+      });
+      await expect(runtime.listModels()).rejects.toThrow(/completion|cleanup|connection/u);
+      expect(existsSync(crashed)).toBe(true);
+      await expect(runtime.listModels()).rejects.toThrow(/cleanup/u);
+    },
+  );
+
   it("probes and starts a JavaScript entry with literal spaces and shell metacharacters", async () => {
     const dir = scratch();
     const command = join(dir, "claude entry & $().mjs");

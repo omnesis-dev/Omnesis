@@ -374,8 +374,9 @@ Gateway 1.4.0  <span class="t-dim">·</span>  <span class="t-dim">devices: 3 cur
         <p>
           On Windows, startup stops before loading <code>.env</code> when its access controls cannot
           be verified. Run exactly <code>omnesis doctor --fix-permissions</code> on that host for an
-          early repair of the configuration directory and file access controls. An unsafe idle file
-          is replaced with a private copy without parsing or applying its contents. The process then
+          early repair of directory access and inheritance on an already-private file. Broad file
+          access is refused without reading or changing its contents: stop related processes, review
+          permissions, and recreate the file privately before retrying. A successful early repair
           exits with status <code>2</code>. Review <code>.env</code>, then rerun the command.
           Additional flags and remote or fleet selections are refused during this early repair.
         </p>

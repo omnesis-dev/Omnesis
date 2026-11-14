@@ -27,7 +27,11 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createLogger, ensurePrivateDirs } from "@omnesis/core";
-import { processLauncher } from "../process-launcher/index.js";
+import {
+  processLauncher,
+  assertProcessCleanupConfirmed,
+  hasUnconfirmedProcessCleanup,
+} from "../process-launcher/index.js";
 import { streamableCaf } from "./caf-stream.js";
 
 const log = createLogger("gateway:transcribe");
@@ -105,7 +109,8 @@ export function needsSeekableInput(bytes: Uint8Array): boolean {
  * `ffmpegPath` is injectable for tests; when omitted it resolves the
  * ffmpeg-static binary. `tempDir` is where the private folder for a seekable
  * copy is made (the system temporary directory by default); the folder is
- * removed however decoding ends. Throws `AudioDecodeError` when ffmpeg is
+ * removed after confirmed process completion and retained if cleanup is uncertain.
+ * Throws `AudioDecodeError` when ffmpeg is
  * missing, exits non-zero, or produces no samples; the error is `unreadable`
  * when the input is at fault (see {@link AudioDecodeError.unreadable}).
  */
@@ -131,11 +136,13 @@ export async function decodeToPcm16kMono(
       `could not create a temporary folder for decoding: ${err instanceof Error ? err.message : String(err)}`,
     );
   }
+  let retain = false;
   try {
     if (process.platform === "win32") {
       try {
         await ensurePrivateDirs([dir]);
       } catch (err) {
+        if (hasUnconfirmedProcessCleanup(err)) throw err;
         throw new AudioDecodeError(
           `could not protect the temporary audio folder: ${err instanceof Error ? err.message : String(err)}`,
         );
@@ -152,12 +159,16 @@ export async function decodeToPcm16kMono(
     // `file:` keeps ffmpeg from reading a protocol into the path; -nostdin
     // keeps it off the stdin it is not reading from.
     return await runFfmpeg(ffmpegPath, ["-nostdin", "-i", `file:${path}`], { timeoutMs });
+  } catch (error) {
+    retain = hasUnconfirmedProcessCleanup(error);
+    throw error;
   } finally {
-    await rm(dir, { recursive: true, force: true }).catch((err: unknown) => {
-      log.warn(
-        `Could not remove the temporary audio folder ${dir}: ${err instanceof Error ? err.message : String(err)}`,
-      );
-    });
+    if (!retain)
+      await rm(dir, { recursive: true, force: true }).catch((err: unknown) => {
+        log.warn(
+          `Could not remove the temporary audio folder ${dir}: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      });
   }
 }
 
@@ -185,6 +196,7 @@ async function runFfmpeg(
     ],
     { ...(opts.input ? { input: opts.input } : {}), timeoutMs },
   );
+  assertProcessCleanupConfirmed(run);
   if (run.failure === "timeout")
     throw new AudioDecodeError(`ffmpeg timed out after ${timeoutMs}ms`);
   if (run.failure)

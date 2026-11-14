@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { generateKeyPairSync } from "node:crypto";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
+import * as core from "@omnesis/core";
 import { tlsFiles } from "../test/support.js";
 import { expiredCertificate } from "../test/expired-certificate.js";
 import { fakeSignupRelay } from "../test/fake-signup-relay.js";
@@ -20,10 +21,12 @@ import { googleBrowserTrust } from "./google-browser-trust.js";
 import { hostedGatewayHostname } from "./hosted-name.js";
 import { GatewayAccountLink } from "./gateway-account-link.js";
 import { GatewayUnregistered, readOrCreateGatewayOwnerKey } from "./gateway-key-client.js";
+import * as privateCredentials from "./google-credentials.js";
 
 let directory: string, manager: GatewayCloudRelayManagement | undefined;
 beforeEach(async () => {
   directory = await mkdtemp(join(tmpdir(), "relay-management-"));
+  if (process.platform === "win32") await core.ensurePrivateDirs([directory]);
 });
 afterEach(async () => {
   await manager?.close();
@@ -99,6 +102,161 @@ async function idle() {
   });
 }
 const input = { relayUrl: "https://relay.example.test", termsAccepted: true };
+async function pendingRelease(createdAt = Date.now()) {
+  const root = join(directory, "cloud-relay"),
+    file = join(root, "release.json"),
+    sessionFile = join(root, "session.json");
+  const bytes = JSON.stringify({
+    version: 1,
+    relayUrl: "https://relay.example.test",
+    gatewayId: "33333333-3333-4333-8333-333333333333",
+    publicOrigin: "https://gateway.example.test",
+    sessionFile,
+    ownerKeyFile: join(root, "owner.key"),
+    certificateFile: join(root, "public.pem"),
+    privateKeyFile: join(root, "public.key"),
+    createdAt,
+  });
+  await mkdir(root, { recursive: true, mode: 0o700 });
+  await core.atomicWriteFile(sessionFile, "{}", { mode: 0o600 });
+  await core.atomicWriteFile(file, bytes, { mode: 0o600 });
+  return { file, sessionFile, bytes };
+}
+
+test("close joins an owned release journal read and prevents cleanup after shutdown", async () => {
+  const f = fixture();
+  manager = await GatewayCloudRelayManagement.open(f.options);
+  const pending = await pendingRelease(Date.now() - 31 * 86400_000);
+  let entered!: () => void, finish!: () => void;
+  const reading = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  const gate = new Promise<void>((resolve) => {
+    finish = resolve;
+  });
+  const original = privateCredentials.readPrivateJson;
+  const read = vi.spyOn(privateCredentials, "readPrivateJson").mockImplementation(async (path) => {
+    if (path === pending.file) {
+      entered();
+      await gate;
+    }
+    return original(path);
+  });
+  let closing: Promise<void> | undefined;
+  let release: Promise<void> | undefined;
+  try {
+    manager.start();
+    await reading;
+    release = (manager as unknown as { releasing?: Promise<void> }).releasing;
+    let closed = false;
+    closing = manager.close().then(() => {
+      closed = true;
+    });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(closed).toBe(false);
+    finish();
+    await closing;
+    expect(await readFile(pending.file, "utf8")).toBe(pending.bytes);
+    expect(await readFile(pending.sessionFile, "utf8")).toBe("{}");
+    expect(f.register).not.toHaveBeenCalled();
+    const calls = read.mock.calls.length;
+    manager.start();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(read).toHaveBeenCalledTimes(calls);
+    await rm(directory, { recursive: true });
+  } finally {
+    finish();
+    await release;
+    await closing;
+  }
+});
+
+test("close aborts a held remote release and waits for its owned completion", async () => {
+  let entered!: () => void, finish!: () => void;
+  const registered = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  const drain = new Promise<void>((resolve) => {
+    finish = resolve;
+  });
+  let signal: AbortSignal | undefined;
+  const register = vi.fn<NonNullable<CloudRelayManagerOptions["register"]>>(async (options) => {
+    signal = options.signal;
+    entered();
+    await drain;
+    signal?.throwIfAborted();
+    throw new Error("Invented release was not acknowledged");
+  });
+  const f = fixture({ register });
+  manager = await GatewayCloudRelayManagement.open(f.options);
+  const pending = await pendingRelease();
+  let closing: Promise<void> | undefined;
+  let release: Promise<void> | undefined;
+  try {
+    manager.start();
+    release = (manager as unknown as { releasing?: Promise<void> }).releasing;
+    await Promise.race([
+      registered,
+      release!.then(() => {
+        throw new Error("Release completed before registration began");
+      }),
+    ]);
+    let closed = false;
+    closing = manager.close().then(() => {
+      closed = true;
+    });
+    expect(signal?.aborted).toBe(true);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(closed).toBe(false);
+    finish();
+    await closing;
+    expect(await readFile(pending.file, "utf8")).toBe(pending.bytes);
+    expect(await readFile(pending.sessionFile, "utf8")).toBe("{}");
+    expect(register).toHaveBeenCalledOnce();
+  } finally {
+    finish();
+    await release;
+    await closing;
+  }
+});
+test.each(["EACCES", "EPRIVATE", "malformed"])(
+  "pending-release journal %s failure preserves the barrier to another registration",
+  async (failure) => {
+    const f = fixture();
+    manager = await GatewayCloudRelayManagement.open(f.options);
+    await manager.configure(input);
+    const releaseFile = join(directory, "cloud-relay", "release.json");
+    const pending =
+      failure === "malformed"
+        ? '{"version":1}'
+        : JSON.stringify({
+            version: 1,
+            relayUrl: "https://relay.example.test",
+            gatewayId: "22222222-2222-4222-8222-222222222222",
+            publicOrigin: "https://gateway.example.test",
+            sessionFile: join(directory, "cloud-relay", "session.json"),
+            ownerKeyFile: join(directory, "cloud-relay", "owner.key"),
+            certificateFile: join(directory, "cloud-relay", "public.pem"),
+            privateKeyFile: join(directory, "cloud-relay", "public.key"),
+            createdAt: Date.now(),
+          });
+    await core.atomicWriteFile(releaseFile, pending, { mode: 0o600 });
+    const read = privateCredentials.readPrivateJson;
+    if (failure !== "malformed") {
+      vi.spyOn(privateCredentials, "readPrivateJson").mockImplementation(async (path) => {
+        if (path === releaseFile)
+          throw Object.assign(new Error("Invented release journal refusal"), { code: failure });
+        return read(path);
+      });
+    }
+    // start() also reads the journal in a background task: refusal must be handled there.
+    manager.start();
+    await expect(manager.enable()).rejects.toMatchObject({ code: "relay-unreachable" });
+    expect(await readFile(releaseFile, "utf8")).toBe(pending);
+    expect(f.register).not.toHaveBeenCalled();
+    expect(await manager.status()).toMatchObject({ enabled: false });
+  },
+);
 test("unconfigured status and close create no files, network, owner keys or background jobs", async () => {
   const f = fixture();
   manager = await GatewayCloudRelayManagement.open(f.options);
@@ -1935,10 +2093,11 @@ test("a disconnected gateway the relay never drops is given up after a month, an
   manager = await GatewayCloudRelayManagement.open(forgetful.options);
   manager.start();
   await gone();
-  // A record that cannot be read cannot be acted on, and does not hold the gateway back.
+  // Unknown release state cannot authorize another registration.
   await writeFile(file, "{");
   manager.start();
-  await gone();
+  await manager.close();
+  expect(await readFile(file, "utf8")).toBe("{");
 });
 test("a gateway named by its environment leaves the same way, with the operator's certificate untouched", async () => {
   const tls = tlsFiles(directory),

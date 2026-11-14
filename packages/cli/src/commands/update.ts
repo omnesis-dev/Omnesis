@@ -63,6 +63,7 @@ import { defineCommand, parseArgs } from "citty";
 import { resolveHarnessBinary } from "@omnesis/agent-integration";
 import {
   acquireUpdateLock,
+  beginUpdateLockChildJoin,
   adoptUpdateLock,
   atomicWriteFileSync,
   compareProductVersions,
@@ -243,6 +244,7 @@ import {
   runFleetUpdate,
   type FleetUpdateSummary,
 } from "../update/fleet.js";
+import { UpdateProcessCleanupUncertainError } from "../update/process-cleanup.js";
 import { runBackup } from "./backup.js";
 import type { ServiceLiveness } from "../service/types.js";
 import type { Writable } from "node:stream";
@@ -265,6 +267,7 @@ export interface RunOutcome {
 export interface RunControl {
   signal?: AbortSignal;
   onProcessGroup?(pid: number | null): void;
+  beginChildJoin?(): { joined(): void };
 }
 
 export type CommandRunner = (
@@ -326,6 +329,7 @@ export const spawnRunner: CommandRunner = async (spec, mode, control) => {
         }
       : spec.env && { ...process.env, ...spec.env };
   if (process.platform === "win32") {
+    const childJoin = control?.beginChildJoin?.();
     let result: Awaited<ReturnType<typeof runWindowsJob>>;
     try {
       result = await runWindowsJob(
@@ -343,15 +347,33 @@ export const spawnRunner: CommandRunner = async (spec, mode, control) => {
         },
         (pid) => control?.onProcessGroup?.(pid),
       );
+      if (Object.hasOwn(result, "cleanupFailure"))
+        throw new UpdateProcessCleanupUncertainError(
+          result.failureMessage ?? result.failure,
+          result.cleanupFailure,
+        );
       if (result.failure === "spawn")
         throw new Error(result.failureMessage ?? "Cannot start update command");
     } catch (error) {
+      if (error instanceof UpdateProcessCleanupUncertainError) throw error;
+      if (error && typeof error === "object" && "cleanupFailure" in error)
+        throw new UpdateProcessCleanupUncertainError(error, error.cleanupFailure);
+      try {
+        childJoin?.joined();
+      } catch (cleanupError) {
+        throw new UpdateProcessCleanupUncertainError(error, cleanupError);
+      }
       try {
         control?.onProcessGroup?.(null);
       } catch {
         /* Preserve the command/publication failure. */
       }
       throw error;
+    }
+    try {
+      childJoin?.joined();
+    } catch (cleanupError) {
+      throw new UpdateProcessCleanupUncertainError(result.failureMessage, cleanupError);
     }
     control?.onProcessGroup?.(null);
     return {
@@ -639,6 +661,7 @@ export interface UpdateFlowDeps {
   cliCommand(): CommandSpec;
   /** Host-wide update transaction, when this is an apply rather than a preview. */
   updateLock?: Pick<UpdateLock, "setProcessGroup" | "setStep" | "reclaim">;
+  beginChildJoin?(): { joined(): void };
   /**
    * Run the installed build's `omnesis update` on the steps after a successful
    * apply, relaying this process's signals to it, and report whether it took
@@ -649,8 +672,20 @@ export interface UpdateFlowDeps {
 
 async function runStep(deps: UpdateFlowDeps, spec: CommandSpec): Promise<RunOutcome> {
   try {
-    return await deps.run(spec, "inherit");
+    return await deps.run(
+      spec,
+      "inherit",
+      process.platform === "win32"
+        ? {
+            beginChildJoin: deps.beginChildJoin,
+            onProcessGroup: deps.updateLock
+              ? (pid) => deps.updateLock!.setProcessGroup(pid)
+              : undefined,
+          }
+        : undefined,
+    );
   } catch (err) {
+    if (err instanceof UpdateProcessCleanupUncertainError) throw err;
     const msg = err instanceof Error ? err.message : String(err);
     throw new CliError(
       `${c.red}Failed to run \`${formatCommandSpec(spec)}\`: ${msg}${c.reset}`,
@@ -675,8 +710,21 @@ async function attempt(
 ): Promise<RunOutcome> {
   const once = async (step: CommandSpec): Promise<RunOutcome> => {
     try {
-      return await deps.run(step, "inherit", control);
+      return await deps.run(
+        step,
+        "inherit",
+        process.platform === "win32"
+          ? {
+              ...control,
+              beginChildJoin: control?.beginChildJoin ?? deps.beginChildJoin,
+              onProcessGroup:
+                control?.onProcessGroup ??
+                (deps.updateLock ? (pid) => deps.updateLock!.setProcessGroup(pid) : undefined),
+            }
+          : control,
+      );
     } catch (err) {
+      if (err instanceof UpdateProcessCleanupUncertainError) throw err;
       return { code: 1, stdout: err instanceof Error ? err.message : String(err) };
     }
   };
@@ -777,7 +825,7 @@ class StoppedForBuild {
     this.stopped.delete(component);
   }
 
-  /** Leave them stopped: the rollback did not finish. */
+  /** Leave them stopped while rollback or owned-process cleanup is uncertain. */
   hold(): void {
     this.held = true;
   }
@@ -1498,6 +1546,7 @@ async function executeHostPlan(
             const result = await attempt(deps, spec, {
               signal: controller.signal,
               onProcessGroup: (pid) => deps.updateLock?.setProcessGroup(pid),
+              beginChildJoin: deps.beginChildJoin,
             });
             if (isDependencyInstall(spec))
               dependencyInstallIncomplete =
@@ -1737,6 +1786,9 @@ async function executeHostPlan(
           `installer again: curl -fsSL https://omnesis.dev/install.sh | sh${c.reset}`,
       );
     }
+  } catch (error) {
+    if (error instanceof UpdateProcessCleanupUncertainError) daemons.hold();
+    throw error;
   } finally {
     release?.();
     await daemons.startAll();
@@ -1909,6 +1961,7 @@ export async function runWithUpdateLock<T>(
   try {
     result = await action(lock, { waitedMs });
   } catch (err) {
+    if (err instanceof UpdateProcessCleanupUncertainError) throw err;
     // The action's own failure is what the caller must see; a lock that could
     // not be returned as well is said, not substituted for it.
     try {
@@ -3760,6 +3813,7 @@ export const continueAfterApplyCommand = defineCommand({
           currentVersion: offer.previousVersion,
         });
         deps.updateLock = lock;
+        deps.beginChildJoin = lock ? () => beginUpdateLockChildJoin(configDir, lock.id) : undefined;
         return deps;
       },
     });
@@ -4026,6 +4080,9 @@ export const updateCommand = defineCommand({
         dryRun,
         async (lock, { waitedMs }) => {
           deps.updateLock = lock;
+          deps.beginChildJoin = lock
+            ? () => beginUpdateLockChildJoin(configDir, lock.id)
+            : undefined;
           hostLock = lock;
           lock?.setStep("resolving target");
           if (waitedMs > 0) {

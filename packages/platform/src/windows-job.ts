@@ -14,7 +14,11 @@ import {
 } from "./windows-owned-process.js";
 import { windowsWorkerInvocation, type WindowsBootstrapRequest } from "./windows-worker-cache.js";
 import { windowsPowerShellExecutable } from "./windows-powershell.js";
+import { WindowsJobControl, type WindowsJobControlConfiguration } from "./windows-job-control.js";
 import { WINDOWS_JOB_POWERSHELL_SCRIPT } from "./native/windows-job-source.js";
+
+/** Async ABI includes authenticated cooperative cancellation and joined completion. */
+export const WINDOWS_JOB_CONTROL_PROTOCOL = 1;
 
 export type {
   WindowsJobOptions,
@@ -26,6 +30,7 @@ function jobFrame(
   command: string,
   args: readonly string[],
   completion?: WindowsJobOptions["completion"],
+  control?: WindowsJobControlConfiguration,
 ): Buffer {
   if (completion !== undefined && completion !== "tree" && completion !== "root")
     throw new Error("Invalid Windows job completion policy");
@@ -37,6 +42,7 @@ function jobFrame(
       args,
       parentPid: process.pid,
       ...(completion === undefined ? {} : { completion }),
+      ...(control ? { control } : {}),
     }),
     "utf8",
   );
@@ -112,7 +118,7 @@ export function spawnWindowsJob(
     opts.startupTimeoutMs !== undefined && Date.now() - start >= opts.startupTimeoutMs;
   const timeout = () =>
     Object.assign(new Error("Command timed out"), { code: "ETIMEDOUT", killed: true });
-  const frame = jobFrame(command, args, opts.completion);
+  jobFrame(command, args, opts.completion);
   if (expired()) throw timeout();
   let invocation: WindowsOwnedInvocation;
   try {
@@ -126,11 +132,30 @@ export function spawnWindowsJob(
     throw error;
   }
   if (expired()) throw timeout();
-  return spawnWindowsOwnedProcess(invocation, frame, {
-    cwd: opts.cwd,
-    env: opts.env,
-    stdout: "capture",
-  }) as WindowsJobProcess;
+  const control = new WindowsJobControl(
+    invocation.parentBirth ?? "",
+    Math.min(
+      start + 30_000,
+      opts.startupTimeoutMs === undefined ? Infinity : start + opts.startupTimeoutMs,
+    ),
+  );
+  try {
+    const controlledFrame = jobFrame(command, args, opts.completion, control.configuration);
+    return spawnWindowsOwnedProcess(
+      invocation,
+      controlledFrame,
+      {
+        cwd: opts.cwd,
+        env: opts.env,
+        stdout: "capture",
+      },
+      undefined,
+      control,
+    ) as WindowsJobProcess;
+  } catch (error) {
+    control.abandon();
+    throw error;
+  }
 }
 function deadlineFailure(reason: "timeout" | "aborted"): WindowsJobResult {
   return { exitCode: null, signal: null, stdout: Buffer.alloc(0), stderr: "", failure: reason };
@@ -170,7 +195,34 @@ export function runWindowsJob(
   const timeoutMs =
     opts.timeoutMs === undefined ? undefined : opts.timeoutMs - (Date.now() - start);
   if (timeoutMs !== undefined && timeoutMs <= 0) return Promise.resolve(deadlineFailure("timeout"));
-  return runWindowsOwnedProcess(invocation, frame, { ...opts, timeoutMs }, onSpawn);
+  if (opts.input !== undefined && opts.inputStream !== undefined)
+    return Promise.resolve(
+      failedSpawn(new Error("Provide binary input or an input stream, not both")),
+    );
+  let control: WindowsJobControl | undefined;
+  try {
+    control = new WindowsJobControl(
+      invocation.parentBirth ?? "",
+      Math.min(start + 30_000, opts.timeoutMs === undefined ? Infinity : start + opts.timeoutMs),
+    );
+    frame = jobFrame(command, args, opts.completion, control.configuration);
+    const remaining =
+      opts.timeoutMs === undefined ? undefined : opts.timeoutMs - (Date.now() - start);
+    if (remaining !== undefined && remaining <= 0) {
+      control.abandon();
+      return control.closed.catch(() => {}).then(() => deadlineFailure("timeout"));
+    }
+    return runWindowsOwnedProcess(
+      invocation,
+      frame,
+      { ...opts, timeoutMs: remaining },
+      onSpawn,
+      control,
+    );
+  } catch (error) {
+    control?.abandon();
+    return (control?.closed.catch(() => {}) ?? Promise.resolve()).then(() => failedSpawn(error));
+  }
 }
 /** Synchronous callers share the same verified helper and kernel containment. */
 export function runWindowsJobSync(

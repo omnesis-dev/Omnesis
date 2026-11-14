@@ -211,6 +211,7 @@ export {
 
 export {
   acquireUpdateLock,
+  beginUpdateLockChildJoin,
   adoptUpdateLock,
   getUpdateLockProcessGroup,
   UpdateLockBusyError,
@@ -219,6 +220,7 @@ export {
   updateLockHolderLabel,
   waitForUpdateLock,
   type UpdateLock,
+  type UpdateLockChildJoin,
   type AdoptUpdateLockOptions,
   type UpdateLockOptions,
   type UpdateLockProcessGroup,
@@ -399,6 +401,7 @@ export {
   markSecretFileEncryptionRequiredSync,
   isEncryptedSecretFile,
   readSecretTextFile,
+  decodeSecretTextFileValue,
   readSecretTextFileSync,
   readSecretJsonFile,
   readSecretJsonFileSync,

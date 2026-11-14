@@ -5,9 +5,19 @@ import { EventEmitter } from "node:events";
 import { PassThrough, Readable } from "node:stream";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const mocks = vi.hoisted(() => ({ spawn: vi.fn(), spawnSync: vi.fn(), workerInvocation: vi.fn() }));
+const mocks = vi.hoisted(() => ({
+  spawn: vi.fn(),
+  spawnSync: vi.fn(),
+  workerInvocation: vi.fn(),
+  control: vi.fn(),
+}));
 vi.mock("node:child_process", () => ({ spawn: mocks.spawn, spawnSync: mocks.spawnSync }));
 vi.mock("./windows-worker-cache.js", () => ({ windowsWorkerInvocation: mocks.workerInvocation }));
+vi.mock("./windows-job-control.js", () => ({
+  WindowsJobControl: vi.fn(function (parentBirth: string, deadlineUnixMs: number) {
+    return mocks.control(parentBirth, deadlineUnixMs);
+  }),
+}));
 import {
   killWindowsJob,
   runWindowsJob,
@@ -52,7 +62,33 @@ beforeEach(() => {
   mocks.workerInvocation.mockReset().mockImplementation((mode: string) => ({
     command: "C:\\Windows\\native-worker.exe",
     args: [mode],
+    parentBirth: "123456789",
   }));
+  mocks.control.mockReset().mockImplementation((parentBirth: string, deadlineUnixMs: number) => {
+    let join!: () => void;
+    const closed = new Promise<void>((resolve) => {
+      join = resolve;
+    });
+    return {
+      configuration: {
+        pipe: `omnesis-job-${process.pid}-${"a".repeat(48)}`,
+        cookie: "b".repeat(64),
+        parentBirth,
+        deadlineUnixMs,
+      },
+      listening: Promise.resolve(),
+      failed: new Promise<never>(() => {}),
+      closed,
+      start: vi.fn(),
+      targetStarted: vi.fn(),
+      inputAllowed: true,
+      attach: (child: Helper, releaseInput: () => Promise<void>) =>
+        child.once("close", () => {
+          void releaseInput().then(join);
+        }),
+      abandon: vi.fn(),
+    };
+  });
   helper = new Helper();
   mocks.spawnSync.mockReset();
   mocks.spawn.mockReset().mockReturnValue(helper);
@@ -64,11 +100,120 @@ afterEach(() => {
 });
 
 describe("Windows job stream protocol", () => {
+  it.each(["buffered", "publication", "exec"] as const)(
+    "retains an explicit undefined cleanup rejection for %s consumers",
+    async (mode) => {
+      const implementation = mocks.control.getMockImplementation()!;
+      mocks.control.mockImplementationOnce((...args: unknown[]) => ({
+        ...implementation(...args),
+        closed: Promise.reject(undefined),
+      }));
+      const publication = new Error("invented publication refusal");
+      const pending =
+        mode === "exec"
+          ? execWindowsJob("fixture", [])
+          : runWindowsJob(
+              "fixture",
+              [],
+              {},
+              mode === "publication"
+                ? () => {
+                    throw publication;
+                  }
+                : undefined,
+            );
+      const outcome = pending.then(
+        (value) => ({ rejected: false as const, value }),
+        (error: unknown) => ({ rejected: true as const, error }),
+      );
+      if (mode !== "publication") {
+        helper.rawStderr.write("OMNESIS_JOB:0\n");
+        await helper.close(0);
+      }
+      const settled = await outcome;
+      if (mode === "buffered") {
+        expect(settled.rejected).toBe(false);
+        if (settled.rejected) throw settled.error;
+        expect(Object.hasOwn(settled.value, "cleanupFailure")).toBe(true);
+        expect(settled.value).toMatchObject({ failure: "spawn", cleanupFailure: undefined });
+      } else {
+        expect(settled.rejected).toBe(true);
+        if (!settled.rejected) throw new Error("An unjoined command incorrectly succeeded");
+        expect(settled.error).toBeInstanceOf(Error);
+        expect(Object.hasOwn(settled.error as Error, "cleanupFailure")).toBe(true);
+        expect(settled.error).toMatchObject({ cleanupFailure: undefined });
+        if (mode === "publication") expect(settled.error).toMatchObject({ cause: publication });
+      }
+    },
+  );
+
+  it("joins both raw and gated stdin after a streaming owner exits without input EOF", async () => {
+    const rawInput = helper.stdin;
+    const proc = spawnWindowsJob("fixture", []);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    helper.rawStderr.write("OMNESIS_JOB:0\n");
+    await proc.jobReady;
+    expect(proc.stdin.writableEnded).toBe(false);
+    await helper.close();
+    await proc.jobClosed;
+    expect(proc.stdin.closed).toBe(true);
+    expect(rawInput.closed).toBe(true);
+  });
+
+  it.each(["buffer", "exec"] as const)(
+    "preserves %s cancellation and exposes cleanup uncertainty",
+    async (mode) => {
+      const makeControl = mocks.control.getMockImplementation()!;
+      const cleanupFailure = new Error("invented missing native join");
+      mocks.control.mockImplementation((...args) => {
+        const control = makeControl(...args);
+        const closed = control.closed.then(() => {
+          throw cleanupFailure;
+        });
+        void closed.catch(() => {});
+        return { ...control, closed };
+      });
+      const abort = new AbortController();
+      const pending =
+        mode === "buffer"
+          ? runWindowsJob("fixture", [], { signal: abort.signal })
+          : execWindowsJob("fixture", [], { signal: abort.signal });
+      void pending.catch(() => {});
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      helper.rawStderr.write("OMNESIS_JOB:0\n");
+      abort.abort();
+      if (mode === "buffer")
+        await expect(pending).resolves.toMatchObject({ failure: "aborted", cleanupFailure });
+      else await expect(pending).rejects.toMatchObject({ code: "ABORT_ERR", cleanupFailure });
+    },
+  );
+
+  it.each(["stream", "buffer"] as const)(
+    "anchors %s setup to the start before synchronous cache verification",
+    async (mode) => {
+      let now = 1_000_000;
+      vi.spyOn(Date, "now").mockImplementation(() => now);
+      mocks.workerInvocation.mockImplementation(() => {
+        now += 5_000;
+        return { command: "fixture", args: [], parentBirth: "123456789" };
+      });
+      const pending =
+        mode === "stream" ? spawnWindowsJob("fixture", []) : runWindowsJob("fixture", [], {});
+      expect(mocks.control).toHaveBeenCalledWith("123456789", 1_030_000);
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      helper.rawStderr.write("OMNESIS_JOB:0\n");
+      await helper.close();
+      if (mode === "stream") await (pending as ReturnType<typeof spawnWindowsJob>).jobClosed;
+      else await pending;
+    },
+  );
+
   it.each(["root", "tree"] as const)(
     "frames explicit %s completion before raw input",
     async (completion) => {
       const proc = spawnWindowsJob("fixture", [], { completion });
       proc.stdin.end(Buffer.from([0, 255]));
+      await new Promise<void>((resolve) => setImmediate(resolve));
       const input = Buffer.concat(helper.input);
       const length = input.readUInt32LE();
       expect(JSON.parse(input.subarray(4, length + 4).toString("utf8"))).toMatchObject({
@@ -78,12 +223,14 @@ describe("Windows job stream protocol", () => {
       helper.rawStderr.write("OMNESIS_JOB:0\n");
       await proc.jobReady;
       await helper.close(7);
+      await proc.jobClosed;
       expect(proc.exitCode).toBe(7);
     },
   );
 
   it("carries root completion through buffered and synchronous runs without changing their exit status", async () => {
     const pending = runWindowsJob("fixture", [], { completion: "root" });
+    await new Promise<void>((resolve) => setImmediate(resolve));
     let input = Buffer.concat(helper.input);
     expect(JSON.parse(input.subarray(4, input.readUInt32LE() + 4).toString("utf8"))).toMatchObject({
       completion: "root",
@@ -124,12 +271,14 @@ describe("Windows job stream protocol", () => {
     proc.stdout.on("data", (bytes: Buffer) => output.push(bytes));
     proc.stderr.on("data", (bytes: Buffer) => errors.push(bytes));
     proc.stdin.write(Buffer.from([0, 255, 10]));
+    await new Promise<void>((resolve) => setImmediate(resolve));
     const input = Buffer.concat(helper.input);
     const length = input.readUInt32LE();
     expect(JSON.parse(input.subarray(4, length + 4).toString("utf8"))).toEqual({
       command: "fixture executable",
       args: ["& literal", "雪"],
       parentPid: process.pid,
+      control: mocks.control.mock.results[0]!.value.configuration,
     });
     expect(input.subarray(length + 4)).toEqual(Buffer.from([0, 255, 10]));
     helper.rawStderr.write("OMNESIS_J");
@@ -137,6 +286,7 @@ describe("Windows job stream protocol", () => {
     helper.stdout.write(Buffer.from([255, 0]));
     await proc.jobReady;
     await helper.close(127);
+    await proc.jobClosed;
     expect(Buffer.concat(errors)).toEqual(Buffer.from([0, 254]));
     expect(Buffer.concat(output)).toEqual(Buffer.from([255, 0]));
     expect(proc.exitCode).toBe(127);
@@ -153,6 +303,7 @@ describe("Windows job stream protocol", () => {
     helper.rawStderr.write(`OMNESIS_JOB:${code}\n`);
     await expect(proc.jobReady).rejects.toMatchObject({ code: name });
     await helper.close(1);
+    await proc.jobClosed;
   });
 
   it("retains ownership until close after publication fails, including throw undefined", async () => {
@@ -217,7 +368,7 @@ describe("Windows job exec capture", () => {
     const clock = vi.spyOn(Date, "now").mockReturnValue(1000);
     mocks.workerInvocation.mockImplementationOnce(() => {
       clock.mockReturnValue(1100);
-      return { command: "C:\\Windows\\native-worker.exe", args: ["job"] };
+      return { command: "C:\\Windows\\native-worker.exe", args: ["job"], parentBirth: "123456789" };
     });
     await expect(execWindowsJob("fixture", [], { timeout: 100 })).rejects.toMatchObject({
       code: "ETIMEDOUT",
@@ -232,7 +383,7 @@ describe("Windows job exec capture", () => {
     const clock = vi.spyOn(Date, "now").mockReturnValue(1000);
     mocks.workerInvocation.mockImplementationOnce(() => {
       clock.mockReturnValue(1040);
-      return { command: "C:\\Windows\\native-worker.exe", args: ["job"] };
+      return { command: "C:\\Windows\\native-worker.exe", args: ["job"], parentBirth: "123456789" };
     });
     try {
       const run = execWindowsJob("fixture", [], { timeout: 100 });
@@ -317,6 +468,20 @@ describe("synchronous Windows job framing", () => {
     expect(mocks.workerInvocation).not.toHaveBeenCalled();
     expect(mocks.spawn).not.toHaveBeenCalled();
   });
+  it("marks a forcibly stopped synchronous owner as cleanup-uncertain", () => {
+    mocks.spawnSync.mockReturnValue({
+      pid: 12345,
+      status: null,
+      signal: "SIGKILL",
+      stdout: Buffer.alloc(0),
+      stderr: Buffer.from("OMNESIS_JOB:0\n"),
+      error: Object.assign(new Error("invented timeout"), { code: "ETIMEDOUT" }),
+    });
+    const result = runWindowsJobSync("fixture", []);
+    expect(result.failure).toBe("timeout");
+    expect(result.cleanupFailure).toBeInstanceOf(Error);
+  });
+
   it("classifies native creation failure and timeout separately", () => {
     mocks.spawnSync.mockReturnValue({
       status: 1,

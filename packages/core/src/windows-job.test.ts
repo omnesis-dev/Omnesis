@@ -6,7 +6,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "no
 import { tmpdir } from "node:os";
 import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { Readable } from "node:stream";
 import { describe, expect, it } from "vitest";
 import { killWindowsJob, runWindowsJob, spawnWindowsJob } from "./windows-job.js";
@@ -78,6 +78,36 @@ describe("Windows job fixture programs", () => {
 });
 
 describe.skipIf(process.platform !== "win32")("Windows native job containment", () => {
+  it("preserves bare executable PATH and extension lookup without a shell", async () => {
+    const result = await runWindowsJob("node", ["-e", "process.stdout.write(process.arch)"], {
+      env: { ...process.env, PATH: dirname(process.execPath) },
+      timeoutMs: 30_000,
+    });
+    expect(result.failure, result.failureMessage ?? result.stderr).toBeUndefined();
+    expect(result.cleanupFailure).toBeUndefined();
+    expect(result.exitCode).toBe(0);
+    expect(Buffer.from(result.stdout).toString("utf8")).toBe(process.arch);
+  });
+
+  it("immediate cancellation never permits payload creation", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "omnesis-job-immediate-abort-"));
+    const marker = join(dir, "started");
+    const proc = spawnWindowsJob(process.execPath, [
+      "-e",
+      `require("node:fs").writeFileSync(${JSON.stringify(marker)}, "unexpected")`,
+    ]);
+    proc.stdin.end();
+    proc.kill("SIGKILL");
+    try {
+      await proc.jobClosed;
+      expect(existsSync(marker)).toBe(false);
+    } finally {
+      proc.kill("SIGKILL");
+      await proc.jobClosed.catch(() => {});
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it.each([0, 7])(
     "root completion joins a persistent descendant, drains bytes and preserves root exit %s",
     async (exitCode) => {
@@ -138,8 +168,11 @@ child.once('message',()=>{
       const members: number[] = JSON.parse(readFileSync(marker, "utf8"));
       expect(members.every(alive)).toBe(true);
       controller.abort();
-      expect(await pending).toMatchObject({ failure: "aborted", exitCode: null });
-      expect(await eventually(() => members.every((pid) => !alive(pid)))).toBe(true);
+      const result = await pending;
+      expect(result).toMatchObject({ failure: "aborted", exitCode: null });
+      expect(result.cleanupFailure).toBeUndefined();
+      // This must already hold when the live cancellation call returns.
+      expect(members.every((pid) => !alive(pid))).toBe(true);
     } finally {
       controller.abort();
       await pending;
@@ -165,12 +198,14 @@ child.once('message',()=>{
       proc.stdin.end(bytes);
       await proc.jobReady;
       expect(await closed).toBe(0);
+      await proc.jobClosed;
       expect(Buffer.concat(chunks)).toEqual(bytes);
       expect(stderr).toBe("target warning\n");
     } finally {
       clearTimeout(timer);
       if (proc.exitCode === null && proc.signalCode === null) proc.kill("SIGKILL");
       await closed;
+      await proc.jobClosed;
     }
   });
 

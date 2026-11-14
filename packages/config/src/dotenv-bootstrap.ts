@@ -38,7 +38,7 @@ export function loadBootstrapDotEnv(
   });
 }
 
-/** Repair without exposing config bytes to the loader; the caller must exit afterward. */
+/** Seal already-private file inheritance without reading config; unsafe grants refuse. */
 export function repairBootstrapDotEnvAccess(error: DotEnvBootstrapError): void {
   if (process.platform !== "win32") throw new Error("Windows bootstrap repair is unavailable");
   secureWindowsPrivatePathSync(dirname(error.path), "directory");

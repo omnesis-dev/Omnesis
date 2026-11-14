@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { existsSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readFileSync, statSync, rmSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { afterEach, describe, test, expect, vi } from "vitest";
 import { createPrivateScratchAsync } from "@omnesis/core";
+import { processLauncher, setProcessLauncher } from "../process-launcher/index.js";
 
 vi.mock("@omnesis/core", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@omnesis/core")>();
@@ -19,6 +20,56 @@ import { OCR_PROMPT } from "./http-vlm-ocr.js";
 const enc = (s: string) => new TextEncoder().encode(s);
 
 describe("GgufOcr", () => {
+  test("does not advertise a binary whose version probe has unconfirmed cleanup", async () => {
+    const core = await vi.importActual<typeof import("@omnesis/core")>("@omnesis/core");
+    const scratch = await core.createPrivateScratchAsync("ocr-probe-test");
+    const previous = processLauncher();
+    const modelPath = join(scratch.path, "model.gguf"),
+      mmprojPath = join(scratch.path, "projector.gguf");
+    writeFileSync(modelPath, "invented model placeholder");
+    writeFileSync(mmprojPath, "invented projector placeholder");
+    setProcessLauncher({
+      run: () =>
+        Promise.resolve({
+          exitCode: 0,
+          signal: null,
+          stdout: new Uint8Array(),
+          stderr: "",
+          cleanupFailure: undefined,
+        }),
+    });
+    try {
+      expect(await mtmdAvailable({ modelPath, mmprojPath, binPath: "synthetic-runtime" })).toBe(
+        false,
+      );
+    } finally {
+      setProcessLauncher(previous);
+      await scratch.cleanup();
+    }
+  });
+
+  test("retains its private image when the runner cannot confirm process cleanup", async () => {
+    const failure = Object.assign(new Error("Synthetic OCR process failure"), {
+      cleanupFailure: new Error("Synthetic unjoined runner"),
+    });
+    let imagePath = "";
+    const ocr = new GgufOcr({
+      modelPath: "m.gguf",
+      mmprojPath: "p.gguf",
+      runMtmd: (args) => {
+        imagePath = args.imagePath;
+        expect(existsSync(join(dirname(imagePath), ".process-join-required"))).toBe(true);
+        return Promise.reject(failure);
+      },
+    });
+    try {
+      await expect(ocr.recognize(enc("invented image bytes"), "image/png")).rejects.toBe(failure);
+      expect(readFileSync(imagePath, "utf8")).toBe("invented image bytes");
+    } finally {
+      if (imagePath) rmSync(dirname(imagePath), { recursive: true, force: true });
+    }
+  });
+
   test("spills the image to a temp file and runs llama-mtmd-cli with the configured paths", async () => {
     let seen: MtmdRunArgs | null = null;
     let imageExistedDuringRun = false;

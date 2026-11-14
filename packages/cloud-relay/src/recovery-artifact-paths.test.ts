@@ -6,6 +6,7 @@ import { link, mkdtemp, mkdir, readFile, rm, symlink, writeFile } from "node:fs/
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
+import * as core from "@omnesis/core";
 import { recoveryFixture } from "../test/recovery-fixture.js";
 import {
   assertRecoveryArtifactDestination,
@@ -27,6 +28,7 @@ vi.mock("node:fs", async (importOriginal) => {
 let directory: string;
 beforeEach(async () => {
   directory = fs.realpathSync(await mkdtemp(join(tmpdir(), "omnesis-recovery-paths-")));
+  if (process.platform === "win32") await core.ensurePrivateDirs([directory]);
   vi.spyOn(process.stdout, "write").mockImplementation(() => true);
 });
 afterEach(async () => {

@@ -54,9 +54,18 @@ $acl.AddAccessRule([System.Security.AccessControl.FileSystemAccessRule]::new([Sy
       ]);
       expect(before.permissionScanCount).toBe(4);
       const repaired = await collectWindowsPermissionData(root, true, 5000);
-      expect(repaired.permissionEntries.every((entry) => entry.ok)).toBe(true);
+      expect(
+        repaired.permissionEntries.find((entry) => entry.relativePath === "exposed")?.fixed,
+      ).toBe(true);
+      expect(
+        repaired.permissionEntries.find((entry) => entry.relativePath === "exposed/unsafe.wal")?.ok,
+      ).toBe(false);
       expect(repaired.permissionEntries.some((entry) => entry.fixed)).toBe(true);
-      expect((await collectWindowsPermissionData(root, false, 5000)).permissionEntries).toEqual([]);
+      expect(
+        (await collectWindowsPermissionData(root, false, 5000)).permissionEntries.map(
+          (entry) => entry.relativePath,
+        ),
+      ).toEqual(["exposed/unsafe.wal"]);
     } finally {
       rmSync(root, { force: true, recursive: true });
     }

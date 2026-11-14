@@ -2,7 +2,6 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { randomUUID, X509Certificate } from "node:crypto";
-import { existsSync } from "node:fs";
 import { readFile, access, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { createLogger } from "@omnesis/core";
@@ -26,6 +25,7 @@ import { bindingOrigin } from "./gateway-binding.js";
 import { relayOrigin } from "./network.js";
 import { installationRelayUrl } from "./installation-relay.js";
 import { readPrivateJson, savePrivateJson } from "./google-credentials.js";
+import { readPrivateText, identityArtifactPresent } from "./private-inputs.js";
 import {
   GatewayUnregistered,
   prepareGatewayOwner,
@@ -139,6 +139,7 @@ export class GatewayCloudRelayManagement implements CloudRelayManagement {
   private notice: CloudRelayManagementStatus["notice"];
   private forgetting: Promise<void> | undefined;
   private releasing: Promise<void> | undefined;
+  private readonly releaseAbort = new AbortController();
   private releaseTimer: ReturnType<typeof setTimeout> | undefined;
   private closed = false;
   private signupAccess:
@@ -241,7 +242,7 @@ export class GatewayCloudRelayManagement implements CloudRelayManagement {
         manager.requireSeparateHostname(manager.settings);
         const e = manager.environment(),
           cert = await readFile(publicGatewayCertificateFile(e), "utf8"),
-          key = await readFile(publicGatewayPrivateKeyFile(e), "utf8");
+          key = await readPrivateText(publicGatewayPrivateKeyFile(e));
         // Served whatever its dates: devices that pinned its key still reach the gateway at home
         // under this name, and nothing renews it while the gateway is not connected.
         const leaf = new X509Certificate(cert);
@@ -266,6 +267,7 @@ export class GatewayCloudRelayManagement implements CloudRelayManagement {
     return manager;
   }
   start(): void {
+    if (this.closed) return;
     this.monitor.start();
     void this.release();
     this.launch();
@@ -447,7 +449,7 @@ export class GatewayCloudRelayManagement implements CloudRelayManagement {
         throw new CloudRelayManagementFailure(400, "ca-terms-required");
       // The gateway keeps its id, so it must be out of its old account before it registers again.
       await this.release();
-      if (existsSync(this.releaseFile))
+      if (await identityArtifactPresent(this.releaseFile))
         throw new CloudRelayManagementFailure(503, "relay-unreachable");
       if (input.invitation !== undefined) {
         if (!input.invitation || input.invitation.length > 4096)
@@ -485,7 +487,7 @@ export class GatewayCloudRelayManagement implements CloudRelayManagement {
     });
   }
   private launch(force = false): void {
-    if (this.pending || !this.settings?.enabled) return;
+    if (this.closed || this.pending || !this.settings?.enabled) return;
     clearTimeout(this.timer);
     // Ends a recheck still in flight, so it cannot write over what this launch finds.
     this.abort.abort();
@@ -649,7 +651,7 @@ export class GatewayCloudRelayManagement implements CloudRelayManagement {
     const settings = this.settings!,
       options = this.keyOptions();
     // A gateway that never registered has nothing on the relay to drop.
-    const release = departing && existsSync(options.sessionFile);
+    const release = departing && (await identityArtifactPresent(options.sessionFile));
     this.connectAbort.abort();
     this.signup = undefined;
     this.connection = { state: "idle" };
@@ -686,28 +688,34 @@ export class GatewayCloudRelayManagement implements CloudRelayManagement {
    * been out of reach when the owner did. A relay that never answers is given up after a month.
    */
   private release(): Promise<void> {
+    if (this.closed) return this.releasing ?? Promise.resolve();
     return (this.releasing ??= (async () => {
       clearTimeout(this.releaseTimer);
       let record: GatewayRelease;
       try {
         record = gatewayReleaseSchema.parse(await readPrivateJson(this.releaseFile));
-      } catch {
-        // Nothing is waiting, or what waits cannot be read and so cannot be acted on.
-        await rm(this.releaseFile, { force: true });
+      } catch (error) {
+        if (
+          !this.closed &&
+          !(error && typeof error === "object" && "code" in error && error.code === "ENOENT")
+        )
+          log.warn("The pending cloud relay release could not be read; it remains pending");
         return;
       }
       try {
+        this.releaseAbort.signal.throwIfAborted();
         if (record.createdAt > Date.now() - GATEWAY_RELEASE_DAYS * 86400_000)
           await releaseGateway(record, {
             register: this.options.register ?? registerGatewayKey,
             fetch: this.options.fetch,
-            signal: AbortSignal.timeout(20_000),
+            signal: AbortSignal.any([this.releaseAbort.signal, AbortSignal.timeout(20_000)]),
           });
+        this.releaseAbort.signal.throwIfAborted();
         await rm(record.sessionFile, { force: true });
         await rm(this.releaseFile, { force: true });
       } catch (error) {
-        log.warn(`The relay has not dropped the disconnected gateway yet: ${String(error)}`);
         if (this.closed) return;
+        log.warn(`The relay has not dropped the disconnected gateway yet: ${String(error)}`);
         this.releaseTimer = setTimeout(
           () => void this.release(),
           this.options.releaseRetryMs ?? 15 * 60_000,
@@ -1129,11 +1137,16 @@ export class GatewayCloudRelayManagement implements CloudRelayManagement {
   }
   async close(): Promise<void> {
     this.closed = true;
+    this.releaseAbort.abort();
     clearTimeout(this.releaseTimer);
     try {
       await this.monitor.close();
     } finally {
-      await this.stop();
+      try {
+        await this.stop();
+      } finally {
+        await this.releasing;
+      }
     }
   }
 }

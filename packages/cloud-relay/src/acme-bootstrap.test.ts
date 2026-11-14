@@ -7,6 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { X509Certificate } from "node:crypto";
 import { beforeEach, afterEach, expect, test, vi } from "vitest";
+import * as core from "@omnesis/core";
 import { tlsFiles, malformedDateCertificate } from "../test/support.js";
 import { expiredCertificate } from "../test/expired-certificate.js";
 import { ensureAcmeBootstrap } from "./acme-bootstrap.js";
@@ -19,6 +20,7 @@ const actualFiles = await vi.importActual<typeof import("node:fs/promises")>("no
 let directory: string;
 beforeEach(async () => {
   directory = await mkdtemp(join(tmpdir(), "omnesis-acme-bootstrap-"));
+  if (process.platform === "win32") await core.ensurePrivateDirs([directory]);
 });
 afterEach(async () => {
   vi.restoreAllMocks();
@@ -26,6 +28,74 @@ afterEach(async () => {
   vi.mocked(files.readFile).mockReset().mockImplementation(actualFiles.readFile);
   await rm(directory, { recursive: true, force: true });
 });
+
+test("Windows bootstrap refuses unsafe private key input before using its public certificate", async () => {
+  const tls = tlsFiles(directory, "gateway.example.test");
+  const refused = Object.assign(new Error("Invented unsafe bootstrap key"), { code: "EPRIVATE" });
+  const read = vi.spyOn(core, "readWindowsPrivateFile").mockRejectedValueOnce(refused);
+  const descriptor = Object.getOwnPropertyDescriptor(process, "platform")!;
+  Object.defineProperty(process, "platform", { ...descriptor, value: "win32" });
+  try {
+    await expect(
+      ensureAcmeBootstrap({
+        publicOrigin: "https://gateway.example.test",
+        certificateFile: tls.certFile,
+        privateKeyFile: tls.keyFile,
+        signal: new AbortController().signal,
+      }),
+    ).rejects.toBe(refused);
+    expect(read).toHaveBeenCalledWith(tls.keyFile, 65_536);
+  } finally {
+    Object.defineProperty(process, "platform", descriptor);
+  }
+});
+
+test("a certificate path behind a non-directory ancestor cannot authorize a fresh private key", async () => {
+  const blocked = join(directory, "ancestor-file");
+  await writeFile(blocked, "invented non-directory ancestor");
+  const key = join(directory, "not-created.key");
+  await expect(
+    ensureAcmeBootstrap({
+      publicOrigin: "https://gateway.example.test",
+      certificateFile: join(blocked, "certificate.pem"),
+      privateKeyFile: key,
+      generatePrivateKey: true,
+      signal: new AbortController().signal,
+    }),
+  ).rejects.toThrow();
+  await expect(readFile(key)).rejects.toMatchObject({ code: "ENOENT" });
+});
+
+test.skipIf(process.platform !== "win32")(
+  "Windows bootstrap accepts a public certificate but refuses a publicly readable private key",
+  async () => {
+    const tls = tlsFiles(directory, "gateway.example.test");
+    const options = {
+      publicOrigin: "https://gateway.example.test",
+      certificateFile: tls.certFile,
+      privateKeyFile: tls.keyFile,
+      signal: new AbortController().signal,
+    };
+    const grant = (path: string) =>
+      core.execWindowsJob(join(process.env.SystemRoot!, "System32", "icacls.exe"), [
+        path,
+        "/grant",
+        "*S-1-1-0:(R)",
+        "/Q",
+      ]);
+    const previous = await readFile(tls.keyFile, "utf8");
+    try {
+      await grant(tls.certFile);
+      expect(core.inspectWindowsPrivatePathSync(tls.certFile, "file").private).toBe(false);
+      await ensureAcmeBootstrap(options);
+      await grant(tls.keyFile);
+      await expect(ensureAcmeBootstrap(options)).rejects.toMatchObject({ code: "EPRIVATE" });
+      expect(await readFile(tls.keyFile, "utf8")).toBe(previous);
+    } finally {
+      core.ensurePrivateFileSync(tls.keyFile);
+    }
+  },
+);
 test("separate public bootstrap uses the existing key, survives concurrent readers and recovers expiry without modifying direct material", async () => {
   const tls = tlsFiles(directory),
     direct = await readFile(tls.certFile, "utf8"),
@@ -121,6 +191,8 @@ test("a dedicated public key is generated once with private permissions and an e
   const original = await readFile(privateKeyFile, "utf8");
   if (process.platform !== "win32") {
     expect((await stat(privateKeyFile)).mode & 0o777).toBe(0o600);
+  } else {
+    expect(core.inspectWindowsPrivatePathSync(privateKeyFile, "file").private).toBe(true);
   }
   expect(original).not.toBe(await readFile(tls.keyFile, "utf8"));
   await ensureAcmeBootstrap(options);

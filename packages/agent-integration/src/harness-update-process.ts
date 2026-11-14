@@ -11,6 +11,8 @@ interface UpdateProcessResult {
   errors: string;
   failure?: "timeout" | "cancelled" | "spawn";
   cause?: unknown;
+  /** No positive proof that all owned descendants stopped; never present on joined cleanup. */
+  cleanupFailure?: unknown;
 }
 const CAPTURED_OUTPUT_BYTES = 8_000;
 
@@ -35,6 +37,7 @@ export function runHarnessUpdateProcess(
       opts.spawnJobFn !== undefined || (process.platform === "win32" && opts.spawnFn === undefined);
     let child: ReturnType<typeof spawn>;
     let ready: Promise<void> | undefined;
+    let joined: Promise<void> | undefined;
     try {
       const env = { ...process.env, NO_COLOR: "1" };
       if (owned) {
@@ -50,6 +53,10 @@ export function runHarnessUpdateProcess(
         );
         child = job;
         ready = job.jobReady;
+        joined =
+          job.jobClosed ??
+          Promise.reject(new Error("Windows update transport cannot confirm process cleanup"));
+        void joined.catch(() => {});
       } else
         child = (opts.spawnFn ?? spawn)(command, args, { stdio: ["ignore", "pipe", "pipe"], env });
     } catch (cause) {
@@ -68,20 +75,31 @@ export function runHarnessUpdateProcess(
     let output = "",
       errors = "",
       settled = false;
-    let failure: UpdateProcessResult["failure"], cause: unknown;
+    let failure: UpdateProcessResult["failure"], cause: unknown, cleanupFailure: unknown;
+    let cleanupFailed = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const finish = (code: number | null): void => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
       opts.signal?.removeEventListener("abort", onAbort);
-      resolve({ code, output, errors, ...(failure ? { failure, cause } : {}) });
+      resolve({
+        code,
+        output,
+        errors,
+        ...(failure ? { failure, cause } : {}),
+        ...(cleanupFailed ? { cleanupFailure } : {}),
+      });
     };
     const stop = (reason: "timeout" | "cancelled"): void => {
       if (settled || failure) return;
       failure = reason;
+      cause =
+        reason === "cancelled"
+          ? opts.signal?.reason
+          : Object.assign(new Error("Update command timed out"), { code: "ETIMEDOUT" });
       child.kill("SIGKILL");
-      // The owned helper's close event is the completion boundary. Preserve
+      // Owned completion additionally requires authenticated native JOINED. Preserve
       // the historical standalone POSIX/injected transport timeout behavior.
       if (!owned) finish(null);
     };
@@ -101,7 +119,21 @@ export function runHarnessUpdateProcess(
       }
       if (!owned) finish(null);
     });
-    child.on("close", finish);
+    child.on("close", (code: number | null) => {
+      void (joined ?? Promise.resolve()).then(
+        () => finish(code),
+        (error: unknown) => {
+          cleanupFailed = true;
+          cleanupFailure = error;
+          failure ??= "spawn";
+          cause =
+            cause === undefined
+              ? error
+              : new AggregateError([cause, error], "Update and owned process cleanup failed");
+          finish(code);
+        },
+      );
+    });
     if (ready)
       void ready.catch((error: unknown) => {
         if (!failure) {

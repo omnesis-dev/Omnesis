@@ -40,7 +40,9 @@ export async function collectWindowsPermissionData(
         const result = results[index]!;
         entry.ok = result.private && entry.error === undefined;
         entry.fixed = result.fixed && result.private;
-        if (!result.private) entry.error ??= "Windows access controls are not private";
+        if (!result.private)
+          entry.error ??=
+            "Windows access controls are not private; stop related processes and review or recreate unsafe files in the protected directory";
       }
     } catch {
       for (const entry of inspected) {

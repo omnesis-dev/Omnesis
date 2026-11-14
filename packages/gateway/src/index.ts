@@ -118,6 +118,7 @@ import { currentTlsMaterialPaths, partitionAddressedHosts } from "./tls-lifecycl
 import { isLoopbackIp, reverseProxyTrusted } from "./http/client-ip.js";
 import { createHostMinter } from "./tls-lifecycle/minters.js";
 import { TlsLifecycleService } from "./tls-lifecycle/service.js";
+import { OwnedProcessShutdownFence } from "./owned-process-shutdown-fence.js";
 import { createAcmeRenewalTask } from "./tls-lifecycle/acme-task.js";
 import { createTlsLifecycleTask } from "./tls-lifecycle/task.js";
 import { DEFAULT_MDNS_ENABLED, DEFAULT_MDNS_HOSTNAME, MdnsAdvertiser } from "./mdns-advertiser.js";
@@ -3914,15 +3915,14 @@ indexerLifecycle.startIndexer().catch((err) => {
 // writer worker in Phase 2+), then dispose the writer worker, then close
 // the main-thread DB handles.
 //
-// Wallclock cap: 60 seconds. If any of the awaited steps wedges (worker
-// in a native call ignoring shutdown messages, etc.) the supervisor
-// gets a guaranteed exit. Per-stage runners already apply their own
-// 5s fallback; this is the umbrella net. Sized to comfortably clear the
+// Wallclock cap: 60 seconds. A timeout records a failed stop; accepted owned
+// process proofs still settle before exit, and terminal cleanup uncertainty
+// retains the PID and lease for review. Per-stage runners apply their own
+// 5s fallback. The ordinary shutdown budget comfortably clears the
 // indexer flush-save (its own 20s budget — a large HNSW graph rewrites the
 // whole ~GB file) plus the backup/export/agent drains ahead of it and the
 // dispose + sidecar encrypt after it, so the clean-exit path wins over the
-// force-exit even on a big install; still well under the service manager's
-// stop timeout.
+// timeout even on a big install, within the service manager's stop timeout.
 const SHUTDOWN_TIMEOUT_MS = GATEWAY_SHUTDOWN_BUDGET_MS;
 
 /**
@@ -3935,6 +3935,21 @@ const SHUTDOWN_TIMEOUT_MS = GATEWAY_SHUTDOWN_BUDGET_MS;
  * nearly finished and gives up on the rest, which is the trade worth making.
  */
 const COMPILE_DRAIN_TIMEOUT_MS = 10_000;
+
+const tlsCleanup = {
+  receipt: () => tlsLifecycle.cleanupFailure(),
+  settle: () => tlsLifecycle.close(),
+};
+const codexCleanup = {
+  receipt: () => codexRuntimeService.cleanupFailure(),
+  settle: () => codexRuntimeService.dispose(),
+};
+const ownedProcessShutdown = new OwnedProcessShutdownFence(() => {
+  process.exitCode = 1;
+  log.error(
+    "Owned process cleanup is unconfirmed; the gateway PID and lock are retained for review",
+  );
+}, [tlsCleanup, codexCleanup]);
 
 const doShutdown = async (): Promise<void> => {
   try {
@@ -3963,6 +3978,7 @@ const doShutdown = async (): Promise<void> => {
       `Route resource cleanup failed: ${error instanceof Error ? (error.stack ?? error.message) : String(error)}`,
     );
   }
+  await ownedProcessShutdown.join(tlsCleanup);
   // A warm still scanning competes with the sidecar persist below for I/O and
   // the shutdown budget; its thread is throwaway, so stop it first — after the
   // lexical index service, because a settled warm starts the service's build.
@@ -4072,7 +4088,7 @@ const doShutdown = async (): Promise<void> => {
   }
   if (codexRuntimeService) {
     try {
-      await codexRuntimeService.dispose();
+      await ownedProcessShutdown.join(codexCleanup);
     } catch (err) {
       log.error(
         `codexRuntimeService.dispose threw: ${err instanceof Error ? (err.stack ?? err.message) : String(err)}`,
@@ -4237,8 +4253,8 @@ const doShutdown = async (): Promise<void> => {
   }
   await inferenceRegistry.health.flush();
   processLauncherHost.dispose();
-  // Last: every store is closed, so a replacement gateway may take the dir.
-  gatewayLock.release();
+  // Unconfirmed owned processes retain their gateway's lease for explicit review.
+  ownedProcessShutdown.releaseLock(gatewayLock);
 };
 
 let shutdownStarted = false;
@@ -4254,12 +4270,18 @@ const shutdown = async (exitCode = 0): Promise<void> => {
     }, SHUTDOWN_TIMEOUT_MS);
     t.unref?.();
   });
-  await Promise.race([doShutdown(), timeoutPromise]);
-  if (timedOut) {
-    log.error(`shutdown exceeded ${SHUTDOWN_TIMEOUT_MS}ms wallclock cap; exiting with code 1`);
-    process.exit(1);
-  }
-  process.exit(exitCode);
+  await Promise.race([doShutdown(), timeoutPromise]).catch((error: unknown) =>
+    ownedProcessShutdown.finish(() => {
+      throw error;
+    }),
+  );
+  await ownedProcessShutdown.finish(() => {
+    if (timedOut) {
+      log.error(`shutdown exceeded ${SHUTDOWN_TIMEOUT_MS}ms wallclock cap; exiting with code 1`);
+      process.exit(1);
+    }
+    process.exit(exitCode);
+  });
 };
 coordinatedShutdown = shutdown;
 
@@ -4271,8 +4293,10 @@ installParentShutdownHandler(() => void shutdown());
 // parent-watchdog.ts for why nothing else can save us from orphaning. Inert
 // for a service-managed gateway, which sets no OMNESIS_PARENT_PID.
 startParentWatchdogFromEnv(process.env, () => {
+  if (shutdownStarted) return;
   log.warn(
     `Spawning process ${process.env.OMNESIS_PARENT_PID} is gone; exiting rather than orphan`,
   );
-  process.exit(0);
+  // Parent disappearance does not confirm an already uncertain owned process's cleanup.
+  void ownedProcessShutdown.finish(() => process.exit(0));
 });

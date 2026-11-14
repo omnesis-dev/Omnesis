@@ -29,6 +29,7 @@ import {
   reconcileMemberAuth,
   type PoolMemberRuntime,
 } from "./codex-runtime-pool.js";
+import * as privateState from "./codex-private-state.js";
 import type { AgentEvent } from "@omnesis/core";
 
 vi.mock("node:fs", async (original) => {
@@ -39,10 +40,20 @@ vi.mock("@omnesis/core", async (original) => {
   const core = await original<typeof import("@omnesis/core")>();
   return { ...core, atomicWriteFileSync: vi.fn(core.atomicWriteFileSync) };
 });
+vi.mock("./codex-private-state.js", async (original) => {
+  const state = await original<typeof import("./codex-private-state.js")>();
+  return { ...state, prepareCodexPrivateState: vi.fn(state.prepareCodexPrivateState) };
+});
 const log = createLogger("test:codex-pool");
 
 let dir: string;
 beforeEach(async () => {
+  const actualPrivateState = await vi.importActual<typeof import("./codex-private-state.js")>(
+    "./codex-private-state.js",
+  );
+  vi.mocked(privateState.prepareCodexPrivateState)
+    .mockReset()
+    .mockImplementation(actualPrivateState.prepareCodexPrivateState);
   dir = mkdtempSync(join(tmpdir(), "codex-pool-"));
   // Direct reconciliation fixtures have the same private parent as prepared pool members.
   if (process.platform === "win32") await ensurePrivateDirs([dir]);
@@ -101,7 +112,158 @@ function makePool(size: number, fakes: FakeRuntime[]): CodexRuntimePool {
   });
 }
 
+function deferred(): {
+  promise: Promise<void>;
+  resolve: () => void;
+  reject: (error: unknown) => void;
+} {
+  let resolve!: () => void, reject!: (error: unknown) => void;
+  const promise = new Promise<void>((done, fail) => {
+    resolve = done;
+    reject = fail;
+  });
+  return { promise, resolve, reject };
+}
+async function windowsPreparationTest(body: () => Promise<void>): Promise<void> {
+  const descriptor = Object.getOwnPropertyDescriptor(process, "platform")!;
+  Object.defineProperty(process, "platform", { ...descriptor, value: "win32" });
+  try {
+    await body();
+  } finally {
+    Object.defineProperty(process, "platform", descriptor);
+  }
+}
+
 describe("CodexRuntimePool routing", () => {
+  it("does not reconcile another idle member after a sibling preparation reports unconfirmed cleanup", async () => {
+    const pool = makePool(2, []),
+      first = deferred(),
+      second = deferred(),
+      firstEntered = deferred(),
+      secondEntered = deferred(),
+      reported = deferred(),
+      bothReported = deferred();
+    const failure = Object.assign(new Error("Invented preparation cleanup failure"), {
+      cleanupFailure: new Error("Invented unjoined native worker"),
+    });
+    let warnings = 0;
+    vi.spyOn(log, "warn").mockImplementation(() => {
+      warnings++;
+      reported.resolve();
+      if (warnings === 2) bothReported.resolve();
+    });
+    vi.spyOn(privateState, "prepareCodexPrivateState").mockImplementation((paths) => {
+      const path = paths[0];
+      if (path === undefined) throw new Error("Missing controlled preparation path");
+      if (path === join(dir, "owner")) return Promise.resolve();
+      mkdirSync(path, { recursive: true });
+      if (path === join(dir, "pool", "0")) {
+        firstEntered.resolve();
+        return first.promise;
+      }
+      secondEntered.resolve();
+      return second.promise;
+    });
+    vi.mocked(symlinkSync).mockClear();
+    await windowsPreparationTest(async () => {
+      pool.reassertAuth();
+      await Promise.all([firstEntered.promise, secondEntered.promise]);
+      first.reject(failure);
+      await reported.promise;
+      second.resolve();
+      await bothReported.promise;
+      expect(symlinkSync).not.toHaveBeenCalled();
+      await expect(pool.dispose()).rejects.toBe(failure);
+    });
+  });
+
+  it("joins idle shared auth preparation and never starts a member helper after disposal", async () => {
+    const fakes: FakeRuntime[] = [];
+    const pool = makePool(1, fakes);
+    const shared = deferred();
+    const prepare = vi
+      .spyOn(privateState, "prepareCodexPrivateState")
+      .mockReturnValue(shared.promise);
+    await windowsPreparationTest(async () => {
+      pool.reassertAuth();
+      expect(prepare).toHaveBeenCalledTimes(1);
+      let settled = false;
+      const disposal = pool.dispose().then(() => {
+        settled = true;
+      });
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(settled).toBe(false);
+      shared.resolve();
+      await disposal;
+      expect(prepare).toHaveBeenCalledTimes(1);
+      expect(existsSync(join(dir, "pool"))).toBe(false);
+      expect(fakes[0].turns).toBe(0);
+    });
+  });
+
+  it.each([false, true])(
+    "joins member auth preparation; cleanup uncertainty %s is retained without classifying an ordinary refusal",
+    async (uncertain) => {
+      const fakes: FakeRuntime[] = [];
+      const pool = makePool(1, fakes);
+      const member = deferred(),
+        entered = deferred();
+      const failure = uncertain
+        ? Object.assign(new Error("Invented native preparation join failure"), {
+            cleanupFailure: new Error("Invented unjoined helper"),
+          })
+        : new Error("Invented joined private access refusal");
+      const prepare = vi
+        .spyOn(privateState, "prepareCodexPrivateState")
+        .mockImplementation((paths) => {
+          if (paths[0] === join(dir, "owner")) return Promise.resolve();
+          entered.resolve();
+          return member.promise;
+        });
+      await windowsPreparationTest(async () => {
+        pool.reassertAuth();
+        await entered.promise;
+        let settled = false;
+        const disposal = pool.dispose();
+        void disposal.then(
+          () => {
+            settled = true;
+          },
+          () => {
+            settled = true;
+          },
+        );
+        const observed = uncertain
+          ? expect(disposal).rejects.toBe(failure)
+          : expect(disposal).resolves.toBeUndefined();
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        expect(settled).toBe(false);
+        member.reject(failure);
+        await observed;
+        if (uncertain) await expect(pool.dispose()).rejects.toBe(failure);
+        else await pool.dispose();
+        expect(prepare).toHaveBeenCalledTimes(2);
+        expect(fakes[0].turns).toBe(0);
+      });
+    },
+  );
+
+  it("retains a completed idle preparation's explicit cleanup marker after its task leaves the live set", async () => {
+    const pool = makePool(1, []),
+      reported = deferred();
+    const failure = Object.assign(new Error("Invented native prep failure"), {
+      cleanupFailure: undefined,
+    });
+    vi.spyOn(privateState, "prepareCodexPrivateState").mockRejectedValue(failure);
+    vi.spyOn(log, "warn").mockImplementation(() => reported.resolve());
+    await windowsPreparationTest(async () => {
+      pool.reassertAuth();
+      await reported.promise;
+      await expect(pool.dispose()).rejects.toBe(failure);
+      await expect(pool.dispose()).rejects.toBe(failure);
+    });
+  });
+
   it("observes idle authentication preparation failures without an unhandled rejection", async () => {
     const pool = makePool(1, []);
     writeFileSync(join(dir, "pool"), "invented occupied path");
@@ -136,6 +298,45 @@ describe("CodexRuntimePool routing", () => {
       })(),
     ).rejects.toThrow("disposed");
     expect(fakes[0].turns).toBe(0);
+    pool.reassertAuth();
+    expect(existsSync(join(dir, "pool"))).toBe(false);
+  });
+
+  it("joins every member and preserves a failed cleanup across concurrent and later disposal", async () => {
+    const fakes: FakeRuntime[] = [];
+    const pool = makePool(2, fakes);
+    const failure = new Error("Synthetic process join was not confirmed");
+    let finishSibling!: () => void;
+    const siblingJoined = new Promise<void>((resolve) => {
+      finishSibling = resolve;
+    });
+    const first = vi.spyOn(fakes[0], "dispose").mockRejectedValue(failure);
+    const second = vi.spyOn(fakes[1], "dispose").mockReturnValue(siblingJoined);
+    let settled = false;
+    const disposal = pool.dispose();
+    const concurrent = pool.dispose();
+    void disposal.then(
+      () => {
+        settled = true;
+      },
+      () => {
+        settled = true;
+      },
+    );
+    const firstRejection = expect(disposal).rejects.toBe(failure);
+    const concurrentRejection = expect(concurrent).rejects.toBe(failure);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(settled).toBe(false);
+    finishSibling();
+    await Promise.all([firstRejection, concurrentRejection]);
+    await expect(pool.dispose()).rejects.toBe(failure);
+    expect(first).toHaveBeenCalledTimes(1);
+    expect(second).toHaveBeenCalledTimes(1);
+    await expect(
+      (async () => {
+        for await (const event of pool.runTurn(turnOpts())) void event;
+      })(),
+    ).rejects.toThrow("disposed");
   });
 
   it("spreads concurrent turns one-per-member across an idle pool", async () => {

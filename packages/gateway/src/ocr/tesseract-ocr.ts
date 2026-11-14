@@ -13,7 +13,7 @@
  */
 
 import { createLogger } from "@omnesis/core";
-import { processLauncher } from "../process-launcher/index.js";
+import { processLauncher, assertProcessCleanupConfirmed } from "../process-launcher/index.js";
 import type { OcrCapability, OcrResult } from "@omnesis/core";
 
 const log = createLogger("gateway:ocr:tesseract");
@@ -46,6 +46,7 @@ const defaultTesseractRunner: TesseractRunner = async (args) => {
       ...(args.signal ? { signal: args.signal } : {}),
     },
   );
+  assertProcessCleanupConfirmed(result);
   if (result.failure === "timeout")
     throw new Error(`Tesseract OCR timed out after ${args.timeoutMs}ms`);
   if (result.failure === "aborted")
@@ -61,6 +62,7 @@ async function tesseractBinaryPresent(): Promise<boolean> {
     timeoutMs: 5_000,
     captureStdout: false,
   });
+  assertProcessCleanupConfirmed(run);
   return !run.failure && run.exitCode === 0;
 }
 

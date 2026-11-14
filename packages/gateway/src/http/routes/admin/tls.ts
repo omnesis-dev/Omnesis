@@ -25,8 +25,8 @@ export function mountTlsRoutes(app: RouteApp, deps: AdminRoutesDeps): void {
 
   app.get("/admin/tls", scope.admin(), (c) => c.json(tlsLifecycle.snapshot()));
 
-  app.post("/admin/tls/reload", scope.admin(), (c) => {
-    tlsLifecycle.activateFromDisk();
+  app.post("/admin/tls/reload", scope.admin(), async (c) => {
+    await tlsLifecycle.activateFromDisk();
     return c.json(tlsLifecycle.snapshot());
   });
 

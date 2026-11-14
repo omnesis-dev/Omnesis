@@ -33,10 +33,13 @@ import {
 } from "./gateway-key-auth.js";
 import { readBoundedJson, readPrivateJson } from "./google-credentials.js";
 import { bindingOrigin } from "./gateway-binding.js";
+import { readGatewayTlsPrivateKey } from "./gateway-private-key.js";
 import { challengeIsFresh, relayOrigin } from "./network.js";
 import { gatewayRecoveryDraft, readGatewayRecoveryReceipt } from "./gateway-recovery.js";
 
 export interface GatewayKeySessionOptions {
+  /** Actual gateway configuration root for an encrypted, path-scoped TLS key. */
+  configDir?: string;
   relayUrl: string;
   sessionFile: string;
   gatewayId: string;
@@ -247,7 +250,9 @@ export async function prepareGatewayRecoveryRequest(
 async function readMaterial(options: GatewayKeySessionOptions): Promise<Material> {
   options.signal?.throwIfAborted();
   const certificate = await readKeyText(options.certificateFile);
-  const tls = createPrivateKey(await readPrivateKeyText(options.privateKeyFile));
+  const tls = createPrivateKey(
+    await readGatewayTlsPrivateKey(options.privateKeyFile, options.configDir),
+  );
   const leaf = new X509Certificate(certificate);
   if (publicKeyFingerprint(createPublicKey(tls)) !== publicKeyFingerprint(leaf.publicKey))
     throw new Error("Gateway TLS certificate and private key do not match");

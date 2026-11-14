@@ -275,6 +275,47 @@ describe("needsSeekableInput", () => {
 });
 
 describe("decodeToPcm16kMono with an MP4-family input", () => {
+  test.each([undefined, "timeout", "aborted"] as const)(
+    "retains seekable audio and outcome metadata after unconfirmed cleanup: %s",
+    async (failure) => {
+      const launcher = await vi.importActual<typeof import("../process-launcher/index.js")>(
+        "../process-launcher/index.js",
+      );
+      const previous = launcher.processLauncher();
+      const cleanupFailure = new Error("Synthetic decoder cleanup unconfirmed");
+      const tempDir = mkdtempSync(join(dir, "unconfirmed-audio-"));
+      let input = "";
+      launcher.setProcessLauncher({
+        run: (_command, args) => {
+          input = args[args.indexOf("-i") + 1]!.slice(5);
+          return Promise.resolve({
+            exitCode: failure ? null : 0,
+            signal: null,
+            stdout: new Uint8Array([0, 0, 0, 0]),
+            stderr: "",
+            cleanupFailure,
+            ...(failure ? { failure } : {}),
+          });
+        },
+      });
+      const bytes = isoBmffHeader("M4A ");
+      try {
+        await expect(
+          decodeToPcm16kMono(bytes, { ffmpegPath: "synthetic-unconfirmed-decoder", tempDir }),
+        ).rejects.toMatchObject({
+          cleanupFailure,
+          failure,
+          exitCode: failure ? null : 0,
+          signal: null,
+        });
+        expect(readFileSync(input)).toEqual(Buffer.from(bytes));
+      } finally {
+        launcher.setProcessLauncher(previous);
+        rmSync(tempDir, { recursive: true, force: true });
+      }
+    },
+  );
+
   // The stub records the input argument it was given and, when that names a
   // file, the file's mode and size while it is being decoded.
   const recordInput = (record: string, tail: string) => `

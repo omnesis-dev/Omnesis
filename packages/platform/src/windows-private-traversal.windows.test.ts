@@ -37,6 +37,7 @@ async function acl(
   broaden = false,
   directory = false,
   writable = false,
+  inherit = false,
 ): Promise<string> {
   const { stdout } = await execWindowsJob(
     windowsPowerShellExecutable(),
@@ -50,6 +51,7 @@ $path=$env:OMNESIS_TRAVERSAL_FIXTURE;
 $sections=[System.Security.AccessControl.AccessControlSections]::Access -bor [System.Security.AccessControl.AccessControlSections]::Owner -bor [System.Security.AccessControl.AccessControlSections]::Group;
 $directory=$env:OMNESIS_TRAVERSAL_DIRECTORY -eq '1';
 $acl=if($directory){[System.IO.Directory]::GetAccessControl($path,$sections)}else{[System.IO.File]::GetAccessControl($path,$sections)};
+if($env:OMNESIS_TRAVERSAL_INHERIT -eq '1') {$acl.SetAccessRuleProtection($false,$true);[System.IO.File]::SetAccessControl($path,$acl);$acl=[System.IO.File]::GetAccessControl($path,$sections)};
 if($env:OMNESIS_TRAVERSAL_BROAD -eq '1') {
  $rights=if($env:OMNESIS_TRAVERSAL_WRITABLE -eq '1'){[System.Security.AccessControl.FileSystemRights]::FullControl}else{[System.Security.AccessControl.FileSystemRights]::Read};
  if($directory) {
@@ -71,6 +73,7 @@ if($env:OMNESIS_TRAVERSAL_BROAD -eq '1') {
         OMNESIS_TRAVERSAL_BROAD: broaden ? "1" : "0",
         OMNESIS_TRAVERSAL_DIRECTORY: directory ? "1" : "0",
         OMNESIS_TRAVERSAL_WRITABLE: writable ? "1" : "0",
+        OMNESIS_TRAVERSAL_INHERIT: inherit ? "1" : "0",
       },
       timeout: 20_000,
     },
@@ -104,7 +107,7 @@ test.runIf(process.platform === "win32")(
       );
       expect(prepared.every((status) => status.private)).toBe(true);
       const outsideAcl = await acl(outside, true);
-      await acl(regular, true);
+      await acl(regular, false, false, false, true);
       expect(
         (await inspectWindowsPrivatePaths([{ path: outside, kind: "file" }]))[0]?.private,
       ).toBe(false);
@@ -323,133 +326,60 @@ test.runIf(process.platform === "win32")(
   90_000,
 );
 
-const hardlinkRepairFixture = String.raw`
-public static partial class OmnesisPrivateFile {
-  static Action FixtureRepair;
-  [DllImport("kernel32.dll",CharSet=CharSet.Unicode,SetLastError=true)] static extern bool CreateHardLink(string name,string existing,IntPtr security);
-  public static string FixtureLinkRepair(string path,string alias) {
-    // Prove this exact source/alias pair supports hardlinks before the pin.
-    if(!CreateHardLink(alias,path,IntPtr.Zero)) throw new Win32Exception(Marshal.GetLastWin32Error());
-    using(PinnedParent parent=Parent(alias))
-    using(SafeFileHandle control=RelativeOpen(parent.Handle,parent.Leaf,false,0x130181U,0U)) {
-      if(Information(control,false).links!=2) throw new InvalidDataException("Hardlink control did not share the file");
-      DeleteEntry(control);
-    }
-    bool linked=false;int error=0;
-    FixtureRepair=delegate {
-      linked=CreateHardLink(alias,path,IntPtr.Zero);
-      if(!linked)error=Marshal.GetLastWin32Error();
-    };
-    try {
-      string status;
-      try {status=Inspect(path,false,true,true);}
-      catch(UnauthorizedAccessException) {status="refused";}
-      uint oldAttributes,newAttributes;
-      using(SafeFileHandle oldFile=Open(alias,false,false,7U)) oldAttributes=Information(oldFile,false).attributes;
-      using(SafeFileHandle newFile=Open(path,false,false,7U)) newAttributes=Information(newFile,false).attributes;
-      return "control-linked:"+status+":"+(linked?"linked":"blocked")+":"+error+":"+oldAttributes+":"+newAttributes;
-    } finally {FixtureRepair=null;}
-  }
+function grantRecords(sddl: string): string[] {
+  return (sddl.match(/\([^)]*\)/gu) ?? [])
+    .map((ace) => {
+      const fields = ace.split(";");
+      fields[1] = fields[1]!.replaceAll("ID", "");
+      return fields.join(";");
+    })
+    .sort();
 }
-`;
 
 test.runIf(process.platform === "win32")(
-  "private repair replaces only the selected name when a hardlink appears after the initial count check",
+  "sealing inherited-private busy hardlinks preserves grants, bytes, inode, times and attributes",
   async () => {
-    const root = mkdtempSync(join(tmpdir(), "private hardlink pin-"));
+    const root = mkdtempSync(join(tmpdir(), "private seal aliases-"));
     const target = join(root, "selected.txt"),
       alias = join(root, "unrelated.txt");
-    const bytes = Buffer.from("invented held repair bytes");
+    const bytes = Buffer.from("invented inherited private bytes");
+    let descriptor: number | undefined;
     try {
+      await inspectWindowsPrivatePaths([{ path: root, kind: "directory" }], {
+        repair: true,
+        protect: true,
+      });
+      await createWindowsPrivateFile(target, bytes);
+      const beforeAcl = await acl(target, false, false, false, true);
+      expect(beforeAcl).not.toMatch(/D:[^()]*P/);
+      linkSync(target, alias);
+      utimesSync(target, 1_600_000_000, 1_600_000_010);
+      descriptor = openSync(target, "r+");
+      chmodSync(target, 0o400);
+      const before = statSync(target, { bigint: true });
       expect(
-        await inspectWindowsPrivatePaths([{ path: root, kind: "directory" }], {
+        await inspectWindowsPrivatePaths([{ path: target, kind: "file" }], {
           repair: true,
           protect: true,
         }),
       ).toEqual([{ private: true, fixed: true }]);
-      await createWindowsPrivateFile(target, bytes);
-      await acl(target, true);
-      utimesSync(target, 1_600_000_000, 1_600_000_010);
-      const attributes = 0x2027; // Readonly, hidden, system, archive, not-content-indexed.
-      await execWindowsJob(
-        windowsPowerShellExecutable(),
-        [
-          "-NoLogo",
-          "-NoProfile",
-          "-NonInteractive",
-          "-Command",
-          "[System.IO.File]::SetAttributes($env:OMNESIS_REPAIR_TARGET,[System.IO.FileAttributes][int]$env:OMNESIS_REPAIR_ATTRIBUTES);",
-        ],
-        {
-          env: {
-            ...process.env,
-            OMNESIS_REPAIR_TARGET: target,
-            OMNESIS_REPAIR_ATTRIBUTES: String(attributes),
-          },
-          timeout: 20_000,
-        },
-      );
-      const before = statSync(target, { bigint: true });
-      const outsideAcl = await acl(target);
-      const boundary = 'Stage="repair-copy";RepairFile(path,source,before);';
-      expect(WINDOWS_PRIVATE_FILE_NATIVE_SOURCE.split(boundary)).toHaveLength(2);
-      const instrumented = WINDOWS_PRIVATE_FILE_NATIVE_SOURCE.replace(
-        boundary,
-        'Stage="repair-copy";if(FixtureRepair!=null)FixtureRepair();RepairFile(path,source,before);',
-      );
-      const result = await runWindowsJob(
-        windowsPowerShellExecutable(),
-        [
-          "-NoLogo",
-          "-NoProfile",
-          "-NonInteractive",
-          "-Command",
-          "$ErrorActionPreference='Stop';$source=[Console]::In.ReadToEnd();Add-Type -TypeDefinition $source;[Console]::Out.Write([OmnesisPrivateFile]::FixtureLinkRepair($env:OMNESIS_REPAIR_TARGET,$env:OMNESIS_REPAIR_ALIAS));",
-        ],
-        {
-          env: { ...process.env, OMNESIS_REPAIR_TARGET: target, OMNESIS_REPAIR_ALIAS: alias },
-          input: Buffer.from(instrumented + hardlinkRepairFixture, "utf8"),
-          timeoutMs: 60_000,
-        },
-      );
-      expect(result.failure, result.stderr).toBeUndefined();
-      expect(result.exitCode, result.stderr).toBe(0);
-      const receipt = Buffer.from(result.stdout).toString("utf8");
-      expect(receipt).toBe(`control-linked:fixed:linked:0:${attributes}:${attributes}`);
-      const finalAttributes = await execWindowsJob(
-        windowsPowerShellExecutable(),
-        [
-          "-NoLogo",
-          "-NoProfile",
-          "-NonInteractive",
-          "-Command",
-          "$PSModuleAutoLoadingPreference='None';[Console]::Out.Write([int][System.IO.File]::GetAttributes($env:OMNESIS_REPAIR_ALIAS));[Console]::Out.Write(':');[Console]::Out.Write([int][System.IO.File]::GetAttributes($env:OMNESIS_REPAIR_TARGET));",
-        ],
-        {
-          env: { ...process.env, OMNESIS_REPAIR_TARGET: target, OMNESIS_REPAIR_ALIAS: alias },
-          timeout: 20_000,
-        },
-      );
-      expect(finalAttributes.stdout).toBe(`${attributes}:${attributes}`);
-      expect(existsSync(alias)).toBe(true);
-      expect(await acl(alias)).toBe(outsideAcl);
-      expect(readFileSync(alias)).toEqual(bytes);
-      expect(readFileSync(target)).toEqual(bytes);
-      const outside = statSync(alias, { bigint: true });
-      const repaired = statSync(target, { bigint: true });
-      expect(outside.ino).toBe(before.ino);
-      expect(repaired.ino).not.toBe(before.ino);
-      expect(outside.mode & 0o200n).toBe(0n);
-      expect(repaired.mode & 0o200n).toBe(0n);
-      expect(repaired.birthtimeNs).toBe(before.birthtimeNs);
-      expect(repaired.mtimeNs).toBe(before.mtimeNs);
-      expect((await inspectWindowsPrivatePaths([{ path: alias, kind: "file" }]))[0]?.private).toBe(
-        false,
-      );
-      expect(await inspectWindowsPrivatePaths([{ path: target, kind: "file" }])).toEqual([
-        { private: true, fixed: false },
-      ]);
+      const afterAcl = await acl(target);
+      expect(afterAcl).toMatch(/D:[^()]*P/);
+      expect(grantRecords(afterAcl)).toEqual(grantRecords(beforeAcl));
+      expect(await acl(alias)).toBe(afterAcl);
+      closeSync(descriptor);
+      descriptor = undefined;
+      for (const path of [target, alias]) {
+        const after = statSync(path, { bigint: true });
+        expect(after.ino).toBe(before.ino);
+        expect(after.mtimeNs).toBe(before.mtimeNs);
+        expect(after.birthtimeNs).toBe(before.birthtimeNs);
+        expect(after.mode).toBe(before.mode);
+        expect(readFileSync(path)).toEqual(bytes);
+      }
+      expect(readdirSync(root).sort()).toEqual(["selected.txt", "unrelated.txt"]);
     } finally {
+      if (descriptor !== undefined) closeSync(descriptor);
       rmSync(root, { recursive: true, force: true });
     }
   },
@@ -497,8 +427,9 @@ test.runIf(process.platform === "win32")(
           repair: true,
           protect: true,
         }),
-      ).toEqual([{ private: true, fixed: true }]);
-      expect(statSync(target, { bigint: true }).ino).not.toBe(original.ino);
+      ).toEqual([{ private: false, fixed: false, error: "EPRIVATE" }]);
+      expect(await acl(target)).toBe(unsafe);
+      expect(statSync(target, { bigint: true }).ino).toBe(original.ino);
       expect(readFileSync(target)).toEqual(bytes);
     } finally {
       if (descriptor !== undefined) closeSync(descriptor);
@@ -533,86 +464,41 @@ test.runIf(process.platform === "win32")(
   60_000,
 );
 
-const failedRepairFixture = String.raw`
-public static partial class OmnesisPrivateFile {
-  static Action FixturePublish;
-  static bool FixtureEncrypted;
-  public static string FixtureUnsupportedRepair(string path) {
-    FixtureEncrypted=true;
-    try {Inspect(path,false,true,true);return "unexpected";}
-    catch(NotSupportedException) {return "unsupported:"+Stage;}
-    finally {FixtureEncrypted=false;}
-  }
-  public static string FixtureFailedRepair(string path) {
-    bool attempted=false;
-    FixturePublish=delegate {attempted=true;throw new IOException("Injected private publication failure");};
-    try {Inspect(path,false,true,true);return "unexpected";}
-    catch(IOException) {return attempted?"publication-refused":"unexpected-source-failure";}
-    finally {FixturePublish=null;}
-  }
-}
-`;
-
 test.runIf(process.platform === "win32")(
-  "failed private repair publication preserves the original file, access controls and readonly state",
+  "unsafe idle readonly files refuse repair without reading, replacing or changing metadata",
   async () => {
-    const root = mkdtempSync(join(tmpdir(), "private repair failure-"));
+    const root = mkdtempSync(join(tmpdir(), "private unsafe idle-"));
     const target = join(root, "selected.txt");
-    const bytes = Buffer.from("invented retained repair bytes");
+    const bytes = Buffer.from("invented retained unsafe bytes");
     try {
       await inspectWindowsPrivatePaths([{ path: root, kind: "directory" }], {
         repair: true,
         protect: true,
       });
       await createWindowsPrivateFile(target, bytes);
-      const originalAcl = await acl(target, true);
+      const beforeAcl = await acl(target, true);
       chmodSync(target, 0o400);
-      const original = statSync(target, { bigint: true });
-      const boundary =
-        'Stage="rename";Rename(file.SafeFileHandle,parent.Handle,path,replaceExisting,replacePinnedSource);';
-      expect(WINDOWS_PRIVATE_FILE_NATIVE_SOURCE.split(boundary)).toHaveLength(2);
-      const inspectBoundary = "Info original=Information(handle,directory);";
-      expect(WINDOWS_PRIVATE_FILE_NATIVE_SOURCE.split(inspectBoundary)).toHaveLength(2);
-      const instrumented = WINDOWS_PRIVATE_FILE_NATIVE_SOURCE.replace(
-        boundary,
-        'Stage="rename";if(FixturePublish!=null)FixturePublish();Rename(file.SafeFileHandle,parent.Handle,path,replaceExisting,replacePinnedSource);',
-      ).replace(
-        inspectBoundary,
-        inspectBoundary + "if(FixtureEncrypted)original.attributes|=0x4000U;",
-      );
-      const result = await runWindowsJob(
-        windowsPowerShellExecutable(),
-        [
-          "-NoLogo",
-          "-NoProfile",
-          "-NonInteractive",
-          "-Command",
-          "$ErrorActionPreference='Stop';$source=[Console]::In.ReadToEnd();Add-Type -TypeDefinition $source;[Console]::Out.Write([OmnesisPrivateFile]::FixtureUnsupportedRepair($env:OMNESIS_REPAIR_TARGET)+';'+[OmnesisPrivateFile]::FixtureFailedRepair($env:OMNESIS_REPAIR_TARGET));",
-        ],
-        {
-          env: { ...process.env, OMNESIS_REPAIR_TARGET: target },
-          input: Buffer.from(instrumented + failedRepairFixture, "utf8"),
-          timeoutMs: 60_000,
-        },
-      );
-      expect(result.failure, result.stderr).toBeUndefined();
-      expect(result.exitCode, result.stderr).toBe(0);
-      expect(Buffer.from(result.stdout).toString("utf8")).toBe(
-        "unsupported:repair-attributes;publication-refused",
-      );
-      expect(await acl(target)).toBe(originalAcl);
+      utimesSync(target, 1_600_000_000, 1_600_000_010);
+      const before = statSync(target, { bigint: true });
+      expect(
+        await inspectWindowsPrivatePaths([{ path: target, kind: "file" }], {
+          repair: true,
+          protect: true,
+        }),
+      ).toEqual([{ private: false, fixed: false, error: "EPRIVATE" }]);
+      expect(await acl(target)).toBe(beforeAcl);
       expect(readFileSync(target)).toEqual(bytes);
       const after = statSync(target, { bigint: true });
-      expect(after.ino).toBe(original.ino);
-      expect(after.birthtimeNs).toBe(original.birthtimeNs);
-      expect(after.mtimeNs).toBe(original.mtimeNs);
-      expect(after.mode & 0o200n).toBe(0n);
+      expect(after.ino).toBe(before.ino);
+      expect(after.mtimeNs).toBe(before.mtimeNs);
+      expect(after.birthtimeNs).toBe(before.birthtimeNs);
+      expect(after.mode).toBe(before.mode);
       expect(readdirSync(root)).toEqual(["selected.txt"]);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
   },
-  90_000,
+  60_000,
 );
 
 test.runIf(process.platform === "win32")(
@@ -663,43 +549,48 @@ test.runIf(process.platform === "win32")(
   90_000,
 );
 
-const concurrentRepairFixture = String.raw`
+const concurrentRefusalFixture = String.raw`
 public static partial class OmnesisPrivateFile {
   static Action FixtureWriter;
-  public static string FixtureConcurrentRepair(string path) {
-    string writer="not-attempted";
+  [DllImport("kernel32.dll",CharSet=CharSet.Unicode,SetLastError=true,EntryPoint="MoveFileExW")] static extern bool FixtureMove(string source,string target,uint flags);
+  public static string FixtureConcurrentRefusal(string path) {
+    bool published=false;
     FixtureWriter=delegate {
-      byte[] bytes=Encoding.UTF8.GetBytes("invented newer writer bytes");
-      try {
-        WriteInput(path,bytes.Length,true,false,"",false,true,new MemoryStream(bytes),false,null);
-        writer="published";
-      } catch(Win32Exception failure) {writer="blocked:"+failure.NativeErrorCode;}
+      byte[] bytes=Encoding.UTF8.GetBytes("invented newer external writer bytes");
+      string staging=path+".external";
+      WriteInput(staging,bytes.Length,false,false,"",false,true,new MemoryStream(bytes),false,null);
+      Check(FixtureMove(staging,path,9U));published=true;
     };
-    try {return Inspect(path,false,true,true)+":"+writer;}
+    try {Inspect(path,false,true,true);return "unexpected";}
+    catch(UnauthorizedAccessException) {return published?"refused:published":"refused:missing-control";}
     finally {FixtureWriter=null;}
   }
 }
 `;
 
 test.runIf(process.platform === "win32")(
-  "a canonical writer cannot replace a pinned repair source or lose a newer value, and can retry after repair",
+  "unsafe refusal cannot overwrite a concurrent ordinary external publisher or mutate the old alias",
   async () => {
-    const root = mkdtempSync(join(tmpdir(), "private repair writer-"));
-    const target = join(root, "selected.txt");
-    const bytes = Buffer.alloc(256 * 1024, 0x44);
+    const root = mkdtempSync(join(tmpdir(), "private external publisher-"));
+    const target = join(root, "selected.txt"),
+      alias = join(root, "old-alias.txt");
+    const bytes = Buffer.from("invented retained previous writer bytes");
     try {
       await inspectWindowsPrivatePaths([{ path: root, kind: "directory" }], {
         repair: true,
         protect: true,
       });
       await createWindowsPrivateFile(target, bytes);
-      await acl(target, true);
-      const boundary = 'Stage="repair-copy";RepairFile(path,source,before);';
+      const oldAcl = await acl(target, true);
+      linkSync(target, alias);
+      const before = statSync(alias, { bigint: true });
+      const boundary = 'Stage="unsafe-file";';
       expect(WINDOWS_PRIVATE_FILE_NATIVE_SOURCE.split(boundary)).toHaveLength(2);
-      const instrumented = WINDOWS_PRIVATE_FILE_NATIVE_SOURCE.replace(
-        boundary,
-        'Stage="repair-copy";if(FixtureWriter!=null)FixtureWriter();RepairFile(path,source,before);',
-      );
+      const source =
+        WINDOWS_PRIVATE_FILE_NATIVE_SOURCE.replace(
+          boundary,
+          boundary + "if(FixtureWriter!=null)FixtureWriter();",
+        ) + concurrentRefusalFixture;
       const result = await runWindowsJob(
         windowsPowerShellExecutable(),
         [
@@ -707,26 +598,25 @@ test.runIf(process.platform === "win32")(
           "-NoProfile",
           "-NonInteractive",
           "-Command",
-          "$ErrorActionPreference='Stop';$source=[Console]::In.ReadToEnd();Add-Type -TypeDefinition $source;[Console]::Out.Write([OmnesisPrivateFile]::FixtureConcurrentRepair($env:OMNESIS_REPAIR_TARGET));",
+          "$ErrorActionPreference='Stop';$source=[Console]::In.ReadToEnd();Add-Type -TypeDefinition $source;[Console]::Out.Write([OmnesisPrivateFile]::FixtureConcurrentRefusal($env:OMNESIS_REPAIR_TARGET));",
         ],
         {
           env: { ...process.env, OMNESIS_REPAIR_TARGET: target },
-          input: Buffer.from(instrumented + concurrentRepairFixture, "utf8"),
+          input: Buffer.from(source),
           timeoutMs: 60_000,
         },
       );
       expect(result.failure, result.stderr).toBeUndefined();
       expect(result.exitCode, result.stderr).toBe(0);
-      expect(Buffer.from(result.stdout).toString("utf8")).toMatch(/^fixed:blocked:(?:5|32|33)$/u);
-      expect(readFileSync(target)).toEqual(bytes);
-      expect(readdirSync(root)).toEqual(["selected.txt"]);
+      expect(Buffer.from(result.stdout).toString()).toBe("refused:published");
+      expect(readFileSync(target, "utf8")).toBe("invented newer external writer bytes");
+      expect(await acl(alias)).toBe(oldAcl);
+      expect(readFileSync(alias)).toEqual(bytes);
+      expect(statSync(alias, { bigint: true }).ino).toBe(before.ino);
+      expect(readdirSync(root).sort()).toEqual(["old-alias.txt", "selected.txt"]);
       expect(await inspectWindowsPrivatePaths([{ path: target, kind: "file" }])).toEqual([
         { private: true, fixed: false },
       ]);
-      const newer = Buffer.from("invented newer writer bytes");
-      await writeWindowsPrivateFileAtomic(target, newer);
-      expect(readFileSync(target)).toEqual(newer);
-      expect(readdirSync(root)).toEqual(["selected.txt"]);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

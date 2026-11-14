@@ -65,7 +65,9 @@ export async function prepareCodexPrivateState(
         protect: kind === "directory",
       });
       if (result.length !== batch.length || result.some((status) => !status.private))
-        throw new Error("Codex runtime state could not be verified as private");
+        throw new Error(
+          "Codex runtime state could not be verified as private. Stop related Codex processes, review file ownership and access rules, and recreate unsafe files privately before retrying.",
+        );
     }
     paths = [];
     bytes = 0;

@@ -7,7 +7,8 @@ import {
   type ChildProcess,
   type ChildProcessWithoutNullStreams,
 } from "node:child_process";
-import { PassThrough, type Readable } from "node:stream";
+import { PassThrough, type Readable, type Writable } from "node:stream";
+import type { WindowsJobControl } from "./windows-job-control.js";
 
 export interface WindowsJobOptions {
   /** Tree lifetime by default; finite build roots may terminate remaining members after root exit. */
@@ -31,12 +32,14 @@ export interface WindowsJobResult {
   stderr: string;
   failure?: "spawn" | "timeout" | "aborted";
   failureMessage?: string;
+  /** Present when owned-process join failed; a rejected promise may carry an undefined reason. */
+  cleanupFailure?: unknown;
 }
 
 const STDERR_LIMIT = 4_000;
 const helpers = new Map<number, ChildProcess>();
 
-/** Stop the job owner: Windows closes its job handle and terminates every member. */
+/** Request cooperative termination through a retained owner; join proof is asynchronous. */
 export function killWindowsOwnedProcess(pid: number): void {
   const helper = helpers.get(pid);
   if (helper) helper.kill("SIGKILL");
@@ -45,27 +48,51 @@ export function killWindowsOwnedProcess(pid: number): void {
 }
 
 /** The helper stays alive until all job members exit; kill stops the whole job. */
-export type WindowsJobProcess = ChildProcessWithoutNullStreams & { jobReady: Promise<void> };
-type JobProcess = ChildProcess & { jobReady: Promise<void> };
+export type WindowsJobProcess = ChildProcessWithoutNullStreams & {
+  jobReady: Promise<void>;
+  /** Native JOINED, helper close and all authenticated control/input cleanup. */
+  jobClosed: Promise<void>;
+};
+type JobProcess = ChildProcess & { jobReady: Promise<void>; jobClosed: Promise<void> };
 type SpawnOptions = Pick<WindowsJobOptions, "cwd" | "env" | "stdout" | "captureStdout">;
 
 export interface WindowsOwnedInvocation {
+  /** Exact FILETIME validated by native cache provenance; never supplied by target input. */
+  parentBirth?: string;
   command: string;
   args: readonly string[];
 }
+function closeInput(stream: Writable): Promise<void> {
+  return new Promise<void>((resolve) => {
+    if (stream.closed) resolve();
+    else {
+      stream.once("close", () => resolve());
+      stream.destroy();
+    }
+  });
+}
+
 export function spawnWindowsOwnedProcess(
   invocation: WindowsOwnedInvocation,
   initialInput: Uint8Array,
   opts: SpawnOptions,
   onSpawn?: (pid: number) => void,
+  control?: WindowsJobControl,
 ): JobProcess {
+  control?.start();
   const output = opts.stdout ?? (opts.captureStdout === false ? "ignore" : "capture");
-  const child = spawn(invocation.command, invocation.args, {
-    cwd: opts.cwd,
-    env: opts.env,
-    windowsHide: true,
-    stdio: ["pipe", output === "capture" ? "pipe" : output, "pipe"],
-  });
+  let child: ChildProcess;
+  try {
+    child = spawn(invocation.command, invocation.args, {
+      cwd: opts.cwd,
+      env: opts.env,
+      windowsHide: true,
+      stdio: ["pipe", output === "capture" ? "pipe" : output, "pipe"],
+    });
+  } catch (error) {
+    control?.abandon();
+    throw error;
+  }
   let resolveReady!: () => void;
   let rejectReady!: (error: unknown) => void;
   const jobReady = new Promise<void>((resolve, reject) => {
@@ -74,7 +101,24 @@ export function spawnWindowsOwnedProcess(
   });
   // A consumer may rely on exit alone; readiness must never reject unobserved.
   void jobReady.catch(() => {});
-  const proc: JobProcess = Object.assign(child, { jobReady });
+  const jobClosed =
+    control?.closed ?? new Promise<void>((resolve) => child.once("close", () => resolve()));
+  void jobClosed.catch(() => {});
+  const proc: JobProcess = Object.assign(child, { jobReady, jobClosed });
+  void control?.failed.catch((error: unknown) => rejectReady(error));
+  const rawInput = proc.stdin!;
+  const gatedInput = control ? new PassThrough() : undefined;
+  if (control && gatedInput) {
+    proc.stdin = gatedInput;
+    proc.stdio[0] = gatedInput;
+    control.attach(proc, async () => {
+      // ChildProcess sees the exposed gate on exit, so retain and explicitly
+      // join its original pipe too, including sessions that never ended stdin.
+      gatedInput.unpipe(rawInput);
+      await Promise.all([closeInput(gatedInput), closeInput(rawInput)]);
+    });
+    rawInput.on("error", () => gatedInput.destroy());
+  }
   const rawStderr = proc.stderr!;
   const stderr = new PassThrough();
   proc.stderr = stderr;
@@ -97,8 +141,15 @@ export function spawnWindowsOwnedProcess(
     const match = /^OMNESIS_JOB:(\d+)$/u.exec(first);
     if (match) {
       const code = Number(match[1]);
-      if (code === 0) resolveReady();
-      else {
+      if (code === 0) {
+        try {
+          control?.targetStarted();
+          resolveReady();
+        } catch (error) {
+          rejectReady(error);
+          proc.kill("SIGKILL");
+        }
+      } else {
         const name =
           code === 2 || code === 3
             ? "ENOENT"
@@ -136,8 +187,11 @@ export function spawnWindowsOwnedProcess(
   proc.once("error", (error) => rejectReady(error));
   proc.once("close", () => {
     rejectReady(new Error("Windows process helper exited before starting the program"));
-    if (proc.pid !== undefined && helpers.get(proc.pid) === proc) helpers.delete(proc.pid);
   });
+  const forget = () => {
+    if (proc.pid !== undefined && helpers.get(proc.pid) === proc) helpers.delete(proc.pid);
+  };
+  void jobClosed.then(forget, forget);
   proc.stdin!.on("error", () => {});
   if (proc.pid !== undefined) {
     helpers.set(proc.pid, proc);
@@ -149,7 +203,23 @@ export function spawnWindowsOwnedProcess(
       return proc;
     }
   }
-  proc.stdin!.write(initialInput);
+  if (control && gatedInput) {
+    void control.listening.then(
+      () => {
+        if (!control.inputAllowed) return;
+        rawInput.write(initialInput, (error) => {
+          if (error) {
+            rejectReady(error);
+            proc.kill("SIGKILL");
+          } else if (control.inputAllowed) gatedInput.pipe(rawInput);
+        });
+      },
+      (error: unknown) => {
+        rejectReady(error);
+        proc.kill("SIGKILL");
+      },
+    );
+  } else rawInput.write(initialInput);
   return proc;
 }
 
@@ -159,6 +229,7 @@ export function runWindowsOwnedProcess(
   initialInput: Uint8Array,
   opts: WindowsJobOptions,
   onSpawn?: (pid: number) => void,
+  control?: WindowsJobControl,
 ): Promise<WindowsJobResult> {
   return new Promise((resolve, reject) => {
     const stdout: Buffer[] = [];
@@ -166,6 +237,8 @@ export function runWindowsOwnedProcess(
     let ready = false;
     let failure: WindowsJobResult["failure"];
     let failureMessage: string | undefined;
+    let cleanupFailure: unknown;
+    let cleanupFailed = false;
     let finished = false;
     let publicationError: unknown;
     let publicationFailed = false;
@@ -181,7 +254,14 @@ export function runWindowsOwnedProcess(
       opts.signal?.removeEventListener("abort", onAbort);
       if (proc?.stdin && opts.inputStream) opts.inputStream.unpipe(proc.stdin);
       if (publicationFailed) {
-        reject(publicationError);
+        reject(
+          !cleanupFailed
+            ? publicationError
+            : Object.assign(
+                new Error("Windows job cleanup was not confirmed", { cause: publicationError }),
+                { cleanupFailure },
+              ),
+        );
         return;
       }
       if (!ready && !failure) {
@@ -195,6 +275,7 @@ export function runWindowsOwnedProcess(
         stderr,
         ...(failure ? { failure } : {}),
         ...(failureMessage ? { failureMessage } : {}),
+        ...(cleanupFailed ? { cleanupFailure } : {}),
       });
     };
     const stop = (reason: "timeout" | "aborted"): void => {
@@ -211,32 +292,50 @@ export function runWindowsOwnedProcess(
       inputStopTimer = setTimeout(() => proc?.kill("SIGKILL"), 1_000);
       inputStopTimer.unref();
     };
+    const finishWithoutChild = (): void => {
+      control?.abandon();
+      void (control?.closed ?? Promise.resolve()).then(
+        () => finish(null, null),
+        (error: unknown) => {
+          cleanupFailed = true;
+          cleanupFailure = error;
+          finish(null, null);
+        },
+      );
+    };
     if (opts.timeoutMs !== undefined) timer = setTimeout(() => stop("timeout"), opts.timeoutMs);
     if (opts.signal?.aborted) {
       failure = "aborted";
-      finish(null, null);
+      finishWithoutChild();
       return;
     }
     if (opts.input !== undefined && opts.inputStream !== undefined) {
       failure = "spawn";
       failureMessage = "Provide binary input or an input stream, not both";
-      finish(null, null);
+      finishWithoutChild();
       return;
     }
     try {
-      proc = spawnWindowsOwnedProcess(invocation, initialInput, opts, (pid) => {
-        try {
-          onSpawn?.(pid);
-        } catch (error) {
-          publicationFailed = true;
-          publicationError = error;
-          throw error;
-        }
-      });
+      proc = spawnWindowsOwnedProcess(
+        invocation,
+        initialInput,
+        opts,
+        (pid) => {
+          try {
+            onSpawn?.(pid);
+          } catch (error) {
+            publicationFailed = true;
+            publicationError = error;
+            throw error;
+          }
+        },
+        control,
+      );
     } catch (error) {
+      control?.abandon();
       failure = "spawn";
       failureMessage = error instanceof Error ? error.message : String(error);
-      finish(null, null);
+      finishWithoutChild();
       return;
     }
     void proc.jobReady.then(
@@ -244,7 +343,10 @@ export function runWindowsOwnedProcess(
         ready = true;
       },
       (error: unknown) => {
-        failure ??= "spawn";
+        failure ??=
+          error && typeof error === "object" && "code" in error && error.code === "ETIMEDOUT"
+            ? "timeout"
+            : "spawn";
         failureMessage = error instanceof Error ? error.message : String(error);
       },
     );
@@ -257,7 +359,20 @@ export function runWindowsOwnedProcess(
       failure ??= "spawn";
       failureMessage = error.message;
     });
-    proc.on("close", (code, signal) => finish(code, signal));
+    proc.on("close", (code, signal) => {
+      void proc!.jobClosed.then(
+        () => finish(code, signal),
+        (error: unknown) => {
+          cleanupFailed = true;
+          cleanupFailure = error;
+          failure ??= "spawn";
+          failureMessage = failureMessage
+            ? `${failureMessage}; Windows job cleanup was not confirmed`
+            : "Windows job cleanup was not confirmed";
+          finish(code, signal);
+        },
+      );
+    });
     opts.signal?.addEventListener("abort", onAbort, { once: true });
     if (opts.signal?.aborted) {
       stop("aborted");
@@ -322,5 +437,13 @@ export function runWindowsOwnedProcessSync(
     stderr,
     ...(failure ? { failure } : {}),
     ...(failureMessage ? { failureMessage } : {}),
+    // Synchronous APIs cannot service the asynchronous control pipe. A killed
+    // helper remains kernel-contained, but raw close cannot prove descendants
+    // joined; callers must not interpret that failure as a completed cleanup.
+    ...((run.error || run.signal) && run.pid > 0
+      ? {
+          cleanupFailure: new Error("Synchronous Windows helper cleanup was not confirmed"),
+        }
+      : {}),
   };
 }

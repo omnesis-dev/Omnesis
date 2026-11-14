@@ -100,6 +100,7 @@ child.once('message',({port})=>{
       abort.abort();
       const outcome = await running;
       expect(outcome.failure).toBe("cancelled");
+      expect(outcome.cleanupFailure).toBeUndefined();
       expect(outcome.output).toContain("invented update ready");
       await new Promise<void>((resolve, reject) => {
         const socket = connect({ host: "127.0.0.1", port });

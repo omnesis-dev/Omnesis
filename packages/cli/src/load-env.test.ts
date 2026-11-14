@@ -101,7 +101,7 @@ continued = true;
 }
 
 describe("CLI bootstrap permission repair", () => {
-  test("exact local doctor repair delegates safe replacement and exits before parsing unsafe env", () => {
+  test("exact local doctor repair delegates private inheritance sealing and exits before parsing env", () => {
     const { result, state, calls, dir, dotenv, contents } = run(["doctor", "--fix-permissions"]);
     expect(result.status).toBe(2);
     expect(result.stderr).toContain("Review the file, then rerun doctor --fix-permissions");

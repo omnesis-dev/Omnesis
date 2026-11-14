@@ -7,16 +7,26 @@ import { afterEach, expect, it, vi } from "vitest";
 import { runHarnessUpdateProcess } from "./harness-update-process.js";
 import type { WindowsCommandProcess } from "./windows-commands.js";
 
-function ownedChild() {
+function ownedChild(manualJoin = false) {
   const events = new EventEmitter();
+  let join!: () => void, refuseJoin!: (error: unknown) => void;
+  const jobClosed = new Promise<void>((resolve, reject) => {
+    join = resolve;
+    refuseJoin = reject;
+  });
+  void jobClosed.catch(() => {});
+  events.once("close", () => {
+    if (!manualJoin) join();
+  });
   const child = Object.assign(events, {
     stdout: new PassThrough(),
     stderr: new PassThrough(),
     stdin: new PassThrough(),
     jobReady: Promise.resolve(),
+    jobClosed,
     kill: vi.fn(() => true),
   });
-  return { child, spawn: vi.fn(() => child as unknown as WindowsCommandProcess) };
+  return { child, join, refuseJoin, spawn: vi.fn(() => child as unknown as WindowsCommandProcess) };
 }
 afterEach(() => {
   vi.useRealTimers();
@@ -112,4 +122,54 @@ it("a failed input close retires and joins an already created owned helper", asy
   expect(child.kill).toHaveBeenCalledExactlyOnceWith("SIGKILL");
   child.emit("close", null);
   await expect(result).resolves.toMatchObject({ failure: "spawn", cause });
+});
+
+it("raw close cannot settle an owned update before native join proof", async () => {
+  const { child, spawn, join } = ownedChild(true);
+  let settled = false;
+  const running = runHarnessUpdateProcess("invented.exe", [], {
+    deadlineMs: 60_000,
+    spawnJobFn: spawn,
+  }).then((value) => {
+    settled = true;
+    return value;
+  });
+  child.emit("close", 7);
+  await Promise.resolve();
+  expect(settled).toBe(false);
+  join();
+  await expect(running).resolves.toMatchObject({ code: 7 });
+});
+it("preserves cancellation and separately reports an unjoined cleanup failure", async () => {
+  const { child, spawn, refuseJoin } = ownedChild(true),
+    abort = new AbortController();
+  const reason = new Error("invented cancellation"),
+    cleanup = new Error("invented missing join proof");
+  const running = runHarnessUpdateProcess("invented.exe", [], {
+    deadlineMs: 60_000,
+    spawnJobFn: spawn,
+    signal: abort.signal,
+  });
+  abort.abort(reason);
+  child.emit("close", null);
+  refuseJoin(cleanup);
+  const result = await running;
+  expect(result.failure).toBe("cancelled");
+  expect(result.cleanupFailure).toBe(cleanup);
+  expect(result.cause).toBeInstanceOf(AggregateError);
+  expect((result.cause as AggregateError).errors).toEqual([reason, cleanup]);
+});
+
+it("retains an undefined native join rejection as an explicit cleanup marker", async () => {
+  const { child, spawn, refuseJoin } = ownedChild(true);
+  const running = runHarnessUpdateProcess("invented.exe", [], {
+    deadlineMs: 60_000,
+    spawnJobFn: spawn,
+  });
+  child.emit("close", 0);
+  refuseJoin(undefined);
+  const result = await running;
+  expect(result.failure).toBe("spawn");
+  expect(Object.hasOwn(result, "cleanupFailure")).toBe(true);
+  expect(result.cleanupFailure).toBeUndefined();
 });

@@ -21,6 +21,7 @@ import { bindingOrigin, validateCertificateDates } from "./gateway-binding.js";
 import { publicKeyFingerprint } from "./gateway-key-auth.js";
 import { readBoundedJson } from "./google-credentials.js";
 import { relayOrigin } from "./network.js";
+import { readPrivateText } from "./private-inputs.js";
 
 export function relayDnsPresenter(options: {
   relayUrl: string;
@@ -143,7 +144,7 @@ async function verifyChain(
 
 async function accountKey(path: string): Promise<string> {
   try {
-    return await readFile(path, "utf8");
+    return await readPrivateText(path);
   } catch (error) {
     if (!(
       typeof error === "object" &&
@@ -174,7 +175,7 @@ async function accountKey(path: string): Promise<string> {
     } finally {
       await rm(temporary, { force: true });
     }
-    return readFile(path, "utf8");
+    return readPrivateText(path);
   }
 }
 
@@ -207,7 +208,7 @@ export class GatewayAcmeRenewal {
     signal.throwIfAborted();
     const hostname = bindingOrigin(this.options.publicOrigin).hostname;
     const certificate = await readFile(this.options.certificateFile, "utf8"),
-      tlsKey = await readFile(this.options.privateKeyFile, "utf8");
+      tlsKey = await readPrivateText(this.options.privateKeyFile);
     const leaf = new X509Certificate(certificate);
     let usable = false;
     try {
@@ -245,7 +246,7 @@ export class GatewayAcmeRenewal {
         throw new Error("ACME renewal did not extend the certificate lifetime");
       if (
         (await readFile(this.options.certificateFile, "utf8")) !== certificate ||
-        (await readFile(this.options.privateKeyFile, "utf8")) !== tlsKey
+        (await readPrivateText(this.options.privateKeyFile)) !== tlsKey
       )
         throw new Error("Gateway TLS material changed during ACME issuance");
       signal.throwIfAborted();

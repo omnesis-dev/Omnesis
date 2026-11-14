@@ -29,6 +29,7 @@ import {
   MANAGED_CODEX_PACKAGE_VERSION,
   convertToolsToCodexDynamicTools,
   buildCodexEnv,
+  assertSupportedCodexRuntime,
   isSupportedCodexCliVersion,
   parseCodexCliVersion,
   parseCodexContextInputTokens,
@@ -196,6 +197,186 @@ describe("fake Codex log framing", () => {
 });
 
 describe("Codex JavaScript executable portability", () => {
+  it("retains a deferred undefined streaming join failure across probes, turns and disposal", async () => {
+    const { EventEmitter } = await import("node:events"),
+      { PassThrough } = await import("node:stream");
+    const core = await import("@omnesis/core"),
+      privateState = await import("./codex-private-state.js");
+    const dir = mkdtempSync(join(tmpdir(), "omnesis-codex-undefined-join-"));
+    let refuseJoin!: (error: unknown) => void;
+    const jobClosed = new Promise<void>((_resolve, reject) => {
+      refuseJoin = reject;
+    });
+    const child = Object.assign(new EventEmitter(), {
+      pid: 12345,
+      stdin: new PassThrough(),
+      stdout: new PassThrough(),
+      stderr: new PassThrough(),
+      exitCode: null as number | null,
+      signalCode: null,
+      jobReady: Promise.resolve(),
+      jobClosed,
+      kill: vi.fn(() => true),
+    });
+    child.stdin.on("data", (bytes: Buffer) => {
+      for (const line of bytes.toString().trim().split("\n")) {
+        const request = JSON.parse(line);
+        if (request.id !== undefined)
+          child.stdout.write(
+            JSON.stringify({
+              id: request.id,
+              result: request.method === "model/list" ? { data: [] } : {},
+            }) + "\n",
+          );
+      }
+    });
+    const spawn = vi
+      .spyOn(core, "spawnWindowsJob")
+      .mockReturnValue(child as unknown as ReturnType<typeof core.spawnWindowsJob>);
+    const execute = vi
+      .spyOn(core, "execWindowsJob")
+      .mockResolvedValue({ stdout: `codex-cli ${MANAGED_CODEX_PACKAGE_VERSION}`, stderr: "" });
+    vi.spyOn(core, "atomicWriteFile").mockResolvedValue();
+    vi.spyOn(privateState, "prepareCodexPrivateState").mockResolvedValue();
+    const platform = Object.getOwnPropertyDescriptor(process, "platform")!;
+    const runtime = new CodexAppServerRuntime({
+      commandInfo: { source: "override", command: process.execPath },
+      codexHome: dir,
+    });
+    Object.defineProperty(process, "platform", { ...platform, value: "win32" });
+    try {
+      await expect(runtime.listModels()).resolves.toEqual([]);
+      child.exitCode = 0;
+      child.emit("exit", 0, null);
+      child.emit("close", 0, null);
+      refuseJoin(undefined);
+      await vi.waitFor(async () => {
+        await expect(runtime.resolveCommandInfo()).rejects.toThrow(/cleanup/u);
+      });
+      await expect(runtime.probeRuntime()).rejects.toThrow(/cleanup/u);
+      await expect(runtime.listModels()).rejects.toThrow(/cleanup/u);
+      const events = await collect(
+        runtime.runTurn({
+          input: baseInput(),
+          model: "invented-model",
+          toolTimeoutMs: 1000,
+          maxToolIterations: 1,
+        }),
+      );
+      expect(events).toContainEqual(expect.objectContaining({ type: "agent.error" }));
+      expect(events).toContainEqual(
+        expect.objectContaining({
+          type: "agent.message.end",
+          payload: expect.objectContaining({ stopReason: "error" }),
+        }),
+      );
+      const disposal = runtime.dispose();
+      await expect(disposal).rejects.toMatchObject({ cleanupFailure: expect.any(Error) });
+      expect(runtime.dispose()).toBe(disposal);
+      await expect(runtime.dispose()).rejects.toThrow(/cleanup/u);
+      expect(spawn).toHaveBeenCalledOnce();
+      expect(execute).toHaveBeenCalledOnce();
+    } finally {
+      refuseJoin(undefined);
+      await runtime.dispose().catch(() => {});
+      Object.defineProperty(process, "platform", platform);
+      vi.restoreAllMocks();
+      child.stdin.destroy();
+      child.stdout.destroy();
+      child.stderr.destroy();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("retains an explicit unjoined compatibility probe and refuses subsequent probes or disposal success", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "omnesis-codex-probe-unjoined-"));
+    const core = await import("@omnesis/core");
+    const failure = Object.assign(new Error("invented version failure"), {
+      code: "EACCES",
+      cleanupFailure: new Error("invented missing join"),
+    });
+    const execute = vi.spyOn(core, "execWindowsJob").mockRejectedValue(failure);
+    const platform = Object.getOwnPropertyDescriptor(process, "platform")!;
+    const runtime = new CodexAppServerRuntime({
+      commandInfo: { source: "override", command: process.execPath },
+      codexHome: dir,
+    });
+    Object.defineProperty(process, "platform", { ...platform, value: "win32" });
+    try {
+      await expect(assertSupportedCodexRuntime({ command: process.execPath })).rejects.toBe(
+        failure,
+      );
+      await expect(runtime.probeRuntime()).rejects.toBe(failure);
+      await expect(runtime.probeRuntime()).rejects.toMatchObject({ cleanupFailure: failure });
+      await expect(runtime.resolveCommandInfo()).rejects.toThrow(/cleanup/u);
+      await expect(runtime.listModels()).rejects.toThrow(/cleanup/u);
+      const disposal = runtime.dispose();
+      await expect(disposal).rejects.toMatchObject({ cleanupFailure: failure });
+      expect(runtime.dispose()).toBe(disposal);
+      expect(execute).toHaveBeenCalledTimes(2);
+    } finally {
+      Object.defineProperty(process, "platform", platform);
+      vi.restoreAllMocks();
+      await runtime.dispose().catch(() => {});
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it.runIf(process.platform === "win32").each(["starting", "ready"] as const)(
+    "retains cleanup uncertainty across repeated disposal and blocks runtime reuse (%s)",
+    async (phase) => {
+      const dir = mkdtempSync(join(tmpdir(), "omnesis-codex-unjoined-"));
+      const command = join(dir, "owned-crash-wrapper.mjs");
+      const trigger = join(dir, "crash-helper");
+      const started = join(dir, "wrapper-started");
+      const crashed = join(dir, "helper-crash-requested");
+      writeFileSync(
+        command,
+        `
+import {spawn} from 'node:child_process';
+import {existsSync,writeFileSync} from 'node:fs';
+if(process.argv.includes('--version') || ${JSON.stringify(phase === "ready")}) {
+  const child=spawn(process.execPath,[${JSON.stringify(fakeCodexPath)},...process.argv.slice(2)],{stdio:'inherit'});
+  child.once('exit',code=>process.exit(code??1));
+} else process.stdin.resume();
+if(!process.argv.includes('--version')) writeFileSync(${JSON.stringify(started)},'ready');
+if(!process.argv.includes('--version')) setInterval(()=>{
+  if(existsSync(${JSON.stringify(trigger)})) {
+    writeFileSync(${JSON.stringify(crashed)},'requested');
+    process.kill(process.ppid,'SIGKILL');
+  }
+},10);
+`,
+      );
+      const runtime = new CodexAppServerRuntime({
+        command,
+        codexHome: join(dir, "home"),
+        env: process.env,
+      });
+      try {
+        const models = runtime.listModels();
+        void models.catch(() => {});
+        if (phase === "ready") await models;
+        else await vi.waitFor(() => expect(existsSync(started)).toBe(true), { timeout: 30_000 });
+        const disposal = phase === "starting" ? runtime.dispose() : undefined;
+        void disposal?.catch(() => {});
+        writeFileSync(trigger, "invented owned helper crash");
+        await vi.waitFor(() => expect(existsSync(crashed)).toBe(true), { timeout: 10_000 });
+        const closed = disposal ?? runtime.dispose();
+        await expect(closed).rejects.toThrow(/completion|cleanup|connection/u);
+        expect(runtime.dispose()).toBe(closed);
+        if (phase === "starting") await expect(models).rejects.toThrow();
+        await expect(runtime.listModels()).rejects.toThrow(/cleanup/u);
+        await expect(runtime.resolveCommandInfo()).rejects.toThrow(/cleanup/u);
+        await expect(runtime.probeRuntime()).rejects.toThrow(/cleanup/u);
+      } finally {
+        await runtime.dispose().catch(() => {});
+        rmSync(dir, { recursive: true, force: true });
+      }
+    },
+    60_000,
+  );
+
   it.each(process.platform === "win32" ? [false, true] : [false])(
     "disposes the app-server behind a JavaScript wrapper (wrapperExits=%s)",
     async (wrapperExits) => {

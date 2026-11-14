@@ -104,6 +104,48 @@ afterEach(async () => {
   await rm(dir, { recursive: true, force: true });
 });
 
+test("Windows login refuses private publication failure without replacing the previous session", async () => {
+  const tokenFile = join(dir, "publication-token");
+  const sessionFile = join(dir, "publication-session.json");
+  await writeFile(tokenFile, "invented-id-token");
+  await writeFile(sessionFile, "previous-session-bytes");
+  vi.spyOn(core, "readWindowsPrivateFile").mockResolvedValue(Buffer.from("invented-id-token"));
+  const failure = new Error("Invented private publication failure");
+  const writer = vi.spyOn(core, "atomicWriteFile").mockRejectedValue(failure);
+  vi.stubGlobal(
+    "fetch",
+    vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          token: "invented-session-token",
+          expiresAt: 12345,
+          accountId: "a".repeat(64),
+        }),
+        { status: 200 },
+      ),
+    ),
+  );
+  const descriptor = Object.getOwnPropertyDescriptor(process, "platform")!;
+  Object.defineProperty(process, "platform", { ...descriptor, value: "win32" });
+  try {
+    await expect(
+      loginRelay({ relayUrl: "https://relay.example.test", idTokenFile: tokenFile, sessionFile }),
+    ).rejects.toBe(failure);
+    expect(writer).toHaveBeenCalledWith(
+      sessionFile,
+      expect.stringContaining("invented-session-token"),
+      { mode: 0o600 },
+    );
+  } finally {
+    Object.defineProperty(process, "platform", descriptor);
+  }
+  expect(await readFile(sessionFile, "utf8")).toBe("previous-session-bytes");
+  expect((await files.readdir(dir)).sort()).toEqual([
+    "publication-session.json",
+    "publication-token",
+  ]);
+});
+
 async function grantPublicFixtureRead(path: string): Promise<void> {
   await core.execWindowsJob(join(process.env.SystemRoot!, "System32", "icacls.exe"), [
     path,
@@ -554,7 +596,9 @@ describe("local daemon and credential files", () => {
         await localToken(await readFile(env.OMNESIS_CLOUD_RELAY_MOCK_KEY_FILE!)),
       );
       await loginRelay({ relayUrl: relay.url, idTokenFile: tokenFile, sessionFile });
-      if (process.platform !== "win32") {
+      if (process.platform === "win32") {
+        expect(core.inspectWindowsPrivatePathSync(sessionFile, "file").private).toBe(true);
+      } else {
         expect((await stat(sessionFile)).mode & 0o777).toBe(0o600);
       }
       const first = await readRelaySession(sessionFile);

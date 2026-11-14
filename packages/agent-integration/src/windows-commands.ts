@@ -4,7 +4,10 @@
 import { loadWindowsPlatformRuntime } from "./windows-files.js";
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
 
-export type WindowsCommandProcess = ChildProcessWithoutNullStreams & { jobReady: Promise<void> };
+export type WindowsCommandProcess = ChildProcessWithoutNullStreams & {
+  jobReady: Promise<void>;
+  jobClosed: Promise<void>;
+};
 export interface WindowsCommandOptions {
   env: NodeJS.ProcessEnv;
   completion: "root";
@@ -27,6 +30,8 @@ export function spawnWindowsIntegrationCommand(
     if (
       !candidate ||
       typeof candidate !== "object" ||
+      !("WINDOWS_JOB_CONTROL_PROTOCOL" in candidate) ||
+      candidate.WINDOWS_JOB_CONTROL_PROTOCOL !== 1 ||
       !("spawnWindowsJob" in candidate) ||
       typeof candidate.spawnWindowsJob !== "function"
     )

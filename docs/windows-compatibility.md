@@ -105,25 +105,31 @@ that source, preserves previous destination bytes and leaves no scratch file.
 The corrected complete probe and current native inspection changes still need
 fresh Windows validation.
 
-Unsafe file permission repair uses a fixed-buffer copy into an initially private
-file and publishes it through the held parent. It does not modify the old file
-object's DACL or readonly attributes; aliases that appear during copying retain
-that object's original bytes and access controls. Ordinary canonical publishers
-honor deny-delete pins; only the repair's own atomic publication uses POSIX
-replacement while its source is held. Arbitrary same-user POSIX replacements
-outside this protocol are not an isolation boundary. An initially multi-linked,
-busy unsafe or unreadable source is refused. Already-private busy files still
-need no mutation. Creation and write timestamps and the readonly setting are
-preserved on the replacement, together with ordinary hidden, system, archive,
-temporary and not-content-indexed attributes. EFS encryption and other storage
-semantics needing dedicated preservation APIs fail closed before content reads;
-the deterministic EFS-metadata refusal case does not establish physical EFS
-execution. Exact-entry deletion and staging cleanup use
-native ignore-readonly disposition rather than clearing shared attributes;
-unsupported filesystems fail closed. Bootstrap repair never returns file bytes
-to the dotenv loader or applies config values, and still exits with status 2.
-Controlled after-check hardlink, failed-publication and denied-read regressions
-require fresh native execution before this repair path is considered verified.
+Windows does not provide an atomic identity-conditional replacement for a regular
+file held open without delete sharing. The controlled NTFS probe confirmed that
+both rename and hardlink replacement fail with sharing violation32 under that
+pin; allowing delete sharing would permit ordinary external publishers, including
+Codex credential refresh, to replace the name during a copy. Generic online
+repair therefore refuses existing broad/unsafe file DACLs unchanged. No range
+lock or escrow publication protocol is used.
+
+A file whose current DACL is already private may have inheritance sealed through
+its exact retained handle. The helper keeps the same owner and normalized grant
+and deny ACEs; only inheritance protection changes. A READ_DATA right activates
+deny-delete sharing during sealing, but no content bytes are read. Existing
+read/write handles and private hardlink aliases remain compatible; if the pin or
+WRITE_DAC right is unavailable the operation refuses. Already-protected private
+files remain a metadata-only no-op. All byte streams, extended attributes, creation and modification times,
+readonly flags and file identity stay untouched, including on refusal. Directory
+repair remains single-object and does not propagate changes into existing files.
+New private writes and fixed-buffer copies retain protected creation before bytes,
+held-parent atomic publication and existing no-clobber guarantees.
+
+Bootstrap repair never reads file bytes or applies config values, and a successful
+early seal still exits with status2 for review/rerun. Broad-access files require
+stopping related applications and reviewing or recreating their access controls.
+The narrowed inheritance-sealing path and fresh cold compiler cache still require
+actual Windows execution before they are considered verified.
 
 Actual x64 dependency preparation, encrypted keyring initialization, the compiled
 CLI and all six compiled gateway worker entrypoints passed in the ARM64 guest.

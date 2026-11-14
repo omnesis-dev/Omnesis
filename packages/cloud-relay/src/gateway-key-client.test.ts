@@ -38,6 +38,7 @@ vi.mock("node:fs/promises", async (original) => {
 
 let directory: string;
 beforeEach(async () => {
+  core.clearSecretFileKeyCacheForTests();
   directory = await mkdtemp(join(tmpdir(), "omnesis-key-client-"));
   if (process.platform === "win32") await core.ensurePrivateDirs([directory]);
 });
@@ -45,6 +46,8 @@ afterEach(async () => {
   vi.useRealTimers();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
+  vi.unstubAllEnvs();
+  core.clearSecretFileKeyCacheForTests();
   await rm(directory, { recursive: true, force: true });
 });
 async function fixture(
@@ -871,6 +874,29 @@ test("an unsafe or dangling recovery artifact cannot authorize a new owner", asy
       code: "ENOENT",
     });
     await expect(stat(f.options.sessionFile)).rejects.toMatchObject({ code: "ENOENT" });
+  } finally {
+    await f.close();
+  }
+});
+
+test("registers with a config-scoped encrypted TLS key and refuses an envelope without its scope", async () => {
+  const f = await fixture();
+  vi.stubEnv("OMNESIS_SECRET_STORE", "file");
+  try {
+    await core.ensureInstallRootKey({ backend: "file", configDir: directory });
+    await core.primeSecretFileKeyCache({ backend: "file", configDir: directory });
+    const key = await readFile(f.options.privateKeyFile, "utf8");
+    await core.writeSecretTextFile(f.options.privateKeyFile, key, { configDir: directory });
+    const transport = vi.fn<typeof fetch>();
+    await expect(registerGatewayKey({ ...f.options, fetch: transport })).rejects.toThrow(
+      "requires its configuration directory",
+    );
+    expect(transport).not.toHaveBeenCalled();
+    await expect(stat(`${f.options.sessionFile}.owner-key`)).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+    const session = await registerGatewayKey({ ...f.options, configDir: directory });
+    expect(session.token).toMatch(/^ey/);
   } finally {
     await f.close();
   }

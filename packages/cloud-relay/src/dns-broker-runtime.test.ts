@@ -8,6 +8,7 @@ import { mkdtemp, readFile, rm, writeFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
+import * as core from "@omnesis/core";
 import { recoveryFixture } from "../test/recovery-fixture.js";
 import { tlsFiles } from "../test/support.js";
 import { assertRelayDnsIsolation, startIndependentDnsDaemon } from "./dns-broker-runtime.js";
@@ -20,6 +21,7 @@ import type { AddressInfo } from "node:net";
 let directory: string;
 beforeEach(async () => {
   directory = await mkdtemp(join(tmpdir(), "omnesis-independent-dns-runtime-"));
+  if (process.platform === "win32") await core.ensurePrivateDirs([directory]);
 });
 afterEach(async () => {
   vi.restoreAllMocks();

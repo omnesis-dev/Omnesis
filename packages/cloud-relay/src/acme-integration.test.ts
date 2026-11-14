@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { readFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { beforeEach, afterEach, expect, test, vi } from "vitest";
+import * as core from "@omnesis/core";
 import { expiredCertificate } from "../test/expired-certificate.js";
 import { tlsFiles } from "../test/support.js";
 import { acmeTrustedRoots, createGatewayAcmeController } from "./acme-integration.js";
@@ -15,6 +16,7 @@ import type { AcmeDnsChallenges as AcmeDnsService } from "./acme-dns.js";
 let directory: string;
 beforeEach(async () => {
   directory = await mkdtemp(join(tmpdir(), "omnesis-acme-integration-"));
+  if (process.platform === "win32") await core.ensurePrivateDirs([directory]);
   vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "1");
 });
 afterEach(async () => {

@@ -251,6 +251,37 @@ describe.each(launchers)("%s launcher", (_name, make) => {
 });
 
 describe("hosted launcher", () => {
+  it.each(["result", "exit"] as const)(
+    "preserves unconfirmed Windows cleanup across host %s",
+    async (mode) => {
+      const dir = mkdtempSync(join(tmpdir(), "omnesis-launcher-uncertain-"));
+      const entry = join(dir, "host.mjs");
+      writeFileSync(
+        entry,
+        `process.send({type:'ready'}); process.on('message', message => {
+        if (${JSON.stringify(mode)} === 'exit') process.exit(0);
+        process.send({type:'result',id:message.id,result:{exitCode:null,signal:null,stdout:Buffer.from(String(process.pid)),stderr:'',failure:'aborted',cleanupFailure:{reason:'invented unconfirmed join'}}});
+      });`,
+      );
+      const platform = Object.getOwnPropertyDescriptor(process, "platform")!;
+      Object.defineProperty(process, "platform", { ...platform, value: "win32" });
+      const host = new HostedProcessLauncher({ modulePath: entry, execArgv: [] });
+      hosts.push(host);
+      try {
+        const result = await host.run("unused", [], { timeoutMs: 5_000 });
+        expect(result.cleanupFailure).toBeDefined();
+        if (mode === "result") {
+          expect(result.cleanupFailure).toEqual({ reason: "invented unconfirmed join" });
+          await stopObservedHost(Number(text(result.stdout)));
+        } else expect(result.failure).toBe("spawn");
+      } finally {
+        Object.defineProperty(process, "platform", platform);
+        host.dispose();
+        rmSync(dir, { recursive: true, force: true });
+      }
+    },
+  );
+
   it("forks programs from the host process, not from the caller", async () => {
     const run = await hosted().run(process.execPath, ["-e", reportLauncherParent], {
       timeoutMs: 10_000,

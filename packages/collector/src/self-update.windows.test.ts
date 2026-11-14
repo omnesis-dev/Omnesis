@@ -85,7 +85,8 @@ describe.runIf(process.platform === "win32")("Windows collector update containme
         const result = await run;
         expect(result.state).toBe("failed");
         expect(result.retainLock).toBe(unverified ? true : undefined);
-        await vi.waitFor(() => expect(alive(pid)).toBe(false), { timeout: 10_000 });
+        expect(result.cleanupFailure).toBeUndefined();
+        expect(alive(pid)).toBe(false);
         expect(alive(process.pid)).toBe(true);
       } finally {
         if (!settled) expire?.();

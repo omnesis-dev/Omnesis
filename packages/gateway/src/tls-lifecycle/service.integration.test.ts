@@ -13,13 +13,22 @@ import { createServer } from "node:https";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { connect } from "node:tls";
-import { afterAll, expect, test } from "vitest";
+import { afterAll, beforeAll, expect, test, vi } from "vitest";
+import { ensurePrivateFileSync, clearSecretFileKeyCacheForTests } from "@omnesis/core";
 import { generateSelfSigned } from "../tls.js";
 import { TlsLifecycleService } from "./service.js";
 import type { AddressInfo } from "node:net";
 
 const configDir = mkdtempSync(join(tmpdir(), "omnesis-tls-activation-"));
-afterAll(() => rmSync(configDir, { recursive: true, force: true }));
+beforeAll(() => {
+  vi.stubEnv("OMNESIS_SECRET_STORE", "file");
+  clearSecretFileKeyCacheForTests();
+});
+afterAll(() => {
+  clearSecretFileKeyCacheForTests();
+  vi.unstubAllEnvs();
+  rmSync(configDir, { recursive: true, force: true });
+});
 
 function servedFingerprint(port: number): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -43,13 +52,15 @@ test("a certificate activated by the lifecycle is the one the next handshake pre
   mkdirSync(join(configDir, "tls"), { recursive: true });
   writeFileSync(join(configDir, "tls", "cert.pem"), first.cert);
   writeFileSync(join(configDir, "tls", "key.pem"), first.key);
+  if (process.platform === "win32") ensurePrivateFileSync(join(configDir, "tls", "key.pem"));
 
   const server = createServer({ cert: first.cert, key: first.key }, (_req, res) => res.end("ok"));
   server.listen(0, "127.0.0.1");
   await once(server, "listening");
   const port = (server.address() as AddressInfo).port;
+  let service: TlsLifecycleService | undefined;
   try {
-    const service = new TlsLifecycleService({
+    service = new TlsLifecycleService({
       configDir,
       initial: { cert: first.cert, key: first.key },
       activate: (material) => server.setSecureContext(material),
@@ -73,6 +84,9 @@ test("a certificate activated by the lifecycle is the one the next handshake pre
     expect(await servedFingerprint(port)).toBe(third.fingerprintSha256);
     expect(service.fingerprintSha256()).toBe(third.fingerprintSha256);
   } finally {
-    server.close();
+    await service?.close();
+    await new Promise<void>((resolve, reject) =>
+      server.close((error) => (error ? reject(error) : resolve())),
+    );
   }
 }, 30_000);

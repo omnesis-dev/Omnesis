@@ -2,28 +2,39 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { randomUUID } from "node:crypto";
-import { execFileSync } from "node:child_process";
-import {
-  lstatSync,
-  mkdirSync,
-  readdirSync,
-  readFileSync,
-  renameSync,
-  rmSync,
-  unlinkSync,
-  writeFileSync,
-} from "node:fs";
+import { lstatSync, mkdirSync, readFileSync, renameSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { atomicWriteFileSync } from "./atomic-write.js";
-import { windowsProcessStart } from "./windows-process-tree.js";
+import { processStart, sameProcess, processGroupExists } from "./update-lock-process.js";
+import { claimGuard, releaseGuard, DEFAULT_STALE_MS } from "./update-lock-guard.js";
+import {
+  beginChildJoin,
+  childJoinRestriction,
+  childJoinAncestorIds,
+  hasPendingChildJoins,
+  mayReclaimWithChildJoins,
+  type UpdateLockChildJoin,
+} from "./update-lock-child-join.js";
+
+export type { UpdateLockChildJoin } from "./update-lock-child-join.js";
 
 export const UPDATE_LOCK_ENV = "OMNESIS_UPDATE_LOCK_ID";
 
 const LOCK_DIR = "update.lock";
 const OWNER_FILE = "owner.json";
-const CLAIM_PREFIX = ".claim-";
 const DEFAULT_HEARTBEAT_MS = 5_000;
-const DEFAULT_STALE_MS = 30_000;
+
+/** Persist the join barrier before launching a child of this exact held lock. */
+export function beginUpdateLockChildJoin(
+  configDir: string,
+  heldLockId: string,
+): UpdateLockChildJoin {
+  const lockDir = join(configDir, LOCK_DIR);
+  return beginChildJoin(lockDir, heldLockId, () => {
+    const owner = readOwner(lockDir);
+    return owner && { id: owner.id, ancestors: childJoinAncestorIds(owner.returnTo) };
+  });
+}
 
 interface UpdateLockReturnOwner {
   id: string;
@@ -207,7 +218,7 @@ export function acquireUpdateLock(configDir: string, opts: UpdateLockOptions): U
       // wall clock moved backwards. Treat it as fresh: a PID namespace can
       // make a live updater look dead to another container on this host.
       const fresh = Number.isFinite(updated) && age < staleMs;
-      if (fresh || (holder && updateWorkMayBeActive(holder))) {
+      if (hasPendingChildJoins(lockDir) || fresh || (holder && updateWorkMayBeActive(holder))) {
         throw new UpdateLockBusyError(holder);
       }
       if (
@@ -248,6 +259,12 @@ export function adoptUpdateLock(
     if (!owner || owner.id !== id) {
       throw new Error("The update lock hand-off is no longer valid; start the update again.");
     }
+    const fence = childJoinRestriction(lockDir, id, childJoinAncestorIds(owner.returnTo));
+    if (fence === "unknown")
+      throw new Error("Could not verify pending children of the host update lock.");
+    // Pending holders must remain in the return chain that authorizes child work.
+    if (fence === "own" && owner.returnTo && !opts.returnToHolder)
+      throw new Error("A pending child requires returning to its immediate update lock holder.");
     const holder: UpdateLockReturnOwner = {
       id: owner.id,
       owner: owner.owner,
@@ -284,10 +301,15 @@ function createHandle(
   const heartbeatMs = opts.heartbeatMs ?? DEFAULT_HEARTBEAT_MS;
   const now = opts.now ?? (() => new Date());
   let released = false;
+  let deferred = false;
   let releaseRetry: NodeJS.Timeout | null = null;
 
   const update = (step?: string, required = false, processGroupPid?: number | null): void => {
-    if (released) return;
+    if (released) {
+      if (deferred && required && processGroupPid === undefined)
+        throw new Error("This update handle finished with a pending child; refusing further work.");
+      return;
+    }
     const claim = claimGuard(lockDir);
     if (!claim) {
       if (required) throw new Error("Could not verify ownership of the host update lock.");
@@ -297,6 +319,13 @@ function createHandle(
       const current = readOwner(lockDir);
       if (!current || current.id !== id) {
         throw new Error("This update lost ownership of the host lock; refusing further work.");
+      }
+      const fence = childJoinRestriction(lockDir, id, childJoinAncestorIds(returnTo));
+      if (fence !== "none" && processGroupPid === null) return;
+      if (fence === "unknown" || (fence === "own" && processGroupPid === undefined)) {
+        if (required)
+          throw new Error("An update child has not been joined; refusing further work.");
+        return;
       }
       const next: UpdateLockOwner = {
         ...current,
@@ -325,7 +354,8 @@ function createHandle(
   }, heartbeatMs);
   timer.unref();
 
-  const finish = (): void => {
+  const finish = (pendingChild = false): void => {
+    deferred ||= pendingChild;
     released = true;
     clearInterval(timer);
     if (releaseRetry) clearTimeout(releaseRetry);
@@ -334,6 +364,10 @@ function createHandle(
 
   const release = (): void => {
     if (released) return;
+    if (hasPendingChildJoins(lockDir)) {
+      finish(true);
+      return;
+    }
     const result = retireLock(lockDir, id);
     if (result === "busy") {
       if (!releaseRetry) {
@@ -345,7 +379,7 @@ function createHandle(
       }
       return;
     }
-    finish();
+    finish(result === "fenced");
   };
   // A process that exits holding an adopted lock returns it to the process it
   // came from, which is still waiting on this one; only a lock this process
@@ -365,10 +399,18 @@ function createHandle(
 
   const handBack = (step = "finishing collector self-update"): void => {
     if (released) return;
+    if (hasPendingChildJoins(lockDir)) {
+      finish(true);
+      return;
+    }
     if (!returnTo) throw new Error("This update lock has no previous owner to return to.");
     const claim = claimGuard(lockDir);
     if (!claim) throw new Error("Could not return ownership of the host update lock.");
     try {
+      if (hasPendingChildJoins(lockDir)) {
+        finish(true);
+        return;
+      }
       const current = readOwner(lockDir);
       if (!current || current.id !== id) {
         throw new Error("This update lost ownership of the host lock before hand-back.");
@@ -391,6 +433,8 @@ function createHandle(
     if (!claim) return false;
     try {
       const current = readOwner(lockDir);
+      const ancestors = childJoinAncestorIds(returnTo);
+      if (!mayReclaimWithChildJoins(lockDir, id, current?.id, ancestors)) return false;
       if (current?.id === id) return true;
       if (!current?.returnTo || current.returnTo.id !== id || updateWorkMayBeActive(current)) {
         return false;
@@ -474,16 +518,6 @@ export function getUpdateLockProcessGroup(configDir: string): UpdateLockProcessG
   return { state: "active", pid: owner.processGroupPid };
 }
 
-function processGroupExists(pid: number): boolean {
-  try {
-    // Windows publishes the job owner's PID; POSIX publishes a process group.
-    process.kill(process.platform === "win32" ? pid : -pid, 0);
-    return true;
-  } catch (err) {
-    return (err as NodeJS.ErrnoException).code !== "ESRCH";
-  }
-}
-
 function updateWorkMayBeActive(owner: UpdateLockOwner): boolean {
   return (
     sameProcess(owner.pid, owner.processStart) ||
@@ -514,7 +548,7 @@ function lockMtime(lockDir: string): number {
 }
 
 /** A winning unique claim fences this directory generation against ABA replacement. */
-type RetireResult = "retired" | "not-owner" | "busy";
+type RetireResult = "retired" | "not-owner" | "busy" | "fenced";
 
 function retireLock(
   lockDir: string,
@@ -524,6 +558,10 @@ function retireLock(
   const claim = claimGuard(lockDir);
   if (!claim) {
     return expectedId && readOwner(lockDir)?.id !== expectedId ? "not-owner" : "busy";
+  }
+  if (hasPendingChildJoins(lockDir)) {
+    releaseGuard(claim);
+    return "fenced";
   }
   const current = readOwner(lockDir);
   if (expectedId && current?.id !== expectedId) {
@@ -547,173 +585,6 @@ function retireLock(
   }
   rmSync(retired, { recursive: true, force: true });
   return "retired";
-}
-
-interface GuardClaim {
-  version: 1;
-  state: "choosing" | "waiting";
-  ticket: number;
-  pid: number;
-  processStart: string | null;
-}
-
-/** A filesystem-backed bakery lock serializes owner changes without a toolchain. */
-function claimGuard(lockDir: string): string | null {
-  const name = `${CLAIM_PREFIX}${randomUUID()}`;
-  const claim = join(lockDir, name);
-  const identity: GuardClaim = {
-    version: 1,
-    state: "choosing",
-    ticket: 0,
-    pid: process.pid,
-    processStart: processStart(process.pid),
-  };
-  try {
-    writeFileSync(claim, `${JSON.stringify(identity)}\n`, { flag: "wx", mode: 0o600 });
-  } catch {
-    return null;
-  }
-
-  let ticket = 1;
-  try {
-    const contenders = readdirSync(lockDir).filter((entry) => entry.startsWith(CLAIM_PREFIX));
-    for (const entry of contenders) {
-      if (entry === name) continue;
-      discardStaleClaim(join(lockDir, entry));
-      const other = readGuardClaim(join(lockDir, entry));
-      if (other?.state === "waiting") ticket = Math.max(ticket, other.ticket + 1);
-    }
-    identity.state = "waiting";
-    identity.ticket = ticket;
-    atomicWriteFileSync(claim, `${JSON.stringify(identity)}\n`, { mode: 0o600 });
-  } catch {
-    releaseGuard(claim);
-    return null;
-  }
-
-  for (let attempt = 0; attempt < 250; attempt += 1) {
-    let contenders: string[];
-    try {
-      contenders = readdirSync(lockDir).filter((entry) => entry.startsWith(CLAIM_PREFIX));
-      for (const entry of contenders) {
-        if (entry === name) continue;
-        discardStaleClaim(join(lockDir, entry));
-      }
-      contenders = readdirSync(lockDir).filter((entry) => entry.startsWith(CLAIM_PREFIX));
-    } catch {
-      releaseGuard(claim);
-      return null;
-    }
-    if (!contenders.includes(name)) {
-      releaseGuard(claim);
-      return null;
-    }
-    let blocked = false;
-    for (const entry of contenders) {
-      if (entry === name) continue;
-      const other = readGuardClaim(join(lockDir, entry));
-      if (
-        !other ||
-        other.state === "choosing" ||
-        other.ticket < ticket ||
-        (other.ticket === ticket && entry < name)
-      ) {
-        blocked = true;
-        break;
-      }
-    }
-    if (!blocked) return claim;
-    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 2);
-  }
-  releaseGuard(claim);
-  return null;
-}
-
-function readGuardClaim(path: string): GuardClaim | null {
-  try {
-    const value = JSON.parse(readFileSync(path, "utf8")) as Partial<GuardClaim>;
-    if (
-      value.version !== 1 ||
-      (value.state !== "choosing" && value.state !== "waiting") ||
-      !Number.isSafeInteger(value.ticket) ||
-      (value.ticket as number) < 0 ||
-      !Number.isInteger(value.pid) ||
-      (typeof value.processStart !== "string" && value.processStart !== null)
-    ) {
-      return null;
-    }
-    return value as GuardClaim;
-  } catch {
-    return null;
-  }
-}
-
-function discardStaleClaim(path: string): void {
-  try {
-    const stat = lstatSync(path);
-    if (!stat.isFile()) return;
-    const age = Date.now() - stat.mtimeMs;
-    // Future mtimes are conservatively live after a backwards clock step.
-    if (age < DEFAULT_STALE_MS) return;
-    let identity: { pid?: unknown; processStart?: unknown };
-    try {
-      identity = JSON.parse(readFileSync(path, "utf8")) as typeof identity;
-    } catch {
-      unlinkSync(path);
-      return;
-    }
-    if (
-      Number.isInteger(identity.pid) &&
-      (typeof identity.processStart === "string" || identity.processStart === null) &&
-      sameProcess(identity.pid as number, identity.processStart)
-    ) {
-      return;
-    }
-    unlinkSync(path);
-  } catch {
-    // A concurrent claimant retired the directory or removed this exact claim.
-  }
-}
-
-function releaseGuard(claim: string): void {
-  try {
-    unlinkSync(claim);
-  } catch {
-    // The whole lock was retired, or this exact claim was already cleaned up.
-  }
-}
-
-function processStart(pid: number): string | null {
-  if (process.platform === "win32") return windowsProcessStart(pid);
-  if (process.platform === "darwin") {
-    try {
-      return execFileSync("ps", ["-o", "lstart=", "-p", String(pid)], {
-        encoding: "utf8",
-        stdio: ["ignore", "pipe", "ignore"],
-      }).trim();
-    } catch {
-      return null;
-    }
-  }
-  if (process.platform !== "linux") return null;
-  try {
-    const bootId = readFileSync("/proc/sys/kernel/random/boot_id", "utf8").trim();
-    const stat = readFileSync(`/proc/${pid}/stat`, "utf8");
-    const close = stat.lastIndexOf(")");
-    const start = stat.slice(close + 2).split(" ")[19];
-    return bootId && start ? `${bootId}:${start}` : null;
-  } catch {
-    return null;
-  }
-}
-
-function sameProcess(pid: number, expectedStart: string | null): boolean {
-  try {
-    process.kill(pid, 0);
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code !== "EPERM") return false;
-  }
-  return expectedStart === null || processStart(pid) === expectedStart;
 }
 
 function busyMessage(holder: UpdateLockOwner): string {

@@ -2,7 +2,6 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { WINDOWS_DIRECTORY_POLICY_NATIVE_SOURCE } from "./windows-directory-policy-source.js";
-import { WINDOWS_FILE_REPAIR_NATIVE_SOURCE } from "./windows-file-repair-source.js";
 
 export const WINDOWS_PRIVATE_FILE_NATIVE_SOURCE =
   String.raw`using System;
@@ -232,7 +231,7 @@ public static partial class OmnesisPrivateFile {
       Check(SetFileInformationByHandle(file,0,info,40));
     } finally { Marshal.FreeHGlobal(info); }
   }
-  static void Rename(SafeFileHandle file,SafeFileHandle parent,string target,bool replaceExisting,bool replacePinnedSource=false) {
+  static void Rename(SafeFileHandle file,SafeFileHandle parent,string target,bool replaceExisting) {
     // SMB requires an absolute name and a null RootDirectory; the validated
     // parent denies untrusted writes and stays pinned without delete sharing.
     bool extendedNetwork=target.StartsWith(@"\\?\UNC\",StringComparison.OrdinalIgnoreCase);
@@ -244,9 +243,8 @@ public static partial class OmnesisPrivateFile {
     IntPtr info=Marshal.AllocHGlobal(infoSize);
     try {
       for(int i=0;i<infoSize;i++) Marshal.WriteByte(info,i,0);
-      // Ordinary writers honor held source/read pins. Only copy-on-repair
-      // replaces its own exclusively held source through POSIX semantics.
-      Marshal.WriteInt32(info,0,(replaceExisting?0x41:0)|(replacePinnedSource?2:0)); Marshal.WriteIntPtr(info,rootOffset,network?IntPtr.Zero:parent.DangerousGetHandle());
+      // Ordinary publication honors every retained deny-delete reader.
+      Marshal.WriteInt32(info,0,replaceExisting?0x41:0); Marshal.WriteIntPtr(info,rootOffset,network?IntPtr.Zero:parent.DangerousGetHandle());
       Marshal.WriteInt32(info,lengthOffset,name.Length); Marshal.Copy(name,0,IntPtr.Add(info,nameOffset),name.Length);
       // The Win32 wrapper rejects this valid relative RootDirectory form.
       // Native rename preserves the pinned parent instead of resolving a path
@@ -295,7 +293,7 @@ public static partial class OmnesisPrivateFile {
   public static void Write(string path,long length,bool atomic,bool readOnly,string staging,bool receipt,bool replaceExisting) {
     WriteInput(path,length,atomic,readOnly,staging,receipt,replaceExisting,Console.OpenStandardInput(),true,null);
   }
-  static void WriteInput(string path,long length,bool atomic,bool readOnly,string staging,bool receipt,bool replaceExisting,Stream input,bool framedCommit,Action validateInput,Action<SafeFileHandle> prepareOutput=null,bool replacePinnedSource=false) {
+  static void WriteInput(string path,long length,bool atomic,bool readOnly,string staging,bool receipt,bool replaceExisting,Stream input,bool framedCommit,Action validateInput) {
     Stage="resolve";path=FullPath(path); if(length<0) throw new InvalidDataException();
     Stage="parent";using(PinnedParent parent=Parent(path)) {
       string scratch=atomic?parent.Leaf+".omnesis-"+System.Diagnostics.Process.GetCurrentProcess().Id+"-"+Guid.NewGuid().ToString("N")+".tmp":parent.Leaf;
@@ -326,10 +324,9 @@ public static partial class OmnesisPrivateFile {
           if(input.ReadByte()!=-1) {if(!framedCommit) Stage="copy-source-changed";throw new InvalidDataException();}
           if(validateInput!=null) validateInput();
           Stage="flush";file.Flush(true);
-          if(prepareOutput!=null) prepareOutput(file.SafeFileHandle);
           if(readOnly) { Stage="readonly";ReadOnly(file.SafeFileHandle); }
-          if(prepareOutput!=null || readOnly) file.Flush(true);
-          if(atomic) { Stage="rename";Rename(file.SafeFileHandle,parent.Handle,path,replaceExisting,replacePinnedSource); }
+          if(readOnly) file.Flush(true);
+          if(atomic) { Stage="rename";Rename(file.SafeFileHandle,parent.Handle,path,replaceExisting); }
         } catch(Exception failure) {
           string originalStage=Stage;
           try { Stage="cleanup";Discard(file.SafeFileHandle); }
@@ -347,32 +344,53 @@ public static partial class OmnesisPrivateFile {
     if(descriptor.Owner==null || !Trusted(descriptor.Owner.Value)) throw new UnauthorizedAccessException();
     return Private(descriptor,false) && (!protect || (descriptor.ControlFlags&ControlFlags.DiscretionaryAclProtected)!=0);
   }
+  static string[] GrantRecords(RawSecurityDescriptor descriptor) {
+    List<string> records=new List<string>();
+    foreach(GenericAce ace in descriptor.DiscretionaryAcl) {
+      byte[] bytes=new byte[ace.BinaryLength];ace.GetBinaryForm(bytes,0);
+      // Turning inherited ACEs explicit cannot change their actual grants.
+      bytes[1]=(byte)(bytes[1]&~(byte)AceFlags.Inherited);
+      records.Add(Convert.ToBase64String(bytes));
+    }
+    records.Sort(StringComparer.Ordinal);return records.ToArray();
+  }
+  static void SealPrivateFile(SafeFileHandle handle,RawSecurityDescriptor before) {
+    if(!Private(before,false)) throw new UnauthorizedAccessException();
+    RawSecurityDescriptor sealedDescriptor=new RawSecurityDescriptor(before.ControlFlags|ControlFlags.DiscretionaryAclProtected,before.Owner,before.Group,before.SystemAcl,before.DiscretionaryAcl);
+    byte[] bytes=new byte[sealedDescriptor.BinaryLength];sealedDescriptor.GetBinaryForm(bytes,0);
+    GCHandle pinned=GCHandle.Alloc(bytes,GCHandleType.Pinned);
+    try {
+      // Preserve this exact DACL. Never replace unsafe grants or read content.
+      int status=NtSetSecurityObject(handle,0x80000004U,pinned.AddrOfPinnedObject());
+      if(status<0) throw new Win32Exception((int)RtlNtStatusToDosError(status));
+    } finally {pinned.Free();}
+    RawSecurityDescriptor after=Security(handle);
+    if(!PrivateEnough(after,true) || before.Owner.Value!=after.Owner.Value || String.Join(";",GrantRecords(before))!=String.Join(";",GrantRecords(after)))
+      throw new IOException("Private file grants changed while sealing inheritance");
+  }
   public static string Inspect(string path,bool directory,bool repair,bool protect) {
     Stage="inspect";path=FullPath(path);
     using(PinnedParent parent=Parent(path))
-    // A file metadata handle can coexist with live readers/writers. Only actual
-    // file mutation needs an exclusive content pin; directory TRAVERSE pins
-    // prevent a selected directory from moving while its DACL is inspected.
     using(SafeFileHandle handle=RelativeOpen(parent.Handle,parent.Leaf,directory,0x120080U|(directory?0x20U:0U)|((repair&&directory)?0x40000U:0U),directory?3U:7U)) {
-      Info original=Information(handle,directory);
-      if(PrivateEnough(Security(handle),protect)) return "private";
+      Info original=Information(handle,directory);RawSecurityDescriptor descriptor=Security(handle);
+      if(PrivateEnough(descriptor,protect)) return "private";
       if(!repair) return "unsafe";
       if(directory) {Stage="repair";RepairDirectory(handle);return "fixed";}
-      Stage="repair-attributes";RepairAttributes(original);
-      // Only an unsafe idle source needs a readable content pin. Publication
-      // creates a different private object; the old inode is never hardened.
-      using(SafeFileHandle source=RelativeOpen(parent.Handle,parent.Leaf,false,0x120081U,0U)) {
-        Info before=Information(source,false);
-        if(Identity(before)!=Identity(original)) throw new UnauthorizedAccessException();
-        if(PrivateEnough(Security(source),protect)) return "private";
-        if(before.links!=1) throw new UnauthorizedAccessException();
-        Stage="repair-copy";RepairFile(path,source,before);return "fixed";
+      // Windows cannot atomically replace an exclusively pinned source while
+      // excluding normal external publishers. Refuse unsafe leaves unchanged.
+      Stage="unsafe-file";if(!Private(descriptor,false)) throw new UnauthorizedAccessException();
+      // READ_DATA activates deny-delete sharing; no content is consumed.
+      // Existing read/write streams remain compatible with this pin.
+      using(SafeFileHandle selected=RelativeOpen(parent.Handle,parent.Leaf,false,0x160081U,3U)) {
+        if(Identity(Information(selected,false))!=Identity(original)) throw new UnauthorizedAccessException();
+        RawSecurityDescriptor current=Security(selected);
+        if(PrivateEnough(current,protect)) return "private";
+        if(!Private(current,false)) throw new UnauthorizedAccessException();
+        Stage="seal-private";SealPrivateFile(selected,current);return "fixed";
       }
     }
   }
-}` +
-  WINDOWS_DIRECTORY_POLICY_NATIVE_SOURCE +
-  WINDOWS_FILE_REPAIR_NATIVE_SOURCE;
+}` + WINDOWS_DIRECTORY_POLICY_NATIVE_SOURCE;
 
 export const WINDOWS_PRIVATE_FILE_POWERSHELL_SCRIPT = `
 $ErrorActionPreference='Stop'

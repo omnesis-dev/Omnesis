@@ -92,22 +92,56 @@ export async function execWindowsJob(
         failed = true;
       }
     });
-    proc.once("close", (code, signal) => {
-      clearTimeout(timer);
-      opts.signal?.removeEventListener("abort", abort);
-      const stdout = Buffer.concat(output).toString("utf8");
-      const stderr = Buffer.concat(errors).toString("utf8");
+    const recordExit = (code: number | null, signal: NodeJS.Signals | null): void => {
       if (!failed && (code !== 0 || signal !== null)) {
         failure = Object.assign(
-          new Error(stderr || `Command exited with ${signal ?? code ?? "unknown status"}`),
+          new Error(
+            Buffer.concat(errors).toString("utf8") ||
+              `Command exited with ${signal ?? code ?? "unknown status"}`,
+          ),
           { code, signal },
         );
         failed = true;
       }
+    };
+    const complete = (cleanupFailed: boolean, cleanupError?: unknown): void => {
+      clearTimeout(timer);
+      opts.signal?.removeEventListener("abort", abort);
+      const stdout = Buffer.concat(output).toString("utf8");
+      const stderr = Buffer.concat(errors).toString("utf8");
+      if (cleanupFailed) {
+        if (failed && failure instanceof Error && Object.isExtensible(failure))
+          Object.assign(failure, {
+            cause: new AggregateError(
+              [failure.cause, cleanupError].filter(Boolean),
+              "Windows job cleanup was not confirmed",
+            ),
+          });
+        else {
+          failure = failed
+            ? new AggregateError([failure, cleanupError], "Command and Windows job cleanup failed")
+            : new Error("Windows job cleanup was not confirmed", { cause: cleanupError });
+          failed = true;
+        }
+      }
       if (failed) {
-        if (failure instanceof Error) Object.assign(failure, { stdout, stderr });
+        if (failure instanceof Error && !Object.isExtensible(failure))
+          failure = new Error(failure.message, { cause: failure });
+        if (failure instanceof Error)
+          Object.assign(failure, {
+            stdout,
+            stderr,
+            ...(cleanupFailed ? { cleanupFailure: cleanupError } : {}),
+          });
         reject(failure);
       } else resolve({ stdout, stderr });
+    };
+    proc.once("close", (code, signal) => {
+      recordExit(code, signal);
+      void proc.jobClosed.then(
+        () => complete(false),
+        (error: unknown) => complete(true, error),
+      );
     });
     opts.signal?.addEventListener("abort", abort, { once: true });
     if (opts.signal?.aborted) abort();

@@ -61,7 +61,18 @@ function invocation(
       : operation.action === "copy-private"
         ? [operation.path, operation.source]
         : [operation.path];
-  if (paths.length > 5000 || paths.some((path) => path.includes("\0")))
+  if (operation.action === "read" || operation.action === "delete") {
+    if (operation.exactBasename !== undefined) paths.push(operation.exactBasename);
+    if (operation.exactParentBasename !== undefined) paths.push(operation.exactParentBasename);
+  } else if (
+    (operation.action === "create" || operation.action === "atomic") &&
+    operation.staging !== undefined
+  ) {
+    paths.push(operation.staging);
+  }
+  // JSON preserves lone UTF-16 surrogates, while Node filesystem paths replace
+  // them during UTF-8 encoding. Refuse names that could identify different files.
+  if (paths.length > 5000 || paths.some((path) => !path.isWellFormed() || path.includes("\0")))
     throw new Error("Invalid private file path");
   const metadata = Buffer.from(JSON.stringify(operation), "utf8");
   if (metadata.length > 2097152) throw new Error("Private file operation is too large");
@@ -94,7 +105,7 @@ function invocation(
   };
 }
 function resultBytes(result: WindowsJobResult): Buffer {
-  if (result.failure || result.exitCode !== 0) {
+  if (result.failure || result.exitCode !== 0 || Object.hasOwn(result, "cleanupFailure")) {
     const last = result.stderr.trim().split(/\r?\n/u).at(-1) ?? "";
     const diagnostic = /^(ENOENT|EEXIST|EPRIVATE)(?::([a-z-]+):([0-9]+))?$/u.exec(last);
     const code = diagnostic?.[1] ?? "EPRIVATE";
@@ -109,20 +120,26 @@ function resultBytes(result: WindowsJobResult): Buffer {
         code,
         ...(stage === undefined ? {} : { stage, nativeCode }),
         ...(result.failure ? { failure: result.failure } : {}),
+        ...(Object.hasOwn(result, "cleanupFailure")
+          ? { cleanupFailure: result.cleanupFailure }
+          : {}),
       },
     );
     const cleanup = /^OMNESIS_PRIVATE_CLEANUP_FAILED:([0-9]+)\r?$/mu.exec(result.stderr);
     if (cleanup) {
-      throw new AggregateError(
-        [
-          failure,
-          Object.assign(new Error("Private staging cleanup failed"), {
-            code: "EPRIVATE",
-            stage: "cleanup",
-            nativeCode: Number(cleanup[1]),
-          }),
-        ],
-        "Private write failed and staging cleanup failed",
+      throw Object.assign(
+        new AggregateError(
+          [
+            failure,
+            Object.assign(new Error("Private staging cleanup failed"), {
+              code: "EPRIVATE",
+              stage: "cleanup",
+              nativeCode: Number(cleanup[1]),
+            }),
+          ],
+          "Private write failed and staging cleanup failed",
+        ),
+        Object.hasOwn(result, "cleanupFailure") ? { cleanupFailure: result.cleanupFailure } : {},
       );
     }
     throw failure;
@@ -153,6 +170,9 @@ export async function readWindowsRegularFilePrefix(
     throw Object.assign(
       new Error("Could not safely read the Windows regular file", { cause: error }),
       {
+        ...(error !== null && typeof error === "object" && Object.hasOwn(error, "cleanupFailure")
+          ? { cleanupFailure: (error as { cleanupFailure: unknown }).cleanupFailure }
+          : {}),
         code:
           native.code === "ENOENT"
             ? "ENOENT"
@@ -340,7 +360,6 @@ export async function inspectWindowsPrivatePaths(
 }
 /** Prepare only missing directory suffixes, refusing unsafe existing ancestry or child inheritance. */
 export function prepareWindowsPrivateStorageDirectorySync(path: string): void {
-  if (!path.isWellFormed()) throw new Error("Invalid private file path");
   operateSync({ action: "storage-directory", path });
 }
 
@@ -359,7 +378,11 @@ export function secureWindowsPrivatePathSync(path: string, kind: WindowsPrivateP
     1,
   )[0]!;
   if (!result.private)
-    throw new Error("Private path requires a trusted Windows owner and safe ACL");
+    throw new Error(
+      kind === "file"
+        ? "Windows file access is unsafe and cannot be repaired online. Stop related processes, review the owner and access rules, and recreate the file privately before retrying."
+        : "Private directory requires a trusted Windows owner and safe ACL",
+    );
 }
 
 /** Commit plaintext only after successful source completion (including authentication). */
@@ -433,6 +456,8 @@ export async function writeWindowsPrivateFileAtomicStream(
   let failed = false,
     failure: unknown;
   const cleanupErrors: unknown[] = [];
+  let cleanupUncertain = false,
+    cleanupFailure: unknown;
   try {
     const result = await runWindowsOwnedProcess(run, Buffer.alloc(0), {
       inputStream: input,
@@ -448,13 +473,29 @@ export async function writeWindowsPrivateFileAtomicStream(
         }
       },
     });
+    cleanupUncertain = Object.hasOwn(result, "cleanupFailure");
+    cleanupFailure = result.cleanupFailure;
     if (sourceFailed) throw sourceError;
     opts.signal?.throwIfAborted();
     resultBytes(result);
     completed = true;
   } catch (error) {
     failed = true;
-    failure = error;
+    if (error !== null && typeof error === "object" && Object.hasOwn(error, "cleanupFailure")) {
+      cleanupUncertain = true;
+      cleanupFailure = (error as { cleanupFailure: unknown }).cleanupFailure;
+      failure = error;
+    } else
+      failure = cleanupUncertain
+        ? Object.assign(
+            new AggregateError(
+              [error, cleanupFailure],
+              "Private write failed; native cleanup was not confirmed",
+              { cause: error },
+            ),
+            { cleanupFailure },
+          )
+        : error;
   } finally {
     stopped = true;
     try {
@@ -469,19 +510,27 @@ export async function writeWindowsPrivateFileAtomicStream(
     }
     // No receipt means CREATE_NEW may have collided: never unlink by guess.
     // Cleanup verifies the receipt on its own held handle before deleting it.
-    if (!completed && receipt) {
+    // Never race a publisher whose owned process completion is unconfirmed.
+    if (!completed && receipt && !cleanupUncertain) {
       try {
         await operate({ action: "cleanup", path: scratch, identity: receipt });
       } catch (error) {
+        if (error !== null && typeof error === "object" && Object.hasOwn(error, "cleanupFailure")) {
+          cleanupUncertain = true;
+          cleanupFailure = (error as { cleanupFailure: unknown }).cleanupFailure;
+        }
         cleanupErrors.push(error);
       }
     }
   }
   if (cleanupErrors.length > 0) {
     if (failed)
-      throw new AggregateError(
-        [failure, ...cleanupErrors],
-        "Private write failed and staging cleanup failed",
+      throw Object.assign(
+        new AggregateError(
+          [failure, ...cleanupErrors],
+          "Private write failed and staging cleanup failed",
+        ),
+        cleanupUncertain ? { cleanupFailure } : {},
       );
     throw new AggregateError(cleanupErrors, "Private staging cleanup failed");
   }

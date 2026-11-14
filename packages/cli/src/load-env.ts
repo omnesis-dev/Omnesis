@@ -28,12 +28,13 @@ try {
     throw error;
   }
   // Bootstrap cannot trust even the variables needed to load the normal CLI.
-  // Native repair may replace the file, but never parses it or resumes this process.
+  // Native repair only seals already-private file inheritance; unsafe grants refuse.
+  // It never reads config bytes, parses them or resumes this process.
   try {
     repairBootstrapDotEnvAccess(error);
   } catch {
     console.error(
-      `Windows bootstrap permissions could not be repaired for ${error.path}. Review its ownership and access controls manually, then rerun doctor --fix-permissions. No .env contents were loaded.`,
+      `Windows bootstrap permissions could not be repaired for ${error.path}. Stop related processes, review its ownership and access controls, and recreate unsafe files privately before rerunning doctor --fix-permissions. No .env contents were loaded.`,
     );
     process.exit(2);
   }

@@ -5,7 +5,10 @@ import { beforeEach, describe, test, expect, vi } from "vitest";
 import type { ProcessResult } from "../process-launcher/index.js";
 
 const { run } = vi.hoisted(() => ({ run: vi.fn() }));
-vi.mock("../process-launcher/index.js", () => ({ processLauncher: () => ({ run }) }));
+vi.mock("../process-launcher/index.js", async (original) => ({
+  ...(await original<typeof import("../process-launcher/index.js")>()),
+  processLauncher: () => ({ run }),
+}));
 
 beforeEach(() => {
   run.mockReset();
@@ -19,6 +22,51 @@ function fakeModule(text = "recognized text") {
 }
 
 describe("TesseractOcr", () => {
+  test.each(["timeout", "aborted"] as const)(
+    "preserves %s metadata alongside unconfirmed cleanup",
+    async (failure) => {
+      const cleanupFailure = new Error("Synthetic unjoined OCR process");
+      run.mockResolvedValue({
+        exitCode: null,
+        signal: "SIGKILL",
+        stdout: enc("unconfirmed output"),
+        stderr: "",
+        failure,
+        failureMessage: "invented process diagnostic",
+        cleanupFailure,
+      });
+      const error = await new TesseractOcr()
+        .recognize(enc("private invented image"), "image/png")
+        .catch((error: unknown) => error);
+      expect(error).toMatchObject({
+        failure,
+        failureMessage: "invented process diagnostic",
+        signal: "SIGKILL",
+        exitCode: null,
+        cleanupFailure,
+      });
+      expect(error).not.toHaveProperty("stdout");
+      expect(error).not.toHaveProperty("input");
+      expect((error as Error).message).toMatch(failure === "timeout" ? /timed out/ : /aborted/);
+    },
+  );
+
+  test.each([undefined, new Error("Synthetic unjoined OCR process")])(
+    "refuses exit-zero output with an explicit cleanup marker: %s",
+    async (cleanupFailure) => {
+      run.mockResolvedValue({
+        exitCode: 0,
+        signal: null,
+        stdout: enc("unconfirmed output"),
+        stderr: "",
+        cleanupFailure,
+      });
+      await expect(new TesseractOcr().recognize(enc("image"), "image/png")).rejects.toMatchObject({
+        cleanupFailure,
+      });
+    },
+  );
+
   test("runs the installed binary with literal argv and unchanged binary stdin", async () => {
     const bytes = Uint8Array.from([0, 255, 13, 10, 128]);
     const signal = new AbortController().signal;

@@ -134,6 +134,7 @@ describe("Windows native worker cache boundary", () => {
       win32.join(payload.metadata.root, payload.metadata.sourceHash, "worker.exe"),
     );
     expect(job.args).toEqual(["job"]);
+    expect(job.parentBirth).toBe(payload.metadata.ownerBirth);
     expect(request.invocation.args.join(" ")).not.toContain("literal");
     expect(
       request.invocation.command.length +
@@ -146,8 +147,9 @@ describe("Windows native worker cache boundary", () => {
     expect(bootstrap).toHaveBeenCalledOnce();
     expect([...inherited.data.values()]).toEqual([
       {
-        format: 1,
+        format: 2,
         ownerPid: process.pid,
+        ownerBirth: payload.metadata.ownerBirth,
         sourceHash: payload.metadata.sourceHash,
         executable: job.command,
       },
@@ -228,6 +230,10 @@ describe("process-local verified cache inheritance", () => {
 
   it.each([
     "pid",
+    "birth-shape",
+    "birth-range",
+    "birth-zero",
+    "birth-missing",
     "hash",
     "root",
     "relative",
@@ -241,10 +247,14 @@ describe("process-local verified cache inheritance", () => {
     const { key, seed, invocation } = await primedSeed();
     const invalid = { ...seed };
     if (variant === "pid") invalid.ownerPid = process.pid + 1;
+    if (variant === "birth-shape") invalid.ownerBirth = 123;
+    if (variant === "birth-range") invalid.ownerBirth = "9223372036854775808";
+    if (variant === "birth-zero") invalid.ownerBirth = "0";
+    if (variant === "birth-missing") delete invalid.ownerBirth;
     if (variant === "hash") invalid.sourceHash = "b".repeat(64);
     if (variant === "root") invalid.executable = "C:\\unverified\\worker.exe";
     if (variant === "relative") invalid.executable = "worker.exe";
-    if (variant === "format") invalid.format = 2;
+    if (variant === "format") invalid.format = 3;
     if (variant === "shape") invalid.ownerPid = String(process.pid);
     if (variant === "missing") delete invalid.ownerPid;
     if (variant === "extra") invalid.unexpected = "invented task input";

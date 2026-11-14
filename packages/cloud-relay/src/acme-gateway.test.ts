@@ -9,6 +9,7 @@ import { connect } from "node:tls";
 import { once } from "node:events";
 import { X509Certificate } from "node:crypto";
 import { beforeEach, afterEach, expect, test, vi } from "vitest";
+import * as core from "@omnesis/core";
 import { localAcmeAuthority } from "../test/acme-authority.js";
 import { tlsFiles, listen, closeServer } from "../test/support.js";
 import { GatewayAcmeRenewal } from "./acme-gateway.js";
@@ -16,6 +17,7 @@ import { GatewayAcmeRenewal } from "./acme-gateway.js";
 let directory: string;
 beforeEach(async () => {
   directory = await mkdtemp(join(tmpdir(), "omnesis-acme-gateway-"));
+  if (process.platform === "win32") await core.ensurePrivateDirs([directory]);
 });
 afterEach(async () => {
   vi.restoreAllMocks();
@@ -75,6 +77,10 @@ test("real ACME JWS, nonce, DNS01 and CSR issuance renews a running gateway TLS 
     expect(await readFile(files.keyFile, "utf8")).toBe(key);
     if (process.platform !== "win32") {
       expect((await stat(join(directory, "account.key"))).mode & 0o777).toBe(0o600);
+    } else {
+      expect(
+        core.inspectWindowsPrivatePathSync(join(directory, "account.key"), "file").private,
+      ).toBe(true);
     }
     expect(authority.payloads.join("\n")).not.toContain("PRIVATE KEY");
     expect(authority.payloads.join("\n")).not.toContain(key);

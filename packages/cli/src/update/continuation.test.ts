@@ -3,6 +3,8 @@
 
 import { pathToFileURL } from "node:url";
 import { execFileSync } from "node:child_process";
+import { EventEmitter } from "node:events";
+import { PassThrough } from "node:stream";
 
 import {
   realpathSync,
@@ -18,8 +20,14 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, test, vi } from "vitest";
-import { UPDATE_LOCK_ENV } from "@omnesis/core";
+import {
+  UPDATE_LOCK_ENV,
+  acquireUpdateLock,
+  type UpdateLock,
+  type spawnWindowsJob,
+} from "@omnesis/core";
 import { inspectWindowsPrivatePathSync } from "@omnesis/platform/windows-private-file";
+import { UpdateProcessCleanupUncertainError } from "./process-cleanup.js";
 import { UpdateInterruptionRouter } from "./interruption.js";
 import {
   CONTAINER_OWN_ENV,
@@ -87,6 +95,12 @@ function offer(over: Partial<UpdateContinuation> = {}): UpdateContinuation {
 }
 
 const dirs: string[] = [];
+const heldLocks: UpdateLock[] = [];
+function runtimeOffer(configDir: string): UpdateContinuation {
+  const lock = acquireUpdateLock(configDir, { owner: "invented continuation fixture" });
+  heldLocks.push(lock);
+  return offer({ lockId: lock.id });
+}
 function tempDir(): string {
   // macOS hands back /var/folders/…, a symlink to /private/var/folders/…, and
   // the code under test resolves symlinks — as it must, since npm reaches a
@@ -97,6 +111,7 @@ function tempDir(): string {
   return dir;
 }
 afterEach(() => {
+  for (const lock of heldLocks.splice(0)) lock.release();
   for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
 });
 
@@ -560,18 +575,19 @@ describe("running the installed build on an offer", () => {
       fs.writeFileSync(seen, process.env.OMNESIS_UPDATE_LOCK_ID ?? "");
       process.exit(4);
     `;
+    const doc = runtimeOffer(configDir);
     const outcome = await launchContinuation({
       configDir,
-      doc: offer(),
+      doc,
       relay: {},
       command: {
         command: process.execPath,
         args: ["-e", script, continuationPath(configDir), seen],
-        env: { OMNESIS_UPDATE_LOCK_ID: LOCK_ID },
+        env: { OMNESIS_UPDATE_LOCK_ID: doc.lockId },
       },
     });
     expect(outcome).toEqual({ accepted: true, code: 4, signal: null });
-    expect(readFileSync(seen, "utf8")).toBe(LOCK_ID);
+    expect(readFileSync(seen, "utf8")).toBe(doc.lockId);
     // The offer never outlives the run that made it.
     expect(existsSync(continuationPath(configDir))).toBe(false);
   });
@@ -590,7 +606,7 @@ describe("running the installed build on an offer", () => {
     `;
       const outcome = await launchContinuation({
         configDir,
-        doc: offer(),
+        doc: runtimeOffer(configDir),
         relay: {},
         command: { command: process.execPath, args: ["-e", script, continuationPath(configDir)] },
       });
@@ -603,7 +619,7 @@ describe("running the installed build on an offer", () => {
     const configDir = tempDir();
     const outcome = await launchContinuation({
       configDir,
-      doc: offer(),
+      doc: runtimeOffer(configDir),
       relay: {},
       command: { command: process.execPath, args: ["-e", "process.exit(3)"] },
     });
@@ -619,7 +635,7 @@ describe("running the installed build on an offer", () => {
     await expect(
       launchContinuation({
         configDir,
-        doc: offer(),
+        doc: runtimeOffer(configDir),
         relay: {},
         command: { command: join(configDir, "no-such-cli"), args: [] },
       }),
@@ -644,7 +660,7 @@ describe("running the installed build on an offer", () => {
     `;
       const run = launchContinuation({
         configDir,
-        doc: offer(),
+        doc: runtimeOffer(configDir),
         relay,
         command: {
           command: process.execPath,
@@ -679,7 +695,7 @@ describe("running the installed build on an offer", () => {
     const relay: SignalRelay = {};
     const run = launchContinuation({
       configDir,
-      doc: offer(),
+      doc: runtimeOffer(configDir),
       relay,
       command: { command: process.execPath, args: ["-e", script, ready] },
     });
@@ -819,5 +835,78 @@ describe("handing over after the apply", () => {
     } finally {
       spy.mockRestore();
     }
+  });
+});
+
+describe("unconfirmed continuation cleanup", () => {
+  test.each(["accepted", "offered", "unreadable"] as const)(
+    "%s receipt cannot authorize parent fallback or lock reclamation",
+    async (receipt) => {
+      const configDir = tempDir();
+      const doc = runtimeOffer(configDir);
+      const cleanupError = new Error("invented helper crash without join");
+      const primaryError = new Error("invented target creation failure");
+      const child = Object.assign(new EventEmitter(), {
+        pid: 12345,
+        stdin: new PassThrough(),
+        stdout: new PassThrough(),
+        stderr: new PassThrough(),
+        kill: vi.fn(() => true),
+        jobReady: Promise.reject(primaryError),
+        jobClosed: Promise.reject(cleanupError),
+      });
+      void child.jobReady.catch(() => {});
+      void child.jobClosed.catch(() => {});
+      const spawnJob = vi.fn(() => {
+        queueMicrotask(() => {
+          if (receipt === "accepted") writeContinuation(configDir, { ...doc, state: "accepted" });
+          if (receipt === "unreadable") writeFileSync(continuationPath(configDir), "{broken");
+          child.emit("spawn");
+          child.emit("close", 1, null);
+        });
+        return child as unknown as ReturnType<typeof spawnWindowsJob>;
+      });
+      const relay: SignalRelay = {};
+      const result = launchContinuation({
+        configDir,
+        doc,
+        relay,
+        spawnJob,
+        command: { command: process.execPath, args: [] },
+      });
+      await expect(result).rejects.toBeInstanceOf(UpdateProcessCleanupUncertainError);
+      await expect(result).rejects.toMatchObject({
+        cause: expect.objectContaining({ errors: [primaryError, cleanupError] }),
+      });
+      expect(existsSync(continuationPath(configDir))).toBe(true);
+      expect(relay.deliver).toBeUndefined();
+      // The parent cannot retire its host transaction while the child's state
+      // is unknown, even if the offer was absent or undecodable.
+      heldLocks.at(-1)!.release();
+      expect(() => acquireUpdateLock(configDir, { owner: "invented competing update" })).toThrow();
+    },
+  );
+
+  test("handover propagates uncertainty without another hold/reclaim or fallback", async () => {
+    const error = new UpdateProcessCleanupUncertainError(
+      new Error("invented abort"),
+      new Error("invented unjoined tree"),
+    );
+    const held = { setStep: vi.fn(), reclaim: vi.fn(() => true) };
+    const router = new UpdateInterruptionRouter(() => {
+      throw new Error("unexpected signal");
+    });
+    await expect(
+      handOverAfterApply({
+        offer: offer(),
+        continueAfterApply: () => Promise.reject(error),
+        interruptions: router,
+        lock: held,
+        targetLabel: "v0.5.0",
+      }),
+    ).rejects.toBe(error);
+    expect(held.setStep).toHaveBeenCalledTimes(1);
+    expect(held.reclaim).not.toHaveBeenCalled();
+    router.claim(() => {})();
   });
 });

@@ -9,6 +9,7 @@ import { cloudflareDnsProvider } from "./cloudflare-dns.js";
 import { createIndependentDnsBroker } from "./independent-dns-server.js";
 import { loadRelayRecoveryPolicy } from "./relay-recovery-runtime.js";
 import { readPrivateJson } from "./google-credentials.js";
+import { readPrivateText } from "./private-inputs.js";
 import type { AddressInfo } from "node:net";
 
 const dnsCredentials = [
@@ -77,7 +78,7 @@ export async function startIndependentDnsDaemon(
       dns,
       tls:
         certFile && keyFile
-          ? { cert: await readFile(certFile, "utf8"), key: await readFile(keyFile, "utf8") }
+          ? { cert: await readFile(certFile, "utf8"), key: await readPrivateText(keyFile) }
           : undefined,
     });
   } catch (error) {

@@ -23,6 +23,10 @@ it.each([
   String.raw`C:\private\state.db:stream`,
   String.raw`C:\private\CON.db`,
   String.raw`C:\private\COM¹.db`,
+  String.raw`C:\private\CONIN$`,
+  String.raw`C:\private\cOnOuT$`,
+  String.raw`C:\CONIN$\state.db`,
+  String.raw`C:\private\CONOUT$\state.db`,
   String.raw`C:\private\state.db.`,
   "C:\\private\\trailing ",
   String.raw`C:\alias.\state.db`,
@@ -66,4 +70,14 @@ it("refuses ill-formed Unicode before Node and native path encodings could disag
   const path = "C:\\private\\" + String.fromCharCode(0xd800) + ".db";
   expect(() => prepareWindowsRelayDatabase(path)).toThrow("invalid Unicode");
   expect(guards.prepare).not.toHaveBeenCalled();
+});
+
+it.each([
+  String.raw`C:\private\CONIN$backup.db`,
+  String.raw`C:\private\pre-CONOUT$`,
+  String.raw`C:\private\console.db`,
+])("keeps ordinary non-exact console-like filename %j", (path) => {
+  expect(prepareWindowsRelayDatabase(path)).toBe(path);
+  expect(guards.prepare).toHaveBeenCalledWith(String.raw`C:\private`);
+  expect(guards.stat).toHaveBeenCalledTimes(4);
 });

@@ -14,7 +14,10 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterAll, afterEach, beforeEach, describe, expect, test } from "vitest";
+import { afterAll, afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+import * as core from "@omnesis/core";
+import { TlsIssuerCleanupUnconfirmedError } from "./issuer-cleanup.js";
+import * as persistence from "./persistence.js";
 import { TlsLifecycleService, type TlsMinter, type TlsPem } from "./service.js";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -139,6 +142,7 @@ interface Rig {
   settings: { autoRenew: boolean; renewBeforeDays: number };
 }
 
+const services: TlsLifecycleService[] = [];
 let rig: Rig;
 let configDir: string;
 
@@ -146,6 +150,7 @@ function writePair(dir: string, pair: TlsPem, cert = "cert.pem", key = "key.pem"
   mkdirSync(join(dir, "tls"), { recursive: true });
   writeFileSync(join(dir, "tls", cert), pair.cert);
   writeFileSync(join(dir, "tls", key), pair.key);
+  if (process.platform === "win32") core.ensurePrivateFileSync(join(dir, "tls", key));
 }
 
 function build(
@@ -186,14 +191,23 @@ function build(
     now: () => clock.now,
     onRotation: (fp) => rotations.push(fp),
   });
+  services.push(service);
   return { configDir, service, activations, rotations, minter, clock, settings };
 }
 
 beforeEach(() => {
+  core.clearSecretFileKeyCacheForTests();
+  vi.stubEnv("OMNESIS_SECRET_STORE", "file");
   configDir = mkdtempSync(join(scratch, "config-"));
   writePair(configDir, outgoing);
 });
-afterEach(() => rmSync(configDir, { recursive: true, force: true }));
+afterEach(async () => {
+  vi.restoreAllMocks();
+  vi.unstubAllEnvs();
+  await Promise.all(services.splice(0).map((service) => service.close()));
+  core.clearSecretFileKeyCacheForTests();
+  rmSync(configDir, { recursive: true, force: true });
+});
 
 const signal = () => new AbortController().signal;
 
@@ -409,6 +423,7 @@ describe("renew on request", () => {
     rig.minter.next = () => new Promise<TlsPem>((resolve) => (release = resolve));
     const first = rig.service.renew(signal(), { force: true });
     const second = rig.service.renew(signal(), { force: true });
+    await vi.waitFor(() => expect(rig.minter.calls).toBe(1));
     release(fresh);
     const [a, b] = await Promise.all([first, second]);
     expect(a.ok && b.ok).toBe(true);
@@ -635,4 +650,170 @@ test("separate public SNI setup can inspect actual default leaf aliases and wild
   expect(rig.service.coversHostname("phone.private.example.test")).toBe(true);
   expect(rig.service.coversHostname("deep.phone.private.example.test")).toBe(false);
   expect(rig.service.coversHostname("gateway.relay.example.test")).toBe(false);
+});
+
+describe("private asynchronous persistence", () => {
+  test("Windows reload refuses an unsafe private key before activation", async () => {
+    rig = build();
+    writePair(configDir, fresh);
+    const reader = vi
+      .spyOn(core, "readSecretTextFile")
+      .mockRejectedValue(new Error("Invented unsafe key"));
+    const descriptor = Object.getOwnPropertyDescriptor(process, "platform")!;
+    Object.defineProperty(process, "platform", { ...descriptor, value: "win32" });
+    try {
+      expect(await rig.service.activateFromDisk()).toMatchObject({
+        error: expect.stringContaining("Invented unsafe key"),
+      });
+      expect(reader).toHaveBeenCalledWith(join(configDir, "tls", "key.pem"), { configDir });
+      expect(rig.activations).toEqual([]);
+    } finally {
+      Object.defineProperty(process, "platform", descriptor);
+    }
+  });
+
+  test("a held private publication yields the event loop and close joins it before cleanup", async () => {
+    rig = build();
+    const publish = persistence.writeTlsMaterial;
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const writer = vi.spyOn(persistence, "writeTlsMaterial").mockImplementation(async (...args) => {
+      await held;
+      await publish(...args);
+    });
+    const renewal = rig.service.renew(signal(), { force: true });
+    await vi.waitFor(() => expect(writer).toHaveBeenCalledTimes(1));
+    const reload = rig.service.activateFromDisk().catch((error: unknown) => error);
+    let closed = false;
+    const close = rig.service.close().then(() => {
+      closed = true;
+    });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(closed).toBe(false);
+    expect(rig.activations).toEqual([]);
+    release();
+    await renewal;
+    await close;
+    expect(await reload).toMatchObject({ message: "The TLS lifecycle is closed." });
+    const count = rig.activations.length;
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(rig.activations).toHaveLength(count);
+    await expect(rig.service.activateFromDisk()).rejects.toThrow("closed");
+  });
+
+  test("a reload queued behind renewal reads the completely published replacement", async () => {
+    rig = build();
+    const publish = persistence.writeTlsMaterial;
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const writer = vi.spyOn(persistence, "writeTlsMaterial").mockImplementation(async (...args) => {
+      await held;
+      await publish(...args);
+    });
+    const renewal = rig.service.renew(signal(), { force: true });
+    await vi.waitFor(() => expect(writer).toHaveBeenCalledTimes(1));
+    const reload = rig.service.activateFromDisk();
+    expect(rig.activations).toEqual([]);
+    release();
+    expect((await renewal).ok).toBe(true);
+    expect(await reload).toBeNull();
+    expect(rig.activations).toEqual([fresh]);
+    expect(readFileSync(join(configDir, "tls", "key.pem"), "utf8")).toBe(fresh.key);
+  });
+
+  test("failed Windows certificate publication restores the previous key and permits another renewal", async () => {
+    rig = build();
+    const certPath = join(configDir, "tls", "cert.pem"),
+      keyPath = join(configDir, "tls", "key.pem");
+    vi.spyOn(core, "writeSecretTextFile").mockImplementation((path, data) => {
+      writeFileSync(path, data);
+      return Promise.resolve({ encrypted: false });
+    });
+    let failed = false;
+    vi.spyOn(core, "atomicWriteFile").mockImplementation((path, data) => {
+      if (path === certPath && !failed) {
+        failed = true;
+        return Promise.reject(new Error("Invented certificate publication failure"));
+      }
+      writeFileSync(path, data);
+      return Promise.resolve();
+    });
+    const descriptor = Object.getOwnPropertyDescriptor(process, "platform")!;
+    Object.defineProperty(process, "platform", { ...descriptor, value: "win32" });
+    try {
+      const outcome = await rig.service.renew(signal(), { force: true });
+      expect(outcome).toMatchObject({
+        ok: false,
+        reason: expect.stringContaining("Invented certificate publication failure"),
+      });
+      expect(readFileSync(keyPath, "utf8")).toBe(outgoing.key);
+      expect(readFileSync(certPath, "utf8")).toBe(outgoing.cert);
+      expect(rig.activations).toEqual([]);
+      expect((await rig.service.renew(signal(), { force: true })).ok).toBe(true);
+      expect(rig.activations).toEqual([fresh]);
+    } finally {
+      Object.defineProperty(process, "platform", descriptor);
+    }
+  });
+
+  test("close joins a cancelled issuer and never activates its late result", async () => {
+    rig = build();
+    let release!: (pair: TlsPem) => void;
+    rig.minter.next = () =>
+      new Promise<TlsPem>((resolve) => {
+        release = resolve;
+      });
+    const renewal = rig.service.renew(signal(), { force: true });
+    await vi.waitFor(() => expect(rig.minter.calls).toBe(1));
+    let closed = false;
+    const close = rig.service.close().then(() => {
+      closed = true;
+    });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(closed).toBe(false);
+    release(fresh);
+    expect((await renewal).ok).toBe(false);
+    await close;
+    expect(rig.activations).toEqual([]);
+    expect(readFileSync(join(configDir, "tls", "key.pem"), "utf8")).toBe(outgoing.key);
+  });
+
+  test("issuer cleanup uncertainty stays sticky through refused work and repeated close", async () => {
+    rig = build();
+    // The injected issuer creates no process; this fixture owns its expected rejecting close.
+    services.splice(services.indexOf(rig.service), 1);
+    const cleanup = new Error("Invented issuer join failure");
+    rig.minter.next = () =>
+      Promise.reject(
+        Object.assign(new Error("Invented issuer failure"), { cleanupFailure: cleanup }),
+      );
+    expect((await rig.service.renew(signal(), { force: true })).ok).toBe(false);
+    await expect(rig.service.renew(signal(), { force: true })).rejects.toBeInstanceOf(
+      TlsIssuerCleanupUnconfirmedError,
+    );
+    await expect(rig.service.activateFromDisk()).rejects.toBeInstanceOf(
+      TlsIssuerCleanupUnconfirmedError,
+    );
+    expect(rig.minter.calls).toBe(1);
+    expect(rig.activations).toEqual([]);
+    await expect(rig.service.close()).rejects.toBeInstanceOf(TlsIssuerCleanupUnconfirmedError);
+    await expect(rig.service.close()).rejects.toBeInstanceOf(TlsIssuerCleanupUnconfirmedError);
+  });
+
+  test.skipIf(process.platform !== "win32")(
+    "renewal protects Windows key, certificate and lifecycle record",
+    async () => {
+      rig = build();
+      expect((await rig.service.renew(signal(), { force: true })).ok).toBe(true);
+      for (const name of ["key.pem", "cert.pem", "lifecycle.json"]) {
+        expect(
+          core.inspectWindowsPrivatePathSync(join(configDir, "tls", name), "file").private,
+        ).toBe(true);
+      }
+    },
+  );
 });

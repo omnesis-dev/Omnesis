@@ -5,15 +5,18 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  lstatSync,
+  renameSync,
   readdirSync,
   rmSync,
   statSync,
   symlinkSync,
   writeFileSync,
 } from "node:fs";
+import { lstat as asyncLstat, writeFile as asyncWriteFile } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { tmpdir } from "node:os";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createPrivateScratch, createPrivateScratchAsync } from "./private-scratch.js";
 import { openSqliteSnapshot } from "./sqlite-snapshot.js";
 
@@ -22,6 +25,23 @@ vi.mock("node:os", async (original) => {
   const actual = await original<typeof import("node:os")>();
   state.originalTmpdir = actual.tmpdir();
   return { ...actual, tmpdir: () => state.base || actual.tmpdir() };
+});
+
+vi.mock("node:fs", async (original) => {
+  const fs = await original<typeof import("node:fs")>();
+  return { ...fs, lstatSync: vi.fn(fs.lstatSync), writeFileSync: vi.fn(fs.writeFileSync) };
+});
+vi.mock("node:fs/promises", async (original) => {
+  const fs = await original<typeof import("node:fs/promises")>();
+  return { ...fs, lstat: vi.fn(fs.lstat), writeFile: vi.fn(fs.writeFile) };
+});
+beforeEach(async () => {
+  const fs = await vi.importActual<typeof import("node:fs")>("node:fs"),
+    promises = await vi.importActual<typeof import("node:fs/promises")>("node:fs/promises");
+  vi.mocked(lstatSync).mockReset().mockImplementation(fs.lstatSync);
+  vi.mocked(writeFileSync).mockReset().mockImplementation(fs.writeFileSync);
+  vi.mocked(asyncLstat).mockReset().mockImplementation(promises.lstat);
+  vi.mocked(asyncWriteFile).mockReset().mockImplementation(promises.writeFile);
 });
 
 function setup(): string {
@@ -35,6 +55,111 @@ afterEach(() => {
 });
 
 describe("private scratch", () => {
+  it.each(["sync", "async"] as const)(
+    "%s recovery keeps a process-join fence after parent death and ordinary scratch remains reclaimable",
+    async (kind) => {
+      const root = setup();
+      const guarded =
+        kind === "sync"
+          ? createPrivateScratch("guarded", { requiresProcessJoin: true })
+          : await createPrivateScratchAsync("guarded", { requiresProcessJoin: true });
+      const marker = ".process-join-required";
+      expect(statSync(join(guarded.path, marker)).isFile()).toBe(true);
+      if (process.platform !== "win32")
+        expect(statSync(join(guarded.path, marker)).mode & 0o777).toBe(0o600);
+      const ordinary = createPrivateScratch("ordinary");
+      const retained = join(root, "2147483647-retained"),
+        abandoned = join(root, "2147483647-ordinary");
+      renameSync(guarded.path, retained);
+      renameSync(ordinary.path, abandoned);
+      writeFileSync(join(retained, "input"), "invented retained subprocess input");
+      const kill = process.kill.bind(process);
+      vi.spyOn(process, "kill").mockImplementation((pid, signal) => {
+        if (pid === 2147483647) throw Object.assign(new Error("gone"), { code: "ESRCH" });
+        return kill(pid, signal);
+      });
+      const next =
+        kind === "sync" ? createPrivateScratch("next") : await createPrivateScratchAsync("next");
+      expect(existsSync(retained)).toBe(true);
+      expect(existsSync(abandoned)).toBe(false);
+      await Promise.resolve(next.cleanup());
+      const joined =
+        kind === "sync"
+          ? createPrivateScratch("joined", { requiresProcessJoin: true })
+          : await createPrivateScratchAsync("joined", { requiresProcessJoin: true });
+      await Promise.resolve(joined.cleanup());
+      expect(existsSync(joined.path)).toBe(false);
+      // An odd marker is still a fence, never evidence of a completed process.
+      rmSync(join(retained, marker));
+      mkdirSync(join(retained, marker));
+      const again =
+        kind === "sync" ? createPrivateScratch("again") : await createPrivateScratchAsync("again");
+      expect(existsSync(retained)).toBe(true);
+      await Promise.resolve(again.cleanup());
+      // A dangling marker still exists lexically; stat/exists would miss it.
+      rmSync(join(retained, marker), { recursive: true, force: true });
+      symlinkSync(join(state.base, "absent-marker-target"), join(retained, marker), "junction");
+      expect(lstatSync(join(retained, marker)).isSymbolicLink()).toBe(true);
+      const dangling =
+        kind === "sync"
+          ? createPrivateScratch("dangling")
+          : await createPrivateScratchAsync("dangling");
+      expect(existsSync(retained)).toBe(true);
+      await Promise.resolve(dangling.cleanup());
+    },
+  );
+
+  it.each(["sync", "async"] as const)(
+    "%s recovery retains an entry when its join-fence metadata cannot be inspected",
+    async (kind) => {
+      const root = setup(),
+        scratch = createPrivateScratch("guarded", { requiresProcessJoin: true }),
+        retained = join(root, "2147483647-unreadable");
+      renameSync(scratch.path, retained);
+      const denied = Object.assign(new Error("Invented marker metadata refusal"), {
+          code: "EACCES",
+        }),
+        kill = process.kill.bind(process);
+      vi.spyOn(process, "kill").mockImplementation((pid, signal) => {
+        if (pid === 2147483647) {
+          if (kind === "sync")
+            vi.mocked(lstatSync).mockImplementationOnce(() => {
+              throw denied;
+            });
+          else vi.mocked(asyncLstat).mockRejectedValueOnce(denied);
+          throw Object.assign(new Error("gone"), { code: "ESRCH" });
+        }
+        return kill(pid, signal);
+      });
+      const next =
+        kind === "sync" ? createPrivateScratch("next") : await createPrivateScratchAsync("next");
+      expect(existsSync(retained)).toBe(true);
+      await Promise.resolve(next.cleanup());
+    },
+  );
+
+  it.each(["sync", "async"] as const)(
+    "%s join-marker failure rejects before scratch can be returned to a child launcher",
+    async (kind) => {
+      const root = setup(),
+        failure = new Error("Invented join marker write failure");
+      if (kind === "sync") {
+        vi.mocked(writeFileSync).mockImplementationOnce(() => {
+          throw failure;
+        });
+        expect(() => createPrivateScratch("guarded", { requiresProcessJoin: true })).toThrow(
+          failure,
+        );
+      } else {
+        vi.mocked(asyncWriteFile).mockRejectedValueOnce(failure);
+        await expect(
+          createPrivateScratchAsync("guarded", { requiresProcessJoin: true }),
+        ).rejects.toBe(failure);
+      }
+      expect(readdirSync(root)).toEqual([]);
+    },
+  );
+
   it("asynchronously prepares private independent children and idempotent cleanup", async () => {
     const root = setup();
     const [first, second] = await Promise.all([

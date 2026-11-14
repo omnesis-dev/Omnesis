@@ -32,6 +32,8 @@ export interface ProcessResult {
   failure?: "spawn" | "timeout" | "aborted";
   /** The start error's message when `failure` is `"spawn"`. */
   failureMessage?: string;
+  /** Owned process termination could not be confirmed; retain any files still in use. */
+  cleanupFailure?: unknown;
 }
 
 /** Runs an external program to completion. */

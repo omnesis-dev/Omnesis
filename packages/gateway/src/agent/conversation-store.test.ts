@@ -8,6 +8,8 @@ import { join, sep } from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import * as core from "@omnesis/core";
+
 import { FsConversationStore, deriveTitle, type ConversationRecord } from "./conversation-store.js";
 import { originIsPermanent } from "./conversation-retention.js";
 import { paginateVisibleConversationMessages } from "./service.js";
@@ -31,12 +33,7 @@ function tmpDir(): string {
 describe("FsConversationStore", () => {
   let dirs: string[] = [];
   afterEach(() => {
-    for (const d of dirs)
-      try {
-        rmSync(d, { recursive: true, force: true });
-      } catch {
-        /* ignore */
-      }
+    for (const d of dirs) rmSync(d, { recursive: true, force: true });
     dirs = [];
   });
 
@@ -63,6 +60,49 @@ describe("FsConversationStore", () => {
       ...over,
     };
   }
+
+  it("Windows private publication failure preserves the previous transcript and summary", async () => {
+    const dir = tmpDir();
+    dirs.push(dir);
+    const store = new FsConversationStore(dir);
+    await store.save(rec());
+    const previousIndex = await readFile(join(dir, ".summary-index.v4"), "utf8");
+    const failure = new Error("Invented transcript publication failure");
+    const writer = vi.spyOn(core, "atomicWriteFile").mockRejectedValue(failure);
+    const descriptor = Object.getOwnPropertyDescriptor(process, "platform")!;
+    Object.defineProperty(process, "platform", { ...descriptor, value: "win32" });
+    try {
+      await expect(store.save(rec({ title: "replacement turn" }))).rejects.toBe(failure);
+      expect(writer).toHaveBeenCalledWith(
+        expect.stringMatching(/s_one\.json$/),
+        expect.stringContaining("replacement turn"),
+        { mode: 0o600 },
+      );
+    } finally {
+      Object.defineProperty(process, "platform", descriptor);
+      writer.mockRestore();
+    }
+    expect((await store.load("s_one"))?.title).toBe("first turn");
+    expect(await readFile(join(dir, ".summary-index.v4"), "utf8")).toBe(previousIndex);
+    expect((await readdir(dir)).sort()).toEqual([".summary-index.v4", "s_one.json"]);
+    await store.save(rec({ title: "recovered turn" }));
+    expect((await store.load("s_one"))?.title).toBe("recovered turn");
+  });
+
+  it.skipIf(process.platform !== "win32")(
+    "publishes private Windows transcripts and summary indexes through replacement",
+    async () => {
+      const dir = tmpDir();
+      dirs.push(dir);
+      const store = new FsConversationStore(dir);
+      await store.save(rec());
+      await store.save(rec({ title: "replacement turn" }));
+      for (const file of ["s_one.json", ".summary-index.v4"]) {
+        expect(core.inspectWindowsPrivatePathSync(join(dir, file), "file").private).toBe(true);
+      }
+      expect((await store.load("s_one"))?.title).toBe("replacement turn");
+    },
+  );
 
   it("save then load round-trips a record", async () => {
     const s = fresh();

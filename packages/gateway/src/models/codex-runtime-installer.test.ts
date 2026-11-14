@@ -8,18 +8,21 @@ import {
   mkdir,
   readFile,
   rm,
+  rename,
   symlink,
   utimes,
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
+import { createRequire } from "node:module";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { CODEX_RUNTIME_COMPAT } from "@omnesis/agent";
+import { CODEX_RUNTIME_COMPAT, CodexAppServerRuntime } from "@omnesis/agent";
 import {
   codexPaths,
+  atomicWriteFile,
   execWindowsJob,
   inspectWindowsPrivatePathSync,
   inspectWindowsPrivatePaths,
@@ -33,7 +36,19 @@ import { CODEX_RUNTIME_LOCK } from "./codex-runtime-lock.js";
 
 const roots: string[] = [];
 
+vi.mock("node:fs/promises", async (original) => {
+  const actual = await original<typeof import("node:fs/promises")>();
+  return { ...actual, rename: vi.fn(actual.rename) };
+});
+vi.mock("@omnesis/core", async (original) => {
+  const actual = await original<typeof import("@omnesis/core")>();
+  return { ...actual, atomicWriteFile: vi.fn(actual.atomicWriteFile) };
+});
+
 afterEach(async () => {
+  vi.mocked(rename).mockReset();
+  vi.mocked(atomicWriteFile).mockReset();
+  vi.restoreAllMocks();
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
 
@@ -41,6 +56,29 @@ async function tempConfig(): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), "omnesis-codex-installer-"));
   roots.push(root);
   return root;
+}
+
+async function releaseSyntheticLock(paths: ReturnType<typeof codexPaths>): Promise<void> {
+  // These invented failed children have no live process; release only the fixture lock.
+  const lockfile = createRequire(import.meta.url)("proper-lockfile") as {
+    unlock(path: string, options: { realpath: boolean; lockfilePath: string }): Promise<void>;
+  };
+  await lockfile
+    .unlock(paths.runtimeStore, { realpath: false, lockfilePath: paths.runtimeUpdateLock })
+    .catch(() => {});
+}
+
+async function failAfterPointerPublication(path: string, failure: Error): Promise<void> {
+  const native = await vi.importActual<typeof import("node:fs/promises")>("node:fs/promises");
+  const core = await vi.importActual<typeof import("@omnesis/core")>("@omnesis/core");
+  vi.mocked(rename).mockImplementation(async (from, to) => {
+    await native.rename(from, to);
+    if (to === path) throw failure;
+  });
+  vi.mocked(atomicWriteFile).mockImplementation(async (target, data, options) => {
+    await core.atomicWriteFile(target, data, options);
+    if (target === path) throw failure;
+  });
 }
 
 async function materializeRuntime(prefix: string, opts: { bin?: string; version?: string } = {}) {
@@ -75,6 +113,281 @@ function fakeRunner(
 }
 
 describe("CodexRuntimeInstaller", () => {
+  it("keeps the lease through a recovery version probe and its unconfirmed cleanup", async () => {
+    const root = await tempConfig();
+    const paths = codexPaths(root);
+    const lockfile = createRequire(import.meta.url)("proper-lockfile") as {
+      lock(path: string, options: unknown): Promise<() => Promise<void>>;
+    };
+    const acquire = lockfile.lock;
+    let releases = 0;
+    vi.spyOn(lockfile, "lock").mockImplementation(async (path, options) => {
+      const release = await acquire(path, options);
+      return () => {
+        releases += 1;
+        return release();
+      };
+    });
+    let startProbe!: () => void;
+    const probeStarted = new Promise<void>((resolve) => {
+      startProbe = resolve;
+    });
+    let rejectProbe!: (error: unknown) => void;
+    const probe = new Promise<{ stdout: string; stderr: string }>((_resolve, reject) => {
+      rejectProbe = reject;
+    });
+    let versions = 0;
+    const run = fakeRunner([]);
+    const installer = new CodexRuntimeInstaller({
+      configDir: root,
+      npmCommand: "synthetic-npm",
+      compatibilityProbe: () => Promise.resolve(),
+      runner: (command, args, options) => {
+        if (command !== "synthetic-npm" && ++versions === 3) {
+          startProbe();
+          return probe;
+        }
+        return run(command, args, options);
+      },
+    });
+    const prepared = await installer.prepare();
+    const failure = Object.assign(new Error("Synthetic recovery version probe unjoined"), {
+      cleanupFailure: undefined,
+    });
+    await failAfterPointerPublication(
+      paths.runtimeCurrent,
+      new Error("Synthetic post-publication durability failure"),
+    );
+    const completion = installer.commit(prepared);
+    const rejection = expect(completion).rejects.toMatchObject({ cause: failure });
+    try {
+      await Promise.race([
+        probeStarted,
+        completion.then(() => {
+          throw new Error("Recovery probe did not start");
+        }),
+      ]);
+      const releasesWhileRunning = releases;
+      const lockPresent = await lstat(paths.runtimeUpdateLock).then(
+        (info) => info.isDirectory(),
+        () => false,
+      );
+      rejectProbe(failure);
+      await rejection;
+      expect(releasesWhileRunning).toBe(0);
+      expect(lockPresent).toBe(true);
+      expect(releases).toBe(0);
+      expect((await lstat(paths.runtimeUpdateLock)).isDirectory()).toBe(true);
+    } finally {
+      rejectProbe(failure);
+      await completion.catch(() => {});
+      await releaseSyntheticLock(paths);
+    }
+  });
+
+  it.each(["validation", "abort"] as const)(
+    "joins the default compatibility probe and preserves both failures after %s",
+    async (phase) => {
+      const root = await tempConfig();
+      const paths = codexPaths(root);
+      const validationFailure = new Error("Synthetic compatibility validation failed");
+      const cleanupFailure = new Error("Synthetic compatibility child did not join");
+      const abort = new AbortController();
+      let start!: () => void;
+      let rejectValidation!: (error: unknown) => void;
+      const started = new Promise<void>((resolve) => {
+        start = resolve;
+      });
+      vi.spyOn(CodexAppServerRuntime.prototype, "listModels").mockImplementation(() => {
+        start();
+        return phase === "validation"
+          ? Promise.reject(validationFailure)
+          : new Promise<unknown[]>((_resolve, reject) => {
+              rejectValidation = reject;
+            });
+      });
+      const disposal = vi
+        .spyOn(CodexAppServerRuntime.prototype, "dispose")
+        .mockRejectedValue(cleanupFailure);
+      const installer = new CodexRuntimeInstaller({
+        configDir: root,
+        npmCommand: "synthetic-npm",
+        runner: fakeRunner([]),
+        id: () => "synthetic-default-probe",
+      });
+      const preparation = installer.prepare(abort.signal);
+      const rejected = expect(preparation).rejects.toMatchObject({
+        name: "CodexGenerationCleanupError",
+        cleanupFailure: true,
+        cause: { errors: [validationFailure, cleanupFailure] },
+      });
+      try {
+        await Promise.race([
+          started,
+          preparation.then(() => {
+            throw new Error("Compatibility probe was not started");
+          }),
+        ]);
+        if (phase === "abort") {
+          abort.abort();
+          rejectValidation(validationFailure);
+        }
+        await rejected;
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        expect(disposal).toHaveBeenCalledTimes(phase === "abort" ? 2 : 1);
+        expect(
+          (await lstat(join(paths.runtimeStaging, "synthetic-default-probe"))).isDirectory(),
+        ).toBe(true);
+        expect((await lstat(paths.runtimeUpdateLock)).isDirectory()).toBe(true);
+      } finally {
+        await releaseSyntheticLock(paths);
+      }
+    },
+  );
+
+  it("does not adopt a pointer or release ownership after unconfirmed pointer publication", async () => {
+    const root = await tempConfig();
+    const paths = codexPaths(root);
+    const calls: Array<{ command: string; args: readonly string[] }> = [];
+    const installer = new CodexRuntimeInstaller({
+      configDir: root,
+      npmCommand: "synthetic-npm",
+      runner: fakeRunner(calls),
+      compatibilityProbe: () => Promise.resolve(),
+    });
+    const prepared = await installer.prepare();
+    const failure = Object.assign(new Error("Synthetic pointer completion unknown"), {
+      cleanupFailure: new Error("Synthetic unjoined publisher"),
+    });
+    const native = await vi.importActual<typeof import("node:fs/promises")>("node:fs/promises");
+    const core = await vi.importActual<typeof import("@omnesis/core")>("@omnesis/core");
+    vi.mocked(rename).mockImplementation(async (from, to) => {
+      await native.rename(from, to);
+      if (to === paths.runtimeCurrent) throw failure;
+    });
+    vi.mocked(atomicWriteFile).mockImplementation(async (path, data, options) => {
+      await core.atomicWriteFile(path, data, options);
+      if (path === paths.runtimeCurrent) throw failure;
+    });
+    try {
+      const priorProbes = calls.length;
+      await expect(installer.commit(prepared)).rejects.toMatchObject({ cause: failure });
+      expect(calls).toHaveLength(priorProbes + 1);
+      expect(
+        (
+          await lstat(join(paths.runtimeVersions, `${prepared.version}--${prepared.id}`))
+        ).isDirectory(),
+      ).toBe(true);
+      expect((await lstat(paths.runtimeUpdateLock)).isDirectory()).toBe(true);
+      await expect(installer.readActive()).rejects.toMatchObject({ cause: failure });
+    } finally {
+      await releaseSyntheticLock(paths);
+    }
+  });
+
+  it.each(["commit", "read-active"] as const)(
+    "keeps generation files and ownership when a %s version probe cannot join",
+    async (phase) => {
+      const root = await tempConfig();
+      const paths = codexPaths(root);
+      const calls: Array<{ command: string; args: readonly string[] }> = [];
+      const run = fakeRunner(calls);
+      let failProbe = false;
+      const failure = Object.assign(new Error("Synthetic version command failure"), {
+        cleanupFailure: new Error("Synthetic unjoined child"),
+      });
+      const installer = new CodexRuntimeInstaller({
+        configDir: root,
+        npmCommand: "synthetic-npm",
+        compatibilityProbe: () => Promise.resolve(),
+        runner: (command, args, options) =>
+          failProbe ? Promise.reject(failure) : run(command, args, options),
+      });
+      try {
+        const first = await installer.commit(await installer.prepare());
+        const prepared = await installer.prepare();
+        const selected = phase === "read-active" ? await installer.commit(prepared) : first;
+        const pointer = await readFile(paths.runtimeCurrent, "utf8");
+        failProbe = true;
+        if (phase === "commit")
+          await expect(installer.commit(prepared)).rejects.toMatchObject({ cause: failure });
+        else await expect(installer.readActive()).rejects.toMatchObject({ cause: failure });
+        expect(await readFile(paths.runtimeCurrent, "utf8")).toBe(pointer);
+        expect((await lstat(selected.installDir)).isDirectory()).toBe(true);
+        if (phase === "commit")
+          expect(
+            (
+              await lstat(join(paths.runtimeVersions, `${prepared.version}--${prepared.id}`))
+            ).isDirectory(),
+          ).toBe(true);
+        expect((await lstat(paths.runtimeUpdateLock)).isDirectory()).toBe(true);
+        await expect(installer.readActive()).rejects.toMatchObject({ cause: failure });
+      } finally {
+        await releaseSyntheticLock(paths);
+      }
+    },
+  );
+
+  it.each(["download", "version", "compatibility"] as const)(
+    "preserves its scratch and lock when %s process cleanup is unconfirmed",
+    async (phase) => {
+      const root = await tempConfig();
+      const paths = codexPaths(root);
+      const failure = Object.assign(new Error("Synthetic command timed out"), {
+        cleanupFailure: new Error("Synthetic child join unconfirmed"),
+      });
+      const calls: Array<{ command: string; args: readonly string[] }> = [];
+      const run = fakeRunner(calls);
+      const installer = new CodexRuntimeInstaller({
+        configDir: root,
+        npmCommand: "synthetic-npm",
+        id: () => "synthetic-unjoined",
+        runner: async (command, args, options) => {
+          const result = await run(command, args, options);
+          if ((command === "synthetic-npm") === (phase === "download") && phase !== "compatibility")
+            throw failure;
+          return result;
+        },
+        compatibilityProbe: async (_info, options) => {
+          await mkdir(options.workspaceDir, { recursive: true });
+          if (phase === "compatibility") throw failure;
+        },
+      });
+      const prepared = {
+        id: "synthetic-unjoined",
+        version: CODEX_RUNTIME_COMPAT.testedVersion,
+        stagingDir: join(paths.runtimeStaging, "synthetic-unjoined"),
+      };
+      try {
+        await expect(installer.prepare()).rejects.toMatchObject({ cause: failure });
+        expect((await lstat(prepared.stagingDir)).isDirectory()).toBe(true);
+        expect((await lstat(paths.runtimeUpdateLock)).isDirectory()).toBe(true);
+        if (phase === "compatibility")
+          expect(
+            (
+              await lstat(join(prepared.stagingDir, ".omnesis-compat-probe", "workspace"))
+            ).isDirectory(),
+          ).toBe(true);
+        const priorCalls = calls.length;
+        await expect(installer.prepare()).rejects.toMatchObject({ cause: failure });
+        await expect(installer.readActive()).rejects.toMatchObject({ cause: failure });
+        await expect(installer.commit(prepared)).rejects.toMatchObject({ cause: failure });
+        await expect(installer.discard(prepared)).rejects.toMatchObject({ cause: failure });
+        await expect(installer.rollbackActivation()).rejects.toMatchObject({ cause: failure });
+        expect(calls).toHaveLength(priorCalls);
+        const competitor = new CodexRuntimeInstaller({
+          configDir: root,
+          npmCommand: "synthetic-npm",
+          runner: run,
+          compatibilityProbe: async () => {},
+        });
+        await expect(competitor.prepare()).rejects.toThrow("already in progress");
+      } finally {
+        await releaseSyntheticLock(paths);
+      }
+    },
+  );
+
   it("installs and probes JavaScript CLI entries with real subprocesses", async () => {
     const root = await tempConfig();
     const npmCommand = join(root, "synthetic npm & $().mjs");

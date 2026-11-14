@@ -172,7 +172,10 @@ export class CodexRuntimePool implements CodexTurnRunner {
   private readonly sharedAuthPath: string;
   private readonly log: Logger;
   private disposed = false;
+  private disposal: Promise<void> | undefined;
   private sharedPrivacy: Promise<void> | undefined;
+  private readonly preparations = new Set<Promise<void>>();
+  private preparationCleanupFailure: unknown;
   private readonly memberPrivacy = new Map<PoolMember, Promise<void>>();
   private readonly waiters: PoolWaiter[] = [];
 
@@ -214,6 +217,7 @@ export class CodexRuntimePool implements CodexTurnRunner {
    *  after a login succeeds or a logout clears the owner's token so the change
    *  propagates immediately; steady-state reconciliation happens per-lease. */
   reassertAuth(): void {
+    if (this.disposed) return;
     for (const member of this.members) {
       if (member.inFlight === 0)
         void this.prepareMember(member).catch((error: unknown) => {
@@ -275,10 +279,34 @@ export class CodexRuntimePool implements CodexTurnRunner {
   /** Ensure a member's isolated home exists and its `auth.json` tracks the
    *  shared login (newest-wins). Windows verifies dedicated state asynchronously
    *  before first use; steady-state reconciliation runs on the idle→busy edge. */
-  private async prepareMember(member: PoolMember): Promise<void> {
+  private prepareMember(member: PoolMember): Promise<void> {
+    if (this.disposed) return Promise.reject(new Error("Codex runtime pool disposed"));
+    if (this.preparationCleanupFailure !== undefined)
+      return Promise.reject(this.preparationCleanupFailure);
+    const preparation = this.prepareMemberOwned(member);
+    this.preparations.add(preparation);
+    void preparation.then(
+      () => this.preparations.delete(preparation),
+      (error: unknown) => {
+        this.rememberPreparationFailure(error);
+        this.preparations.delete(preparation);
+      },
+    );
+    return preparation;
+  }
+
+  private rememberPreparationFailure(error: unknown): void {
+    if (error !== null && typeof error === "object" && Object.hasOwn(error, "cleanupFailure"))
+      this.preparationCleanupFailure ??= error;
+  }
+
+  private async prepareMemberOwned(member: PoolMember): Promise<void> {
+    if (this.disposed) throw new Error("Codex runtime pool disposed");
     if (process.platform === "win32") {
       try {
         await (this.sharedPrivacy ??= prepareCodexPrivateState([this.opts.sharedHome]));
+        if (this.disposed) throw new Error("Codex runtime pool disposed");
+        if (this.preparationCleanupFailure !== undefined) throw this.preparationCleanupFailure;
         let ready = this.memberPrivacy.get(member);
         if (!ready) {
           ready = prepareCodexPrivateState([member.home], {
@@ -294,6 +322,8 @@ export class CodexRuntimePool implements CodexTurnRunner {
         throw error;
       }
     } else mkdirSync(member.home, { recursive: true });
+    if (this.disposed) throw new Error("Codex runtime pool disposed");
+    if (this.preparationCleanupFailure !== undefined) throw this.preparationCleanupFailure;
     reconcileMemberAuth(member.home, this.sharedAuthPath, this.log);
   }
 
@@ -342,14 +372,29 @@ export class CodexRuntimePool implements CodexTurnRunner {
     };
   }
 
-  async dispose(): Promise<void> {
-    if (this.disposed) return;
+  dispose(): Promise<void> {
+    if (this.disposal) return this.disposal;
     this.disposed = true;
     for (const waiter of this.waiters.splice(0)) {
       waiter.cleanup();
       waiter.reject(new Error("Codex runtime pool disposed"));
     }
-    await Promise.all(this.members.map((m) => m.runtime.dispose().catch(() => {})));
+    this.disposal = Promise.allSettled([
+      ...this.members.map((m) => Promise.resolve().then(() => m.runtime.dispose())),
+      // Admission is closed and each preparation rechecks it before starting
+      // another helper, so this snapshot cannot gain future owned work.
+      ...[...this.preparations].map((preparation) =>
+        preparation.catch((error: unknown) => {
+          this.rememberPreparationFailure(error);
+          // A joined permission/refusal error is not a process cleanup failure.
+        }),
+      ),
+    ]).then((results) => {
+      if (this.preparationCleanupFailure !== undefined) throw this.preparationCleanupFailure;
+      const failed = results.find((result) => result.status === "rejected");
+      if (failed?.status === "rejected") throw failed.reason;
+    });
+    return this.disposal;
   }
 }
 

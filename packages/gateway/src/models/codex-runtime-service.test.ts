@@ -11,7 +11,12 @@ import { z } from "zod";
 import { CODEX_SUPPORTED_ROLES, type AgentEvent } from "@omnesis/core";
 import { ConfigStore } from "../config-store.js";
 import { AgentSetupUnavailableError } from "./agent-assignment-setup.js";
-import { CodexRuntimeLifecycleConflictError } from "./codex-runtime-lifecycle.js";
+import {
+  CodexRuntimeLifecycle,
+  CodexRuntimeLifecycleConflictError,
+} from "./codex-runtime-lifecycle.js";
+import { CodexRuntimeUpdater } from "./codex-runtime-updater.js";
+import { CodexGenerationSupervisor } from "./codex-generation-supervisor.js";
 import {
   CodexRuntimeService,
   parseCodexAppServerModels,
@@ -23,6 +28,212 @@ import type { CodexRuntimeInstaller } from "./codex-runtime-installer.js";
 const fakeCodexPath = fileURLToPath(
   new URL("../../../agent/src/test-fixtures/fake-codex-app-server.mjs", import.meta.url),
 );
+
+describe("Codex service disposal failures", () => {
+  it.each(["version", "auth", "models"] as const)(
+    "holds admission instead of starting a fallback after unjoined %s discovery",
+    async (stage) => {
+      const dir = await mkdtemp(join(tmpdir(), "omnesis-codex-discovery-unjoined-"));
+      const home = join(dir, "codex-home");
+      await mkdir(home);
+      await writeFile(join(home, "auth.json"), "{}");
+      const agent = await import("@omnesis/agent");
+      const core = await import("@omnesis/core");
+      const failure = Object.assign(new Error("invented discovery failure"), {
+        cleanupFailure: new Error("invented missing native join"),
+      });
+      vi.spyOn(agent, "ensureCodexHome").mockResolvedValue(undefined);
+      vi.spyOn(CodexAppServerRuntime.prototype, "resolveCommandInfo").mockResolvedValue({
+        source: "override",
+        command: process.execPath,
+      });
+      const probe = vi.spyOn(CodexAppServerRuntime.prototype, "probeRuntime");
+      if (stage === "version") probe.mockRejectedValue(failure);
+      else probe.mockResolvedValue({ command: process.execPath, version: "0.167.0" });
+      vi.spyOn(CodexAppServerRuntime.prototype, "listModels").mockRejectedValue(failure);
+      const execute = vi.spyOn(core, "execWindowsJob");
+      if (stage === "auth") execute.mockRejectedValue(failure);
+      else execute.mockResolvedValue({ stdout: "invented logged-in status", stderr: "" });
+      const service = new CodexRuntimeService({
+        configDir: dir,
+        command: process.execPath,
+        interactivePoolSize: 0,
+        backgroundPoolSize: 1,
+        inferencePoolSize: 1,
+      });
+      const platform = Object.getOwnPropertyDescriptor(process, "platform")!;
+      Object.defineProperty(process, "platform", { ...platform, value: "win32" });
+      try {
+        expect(await service.refresh()).toMatchObject({
+          status: "unreachable",
+          reason: expect.stringMatching(/cleanup/u),
+        });
+        expect(await service.refresh()).toMatchObject({ status: "unreachable" });
+        await expect(service.startDeviceLogin()).rejects.toThrow(/cleanup/u);
+        await expect(service.logout()).rejects.toThrow(/cleanup/u);
+        expect(execute).toHaveBeenCalledTimes(stage === "version" ? 0 : 1);
+        expect(await readFile(join(home, "auth.json"), "utf8")).toBe("{}");
+      } finally {
+        Object.defineProperty(process, "platform", platform);
+        await service.dispose().catch(() => {});
+        vi.restoreAllMocks();
+        await rm(dir, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it("keeps logout cleanup uncertainty fenced through lifecycle disposal", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "omnesis-codex-unjoined-logout-"));
+    const auth = join(dir, "auth.json");
+    await writeFile(auth, "invented auth marker");
+    const core = await import("@omnesis/core");
+    const failure = Object.assign(new Error("invented logout timeout"), {
+      code: "ETIMEDOUT",
+      cleanupFailure: new Error("invented missing native join"),
+    });
+    const execute = vi.spyOn(core, "execWindowsJob").mockRejectedValue(failure);
+    const platform = Object.getOwnPropertyDescriptor(process, "platform")!;
+    const invalidateRefresh = vi.fn();
+    const holdCleanup = vi.fn((error: Error) => error);
+    const lifecycle = new CodexRuntimeLifecycle({
+      codexHome: dir,
+      cliArgsPrefix: [],
+      env: process.env,
+      refreshTimeoutMs: 100,
+      loginStartTimeoutMs: 100,
+      loginTtlMs: 100,
+      supervisor: {
+        holdCleanup,
+        current: {
+          runtime: { resolveCommandInfo: () => Promise.resolve({ command: process.execPath }) },
+        },
+      } as unknown as CodexGenerationSupervisor,
+      ensureSelectedRuntime: () => Promise.resolve(),
+      updateInProgress: () => false,
+      refresh: () => Promise.reject(new Error("unexpected refresh")),
+      invalidateRefresh,
+      describeRuntime: () => Promise.resolve(undefined),
+      setStatus: vi.fn(),
+    });
+    Object.defineProperty(process, "platform", { ...platform, value: "win32" });
+    try {
+      await expect(lifecycle.logout()).rejects.toBe(failure);
+      expect(await readFile(auth, "utf8")).toBe("invented auth marker");
+      expect(lifecycle.busy).toBe(true);
+      expect(invalidateRefresh).not.toHaveBeenCalled();
+      const operation = vi.fn(() => Promise.resolve("unexpected"));
+      await expect(lifecycle.runAgentSetup(operation)).rejects.toThrow(/cleanup/u);
+      await expect(lifecycle.startDeviceLogin()).rejects.toThrow(/cleanup/u);
+      await expect(lifecycle.logout()).rejects.toThrow(/cleanup/u);
+      expect(operation).not.toHaveBeenCalled();
+      const disposal = lifecycle.dispose();
+      await expect(disposal).rejects.toMatchObject({ cause: failure });
+      expect(lifecycle.dispose()).toBe(disposal);
+      await expect(lifecycle.dispose()).rejects.toBe(holdCleanup.mock.results[0]!.value);
+      expect(execute).toHaveBeenCalledOnce();
+    } finally {
+      Object.defineProperty(process, "platform", platform);
+      vi.restoreAllMocks();
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("clears a pending shutdown receipt after the retained disposal positively settles", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "omnesis-codex-joined-dispose-"));
+    let release!: () => void;
+    const update = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    vi.spyOn(CodexRuntimeUpdater.prototype, "dispose").mockReturnValue(update);
+    vi.spyOn(CodexRuntimeLifecycle.prototype, "dispose").mockResolvedValue();
+    vi.spyOn(CodexGenerationSupervisor.prototype, "dispose").mockResolvedValue();
+    const service = new CodexRuntimeService({ configDir: dir, command: process.execPath });
+    try {
+      const disposal = service.dispose();
+      expect(service.cleanupFailure()).toMatchObject({
+        cleanupFailure: true,
+        cleanupPending: true,
+      });
+      release();
+      await disposal;
+      expect(service.cleanupFailure()).toBeUndefined();
+      expect(service.dispose()).toBe(disposal);
+    } finally {
+      release();
+      await service.dispose();
+      vi.restoreAllMocks();
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it.each(["updater", "lifecycle", "supervisor"] as const)(
+    "joins all owners after %s fails and preserves repeated rejection",
+    async (component) => {
+      const dir = await mkdtemp(join(tmpdir(), "omnesis-codex-dispose-"));
+      const failure = new Error(`invented ${component} cleanup failure`);
+      let releaseUpdate!: () => void, releaseRetirement!: () => void;
+      const update = new Promise<void>((resolve, reject) => {
+        releaseUpdate = () => (component === "updater" ? reject(failure) : resolve());
+      });
+      const retirement = new Promise<void>((resolve, reject) => {
+        releaseRetirement = () => (component === "supervisor" ? reject(failure) : resolve());
+      });
+      const updater = vi.spyOn(CodexRuntimeUpdater.prototype, "dispose").mockReturnValue(update);
+      const lifecycle = vi
+        .spyOn(CodexRuntimeLifecycle.prototype, "dispose")
+        .mockImplementation(() =>
+          component === "lifecycle" ? Promise.reject(failure) : Promise.resolve(),
+        );
+      const supervisor = vi
+        .spyOn(CodexGenerationSupervisor.prototype, "dispose")
+        .mockReturnValue(retirement);
+      const service = new CodexRuntimeService({
+        configDir: dir,
+        command: process.execPath,
+        interactivePoolSize: 0,
+        inferencePoolSize: 1,
+        backgroundPoolSize: 1,
+      });
+      expect(service.cleanupFailure()).toBeUndefined();
+      const disposal = service.dispose();
+      const pendingReceipt = service.cleanupFailure();
+      expect(pendingReceipt).toMatchObject({ cleanupFailure: true, cleanupPending: true });
+      expect(service.cleanupFailure()).toBe(pendingReceipt);
+      let settled = false;
+      void disposal.then(
+        () => {
+          settled = true;
+        },
+        () => {
+          settled = true;
+        },
+      );
+      try {
+        await Promise.resolve();
+        await Promise.resolve();
+        expect(supervisor).not.toHaveBeenCalled();
+        expect(settled).toBe(false);
+        releaseUpdate();
+        await vi.waitFor(() => expect(supervisor).toHaveBeenCalledOnce());
+        expect(settled).toBe(false);
+        releaseRetirement();
+        await expect(disposal).rejects.toBe(failure);
+        expect(service.cleanupFailure()).toMatchObject({ cleanupFailure: true, cause: failure });
+        expect(service.dispose()).toBe(disposal);
+        await expect(service.dispose()).rejects.toBe(failure);
+        expect(updater).toHaveBeenCalledOnce();
+        expect(lifecycle).toHaveBeenCalledOnce();
+        expect(supervisor).toHaveBeenCalledOnce();
+      } finally {
+        releaseUpdate();
+        releaseRetirement();
+        await disposal.catch(() => {});
+        vi.restoreAllMocks();
+        await rm(dir, { recursive: true, force: true });
+      }
+    },
+  );
+});
 
 describe("Codex JavaScript command lifecycle", () => {
   it.each([false, true])(

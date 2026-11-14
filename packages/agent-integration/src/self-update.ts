@@ -241,6 +241,18 @@ export function createHarnessCliUpdater(opts: {
         ],
         { deadlineMs, signal: opts.signal, spawnFn: opts.spawnFn },
       );
+      if (Object.hasOwn(result, "cleanupFailure")) {
+        const reason =
+          result.failure === "cancelled"
+            ? "The update was cancelled"
+            : result.failure === "timeout"
+              ? "The update exceeded its deadline"
+              : "The update process failed";
+        return {
+          state: "failed",
+          detail: `${reason}, but its owned processes could not be confirmed stopped. Review the running update before retrying.`,
+        };
+      }
       if (result.failure === "timeout")
         return {
           state: "failed",

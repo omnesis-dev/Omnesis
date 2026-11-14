@@ -20,7 +20,10 @@ export function prepareWindowsRelayDatabase(path: string): string {
         /[<>:"|?*]/u.test(part) ||
         Array.from(part).some((character) => character.charCodeAt(0) < 32) ||
         /[ .]$/u.test(part) ||
-        /^(?:con|prn|aux|nul|com[1-9¹²³]|lpt[1-9¹²³])(?:\.|$)/iu.test(part),
+        /^(?:con|prn|aux|nul|com[1-9¹²³]|lpt[1-9¹²³])(?:\.|$)/iu.test(part) ||
+        // Console aliases remain special within joined Win32 paths.
+        // https://learn.microsoft.com/windows/win32/api/fileapi/nf-fileapi-createfilew#consoles
+        /^con(?:in|out)\$$/iu.test(part),
     )
   ) {
     throw new Error("Relay database path contains an unsafe Windows filename");

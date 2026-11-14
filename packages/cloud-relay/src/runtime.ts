@@ -6,7 +6,12 @@ import { dirname, resolve } from "node:path";
 import { randomUUID } from "node:crypto";
 import { once } from "node:events";
 import { z } from "zod";
-import { DEFAULT_CONFIG_DIR, resolveTlsMaterial, readWindowsPrivateFile } from "@omnesis/core";
+import {
+  DEFAULT_CONFIG_DIR,
+  resolveTlsMaterial,
+  readWindowsPrivateFile,
+  atomicWriteFile,
+} from "@omnesis/core";
 import { accountRuntimeConfiguration } from "./account-runtime-configuration.js";
 import { RelayAccounts } from "./accounts.js";
 import { googleIdentityProvider, localIdentityProvider, RelaySessions } from "./identity.js";
@@ -389,9 +394,13 @@ export async function loginRelay(options: {
     })
     .parse(await response.json());
   await mkdir(dirname(options.sessionFile), { recursive: true, mode: 0o700 });
-  const temporary = `${options.sessionFile}.${randomUUID()}.tmp`;
-  await writeFile(temporary, JSON.stringify(session) + "\n", { mode: 0o600, flag: "wx" });
-  await rename(temporary, options.sessionFile);
+  if (process.platform === "win32") {
+    await atomicWriteFile(options.sessionFile, JSON.stringify(session) + "\n", { mode: 0o600 });
+  } else {
+    const temporary = `${options.sessionFile}.${randomUUID()}.tmp`;
+    await writeFile(temporary, JSON.stringify(session) + "\n", { mode: 0o600, flag: "wx" });
+    await rename(temporary, options.sessionFile);
+  }
 }
 
 export async function runRelayCommand(
@@ -487,6 +496,7 @@ export async function runRelayCommand(
       });
     }
     await registerGatewayKey({
+      configDir: env.OMNESIS_CONFIG_DIR ?? DEFAULT_CONFIG_DIR,
       relayUrl: config.OMNESIS_CLOUD_RELAY_URL,
       sessionFile: config.OMNESIS_CLOUD_RELAY_SESSION_FILE,
       gatewayId: config.OMNESIS_CLOUD_RELAY_GATEWAY_ID,

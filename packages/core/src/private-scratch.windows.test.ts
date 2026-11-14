@@ -46,8 +46,8 @@ $acl.AddAccessRule([System.Security.AccessControl.FileSystemAccessRule]::new([Sy
     expect(
       (await inspectWindowsPrivatePaths([{ path: root, kind: "directory" }]))[0]?.private,
     ).toBe(false);
-    const scratch = createPrivateScratch("snapshot");
-    const asyncScratch = await createPrivateScratchAsync("ocr");
+    const scratch = createPrivateScratch("snapshot", { requiresProcessJoin: true });
+    const asyncScratch = await createPrivateScratchAsync("ocr", { requiresProcessJoin: true });
     try {
       const snapshot = join(scratch.path, "snapshot.db");
       writeFileSync(snapshot, "invented plaintext snapshot");
@@ -59,8 +59,10 @@ $acl.AddAccessRule([System.Security.AccessControl.FileSystemAccessRule]::new([Sy
         { path: snapshot, kind: "file" },
         { path: asyncScratch.path, kind: "directory" },
         { path: image, kind: "file" },
+        { path: join(scratch.path, ".process-join-required"), kind: "file" },
+        { path: join(asyncScratch.path, ".process-join-required"), kind: "file" },
       ]);
-      expect(results).toHaveLength(5);
+      expect(results).toHaveLength(7);
       expect(results.every((entry) => entry.private && !entry.fixed)).toBe(true);
     } finally {
       scratch.cleanup();

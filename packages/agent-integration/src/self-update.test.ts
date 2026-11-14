@@ -25,6 +25,7 @@ import {
   resolveHarnessBinary,
 } from "./self-update.js";
 import { DEVICE_UPDATE_DETAIL_MAX_CHARS } from "./protocol.js";
+import * as harnessUpdateProcess from "./harness-update-process.js";
 import type { RawData } from "ws";
 import type { HarnessRestart, HarnessSelfUpdater, HarnessUpdateAttempt } from "./self-update.js";
 
@@ -334,6 +335,23 @@ describe("the harness plugin's device.update handler", () => {
 });
 
 describe("createHarnessCliUpdater", () => {
+  test("refuses retry after an explicit cleanup marker whose payload is undefined", async () => {
+    const run = vi.spyOn(harnessUpdateProcess, "runHarnessUpdateProcess").mockResolvedValue({
+      code: 0,
+      output: "",
+      errors: "",
+      cleanupFailure: undefined,
+    });
+    try {
+      const updater = createHarnessCliUpdater({ harness: "openclaw", cliPath: "omnesis" });
+      const result = await updater.run({ version: "0.5.0" });
+      expect(result.state).toBe("failed");
+      expect(result.detail).toContain("could not be confirmed stopped");
+    } finally {
+      run.mockRestore();
+    }
+  });
+
   test("passes an exact commit to the CLI as one argument", async () => {
     const commit = "a".repeat(40);
     const spawnFn = vi.fn(() => fakeChild(1, "invented failure\n"));

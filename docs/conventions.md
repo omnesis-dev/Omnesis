@@ -1246,6 +1246,16 @@ root's status, the owner terminates remaining Job members and joins their exit
 and output. Streamed commands retain the default tree lifetime.
 POSIX paths preserve their native process behavior.
 
+Updater and continuation launches create `beginUpdateLockChildJoin` against the
+actual held lock before starting a child. Its private persisted marker survives
+ownership adoption and process exit. Clear that exact scope only after the owned
+child and its helpers have joined. A missing receipt, helper death or expired
+heartbeat cannot clear it. Pending markers prevent lock retirement and defer
+hand-back/release; the waiting holder cannot advance its apply steps. Adopted
+children can work, and a nested parent can resume after its own child joins when
+the remaining markers belong to its verified return ancestors. Existing process
+and apply-group liveness checks still apply.
+
 `terminateChildProcess` remains available for an already-running Windows root;
 its `taskkill` tree request requires that root to remain alive and provides no
 crash containment. New owned executable launches use kernel jobs instead.
@@ -1397,6 +1407,7 @@ When you set out to write code that matches one of the patterns above, open the 
 | HTTPS + TOFU pinning               | `packages/gateway/src/tls.ts`                                                                                         |
 | Secret-store abstraction           | `packages/core/src/secret-store.ts`, `packages/core/src/secret-file.ts`                                               |
 | Host update serialization          | `packages/core/src/update-lock.ts` + `packages/cli/src/update/source-launcher.ts`                                     |
+| Updater child completion           | `packages/core/src/update-lock-child-join.ts`                                                                         |
 | Transient-buffer                   | `packages/providers/whatsapp/src/message-store.ts`                                                                    |
 | Canonical local path boundaries    | `packages/source-sdk/src/node-path-boundary.ts`                                                                       |
 | Local coding-agent transcripts     | `packages/source-sdk/src/local-agent-sessions.ts` + `packages/providers/pi/src/index.ts`                              |

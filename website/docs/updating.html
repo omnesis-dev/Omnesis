@@ -702,8 +702,15 @@
             the health wait, the harness refresh and any rollback) is run by the newly installed
             release, so a fix to those steps applies to the update that delivers it. Only one update
             runs on a machine at a time; a second is refused with the running process and its
-            current step, or waits with <code>--wait-for-lock</code>. The lock of a killed update is
+            current step, or waits with <code>--wait-for-lock</code>. Ordinary stale locks are
             recovered automatically after a short interval.
+          </p>
+          <p>
+            On Windows, an interrupted update confirms that its owned child processes have stopped
+            before continuing or restarting daemons. If that cleanup cannot be confirmed, it keeps
+            the host update lock and any continuation receipt, reports the uncertainty, and stops
+            without a fallback, rollback, or daemon restart. Review the update process state before
+            retrying.
           </p>
           <p>
             With <code>--backup</code>, a gateway that runs from the installation being updated is

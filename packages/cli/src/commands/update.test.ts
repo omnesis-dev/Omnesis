@@ -13,6 +13,8 @@ import {
   getUpdateLockProcessGroup,
   UpdateLockBusyError,
 } from "@omnesis/core";
+import * as core from "@omnesis/core";
+import { UpdateProcessCleanupUncertainError } from "../update/process-cleanup.js";
 import { assertSourceNodeVersion } from "../update/source-node.js";
 import { npmRefusal } from "../update/build-tools.js";
 import {
@@ -171,6 +173,30 @@ describe("spawnRunner trust for npm", () => {
 });
 
 describe("spawnRunner outcome", () => {
+  test("retains the child fence for an explicit undefined cleanup marker", async () => {
+    const platform = Object.getOwnPropertyDescriptor(process, "platform")!;
+    const joined = vi.fn(),
+      beginChildJoin = vi.fn(() => ({ joined }));
+    const run = vi.spyOn(core, "runWindowsJob").mockResolvedValue({
+      exitCode: 0,
+      signal: null,
+      stdout: Buffer.alloc(0),
+      stderr: "",
+      cleanupFailure: undefined,
+    });
+    Object.defineProperty(process, "platform", { ...platform, value: "win32" });
+    try {
+      await expect(
+        spawnRunner({ command: process.execPath, args: [] }, "capture", { beginChildJoin }),
+      ).rejects.toBeInstanceOf(UpdateProcessCleanupUncertainError);
+      expect(beginChildJoin).toHaveBeenCalledOnce();
+      expect(joined).not.toHaveBeenCalled();
+    } finally {
+      Object.defineProperty(process, "platform", platform);
+      run.mockRestore();
+    }
+  });
+
   test.skipIf(process.platform === "win32")(
     "a process ended by a signal reports that signal",
     async () => {
@@ -3580,6 +3606,35 @@ describe("rolling back a failed update", () => {
       };
     }
 
+    test("an unjoined build cannot retry, roll back, or restart stopped daemons", async () => {
+      const error = new UpdateProcessCleanupUncertainError(
+        new Error("invented abort"),
+        new Error("invented unjoined descendant"),
+      );
+      const recorded = recording([...preflight, clean]);
+      const run: CommandRunner = (spec, mode, control) => {
+        if (spec.command === "npm" && spec.args[0] === "ci") return Promise.reject(error);
+        return recorded.runner.run(spec, mode, control);
+      };
+      await expect(
+        source(
+          makeDeps(
+            { run, calls: recorded.runner.calls },
+            {
+              ...recorded.services,
+              roles: hostRoles({ gateway: supervised, collector: supervised }),
+              buildMemoryTight: () => true,
+            },
+          ),
+        ),
+      ).rejects.toBe(error);
+      expect(recorded.services.stopService).toHaveBeenCalled();
+      expect(recorded.services.startService).not.toHaveBeenCalled();
+      expect(recorded.services.restartService).not.toHaveBeenCalled();
+      expect(executed(recorded.runner)).not.toContain("rm -rf node_modules");
+      expect(executed(recorded.runner)).not.toContain(`git checkout --detach ${previousRef}`);
+    });
+
     test("a killed build says the machine most likely ran out of memory, and how to update", async () => {
       const { runner } = recording([...preflight, clean, clean, killedBuild, ...rollback]);
       const failure = await source(makeDeps(runner)).then(
@@ -5037,6 +5092,27 @@ describe("a package install another update already moved to the target", () => {
 });
 
 describe("waiting for another update on this host", () => {
+  test("cleanup uncertainty keeps the real host transaction fenced", async () => {
+    const configDir = mkdtempSync(join(tmpdir(), "omnesis-unjoined-update-"));
+    const error = new UpdateProcessCleanupUncertainError(
+      undefined,
+      new Error("invented unjoined child"),
+    );
+    let held: ReturnType<typeof acquireUpdateLock> | undefined;
+    try {
+      await expect(
+        runWithUpdateLock(configDir, false, async (lock) => {
+          held = lock;
+          throw error;
+        }),
+      ).rejects.toBe(error);
+      expect(() => acquireUpdateLock(configDir, { owner: "invented competing update" })).toThrow();
+    } finally {
+      held?.release();
+      rmSync(configDir, { recursive: true, force: true });
+    }
+  });
+
   test("waits for the holder, saying who it waits for, then runs the transaction", async () => {
     const configDir = mkdtempSync(join(tmpdir(), "omnesis-cli-update-lock-"));
     const holder = acquireUpdateLock(configDir, {
@@ -5387,6 +5463,40 @@ describe("handing the rest of an update to the build it installed", () => {
         sourceDeps(events, [...successfulUpdate, clean, clean, clean], { continueAfterApply }),
       );
       expect(events.slice(3)).toEqual(["npm run build", "copy", "restart collector"]);
+    });
+
+    test("an unjoined continuation leaves pre-build daemon obligations held", async () => {
+      const events: string[] = [];
+      const error = new UpdateProcessCleanupUncertainError(
+        undefined,
+        new Error("invented cleanup uncertainty"),
+      );
+      const startService = vi.fn((_component: ServiceComponent) => Promise.resolve());
+      const restartService = vi.fn((_component: ServiceComponent) => Promise.resolve());
+      const held = { setStep: vi.fn(), setProcessGroup: vi.fn(), reclaim: vi.fn(() => true) };
+      await expect(
+        updateSourceCheckout(
+          { rootDir, edge: false, dryRun: false },
+          sourceDeps(events, [...successfulUpdate, clean, clean, clean], {
+            roles: hostRoles({ gateway: supervised, collector: supervised }),
+            buildMemoryTight: () => true,
+            updateLock: held,
+            continueAfterApply: () => Promise.reject(error),
+            stopService: vi.fn((component: ServiceComponent) => {
+              events.push(`stop ${component}`);
+              return Promise.resolve();
+            }),
+            startService,
+            restartService,
+          }),
+        ),
+      ).rejects.toBe(error);
+      expect(events).toContain("stop collector");
+      expect(events).toContain("stop gateway");
+      expect(startService).not.toHaveBeenCalled();
+      expect(restartService).not.toHaveBeenCalled();
+      expect(held.reclaim).not.toHaveBeenCalled();
+      expect(events).not.toContain(`git checkout --detach ${PREVIOUS}`);
     });
 
     test("daemons stopped for the build are left to the installed build that restarts them", async () => {

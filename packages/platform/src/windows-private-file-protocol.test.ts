@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import { Readable } from "node:stream";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({ spawn: vi.fn(), spawnSync: vi.fn(), workerInvocation: vi.fn() }));
 vi.mock("node:child_process", async (original) => ({
@@ -19,10 +20,13 @@ import {
   prepareWindowsPrivateStorageDirectorySync,
   secureWindowsPrivatePathSync,
   writeWindowsPrivateFileAtomicSync,
+  writeWindowsPrivateFileAtomicStream,
+  readWindowsRegularFilePrefix,
 } from "./windows-private-file.js";
 
 beforeEach(() => {
   vi.stubEnv("SystemRoot", "C:\\Windows");
+  mocks.spawn.mockReset();
   mocks.workerInvocation.mockReset().mockImplementation((mode: string) => ({
     command: "C:\\Windows\\native-worker.exe",
     args: [mode],
@@ -225,4 +229,60 @@ describe("Windows private native protocol", () => {
     expect(String(error)).not.toContain("Fictional-private-path");
     expect(String(error)).not.toContain("invented secret bytes");
   });
+});
+
+const malformedName = String.fromCharCode(0xd800);
+const malformedPath = "C:\\invented\\" + malformedName + ".key";
+const validPath = String.raw`C:\invented\valid.key`;
+it.each([
+  ["create", () => createWindowsPrivateFileSync(malformedPath, Buffer.from("invented bytes"))],
+  ["read", () => readWindowsPrivateFileSync(malformedPath)],
+  ["copy source", () => copyWindowsPrivateFileSync(malformedPath, validPath)],
+  ["copy destination", () => copyWindowsPrivateFileSync(validPath, malformedPath)],
+  ["inspect", () => inspectWindowsPrivatePathSync(malformedPath, "file")],
+  ["storage", () => prepareWindowsPrivateStorageDirectorySync(malformedPath)],
+  [
+    "exact basename",
+    () => readWindowsPrivateFileContentsSync(validPath, { exactBasename: malformedName }),
+  ],
+  [
+    "exact parent",
+    () => deleteWindowsPrivateFileExactSync(validPath, { exactParentBasename: malformedName }),
+  ],
+] as const)("refuses ill-formed UTF-16 in %s before worker bootstrap", (_label, operation) => {
+  expect(operation).toThrow("Invalid private file path");
+  expect(mocks.workerInvocation).not.toHaveBeenCalled();
+  expect(mocks.spawnSync).not.toHaveBeenCalled();
+});
+it.each([0xdbff, 0xdc00, 0xdfff])("refuses unpaired surrogate code unit %i", (value) => {
+  expect(() => readWindowsPrivateFileSync("C:\\invented\\" + String.fromCharCode(value))).toThrow(
+    "Invalid private file path",
+  );
+  expect(mocks.workerInvocation).not.toHaveBeenCalled();
+});
+it("rejects malformed streamed and regular source paths without consuming input or starting helpers", async () => {
+  let consumed = false;
+  const source = Readable.from(
+    (function* () {
+      consumed = true;
+      yield Buffer.from("invented bytes");
+    })(),
+  );
+  await expect(writeWindowsPrivateFileAtomicStream(malformedPath, source, 14)).rejects.toThrow(
+    "Invalid private file path",
+  );
+  await expect(readWindowsRegularFilePrefix(malformedPath, 8)).rejects.toMatchObject({
+    code: "EUNSAFEPATH",
+  });
+  expect(consumed).toBe(false);
+  expect(mocks.workerInvocation).not.toHaveBeenCalled();
+  expect(mocks.spawn).not.toHaveBeenCalled();
+  source.destroy();
+});
+it("preserves valid non-ASCII and supplementary Unicode paths and exact names literally", () => {
+  const path = "C:\\invented\\caf\u00e9-\u{1f9ed}.key";
+  const name = "caf\u00e9-\u{1f9ed}.key";
+  readWindowsPrivateFileContentsSync(path, { exactBasename: name });
+  expect(frame().metadata).toEqual({ action: "read", path, limit: -1, exactBasename: name });
+  expect(mocks.workerInvocation).toHaveBeenCalledTimes(1);
 });

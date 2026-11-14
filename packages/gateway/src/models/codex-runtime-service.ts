@@ -30,6 +30,7 @@ import {
   type CodexRuntimeUpdateSnapshot,
 } from "@omnesis/core";
 import { CodexRuntimeInstaller } from "./codex-runtime-installer.js";
+import { CodexGenerationCleanupError, codexCleanupFailure } from "./codex-runtime-cleanup.js";
 import {
   AgentSetupConflictError,
   setupAgentAssignment,
@@ -119,6 +120,7 @@ export class CodexRuntimeService {
   private readonly inferenceRunner: CodexTurnRunner;
   private readonly refreshTimeoutMs: number;
   private refreshEpoch = 0;
+  private disposal: Promise<void> | undefined;
   private refreshInFlight: {
     epoch: number;
     promise: Promise<CodexBackendStatus>;
@@ -316,9 +318,52 @@ export class CodexRuntimeService {
     yield* this.supervisor.runner(lane).runTurn(opts);
   }
 
-  async dispose(): Promise<void> {
-    await Promise.all([this.updater.dispose(), this.lifecycle.dispose()]);
-    await this.supervisor.dispose();
+  private disposalSettled = false;
+  private disposalFailure: unknown;
+  private readonly pendingCleanup = Object.assign(
+    new CodexGenerationCleanupError(new Error("Codex runtime cleanup remains pending.")),
+    { cleanupPending: true as const },
+  );
+
+  /** Read-only shutdown receipt; never probes or starts a runtime. */
+  cleanupFailure(): unknown | undefined {
+    return (
+      this.supervisor.cleanupError ??
+      this.lifecycle.cleanupReceipt() ??
+      this.disposalFailure ??
+      (this.disposal && !this.disposalSettled ? this.pendingCleanup : undefined)
+    );
+  }
+
+  dispose(): Promise<void> {
+    if (!this.disposal) {
+      this.disposal = this.disposeAll().then(
+        () => {
+          this.disposalSettled = true;
+        },
+        (error: unknown) => {
+          this.disposalSettled = true;
+          this.disposalFailure =
+            codexCleanupFailure(error) ?? new CodexGenerationCleanupError(error);
+          throw error;
+        },
+      );
+    }
+    return this.disposal;
+  }
+
+  private async disposeAll(): Promise<void> {
+    // A failed login drain cannot skip unrelated generation cleanup. Wait for
+    // the updater too, so retirement cannot race an activation still in flight.
+    const results = await Promise.allSettled([
+      Promise.resolve().then(() => this.updater.dispose()),
+      Promise.resolve().then(() => this.lifecycle.dispose()),
+    ]);
+    results.push(
+      ...(await Promise.allSettled([Promise.resolve().then(() => this.supervisor.dispose())])),
+    );
+    const failure = results.find((result) => result.status === "rejected");
+    if (failure?.status === "rejected") throw failure.reason;
   }
 
   async getRuntimeUpdate(): Promise<CodexRuntimeUpdateSnapshot> {
@@ -345,12 +390,15 @@ export class CodexRuntimeService {
       .use(async () => {
         const status = await this.computeStatus();
         const runtimeUpdate = await this.updater.computePlan();
+        this.assertCleanupConfirmed();
         const enriched = { ...status, runtimeUpdate };
         if (epoch !== this.refreshEpoch) return this.status;
         this.status = enriched;
         return enriched;
       })
       .catch((err) => {
+        const cleanupFailure = codexCleanupFailure(err);
+        const failure = cleanupFailure ? this.supervisor.holdCleanup(cleanupFailure) : err;
         if (epoch !== this.refreshEpoch) return this.status;
         const status: CodexBackendStatus = {
           type: "codex",
@@ -358,7 +406,7 @@ export class CodexRuntimeService {
           status: "unreachable",
           loggedIn: false,
           models: [],
-          reason: conciseError(err),
+          reason: conciseError(failure),
           refreshedAt: new Date().toISOString(),
         };
         this.status = status;
@@ -407,10 +455,12 @@ export class CodexRuntimeService {
   }
 
   private async describeRuntime(): Promise<CodexRuntimeStatus | undefined> {
+    this.assertCleanupConfirmed();
     let commandInfo: CodexRuntimeCommandInfo;
     try {
       commandInfo = await this.supervisor.current.runtime.resolveCommandInfo();
     } catch (err) {
+      this.refuseUnconfirmedCleanup(err);
       return {
         source: "managed",
         command: "",
@@ -420,6 +470,7 @@ export class CodexRuntimeService {
     }
 
     try {
+      this.assertCleanupConfirmed();
       const probe = await this.supervisor.current.runtime.probeRuntime(this.refreshTimeoutMs);
       return {
         ...commandInfo,
@@ -427,12 +478,22 @@ export class CodexRuntimeService {
         supported: true,
       };
     } catch (err) {
+      this.refuseUnconfirmedCleanup(err);
       return {
         ...commandInfo,
         supported: false,
         reason: conciseError(err),
       };
     }
+  }
+
+  private assertCleanupConfirmed(): void {
+    if (this.supervisor.cleanupError) throw this.supervisor.cleanupError;
+  }
+
+  private refuseUnconfirmedCleanup(error: unknown): void {
+    const failure = codexCleanupFailure(error);
+    if (failure) throw this.supervisor.holdCleanup(failure);
   }
 
   private async computeStatus(): Promise<CodexBackendStatus> {
@@ -466,6 +527,7 @@ export class CodexRuntimeService {
     }
     const commandInfo = await this.supervisor.current.runtime.resolveCommandInfo();
 
+    this.assertCleanupConfirmed();
     const loggedIn = await this.checkLoggedIn(commandInfo.command, childEnv);
     if (!loggedIn.ok) {
       return {
@@ -513,6 +575,7 @@ export class CodexRuntimeService {
     command: string,
     childEnv: NodeJS.ProcessEnv,
   ): Promise<{ discovery: "app-server" | "debug-models"; modelDetails: CodexModelStatus[] }> {
+    this.assertCleanupConfirmed();
     try {
       const modelDetails = parseCodexAppServerModels(
         await this.supervisor.current.runtime.listModels(this.refreshTimeoutMs),
@@ -524,11 +587,13 @@ export class CodexRuntimeService {
         "Codex app-server model/list returned an empty catalog; falling back to debug models",
       );
     } catch (err) {
+      this.refuseUnconfirmedCleanup(err);
       log.warn(
         `Codex app-server model/list failed; falling back to debug models: ${conciseError(err)}`,
       );
     }
 
+    this.assertCleanupConfirmed();
     const invocation = nodeCommandInvocation(command, [...this.cliArgsPrefix, "debug", "models"]);
     const result = await (process.platform === "win32" ? execWindowsJob : execFileAsync)(
       invocation.command,
@@ -550,6 +615,7 @@ export class CodexRuntimeService {
     command: string,
     env: NodeJS.ProcessEnv,
   ): Promise<{ ok: true } | { ok: false; reason: string }> {
+    this.assertCleanupConfirmed();
     try {
       const invocation = nodeCommandInvocation(command, [...this.cliArgsPrefix, "login", "status"]);
       await (process.platform === "win32" ? execWindowsJob : execFileAsync)(
@@ -563,6 +629,7 @@ export class CodexRuntimeService {
       );
       return { ok: true };
     } catch (err) {
+      this.refuseUnconfirmedCleanup(err);
       return { ok: false, reason: `Codex is not logged in (${conciseError(err)}).` };
     }
   }

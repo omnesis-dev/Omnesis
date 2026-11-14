@@ -11,7 +11,7 @@ import { prepareCodexPrivateState } from "./codex-private-state.js";
 import { reconcileMemberAuth } from "./codex-runtime-pool.js";
 
 it.runIf(process.platform === "win32")(
-  "repairs existing explicit broad ACLs before Codex use and preserves only its exact owner auth link",
+  "refuses existing explicit broad file ACLs before Codex use and preserves its exact owner auth link after reviewed grants",
   async () => {
     const root = await mkdtemp(join(tmpdir(), "codex-private-native-"));
     const home = join(root, "owner"),
@@ -35,6 +35,14 @@ it.runIf(process.platform === "win32")(
           ])
         ).every((entry) => !entry.private),
       ).toBe(true);
+      await expect(ensureCodexRuntimeDirs(home, workspace)).rejects.toThrow(
+        "could not be verified as private",
+      );
+      expect(await readFile(auth, "utf8")).toBe("invented retained login");
+      expect(await readFile(session, "utf8")).toBe("invented retained session");
+      // Explicit fixture-owner review removes only the invented broad grant.
+      for (const file of [auth, session])
+        await execWindowsJob(command, [file, "/remove:g", "*S-1-1-0"], { timeout: 20_000 });
       await ensureCodexRuntimeDirs(home, workspace);
       const paths = [
         { path: home, kind: "directory" },
@@ -66,7 +74,7 @@ it.runIf(process.platform === "win32")(
 );
 
 it.runIf(process.platform === "win32")(
-  "accepts busy inherited-private Codex files without mutation and refuses busy unsafe files until repaired",
+  "accepts busy inherited-private Codex files without mutation and refuses unsafe files even after handles close",
   async () => {
     const root = await mkdtemp(join(tmpdir(), "codex-live-private-"));
     const home = join(root, "owner"),
@@ -125,9 +133,12 @@ $acl=[System.IO.File]::GetAccessControl($env:OMNESIS_CODEX_FIXTURE,$sections);
       expect(await readFile(file, "utf8")).toBe(bytes);
       await live.close();
       live = undefined;
-      await prepareCodexPrivateState([home, workspace]);
+      await expect(prepareCodexPrivateState([home, workspace])).rejects.toThrow(
+        "could not be verified as private",
+      );
+      expect(await acl()).toBe(unsafe);
       expect(await inspectWindowsPrivatePaths([{ path: file, kind: "file" }])).toEqual([
-        { private: true, fixed: false },
+        { private: false, fixed: false },
       ]);
       expect(await readFile(file, "utf8")).toBe(bytes);
     } finally {

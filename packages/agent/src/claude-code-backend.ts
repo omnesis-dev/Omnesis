@@ -285,6 +285,7 @@ export class ClaudeCodeRuntime implements ClaudeCodeTurnRunner {
   private readonly idleTimeoutMs: number;
   private readonly log: Logger;
   private resolvedCommand: string | null = null;
+  private cleanupFailure: unknown;
 
   constructor(opts: ClaudeCodeRuntimeOptions) {
     this.workspaceDir = opts.workspaceDir;
@@ -297,8 +298,27 @@ export class ClaudeCodeRuntime implements ClaudeCodeTurnRunner {
     this.log = opts.logger ?? log;
   }
 
+  private assertCleanupConfirmed(): void {
+    if (this.cleanupFailure !== undefined)
+      throw Object.assign(
+        new Error("Claude Code process cleanup was not confirmed; runtime reuse is blocked", {
+          cause: this.cleanupFailure,
+        }),
+        { cleanupFailure: this.cleanupFailure },
+      );
+  }
+
+  private recordCleanupFailure(error: unknown): boolean {
+    if (error !== null && typeof error === "object" && "cleanupFailure" in error) {
+      this.cleanupFailure ??= error;
+      return true;
+    }
+    return false;
+  }
+
   /** The `claude` executable, resolved once and then reused until {@link forgetCommand}. */
   async resolveCommand(): Promise<string> {
+    this.assertCleanupConfirmed();
     if (this.resolvedCommand) return this.resolvedCommand;
     const command = await resolveClaudeCodeCommand({
       commandOverride: this.commandOverride,
@@ -337,6 +357,7 @@ export class ClaudeCodeRuntime implements ClaudeCodeTurnRunner {
       output = `${result.stdout}${result.stderr}`;
     } catch (err) {
       this.forgetCommand();
+      if (this.recordCleanupFailure(err)) throw err;
       throw new Error(`Claude Code probe failed: ${conciseError(err)}`, { cause: err });
     }
     const version = parseClaudeCodeVersion(output);
@@ -370,6 +391,7 @@ export class ClaudeCodeRuntime implements ClaudeCodeTurnRunner {
       );
       stdout = String(result.stdout);
     } catch (err) {
+      if (this.recordCleanupFailure(err)) throw err;
       // Signed out is exit 1 with the same JSON on stdout.
       const out = (err as { stdout?: unknown }).stdout;
       if (typeof out !== "string" || !out.trim()) throw err;
@@ -393,6 +415,7 @@ export class ClaudeCodeRuntime implements ClaudeCodeTurnRunner {
 
   /** The CLI's model catalog, from a session that never sends a prompt. */
   async listModels(timeoutMs = 30_000): Promise<ClaudeCodeModelInfo[]> {
+    this.assertCleanupConfirmed();
     await ensureWorkspace(this.workspaceDir);
     const command = await this.resolveCommand();
     await this.assertNoManagedPolicyConflict();
@@ -403,6 +426,9 @@ export class ClaudeCodeRuntime implements ClaudeCodeTurnRunner {
       cwd: this.workspaceDir,
       env: this.childEnv,
       log: this.log,
+      onCleanupFailure: (error) => {
+        this.cleanupFailure = error;
+      },
       onMessage: () => {},
       onMcpMessage: () => Promise.resolve(undefined),
       onUnexpectedRequest: (subtype) => {
@@ -438,6 +464,7 @@ export class ClaudeCodeRuntime implements ClaudeCodeTurnRunner {
 
     let command: string;
     try {
+      this.assertCleanupConfirmed();
       await ensureWorkspace(this.workspaceDir);
       command = await this.resolveCommand();
       await this.assertNoManagedPolicyConflict();
@@ -474,6 +501,9 @@ export class ClaudeCodeRuntime implements ClaudeCodeTurnRunner {
       cwd: this.workspaceDir,
       env: this.childEnv,
       log: this.log,
+      onCleanupFailure: (error) => {
+        this.cleanupFailure = error;
+      },
       onMessage: (message) => turn.onMessage(message),
       onMcpMessage: (message) => turn.onMcpMessage(message),
       onUnexpectedRequest: (subtype) =>
@@ -1025,7 +1055,7 @@ class ClaudeCodeTurn {
     this.queue.push(wrapEvent("agent.error", { ...this.ids, code, message }));
     this.complete("error", { code, message });
     // Nothing more from this process may reach the conversation.
-    void this.session?.dispose();
+    void this.session?.dispose().catch(() => {});
   }
 
   /** A breach of the locked-down session: stop the CLI at once, without a grace period. */
@@ -1104,6 +1134,7 @@ interface ClaudeCodeProcessOptions {
   /** A control request Omnesis never registered for: a hook, an elicitation, a permission prompt. */
   onUnexpectedRequest?(subtype: string): void;
   onExit?(code: number | null, sig: NodeJS.Signals | null): void;
+  onCleanupFailure?(error: unknown): void;
 }
 
 /** One `claude -p` process: newline-delimited JSON both ways, with request/response control frames. */
@@ -1137,7 +1168,20 @@ class ClaudeCodeProcess {
         windowsHide: true,
       });
     this.proc = proc;
-    this.exited = new Promise((resolve) => proc.once("close", () => resolve()));
+    this.exited = (
+      job?.jobClosed ?? new Promise<void>((resolve) => proc.once("close", () => resolve()))
+    ).catch((error: unknown) => {
+      // Keep the runtime's undefined sentinel distinct from a failed join.
+      throw error === undefined
+        ? Object.assign(
+            new Error("Claude Code process cleanup was not confirmed", { cause: error }),
+            { cleanupFailure: error },
+          )
+        : error;
+    });
+    // Observe early rejection while a turn is active; dispose still awaits the
+    // same promise and refuses to release the session on uncertain cleanup.
+    void this.exited.catch((error: unknown) => this.opts.onCleanupFailure?.(error));
     createInterface({ input: proc.stdout }).on("line", (line) =>
       markActivity("agent.claudeCode.message", () => this.handleLine(line)),
     );
