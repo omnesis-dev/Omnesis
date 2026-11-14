@@ -11,9 +11,12 @@
  * them by. Every entry carries the number of records a filter holding only
  * that entry would share, counted with the conditions of the real check.
  *
- * These are pure reads of the corpus. The counts and the preview read every
- * record of the account, so all of this runs on a reader, never on the
- * thread that serves requests. Pages are bounded.
+ * These are pure reads of the corpus. The counts and the preview are read
+ * from the account's filter rows (`filter-value-sql.ts`) when they are ready,
+ * at a cost that follows the records matched rather than the account's size,
+ * and otherwise from every record of the account; either way all of this
+ * runs on a reader, never on the thread that serves requests. Pages are
+ * bounded.
  */
 
 import { createHash } from "node:crypto";
@@ -35,10 +38,17 @@ import {
   filterDeviceCountsSql,
   filterItemCountsSql,
   filterPersonCountsSql,
-  filterVerdictSql,
   type CompiledFilter,
   type FieldDetail,
+  type FilterSql,
 } from "./filter-sql.js";
+import {
+  countFilterVerdicts,
+  filterValueDeviceCountsSql,
+  filterValueItemCountsSql,
+  filterValuePersonCountsSql,
+} from "./filter-value-sql.js";
+import { filterValueDeclaration, filterValuesReady } from "./filter-values.js";
 import { SOURCE_FILTER_MAX_ENTRIES, sourceFilterEntryCount } from "./scope-policy.js";
 import type { Db } from "../data/types.js";
 
@@ -269,6 +279,11 @@ export function countFilterEntries(
   refs: readonly FilterRef[],
 ): number[] {
   registerFilterSqlFunctions(db);
+  const values = filterValueDeclaration(fields);
+  const ready = filterValuesReady(db, sourceId, values);
+  /** The statement from the account's filter rows when they can answer, else from its records. */
+  const pick = (fromValues: () => FilterSql | null, fromRecords: () => FilterSql): FilterSql =>
+    (ready ? fromValues() : null) ?? fromRecords();
   const counts = new Array<number>(refs.length).fill(0);
   const byField = new Map<string, number[]>();
   refs.forEach((ref, index) => {
@@ -286,7 +301,10 @@ export function countFilterEntries(
         for (const key of personKeys(ref.identifiers)) entries.push([index, key]);
       }
       if (entries.length === 0) continue;
-      const sql = filterPersonCountsSql(probe, entries);
+      const sql = pick(
+        () => filterValuePersonCountsSql(probe, values, entries),
+        () => filterPersonCountsSql(probe, entries),
+      );
       const rows = db.prepare<unknown[], { idx: number; n: number }>(sql.sql).all(...sql.params);
       rowsToCounts(rows, refs.length).forEach((n, index) => {
         if (n > 0) counts[index] = n;
@@ -309,7 +327,10 @@ export function countFilterEntries(
       }
     }
     if (entries.length > 0) {
-      const sql = filterItemCountsSql(probe, entries);
+      const sql = pick(
+        () => filterValueItemCountsSql(probe, values, entries),
+        () => filterItemCountsSql(probe, entries),
+      );
       for (const row of db
         .prepare<unknown[], { idx: number; n: number }>(sql.sql)
         .all(...sql.params)) {
@@ -317,7 +338,10 @@ export function countFilterEntries(
       }
     }
     if (wholeDevices.length > 0) {
-      const sql = filterDeviceCountsSql(probe);
+      const sql = pick(
+        () => filterValueDeviceCountsSql(probe, values),
+        () => filterDeviceCountsSql(probe),
+      );
       const perDevice = new Map(
         db
           .prepare<unknown[], { device: string; n: number }>(sql.sql)
@@ -651,16 +675,7 @@ export function readFilterPreview(
     }
     if (compiled.unusable !== null) return { ok: false, error: "invalid-filter" };
     registerFilterSqlFunctions(db);
-    const verdict = filterVerdictSql(compiled, { row: "d" });
-    const totals = db
-      .prepare<unknown[], { total: number; visible: number; tooOld: number; unmatched: number }>(
-        `SELECT count(*) AS total,
-                coalesce(sum(verdict = 'R'), 0) AS visible,
-                coalesce(sum(verdict = 'O'), 0) AS tooOld,
-                coalesce(sum(verdict = 'U'), 0) AS unmatched
-           FROM (SELECT (${verdict.sql}) AS verdict FROM documents d WHERE d.source_id = ?)`,
-      )
-      .get(...verdict.params, sourceId)!;
+    const totals = countFilterVerdicts(db, compiled, fields);
     const refs = filter.rules[0].match;
     const counts = countFilterEntries(db, sourceId, fields, refs);
     const items = savedFilterEntries(db, sourceId, fields, refs).map((entry, index) => ({
@@ -672,10 +687,10 @@ export function readFilterPreview(
       value: {
         sourceId,
         total: totals.total,
-        visible: totals.visible,
-        hidden: totals.total - totals.visible,
-        tooOld: totals.tooOld,
-        unmatched: totals.unmatched,
+        visible: totals.R,
+        hidden: totals.total - totals.R,
+        tooOld: totals.O,
+        unmatched: totals.U,
         items,
       },
     };

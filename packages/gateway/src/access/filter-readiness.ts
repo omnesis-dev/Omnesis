@@ -22,8 +22,8 @@
  * source whose devices each keep their own.
  *
  * Reading the state is a handful of indexed rows. The count of records that
- * cannot be placed ({@link countUnmatchedRecords}) reads every record of the
- * account and belongs on a reader.
+ * cannot be placed ({@link countUnmatchedRecords}) reads the account's filter
+ * rows, or every record while those are not ready, and belongs on a reader.
  */
 
 import {
@@ -42,8 +42,8 @@ import {
   listSourceOpenReads,
 } from "../data/repositories/SourceInventoryRepository.js";
 import { filterFieldsFor } from "./filter-fields.js";
-import { registerFilterSqlFunctions } from "./filter-people.js";
-import { FILTER_PEOPLE_FIELD, compileFieldProbe, filterVerdictSql } from "./filter-sql.js";
+import { FILTER_PEOPLE_FIELD, compileFieldProbe } from "./filter-sql.js";
+import { countFilterVerdicts } from "./filter-value-sql.js";
 import { PERSON_NOUN } from "./filter-wording.js";
 import type { Db } from "../data/types.js";
 
@@ -284,18 +284,16 @@ function hostingDevices(db: Db, sourceId: string, primaryDeviceId: string): Filt
  * "unknown". `field` is a declared path or `$people`.
  *
  * Counted with the conditions of the real check, over every record of the
- * account; run it on a reader. `null` when the field cannot be applied.
+ * account (`countFilterVerdicts`); run it on a reader. `null` when the field
+ * cannot be applied.
  */
 export function countUnmatchedRecords(db: Db, sourceId: string, field: string): number | null {
-  const compiled = compileFieldProbe(sourceId, filterFieldsFor(db, sourceTypeOf(sourceId)), field);
-  if (compiled.unusable !== null) return null;
-  registerFilterSqlFunctions(db);
-  const verdict = filterVerdictSql(compiled, { row: "d" });
-  return db
-    .prepare<unknown[], { n: number }>(
-      `SELECT count(*) AS n FROM documents d WHERE d.source_id = ? AND (${verdict.sql}) = 'U'`,
-    )
-    .get(sourceId, ...verdict.params)!.n;
+  return db.transaction(() => {
+    const fields = filterFieldsFor(db, sourceTypeOf(sourceId));
+    const compiled = compileFieldProbe(sourceId, fields, field);
+    if (compiled.unusable !== null) return null;
+    return countFilterVerdicts(db, compiled, fields).U;
+  })();
 }
 
 /** The name a sentence calls an account by: its source's name, else the account's. */

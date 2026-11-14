@@ -268,8 +268,8 @@ function disconnectedEditor(db: Db, sourceId: string): SourceFilterEditorStructu
 
 /**
  * The two counts the editor shows under one field: records too old for it,
- * and records new enough whose detail is not known. Reads every record of
- * the account. `null` when the field cannot be counted.
+ * and records new enough whose detail is not known, counted over every record
+ * of the account. `null` when the field cannot be counted.
  */
 export function readSourceFilterFieldCounts(
   db: Db,
@@ -304,7 +304,7 @@ export function readSourceFilterOptionsPage(
   })();
 }
 
-/** How many records each entry would share on its own. Reads every record of the account. */
+/** How many records each entry would share on its own, among every record of the account. */
 export function readSourceFilterEntryCounts(db: Db, sourceId: string, refs: FilterRef[]): number[] {
   return countFilterEntries(db, sourceId, filterFieldsFor(db, sourceTypeOf(sourceId)), refs);
 }
@@ -316,7 +316,7 @@ export type SourceFilterPreview = FilterPreview & {
   unmatchedText: string | null;
 };
 
-/** What a draft filter would do to the account. Reads every record of the account. */
+/** What a draft filter would do to the account, counted over every record of it. */
 export function readSourceFilterPreview(
   db: Db,
   sourceId: string,

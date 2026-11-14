@@ -23,8 +23,8 @@
  * **The rule.** Two things are checked on the record itself before the filter
  * is applied: its version is at least the minimum of every field the filter
  * uses, and each of those details is there. A record failing either is hidden
- * whatever the filter says, "share only" or "hide". Nothing is stored per
- * record for this: the details are read from the record's own metadata.
+ * whatever the filter says, "share only" or "hide". The check reads the
+ * details from the record's own metadata.
  *
  * - *membership*: the record's ids against the saved ids.
  * - *tree*: the record's immediate container against the saved nodes and
@@ -57,20 +57,13 @@
  * The statements call the SQL functions `filter-people.ts` registers; run
  * them only on a connection passed to `registerFilterSqlFunctions`.
  *
- * ## If reading the metadata of every record proves too slow
- *
- * The design held in reserve, not built: a table
- * `document_filter_values(document_id, field, device_id, value)` WITHOUT
- * ROWID, with a second index on `(source_id, field, device_id, value,
- * document_id)`, plus one presence row per `(document_id, field)` so that
- * "none" and "not known" stay different, and the record's people-keys stored
- * the same way under a reserved field name. It is filled in the transaction
- * that writes the document, from the declared paths, and rewritten when the
- * declaration changes. A third {@link FilterTableMap} form then turns each
- * per-record JSON probe below into an index seek, and a count for one item
- * into a range scan of that item's rows; the verdict, its order of checks and
- * every caller stay as they are. Two ways to fill it are open: for every
- * account from the start, or for an account when its first filter is saved.
+ * **Reads over a whole account.** Reading every record's metadata is right
+ * for one record or a page of them, and too slow for a count over a large
+ * account. Counts, previews and a share-only filter's candidates are read
+ * instead from the filter rows `filter-values.ts` keeps for every record,
+ * compiled by `filter-value-sql.ts` from the same conditions in the same
+ * order; this module's statements remain the answer whenever those rows are
+ * not ready.
  */
 
 import { createHash } from "node:crypto";
@@ -514,7 +507,7 @@ interface Branch {
   cause?: FilterUnknownCause;
 }
 
-class SqlBuilder {
+export class SqlBuilder {
   readonly params: Array<string | number> = [];
   /** Record a bound value and return its placeholder. */
   bind(value: string | number): string {
@@ -527,7 +520,7 @@ class SqlBuilder {
   }
 }
 
-function fragment(build: (sql: SqlBuilder) => string): FilterSql {
+export function fragment(build: (sql: SqlBuilder) => string): FilterSql {
   const builder = new SqlBuilder();
   const sql = build(builder);
   return { sql, params: builder.params };
@@ -539,7 +532,7 @@ function rowDevice(detail: FieldDetail, subject: string): string {
 }
 
 /** The current generation of the list of `detail` for the device `deviceSql`. */
-function generationSql(
+export function generationSql(
   sql: SqlBuilder,
   map: FilterTableMap,
   sourceId: string,
@@ -643,7 +636,7 @@ function peopleSql(sql: SqlBuilder, map: FilterTableMap, person: PersonDetail, s
 }
 
 /** The keys of one member row `fm`, or NULL when the member cannot be read. */
-function memberKeysSql(sql: SqlBuilder, person: PersonDetail): string {
+export function memberKeysSql(sql: SqlBuilder, person: PersonDetail): string {
   return `${FILTER_MEMBER_SQL_FUNCTION}(fm.identifier_type, fm.identifier_value, ${sql.bind(person.kindsText)})`;
 }
 
@@ -652,7 +645,7 @@ function memberKeysSql(sql: SqlBuilder, person: PersonDetail): string {
  * `condition` in the current list. Uncorrelated: one pass over the account's
  * member rows for the statement.
  */
-function chatsWhereSql(
+export function chatsWhereSql(
   sql: SqlBuilder,
   map: FilterTableMap,
   sourceId: string,
@@ -697,7 +690,7 @@ function chatHasMemberSql(
         AND ${condition()})`;
 }
 
-function savedKeysSql(sql: SqlBuilder, person: PersonDetail): string {
+export function savedKeysSql(sql: SqlBuilder, person: PersonDetail): string {
   return `(SELECT fj.value FROM json_each(${sql.bind(JSON.stringify(person.keys))}) fj)`;
 }
 

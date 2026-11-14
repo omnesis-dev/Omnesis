@@ -35,6 +35,8 @@ import {
   type FilterSql,
   type FilterUnknownCause,
 } from "./filter-sql.js";
+import { filterCandidateSql } from "./filter-value-sql.js";
+import { filterValueDeclaration } from "./filter-values.js";
 import { PERSON_NOUN } from "./filter-wording.js";
 import type { Db } from "../data/types.js";
 
@@ -145,6 +147,23 @@ export function documentAccessInclusionSql(
   if (grant.filters.length > 0 && grant.internalSourceIds?.length) {
     parts.push(`${sourceColumn} NOT IN (SELECT value FROM json_each(?))`);
     params.push(JSON.stringify(grant.internalSourceIds));
+  }
+  // A statement over many records first settles, from the filter rows, the
+  // records a share-only filter cannot let through; the check that follows
+  // reads only the rest. Every record it lets through passes the narrowing,
+  // so the answer is the check's alone.
+  if (!options.fewRecords) {
+    for (const each of compiled) {
+      const narrowing = filterCandidateSql(
+        each,
+        filterValueDeclaration(filterFieldsFor(db, sourceTypeOf(each.sourceId))),
+        options.row !== undefined ? { row: options.row } : { id: documentColumn },
+        sourceColumn,
+      );
+      if (!narrowing) continue;
+      parts.push(narrowing.sql);
+      params.push(...narrowing.params);
+    }
   }
   parts.push(`(${filter.sql})`);
   params.push(...filter.params);

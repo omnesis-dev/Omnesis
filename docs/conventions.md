@@ -117,10 +117,18 @@ same phone library as people resolution. Clients send typed text to the
 gateway to be read; they keep no parser of their own.
 
 **Whole-account reads.** Counts per field and per item, the preview of a
-draft filter and the count of records that cannot be placed walk a whole
-account. They run on the IO worker, in the background, and are cached under a
-stamp that changes whenever anything they read may have changed; a request
-that finds no cached value answers `pending` and the client asks again after
+draft filter and the count of records that cannot be placed are read from the
+filter rows `access/filter-values.ts` keeps for every record: one indexed row
+per id or people-key a record carries, written in the transaction that stores
+the record, so a count costs the records it matches rather than the account.
+A statement over many records under a share-only filter is narrowed by the
+same rows before the check reads any record. The rows are never the answer
+to whether a record is readable, and an account whose rows are not ready (an
+upgrade's or a changed declaration's background pass, or a record changed
+outside a sync page and still queued) is read record by record instead. These
+reads run on the IO worker, in the background, and are cached under a stamp
+that changes whenever anything they read may have changed; a request that
+finds no cached value answers `pending` and the client asks again after
 `retryAfterMs`.
 
 **Records too old for a field.** A new filter entry on a field is accepted
