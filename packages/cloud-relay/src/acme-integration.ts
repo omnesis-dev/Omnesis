@@ -21,6 +21,7 @@ import {
   brokerOrRelayPresenter,
   dnsBrokerClient,
   dnsBrokerSelection,
+  readBrokerMarker,
 } from "./dns-broker-client.js";
 import { hostedGatewayHostname } from "./hosted-name.js";
 import { relayOrigin } from "./network.js";
@@ -89,6 +90,8 @@ export async function createGatewayAcmeController(
       renew(signal: AbortSignal): Promise<boolean>;
       fingerprintSha256(): string | undefined;
       spkiFingerprintSha256(): string | undefined;
+      /** The ACME account the hosted name's CAA record was set to bind, through the broker. */
+      expectedCaa?(): Promise<string | undefined>;
       close(): Promise<void>;
     }
   | undefined
@@ -151,6 +154,8 @@ export async function createGatewayAcmeController(
     | { renewal: import("./acme-gateway.js").GatewayAcmeRenewal; dns?: AcmeDnsChallenges }
     | undefined;
   let initializing: Promise<void> | undefined;
+  const brokerMarker = `${accountKeyFile}.dns-broker.json`;
+  let beforeOrder: ((accountUri: string, signal: AbortSignal) => Promise<void>) | undefined;
   const activate = async (signal: AbortSignal) => {
     signal.throwIfAborted();
     const cert = await readFile(config.OMNESIS_ACME_CERT_FILE, "utf8"),
@@ -228,7 +233,7 @@ export async function createGatewayAcmeController(
                   invalidateSession: session.invalidate,
                   fetch: options.fetch,
                 });
-          presenter =
+          const selecting =
             selection && hosted
               ? brokerOrRelayPresenter({
                   broker: dnsBrokerClient({
@@ -244,9 +249,11 @@ export async function createGatewayAcmeController(
                   }),
                   required: selection.required,
                   relay,
-                  markerFile: `${accountKeyFile}.dns-broker.json`,
+                  markerFile: brokerMarker,
                 })
-              : relay!;
+              : undefined;
+          beforeOrder = selecting?.beforeOrder;
+          presenter = selecting ?? relay!;
         }
         await activate(abort.signal);
         state = {
@@ -258,6 +265,7 @@ export async function createGatewayAcmeController(
             privateKeyFile: publicKeyFile,
             accountKeyFile,
             presenter,
+            beforeOrder,
             issuer: options.issuer,
             trustedRoots,
             activate,
@@ -284,6 +292,8 @@ export async function createGatewayAcmeController(
   return {
     fingerprintSha256: () => fingerprint,
     spkiFingerprintSha256: () => spkiFingerprint,
+    expectedCaa: async () =>
+      beforeOrder ? (await readBrokerMarker(brokerMarker))?.accountUri : undefined,
     renew(signal) {
       return (pending ??= (async () => {
         const combined = AbortSignal.any([signal, abort.signal]);

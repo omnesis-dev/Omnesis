@@ -118,6 +118,8 @@ export interface CloudRelayManagerOptions {
    * for before. The gateway tells its administrators; never with the hostname or the certificate.
    */
   onIncidentHold?(): void;
+  /** Test seam: production reads CAA records from DNS. */
+  caaLookup?: import("./acme-caa.js").CaaLookup;
 }
 
 /** Persistent gateway-local control plane. Constructing an unconfigured manager creates no files or jobs. */
@@ -166,6 +168,13 @@ export class GatewayCloudRelayManagement implements CloudRelayManagement {
           spkiFingerprint: options.publicSpkiFingerprint?.() ?? this.spkiFingerprintSha256(),
         }),
         onIncident: (incidents) => this.holdForIncidents(incidents),
+        caa: () => this.expectedCaa(),
+        onCaaDrift: (digest) =>
+          this.hold(
+            [digest],
+            "The CAA record of this gateway's public name no longer binds its own ACME account",
+          ),
+        ...(options.caaLookup ? { caaLookup: options.caaLookup } : {}),
       });
     this.directory = join(options.configDir, "cloud-relay");
     this.file = join(this.directory, "management.json");
@@ -1105,16 +1114,24 @@ export class GatewayCloudRelayManagement implements CloudRelayManagement {
     return this.status();
   }
   /** Saved before the monitor's journal records the incidents, so a crash can't lose the hold. */
-  private async holdForIncidents(incidents: CertificateIncident[]): Promise<void> {
-    const added = await this.account!.holdForCertificateIncident(
+  private holdForIncidents(incidents: CertificateIncident[]): Promise<void> {
+    return this.hold(
       incidents.map((incident) => incident.certificateFingerprint),
+      "A certificate for this gateway's public name has a key it doesn't hold",
     );
+  }
+  private async hold(evidence: string[], reason: string): Promise<void> {
+    const added = await this.account!.holdForCertificateIncident(evidence);
     if (!added) return;
     this.revision++;
-    log.warn(
-      "A certificate for this gateway's public name has a key it doesn't hold: new devices now wait for approval",
-    );
+    log.warn(`${reason}: new devices now wait for approval`);
     this.options.onIncidentHold?.();
+  }
+  /** The name and account the hosted name's CAA record must keep binding, once published. */
+  private async expectedCaa(): Promise<{ hostname: string; accountUri: string } | undefined> {
+    const accountUri = await this.controller?.expectedCaa?.();
+    const origin = this.publicOrigin();
+    return accountUri && origin ? { hostname: new URL(origin).hostname, accountUri } : undefined;
   }
   /**
    * The owner looked into a certificate incident. Only callers that know the request didn't come

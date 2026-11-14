@@ -188,6 +188,8 @@ export interface GatewayAcmeOptions {
   /** Existing gateway TLS lifecycle reloads the atomically replaced certificate into its HTTPS server. */
   activate: (signal: AbortSignal) => Promise<void>;
   afterActivation?: (signal: AbortSignal) => Promise<void>;
+  /** Runs with the ACME account's URL before each order. */
+  beforeOrder?: (accountUri: string, signal: AbortSignal) => Promise<void>;
   issuer?: typeof issueAcmeCertificate;
   trustedRoots?: readonly string[];
 }
@@ -232,6 +234,7 @@ export class GatewayAcmeRenewal {
         accountKey: await accountKey(this.options.accountKeyFile),
         tlsKey,
         presenter: this.options.presenter,
+        ...(this.options.beforeOrder ? { beforeOrder: this.options.beforeOrder } : {}),
         signal,
       });
       const candidate = validateAcmeCertificate(

@@ -12,8 +12,10 @@ const mocks = vi.hoisted(() => ({
     getOrder: vi.fn(),
     finalizeOrder: vi.fn(),
     getCertificate: vi.fn(),
+    getAccountUrl: vi.fn(),
   },
   resolveTxt: vi.fn(),
+  resolveCaa: vi.fn(),
   cancel: vi.fn(),
   intercept: undefined as ((request: { url: string }) => unknown) | undefined,
   sleep: vi.fn(),
@@ -39,12 +41,14 @@ vi.mock("acme-client", () => ({
 vi.mock("node:dns/promises", () => ({
   Resolver: class {
     resolveTxt = mocks.resolveTxt;
+    resolveCaa = mocks.resolveCaa;
     cancel = mocks.cancel;
   },
 }));
 vi.mock("node:timers/promises", () => ({ setTimeout: mocks.sleep }));
 import { issueAcmeCertificate } from "./acme-client.js";
 
+const ACCOUNT = "https://ca.example.test/acct/1";
 const hostname = "gateway.example.test",
   digest = "a".repeat(43);
 const challenge = {
@@ -75,6 +79,8 @@ beforeEach(() => {
   mocks.cancel.mockClear();
   mocks.sleep.mockReset().mockResolvedValue(undefined);
   mocks.client.createAccount.mockResolvedValue({});
+  mocks.client.getAccountUrl.mockReturnValue(ACCOUNT);
+  mocks.resolveCaa.mockReset().mockResolvedValue([]);
   mocks.client.createOrder.mockResolvedValue({
     url: "https://ca.example.test/order",
     status: "pending",
@@ -222,4 +228,38 @@ test("CA transport policy rejects out-of-scope recipients and binds network canc
   await expect(issueAcmeCertificate({ ...options(), signal: abort.signal })).rejects.toThrow(
     "stopped",
   );
+});
+
+test("F3: a certificate order is refused when the name's CAA accounturi is not the gateway's own account", async () => {
+  // Whoever rewrote the name's CAA record bound issuance to an ACME account of their own.
+  mocks.resolveCaa.mockResolvedValue([
+    { critical: 0, issue: "letsencrypt.org; accounturi=https://ca.example.test/acct/666" },
+  ]);
+  await expect(issueAcmeCertificate(options())).rejects.toThrow("another ACME account");
+  expect(mocks.client.createOrder).not.toHaveBeenCalled();
+  expect(presenter.create).not.toHaveBeenCalled();
+});
+
+test("the account-bound CAA step runs with the account URL before the order, and its own record lets it through", async () => {
+  const beforeOrder = vi.fn(async () => {
+    mocks.resolveCaa.mockResolvedValue([
+      { critical: 0, issue: `letsencrypt.org; validationmethods=dns-01; accounturi=${ACCOUNT}` },
+    ]);
+  });
+  expect(await issueAcmeCertificate({ ...options(), beforeOrder })).toBe("public-certificate");
+  expect(beforeOrder).toHaveBeenCalledWith(ACCOUNT, expect.any(AbortSignal));
+  expect(beforeOrder.mock.invocationCallOrder[0]).toBeLessThan(
+    mocks.client.createOrder.mock.invocationCallOrder[0]!,
+  );
+  // A name DNS couldn't answer for, or one with no account binding, goes ahead: the CA decides.
+  mocks.client.getAuthorizations.mockResolvedValue([{ ...authorization, status: "valid" }]);
+  mocks.client.getOrder.mockResolvedValue({ status: "valid" });
+  for (const answer of [
+    Promise.reject(Object.assign(new Error("SERVFAIL"), { code: "ESERVFAIL" })),
+    Promise.resolve([{ critical: 0, issue: "letsencrypt.org" }]),
+  ]) {
+    answer.catch(() => {});
+    mocks.resolveCaa.mockReturnValueOnce(answer);
+    expect(await issueAcmeCertificate(options())).toBe("public-certificate");
+  }
 });
