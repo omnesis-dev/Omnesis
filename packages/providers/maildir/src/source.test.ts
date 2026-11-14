@@ -29,7 +29,6 @@ import type { DocumentInput } from "@omnesis/types";
 import type { MaildirCursor, MaildirLimits } from "./source.js";
 import type { FixtureMessage } from "./testing/maildir-writer.js";
 
-
 vi.mock("node:fs", async (original) => {
   const actual = await original<typeof import("node:fs")>();
   const { withFixturePermissions } = await import("./testing/permission-fixture.js");
