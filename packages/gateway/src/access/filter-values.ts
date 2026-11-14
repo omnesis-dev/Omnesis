@@ -114,10 +114,16 @@ export const POSTING_LEVELS = 6;
 const LEVEL_LIST = Array.from({ length: POSTING_LEVELS }, (_unused, level) => level).join(", ");
 
 /**
- * The condition that `alias` is a posting of `term`, at any level: one seek
- * of the postings' key per level.
+ * The condition that `alias` is a posting of `term`: one seek of the
+ * postings' key per level that holds any, read in the statement's own
+ * snapshot (level 0, and every level a merge has given postings).
  */
 export function postingOfTerm(alias: string, term: string): string {
+  return `${alias}.level IN (SELECT 0 UNION ALL SELECT level FROM document_filter_levels WHERE postings > 0) AND ${alias}.term = ${term}`;
+}
+
+/** {@link postingOfTerm} at every level, for a write that must find a posting wherever it is. */
+function postingAtAnyLevel(alias: string, term: string): string {
   return `${alias}.level IN (${LEVEL_LIST}) AND ${alias}.term = ${term}`;
 }
 
@@ -608,11 +614,11 @@ class RowWriter {
        VALUES (0, ?, ?, ?, ?)`,
     );
     this.deletePosting = db.prepare<[number, number]>(
-      `DELETE FROM document_filter_postings WHERE ${postingOfTerm("document_filter_postings", "?")} AND seq = ?`,
+      `DELETE FROM document_filter_postings WHERE ${postingAtAnyLevel("document_filter_postings", "?")} AND seq = ?`,
     );
     this.updatePostings = db.prepare<[number, number, number, number]>(
       `UPDATE document_filter_postings SET source_version = ?, known = ?
-        WHERE ${postingOfTerm("document_filter_postings", "?")} AND seq = ?`,
+        WHERE ${postingAtAnyLevel("document_filter_postings", "?")} AND seq = ?`,
     );
     this.dequeue = db.prepare<[string]>(
       "DELETE FROM document_filter_value_queue WHERE document_id = ?",
@@ -895,6 +901,7 @@ export function writeDocumentFilterValues(db: Db, documents: readonly FilterValu
     }
     for (const document of documents) writer.refreshAttachments(document, written);
     writer.flush();
+    mergeLevelZeroWhenFull(db);
     markNewAccountsCut(db, documents, writer);
   })();
 }
@@ -1033,6 +1040,7 @@ export function applyFilterValueWork(
         applied++;
       }
       writer.flush();
+      mergeLevelZeroWhenFull(db);
     })();
   }
   return { applied, remaining: [] };
@@ -1046,9 +1054,14 @@ export function applyFilterValueWork(
 // them one by one where they belong would touch a page per posting. Each
 // posting is moved once per level, so its share of the merges is a fraction of
 // a page.
+//
+// Level 0 is kept to a few pages, so a transaction of a handful of records
+// touches only those: whoever writes postings merges it into level 1 once it
+// is full, a bounded step of a few milliseconds. Larger levels are merged by
+// the background task.
 
 /** Postings level 0 holds before it is merged; level `k` holds ten times level `k - 1`. */
-export const FILTER_POSTING_LEVEL_BASE = 15_000;
+export const FILTER_POSTING_LEVEL_BASE = 1_000;
 /** About how many postings one transaction of a merge moves. */
 export const FILTER_POSTING_MERGE_SLICE = 500;
 
@@ -1063,13 +1076,7 @@ export function filterPostingLevelCapacity(level: number): number {
  * are read from `document_filter_levels`.
  */
 export function filterPostingLevelToMerge(db: Db): number | null {
-  const fresh = db
-    .prepare<[number], { n: number }>(
-      `SELECT count(*) AS n FROM (
-         SELECT 1 FROM document_filter_postings WHERE level = 0 LIMIT ?)`,
-    )
-    .get(filterPostingLevelCapacity(0))!.n;
-  if (fresh >= filterPostingLevelCapacity(0)) return 0;
+  if (levelZeroFull(db)) return 0;
   const full = db
     .prepare<[], { level: number; postings: number }>(
       "SELECT level, postings FROM document_filter_levels ORDER BY level",
@@ -1077,6 +1084,27 @@ export function filterPostingLevelToMerge(db: Db): number | null {
     .all()
     .find((row) => row.postings >= filterPostingLevelCapacity(row.level));
   return full?.level ?? null;
+}
+
+/** Whether level 0 holds its capacity, counted no further. */
+function levelZeroFull(db: Db): boolean {
+  const capacity = filterPostingLevelCapacity(0);
+  return (
+    db
+      .prepare<[number], { n: number }>(
+        `SELECT count(*) AS n FROM (
+           SELECT 1 FROM document_filter_postings WHERE level = 0 LIMIT ?)`,
+      )
+      .get(capacity)!.n >= capacity
+  );
+}
+
+/**
+ * Merge level 0 into level 1 when it is full. Called by every write of
+ * postings, inside its transaction, after the postings are in.
+ */
+function mergeLevelZeroWhenFull(db: Db): void {
+  if (levelZeroFull(db)) mergeFilterPostings(db, 0);
 }
 
 /**

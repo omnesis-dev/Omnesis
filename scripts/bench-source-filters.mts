@@ -162,6 +162,22 @@ function profile(membersOf: boolean): unknown {
   };
 }
 
+/** The same records with nothing declared filterable: the write without filter rows. */
+function unfilteredProfile(): unknown {
+  const {
+    personFilter: _people,
+    metadataFields,
+    ...rest
+  } = profile(false) as {
+    personFilter: unknown;
+    metadataFields: Array<Record<string, unknown>>;
+  };
+  return {
+    ...rest,
+    metadataFields: metadataFields.map(({ filter: _filter, ...field }) => field),
+  };
+}
+
 function metadataAt(index: number): string {
   const next = random(index);
   const old = index % 2 === 0;
@@ -642,13 +658,20 @@ try {
         sourceUpdatedAt: at,
       };
     }) as unknown as Parameters<typeof upsertDocuments>[1];
-  // The same page for a source that declares nothing filterable is the
-  // write without rows; five pages each, alternating, for a median. A page
-  // is written in one transaction, and the way the writer's sync operation
-  // writes it: five records per transaction, giving the writer back between.
-  // The background task merges full levels between pages; that work is
-  // timed apart (see the merge rows) and is the pages' too.
-  const PLAIN = "bench-notes:reader";
+  // The same page for an account of a source whose profile is the same but
+  // declares nothing filterable (the same people are indexed) is the write
+  // without rows; ten pages each, alternating, for a median. A page is written
+  // in one transaction, and the way the writer's sync operation writes it:
+  // five records per transaction, giving the writer back between. Level 0 is
+  // merged by the pages themselves; the background task merges the larger
+  // levels between pages, and that work is timed apart (see the merge rows)
+  // and is the pages' too.
+  const PLAIN = "bench-unfiltered:reader";
+  upsertSourceDocumentProfiles(
+    db,
+    [{ sourceType: "bench-unfiltered", outputRevision: 2, profile: unfilteredProfile() as never }],
+    Date.now(),
+  );
   const ROUNDS = 10;
   let pageFrom = TOTAL;
   for (const [mode, chunked] of [
@@ -682,7 +705,7 @@ try {
     );
     mergeRows(`merges during the pages written ${mode}`);
     record(
-      `sync page of 500 new records, ${mode}, of a source with nothing filterable`,
+      `sync page of 500 new records, ${mode}, the same records declaring nothing filterable`,
       "writer",
       pageTimes[PLAIN]!.sort((a, b) => a - b),
     );

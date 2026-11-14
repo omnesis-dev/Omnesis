@@ -517,6 +517,23 @@ describe("record numbers and posting levels", () => {
     expectConsistent();
   });
 
+  it("merges a full level 0 in the write that filled it", () => {
+    const page = (from: number) =>
+      Array.from({ length: 100 }, (_, n) =>
+        mail(`m-${from + n}`, {
+          labelIds: [`l-${n % 7}`, `l-${n % 5}-b`],
+          folderIds: [`f-${from + n}`],
+        }),
+      );
+    for (let from = 0; from < 400; from += 100) {
+      write(page(from), 3);
+      expect(postingsAt(0)).toBeLessThan(filterPostingLevelCapacity(0));
+    }
+    expect(postingsAt(1)).toBeGreaterThan(0);
+    expect(recordedAt(1)).toBe(postingsAt(1));
+    expectConsistent();
+  });
+
   it("merges the lowest full level, and never the last", () => {
     write([mail("m-1", { labelIds: ["l-1"] })], 3);
     expect(filterPostingLevelToMerge(db)).toBeNull();
