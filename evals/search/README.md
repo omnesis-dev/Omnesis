@@ -32,9 +32,13 @@ for the in-memory index after the bulk load, because that is what a settled
 install serves from, and records how many queries each ranker answered: a query
 the in-memory ranker cannot serve still falls back.
 
-Three scores are reported per language, and as a macro average in which every
+Four scores are reported per language, and as a macro average in which every
 language counts equally:
 
+- **Hit@10** is the share of questions with at least one relevant passage in
+  the first ten results. It is the score to watch when the reader of the
+  results is an agent, which reads the whole first page and takes what it
+  needs from it.
 - **nDCG@10** rewards relevant passages near the top of the first ten results.
   1 is a perfect ranking. This is MIRACL's headline score.
 - **Recall@100** is the share of a question's relevant passages found anywhere

@@ -25,8 +25,9 @@ import {
   type RunSummary,
 } from "./results.js";
 
-type Metric = "ndcg10" | "recall100" | "mrr10";
+type Metric = "hit10" | "ndcg10" | "recall100" | "mrr10";
 const METRIC_LABELS: Readonly<Record<Metric, string>> = {
+  hit10: "Hit@10",
   ndcg10: "nDCG@10",
   recall100: "Recall@100",
   mrr10: "MRR@10",
@@ -64,6 +65,7 @@ export function renderResults(summaries: readonly RunSummary[]): string {
         "Commit",
         "Passages",
         "Queries",
+        "Hit@10",
         "nDCG@10",
         "Recall@100",
         "MRR@10",
@@ -76,6 +78,7 @@ export function renderResults(summaries: readonly RunSummary[]): string {
         `${s.source.commit.slice(0, 9)}${s.source.dirty ? " (dirty)" : ""}`,
         s.totals.passages.toLocaleString("en-US"),
         s.totals.queries.toLocaleString("en-US"),
+        fmt(s.macro.hit10),
         fmt(s.macro.ndcg10),
         fmt(s.macro.recall100),
         fmt(s.macro.mrr10),
@@ -84,13 +87,13 @@ export function renderResults(summaries: readonly RunSummary[]): string {
       ]),
     ),
     "",
-    'The three scores are macro averages: every language counts equally. "In-memory ranker" is the',
+    'The four scores are macro averages: every language counts equally. "In-memory ranker" is the',
     "share of queries the default keyword ranker served; the FTS5 fallback served the rest.",
   ];
   const languages = [...new Set(summaries.flatMap((s) => s.languages.map((l) => l.language)))].sort(
     (a, b) => LANGUAGE_NAMES[a].localeCompare(LANGUAGE_NAMES[b]),
   );
-  for (const metric of ["ndcg10", "recall100"] as const) {
+  for (const metric of ["hit10", "ndcg10", "recall100"] as const) {
     out.push(
       "",
       `## ${METRIC_LABELS[metric]} by language`,
@@ -238,7 +241,7 @@ async function main(): Promise<void> {
     }
     const base = { summary: readSummary(baseName), rows: readQueryRows(baseName) };
     const candidate = { summary: readSummary(candidateName), rows: readQueryRows(candidateName) };
-    for (const metric of ["ndcg10", "recall100"] as const) {
+    for (const metric of ["hit10", "ndcg10", "recall100"] as const) {
       process.stdout.write(`${renderComparison(base, candidate, metric)}\n`);
     }
     return;
