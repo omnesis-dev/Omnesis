@@ -95,7 +95,9 @@ export function cloudflareBrokerZone(options: {
       `${options.apiUrl ?? CLOUDFLARE_API}/zones/${zoneId}/dns_records${path}`,
       {
         method,
-        redirect: "error",
+        // Workers has no "error" redirect mode (it throws before sending), so take redirects as
+        // they come and refuse them below: a 3xx is not ok.
+        redirect: "manual",
         signal,
         headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
         body: body === undefined ? undefined : JSON.stringify(body),
