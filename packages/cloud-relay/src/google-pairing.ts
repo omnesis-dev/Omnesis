@@ -86,6 +86,15 @@ export interface GatewayEnrollment {
   /** Whether a passkey the owner confirmed here signed that ceremony. Spends its challenge. */
   verifyApproval?(proof: unknown, binding: string): Promise<boolean>;
   /**
+   * Whether a held request can be approved with a passkey on the gateway's page right now: a
+   * passkey is confirmed here, the gateway has an origin of its own, and no incident holds it.
+   */
+  passkeyApproval?(): boolean;
+  /** Whether the linked account has a passkey this gateway knows (pinned or confirmed here). */
+  accountPasskey?(): boolean;
+  /** The passkey ids a device may sign in with on the gateway's page, as a prompt hint only. */
+  signInPasskeys?(): string[];
+  /**
    * Whether an administrative action that loosens this gateway must first be confirmed with a
    * passkey (a "step-up"): true once the owner confirmed a passkey here.
    */
@@ -241,6 +250,7 @@ export class GooglePairingRequests {
     if (!where) throw new RelayError(404, "Passkey sign-in on this gateway is unavailable");
     const binding = enrollmentNonce(value);
     const issued = this.challenges.issue();
+    const allowCredentials = this.options.enrollment?.signInPasskeys?.() ?? [];
     return {
       purpose: "device-enrollment",
       ...where,
@@ -253,6 +263,7 @@ export class GooglePairingRequests {
         binding,
       ),
       expiresAt: issued.expiresAt,
+      ...(allowCredentials.length > 0 ? { allowCredentials } : {}),
     };
   }
 
@@ -270,6 +281,7 @@ export class GooglePairingRequests {
       ...(row.revokedDevice ? { revokedDevice: true as const } : {}),
       // A portal's request is approved only in the browser that made it.
       deviceKeyRequired: row.kind === "portal",
+      passkeyApproval: this.passkeyApproval(),
     };
   }
 
@@ -323,6 +335,16 @@ export class GooglePairingRequests {
       ...(row.devicePublicKey ? { devicePublicKey: row.devicePublicKey } : {}),
       verificationCode: row.verificationCode,
     });
+  }
+
+  /** Whether a held request can be approved with a passkey on the gateway's page right now. */
+  passkeyApproval(): boolean {
+    return this.options.enrollment?.passkeyApproval?.() ?? false;
+  }
+
+  /** Whether the linked account has a passkey this gateway knows. */
+  accountPasskey(): boolean {
+    return this.options.enrollment?.accountPasskey?.() ?? false;
   }
 
   /** The origin and RP ID a page uses for a passkey sign-in on this gateway, when it has one. */

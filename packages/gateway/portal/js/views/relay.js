@@ -11,12 +11,16 @@
 
 import { html } from "htm/preact";
 import { CopyIconButton } from "../components/copy-button.js";
-import { useState } from "preact/hooks";
+import { useEffect, useRef, useState } from "preact/hooks";
 import { RelayProblems, relayProblems, relayDiagnostics } from "../components/relay-problems.js";
 import {
-  GatewayPasskeyConfirm,
-  passkeyConfirmationNeeded,
+  accountConfirmation,
+  CONFIRM_ON_LOAD,
+  FinishSetup,
+  openOnGateway,
+  SetupReminder,
 } from "../components/gateway-passkey-confirm.js";
+import { onGatewayOrigin } from "../lib/gateway-passkey.js";
 import { useRelayManagement } from "../lib/use-relay-management.js";
 import {
   relayError,
@@ -614,22 +618,12 @@ function TrustedSignIns({ enrollment }) {
   </div>`;
 }
 
-function NewDevices({ enrollment, held, busy, run }) {
+function NewDevices({ enrollment, reminder, onFinish, held, busy, run }) {
   // While a certificate incident holds the gateway, the choice can't take effect, so it waits.
   const disabled = held || (Boolean(busy) && busy !== "refresh");
   return html`<section class="relay-section" aria-labelledby="relay-new-devices-title">
     <h3 class="relay-section-title" id="relay-new-devices-title">New devices</h3>
-    ${
-      !held &&
-      (passkeyConfirmationNeeded(enrollment)
-        ? html`<${GatewayPasskeyConfirm} enrollment=${enrollment} busy=${busy} run=${run} />`
-        : enrollment.confirmationNeeded &&
-          html`<p class="relay-notice" role="status">
-            Every new device waits for your approval: no sign-in is confirmed on this gateway.
-            Approve a device that signed in with Google in an Omnesis app, and choose to trust
-            that Google account.
-          </p>`)
-    }
+    ${!held && reminder && html`<${SetupReminder} onFinish=${onFinish} />`}
     <p class="relay-hint">What happens when a new device signs in to your Omnesis account.</p>
     ${
       held &&
@@ -661,8 +655,53 @@ function Skeleton() {
   </section>`;
 }
 
-export function RelayView() {
+/** Where "Not now" on the setup checklist is remembered, per gateway, in this browser only. */
+const SETUP_LATER_KEY = "omnesis.relay.setup-later";
+function setupLater(gatewayId) {
+  try {
+    return globalThis.localStorage?.getItem(SETUP_LATER_KEY) === String(gatewayId);
+  } catch {
+    return false;
+  }
+}
+function rememberSetupLater(gatewayId, later) {
+  try {
+    if (later) globalThis.localStorage?.setItem(SETUP_LATER_KEY, String(gatewayId));
+    else globalThis.localStorage?.removeItem(SETUP_LATER_KEY);
+  } catch {
+    // Without storage, "Not now" lasts until the page is reloaded.
+  }
+}
+
+const CONNECTING = ["waiting", "registering", "linking"];
+
+export function RelayView({ open = openOnGateway, location = globalThis.location } = {}) {
   const { status, error, busy, run, version } = useRelayManagement();
+  const [laterChoice, setLater] = useState(null);
+  const later = laterChoice ?? setupLater(status?.gatewayId);
+  const phase = status ? relayPhase(status) : "loading";
+  const enrollment =
+    status?.account?.linked && ["connected", "reconnecting", "disconnected", "off"].includes(phase)
+      ? status.deviceEnrollment
+      : undefined;
+  const setup = enrollment && !status.incidentHold ? accountConfirmation(enrollment) : null;
+  const ready = status?.certificate?.state === "valid";
+  // Connecting from here ends on the gateway's own address once its certificate is ready, so a
+  // passkey account's last step runs there straight away.
+  const connecting = useRef(false);
+  useEffect(() => {
+    if (CONNECTING.includes(phase)) connecting.current = true;
+    else if (phase !== "connected") connecting.current = false;
+    else if (connecting.current && setup === "passkey" && ready && !later) {
+      connecting.current = false;
+      if (!onGatewayOrigin(enrollment.confirmOrigin, location))
+        open(enrollment.confirmOrigin, { next: CONFIRM_ON_LOAD, location }).catch(() => {});
+    }
+  }, [phase, setup, ready, later]);
+  const chooseLater = (value) => {
+    rememberSetupLater(status?.gatewayId, value);
+    setLater(value);
+  };
   if (!status) {
     if (busy) return html`<div class="relay-view"><${Skeleton} /></div>`;
     return html`<div class="relay-view">
@@ -678,15 +717,28 @@ export function RelayView() {
       </section>
     </div>`;
   }
-  const phase = relayPhase(status);
   const established = ["connected", "reconnecting", "disconnected", "off"].includes(phase);
-  const linked = Boolean(status.account?.linked);
-  const enrollment = linked && established ? status.deviceEnrollment : undefined;
+  // The checklist stands in for the headline while it's the one thing left to do.
+  const checklist = setup && !later && phase === "connected";
   const problems = relayProblems(status, phase);
   // A failed connect or a dropped connection is said in the headline; the details still help.
   const troubled = problems.length > 0 || phase === "failed" || phase === "disconnected";
   return html`<div class="relay-view">
-    <${Hero} status=${status} phase=${phase} busy=${busy} run=${run} />
+    ${
+      checklist
+        ? html`<${FinishSetup}
+            enrollment=${enrollment}
+            hostname=${status.hostname}
+            ready=${ready}
+            serviceUrl=${status.config?.relayUrl}
+            busy=${busy}
+            run=${run}
+            open=${open}
+            location=${location}
+            onDismiss=${() => chooseLater(true)}
+          />`
+        : html`<${Hero} status=${status} phase=${phase} busy=${busy} run=${run} />`
+    }
     ${error && html`<p role="alert" class="relay-notice">${error}</p>`}
     ${
       status.notice === "account-deleted" &&
@@ -709,6 +761,8 @@ export function RelayView() {
       enrollment &&
       html`<${NewDevices}
         enrollment=${enrollment}
+        reminder=${Boolean(setup) && later}
+        onFinish=${() => chooseLater(false)}
         held=${Boolean(status.incidentHold)}
         busy=${busy}
         run=${run}

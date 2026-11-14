@@ -7,6 +7,7 @@ import {
   gatewayPasskeyOptionsSchema,
   googlePairingRequestSchema,
   passkeyApprovalSchema,
+  PasskeyNotOnAccount,
 } from "@omnesis/cloud-relay";
 import { z } from "zod";
 import { bodyLimit } from "hono/body-limit";
@@ -106,6 +107,14 @@ export function mountCloudPairingRoutes(
         ...(active.account && active.pairing.gatewayPasskey()
           ? { gatewayPasskey: active.pairing.gatewayPasskey() }
           : {}),
+        // Whether a held request can be approved with a passkey on this gateway's page, and
+        // whether the account has a passkey to sign in with: which buttons a page offers.
+        ...(active.account
+          ? {
+              passkeyApproval: active.pairing.passkeyApproval(),
+              accountPasskey: active.pairing.accountPasskey(),
+            }
+          : {}),
         ...(active.managedClient
           ? {
               authorizationRelayOrigin: active.account
@@ -140,6 +149,13 @@ export function mountCloudPairingRoutes(
     try {
       return await run();
     } catch (error) {
+      // Said apart, so the page can tell the person the passkey belongs to another account.
+      if (error instanceof PasskeyNotOnAccount)
+        throw new HttpError(
+          401,
+          "PASSKEY_NOT_ON_ACCOUNT",
+          "That passkey isn't on the Omnesis account this gateway is linked to",
+        );
       const status =
         typeof error === "object" && error !== null && "status" in error ? error.status : undefined;
       throw new HttpError(

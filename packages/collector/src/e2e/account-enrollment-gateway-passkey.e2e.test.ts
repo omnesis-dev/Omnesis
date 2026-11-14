@@ -150,13 +150,16 @@ describe.skipIf(!browserReady)("passkeys on the gateway's own page", () => {
     expect((await gateway.status()).deviceEnrollment.confirmedSignIns).toEqual([]);
   }, 120_000);
 
-  test("right after linking, the owner confirms the passkey from the card on the gateway's own page", async () => {
+  test("right after linking, the owner confirms the passkey from the setup checklist on the gateway's own page", async () => {
     const page = await ownerPortal(owner);
     await page.goto(`${gateway.publicOrigin}/portal/settings/account`);
-    await expectText(page, "Confirm your passkey on this gateway");
+    // Nothing is confirmed yet, so the checklist stands in for the headline; its last step is
+    // the account's passkey, used here on the gateway's own page.
+    await expectText(page, "Finish setting up");
+    await expectText(page, "Let your Face ID add devices");
     await expectText(page, "Not confirmed on this gateway");
     await shot(page, "confirm-card");
-    await clickFirst(page, ["Confirm with passkey"]);
+    await clickFirst(page, ["Continue with Face ID"]);
     const confirmed = await waitFor(async () => {
       const status = await gateway.status();
       return status.deviceEnrollment.confirmedSignIns?.length ? status : undefined;
@@ -173,7 +176,9 @@ describe.skipIf(!browserReady)("passkeys on the gateway's own page", () => {
       expect.objectContaining({ source: "link-page", confirmed: true }),
     ]);
     await expectText(page, "Confirmed on this gateway");
-    expect(await page.getByText("Confirm your passkey on this gateway").count()).toBe(0);
+    // Set up: the checklist gives way to the ordinary headline.
+    await expectText(page, "Connected as");
+    expect(await page.getByText("Finish setting up").count()).toBe(0);
     await shot(page, "confirmed");
     // The list the CLI reads says the same.
     const listed = await gateway.json<{ items: Array<{ confirmed: boolean; via?: string }> }>(
@@ -255,7 +260,7 @@ describe.skipIf(!browserReady)("passkeys on the gateway's own page", () => {
       if (frame === fresh.page.mainFrame()) visited.push(frame.url());
     });
     await fresh.page.goto(`${gateway.publicOrigin}/portal/`);
-    await clickFirst(fresh.page, ["Sign in with Passkey"]);
+    await clickFirst(fresh.page, ["Continue with Face ID"]);
     await fresh.page.locator("nav.sidebar-nav").waitFor({ timeout: 30_000 });
     await syncPasskey(fresh, owner, copied);
     expect(visited.filter((url) => new URL(url).origin === world.relayOrigin)).toEqual([]);

@@ -872,8 +872,9 @@ describe.skipIf(!browserReady)("devices join a gateway by signing in", () => {
     await gateway.pace(3);
     const page = session.page;
     await page.goto(`${gateway.publicOrigin}/portal/`);
-    // The relay's account page; signing in on the gateway's own page is the other button.
-    await clickFirst(page, ["Sign in on the Omnesis account page"]);
+    // "Continue with Google" opens the relay's account page, which offers the passkey too;
+    // "Continue with Face ID" would sign in on the gateway's own page instead.
+    await clickFirst(page, ["Continue with Google"]);
     await clickFirst(page, ["Sign in with Passkey", "Verify with Passkey"]);
     await waitFor(
       () => new URL(page.url()).origin === new URL(gateway.publicOrigin).origin,
@@ -886,7 +887,7 @@ describe.skipIf(!browserReady)("devices join a gateway by signing in", () => {
     await gateway.setPolicy("automatic");
     const before = new Set((await gateway.devices()).map((device) => device.id));
     const page = await portalSignIn(first);
-    await expectText(page, "Confirm this browser", 30_000);
+    await expectText(page, "Waiting for your OK", 30_000);
     const held = await waitFor(
       async () =>
         (await gateway.pendingRequests()).find(
@@ -896,7 +897,7 @@ describe.skipIf(!browserReady)("devices join a gateway by signing in", () => {
     );
     expect(held).toMatchObject({ signIn: "passkey", canTrustSignIn: false });
     // Same browser, same device key: the owner's passkey on the gateway's page approves it.
-    await clickFirst(page, ["Approve with your passkey"]);
+    await clickFirst(page, ["Approve with Face ID here"]);
     await page.locator("nav.sidebar-nav").waitFor({ timeout: 30_000 });
     const added = (await gateway.devices()).filter((device) => !before.has(device.id));
     expect(added).toHaveLength(1);
@@ -926,7 +927,7 @@ describe.skipIf(!browserReady)("devices join a gateway by signing in", () => {
       if (frame === page.mainFrame()) visited.push(frame.url());
     });
     await page.locator("a.gateway").click();
-    await expectText(page, "Confirm this browser", 30_000);
+    await expectText(page, "Waiting for your OK", 30_000);
     expect(new URL(page.url()).origin).toBe(new URL(gateway.publicOrigin).origin);
     // The sign-in travelled in the fragment, which the portal takes out of the address bar.
     expect(page.url()).not.toContain("account-signin");
@@ -942,10 +943,13 @@ describe.skipIf(!browserReady)("devices join a gateway by signing in", () => {
     );
     expect(shown).toBe(held.verificationCode);
     expect(await page.locator("nav.sidebar-nav").count()).toBe(0);
-    // The owner compares the code on a device they already use and approves.
+    // The owner compares the code on a device they already use and approves. The browser
+    // checked the code against its own device key already, so it signs in by itself: there is
+    // no "Codes match" to press.
+    expect(await page.getByRole("button", { name: "Codes match, pair this device" }).count()).toBe(
+      0,
+    );
     await gateway.decide(held.requestId, true);
-    await expectText(page, "Approved by your gateway.", 30_000);
-    await clickFirst(page, ["Codes match, pair this device"]);
     await page.locator("nav.sidebar-nav").waitFor({ timeout: 30_000 });
     const added = (await gateway.devices()).filter((device) => !before.has(device.id));
     expect(added).toHaveLength(1);
@@ -964,7 +968,7 @@ describe.skipIf(!browserReady)("devices join a gateway by signing in", () => {
     const copied = await copyPasskey(first, fresh);
     const page = await portalSignIn(fresh);
     await syncPasskey(fresh, first, copied);
-    await expectText(page, "Confirm this browser", 30_000);
+    await expectText(page, "Waiting for your OK", 30_000);
     const shown = (await page.locator("code.cloud-pairing-code").textContent())?.trim();
     const held = await waitFor(
       async () =>
