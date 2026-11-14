@@ -40,17 +40,17 @@ those failures.
 
 ## Native Windows evidence
 
-The focused x64 run at revision `53f02f142` passed native dependency preparation
-and the MSVC vector binding proof. The proof exercised Unicode paths, replacement
-with an old mapped reader still open, dimensionality changes, read-only targets,
-failed publication retaining the previous index, explicit resource disposal and
-a sparse file larger than 4 GiB.
+The focused x64 run at revision `bbc97b2ac` passed 1,548 tests, failed four
+and skipped 24 across 106 passing and two failing files. Native dependency
+preparation, MSVC vector publication, cache initialization and reuse, explicit
+DOS short-name paths and native security cases passed. Three worker-thread
+loader fixtures and one Maildir read-failure case remain; E2E did not run after
+the unit failure. Their corrections require another native verdict.
 
-Its unit phase passed 1,456 tests, failed 88 and skipped 24, across 99 passing
-and nine failing files. E2E did not run after that failure. Remaining groups
-include native worker cache verification, SQLite fixture cleanup, native paths,
-command fixture escaping and CRLF comparisons. Corrected groups require fresh
-Windows results; a passing native dependency proof is not a passing runtime lane.
+The vector proof exercised Unicode paths, replacement with an old mapped reader
+still open, dimensionality changes, read-only targets, failed publication
+retaining the previous index, explicit disposal and a sparse file over 4 GiB.
+A passing dependency proof is not a passing runtime lane.
 
 The worker cache failures exposed a path representation boundary: .NET expands
 DOS short-name ancestors while JavaScript verifies the requested path spelling.
@@ -59,8 +59,10 @@ then returns the requested spelling. Owner, creation-time, DACL, reparse-point,
 generation, binary-hash and transferred-handle checks remain enforced. Native
 cold initialization, cache reuse and security regressions must pass together.
 
-An actual ARM64 guest has exercised binary-safe process ownership and NTFS
-case-sensitive directory containment. The Local Files boundary refused a distinct
+An actual ARM64 guest boots with hardware acceleration and runs Node 24. Its
+process-creation metadata query completes in 1.9 seconds within the unchanged
+10-second deadline. Earlier native probes exercised binary-safe process
+ownership and NTFS case-sensitive directory containment. The Local Files boundary refused a distinct
 sibling differing only in case before reading its bytes, while accepting an
 alias for the same directory. This is narrow evidence: complete ARM64 native
 dependencies and product validation remain open, and the provider remains gated.

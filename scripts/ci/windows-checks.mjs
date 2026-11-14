@@ -79,6 +79,8 @@ export const FOCUSED_UNIT_FILES = [
   "packages/cli/src/commands/openclaw-capability-consent.test.ts",
   "packages/cli/src/commands/openclaw-install-record.test.ts",
   "scripts/nx/entrypoints.test.mjs",
+  "packages/providers/apple/src/imessage-transcript-storage.test.ts",
+  "packages/providers/apple/src/imessage-transcript-durability.test.ts",
   "packages/providers/telegram/src/protected-store.test.ts",
   "packages/providers/telegram/src/message-store.test.ts",
   "packages/providers/whatsapp/src/message-store.test.ts",

@@ -21,6 +21,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { windowsPowerShellExecutable } from "./windows-powershell.js";
 
 const tsx = pathToFileURL(createRequire(import.meta.url).resolve("tsx")).href;
+const tsxWorkerApi = import.meta.resolve("tsx/esm/api");
 const jobModule = new URL("./windows-job.ts", import.meta.url).href;
 const fileModule = new URL("./windows-private-file.ts", import.meta.url).href;
 let root: string;
@@ -76,14 +77,17 @@ const threadFixture = `
 import {Worker} from 'node:worker_threads';
 import {execFileSync} from 'node:child_process';
 const threadCode=${JSON.stringify(`
-const {parentPort}=require('node:worker_threads');
-import(${JSON.stringify(jobModule)}).then(async({runWindowsJob})=>{
+const {parentPort,workerData}=require('node:worker_threads');
+import(${JSON.stringify(tsxWorkerApi)}).then(({register})=>{
+ register();return import(${JSON.stringify(jobModule)});
+}).then(async({runWindowsJob})=>{
+ if(workerData.importOnly) {parentPort.postMessage({imported:typeof runWindowsJob});parentPort.close();return;}
  const result=await runWindowsJob(process.execPath,['-e',''],{timeoutMs:15000});
  parentPort.postMessage({failure:result.failure,exitCode:result.exitCode});parentPort.close();
 }).catch(error=>{parentPort.postMessage({error:String(error)});parentPort.close();});
 `)};
-async function fixtureThread() {
- const worker=new Worker(threadCode,{eval:true,execArgv:['--import',${JSON.stringify(tsx)}]});
+async function fixtureThread(importOnly=false) {
+ const worker=new Worker(threadCode,{eval:true,workerData:{importOnly},execArgv:[]});
  let result;
  await new Promise((resolve,reject)=>{worker.once('message',value=>result=value);worker.once('error',reject);worker.once('exit',code=>code===0?resolve():reject(Error('Fixture thread failed')));});
  await new Promise(resolve=>setImmediate(resolve));return result;
@@ -111,6 +115,27 @@ function generation(): string {
   expect(names[0]).toMatch(/^[0-9a-f]{64}$/u);
   return join(cache, names[0]!);
 }
+
+it("registers the cache fixture's TypeScript module graph in parallel and replacement workers", () => {
+  const script =
+    threadFixture +
+    `
+const parallel=await Promise.all([fixtureThread(true),fixtureThread(true)]);
+const churn=[];
+for(let index=0;index<3;index++) churn.push(await fixtureThread(true));
+process.stdout.write(JSON.stringify([...parallel,...churn]));
+`;
+  const result = spawnSync(process.execPath, ["--input-type=module", "-e", script], {
+    encoding: "utf8",
+    windowsHide: true,
+    timeout: 15_000,
+  });
+  expect(result.error).toBeUndefined();
+  expect(result.status, result.stderr).toBe(0);
+  expect(JSON.parse(result.stdout)).toEqual(
+    Array.from({ length: 5 }, () => ({ imported: "function" })),
+  );
+});
 
 describe.skipIf(process.platform !== "win32")("Windows compiled worker cache", () => {
   beforeEach(() => {

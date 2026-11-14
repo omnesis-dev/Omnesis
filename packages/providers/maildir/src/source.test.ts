@@ -32,10 +32,11 @@ import type { FixtureMessage } from "./testing/maildir-writer.js";
 vi.mock("node:fs", async (original) => {
   const actual = await original<typeof import("node:fs")>();
   const { withFixturePermissions } = await import("./testing/permission-fixture.js");
+  // Read denial does not hide an entry's metadata: chmod(000) still allows
+  // lstat of that file. Enumeration and content reads carry the denial.
   return {
     ...actual,
     readdirSync: withFixturePermissions(actual.readdirSync),
-    lstatSync: withFixturePermissions(actual.lstatSync),
     openSync: withFixturePermissions(actual.openSync),
   };
 });
@@ -681,28 +682,35 @@ describe("a Thunderbird profile's mail folder", () => {
     expect(gateway.byTitle("Welcome to the team").metadata.extra?.flagged).toBe(true);
   });
 
-  test.skipIf(isRoot)(
-    "a changed file that will not open keeps its message until it reads again",
-    async () => {
-      const path = storeThunderbirdMessage(join(root, "Inbox"), "1.a", message(), {
-        status: READ,
-      });
-      const gateway = new FakeGateway();
-      const source = makeSource();
-      await gateway.cycle(source);
-      setThunderbirdStatus(path, { status: READ | STARRED }, later(1));
-      setFixtureMode(path, 0o000);
-      try {
-        const blocked = await gateway.cycle(source);
-        expect(blocked.present).toContain(gateway.byTitle("Welcome to the team").externalId);
-        expect(gateway.docs.size).toBe(1);
-      } finally {
-        setFixtureMode(path, 0o644);
-      }
-      await gateway.cycle(source);
-      expect(gateway.byTitle("Welcome to the team").metadata.extra?.flagged).toBe(true);
-    },
-  );
+  for (const denial of ["POSIX mode", "read boundary"] as const) {
+    test.skipIf(denial === "POSIX mode" && (isRoot || process.platform === "win32"))(
+      `a changed file that will not open keeps its message until it reads again (${denial})`,
+      async () => {
+        const path = storeThunderbirdMessage(join(root, "Inbox"), "1.a", message(), {
+          status: READ,
+        });
+        const gateway = new FakeGateway();
+        const source = makeSource();
+        await gateway.cycle(source);
+        setThunderbirdStatus(path, { status: READ | STARRED }, later(1));
+        if (denial === "read boundary") deniedFixturePaths.add(path);
+        else setFixtureMode(path, 0o000);
+        try {
+          const blocked = await gateway.cycle(source);
+          expect(blocked.present).toContain(gateway.byTitle("Welcome to the team").externalId);
+          expect(blocked.issues).toEqual([]);
+          expect(blocked.emitted).toEqual([]);
+          expect(gateway.byTitle("Welcome to the team").metadata.extra?.flagged).toBeUndefined();
+          expect(gateway.docs.size).toBe(1);
+        } finally {
+          if (denial === "read boundary") deniedFixturePaths.delete(path);
+          else setFixtureMode(path, 0o644);
+        }
+        await gateway.cycle(source);
+        expect(gateway.byTitle("Welcome to the team").metadata.extra?.flagged).toBe(true);
+      },
+    );
+  }
 
   test("a Maildir copied without its new directory keeps the flags in its file names", async () => {
     const copy = join(root, "Backup");
