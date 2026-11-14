@@ -44,6 +44,17 @@ internal class SourceFilterPickerState(initialField: String = "", initialIdentif
     val parent: String? get() = ancestors.lastOrNull()?.ref?.id?.takeIf { it.isNotEmpty() }
     /** The device whose tree is listed, once one is opened. */
     val device: String? get() = ancestors.firstNotNullOfOrNull { it.ref.device }
+    /** The opened item, whose own row ("Select this folder") stands above its children; null at the top. */
+    val current: FilterOption? get() = ancestors.lastOrNull()
+    /** The listing the opened item itself appears in: its parent's id and device. */
+    val currentParent: Pair<String?, String?> get() = ancestors.dropLast(1).let { trail ->
+        trail.lastOrNull()?.ref?.id?.takeIf { it.isNotEmpty() } to trail.firstNotNullOfOrNull { it.ref.device }
+    }
+    /** Counts read since an item was opened, by entry key: an opened item keeps the count it had then until one arrives. */
+    private val counts = mutableStateMapOf<String, Long>()
+    fun learnCounts(items: List<FilterOption>) = items.forEach { item -> item.count?.let { counts[filterRefKey(item.ref)] = it } }
+    /** The count of [option], or the one read for it since it was listed. */
+    fun countOf(option: FilterOption): Long? = option.count ?: counts[filterRefKey(option.ref)]
     fun chooseField(value: String) {
         if (value == field) return
         fieldLocations[field] = query to ancestors

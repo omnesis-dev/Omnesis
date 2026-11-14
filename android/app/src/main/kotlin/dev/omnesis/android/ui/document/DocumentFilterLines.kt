@@ -11,6 +11,8 @@ internal data class FilterDetailLine(val label: String, val value: String)
 
 /** What a field holding no items of its kind says. */
 internal const val NO_FILTER_ITEMS = "None"
+/** What a field the record cannot answer for says when the gateway sent no sentence. */
+internal const val NOT_RECORDED = "Not recorded"
 
 /**
  * The lines that say what a filter sees of a document: one per filterable field of its source, named in the singular
@@ -22,7 +24,7 @@ internal fun DocumentFilterDetails.lines(): List<FilterDetailLine> = fields.map 
     val noun = if (present && field.items.size == 1) field.noun.one else field.noun.many
     val value = when {
         present -> field.items.joinToString { it.label }.ifEmpty { NO_FILTER_ITEMS }
-        else -> field.stateText.ifBlank { if (field.state == DocumentFilterField.TOO_OLD) "Too old to carry its ${field.noun.many}" else "Not recorded" }
+        else -> field.stateText.ifBlank { NOT_RECORDED }
     }
     FilterDetailLine(noun.replaceFirstChar { it.uppercase() }, value)
 } + FilterDetailLine("Source version", sourceVersion.toString())

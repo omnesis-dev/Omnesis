@@ -83,7 +83,7 @@ internal fun accountChangeParts(before: AccountShare, after: AccountShare): List
 
 /** How many records one selected item matches, when a ready [preview] counted it. */
 internal fun scopeItemCount(preview: FilterPreview?, ref: FilterRef): Long? =
-    preview?.takeIf { !it.pending }?.items?.firstOrNull { filterRefKey(it.ref) == filterRefKey(ref) }?.count?.takeIf { it >= 0 }
+    preview?.takeIf { !it.pending && it.connected }?.items?.firstOrNull { filterRefKey(it.ref) == filterRefKey(ref) }?.count?.takeIf { it >= 0 }
 
 /**
  * The name a selected item is known by: a name this session has read, the name the item carries, the name a
@@ -105,8 +105,15 @@ internal fun AccessSelectedFilterRow(
 ) {
     val known = filterItemLabel(ref, sourceId, hints, preview)
     val name = known ?: savedSelectionName(field)
-    AccessFilterItemRow(filterEntryCaption(ref, field, hints[sourceId to filterRefKey(ref)]?.depth), name, count, last = last, mark = mark, counting = counting,
-        detail = NAME_UNAVAILABLE.takeIf { known == null && !counting },
+    val hint = hints[sourceId to filterRefKey(ref)]
+    val missing = preview?.items?.firstOrNull { filterRefKey(it.ref) == filterRefKey(ref) && it.missing == true }
+    AccessFilterItemRow(filterEntryCaption(ref, field, hint?.depth), name, count, last = last, mark = mark, counting = counting,
+        detail = when {
+            missing != null -> missingEntryNote(missing.reason)
+            hint?.missing == true -> missingEntryNote(hint.reason)
+            known == null && !counting -> NAME_UNAVAILABLE
+            else -> null
+        },
         trailing = if (remove != null) { { AccessTextAction("Remove", danger = true, alignment = Alignment.CenterEnd, description = "Remove $name", onClick = remove) } } else null)
 }
 
@@ -179,6 +186,8 @@ internal fun PolicyCounts(state: PolicyPreviewState, after: Boolean) {
             AccessTextAction("Try again", onClick = state.retry)
         }
         preview == null || !state.settled -> AccessProgressLine(COUNTING_MESSAGE)
+        // An account that is no longer connected has nothing to count.
+        !preview.connected -> Unit
         else -> AccessChangeValue("${accessCount(preview.visible)} shared · ${accessCount(preview.hidden)} hidden", after)
     }
 }

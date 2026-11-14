@@ -62,6 +62,17 @@ class GatewayErrorEnvelopeTest {
         )
     }
 
+    /** A refusal that names why for the person carries the sentence beside its code; a `message` that is not text is ignored. */
+    @Test
+    fun `keeps the sentence a refusal names its cause in`() {
+        val e = failWith(409, """{"error":"invalid-selection","message":"Label filters need Gmail to be resynced."}""")
+        assertEquals("invalid-selection", e.body)
+        assertEquals("Label filters need Gmail to be resynced.", e.userMessage)
+        val other = failWith(409, """{"error":"invalid-selection","message":{"nested":true}}""")
+        assertEquals("invalid-selection", other.body)
+        assertEquals(null, other.userMessage)
+    }
+
     /** The context-window branch reads `code`; it must survive the unwrap. */
     @Test
     fun `exposes the code a caller branches on`() {

@@ -41,6 +41,10 @@ class FilterEditorSessionTest {
         ))
         session.preview(policy); missing = true; session.preview(policy)
         assertEquals("Workshop", session.label(policy.sourceId, ref))
+        // The entry is remembered as missing, so its row says the list no longer names it.
+        assertTrue(session.hints.value.getValue(policy.sourceId to filterRefKey(ref)).missing)
+        missing = false; session.preview(policy)
+        assertFalse(session.hints.value.getValue(policy.sourceId to filterRefKey(ref)).missing)
         wrong = true
         try { session.preview(policy); fail("Wrong source accepted") } catch (_: IllegalStateException) { }
         try { session.options(policy.sourceId, "extra.labelIds", "", null, null, null); fail("Wrong options accepted") } catch (_: IllegalStateException) { }

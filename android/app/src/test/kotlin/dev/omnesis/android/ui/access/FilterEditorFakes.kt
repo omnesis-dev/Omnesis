@@ -44,5 +44,14 @@ internal fun readyPreview(
 ) = FilterPreview("ready", sourceId = sourceId, total = total, visible = visible, hidden = total - visible, items = items,
     tooOld = if (tooOldText != null) 1 else 0, unmatched = if (unmatchedText != null) 1 else 0, tooOldText = tooOldText, unmatchedText = unmatchedText)
 
+/** What a gateway says above the saved entries of an account that is no longer connected. */
+internal const val GATEWAY_DISCONNECTED_TEXT = "This account is no longer connected. Its saved filter entries are kept until you remove them."
+
+/** [editor] as the gateway answers for an account that is gone while a saved filter still names it. */
+internal fun disconnectedEditor(editor: FilterEditor) = editor.copy(
+    devices = emptyList(), connected = false, profileText = GATEWAY_DISCONNECTED_TEXT,
+    fields = editor.fields.map { it.copy(state = FilterFieldState(FilterFieldState.DISCONNECTED, text = "This account is no longer connected.")) },
+)
+
 /** A preview still being counted. */
 internal fun pendingPreview(retryAfterMs: Long = ACCESS_REFRESH_INTERVAL_MILLIS) = FilterPreview("pending", retryAfterMs = retryAfterMs)

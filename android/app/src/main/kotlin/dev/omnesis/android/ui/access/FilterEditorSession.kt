@@ -11,8 +11,11 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 
-/** What the session has learnt about an entry from the choices and previews it read: its full name and its depth in its tree. */
-internal data class FilterEntryHint(val label: String, val depth: Int? = null)
+/**
+ * What the session has learnt about an entry from the choices and previews it read: its full name and its depth in its
+ * tree, and whether the latest preview found it [missing] from the account's list, with the gateway's [reason].
+ */
+internal data class FilterEntryHint(val label: String?, val depth: Int? = null, val missing: Boolean = false, val reason: String? = null)
 
 /**
  * One editing session's view of the gateway: at most two requests in flight, and what the responses taught about
@@ -31,7 +34,7 @@ internal class FilterEditorSession(private val delegate: FilterEditorGateway) : 
         mutableHints.update { previous ->
             previous + values.associate { (ref, hint) ->
                 val key = sourceId to filterRefKey(ref)
-                key to hint.copy(depth = hint.depth ?: previous[key]?.depth)
+                key to hint.copy(label = hint.label ?: previous[key]?.label, depth = hint.depth ?: previous[key]?.depth)
             }
         }
     }
@@ -43,7 +46,10 @@ internal class FilterEditorSession(private val delegate: FilterEditorGateway) : 
     }
     override suspend fun preview(policy: SourceFilter): FilterPreview = admitted { delegate.preview(policy) }.also { result ->
         check(result.pending || result.sourceId == policy.sourceId) { "The preview belongs to another source. Reopen this filter." }
-        remember(policy.sourceId, result.items.filter { it.missing != true }.map { it.ref to FilterEntryHint(it.label, it.depth) })
+        // A missing entry's label is its id: it is remembered as missing, keeping any name read for it before.
+        remember(policy.sourceId, result.items.map { item ->
+            item.ref to if (item.missing == true) FilterEntryHint(null, item.depth, missing = true, reason = item.reason) else FilterEntryHint(item.label, item.depth)
+        })
     }
     override suspend fun options(sourceId: String, field: String, query: String, parentId: String?, device: String?, cursor: String?): FilterOptions =
         admitted { delegate.options(sourceId, field, query, parentId, device, cursor) }.also { result ->

@@ -128,12 +128,31 @@ internal fun SourceFilterPicker(
             val listed = page.options
             page.options = if (refreshing && listed != null) value.copy(items = mergeFilterOptions(listed.items, value.items), nextCursor = if (page.cursor == null) value.nextCursor else listed.nextCursor)
                 else value.copy(items = mergeFilterOptions(if (page.cursor == null) emptyList() else listed?.items.orEmpty(), value.items))
+            picker.learnCounts(value.items)
             page.loaded = true; page.loadedCursor = page.cursor; page.error = null
         } catch (cancelled: CancellationException) { throw cancelled }
         catch (error: Exception) { coroutineContext.ensureActive(); if (!refreshing) page.error = accessManagementError(error, reading = true) }
         finally { page.polled = asked; if (page.request === token) page.loading = false }
     }
-    val pendingCounts = picker.options?.retryAfterMs
+    // The opened item's own count is read again from the listing it appears in until it is known.
+    val opened = picker.current?.takeIf { field?.tree == true }
+    val openedPending = opened != null && picker.countOf(opened) == null
+    LaunchedEffect(session, picker.location, page.poll, openedPending, ready) {
+        if (!ready || !openedPending || opened == null) return@LaunchedEffect
+        val (parentId, device) = picker.currentParent
+        try {
+            var cursor: String? = null
+            var pages = 0
+            do {
+                val listing = session.options(source.id, picker.field, "", parentId, device, cursor)
+                picker.learnCounts(listing.items)
+                if (listing.items.any { filterRefKey(it.ref) == filterRefKey(opened.ref) }) break
+                cursor = listing.nextCursor
+            } while (cursor != null && ++pages < MAX_PARENT_PAGES)
+        } catch (cancelled: CancellationException) { throw cancelled }
+        catch (_: Exception) { /* The next poll asks again. */ }
+    }
+    val pendingCounts = picker.options?.retryAfterMs ?: ACCESS_REFRESH_INTERVAL_MILLIS.takeIf { openedPending }
     AccessAutoRefresh(ready && !picker.enteringIdentifier && page.loaded && pendingCounts != null && page.error == null, pendingCounts ?: ACCESS_REFRESH_INTERVAL_MILLIS) { page.poll++ }
     val title = capabilityTitle(capability)
     val account = source.accountName(nameFor)
@@ -176,7 +195,8 @@ internal fun SourceFilterPicker(
                         AccessTextAction("Try again", onClick = loaded.retry)
                     }
                     editor == null -> Box(Modifier.padding(vertical = 12.dp)) { AccessProgressLine(LOADING_MESSAGE) }
-                    field == null -> Unit
+                    // An account with nothing to filter on says why, in the gateway's words.
+                    field == null -> editor.profileText?.let { AccessNotice(it) }
                     !ready -> FilterFieldStateBlock(field.state, account.source, onResync = resync)
                     else -> {
                         AccessTextField(picker.query, { picker.query = it }, label = "Search ${field.title.lowercase()}", search = true)
@@ -195,12 +215,12 @@ internal fun SourceFilterPicker(
                         picker.error?.let { Text(it, style = AccessType.RowSecondary, color = colors.danger); AccessTextAction("Try again") { page.retry++ } }
                         if (picker.loading && picker.options == null) Box(Modifier.padding(vertical = 12.dp)) { AccessProgressLine(LOADING_MESSAGE) }
                         val options = picker.options?.items.orEmpty()
-                        val current = picker.ancestors.lastOrNull().takeIf { field.tree }
+                        val current = opened
                         val more = picker.options?.nextCursor
                         LazyColumn(Modifier.weight(1f).fillMaxWidth(), state = picker.listState) {
                             if (current != null) item(key = "current-folder") {
                                 val level = if (current.ref.isDevice) DEVICE_NOUN.one else (field.levelNoun(current.depth) ?: field.noun).one
-                                ChoiceRow("Select this $level", isSelected(current.ref), current.count, last = options.isEmpty() && addresses.isEmpty()) { toggle(current.ref) }
+                                ChoiceRow("Select this $level", isSelected(current.ref), picker.countOf(current), last = options.isEmpty() && addresses.isEmpty()) { toggle(current.ref) }
                             }
                             itemsIndexed(options, key = { _, item -> filterRefKey(item.ref) }) { index, item ->
                                 ChoiceRow(if (browsing) item.shortLabel ?: item.label else item.label, isSelected(item.ref), item.count,
@@ -224,6 +244,9 @@ internal fun SourceFilterPicker(
         }
     }
 }
+
+/** How many pages of its parent's listing are read to find an opened item's count. */
+private const val MAX_PARENT_PAGES = 20
 
 /** What a resync that could not be started says. */
 internal const val RESYNC_FAILED_MESSAGE = "The resync could not be started. Try again."

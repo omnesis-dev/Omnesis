@@ -59,8 +59,8 @@ val FilterRef.fieldPath: String get() = if (isPerson) FilterRef.PEOPLE_FIELD els
     /** Whether the filter has the one shape this editor writes: one rule, and the opposite for everything else. */
     val editable: Boolean get() = rules.size == 1 && rules.single().action in listOf("share", "hide") && otherwise in listOf("share", "hide") &&
         rules.single().action != otherwise
-    /** Whether the filter holds no more entries than the gateway accepts; an entry counts once per captured address. */
-    val withinLimits: Boolean get() = rules.size == 1 && rules.single().match.sumOf { it.identifiers?.size ?: 1 } <= MAX_FILTER_ENTRIES
+    /** Whether the filter holds no more entries than the gateway accepts; a person counts once per captured address. */
+    val withinLimits: Boolean get() = rules.size == 1 && rules.single().match.sumOf { it.entryWeight } <= MAX_FILTER_ENTRIES
 
     companion object {
         fun empty(sourceId: String, levelId: String, capability: String) = SourceFilter(
@@ -69,8 +69,11 @@ val FilterRef.fieldPath: String get() = if (isPerson) FilterRef.PEOPLE_FIELD els
     }
 }
 
-/** The most entries one filter can hold; an item matched by several addresses counts once per address. */
+/** The most entries one filter can hold; a person counts once per captured address. */
 const val MAX_FILTER_ENTRIES = 256
+
+/** What an entry counts towards [MAX_FILTER_ENTRIES]: a person its addresses, any other entry one. */
+val FilterRef.entryWeight: Int get() = if (isPerson) identifiers?.size ?: 0 else 1
 
 @Serializable data class SourceFiltersAvailability(val enabled: Boolean)
 
@@ -101,6 +104,8 @@ const val MAX_FILTER_ENTRIES = 256
         const val COLLECTOR_BEHIND = "collector-behind"
         const val GATEWAY_BEHIND = "gateway-behind"
         const val LIST_PENDING = "list-pending"
+        /** The account is no longer connected; its saved entries are kept until they are removed. */
+        const val DISCONNECTED = "disconnected"
     }
 }
 
@@ -153,6 +158,12 @@ const val MAX_FILTER_ENTRIES = 256
     val retryAfterMs: Long? = null,
     /** The one resync several fields wait on, stated once for all of them; null when none does. */
     val resync: FilterEditorResync? = null,
+    /** Whether the source has told the gateway what can be filtered: "declared", "no-profile" or "collector-behind". */
+    val profile: String = "declared",
+    /** The gateway's sentence for an account with nothing to filter on, or one no longer connected; shown as it comes. */
+    val profileText: String? = null,
+    /** False for an account that is gone while a saved filter still names it: its entries can only be removed. */
+    val connected: Boolean = true,
 ) {
     fun field(path: String): FilterEditorField? = fields.firstOrNull { it.field == path }
 }
@@ -208,7 +219,14 @@ const val MAX_FILTER_ENTRIES = 256
     val missing: Boolean? = null,
     /** How many nodes stand above the entry in its tree; level 0 is the top. */
     val depth: Int? = null,
-)
+    /** With [missing]: [NOT_IN_LIST] when the list no longer holds the entry, [LIST_GONE] when there is no list. */
+    val reason: String? = null,
+) {
+    companion object {
+        const val NOT_IN_LIST = "not-in-list"
+        const val LIST_GONE = "list-gone"
+    }
+}
 
 /**
  * `POST /admin/access/source-filters/:sourceId/preview`: what a draft filter shares and hides. While [pending] only
@@ -226,6 +244,8 @@ const val MAX_FILTER_ENTRIES = 256
     val tooOldText: String? = null,
     val unmatchedText: String? = null,
     val items: List<FilterPreviewItem> = emptyList(),
+    /** False for an account that is gone: every count is 0 and only the entries' names mean anything. */
+    val connected: Boolean = true,
 ) {
     val pending: Boolean get() = status != "ready"
 }

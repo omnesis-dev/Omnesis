@@ -41,14 +41,14 @@ class DocumentOwnerDetailsTest {
         val labels = FilterNoun("label", "labels")
         val details = DocumentFilterDetails("doc-example", 0, listOf(
             DocumentFilterField("extra.labelIds", labels, DocumentFilterField.PRESENT),
-            DocumentFilterField("extra.folderId", FilterNoun("folder", "folders"), DocumentFilterField.TOO_OLD, "Too old to carry its folders. Resync Drive to add them."),
+            DocumentFilterField("extra.folderId", FilterNoun("folder", "folders"), DocumentFilterField.TOO_OLD, "Written before this source recorded its folders. Resync the source to add them."),
             DocumentFilterField("extra.projectDir", FilterNoun("project folder", "project folders"), DocumentFilterField.UNKNOWN),
             DocumentFilterField("extra.repositoryId", FilterNoun("repository", "repositories"), DocumentFilterField.PRESENT,
                 items = listOf(DocumentFilterItem("5201", "5201", listed = false))),
         ))
         assertEquals(listOf(
             FilterDetailLine("Labels", NO_FILTER_ITEMS),
-            FilterDetailLine("Folders", "Too old to carry its folders. Resync Drive to add them."),
+            FilterDetailLine("Folders", "Written before this source recorded its folders. Resync the source to add them."),
             FilterDetailLine("Project folders", "Not recorded"),
             FilterDetailLine("Repository", "5201"),
             FilterDetailLine("Source version", "0"),
@@ -80,7 +80,7 @@ class DocumentOwnerDetailsTest {
         } } }
         compose.onNodeWithText(WHO_CAN_READ_TITLE).assertExists()
         compose.onNodeWithText("Workshop planning — 14 March").assertExists()
-        compose.onNodeWithText("WhatsApp · +1 (555) 010-0123").assertExists()
+        compose.onNodeWithText("WhatsApp · +15550100123").assertExists()
         listOf("Family helper", "Notes capture", "Research assistant").forEach { compose.onNodeWithText(it).performScrollTo().assertExists() }
         compose.onNodeWithContentDescription("Answer: Can read. This account is shared with all content").performScrollTo().assertExists()
         compose.onNodeWithContentDescription("Answer: Can’t read. Hidden by: chat Workshop planning").performScrollTo().assertExists()
@@ -96,5 +96,10 @@ class DocumentOwnerDetailsTest {
         } } }
         compose.onNodeWithText("Try again").performClick()
         assertEquals(1, retries)
+    }
+
+    @Test fun theAuditsAccountLineIsTheSourceNameThenTheAccountItsIdNames() {
+        assertEquals("WhatsApp · +15550100123", auditAccountName("WhatsApp", "whatsapp-messages:+15550100123").line)
+        assertEquals("WhatsApp", auditAccountName("WhatsApp", "notes").line)
     }
 }

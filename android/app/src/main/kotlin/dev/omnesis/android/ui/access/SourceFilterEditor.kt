@@ -18,8 +18,6 @@ import kotlinx.coroutines.CancellationException
 
 internal enum class SourceFilterBoundary { ALL, ONLY, EXCEPT }
 
-/** What a filter on an account that is no longer connected says above its saved entries. */
-internal const val DISCONNECTED_FILTER_NOTE = "This account is no longer connected. You can remove its saved entries."
 private enum class SourceFilterStage { MODE, MATCHES, REVIEW }
 
 /** Carries the filter being edited across a configuration change. */
@@ -62,9 +60,9 @@ internal fun SourceFilterEditor(
     // Names arrive with the previews and choices this session reads; a row shows its name as soon as one does.
     val hints by session.hints.collectAsState()
     var policy by rememberSaveable(source.id, levelId, capability, stateSaver = SourceFilterSaver) { mutableStateOf((initialPolicy ?: SourceFilter.empty(source.id, levelId, capability)).copy(audience = FilterAudience(levelId, capability))) }
-    val connected = source.available && source.filterable
-    // Read for a disconnected account too: the gateway still names and captions its saved entries.
+    // Read for a disconnected account too: the gateway still names and captions its saved entries, and says it is gone.
     val editor = rememberFilterEditor(session, source.id).editor
+    val connected = source.available && source.filterable && editor?.connected != false
     val savedRefs = remember(initialPolicy) { initialPolicy?.rules?.firstOrNull()?.match.orEmpty() }
     // The owner can always keep or trim a filter this editor can express. Items can be added only while the account
     // is connected and still offers every field the saved filter matches on.
@@ -151,13 +149,14 @@ internal fun SourceFilterEditor(
                         AccessChoice("Everything except matching content", "Continue to select filters that define which content never gets shared.", boundary == SourceFilterBoundary.EXCEPT) { choose(SourceFilterBoundary.EXCEPT) }
                     }
                 } else {
-                    when {
-                        !policy.editable -> AccessNotice("This filter uses settings that cannot be changed here. It stays in force as saved.")
-                        !writable -> AccessNotice("Filters cannot be changed right now. This saved filter stays in force.")
-                        !source.available -> AccessNotice(DISCONNECTED_FILTER_NOTE)
-                        removeOnly -> AccessNotice("This account no longer offers some of these filters. You can remove its saved entries.")
+                    val notice = when {
+                        !policy.editable -> "This filter uses settings that cannot be changed here. It stays in force as saved."
+                        !writable -> "Filters cannot be changed right now. This saved filter stays in force."
+                        // A gone account, or one with nothing to filter on, is explained in the gateway's words.
+                        removeOnly -> editor?.profileText
+                        else -> null
                     }
-                    if (!pickable) AccessGap(20.dp)
+                    notice?.let { AccessNotice(it); AccessGap(20.dp) }
                     AccessPill(scopePolicyActionLabel(policy), scopePolicyTone(policy))
                     AccessGap(AccessUi.ContentGap)
                     if (policy.editable) {
@@ -181,6 +180,7 @@ internal fun SourceFilterEditor(
                         when {
                             failure != null -> { AccessNotice(COUNTS_UNAVAILABLE_MESSAGE, error = true); AccessTextAction("Try again", onClick = result.retry) }
                             preview == null || !result.settled -> AccessProgressLine(COUNTING_MESSAGE)
+                            !preview.connected -> Unit
                             else -> FilterResult(preview)
                         }
                     }

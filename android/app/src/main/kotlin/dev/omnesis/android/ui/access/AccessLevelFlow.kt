@@ -115,8 +115,12 @@ internal fun scopePolicyActionLabel(policy: SourceFilter): String = when (policy
 internal const val ALL_CONTENT = "All content"
 /** What stands for a saved filter this editor cannot express. */
 internal const val SAVED_FILTER = "Saved filter"
-/** The line under a saved item that is shown without its name. */
+/** The line under a saved item that is shown without its name, or that names something with no list to look it up in. */
 internal const val NAME_UNAVAILABLE = "Name unavailable"
+/** The line under a saved item the account's list no longer holds. */
+internal const val NO_LONGER_IN_ACCOUNT = "No longer in this account"
+/** The line under a saved item the account's list does not hold, by the gateway's [reason]. */
+internal fun missingEntryNote(reason: String?): String = if (reason == FilterPreviewItem.NOT_IN_LIST) NO_LONGER_IN_ACCOUNT else NAME_UNAVAILABLE
 /** A field's name as its tab and its search say it: "Labels". */
 internal val FilterEditorField.title: String get() = noun.many.replaceFirstChar { it.uppercase() }
 /**

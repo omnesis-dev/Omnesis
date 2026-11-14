@@ -163,7 +163,8 @@ internal fun accessManagementError(error: Exception, reading: Boolean = false): 
         is GatewayException.ServerError -> when (accessManagementErrorCode(error)) {
             "level-name-taken" -> LEVEL_NAME_TAKEN_MESSAGE
             "level-in-use" -> "Integrations use this level for answers. Move them to another access level before removing Answer, or restore Answer here."
-            "invalid-selection" -> if (reading) generic else "These permissions cannot be saved as chosen. A saved source filter must stay with a source this access level allows."
+            // A refused save names why in the gateway's sentence when it has one.
+            "invalid-selection" -> if (reading) generic else error.userMessage ?: "These permissions cannot be saved as chosen. A saved source filter must stay with a source this access level allows."
             else -> generic
         }
         else -> error.message ?: "Could not connect to the gateway. Try again."

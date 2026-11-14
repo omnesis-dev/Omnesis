@@ -112,8 +112,8 @@ private fun ChangedAccounts(draft: AccessLevelDraft, overview: AccessOverview, c
         val source = overview.sources.firstOrNull { it.id == change.sourceId } ?: disconnectedAccount(change.sourceId, nameFor)
         AccessAccountLine(source.accountName(nameFor), accessSourceIcon(source, iconFor), Modifier.padding(bottom = 6.dp))
         // An account that is no longer connected has nothing to count.
-        val connected = overview.sources.any { it.id == change.sourceId }
         val editor = rememberFilterEditor(session, change.sourceId).editor
+        val connected = overview.sources.any { it.id == change.sourceId && it.available } && editor?.connected != false
         val before = change.before.filter?.let { rememberPolicyPreview(session, it) }
         val after = change.after.filter?.let { rememberPolicyPreview(session, it) }
         accountChangeParts(change.before, change.after).forEach { part ->

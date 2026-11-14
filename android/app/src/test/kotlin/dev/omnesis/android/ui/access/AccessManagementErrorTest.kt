@@ -51,6 +51,18 @@ class AccessManagementErrorTest {
         assertEquals(refused, accessManagementError(GatewayException.ServerError(409, null, "invalid-selection")))
         assertFalse(accessManagementError(GatewayException.ServerError(409, "invalid-selection"), reading = true).contains("saved"))
     }
+    @Test fun aSaveTheGatewayRefusesWithASentenceShowsThatSentence() {
+        val sentence = "Label filters need Gmail to be resynced. Search keeps working meanwhile."
+        val refusal = GatewayException.ServerError(409, "invalid-selection", userMessage = sentence)
+        assertEquals(sentence, accessManagementError(refusal))
+        val overview = dev.omnesis.android.transport.dto.AccessOverview(emptyList(), emptyList())
+        val level = dev.omnesis.android.transport.dto.AccessLevelSummary("level-example", "Research assistant", 3, listOf(dev.omnesis.android.transport.dto.AccessGrantRule.notes()), 0)
+        for (opened in listOf(level, null)) {
+            val saving = AccessManagementState(overview, AccessLevelDraft.opening(opened, overview), loading = true)
+            assertEquals(sentence, saving.afterSaveFailure(refusal).error)
+        }
+        assertFalse(accessManagementError(refusal, reading = true).contains("Label"))
+    }
     @Test fun aRefusedDeletionKeepsTheDraftAndNamesWhatUsesTheLevel() {
         val overview = dev.omnesis.android.transport.dto.AccessOverview(emptyList(), emptyList())
         val level = dev.omnesis.android.transport.dto.AccessLevelSummary("level-example", "Research assistant", 3, listOf(dev.omnesis.android.transport.dto.AccessGrantRule.notes()), 1)

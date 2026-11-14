@@ -25,13 +25,14 @@ class SourceFilterClientTest {
     @Test fun theEditorDecodesEveryFieldStateAndKeepsAStateItDoesNotKnow() = runTest {
         server.enqueue(MockResponse().setBody("""
             {"sourceId":"gmail:one/account","sourceType":"gmail","devices":[{"id":"dev_studio","name":"Studio Mac"}],"showDeviceLevel":false,"retryAfterMs":1500,
+             "profile":"declared","profileText":null,"connected":true,
              "resync":{"state":"needs-resync","fields":["extra.labelIds","${'$'}people"],"text":"Label and people filters need Gmail to be resynced."},
              "fields":[
               {"field":"${'$'}people","capability":"person","noun":{"one":"person","many":"people"},"picker":"search","scope":"global","identifiers":["email","domain"],
-               "state":{"status":"ready"},"counts":{"status":"ready","tooOld":0,"unmatched":2,"tooOldText":null,"unmatchedText":"2 records can't be matched to a person and stay hidden."}},
+               "state":{"status":"ready"},"counts":{"status":"ready","tooOld":0,"unmatched":2,"tooOldText":null,"unmatchedText":"2 records can’t be matched to a person and stay hidden."}},
               {"field":"extra.labelIds","capability":"membership","noun":{"one":"label","many":"labels"},"picker":"tree","scope":"global",
                "levels":[{"one":"label","many":"labels"}],"inside":{"one":"label","many":"labels"},"insideText":"Includes the labels inside.",
-               "state":{"status":"needs-resync","cost":"This reads about 95,000 messages a day.","text":"Label filters need Gmail to be resynced. Your mail stays searchable meanwhile. This reads about 95,000 messages a day."},
+               "state":{"status":"needs-resync","cost":"This reads about 95,000 messages a day.","text":"Label filters need Gmail to be resynced. Search keeps working meanwhile. This reads about 95,000 messages a day."},
                "counts":{"status":"pending"}},
               {"field":"extra.folderId","capability":"tree","noun":{"one":"folder","many":"folders"},"picker":"tree","scope":"device",
                "state":{"status":"resyncing","processed":212000,"total":900000,"text":"Resyncing Gmail: 212,000 of about 900,000."},"counts":{"status":"pending"}},
@@ -45,11 +46,12 @@ class SourceFilterClientTest {
         assertTrue(request.path!!.endsWith("/admin/access/source-filters/gmail:one%2Faccount") || request.path!!.endsWith("/admin/access/source-filters/gmail%3Aone%2Faccount"))
         assertEquals("no-store", request.getHeader("Cache-Control"))
         assertEquals(1500L, editor.retryAfterMs)
+        assertEquals("declared", editor.profile); assertNull(editor.profileText); assertTrue(editor.connected)
         assertEquals(listOf("extra.labelIds", FilterRef.PEOPLE_FIELD), editor.resync?.fields)
         assertEquals(FilterFieldState(FilterFieldState.NEEDS_RESYNC, text = "Label and people filters need Gmail to be resynced."), editor.resync?.fieldState)
         assertEquals(listOf("ready", "needs-resync", "resyncing", "collector-behind", "something-new"), editor.fields.map { it.state.status })
         assertTrue(editor.fields[0].state.ready)
-        assertEquals("2 records can't be matched to a person and stay hidden.", editor.fields[0].counts.unmatchedText)
+        assertEquals("2 records can’t be matched to a person and stay hidden.", editor.fields[0].counts.unmatchedText)
         assertEquals("This reads about 95,000 messages a day.", editor.fields[1].state.cost)
         assertTrue(editor.fields[1].counts.pending)
         assertTrue(editor.fields[1].tree)
@@ -81,7 +83,7 @@ class SourceFilterClientTest {
     @Test fun aPreviewIsPendingOrReadyAndAPersonIsSentWithOnlyItsOwnKeys() = runTest {
         server.enqueue(MockResponse().setBody("""{"status":"pending","retryAfterMs":1500}"""))
         server.enqueue(MockResponse().setBody("""{"status":"ready","sourceId":"chat:one","total":3,"visible":1,"hidden":2,"tooOld":0,"unmatched":1,"tooOldText":null,
-            "unmatchedText":"1 record can't be matched to a chat and stay hidden.","items":[{"ref":{"capability":"membership","field":"extra.chatId","id":"chat-1"},"label":"chat-1","count":0,"missing":true}]}"""))
+            "unmatchedText":"1 record can’t be matched to a chat and stay hidden.","connected":true,"items":[{"ref":{"capability":"membership","field":"extra.chatId","id":"chat-1"},"label":"chat-1","count":0,"missing":true,"reason":"not-in-list"}]}"""))
         val person = FilterRef.person("Maya", listOf(FilterIdentifier("phone", "+15550100123")))
         val policy = SourceFilter.empty("chat:one", "new", "answer").copy(rules = listOf(FilterRule(listOf(person, FilterRef.item(FilterRef.MEMBERSHIP, "extra.chatId", "chat-1")), "hide")))
         val pending = client().filterPreview(policy)
@@ -95,6 +97,8 @@ class SourceFilterClientTest {
         assertEquals(2L, ready.hidden); assertEquals(1L, ready.unmatched)
         assertNull(ready.tooOldText)
         assertEquals(true, ready.items.single().missing)
+        assertEquals(FilterPreviewItem.NOT_IN_LIST, ready.items.single().reason)
+        assertTrue(ready.connected)
         assertEquals(2, server.requestCount)
     }
     @Test fun aTypedAddressIsCheckedByTheGatewayWhichNamesTheProblem() = runTest {
@@ -120,11 +124,11 @@ class SourceFilterClientTest {
     @Test fun aDocumentsFilterDetailsAndWhoCanReadItDecode() = runTest {
         server.enqueue(MockResponse().setBody("""{"documentId":"doc_8d1e","sourceVersion":2,"fields":[
             {"field":"extra.labelIds","noun":{"one":"label","many":"labels"},"state":"present","stateText":"","items":[{"id":"Label_12","label":"Finance","listed":true},{"id":"Label_99","label":"Label_99","listed":false}]},
-            {"field":"extra.folderId","noun":{"one":"folder","many":"folders"},"state":"too-old","stateText":"Too old to carry its folders. Resync Drive to add them.","items":[]}]}"""))
+            {"field":"extra.folderId","noun":{"one":"folder","many":"folders"},"state":"too-old","stateText":"Written before this source recorded its folders. Resync the source to add them.","items":[]}]}"""))
         server.enqueue(MockResponse().setBody("""{"documentId":"doc_8d1e","title":"Q4 budget review","sourceId":"gmail:one","sourceName":"Gmail (maya.reeves@example.org)","sourceVersion":2,
-            "notes":{"answer":"For Answer, readable means within what Omnesis may use.","owner":"This page is for you, the owner."},
+            "notes":{"answer":"“Can read” under Answer means Omnesis may use this document when answering that agent.","owner":"This page is for you, the owner."},
             "levels":[{"id":"lvl_7c21","name":"Coding assistant","agents":[{"id":"grt_51aa","name":"Claude Code on Studio Mac","kind":"connection"},{"id":"dev_1","name":"Kitchen speaker","kind":"device"}],
-              "answer":{"readable":true,"code":"readable","text":"Readable"},"direct":{"readable":false,"code":"hidden-by-item","text":"Hidden by: label Finance"}},
+              "answer":{"readable":true,"code":"readable","text":"This account is shared with all content"},"direct":{"readable":false,"code":"hidden-by-item","text":"Hidden by: label Finance"}},
              {"id":"lvl_90fe","name":"Travel planner","agents":[],"answer":{"readable":false,"code":"account-not-shared","text":"This account is not shared"},
               "direct":{"readable":false,"code":"permission-not-granted","text":"Direct is not granted on this level"}}]}"""))
         val details = client().documentFilterDetails("doc/8d1e")

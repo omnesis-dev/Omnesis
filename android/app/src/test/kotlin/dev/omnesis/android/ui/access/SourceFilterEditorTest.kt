@@ -38,7 +38,7 @@ class SourceFilterEditorTest {
     private val people = peopleField("phone", "email")
     private val policy = SourceFilter("scope-chat:one", FilterAudience("level-example", "answer"), listOf(FilterRule(listOf(ref), "hide")), "share")
     private val source = AccessSourceInstance("scope-chat:one", "Cedar account", filterable = true)
-    private val preview = readyPreview(source.id, 10, 6, listOf(FilterPreviewItem(ref, "Maya", 3)), unmatchedText = "1 record can't be matched to a person and stay hidden.")
+    private val preview = readyPreview(source.id, 10, 6, listOf(FilterPreviewItem(ref, "Maya", 3)), unmatchedText = "1 record can’t be matched to a person and stay hidden.")
     private fun editorWith(vararg fields: FilterEditorField) = FilterEditor(source.id, "scope-chat", fields = fields.toList())
     private fun gatewayOf(previewFor: suspend (SourceFilter) -> FilterPreview = { preview }, editor: FilterEditor = editorWith(people)) =
         FakeFilterGateway(editorFor = { editor }, previewFor = previewFor)
@@ -72,7 +72,7 @@ class SourceFilterEditorTest {
     @Test fun theReviewStatesTheGatewaysSentencesForRecordsKeptHiddenOnlyWhenThereAreAny() {
         show(true)
         reviewFilter()
-        compose.onNodeWithText("1 record can't be matched to a person and stay hidden.").performScrollTo().assertExists()
+        compose.onNodeWithText("1 record can’t be matched to a person and stay hidden.").performScrollTo().assertExists()
         compose.onNodeWithText("older items", substring = true).assertDoesNotExist()
         compose.onNodeWithText("still syncing", substring = true).assertDoesNotExist()
         compose.onNodeWithText("couldn", substring = true).assertDoesNotExist()

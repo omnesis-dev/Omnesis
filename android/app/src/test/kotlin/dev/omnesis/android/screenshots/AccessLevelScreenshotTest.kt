@@ -114,20 +114,20 @@ class AccessLevelScreenshotTest {
         private val hiddenByWhatsAppSelection = mapOf(setOf(workshop, maya) to 37L, setOf(maya, jamie) to 22L)
         /** The sentences the gateway writes for the records a filter on each account keeps hidden. */
         private val hiddenSentences = mapOf(
-            source.id to (null to "4 records can't be matched to a chat and stay hidden."),
-            driveSource.id to ("6 older items could not be resynced and stay hidden from agents using this filter." to "2 records can't be matched to a folder and stay hidden."),
+            source.id to (null to "4 records can’t be matched to a chat and stay hidden."),
+            driveSource.id to ("6 older items could not be resynced and stay hidden from agents using this filter." to "2 records can’t be matched to a folder and stay hidden."),
         )
         /** Gmail's labels and people before the account was resynced, at the cost its source declares. */
         internal val gmailNeedsResync = mapOf(
             GMAIL_LABELS to FilterFieldState(FilterFieldState.NEEDS_RESYNC, cost = "This reads about 75,000 messages a day.",
-                text = "Label filters need Gmail to be resynced. Your mail stays searchable meanwhile. This reads about 75,000 messages a day."),
+                text = "Label filters need Gmail to be resynced. Search keeps working meanwhile. This reads about 75,000 messages a day."),
             FilterRef.PEOPLE_FIELD to FilterFieldState(FilterFieldState.NEEDS_RESYNC, cost = "This reads about 75,000 messages a day.",
-                text = "People filters need Gmail to be resynced. Your mail stays searchable meanwhile. This reads about 75,000 messages a day."),
+                text = "People filters need Gmail to be resynced. Search keeps working meanwhile. This reads about 75,000 messages a day."),
         )
         /** The one sentence the gateway writes for the fields of an account that wait on the same resync. */
         private val resyncs = mapOf(
             gmailSource.id to FilterEditorResync(FilterFieldState.NEEDS_RESYNC, listOf(GMAIL_LABELS, FilterRef.PEOPLE_FIELD),
-                "Label and people filters need Gmail to be resynced. Your mail stays searchable meanwhile. This reads about 75,000 messages a day."),
+                "Label and people filters need Gmail to be resynced. Your emails stay searchable meanwhile. This reads about 75,000 messages a day."),
             driveSource.id to FilterEditorResync(FilterFieldState.RESYNCING, listOf(DRIVE_FOLDERS), "Resyncing Google Drive: 212 of about 900.", 212, 900),
         )
         /** Drive's folders while the account is read again. */
@@ -137,10 +137,10 @@ class AccessLevelScreenshotTest {
          * A gateway over the fixture accounts. [counted] false answers as a gateway still counting; [states] puts fields of
          * an account, by its id and then the field's path, in another state than ready.
          */
-        internal fun gatewayFor(counted: Boolean = true, states: Map<String, Map<String, FilterFieldState>> = emptyMap()) = object : FilterEditorGateway {
+        internal fun gatewayFor(counted: Boolean = true, states: Map<String, Map<String, FilterFieldState>> = emptyMap(), connected: Boolean = true) = object : FilterEditorGateway {
             override suspend fun editor(sourceId: String) = FilterEditor(sourceId, sourceId.substringBefore(':'), listOf(FilterDevice("dev_studio", "Studio Mac")),
                 fields = fields.getValue(sourceId).map { field -> states[sourceId]?.get(field.field)?.let { field.copy(state = it) } ?: field },
-                resync = resyncs[sourceId]?.takeIf { states[sourceId] != null })
+                resync = resyncs[sourceId]?.takeIf { states[sourceId] != null }).let { if (connected) it else disconnectedEditor(it) }
             override suspend fun preview(policy: SourceFilter): FilterPreview {
                 assertProviderWirePolicy(policy)
                 if (!counted) return pendingPreview()
@@ -151,6 +151,7 @@ class AccessLevelScreenshotTest {
                 val total = 120L
                 val hidden = if (policy.rules.single().action == "share") total - sum else hiddenByWhatsAppSelection[matched.toSet()] ?: sum
                 val (tooOld, unmatched) = hiddenSentences[account.id] ?: (null to null)
+                if (!connected) return readyPreview(account.id, 0, 0, matched.map { FilterPreviewItem(it, listed.getValue(it).label, 0) }).copy(connected = false)
                 return readyPreview(account.id, total, total - hidden, matched.map { FilterPreviewItem(it, listed.getValue(it).label, listed.getValue(it).count!!) }, tooOld, unmatched)
             }
             override suspend fun options(sourceId: String, field: String, query: String, parentId: String?, device: String?, cursor: String?): FilterOptions {
@@ -169,6 +170,6 @@ class AccessLevelScreenshotTest {
         }
         internal val gateway = gatewayFor()
         /** The gateway for an account that is no longer connected: it still names and captions the saved entries. */
-        internal val disconnectedGateway = gatewayFor()
+        internal val disconnectedGateway = gatewayFor(connected = false)
     }
 }

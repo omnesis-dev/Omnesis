@@ -71,11 +71,15 @@ class SourceFilterFlowInteractionTest {
     }
     @Test fun aFilterOnAnAccountNoLongerConnectedCanBeKeptOrTrimmedButNotAddedTo() {
         var closes = 0
+        val gone = FakeFilterGateway(editorFor = { disconnectedEditor(editor) }, optionsFor = { listing(it) },
+            previewFor = { readyPreview(source.id, 0, 0, it.rules.flatMap { rule -> rule.match }.map { ref -> FilterPreviewItem(ref, "Workspace", 0) }).copy(connected = false) })
         compose.setContent { CompositionLocalProvider(LocalInspectionMode provides true) { OmnesisTheme {
-            SourceFilterEditor(disconnectedAccount(source.id) { "Files" }, "level-example", "direct", policy, true, gateway, onClose = { closes++ }) { saved = it; saves++ }
+            SourceFilterEditor(disconnectedAccount(source.id) { "Files" }, "level-example", "direct", policy, true, gone, onClose = { closes++ }) { saved = it; saves++ }
         } } }
         compose.onNodeWithText("Files · no longer connected").assertExists()
-        compose.onNodeWithText(DISCONNECTED_FILTER_NOTE).assertExists()
+        // The notice is the gateway's sentence, never one the app writes.
+        compose.onNodeWithText(GATEWAY_DISCONNECTED_TEXT).assertExists()
+        compose.onNodeWithText("This account is no longer connected. You can remove its saved entries.").assertDoesNotExist()
         compose.onNodeWithText("What should be shared?").assertDoesNotExist()
         compose.onNodeWithText("Apply filter").assertIsNotEnabled()
         compose.onNodeWithText("Cancel").performClick()
@@ -114,12 +118,85 @@ class SourceFilterFlowInteractionTest {
             SourceFilterEditor(source, "level-example", "direct", policy, true, labelsOnly, onClose = {}) { saved = it; saves++ }
         } } }
         compose.waitForIdle()
-        compose.onNodeWithText("This account no longer offers some of these filters. You can remove its saved entries.").assertExists()
+        // A field gone from a declared account has no gateway sentence, so no notice is written for it.
+        compose.onNodeWithText("This account no longer offers some of these filters. You can remove its saved entries.").assertDoesNotExist()
         compose.onNodeWithText("Choose matching content").assertDoesNotExist()
         compose.onNodeWithContentDescription("Remove Saved selection").performClick()
         compose.onNodeWithText("Apply filter").performClick()
         assertEquals(1, saves)
         assertNull(saved)
+    }
+    @Test fun anAccountTheOverviewListsButTheGatewayCallsGoneIsRemoveOnlyUnderTheGatewaysSentence() {
+        val gone = FakeFilterGateway(editorFor = { disconnectedEditor(editor) }, optionsFor = { listing(it) })
+        compose.setContent { CompositionLocalProvider(LocalInspectionMode provides true) { OmnesisTheme {
+            SourceFilterEditor(source, "level-example", "direct", policy, true, gone, onClose = {}) { saved = it; saves++ }
+        } } }
+        compose.waitForIdle()
+        compose.onNodeWithText(GATEWAY_DISCONNECTED_TEXT).assertExists()
+        compose.onNodeWithText("What should be shared?").assertDoesNotExist()
+        compose.onNodeWithText("Apply filter").assertIsNotEnabled()
+    }
+    @Test fun anAccountWithNothingToFilterOnSaysWhyInTheGatewaysWords() {
+        val text = "Update Omnesis on Studio Mac to use filters on this account."
+        val undeclared = FakeFilterGateway(editorFor = { FilterEditor(source.id, "files", profile = "collector-behind", profileText = text) })
+        compose.setContent { CompositionLocalProvider(LocalInspectionMode provides true) { OmnesisTheme {
+            SourceFilterEditor(source, "level-example", "direct", null, true, undeclared, onClose = {}) { saved = it; saves++ }
+        } } }
+        compose.onNodeWithText("Only matching content").performClick()
+        compose.onNodeWithText("Continue").performClick()
+        compose.onNodeWithText(text).assertExists()
+    }
+    @Test fun entriesTheListNoLongerHoldsSayWhyByTheGatewaysReason() {
+        val gone = FilterRef.item(FilterRef.TREE, folders.field, "archived")
+        val unlisted = FilterRef.item(FilterRef.TREE, folders.field, "unlisted")
+        val three = policy.copy(rules = listOf(FilterRule(listOf(folder, gone, unlisted), "share")))
+        val reasons = FakeFilterGateway(editorFor = { editor }, optionsFor = { listing(it) }, previewFor = {
+            readyPreview(source.id, 8, 3, listOf(FilterPreviewItem(folder, "Workspace", 3),
+                FilterPreviewItem(gone, "archived", 0, missing = true, reason = FilterPreviewItem.NOT_IN_LIST),
+                FilterPreviewItem(unlisted, "unlisted", 0, missing = true, reason = FilterPreviewItem.LIST_GONE)))
+        })
+        compose.setContent { CompositionLocalProvider(LocalInspectionMode provides true) { OmnesisTheme {
+            SourceFilterEditor(source, "level-example", "direct", three, true, reasons, onClose = {}) { saved = it; saves++ }
+        } } }
+        compose.onNodeWithText("Continue").performClick()
+        compose.onNodeWithText("Review filter").performClick()
+        compose.waitForIdle()
+        compose.onNodeWithText(NO_LONGER_IN_ACCOUNT).performScrollTo().assertExists()
+        compose.onAllNodesWithText(NAME_UNAVAILABLE).assertCountEquals(1)
+        // A missing entry is never shown by its raw id.
+        compose.onNodeWithText("archived").assertDoesNotExist()
+    }
+    @Test fun aGoneAccountsReviewShowsNoCounts() {
+        assertNull(scopeItemCount(readyPreview(source.id, 0, 0, listOf(FilterPreviewItem(folder, "Workspace", 0))).copy(connected = false), folder))
+        assertEquals(3L, scopeItemCount(readyPreview(source.id, 8, 3, listOf(FilterPreviewItem(folder, "Workspace", 3))), folder))
+    }
+    @Test fun anOpenedFolderWhoseCountWasPendingIsReadAgainFromItsParentUntilKnown() {
+        var rootReads = 0
+        val counting = FakeFilterGateway(editorFor = { editor }, optionsFor = { request ->
+            if (request.parentId == null) {
+                rootReads++
+                // The first listing is still counting the folder; later ones know it. No retry is offered at the top.
+                FilterOptions(request.sourceId, request.field, listOf(FilterOption(folder, "Workspace", "Workspace", if (rootReads == 1) null else 3, hasChildren = true)))
+            } else listing(request)
+        })
+        val state = SourceFilterPickerState()
+        compose.setContent { CompositionLocalProvider(LocalInspectionMode provides true) { OmnesisTheme {
+            SourceFilterPicker(source, counting, onClose = {}, state = state) {}
+        } } }
+        compose.onNodeWithContentDescription("Open Workspace").performClick()
+        compose.waitForIdle()
+        assertEquals(3L, state.countOf(state.current!!))
+        compose.onNodeWithText("3 matching").assertExists()
+        assertTrue(counting.optionRequests.count { it.parentId == null } >= 2)
+    }
+    @Test fun aPersonCountsOncePerAddressTowardsTheLimitAndAnyOtherEntryOnce() {
+        val person = FilterRef.person("Maya Reeves", List(3) { FilterIdentifier("email", "maya$it@example.org") })
+        assertEquals(3, person.entryWeight)
+        assertEquals(1, folder.entryWeight)
+        assertEquals(0, FilterRef.person("Nobody", emptyList()).entryWeight)
+        val full = policy.copy(rules = listOf(FilterRule(List(MAX_FILTER_ENTRIES - 2) { FilterRef.item(FilterRef.TREE, folders.field, "f$it") } + person, "share")))
+        assertFalse(full.withinLimits)
+        assertTrue(full.copy(rules = listOf(FilterRule(full.rules.single().match.dropLast(1) + FilterRef.person("Maya", person.identifiers!!.take(2)), "share"))).withinLimits)
     }
     @Test fun aSavedFilterOfAnotherShapeCanOnlyBeReadAndClosedWithoutAskingForAPreview() {
         var previews = 0
