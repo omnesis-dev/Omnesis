@@ -205,11 +205,11 @@ describe.skipIf(!tools)("the gateway's own Tailscale device", () => {
       "maya-desktop",
     ]);
     expect(result.code, `${result.stdout}\n${result.stderr}`).toBe(0);
-    const devices = await gateway.admin<{ data: Array<{ name: string; kind: string }> }>(
+    const devices = await gateway.admin<{ items: Array<{ name: string; kind: string }> }>(
       "GET",
       "/admin/devices",
     );
-    expect(devices.json.data.filter((d) => d.kind === "collector").map((d) => d.name)).toEqual(
+    expect(devices.json.items.filter((d) => d.kind === "collector").map((d) => d.name)).toEqual(
       expect.arrayContaining(["maya-laptop", "maya-desktop"]),
     );
   });

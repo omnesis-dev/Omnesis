@@ -170,6 +170,19 @@ func (n *Node) Login(ctx context.Context) error {
 	n.loginAsked = true
 	n.mu.Unlock()
 	defer n.poke()
+	// Signing out resets the device's preferences, so a later sign-in would
+	// go to Tailscale's default coordination server under the machine's own
+	// hostname. Apply what tsnet applies at start before asking for a link.
+	prefs := ipn.NewPrefs()
+	prefs.Hostname = n.cfg.Hostname
+	prefs.WantRunning = true
+	prefs.ControlURL = n.cfg.ControlURL
+	if prefs.ControlURL == "" {
+		prefs.ControlURL = ipn.DefaultControlURL
+	}
+	if err := n.lc.Start(ctx, ipn.Options{UpdatePrefs: prefs}); err != nil {
+		return err
+	}
 	return n.lc.StartLoginInteractive(ctx)
 }
 

@@ -19,10 +19,19 @@
  */
 
 import { execFile, spawn, type ChildProcess } from "node:child_process";
+import { createHash, X509Certificate } from "node:crypto";
 import { request as httpRequest } from "node:http";
 import { request as httpsRequest } from "node:https";
 import { connect as tlsConnect } from "node:tls";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { createServer, type AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -190,6 +199,11 @@ export class TestTailnet {
       freePort(),
       freePort(),
     ]);
+    // The relay speaks TLS, as every Tailscale client expects of one, with the
+    // certificate derper makes for itself on an IP address; the DERP map pins
+    // that certificate by its hash.
+    const derpCerts = join(this.dir, "derp-certs");
+    mkdirSync(derpCerts, { recursive: true });
     const derp = startProcess(
       this.tools.derper,
       [
@@ -203,11 +217,20 @@ export class TestTailnet {
         String(stunPort),
         "-hostname",
         "127.0.0.1",
+        "-certmode",
+        "manual",
+        "-certdir",
+        derpCerts,
       ],
       { ...process.env, TS_NO_LOGS_NO_SUPPORT: "true" },
       join(this.dir, "derper.log"),
     );
     this.procs.push(derp);
+    const derpCert = join(derpCerts, "127.0.0.1.crt");
+    await waitFor(() => existsSync(derpCert), "the relay's certificate", 30_000);
+    const derpCertHash = createHash("sha256")
+      .update(new X509Certificate(readFileSync(derpCert)).raw)
+      .digest("hex");
     const derpMap = join(this.dir, "derp.yaml");
     writeFileSync(
       derpMap,
@@ -224,6 +247,7 @@ export class TestTailnet {
         "        ipv4: 127.0.0.1",
         `        stunport: ${stunPort}`,
         `        derpport: ${derpPort}`,
+        `        certname: sha256-raw:${derpCertHash}`,
         "",
       ].join("\n"),
     );
@@ -632,8 +656,9 @@ export function fetchFrom(
         {
           method: init.method ?? "GET",
           headers: { ...(body ? { "content-type": "application/json" } : {}), ...init.headers },
+          // No agent: Node then uses this connection instead of resolving
+          // the tailnet name itself, which only the machine's proxy can.
           createConnection: () => tlsConnect({ socket, servername: target.hostname, ca: caCert }),
-          agent: false,
         },
         (response) => {
           let text = "";
