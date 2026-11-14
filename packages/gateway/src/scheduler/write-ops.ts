@@ -447,6 +447,11 @@ const WRITE_OP_DEFS: readonly WriteOpDef[] = [
   { name: "filterLists.stagePart", priority: "realtime" },
   { name: "filterLists.delete", priority: "user" },
   { name: "filterLists.sweep", priority: "background" },
+  // Filter rows of records left queued: those a write outside the page path
+  // changed, and every record of an account whose rows are cut again. Applied
+  // in bounded sub-batches that give the writer back between them.
+  { name: "filterValues.apply", priority: "background" },
+  { name: "filterValues.advancePasses", priority: "background" },
 
   // ── the Brain run queue ───────────────────────────────────────
   // Agent runs are asynchronous background work that must never contend

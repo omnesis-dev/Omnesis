@@ -646,6 +646,11 @@ import {
   type PairingGenerationFence,
 } from "../data/pairing-generation-fence.js";
 import { applyTranscriptionVocabularyBatch } from "../transcribe/vocabulary/storage.js";
+import {
+  advanceFilterValuePasses,
+  applyFilterValueWork,
+  type FilterValueWork,
+} from "../access/filter-values.js";
 import { advanceTranscriptionVocabularyRebuild } from "../transcribe/vocabulary/rebuild.js";
 import type { WorthAnswer } from "../worth/answers.js";
 import type { SelfIdentitySource } from "../self-identity-sources.js";
@@ -1531,6 +1536,7 @@ export const writerHandlers = {
     deleteFilterLists(db, sourceId, deviceId),
   "filterLists.sweep": (db: Db, cursor: FilterListKey | null, limit: number) =>
     sweepFilterListRows(db, cursor, limit),
+  "filterValues.advancePasses": (db: Db, limit: number) => advanceFilterValuePasses(db, limit),
 
   // ── briefs (the Brain run queue) ─────────────────────────────
   "cognition.enqueue": (db: Db, input: EnqueueCognitionRunInput, now: number) =>
@@ -2117,6 +2123,11 @@ export const writerYieldableHandlers = {
     }),
   "vocabulary.advanceRebuild": (db: Db, token: PreemptToken, settings: VocabularySettings) =>
     advanceTranscriptionVocabularyRebuild(db, settings, token),
+  "filterValues.apply": (db: Db, token: PreemptToken, work: FilterValueWork[]) => {
+    const result = applyFilterValueWork(db, work, sliceDeadline(token, BACKGROUND_BATCH_SLICE_MS));
+    if (result.remaining.length) return { kind: "yield" as const, resume: [result.remaining] };
+    return { applied: result.applied };
+  },
   "vocabulary.applyBatch": (db: Db, token: PreemptToken, docs: ExtractedVocabularyDocument[]) => {
     const result = applyTranscriptionVocabularyBatch(db, docs, token);
     if (result.remaining.length) return { kind: "yield" as const, resume: [result.remaining] };

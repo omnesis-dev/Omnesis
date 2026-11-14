@@ -705,6 +705,11 @@ import {
   type FilterListKey,
   type StageFilterListPartArgs,
 } from "./data/repositories/SourceFilterListRepository.js";
+import {
+  advanceFilterValuePasses,
+  applyFilterValueWork,
+  type FilterValueWork,
+} from "./access/filter-values.js";
 import { buildSafeUrlCanonicalizerRegistry } from "./known-url-pattern-safety.js";
 import { getUrlCanonicalizers, getUrlCanonicalizerSpecs } from "./url-canonicalizers.js";
 import type { UrlCanonicalizerSpec } from "@omnesis/core";
@@ -1702,6 +1707,10 @@ export interface WriteGate extends KnowledgeWriteGate {
     cursor: FilterListKey | null,
     limit: number,
   ): Promise<{ deleted: number; cursor: FilterListKey | null }>;
+  /** Apply the filter rows a reader cut for queued records; see `access/filter-values.ts`. */
+  applyFilterValueWork(work: FilterValueWork[]): Promise<{ applied: number }>;
+  /** Queue the next records of an account whose filter rows must be cut again. */
+  advanceFilterValuePasses(limit: number): Promise<{ queued: number; changed: boolean }>;
 
   // ── briefs (the Brain run queue) ─────────────────────────────
   /** Enqueue one Brain run (or fold into a pending row by dedupe key). */
@@ -2797,6 +2806,8 @@ export function writeGateFromCall(call: WriterCallFn): WriteGate {
     stageFilterListPart: (args) => call("filterLists.stagePart", [args]),
     deleteFilterLists: (sourceId, deviceId) => call("filterLists.delete", [sourceId, deviceId]),
     sweepFilterListRows: (cursor, limit) => call("filterLists.sweep", [cursor, limit]),
+    applyFilterValueWork: (work) => call("filterValues.apply", [work]),
+    advanceFilterValuePasses: (limit) => call("filterValues.advancePasses", [limit]),
 
     enqueueCognitionRun: (input, now) => call("cognition.enqueue", [input, now]),
     claimDueCognitionRuns: (opts) => call("cognition.claimDue", [opts]),
@@ -3475,6 +3486,8 @@ export function directWriteGate(db: Db): WriteGate {
     },
     deleteFilterLists: async (sourceId, deviceId) => deleteFilterLists(db, sourceId, deviceId),
     sweepFilterListRows: async (cursor, limit) => sweepFilterListRows(db, cursor, limit),
+    applyFilterValueWork: async (work) => ({ applied: applyFilterValueWork(db, work).applied }),
+    advanceFilterValuePasses: async (limit) => advanceFilterValuePasses(db, limit),
 
     enqueueCognitionRun: async (input, now) => enqueueCognitionRun(db, input, now),
     claimDueCognitionRuns: async (opts) => claimDueCognitionRuns(db, opts),

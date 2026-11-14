@@ -71,6 +71,7 @@ export {
 
 export { createCleanupTasks, type CleanupTaskOpts, type CleanupBundle } from "./tasks/cleanup.js";
 export { createFilterListSweepTask, type FilterListSweepOpts } from "./tasks/filter-list-sweep.js";
+export { createFilterValuesTask, type FilterValuesTaskOpts } from "./tasks/filter-values.js";
 export {
   createBackendReprobeTask,
   type BackendReprobeOpts,

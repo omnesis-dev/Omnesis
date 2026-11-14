@@ -35,6 +35,7 @@ import { createAccessTables } from "../access/store.js";
 import { createAnswerPrivacyTables, createDirectAuditTables } from "../privacy/store.js";
 import { createSubscriptionTables } from "../subscriptions/store-schema.js";
 import { createTranscriptionVocabularyTables } from "../transcribe/vocabulary/storage.js";
+import { createDocumentFilterValueTables } from "../access/filter-values.js";
 import { DEVICE_ENROLLMENT_PUBLIC_KEY_INDEX } from "./migration-214-device-enrollment.js";
 import { createSourceInventoryTables } from "./repositories/SourceInventoryRepository.js";
 import { addSourceSyncIssues } from "./migration-179-source-sync-issues.js";
@@ -700,6 +701,7 @@ function runSchemaSetupInTxn(db: Db): void {
   // them, filled from the documents already stored.
   createSourceVersionCounts(db);
   createDocumentFilterIndexQueue(db);
+  createDocumentFilterValueTables(db);
   db.exec(`
     CREATE TABLE IF NOT EXISTS snapshot_absence_cascade_outbox (
       id INTEGER PRIMARY KEY AUTOINCREMENT,

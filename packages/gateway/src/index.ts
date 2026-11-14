@@ -192,6 +192,7 @@ import {
   indexerWakeTask,
   createCleanupTasks,
   createFilterListSweepTask,
+  createFilterValuesTask,
   createBackendReprobeTask,
   createSubscriptionDeliveriesTask,
   type PeriodicTask,
@@ -3645,6 +3646,22 @@ const filterListSweepJob = periodicJob(filterListSweepTask, {
   category: "infra",
   tracker: new StatelessTracker(),
 });
+// The filter rows of records no sync page wrote: an upgrade's records, an
+// account whose declaration changed, records another write changed.
+const filterValuesTask = createFilterValuesTask({
+  ioGate,
+  writeGate,
+  log: log.child("filter-values"),
+});
+scheduler.schedule(filterValuesTask);
+const filterValuesJob = periodicJob(filterValuesTask, {
+  scheduler,
+  displayName: "Filter rows",
+  description:
+    "Writes the indexed filter details of records that were stored without them, so filter counts and previews stay fast.",
+  category: "infra",
+  tracker: new StatelessTracker(),
+});
 const pushWakeRetryHandle = scheduler.schedule(pushWakeRetryBundle.task);
 const cleanupHandles = cleanupBundle.tasks.map((t) => scheduler.schedule(t));
 void cleanupHandles;
@@ -3848,6 +3865,7 @@ backgroundJobs.registerAll([
   indexerWakeBundle.job,
   ...cleanupBundle.jobs,
   filterListSweepJob,
+  filterValuesJob,
   pushWakeRetryBundle.job,
   activityRetentionBundle.job,
   absenceSweepBundle.job,

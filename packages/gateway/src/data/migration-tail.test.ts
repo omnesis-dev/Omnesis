@@ -93,6 +93,8 @@ const WOUND_BACK = [
   219,
   // 220 source authority and Answer proofs are removed by undoSourceFilters.
   220,
+  // 221 creates the records' filter rows and their triggers, which undoFilterValues drops.
+  221,
 ];
 
 let dir: string;
@@ -350,7 +352,28 @@ function undoSourceVersion(db: Db): void {
   }
 }
 
+/** Undo migration 221: the filter rows of every record, their counts, queue and triggers. */
+function undoFilterValues(db: Db): void {
+  for (const { name } of db
+    .prepare<[], { name: string }>(
+      "SELECT name FROM sqlite_master WHERE type = 'trigger' AND name LIKE 'document_filter_value%'",
+    )
+    .all()) {
+    db.exec(`DROP TRIGGER "${name}"`);
+  }
+  for (const table of [
+    "document_filter_values",
+    "document_filter_value_counts",
+    "document_filter_value_sources",
+    "document_filter_value_queue",
+    "document_filter_slots",
+  ]) {
+    db.exec(`DROP TABLE IF EXISTS ${table}`);
+  }
+}
+
 function windBack(db: Db): void {
+  undoFilterValues(db);
   undoSourceFilters(db);
   undoSourceVersion(db);
   db.exec("DROP TABLE source_filter_item_members");

@@ -92,6 +92,7 @@ import { installTranscriptionVocabulary } from "../transcribe/vocabulary/storage
 import { createNoteAgentTables } from "../brain/note-agent/storage.js";
 import { createNoteHandoffTables } from "../brain/note-agent/handoffs.js";
 import { createScopePolicyStore } from "../access/scope-policy-store.js";
+import { createDocumentFilterValueTables } from "../access/filter-values.js";
 import { createAnswerScopeSchema } from "../privacy/answer-scope-schema.js";
 import { migrateV152AccessGrants } from "./migration-152-access-grants.js";
 import { migrateV153AccessPolicyFamilies } from "./migration-153-access-policy-families.js";
@@ -5029,6 +5030,14 @@ export const MIGRATIONS: readonly Migration[] = [
       createScopePolicyStore(db);
       createAnswerScopeSchema(db);
     },
+  },
+  {
+    // New tables and triggers only. The rows of the records already stored
+    // are cut by the background pass, a bounded batch at a time, so an
+    // upgrade does not hold the writer for a read of every record.
+    version: 221,
+    description: "keep the filter details of every record as indexed rows",
+    up: createDocumentFilterValueTables,
   },
 ];
 

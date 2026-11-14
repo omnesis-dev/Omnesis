@@ -19,6 +19,7 @@ import { markLinkStatsDirty, markPeopleGraphDirty, markMergeRulesDirty } from ".
 import { extractPeopleFromMetadata, type DocumentProjection } from "../document-projection.js";
 import { documentsMetadataCodec, type DocumentsMetadata } from "../json-columns.js";
 import { applyDeclaredEdges } from "../../domain/EdgeDeclarationWriter.js";
+import { writeDocumentFilterValues, type FilterValueDocument } from "../../access/filter-values.js";
 import { reviewBrainArtifactsForDeletedDocs } from "../../brain/source-deletion-review.js";
 import { sourcePrefixPredicate } from "../source-addressing.js";
 import { getPendingSourcePage } from "./PendingSourcePageRepository.js";
@@ -426,9 +427,10 @@ export function upsertDocuments(
         -- a document that exists because it moved.
         OR excluded.partition_key IS NOT documents.partition_key
       )
-    -- The stored row's id: the generated one for an insert, the existing one
-    -- for an update, and no row when the conflict left the document as it was.
-    RETURNING id
+    -- The stored row's id (the generated one for an insert, the existing one
+    -- for an update) and version, and no row when the conflict left the
+    -- document as it was.
+    RETURNING id, source_version
   `);
   // A document the upsert left as it was still records that this page read
   // it. Only the version moves: `updated_at` is the indexer's event clock and
@@ -530,6 +532,8 @@ export function upsertDocuments(
     // number it inserted; they feed the per-source stats maintenance.
     const insertedBySource = new Map<string, number>();
     const inventorySources = new Set<string>();
+    // What this transaction stored, as its filter rows are cut from it.
+    const filterRecords: FilterValueDocument[] = [];
     for (const doc of docs) {
       if (documentTemporalProjection && doc.sourceId !== documentTemporalProjection.sourceId) {
         throw new Error(
@@ -578,7 +582,7 @@ export function upsertDocuments(
         source_version: sourceVersion,
         replica_version_policy:
           options.replicaVersionPolicies?.[doc.sourceId] === "source-updated-at" ? 1 : 0,
-      }) as { id: string } | undefined;
+      }) as { id: string; source_version: number } | undefined;
       const inserted = stored?.id === insertedId;
       if (
         options.replicaVersionPolicies?.[doc.sourceId] === "source-updated-at" &&
@@ -612,7 +616,29 @@ export function upsertDocuments(
           streamId,
           sourceVersion,
         );
-        if (stamped) queueVersionChangeStmt.run(stamped.id);
+        if (stamped) {
+          queueVersionChangeStmt.run(stamped.id);
+          filterRecords.push({
+            id: stamped.id,
+            providerId: doc.providerId,
+            sourceId: doc.sourceId,
+            externalId: doc.externalId,
+            streamId,
+            sourceVersion,
+            metadata,
+          });
+        }
+      }
+      if (stored !== undefined) {
+        filterRecords.push({
+          id: stored.id,
+          providerId: doc.providerId,
+          sourceId: doc.sourceId,
+          externalId: doc.externalId,
+          streamId,
+          sourceVersion: stored.source_version,
+          metadata,
+        });
       }
       if (options.initialInventory && inserted)
         recordSourceInventoryDocument(db, {
@@ -685,6 +711,18 @@ export function upsertDocuments(
       absencePlanInvalidated = true;
     } else {
       absencePlanScope = recovery.expectedScope;
+    }
+    // The filter rows of what was stored, in the same transaction. A failure
+    // costs only the rows: the records stay queued and the background drain
+    // cuts them, while readers decide from the records themselves.
+    try {
+      writeDocumentFilterValues(db, filterRecords);
+    } catch (error) {
+      log.warn(
+        `Left ${filterRecords.length} record(s) queued for their filter rows: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
     }
     updateSourceStats(insertedBySource);
   });
