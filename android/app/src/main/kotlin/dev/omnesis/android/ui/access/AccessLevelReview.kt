@@ -35,7 +35,7 @@ internal fun AccessLevelOverview(draft: AccessLevelDraft, overview: AccessOvervi
  */
 @Composable
 internal fun AccessLevelReview(
-    draft: AccessLevelDraft, overview: AccessOverview, session: ScopePreviewSession, iconFor: (String) -> SourceIconModel,
+    draft: AccessLevelDraft, overview: AccessOverview, session: FilterEditorSession, iconFor: (String) -> SourceIconModel,
     nameFor: (String) -> String?, update: (AccessLevelDraft) -> Unit, change: (AccessLevelPage) -> Unit,
 ) {
     val colors = AccessUi.colors
@@ -100,19 +100,20 @@ private fun AccessLevelImpact(users: AccessLevelUsers) {
 internal fun AccessConnectionName(name: String, integration: Boolean, modifier: Modifier = Modifier) {
     Row(modifier.semantics(mergeDescendants = true) {}, verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(name, style = AccessType.RowTitle.copy(fontWeight = androidx.compose.ui.text.font.FontWeight.Normal), color = AccessUi.colors.primary, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
-        if (integration) AccessPill("Integration")
+        if (integration) AccessTag("Integration", AccessUi.colors.secondary)
     }
 }
 
 /** Every account whose share of one capability an edit changes, each laid out by [accountChangeParts]. */
 @Composable
-private fun ChangedAccounts(draft: AccessLevelDraft, overview: AccessOverview, capability: AccessCapability, session: ScopePreviewSession, iconFor: (String) -> SourceIconModel, nameFor: (String) -> String?) {
+private fun ChangedAccounts(draft: AccessLevelDraft, overview: AccessOverview, capability: AccessCapability, session: FilterEditorSession, iconFor: (String) -> SourceIconModel, nameFor: (String) -> String?) {
     draft.changedAccounts(capability, overview).forEachIndexed { index, change -> key(change.sourceId) {
         if (index > 0) AccessGap(20.dp)
         val source = overview.sources.firstOrNull { it.id == change.sourceId } ?: disconnectedAccount(change.sourceId, nameFor)
         AccessAccountLine(source.accountName(nameFor), accessSourceIcon(source, iconFor), Modifier.padding(bottom = 6.dp))
         // An account that is no longer connected has nothing to count.
         val connected = overview.sources.any { it.id == change.sourceId }
+        val editor = rememberFilterEditor(session, change.sourceId).editor
         val before = change.before.filter?.let { rememberPolicyPreview(session, it) }
         val after = change.after.filter?.let { rememberPolicyPreview(session, it) }
         accountChangeParts(change.before, change.after).forEach { part ->
@@ -126,7 +127,7 @@ private fun ChangedAccounts(draft: AccessLevelDraft, overview: AccessOverview, c
                             true -> after
                             null -> if (item.mark == FilterItemMark.REMOVED) before else after
                         } ?: return@forEachIndexed
-                        ReviewedFilterItem(item.ref, source, session, state, last = itemIndex == part.items.lastIndex, mark = item.mark)
+                        ReviewedFilterItem(item.ref, source, editor, session, state, last = itemIndex == part.items.lastIndex, mark = item.mark)
                     }
                 }
             }
@@ -146,9 +147,9 @@ private fun AccountSideValue(share: AccountShare, state: PolicyPreviewState?, af
 
 /** One item of a reviewed filter, named and counted as its side's preview knows it. */
 @Composable
-private fun ReviewedFilterItem(ref: ScopeRef, source: AccessSourceInstance, session: ScopePreviewSession, state: PolicyPreviewState, last: Boolean, mark: FilterItemMark? = null) {
-    val names by session.labels.collectAsState()
-    AccessSelectedFilterRow(ref, source, names, last, preview = state.preview, count = state.count(ref), counting = state.counting, mark = mark)
+private fun ReviewedFilterItem(ref: FilterRef, source: AccessSourceInstance, editor: FilterEditor?, session: FilterEditorSession, state: PolicyPreviewState, last: Boolean, mark: FilterItemMark? = null) {
+    val hints by session.hints.collectAsState()
+    AccessSelectedFilterRow(ref, source.id, editor.fieldOf(ref), hints, last, preview = state.preview, count = state.count(ref), counting = state.counting, mark = mark)
 }
 
 /**

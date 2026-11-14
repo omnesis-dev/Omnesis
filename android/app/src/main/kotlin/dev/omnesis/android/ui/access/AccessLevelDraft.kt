@@ -4,7 +4,6 @@ package dev.omnesis.android.ui.access
 
 import dev.omnesis.android.transport.dto.*
 import kotlinx.serialization.Serializable
-import java.text.Normalizer
 
 /** The id a level carries until the gateway has saved it. */
 internal const val NEW_ACCESS_LEVEL_ID = "new"
@@ -85,7 +84,7 @@ data class AccessLevelDraft(
         val answer = rule(AccessCapability.ANSWER) ?: return this
         val direct = rule(AccessCapability.DIRECT) ?: return this
         return setRule(direct.copy(sources = answer.sources, scopePolicies = answer.scopePolicies.map {
-            it.copy(audience = ScopeAudience(id, AccessCapability.DIRECT.wire))
+            it.copy(audience = FilterAudience(id, AccessCapability.DIRECT.wire))
         }))
     }
     fun withDirectSameAsAnswer(linked: Boolean, authoringEnabled: Boolean? = true): AccessLevelDraft = when {
@@ -127,7 +126,7 @@ data class AccessLevelDraft(
         val saved = savedLevel(overview)?.rules?.firstOrNull { it.capability == AccessCapability.ANSWER }?.release
         return overview.policyFamilies.any { it.id == release.policyFamilyId } || (saved != null && saved == release)
     }
-    fun setPolicy(policy: ScopePolicy?, sourceId: String, capability: AccessCapability): AccessLevelDraft {
+    fun setPolicy(policy: SourceFilter?, sourceId: String, capability: AccessCapability): AccessLevelDraft {
         val rule = rule(capability) ?: return this
         val previous = rule.scopePolicies.firstOrNull { it.sourceId == sourceId }
         if (previous == policy) return this
@@ -158,7 +157,7 @@ data class AccessLevelDraft(
             val copied = rules.map { rule ->
                 rule.copy(
                     release = if (unpublished && rule.release != null) startingRelease(overview) else rule.release, filterRevision = null,
-                    scopePolicies = rule.scopePolicies.map { it.copy(audience = ScopeAudience(NEW_ACCESS_LEVEL_ID, rule.capability.wire)) },
+                    scopePolicies = rule.scopePolicies.map { it.copy(audience = FilterAudience(NEW_ACCESS_LEVEL_ID, rule.capability.wire)) },
                 )
             }
             return AccessLevelDraft(NEW_ACCESS_LEVEL_ID, "", copied, expectedRevision = null, expectedFilterRevisions = emptyMap(),
@@ -166,50 +165,4 @@ data class AccessLevelDraft(
                 requireAnswerPolicySelection = unpublished && overview.startingPolicyId == null)
         }
     }
-}
-
-/**
- * The identifier for an address typed by hand, or null when the text names no address of that type. It reads every way
- * of writing an address the gateway reads (separators, a leading 00, a tel: or mailto: prefix, a display name, capitals)
- * into the gateway's spelling, so the item is recognised as already selected and lines up with the counts the gateway
- * returns for it. The gateway stays the authority on what it saves.
- */
-fun scopeTypedIdentifier(value: String, type: String): ScopeIdentifier? {
-    if (value.length > 512) return null
-    val text = Normalizer.normalize(value, Normalizer.Form.NFKC).trim { it.isWhitespace() }
-    val typed = when (type) {
-        "phone" -> typedPhone(text)
-        "email" -> typedEmail(text)
-        "domain" -> typedDomain(text)
-        else -> null
-    }
-    return typed?.let { ScopeIdentifier(type, it) }
-}
-
-private const val SPACE = "\\s\\p{Z}"
-private fun hostName(value: String) = value.lowercase().replace(Regex("\\.+$"), "")
-
-private fun typedPhone(text: String): String? {
-    // "+44 (0)20 …" does not say whether the zero is dialled, so it names no single number.
-    if (Regex("\\([$SPACE]*0[$SPACE]*\\)").containsMatchIn(text)) return null
-    var value = text.replace(Regex("^tel:", RegexOption.IGNORE_CASE), "")
-        .replace(Regex("[\u2010-\u2015\u2212\uFE58\uFE63\uFF0D]"), "-")
-        .replace(Regex("[$SPACE().-]"), "")
-    if (Regex("^00[1-9]").containsMatchIn(value)) value = "+" + value.drop(2)
-    return value.takeIf { Regex("^\\+[1-9][0-9]{6,14}$").matches(it) }
-}
-
-private fun typedEmail(text: String): String? {
-    val inner = Regex("<([^<>]*)>$").find(text)?.groupValues?.get(1) ?: text
-    val value = hostName(inner.trim { it.isWhitespace() }.replace(Regex("^mailto:", RegexOption.IGNORE_CASE), ""))
-    val part = "[^$SPACE@<>]+"
-    return value.takeIf { it.length <= 320 && Regex("^$part@$part\\.$part$").matches(it) }
-}
-
-private fun typedDomain(text: String): String? {
-    val value = hostName(text.removePrefix("@"))
-    // A host name written in another script is left for the gateway to judge.
-    val pattern = if (value.all { it.code < 128 }) "^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\\.)+[a-z](?:[a-z0-9-]{0,61}[a-z0-9])?$"
-        else "^[^$SPACE@/:*.]+(?:\\.[^$SPACE@/:*.]+)+$"
-    return value.takeIf { it.length <= 253 && Regex(pattern).matches(it) }
 }

@@ -51,7 +51,7 @@ fun AccessHomeScreen(onClose: () -> Unit, onConnect: () -> Unit, vm: AccessManag
  */
 @Composable
 internal fun AccessHomeContent(
-    state: AccessManagementState, gateway: ScopeEditorGateway, onClose: () -> Unit,
+    state: AccessManagementState, gateway: FilterEditorGateway, onClose: () -> Unit,
     onConnect: () -> Unit = {}, onEdit: (AccessLevelSummary?) -> Unit = {},
     onUpdate: (AccessLevelDraft) -> Unit = {}, onSave: () -> Unit = {}, onReload: () -> Unit = {},
     onDelete: (AccessLevelSummary) -> Unit = {}, onDismissDeleteError: () -> Unit = {},

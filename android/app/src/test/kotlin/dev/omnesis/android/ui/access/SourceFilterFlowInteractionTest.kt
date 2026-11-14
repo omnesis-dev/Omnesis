@@ -20,16 +20,19 @@ import org.robolectric.annotation.Config
 @Config(sdk = [34], qualifiers = "w411dp-h891dp-xxhdpi")
 class SourceFilterFlowInteractionTest {
     @get:Rule val compose = createComposeRule()
-    private val folder = ScopeRef("folder", "workspace")
-    private val scopes = SourceScopes(listOf(SourceScopeItem("folder", "hierarchy", noun = SourceScopeNoun("folder", "folders"), picker = "tree")), 3)
-    private val source = AccessSourceInstance("files:reader@example.org", "Files", scopes = scopes, scopeReadiness = listOf(ScopeKindReadiness("folder", true)))
-    private val policy = ScopePolicy(source.id, ScopeAudience("level-example", "direct"), listOf(ScopeRule(listOf(folder), "share")), "hide")
-    private val gateway = object : ScopeEditorGateway {
-        override suspend fun preview(policy: ScopePolicy) = ScopePreview(source.id, 8, 3, 5, 1, policy.rules.flatMap { it.match }.map { ScopePreviewItem(it, it.label ?: "Workspace", 3) }, emptyList(), source.scopeReadiness!!).also { assertProviderWirePolicy(policy) }
-        override suspend fun options(sourceId: String, kind: String, query: String, parentId: String?, cursor: String?) = ScopeOptions(sourceId, "files", scopes, source.scopeReadiness!!,
-            if (parentId == null) listOf(ScopeOption(folder, "Workspace", 3, hasChildren = true)) else listOf(ScopeOption(ScopeRef("folder", "design"), "Design notes", 2)))
-    }
-    private var saved: ScopePolicy? = null
+    private val folder = FilterRef.item(FilterRef.TREE, "extra.folderId", "workspace")
+    private val folders = readyField("extra.folderId", FilterRef.TREE, "folder", "folders", picker = "tree", insideText = "Includes the folders inside.")
+    private val source = AccessSourceInstance("files:reader@example.org", "Files", filterable = true)
+    private val policy = SourceFilter(source.id, FilterAudience("level-example", "direct"), listOf(FilterRule(listOf(folder), "share")), "hide")
+    private val editor = FilterEditor(source.id, "files", fields = listOf(folders))
+    private fun listing(request: FilterOptionsRequest) = FilterOptions(request.sourceId, request.field,
+        if (request.parentId == null) listOf(FilterOption(folder, "Workspace", "Workspace", 3, hasChildren = true))
+        else listOf(FilterOption(FilterRef.item(FilterRef.TREE, folders.field, "design"), "Workspace/Design notes", "Design notes", 2, parentId = "workspace")))
+    private val gateway = FakeFilterGateway(
+        editorFor = { editor }, optionsFor = { listing(it) },
+        previewFor = { readyPreview(source.id, 8, 3, it.rules.flatMap { rule -> rule.match }.map { ref -> FilterPreviewItem(ref, "Workspace", 3) }) },
+    )
+    private var saved: SourceFilter? = null
     private var saves = 0
     private fun show() {
         compose.setContent { CompositionLocalProvider(LocalInspectionMode provides true) { OmnesisTheme {
@@ -72,7 +75,7 @@ class SourceFilterFlowInteractionTest {
             SourceFilterEditor(disconnectedAccount(source.id) { "Files" }, "level-example", "direct", policy, true, gateway, onClose = { closes++ }) { saved = it; saves++ }
         } } }
         compose.onNodeWithText("Files · no longer connected").assertExists()
-        compose.onNodeWithText("This account is no longer connected. Saved filters can be removed but not added.").assertExists()
+        compose.onNodeWithText(DISCONNECTED_FILTER_NOTE).assertExists()
         compose.onNodeWithText("What should be shared?").assertDoesNotExist()
         compose.onNodeWithText("Apply filter").assertIsNotEnabled()
         compose.onNodeWithText("Cancel").performClick()
@@ -84,72 +87,68 @@ class SourceFilterFlowInteractionTest {
         assertNull(saved)
     }
     @Test fun aSavedItemWhoseNameCannotBeLoadedIsShownAsASavedSelectionOfItsKind() {
-        val unknown = object : ScopeEditorGateway {
-            override suspend fun preview(policy: ScopePolicy): ScopePreview = throw dev.omnesis.android.transport.GatewayException.NotFound("source-not-found")
-            override suspend fun options(sourceId: String, kind: String, query: String, parentId: String?, cursor: String?): ScopeOptions = throw dev.omnesis.android.transport.GatewayException.NotFound("source-not-found")
+        val unknown = object : FilterEditorGateway {
+            private fun gone(): Nothing = throw dev.omnesis.android.transport.GatewayException.NotFound("source-not-found")
+            override suspend fun editor(sourceId: String): FilterEditor = gone()
+            override suspend fun preview(policy: SourceFilter): FilterPreview = gone()
+            override suspend fun options(sourceId: String, field: String, query: String, parentId: String?, device: String?, cursor: String?): FilterOptions = gone()
+            override suspend fun identifier(type: String, value: String): FilterIdentifierCheck = gone()
+            override suspend fun resync(sourceId: String) = gone()
         }
-        val person = ScopeRef("participant", label = "Maya Reeves", identifiers = listOf(ScopeIdentifier("email", "maya@example.org")))
-        val both = policy.copy(rules = listOf(ScopeRule(listOf(folder, person), "share")))
+        val person = FilterRef.person("Maya Reeves", listOf(FilterIdentifier("email", "maya@example.org")))
+        val both = policy.copy(rules = listOf(FilterRule(listOf(folder, person), "share")))
         compose.setContent { CompositionLocalProvider(LocalInspectionMode provides true) { OmnesisTheme {
             SourceFilterEditor(disconnectedAccount(source.id) { "Files" }, "level-example", "direct", both, true, unknown, onClose = {}) { saved = it; saves++ }
         } } }
-        compose.onNodeWithText("Saved folder selection").assertExists()
+        compose.onNodeWithText("Saved selection").assertExists()
         compose.onNodeWithText(NAME_UNAVAILABLE).assertExists()
         compose.onNodeWithText("Maya Reeves").assertExists()
         compose.onNodeWithText("Result").assertDoesNotExist()
-        compose.onNodeWithContentDescription("Remove Saved folder selection").performClick()
+        compose.onNodeWithContentDescription("Remove Saved selection").performClick()
         compose.onNodeWithText("Apply filter").performClick()
         assertEquals(listOf(person), saved!!.rules.single().match)
     }
-    @Test fun aFilterOfAKindItsSourceNoLongerDeclaresCanStillBeRemoved() {
-        val undeclared = source.copy(scopes = SourceScopes(listOf(SourceScopeItem("label", "changes", noun = SourceScopeNoun("label", "labels"), picker = "search")), 4), scopeReadiness = listOf(ScopeKindReadiness("label", true)))
+    @Test fun aFilterOnAFieldTheAccountNoLongerOffersCanStillBeRemoved() {
+        val labelsOnly = FakeFilterGateway(editorFor = { FilterEditor(source.id, "files", fields = listOf(readyField("extra.labelIds", FilterRef.MEMBERSHIP, "label", "labels"))) })
         compose.setContent { CompositionLocalProvider(LocalInspectionMode provides true) { OmnesisTheme {
-            SourceFilterEditor(undeclared, "level-example", "direct", policy, true, gateway, onClose = {}) { saved = it; saves++ }
+            SourceFilterEditor(source, "level-example", "direct", policy, true, labelsOnly, onClose = {}) { saved = it; saves++ }
         } } }
-        compose.onNodeWithText("This account no longer offers some of these filters. Saved filters can be removed but not added.").assertExists()
+        compose.waitForIdle()
+        compose.onNodeWithText("This account no longer offers some of these filters. You can remove its saved entries.").assertExists()
         compose.onNodeWithText("Choose matching content").assertDoesNotExist()
-        compose.onNodeWithContentDescription("Remove Workspace").performClick()
+        compose.onNodeWithContentDescription("Remove Saved selection").performClick()
         compose.onNodeWithText("Apply filter").performClick()
         assertEquals(1, saves)
         assertNull(saved)
     }
-    @Test fun anAdvancedSavedRuleCanOnlyBeReadAndClosed() {
-        val advanced = policy.copy(maxAge = "P3M")
-        compose.setContent { CompositionLocalProvider(LocalInspectionMode provides true) { OmnesisTheme {
-            SourceFilterEditor(source, "level-example", "direct", advanced, true, gateway, onClose = {}) { saves++ }
-        } } }
-        compose.onNodeWithText("Apply filter").assertDoesNotExist()
-        compose.onNodeWithText("All content", substring = false).assertDoesNotExist()
-        compose.onNodeWithText("Saved rules").assertExists()
-        compose.onNodeWithText("Maximum age: P3M").assertExists()
-        assertEquals(0, saves)
-    }
-    @Test fun anAdvancedSavedRuleIsShownWithoutAskingForAPreview() {
+    @Test fun aSavedFilterOfAnotherShapeCanOnlyBeReadAndClosedWithoutAskingForAPreview() {
         var previews = 0
-        val reader = object : ScopeEditorGateway {
-            override suspend fun preview(policy: ScopePolicy): ScopePreview { previews++; throw IllegalStateException("The gateway previews only authorable filters") }
-            override suspend fun options(sourceId: String, kind: String, query: String, parentId: String?, cursor: String?) = gateway.options(sourceId, kind, query, parentId, cursor)
-        }
+        val reader = FakeFilterGateway(editorFor = { editor }, optionsFor = { listing(it) }, previewFor = { previews++; error("The gateway previews only authorable filters") })
+        val other = policy.copy(rules = listOf(FilterRule(listOf(folder), "share"), FilterRule(listOf(folder), "hide")))
         compose.setContent { CompositionLocalProvider(LocalInspectionMode provides true) { OmnesisTheme {
-            SourceFilterEditor(source, "level-example", "direct", policy.copy(maxAge = "P3M"), true, reader, onClose = {}) { saves++ }
+            SourceFilterEditor(source, "level-example", "direct", other, true, reader, onClose = {}) { saves++ }
         } } }
         compose.waitForIdle()
         assertEquals(0, previews)
+        compose.onNodeWithText("Apply filter").assertDoesNotExist()
+        compose.onNodeWithText("All content", substring = false).assertDoesNotExist()
+        compose.onNodeWithText("Saved rules").assertExists()
         compose.onNodeWithText("Try again").assertDoesNotExist()
         compose.onNodeWithText(COUNTING_MESSAGE).assertDoesNotExist()
-        compose.onNodeWithText("Saved rules").assertExists()
+        assertEquals(0, saves)
     }
-    @Test fun aFailedPreviewIsNotWordedAsAFailedSave() {
-        val reader = object : ScopeEditorGateway {
-            override suspend fun preview(policy: ScopePolicy): ScopePreview = throw dev.omnesis.android.transport.GatewayException.ServerError(503, "unavailable")
-            override suspend fun options(sourceId: String, kind: String, query: String, parentId: String?, cursor: String?) = gateway.options(sourceId, kind, query, parentId, cursor)
-        }
+    @Test fun countsThatCannotBeReadSaySoAndNeverReadAsAFailedSave() {
+        val reader = FakeFilterGateway(editorFor = { editor }, optionsFor = { listing(it) },
+            previewFor = { throw dev.omnesis.android.transport.GatewayException.ServerError(503, "unavailable") })
         compose.setContent { CompositionLocalProvider(LocalInspectionMode provides true) { OmnesisTheme {
-            SourceFilterEditor(source, "level-example", "direct", policy, false, reader, onClose = {}) { saves++ }
+            SourceFilterEditor(source, "level-example", "direct", policy, true, reader, onClose = {}) { saves++ }
         } } }
+        compose.onNodeWithText("Continue").performClick()
+        compose.onNodeWithText("Review filter").performClick()
         compose.waitForIdle()
-        compose.onNodeWithText("The gateway could not load this. Try again.").assertExists()
+        compose.onNodeWithText(COUNTS_UNAVAILABLE_MESSAGE).assertExists()
         compose.onNodeWithText("The gateway could not save these changes. Try again.").assertDoesNotExist()
+        compose.onNodeWithText("Apply filter").assertIsEnabled()
     }
     @Test fun anInProgressFilterSurvivesAConfigurationChange() {
         val restoration = StateRestorationTester(compose)
@@ -163,11 +162,11 @@ class SourceFilterFlowInteractionTest {
         restoration.emulateSavedInstanceStateRestore()
         compose.onNodeWithText("Review this filter").assertExists()
         compose.onNodeWithText("Apply filter").performClick()
-        assertEquals(listOf(ScopeRule(listOf(folder), "hide")), saved!!.rules)
+        assertEquals(listOf(FilterRule(listOf(folder), "hide")), saved!!.rules)
         assertEquals("share", saved!!.otherwise)
     }
     @Test fun openingADecisionLeavesASavedSelectionAndItsRevisionAsTheyWere() {
-        val savedPolicy = policy.copy(rules = listOf(ScopeRule(listOf(folder), "share")))
+        val savedPolicy = policy.copy(rules = listOf(FilterRule(listOf(folder), "share")))
         val direct = AccessGrantRule.direct(AccessSourceBoundary(AccessSourceMode.ALLOWLIST, listOf(source.id))).copy(scopePolicies = listOf(savedPolicy), filterRevision = 4)
         val level = AccessLevelSummary("level-example", "File helper", 1, listOf(direct), 0)
         val overview = AccessOverview(emptyList(), listOf(source), levels = listOf(level), sourceFilters = SourceFiltersAvailability(true))
@@ -176,30 +175,29 @@ class SourceFilterFlowInteractionTest {
             AccessHomeContent(AccessManagementState(overview, draft), gateway, onClose = {}, onUpdate = { draft = it })
         } } }
         compose.onNodeWithContentDescription("Change Direct data").performClick()
-        compose.onNodeWithText("Only 1 selected match").assertExists()
+        compose.onNodeWithText("Share matching content · 1 item").assertExists()
         assertEquals(savedPolicy, draft.rule(AccessCapability.DIRECT)!!.scopePolicies.single())
         assertEquals(4, draft.expectedFilterRevisions["direct"])
     }
-    @Test fun savedNamesFromOtherKindsAppearWithoutChangingTabsOrApplyingTheFilter() {
-        val labelRef = ScopeRef("label", "project-label")
-        val person = ScopeRef("participant", label = "reader@example.org", identifiers = listOf(ScopeIdentifier("email", "reader@example.org")))
-        val contract = SourceScopes(listOf(SourceScopeItem("participant", "fixed", identifiers = listOf("email", "domain")), SourceScopeItem("label", "changes", noun = SourceScopeNoun("label", "labels"), picker = "search")), 2)
-        val readiness = contract.items.map { ScopeKindReadiness(it.kind, true) }
-        val mail = AccessSourceInstance("gmail:reader@example.org", "Gmail", scopes = contract, scopeReadiness = readiness)
-        val saved = ScopePolicy(mail.id, ScopeAudience("level-example", "answer"), listOf(ScopeRule(listOf(labelRef, person), "share")), "hide")
-        val pending = kotlinx.coroutines.CompletableDeferred<ScopePreview>()
-        val reader = object : ScopeEditorGateway {
-            override suspend fun preview(policy: ScopePolicy) = pending.await()
-            override suspend fun options(sourceId: String, kind: String, query: String, parentId: String?, cursor: String?) = ScopeOptions(sourceId, "gmail", contract, readiness, emptyList())
-        }
+    @Test fun savedNamesFromOtherFieldsAppearWithoutChangingTabsOrApplyingTheFilter() {
+        val labelRef = FilterRef.item(FilterRef.MEMBERSHIP, "extra.labelIds", "project-label")
+        val person = FilterRef.person("reader@example.org", listOf(FilterIdentifier("email", "reader@example.org")))
+        val mail = AccessSourceInstance("gmail:reader@example.org", "Gmail", filterable = true)
+        val saved = SourceFilter(mail.id, FilterAudience("level-example", "answer"), listOf(FilterRule(listOf(labelRef, person), "share")), "hide")
+        val pending = kotlinx.coroutines.CompletableDeferred<FilterPreview>()
+        val reader = FakeFilterGateway(
+            editorFor = { FilterEditor(mail.id, "gmail", fields = listOf(peopleField("email", "domain"), readyField("extra.labelIds", FilterRef.MEMBERSHIP, "label", "labels"))) },
+            previewFor = { pending.await() },
+        )
         compose.setContent { CompositionLocalProvider(LocalInspectionMode provides true) { OmnesisTheme {
             SourceFilterEditor(mail, "level-example", "answer", saved, true, reader, onClose = {}) { saves++ }
         } } }
         compose.onNodeWithText("Continue").performClick()
-        pending.complete(ScopePreview(mail.id, 4, 2, 2, 0, listOf(ScopePreviewItem(labelRef, "Project", 2)), emptyList(), readiness))
+        pending.complete(readyPreview(mail.id, 4, 2, listOf(FilterPreviewItem(labelRef, "Project", 2))))
         compose.waitForIdle()
         compose.onNodeWithText("View selected").performClick()
         compose.onNodeWithText("Project").assertExists()
+        compose.onNodeWithText("Label").assertExists()
         compose.onNodeWithText("reader@example.org").assertExists()
         assertEquals(0, saves)
         assertEquals(listOf(labelRef, person), saved.rules.single().match)
@@ -207,11 +205,8 @@ class SourceFilterFlowInteractionTest {
     @Test fun aRenamedSavedFolderStaysCheckedAndCanBeRemovedWithoutDuplication() {
         val before = folder
         val renamed = folder
-        var selection: List<ScopeRef>? = null
-        val reader = object : ScopeEditorGateway {
-            override suspend fun preview(policy: ScopePolicy) = gateway.preview(policy)
-            override suspend fun options(sourceId: String, kind: String, query: String, parentId: String?, cursor: String?) = ScopeOptions(sourceId, "files", scopes, source.scopeReadiness!!, listOf(ScopeOption(renamed, "Renamed folder", 3)))
-        }
+        var selection: List<FilterRef>? = null
+        val reader = FakeFilterGateway(editorFor = { editor }, optionsFor = { FilterOptions(it.sourceId, it.field, listOf(FilterOption(renamed, "Renamed folder", "Renamed folder", 3))) })
         compose.setContent { CompositionLocalProvider(LocalInspectionMode provides true) { OmnesisTheme {
             SourceFilterPicker(source, reader, onClose = {}, initialSelection = listOf(before)) { selection = it }
         } } }
@@ -226,11 +221,8 @@ class SourceFilterFlowInteractionTest {
     @Test fun equalFolderNamesWithDifferentIdsRemainIndependentSelections() {
         val first = folder
         val second = first.copy(id = "workspace-copy")
-        var selection: List<ScopeRef>? = null
-        val reader = object : ScopeEditorGateway {
-            override suspend fun preview(policy: ScopePolicy) = gateway.preview(policy)
-            override suspend fun options(sourceId: String, kind: String, query: String, parentId: String?, cursor: String?) = ScopeOptions(sourceId, "files", scopes, source.scopeReadiness!!, listOf(ScopeOption(first, "Workspace", 3), ScopeOption(second, "Workspace", 3)))
-        }
+        var selection: List<FilterRef>? = null
+        val reader = FakeFilterGateway(editorFor = { editor }, optionsFor = { FilterOptions(it.sourceId, it.field, listOf(FilterOption(first, "Workspace", "Workspace", 3), FilterOption(second, "Workspace", "Workspace", 3))) })
         compose.setContent { CompositionLocalProvider(LocalInspectionMode provides true) { OmnesisTheme {
             SourceFilterPicker(source, reader, onClose = {}, initialSelection = listOf(first)) { selection = it }
         } } }

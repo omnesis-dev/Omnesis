@@ -21,34 +21,33 @@ import org.robolectric.annotation.Config
 @Config(sdk = [34], qualifiers = "w411dp-h891dp-xxhdpi")
 class SourceFilterPagingInteractionTest {
     @get:Rule val compose = createComposeRule()
-    private val scopes = SourceScopes(listOf(
-        SourceScopeItem("folder", "hierarchy", noun = SourceScopeNoun("folder", "folders"), picker = "tree"),
-        SourceScopeItem("participant", "identity", noun = SourceScopeNoun("person", "people")),
-    ), 3)
-    private val readiness = listOf(ScopeKindReadiness("folder", true), ScopeKindReadiness("participant", true))
-    private val source = AccessSourceInstance("files:viewer@example.org", "Files", scopes = scopes, scopeReadiness = readiness)
-    private val initial = ScopePolicy(source.id, ScopeAudience("saved", "direct"), listOf(ScopeRule(listOf(ScopeRef("folder", "folder-1")), "share")), "hide")
-    private val navigation = SourceFilterPickerState("folder", "")
+    private val folders = readyField("extra.folderId", FilterRef.TREE, "folder", "folders", picker = "tree", insideText = "Includes the folders inside.")
+    private val people = peopleField("email")
+    private val source = AccessSourceInstance("files:viewer@example.org", "Files", filterable = true)
+    private val initial = SourceFilter(source.id, FilterAudience("saved", "direct"), listOf(FilterRule(listOf(FilterRef.item(FilterRef.TREE, "extra.folderId", "folder-1")), "share")), "hide")
+    private val navigation = SourceFilterPickerState("extra.folderId")
     private var reads = 0
     private var failedSecondPage = false
     private var previews = 0
-    private var applied: ScopePolicy? = null
-    private val gateway = object : ScopeEditorGateway {
-        override suspend fun preview(policy: ScopePolicy): ScopePreview {
-            assertProviderWirePolicy(policy)
+    private var applied: SourceFilter? = null
+    private val gateway = FakeFilterGateway(
+        editorFor = { FilterEditor(it, "files", fields = listOf(folders, people)) },
+        previewFor = { policy ->
             previews++
-            return ScopePreview(source.id, 65, 2, 63, 1, policy.rules.flatMap { it.match }.map { ScopePreviewItem(it, it.label ?: "Folder ${it.id!!.substringAfterLast('-')}", 1) }, emptyList(), readiness)
-        }
-        override suspend fun options(sourceId: String, kind: String, query: String, parentId: String?, cursor: String?): ScopeOptions {
+            readyPreview(source.id, 65, 2, policy.rules.flatMap { it.match }.map { FilterPreviewItem(it, it.label ?: "Folder ${it.id!!.substringAfterLast('-')}", 1) })
+        },
+        optionsFor = { request ->
             reads++
-            if (cursor != null && !failedSecondPage) { failedSecondPage = true; error("Temporary choices failure") }
-            val range = if (cursor == null) 1..50 else 51..65
-            return ScopeOptions(sourceId, "files", scopes, readiness, range.map { index ->
-                val label = if (kind == "folder") "Folder $index" else "Person $index"
-                ScopeOption(if (kind == "participant") ScopeRef(kind, label = label, identifiers = listOf(ScopeIdentifier("email", "reader$index@example.org"))) else ScopeRef(kind, "${parentId ?: "root"}-$index"), label, 1, hasChildren = kind == "folder")
-            }, nextCursor = if (cursor == null) "page-two" else null).also { assertProviderWireOptions(it) }
-        }
-    }
+            if (request.cursor != null && !failedSecondPage) { failedSecondPage = true; error("Temporary choices failure") }
+            val range = if (request.cursor == null) 1..50 else 51..65
+            val field = if (request.field == folders.field) folders else people
+            FilterOptions(request.sourceId, request.field, range.map { index ->
+                val label = if (field == folders) "Folder $index" else "Person $index"
+                FilterOption(if (field == people) FilterRef.person(label, listOf(FilterIdentifier("email", "reader$index@example.org")))
+                    else FilterRef.item(FilterRef.TREE, folders.field, "${request.parentId ?: "root"}-$index"), label, label, 1, hasChildren = field == folders)
+            }, nextCursor = if (request.cursor == null) "page-two" else null).also { assertProviderWireOptions(it, field, source.id) }
+        },
+    )
     private fun show() {
         var open by mutableStateOf(true)
         compose.setContent { CompositionLocalProvider(LocalInspectionMode provides true) { OmnesisTheme {

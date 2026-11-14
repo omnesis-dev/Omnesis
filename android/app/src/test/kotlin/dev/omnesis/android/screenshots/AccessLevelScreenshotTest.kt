@@ -47,38 +47,47 @@ class AccessLevelScreenshotTest {
         }
     }
     companion object {
-        // Actual provider-declared contracts; all account/content values invented from scratch.
-        internal val contract = SourceScopes(listOf(
-            SourceScopeItem("conversation", "fixed", noun = SourceScopeNoun("conversation", "conversations"), picker = "search"),
-            SourceScopeItem("participant", "changes", identifiers = listOf("phone")),
-        ), revision = 2)
-        internal val readiness = contract.items.map { ScopeKindReadiness(it.kind, true) }
-        private val mailContract = SourceScopes(listOf(SourceScopeItem("participant", "fixed", identifiers = listOf("email", "domain")), SourceScopeItem("label", "changes", noun = SourceScopeNoun("label", "labels"), picker = "search")), revision = 2)
-        internal val gmailSource = AccessSourceInstance("gmail:reader@example.org", "Gmail · reader@example.org", sourceType = "gmail", scopes = mailContract, scopeReadiness = mailContract.items.map { ScopeKindReadiness(it.kind, true) })
-        private val folderContract = SourceScopes(listOf(SourceScopeItem("folder", "hierarchy", noun = SourceScopeNoun("folder", "folders"), picker = "tree")), revision = 3)
-        internal val driveSource = AccessSourceInstance("google-drive:reader@example.org", "Google Drive · reader@example.org", sourceType = "google-drive", scopes = folderContract, scopeReadiness = listOf(ScopeKindReadiness("folder", true)))
+        // Fields as the providers declare them; every account and content value is invented.
+        const val CHATS = "extra.chatId"
+        const val GMAIL_LABELS = "extra.labelIds"
+        const val DRIVE_FOLDERS = "extra.folderId"
+        private val chatField = readyField(CHATS, FilterRef.MEMBERSHIP, "chat", "chats")
+        private val mailLabelField = readyField(GMAIL_LABELS, FilterRef.TREE, "label", "labels", picker = "tree", insideText = "Includes the labels inside.")
+        private val folderField = readyField(DRIVE_FOLDERS, FilterRef.TREE, "folder", "folders", picker = "tree", insideText = "Includes the folders inside.")
+        internal val gmailSource = AccessSourceInstance("gmail:reader@example.org", "Gmail · reader@example.org", sourceType = "gmail", filterable = true)
+        internal val driveSource = AccessSourceInstance("google-drive:reader@example.org", "Google Drive · reader@example.org", sourceType = "google-drive", filterable = true)
         /** The WhatsApp account, whose filter the filter renders edit. */
-        internal val source = AccessSourceInstance("whatsapp-messages:+15550100123", "WhatsApp · +1 (555) 010-0123", sourceType = "whatsapp-messages", scopes = contract, scopeReadiness = readiness)
+        internal val source = AccessSourceInstance("whatsapp-messages:+15550100123", "WhatsApp · +1 (555) 010-0123", sourceType = "whatsapp-messages", filterable = true)
+        private val fields = mapOf(
+            source.id to listOf(chatField, peopleField("phone")),
+            gmailSource.id to listOf(peopleField("email", "domain"), mailLabelField),
+            driveSource.id to listOf(folderField),
+        )
 
-        private fun person(name: String, phone: String) = ScopeRef("participant", label = name, identifiers = listOf(ScopeIdentifier("phone", phone)))
-        internal val workshop = ScopeRef("conversation", "conversation-workshop")
+        private fun person(name: String, phone: String) = FilterRef.person(name, listOf(FilterIdentifier("phone", phone)))
+        private fun option(ref: FilterRef, label: String, count: Long, short: String = label, children: Boolean = false, parent: String? = null) =
+            FilterOption(ref, label, short, count, parentId = parent, hasChildren = children.takeIf { it })
+        private fun chat(id: String) = FilterRef.item(FilterRef.MEMBERSHIP, CHATS, id)
+        private fun folder(id: String) = FilterRef.item(FilterRef.TREE, DRIVE_FOLDERS, id)
+        internal val workshop = chat("chat-workshop")
         internal val maya = person("Maya Reeves", "+15550100142")
-        internal val jamie = person("Jamie Lopez", "+15550100167")
-        internal val projects = ScopeOption(ScopeRef("folder", "projects"), "Projects", 18, hasChildren = true)
-        /** What the WhatsApp filter hides: one conversation and one person. */
+        internal val jamie = person("Jamie Lopez", "+15550100187")
+        internal val projects = option(folder("folder-projects"), "Projects", 18, children = true)
+        /** What the WhatsApp filter hides: one chat and one person. */
         internal val refs = listOf(workshop, maya)
-        private val conversations = listOf(ScopeOption(workshop, "Workshop planning", 24), ScopeOption(ScopeRef("conversation", "conversation-hike"), "Weekend hike", 12), ScopeOption(ScopeRef("conversation", "conversation-books"), "Book club", 7))
-        private val people = listOf(ScopeOption(maya, "Maya Reeves", 17), ScopeOption(jamie, "Jamie Lopez", 9), ScopeOption(person("David Lin", "+15550100188"), "David Lin", 6), ScopeOption(person("Sarah Mendez", "+15550100191"), "Sarah Mendez", 3))
-        private val rootFolders = listOf(projects, ScopeOption(ScopeRef("folder", "archive"), "Archive", 9))
-        private val projectFolders = listOf(ScopeOption(ScopeRef("folder", "plans"), "Plans", 11), ScopeOption(ScopeRef("folder", "budgets"), "Budgets", 5), ScopeOption(ScopeRef("folder", "reference"), "Reference", 2))
-        private val mailLabels = listOf(ScopeOption(ScopeRef("label", "Label_41"), "Project", 12))
-        private val mailPeople = listOf(ScopeOption(ScopeRef("participant", label = "reader@example.org", identifiers = listOf(ScopeIdentifier("email", "reader@example.org"))), "reader@example.org", 17))
+        private val chats = listOf(option(workshop, "Workshop planning", 24), option(chat("chat-hike"), "Weekend hike", 12), option(chat("chat-books"), "Book club", 7))
+        private val people = listOf(option(maya, "Maya Reeves", 17), option(jamie, "Jamie Lopez", 9), option(person("David Lin", "+15550100188"), "David Lin", 6), option(person("Sarah Mendez", "+15550100191"), "Sarah Mendez", 3))
+        private val rootFolders = listOf(projects, option(folder("folder-archive"), "Archive", 9))
+        private val projectFolders = listOf(option(folder("folder-plans"), "Projects/Plans", 11, "Plans", parent = "folder-projects"),
+            option(folder("folder-budgets"), "Projects/Budgets", 5, "Budgets", parent = "folder-projects"), option(folder("folder-reference"), "Projects/Reference", 2, "Reference", parent = "folder-projects"))
+        private val mailLabels = listOf(option(FilterRef.item(FilterRef.TREE, GMAIL_LABELS, "Label_41"), "Project", 12), option(FilterRef.item(FilterRef.TREE, GMAIL_LABELS, "Label_42"), "Receipts", 7))
+        private val mailPeople = listOf(option(FilterRef.person("reader@example.org", listOf(FilterIdentifier("email", "reader@example.org"))), "reader@example.org", 17))
 
         internal const val LEVEL_ID = "scope-level"
-        /** WhatsApp shares everything except the workshop conversation and one person. */
-        internal val policy = ScopePolicy(source.id, ScopeAudience(LEVEL_ID, "answer"), listOf(ScopeRule(refs, "hide")), "share")
+        /** WhatsApp shares everything except the workshop chat and one person. */
+        internal val policy = SourceFilter(source.id, FilterAudience(LEVEL_ID, "answer"), listOf(FilterRule(refs, "hide")), "share")
         /** Google Drive shares only one folder. */
-        internal val drivePolicy = ScopePolicy(driveSource.id, ScopeAudience(LEVEL_ID, "answer"), listOf(ScopeRule(listOf(projects.ref), "share")), "hide")
+        internal val drivePolicy = SourceFilter(driveSource.id, FilterAudience(LEVEL_ID, "answer"), listOf(FilterRule(listOf(projects.ref), "share")), "hide")
         private val policyFamily = AccessPolicyFamilySummary("policy-everyday", "Everyday privacy", "4")
         private val everyAccount = AccessSourceBoundary(AccessSourceMode.ALLOWLIST, listOf(gmailSource.id, driveSource.id, source.id))
         /** "Research assistant" as saved, used by two connections and one integration. */
@@ -103,39 +112,63 @@ class AccessLevelScreenshotTest {
 
         /** What each known selection of the WhatsApp filter hides, where selected items overlap. */
         private val hiddenByWhatsAppSelection = mapOf(setOf(workshop, maya) to 37L, setOf(maya, jamie) to 22L)
+        /** The sentences the gateway writes for the records a filter on each account keeps hidden. */
+        private val hiddenSentences = mapOf(
+            source.id to (null to "4 records can't be matched to a chat and stay hidden."),
+            driveSource.id to ("6 older items could not be resynced and stay hidden from agents using this filter." to "2 records can't be matched to a folder and stay hidden."),
+        )
+        /** Gmail's labels and people before the account was resynced, at the cost its source declares. */
+        internal val gmailNeedsResync = mapOf(
+            GMAIL_LABELS to FilterFieldState(FilterFieldState.NEEDS_RESYNC, cost = "This reads about 75,000 messages a day.",
+                text = "Label filters need Gmail to be resynced. Your mail stays searchable meanwhile. This reads about 75,000 messages a day."),
+            FilterRef.PEOPLE_FIELD to FilterFieldState(FilterFieldState.NEEDS_RESYNC, cost = "This reads about 75,000 messages a day.",
+                text = "People filters need Gmail to be resynced. Your mail stays searchable meanwhile. This reads about 75,000 messages a day."),
+        )
+        /** The one sentence the gateway writes for the fields of an account that wait on the same resync. */
+        private val resyncs = mapOf(
+            gmailSource.id to FilterEditorResync(FilterFieldState.NEEDS_RESYNC, listOf(GMAIL_LABELS, FilterRef.PEOPLE_FIELD),
+                "Label and people filters need Gmail to be resynced. Your mail stays searchable meanwhile. This reads about 75,000 messages a day."),
+            driveSource.id to FilterEditorResync(FilterFieldState.RESYNCING, listOf(DRIVE_FOLDERS), "Resyncing Google Drive: 212 of about 900.", 212, 900),
+        )
+        /** Drive's folders while the account is read again. */
+        internal val driveResyncing = FilterFieldState(FilterFieldState.RESYNCING, processed = 212, total = 900, text = "Resyncing Google Drive: 212 of about 900.")
 
-        /** A gateway over the fixture accounts. [counted] false answers as a source whose counts are still being prepared. */
-        internal fun gatewayFor(counted: Boolean = true) = object : ScopeEditorGateway {
-            override suspend fun preview(policy: ScopePolicy): ScopePreview {
+        /**
+         * A gateway over the fixture accounts. [counted] false answers as a gateway still counting; [states] puts fields of
+         * an account, by its id and then the field's path, in another state than ready.
+         */
+        internal fun gatewayFor(counted: Boolean = true, states: Map<String, Map<String, FilterFieldState>> = emptyMap()) = object : FilterEditorGateway {
+            override suspend fun editor(sourceId: String) = FilterEditor(sourceId, sourceId.substringBefore(':'), listOf(FilterDevice("dev_studio", "Studio Mac")),
+                fields = fields.getValue(sourceId).map { field -> states[sourceId]?.get(field.field)?.let { field.copy(state = it) } ?: field },
+                resync = resyncs[sourceId]?.takeIf { states[sourceId] != null })
+            override suspend fun preview(policy: SourceFilter): FilterPreview {
                 assertProviderWirePolicy(policy)
+                if (!counted) return pendingPreview()
                 val account = overview.sources.first { it.id == policy.sourceId }
                 val matched = policy.rules.flatMap { it.match }
-                val listed = (conversations + people + rootFolders + projectFolders + mailLabels + mailPeople).associateBy { it.ref }
-                val sum = matched.sumOf { listed.getValue(it).count }
+                val listed = (chats + people + rootFolders + projectFolders + mailLabels + mailPeople).associateBy { it.ref }
+                val sum = matched.sumOf { listed.getValue(it).count!! }
                 val total = 120L
                 val hidden = if (policy.rules.single().action == "share") total - sum else hiddenByWhatsAppSelection[matched.toSet()] ?: sum
-                val samples = if (account.id == source.id) listOf(ScopePreviewSample("visible", "Weekend hike", true, false), ScopePreviewSample("hidden", "Workshop planning", false, false), ScopePreviewSample("unknown", "Unnamed group", false, true)) else emptyList()
-                return ScopePreview(account.id, total, total - hidden, hidden, if (account.id == source.id) 4 else 0, matched.map { ScopePreviewItem(it, listed.getValue(it).label, listed.getValue(it).count) }, samples,
-                    account.scopeReadiness!!.map { if (counted) it else it.copy(ready = false, reason = "backfill") })
+                val (tooOld, unmatched) = hiddenSentences[account.id] ?: (null to null)
+                return readyPreview(account.id, total, total - hidden, matched.map { FilterPreviewItem(it, listed.getValue(it).label, listed.getValue(it).count!!) }, tooOld, unmatched)
             }
-            override suspend fun options(sourceId: String, kind: String, query: String, parentId: String?, cursor: String?): ScopeOptions {
-                val account = overview.sources.first { it.id == sourceId }
-                val declaration = checkNotNull(account.scopes?.items?.firstOrNull { it.kind == kind })
-                val options = when (kind) {
-                    "folder" -> if (parentId == projects.ref.id) projectFolders else rootFolders
-                    "label" -> mailLabels
-                    "conversation" -> conversations
-                    "participant" -> if ("phone" in declaration.identifiers.orEmpty()) people else mailPeople
-                    else -> error("The fixture has no options for this declared kind")
+            override suspend fun options(sourceId: String, field: String, query: String, parentId: String?, device: String?, cursor: String?): FilterOptions {
+                val options = when (field) {
+                    DRIVE_FOLDERS -> if (parentId == projects.ref.id) projectFolders else rootFolders
+                    GMAIL_LABELS -> mailLabels
+                    CHATS -> chats
+                    FilterRef.PEOPLE_FIELD -> if (sourceId == source.id) people else mailPeople
+                    else -> error("The fixture has no options for this field")
                 }.filter { query.isBlank() || it.label.contains(query, ignoreCase = true) }
-                return assertProviderWireOptions(ScopeOptions(account.id, account.sourceType!!, account.scopes!!, account.scopeReadiness!!.map { if (counted) it else it.copy(ready = false, reason = "backfill") }, options), account, kind)
+                val declared = fields.getValue(sourceId).first { it.field == field }
+                return assertProviderWireOptions(FilterOptions(sourceId, field, if (counted) options else options.map { it.copy(count = null) }, retryAfterMs = if (counted) null else 1_500), declared, sourceId)
             }
+            override suspend fun identifier(type: String, value: String) = FilterIdentifierCheck(error = "Enter a valid phone number. Include the international country code.")
+            override suspend fun resync(sourceId: String) = Unit
         }
         internal val gateway = gatewayFor()
-        /** A gateway that no longer knows the account asked about, as for an account that was disconnected. */
-        internal val disconnectedGateway = object : ScopeEditorGateway {
-            override suspend fun preview(policy: ScopePolicy): ScopePreview = throw dev.omnesis.android.transport.GatewayException.NotFound("source-not-found")
-            override suspend fun options(sourceId: String, kind: String, query: String, parentId: String?, cursor: String?): ScopeOptions = throw dev.omnesis.android.transport.GatewayException.NotFound("source-not-found")
-        }
+        /** The gateway for an account that is no longer connected: it still names and captions the saved entries. */
+        internal val disconnectedGateway = gatewayFor()
     }
 }

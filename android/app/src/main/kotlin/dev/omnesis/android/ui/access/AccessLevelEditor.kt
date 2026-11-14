@@ -25,7 +25,7 @@ private enum class AccessLevelNavigation { CLOSE, CANCEL_DECISION, BACK, BACK_AN
 
 @Composable
 internal fun AccessLevelEditor(
-    state: AccessManagementState, gateway: ScopeEditorGateway, iconFor: (String) -> SourceIconModel,
+    state: AccessManagementState, gateway: FilterEditorGateway, iconFor: (String) -> SourceIconModel,
     nameFor: (String) -> String?, update: (AccessLevelDraft) -> Unit, save: () -> Unit,
     close: () -> Unit, reload: () -> Unit, readPolicy: ((String) -> Unit)? = null,
 ) {
@@ -41,7 +41,7 @@ internal fun AccessLevelEditor(
     var reviewCapabilities by rememberSaveable { mutableStateOf(emptySet<AccessCapability>()) }
     var requiredReviewPages by rememberSaveable { mutableStateOf<List<AccessLevelPage>>(emptyList()) }
     var attempted by remember(page) { mutableStateOf(false) }
-    val session = remember(gateway) { gateway.previewSession() }
+    val session = remember(gateway) { gateway.editorSession() }
     val filterNavigation = remember(session, draft.id, draft.expectedRevision) { SourceFilterNavigation() }
     val original = draft.savedLevel(overview)
     val conflict = state.conflict || (!creating && overview.levels.firstOrNull { it.id == draft.id }?.revision != draft.expectedRevision)
@@ -136,7 +136,7 @@ internal fun AccessLevelEditor(
         onCancel = if (navigation == AccessLevelNavigation.BACK_AND_CANCEL) ::leave else null,
         footer = draft.accountsNote(page, overview),
         busy = state.loading, focusKey = state.error,
-        banner = if (conflict) { { AccessBanner(ACCESS_LEVEL_CONFLICT_MESSAGE, "Reload latest and discard draft", enabled = !state.loading, onAction = reload) } } else null,
+        banner = if (conflict) { { AccessBanner(ACCESS_LEVEL_CONFLICT_MESSAGE, "Load the latest version and discard my changes", enabled = !state.loading, onAction = reload) } } else null,
     ) {
         if (state.loading) { AccessProgressLine("Saving…"); AccessGap(16.dp) }
         // A conflict's own code is said by the banner; any other refusal is said here.
@@ -186,4 +186,4 @@ internal fun AccessLevelEditor(
 internal const val NEW_ACCESS_LEVEL_LABEL = "New access level"
 
 /** What the banner of a level edited elsewhere says. */
-internal const val ACCESS_LEVEL_CONFLICT_MESSAGE = "This access level changed elsewhere. Your draft is retained. Reload the latest level before saving."
+internal const val ACCESS_LEVEL_CONFLICT_MESSAGE = "This access level changed elsewhere. Your changes are kept. Load the latest version before saving."

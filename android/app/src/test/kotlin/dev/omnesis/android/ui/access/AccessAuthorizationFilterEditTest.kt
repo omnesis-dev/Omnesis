@@ -22,21 +22,18 @@ import org.junit.Test
 class AccessAuthorizationFilterEditTest {
     private val dispatcher = StandardTestDispatcher()
     private val source = AccessSourceInstance("scope-chat:one", "Cedar account")
-    private val folder = ScopeRef("folder", id = "folder-7f3a")
-    private val policy = ScopePolicy(source.id, ScopeAudience("new", "answer"), listOf(ScopeRule(listOf(folder), "share")), "hide")
+    private val folder = FilterRef.item(FilterRef.TREE, "extra.folderId", "folder-7f3a")
+    private val policy = SourceFilter(source.id, FilterAudience("new", "answer"), listOf(FilterRule(listOf(folder), "share")), "hide")
     private val request = AccessAuthorizationRequest("request-example", "approval-example", "pending", "client-example", "Research assistant",
         redirectOrigin = "https://client.example", resource = "https://gateway.example/mcp", scope = "omnesis:access", expiresAt = 2_000_000_000_000, requiresAnswer = false)
 
     private class FakeGateway(private val request: AccessAuthorizationRequest, private val source: AccessSourceInstance) : AccessAuthorizationGateway {
         var pairingChanged = false
         var editors = 0
-        val editor = object : ScopeEditorGateway {
-            override suspend fun options(sourceId: String, kind: String, query: String, parentId: String?, cursor: String?) =
-                ScopeOptions(sourceId, "scope-chat", SourceScopes(emptyList()), emptyList(), emptyList())
-            override suspend fun preview(policy: ScopePolicy) = ScopePreview(policy.sourceId, 4, 1, 3, 0,
-                policy.rules.flatMap { it.match }.map { ScopePreviewItem(it, "Blueprints", 1) }, emptyList(), emptyList())
-        }
-        override fun scopeEditor(expectedPairing: AccessAuthorizationPairingIdentity?): ScopeEditorGateway {
+        val editor = FakeFilterGateway(previewFor = { policy ->
+            readyPreview(policy.sourceId, 4, 1, policy.rules.flatMap { it.match }.map { FilterPreviewItem(it, "Blueprints", 1) })
+        })
+        override fun scopeEditor(expectedPairing: AccessAuthorizationPairingIdentity?): FilterEditorGateway {
             if (pairingChanged) throw AccessAuthorizationPairingChanged()
             editors++
             return editor

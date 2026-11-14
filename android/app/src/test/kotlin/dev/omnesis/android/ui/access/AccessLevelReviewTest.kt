@@ -17,20 +17,20 @@ class AccessLevelReviewTest {
     private val chat = AccessSourceInstance("chat:+15550100123", "Chat · +1 (555) 010-0123")
     private val overview = AccessOverview(emptyList(), listOf(gmail, drive, chat), sourceFilters = SourceFiltersAvailability(true))
 
-    private val projects = ScopeRef("folder", "projects")
-    private val workshop = ScopeRef("conversation", "conversation-workshop")
-    private val maya = ScopeRef("participant", label = "Maya Reeves", identifiers = listOf(ScopeIdentifier("phone", "+15550100142")))
-    private val jamie = ScopeRef("participant", label = "Jamie Lopez", identifiers = listOf(ScopeIdentifier("phone", "+15550100167")))
-    private val project = ScopeRef("label", "label-project")
+    private val projects = FilterRef.item(FilterRef.TREE, "extra.folderId", "projects")
+    private val workshop = FilterRef.item(FilterRef.MEMBERSHIP, "extra.chatId", "conversation-workshop")
+    private val maya = FilterRef.person("Maya Reeves", listOf(FilterIdentifier("phone", "+15550100142")))
+    private val jamie = FilterRef.person("Jamie Lopez", listOf(FilterIdentifier("phone", "+15550100167")))
+    private val project = FilterRef.item(FilterRef.MEMBERSHIP, "extra.labelIds", "label-project")
 
-    private fun filter(source: AccessSourceInstance, capability: AccessCapability, action: String, vararg refs: ScopeRef) =
-        ScopePolicy(source.id, ScopeAudience(LEVEL, capability.name.lowercase()), listOf(ScopeRule(refs.toList(), action)), if (action == "share") "hide" else "share")
+    private fun filter(source: AccessSourceInstance, capability: AccessCapability, action: String, vararg refs: FilterRef) =
+        SourceFilter(source.id, FilterAudience(LEVEL, capability.name.lowercase()), listOf(FilterRule(refs.toList(), action)), if (action == "share") "hide" else "share")
     private fun every(vararg sources: AccessSourceInstance) = AccessSourceBoundary(AccessSourceMode.ALLOWLIST, sources.map { it.id })
     /** Answer as the example level saves it: every account, Files sharing one folder, Chat hiding a conversation and a person. */
     private val answer = AccessGrantRule.answer(every(gmail, drive, chat), AccessAnswerRelease.unreviewed()).copy(filterRevision = 1, scopePolicies = listOf(
         filter(drive, AccessCapability.ANSWER, "share", projects), filter(chat, AccessCapability.ANSWER, "hide", workshop, maya)))
     private fun directLike(rule: AccessGrantRule) = AccessGrantRule.direct(rule.sources).copy(filterRevision = rule.filterRevision,
-        scopePolicies = rule.scopePolicies.map { it.copy(audience = ScopeAudience(LEVEL, "direct")) })
+        scopePolicies = rule.scopePolicies.map { it.copy(audience = FilterAudience(LEVEL, "direct")) })
     private fun opened(vararg rules: AccessGrantRule): Pair<AccessLevelDraft, AccessOverview> {
         val level = AccessLevelSummary(LEVEL, "Research assistant", 3, rules.toList(), 2)
         val state = overview.copy(levels = listOf(level))
@@ -48,7 +48,7 @@ class AccessLevelReviewTest {
         val (saved, state) = opened(answer, directLike(answer))
         val off = saved.enabled(AccessCapability.DIRECT, false, state)
         assertEquals(listOf("Permissions", "Direct data", "New sources"), off.changes(state).map { it.title })
-        assertEquals("Answer and Direct: Blocked", off.changes(state).single { it.title == "New sources" }.before)
+        assertEquals("Answer: Blocked / Direct: Blocked", off.changes(state).single { it.title == "New sources" }.before)
         assertEquals("Answer: Blocked", off.changes(state).single { it.title == "New sources" }.after)
         assertEquals(mapOf(
             gmail.id to listOf("Before All content", "After Not granted"),
@@ -137,7 +137,7 @@ class AccessLevelReviewTest {
         val changed = saved.setPolicy(filter(chat, AccessCapability.ANSWER, "hide", maya, jamie), chat.id, AccessCapability.ANSWER)
         assertEquals(listOf("Answer data", "Direct data"), changed.changes(state).map { it.title })
         assertEquals(changed.layout(AccessCapability.ANSWER, state), changed.layout(AccessCapability.DIRECT, state))
-        assertEquals("Answer and Direct: Blocked", changed.unchangedDecisions(state).single { it.title == "New sources" }.value)
+        assertEquals("Answer: Blocked / Direct: Blocked", changed.unchangedDecisions(state).single { it.title == "New sources" }.value)
     }
 
     @Test fun linkingOrUnlinkingDirectWithoutChangingWhatItReadsChangesNothing() {
@@ -146,11 +146,11 @@ class AccessLevelReviewTest {
         val (separate, separateState) = opened(answer, AccessGrantRule.direct(every(gmail)))
         val linked = separate.withDirectSameAsAnswer(true)
         assertEquals(listOf("Direct data"), linked.changes(separateState).map { it.title })
-        assertEquals("Answer and Direct: Blocked", linked.unchangedDecisions(separateState).single { it.title == "New sources" }.value)
+        assertEquals("Answer: Blocked / Direct: Blocked", linked.unchangedDecisions(separateState).single { it.title == "New sources" }.value)
     }
 
     @Test fun anAdvancedFilterKeepsItsOwnListUnderEachSide() {
-        val advanced = ScopePolicy(chat.id, ScopeAudience(LEVEL, "answer"), listOf(ScopeRule(listOf(workshop), "hide"), ScopeRule(listOf(maya), "share")), "hide")
+        val advanced = SourceFilter(chat.id, FilterAudience(LEVEL, "answer"), listOf(FilterRule(listOf(workshop), "hide"), FilterRule(listOf(maya), "share")), "hide")
         val (saved, state) = opened(answer.copy(scopePolicies = listOf(advanced)))
         val replaced = saved.setPolicy(filter(chat, AccessCapability.ANSWER, "hide", jamie), chat.id, AccessCapability.ANSWER)
         assertEquals(mapOf(chat.id to listOf("Before Saved filter", "under Before: conversation-workshop, Maya Reeves", "After Hide matching content", "under After: Jamie Lopez")),
@@ -167,7 +167,7 @@ class AccessLevelReviewTest {
     }
 
     @Test fun aChangeElsewhereLeavesARetainedAdvancedFilterOutOfTheReview() {
-        val advanced = ScopePolicy(chat.id, ScopeAudience(LEVEL, "answer"), listOf(ScopeRule(listOf(workshop), "hide"), ScopeRule(listOf(maya), "share")), "hide")
+        val advanced = SourceFilter(chat.id, FilterAudience(LEVEL, "answer"), listOf(FilterRule(listOf(workshop), "hide"), FilterRule(listOf(maya), "share")), "hide")
         val (saved, state) = opened(answer.copy(scopePolicies = listOf(advanced)))
         val changed = saved.setPolicy(filter(gmail, AccessCapability.ANSWER, "share", project), gmail.id, AccessCapability.ANSWER)
         assertEquals(listOf(gmail.id), changed.changedAccounts(AccessCapability.ANSWER, state).map { it.sourceId })

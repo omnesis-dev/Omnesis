@@ -67,6 +67,7 @@ import dev.omnesis.android.ui.devannotate.ShakeToAnnotate
 import dev.omnesis.android.ui.devannotate.devTargetForRoute
 import dev.omnesis.android.ui.devices.DevicesScreen
 import dev.omnesis.android.ui.devices.GatewayPairingApprovalSheet
+import dev.omnesis.android.ui.document.DocumentAccessScreen
 import dev.omnesis.android.ui.document.DocumentDetailScreen
 import dev.omnesis.android.ui.models.BackendDetailScreen
 import dev.omnesis.android.ui.models.BackendsScreen
@@ -979,7 +980,14 @@ fun HomeScaffold(
                     onOpenDocument = { nav.navigate("document/${Uri.encode(it)}") },
                     onOpenPerson = { nav.navigate(personRoute(it)) },
                     onOpenSettings = openSettings,
+                    onOpenAccess = { nav.navigate("document/${Uri.encode(it)}/access") },
                 )
+            }
+            composable(
+                route = "document/{id}/access",
+                arguments = listOf(navArgument("id") { type = NavType.StringType }),
+            ) {
+                DocumentAccessScreen(onBack = { nav.popBackStack() })
             }
             composable("notes") {
                 NotesHistoryScreen(

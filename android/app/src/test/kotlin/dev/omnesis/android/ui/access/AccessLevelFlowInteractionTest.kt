@@ -22,10 +22,7 @@ class AccessLevelFlowInteractionTest {
     @get:Rule val compose = createComposeRule()
     private val source = AccessSourceInstance("mail:reader@example.org", "Mail", sourceType = "mail")
     private val overview = AccessOverview(emptyList(), listOf(source))
-    private val gateway = object : ScopeEditorGateway {
-        override suspend fun preview(policy: ScopePolicy): ScopePreview = error("No filter expected")
-        override suspend fun options(sourceId: String, kind: String, query: String, parentId: String?, cursor: String?): ScopeOptions = error("No picker expected")
-    }
+    private val gateway = FakeFilterGateway()
     private var saved = 0
     private var closed = 0
     private var reloaded = 0
@@ -188,7 +185,7 @@ class AccessLevelFlowInteractionTest {
         compose.onNodeWithText("Review changes").assertIsEnabled()
         compose.onNodeWithText(ACCESS_LEVEL_CONFLICT_MESSAGE).assertExists()
         assertEquals(0, reloaded)
-        compose.onNodeWithText("Reload latest and discard draft").performClick()
+        compose.onNodeWithText("Load the latest version and discard my changes").performClick()
         assertEquals(1, reloaded)
     }
     @Test fun retryCannotSaveChangesAfterLeavingTheReview() {
@@ -217,7 +214,7 @@ class AccessLevelFlowInteractionTest {
         compose.runOnIdle { catalogue = catalogue.copy(levels = listOf(level.copy(name = "Remote name", revision = 2))) }
         compose.onNodeWithText("Review changes").assertIsEnabled()
         compose.onAllNodesWithText("My unsaved name")[0].assertExists()
-        compose.onNodeWithText("Reload latest and discard draft").assertExists()
+        compose.onNodeWithText("Load the latest version and discard my changes").assertExists()
     }
     @Test fun changingAnAlreadyReviewedCreateDecisionReturnsDirectlyToReview() {
         val initial = AccessLevelDraft.opening(null, overview).copy(name = "Capture notes", rules = listOf(AccessGrantRule.notes()))
@@ -248,7 +245,7 @@ class AccessLevelFlowInteractionTest {
         compose.onNodeWithText("Continue").assertIsEnabled()
     }
     @Test fun aDeselectedFilteredSourceKeepsItsFilterInTheDraftWithoutBlockingTheDecision() {
-        val filtered = ScopePolicy(source.id, ScopeAudience("saved-level", "answer"), listOf(ScopeRule(listOf(ScopeRef("participant", label = "Maya Reeves", identifiers = listOf(ScopeIdentifier("email", "maya@example.org")))), "share")), "hide")
+        val filtered = SourceFilter(source.id, FilterAudience("saved-level", "answer"), listOf(FilterRule(listOf(FilterRef.person("Maya Reeves", listOf(FilterIdentifier("email", "maya@example.org")))), "share")), "hide")
         val answer = AccessGrantRule.answer(AccessSourceBoundary(AccessSourceMode.ALL, emptyList()), AccessAnswerRelease.unreviewed()).copy(filterRevision = 2, scopePolicies = listOf(filtered))
         val other = AccessSourceInstance("notes:reader@example.org", "Notes", sourceType = "notes")
         val level = AccessLevelSummary("saved-level", "Before", 1, listOf(answer), 0)
@@ -260,7 +257,7 @@ class AccessLevelFlowInteractionTest {
         compose.onNodeWithText("Done").assertIsEnabled()
         compose.onNodeWithText("Mail").performClick()
         compose.onNodeWithText("Not shared · saved filter kept").assertDoesNotExist()
-        compose.onNodeWithText("Only 1 selected match").assertExists()
+        compose.onNodeWithText("Share matching content · 1 item").assertExists()
         compose.onNodeWithText("Done").assertIsEnabled()
     }
     @Test fun savingDisablesEditingAndLeavingTheDraft() {
@@ -372,20 +369,20 @@ class AccessLevelFlowInteractionTest {
         assertEquals(direct.sources, withAnswer.serializedRules.single { it.capability == AccessCapability.DIRECT }.sources)
     }
     @Test fun linkedReviewCorrectionChoosesSeparateDirectDataAndPersistsItsExactBoundary() {
-        val scopes = SourceScopes(listOf(SourceScopeItem("label", "changes", noun = SourceScopeNoun("label", "labels"), picker = "search")))
-        val ready = listOf(ScopeKindReadiness("label", true))
-        val first = source.copy(scopes = scopes, scopeReadiness = ready)
-        val second = AccessSourceInstance("mail:other@example.org", "Other mail", scopes = scopes, scopeReadiness = ready)
-        val oldRef = ScopeRef("label", "before-label")
-        val newRef = ScopeRef("label", "after-label")
-        val answerPolicy = ScopePolicy(first.id, ScopeAudience("new", "answer"), listOf(ScopeRule(listOf(oldRef), "share")), "hide")
+        val labels = readyField("extra.labelIds", FilterRef.MEMBERSHIP, "label", "labels")
+        val first = source.copy(filterable = true)
+        val second = AccessSourceInstance("mail:other@example.org", "Other mail", filterable = true)
+        val oldRef = FilterRef.item(FilterRef.MEMBERSHIP, "extra.labelIds", "before-label")
+        val newRef = FilterRef.item(FilterRef.MEMBERSHIP, "extra.labelIds", "after-label")
+        val answerPolicy = SourceFilter(first.id, FilterAudience("new", "answer"), listOf(FilterRule(listOf(oldRef), "share")), "hide")
         val answer = AccessGrantRule.answer(AccessSourceBoundary(AccessSourceMode.ALLOWLIST, listOf(first.id)), AccessAnswerRelease.unreviewed()).copy(scopePolicies = listOf(answerPolicy))
         val catalogue = overview.copy(sources = listOf(first, second), sourceFilters = SourceFiltersAvailability(true))
         var draft by mutableStateOf(AccessLevelDraft.opening(null, catalogue).copy(name = "Independent helper", rules = listOf(answer, AccessGrantRule.direct(AccessSourceBoundary(AccessSourceMode.ALLOWLIST, emptyList()))), requireAnswerPolicySelection = false))
-        val filterGateway = object : ScopeEditorGateway {
-            override suspend fun preview(policy: ScopePolicy) = ScopePreview(policy.sourceId, 6, 3, 3, 0, policy.rules.flatMap { it.match }.map { ScopePreviewItem(it, if (it == oldRef) "Project" else "Design notes", 3) }, emptyList(), ready)
-            override suspend fun options(sourceId: String, kind: String, query: String, parentId: String?, cursor: String?) = ScopeOptions(sourceId, "mail", scopes, ready, listOf(ScopeOption(newRef, "Design notes", 3)))
-        }
+        val filterGateway = FakeFilterGateway(
+            editorFor = { FilterEditor(it, "mail", fields = listOf(labels)) },
+            optionsFor = { FilterOptions(it.sourceId, it.field, listOf(FilterOption(newRef, "Design notes", "Design notes", 3))) },
+            previewFor = { policy -> readyPreview(policy.sourceId, 6, 3, policy.rules.flatMap { it.match }.map { FilterPreviewItem(it, if (it == oldRef) "Project" else "Design notes", 3) }) },
+        )
         compose.setContent { CompositionLocalProvider(LocalInspectionMode provides true) { OmnesisTheme {
             AccessHomeContent(AccessManagementState(catalogue, draft), filterGateway, onClose = {}, onUpdate = { draft = it }, onSave = { saved++ })
         } } }
@@ -411,7 +408,7 @@ class AccessLevelFlowInteractionTest {
         val direct = draft.serializedRules.single { it.capability == AccessCapability.DIRECT }
         assertEquals(listOf(second.id), direct.sources.sourceIds)
         assertEquals(listOf(newRef), direct.scopePolicies.single().rules.single().match)
-        assertEquals(ScopeAudience("new", "direct"), direct.scopePolicies.single().audience)
+        assertEquals(FilterAudience("new", "direct"), direct.scopePolicies.single().audience)
         assertEquals(answer.copy(filterRevision = 0), draft.serializedRules.single { it.capability == AccessCapability.ANSWER })
     }
     @Test fun addingReadingFromNotesReviewVisitsEveryNewlyRequiredDecision() {
@@ -453,21 +450,17 @@ class AccessLevelFlowInteractionTest {
     }
     @Test fun aSameCountPolicyReplacementShowsOnlyTheChangedAccountInPrimaryReview() {
         val other = AccessSourceInstance("mail:other@example.org", "Other mail")
-        val firstPolicy = ScopePolicy(source.id, ScopeAudience("saved-level", "direct"), listOf(ScopeRule(listOf(ScopeRef("label", "first")), "share")), "hide")
-        val secondPolicy = firstPolicy.copy(sourceId = other.id, rules = listOf(ScopeRule(listOf(ScopeRef("label", "unchanged")), "share")))
+        val firstPolicy = SourceFilter(source.id, FilterAudience("saved-level", "direct"), listOf(FilterRule(listOf(FilterRef.item(FilterRef.MEMBERSHIP, "extra.labelIds", "first")), "share")), "hide")
+        val secondPolicy = firstPolicy.copy(sourceId = other.id, rules = listOf(FilterRule(listOf(FilterRef.item(FilterRef.MEMBERSHIP, "extra.labelIds", "unchanged")), "share")))
         val direct = AccessGrantRule.direct(AccessSourceBoundary(AccessSourceMode.ALLOWLIST, listOf(source.id, other.id))).copy(scopePolicies = listOf(firstPolicy, secondPolicy), filterRevision = 3)
         val level = AccessLevelSummary("saved-level", "Helper", 1, listOf(direct), 0)
         val catalogue = overview.copy(sources = listOf(source, other), levels = listOf(level))
-        val replacement = firstPolicy.copy(rules = listOf(ScopeRule(listOf(ScopeRef("label", "replacement")), "share")))
-        val reader = object : ScopeEditorGateway {
-            override suspend fun preview(policy: ScopePolicy): ScopePreview {
-                assertProviderWirePolicy(policy)
-                return ScopePreview(policy.sourceId, 3, 1, 2, 0, policy.rules.flatMap { it.match }.map { ref ->
-                    ScopePreviewItem(ref, when (ref.id) { "first" -> "Project"; "replacement" -> "Receipts"; else -> "Outside" }, 1)
-                }, emptyList(), listOf(ScopeKindReadiness("label", true)))
-            }
-            override suspend fun options(sourceId: String, kind: String, query: String, parentId: String?, cursor: String?) = error("No picker expected")
-        }
+        val replacement = firstPolicy.copy(rules = listOf(FilterRule(listOf(FilterRef.item(FilterRef.MEMBERSHIP, "extra.labelIds", "replacement")), "share")))
+        val reader = FakeFilterGateway(previewFor = { policy ->
+            readyPreview(policy.sourceId, 3, 1, policy.rules.flatMap { it.match }.map { ref ->
+                FilterPreviewItem(ref, when (ref.id) { "first" -> "Project"; "replacement" -> "Receipts"; else -> "Outside" }, 1)
+            })
+        })
         var draft by mutableStateOf(AccessLevelDraft.opening(level, catalogue).setPolicy(replacement, source.id, AccessCapability.DIRECT))
         compose.setContent { OmnesisTheme { AccessHomeContent(AccessManagementState(catalogue, draft), reader, onClose = {}, onUpdate = { draft = it }) } }
         compose.onNodeWithText("Review changes").performClick()

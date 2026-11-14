@@ -33,6 +33,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.outlined.OpenInNew
 import androidx.compose.material.icons.outlined.BlurCircular
+import androidx.compose.material.icons.outlined.Shield
 import androidx.compose.material.icons.outlined.Timeline
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -116,6 +117,7 @@ fun DocumentInspectorSheet(
     onLoadMoreAnnotations: () -> Unit = {},
     onToggleAnnotationDependents: (Annotation) -> Unit = {},
     onLoadMoreAnnotationDependents: (Annotation) -> Unit = {},
+    onOpenAccess: (() -> Unit)? = null,
 ) {
     val c = OmTheme.colors
     ModalBottomSheet(
@@ -136,6 +138,7 @@ fun DocumentInspectorSheet(
             onLoadMoreAnnotations = onLoadMoreAnnotations,
             onToggleAnnotationDependents = onToggleAnnotationDependents,
             onLoadMoreAnnotationDependents = onLoadMoreAnnotationDependents,
+            onOpenAccess = onOpenAccess,
         )
     }
 }
@@ -162,6 +165,7 @@ fun InspectorContent(
     onLoadMoreAnnotations: () -> Unit = {},
     onToggleAnnotationDependents: (Annotation) -> Unit = {},
     onLoadMoreAnnotationDependents: (Annotation) -> Unit = {},
+    onOpenAccess: (() -> Unit)? = null,
 ) {
     val c = OmTheme.colors
     var tab by remember { mutableStateOf(initialTab) }
@@ -192,7 +196,7 @@ fun InspectorContent(
             ) {
                 if (tab == InspectorTab.Metadata) {
                     item("metadata-static") {
-                        MetadataPane(bundle)
+                        MetadataPane(bundle, onOpenAccess)
                     }
                     annotationsSectionItems(
                         listState = listState,
@@ -267,6 +271,7 @@ private fun InspectorTabBar(tab: InspectorTab, onSelect: (InspectorTab) -> Unit)
 @Composable
 private fun MetadataPane(
     bundle: DocumentBundle,
+    onOpenAccess: (() -> Unit)?,
 ) {
     val doc = bundle.doc
     val display = bundle.sourceDisplay
@@ -276,6 +281,15 @@ private fun MetadataPane(
             Kv("Type", docTypeLabel(doc.documentType) ?: "—")
             Kv("Source", display[doc.sourceId].label)
             doc.sourceUrl?.takeIf { it.isNotBlank() }?.let { Kv("URL", it, mono = true) }
+        }
+
+        // The owner's way to the page that says which access levels can read this document.
+        onOpenAccess?.let { WhoCanReadRow(it) }
+
+        bundle.filterDetails?.let { details ->
+            FlatSection("Filter details") {
+                details.lines().forEach { Kv(it.label, it.value) }
+            }
         }
 
         val tags = doc.tags
@@ -299,9 +313,9 @@ private fun MetadataPane(
         }
 
         FlatSection("Timestamps") {
-            Kv("Created", doc.sourceCreatedAt, mono = true)
-            doc.sourceUpdatedAt?.let { Kv("Updated", it, mono = true) }
-            doc.ingestedAt?.let { Kv("Ingested", it, mono = true) }
+            Kv("Created", documentDetailTime(doc.sourceCreatedAt))
+            doc.sourceUpdatedAt?.let { Kv("Updated", documentDetailTime(it)) }
+            doc.ingestedAt?.let { Kv("Ingested", documentDetailTime(it)) }
         }
 
         FlatSection("Identifiers") {
@@ -310,6 +324,24 @@ private fun MetadataPane(
             Kv("Source ID", doc.sourceId, mono = true)
             Kv("Provider ID", doc.providerId, mono = true)
         }
+    }
+}
+
+/** The entry to the page that lists which access levels can read the document: a plain row under the document's section. */
+@Composable
+private fun WhoCanReadRow(onClick: () -> Unit) {
+    val c = OmTheme.colors
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clickable(onClickLabel = WHO_CAN_READ_TITLE, onClick = onClick)
+            .padding(vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Icon(Icons.Outlined.Shield, contentDescription = null, tint = c.accent, modifier = Modifier.size(20.dp))
+        Text(WHO_CAN_READ_TITLE, fontSize = 15.sp, fontWeight = FontWeight.Medium, color = c.accent, modifier = Modifier.weight(1f))
+        Icon(Icons.AutoMirrored.Outlined.KeyboardArrowRight, contentDescription = null, tint = c.textSecondary, modifier = Modifier.size(20.dp))
     }
 }
 

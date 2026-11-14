@@ -74,6 +74,11 @@
       "reason": "invented WhatsApp group id in the iOS document access preview"
     },
     {
+      "value": "120363000000000001@g.us",
+      "paths": ["android/app/src/main/kotlin/dev/omnesis/android/ui/document/DocumentFixtures.kt"],
+      "reason": "Invented WhatsApp group id in the external id of the fictional document the access renders show."
+    },
+    {
       "value": "120363000000000002@g.us",
       "paths": ["packages/providers/whatsapp/src/normalizer.test.ts"],
       "reason": "reviewed invented fixture"

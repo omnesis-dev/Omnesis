@@ -59,6 +59,7 @@ import androidx.compose.ui.window.DialogWindowProvider
 import dev.omnesis.android.designsystem.components.SourceIcon
 import dev.omnesis.android.designsystem.components.SourceIconModel
 import dev.omnesis.android.designsystem.theme.OmTheme
+import dev.omnesis.android.transport.dto.AccessCapability
 import dev.omnesis.android.transport.dto.AccessSourceInstance
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.ui.input.pointer.pointerInput
@@ -77,8 +78,9 @@ internal object AccessUi {
     val colors: AccessPalette
         @Composable @ReadOnlyComposable get() {
             val theme = OmTheme.colors
-            return if (theme.isDark) AccessPalette(theme.bgPrimary, theme.bgSecondary, Color(0xFF232A33), theme.textPrimary, Color(0xFF9AA4B2), Color(0xFF5D6673), theme.accent, theme.bgPrimary, theme.danger, theme.success)
-            else AccessPalette(theme.bgPrimary, Color(0xFFF3F5F8), Color(0xFFE3E7EC), theme.textPrimary, theme.textSecondary, Color(0xFF8C959F), theme.accent, Color.White, theme.danger, theme.success)
+            // Secondary and muted text share the theme's secondary token, which reads at 4.5:1 or more on the page and on surfaces.
+            return if (theme.isDark) AccessPalette(theme.bgPrimary, theme.bgSecondary, Color(0xFF232A33), theme.textPrimary, theme.textSecondary, theme.textSecondary, theme.accent, theme.bgPrimary, theme.danger, theme.success)
+            else AccessPalette(theme.bgPrimary, Color(0xFFF3F5F8), Color(0xFFE3E7EC), theme.textPrimary, theme.textSecondary, theme.textSecondary, theme.accent, Color.White, theme.danger, theme.success)
         }
 
     /** The horizontal inset of content, top bar actions and the bottom button. */
@@ -337,22 +339,31 @@ internal fun AccessPill(text: String, tone: AccessPillTone = AccessPillTone.NEUT
  */
 @Composable
 internal fun AccessCapabilityPills(holdings: AccessCapabilityHoldings, modifier: Modifier = Modifier) {
-    val colors = AccessUi.colors
-    val shape = RoundedCornerShape(5.dp)
     Row(modifier.clearAndSetSemantics { contentDescription = holdings.description }, horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
-        ACCESS_CAPABILITIES.forEach { capability ->
-            val held = holdings.holds(capability)
-            val tint = when (capabilityTone(capability, held)) {
-                AccessCapabilityTone.REVIEWED -> colors.success
-                AccessCapabilityTone.RAW -> colors.danger
-                AccessCapabilityTone.WRITE -> colors.accent
-                AccessCapabilityTone.WITHHELD -> colors.muted
-            }
-            Box(Modifier.height(20.dp).then(if (held) Modifier.background(tint.copy(alpha = .10f), shape) else Modifier).border(1.dp, tint.copy(alpha = if (held) .45f else .60f), shape)
-                .padding(horizontal = 7.dp), contentAlignment = Alignment.Center) {
-                Text(capability.title.uppercase(), style = AccessType.CapabilityPill, color = tint, maxLines = 1)
-            }
-        }
+        ACCESS_CAPABILITIES.forEach { capability -> AccessCapabilityPill(capability, holdings.holds(capability)) }
+    }
+}
+
+/** One capability's pill, in its colour when [held] and muted otherwise, as [AccessCapabilityPills] draws each. */
+@Composable
+internal fun AccessCapabilityPill(capability: AccessCapability, held: Boolean) {
+    val colors = AccessUi.colors
+    val tint = when (capabilityTone(capability, held)) {
+        AccessCapabilityTone.REVIEWED -> colors.success
+        AccessCapabilityTone.RAW -> colors.danger
+        AccessCapabilityTone.WRITE -> colors.accent
+        AccessCapabilityTone.WITHHELD -> colors.muted
+    }
+    AccessTag(capability.title, tint, filled = held)
+}
+
+/** A small uppercase tag in [tint]: an outline, with a faint wash of the tint when [filled]. Capability pills and the integration tag share it. */
+@Composable
+internal fun AccessTag(text: String, tint: Color, filled: Boolean = false) {
+    val shape = RoundedCornerShape(5.dp)
+    Box(Modifier.height(20.dp).then(if (filled) Modifier.background(tint.copy(alpha = .10f), shape) else Modifier).border(1.dp, tint.copy(alpha = if (filled) .45f else .60f), shape)
+        .padding(horizontal = 7.dp), contentAlignment = Alignment.Center) {
+        Text(text.uppercase(), style = AccessType.CapabilityPill, color = tint, maxLines = 1)
     }
 }
 
@@ -394,6 +405,17 @@ internal fun AccessProgressLine(text: String) {
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
         AccessSpinner()
         Text(text, style = AccessType.Subtitle, color = colors.secondary)
+    }
+}
+
+/** How far a long task has come, as a thin bar that fills from the leading edge. */
+@Composable
+internal fun AccessProgressBar(fraction: Float, modifier: Modifier = Modifier) {
+    val colors = AccessUi.colors
+    val shown = fraction.coerceIn(0f, 1f)
+    Box(modifier.fillMaxWidth().height(6.dp).clip(CircleShape).background(colors.divider)
+        .semantics { progressBarRangeInfo = ProgressBarRangeInfo(shown, 0f..1f) }) {
+        Box(Modifier.fillMaxWidth(shown).fillMaxHeight().clip(CircleShape).background(colors.accent))
     }
 }
 
@@ -572,18 +594,18 @@ internal fun AccessChangeValue(text: String, after: Boolean) {
 internal enum class FilterItemMark(val label: String) { ADDED("Added"), REMOVED("Removed") }
 
 /**
- * One item of a filter: its type as a small caption, its name, and how many records it matches at the
+ * One item of a filter: its type as a small caption when known, its name, and how many records it matches at the
  * trailing edge. A [mark] says what an edit did to it; a removed item is struck through. While [counting],
  * a small spinner stands where the count will be. [detail] is a second line under the name; [trailing]
  * replaces the count with an action.
  */
 @Composable
-internal fun AccessFilterItemRow(caption: String, name: String, count: Long?, last: Boolean = false, mark: FilterItemMark? = null, counting: Boolean = false, detail: String? = null, trailing: (@Composable () -> Unit)? = null) {
+internal fun AccessFilterItemRow(caption: String?, name: String, count: Long?, last: Boolean = false, mark: FilterItemMark? = null, counting: Boolean = false, detail: String? = null, trailing: (@Composable () -> Unit)? = null) {
     val colors = AccessUi.colors
     val removed = mark == FilterItemMark.REMOVED
     AccessRow(last = last) {
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Text(caption, style = AccessType.Small, color = colors.secondary)
+            caption?.let { Text(it, style = AccessType.Small, color = colors.secondary) }
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(name, style = AccessType.RowTitle.copy(fontWeight = FontWeight.Normal, textDecoration = if (removed) TextDecoration.LineThrough else null),
                     color = if (removed) colors.secondary else colors.primary, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
@@ -747,15 +769,15 @@ internal fun AccessAddRow(label: String, modifier: Modifier = Modifier, onClick:
 internal const val ACCESS_REFRESH_INTERVAL_MILLIS = 3_000L
 
 /**
- * Calls [refresh] every few seconds for as long as [active] holds, so counts that are still being
- * prepared arrive without the owner asking for them. A screenshot render never refreshes.
+ * Calls [refresh] every [intervalMillis] for as long as [active] holds, so counts and states the gateway is still
+ * working out arrive without the owner asking for them. A screenshot render never refreshes.
  */
 @Composable
-internal fun AccessAutoRefresh(active: Boolean, refresh: () -> Unit) {
+internal fun AccessAutoRefresh(active: Boolean, intervalMillis: Long = ACCESS_REFRESH_INTERVAL_MILLIS, refresh: () -> Unit) {
     val frozen = LocalInspectionMode.current
     val latest by rememberUpdatedState(refresh)
-    LaunchedEffect(active, frozen) {
+    LaunchedEffect(active, frozen, intervalMillis) {
         if (!active || frozen) return@LaunchedEffect
-        while (true) { delay(ACCESS_REFRESH_INTERVAL_MILLIS); latest() }
+        while (true) { delay(intervalMillis.coerceAtLeast(500L)); latest() }
     }
 }

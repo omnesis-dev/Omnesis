@@ -20,7 +20,7 @@ class AccessTest {
     }
 
     @Test fun a_filtered_rule_reads_its_whole_boundary_from_scope_sources_and_writes_it_as_sources() {
-        val policy = """{"sourceId":"files:fictional","audience":{"accessLevel":"level_example","capability":"direct"},"rules":[{"match":[{"kind":"folder","id":"folder-example"}],"action":"share"}],"otherwise":"hide"}"""
+        val policy = """{"sourceId":"files:fictional","audience":{"accessLevel":"level_example","capability":"direct"},"rules":[{"match":[{"capability":"tree","field":"extra.folderId","id":"folder-example"}],"action":"share"}],"otherwise":"hide"}"""
         val whole = AccessSourceBoundary(AccessSourceMode.ALLOWLIST, listOf("notes:fictional", "files:fictional"))
         // The gateway leaves the filtered account out of `sources` and names every account in `scopeSources`.
         val split = OmnesisJson.decodeFromString<AccessGrantRule>(

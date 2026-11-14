@@ -35,7 +35,7 @@ data class AccessManagementState(
 )
 
 internal const val ACCESS_LEVEL_GONE_MESSAGE =
-    "This access level is no longer available. Your unsaved draft is retained; close it to return to Access."
+    "This access level is no longer available. Your changes are kept; close it to return to Access."
 
 /** A save the gateway refused. A level deleted elsewhere reads as a conflict whose reload names the deletion. */
 internal fun AccessManagementState.afterSaveFailure(error: Exception): AccessManagementState {
@@ -68,7 +68,7 @@ class AccessManagementViewModel @Inject constructor(private val session: Session
     }
     private val mutable = MutableStateFlow(AccessManagementState())
     val state = mutable.asStateFlow()
-    val scopeGateway: ScopeEditorGateway = PairedScopeEditorGateway(session).previewSession()
+    val scopeGateway: FilterEditorGateway = PairedFilterEditorGateway(session).editorSession()
     fun sourceIcon(sourceId: String) = sourceCatalog.iconModel(sourceId)
     fun sourceName(sourceId: String) = sourceCatalog.familyLabel(sourceId)
     fun refresh(reloadDraft: Boolean = false) {

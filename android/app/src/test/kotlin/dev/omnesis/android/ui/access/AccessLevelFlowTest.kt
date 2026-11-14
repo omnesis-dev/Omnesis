@@ -65,7 +65,7 @@ class AccessLevelFlowTest {
         assertEquals(7, changed.expectedRevision)
     }
     @Test fun futureChoiceKeepsCurrentAccountsAndSavedRestrictionIdentifiers() {
-        val policy = ScopePolicy(source.id, ScopeAudience("saved-level", "answer"), listOf(ScopeRule(listOf(ScopeRef("label", "label-example")), "share")), "hide")
+        val policy = SourceFilter(source.id, FilterAudience("saved-level", "answer"), listOf(FilterRule(listOf(FilterRef.item(FilterRef.MEMBERSHIP, "extra.labelIds", "label-example")), "share")), "hide")
         val answer = draft(AccessCapability.ANSWER).rules.single().copy(scopePolicies = listOf(policy), filterRevision = 4)
         val level = AccessLevelSummary("saved-level", "Project helper", 7, listOf(answer), 2)
         val state = overview.copy(levels = listOf(level))
@@ -92,11 +92,11 @@ class AccessLevelFlowTest {
         }
     }
     @Test fun sameCountReplacementStillReviewsTheActualChangedRestriction() {
-        val policy = ScopePolicy(source.id, ScopeAudience("saved", "direct"), listOf(ScopeRule(listOf(ScopeRef("label", "first")), "share")), "hide")
+        val policy = SourceFilter(source.id, FilterAudience("saved", "direct"), listOf(FilterRule(listOf(FilterRef.item(FilterRef.MEMBERSHIP, "extra.labelIds", "first")), "share")), "hide")
         val rule = draft(AccessCapability.DIRECT).rules.single().copy(scopePolicies = listOf(policy))
         val level = AccessLevelSummary("saved", "Helper", 1, listOf(rule), 0)
         val state = overview.copy(levels = listOf(level))
-        val changed = AccessLevelDraft.opening(level, state).setPolicy(policy.copy(rules = listOf(ScopeRule(listOf(ScopeRef("label", "second")), "share"))), source.id, AccessCapability.DIRECT)
+        val changed = AccessLevelDraft.opening(level, state).setPolicy(policy.copy(rules = listOf(FilterRule(listOf(FilterRef.item(FilterRef.MEMBERSHIP, "extra.labelIds", "second")), "share"))), source.id, AccessCapability.DIRECT)
         assertEquals(listOf("Direct data"), changed.changes(state).map { it.title })
     }
     @Test fun reviewKeepsItsOpeningBaselineWhenTheOverviewRefreshes() {
@@ -138,7 +138,7 @@ class AccessLevelFlowTest {
         assertEquals("0 accounts selected", ruleDataSummary(excluded, overview.copy(sources = emptyList())))
     }
     @Test fun applyingAnUnchangedPolicyRetainsExactWireOrderAndIsNotADraftChange() {
-        val first = ScopePolicy(source.id, ScopeAudience("saved", "direct"), listOf(ScopeRule(listOf(ScopeRef("label", "first")), "share")), "hide")
+        val first = SourceFilter(source.id, FilterAudience("saved", "direct"), listOf(FilterRule(listOf(FilterRef.item(FilterRef.MEMBERSHIP, "extra.labelIds", "first")), "share")), "hide")
         val second = first.copy(sourceId = "mail:other@example.org")
         val direct = draft(AccessCapability.DIRECT).rules.single().copy(sources = AccessSourceBoundary(AccessSourceMode.ALLOWLIST, listOf(source.id, second.sourceId)), scopePolicies = listOf(first, second), filterRevision = 3)
         val level = AccessLevelSummary("saved", "Helper", 1, listOf(direct), 0)
@@ -149,21 +149,22 @@ class AccessLevelFlowTest {
         assertTrue(unchanged.changes(state).isEmpty())
     }
     @Test fun presentationAndSetOrderAreNotAuthorityChangesButAdvancedRuleOrderIsPreserved() {
-        val refs = listOf(ScopeRef("label", "first"), ScopeRef("participant", label = "Before", identifiers = listOf(ScopeIdentifier("email", "reader@example.org"))))
-        val policy = ScopePolicy(source.id, ScopeAudience("saved", "direct"), listOf(ScopeRule(refs, "share")), "hide")
+        val refs = listOf(FilterRef.item(FilterRef.MEMBERSHIP, "extra.labelIds", "first"), FilterRef.person("Before", listOf(FilterIdentifier("email", "reader@example.org"))))
+        val policy = SourceFilter(source.id, FilterAudience("saved", "direct"), listOf(FilterRule(refs, "share")), "hide")
         val direct = AccessGrantRule.direct(AccessSourceBoundary(AccessSourceMode.ALL, emptyList())).copy(scopePolicies = listOf(policy), filterRevision = 3)
         val level = AccessLevelSummary("saved", "Helper", 1, listOf(direct), 0)
         val state = overview.copy(levels = listOf(level))
-        val currentPolicy = policy.copy(rules = listOf(ScopeRule(refs.reversed().map { if (it.kind == "participant") it.copy(label = "Renamed") else it }, "share")))
+        val currentPolicy = policy.copy(rules = listOf(FilterRule(refs.reversed().map { if (it.isPerson) it.copy(label = "Renamed") else it }, "share")))
         val current = AccessLevelDraft.opening(level, state).setRule(direct.copy(sources = AccessSourceBoundary(AccessSourceMode.DENYLIST, emptyList()), scopePolicies = listOf(currentPolicy)))
         assertFalse(current.isChangedFrom(level))
         assertTrue(current.changes(state).isEmpty())
         assertEquals(currentPolicy, current.serializedRules.single().scopePolicies.single())
-        val advanced = policy.copy(rules = listOf(policy.rules.single(), ScopeRule(listOf(refs.first()), "hide")))
-        assertFalse(sameScopeSettings(listOf(advanced), listOf(advanced.copy(rules = advanced.rules.reversed()))))
+        val advanced = policy.copy(rules = listOf(policy.rules.single(), FilterRule(listOf(refs.first()), "hide")))
+        assertFalse(sameFilterSettings(listOf(advanced), listOf(advanced.copy(rules = advanced.rules.reversed()))))
     }
-    @Test fun recordsAFilterCannotCompareYetAreSaidToWaitForTheirDetails() {
-        assertEquals("1 record stays hidden until its details finish syncing.", uncheckedRecordsLine(1))
-        assertEquals("4 records stay hidden until their details finish syncing.", uncheckedRecordsLine(4))
+    @Test fun theReleaseChoiceAndTheEmptySearchUseTheWordsEveryClientShares() {
+        assertEquals("Choose a privacy policy for Answer, or explicitly choose unreviewed release.", RELEASE_CHOICE_MESSAGE)
+        assertEquals("Counts could not be loaded.", COUNTS_UNAVAILABLE_MESSAGE)
+        assertEquals("Counting…", COUNTING_MESSAGE)
     }
 }

@@ -407,7 +407,10 @@ fun SettingsContent(
                         NavigationRow("Omnesis account", onOpenOmnesisAccount)
                         RowDivider()
                     }
-                    if (onOpenAccessHome != null) NavigationRow("Access", onOpenAccessHome)
+                    if (onOpenAccessHome != null) {
+                        NavigationRow("Access", onOpenAccessHome)
+                        RowDivider()
+                    }
                     NavigationRow("Authorize an MCP connection", onOpenAccessAuthorization)
                     RowDivider()
                     ActionRow("Re-pair with gateway", c.accent) { showRepairConfirm = true }

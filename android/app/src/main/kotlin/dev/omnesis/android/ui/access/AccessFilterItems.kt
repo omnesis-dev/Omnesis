@@ -10,17 +10,17 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.ensureActive
 import kotlin.coroutines.coroutineContext
 
-internal data class FilterItemChange(val ref: ScopeRef, val mark: FilterItemMark?)
+internal data class FilterItemChange(val ref: FilterRef, val mark: FilterItemMark?)
 
 /** Every item of a filter an edit changed on an account that keeps one: what the edit adds, then what it removes, then what it keeps. */
-internal fun changedFilterItems(before: ScopePolicy, after: ScopePolicy): List<FilterItemChange> {
+internal fun changedFilterItems(before: SourceFilter, after: SourceFilter): List<FilterItemChange> {
     val had = before.rules.flatMap { it.match }
     val has = after.rules.flatMap { it.match }
-    val hadKeys = had.mapTo(mutableSetOf(), ::scopeRefKey)
-    val hasKeys = has.mapTo(mutableSetOf(), ::scopeRefKey)
-    return has.filter { scopeRefKey(it) !in hadKeys }.map { FilterItemChange(it, FilterItemMark.ADDED) } +
-        had.filter { scopeRefKey(it) !in hasKeys }.map { FilterItemChange(it, FilterItemMark.REMOVED) } +
-        has.filter { scopeRefKey(it) in hadKeys }.map { FilterItemChange(it, null) }
+    val hadKeys = had.mapTo(mutableSetOf(), ::filterRefKey)
+    val hasKeys = has.mapTo(mutableSetOf(), ::filterRefKey)
+    return has.filter { filterRefKey(it) !in hadKeys }.map { FilterItemChange(it, FilterItemMark.ADDED) } +
+        had.filter { filterRefKey(it) !in hasKeys }.map { FilterItemChange(it, FilterItemMark.REMOVED) } +
+        has.filter { filterRefKey(it) in hadKeys }.map { FilterItemChange(it, null) }
 }
 
 /** What a review says of a capability that is off, and of an account a granted capability does not read. */
@@ -31,10 +31,10 @@ internal const val NOT_SHARED = "Not shared"
  * What one capability reads from one account on one side of an edit. [granted] is whether the level holds
  * the capability, [allowed] whether the capability reads the account, and [policy] the filter saved for it.
  */
-internal data class AccountShare(val granted: Boolean, val allowed: Boolean, val policy: ScopePolicy?) {
+internal data class AccountShare(val granted: Boolean, val allowed: Boolean, val policy: SourceFilter?) {
     val shared: Boolean get() = granted && allowed
     /** The filter this side applies. A filter kept on an account that is not read applies nothing. */
-    val filter: ScopePolicy? get() = policy.takeIf { shared }
+    val filter: SourceFilter? get() = policy.takeIf { shared }
     /** The side's value: "Not granted", "Not shared", "All content", or what its filter does with its matches. */
     val status: String get() = when {
         !granted -> NOT_GRANTED
@@ -43,7 +43,7 @@ internal data class AccountShare(val granted: Boolean, val allowed: Boolean, val
     }
     val tone: AccessPillTone get() = if (shared) scopePolicyTone(filter) else AccessPillTone.OUTLINE
     /** Whether both sides read the same content: neither reads the account, or both read it through the same filter. */
-    fun sameAs(other: AccountShare): Boolean = shared == other.shared && (!shared || sameScopeSettings(listOfNotNull(filter), listOfNotNull(other.filter)))
+    fun sameAs(other: AccountShare): Boolean = shared == other.shared && (!shared || sameFilterSettings(listOfNotNull(filter), listOfNotNull(other.filter)))
 
     companion object {
         fun of(rule: AccessGrantRule?, sourceId: String) = AccountShare(rule != null, rule?.let { sourceAllowed(it.sources, sourceId) } == true,
@@ -67,7 +67,7 @@ internal sealed interface AccountChangePart {
 internal fun accountChangeParts(before: AccountShare, after: AccountShare): List<AccountChangePart> {
     val old = before.filter
     val new = after.filter
-    fun unmarked(policy: ScopePolicy) = policy.rules.flatMap { it.match }.map { FilterItemChange(it, null) }
+    fun unmarked(policy: SourceFilter) = policy.rules.flatMap { it.match }.map { FilterItemChange(it, null) }
     return buildList {
         if (old != null && new != null && old.editable && new.editable) {
             add(AccountChangePart.Side(false, before)); add(AccountChangePart.Side(true, after))
@@ -81,76 +81,78 @@ internal fun accountChangeParts(before: AccountShare, after: AccountShare): List
     }
 }
 
-/** How many records one selected item matches, when the preview counted it. */
-internal fun scopeItemCount(preview: ScopePreview?, ref: ScopeRef): Long? =
-    preview?.items?.firstOrNull { scopeRefKey(it.ref) == scopeRefKey(ref) }?.count?.takeIf { it >= 0 }
+/** How many records one selected item matches, when a ready [preview] counted it. */
+internal fun scopeItemCount(preview: FilterPreview?, ref: FilterRef): Long? =
+    preview?.takeIf { !it.pending }?.items?.firstOrNull { filterRefKey(it.ref) == filterRefKey(ref) }?.count?.takeIf { it >= 0 }
 
 /**
  * The name a selected item is known by: a name this session has read, the name the item carries, the name a
  * [preview] of its filter gives it, else its captured addresses; never its stored id. Null when none is known.
  */
-internal fun filterItemLabel(ref: ScopeRef, sourceId: String, names: Map<Pair<String, String>, String>, preview: ScopePreview? = null): String? =
-    names[sourceId to scopeRefKey(ref)] ?: ref.label ?: preview?.items?.firstOrNull { scopeRefKey(it.ref) == scopeRefKey(ref) }?.label
+internal fun filterItemLabel(ref: FilterRef, sourceId: String, hints: Map<Pair<String, String>, FilterEntryHint>, preview: FilterPreview? = null): String? =
+    hints[sourceId to filterRefKey(ref)]?.label ?: ref.label
+        ?: preview?.items?.firstOrNull { filterRefKey(it.ref) == filterRefKey(ref) && it.missing != true }?.label
         ?: ref.identifiers?.joinToString { it.value }
 
-/** How deep in its source's tree a [preview] places a selected item; null when the preview does not say. */
-internal fun scopeItemDepth(preview: ScopePreview?, ref: ScopeRef): Int? =
-    preview?.items?.firstOrNull { scopeRefKey(it.ref) == scopeRefKey(ref) }?.depth
-
 /**
- * One selected item of a filter, by the name it is known by; an item whose name is not known is shown as a saved
- * selection of its kind. [remove] puts "Remove" where the count stands.
+ * One selected item of a filter, by the name it is known by and captioned by its [field]; an item whose name is not
+ * known is shown as a saved selection of its field. [remove] puts "Remove" where the count stands.
  */
 @Composable
 internal fun AccessSelectedFilterRow(
-    ref: ScopeRef, source: AccessSourceInstance, names: Map<Pair<String, String>, String>, last: Boolean, preview: ScopePreview? = null,
-    count: Long? = null, counting: Boolean = false, mark: FilterItemMark? = null, depth: Int? = scopeItemDepth(preview, ref),
-    remove: (() -> Unit)? = null,
+    ref: FilterRef, sourceId: String, field: FilterEditorField?, hints: Map<Pair<String, String>, FilterEntryHint>, last: Boolean,
+    preview: FilterPreview? = null, count: Long? = null, counting: Boolean = false, mark: FilterItemMark? = null, remove: (() -> Unit)? = null,
 ) {
-    val known = filterItemLabel(ref, source.id, names, preview)
-    val name = known ?: savedSelectionName(ref.kind, source)
-    AccessFilterItemRow(scopeKindCaption(ref.kind, source, depth), name, count, last = last, mark = mark, counting = counting,
+    val known = filterItemLabel(ref, sourceId, hints, preview)
+    val name = known ?: savedSelectionName(field)
+    AccessFilterItemRow(filterEntryCaption(ref, field, hints[sourceId to filterRefKey(ref)]?.depth), name, count, last = last, mark = mark, counting = counting,
         detail = NAME_UNAVAILABLE.takeIf { known == null && !counting },
         trailing = if (remove != null) { { AccessTextAction("Remove", danger = true, alignment = Alignment.CenterEnd, description = "Remove $name", onClick = remove) } } else null)
 }
 
+/** The field of an account an entry belongs to, once the account's fields are known. */
+internal fun FilterEditor?.fieldOf(ref: FilterRef): FilterEditorField? = this?.field(ref.fieldPath)
+
 /** What heads the list of a filter's selected items. */
 internal const val SELECTED_FILTERS_TITLE = "Selected filters"
 
-/** What a filter with more entries than the gateway accepts says, before the screen says where to remove some. */
-internal const val FILTER_LIMIT_MESSAGE = "A filter can hold at most $MAX_SCOPE_FILTER_ENTRIES entries."
+/** What a filter with more entries than the gateway accepts says. */
+internal const val FILTER_LIMIT_MESSAGE = "A filter can include at most $MAX_FILTER_ENTRIES items."
 
-/** What stands where counts will be while they are prepared. */
-internal const val COUNTING_MESSAGE = "Counting matching records…"
+/** What stands where counts will be while the gateway works them out. */
+internal const val COUNTING_MESSAGE = "Counting…"
+
+/** What stands where counts would be when they could not be read. */
+internal const val COUNTS_UNAVAILABLE_MESSAGE = "Counts could not be loaded."
 
 /**
- * The preview of exactly [policy]; [preview] stays null until that preview has arrived, and [failure] is why it
- * could not be read. [retry] asks again after a failure; [refresh] asks again without dropping the counts on screen.
+ * The preview of exactly [policy]; [preview] stays null until a response for that policy has arrived, and [failure] is
+ * why it could not be read. [retry] asks again after a failure; [refresh] asks again without dropping what is on screen.
  */
-internal class PolicyPreviewState(val policy: ScopePolicy, val preview: ScopePreview?, val failure: Exception?, val refresh: () -> Unit = {}, val retry: () -> Unit) {
+internal class PolicyPreviewState(val policy: SourceFilter, val preview: FilterPreview?, val failure: Exception?, val refresh: () -> Unit = {}, val retry: () -> Unit) {
     val failed: Boolean get() = failure != null
-    /** Whether the counts are final: the preview has arrived and the gateway has prepared everything the filter matches by. */
-    val settled: Boolean get() = preview != null && policy.readyToSave(preview.readiness)
-    /** Whether the counts are still on their way: no preview yet, or one whose counts are not final. */
+    /** Whether the counts have arrived: the gateway has finished counting this filter. */
+    val settled: Boolean get() = preview != null && !preview.pending
+    /** Whether the counts are still on their way. */
     val counting: Boolean get() = policy.editable && !failed && !settled
-    /** Per-item counts are shown only once the preview is final. */
-    fun count(ref: ScopeRef): Long? = if (settled) scopeItemCount(preview, ref) else null
+    /** Per-item counts are shown only once the counts have arrived. */
+    fun count(ref: FilterRef): Long? = if (settled) scopeItemCount(preview, ref) else null
 }
 
 /**
- * Reads the preview of [policy] through [session] and keeps it current: again when the filter changes, and every few
- * seconds while its counts are not final. Nothing is read while [active] is false, or for a filter the editor cannot
- * express. Every screen that states a filter's counts reads them here.
+ * Reads the preview of [policy] through [session] and keeps it current: again when the filter changes, and again
+ * after the gateway's `retryAfterMs` while its counts are pending. Nothing is read while [active] is false, or for a
+ * filter the editor cannot express. Every screen that states a filter's counts reads them here.
  */
 @Composable
-internal fun rememberPolicyPreview(session: ScopePreviewSession, policy: ScopePolicy, active: Boolean = true): PolicyPreviewState {
-    var preview by remember(session, policy.sourceId, policy.audience.capability) { mutableStateOf<ScopePreview?>(null) }
-    var current by remember(session, policy.sourceId, policy.audience.capability) { mutableStateOf<ScopePolicy?>(null) }
+internal fun rememberPolicyPreview(session: FilterEditorSession, policy: SourceFilter, active: Boolean = true): PolicyPreviewState {
+    var preview by remember(session, policy.sourceId, policy.audience.capability) { mutableStateOf<FilterPreview?>(null) }
+    var current by remember(session, policy.sourceId, policy.audience.capability) { mutableStateOf<SourceFilter?>(null) }
     var failure by remember { mutableStateOf<Exception?>(null) }
     var retry by remember { mutableIntStateOf(0) }
     var refresh by remember { mutableIntStateOf(0) }
     LaunchedEffect(session, policy, active, retry, refresh) {
-        // A refresh of the policy already on screen keeps its preview until the next one arrives.
+        // Asking again for the policy already on screen keeps its preview until the next one arrives.
         val refreshing = current == policy && preview != null
         if (!refreshing) { current = null; preview = null }
         failure = null
@@ -162,7 +164,7 @@ internal fun rememberPolicyPreview(session: ScopePreviewSession, policy: ScopePo
         catch (error: Exception) { coroutineContext.ensureActive(); if (!refreshing) failure = error }
     }
     val state = PolicyPreviewState(policy, preview.takeIf { current == policy }, failure, retry = { retry += 1 }, refresh = { refresh += 1 })
-    AccessAutoRefresh(active && state.preview != null && !state.settled, state.refresh)
+    AccessAutoRefresh(active && state.preview?.pending == true, state.preview?.retryAfterMs ?: ACCESS_REFRESH_INTERVAL_MILLIS, state.refresh)
     return state
 }
 
@@ -173,10 +175,39 @@ internal fun PolicyCounts(state: PolicyPreviewState, after: Boolean) {
     when {
         !state.policy.editable -> Unit
         state.failed -> {
-            AccessChangeValue("Counts could not be loaded. Your selection is kept.", after)
+            AccessChangeValue(COUNTS_UNAVAILABLE_MESSAGE, after)
             AccessTextAction("Try again", onClick = state.retry)
         }
         preview == null || !state.settled -> AccessProgressLine(COUNTING_MESSAGE)
         else -> AccessChangeValue("${accessCount(preview.visible)} shared · ${accessCount(preview.hidden)} hidden", after)
     }
+}
+
+/**
+ * One account's filter editor response through [session], kept current: asked again after the gateway's
+ * `retryAfterMs` while counts are pending, and every few seconds while a field is being resynced or waits for its
+ * list. [failure] is why it could not be read; [retry] asks again after one, and [refresh] at once.
+ */
+internal class FilterEditorState(val editor: FilterEditor?, val failure: Exception?, val retry: () -> Unit, val refresh: () -> Unit)
+
+/** Whether a field's state changes by itself, so its editor is asked again until it does. */
+internal val FilterFieldState.settling: Boolean get() = status == FilterFieldState.RESYNCING || status == FilterFieldState.LIST_PENDING
+
+@Composable
+internal fun rememberFilterEditor(session: FilterEditorSession, sourceId: String, active: Boolean = true): FilterEditorState {
+    val known by session.editors.collectAsState()
+    var failure by remember(session, sourceId) { mutableStateOf<Exception?>(null) }
+    var retry by remember(session, sourceId) { mutableIntStateOf(0) }
+    var refresh by remember(session, sourceId) { mutableIntStateOf(0) }
+    LaunchedEffect(session, sourceId, active, retry, refresh) {
+        if (!active) return@LaunchedEffect
+        failure = null
+        try { session.editor(sourceId) }
+        catch (cancelled: CancellationException) { throw cancelled }
+        catch (error: Exception) { coroutineContext.ensureActive(); if (known[sourceId] == null) failure = error }
+    }
+    val editor = known[sourceId]
+    val waiting = editor != null && (editor.retryAfterMs != null || editor.fields.any { it.state.settling })
+    AccessAutoRefresh(active && waiting, editor?.retryAfterMs ?: ACCESS_REFRESH_INTERVAL_MILLIS) { refresh += 1 }
+    return FilterEditorState(editor, failure, retry = { retry += 1 }, refresh = { refresh += 1 })
 }

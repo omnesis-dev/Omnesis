@@ -21,7 +21,7 @@ import dev.omnesis.android.transport.dto.AccessOverview
 import dev.omnesis.android.transport.dto.AccessReconnectProposal
 import dev.omnesis.android.transport.dto.AccessSourceInstance
 import dev.omnesis.android.transport.dto.PrivacyPolicyDocument
-import dev.omnesis.android.transport.dto.ScopePolicy
+import dev.omnesis.android.transport.dto.SourceFilter
 import dev.omnesis.android.ui.common.classifyGatewayError
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.CancellationException
@@ -35,7 +35,7 @@ import kotlinx.coroutines.async
 import javax.inject.Inject
 
 interface AccessAuthorizationGateway {
-    fun scopeEditor(expectedPairing: AccessAuthorizationPairingIdentity?): ScopeEditorGateway? = null
+    fun scopeEditor(expectedPairing: AccessAuthorizationPairingIdentity?): FilterEditorGateway? = null
     /** The pending request behind a code, with the gateway's proposal for approving it. */
     suspend fun lookup(
         code: String,
@@ -73,10 +73,10 @@ class SessionAccessAuthorizationGateway @Inject constructor(
     private val sourceCatalog: SourceCatalog,
     private val pendingRequests: AccessPendingRequests,
 ) : AccessAuthorizationGateway {
-    override fun scopeEditor(expectedPairing: AccessAuthorizationPairingIdentity?): ScopeEditorGateway {
+    override fun scopeEditor(expectedPairing: AccessAuthorizationPairingIdentity?): FilterEditorGateway {
         val current = session.requireSession()
         if (expectedPairing != null && current.pairing.accessAuthorizationIdentity() != expectedPairing) throw AccessAuthorizationPairingChanged()
-        return PairedScopeEditorGateway(session)
+        return PairedFilterEditorGateway(session)
     }
     override suspend fun lookup(
         code: String,
@@ -198,14 +198,14 @@ class AccessAuthorizationViewModel @Inject constructor(
     private var handledLaunchNonce: Long? = null
 
     /** What the open filter editor reads its choices and previews through; one session serves every filter of a request. */
-    internal var filterSession: ScopePreviewSession? = null
+    internal var filterSession: FilterEditorSession? = null
         private set
 
     /** Opens one source's filter. A pairing that changed under the wizard is reported, not edited against. */
     fun editFilter(source: AccessSourceInstance, capability: AccessCapability) {
         try {
             val editor = gateway.scopeEditor(authorizationPairing) ?: return
-            if (filterSession == null) filterSession = editor.previewSession()
+            if (filterSession == null) filterSession = editor.editorSession()
         } catch (error: Exception) {
             _state.update {
                 it.copy(actionError = if (error is AccessAuthorizationPairingChanged) PAIRING_CHANGED_MESSAGE else accessAuthorizationUnmappedMessage(error))
@@ -218,7 +218,7 @@ class AccessAuthorizationViewModel @Inject constructor(
     fun closeFilter() = _state.update { it.copy(filterEdit = null) }
 
     /** Stores the edited filter, or removes the source's filter when [policy] is null, and closes the editor. */
-    fun applyFilter(policy: ScopePolicy?) = _state.update { current ->
+    fun applyFilter(policy: SourceFilter?) = _state.update { current ->
         val edit = current.filterEdit ?: return@update current
         val form = current.form ?: return@update current.copy(filterEdit = null)
         current.copy(form = form.copy(level = form.level.setPolicy(policy, edit.source.id, edit.capability)), filterEdit = null)

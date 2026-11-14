@@ -18,7 +18,7 @@ internal val AccessCapability.title: String get() = when (this) {
 }
 internal val AccessCapability.explanation: String get() = when (this) {
     AccessCapability.ANSWER -> "Ask questions to the Omnesis agent using allowed sources. A privacy policy can review every answer before it is released."
-    AccessCapability.DIRECT -> "Search and read raw matching records from allowed sources."
+    AccessCapability.DIRECT -> "Search and read original matching records from allowed sources."
     AccessCapability.NOTES -> "Save notes with Tell Omnesis. The agent’s name is recorded with each note. This does not grant access to read existing notes."
 }
 /** What allowing the capability gives up, said beside its explanation. */
@@ -52,7 +52,7 @@ internal fun AccessLevelPage.question(creating: Boolean): String = when (this) {
     AccessLevelPage.REVIEW -> if (creating) "Ready to create this access level?" else "Review your changes"
 }
 internal val AccessLevelPage.subtitle: String? get() = when (this) {
-    AccessLevelPage.DIRECT_CHOICE, AccessLevelPage.DIRECT_DATA -> "Direct mode allows the agent to read allowed raw records directly without Answer’s privacy review."
+    AccessLevelPage.DIRECT_CHOICE, AccessLevelPage.DIRECT_DATA -> "Direct allows the agent to read allowed original records directly without Answer’s privacy review."
     else -> null
 }
 internal const val NO_PERMISSION_MESSAGE = "Choose at least one permission."
@@ -66,14 +66,16 @@ internal fun AccessLevelDraft.pageError(page: AccessLevelPage, overview: AccessO
     AccessLevelPage.PERMISSIONS -> NO_PERMISSION_MESSAGE.takeIf { rules.isEmpty() }
     AccessLevelPage.ANSWER_DATA -> dataError(AccessCapability.ANSWER, overview)
     AccessLevelPage.DIRECT_DATA, AccessLevelPage.DIRECT_CHOICE -> dataError(AccessCapability.DIRECT, overview)
-    AccessLevelPage.RELEASE -> if (releaseValid(overview)) null else "Choose a published privacy policy, or choose automatic release."
+    AccessLevelPage.RELEASE -> RELEASE_CHOICE_MESSAGE.takeIf { !releaseValid(overview) }
     AccessLevelPage.REVIEW -> NO_PERMISSION_MESSAGE.takeIf { rules.isEmpty() } ?: nameError(overview) ?: permissionsError(overview)
     else -> null
 }
 /** Why the level's permissions cannot be saved, whatever its name; null when they can. */
 internal fun AccessLevelDraft.permissionsError(overview: AccessOverview): String? = NO_PERMISSION_MESSAGE.takeIf { rules.isEmpty() }
     ?: readingCapabilities.firstNotNullOfOrNull { dataError(it, overview) }
-    ?: "Review the Answer release choice.".takeIf { !releaseValid(overview) }
+    ?: RELEASE_CHOICE_MESSAGE.takeIf { !releaseValid(overview) }
+/** What a reviewed Answer without a usable privacy policy says, on its own step and on the review. */
+internal const val RELEASE_CHOICE_MESSAGE = "Choose a privacy policy for Answer, or explicitly choose unreviewed release."
 /** What a step that chooses accounts says under its list while the choice cannot be saved. */
 internal fun AccessLevelDraft.accountsNote(page: AccessLevelPage, overview: AccessOverview): String? = page.capability()?.let { dataError(it, overview) }
 internal fun AccessLevelDraft.isChangedFrom(level: AccessLevelSummary?): Boolean = level == null || name.trim() != level.name || !sameGrantSettings(serializedRules, level.rules)
@@ -95,18 +97,16 @@ internal fun AccessSourceInstance.accountLabel(displayName: String = name): Stri
     val friendly = name.takeIf { it.startsWith(displayName) }?.removePrefix(displayName)?.trim(' ', '·', ':', '—', '-', '(', ')')
     return friendly?.takeIf { it.isNotBlank() } ?: account
 }
-internal fun scopeKindTitle(kind: String, source: AccessSourceInstance): String = source.scopes?.items?.firstOrNull { it.kind == kind }?.noun?.many?.replaceFirstChar { it.uppercase() }
-    ?: if (kind == "participant") "People" else kind.replaceFirstChar { it.uppercase() }
-/** An account's content under one capability, in a line. */
-internal fun scopePolicySummary(policy: ScopePolicy?): String {
+/** An account's content under one capability, in a line: "All content", "Share matching content · 3 items". */
+internal fun scopePolicySummary(policy: SourceFilter?): String {
     if (policy == null) return ALL_CONTENT
     if (!policy.editable) return SAVED_FILTER
     val refs = policy.rules.single().match
     if (refs.isEmpty()) return if (policy.otherwise == "share") ALL_CONTENT else "No matching content"
-    return "${if (policy.rules.single().action == "share") "Only" else "Except"} ${refs.size} selected ${if (refs.size == 1) "match" else "matches"}"
+    return "${scopePolicyActionLabel(policy)} · ${refs.size} ${if (refs.size == 1) "item" else "items"}"
 }
 /** What a filter does with its matches, as a short pill label. */
-internal fun scopePolicyActionLabel(policy: ScopePolicy): String = when (policy.rules.singleOrNull()?.action.takeIf { policy.editable }) {
+internal fun scopePolicyActionLabel(policy: SourceFilter): String = when (policy.rules.singleOrNull()?.action.takeIf { policy.editable }) {
     "share" -> "Share matching content"
     "hide" -> "Hide matching content"
     else -> SAVED_FILTER
@@ -115,27 +115,37 @@ internal fun scopePolicyActionLabel(policy: ScopePolicy): String = when (policy.
 internal const val ALL_CONTENT = "All content"
 /** What stands for a saved filter this editor cannot express. */
 internal const val SAVED_FILTER = "Saved filter"
-/** What a saved item is shown by when its name cannot be loaded: "Saved conversation selection". */
-internal fun savedSelectionName(kind: String, source: AccessSourceInstance): String = "Saved ${scopeKindCaption(kind, source).lowercase()} selection"
 /** The line under a saved item that is shown without its name. */
 internal const val NAME_UNAVAILABLE = "Name unavailable"
+/** A field's name as its tab and its search say it: "Labels". */
+internal val FilterEditorField.title: String get() = noun.many.replaceFirstChar { it.uppercase() }
 /**
- * What a source calls an item [depth] levels down a kind's tree. A source that names its levels has a word for each,
- * the last standing for every deeper level; null for any other source and for an item whose depth is not known.
+ * What a field calls an item [depth] levels down its tree. A field that names its levels has a word for each, the last
+ * standing for every deeper level; null for any other field and for an item whose depth is not known.
  */
-internal fun scopeLevelNoun(kind: String, source: AccessSourceInstance, depth: Int?): SourceScopeNoun? {
-    val levels = source.scopes?.items?.firstOrNull { it.kind == kind }?.levels?.takeIf { it.isNotEmpty() } ?: return null
-    return depth?.takeIf { it >= 0 }?.let { levels[minOf(it, levels.lastIndex)] }
+internal fun FilterEditorField.levelNoun(depth: Int?): FilterNoun? {
+    val named = levels?.takeIf { it.isNotEmpty() } ?: return null
+    return depth?.takeIf { it >= 0 }?.let { named[minOf(it, named.lastIndex)] }
 }
-/** The singular type of a selected item ("Conversation", "Person", "Label", "Folder"), by its level where the source names the levels of a tree. */
-internal fun scopeKindCaption(kind: String, source: AccessSourceInstance, depth: Int? = null): String =
-    (scopeLevelNoun(kind, source, depth)?.one ?: source.scopes?.items?.firstOrNull { it.kind == kind }?.noun?.one)?.replaceFirstChar { it.uppercase() }
-        ?: if (kind == "participant") "Person" else kind.replaceFirstChar { it.uppercase() }
-/** The top of a kind's tree, in the source's word for its first level: "All folders". */
-internal fun scopeTreeRootLabel(kind: String, source: AccessSourceInstance): String =
-    "All ${(scopeLevelNoun(kind, source, 0)?.many ?: scopeKindTitle(kind, source)).lowercase()}"
+/** What stands for a whole device in a per-device field. */
+internal val DEVICE_NOUN = FilterNoun("device", "devices")
+/**
+ * The singular type of an entry ("Chat", "Person", "Folder", "Device"), by its level where its field names the levels of
+ * its tree; null for an item while the account's fields are not known.
+ */
+internal fun filterEntryCaption(ref: FilterRef, field: FilterEditorField?, depth: Int? = null): String? = when {
+    ref.isDevice -> DEVICE_NOUN.one
+    field != null -> (field.levelNoun(depth) ?: field.noun).one
+    ref.isPerson -> "person"
+    else -> null
+}?.replaceFirstChar { it.uppercase() }
+/** What a saved entry is shown by when its name cannot be loaded: "Saved chat selection". */
+internal fun savedSelectionName(field: FilterEditorField?): String = field?.let { "Saved ${it.noun.one} selection" } ?: "Saved selection"
+/** The top of a field's tree, which [showDeviceLevel] makes the account's devices: "All folders", "All devices". */
+internal fun FilterEditorField.rootLabel(showDeviceLevel: Boolean): String =
+    "All " + if (showDeviceLevel && scope == "device") DEVICE_NOUN.many else (levelNoun(0) ?: noun).many
 /** The tone of the pill that states an account's content: neutral for all of it, accent for a share filter, danger for a hide filter. */
-internal fun scopePolicyTone(policy: ScopePolicy?): AccessPillTone = when {
+internal fun scopePolicyTone(policy: SourceFilter?): AccessPillTone = when {
     policy == null || !policy.editable || policy.rules.single().match.isEmpty() -> AccessPillTone.NEUTRAL
     policy.rules.single().action == "share" -> AccessPillTone.ACCENT
     else -> AccessPillTone.DANGER
@@ -151,10 +161,10 @@ internal fun releaseSummary(rule: AccessGrantRule?, overview: AccessOverview): S
     rule.release?.mode == AccessAnswerReleaseMode.UNREVIEWED -> "No privacy review"
     else -> "Privacy review · ${overview.policyFamilies.firstOrNull { it.id == rule.release?.policyFamilyId }?.name ?: "Saved policy unavailable"}"
 }
-internal const val DIRECT_SAME_AS_ANSWER_LABEL = "Use same sources and filters as Answer mode"
+internal const val DIRECT_SAME_AS_ANSWER_LABEL = "Use same sources and filters as Answer"
 internal const val DIRECT_OWN_LIST_LABEL = "Choose different sources"
 /** What the Direct data screen says while Direct is linked to Answer. */
-internal const val DIRECT_LINKED_NOTE = "Uses the same sources and filters as Answer mode."
+internal const val DIRECT_LINKED_NOTE = "Uses the same sources and filters as Answer."
 
 /** Which of Answer, Direct and Notes a level allows, as its capability pills show them. */
 internal data class AccessCapabilityHoldings(val answer: Boolean, val direct: Boolean, val notes: Boolean) {
@@ -197,8 +207,10 @@ internal fun levelDecisions(name: String, rules: List<AccessGrantRule>, overview
     answer?.let { add(AccessDecision(AccessLevelPage.ANSWER_DATA, "Answer data", ruleDataSummary(it, overview))) }
     direct?.let { add(AccessDecision(AccessLevelPage.DIRECT_DATA, "Direct data", if (linked) "Same sources and filters as Answer" else ruleDataSummary(it, overview))) }
     val reading = listOfNotNull(answer, direct)
+    // A linked Direct follows Answer's choice, which is stated for both as it is for separate lists.
     if (reading.isNotEmpty()) add(AccessDecision(AccessLevelPage.FUTURE, "New sources",
-        if (linked) "Answer and Direct: ${newSourcesSummary(reading.first().sources)}" else reading.joinToString("\n") { "${it.capability.title}: ${newSourcesSummary(it.sources)}" }))
+        (if (linked && direct != null) listOf(AccessCapability.ANSWER to reading.first().sources, AccessCapability.DIRECT to reading.first().sources) else reading.map { it.capability to it.sources })
+            .joinToString(" / ") { (capability, sources) -> "${capability.title}: ${newSourcesSummary(sources)}" }))
     answer?.let { add(AccessDecision(AccessLevelPage.RELEASE, "Answer release", releaseSummary(it, overview))) }
 }
 

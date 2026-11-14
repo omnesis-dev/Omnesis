@@ -515,28 +515,39 @@ class GatewayLiveE2ETest {
     @Test
     fun paired_owner_creates_reopens_and_edits_a_source_filtered_level() = runBlocking {
         var source: dev.omnesis.android.transport.dto.AccessSourceInstance? = null
+        var selected: dev.omnesis.android.transport.dto.FilterOption? = null
         for (attempt in 0 until 60) {
             val overview = admin.accessOverview()
             assertTrue("The isolated gateway must enable filter authoring", overview.sourceFilters?.enabled == true)
-            source = overview.sources.firstOrNull { candidate -> candidate.scopes?.items?.any { it.kind == "conversation" } == true &&
-                candidate.scopeReadiness?.firstOrNull { it.kind == "conversation" }?.ready == true }
+            // The first listed choice of any account field that takes entries now.
+            for (candidate in overview.sources.filter { it.filterable }) {
+                val field = admin.filterEditor(candidate.id).fields.firstOrNull { it.state.ready && it.capability != dev.omnesis.android.transport.dto.FilterRef.PERSON } ?: continue
+                val option = admin.filterOptions(candidate.id, field.field).items.firstOrNull() ?: continue
+                source = candidate; selected = option; break
+            }
             if (source != null) break
             kotlinx.coroutines.delay(500)
         }
-        val selectedSource = requireNotNull(source) { "Native scope preparation did not finish" }
-        val selected = admin.scopeOptions(selectedSource.id, "conversation").items.first()
+        val selectedSource = requireNotNull(source) { "No account offered a filter field that takes entries" }
+        val choice = requireNotNull(selected)
         val boundary = dev.omnesis.android.transport.dto.AccessSourceBoundary(dev.omnesis.android.transport.dto.AccessSourceMode.ALLOWLIST, listOf(selectedSource.id))
-        var policy = dev.omnesis.android.transport.dto.ScopePolicy(selectedSource.id, dev.omnesis.android.transport.dto.ScopeAudience("new", "direct"),
-            listOf(dev.omnesis.android.transport.dto.ScopeRule(listOf(selected.ref), "share")), "hide")
-        val created = admin.createAccessLevel(dev.omnesis.android.transport.dto.AccessLevelCreateBody("native scope editor ${java.util.UUID.randomUUID()}",
+        var policy = dev.omnesis.android.transport.dto.SourceFilter(selectedSource.id, dev.omnesis.android.transport.dto.FilterAudience("new", "direct"),
+            listOf(dev.omnesis.android.transport.dto.FilterRule(listOf(choice.ref), "share")), "hide")
+        val created = admin.createAccessLevel(dev.omnesis.android.transport.dto.AccessLevelCreateBody("native filter editor ${java.util.UUID.randomUUID()}",
             listOf(dev.omnesis.android.transport.dto.AccessGrantRule.direct(boundary).copy(filterRevision = 0, scopePolicies = listOf(policy)))))
         val reopened = admin.accessOverview().levels.first { it.id == created.id }
         val saved = reopened.rules.single().scopePolicies.single()
-        org.junit.Assert.assertEquals(listOf(selected.ref), saved.rules.single().match)
+        org.junit.Assert.assertEquals(listOf(choice.ref), saved.rules.single().match)
         org.junit.Assert.assertEquals(created.id, saved.audience.accessLevel)
-        val preview = admin.scopePreview(saved)
+        var preview = admin.filterPreview(saved)
+        for (attempt in 0 until 60) {
+            if (!preview.pending) break
+            kotlinx.coroutines.delay(preview.retryAfterMs ?: 500)
+            preview = admin.filterPreview(saved)
+        }
+        assertTrue("The preview's counts never arrived", !preview.pending)
         org.junit.Assert.assertEquals(preview.total, preview.visible + preview.hidden)
-        assertTrue(preview.unknown <= preview.hidden)
+        assertTrue(preview.tooOld + preview.unmatched <= preview.hidden)
         policy = saved.copy(rules = listOf(saved.rules.single().copy(action = "hide")), otherwise = "share")
         val revision = created.rules.single().filterRevision ?: 0
         val updated = admin.updateAccessLevel(created.id, dev.omnesis.android.transport.dto.AccessLevelUpdateBody(created.name,
