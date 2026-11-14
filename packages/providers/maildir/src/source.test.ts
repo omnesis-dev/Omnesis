@@ -60,15 +60,35 @@ const SELF = { name: "Maya Reeves", address: "maya.reeves@example.com" };
 const JAMIE = { name: "Jamie Lopez", address: "jamie.lopez@example.org" };
 const DAVID = { name: "David Lin", address: "david.lin@example.io" };
 
+const ownedSources = new Set<MaildirSource>();
+
+function ownSource(options: ConstructorParameters<typeof MaildirSource>[0]): MaildirSource {
+  const source = new MaildirSource(options);
+  ownedSources.add(source);
+  return source;
+}
+
 let scratch: string;
 let root: string;
 beforeEach(() => {
   scratch = mkdtempSync(join(tmpdir(), "omnesis-maildir-source-"));
   root = join(scratch, "Mail");
 });
-afterEach(() => {
+afterEach(async () => {
+  const disposed = await Promise.allSettled(
+    [...ownedSources].map((source) => Promise.resolve().then(() => source.dispose())),
+  );
+  ownedSources.clear();
+  const failures: unknown[] = disposed.flatMap((result) =>
+    result.status === "rejected" ? [result.reason] : [],
+  );
   deniedFixturePaths.clear();
-  rmSync(scratch, { recursive: true, force: true });
+  try {
+    rmSync(scratch, { recursive: true, force: true });
+  } catch (error) {
+    failures.push(error);
+  }
+  if (failures.length) throw new AggregateError(failures, "Maildir fixture cleanup failed");
 });
 
 function message(overrides: Partial<FixtureMessage> & { messageId?: string } = {}): FixtureMessage {
@@ -140,7 +160,7 @@ function makeSource(
     indexPath?: string;
   } = {},
 ): MaildirSource {
-  return new MaildirSource({
+  return ownSource({
     sourceId: "maildir:fixture",
     providerId: "maildir:fixture",
     root,
@@ -380,7 +400,7 @@ describe("a sync that runs long", () => {
       );
     }
     let clock = 0;
-    const source = new MaildirSource({
+    const source = ownSource({
       sourceId: "maildir:fixture",
       providerId: "maildir:fixture",
       root,
@@ -1196,7 +1216,7 @@ test("two sources over two trees share nothing", async () => {
   const two = new FakeGateway();
   await one.cycle(makeSource({ indexPath: join(scratch, "one.sqlite") }));
   await two.cycle(
-    new MaildirSource({
+    ownSource({
       sourceId: "maildir:other",
       providerId: "maildir:other",
       root: otherRoot,

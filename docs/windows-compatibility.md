@@ -1,8 +1,8 @@
 # Windows runtime compatibility audit
 
-This audit covers running the TypeScript product manually on Windows. It does
-not add a Windows installer or claim support for operating-system integrations
-that a provider explicitly restricts to another platform.
+This audit covers running the TypeScript product manually on Windows. Windows
+installation scripts remain out of scope. The audit is incomplete; the results
+below do not establish general Windows support.
 
 ## Acceptance criteria
 
@@ -11,160 +11,89 @@ that a provider explicitly restricts to another platform.
 - Exercise source and compiled entrypoints, native dependencies, worker threads,
   subprocesses, TLS, pairing, sync, search, analytics, persistence and shutdown.
 - Every test without a fundamental product reason to be platform-specific must
-  pass on Windows. Shell-based fixtures must be ported rather than excluded.
-- Installation tests and installer shell scripts are excluded from this audit;
-  platform-only integrations retain their operating-system-specific assertions.
-- Preserve Linux and macOS behavior with regression tests and native validation.
-- Keep all fixes and the evolving evidence in one pull request.
-
-## Findings and validation
-
-| Area                   | Finding                                                                              | Current evidence                                                                                                                                                                                        |
-| ---------------------- | ------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Gateway startup        | The claim guard only implemented Linux and macOS locking.                            | Windows guard implemented; the lock unit suite passes on Windows and Linux. Full Windows gateway lifecycle verification remains pending.                                                                |
-| External processes     | Cancellation used Unix negative-PID process groups on Windows.                       | Windows tree termination implemented; launcher fixtures now use Node so the same tests can run on Windows. Linux launcher suite passes. Windows execution pending.                                      |
-| Hosted widgets         | Registration required an absolute path beginning with `/`.                           | Validation uses the host path implementation; host-filesystem regression test passes on Linux. Windows execution pending.                                                                               |
-| JavaScript executables | Windows cannot execute a JavaScript shebang or an npm batch shim through `execFile`. | Node/npm argv helpers and Codex/CLI call sites updated. The complete 70-test Codex backend suite passes on Linux, including its managed runtime. Windows execution pending.                             |
-| Browser authorization  | Windows browser opening treated `start` as an executable.                            | Literal URI handling through PowerShell, with regression coverage for shell metacharacters. Native Windows CLI and enrollment coverage is still being extended.                                         |
-| Local paths            | Home expansion depended on `HOME`; vault link keys used native separators.           | Native home resolution, Windows home prefixes, slash-based Obsidian identities and Windows browser-profile discovery implemented. Focused Linux provider and CLI tests pass. Windows execution pending. |
-| Encrypted analytics    | Bundled DuckDB extension pins omitted Windows.                                       | Upstream Windows x64 `httpfs` binary pinned; all nine extension-download tests pass on Linux. Native Windows ARM64 extension availability remains under investigation.                                  |
+  pass on Windows. Port generic shell fixtures rather than excluding them.
+- Exclude installation tests and installer shell scripts. Preserve assertions
+  for integrations that fundamentally require another operating system.
+- Prove Linux and macOS regression safety with native validation.
+- Keep fixes and evolving evidence in one pull request.
 
 ## Continuous integration
 
-The proposed Windows workflow has one focused pull-request job and a daily
-sweep at 04:43 UTC. The daily sweep includes broad units, two spawned-gateway
-shards and portal browser tests. It uses GitHub-hosted Windows runners and
-read-only repository permissions. The embedding tests use the real pinned
-reference model through a portable CPU server; its model pins are checked
-against the existing Docker embedding lane.
+The proposed workflow runs focused Windows tests on pull requests and a broad
+sweep daily at 04:43 UTC. The daily sweep includes units, adapter tests,
+typechecks, two spawned-gateway shards and portal browser tests. All jobs use
+GitHub-hosted runners and read-only repository permissions. Real embedding
+coverage uses the pinned CPU model; its pins are checked against the existing
+Docker embedding lane. Scheduled execution begins only after the workflow
+reaches the default branch.
 
-`node scripts/ci/windows-checks.mjs unit --list` prints the broad unit plan;
-the same entrypoint accepts `focused`, `e2e` and `portal`. Installer exclusions
-carry explicit reasons in that entrypoint. The workflow becomes scheduled only
-after it reaches the default branch.
+`node scripts/ci/windows-checks.mjs unit --list` prints the broad unit plan.
+The same entrypoint accepts `focused`, `e2e` and `portal`. Installer exclusions
+have explicit reasons. Manual dispatch defaults to the complete sweep and can
+select units, both E2E shards, or the portal for diagnosis; daily coverage remains
+broad.
 
-Manual dispatch defaults to the complete sweep and can select only units,
-both E2E shards, or the portal for investigating a failure. This does not reduce
-the daily coverage or the focused pull-request check.
+The first complete Windows unit baseline took about 163 minutes. Its failures
+and helper initialization costs must be resolved before treating that as a
+representative daily runtime. No product or test deadlines were raised to hide
+those failures.
 
-The audit is in progress. Passing Linux tests and inspecting Windows-specific
-branches do not establish Windows compatibility. Native dependency installation,
-the broader runtime surface, Windows lifecycle tests and macOS regression checks
-remain to be completed.
+## Native Windows evidence
 
-## Native execution findings
+The focused x64 run at revision `53f02f142` passed native dependency preparation
+and the MSVC vector binding proof. The proof exercised Unicode paths, replacement
+with an old mapped reader still open, dimensionality changes, read-only targets,
+failed publication retaining the previous index, explicit resource disposal and
+a sparse file larger than 4 GiB.
 
-The first GitHub-hosted Windows focused run reported 638 passing tests, 61
-failures and 78 skips; a launcher worker also exited before completing its
-suite. This is a failing baseline, not a Windows compatibility verdict. It
-identified a real startup blocker: Windows file flushing requires a writable
-handle, while atomic writes reopened their scratch files read-only. Atomic
-writes now retain the creation handle through the flush. The corresponding
-Linux regression slice passes 87 tests; the Windows rerun is required.
+Its unit phase passed 1,456 tests, failed 88 and skipped 24, across 99 passing
+and nine failing files. E2E did not run after that failure. Remaining groups
+include native worker cache verification, SQLite fixture cleanup, native paths,
+command fixture escaping and CRLF comparisons. Corrected groups require fresh
+Windows results; a passing native dependency proof is not a passing runtime lane.
 
-Additional fixes cover native path spelling, watcher polling keys, portable
-temporary directories and Unix-only permission assertions. Unix mode bits do
-not establish Windows confidentiality: native owner/DACL checks and private
-creation are being added, including atomic secret replacement and honest doctor
-results. The first Windows native job suite passed 12 of 13 cases; the remaining
-fixture needed a detached descendant to survive Node's own Windows child-job
-cleanup. That corrected case still requires a passing native rerun.
+The worker cache failures exposed a path representation boundary: .NET expands
+DOS short-name ancestors while JavaScript verifies the requested path spelling.
+The fix checks the canonical path while verified ancestor handles remain pinned,
+then returns the requested spelling. Owner, creation-time, DACL, reparse-point,
+generation, binary-hash and transferred-handle checks remain enforced. Native
+cold initialization, cache reuse and security regressions must pass together.
 
-The real pinned reference embedding model loaded and completed readiness
-inference on Windows. Its Linux sanity check also produced two finite
-1,024-dimensional vectors. The initial broad Windows sweep was stopped after
-the common atomic-write startup failure was established, to avoid spending
-runner time on the same failure across the remaining gateway suites.
+An actual ARM64 guest has exercised binary-safe process ownership and NTFS
+case-sensitive directory containment. The Local Files boundary refused a distinct
+sibling differing only in case before reading its bytes, while accepting an
+alias for the same directory. This is narrow evidence: complete ARM64 native
+dependencies and product validation remain open, and the provider remains gated.
 
-Subsequent focused Windows runs completed their unit files and reached 822
-passing tests, with 15 failures and 20 skips. Native private-file creation and
-read checks pass, but protected atomic replacement still fails at the rename
-operation. The audit is investigating that native API failure before accepting
-gateway persistence or encrypted-artifact publication. Lock contention and
-parent-crash fixtures also require a passing rerun after their fixes.
+## Broader failing baselines
 
-An actual Windows ARM64 guest has exercised binary-safe process ownership and
-NTFS directories with case sensitivity enabled. The Local Files boundary
-refused a distinct sibling whose name differed only in case, before reading
-its bytes, while accepting an alias referring to the same directory. This is
-narrow evidence; the provider remains gated until its full Windows validation
-passes.
+The complete Windows unit baseline at `3c076e8e3` recorded 35,642 passing tests,
+1,879 failures and 89 skips: 2,319 files passed, 232 failed and four were skipped.
+It also reported 16 unhandled errors. Both Windows gateway E2E shards completed:
+102 files passed and 26 failed in one; 100 passed, 26 failed and one skipped in
+the other. The portal exposed excessive native-helper startup overhead.
 
-The first complete Linux unit baseline finished with 2,573 passing files,
-five failures and eight skipped files. The failures include a stale platform
-expectation, a missing test binary, and tests that overlapped active source
-changes. Focused reruns of the corrected areas pass; this baseline does not
-replace a final frozen-source regression run. Windows portal and complete
-spawned-gateway validation remain in progress.
+Those baselines identified Unix-only process control, npm/shebang execution,
+Windows filesystem flushing, private-file protection, mapped-index publication,
+temporary paths, certificate line endings and resource lifecycles. Fixes and
+focused regressions cover these areas, but a fresh complete Windows verdict is
+required. Skipping portable tests is not an acceptable resolution.
 
-The focused Windows unit run at revision `3c076e8e3` completed with 926 passing
-tests, one failure and 20 skips. Its remaining failure is a Local Files race
-fixture attempting a directory rename that Windows refuses while a file is
-open. The replacement fixture must preserve the containment assertion for both
-OS-refused and successful substitutions. Native atomic secret replacement now
-passes that hosted run.
+## Regression evidence
 
-The broad Windows E2E baseline completed both shards: 102 files passed and 26
-failed in the first; 100 passed, 26 failed and one skipped in the second.
-Failures include command shims, temporary paths, CRLF-sensitive certificate and
-extension processing, integration credential flushing, and replacing a
-memory-mapped vector index. These are being fixed rather than excluded. The
-portal rerun also exposed excessive native-helper startup overhead. A protected
-compiled helper cache is under native security and lifecycle validation.
+Four live embedding transition cases pass on Linux with real CPU inference:
+HTTP-to-HTTP, HTTP-to-local, local-to-HTTP and local-to-local. The latest frozen
+worker-shutdown slice waited zero seconds and ran for 3 minutes 13 seconds.
+It verifies ongoing vector search through generation and dimension changes,
+publication and worker handoff. Native workers drain inference before shutdown;
+acknowledgment and actual thread exit are both joined before handle cleanup.
+Windows execution of this coverage remains required.
 
-A frozen Linux run at the same revision passed 38,573 tests in 2,582 files, with
-12 files skipped. The subsequent script smoke phase passed 159 tests and failed
-two Windows-workflow policy checks: cancellation forwarding and running-Node
-header preparation. The overall job is therefore failed; corrections and a
-fresh complete validation remain required.
-
-The next hosted focused run stopped during dependency preparation before any
-tests ran. Review found an incorrect .NET-to-FILETIME epoch conversion in the
-compiled-helper owner check; the conversion now uses the year-1-to-1601 offset,
-with independent calendar anchors in its regression tests. Native initialization
-also reports bounded stage/code diagnostics without exposing input or secrets.
-A new hosted run is required to establish the startup result.
-
-The vector-index changes include an explicitly invoked Windows source build and
-native publication proof. They cover Unicode paths, mapped-reader replacement,
-read-only targets, failed publication, deterministic disposal and a sparse file
-over 4 GiB. This preparation is separate from installer support. Its Linux
-regression slice passes; MSVC compilation and Windows execution remain pending.
-Windows Hermes persistence now uses the same canonical private-file runtime as
-the TypeScript integration, with a retained refresh-lease bridge and protected
-SQLite directory inheritance. Its adapter and packaging regressions pass on
-Linux; native Windows validation remains required.
-
-The complete broad Windows unit baseline at `3c076e8e3` finished with 35,642
-passing tests, 1,879 failures and 89 skips: 2,319 files passed, 232 failed and
-four were skipped. The unit phase took about 163 minutes and reported 16
-unhandled errors. This establishes additional work rather than a passing daily
-lane. Failure groups include hardcoded temporary paths, executable fixtures,
-POSIX permission expectations, private-file fixtures, CRLF comparisons and
-native filesystem flushing. The updated native helper and publication fixes
-still require a fresh broad verdict after focused validation.
-
-Real CPU embedding transitions exposed query starvation with a single embedding
-slot and in-flight queries crossing a generation flip. The first expanded
-four-case run passed HTTP-to-HTTP and HTTP-to-local, but failed local-to-HTTP
-and local-to-local. The fixes drain generation-bound searches before publishing,
-retain native bridges until handoff succeeds, and advance the fallback read
-snapshot. Native rebuild observations now use a fixture-only delivery gate
-around real worker results rather than depending on CPU speed. The frozen Linux four-case run now passes (wait 5 seconds, run 6 minutes
-11 seconds). Native Windows transition validation remains pending.
-
-The broader baseline also exposed unclosed SQLite and directory handles in
-transcript/Watch lifecycles, read-only file flushing, and runtime test fixtures
-that assumed POSIX paths or executable shebangs. Focused Linux regressions cover
-those changes. The Linux Docker lane caught a patch-verification guard rejecting
-valid pure additions; its fix preserves removal checks and verifies every
-installed dependency patch. Complete Linux, Windows and macOS verdicts remain
-required.
-
-The updated hosted Windows run passed dependency preparation. MSVC successfully
-produced the patched vector binding and sparse-file proof executable, but the
-process owner kept waiting after compilation completed: the binding step stayed
-open for another 15 minutes, and the proof-build wrapper hit its three-minute
-budget after reporting success. Native publication assertions therefore did not
-run. Finite build-root retirement is being corrected while ordinary streamed
-processes retain their descendant-lifetime contract; no deadline was raised.
+At `53f02f142`, Linux typechecks, lint, portal E2E, embedding E2E, both Docker
+runtime architectures, Docker smoke tests and integration harnesses passed.
+The broader unit and E2E results remain under review. The macOS typecheck passed,
+but its unit lane failed: failures include temporary-directory aliases, an
+incomplete installer fixture export and a private-content assertion matching a
+system directory name. These are being corrected before claiming regression
+safety. A final frozen-source Linux and macOS verdict, alongside Windows, remains
+mandatory.

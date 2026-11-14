@@ -39,6 +39,44 @@ fs.writeFileSync(process.argv[1],JSON.stringify([process.pid,child.pid]));
 setTimeout(()=>{},60000);
 `;
 
+const finiteRootChildSource = [
+  'require("node:fs").writeSync(1,"child-ready\\n");',
+  'process.send("ready");',
+  "setInterval(()=>{},1000);",
+].join("\n");
+
+describe("Windows job fixture programs", () => {
+  it("starts the persistent descendant fixture with real bytes and IPC readiness", async () => {
+    const child = spawn(process.execPath, ["-e", finiteRootChildSource], {
+      stdio: ["ignore", "pipe", "pipe", "ipc"],
+      windowsHide: true,
+    });
+    const chunks: Buffer[] = [];
+    let stderr = "";
+    child.stdout!.on("data", (bytes: Buffer) => chunks.push(bytes));
+    child.stderr!.on("data", (bytes: Buffer) => {
+      stderr += bytes.toString("utf8");
+    });
+    const closed = new Promise<void>((resolve) => child.once("close", () => resolve()));
+    const ready = new Promise<unknown>((resolve, reject) => {
+      child.once("message", resolve);
+      child.once("error", reject);
+      child.once("close", () => reject(new Error(`Fixture exited before readiness: ${stderr}`)));
+    });
+    const stop = setTimeout(() => child.kill("SIGKILL"), 10_000);
+    try {
+      await expect(ready).resolves.toBe("ready");
+      expect(child.exitCode).toBeNull();
+    } finally {
+      clearTimeout(stop);
+      child.kill("SIGKILL");
+      await closed;
+    }
+    expect(Buffer.concat(chunks)).toEqual(Buffer.from("child-ready\n"));
+    expect(stderr).toBe("");
+  });
+});
+
 describe.skipIf(process.platform !== "win32")("Windows native job containment", () => {
   it.each([0, 7])(
     "root completion joins a persistent descendant, drains bytes and preserves root exit %s",
@@ -56,10 +94,12 @@ describe.skipIf(process.platform !== "win32")("Windows native job containment", 
         const program = `
 const fs=require('node:fs');
 const {spawn}=require('node:child_process');
-const child=spawn(process.execPath,['-e', 'require("node:fs").writeSync(1,"child-ready\\n");process.send("ready");setInterval(()=>{},1000)'],{detached:true,stdio:['ignore','inherit','inherit','ipc']});
+const child=spawn(process.execPath,['-e', ${JSON.stringify(finiteRootChildSource)}],{detached:true,stdio:['ignore','inherit','inherit','ipc']});
+child.once('error',()=>process.exit(1));
+child.once('exit',()=>process.exit(1));
 child.once('message',()=>{
   fs.writeFileSync(process.argv[1],JSON.stringify([process.pid,child.pid]));
-  fs.writeSync(1,Buffer.from([0,255,42]));fs.writeSync(2,'root-finished\\n');
+  fs.writeSync(1,Buffer.from([0,255,42]));fs.writeSync(2,${JSON.stringify("root-finished\n")});
   process.exit(${exitCode});
 });
 `;

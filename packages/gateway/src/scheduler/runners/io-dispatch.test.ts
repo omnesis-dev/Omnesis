@@ -33,7 +33,10 @@ class FakeWorker extends EventEmitter {
     }
   }
 
-  terminate(): void {}
+  terminate(): Promise<number> {
+    this.emit("exit", 0);
+    return Promise.resolve(0);
+  }
 
   /** Test control: settle the call with id `id` successfully. */
   complete(id: number, value: unknown): void {

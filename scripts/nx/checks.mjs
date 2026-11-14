@@ -17,11 +17,11 @@ import {
 } from "./bundles.mjs";
 import { assertTreeFingerprint, treeFingerprint } from "./tree-state.mjs";
 
-const nxEntry = createRequire(import.meta.url).resolve("nx/bin/nx.js");
+const require = createRequire(import.meta.url);
 
 /** Launch Nx's JavaScript entry directly; Windows batch shims are not executables. */
 export function nxInvocation(args) {
-  return { command: process.execPath, args: [nxEntry, ...args] };
+  return { command: process.execPath, args: [require.resolve("nx/bin/nx.js"), ...args] };
 }
 
 function queryNx(args) {

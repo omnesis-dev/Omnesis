@@ -207,6 +207,17 @@ describe("SearchWorkerPool respawn", () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
+  test("disposal joins the real search thread and concurrent callers share completion", async () => {
+    pool = makePool();
+    await pool.start();
+    const worker = workerOf(pool, 0);
+    const stopped = pool.dispose();
+    expect(pool.dispose()).toBe(stopped);
+    await stopped;
+    expect(worker.threadId).toBe(-1);
+    await expect(pool.start()).rejects.toThrow(/disposed/);
+  });
+
   test("a crashed worker is respawned and the next query is served by a worker again", async () => {
     pool = makePool();
     await pool.start();

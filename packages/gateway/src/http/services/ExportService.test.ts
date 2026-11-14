@@ -405,6 +405,7 @@ describe("ExportService", () => {
   });
 
   test("a missing gateway database fails fast with a 503", () => {
+    db.close();
     rmSync(gatewayDbPath, { force: true });
     const service = makeService();
     let thrown: unknown;

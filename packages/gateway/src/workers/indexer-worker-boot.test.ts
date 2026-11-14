@@ -1659,9 +1659,12 @@ describe("indexer worker boot persistence", () => {
 
     try {
       await blockingEmbedder.holds[0]!.started;
-      await proxy.dispose();
-      expect(exited).toBe(true);
+      const disposal = proxy.dispose();
       await readyRejection;
+      expect(exited).toBe(false);
+      blockingEmbedder.holds[0]!.release();
+      await disposal;
+      expect(exited).toBe(true);
     } finally {
       blockingEmbedder.holds[0]!.release();
       await proxy.dispose();

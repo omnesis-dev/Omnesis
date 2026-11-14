@@ -2046,7 +2046,7 @@ export function createServer(
   });
 
   // /sql, /analytics/*, /sqlite/*, /analytics/activity/:table.
-  mountAnalyticsRoutes(app, {
+  const analyticsRoutes = mountAnalyticsRoutes(app, {
     db,
     analyticsService,
     sourceService,
@@ -2073,5 +2073,18 @@ export function createServer(
     );
   }
 
-  return Object.assign(app, { close: () => brainAdmin.close() });
+  let closePromise: Promise<void> | undefined;
+  return Object.assign(app, {
+    close: () =>
+      (closePromise ??= (async () => {
+        const results = await Promise.allSettled([
+          Promise.resolve().then(() => brainAdmin.close()),
+          Promise.resolve().then(() => analyticsRoutes.close()),
+        ]);
+        const failures = results.flatMap((result) =>
+          result.status === "rejected" ? [result.reason] : [],
+        );
+        if (failures.length) throw new AggregateError(failures, "Gateway route cleanup failed");
+      })()),
+  });
 }

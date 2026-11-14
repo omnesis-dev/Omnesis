@@ -91,7 +91,9 @@ describe("scanMessage", () => {
     const target = write("target", "Subject: x\n\nbody");
     const link = join(dir, "link");
     symlinkSync(target, link);
-    await expect(parseMessageFile(link)).rejects.toMatchObject({ code: "ELOOP" });
+    await expect(parseMessageFile(link)).rejects.toMatchObject({
+      code: process.platform === "win32" ? "EACCES" : "ELOOP",
+    });
   });
 
   test("a file that is not there is an error the caller classifies", async () => {

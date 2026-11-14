@@ -48,6 +48,7 @@ import { Worker } from "node:worker_threads";
 import { assertNever, createLogger } from "@omnesis/core";
 import { ambientAnswerProfiler, type AnswerProfiler } from "../privacy/answer-profile.js";
 import { DEFAULT_BACKGROUND_WORKER_NICE } from "./worker-priority.js";
+import { shutdownWorker } from "./shutdown-worker.js";
 import type { LexicalIndexData } from "../search/lexical-index-data.js";
 import type { CandidateGenRequest, CandidateGenResult } from "../search/candidate-gen.js";
 import type { TemporalIntent, TemporalIntentOptions } from "../search/temporal-intent.js";
@@ -123,7 +124,6 @@ interface WorkerSlot {
   respawnTimer: ReturnType<typeof setTimeout> | null;
   lastHeartbeat: number;
   heartbeatCheck: ReturnType<typeof setInterval> | null;
-  shutdownResolve: (() => void) | null;
   unresponsiveSince: number | null;
   /** Where the current worker's date recognizer models stand; a new worker starts cold. */
   temporal: "cold" | "warming" | "warm";
@@ -153,6 +153,7 @@ export class SearchWorkerPool {
   /** `start()`'s promise has resolved or rejected; it settles once. */
   private readySettled = false;
   private disposed = false;
+  private disposePromise: Promise<void> | null = null;
   private readyPromise: Promise<void>;
   private resolveReady!: () => void;
   private rejectReady!: (err: Error) => void;
@@ -231,6 +232,7 @@ export class SearchWorkerPool {
   }
 
   async start(): Promise<void> {
+    if (this.disposed) throw new Error("search worker pool disposed");
     if (this.slots.length > 0) return this.readyPromise;
 
     for (let i = 0; i < this.concurrency; i++) {
@@ -244,7 +246,6 @@ export class SearchWorkerPool {
         respawnTimer: null,
         lastHeartbeat: 0,
         heartbeatCheck: null,
-        shutdownResolve: null,
         unresponsiveSince: null,
         temporal: "cold",
       };
@@ -380,36 +381,35 @@ export class SearchWorkerPool {
     });
   }
 
-  async dispose(): Promise<void> {
-    if (this.disposed) return;
+  dispose(): Promise<void> {
+    if (this.disposePromise) return this.disposePromise;
     this.disposed = true;
     this.rejectFirstReady(new Error("search worker pool disposed"));
+    this.disposePromise = this.shutdownWorkers();
+    return this.disposePromise;
+  }
 
-    const shutdowns = this.slots.map((slot) => {
-      if (slot.heartbeatCheck) clearInterval(slot.heartbeatCheck);
-      if (slot.respawnTimer) clearTimeout(slot.respawnTimer);
-      slot.respawnTimer = null;
-      const worker = slot.worker;
-      if (!worker) return Promise.resolve();
-      const p = new Promise<void>((resolve) => {
-        slot.shutdownResolve = resolve;
-      });
-      worker.postMessage({ type: "shutdown" } satisfies MainToSearch);
-      const fallback = setTimeout(() => {
-        log.warn(`search worker ${slot.index} shutdown timed out — terminating`);
-        try {
-          void worker.terminate();
-        } catch {
-          /* best-effort */
-        }
-        slot.shutdownResolve?.();
-      }, 5_000);
-      fallback.unref?.();
-      return p.then(() => clearTimeout(fallback));
-    });
-
-    await Promise.all(shutdowns);
-    this.rejectAllInflight(new Error("search worker pool shut down"));
+  private async shutdownWorkers(): Promise<void> {
+    try {
+      const outcomes = await Promise.allSettled(
+        this.slots.map((slot) => {
+          if (slot.heartbeatCheck) clearInterval(slot.heartbeatCheck);
+          if (slot.respawnTimer) clearTimeout(slot.respawnTimer);
+          slot.respawnTimer = null;
+          const worker = slot.worker;
+          if (!worker) return Promise.resolve();
+          return shutdownWorker(
+            worker,
+            () => worker.postMessage({ type: "shutdown" } satisfies MainToSearch),
+            () => log.warn(`search worker ${slot.index} shutdown timed out — terminating`),
+          );
+        }),
+      );
+      const failure = outcomes.find((result) => result.status === "rejected");
+      if (failure?.status === "rejected") throw failure.reason;
+    } finally {
+      this.rejectAllInflight(new Error("search worker pool shut down"));
+    }
   }
 
   /**
@@ -457,7 +457,6 @@ export class SearchWorkerPool {
         log.error(`search worker ${slot.index} exited unexpectedly with code=${code}`);
       }
       this.markDown(slot, new Error(`search worker exited code=${code}`));
-      slot.shutdownResolve?.();
       if (this.disposed) return;
       if (slot.everReady) {
         this.scheduleRespawn(slot);
@@ -595,7 +594,6 @@ export class SearchWorkerPool {
         break;
       }
       case "shutdownComplete":
-        slot.shutdownResolve?.();
         break;
       default:
         assertNever(msg);

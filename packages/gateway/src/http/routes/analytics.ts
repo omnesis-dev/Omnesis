@@ -42,7 +42,10 @@ export interface AnalyticsRoutesDeps {
  * /sql + /analytics/* + /sqlite/* + /analytics/activity/:table.
  * Mirrors the original block at server.ts:3213-3421.
  */
-export function mountAnalyticsRoutes(app: RouteApp, deps: AnalyticsRoutesDeps): void {
+export function mountAnalyticsRoutes(
+  app: RouteApp,
+  deps: AnalyticsRoutesDeps,
+): { close(): Promise<void> } {
   const { db, analyticsService, sourceService } = deps;
 
   // `/sql` runs the caller's query on an io worker, on a read-only connection
@@ -55,12 +58,29 @@ export function mountAnalyticsRoutes(app: RouteApp, deps: AnalyticsRoutesDeps): 
   // a test harness's writable database cannot accept a write through `/sql`
   // either.
   let fallbackDb: Db | null = null;
+  let closed = false;
   const readOnlyFallback = (): Db => {
+    if (closed) throw new ServiceUnavailableError("Analytics routes are closed");
     if (db.readonly) return db;
     if (!fallbackDb) {
-      fallbackDb = new Database(db.name, { readonly: true, fileMustExist: true });
-      fallbackDb.exec("PRAGMA busy_timeout = 5000");
-      fallbackDb.exec("PRAGMA mmap_size = 0");
+      const candidate = new Database(db.name, { readonly: true, fileMustExist: true });
+      try {
+        candidate.exec("PRAGMA busy_timeout = 5000");
+        candidate.exec("PRAGMA mmap_size = 0");
+      } catch (error) {
+        const failures = [error];
+        try {
+          candidate.close();
+        } catch (cleanup) {
+          failures.push(cleanup);
+        }
+        if (failures.length > 1)
+          throw new AggregateError(failures, "Analytics fallback initialization failed", {
+            cause: error,
+          });
+        throw error;
+      }
+      fallbackDb = candidate;
     }
     return fallbackDb;
   };
@@ -70,6 +90,7 @@ export function mountAnalyticsRoutes(app: RouteApp, deps: AnalyticsRoutesDeps): 
   // returns the body already serialized, or the engine's refusal, which
   // answers 400 with its message.
   app.post("/sql", scope.admin(), validateJson(sqlBody), async (c) => {
+    if (closed) throw new ServiceUnavailableError("Analytics routes are closed");
     const body = c.req.valid("json");
     const request = { sql: body.sql, limit: body.limit };
     const read = deps.ioGate
@@ -338,4 +359,14 @@ export function mountAnalyticsRoutes(app: RouteApp, deps: AnalyticsRoutesDeps): 
       throw err;
     }
   });
+
+  return {
+    close() {
+      closed = true;
+      return Promise.resolve().then(() => {
+        if (fallbackDb?.open) fallbackDb.close();
+        fallbackDb = null;
+      });
+    },
+  };
 }

@@ -148,7 +148,7 @@ public static partial class OmnesisPrivateFile {
     long creation,exit,kernel,user;Check(GetProcessTimes(owner,out creation,out exit,out kernel,out user));
     if(WaitForSingleObject(owner,0)!=258 || creation.ToString(System.Globalization.CultureInfo.InvariantCulture)!=birth) throw new UnauthorizedAccessException();
   }
-  static string PinWinner(string directory,string sourceHash,string config,int ownerPid,string ownerBirth) {
+  static string PinWinner(string directory,string sourceHash,string config,int ownerPid,string ownerBirth,string invocationPath) {
     if(ownerPid<=0 || !System.Text.RegularExpressions.Regex.IsMatch(ownerBirth,@"^[0-9]{1,19}$")) throw new InvalidDataException();
     IntPtr owner=OpenProcess(0x101040,false,ownerPid);
     if(owner==IntPtr.Zero) throw new Win32Exception(Marshal.GetLastWin32Error());
@@ -157,8 +157,12 @@ public static partial class OmnesisPrivateFile {
       string cache=Path.GetDirectoryName(directory);
       using(CachePins pins=new CachePins(directory,cache,false)) {
         string record=Winner(directory,sourceHash,config);
+        // .NET expands existing 8.3 ancestors. Preserve the requested spelling
+        // only after its canonical path matches the verified, pinned winner.
+        if(!String.Equals(FullPath(invocationPath),Path.Combine(directory,"worker.exe"),StringComparison.Ordinal)) throw new InvalidDataException();
         JavaScriptSerializer serializer=new JavaScriptSerializer();
         Dictionary<string,object> response=serializer.DeserializeObject(record) as Dictionary<string,object>;
+        response["executable"]=invocationPath;
         response["ownerPid"]=ownerPid;response["ownerBirth"]=ownerBirth;response["pinsTransferred"]=true;
         string json=serializer.Serialize(response);
         string rootIdentity;
@@ -235,6 +239,7 @@ public static partial class OmnesisPrivateFile {
     for(int i=0;i<commit.Length;i++) if(commit[i]!=expected[i]) throw new InvalidDataException();
     string code=new UTF8Encoding(false,true).GetString(source);
     if(Hash(Encoding.UTF8.GetBytes(code+"\0"+config+"\0"+manifest+"\0v1"))!=sourceHash) throw new InvalidDataException();
+    string invocationPath=Path.Combine(root,sourceHash,"worker.exe");
     root=FullPath(root);
     using(CachePins existing=new CachePins(root,root,true)) {
       if(!Directory.Exists(root)) Directory.CreateDirectory(root,CacheDirectoryAcl());
@@ -244,7 +249,7 @@ public static partial class OmnesisPrivateFile {
     using(SafeFileHandle rootHandle=Open(root,true,false,3)) {
       RequirePrivate(rootHandle,true);
       string winner=Path.Combine(root,sourceHash);
-      if(Directory.Exists(winner)) return PinWinner(winner,sourceHash,config,ownerPid,ownerBirth);
+      if(Directory.Exists(winner)) return PinWinner(winner,sourceHash,config,ownerPid,ownerBirth,invocationPath);
       string staging=Path.Combine(root,".build-"+System.Diagnostics.Process.GetCurrentProcess().Id+"-"+Guid.NewGuid().ToString("N"));
       bool created=false,published=false;
       try {
@@ -284,7 +289,7 @@ public static partial class OmnesisPrivateFile {
         Winner(staging,sourceHash,config);
         try {Directory.Move(staging,winner);published=true;}
         catch(IOException) {if(!Directory.Exists(winner)) throw;}
-        return PinWinner(winner,sourceHash,config,ownerPid,ownerBirth);
+        return PinWinner(winner,sourceHash,config,ownerPid,ownerBirth,invocationPath);
       } finally {
         // Only this process's successful CREATE_NEW directory is removed.
         // A competing publisher's generation and preexisting paths are untouched.

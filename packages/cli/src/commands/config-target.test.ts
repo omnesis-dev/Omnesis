@@ -104,10 +104,11 @@ describe("probeGateway", () => {
 });
 
 describe("resolveConfigTarget", () => {
+  const configDir = join(tmpdir(), "omnesis-config-target-test");
   function env(overrides: Partial<ConfigTargetEnvironment>): ConfigTargetEnvironment {
     return {
       gatewayUrl: "https://localhost:7600",
-      configDir: "/tmp/omnesis-config-target-test",
+      configDir,
       gatewayHolder: () => null,
       probe: vi.fn(() => Promise.resolve("refused" as const)),
       ...overrides,
@@ -150,9 +151,7 @@ describe("resolveConfigTarget", () => {
     ]) {
       const target = await resolveConfigTarget(env({ gatewayUrl }));
       expect(target).toBeInstanceOf(FileConfigTarget);
-      expect((target as FileConfigTarget).path).toBe(
-        "/tmp/omnesis-config-target-test/omnesis.json",
-      );
+      expect((target as FileConfigTarget).path).toBe(join(configDir, "omnesis.json"));
     }
   });
 });

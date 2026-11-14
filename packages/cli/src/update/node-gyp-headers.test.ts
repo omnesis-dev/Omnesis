@@ -306,21 +306,27 @@ describe("prepareNodeGypHeaders", () => {
 });
 
 describe("the installer's copies", () => {
-  test("embed this script verbatim, in the installer and in the source launcher it writes", () => {
-    // Single-quoted in the shell, and inside an unquoted heredoc in the
-    // launcher: nothing in it may be quoted, expanded or substituted there.
-    expect(NODE_GYP_HEADERS_SCRIPT).not.toMatch(/['`$\\]/);
-    const installer = readFileSync(join(process.cwd(), "scripts", "install.sh"), "utf8");
-    const copies = installer.split(`node -e '${NODE_GYP_HEADERS_SCRIPT}'`).length - 1;
-    expect(copies).toBe(2);
-    // Every `npm ci` the installer runs -- the install, its retry, and the
-    // reinstall after a failed build -- comes straight after the check.
-    const installs = installer.match(/\( cd "\$SOURCE_DIR" && npm ci \$NPM_CI_QUIET \)/g) ?? [];
-    const checked =
-      installer.match(
-        /prepare_node_gyp_headers "\$SOURCE_DIR"\n\s+(?:if ! )?\( cd "\$SOURCE_DIR" && npm ci \$NPM_CI_QUIET \)/g,
-      ) ?? [];
-    expect(installs).toHaveLength(3);
-    expect(checked).toHaveLength(installs.length);
-  });
+  test.each(["\n", "\r\n"])(
+    "embed this script verbatim with checkout newline %j, in the installer and source launcher",
+    (newline) => {
+      // Single-quoted in the shell, and inside an unquoted heredoc in the
+      // launcher: nothing in it may be quoted, expanded or substituted there.
+      expect(NODE_GYP_HEADERS_SCRIPT).not.toMatch(/['`$\\]/);
+      const checkout = readFileSync(join(process.cwd(), "scripts", "install.sh"), "utf8");
+      const fixture = checkout.replace(/\r?\n/gu, newline);
+      // Git checkout line endings do not change the embedded JavaScript program.
+      const installer = fixture.replace(/\r\n?/gu, "\n");
+      const copies = installer.split(`node -e '${NODE_GYP_HEADERS_SCRIPT}'`).length - 1;
+      expect(copies).toBe(2);
+      // Every `npm ci` the installer runs -- the install, its retry, and the
+      // reinstall after a failed build -- comes straight after the check.
+      const installs = installer.match(/\( cd "\$SOURCE_DIR" && npm ci \$NPM_CI_QUIET \)/g) ?? [];
+      const checked =
+        installer.match(
+          /prepare_node_gyp_headers "\$SOURCE_DIR"\n\s+(?:if ! )?\( cd "\$SOURCE_DIR" && npm ci \$NPM_CI_QUIET \)/g,
+        ) ?? [];
+      expect(installs).toHaveLength(3);
+      expect(checked).toHaveLength(installs.length);
+    },
+  );
 });

@@ -19,6 +19,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { UPDATE_LOCK_ENV } from "@omnesis/core";
+import { inspectWindowsPrivatePathSync } from "@omnesis/platform/windows-private-file";
 import { UpdateInterruptionRouter } from "./interruption.js";
 import {
   CONTAINER_OWN_ENV,
@@ -52,6 +53,10 @@ import {
   type HostRoles,
 } from "./detect.js";
 
+const SOURCE_ROOT = join(tmpdir(), "omnesis-installed-source");
+const SOURCE_LOADER = join(SOURCE_ROOT, "node_modules", "tsx", "dist", "loader.mjs");
+const PACKAGE_ENTRY = join(tmpdir(), "omnesis-installed-package", "dist", "index.js");
+
 const TARGET_COMMIT = "1122334455667788990011223344556677889900";
 const PREVIOUS_COMMIT = "9f1c2ab3d4e5f60718293a4b5c6d7e8f90a1b2c3";
 const OFFER_ID = "3f1b0c6e-8a2d-4e5f-9b7c-1d2e3f4a5b6c";
@@ -65,7 +70,7 @@ function offer(over: Partial<UpdateContinuation> = {}): UpdateContinuation {
     state: "offered",
     subject: {
       method: "source",
-      rootDir: "/opt/omnesis",
+      rootDir: SOURCE_ROOT,
       edge: false,
       target: "v0.5.0",
       targetCommit: TARGET_COMMIT,
@@ -167,7 +172,7 @@ describe("what the continuing build rebuilds from an offer", () => {
     const subject = offer().subject;
     const plan = applyPlanForSubject(subject, { NODE_OPTIONS: "--max-old-space-size=2048" });
     expect(plan.rollback).toEqual(
-      sourceUpdateSpecs("/opt/omnesis", PREVIOUS_COMMIT, {
+      sourceUpdateSpecs(SOURCE_ROOT, PREVIOUS_COMMIT, {
         NODE_OPTIONS: "--max-old-space-size=2048",
       }),
     );
@@ -255,13 +260,13 @@ describe("reading an offer", () => {
 
   test("an offer is only for the installation it describes", () => {
     const source = offer().subject;
-    expect(planForSubject({ method: "source", rootDir: "/opt/omnesis" }, source)).toEqual({
+    expect(planForSubject({ method: "source", rootDir: SOURCE_ROOT }, source)).toEqual({
       kind: "source",
-      rootDir: "/opt/omnesis",
+      rootDir: SOURCE_ROOT,
     });
-    expect(() => planForSubject({ method: "source", rootDir: "/opt/other" }, source)).toThrow(
-      ContinuationRefused,
-    );
+    expect(() =>
+      planForSubject({ method: "source", rootDir: join(tmpdir(), "omnesis-other-source") }, source),
+    ).toThrow(ContinuationRefused);
     expect(() => planForSubject({ method: "npm-global" }, source)).toThrow(ContinuationRefused);
     expect(
       planForSubject(
@@ -337,7 +342,11 @@ describe("taking an offer", () => {
   test("the offer is written owner-only, and a symlink in its place is no offer", () => {
     const configDir = tempDir();
     writeContinuation(configDir, offer());
-    expect(statSync(continuationPath(configDir)).mode & 0o777).toBe(0o600);
+    if (process.platform === "win32") {
+      expect(inspectWindowsPrivatePathSync(continuationPath(configDir), "file").private).toBe(true);
+    } else {
+      expect(statSync(continuationPath(configDir)).mode & 0o777).toBe(0o600);
+    }
 
     const elsewhere = tempDir();
     writeContinuation(elsewhere, offer());
@@ -399,25 +408,25 @@ describe("finding the installed build", () => {
 
   const ctx = (over: Partial<ContinuationCommandContext> = {}): ContinuationCommandContext => ({
     env: {},
-    execPath: "/usr/bin/node",
-    packageEntry: () => "/usr/lib/node_modules/omnesis/dist/index.js",
-    sourceLoader: () => "/opt/omnesis/node_modules/tsx/dist/loader.mjs",
+    execPath: process.execPath,
+    packageEntry: () => PACKAGE_ENTRY,
+    sourceLoader: () => SOURCE_LOADER,
     interactive: true,
     ...over,
   });
 
   test("the installed CLI is reached by path: a checkout's tsx entry, a package's manifest entry", () => {
-    expect(installedCliCommand({ method: "source", rootDir: "/opt/omnesis" }, ctx())).toEqual({
-      command: "/usr/bin/node",
+    expect(installedCliCommand({ method: "source", rootDir: SOURCE_ROOT }, ctx())).toEqual({
+      command: process.execPath,
       args: [
         "--import",
-        pathToFileURL("/opt/omnesis/node_modules/tsx/dist/loader.mjs").href,
-        "/opt/omnesis/packages/cli/src/index.ts",
+        pathToFileURL(SOURCE_LOADER).href,
+        join(SOURCE_ROOT, "packages", "cli", "src", "index.ts"),
       ],
     });
     expect(installedCliCommand({ method: "npm-global" }, ctx())).toEqual({
-      command: "/usr/bin/node",
-      args: ["/usr/lib/node_modules/omnesis/dist/index.js"],
+      command: process.execPath,
+      args: [PACKAGE_ENTRY],
     });
     expect(installedCliCommand({ method: "npm-global" }, ctx({ packageEntry: () => null }))).toBe(
       null,
@@ -456,11 +465,11 @@ describe("finding the installed build", () => {
 
   test("a checkout runs its own tsx entry, with the lock id to adopt", () => {
     expect(continuationCommand(offer().subject, OFFER_ID, LOCK_ID, ctx())).toEqual({
-      command: "/usr/bin/node",
+      command: process.execPath,
       args: [
         "--import",
-        pathToFileURL("/opt/omnesis/node_modules/tsx/dist/loader.mjs").href,
-        "/opt/omnesis/packages/cli/src/index.ts",
+        pathToFileURL(SOURCE_LOADER).href,
+        join(SOURCE_ROOT, "packages", "cli", "src", "index.ts"),
         "update",
         "continue-after-apply",
         OFFER_ID,
@@ -472,13 +481,8 @@ describe("finding the installed build", () => {
   test("a package runs the entry its manifest names, or nothing when there is none", () => {
     const subject = { method: "npm-global" as const, target: "0.5.0", previous: "0.4.10" };
     expect(continuationCommand(subject, OFFER_ID, LOCK_ID, ctx())).toEqual({
-      command: "/usr/bin/node",
-      args: [
-        "/usr/lib/node_modules/omnesis/dist/index.js",
-        "update",
-        "continue-after-apply",
-        OFFER_ID,
-      ],
+      command: process.execPath,
+      args: [PACKAGE_ENTRY, "update", "continue-after-apply", OFFER_ID],
       env: { OMNESIS_UPDATE_LOCK_ID: LOCK_ID },
     });
     expect(continuationCommand(subject, OFFER_ID, LOCK_ID, ctx({ packageEntry: () => null }))).toBe(

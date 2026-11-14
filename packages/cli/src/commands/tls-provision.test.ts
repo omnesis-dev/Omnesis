@@ -14,6 +14,8 @@ import {
   type TlsProvisionEnv,
 } from "./tls-provision.js";
 
+const CONFIG_DIR = join(tmpdir(), "omnesis-test-config");
+
 describe("defaultTlsProvisionEnv", () => {
   it("uses the connected macOS app for status, DNS, and certificate issuance", () => {
     const home = mkdtempSync(join(tmpdir(), "omnesis-tailscale-cli-"));
@@ -55,7 +57,7 @@ describe("defaultTlsProvisionEnv", () => {
  */
 function fakeEnv(overrides: Partial<TlsProvisionEnv> = {}): TlsProvisionEnv {
   return {
-    configDir: "/tmp/omnesis-test-config",
+    configDir: CONFIG_DIR,
     platform: "linux",
     hasTailscale: () => false,
     tailscaleDnsName: () => "",
@@ -85,8 +87,8 @@ describe("provisionTls", () => {
     expect(result.provisioned).toBe(true);
     expect(certCall).toHaveBeenCalledOnce();
     expect(result.envWritten).toEqual({
-      OMNESIS_TLS_CERT: "/tmp/omnesis-test-config/tls/tailscale.crt",
-      OMNESIS_TLS_KEY: "/tmp/omnesis-test-config/tls/tailscale.key",
+      OMNESIS_TLS_CERT: join(CONFIG_DIR, "tls", "tailscale.crt"),
+      OMNESIS_TLS_KEY: join(CONFIG_DIR, "tls", "tailscale.key"),
       OMNESIS_GATEWAY_URL: "https://box.tail-scale-example.ts.net:7600",
       OMNESIS_PAIRING_SYSTEM_TRUST_ORIGIN: "https://box.tail-scale-example.ts.net:7600",
     });
@@ -112,11 +114,11 @@ describe("provisionTls", () => {
     expect(result.tier).toBe("mkcert");
     expect(result.provisioned).toBe(true);
     expect(mk).toHaveBeenCalledOnce();
-    expect(result.envWritten.OMNESIS_TLS_CERT).toBe("/tmp/omnesis-test-config/tls/mkcert.crt");
-    expect(result.envWritten.OMNESIS_TLS_KEY).toBe("/tmp/omnesis-test-config/tls/mkcert.key");
+    expect(result.envWritten.OMNESIS_TLS_CERT).toBe(join(CONFIG_DIR, "tls", "mkcert.crt"));
+    expect(result.envWritten.OMNESIS_TLS_KEY).toBe(join(CONFIG_DIR, "tls", "mkcert.key"));
     expect(mk).toHaveBeenCalledWith(
-      "/tmp/omnesis-test-config/tls/mkcert.crt",
-      "/tmp/omnesis-test-config/tls/mkcert.key",
+      join(CONFIG_DIR, "tls", "mkcert.crt"),
+      join(CONFIG_DIR, "tls", "mkcert.key"),
       ["localhost", "127.0.0.1", "::1", "testhost.local", "192.0.2.60", "2001:db8::60"],
     );
     expect(result.envWritten.OMNESIS_GATEWAY_URL).toBe("https://testhost.local:7600");
@@ -134,8 +136,8 @@ describe("provisionTls", () => {
 
     expect(provisionTls({}, env, () => {}).provisioned).toBe(true);
     expect(mk).toHaveBeenCalledWith(
-      "/tmp/omnesis-test-config/tls/mkcert.crt",
-      "/tmp/omnesis-test-config/tls/mkcert.key",
+      join(CONFIG_DIR, "tls", "mkcert.crt"),
+      join(CONFIG_DIR, "tls", "mkcert.key"),
       ["localhost", "127.0.0.1", "::1", "testhost.local"],
     );
   });
@@ -320,7 +322,7 @@ describe("provisionTls", () => {
 
   it("does not re-mint when a cert already exists at the target path (idempotent), still wiring env", () => {
     const tsCert = vi.fn();
-    const certPath = "/tmp/omnesis-test-config/tls/tailscale.crt";
+    const certPath = join(CONFIG_DIR, "tls", "tailscale.crt");
     const env = fakeEnv({
       hasTailscale: () => true,
       tailscaleDnsName: () => "box.example.ts.net",
@@ -336,7 +338,7 @@ describe("provisionTls", () => {
 
   it("--force re-mints even when the cert already exists at the target path", () => {
     const tsCert = vi.fn();
-    const certPath = "/tmp/omnesis-test-config/tls/tailscale.crt";
+    const certPath = join(CONFIG_DIR, "tls", "tailscale.crt");
     const env = fakeEnv({
       hasTailscale: () => true,
       tailscaleDnsName: () => "box.example.ts.net",

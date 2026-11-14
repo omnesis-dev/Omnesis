@@ -93,7 +93,7 @@ function fixtureHandleCount() {
 }
 `;
 function grantAncestor(rights: "Modify" | "AppendData") {
-  const script = `$ErrorActionPreference='Stop';$acl=Get-Acl -LiteralPath $env:OMNESIS_FIXTURE_FILE;$sid=[Security.Principal.SecurityIdentifier]::new('S-1-1-0');$rule=[Security.AccessControl.FileSystemAccessRule]::new($sid,[Security.AccessControl.FileSystemRights]$env:OMNESIS_FIXTURE_RIGHTS,[Security.AccessControl.AccessControlType]::Allow);$acl.AddAccessRule($rule);Set-Acl -LiteralPath $env:OMNESIS_FIXTURE_FILE -AclObject $acl`;
+  const script = `$ErrorActionPreference='Stop';$acl=[IO.Directory]::GetAccessControl($env:OMNESIS_FIXTURE_FILE);$sid=[Security.Principal.SecurityIdentifier]::new('S-1-1-0');$rule=[Security.AccessControl.FileSystemAccessRule]::new($sid,[Security.AccessControl.FileSystemRights]$env:OMNESIS_FIXTURE_RIGHTS,[Security.AccessControl.AccessControlType]::Allow);$acl.AddAccessRule($rule);[IO.Directory]::SetAccessControl($env:OMNESIS_FIXTURE_FILE,$acl)`;
   return spawnSync(
     windowsPowerShellExecutable(),
     ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", script],
@@ -143,6 +143,29 @@ describe.skipIf(process.platform !== "win32")("Windows compiled worker cache", (
     expect(directory.endsWith(manifest.sourceHash)).toBe(true);
     expect(manifest.binaryHash).toMatch(/^[0-9a-f]{64}$/u);
   });
+  it("accepts DOS short-name cache ancestors on cold initialization and reuse", async () => {
+    // GetShortPathName returns the original spelling on volumes without 8.3
+    // aliases; on NTFS with aliases it exercises .NET's long-name expansion.
+    const script = String.raw`$ErrorActionPreference='Stop';Add-Type -TypeDefinition 'using System;using System.Text;using System.Runtime.InteropServices;public static class FixtureShortPath {[DllImport("kernel32.dll",CharSet=CharSet.Unicode,SetLastError=true)]public static extern uint GetShortPathName(string path,StringBuilder result,uint length);}';$result=[Text.StringBuilder]::new(32768);$length=[FixtureShortPath]::GetShortPathName($env:OMNESIS_FIXTURE_FILE,$result,32768);if($length -eq 0 -or $length -ge 32768){throw 'Short-path fixture failed'};[Console]::Out.Write($result.ToString())`;
+    const alias = spawnSync(
+      windowsPowerShellExecutable(),
+      ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", script],
+      {
+        env: { ...process.env, OMNESIS_FIXTURE_FILE: root },
+        encoding: "utf8",
+        windowsHide: true,
+        timeout: 15000,
+      },
+    );
+    expect(alias.status, alias.stderr).toBe(0);
+    expect(alias.stdout.length).toBeGreaterThan(0);
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const result = await run(program, alias.stdout);
+      expect(result.code, result.stderr || result.stdout).toBe(0);
+      expect(JSON.parse(result.stdout)).toMatchObject({ exitCode: 0, stdout: "fixture" });
+    }
+    generation();
+  });
   it("refuses a corrupt manifest before a valid cached worker can write", async () => {
     expect((await run(program)).code).toBe(0);
     const directory = generation();
@@ -162,7 +185,7 @@ catch(error) { process.stdout.write('refused'); }
   it("refuses a cached executable whose DACL permits another user to read it", async () => {
     expect((await run(program)).code).toBe(0);
     const executable = join(generation(), "worker.exe");
-    const script = `$ErrorActionPreference='Stop';$acl=Get-Acl -LiteralPath $env:OMNESIS_FIXTURE_FILE;$sid=[Security.Principal.SecurityIdentifier]::new('S-1-1-0');$rule=[Security.AccessControl.FileSystemAccessRule]::new($sid,[Security.AccessControl.FileSystemRights]::Read,[Security.AccessControl.AccessControlType]::Allow);$acl.AddAccessRule($rule);Set-Acl -LiteralPath $env:OMNESIS_FIXTURE_FILE -AclObject $acl`;
+    const script = `$ErrorActionPreference='Stop';$acl=[IO.File]::GetAccessControl($env:OMNESIS_FIXTURE_FILE);$sid=[Security.Principal.SecurityIdentifier]::new('S-1-1-0');$rule=[Security.AccessControl.FileSystemAccessRule]::new($sid,[Security.AccessControl.FileSystemRights]::Read,[Security.AccessControl.AccessControlType]::Allow);$acl.AddAccessRule($rule);[IO.File]::SetAccessControl($env:OMNESIS_FIXTURE_FILE,$acl)`;
     const changed = spawnSync(
       windowsPowerShellExecutable(),
       ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", script],
