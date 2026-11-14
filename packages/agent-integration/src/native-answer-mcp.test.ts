@@ -11,7 +11,6 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 import { z } from "zod/v4";
 import { writePrivateFixture as writeFileSync } from "../test/private-fixtures.js";
 
-
 import {
   FICTIONAL_LARGE_RESULT_BYTES,
   startFictionalGateway,
