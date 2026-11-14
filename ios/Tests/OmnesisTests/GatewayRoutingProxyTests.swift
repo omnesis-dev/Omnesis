@@ -528,6 +528,7 @@ extension GatewayRoutingProxyTests {
                 listenPort: port,
                 recoverInitialListener: true,
                 transport: factory.transport,
+                // Scripted candidate deadlines: a slow trust verification still selects the loopback candidate.
                 clock: ScriptedGatewayClock().clock,
                 verifyTrust: { trust, host in pin.resolve(trust, challengeHost: host) == .pinned(systemTrusted: false) }
             )
