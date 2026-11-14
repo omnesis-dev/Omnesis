@@ -56,7 +56,7 @@ final class AccountCloudPairingClientTests: XCTestCase {
             ))
         let value = try JSONDecoder().decode(Fixture.self, from: Data(contentsOf: url)),
             challenge = try reusing?.challenge ?? CloudPairingChallenge(name: "Fictional phone"), signer = try TestIdentitySigner()
-        let clock = value.clock, fixtureClock = AccountTestClock(value.clock)
+        let fixtureClock = AccountTestClock(value.clock)
         let key = try DeviceEnrollmentKey.loadOrCreate(store: InMemoryStore(), enclaveAvailable: false)
         let enrollmentNonce = try DeviceEnrollmentContract.enrollmentNonce(
             requestId: challenge.requestId,
@@ -76,8 +76,41 @@ final class AccountCloudPairingClientTests: XCTestCase {
             let data = try baseControl.handler(url, body, bearer)
             return try mutateControl?(url, data) ?? data
         }
-        let gatewayChallenge = gatewayChallenge
-        let pinned = AccountTestTransport(publicCertificate: publicCertificate) { url, body, bearer in
+        let pinned = makePinned(value: value, challenge: challenge, publicCertificate: publicCertificate, mutateGateway: mutateGateway)
+        let factory = AccountTestLeafFactory(transport: pinned, fingerprint: value.fingerprint)
+        let client = try AccountCloudPairingClient(
+            relayOrigin: XCTUnwrap(URL(string: origin)),
+            clientId: clientId,
+            direct: control,
+            gatewayFactory: factory,
+            deviceKey: { key },
+            checksPublicCertificate: checksPublicCertificate,
+            now: { fixtureClock.value }
+        )
+        return try SessionFixture(
+            client: client,
+            challenge: challenge,
+            fixture: value,
+            signer: signer,
+            control: control,
+            clock: fixtureClock,
+            pinned: pinned,
+            key: key,
+            googleNonce: DeviceEnrollmentContract.googleProofNonce(salt: salt, nonce: enrollmentNonce)
+        )
+    }
+
+    /// The gateway behind the pinned connection: its challenge, its config naming its approval page,
+    /// and the request and poll replies for `challenge`.
+    private func makePinned(
+        value: Fixture,
+        challenge: CloudPairingChallenge,
+        publicCertificate: Bool,
+        mutateGateway: Mutation?
+    )
+        -> AccountTestTransport {
+        let gatewayChallenge = gatewayChallenge, clock = value.clock
+        return AccountTestTransport(publicCertificate: publicCertificate) { url, body, bearer in
             XCTAssertNil(bearer)
             if url.path.hasSuffix("challenge") {
                 let data = try JSONSerialization.data(withJSONObject: ["challenge": gatewayChallenge, "expiresAt": (clock + 120) * 1000])
@@ -109,27 +142,6 @@ final class AccountCloudPairingClientTests: XCTestCase {
             ))
             return try mutateGateway?(url, data) ?? data
         }
-        let factory = AccountTestLeafFactory(transport: pinned, fingerprint: value.fingerprint)
-        let client = try AccountCloudPairingClient(
-            relayOrigin: XCTUnwrap(URL(string: origin)),
-            clientId: clientId,
-            direct: control,
-            gatewayFactory: factory,
-            deviceKey: { key },
-            checksPublicCertificate: checksPublicCertificate,
-            now: { fixtureClock.value }
-        )
-        return try SessionFixture(
-            client: client,
-            challenge: challenge,
-            fixture: value,
-            signer: signer,
-            control: control,
-            clock: fixtureClock,
-            pinned: pinned,
-            key: key,
-            googleNonce: DeviceEnrollmentContract.googleProofNonce(salt: salt, nonce: enrollmentNonce)
-        )
     }
 
     private func makeControl(

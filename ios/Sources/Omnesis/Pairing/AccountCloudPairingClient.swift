@@ -605,13 +605,10 @@ extension AccountCloudPairingClient {
         try checkOpen()
         guard stage == .pairing, let value = pending, !value.approved, !value.joinedAutomatically,
               let gateway else { return nil }
-        struct Config: Decodable {
-            struct Passkey: Decodable { let rpId: String
-                let origin: String
-            }
-
-            let gatewayPasskey: Passkey?
+        struct Passkey: Decodable { let rpId: String
+            let origin: String
         }
+        struct Config: Decodable { let gatewayPasskey: Passkey? }
         let data = try await gateway.requestData(
             url: value.origin.appendingPathComponent("devices/account/config"),
             method: "GET",

@@ -539,13 +539,13 @@ extension AccountCloudPairingModelTests {
         for joins in [false, true] {
             let browser = AccountModelGoogle(), pages = AccountModelApprovalBrowser(), gate = AccountApprovalGate()
             browser.succeeds = true
-            let session = AccountModelSession(
+            let session = try AccountModelSession(
                 binding: fixture.gateway,
                 clock: fixture.clock,
                 gate: gate,
                 single: true,
                 joins: joins,
-                page: try gatewayPage(fixture)
+                page: gatewayPage(fixture)
             )
             let model = AccountCloudPairingCoordinator(
                 googleBrowser: browser,
@@ -574,7 +574,7 @@ extension AccountCloudPairingModelTests {
                 XCTAssertEqual(model.approvalPage, try gatewayPage(fixture))
                 XCTAssertTrue(pages.opened.isEmpty, "A Google sign-in opened the passkey page by itself")
                 model.openApprovalPage()
-                XCTAssertEqual(pages.opened, [try gatewayPage(fixture)])
+                try XCTAssertEqual(pages.opened, [gatewayPage(fixture)])
                 model.cancel()
                 XCTAssertEqual(pages.closes, 1)
                 XCTAssertNil(model.approvalPage)
@@ -616,13 +616,13 @@ extension AccountCloudPairingModelTests {
     func testAFailedPollClosesTheApprovalPage() async throws {
         let fixture = try fixture(), gate = AccountApprovalGate(), pages = AccountModelApprovalBrowser()
         await gate.release()
-        let session = AccountModelSession(
+        let session = try AccountModelSession(
             binding: fixture.gateway,
             clock: fixture.clock,
             gate: gate,
             single: true,
             pollLie: "code",
-            page: try gatewayPage(fixture)
+            page: gatewayPage(fixture)
         )
         let model = AccountCloudPairingCoordinator(
             googleBrowser: AccountModelGoogle(),
