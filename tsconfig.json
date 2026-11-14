@@ -1,6 +1,7 @@
 {
   "references": [
     { "path": "evals/briefs" },
+    { "path": "evals/search" },
     { "path": "extension" },
     { "path": "packages/types" },
     { "path": "packages/config" },
