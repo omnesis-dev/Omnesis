@@ -66,6 +66,7 @@ import {
   devicePinnedJson,
   signInOnThisMachine,
   signedInAccount,
+  sha256Hex,
   waitFor,
   type GatewayPasskeyCeremony,
   type PasskeySession,
@@ -510,6 +511,18 @@ describe.skipIf(!browserReady)("a relay cannot enroll devices on its own", () =>
           });
         };
         expect((await joinOptions()).status).toBe(200);
+        // A step-up the owner could finish on the gateway's page for one relayed action.
+        const token = gateway.harness.apiKey;
+        const pairBody = JSON.stringify({ kind: "cli", name: "Fictional incident-time CLI" });
+        const stepUpTarget = JSON.stringify({
+          method: "POST",
+          path: "/admin/devices/pair",
+          bodySha256: sha256Hex(pairBody),
+        });
+        const earlyStepUp = await gateway.json<GatewayPasskeyCeremony>("/admin/step-up/options", {
+          method: "POST",
+          body: stepUpTarget,
+        });
 
         // Someone obtains a publicly trusted, logged certificate for the gateway's name
         // with a key of their own.
@@ -569,7 +582,6 @@ describe.skipIf(!browserReady)("a relay cannot enroll devices on its own", () =>
 
         // Through the relay, an admin credential is enough to read the status but never to
         // lift the hold, whether or not the relay marks the request as relayed.
-        const token = gateway.harness.apiKey;
         const read = await gateway.throughRelay("/admin/cloud-relay", { token });
         expect(read.status).toBe(200);
         expect(JSON.parse(read.body)).toMatchObject({ incidentHold: held.incidentHold });
@@ -580,6 +592,41 @@ describe.skipIf(!browserReady)("a relay cannot enroll devices on its own", () =>
         });
         expect(lifted.status).toBe(403);
         expect(JSON.parse(lifted.body)).toMatchObject({ code: "local-request-required" });
+        // F21 (certificate incident): no step-up starts on a page whoever holds that certificate
+        // could serve, and one started before counts for nothing, so through the relay nothing
+        // that loosens the gateway goes through.
+        const stepUpOptions = await gateway.throughRelay("/admin/step-up/options", {
+          method: "POST",
+          body: stepUpTarget,
+          token,
+        });
+        expect(stepUpOptions.status).toBe(403);
+        expect(JSON.parse(stepUpOptions.body)).toMatchObject({ code: "STEP_UP_UNAVAILABLE" });
+        const lateStepUp = await gateway.throughRelay("/admin/step-up", {
+          method: "POST",
+          body: JSON.stringify({
+            ...JSON.parse(stepUpTarget),
+            proof: {
+              type: "gateway-passkey",
+              challenge: earlyStepUp.challenge,
+              credential: await assertionOn(
+                session,
+                gateway.publicOrigin,
+                earlyStepUp.webauthnChallenge,
+              ),
+            },
+          }),
+          token,
+        });
+        expect(lateStepUp.status).toBe(403);
+        expect(JSON.parse(lateStepUp.body)).toMatchObject({ code: "STEP_UP_REFUSED" });
+        const relayedPairing = await gateway.throughRelay("/admin/devices/pair", {
+          method: "POST",
+          body: pairBody,
+          token,
+        });
+        expect(relayedPairing.status).toBe(403);
+        expect(JSON.parse(relayedPairing.body)).toMatchObject({ code: "STEP_UP_UNAVAILABLE" });
         // Nor does choosing automatic again lift it.
         await gateway.setPolicy("automatic");
         expect((await gateway.status()).deviceEnrollment.policy).toBe("ask");

@@ -117,6 +117,7 @@ import { mountAdminRoutes } from "./http/routes/admin.js";
 import { mountDirectCandidateRoutes } from "./http/routes/direct-candidates.js";
 import { mountDeviceEnrollmentRoutes } from "./http/routes/device-enrollment.js";
 import { mountCloudPairingRoutes } from "./http/routes/cloud-pairing.js";
+import { mountStepUp } from "./http/step-up.js";
 import { mountBackupRoutes } from "./http/routes/backup.js";
 import { mountExportRoutes } from "./http/routes/export.js";
 import { mountModelCredentialsRoutes } from "./http/routes/model-credentials.js";
@@ -1216,6 +1217,14 @@ export function createServer(
       return;
     }
     await runWithPriority(priority, () => next());
+  });
+
+  // A passkey on the gateway's own page before an administrative action that loosens it, for
+  // requests through the relay and devices that joined on their own. Before any guarded route.
+  mountStepUp(app, {
+    enrollment: () => opts?.cloudRelayManagement?.accountPairingIdentity?.()?.enrollment,
+    enrollmentMethod: (deviceId) =>
+      getDevice(db, deviceId as DeviceId)?.enrollment?.method ?? undefined,
   });
 
   // ── Closure helpers shared across route modules ─────────────────────
