@@ -26,6 +26,7 @@ import { join } from "node:path";
 import { parseDotEnv, upsertDotEnv } from "@omnesis/config";
 import {
   atomicWriteFileSync,
+  createWindowsPrivateFile,
   parseSecretStoreBackend,
   PASSPHRASE_ENV,
   PASSPHRASE_FILE_ENV,
@@ -149,7 +150,11 @@ export function planDockerPassphrase(
  * installer writes one. Created owner-only and exclusively, so there is never
  * a readable window and never a second writer's passphrase overwritten.
  */
-export function writeGeneratedPassphrase(path: string): void {
+export async function writeGeneratedPassphrase(path: string): Promise<void> {
+  if (process.platform === "win32") {
+    await createWindowsPrivateFile(path, Buffer.from(randomBytes(32).toString("base64url")));
+    return;
+  }
   const fd = openSync(path, "wx", 0o600);
   try {
     writeSync(fd, randomBytes(32).toString("base64url"));
@@ -163,11 +168,11 @@ export function writeGeneratedPassphrase(path: string): void {
  * generated, and point this process's secret store at it. Nothing the daemons
  * read changes yet — see `recordDockerPassphrase`.
  */
-export function prepareDockerPassphrase(
+export async function prepareDockerPassphrase(
   plan: DockerPassphrasePlan,
   env: NodeJS.ProcessEnv = process.env,
-): void {
-  if (plan.kind === "generate") writeGeneratedPassphrase(plan.file);
+): Promise<void> {
+  if (plan.kind === "generate") await writeGeneratedPassphrase(plan.file);
   env[SECRET_STORE_ENV] = "passphrase";
   if (plan.file) env[PASSPHRASE_FILE_ENV] = plan.file;
 }

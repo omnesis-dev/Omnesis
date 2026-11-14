@@ -14,7 +14,7 @@
  * the CLI, which is the only thing that writes them.
  */
 
-import { join } from "node:path";
+import { posix } from "node:path";
 
 export const SERVICE_COMPONENTS = ["gateway", "collector"] as const;
 
@@ -42,7 +42,7 @@ export function launchdPlistPath(
   component: ServiceComponent,
   instance?: string,
 ): string {
-  return join(home, "Library", "LaunchAgents", `${launchdLabel(component, instance)}.plist`);
+  return posix.join(home, "Library", "LaunchAgents", `${launchdLabel(component, instance)}.plist`);
 }
 
 /** systemd unit name, e.g. `omnesis-gateway.service` / `omnesis-gateway-staging.service`. */
@@ -91,7 +91,7 @@ export function systemdUnitPath(
   component: ServiceComponent,
   instance?: string,
 ): string {
-  return join(home, ".config", "systemd", "user", systemdUnitName(component, instance));
+  return posix.join(home, ".config", "systemd", "user", systemdUnitName(component, instance));
 }
 
 /**

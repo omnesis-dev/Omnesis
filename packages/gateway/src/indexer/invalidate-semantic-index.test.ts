@@ -4,7 +4,8 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, expect, test } from "vitest";
+import { afterEach, beforeEach, expect, test, vi } from "vitest";
+import * as core from "@omnesis/core";
 import {
   createIndexDatabase,
   getIndexEmbedModel,
@@ -19,6 +20,11 @@ import {
 } from "./db.js";
 import { invalidateSemanticIndex, invalidateVectorGraph } from "./invalidate-semantic-index.js";
 import type Database from "better-sqlite3";
+
+vi.mock("@omnesis/core", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@omnesis/core")>();
+  return { ...actual, fsyncDirSync: vi.fn(actual.fsyncDirSync) };
+});
 
 let dir: string;
 let graph: string;
@@ -103,4 +109,24 @@ test("invalidating the graph alone drops its files and stamps, and keeps every e
   expect(getUsearchBackfillCursor(db)).toBeNull();
   expect(hasLexicalWrites(db)).toBe(false);
   expect(db.prepare("SELECT length(embedding) AS n FROM chunks").get()).toEqual({ n: 32 });
+});
+
+test("a failed directory flush retains recovery intent until an invalidation retry succeeds", () => {
+  writeFileSync(graph, "obsolete graph");
+  writeFileSync(`${graph}.enc`, "obsolete ciphertext");
+  const failure = Object.assign(new Error("scripted directory flush failure"), { code: "EIO" });
+  vi.mocked(core.fsyncDirSync).mockImplementationOnce(() => {
+    throw failure;
+  });
+
+  expect(() => invalidateSemanticIndex(db, graph, 16, "replacement-model")).toThrow(failure);
+  expect(hasLexicalWrites(db)).toBe(true);
+  expect(existsSync(graph)).toBe(false);
+  expect(existsSync(`${graph}.enc`)).toBe(false);
+
+  invalidateSemanticIndex(db, graph, 16, "replacement-model");
+  expect(hasLexicalWrites(db)).toBe(false);
+  expect(getIndexEmbedModel(db)).toEqual({ name: "replacement-model", dim: 16 });
+  expect(getUsearchSavedChangeSeq(db)).toBeNull();
+  expect(getUsearchBackfillCursor(db)).toBeNull();
 });

@@ -612,6 +612,11 @@ async function buildRawEmbedder(
   });
 }
 
+let initialization: Promise<void> | null = null;
+let initializingEmbedder: import("../indexer/types.js").Embedder | null = null;
+let shutdownRequested = false;
+const queryWork = new Set<Promise<void>>();
+
 async function handleInit(init: IndexerInit): Promise<void> {
   if (state) {
     log("warn", "indexer-worker", "init received twice — ignoring");
@@ -653,6 +658,7 @@ async function handleInit(init: IndexerInit): Promise<void> {
       // The embedder is built here and reused below; the warm-up is paid once
       // either way.
       warmupEmbedder = await buildEmbedder(init);
+      initializingEmbedder = warmupEmbedder;
       post({ type: "bootProgress", stage: "warmup", progress: 0 });
       await warmupEmbedder.embed(["warmup"]);
       post({ type: "bootProgress", stage: "warmup", progress: 1 });
@@ -732,6 +738,7 @@ async function handleInit(init: IndexerInit): Promise<void> {
     const source = new DirectDocumentSource(gatewayDb);
     const chunker = new DocumentChunker(init.chunkerChunkSize, init.chunkerOverlap);
     const embedder = init.lexicalOnly ? null : (warmupEmbedder ?? (await buildEmbedder(init)));
+    initializingEmbedder = embedder;
     currentCutoffs = init.cutoffs;
     const walProbe = indexDb.prepare<[], { log: number; checkpointed: number }>(
       "PRAGMA wal_checkpoint(NOOP)",
@@ -841,6 +848,8 @@ async function handleInit(init: IndexerInit): Promise<void> {
       lastDiskSkipLogAt: 0,
     };
     startupIndexResources = null;
+    initializingEmbedder = null;
+    if (shutdownRequested) return;
 
     // A prior worker may have stopped after acknowledging a source deletion
     // but before its trailing purge became durable. Replay that persisted
@@ -1126,9 +1135,10 @@ async function handleInit(init: IndexerInit): Promise<void> {
     // Release a model the early mismatch warm-up loaded; nothing else holds it
     // once init fails. Guarded on the live state so a failure that lands after
     // the worker adopted the embedder cannot dispose the one it is using.
-    if (warmupEmbedder && state?.embedder !== warmupEmbedder) {
+    if (initializingEmbedder && state?.embedder !== initializingEmbedder) {
       try {
-        await warmupEmbedder.dispose?.();
+        await initializingEmbedder.dispose();
+        initializingEmbedder = null;
       } catch {
         /* disposal is best-effort on an already-failed boot */
       }
@@ -1339,8 +1349,12 @@ async function handleEmbedQuery(id: number, text: string, sentAtMs: number): Pro
   //     Metal/CPU work.
   const recvAtMs = Date.now();
   const ipcInMs = recvAtMs - sentAtMs;
-  if (!state?.embedder) {
-    post({ type: "embedQueryError", id, error: "embedder not ready" });
+  if (shutdownRequested || !state?.embedder) {
+    post({
+      type: "embedQueryError",
+      id,
+      error: shutdownRequested ? "indexer shutting down" : "embedder not ready",
+    });
     return;
   }
   try {
@@ -1529,14 +1543,34 @@ function handleDeleteDocumentIndexBatch(
 }
 
 async function handleShutdown(): Promise<void> {
+  if (shutdownRequested) return;
+  shutdownRequested = true;
+  // Initialization owns native warmup before publishing state. It must finish
+  // before disposal; a JS embedding timeout does not stop the C++ operation.
+  if (state) {
+    state.shuttingDown = true;
+    state.indexer.stop();
+  }
+  await initialization;
   // The guard saves and releases the graph on its own timer; it must not fire
   // into databases this shutdown is about to close.
   graphKeeper?.stop();
   if (!state) {
+    try {
+      await initializingEmbedder?.dispose();
+      initializingEmbedder = null;
+    } catch (error) {
+      log(
+        "error",
+        "indexer-worker",
+        `native cleanup failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      return;
+    }
     post({ type: "shutdownComplete" });
+    parentPort!.close();
     return;
   }
-  if (state.shuttingDown) return;
   state.shuttingDown = true;
 
   if (state.cycleTimer) clearTimeout(state.cycleTimer);
@@ -1552,6 +1586,8 @@ async function handleShutdown(): Promise<void> {
       /* already logged */
     }
   }
+
+  await Promise.allSettled(queryWork);
 
   // Retry queued privacy cleanup before the last graph publication. When it
   // still fails, leave the prior snapshot untouched; the durable obligation
@@ -1569,8 +1605,15 @@ async function handleShutdown(): Promise<void> {
 
   try {
     await state.embedder?.dispose();
-  } catch {
-    /* best-effort */
+  } catch (error) {
+    log(
+      "error",
+      "indexer-worker",
+      `native cleanup failed: ${error instanceof Error ? error.message : String(error)}`,
+    );
+    // An acknowledgement authorizes thread termination; failed native cleanup
+    // remains owned by the gateway process shutdown boundary.
+    return;
   }
   try {
     state.indexDb.close();
@@ -1583,8 +1626,8 @@ async function handleShutdown(): Promise<void> {
     /* best-effort */
   }
 
-  // Main-side proxy terminates the worker after shutdownComplete.
   post({ type: "shutdownComplete" });
+  parentPort!.close();
 }
 
 /**
@@ -1683,11 +1726,17 @@ function handleUpdateCutoffs(cutoffs: IndexerCutoffMap): void {
 parentPort.on("message", (msg: MainToIndexer) => {
   switch (msg.type) {
     case "init":
-      void handleInit(msg);
+      if (!initialization && !shutdownRequested) initialization = handleInit(msg);
       break;
-    case "embedQuery":
-      void handleEmbedQuery(msg.id, msg.text, msg.sentAtMs);
+    case "embedQuery": {
+      const operation = handleEmbedQuery(msg.id, msg.text, msg.sentAtMs);
+      queryWork.add(operation);
+      void operation.then(
+        () => queryWork.delete(operation),
+        () => queryWork.delete(operation),
+      );
       break;
+    }
     case "runReindexMissing":
       void handleRunReindexMissing(msg.id);
       break;

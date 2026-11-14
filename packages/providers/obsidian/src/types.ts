@@ -10,16 +10,17 @@
  * disappears and another path appears with the same `(size, contentHash)`
  * we treat the new path as a rename of the old and reuse its stableId.
  *
- * `inode` is the final-fallback identity. Stable across renames on
- * APFS / ext4. Less stable on NTFS but acceptable — it only ever
- * decides identity when both the frontmatter id and the
- * `(size, contentHash)` rename-detection key are unavailable.
+ * `fileIdentity` preserves the exact volume/inode pair for rename detection
+ * and guarded reads. The numeric `inode` remains for installed-state compatibility
+ * and the existing external-ID spelling when it is an exact safe integer.
  */
 export interface ObsidianFileState {
   mtime: number;
   contentHash: string;
   size: number;
   inode: number;
+  /** Exact volume/file identity; absent in installed numeric-only cursors. */
+  fileIdentity?: string;
   stableId: string;
   /**
    * {@link OBSIDIAN_RENDER_VERSION} this note was last emitted under. Absent
@@ -82,7 +83,8 @@ export interface ParsedNote {
    *   2. otherwise a previously-tracked stableId carried over via
    *      rename-detection (matching `(size, contentHash)` of a just-
    *      disappeared path),
-   *   3. otherwise `inode:<n>` from `stat.ino`.
+   *   3. otherwise `inode:<n>` for safe integer file IDs or
+   *      `inode:<device>:<inode>` for full-width filesystem IDs.
    *
    * This is the externalId emitted to the gateway. The relative path is
    * NOT the externalId.

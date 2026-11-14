@@ -17,6 +17,7 @@ import {
   HARDENED_UNIT_PATH,
 } from "@omnesis/core";
 import { skillFilePath } from "../commands/connect.js";
+import { serviceUnitReferencesPath } from "../service/rebind.js";
 import { INTEGRATION_PLUGIN_ID, LEGACY_PLUGIN_ID } from "./harness-config.js";
 import { COMPONENT_LABELS, UNINSTALL_COMPONENTS } from "./types.js";
 import type {
@@ -339,7 +340,7 @@ export function planUninstall(inv: Inventory, request: UninstallRequest): Plan {
       ...inv.packages.flatMap((pkg) => [pkg.prefix, pkg.packageDir]),
     ];
     const dependents = remainingUnits.filter((unit) =>
-      cliPaths.some((path) => unit.definition.includes(path)),
+      cliPaths.some((path) => serviceUnitReferencesPath(inv.platform, unit.definition, path)),
     );
     if (dependents.length > 0) {
       const names = dependents.map((unit) => unit.unitName).join(", ");

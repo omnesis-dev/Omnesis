@@ -386,6 +386,7 @@ export {
   PRIVATE_UMASK,
   applyPrivateUmask,
   ensurePrivateDirSync,
+  ensurePrivateDirs,
   ensurePrivateFileSync,
 } from "./security-files.js";
 
@@ -1376,7 +1377,12 @@ export {
   MAX_SYNC_ISSUES,
 } from "./sync-issues.js";
 
-export { createPrivateScratch, type PrivateScratch } from "./private-scratch.js";
+export {
+  createPrivateScratch,
+  createPrivateScratchAsync,
+  type PrivateScratch,
+  type AsyncPrivateScratch,
+} from "./private-scratch.js";
 export {
   localGatewayRequestUrl,
   resolveHostToLoopback,
@@ -1406,8 +1412,44 @@ export { oauthCallbackHost } from "./oauth-callback-host.js";
 
 export { SPEECH_TO_SPEECH_MODEL, speechToSpeechAssignment } from "./models/speech-to-speech.js";
 export { CLI_COMMAND_ENV, operatorCommand } from "./operator-command.js";
+export { nodeCommandInvocation, type NodeCommandInvocation } from "./node-command.js";
+export { resolveNpmInvocation, type ResolveNpmInvocationOptions } from "./node-command.js";
+export { killWindowsProcessTree, terminateChildProcess } from "./child-termination.js";
+export { installParentShutdownHandler, requestChildShutdown } from "./parent-shutdown.js";
+export {
+  WindowsProcessTree,
+  type WindowsProcessIdentity,
+  type WindowsProcessTreeOptions,
+} from "./windows-process-tree.js";
+
+export {
+  killWindowsJob,
+  runWindowsJob,
+  spawnWindowsJob,
+  type WindowsJobProcess,
+  windowsJobInvocation,
+  type WindowsJobOptions,
+  type WindowsJobResult,
+} from "./windows-job.js";
 
 export { connectionPathSchema, parseConnectionPath } from "./connection-path.js";
 export type { ConnectionPath } from "./connection-path.js";
 
 export { cloudRelayEnabled } from "./cloud-relay-enabled.js";
+
+export { execWindowsJob } from "./windows-job-exec.js";
+
+export {
+  inspectWindowsPrivatePathSync,
+  prepareWindowsPrivateStorageDirectorySync,
+  inspectWindowsPrivatePaths,
+  copyWindowsPrivateFile,
+  copyWindowsPrivateFileSync,
+  writeWindowsPrivateFileAtomicStream,
+  readWindowsPrivateFile,
+  readWindowsPrivateFileSync,
+  readWindowsPrivateFileContents,
+  readWindowsPrivateFileContentsSync,
+  createWindowsPrivateFile,
+  readWindowsRegularFilePrefix,
+} from "./windows-private-file.js";

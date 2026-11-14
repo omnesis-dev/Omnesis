@@ -25,13 +25,18 @@
 //     exit 5) when the instance never serves rather than reporting a dead PID
 //     as ready.
 //   - the typecheck:fast / typecheck:watch fast-inner-loop scripts exist in
-//     package.json and typecheck:fast actually runs clean (exit 0), so the
-//     "Fast inner loops" guidance in AGENTS.md points at scripts that work.
+//     package.json and the real typecheck:fast runner selects the requested
+//     projects and preserves compiler failures.
 
 import { describe, it, expect, afterEach, afterAll, beforeAll } from "vitest";
 import captureAssert from "node:assert/strict";
 import { capturePortalScreenshot } from "./lib/portal-capture.mjs";
-import { execFileSync, execFile, spawn, spawnSync } from "node:child_process";
+import {
+  execFileSync as processExecFileSync,
+  execFile as processExecFile,
+  spawn as processSpawn,
+  spawnSync as processSpawnSync,
+} from "node:child_process";
 import {
   mkdtempSync,
   mkdirSync,
@@ -49,8 +54,46 @@ import {
 import { join, dirname } from "node:path";
 import { runInNewContext } from "node:vm";
 import { tmpdir } from "node:os";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { createRequire } from "node:module";
 import { gatewayBootBudgetMs } from "./lib/boot-budget.mjs";
+import {
+  bashExecutable,
+  bashEnvironment,
+  nativeBashPath,
+  prependPath,
+  localSshFixturePath,
+} from "./lib/test-shell.mjs";
+
+const fixtureBash = bashExecutable();
+function fixtureOptions(command, options) {
+  return command === fixtureBash
+    ? { ...options, env: bashEnvironment(options?.env ?? process.env, { executable: fixtureBash }) }
+    : options;
+}
+function execFileSync(command, args, options) {
+  return processExecFileSync(command, args, fixtureOptions(command, options));
+}
+function spawnSync(command, args, options) {
+  return processSpawnSync(command, args, fixtureOptions(command, options));
+}
+function spawn(command, args, options) {
+  return processSpawn(command, args, fixtureOptions(command, options));
+}
+function execFile(command, args, options, callback) {
+  if (typeof options === "function")
+    return processExecFile(command, args, fixtureOptions(command), options);
+  return processExecFile(command, args, fixtureOptions(command, options), callback);
+}
+
+it("Node fixture invocations keep their supplied environment unchanged", () => {
+  const supplied = "invented-node-only-path";
+  const output = execFileSync(process.execPath, ["-p", "process.env.PATH"], {
+    env: { ...process.env, PATH: supplied },
+    encoding: "utf8",
+  });
+  expect(output.trim()).toBe(supplied);
+});
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(here, "..");
@@ -119,7 +162,7 @@ const BOOT_BUDGET_MS = gatewayBootBudgetMs();
 // leave a test timing out one line after the wait it was given.
 const WITH_GATEWAY_TIMEOUT_MS = BOOT_BUDGET_MS + 60_000;
 const PID_CAPTURE_TIMEOUT_MS = 5_000;
-const tsx = join(repoRoot, "node_modules", ".bin", "tsx");
+const tsxLoader = pathToFileURL(createRequire(import.meta.url).resolve("tsx")).href;
 const leanGatewayEnv = {
   OMNESIS_IO_CONCURRENCY: "2",
   OMNESIS_CPU_CONCURRENCY: "2",
@@ -189,10 +232,14 @@ describe("scripts/db-stats.ts", () => {
 
     // Run the real script. Before the fix this threw a ReferenceError on the
     // (Bun-only) Bun.file call, so a non-zero exit here is the regression net.
-    const out = execFileSync(tsx, ["scripts/db-stats.ts", dbPath], {
-      cwd: repoRoot,
-      encoding: "utf8",
-    });
+    const out = execFileSync(
+      process.execPath,
+      ["--import", tsxLoader, "scripts/db-stats.ts", dbPath],
+      {
+        cwd: repoRoot,
+        encoding: "utf8",
+      },
+    );
 
     expect(out).toContain("Total documents: 2");
     expect(out).toMatch(/Db size: \d+\.\d+ MB/);
@@ -202,11 +249,15 @@ describe("scripts/db-stats.ts", () => {
   it("fails loudly when the DB path does not exist", () => {
     const dir = tmpDir("omnesis-dbstats-missing-");
     expect(() =>
-      execFileSync(tsx, ["scripts/db-stats.ts", join(dir, "nope.db")], {
-        cwd: repoRoot,
-        encoding: "utf8",
-        stdio: "pipe",
-      }),
+      execFileSync(
+        process.execPath,
+        ["--import", tsxLoader, "scripts/db-stats.ts", join(dir, "nope.db")],
+        {
+          cwd: repoRoot,
+          encoding: "utf8",
+          stdio: "pipe",
+        },
+      ),
     ).toThrow();
   });
 });
@@ -218,7 +269,7 @@ describe("scripts/test-env.sh", () => {
   // probe off that, copying nothing into the live tree.
   function sourcedEnv() {
     const raw = execFileSync(
-      "bash",
+      bashExecutable(),
       [
         "-c",
         `source "${join(repoRoot, "scripts/test-env.sh")}" >/dev/null 2>&1; ` +
@@ -227,7 +278,7 @@ describe("scripts/test-env.sh", () => {
       { encoding: "utf8" },
     );
     const [gatewayUrl, collectorUrl, caCert] = raw.trim().split("\n");
-    return { gatewayUrl, collectorUrl, caCert };
+    return { gatewayUrl, collectorUrl, caCert: nativeBashPath(caCert) };
   }
 
   it("exports https:// URLs and a NODE_EXTRA_CA_CERTS pointing at the config dir's cert", () => {
@@ -352,9 +403,9 @@ describe("scripts/chaos-gateway.mjs cross-platform liveness", () => {
       OMNESIS_MDNS_DISABLE: "1",
       OMNESIS_BIND: "127.0.0.1",
     };
-    // Spawn the already-resolved local tsx binary directly. Detached mode puts
-    // the gateway in its own process group so cleanup cannot orphan it.
-    const proc = spawn(tsx, ["packages/gateway/src/index.ts"], {
+    // Run the loader in the spawned Node process. POSIX detached mode gives
+    // cleanup a process group; Windows terminates the directly owned gateway.
+    const proc = spawn(process.execPath, ["--import", tsxLoader, "packages/gateway/src/index.ts"], {
       env,
       cwd: repoRoot,
       stdio: ["ignore", "pipe", "pipe"],
@@ -382,7 +433,8 @@ describe("scripts/chaos-gateway.mjs cross-platform liveness", () => {
       if (killed) return;
       killed = true;
       try {
-        if (typeof proc.pid === "number") process.kill(-proc.pid, "SIGKILL");
+        if (process.platform !== "win32" && typeof proc.pid === "number")
+          process.kill(-proc.pid, "SIGKILL");
         else proc.kill("SIGKILL");
       } catch {
         /* already dead */
@@ -536,14 +588,18 @@ describe("scripts/omnesis-where.sh read-only topology", () => {
       OMNESIS_MDNS_DISABLE: "1",
       OMNESIS_BIND: "127.0.0.1",
     };
-    const proc = spawn(tsx, [join(repoRoot, "packages/gateway/src/index.ts")], {
-      env,
-      // cwd is the discovered "serving checkout"; the gateway entry is an
-      // absolute path so it loads regardless of where we launch it from.
-      cwd: servingDir,
-      stdio: ["ignore", "ignore", "ignore"],
-      detached: true,
-    });
+    const proc = spawn(
+      process.execPath,
+      ["--import", tsxLoader, join(repoRoot, "packages/gateway/src/index.ts")],
+      {
+        env,
+        // cwd is the discovered "serving checkout"; the gateway entry is an
+        // absolute path so it loads regardless of where we launch it from.
+        cwd: servingDir,
+        stdio: ["ignore", "ignore", "ignore"],
+        detached: true,
+      },
+    );
     const caCert = join(configDir, "tls", "cert.pem");
     const tokenPath = join(configDir, "token");
     const url = `https://localhost:${port}`;
@@ -553,7 +609,8 @@ describe("scripts/omnesis-where.sh read-only topology", () => {
       if (killed) return;
       killed = true;
       try {
-        if (typeof proc.pid === "number") process.kill(-proc.pid, "SIGKILL");
+        if (process.platform !== "win32" && typeof proc.pid === "number")
+          process.kill(-proc.pid, "SIGKILL");
         else proc.kill("SIGKILL");
       } catch {
         /* already dead */
@@ -611,7 +668,7 @@ describe("scripts/omnesis-where.sh read-only topology", () => {
   function runWhere(gw, extraEnv = {}) {
     return new Promise((resolve) => {
       execFile(
-        "bash",
+        bashExecutable(),
         [whereScript],
         {
           cwd: repoRoot,
@@ -694,7 +751,7 @@ describe("scripts/omnesis-where.sh read-only topology", () => {
       "printf",
     ];
     for (const tool of need) {
-      const real = execFileSync("bash", ["-c", `command -v ${tool} || true`], {
+      const real = execFileSync(bashExecutable(), ["-c", `command -v ${tool} || true`], {
         encoding: "utf8",
       }).trim();
       // printf is a bash builtin (no external path) — that is fine, bash
@@ -732,7 +789,7 @@ describe("scripts/dev-instance.sh one-command isolated instance", () => {
   function runDevInstance(args, { configDir, port, extraEnv = {}, timeout = 120000 }) {
     return new Promise((resolve) => {
       execFile(
-        "bash",
+        bashExecutable(),
         [devInstance, ...args],
         {
           cwd: repoRoot,
@@ -784,7 +841,7 @@ describe("scripts/dev-instance.sh one-command isolated instance", () => {
     // Ensure the instance is torn down even if an assertion below throws.
     cleanups.push(() => {
       try {
-        execFileSync("bash", [devInstance, "stop"], {
+        execFileSync(bashExecutable(), [devInstance, "stop"], {
           cwd: repoRoot,
           env: {
             ...process.env,
@@ -881,7 +938,7 @@ describe("scripts/dev-instance.sh one-command isolated instance", () => {
     writeFileSync(join(fakeBin, "curl"), "#!/usr/bin/env bash\nprintf '503'\n", { mode: 0o755 });
     cleanups.push(() => {
       try {
-        execFileSync("bash", [devInstance, "stop"], {
+        execFileSync(bashExecutable(), [devInstance, "stop"], {
           cwd: repoRoot,
           env: {
             ...process.env,
@@ -899,7 +956,7 @@ describe("scripts/dev-instance.sh one-command isolated instance", () => {
       configDir,
       port,
       extraEnv: {
-        PATH: `${fakeBin}:${process.env.PATH}`,
+        PATH: prependPath(fakeBin),
         OMNESIS_DEV_READY_TIMEOUT: "1",
         OMNESIS_LOG_LEVEL: "warn",
       },
@@ -999,16 +1056,20 @@ describe("isolated gateway labels", () => {
         writeFileSync(join(bin, "date"), `#!/usr/bin/env bash\ntouch '${mutation}'\nexit 1\n`, {
           mode: 0o755,
         });
-        const result = spawnSync("bash", [join(repoRoot, "scripts", script), "start", ...args], {
-          env: {
-            ...process.env,
-            PATH: `${bin}:${process.env.PATH}`,
-            OMNESIS_CONFIG_DIR: configDir,
-            OMNESIS_GATEWAY_PORT: "19990",
+        const result = spawnSync(
+          bashExecutable(),
+          [join(repoRoot, "scripts", script), "start", ...args],
+          {
+            env: {
+              ...process.env,
+              PATH: prependPath(bin),
+              OMNESIS_CONFIG_DIR: configDir,
+              OMNESIS_GATEWAY_PORT: "19990",
+            },
+            encoding: "utf8",
+            timeout: 10_000,
           },
-          encoding: "utf8",
-          timeout: 10_000,
-        });
+        );
         expect(result.status).toBe(2);
         expect(existsSync(configDir)).toBe(false);
         expect(existsSync(mutation)).toBe(false);
@@ -1022,11 +1083,15 @@ describe("isolated gateway labels", () => {
     writeFileSync(join(configDir, "tls", "cert.pem"), "fixture-ca");
     const token = "fixture+token&scope=read#fragment";
     writeFileSync(join(configDir, "token"), token);
-    const result = spawnSync("bash", [join(repoRoot, "scripts/dev-instance.sh"), "info"], {
-      env: { ...process.env, OMNESIS_CONFIG_DIR: configDir, OMNESIS_GATEWAY_PORT: "19990" },
-      encoding: "utf8",
-      timeout: 10_000,
-    });
+    const result = spawnSync(
+      bashExecutable(),
+      [join(repoRoot, "scripts/dev-instance.sh"), "info"],
+      {
+        env: { ...process.env, OMNESIS_CONFIG_DIR: configDir, OMNESIS_GATEWAY_PORT: "19990" },
+        encoding: "utf8",
+        timeout: 10_000,
+      },
+    );
     expect(result.status).toBe(0);
     const portal = new URL(result.stdout.match(/^# PORTAL \(one-click login\): (.+)$/m)[1]);
     expect([...portal.searchParams.keys()]).toEqual(["token"]);
@@ -1055,7 +1120,7 @@ setInterval(() => {}, 1000);`,
     writeFileSync(join(bin, "curl"), "#!/usr/bin/env bash\nprintf '503'\n", { mode: 0o755 });
     const result = await new Promise((resolve) =>
       execFile(
-        "bash",
+        bashExecutable(),
         [
           join(repoRoot, "scripts/dev-instance.sh"),
           "start",
@@ -1067,7 +1132,7 @@ setInterval(() => {}, 1000);`,
         {
           env: {
             ...process.env,
-            PATH: `${bin}:${process.env.PATH}`,
+            PATH: prependPath(bin),
             OMNESIS_CONFIG_DIR: configDir,
             OMNESIS_GATEWAY_PORT: "19990",
             OMNESIS_DEV_READY_TIMEOUT: "2",
@@ -1131,7 +1196,7 @@ describe("scripts/lib/safe_kill helper (C7)", () => {
   }
 
   function countAlive(tag) {
-    const out = execFileSync("bash", ["-c", `pgrep -f -- ${tag} || true`], {
+    const out = execFileSync(bashExecutable(), ["-c", `pgrep -f -- ${tag} || true`], {
       encoding: "utf8",
     })
       .trim()
@@ -1155,7 +1220,7 @@ describe("scripts/lib/safe_kill helper (C7)", () => {
     const args = signal ? [pattern, signal] : [pattern];
     return new Promise((resolve) => {
       execFile(
-        "bash",
+        bashExecutable(),
         [safeKill, ...args],
         { cwd: repoRoot, encoding: "utf8", timeout: 10000 },
         (err, stdout, stderr) => {
@@ -1205,7 +1270,7 @@ describe("scripts/lib/safe_kill helper (C7)", () => {
     const script = `source ${JSON.stringify(safeKill)}; safe_kill "$ABSENT_TAG"`;
     const { code, out } = await new Promise((resolve) => {
       execFile(
-        "bash",
+        bashExecutable(),
         ["-c", script],
         {
           cwd: repoRoot,
@@ -1287,35 +1352,9 @@ describe("scripts/ios-snapshot.sh macOS-host bridge guards (C10)", () => {
   const iosSnapshot = join(repoRoot, "scripts/ios-snapshot.sh");
 
   // Build a PATH dir whose `ssh` is a shim: `ssh <host> <cmd...>` → `bash -c
-  // <cmd>` locally. Every other tool the script needs is symlinked through.
+  // <cmd>` locally. Verify that it shadows SSH and refuse every transfer.
   function sshStubPath() {
-    const binDir = tmpDir("omnesis-ios-snap-bin-");
-    const sshShim = join(binDir, "ssh");
-    // $1 is the host (ignored); the rest is the remote command. `bash -lc`
-    // mirrors how the script invokes the remote shell.
-    writeFileSync(sshShim, '#!/usr/bin/env bash\nshift\nexec bash -c "$@"\n', { mode: 0o755 });
-    const need = [
-      "bash",
-      "rsync",
-      "dirname",
-      "printf",
-      "test",
-      "mkdir",
-      "cat",
-      "ls",
-      "wc",
-      "tr",
-      "find",
-      "cp",
-      "rm",
-    ];
-    for (const tool of need) {
-      const real = execFileSync("bash", ["-c", `command -v ${tool} || true`], {
-        encoding: "utf8",
-      }).trim();
-      if (real && real.startsWith("/")) symlinkSync(real, join(binDir, tool));
-    }
-    return binDir;
+    return localSshFixturePath(tmpDir("omnesis-ios-snap-bin-"));
   }
 
   function runIosSnapshot(args, { extraEnv = {}, path = null, timeout = 20000 }) {
@@ -1323,7 +1362,7 @@ describe("scripts/ios-snapshot.sh macOS-host bridge guards (C10)", () => {
       const env = { ...process.env, ...extraEnv };
       if (path) env.PATH = path;
       execFile(
-        "bash",
+        bashExecutable(),
         [iosSnapshot, ...args],
         { cwd: repoRoot, env, timeout },
         (err, stdout, stderr) => {
@@ -1393,7 +1432,7 @@ describe("scripts/ios-snapshot.sh macOS-host bridge guards (C10)", () => {
       source.slice(start, end) +
       '\nprintf "%s\\n%s\\n" "$BUNDLE_ID" "$APP_BUNDLE_ID"\n';
     for (const actual of ["", "dev.example.test.demo"]) {
-      const result = spawnSync("bash", ["-c", program], {
+      const result = spawnSync(bashExecutable(), ["-c", program], {
         encoding: "utf8",
         env: {
           ...process.env,
@@ -1495,7 +1534,7 @@ describe("scripts/ios-snapshot.sh macOS-host bridge guards (C10)", () => {
       const target = join(scratch, "scratch with spaces");
       const log = join(scratch, `build-${coverage}.log`);
       const result = spawnSync(
-        "bash",
+        bashExecutable(),
         ["--posix", "-c", `set -euo pipefail\nxcodebuild() { printf '%s\\n' "$@"; }\n${block}`],
         {
           encoding: "utf8",
@@ -1620,32 +1659,7 @@ describe("scripts/android-render.sh macOS-host bridge guards (C20)", () => {
   const androidRender = join(repoRoot, "scripts/android-render.sh");
 
   function sshStubPath() {
-    const binDir = tmpDir("omnesis-android-render-bin-");
-    const sshShim = join(binDir, "ssh");
-    // $1 is the host (ignored); the rest is the remote command.
-    writeFileSync(sshShim, '#!/usr/bin/env bash\nshift\nexec bash -c "$@"\n', { mode: 0o755 });
-    const need = [
-      "bash",
-      "rsync",
-      "dirname",
-      "printf",
-      "test",
-      "mkdir",
-      "cat",
-      "ls",
-      "wc",
-      "tr",
-      "find",
-      "cp",
-      "rm",
-    ];
-    for (const tool of need) {
-      const real = execFileSync("bash", ["-c", `command -v ${tool} || true`], {
-        encoding: "utf8",
-      }).trim();
-      if (real && real.startsWith("/")) symlinkSync(real, join(binDir, tool));
-    }
-    return binDir;
+    return localSshFixturePath(tmpDir("omnesis-android-render-bin-"));
   }
 
   function runAndroidRender(args, { extraEnv = {}, path = null, timeout = 20000 }) {
@@ -1653,7 +1667,7 @@ describe("scripts/android-render.sh macOS-host bridge guards (C20)", () => {
       const env = { ...process.env, ...extraEnv };
       if (path) env.PATH = path;
       execFile(
-        "bash",
+        bashExecutable(),
         [androidRender, ...args],
         { cwd: repoRoot, env, timeout },
         (err, stdout, stderr) => {
@@ -1801,7 +1815,7 @@ describe("android.yml CI workflow structure (C20)", () => {
       );
       const step = wf.jobs["build-and-test"].steps.find((s) => s.name === "lane [android-build]");
       const result = spawnSync(
-        "bash",
+        bashExecutable(),
         ["--noprofile", "--norc", "-e", "-o", "pipefail", "-c", step.run],
         {
           cwd: dir,
@@ -2482,7 +2496,7 @@ describe("full-validation workflow topology", () => {
     const script = workflow.jobs["main-verdict"].steps[0].run;
     for (const failed of ["push", "schedule", "workflow_dispatch"]) {
       const mock = `gh() { if [[ "$*" == *"event=${failed}&"* ]]; then return 23; fi; printf '[]'; };\n`;
-      const result = spawnSync("bash", ["-c", mock + script], {
+      const result = spawnSync(bashExecutable(), ["-c", mock + script], {
         env: { ...process.env, GITHUB_REPOSITORY: "example/repo" },
         encoding: "utf8",
       });
@@ -2763,23 +2777,12 @@ describe("full-validation workflow topology", () => {
     const dockerfile = readFileSync(join(repoRoot, "Dockerfile"), "utf8");
     expect(dockerfile).not.toMatch(/(?:^RUN|&&)\s+npm ci\b/mu);
     expect(dockerfile.match(/(?:^RUN|&&)\s+sh scripts\/ci\/npm-ci\.sh/gmu)).toHaveLength(2);
-    const dir = tmpDir("omnesis-npm-ci-");
-    writeFileSync(
-      join(dir, "npm"),
-      '#!/bin/sh\nprintf "%s|%s|%s" "$npm_package_config_node_gyp_nodedir" "$npm_config_nodedir" "$*"\n',
-    );
-    chmodSync(join(dir, "npm"), 0o755);
-    const out = execFileSync(join(repoRoot, "scripts/ci/npm-ci.sh"), ["--no-audit"], {
-      cwd: dir,
-      env: { ...process.env, PATH: `${dir}:${process.env.PATH}`, npm_config_nodedir: "" },
-      encoding: "utf8",
-    });
-    const [nodedir, npmConfigNodedir, args] = out.split("|");
-    // The wrapper points npm's debug log at its own directory.
-    expect(args).toMatch(/^ci --logs-dir \S+ --no-audit$/u);
-    // npm 11 warns about `npm_config_nodedir`, which is not an npm option.
-    expect(npmConfigNodedir).toBe("");
-    expect(existsSync(join(nodedir, "include", "node", "common.gypi"))).toBe(true);
+    const windows = parse(readFileSync(join(workflowDir, "windows.yml"), "utf8"));
+    const install = windows.jobs.windows.steps.find((step) => step.id === "dependencies");
+    expect(install.run.trim()).toBe("node scripts/ci/npm-ci.mjs --no-audit --no-fund");
+    // The real native-header preparation and inherited npm environment are
+    // exercised by npm-ci-node.test.mjs, including a checkout without aliases.
+    // Docker's POSIX wrapper remains covered by npm-ci.test.mjs on its hosts.
   });
 
   it("applies patches/ in every image stage that installs dependencies", () => {
@@ -3056,10 +3059,14 @@ describe("external-harness conformance workflow", () => {
       mkdirSync(formerFallback);
       writeFileSync(join(formerFallback, "must-remain"), "unowned\n");
       cleanups.push(() => rmSync(formerFallback, { recursive: true, force: true }));
-      const missingOwnership = spawnSync("bash", ["-euo", "pipefail", "-c", cleanup.run], {
-        env: baseEnv,
-        encoding: "utf8",
-      });
+      const missingOwnership = spawnSync(
+        bashExecutable(),
+        ["-euo", "pipefail", "-c", cleanup.run],
+        {
+          env: baseEnv,
+          encoding: "utf8",
+        },
+      );
       expect(missingOwnership.status, missingOwnership.stderr).toBe(0);
       expect(existsSync(join(formerFallback, "must-remain"))).toBe(true);
 
@@ -3067,7 +3074,7 @@ describe("external-harness conformance workflow", () => {
       const symlinkPath = `/tmp/oh-${runId}-o.abcdef`;
       symlinkSync(danglingTarget, symlinkPath);
       cleanups.push(() => rmSync(symlinkPath, { force: true }));
-      const symlinked = spawnSync("bash", ["-euo", "pipefail", "-c", cleanup.run], {
+      const symlinked = spawnSync(bashExecutable(), ["-euo", "pipefail", "-c", cleanup.run], {
         env: { ...baseEnv, HARNESS_ROOT: symlinkPath, HARNESS_ROOT_ID: "0:0" },
         encoding: "utf8",
       });
@@ -3076,7 +3083,7 @@ describe("external-harness conformance workflow", () => {
 
       const replacedPath = mkdtempSync(`/tmp/oh-${runId}-o.`);
       cleanups.push(() => rmSync(replacedPath, { recursive: true, force: true }));
-      const replaced = spawnSync("bash", ["-euo", "pipefail", "-c", cleanup.run], {
+      const replaced = spawnSync(bashExecutable(), ["-euo", "pipefail", "-c", cleanup.run], {
         env: { ...baseEnv, HARNESS_ROOT: replacedPath, HARNESS_ROOT_ID: "0:0" },
         encoding: "utf8",
       });
@@ -3086,7 +3093,7 @@ describe("external-harness conformance workflow", () => {
       const ownedPath = mkdtempSync(`/tmp/oh-${runId}-o.`);
       writeFileSync(join(ownedPath, "owned"), "delete me\n");
       const ownedStat = statSync(ownedPath);
-      const owned = spawnSync("bash", ["-euo", "pipefail", "-c", cleanup.run], {
+      const owned = spawnSync(bashExecutable(), ["-euo", "pipefail", "-c", cleanup.run], {
         env: {
           ...baseEnv,
           HARNESS_ROOT: ownedPath,
@@ -3125,7 +3132,7 @@ describe("external-harness conformance workflow", () => {
       );
       cleanups.push(() => rmSync(racingOwnedPath, { recursive: true, force: true }));
       cleanups.push(() => rmSync(racingBackup, { recursive: true, force: true }));
-      const raced = spawnSync("bash", ["-euo", "pipefail", "-c", cleanup.run], {
+      const raced = spawnSync(bashExecutable(), ["-euo", "pipefail", "-c", cleanup.run], {
         env: {
           ...baseEnv,
           PATH: `${fakeBin}:${baseEnv.PATH}`,
@@ -3148,33 +3155,56 @@ describe("fast inner-loop typecheck scripts", () => {
   // The "Fast inner loops" section of AGENTS.md tells future agents to reach
   // for typecheck:fast / typecheck:watch as a narrower signal than the full
   // typecheck. This guards that the scripts it names actually exist and that
-  // the documented fast typecheck genuinely runs clean — the doc never points
-  // at an aspirational script.
+  // the documented runner executes the requested compiler projects and
+  // preserves failures without depending on a shell.
   const pkg = JSON.parse(readFileSync(join(repoRoot, "package.json"), "utf8"));
 
   it("declares typecheck:fast and typecheck:watch in package.json", () => {
     expect(pkg.scripts["typecheck:fast"]).toBeTruthy();
     expect(pkg.scripts["typecheck:watch"]).toBeTruthy();
     // typecheck:watch must launch a watch (tsc --build --watch); typecheck:fast
-    // must be a real tsc --build (not an alias of the full typecheck verbatim).
+    // must use the portable runner (not an alias of the full typecheck verbatim).
     expect(pkg.scripts["typecheck:watch"]).toContain("--watch");
-    expect(pkg.scripts["typecheck:fast"]).toContain("tsc --build");
+    expect(pkg.scripts["typecheck:fast"]).toBe("node scripts/typecheck-fast.mjs");
     expect(pkg.scripts["typecheck:fast"]).not.toBe(pkg.scripts.typecheck);
   });
 
-  it("typecheck:fast runs clean (exit 0) against the real tree", () => {
-    // Run the real script via npm so the test exercises exactly what AGENTS.md
-    // documents. tsc --build is incremental; the cost here is a warm build of
-    // the app packages, well within the timeout. A type error anywhere in the
-    // gateway/collector/cli dependency chain makes this throw — the regression
-    // net for "the documented fast typecheck still passes".
-    const out = execFileSync("npm", ["run", "typecheck:fast"], {
-      cwd: repoRoot,
-      encoding: "utf8",
-      stdio: "pipe",
-    });
-    expect(out).not.toMatch(/error TS\d+/);
-  }, 120000);
+  it("the real fast runner selects default or explicit projects and propagates compiler failure", () => {
+    const root = tmpDir("fast-typecheck-fixture-");
+    const compilerDirectory = join(root, "node_modules", "typescript", "bin");
+    mkdirSync(compilerDirectory, { recursive: true });
+    writeFileSync(
+      join(compilerDirectory, "tsc"),
+      "process.stdout.write(JSON.stringify(process.argv.slice(2))); process.exit(Number(process.env.TYPECHECK_EXIT ?? 0));",
+    );
+    const invoke = (args, code = 0) =>
+      spawnSync(process.execPath, [join(repoRoot, "scripts", "typecheck-fast.mjs"), ...args], {
+        cwd: root,
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          // The compiler is a fixture, not an admitted real typecheck.
+          OMNESIS_TEST_SCHEDULER: "0",
+          OMNESIS_TEST_SCHEDULER_ACTIVE: "",
+          OMNESIS_FORCE_TEST_ADMISSION: "",
+          OMNESIS_TREE_FINGERPRINT: "",
+          TYPECHECK_EXIT: String(code),
+        },
+      });
+    const defaults = invoke([]);
+    expect(defaults.status, defaults.stderr).toBe(0);
+    expect(JSON.parse(defaults.stdout)).toEqual([
+      "--build",
+      "packages/gateway",
+      "packages/collector",
+      "packages/cli",
+    ]);
+    const custom = invoke(["packages/example"]);
+    expect(custom.status, custom.stderr).toBe(0);
+    expect(JSON.parse(custom.stdout)).toEqual(["--build", "packages/example"]);
+    const failed = invoke(["packages/example"], 7);
+    expect(failed.status).toBe(7);
+  });
 });
 
 describe("agent-doc executable-claim drift guard (C6)", () => {
@@ -3275,7 +3305,7 @@ describe("agent-doc executable-claim drift guard (C6)", () => {
     // against the code, so a future test-layout change that breaks the contract
     // surfaces here.
     const testFiles = execFileSync(
-      "bash",
+      bashExecutable(),
       ["-c", `ls ${JSON.stringify(screenshotDir)}/*ScreenshotTest.kt`],
       { cwd: repoRoot, encoding: "utf8" },
     )
@@ -3338,11 +3368,15 @@ esac
 `,
       );
       chmodSync(curl, 0o755);
-      const result = spawnSync("bash", [join(repoRoot, "scripts/synth-gateway.sh"), "seed"], {
-        env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, OMNESIS_CONFIG_DIR: config },
-        encoding: "utf8",
-        timeout: 60_000,
-      });
+      const result = spawnSync(
+        bashExecutable(),
+        [join(repoRoot, "scripts/synth-gateway.sh"), "seed"],
+        {
+          env: { ...process.env, PATH: prependPath(bin), OMNESIS_CONFIG_DIR: config },
+          encoding: "utf8",
+          timeout: 60_000,
+        },
+      );
       return { result, adds: Number(readFileSync(counter, "utf8")) };
     } finally {
       rmSync(root, { recursive: true, force: true });
@@ -3446,7 +3480,7 @@ describe("scripts/setup-worktree.sh workspace links", () => {
       writeFileSync(join(primary, build), "an invented extension build");
       git(primary, "worktree", "add", "-q", worktree);
 
-      const result = spawnSync("bash", [join(worktree, "scripts", "setup-worktree.sh")], {
+      const result = spawnSync(bashExecutable(), [join(worktree, "scripts", "setup-worktree.sh")], {
         cwd: worktree,
         encoding: "utf8",
       });
@@ -3499,7 +3533,7 @@ describe("scripts/shot-portal.sh on-demand portal screenshot loop (C9)", () => {
   function runShot(args, { extraEnv = {}, timeout = 120000 } = {}) {
     return new Promise((resolve) => {
       execFile(
-        "bash",
+        bashExecutable(),
         [shotPortal, ...args],
         {
           cwd: repoRoot,
@@ -3540,7 +3574,7 @@ describe("scripts/shot-portal.sh on-demand portal screenshot loop (C9)", () => {
   // serves our isolated config dir, so it is unambiguously ours.
   afterAll(() => {
     try {
-      execFileSync("bash", [devInstance, "stop"], {
+      execFileSync(bashExecutable(), [devInstance, "stop"], {
         cwd: repoRoot,
         env: {
           ...process.env,
@@ -3553,9 +3587,13 @@ describe("scripts/shot-portal.sh on-demand portal screenshot loop (C9)", () => {
       /* already stopped */
     }
     try {
-      const pids = execFileSync("bash", ["-c", `lsof -nP -iTCP:${PORT} -sTCP:LISTEN -t || true`], {
-        encoding: "utf8",
-      })
+      const pids = execFileSync(
+        bashExecutable(),
+        ["-c", `lsof -nP -iTCP:${PORT} -sTCP:LISTEN -t || true`],
+        {
+          encoding: "utf8",
+        },
+      )
         .split(/\s+/)
         .filter(Boolean);
       for (const pid of pids) {
@@ -3618,7 +3656,7 @@ describe("scripts/shot-portal.sh on-demand portal screenshot loop (C9)", () => {
     const caCert = join(configDir, "tls", "cert.pem");
     const token = readFileSync(join(configDir, "token"), "utf8").trim();
     const landingOut = join(outDir, "landing.png");
-    execFileSync("node", [join(repoRoot, "scripts/capture-portal.mjs")], {
+    execFileSync(process.execPath, [join(repoRoot, "scripts/capture-portal.mjs")], {
       cwd: repoRoot,
       env: {
         ...process.env,
@@ -3671,31 +3709,7 @@ describe("scripts/ios-logic.sh sim-less native logic lane guards (C11)", () => {
   const iosLogic = join(repoRoot, "scripts/ios-logic.sh");
 
   function sshStubPath() {
-    const binDir = tmpDir("omnesis-ios-logic-bin-");
-    const sshShim = join(binDir, "ssh");
-    writeFileSync(sshShim, '#!/usr/bin/env bash\nshift\nexec bash -c "$@"\n', { mode: 0o755 });
-    const need = [
-      "bash",
-      "rsync",
-      "dirname",
-      "printf",
-      "test",
-      "mkdir",
-      "cat",
-      "ls",
-      "wc",
-      "tr",
-      "find",
-      "cp",
-      "rm",
-    ];
-    for (const tool of need) {
-      const real = execFileSync("bash", ["-c", `command -v ${tool} || true`], {
-        encoding: "utf8",
-      }).trim();
-      if (real && real.startsWith("/")) symlinkSync(real, join(binDir, tool));
-    }
-    return binDir;
+    return localSshFixturePath(tmpDir("omnesis-ios-logic-bin-"));
   }
 
   function runIosLogic(args, { extraEnv = {}, path = null, timeout = 20000 }) {
@@ -3703,7 +3717,7 @@ describe("scripts/ios-logic.sh sim-less native logic lane guards (C11)", () => {
       const env = { ...process.env, ...extraEnv };
       if (path) env.PATH = path;
       execFile(
-        "bash",
+        bashExecutable(),
         [iosLogic, ...args],
         { cwd: repoRoot, env, timeout },
         (err, stdout, stderr) => {
@@ -3781,22 +3795,24 @@ describe("scripts/ios-logic.sh sim-less native logic lane guards (C11)", () => {
     mkdirSync(descendant, { recursive: true });
     mkdirSync(ci, { recursive: true });
     writeFileSync(join(marked, ".omnesis-primary"), "");
-    symlinkSync(ci, alias);
+    symlinkSync(ci, alias, process.platform === "win32" ? "junction" : "dir");
     const bin = join(sandbox, "bin");
     mkdirSync(bin);
-    writeFileSync(join(bin, "ssh"), '#!/usr/bin/env bash\nshift\nexec bash -c "$@"\n', {
-      mode: 0o755,
-    });
+    const path = localSshFixturePath(bin);
     for (const scratch of [descendant, alias]) {
-      const result = spawnSync("bash", [join(repoRoot, "scripts/ios-style.sh"), "check", scratch], {
-        cwd: repoRoot,
-        encoding: "utf8",
-        env: {
-          ...process.env,
-          PATH: `${bin}:${process.env.PATH}`,
-          OMNESIS_EPIC_MACOS_HOST: "stub",
+      const result = spawnSync(
+        bashExecutable(),
+        [join(repoRoot, "scripts/ios-style.sh"), "check", scratch],
+        {
+          cwd: repoRoot,
+          encoding: "utf8",
+          env: {
+            ...process.env,
+            PATH: path,
+            OMNESIS_EPIC_MACOS_HOST: "stub",
+          },
         },
-      });
+      );
       expect(result.status).toBe(1);
       expect(result.stderr).toContain("refusing primary, home or CI scratch path");
       expect(existsSync(join(scratch, "ios"))).toBe(false);
@@ -3893,7 +3909,9 @@ describe("ios/Package.swift sim-less logic target (C11)", () => {
     // only SwiftUI but exercises the UIKit-gated AppearanceStore — kept excluded.
     const src = readFileSync(pkg, "utf8");
     const testDir = join(repoRoot, "ios/Tests/OmnesisTests");
-    const files = execFileSync("bash", ["-c", `ls ${testDir}/*.swift`], { encoding: "utf8" })
+    const files = execFileSync(bashExecutable(), ["-c", `ls ${testDir}/*.swift`], {
+      encoding: "utf8",
+    })
       .trim()
       .split("\n")
       .map((p) => p.split("/").pop());
@@ -3918,31 +3936,7 @@ describe("scripts/android-logic.sh emulator-less JVM logic lane guards (C11)", (
   const androidLogic = join(repoRoot, "scripts/android-logic.sh");
 
   function sshStubPath() {
-    const binDir = tmpDir("omnesis-android-logic-bin-");
-    const sshShim = join(binDir, "ssh");
-    writeFileSync(sshShim, '#!/usr/bin/env bash\nshift\nexec bash -c "$@"\n', { mode: 0o755 });
-    const need = [
-      "bash",
-      "rsync",
-      "dirname",
-      "printf",
-      "test",
-      "mkdir",
-      "cat",
-      "ls",
-      "wc",
-      "tr",
-      "find",
-      "cp",
-      "rm",
-    ];
-    for (const tool of need) {
-      const real = execFileSync("bash", ["-c", `command -v ${tool} || true`], {
-        encoding: "utf8",
-      }).trim();
-      if (real && real.startsWith("/")) symlinkSync(real, join(binDir, tool));
-    }
-    return binDir;
+    return localSshFixturePath(tmpDir("omnesis-android-logic-bin-"));
   }
 
   function runAndroidLogic(args, { extraEnv = {}, path = null, timeout = 20000 }) {
@@ -3950,7 +3944,7 @@ describe("scripts/android-logic.sh emulator-less JVM logic lane guards (C11)", (
       const env = { ...process.env, ...extraEnv };
       if (path) env.PATH = path;
       execFile(
-        "bash",
+        bashExecutable(),
         [androidLogic, ...args],
         { cwd: repoRoot, env, timeout },
         (err, stdout, stderr) => {

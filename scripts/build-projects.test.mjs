@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   SINGLE_PROCESS_MIN_MB,
@@ -12,7 +13,7 @@ import {
 describe("build-projects", () => {
   it("builds dependencies before the projects that reference them", () => {
     const order = buildOrder();
-    const at = (project) => order.indexOf(`${project}/tsconfig.json`);
+    const at = (project) => order.indexOf(join(project, "tsconfig.json"));
     for (const project of ["packages/types", "packages/core", "packages/gateway", "packages/cli"]) {
       expect(at(project), project).toBeGreaterThanOrEqual(0);
     }

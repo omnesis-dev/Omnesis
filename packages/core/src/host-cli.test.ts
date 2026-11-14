@@ -28,7 +28,7 @@ describe("Homebrew CLI paths", () => {
     ).toEqual([]);
   });
 
-  test("outside macOS only the PATH lookup", () => {
-    expect(mkcertCliCandidates("linux", "/usr/bin:/bin")).toEqual(["mkcert"]);
+  test.each(["linux", "win32"] as const)("%s uses only the PATH lookup", (platform) => {
+    expect(mkcertCliCandidates(platform, "/usr/bin:/bin")).toEqual(["mkcert"]);
   });
 });

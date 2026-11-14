@@ -1792,12 +1792,12 @@ export class SyntheticE2EHarness {
     this.gatewayProcess = spawn(gatewayCommand.command, gatewayCommand.args, {
       env,
       cwd: join(import.meta.dirname, "../../../.."),
-      stdio: ["ignore", "ignore", "ignore"],
+      stdio: ["ignore", "ignore", "ignore", "ipc"],
       detached: true,
     });
     // Reap this detached group even if the runner dies before stop() runs
     // (e.g. `timeout` SIGTERMs the e2e run) — otherwise the gateway orphans.
-    registerSubprocessGroup(this.gatewayProcess);
+    await registerSubprocessGroup(this.gatewayProcess);
 
     const startTime = Date.now();
     const timeout = gatewayBootBudgetMs();

@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { chmodSync, existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { setFixtureMode } from "@omnesis/source-sdk/testing";
 import Database from "better-sqlite3";
 import { describe, expect, test, beforeEach, afterEach, vi } from "vitest";
 import { canDenyReads } from "../testing/apple-db-fixtures.js";
@@ -83,7 +84,7 @@ describe("SingleFileAppleDb", () => {
   // The provider opens all seven Apple databases in one pass. A helper that
   // threw would end that pass, so every failure below is recorded instead.
   test.skipIf(!canDenyReads)("a denied read is recorded, not thrown", () => {
-    chmodSync(path, 0o000);
+    setFixtureMode(path, 0o000);
 
     expect(() => helper.open()).not.toThrow();
 
@@ -118,11 +119,11 @@ describe("SingleFileAppleDb", () => {
   test.skipIf(!canDenyReads)(
     "access restored on a later cycle opens and clears the failure",
     () => {
-      chmodSync(path, 0o000);
+      setFixtureMode(path, 0o000);
       helper.open();
       expect(helper.getLastOpenFailure()).not.toBeNull();
 
-      chmodSync(path, 0o644);
+      setFixtureMode(path, 0o644);
 
       expect(helper.getDb()).not.toBeNull();
       expect(helper.getLastOpenFailure()).toBeNull();
@@ -132,11 +133,11 @@ describe("SingleFileAppleDb", () => {
   // Otherwise the source would keep telling the operator to grant access to a
   // database that is no longer on the host.
   test.skipIf(!canDenyReads)("a failure does not outlive the database it was about", () => {
-    chmodSync(path, 0o000);
+    setFixtureMode(path, 0o000);
     helper.open();
     expect(helper.getLastOpenFailure()).not.toBeNull();
 
-    chmodSync(path, 0o644);
+    setFixtureMode(path, 0o644);
     rmSync(path, { force: true });
 
     expect(helper.getDb()).toBeNull();
@@ -147,7 +148,7 @@ describe("SingleFileAppleDb", () => {
   // `open()` runs on every cycle and on every lazy `getDb()`. The durable
   // channel for a standing failure is the source's sync error, not the log.
   test.skipIf(!canDenyReads)("a standing failure is announced once, not once a call", () => {
-    chmodSync(path, 0o000);
+    setFixtureMode(path, 0o000);
 
     helper.open();
     helper.getDb();
@@ -213,7 +214,7 @@ describe("the remediation an operator is handed", () => {
       const path = join(dir, "store.sqlite");
       new Database(path).close();
       const helper = new TestDbWithRealHint(path, fakeLogger());
-      chmodSync(path, 0o000);
+      setFixtureMode(path, 0o000);
       helper.open();
 
       const failure = helper.getLastOpenFailure();

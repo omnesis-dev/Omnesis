@@ -71,6 +71,8 @@ import {
   distrustingNodeOptions,
   ensureGatewayTrust,
   readPackageVersion,
+  resolveNpmInvocation,
+  runWindowsJob,
   saveNewerSettings,
   SOURCE_COMMIT_PATTERN,
   UPDATE_LOCK_ENV,
@@ -229,7 +231,7 @@ import {
   buildToolsRefusal,
   missingBuildTools,
   nodeBuildToolProbe,
-  npmRefusal,
+  nodeNpmRefusal,
   type BuildTool,
 } from "../update/build-tools.js";
 import { adoptSourceCheckout } from "../update/source-adoption.js";
@@ -306,36 +308,74 @@ async function waitForProcessGroup(groupPid: number): Promise<void> {
   }
 }
 
-export const spawnRunner: CommandRunner = (spec, mode, control) =>
-  new Promise((resolve, reject) => {
+export const spawnRunner: CommandRunner = async (spec, mode, control) => {
+  const invocation = /^npm(?:\.(?:cmd|bat))?$/iu.test(basename(spec.command))
+    ? await resolveNpmInvocation(spec.args, {
+        command: spec.command,
+        env: { ...process.env, ...spec.env },
+      })
+    : { command: spec.command, args: spec.args };
+  // npm's registry requests own their CA store; preserve the constrained
+  // preload while keeping ordinary build commands' NODE_OPTIONS unchanged.
+  const env =
+    /^np[mx](?:\.(?:cmd|bat))?$/iu.test(basename(spec.command)) && spec.args[0] !== "run"
+      ? {
+          ...process.env,
+          ...spec.env,
+          NODE_OPTIONS: distrustingNodeOptions(spec.env?.NODE_OPTIONS),
+        }
+      : spec.env && { ...process.env, ...spec.env };
+  if (process.platform === "win32") {
+    let result: Awaited<ReturnType<typeof runWindowsJob>>;
+    try {
+      result = await runWindowsJob(
+        invocation.command,
+        invocation.args,
+        {
+          cwd: spec.cwd,
+          env,
+          signal: control?.signal,
+          stdout: mode,
+          ...(mode === "inherit" ? { inputStream: process.stdin } : {}),
+          onStderr: (bytes) => {
+            process.stderr.write(bytes);
+          },
+        },
+        (pid) => control?.onProcessGroup?.(pid),
+      );
+      if (result.failure === "spawn")
+        throw new Error(result.failureMessage ?? "Cannot start update command");
+    } catch (error) {
+      try {
+        control?.onProcessGroup?.(null);
+      } catch {
+        /* Preserve the command/publication failure. */
+      }
+      throw error;
+    }
+    control?.onProcessGroup?.(null);
+    return {
+      code: result.exitCode ?? 1,
+      signal: result.signal as NodeJS.Signals | null,
+      stdout: Buffer.from(result.stdout).toString("utf8"),
+    };
+  }
+  return new Promise((resolve, reject) => {
     // A controlled update command uses a fresh POSIX process group so aborting
     // npm or Compose also reaches lifecycle scripts, shells, and workers. A
     // pipe gate keeps that group from executing until its identity has been
-    // durably published in the host lock. Windows retains direct-child
-    // behavior.
+    // durably published in the host lock. Windows uses its kernel job above.
     const grouped = control?.signal !== undefined && process.platform !== "win32";
-    const command = grouped ? "/bin/sh" : spec.command;
+    const command = grouped ? "/bin/sh" : invocation.command;
     const args = grouped
       ? [
           "-c",
           'if IFS= read -r _ <&3; then exec "$@"; else exit 125; fi',
           "omnesis-update-gate",
-          spec.command,
-          ...spec.args,
+          invocation.command,
+          ...invocation.args,
         ]
-      : spec.args;
-    // npm reaches the registry with its own CA store; keep the distrusted
-    // roots out of it the way this process keeps them out of its own. `npm run`
-    // reaches no registry, so a build keeps exactly the NODE_OPTIONS it was
-    // given, as in the installer.
-    const env =
-      /^np[mx]$/u.test(basename(spec.command)) && spec.args[0] !== "run"
-        ? {
-            ...process.env,
-            ...spec.env,
-            NODE_OPTIONS: distrustingNodeOptions(spec.env?.NODE_OPTIONS),
-          }
-        : spec.env && { ...process.env, ...spec.env };
+      : invocation.args;
     const child = spawn(command, args, {
       cwd: spec.cwd,
       ...(env ? { env } : {}),
@@ -409,6 +449,7 @@ export const spawnRunner: CommandRunner = (spec, mode, control) =>
       if (!aborted) gate?.end("go\n");
     }
   });
+};
 
 export interface UpdateApplyStateStore {
   read(): string | null;
@@ -548,7 +589,7 @@ export interface UpdateFlowDeps {
    * Why this machine cannot run `npm ci`, or null when it can. Absent where
    * nothing is built from source.
    */
-  npmRefusal?(): string | null;
+  npmRefusal?(): string | null | Promise<string | null>;
   /**
    * The unit files `omnesis service install` wrote for this account's
    * daemons, brought to this build's generator ahead of their restarts and put
@@ -2341,7 +2382,7 @@ export async function updateSourceCheckout(
       `${c.dim}Commit ancestry is checked after fetching during a real update; ` +
         `a backwards or divergent target may require --force.${c.reset}`,
     );
-    const npmPreview = deps.npmRefusal?.();
+    const npmPreview = await deps.npmRefusal?.();
     if (npmPreview) console.log(`${c.yellow}! ${npmPreview}${c.reset}`);
     const toolsPreview = deps.missingBuildTools?.();
     if (toolsPreview && toolsPreview.missing.length > 0) {
@@ -2364,7 +2405,7 @@ export async function updateSourceCheckout(
   // own release. The tools are named here; nothing acquires root to install
   // them in the middle of an update. npm comes first: the toolchain's install
   // command does not bring it back.
-  const npmMissing = deps.npmRefusal?.();
+  const npmMissing = await deps.npmRefusal?.();
   if (npmMissing) throw new CliError(`${c.red}${npmMissing}${c.reset}`, EXIT_USER_ERROR);
   const tools = deps.missingBuildTools?.();
   if (tools && tools.missing.length > 0) {
@@ -3507,7 +3548,7 @@ function hostUpdateDeps(ctx: HostUpdateContext): {
     npmRefusal:
       plan.kind === "source"
         ? () =>
-            npmRefusal(nodeBuildToolProbe, {
+            nodeNpmRefusal({
               nodeDir: stableNodeBinDir(process.execPath),
               path: process.env.PATH,
             })
@@ -3569,7 +3610,7 @@ function hostUpdateDeps(ctx: HostUpdateContext): {
               },
             );
       if (!cli) return { command: "omnesis", args: [] };
-      // A source checkout's tsx runs `#!/usr/bin/env node`: find this Node.
+      // Build and harness subprocesses inherit the updater's Node installation.
       const path = [dirname(process.execPath), process.env.PATH ?? ""]
         .filter((entry) => entry.length > 0)
         .join(delimiter);

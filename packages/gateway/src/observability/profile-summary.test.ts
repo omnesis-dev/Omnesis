@@ -7,11 +7,17 @@
  * time add up, and that what it keeps names code and nothing else.
  */
 
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { describe, expect, test } from "vitest";
 
 import { displayPath, summarizeProfile, type CpuProfile } from "./profile-summary.js";
 
-const ROOT = "/srv/checkout";
+const FIXTURE_ROOT = join(tmpdir(), "profile summary fixture");
+const ROOT = join(FIXTURE_ROOT, "checkout");
+const EXTERNAL_DIRECTORY = join(FIXTURE_ROOT, "elsewhere", "private");
+const INSTALL_ROOT = join(FIXTURE_ROOT, "app", "node_modules");
 
 /**
  * (root)
@@ -19,7 +25,7 @@ const ROOT = "/srv/checkout";
  * └── handleTick        packages/gateway/src/tick.ts:10
  *     └── scanEverything   packages/gateway/src/scan.ts:20
  *         ├── parseRows       node_modules/some-lib/index.js:5
- *         └── readElsewhere   /opt/elsewhere/private/helper.js:1
+ *         └── readElsewhere   elsewhere/private/helper.js:1
  */
 function profileFrom(timeline: Array<[nodeId: number, samples: number]>): CpuProfile {
   const frame = (functionName: string, url: string, lineNumber: number) => ({
@@ -35,16 +41,38 @@ function profileFrom(timeline: Array<[nodeId: number, samples: number]>): CpuPro
       { id: 2, callFrame: frame("(idle)", "", -1) },
       {
         id: 3,
-        callFrame: frame("handleTick", `file://${ROOT}/packages/gateway/src/tick.ts`, 9),
+        callFrame: frame(
+          "handleTick",
+          pathToFileURL(join(ROOT, "packages/gateway/src/tick.ts")).href,
+          9,
+        ),
         children: [4],
       },
       {
         id: 4,
-        callFrame: frame("scanEverything", `file://${ROOT}/packages/gateway/src/scan.ts`, 19),
+        callFrame: frame(
+          "scanEverything",
+          pathToFileURL(join(ROOT, "packages/gateway/src/scan.ts")).href,
+          19,
+        ),
         children: [5, 6],
       },
-      { id: 5, callFrame: frame("parseRows", `file://${ROOT}/node_modules/some-lib/index.js`, 4) },
-      { id: 6, callFrame: frame("readElsewhere", "file:///opt/elsewhere/private/helper.js", 0) },
+      {
+        id: 5,
+        callFrame: frame(
+          "parseRows",
+          pathToFileURL(join(ROOT, "node_modules/some-lib/index.js")).href,
+          4,
+        ),
+      },
+      {
+        id: 6,
+        callFrame: frame(
+          "readElsewhere",
+          pathToFileURL(join(EXTERNAL_DIRECTORY, "helper.js")).href,
+          0,
+        ),
+      },
     ],
     startTime: 0,
     // The first sample at the start, then one per millisecond; the last lasts 1 ms too.
@@ -119,8 +147,10 @@ describe("summarizeProfile", () => {
 
   test("stores no absolute path from the machine it ran on", () => {
     const json = JSON.stringify(summary);
-    expect(json).not.toContain(ROOT);
-    expect(json).not.toContain("/opt/elsewhere");
+    for (const path of [ROOT, EXTERNAL_DIRECTORY]) {
+      expect(json).not.toContain(path);
+      expect(json).not.toContain(JSON.stringify(path).slice(1, -1));
+    }
     expect(json).toContain('"file":"node_modules/some-lib/index.js"');
     expect(json).toContain('"file":"helper.js"');
   });
@@ -141,29 +171,27 @@ describe("summarizeProfile", () => {
 
 describe("displayPath", () => {
   test("keeps code locations and drops everything else about the path", () => {
-    expect(displayPath(`file://${ROOT}/packages/core/src/a.ts`, ROOT)).toEqual({
+    expect(displayPath(pathToFileURL(join(ROOT, "packages/core/src/a.ts")).href, ROOT)).toEqual({
       file: "packages/core/src/a.ts",
       inRoot: true,
     });
-    expect(displayPath(`${ROOT}/node_modules/x/y.js`, ROOT)).toEqual({
+    expect(displayPath(join(ROOT, "node_modules/x/y.js"), ROOT)).toEqual({
       file: "node_modules/x/y.js",
       inRoot: false,
     });
     // An npm install: the gateway itself lives under node_modules.
-    expect(
-      displayPath("/opt/app/node_modules/@omnesis/gateway/dist/a.js", "/opt/app/node_modules"),
-    ).toEqual({
+    expect(displayPath(join(INSTALL_ROOT, "@omnesis/gateway/dist/a.js"), INSTALL_ROOT)).toEqual({
       file: "node_modules/@omnesis/gateway/dist/a.js",
       inRoot: true,
     });
-    expect(
-      displayPath("/opt/app/node_modules/hono/dist/compose.js", "/opt/app/node_modules"),
-    ).toEqual({
+    expect(displayPath(join(INSTALL_ROOT, "hono/dist/compose.js"), INSTALL_ROOT)).toEqual({
       file: "node_modules/hono/dist/compose.js",
       inRoot: false,
     });
     expect(displayPath("node:internal/timers", ROOT).file).toBe("node:internal/timers");
-    expect(displayPath("file:///elsewhere/secret/name.js", ROOT).file).toBe("name.js");
+    expect(displayPath(pathToFileURL(join(EXTERNAL_DIRECTORY, "name.js")).href, ROOT).file).toBe(
+      "name.js",
+    );
     expect(displayPath("data:text/javascript,doSomething()", ROOT).file).toBe("data:");
     expect(displayPath("", ROOT).file).toBe("");
   });

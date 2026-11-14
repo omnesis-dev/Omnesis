@@ -164,13 +164,13 @@ describe("certificate helpers", () => {
 });
 
 describe("resolveTlsMaterial", () => {
-  const configDir = "/srv/omnesis";
+  const configDir = join(dir, "config");
 
   test("no env override means the gateway's own self-signed pair", () => {
     expect(resolveTlsMaterial({ configDir })).toEqual({
       ownership: "self-signed",
-      certPath: "/srv/omnesis/tls/cert.pem",
-      keyPath: "/srv/omnesis/tls/key.pem",
+      certPath: join(configDir, "tls", "cert.pem"),
+      keyPath: join(configDir, "tls", "key.pem"),
     });
     expect(resolveTlsMaterial({ configDir, certPath: "/x.crt" }).ownership).toBe("self-signed");
   });
@@ -179,26 +179,26 @@ describe("resolveTlsMaterial", () => {
     expect(
       resolveTlsMaterial({
         configDir,
-        certPath: "/srv/omnesis/tls/../tls/tailscale.crt",
-        keyPath: "/srv/omnesis/tls/tailscale.key",
+        certPath: `${configDir}/tls/../tls/tailscale.crt`,
+        keyPath: join(configDir, "tls", "tailscale.key"),
       }),
     ).toEqual({
       ownership: "tailscale",
-      certPath: "/srv/omnesis/tls/tailscale.crt",
-      keyPath: "/srv/omnesis/tls/tailscale.key",
+      certPath: join(configDir, "tls", "tailscale.crt"),
+      keyPath: join(configDir, "tls", "tailscale.key"),
     });
     expect(
       resolveTlsMaterial({
         configDir,
-        certPath: "/srv/omnesis/tls/mkcert.crt",
-        keyPath: "/srv/omnesis/tls/mkcert.key",
+        certPath: join(configDir, "tls", "mkcert.crt"),
+        keyPath: join(configDir, "tls", "mkcert.key"),
       }).ownership,
     ).toBe("mkcert");
     expect(
       resolveTlsMaterial({
         configDir,
-        certPath: "/srv/omnesis/tls/cert.pem",
-        keyPath: "/srv/omnesis/tls/key.pem",
+        certPath: join(configDir, "tls", "cert.pem"),
+        keyPath: join(configDir, "tls", "key.pem"),
       }).ownership,
     ).toBe("self-signed");
   });
@@ -207,7 +207,7 @@ describe("resolveTlsMaterial", () => {
     expect(
       resolveTlsMaterial({
         configDir,
-        certPath: "/srv/omnesis/tls/tailscale.crt",
+        certPath: join(configDir, "tls", "tailscale.crt"),
         keyPath: "/etc/ssl/private/gateway.key",
       }).ownership,
     ).toBe("external");

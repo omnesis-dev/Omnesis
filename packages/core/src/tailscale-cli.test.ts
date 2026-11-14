@@ -9,8 +9,8 @@ import {
 } from "./tailscale-cli.js";
 
 describe("Tailscale CLI candidates", () => {
-  test("Linux uses the CLI on PATH", () => {
-    expect(tailscaleCliCandidates("linux", "/home/maya", "/usr/bin:/bin")).toEqual([
+  test.each(["linux", "win32"] as const)("%s uses the CLI on PATH", (platform) => {
+    expect(tailscaleCliCandidates(platform, "/home/maya", "/usr/bin:/bin")).toEqual([
       { file: "tailscale", bundledApp: false },
     ]);
   });
@@ -57,6 +57,13 @@ describe("Tailscale CLI candidates", () => {
       "/Applications/Tailscale.app/Contents/MacOS/Tailscale",
       "/Users/maya/Applications/Tailscale.app/Contents/MacOS/Tailscale",
     ]);
+  });
+
+  test("macOS home names preserve literal backslashes", () => {
+    const candidates = tailscaleCliCandidates("darwin", "/Users/maya\\literal", "");
+    expect(candidates.at(-1)?.file).toBe(
+      "/Users/maya\\literal/Applications/Tailscale.app/Contents/MacOS/Tailscale",
+    );
   });
 
   test("a successful status process can still be logged out", () => {

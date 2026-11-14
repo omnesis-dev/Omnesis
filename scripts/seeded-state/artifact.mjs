@@ -22,6 +22,27 @@ import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import Database from "better-sqlite3";
 
+// Source checkouts and compiled package consumers use the same native ACL contract.
+const windowsPrivacy =
+  process.platform === "win32"
+    ? await (async () => {
+        const bootstrap = new URL("../lib/bootstrap-platform.mjs", import.meta.url);
+        return existsSync(bootstrap)
+          ? (await import(bootstrap.href)).bootstrapWindowsPlatform("windows-private-file.ts")
+          : import("@omnesis/platform/windows-private-file");
+      })()
+    : undefined;
+
+/** Allocate private destination bytes before copying, using bounded memory. */
+function copyPrivateSeedFile(source, target) {
+  if (!windowsPrivacy) {
+    copyFileSync(source, target);
+    chmodSync(target, 0o600);
+    return;
+  }
+  windowsPrivacy.copyWindowsPrivateFileSync(source, target);
+}
+
 export const SEEDED_STATE_FORMAT = 1;
 export const SEEDED_STATE_MANIFEST = "seeded-state-manifest.json";
 export const SEEDED_STATE_MARKER = ".omnesis-seeded-state";
@@ -756,7 +777,8 @@ export function installSeededStateArtifact(artifactDirectory, stateDirectory, op
   }
   const digest = options.expectedManifestSha256;
   mkdirSync(stateDirectory, { recursive: true, mode: 0o700 });
-  chmodSync(stateDirectory, 0o700);
+  if (windowsPrivacy) windowsPrivacy.secureWindowsPrivatePathSync(stateDirectory, "directory");
+  else chmodSync(stateDirectory, 0o700);
   const lockPath = join(stateDirectory, INSTALL_LOCK);
   let lock;
   try {
@@ -775,6 +797,11 @@ export function installSeededStateArtifact(artifactDirectory, stateDirectory, op
     if (existsSync(markerPath)) {
       const installed = readFileSync(markerPath, "utf8").trim();
       if (installed !== digest) throw new Error("state was initialized from a different artifact");
+      if (windowsPrivacy) {
+        for (const database of manifest.databases)
+          windowsPrivacy.secureWindowsPrivatePathSync(join(stateDirectory, database.name), "file");
+        windowsPrivacy.secureWindowsPrivatePathSync(markerPath, "file");
+      }
       return { installed: false, digest };
     }
     const existing = readdirSync(stateDirectory).filter((entry) => entry !== INSTALL_LOCK);
@@ -784,18 +811,19 @@ export function installSeededStateArtifact(artifactDirectory, stateDirectory, op
 
     for (const database of manifest.databases) {
       const temporary = join(stateDirectory, `.${database.name}.seed-tmp`);
-      copyFileSync(join(artifactDirectory, database.name), temporary);
-      chmodSync(temporary, 0o600);
+      temporaryFiles.push({ temporary, final: join(stateDirectory, database.name) });
+      copyPrivateSeedFile(join(artifactDirectory, database.name), temporary);
       if (sha256File(temporary) !== database.sha256) {
         throw new Error(`seeded-state copy verification failed: ${database.name}`);
       }
-      temporaryFiles.push({ temporary, final: join(stateDirectory, database.name) });
     }
     for (const file of temporaryFiles) {
       renameSync(file.temporary, file.final);
       finalFiles.push(file.final);
     }
-    writeFileSync(markerPath, `${digest}\n`, { mode: 0o600, flag: "wx" });
+    if (windowsPrivacy)
+      windowsPrivacy.createWindowsPrivateFileSync(markerPath, Buffer.from(`${digest}\n`));
+    else writeFileSync(markerPath, `${digest}\n`, { mode: 0o600, flag: "wx" });
     return { installed: true, digest };
   } catch (error) {
     for (const path of [...temporaryFiles.map((file) => file.temporary), ...finalFiles]) {

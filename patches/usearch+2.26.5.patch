@@ -1,0 +1,461 @@
+diff --git a/node_modules/usearch/include/usearch/index.hpp b/node_modules/usearch/include/usearch/index.hpp
+--- a/node_modules/usearch/include/usearch/index.hpp
++++ b/node_modules/usearch/include/usearch/index.hpp
+@@ -1,3 +1,4 @@
++// Modified for Omnesis: Unicode Windows paths, delete-shared mappings and 64-bit file lengths.
+ /**
+  *  @file       index.hpp
+  *  @author     Ash Vardanian
+@@ -76,6 +77,7 @@
+ #define NOMINMAX
+ #endif
+ #include <Windows.h>
++#include <string>
+ #include <sys/stat.h> // `fstat` for file size
+ #undef NOMINMAX
+ #undef _USE_MATH_DEFINES
+@@ -1922,6 +1924,23 @@
+  * This class raises no exceptions and corresponds errors through `serialization_result_t`.
+  * The class automatically closes the file when the object is destroyed.
+  */
++#if defined(USEARCH_DEFINED_WINDOWS)
++// UTF-8 is the path encoding used by the JavaScript binding.
++inline std::wstring windows_wide_path(char const* path) {
++    int count = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, path, -1, nullptr, 0);
++    if (!count) return {};
++    std::wstring result(static_cast<std::size_t>(count), L'\0');
++    if (!MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, path, -1, &result[0], count)) return {};
++    return result;
++}
++inline std::FILE* windows_fopen(char const* path, wchar_t const* mode) noexcept {
++    try {
++        auto wide = windows_wide_path(path);
++        return wide.empty() ? nullptr : _wfopen(wide.c_str(), mode);
++    } catch (...) { errno = ENOMEM; return nullptr; }
++}
++#endif
++
+ class output_file_t {
+     char const* path_ = nullptr;
+     std::FILE* file_ = nullptr;
+@@ -1939,7 +1958,11 @@
+     serialization_result_t open_if_not() noexcept {
+         serialization_result_t result;
+         if (!file_)
++#if defined(USEARCH_DEFINED_WINDOWS)
++            file_ = windows_fopen(path_, L"wb");
++#else
+             file_ = std::fopen(path_, "wb");
++#endif
+         if (!file_)
+             return result.failed(std::strerror(errno));
+         return result;
+@@ -1981,7 +2004,11 @@
+     serialization_result_t open_if_not() noexcept {
+         serialization_result_t result;
+         if (!file_)
++#if defined(USEARCH_DEFINED_WINDOWS)
++            file_ = windows_fopen(path_, L"rb");
++#else
+             file_ = std::fopen(path_, "rb");
++#endif
+         if (!file_)
+             return result.failed(std::strerror(errno));
+         return result;
+@@ -2078,12 +2105,22 @@
+ 
+ #if defined(USEARCH_DEFINED_WINDOWS)
+ 
+-        HANDLE file_handle =
+-            CreateFileA(path_, GENERIC_READ, FILE_SHARE_READ, 0, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, 0);
++        std::wstring wide;
++        try { wide = windows_wide_path(path_); }
++        catch (...) { return result.failed("Allocating the Windows path failed!"); }
++        if (wide.empty()) return result.failed("Invalid UTF-8 file path!");
++        HANDLE file_handle = CreateFileW(wide.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_DELETE,
++                                        0, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, 0);
+         if (file_handle == INVALID_HANDLE_VALUE)
+             return result.failed("Opening file failed!");
+ 
+-        std::size_t file_length = GetFileSize(file_handle, 0);
++        LARGE_INTEGER length;
++        if (!GetFileSizeEx(file_handle, &length) || length.QuadPart <= 0 ||
++            static_cast<unsigned long long>(length.QuadPart) > (std::numeric_limits<std::size_t>::max)()) {
++            CloseHandle(file_handle);
++            return result.failed("Invalid mapped file length!");
++        }
++        std::size_t file_length = static_cast<std::size_t>(length.QuadPart);
+         HANDLE mapping_handle = CreateFileMapping(file_handle, 0, PAGE_READONLY, 0, 0, 0);
+         if (mapping_handle == 0) {
+             CloseHandle(file_handle);
+diff --git a/node_modules/usearch/javascript/lib.cpp b/node_modules/usearch/javascript/lib.cpp
+--- a/node_modules/usearch/javascript/lib.cpp
++++ b/node_modules/usearch/javascript/lib.cpp
+@@ -1,3 +1,4 @@
++// Modified for Omnesis: deterministic reset and atomic Windows mmap publication.
+ /**
+  *  @file javascript.cpp
+  *  @author Ash Vardanian
+@@ -10,6 +11,7 @@
+  *
+  */
+ #include <new>    // `std::bad_alloc`
++#include <vector>
+ #include <thread> // `std::thread::hardware_concurrency()`
+ 
+ #define NAPI_CPP_EXCEPTIONS
+@@ -40,6 +42,7 @@
+     void Save(Napi::CallbackInfo const& ctx);
+     void Load(Napi::CallbackInfo const& ctx);
+     void View(Napi::CallbackInfo const& ctx);
++    void Reset(Napi::CallbackInfo const& ctx);
+ 
+     void Add(Napi::CallbackInfo const& ctx);
+     Napi::Value Search(Napi::CallbackInfo const& ctx);
+@@ -67,6 +70,7 @@
+             InstanceMethod("save", &CompiledIndex::Save),
+             InstanceMethod("load", &CompiledIndex::Load),
+             InstanceMethod("view", &CompiledIndex::View),
++            InstanceMethod("reset", &CompiledIndex::Reset),
+         });
+ 
+     Napi::FunctionReference* constructor = new Napi::FunctionReference();
+@@ -74,6 +78,54 @@
+     env.SetInstanceData(constructor);
+ 
+     exports.Set("CompiledIndex", func);
++#if defined(USEARCH_DEFINED_WINDOWS)
++    exports.Set("windowsPublicationVersion", Napi::Number::New(env, 1));
++    exports.Set("atomicReplaceFile", Napi::Function::New(env, [](Napi::CallbackInfo const& ctx) {
++        try {
++            std::string source = ctx[0].As<Napi::String>();
++            std::string target = ctx[1].As<Napi::String>();
++            auto source_wide = windows_wide_path(source.c_str());
++            auto target_wide = windows_wide_path(target.c_str());
++            if (source_wide.empty() || target_wide.empty()) {
++                Napi::TypeError::New(ctx.Env(), "Invalid UTF-8 publication path").ThrowAsJavaScriptException();
++                return;
++            }
++            struct rename_info_t { DWORD flags; HANDLE root; DWORD length; WCHAR name[1]; };
++            std::size_t bytes = (target_wide.size() - 1) * sizeof(WCHAR);
++            std::vector<unsigned char> storage(sizeof(rename_info_t) + bytes, 0);
++            auto info = reinterpret_cast<rename_info_t*>(storage.data());
++            info->flags = 0x43; // REPLACE_IF_EXISTS | POSIX_SEMANTICS | IGNORE_READONLY_ATTRIBUTE.
++            info->length = static_cast<DWORD>(bytes);
++            std::memcpy(info->name, target_wide.data(), bytes);
++            HANDLE file = CreateFileW(source_wide.c_str(), DELETE | SYNCHRONIZE,
++                                     FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
++                                     OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
++            DWORD error = file == INVALID_HANDLE_VALUE ? GetLastError() : ERROR_SUCCESS;
++            if (!error) {
++                if (!SetFileInformationByHandle(file, static_cast<FILE_INFO_BY_HANDLE_CLASS>(22), info,
++                                                static_cast<DWORD>(storage.size())))
++                    error = GetLastError();
++                CloseHandle(file);
++                // Legacy filesystems may lack POSIX rename. This fallback remains atomic and
++                // fails without replacing the destination when a live view prevents it.
++                if (error == ERROR_INVALID_PARAMETER || error == ERROR_NOT_SUPPORTED ||
++                    error == ERROR_INVALID_FUNCTION) {
++                    error = MoveFileExW(source_wide.c_str(), target_wide.c_str(), MOVEFILE_REPLACE_EXISTING)
++                                ? ERROR_SUCCESS : GetLastError();
++                }
++            }
++            if (error) {
++                auto failure = Napi::Error::New(ctx.Env(), "Atomic index publication failed; Windows error " +
++                                                           std::to_string(error));
++                failure.Set("code", "EPERM");
++                failure.Set("nativeCode", Napi::Number::New(ctx.Env(), error));
++                failure.ThrowAsJavaScriptException();
++            }
++        } catch (std::exception const& error) {
++            Napi::Error::New(ctx.Env(), error.what()).ThrowAsJavaScriptException();
++        }
++    }));
++#endif
+     return exports;
+ }
+ 
+@@ -132,6 +184,10 @@
+     } catch (...) {
+         Napi::TypeError::New(ctx.Env(), "Serialization failed").ThrowAsJavaScriptException();
+     }
++}
++
++void CompiledIndex::Reset(Napi::CallbackInfo const&) {
++    native_->reset();
+ }
+ 
+ void CompiledIndex::Load(Napi::CallbackInfo const& ctx) {
+diff --git a/node_modules/usearch/javascript/usearch.ts b/node_modules/usearch/javascript/usearch.ts
+--- a/node_modules/usearch/javascript/usearch.ts
++++ b/node_modules/usearch/javascript/usearch.ts
+@@ -1,9 +1,23 @@
++// Modified for Omnesis: Windows native capability checks, publication and reset.
+ import build from "node-gyp-build";
+ import * as path from "path";
+ import { existsSync } from "fs";
+ import { getFileName, getRoot } from "bindings";
+ 
+ const compiled: Compiled = build(getBuildDir(getDirName()));
++if (process.platform === "win32" && compiled.windowsPublicationVersion !== 1)
++  throw new Error("Omnesis requires its rebuilt Windows USearch binding; run node scripts/ci/build-windows-usearch.mjs.");
++
++function nativePath(value: string): string {
++  if (typeof value !== "string" || value.includes("\0")) throw new TypeError("Invalid index path");
++  return process.platform === "win32" ? path.toNamespacedPath(value) : value;
++}
++
++/** Atomically replace a Windows index while existing mapped readers retain the old file. */
++export function atomicReplaceFile(source: string, target: string): void {
++  if (!compiled.atomicReplaceFile) throw new Error("Native Windows index publication is unavailable");
++  compiled.atomicReplaceFile(nativePath(source), nativePath(target));
++}
+ 
+ type Vector = Float32Array | Float64Array | Int8Array | Uint8Array;
+ type Matrix = Vector[];
+@@ -28,9 +42,12 @@
+   save(path: string): void;
+   load(path: string): void;
+   view(path: string): void;
++  reset?(): void;
+ }
+ 
+ interface Compiled {
++  windowsPublicationVersion?: number;
++  atomicReplaceFile?(source: string, target: string): void;
+   CompiledIndex: CompiledIndex;
+   exactSearch(
+     dataset: VectorOrMatrix,
+@@ -514,7 +531,7 @@
+       throw new Error(
+         "`path` must be a string representing the file path to write."
+       );
+-    this.#compiledIndex.save(path);
++    this.#compiledIndex.save(nativePath(path));
+   }
+ 
+   /**
+@@ -527,7 +544,12 @@
+       throw new Error(
+         "`path` must be a string representing the file path to read."
+       );
+-    this.#compiledIndex.load(path);
++    this.#compiledIndex.load(nativePath(path));
++  }
++
++  /** Release native allocations and mappings synchronously when the binding supports it. */
++  reset(): void {
++    this.#compiledIndex.reset?.();
+   }
+ 
+   /**
+@@ -540,7 +562,7 @@
+       throw new Error(
+         "`path` must be a string representing the file path to read."
+       );
+-    this.#compiledIndex.view(path);
++    this.#compiledIndex.view(nativePath(path));
+   }
+ }
+ 
+@@ -651,6 +673,7 @@
+   Matches,
+   BatchMatches,
+   exactSearch,
++  atomicReplaceFile,
+ };
+ export default usearch;
+ 
+diff --git a/node_modules/usearch/javascript/dist/esm/usearch.js b/node_modules/usearch/javascript/dist/esm/usearch.js
+--- a/node_modules/usearch/javascript/dist/esm/usearch.js
++++ b/node_modules/usearch/javascript/dist/esm/usearch.js
+@@ -1,8 +1,22 @@
++// Modified for Omnesis: Windows native capability checks, publication and reset.
+ import build from "node-gyp-build";
+ import * as path from "path";
+ import { existsSync } from "fs";
+ import { getFileName, getRoot } from "bindings";
+ const compiled = build(getBuildDir(getDirName()));
++if (process.platform === "win32" && compiled.windowsPublicationVersion !== 1)
++    throw new Error("Omnesis requires its rebuilt Windows USearch binding; run node scripts/ci/build-windows-usearch.mjs.");
++function nativePath(value) {
++    if (typeof value !== "string" || value.includes("\0"))
++        throw new TypeError("Invalid index path");
++    return process.platform === "win32" ? path.toNamespacedPath(value) : value;
++}
++/** Atomically replace a Windows index while existing mapped readers retain the old file. */
++export function atomicReplaceFile(source, target) {
++    if (!compiled.atomicReplaceFile)
++        throw new Error("Native Windows index publication is unavailable");
++    compiled.atomicReplaceFile(nativePath(source), nativePath(target));
++}
+ /**
+  * Enumeration representing the various metric kinds used to measure the distance between vectors in the index.
+  * @enum {string}
+@@ -364,7 +378,7 @@
+     save(path) {
+         if (typeof path !== "string")
+             throw new Error("`path` must be a string representing the file path to write.");
+-        this.#compiledIndex.save(path);
++        this.#compiledIndex.save(nativePath(path));
+     }
+     /**
+      * Load index from a file.
+@@ -374,7 +388,11 @@
+     load(path) {
+         if (typeof path !== "string")
+             throw new Error("`path` must be a string representing the file path to read.");
+-        this.#compiledIndex.load(path);
++        this.#compiledIndex.load(nativePath(path));
++    }
++    /** Release native allocations and mappings synchronously when the binding supports it. */
++    reset() {
++        this.#compiledIndex.reset?.();
+     }
+     /**
+      * View index from a file, without loading into RAM.
+@@ -384,7 +402,7 @@
+     view(path) {
+         if (typeof path !== "string")
+             throw new Error("`path` must be a string representing the file path to read.");
+-        this.#compiledIndex.view(path);
++        this.#compiledIndex.view(nativePath(path));
+     }
+ }
+ /**
+@@ -466,6 +484,7 @@
+     Matches,
+     BatchMatches,
+     exactSearch,
++    atomicReplaceFile,
+ };
+ export default usearch;
+ // utility functions to help find native builds
+diff --git a/node_modules/usearch/javascript/dist/esm/usearch.d.ts b/node_modules/usearch/javascript/dist/esm/usearch.d.ts
+--- a/node_modules/usearch/javascript/dist/esm/usearch.d.ts
++++ b/node_modules/usearch/javascript/dist/esm/usearch.d.ts
+@@ -1,3 +1,6 @@
++// Modified for Omnesis: Windows native capability checks, publication and reset.
++/** Atomically replace a Windows index while existing mapped readers retain the old file. */
++export declare function atomicReplaceFile(source: string, target: string): void;
+ type Vector = Float32Array | Float64Array | Int8Array | Uint8Array;
+ type Matrix = Vector[];
+ type VectorOrMatrix = Vector | Matrix;
+@@ -212,6 +215,8 @@
+      * @throws Will throw an error if `path` is not a string.
+      */
+     load(path: string): void;
++    /** Release native allocations and mappings synchronously when the binding supports it. */
++    reset(): void;
+     /**
+      * View index from a file, without loading into RAM.
+      * @param {string} path File path to read.
+@@ -258,5 +263,6 @@
+     Matches: typeof Matches;
+     BatchMatches: typeof BatchMatches;
+     exactSearch: typeof exactSearch;
++    atomicReplaceFile: typeof atomicReplaceFile;
+ };
+ export default usearch;
+diff --git a/node_modules/usearch/javascript/dist/cjs/usearch.js b/node_modules/usearch/javascript/dist/cjs/usearch.js
+--- a/node_modules/usearch/javascript/dist/cjs/usearch.js
++++ b/node_modules/usearch/javascript/dist/cjs/usearch.js
+@@ -1,3 +1,4 @@
++// Modified for Omnesis: Windows native capability checks, publication and reset.
+ "use strict";
+ var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+     if (k2 === undefined) k2 = k;
+@@ -49,12 +50,27 @@
+ var _Index_compiledIndex;
+ Object.defineProperty(exports, "__esModule", { value: true });
+ exports.Index = exports.BatchMatches = exports.Matches = exports.ScalarKind = exports.MetricKind = void 0;
++exports.atomicReplaceFile = atomicReplaceFile;
+ exports.exactSearch = exactSearch;
++// Modified for Omnesis: Windows native capability checks, publication and reset.
+ const node_gyp_build_1 = __importDefault(require("node-gyp-build"));
+ const path = __importStar(require("path"));
+ const fs_1 = require("fs");
+ const bindings_1 = require("bindings");
+ const compiled = (0, node_gyp_build_1.default)(getBuildDir(getDirName()));
++if (process.platform === "win32" && compiled.windowsPublicationVersion !== 1)
++    throw new Error("Omnesis requires its rebuilt Windows USearch binding; run node scripts/ci/build-windows-usearch.mjs.");
++function nativePath(value) {
++    if (typeof value !== "string" || value.includes("\0"))
++        throw new TypeError("Invalid index path");
++    return process.platform === "win32" ? path.toNamespacedPath(value) : value;
++}
++/** Atomically replace a Windows index while existing mapped readers retain the old file. */
++function atomicReplaceFile(source, target) {
++    if (!compiled.atomicReplaceFile)
++        throw new Error("Native Windows index publication is unavailable");
++    compiled.atomicReplaceFile(nativePath(source), nativePath(target));
++}
+ /**
+  * Enumeration representing the various metric kinds used to measure the distance between vectors in the index.
+  * @enum {string}
+@@ -412,7 +428,7 @@
+     save(path) {
+         if (typeof path !== "string")
+             throw new Error("`path` must be a string representing the file path to write.");
+-        __classPrivateFieldGet(this, _Index_compiledIndex, "f").save(path);
++        __classPrivateFieldGet(this, _Index_compiledIndex, "f").save(nativePath(path));
+     }
+     /**
+      * Load index from a file.
+@@ -422,7 +438,12 @@
+     load(path) {
+         if (typeof path !== "string")
+             throw new Error("`path` must be a string representing the file path to read.");
+-        __classPrivateFieldGet(this, _Index_compiledIndex, "f").load(path);
++        __classPrivateFieldGet(this, _Index_compiledIndex, "f").load(nativePath(path));
++    }
++    /** Release native allocations and mappings synchronously when the binding supports it. */
++    reset() {
++        var _a, _b;
++        (_b = (_a = __classPrivateFieldGet(this, _Index_compiledIndex, "f")).reset) === null || _b === void 0 ? void 0 : _b.call(_a);
+     }
+     /**
+      * View index from a file, without loading into RAM.
+@@ -432,7 +453,7 @@
+     view(path) {
+         if (typeof path !== "string")
+             throw new Error("`path` must be a string representing the file path to read.");
+-        __classPrivateFieldGet(this, _Index_compiledIndex, "f").view(path);
++        __classPrivateFieldGet(this, _Index_compiledIndex, "f").view(nativePath(path));
+     }
+ }
+ exports.Index = Index;
+@@ -516,6 +537,7 @@
+     Matches,
+     BatchMatches,
+     exactSearch,
++    atomicReplaceFile,
+ };
+ exports.default = usearch;
+ // utility functions to help find native builds
+diff --git a/node_modules/usearch/javascript/dist/cjs/usearch.d.ts b/node_modules/usearch/javascript/dist/cjs/usearch.d.ts
+--- a/node_modules/usearch/javascript/dist/cjs/usearch.d.ts
++++ b/node_modules/usearch/javascript/dist/cjs/usearch.d.ts
+@@ -1,3 +1,6 @@
++// Modified for Omnesis: Windows native capability checks, publication and reset.
++/** Atomically replace a Windows index while existing mapped readers retain the old file. */
++export declare function atomicReplaceFile(source: string, target: string): void;
+ type Vector = Float32Array | Float64Array | Int8Array | Uint8Array;
+ type Matrix = Vector[];
+ type VectorOrMatrix = Vector | Matrix;
+@@ -212,6 +215,8 @@
+      * @throws Will throw an error if `path` is not a string.
+      */
+     load(path: string): void;
++    /** Release native allocations and mappings synchronously when the binding supports it. */
++    reset(): void;
+     /**
+      * View index from a file, without loading into RAM.
+      * @param {string} path File path to read.
+@@ -258,5 +263,6 @@
+     Matches: typeof Matches;
+     BatchMatches: typeof BatchMatches;
+     exactSearch: typeof exactSearch;
++    atomicReplaceFile: typeof atomicReplaceFile;
+ };
+ export default usearch;

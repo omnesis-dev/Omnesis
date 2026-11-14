@@ -13,12 +13,17 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
 import { CODEX_RUNTIME_COMPAT } from "@omnesis/agent";
-import { codexPaths } from "@omnesis/core";
+import {
+  codexPaths,
+  execWindowsJob,
+  inspectWindowsPrivatePathSync,
+  inspectWindowsPrivatePaths,
+} from "@omnesis/core";
 
 import {
   CodexRuntimeInstaller,
@@ -70,6 +75,37 @@ function fakeRunner(
 }
 
 describe("CodexRuntimeInstaller", () => {
+  it("installs and probes JavaScript CLI entries with real subprocesses", async () => {
+    const root = await tempConfig();
+    const npmCommand = join(root, "synthetic npm & $().mjs");
+    await writeFile(
+      npmCommand,
+      `#!/usr/bin/env node
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+const args = process.argv.slice(2);
+const prefix = args[args.indexOf('--prefix') + 1];
+if (!prefix) process.exit(2);
+const pkg = join(prefix, 'node_modules', '@openai', 'codex');
+mkdirSync(join(pkg, 'bin'), { recursive: true });
+writeFileSync(join(pkg, 'package.json'), JSON.stringify({name:'@openai/codex', version:${JSON.stringify(CODEX_RUNTIME_COMPAT.testedVersion)}, bin:{codex:'bin/codex.js'}}));
+writeFileSync(join(pkg, 'bin', 'codex.js'), ${JSON.stringify(`#!/usr/bin/env node\nprocess.stdout.write('codex-cli ${CODEX_RUNTIME_COMPAT.testedVersion}\\n');\n`)}, { mode: 0o700 });
+`,
+      { mode: 0o700 },
+    );
+    const installer = new CodexRuntimeInstaller({
+      configDir: join(root, "config"),
+      npmCommand,
+      compatibilityProbe: async () => {},
+    });
+    const prepared = await installer.prepare();
+    const installed = await installer.commit(prepared);
+    expect(installed.version).toBe(CODEX_RUNTIME_COMPAT.testedVersion);
+    await expect(installer.readActive()).resolves.toMatchObject({
+      version: CODEX_RUNTIME_COMPAT.testedVersion,
+    });
+  });
+
   it("pins the wrapper and every platform payload to release-owned SRI digests", async () => {
     const rootLock = JSON.parse(
       await readFile(new URL("../../../../package-lock.json", import.meta.url), "utf8"),
@@ -90,10 +126,36 @@ describe("CodexRuntimeInstaller", () => {
   it("installs the single compiled target with argv execution and atomically selects it", async () => {
     const configDir = await tempConfig();
     const calls: Array<{ command: string; args: readonly string[] }> = [];
+    if (process.platform === "win32") {
+      const grant = await execWindowsJob(join(process.env.SystemRoot!, "System32", "icacls.exe"), [
+        configDir,
+        "/grant",
+        "*S-1-1-0:(OI)(CI)(R)",
+        "/Q",
+      ]);
+      expect(grant.stderr).toBe("");
+    }
+    const run = fakeRunner(calls);
     const installer = new CodexRuntimeInstaller({
       configDir,
       npmCommand: "synthetic-npm",
-      runner: fakeRunner(calls),
+      runner: async (command, args, options) => {
+        if (process.platform === "win32" && args[0] === "ci") {
+          const staging = args[args.indexOf("--prefix") + 1]!;
+          const evidence = await inspectWindowsPrivatePaths([
+            { path: staging, kind: "directory" },
+            { path: join(staging, ".npm-home"), kind: "directory" },
+            { path: join(staging, ".npm-cache"), kind: "directory" },
+            { path: join(staging, "package.json"), kind: "file" },
+            { path: join(staging, "package-lock.json"), kind: "file" },
+          ]);
+          expect(
+            evidence.every((entry) => entry.private),
+            "runtime must be private before downloading package bytes",
+          ).toBe(true);
+        }
+        return run(command, args, options);
+      },
       compatibilityProbe: async () => {},
       id: (() => {
         let n = 0;
@@ -136,12 +198,26 @@ describe("CodexRuntimeInstaller", () => {
       ),
       activatedAt: "2026-09-03T12:00:00.000Z",
     });
-    expect((await lstat(installed.installDir)).mode & 0o777).toBe(0o700);
-    expect((await lstat(installed.command)).mode & 0o777).toBe(0o700);
-    expect(
-      (await lstat(join(installed.installDir, "node_modules/@openai/codex/package.json"))).mode &
-        0o777,
-    ).toBe(0o600);
+    if (process.platform === "win32") {
+      const evidence = await inspectWindowsPrivatePaths([
+        { path: codexPaths(configDir).runtimeStore, kind: "directory" },
+        { path: installed.installDir, kind: "directory" },
+        { path: installed.command, kind: "file" },
+        {
+          path: join(installed.installDir, "node_modules/@openai/codex/package.json"),
+          kind: "file",
+        },
+        { path: codexPaths(configDir).runtimeCurrent, kind: "file" },
+      ]);
+      expect(evidence.every((entry) => entry.private)).toBe(true);
+    } else {
+      expect((await lstat(installed.installDir)).mode & 0o777).toBe(0o700);
+      expect((await lstat(installed.command)).mode & 0o777).toBe(0o700);
+      expect(
+        (await lstat(join(installed.installDir, "node_modules/@openai/codex/package.json"))).mode &
+          0o777,
+      ).toBe(0o600);
+    }
   });
 
   it("runs an isolated app-server compatibility probe with no shared Codex home", async () => {
@@ -341,7 +417,11 @@ describe("CodexRuntimeInstaller", () => {
       id: () => "second",
     });
     const prepared = await first.prepare();
-    expect((await lstat(codexPaths(configDir).runtimeUpdateLock)).mode & 0o777).toBe(0o700);
+    if (process.platform === "win32")
+      expect(
+        inspectWindowsPrivatePathSync(codexPaths(configDir).runtimeUpdateLock, "directory").private,
+      ).toBe(true);
+    else expect((await lstat(codexPaths(configDir).runtimeUpdateLock)).mode & 0o777).toBe(0o700);
 
     await expect(second.prepare()).rejects.toThrow("already in progress");
     await first.discard(prepared);
@@ -391,8 +471,8 @@ describe("CodexRuntimeInstaller", () => {
     };
 
     expect(second.installDir).not.toBe(first.installDir);
-    expect(pointer.generation).toBe(second.installDir.split("/").at(-1));
-    expect(pointer.previousGeneration).toBe(first.installDir.split("/").at(-1));
+    expect(pointer.generation).toBe(basename(second.installDir));
+    expect(pointer.previousGeneration).toBe(basename(first.installDir));
     expect((await lstat(first.installDir)).isDirectory()).toBe(true);
   });
 

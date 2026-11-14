@@ -3,6 +3,7 @@
 
 import { execFileSync } from "node:child_process";
 import {
+  cpSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -16,6 +17,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { describe, expect, test } from "vitest";
 import { parsePackReport } from "./publish-graph.mjs";
+import { resolveNpmInvocation } from "../../packages/core/src/node-command.ts";
 
 import {
   assertExportsAreStaged,
@@ -29,18 +31,84 @@ const repoRoot = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 describe("release package selection", () => {
   test("publishes exactly the product packages and excludes synthetic providers", () => {
     const packages = listPublishablePackages();
-    expect(packages).toHaveLength(46);
+    expect(packages).toHaveLength(47);
     expect(packages.map(({ dir }) => dir)).not.toContainEqual(
       expect.stringMatching(/^packages\/providers-synth\//u),
     );
     expect(packages.map(({ pkg }) => pkg.name)).toContain("omnesis");
     expect(packages.map(({ pkg }) => pkg.name)).toContain("@omnesis/provider-local-files");
     expect(packages.map(({ pkg }) => pkg.name)).toContain("@omnesis/cloud-relay");
+    expect(packages.map(({ pkg }) => pkg.name)).toContain("@omnesis/platform");
   });
 });
 
 describe("release package runtime assets", () => {
-  test("ships the native tunnel and relay runtime exports required by the gateway", () => {
+  test("ships platform primitives without workspace runtime dependencies", async () => {
+    const temp = mkdtempSync(join(tmpdir(), "omnesis-platform-stage-test-"));
+    try {
+      const entry = listPublishablePackages().find(({ pkg }) => pkg.name === "@omnesis/platform");
+      expect(entry).toBeDefined();
+      const staged = stagePackage(entry, join(temp, "staged"));
+      const manifest = JSON.parse(readFileSync(join(staged, "package.json"), "utf8"));
+      expect(Object.keys(manifest.dependencies ?? {})).toEqual([]);
+      expect(manifest.exports["."]).toEqual({
+        types: "./dist/index.d.ts",
+        default: "./dist/index.js",
+      });
+      execFileSync(
+        process.execPath,
+        [
+          "--input-type=module",
+          "-e",
+          `
+        const platform = await import(${JSON.stringify(pathToFileURL(join(staged, "dist/index.js")).href)});
+        for (const name of ['spawnWindowsJob', 'runWindowsJob', 'writeWindowsPrivateFileAtomicSync']) {
+          if (typeof platform[name] !== 'function') throw new Error('Missing platform export: ' + name);
+        }
+      `,
+        ],
+        { cwd: temp, stdio: ["ignore", "pipe", "pipe"] },
+      );
+      const npm = await resolveNpmInvocation(["pack", "--dry-run", "--json", "--ignore-scripts"]);
+      const pack = parsePackReport(
+        execFileSync(npm.command, npm.args, { cwd: staged, encoding: "utf8" }),
+      );
+      expect(pack.files.map(({ path }) => path)).toContain("dist/windows-private-file.js");
+      expect(pack.files.map(({ path }) => path)).toContain("dist/windows-job.js");
+    } finally {
+      rmSync(temp, { recursive: true, force: true });
+    }
+  });
+
+  test("dotenv bootstrap subpath loads without the config writer or platform package", () => {
+    const temp = mkdtempSync(join(tmpdir(), "omnesis-dotenv-stage-test-"));
+    try {
+      const entry = listPublishablePackages().find(({ pkg }) => pkg.name === "@omnesis/config");
+      const staged = stagePackage(entry, join(temp, "staged"));
+      const manifest = JSON.parse(readFileSync(join(staged, "package.json"), "utf8"));
+      expect(manifest.exports["./dotenv"]).toEqual({
+        types: "./dist/dotenv-reader.d.ts",
+        default: "./dist/dotenv-reader.js",
+      });
+      execFileSync(
+        process.execPath,
+        [
+          "--input-type=module",
+          "-e",
+          `
+        const before = JSON.stringify(process.env);
+        const reader = await import(${JSON.stringify(pathToFileURL(join(staged, "dist/dotenv-reader.js")).href)});
+        if (JSON.stringify(process.env) !== before) throw new Error('Import modified environment');
+        if (reader.parseDotEnv('EXAMPLE=fictional-value').EXAMPLE !== 'fictional-value') throw new Error('Parser missing');
+      `,
+        ],
+        { cwd: temp, stdio: ["ignore", "pipe", "pipe"] },
+      );
+    } finally {
+      rmSync(temp, { recursive: true, force: true });
+    }
+  });
+  test("ships the native tunnel and relay runtime exports required by the gateway", async () => {
     const temp = mkdtempSync(join(tmpdir(), "omnesis-cloud-relay-stage-test-"));
     try {
       const entry = listPublishablePackages().find(
@@ -74,8 +142,9 @@ describe("release package runtime assets", () => {
       );
       expect(existsSync(join(staged, "test"))).toBe(false);
       expect(existsSync(join(staged, "dist", "server.test.js"))).toBe(false);
+      const npm = await resolveNpmInvocation(["pack", "--dry-run", "--json", "--ignore-scripts"]);
       const pack = parsePackReport(
-        execFileSync("npm", ["pack", "--dry-run", "--json", "--ignore-scripts"], {
+        execFileSync(npm.command, npm.args, {
           cwd: staged,
           encoding: "utf8",
         }),
@@ -86,7 +155,7 @@ describe("release package runtime assets", () => {
     }
   });
 
-  test("stages the gateway's offline Models.dev snapshot beside its compiled catalog service", () => {
+  test("stages the gateway's offline Models.dev snapshot beside its compiled catalog service", async () => {
     expect(runtimeAssetsFor("@omnesis/gateway")).toContainEqual({
       from: "models-dev",
       to: "models-dev",
@@ -116,8 +185,9 @@ describe("release package runtime assets", () => {
       // npm's file filter decides whether the root install scripts ship; the
       // thousands of compiled files only make the pack slow, so leave them out.
       rmSync(join(staged, "dist"), { recursive: true, force: true });
+      const npm = await resolveNpmInvocation(["pack", "--dry-run", "--json"]);
       const pack = parsePackReport(
-        execFileSync("npm", ["pack", "--dry-run", "--json"], { cwd: staged, encoding: "utf8" }),
+        execFileSync(npm.command, npm.args, { cwd: staged, encoding: "utf8" }),
       );
       expect(pack.files.map(({ path }) => path)).toContain("native-runtime-preflight.mjs");
       expect(pack.files.map(({ path }) => path)).toContain("native-vector-compat.mjs");
@@ -251,11 +321,13 @@ describe("release package runtime assets", () => {
   test("ships both agent harness entry points with the shared integration package", () => {
     const assets = runtimeAssetsFor("@omnesis/agent-integration");
     expect(assets).toEqual([
+      { from: "../platform/dist", to: "dist/private-platform" },
       { from: "openclaw-entry.mjs", to: "openclaw-entry.mjs" },
       { from: "openclaw.plugin.json", to: "openclaw.plugin.json" },
       { from: "hermes/__init__.py", to: "hermes/__init__.py" },
       { from: "hermes/adapter.py", to: "hermes/adapter.py" },
       { from: "hermes/plugin.yaml", to: "hermes/plugin.yaml" },
+      { from: "hermes/windows-files.mjs", to: "hermes/windows-files.mjs" },
     ]);
     for (const asset of assets) {
       expect(
@@ -319,6 +391,46 @@ describe("release package runtime assets", () => {
       expect(manifest.dependencies).toEqual(entry.pkg.dependencies);
       expect(manifest.engines).toEqual({ node: ">=24.0.0" });
       expect(manifest.dependencies).not.toHaveProperty("@omnesis/core");
+      expect(manifest.dependencies).not.toHaveProperty("@omnesis/platform");
+      expect(existsSync(join(staged, "dist", "private-platform", "windows-private-file.js"))).toBe(
+        true,
+      );
+      expect(
+        existsSync(join(staged, "dist", "private-platform", "native", "windows-worker-source.js")),
+      ).toBe(true);
+      // This process has no workspace ancestor or Omnesis node_modules aliases.
+      // A Linux import proves closure; Windows also exercises the bundled native
+      // credential read/write boundary against a real protected file.
+      const standalone = mkdtempSync(join(tmpdir(), "omnesis-standalone-runtime-"));
+      try {
+        cpSync(join(staged, "dist", "windows-files.js"), join(standalone, "windows-files.js"));
+        cpSync(join(staged, "dist", "private-platform"), join(standalone, "private-platform"), {
+          recursive: true,
+        });
+        writeFileSync(join(standalone, "package.json"), '{"type":"module"}');
+        execFileSync(
+          process.execPath,
+          [
+            "--input-type=module",
+            "-e",
+            `import { privateWindowsFiles } from './windows-files.js';
+const files = privateWindowsFiles();
+if (typeof files.readWindowsPrivateFileContentsSync !== 'function' ||
+    typeof files.writeWindowsPrivateFileAtomicSync !== 'function') throw new Error('Missing standalone helpers');
+if (process.platform === 'win32') {
+  const path = new URL('./invented-credentials.json', import.meta.url);
+  const { fileURLToPath } = await import('node:url');
+  const target = fileURLToPath(path);
+  files.writeWindowsPrivateFileAtomicSync(target, Buffer.from('invented-private-bytes'));
+  if (files.readWindowsPrivateFileContentsSync(target).toString() !== 'invented-private-bytes')
+    throw new Error('Standalone native private file round trip failed');
+}`,
+          ],
+          { cwd: standalone, stdio: ["ignore", "pipe", "pipe"], timeout: 60_000 },
+        );
+      } finally {
+        rmSync(standalone, { recursive: true, force: true });
+      }
       const loaded = await import(`${join(staged, "openclaw-entry.mjs")}?smoke=${Date.now()}`);
       expect(loaded.default).toMatchObject({
         id: "omnesis-integration",

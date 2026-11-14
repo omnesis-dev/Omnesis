@@ -22,13 +22,25 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { createRequire } from "node:module";
+import { tmpdir } from "node:os";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { suiteTypecheckConfigs, runSuiteTypechecks } from "./typecheck-tests.mjs";
 
 import { describe, expect, test } from "vitest";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const TSC = createRequire(import.meta.url).resolve("typescript/bin/tsc");
 const SKIP_DIRS = new Set(["node_modules", "dist", ".git"]);
 
 /** Every package under `packages/`, at whatever depth it sits. */
@@ -56,7 +68,7 @@ function suitesIn(relativeDir, found = []) {
 /** What a tsconfig resolves to — the files it puts in a program, and what it holds back. */
 function resolved(configRelativePath) {
   const shown = JSON.parse(
-    execFileSync("npx", ["tsc", "-p", configRelativePath, "--showConfig"], {
+    execFileSync(process.execPath, [TSC, "-p", configRelativePath, "--showConfig"], {
       cwd: repoRoot,
       encoding: "utf8",
       maxBuffer: 32 * 1024 * 1024,
@@ -101,33 +113,80 @@ describe("the typecheck lanes", () => {
     expect(stale, "ratchet entries naming files that are gone").toEqual([]);
   }, 180_000);
 
-  test("run every tests config that exists, and fail when one of them fails", () => {
+  test("the portable lane discovers every tests config that exists", () => {
     const script = JSON.parse(readFileSync(join(repoRoot, "package.json"), "utf8")).scripts[
       "typecheck:tests:raw"
     ];
-    // Read out of the script rather than restated: a lane that stops reaching a
-    // depth, or stops propagating a failure, is green in every other test there
-    // is. Rewriting the lane as something other than a shell loop is a fine
-    // thing to do, and this assertion is where you say so.
-    expect(script, "the lane no longer fails when a config fails").toContain("|| exit 1");
-    const globs = [...script.matchAll(/(?:packages\/[*/]*|extension\/)tsconfig\.tests\.json/g)].map(
-      (m) => m[0],
-    );
-    expect(globs.length, "the lane names no tsconfig.tests.json glob").toBeGreaterThan(0);
+    expect(script).toBe("node scripts/typecheck-tests.mjs");
     const reached = new Set(
-      execFileSync("sh", ["-c", `ls -1 ${globs.join(" ")} 2>/dev/null || true`], {
-        cwd: repoRoot,
-        encoding: "utf8",
-      })
-        .split("\n")
-        .filter(Boolean),
+      suiteTypecheckConfigs(repoRoot).map((config) => resolve(repoRoot, config)),
     );
     const configs = packageDirs()
-      .map((p) => join(p, "tsconfig.tests.json"))
-      .filter((c) => existsSync(join(repoRoot, c)));
-    expect(
-      configs.filter((c) => !reached.has(c)),
-      "tests configs the lane's globs never reach",
-    ).toEqual([]);
+      .map((directory) => join(repoRoot, directory, "tsconfig.tests.json"))
+      .filter(existsSync);
+    if (existsSync(join(repoRoot, "extension", "tsconfig.tests.json")))
+      configs.push(join(repoRoot, "extension", "tsconfig.tests.json"));
+    expect(configs.filter((config) => !reached.has(config))).toEqual([]);
+    expect(reached.size).toBe(configs.length);
+  });
+});
+
+const makeWorkspace = () => {
+  const root = mkdtempSync(join(tmpdir(), "suite typecheck # "));
+  for (const directory of ["packages/first", "packages/nested/deeper/second", "extension"]) {
+    mkdirSync(join(root, directory), { recursive: true });
+    writeFileSync(join(root, directory, "package.json"), "{}");
+    writeFileSync(join(root, directory, "tsconfig.tests.json"), "{}");
+  }
+  return root;
+};
+
+describe("portable suite typecheck execution", () => {
+  test("runs actual Node compiler processes and stops on the first failed config", () => {
+    const root = makeWorkspace();
+    try {
+      const output = join(root, "commands.jsonl");
+      const compiler = join(root, "compiler.mjs");
+      writeFileSync(
+        compiler,
+        `import fs from 'node:fs';
+const args = process.argv.slice(2);
+fs.appendFileSync(${JSON.stringify(output)}, JSON.stringify(args) + '\\n');
+process.exit(args.includes('extension/tsconfig.tests.json') ? 7 : 0);
+`,
+      );
+      expect(runSuiteTypechecks({ root, compilerPath: compiler })).toBe(7);
+      expect(readFileSync(output, "utf8").trim().split("\n").map(JSON.parse)).toEqual([
+        ["--build"],
+        ["-p", "extension/tsconfig.tests.json"],
+      ]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("includes nested packages and does not run suite compilers after a failed production build", () => {
+    const root = makeWorkspace();
+    try {
+      expect(suiteTypecheckConfigs(root)).toEqual([
+        "extension/tsconfig.tests.json",
+        "packages/first/tsconfig.tests.json",
+        "packages/nested/deeper/second/tsconfig.tests.json",
+      ]);
+      const calls = [];
+      expect(
+        runSuiteTypechecks({
+          root,
+          compilerPath: "compiler",
+          run: (command, args) => {
+            calls.push([command, ...args]);
+            return { status: 5 };
+          },
+        }),
+      ).toBe(5);
+      expect(calls).toEqual([[process.execPath, "compiler", "--build"]]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });

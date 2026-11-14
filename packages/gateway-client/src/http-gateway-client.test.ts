@@ -12,7 +12,9 @@ import type { DocumentInput } from "@omnesis/types";
 import type { Server } from "node:http";
 type Db = Database.Database;
 import { randomUUID } from "node:crypto";
-import { unlinkSync, existsSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 const API_KEY = "integration-test-key";
 const PORT = 17602;
@@ -20,13 +22,8 @@ const PORT = 17602;
 let db: Db;
 let server: Server;
 let client: HttpGatewayClient;
+let dbDirectory: string;
 let dbPath: string;
-
-function cleanupDb(path: string) {
-  for (const suffix of ["", "-wal", "-shm", "-journal"]) {
-    if (existsSync(path + suffix)) unlinkSync(path + suffix);
-  }
-}
 
 function makeDoc(externalId = "msg-1"): DocumentInput {
   return {
@@ -362,7 +359,8 @@ function createTestGateway(database: Db, apiKey: string) {
 }
 
 beforeAll(() => {
-  dbPath = `/tmp/omnesis-integration-test-${randomUUID()}.db`;
+  dbDirectory = mkdtempSync(join(tmpdir(), "omnesis-integration-test-"));
+  dbPath = join(dbDirectory, "gateway.db");
   db = new Database(dbPath);
   db.exec("PRAGMA journal_mode = WAL");
   db.exec(`
@@ -392,11 +390,12 @@ beforeAll(() => {
 
 afterAll(async () => {
   await new Promise<void>((resolve) => {
+    if (!server) return resolve();
     server.closeAllConnections?.();
     server.close(() => resolve());
   });
-  db.close();
-  cleanupDb(dbPath);
+  db?.close();
+  if (dbDirectory) rmSync(dbDirectory, { recursive: true, force: true });
 });
 
 describe("HttpGatewayClient.transcribe", () => {

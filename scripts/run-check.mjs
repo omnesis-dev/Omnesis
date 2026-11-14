@@ -11,6 +11,7 @@ import { parseCLI } from "vitest/node";
 import { waitForChild } from "./lib/check-process.mjs";
 import { progressArgs, progressEnvironment } from "./lib/check-progress.mjs";
 import { assertTreeFingerprint } from "./nx/tree-state.mjs";
+import { resolveNpmInvocation } from "../packages/core/src/node-command.ts";
 
 export function schedulerCommand(env = process.env) {
   if (env.OMNESIS_TEST_SCHEDULER === "0") return null;
@@ -70,7 +71,12 @@ export function testProcessEnv(env = process.env) {
   return child;
 }
 
-function run(command, args, env) {
+async function run(command, args, env) {
+  if (command === "npm") {
+    const invocation = await resolveNpmInvocation(args, { env });
+    command = invocation.command;
+    args = invocation.args;
+  }
   return waitForChild(
     spawn(command, args, { stdio: "inherit", env, detached: process.platform !== "win32" }),
   );
@@ -237,7 +243,12 @@ export async function main(argv = process.argv.slice(2)) {
           ],
           { ...env, OMNESIS_LOG_LEVEL: env.OMNESIS_LOG_LEVEL ?? "warn" },
         );
-    } else if (kind === "types-tests") code = await run("npm", ["run", "typecheck:tests:raw"], env);
+    } else if (kind === "types-tests")
+      code = await run(
+        process.execPath,
+        [join(import.meta.dirname, "typecheck-tests.mjs"), ...args],
+        env,
+      );
     else if (kind === "deadcode")
       code = await run(process.execPath, [nodeModule("knip/bin/knip.js"), ...args], env);
     else if (kind === "e2e")

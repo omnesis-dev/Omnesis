@@ -1,18 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import {
-  readFileSync,
-  writeFileSync,
-  existsSync,
-  mkdirSync,
-  renameSync,
-  watch,
-  type FSWatcher,
-} from "node:fs";
+import { readFileSync, existsSync, mkdirSync, watch, type FSWatcher } from "node:fs";
 import { dirname, basename, join } from "node:path";
-import { createHash, randomBytes } from "node:crypto";
+import { createHash } from "node:crypto";
 import {
+  atomicWriteFile,
   createLogger,
   newerSettingsPath,
   restoreNewerSettings,
@@ -245,7 +238,7 @@ export class ConfigStore {
     }
   }
 
-  private validateAndCommit(candidate: unknown): ConfigMutationResult {
+  private async validateAndCommit(candidate: unknown): Promise<ConfigMutationResult> {
     const validation = validateConfig(candidate);
     if (!validation.ok) {
       return { ok: false, errors: validation.errors };
@@ -274,7 +267,7 @@ export class ConfigStore {
     // Write file atomically, remember the hash so the upcoming watcher event
     // for our own write is ignored.
     const serialized = JSON.stringify(after, null, 2) + "\n";
-    this.writeFileAtomic(serialized);
+    await atomicWriteFile(this.filePath, serialized, { mode: 0o600, ensureDir: true });
     this.current = after;
     this.rawText = serialized;
     this.version += 1;
@@ -286,14 +279,6 @@ export class ConfigStore {
       log.warn(`Change listener threw: ${err instanceof Error ? err.message : String(err)}`);
     });
     return { ok: true, version: this.version, config: after, changedPaths };
-  }
-
-  private writeFileAtomic(text: string): void {
-    const dir = dirname(this.filePath);
-    mkdirSync(dir, { recursive: true });
-    const tmp = `${this.filePath}.tmp.${randomBytes(6).toString("hex")}`;
-    writeFileSync(tmp, text, { mode: 0o600 });
-    renameSync(tmp, this.filePath);
   }
 
   private readAndApply(ctx: { source: "boot" | "watcher" }): void {
@@ -449,7 +434,15 @@ export class ConfigStore {
         if (this.watcherDebounceTimer) clearTimeout(this.watcherDebounceTimer);
         this.watcherDebounceTimer = setTimeout(() => {
           this.watcherDebounceTimer = null;
-          this.readAndApply({ source: "watcher" });
+          // A native atomic publication may finish before its async writer joins.
+          // Reload only after that mutation commits its in-memory state and hash.
+          void this.acquire(() => Promise.resolve(this.readAndApply({ source: "watcher" }))).catch(
+            (err) => {
+              log.warn(
+                `Config watcher reload failed: ${err instanceof Error ? err.message : String(err)}`,
+              );
+            },
+          );
         }, this.watchDebounceMs);
       });
       log.info(`Watching config at ${this.filePath}`);

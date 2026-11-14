@@ -34,7 +34,7 @@
 import { execFileSync } from "node:child_process";
 import { readFileSync, existsSync, realpathSync, lstatSync, readlinkSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, extname, join } from "node:path";
+import { dirname, extname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -559,9 +559,10 @@ function runAll() {
  * nothing but the SPDX line, a shebang or blank lines before it.
  */
 export function isOwnCopyrightHeaderLine(path, added) {
-  if (!path || !COPYRIGHT_LINE_RE.test(added)) return false;
-  const head = safeRead(join(REPO_ROOT, path)).split("\n").slice(0, 4);
-  const index = head.indexOf(added);
+  const candidate = added.endsWith("\r") ? added.slice(0, -1) : added;
+  if (!path || !COPYRIGHT_LINE_RE.test(candidate)) return false;
+  const head = safeRead(resolve(REPO_ROOT, path)).split(/\r?\n/u).slice(0, 4);
+  const index = head.indexOf(candidate);
   if (index === -1) return false;
   const prefix = head.slice(0, index).map((line) => line.trim());
   return (

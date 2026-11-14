@@ -238,7 +238,8 @@ function isNativeWire(path) {
 const areas = [
   { test: (p) => p.startsWith("packages/cloud-relay/"), bundles: ["security-notifications"] },
   {
-    test: (p) => /packages\/(?:core|types|config|source-sdk|gateway-client)\/src\//.test(p),
+    test: (p) =>
+      /packages\/(?:core|platform|types|config|source-sdk|gateway-client)\/src\//.test(p),
     bundles: ["gateway-core"],
   },
   { test: (p) => p.startsWith("ios/"), bundles: ["ios-logic"] },

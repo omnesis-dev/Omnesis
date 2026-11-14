@@ -34,6 +34,7 @@
     "zod": "^4.6.7"
   },
   "devDependencies": {
+    "@omnesis/platform": "*",
     "@omnesis/types": "*",
     "@types/ws": "^8.18.2",
     "openclaw": "2026.11.1"
@@ -44,6 +45,7 @@
     "openclaw-entry.mjs",
     "hermes/__init__.py",
     "hermes/adapter.py",
-    "hermes/plugin.yaml"
+    "hermes/plugin.yaml",
+    "hermes/windows-files.mjs"
   ]
 }

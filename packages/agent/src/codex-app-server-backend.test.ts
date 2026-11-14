@@ -4,6 +4,7 @@
 import {
   appendFileSync,
   chmodSync,
+  copyFileSync,
   writeFileSync,
   existsSync,
   readFileSync,
@@ -18,6 +19,7 @@ import { fileURLToPath } from "node:url";
 
 import { describe, expect, it, vi } from "vitest";
 import { z } from "zod";
+import { inspectWindowsPrivatePathSync, type AgentEvent, type ToolResult } from "@omnesis/core";
 import { searchModelContextResult } from "./test-fixtures/search-model-context.js";
 
 import {
@@ -26,6 +28,7 @@ import {
   MANAGED_CODEX_PACKAGE,
   MANAGED_CODEX_PACKAGE_VERSION,
   convertToolsToCodexDynamicTools,
+  buildCodexEnv,
   isSupportedCodexCliVersion,
   parseCodexCliVersion,
   parseCodexContextInputTokens,
@@ -36,7 +39,6 @@ import {
 import { renderTranscriptUserInput } from "./transcript-user-input.js";
 import { setActivityMarker } from "./activity.js";
 import type { ChatMessage, ToolHandle, TurnInput } from "./backend.js";
-import type { AgentEvent, ToolResult } from "@omnesis/core";
 
 const fakeCodexPath = fileURLToPath(
   new URL("./test-fixtures/fake-codex-app-server.mjs", import.meta.url),
@@ -190,6 +192,100 @@ describe("fake Codex log framing", () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+
+describe("Codex JavaScript executable portability", () => {
+  it.each(process.platform === "win32" ? [false, true] : [false])(
+    "disposes the app-server behind a JavaScript wrapper (wrapperExits=%s)",
+    async (wrapperExits) => {
+      const dir = mkdtempSync(join(tmpdir(), "omnesis-codex-wrapper-"));
+      const command = join(dir, "codex wrapper.mjs");
+      const logPath = join(dir, "events.jsonl");
+      const wrapperPidPath = join(dir, "wrapper.pid");
+      writeFileSync(
+        command,
+        `#!/usr/bin/env node
+import { spawn } from 'node:child_process';
+import { writeFileSync } from 'node:fs';
+if (!process.argv.includes('--version')) writeFileSync(${JSON.stringify(wrapperPidPath)}, String(process.pid));
+const child = spawn(process.execPath, [${JSON.stringify(fakeCodexPath)}, ...process.argv.slice(2)], { detached: ${wrapperExits}, stdio: 'inherit' });
+process.on('SIGTERM', () => child.kill('SIGTERM'));
+child.on('exit', (code) => process.exit(code ?? 1));
+if (${wrapperExits} && !process.argv.includes('--version')) child.once('spawn', () => { child.unref(); process.exit(0); });
+`,
+        { mode: 0o700 },
+      );
+      const runtime = new CodexAppServerRuntime({
+        command,
+        codexHome: join(dir, "home"),
+        env: { ...process.env, OMNESIS_FAKE_CODEX_LOG: logPath },
+      });
+      let childPid: number | undefined;
+      try {
+        await runtime.listModels();
+        childPid = firstPayload<{ pid: number }>(readLog(logPath), "startup").pid;
+        if (wrapperExits) {
+          const wrapperPid = Number(readFileSync(wrapperPidPath, "utf8"));
+          await vi.waitFor(() => expect(() => process.kill(wrapperPid, 0)).toThrow());
+        }
+        await runtime.dispose();
+        expect(() => process.kill(childPid!, 0)).toThrow();
+      } finally {
+        await runtime.dispose();
+        if (childPid !== undefined) {
+          try {
+            process.kill(childPid, "SIGKILL");
+          } catch {
+            /* already exited */
+          }
+        }
+        rmSync(dir, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it("probes and starts a JavaScript app-server entry without a shell wrapper", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "omnesis-codex-js-"));
+    const command = join(dir, "codex entry & $().mjs");
+    copyFileSync(fakeCodexPath, command);
+    chmodSync(command, 0o700);
+    const runtime = new CodexAppServerRuntime({
+      command,
+      codexHome: join(dir, "home"),
+      workspaceDir: join(dir, "workspace"),
+      env: process.env,
+    });
+    try {
+      await expect(runtime.probeRuntime()).resolves.toMatchObject({ command, version: "0.142.4" });
+      await expect(runtime.listModels()).resolves.toEqual(
+        expect.arrayContaining([expect.objectContaining({ model: "gpt-example-frontier" })]),
+      );
+    } finally {
+      await runtime.dispose();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("preserves case-insensitive Windows host variables while excluding credentials", () => {
+    expect(
+      buildCodexEnv(
+        {
+          Path: "synthetic path",
+          SYSTEMROOT: "synthetic root",
+          Temp: "synthetic temp",
+          OPENAI_API_KEY: "must-not-leak",
+          codex_home: "wrong home",
+        },
+        "private home",
+        "win32",
+      ),
+    ).toEqual({
+      CODEX_HOME: "private home",
+      PATH: "synthetic path",
+      SystemRoot: "synthetic root",
+      TEMP: "synthetic temp",
+    });
   });
 });
 
@@ -527,9 +623,14 @@ describe("CodexAppServerBackend", () => {
           (event) => event.type === "agent.message.end",
         )?.payload.stopReason,
       ).toBe("end_turn");
-      const pid = firstPayload<{ pid: number }>(readLog(logPath), "startup").pid;
+      const { pid, ownerPid } = firstPayload<{ pid: number; ownerPid: number }>(
+        readLog(logPath),
+        "startup",
+      );
       process.kill(pid, "SIGTERM");
-      await vi.waitFor(() => expect(() => process.kill(pid, 0)).toThrow());
+      // An exited target is still owned while its Windows job host drains.
+      // Queue replacements only after the actual client process lifetime ends.
+      await vi.waitFor(() => expect(() => process.kill(ownerPid, 0)).toThrow());
       const turns = await Promise.all([
         collect(backend.runTurn(baseInput())),
         collect(backend.runTurn(baseInput())),
@@ -659,7 +760,7 @@ describe("CodexAppServerBackend", () => {
       packageName: MANAGED_CODEX_PACKAGE,
       packageVersion: MANAGED_CODEX_PACKAGE_VERSION,
     });
-    expect(managed.command).toContain("@openai/codex");
+    expect(managed.command.replaceAll("\\", "/")).toContain("@openai/codex");
   });
 
   it("initializes the installed managed runtime and lists models without an inference turn", async () => {
@@ -862,9 +963,17 @@ describe("CodexAppServerBackend", () => {
       expect(configToml).toContain("shell_tool = false");
       expect(configToml).toContain("multi_agent = false");
       expect(configToml).toContain("network_access = false");
-      expect(statSync(codexHome).mode & 0o777).toBe(0o700);
-      expect(statSync(workspaceDir).mode & 0o777).toBe(0o700);
-      expect(statSync(join(codexHome, "config.toml")).mode & 0o777).toBe(0o600);
+      if (process.platform === "win32") {
+        for (const path of [codexHome, workspaceDir])
+          expect(inspectWindowsPrivatePathSync(path, "directory").private).toBe(true);
+        expect(inspectWindowsPrivatePathSync(join(codexHome, "config.toml"), "file").private).toBe(
+          true,
+        );
+      } else {
+        expect(statSync(codexHome).mode & 0o777).toBe(0o700);
+        expect(statSync(workspaceDir).mode & 0o777).toBe(0o700);
+        expect(statSync(join(codexHome, "config.toml")).mode & 0o777).toBe(0o600);
+      }
 
       const logs = readLog(logPath);
       const startup = firstPayload<{

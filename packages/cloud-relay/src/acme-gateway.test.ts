@@ -73,7 +73,9 @@ test("real ACME JWS, nonce, DNS01 and CSR issuance renews a running gateway TLS 
     const issued = await readFile(files.certFile, "utf8");
     expect(issued).not.toBe(original);
     expect(await readFile(files.keyFile, "utf8")).toBe(key);
-    expect((await stat(join(directory, "account.key"))).mode & 0o777).toBe(0o600);
+    if (process.platform !== "win32") {
+      expect((await stat(join(directory, "account.key"))).mode & 0o777).toBe(0o600);
+    }
     expect(authority.payloads.join("\n")).not.toContain("PRIVATE KEY");
     expect(authority.payloads.join("\n")).not.toContain(key);
     const socket = connect({

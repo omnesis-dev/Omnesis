@@ -473,7 +473,9 @@
             and unsent messages, messages marked deleted, and any folder matching the
             <em>Exclude folders</em> setting, which takes folder names such as
             <code>[Gmail]/All Mail</code>; <code>*</code> matches within a folder name and
-            <code>**</code> across folders.
+            <code>**</code> across folders. Symbolic links are skipped. On Windows, message paths
+            through a junction or symbolic link are refused; choose the actual folder rather than a
+            linked path.
           </li>
           <li>
             <strong>A folder it cannot read.</strong> An unreadable folder, or a Maildir that is not
@@ -691,7 +693,9 @@
                 </td>
                 <td>
                   Markdown notes as documents, with frontmatter, tags, and wikilinks. Vaults with
-                  the same folder name on one collector remain separate sources.
+                  the same folder name on one collector remain separate sources. Links outside the
+                  selected vault are not indexed. If the vault path is redirected to another folder,
+                  restore the original folder or update the source's vault path before syncing.
                 </td>
               </tr>
               <tr>
@@ -1027,7 +1031,8 @@
             <code>Library</code> and <code>.config</code>, build and dependency folders, and files
             that look like keys or secrets are never read, even inside a chosen folder. Git working
             trees and Obsidian vaults are skipped whole — the Obsidian source indexes vaults — and
-            naming one as a folder is refused at setup with the reason.
+            naming one as a folder is refused at setup with the reason. Protected configuration
+            locations are also refused when selected directly or reached through an alias.
           </li>
           <li>
             <strong>Files it cannot read.</strong> A damaged PDF keeps the text of the pages that
@@ -1216,9 +1221,10 @@
                 </td>
                 <td>
                   Visit, daily-rollup, and search-term analytics tables, plus a daily browsing
-                  summary document. Reads Chrome, Brave, Edge, and Vivaldi on any collector, plus
-                  Safari and Arc on a macOS collector. Omnesis reads private copies of the browser
-                  databases and never modifies the originals.
+                  summary document. Reads Chrome, Brave, Edge, and Vivaldi on macOS, Linux, and
+                  Windows collectors. Arc history is read on macOS and from its packaged Windows
+                  profile; Safari requires a macOS collector. Omnesis reads private copies of the
+                  browser databases and never modifies the originals.
                 </td>
               </tr>
               <tr>

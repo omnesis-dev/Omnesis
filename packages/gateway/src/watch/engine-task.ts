@@ -394,9 +394,23 @@ export function openWatchStores(
 ): { ok: true; stores: WatchStores } | { ok: false; reason: string } {
   const open = (): EncryptedSqliteDatabase => {
     const handle = openEncryptedSqlite(options.journalPath, { key: options.storageKey });
-    handle.pragma("journal_mode = WAL");
-    handle.pragma(`busy_timeout = ${options.busyTimeoutMs ?? DEFAULT_BUSY_TIMEOUT_MS}`);
-    return handle;
+    try {
+      handle.pragma("journal_mode = WAL");
+      handle.pragma(`busy_timeout = ${options.busyTimeoutMs ?? DEFAULT_BUSY_TIMEOUT_MS}`);
+      return handle;
+    } catch (error) {
+      const failures: unknown[] = [error];
+      try {
+        handle.close();
+      } catch (cleanup) {
+        failures.push(cleanup);
+      }
+      if (failures.length > 1)
+        throw new AggregateError(failures, "Watch store initialization and cleanup failed", {
+          cause: error,
+        });
+      throw error;
+    }
   };
 
   let db: EncryptedSqliteDatabase | undefined;
@@ -436,9 +450,21 @@ export function openWatchStores(
       },
     };
   } catch (err) {
-    adminDb?.close();
-    db?.close();
-    return { ok: false, reason: err instanceof Error ? err.message : String(err) };
+    const failures: unknown[] = [];
+    for (const handle of [adminDb, db]) {
+      try {
+        handle?.close();
+      } catch (cleanup) {
+        failures.push(cleanup);
+      }
+    }
+    const reason = err instanceof Error ? err.message : String(err);
+    return {
+      ok: false,
+      reason:
+        reason +
+        (failures.length ? ` (${failures.length} watch connection cleanup failure(s))` : ""),
+    };
   }
 }
 

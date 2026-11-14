@@ -63,20 +63,20 @@ describe("keyring command", () => {
     // hardcoded provider list, so a provider the list forgot is still secured.
     touch(join(dir, "granola", "maya.reeves@example.com", "credentials.json"));
 
-    const rel = collectSecretFileCandidates(dir).map((p) => relative(dir, p).split("/").join("/"));
+    const rel = collectSecretFileCandidates(dir).map((p) => relative(dir, p));
 
     expect(rel).toEqual([
       "collector-token",
-      "config-secrets/aW5mZXJlbmNl.secret",
-      "enable-banking/bank-100/session.json",
+      join("config-secrets", "aW5mZXJlbmNl.secret"),
+      join("enable-banking", "bank-100", "session.json"),
       "google-credentials.json",
-      "google/maya@example.com/tokens.json",
-      "granola/maya.reeves@example.com/credentials.json",
-      "plaid/item-100/item.json",
-      "strava/athlete-100/tokens.json",
+      join("google", "maya@example.com", "tokens.json"),
+      join("granola", "maya.reeves@example.com", "credentials.json"),
+      join("plaid", "item-100", "item.json"),
+      join("strava", "athlete-100", "tokens.json"),
       "token",
-      "whatsapp/+15550100001/auth/creds.json",
-      "whatsapp/+15550100001/auth/session-user.json",
+      join("whatsapp", "+15550100001", "auth", "creds.json"),
+      join("whatsapp", "+15550100001", "auth", "session-user.json"),
     ]);
   });
 

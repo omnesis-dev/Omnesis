@@ -264,6 +264,7 @@ function attachLexicalIndex(data: LexicalIndexData): void {
 async function handleShutdown(): Promise<void> {
   if (!state) {
     post({ type: "shutdownComplete" });
+    parentPort!.close();
     return;
   }
   if (state.shuttingDown) return;
@@ -283,6 +284,7 @@ async function handleShutdown(): Promise<void> {
   }
 
   post({ type: "shutdownComplete" });
+  parentPort!.close();
 }
 
 parentPort.on("message", (msg: MainToSearch) => {

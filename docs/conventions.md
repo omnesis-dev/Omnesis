@@ -155,6 +155,11 @@ Files that follow this shape: `packages/gateway/src/analytics-db.ts`, `packages/
 
 `@omnesis/core` is bisected two ways. First, `exports` subpaths (`/protocol`, `/config`, `/sources`, …) let a consumer import a narrow slice. Second, `@omnesis/types`, `@omnesis/config`, and `@omnesis/source-sdk` are physically separate workspace packages, so providers don't pull the gateway-only surface, and the HTTP/WS client lives in `@omnesis/gateway-client`. Re-export shims in `@omnesis/core` still preserve the old import paths for back-compat.
 
+Stall and diagnostic workers use `@omnesis/core/private-files` for canonical
+private atomic writes and directory protection. Its transitive module graph
+contains only Node built-ins and the platform filesystem bootstrap; importing
+the broad Core barrel into these workers is prohibited by the worker graph test.
+
 **New code should import from the narrowest package**, not `@omnesis/core`: branded IDs / document model / device + pagination from `@omnesis/types`; the zod config schema + `OmnesisConfig` + `*Settings` from `@omnesis/config`; `defineSource` / `Source` / `Provider` / `GatewayClient` + the source-descriptor surface from `@omnesis/source-sdk`; `HttpGatewayClient` / `GatewayWsClient` from `@omnesis/gateway-client`. Reserve `@omnesis/core` for genuinely cross-cutting helpers (`createLogger`, `computeContentHash`, the WS-envelope protocol, TOFU). When you add a type or helper, place it in the _smallest_ package that satisfies its consumers — don't default to `@omnesis/core`.
 
 Re-export shims must use **explicit named re-exports** (`export { X } from …`), never `export *` — vite/vitest can't follow `export *` across workspace-package boundaries, so a `export *` shim type-checks but resolves to `undefined` at vitest runtime.
@@ -1213,7 +1218,72 @@ The same code runs two ways: as TypeScript source under tsx (dev, source install
 - Any spawn of a sibling worker thread or subprocess goes through `resolveWorkerEntry` / `resolveSubprocessEntry` from `@omnesis/core` — they pick the `.ts`-under-tsx entry in dev and the emitted `.js` sibling when compiled. A hardcoded `new URL("./worker.ts", import.meta.url)` is a regression.
 - Module-relative asset paths (the gateway's `portal/`, package.json reads) must resolve from both `src/` and `dist/` — both sit one level below the package root, so `..`-anchored paths are safe.
 
+The standalone agent integration bundles generated `@omnesis/platform` Windows
+filesystem helpers under `dist/private-platform`. Release staging and source
+archive creation copy the canonical compiled implementation; they do not add a
+workspace runtime dependency or duplicate the native implementation. Its source
+loader resolves only existing relative TypeScript siblings in that builtin-only
+graph. The published archive uses ordinary JavaScript paths.
+
 - Helpers: `packages/core/src/worker-entry.ts`
+
+JavaScript CLI entry points use `nodeCommandInvocation` before `spawn` or
+`execFile`: Windows does not execute their shebang, so it invokes the current
+Node executable with the entry path as one argument. `resolveNpmInvocation`
+resolves npm's JavaScript CLI beside Node or a PATH installation without
+executing a Windows batch shim. Pass argument arrays throughout; do not enable
+a shell to make a CLI entry executable.
+
+An owned Windows wrapper can exit while native descendants retain its pipes.
+Long-lived CLI streams use `spawnWindowsJob`: the kernel assigns the target to a
+kill-on-close job during creation, and its retained helper stays alive until all
+members exit. Configuration precedes raw stdin, and `jobReady` distinguishes
+native creation errors from target exit codes. Bounded probes use `execWindowsJob`
+so timeouts, cancellation and output limits stop the entire job and await closure.
+`runWindowsJob` adds buffered output and a publication gate before target start.
+Finite build commands explicitly use `completion: "root"`: after capturing the
+root's status, the owner terminates remaining Job members and joins their exit
+and output. Streamed commands retain the default tree lifetime.
+POSIX paths preserve their native process behavior.
+
+`terminateChildProcess` remains available for an already-running Windows root;
+its `taskkill` tree request requires that root to remain alive and provides no
+crash containment. New owned executable launches use kernel jobs instead.
+
+- CLI invocation: `packages/core/src/node-command.ts`
+- Kernel ownership and binary streams: `packages/core/src/windows-job.ts`
+- Bounded probes: `packages/core/src/windows-job-exec.ts`
+- Existing-child shutdown: `packages/core/src/child-termination.ts`
+
+Private Windows key files use `createWindowsPrivateFile` and
+`readWindowsPrivateFile`: creation applies a protected DACL before writing secret
+bytes, and reads validate the owner, every allow ACE, reparse status and bounded
+size on the same open handle. Only the current user, SYSTEM and Administrators
+may receive access. POSIX mode bits do not describe Windows ACL confidentiality.
+
+- Private Windows key files: `packages/core/src/windows-private-file.ts`
+
+Permission fixtures use `@omnesis/source-sdk/testing` on owned temporary paths.
+`setFixtureMode` stages read/list denial; `setFixtureDirectoryWritable` stages
+child creation/publication denial while retaining reads. Restore access in
+`finally`. Windows directory `chmod` does not establish these denials, and a
+read-denial capability does not justify skipping a write-publication test.
+
+Spawned gateways accept graceful shutdown through an inherited Node parent IPC
+channel, using the same coordinator as SIGINT/SIGTERM. Standalone processes add
+no listener. This avoids Windows' forceful signal emulation without exposing a
+network control endpoint. Harnesses invoke the TypeScript loader in the spawned
+Node process so its PID, parent channel and gateway ownership refer to one process.
+
+Check runners and harnesses retain Windows subtree ownership with
+`WindowsProcessTree`: observe the original live child, capture creation identities,
+refresh while it runs, and retain observed descendants after reparenting. Forced
+cleanup opens a native process handle, verifies its creation time, and terminates
+through that same handle. Unknown identities never authorize a kill, and an
+unavailable process snapshot does not release a check lane.
+
+- Parent control: `packages/core/src/parent-shutdown.ts`
+- Birth-aware ownership: `packages/core/src/windows-process-tree.ts`
 - Pipeline: `scripts/release/` + `docs/releasing.md`
 
 ### A suite's dependency object is checked against its type
@@ -1231,7 +1301,7 @@ Two halves make it visible, and **neither works alone**:
    it would otherwise emit the suites into `dist`, which is what gets published
    — so an annotation in a test file is read by nothing, `satisfies` included.
    Each covered package carries a `tsconfig.tests.json` beside its own, and
-   `npm run typecheck:tests` runs **every** one it finds (one CI step), so
+   `npm run typecheck:tests` discovers and runs **every** one through `scripts/typecheck-tests.mjs` (one CI step), so
    adding the file is the whole of joining. The `include` is every suite and
    the `exclude` is the ones that do not pass yet, so a **new** suite is
    covered from the day it is written. Take a file off that list when you clean
@@ -1328,6 +1398,7 @@ When you set out to write code that matches one of the patterns above, open the 
 | Secret-store abstraction           | `packages/core/src/secret-store.ts`, `packages/core/src/secret-file.ts`                                               |
 | Host update serialization          | `packages/core/src/update-lock.ts` + `packages/cli/src/update/source-launcher.ts`                                     |
 | Transient-buffer                   | `packages/providers/whatsapp/src/message-store.ts`                                                                    |
+| Canonical local path boundaries    | `packages/source-sdk/src/node-path-boundary.ts`                                                                       |
 | Local coding-agent transcripts     | `packages/source-sdk/src/local-agent-sessions.ts` + `packages/providers/pi/src/index.ts`                              |
 | Per-source write epochs            | `packages/collector/src/source-sync-runner.ts` + `packages/gateway/src/data/repositories/DocumentRepository.ts`       |
 | Routes only call services          | `packages/gateway/src/http/routes/admin/devices.ts` + `packages/gateway/src/http/services/`                           |
@@ -1370,6 +1441,7 @@ Also enforced:
 - **Snapshot-contract guard** — `packages/source-sdk/src/snapshot-contract.test.ts` walks every file under `packages/providers/` and `packages/source-sdk/` for an actual `presentExternalIds` / `presentIds` emission and fails unless the file is registered in `snapshot-emitters.json` with a sentence saying how completeness is guaranteed. It cannot judge whether the discipline is correct — no static check can — but it guarantees no snapshot emission exists that nobody has thought about, and hands the reviewer the claim to check. The semantic half is `SnapshotEnumeration` and the spawned-gateway sweep in `packages/collector/src/e2e/snapshot-absence.e2e.test.ts`.
 - **Privacy guard** — `scripts/pii-scan.mjs` scans staged diffs, commit messages, and the full tracked tree (`npm run privacy:scan`) for real-looking emails, phone numbers, private/tailnet IPs, common secret shapes, and full-name candidates in high-risk fixture/test paths. Existing reviewed fixture values live in `privacy/pii-allowlist.json`; identity entries are path-scoped so a value reviewed in one fixture cannot bless the same value elsewhere. New values must be invented and added deliberately in the same PR. CI runs the full-tree scan as the first gate of every run.
 - **CI** — `.github/workflows/full-validation.yml` uses GitHub-hosted runners. Every push to `main` runs all Linux lanes and keeps its own commit-keyed run; newer pushes do not replace it. Full sweeps include macOS at 01:17 and 13:17 UTC. Manual dispatch defaults to `lanes=all`; `lanes=linux` runs only Linux and is used by Dependabot after its merges. A newer push to a pull request cancels that pull request's older run. On a pull request, a `scope` job (`scripts/nx/ci-scope.mjs`) runs only the lanes the change affects: the Node lanes follow the Nx affected plan of its merge commit (the affected projects' unit suites and typechecks, format and lint of the changed files, and the E2E files of the selected behavioral bundles, re-sharded), the Android lane runs when that plan selects an Android bundle, and the native, install, Docker, harness and security lanes follow path rules for what each covers. A shared input (lockfile, manifests, root configs, workflows, `packages/core`, the check runners and planner), an unsupported path or a planner failure runs every Linux lane, and a change most projects depend on runs the whole-repository unit suite and typechecks. The macOS lanes (`MACOS_LANES` in the planner: the macOS Node lane, the Swift linters, iOS, the Android screenshot goldens, the Mac installer scenarios) run on a pull request only for the paths they cover, never for a shared input or a planner failure that still knows the changed files, because GitHub lends the repository only a few macOS runners at a time — except that iOS also runs when the plan selects an iOS bundle for a gateway wire path the app decodes. The verdict accepts a skipped lane only when its scope switch is explicitly false. It calls the reusable lane workflows (`ci.yml` for Node, plus the native, install, Docker, harness and security lanes) at one exact revision, gates every Node job behind the privacy scan, and ends in one `verdict` job. Pull-request runs use the plain `pull_request` trigger — read-only token, no secrets. The README badge reads `ci-status.yml`: the newest completed full sweep must pass, along with the newest completed Linux-only run if it is newer; cancelled and skipped runs are ignored. A red `main` stops merging until it is fixed forward or reverted. Release validation requires a scheduled or all-lanes manual run to pass at the exact tagged commit; Linux-only success cannot authorize a release.
+- **Windows runtime CI** — `.github/workflows/windows.yml` runs focused portability units and real gateway/collector smoke tests on every pull request. A daily 04:43 UTC sweep runs every source and test typecheck, the complete runtime unit and adapter suites, two spawned-gateway E2E shards with the real reference embedder, and the full portal suite on GitHub-hosted Windows runners. Manual dispatch defaults to the full sweep and can select a failing lane for diagnosis. Only installer and install-shell suites are excluded, with explicit reasons in `scripts/ci/windows-checks.mjs`; a shell-based runtime fixture must be ported rather than excluded.
 - **Pre-commit / commit-msg / pre-push hooks** — Lefthook (`lefthook.yml`) runs a license-header check, eslint, prettier, and the PII scan pre-commit; strips AI co-author trailers and scans the message on commit-msg; and runs the bounded format and privacy checks on pre-push. Whole-program typecheck, lint, tests, and dead-code analysis stay in the explicit final-validation and CI lanes so a push does not repeat queue-backed work after the required validation has passed.
 
 Known state, not a guard:

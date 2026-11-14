@@ -1663,19 +1663,51 @@ function checkDatabaseEncryption(d: DoctorData, security: SecurityData, ck: Chec
 function checkSecurityPermissions(d: DoctorData, security: SecurityData, ck: Checks): void {
   const bad = security.permissionEntries.filter((entry) => !entry.ok);
   const fixed = security.permissionEntries.filter((entry) => entry.fixed);
+  const windowsHost = security.diskEncryption.platform === "win32";
+  const windowsAcl = security.permissionModel === "windows-acl";
+  if (windowsHost && !windowsAcl) {
+    ck.fail(
+      "Security",
+      "security.permissions",
+      "Windows access controls were not verified by this host",
+      "Update Omnesis on this host and rerun the doctor to inspect native access controls.",
+    );
+    return;
+  }
+  if (
+    windowsAcl &&
+    security.permissionEntries.length === 0 &&
+    !((security.permissionScanCount ?? 0) > 0)
+  ) {
+    ck.fail(
+      "Security",
+      "security.permissions",
+      "Windows access controls could not be verified",
+      "Inspect this host's configuration directory access controls and rerun the doctor.",
+    );
+    return;
+  }
 
   if (bad.length === 0) {
     const suffix =
-      fixed.length > 0 ? `; repaired ${fixed.length} mode${fixed.length === 1 ? "" : "s"}` : "";
+      fixed.length > 0
+        ? `; repaired ${fixed.length} ${windowsAcl ? "ACL" : "mode"}${fixed.length === 1 ? "" : "s"}`
+        : "";
     ck.pass(
       "Security",
       "security.permissions",
-      `Omnesis config tree is owner-only (${formatMode(0o700)} dirs and managed executables, ${formatMode(0o600)} other files${suffix})`,
+      windowsAcl
+        ? `Omnesis config tree has private Windows access controls${suffix}`
+        : `Omnesis config tree is owner-only (${formatMode(0o700)} dirs and managed executables, ${formatMode(0o600)} other files${suffix})`,
     );
   } else {
     const shown = bad
       .slice(0, 5)
       .map((entry) => {
+        if (windowsAcl) {
+          const detail = entry.kind === "missing" ? "missing" : (entry.error ?? "unverified ACL");
+          return `${entry.relativePath} (${detail})`;
+        }
         const actual = entry.actualMode == null ? "missing" : formatMode(entry.actualMode);
         const expected =
           entry.expectedMode == null ? "no symlinks/special files" : formatMode(entry.expectedMode);
@@ -1688,7 +1720,7 @@ function checkSecurityPermissions(d: DoctorData, security: SecurityData, ck: Che
       `${bad.length} Omnesis config entr${bad.length === 1 ? "y is" : "ies are"} not owner-only: ${shown}`,
       security.fixPermissions
         ? "Some permission repairs failed. Inspect the listed paths and rerun with sufficient privileges."
-        : `Run \`${operatorCommand()} doctor --fix-permissions\`${hostSuffix(d)} to repair safe local modes.`,
+        : `Run \`${operatorCommand()} doctor --fix-permissions\`${hostSuffix(d)} to repair safe local ${windowsAcl ? "access controls" : "modes"}.`,
     );
   }
 

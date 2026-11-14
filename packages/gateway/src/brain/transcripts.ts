@@ -110,6 +110,7 @@ interface IndexScanState {
 // restarts the unfinished enumeration with idempotent upserts.
 const INDEX_OPERATION_TAILS = new Map<string, Promise<void>>();
 const INDEX_SCAN_STATES = new Map<string, IndexScanState>();
+const INDEX_OWNERS = new Map<string, Set<FsCognitionTranscriptStore>>();
 
 function parseRef(fileName: string): CognitionTranscriptRef | null {
   const match = FILE_PATTERN.exec(fileName);
@@ -131,14 +132,27 @@ export class FsCognitionTranscriptStore {
   private pruneDir: Dir | null = null;
   private indexDb: Sqlite.Database | null = null;
   private closed = false;
+  private activeIndexOperation = false;
+  private closePromise: Promise<void> | null = null;
   private backgroundIndexBuild: Promise<void> | null = null;
 
   constructor(private readonly dir: string) {
-    this.reconcilePendingRefs();
+    const key = resolve(this.indexPath());
+    const owners = INDEX_OWNERS.get(key) ?? new Set<FsCognitionTranscriptStore>();
+    owners.add(this);
+    INDEX_OWNERS.set(key, owners);
+    try {
+      this.index();
+    } catch (error) {
+      owners.delete(this);
+      if (!owners.size) INDEX_OWNERS.delete(key);
+      throw error;
+    }
   }
 
   /** Persist one attempt's transcript (creates the directory on demand). */
   save(transcript: CognitionRunTranscript): void {
+    this.assertOpen();
     mkdirSync(this.dir, { recursive: true });
     const name = `${transcript.finishedAt}-${sanitizeRunId(transcript.runId)}-a${transcript.attempt}.json`;
     const ref = parseRef(name);
@@ -156,6 +170,7 @@ export class FsCognitionTranscriptStore {
 
   /** All stored transcripts, oldest first. */
   list(): CognitionTranscriptRef[] {
+    this.assertOpen();
     const refs: CognitionTranscriptRef[] = [];
     for (const fileName of this.readDir()) {
       const ref = parseRef(fileName);
@@ -272,6 +287,7 @@ export class FsCognitionTranscriptStore {
    * crafted name from escaping the transcripts directory.
    */
   load(fileName: string): CognitionRunTranscript {
+    this.assertOpen();
     if (!FILE_PATTERN.test(fileName)) {
       throw new Error(`not a transcript file name: ${fileName}`);
     }
@@ -280,6 +296,7 @@ export class FsCognitionTranscriptStore {
 
   /** Asynchronous counterpart for HTTP reads and bounded index traversal. */
   async loadAsync(fileName: string): Promise<CognitionRunTranscript> {
+    this.assertOpen();
     if (!FILE_PATTERN.test(fileName)) {
       throw new Error(`not a transcript file name: ${fileName}`);
     }
@@ -425,35 +442,90 @@ export class FsCognitionTranscriptStore {
    * read and write; what remains per call is the statement itself.
    */
   private index(): Sqlite.Database {
-    if (this.closed) throw new Error(`transcript store is closed: ${this.dir}`);
-    this.indexDb ??= this.openIndex();
+    // An operation already admitted before close drains to a consistent batch
+    // boundary; public entrypoints and queued operations still fail closed.
+    if (!this.activeIndexOperation) this.assertOpen();
+    if (!this.indexDb) {
+      const db = this.openIndex();
+      try {
+        this.reconcilePendingRefs(db);
+      } catch (error) {
+        const failures: unknown[] = [error];
+        try {
+          db.close();
+        } catch (cleanup) {
+          failures.push(cleanup);
+        }
+        if (failures.length > 1)
+          throw new AggregateError(failures, "Transcript recovery and cleanup failed", {
+            cause: error,
+          });
+        throw error;
+      }
+      this.indexDb = db;
+    }
     return this.indexDb;
   }
 
   /**
-   * Closes the ref index for good: every later call on the store fails, and a
-   * background index build in flight stops at its next batch. The gateway's
-   * stores live as long as the process, which closes their connections as it
-   * exits; this is for stores with a shorter life, such as a test's.
+   * Closes the store for good: later resource operations fail, and a background
+   * index build stops at its next batch. The caller awaits archive-local work
+   * and owned directory/SQLite handles.
+   * Other facades retain a shared discovery cursor until its final owner closes.
    */
-  close(): void {
+  close(): Promise<void> {
+    if (this.closePromise) return this.closePromise;
     this.closed = true;
-    this.indexDb?.close();
-    this.indexDb = null;
+    this.closePromise = this.withIndexOperation(async () => {
+      const failures: unknown[] = [];
+      const closeDirectory = async (directory: Dir | null): Promise<void> => {
+        if (!directory) return;
+        try {
+          await directory.close();
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== "ERR_DIR_CLOSED") failures.push(error);
+        }
+      };
+      await closeDirectory(this.pruneDir);
+      this.pruneDir = null;
+      const key = resolve(this.indexPath());
+      const owners = INDEX_OWNERS.get(key);
+      owners?.delete(this);
+      if (!owners?.size) {
+        await closeDirectory(INDEX_SCAN_STATES.get(key)?.directory ?? null);
+        INDEX_SCAN_STATES.delete(key);
+        INDEX_OWNERS.delete(key);
+      }
+      try {
+        this.indexDb?.close();
+      } catch (error) {
+        failures.push(error);
+      }
+      this.indexDb = null;
+      if (failures.length) throw new AggregateError(failures, "Transcript store cleanup failed");
+    }, true).finally(async () => {
+      await this.backgroundIndexBuild;
+    });
+    return this.closePromise;
+  }
+
+  private assertOpen(): void {
+    if (this.closed) throw new Error(`transcript store is closed: ${this.dir}`);
   }
 
   private openIndex(): Sqlite.Database {
     mkdirSync(this.dir, { recursive: true });
     const db = new Sqlite(this.indexPath());
-    const empty =
-      db
-        .prepare<[], { count: number }>(
-          "SELECT COUNT(*) AS count FROM sqlite_master WHERE type IN ('table', 'index')",
-        )
-        .get()?.count === 0;
-    if (empty) db.pragma("auto_vacuum = INCREMENTAL");
-    db.pragma("journal_mode = WAL");
-    db.exec(`
+    try {
+      const empty =
+        db
+          .prepare<[], { count: number }>(
+            "SELECT COUNT(*) AS count FROM sqlite_master WHERE type IN ('table', 'index')",
+          )
+          .get()?.count === 0;
+      if (empty) db.pragma("auto_vacuum = INCREMENTAL");
+      db.pragma("journal_mode = WAL");
+      db.exec(`
       CREATE TABLE IF NOT EXISTS transcript_refs (
         file_name TEXT PRIMARY KEY,
         run_id TEXT NOT NULL,
@@ -470,19 +542,32 @@ export class FsCognitionTranscriptStore {
         value TEXT NOT NULL
       );
     `);
-    const columns = db
-      .prepare<[], { name: string }>("SELECT name FROM pragma_table_info('transcript_refs')")
-      .all()
-      .map((row) => row.name);
-    if (!columns.includes("state")) {
-      db.exec("ALTER TABLE transcript_refs ADD COLUMN state TEXT NOT NULL DEFAULT 'committed'");
-    }
-    db.exec(`
+      const columns = db
+        .prepare<[], { name: string }>("SELECT name FROM pragma_table_info('transcript_refs')")
+        .all()
+        .map((row) => row.name);
+      if (!columns.includes("state")) {
+        db.exec("ALTER TABLE transcript_refs ADD COLUMN state TEXT NOT NULL DEFAULT 'committed'");
+      }
+      db.exec(`
       CREATE INDEX IF NOT EXISTS idx_transcript_refs_state_newest
         ON transcript_refs(state, finished_at DESC, file_name DESC);
       CREATE INDEX IF NOT EXISTS idx_transcript_refs_run_state
         ON transcript_refs(run_id, state, finished_at DESC, file_name DESC);
     `);
+    } catch (error) {
+      const failures: unknown[] = [error];
+      try {
+        db.close();
+      } catch (cleanup) {
+        failures.push(cleanup);
+      }
+      if (failures.length > 1)
+        throw new AggregateError(failures, "Transcript index setup and cleanup failed", {
+          cause: error,
+        });
+      throw error;
+    }
     return db;
   }
 
@@ -521,8 +606,7 @@ export class FsCognitionTranscriptStore {
    * of the archive, and a state this build does not know (one a newer build
    * wrote before a rollback) is still settled.
    */
-  private reconcilePendingRefs(): void {
-    const db = this.index();
+  private reconcilePendingRefs(db: Sqlite.Database): void {
     const pending = db
       .prepare<[], { file_name: string }>(
         `SELECT file_name FROM transcript_refs
@@ -554,7 +638,7 @@ export class FsCognitionTranscriptStore {
   }
 
   private startBackgroundIndexBuild(): void {
-    if (this.backgroundIndexBuild) return;
+    if (this.closed || this.backgroundIndexBuild) return;
     this.backgroundIndexBuild = (async () => {
       let complete = false;
       while (!complete) {
@@ -570,7 +654,11 @@ export class FsCognitionTranscriptStore {
       });
   }
 
-  private async withIndexOperation<T>(operation: () => Promise<T>): Promise<T> {
+  private async withIndexOperation<T>(
+    operation: () => Promise<T>,
+    allowClosed = false,
+  ): Promise<T> {
+    if (!allowClosed) this.assertOpen();
     const key = resolve(this.indexPath());
     const previous = INDEX_OPERATION_TAILS.get(key) ?? Promise.resolve();
     let release!: () => void;
@@ -581,8 +669,11 @@ export class FsCognitionTranscriptStore {
     INDEX_OPERATION_TAILS.set(key, tail);
     await previous.catch(() => {});
     try {
+      if (!allowClosed) this.assertOpen();
+      this.activeIndexOperation = true;
       return await operation();
     } finally {
+      this.activeIndexOperation = false;
       release();
       if (INDEX_OPERATION_TAILS.get(key) === tail) INDEX_OPERATION_TAILS.delete(key);
     }

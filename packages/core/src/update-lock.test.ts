@@ -84,6 +84,42 @@ describe("update lock", () => {
     }
   });
 
+  it.runIf(process.platform === "win32")(
+    "keeps a dead updater's fence while its native job owner remains",
+    async () => {
+      const configDir = await tempConfig();
+      const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], {
+        stdio: "ignore",
+        windowsHide: true,
+      });
+      const exited = once(child, "exit");
+      await once(child, "spawn");
+      const lock = acquireUpdateLock(configDir, { owner: "initial updater" });
+      try {
+        lock.setProcessGroup(child.pid!);
+        expect(getUpdateLockProcessGroup(configDir)).toEqual({ state: "active", pid: child.pid });
+        const path = join(configDir, "update.lock", "owner.json");
+        const owner = JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>;
+        owner.pid = 2_147_483_647;
+        owner.processStart = "dead-updater";
+        owner.updatedAt = "2000-01-01T00:00:00.000Z";
+        writeFileSync(path, JSON.stringify(owner));
+        expect(() => acquireUpdateLock(configDir, { owner: "replacement", staleMs: 1 })).toThrow(
+          UpdateLockBusyError,
+        );
+        child.kill("SIGKILL");
+        await exited;
+        expect(getUpdateLockProcessGroup(configDir)).toEqual({ state: "gone", pid: child.pid });
+        const replacement = acquireUpdateLock(configDir, { owner: "replacement", staleMs: 1 });
+        replacement.release();
+      } finally {
+        if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+        await exited;
+        lock.release();
+      }
+    },
+  );
+
   it("recovers an old lock whose process is dead", async () => {
     const configDir = await tempConfig();
     const lockDir = join(configDir, "update.lock");
@@ -112,52 +148,49 @@ describe("update lock", () => {
     lock.release();
   });
 
-  it.skipIf(process.platform === "win32")(
-    "does not retire a dead CLI owner's fence while its detached apply group remains",
-    async () => {
-      const configDir = await tempConfig();
-      const lockDir = join(configDir, "update.lock");
-      mkdirSync(lockDir, { mode: 0o700 });
-      writeFileSync(
-        join(lockDir, "owner.json"),
-        `${JSON.stringify({
-          version: 1,
-          id: "dead-cli-owner",
-          owner: "Omnesis update",
-          pid: 2_147_483_647,
-          processStart: "dead-cli",
-          startedAt: "2026-01-01T00:00:00.000Z",
-          updatedAt: "2026-01-01T00:00:00.000Z",
-          currentStep: "installing",
-          processGroupPid: 2_147_483_646,
-          processGroupStart: "detached-apply",
-        })}\n`,
-      );
-      const realKill = process.kill.bind(process);
-      const kill = vi.spyOn(process, "kill").mockImplementation((pid, signal) => {
-        if (pid === -2_147_483_646) return true;
-        return realKill(pid, signal);
-      });
-      try {
-        expect(() =>
-          acquireUpdateLock(configDir, {
-            owner: "next update",
-            staleMs: 1,
-            now: () => new Date("2026-01-01T00:01:00.000Z"),
-          }),
-        ).toThrow(UpdateLockBusyError);
-      } finally {
-        kill.mockRestore();
-      }
+  it("does not retire a dead CLI owner's fence while its detached apply group remains", async () => {
+    const configDir = await tempConfig();
+    const lockDir = join(configDir, "update.lock");
+    mkdirSync(lockDir, { mode: 0o700 });
+    writeFileSync(
+      join(lockDir, "owner.json"),
+      `${JSON.stringify({
+        version: 1,
+        id: "dead-cli-owner",
+        owner: "Omnesis update",
+        pid: 2_147_483_647,
+        processStart: "dead-cli",
+        startedAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+        currentStep: "installing",
+        processGroupPid: 2_147_483_646,
+        processGroupStart: "detached-apply",
+      })}\n`,
+    );
+    const realKill = process.kill.bind(process);
+    const kill = vi.spyOn(process, "kill").mockImplementation((pid, signal) => {
+      if (pid === (process.platform === "win32" ? 2_147_483_646 : -2_147_483_646)) return true;
+      return realKill(pid, signal);
+    });
+    try {
+      expect(() =>
+        acquireUpdateLock(configDir, {
+          owner: "next update",
+          staleMs: 1,
+          now: () => new Date("2026-01-01T00:01:00.000Z"),
+        }),
+      ).toThrow(UpdateLockBusyError);
+    } finally {
+      kill.mockRestore();
+    }
 
-      const recovered = acquireUpdateLock(configDir, {
-        owner: "next update",
-        staleMs: 1,
-        now: () => new Date("2026-01-01T00:01:00.000Z"),
-      });
-      recovered.release();
-    },
-  );
+    const recovered = acquireUpdateLock(configDir, {
+      owner: "next update",
+      staleMs: 1,
+      now: () => new Date("2026-01-01T00:01:00.000Z"),
+    });
+    recovered.release();
+  });
 
   it("does not reclaim a future lease when PID liveness is not comparable", async () => {
     const configDir = await tempConfig();

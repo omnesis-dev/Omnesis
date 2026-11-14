@@ -14,6 +14,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
+import { execWindowsJob } from "@omnesis/core";
 import { defaultScopesForDeviceKind } from "@omnesis/types";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import { REPO_ROOT } from "./account-enrollment-harness.js";
@@ -42,7 +43,8 @@ describe("sign-in enrollment with the cloud relay flag off", () => {
     };
     delete env.OMNESIS_CLOUD_RELAY_ENABLED;
     if (flag) env.OMNESIS_CLOUD_RELAY_ENABLED = "1";
-    const result = await execFileAsync(command.command, [...command.args, ...args], {
+    const execute = process.platform === "win32" ? execWindowsJob : execFileAsync;
+    const result = await execute(command.command, [...command.args, ...args], {
       cwd: REPO_ROOT,
       env,
       timeout: 30_000,
@@ -316,8 +318,8 @@ describe("sign-in enrollment with the cloud relay flag off", () => {
     expect(await cli(["--help"], true)).toMatch(/^\s+cloud\b/m);
   });
 
-  test("`omnesis cloud` is an unknown command, and its help lists no enrollment commands", async () => {
-    for (const args of [
+  test.each(
+    [
       ["cloud"],
       ["cloud", "pair"],
       ["cloud", "connect"],
@@ -327,11 +329,14 @@ describe("sign-in enrollment with the cloud relay flag off", () => {
       ["cloud", "incidents", "list"],
       ["cloud", "incidents", "ack"],
       ["cloud", "remove-sign-in", "fictional"],
-    ]) {
-      const run = await cliRun(args, false);
-      expect(run.code, args.join(" ")).not.toBe(0);
-      expect(run.output, args.join(" ")).toMatch(/unknown command/i);
-    }
+    ].map((args) => ({ args })),
+  )("disabled CLI invocation $args is an unknown command", async ({ args }) => {
+    const run = await cliRun(args, false);
+    expect(run.code, args.join(" ")).not.toBe(0);
+    expect(run.output, args.join(" ")).toMatch(/unknown command/i);
+  });
+
+  test("disabled cloud help lists no enrollment commands, while the flag reveals them", async () => {
     // Without the command, its help falls back to the top-level usage.
     const cloudCommands = [
       "Connect this gateway to your Omnesis account with one sign-in",

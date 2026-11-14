@@ -26,7 +26,7 @@ export function mountPushRoutes(app: RouteApp, service: PushAdminService): void 
     "/admin/push/import-credential",
     scope.admin(),
     validateJson(importCredentialBody),
-    (c) => c.json({ path: service.importCredential(c.req.valid("json")) }),
+    async (c) => c.json({ path: await service.importCredential(c.req.valid("json")) }),
   );
   app.post(
     "/admin/devices/:id/push-health",
@@ -54,9 +54,9 @@ export function mountPushRoutes(app: RouteApp, service: PushAdminService): void 
   app.post("/admin/apns/test", scope.admin(), async (c) =>
     c.json({ result: await service.sendTest() }),
   );
-  app.post("/admin/apns/import-key", scope.admin(), validateJson(legacyImportBody), (c) =>
+  app.post("/admin/apns/import-key", scope.admin(), validateJson(legacyImportBody), async (c) =>
     c.json({
-      keyPath: service.importCredential({
+      keyPath: await service.importCredential({
         platform: "ios",
         sourcePath: c.req.valid("json").sourcePath,
       }),

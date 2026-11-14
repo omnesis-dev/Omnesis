@@ -22,6 +22,7 @@
 
 import { existsSync, readdirSync, renameSync, rmSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
+import { randomBytes } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { createLogger, resolveSubprocessEntry, type SubprocessEntry } from "@omnesis/core";
 
@@ -37,6 +38,23 @@ const VALIDATE_TIMEOUT_MS = 120_000;
  * also what Node reports for a validator that failed to load.
  */
 export const USEARCH_FILE_REJECTED_EXIT_CODE = 65;
+export const USEARCH_NATIVE_STAGE_PREFIX = "OMNESIS_USEARCH_NATIVE_V1";
+
+// NTSTATUS reference: https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-erref/596a1078-e883-4972-9bbc-49e60bebca55
+// Native faults with documented NTSTATUS values. Ordinary CRT exit codes are
+// deliberately absent: they need a separately demonstrated runtime contract.
+const WINDOWS_NATIVE_FAULTS = new Set([
+  0xc0000005, // STATUS_ACCESS_VIOLATION
+  0xc000001d, // STATUS_ILLEGAL_INSTRUCTION
+  0xc00000fd, // STATUS_STACK_OVERFLOW
+  0xc0000374, // STATUS_HEAP_CORRUPTION
+  0xc0000409, // STATUS_STACK_BUFFER_OVERRUN
+]);
+
+// Node's Windows ABORT() exits directly with kAbort=134, bypassing CRT abort.
+// https://github.com/nodejs/node/blob/v24.21.0/src/util.h
+// https://github.com/nodejs/node/blob/v24.21.0/src/node_exit_code.h
+const WINDOWS_NODE_ABORT = 134;
 
 // How much of the validator's stderr to log; a failed import's stack is long
 // and leads with its cause.
@@ -61,7 +79,9 @@ const QUARANTINED_COPY = /\.usearch(?:\.tmp)?\.corrupt-/;
  * quarantining a healthy multi-GB index because the probe never got to look at
  * it would force an expensive, needless rebuild on every such boot. Those return
  * `"inconclusive"`: the file is left in place and we let the in-process open
- * proceed (it will succeed if the file is in fact fine).
+ * proceed (it will succeed if the file is in fact fine). An unfinished native
+ * open or invalid control response instead throws, preserving the graph while
+ * preventing an unverified native open in the gateway.
  *
  * Copies quarantined by earlier boots are pruned whatever this boot finds.
  *
@@ -79,13 +99,32 @@ export function quarantineCorruptUsearch(
   pruneQuarantinedCopies(path);
   if (!existsSync(path)) return "absent";
 
-  const result = spawnSync(validator.command, [...validator.args, path, String(dimensions)], {
-    timeout: VALIDATE_TIMEOUT_MS,
-    stdio: ["ignore", "ignore", "pipe"],
-    encoding: "utf8",
-  });
-
+  const nonce = randomBytes(16).toString("hex");
+  const begin = `${USEARCH_NATIVE_STAGE_PREFIX}:${nonce}:begin\n`;
+  const complete = `${begin}${USEARCH_NATIVE_STAGE_PREFIX}:${nonce}:complete\n`;
+  const result = spawnSync(
+    validator.command,
+    [...validator.args, path, String(dimensions), nonce],
+    {
+      timeout: VALIDATE_TIMEOUT_MS,
+      maxBuffer: 65_536,
+      stdio: ["ignore", "pipe", "pipe"],
+      encoding: "utf8",
+    },
+  );
+  if (result.error && "code" in result.error && result.error.code === "ENOBUFS") {
+    throw new Error("Truncated usearch validation output; refusing in-process open");
+  }
+  const control = result.stdout ?? "";
+  if (control !== "" && control !== begin && control !== complete) {
+    throw new Error("Invalid usearch validation control response; refusing in-process open");
+  }
+  const enteredNative = control === begin;
+  const completedNative = control === complete;
   if (result.status === 0 && !result.signal && !result.error) {
+    if (control !== complete) {
+      throw new Error("Missing usearch validation completion; refusing in-process open");
+    }
     log.info(`usearch sidecar ${path} validated (dim ${dimensions})`);
     return "ok";
   }
@@ -94,11 +133,36 @@ export function quarantineCorruptUsearch(
 
   // Corrupt iff the validator actually ran and reported the file bad: its
   // rejection status (a catchable load error / wrong dimension) or a native
-  // abort. Everything else — spawn error, exit 1 (it could not load), SIGKILL
-  // (OOM), SIGTERM (timeout), exit 2 (bad args) — is inconclusive.
-  const crashedNatively = result.signal != null && CORRUPT_SIGNALS.has(result.signal);
+  // abort. Pre-open startup failures remain inconclusive; failure after a
+  // reported native open must prevent the gateway from opening the same file.
+  // Node's OOM handler uses the same ABORT() code; resource exhaustion is not
+  // evidence that a derivable graph is corrupt.
+  const nodeOutOfMemory =
+    /^FATAL ERROR: [^\r\n]*Allocation failed - (?:JavaScript heap|process) out of memory\b/imu.test(
+      result.stderr ?? "",
+    );
+  const signedStatus = result.status;
+  const windowsFault =
+    process.platform === "win32" &&
+    enteredNative &&
+    signedStatus !== null &&
+    Number.isInteger(signedStatus) &&
+    signedStatus >= -0x80000000 &&
+    signedStatus <= 0xffffffff &&
+    (WINDOWS_NATIVE_FAULTS.has(signedStatus >>> 0) ||
+      (signedStatus === WINDOWS_NODE_ABORT && !nodeOutOfMemory));
+  // POSIX prebuilt bindings release allocations at process exit. A native
+  // destructor can therefore still expose corruption after the frame.
+  const crashedNatively =
+    (result.signal != null && CORRUPT_SIGNALS.has(result.signal)) || windowsFault;
   const rejected = result.status === USEARCH_FILE_REJECTED_EXIT_CODE;
-  const isCorrupt = !result.error && (crashedNatively || rejected);
+  const isCorrupt = !result.error && !nodeOutOfMemory && (crashedNatively || rejected);
+  if (completedNative && !isCorrupt) {
+    throw new Error("Usearch validator failed after native completion; refusing in-process open");
+  }
+  if (enteredNative && !isCorrupt) {
+    throw new Error("Usearch native validation did not complete; refusing in-process open");
+  }
 
   if (!isCorrupt) {
     const why = result.error
@@ -112,7 +176,7 @@ export function quarantineCorruptUsearch(
     return "inconclusive";
   }
 
-  const reason = `${result.signal ? `native abort (${result.signal})` : "invalid file"}${validatorSaid}`;
+  const reason = `${result.signal ? `native abort (${result.signal})` : windowsFault ? `native abort (Windows status ${result.status})` : "invalid file"}${validatorSaid}`;
   const quarantinePath = `${path}.corrupt-${fsSafeTimestamp()}`;
   try {
     renameSync(path, quarantinePath);
@@ -128,6 +192,9 @@ export function quarantineCorruptUsearch(
         err instanceof Error ? err.message : String(err)
       }`,
     );
+    throw new Error("Cannot quarantine corrupt usearch sidecar; refusing in-process open", {
+      cause: err,
+    });
   }
   return "quarantined";
 }

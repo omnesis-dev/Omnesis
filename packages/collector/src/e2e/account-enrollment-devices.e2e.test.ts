@@ -36,6 +36,7 @@ import {
   tokenRotationTranscript,
 } from "@omnesis/cloud-relay";
 import { HttpGatewayClient, GatewayWsClient } from "@omnesis/gateway-client";
+import { inspectWindowsPrivatePathSync } from "@omnesis/core";
 import { AccountId, SourceId, SourceType, ProviderId } from "@omnesis/types";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 import {
@@ -471,9 +472,12 @@ describe.skipIf(!browserReady)("devices join a gateway by signing in", () => {
       token: string;
       deviceId: string;
     };
-    expect(
-      (await stat(join(configDir, "cloud-relay", "collector-device.json.key"))).mode & 0o077,
-    ).toBe(0);
+    const deviceKeyPath = join(configDir, "cloud-relay", "collector-device.json.key");
+    if (process.platform === "win32") {
+      expect(inspectWindowsPrivatePathSync(deviceKeyPath, "file").private).toBe(true);
+    } else {
+      expect((await stat(deviceKeyPath)).mode & 0o077).toBe(0);
+    }
     expect(bundle.gatewayUrl).toBe(gateway.publicOrigin);
     const row = await deviceRow(bundle.deviceId);
     expect(row).toMatchObject({ kind: "collector", name });

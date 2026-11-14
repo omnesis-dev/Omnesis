@@ -4,7 +4,7 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { createServer, type Server } from "node:net";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
 import {
   dockerReinstallCommand,
@@ -161,14 +161,23 @@ describe("probeDockerSocket", () => {
 
     test("connects and reports what refused it", async () => {
       dir = mkdtempSync(join(tmpdir(), "omnesis-socket-"));
-      const path = join(dir, "docker.sock");
+      // Node uses named pipes for local IPC on Windows; the connector accepts
+      // either endpoint syntax without needing the real Docker daemon.
+      const endpoint = (name: string): string =>
+        process.platform === "win32" ? `\\\\.\\pipe\\${basename(dir)}-${name}` : join(dir, name);
+      const path = endpoint("docker.sock");
       server = createServer((socket) => socket.end());
-      await new Promise<void>((resolve) => server!.listen(path, resolve));
+      await new Promise<void>((resolve, reject) => {
+        server!.once("error", reject);
+        server!.listen(path, resolve);
+      });
       await expect(nodeDockerSocketProbeDeps.connect(path)).resolves.toBeNull();
-      await expect(nodeDockerSocketProbeDeps.connect(join(dir, "absent.sock"))).resolves.toBe(
+      await expect(nodeDockerSocketProbeDeps.connect(endpoint("absent.sock"))).resolves.toBe(
         "ENOENT",
       );
-      expect(nodeDockerSocketProbeDeps.socketGid(path)).toBe(process.getgid?.());
+      expect(nodeDockerSocketProbeDeps.socketGid(path)).toBe(
+        process.platform === "win32" ? null : process.getgid?.(),
+      );
     });
   });
 });

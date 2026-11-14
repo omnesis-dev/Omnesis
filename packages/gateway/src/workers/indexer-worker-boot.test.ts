@@ -5,7 +5,6 @@ import { randomBytes } from "node:crypto";
 import { createServer, type Server } from "node:http";
 import { type AddressInfo } from "node:net";
 import {
-  chmodSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -19,6 +18,7 @@ import { dirname, join } from "node:path";
 import { Worker } from "node:worker_threads";
 import { afterEach, describe, expect, test } from "vitest";
 import { resolveWorkerEntry } from "@omnesis/core";
+import { setFixtureDirectoryWritable } from "@omnesis/source-sdk/testing";
 import { createDatabase, deleteAllBySource, upsertDocuments } from "../db.js";
 import { NO_ENCODING } from "../indexer/embedder-prefixes.js";
 import {
@@ -1008,7 +1008,7 @@ describe("indexer worker boot persistence", () => {
 
       deleteDocumentsBySource(paths.gatewayDbPath, sourceId);
       await proxy.deleteSourceIndex(sourceId);
-      chmodSync(graphDir, 0o500);
+      setFixtureDirectoryWritable(graphDir, false);
       graphReadOnly = true;
       fakeEmbedder.holds[0]!.release();
 
@@ -1016,7 +1016,7 @@ describe("indexer worker boot persistence", () => {
       await proxy.dispose();
       proxy = undefined;
 
-      chmodSync(graphDir, graphDirMode);
+      setFixtureDirectoryWritable(graphDir, true, graphDirMode);
       graphReadOnly = false;
       const failedDb = openIndexDb(paths.indexDbPath, { readonly: true });
       try {
@@ -1043,7 +1043,7 @@ describe("indexer worker boot persistence", () => {
       }
     } finally {
       fakeEmbedder.holds[0]!.release();
-      if (graphReadOnly) chmodSync(graphDir, graphDirMode);
+      if (graphReadOnly) setFixtureDirectoryWritable(graphDir, true, graphDirMode);
       await proxy?.dispose();
       await closeServer(fakeEmbedder.server);
     }
@@ -1078,7 +1078,7 @@ describe("indexer worker boot persistence", () => {
         indexDb.close();
       }
 
-      chmodSync(graphDir, 0o500);
+      setFixtureDirectoryWritable(graphDir, false);
       graphReadOnly = true;
       proxy = createProxy(paths, seedEmbedder.url);
 
@@ -1095,7 +1095,7 @@ describe("indexer worker boot persistence", () => {
         failedDb.close();
       }
 
-      chmodSync(graphDir, graphDirMode);
+      setFixtureDirectoryWritable(graphDir, true, graphDirMode);
       graphReadOnly = false;
       proxy = createProxy(paths, seedEmbedder.url);
       await proxy.whenReady();
@@ -1107,7 +1107,7 @@ describe("indexer worker boot persistence", () => {
         recoveredDb.close();
       }
     } finally {
-      if (graphReadOnly) chmodSync(graphDir, graphDirMode);
+      if (graphReadOnly) setFixtureDirectoryWritable(graphDir, true, graphDirMode);
       await proxy?.dispose();
       await closeServer(seedEmbedder.server);
     }
@@ -1659,9 +1659,12 @@ describe("indexer worker boot persistence", () => {
 
     try {
       await blockingEmbedder.holds[0]!.started;
-      await proxy.dispose();
-      expect(exited).toBe(true);
+      const disposal = proxy.dispose();
       await readyRejection;
+      expect(exited).toBe(false);
+      blockingEmbedder.holds[0]!.release();
+      await disposal;
+      expect(exited).toBe(true);
     } finally {
       blockingEmbedder.holds[0]!.release();
       await proxy.dispose();

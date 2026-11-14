@@ -10,10 +10,17 @@ import {
   X509Certificate,
   type KeyObject,
 } from "node:crypto";
-import { createReadStream, existsSync } from "node:fs";
-import { mkdir, link, rm } from "node:fs/promises";
+import { createReadStream } from "node:fs";
+import { mkdir, link, rm, lstat } from "node:fs/promises";
 import { dirname } from "node:path";
-import { atomicWriteFile, atomicWriteFileSync } from "@omnesis/core";
+import { Readable } from "node:stream";
+import {
+  atomicWriteFile,
+  atomicWriteFileSync,
+  readWindowsPrivateFile,
+  readWindowsRegularFilePrefix,
+  writeWindowsPrivateFileAtomicStream,
+} from "@omnesis/core";
 import { z } from "zod";
 import {
   keyChallengeSchema,
@@ -76,6 +83,25 @@ async function readKeyText(path: string): Promise<string> {
   return Buffer.concat(chunks).toString("utf8");
 }
 
+async function readPrivateKeyText(path: string): Promise<string> {
+  return process.platform === "win32"
+    ? (await readWindowsPrivateFile(path, 65_536)).toString("utf8")
+    : readKeyText(path);
+}
+
+/** Probe presence without interpreting a recovery artifact or collapsing denied metadata into absence. */
+async function hasRecoveryArtifact(path: string): Promise<boolean> {
+  try {
+    if (process.platform === "win32") await readWindowsRegularFilePrefix(path, 0);
+    else await lstat(path);
+    return true;
+  } catch (error) {
+    if (error && typeof error === "object" && "code" in error && error.code === "ENOENT")
+      return false;
+    throw error;
+  }
+}
+
 /** Exclusive publication keeps a concurrent registration from replacing the stable owner identity. */
 export async function readOrCreateGatewayOwnerKey(
   path: string,
@@ -83,7 +109,7 @@ export async function readOrCreateGatewayOwnerKey(
 ): Promise<KeyObject> {
   let material: string;
   try {
-    material = await readKeyText(path);
+    material = await readPrivateKeyText(path);
   } catch (error) {
     if (!(
       typeof error === "object" &&
@@ -99,24 +125,37 @@ export async function readOrCreateGatewayOwnerKey(
     }
     const key = generateKeyPairSync("ed25519").privateKey.export({ type: "pkcs8", format: "pem" });
     await mkdir(dirname(path), { recursive: true, mode: 0o700 });
-    const temporary = `${path}.${randomUUID()}.tmp`;
-    try {
-      await atomicWriteFile(temporary, key, { mode: 0o600 });
+    if (process.platform === "win32") {
+      const bytes = typeof key === "string" ? Buffer.from(key) : key;
       try {
-        await link(temporary, path);
+        await writeWindowsPrivateFileAtomicStream(path, Readable.from([bytes]), bytes.byteLength, {
+          replaceExisting: false,
+          timeoutMs: 30_000,
+        });
       } catch (error) {
-        if (!(
-          typeof error === "object" &&
-          error !== null &&
-          "code" in error &&
-          error.code === "EEXIST"
-        ))
+        if (!(error && typeof error === "object" && "code" in error && error.code === "EEXIST"))
           throw error;
       }
-    } finally {
-      await rm(temporary, { force: true });
+    } else {
+      const temporary = `${path}.${randomUUID()}.tmp`;
+      try {
+        await atomicWriteFile(temporary, key, { mode: 0o600 });
+        try {
+          await link(temporary, path);
+        } catch (error) {
+          if (!(
+            typeof error === "object" &&
+            error !== null &&
+            "code" in error &&
+            error.code === "EEXIST"
+          ))
+            throw error;
+        }
+      } finally {
+        await rm(temporary, { force: true });
+      }
     }
-    material = await readKeyText(path);
+    material = await readPrivateKeyText(path);
   }
   const key = createPrivateKey(material);
   if (key.asymmetricKeyType !== "ed25519")
@@ -127,9 +166,9 @@ export async function readOrCreateGatewayOwnerKey(
 async function readOwnerIdentity(
   options: Pick<GatewayKeySessionOptions, "sessionFile" | "ownerKeyFile" | "recoveryReceiptFile">,
 ): Promise<{ owner: KeyObject; enrolled: boolean }> {
-  let allowCreate = !existsSync(
+  let allowCreate = !(await hasRecoveryArtifact(
     options.recoveryReceiptFile ?? `${options.sessionFile}.recovery.json`,
-  );
+  ));
   try {
     const stored = await readPrivateJson(options.sessionFile);
     allowCreate &&= !(
@@ -208,7 +247,7 @@ export async function prepareGatewayRecoveryRequest(
 async function readMaterial(options: GatewayKeySessionOptions): Promise<Material> {
   options.signal?.throwIfAborted();
   const certificate = await readKeyText(options.certificateFile);
-  const tls = createPrivateKey(await readKeyText(options.privateKeyFile));
+  const tls = createPrivateKey(await readPrivateKeyText(options.privateKeyFile));
   const leaf = new X509Certificate(certificate);
   if (publicKeyFingerprint(createPublicKey(tls)) !== publicKeyFingerprint(leaf.publicKey))
     throw new Error("Gateway TLS certificate and private key do not match");

@@ -470,6 +470,15 @@ makes its `RE2` constructor free the native memory it would otherwise leave on
 the module's fixed heap. Apache-2.0 §4(b) requires modified files to carry a
 notice of the change; the patch adds one.
 
+**`usearch@2.26.5`** (Apache-2.0): `patches/usearch+2.26.5.patch` adds
+Unicode Windows paths, delete-shared memory maps, 64-bit mapped file lengths,
+deterministic native reset, and atomic publication while readers retain an old
+map. The JavaScript wrapper checks the Windows binding capability. Windows
+source builds run `node scripts/ci/build-windows-usearch.mjs` after dependency
+installation to compile and prove the modified binding; other platforms keep
+their existing native binaries. Modified files retain their upstream notices
+and identify these changes.
+
 ### Copyleft and weak-copyleft dependencies (individual callout)
 
 The following distributed dependencies carry copyleft or weak-copyleft licenses

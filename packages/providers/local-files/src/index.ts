@@ -1,19 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import {
-  closeSync,
-  constants as fsConstants,
-  existsSync,
-  fstatSync,
-  openSync,
-  readFileSync,
-  readdirSync,
-  realpathSync,
-  statSync,
-} from "node:fs";
-import { homedir } from "node:os";
-import { isAbsolute, join, relative, resolve, sep } from "node:path";
+import { existsSync, readdirSync, realpathSync, statSync } from "node:fs";
+import { join, relative, resolve, sep } from "node:path";
 import picomatch from "picomatch";
 import {
   createLogger,
@@ -43,9 +32,15 @@ import {
   MIN_FILE_BYTES,
   classifyFile,
   isRefusedPath,
+  isProtectedAbsolutePath,
   subtreePruneReason,
 } from "./policy.js";
 import { normalizeFile } from "./normalizer.js";
+import { readLocalFileBytes } from "./file-read.js";
+import { exactFileIdentity, fileIdentityKey } from "./identity.js";
+import { createUnsafePathMatcher } from "./unsafe-paths.js";
+import { containsLocalPath, sameLocalPath } from "./path-boundary.js";
+import { displayLocalFilePath as displayPath } from "./paths.js";
 import { localFilesIconDataUri } from "./icons.js";
 import { localFilesDocumentEventProfile } from "./document-event-profile.js";
 import { localFilesStateSpec } from "./state.js";
@@ -68,15 +63,8 @@ const EXTRACT_MIME_TYPES = Object.values(ALLOWED_EXTENSIONS).filter(
   (m) => !["text/plain", "text/markdown", "text/csv", "application/json"].includes(m),
 );
 
-function displayPath(absolutePath: string): string {
-  const home = homedir();
-  return absolutePath === home || absolutePath.startsWith(home + sep)
-    ? `~${sep}${relative(home, absolutePath)}`.split(sep).join("/")
-    : absolutePath;
-}
-
 /**
- * Refusal reason when a root is itself a repo or vault, null otherwise. A
+ * Refusal reason for a protected configuration root, repository, or vault. A
  * root pointed at one would index nothing — the walk prunes those subtrees
  * — so callers refuse it with the reason instead of a silently empty
  * source. No walk-up: a folder inside a repo the operator names explicitly
@@ -84,7 +72,7 @@ function displayPath(absolutePath: string): string {
  * symlinked root into a repo cannot slip past validation only to prune to
  * empty at walk time.
  */
-function repoOrVaultRefusal(path: string, label: string): string | null {
+function rootRefusal(path: string, label: string): string | null {
   const candidates = new Set([path]);
   try {
     candidates.add(realpathSync(path));
@@ -92,6 +80,8 @@ function repoOrVaultRefusal(path: string, label: string): string | null {
     // Unresolvable here: the existence check reports it, not this one.
   }
   for (const candidate of candidates) {
+    if (isProtectedAbsolutePath(candidate))
+      return `Directory is a protected system or configuration location: ${label}`;
     if (existsSync(join(candidate, ".git"))) {
       return `Directory is a git repository, which Local Files never indexes: ${label}`;
     }
@@ -111,6 +101,8 @@ interface ScanResult {
    * never treated as gone.
    */
   placeholders: string[];
+  /** Observed unsafe lexical aliases; retain only prior records under these prefixes. */
+  unsafePaths: string[];
   /**
    * Why each root the scan could not read in full stopped short, by root.
    *
@@ -126,6 +118,7 @@ interface ScanResult {
 interface WalkState {
   files: LocalFileEntry[];
   placeholders: string[];
+  unsafePaths: string[];
   /**
    * Files the walk saw but did not index, for a reason that says nothing
    * about whether they should stay in the corpus.
@@ -227,6 +220,7 @@ function walkDir(
       }
       if (!isInside(resolvedTarget)) {
         countSkip(state, "symlink-outside-root");
+        state.unsafePaths.push(fullPath);
         continue;
       }
       try {
@@ -253,6 +247,16 @@ function walkDir(
         resolved = realpathSync(fullPath);
       } catch {
         countSkip(state, "dangling-symlink");
+        continue;
+      }
+      if (!isInside(resolved)) {
+        countSkip(state, "directory-outside-root");
+        state.unsafePaths.push(fullPath);
+        continue;
+      }
+      if (isProtectedAbsolutePath(resolved)) {
+        if (relative(fullPath, resolved) !== "") state.unsafePaths.push(fullPath);
+        countSkip(state, "protected-directory");
         continue;
       }
       if (visited.has(resolved)) {
@@ -298,11 +302,20 @@ function walkDir(
       }
       if (!isInside(resolvedPath)) {
         countSkip(state, "symlink-outside-root");
+        state.unsafePaths.push(fullPath);
+        continue;
+      }
+      if (isProtectedAbsolutePath(resolvedPath)) {
+        if (relative(fullPath, resolvedPath) !== "") state.unsafePaths.push(fullPath);
+        countSkip(state, "protected-file");
         continue;
       }
       let stat;
+      let fileIdentity: string | undefined;
       try {
         stat = statSync(resolvedPath);
+        if (process.platform === "win32")
+          fileIdentity = exactFileIdentity(statSync(resolvedPath, { bigint: true }));
       } catch {
         // There, and momentarily unreadable — a permission that changed, an
         // I/O error. Carried as present so a transient failure cannot be
@@ -345,6 +358,7 @@ function walkDir(
         size: stat.size,
         inode: stat.ino,
         device: stat.dev,
+        ...(fileIdentity === undefined ? {} : { fileIdentity }),
       });
     }
   }
@@ -354,8 +368,7 @@ function walkDir(
 function createContainmentChecker(roots: string[]): (path: string) => string | null {
   return (path: string): string | null => {
     for (const root of roots) {
-      const rel = relative(root, path);
-      if (rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel)) return root;
+      if (containsLocalPath(root, path)) return root;
     }
     return null;
   };
@@ -372,13 +385,13 @@ function createContainmentChecker(roots: string[]): (path: string) => string | n
  */
 function resolveStableId(
   rawHash: string,
-  inode: number,
-  device: number,
-  size: number,
+  file: LocalFileEntry,
   disappearedByHash: Map<string, LocalFileState[]>,
   disappearedByInode: Map<string, LocalFileState>,
   replaced: LocalFileState | undefined,
 ): string {
+  const { inode, size } = file;
+  const identity = fileIdentityKey(file);
   const candidates = disappearedByHash.get(rawHash);
   if (candidates) {
     const idx = candidates.findIndex((c) => c.size === size);
@@ -389,36 +402,14 @@ function resolveStableId(
     }
   }
   if (inode > 0) {
-    const inodeMatch = disappearedByInode.get(`${device}:${inode}`);
+    const inodeMatch = disappearedByInode.get(identity);
     if (inodeMatch) {
-      disappearedByInode.delete(`${device}:${inode}`);
+      disappearedByInode.delete(identity);
       return inodeMatch.stableId;
     }
   }
   if (replaced) return replaced.stableId;
-  return `ino:${device}:${inode}`;
-}
-
-/** Read bytes with TOCTOU guards: the file must be unchanged since discovery. */
-function readFileBytes(file: LocalFileEntry): Uint8Array {
-  const fd = openSync(file.absolutePath, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW);
-  try {
-    const stat = fstatSync(fd);
-    if (
-      !stat.isFile() ||
-      stat.nlink !== 1 ||
-      stat.dev !== file.device ||
-      stat.ino !== file.inode ||
-      stat.size !== file.size ||
-      stat.mtimeMs !== file.mtime
-    ) {
-      throw new Error(`Local file changed after discovery: ${file.displayPath}`);
-    }
-    const buf = readFileSync(fd);
-    return new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength);
-  } finally {
-    closeSync(fd);
-  }
+  return `ino:${identity}`;
 }
 
 export default defineSource({
@@ -462,7 +453,7 @@ export default defineSource({
         // repository or a vault here is not a small mistake: the walk prunes
         // both, so the source would be configured, valid, and permanently
         // empty — which reads as a bug rather than a refusal.
-        check: (value, probe) => repoOrVaultRefusal(probe.resolve(value), value.trim()),
+        check: (value, probe) => rootRefusal(probe.resolve(value), value.trim()),
       }),
       {
         label: "Folders to index",
@@ -521,14 +512,15 @@ export default defineSource({
       // declarative constraint expresses: a folder that became a repository
       // since it was configured would prune to nothing and read as an empty
       // source rather than a refused one.
-      const refusal = repoOrVaultRefusal(root, root);
+      const refusal = rootRefusal(root, root);
       if (refusal) throw new Error(refusal);
     }
     const isInside = createContainmentChecker(roots);
     const excludeMatchers = (config?.exclude ?? [])
       .filter((p) => p.length > 0)
       .map((p) => picomatch(p));
-    const isExcluded = (relPath: string): boolean => excludeMatchers.some((m) => m(relPath));
+    const isExcluded = (relPath: string): boolean =>
+      excludeMatchers.some((m) => m(relPath.split(sep).join("/")));
     const extractAttachment = host?.extractAttachment;
 
     const attachmentConfig: AttachmentExtractionConfig = resolveAttachmentConfig(
@@ -564,7 +556,9 @@ export default defineSource({
     const rootOf = (absolutePath: string): string | null => {
       let best: string | null = null;
       for (const root of roots) {
-        if (absolutePath !== root && !absolutePath.startsWith(root + sep)) continue;
+        const exact = absolutePath === root || absolutePath.startsWith(root + sep);
+        if (!exact && (process.platform !== "win32" || !containsLocalPath(root, absolutePath)))
+          continue;
         if (best === null || root.length > best.length) best = root;
       }
       return best;
@@ -578,6 +572,7 @@ export default defineSource({
       const state: WalkState = {
         files: [],
         placeholders: [],
+        unsafePaths: [],
         presentButUnread: [],
         entries: 0,
         skipped: {},
@@ -600,7 +595,16 @@ export default defineSource({
         }
         state.rootFailure = undefined;
         try {
-          visited.add(realpathSync(root));
+          const canonicalRoot = realpathSync(root);
+          if (!sameLocalPath(root, canonicalRoot, "directory")) {
+            gaps.set(root, "Configured folder resolves to a different location");
+            continue;
+          }
+          if (isProtectedAbsolutePath(canonicalRoot)) {
+            gaps.set(root, "Folder resolves to a protected system or configuration location");
+            continue;
+          }
+          visited.add(canonicalRoot);
         } catch {
           gaps.set(root, `Root unreadable: ${displayPath(root)}`);
           continue;
@@ -612,6 +616,7 @@ export default defineSource({
       return {
         files: state.files,
         placeholders: [...state.placeholders, ...state.presentButUnread],
+        unsafePaths: state.unsafePaths,
         gaps,
         stats: { skipped: state.skipped, unreadable: state.unreadable },
       };
@@ -623,7 +628,7 @@ export default defineSource({
           signal,
           roots: roots.map((path) => ({ path })),
           fileExtensions: Object.keys(ALLOWED_EXTENSIONS).map((e) => `.${e}`),
-          exclude: (path) => isExcluded(path) || isRefusedPath(path),
+          exclude: (path) => isExcluded(path) || isRefusedPath(path.split(sep).join("/")),
         }),
       watchPaths: roots,
       watchDirectoryPaths: roots,
@@ -652,8 +657,13 @@ export default defineSource({
             prev !== undefined &&
             !prev.skipped &&
             prev.partitionKey !== partitionOf(rootOf(file.absolutePath)!);
-          if (cutoffMs !== null && file.mtime < cutoffMs && !needsPartition) continue;
-          if (!prev || prev.mtime !== file.mtime || needsPartition) {
+          const needsExactIdentity =
+            prev !== undefined &&
+            file.fileIdentity !== undefined &&
+            prev.fileIdentity !== file.fileIdentity;
+          if (cutoffMs !== null && file.mtime < cutoffMs && !needsPartition && !needsExactIdentity)
+            continue;
+          if (!prev || prev.mtime !== file.mtime || needsPartition || needsExactIdentity) {
             filesToProcess.push(file);
           } else if (prev.skipped && nowMs - (prev.skippedAt ?? 0) > SKIP_RETRY_MS) {
             // A terminal skip ages out: the operator may have raised a cap
@@ -679,12 +689,16 @@ export default defineSource({
             size: file.size,
             inode: file.inode,
             device: file.device,
-            stableId: prev?.stableId ?? `ino:${file.device}:${file.inode}`,
+            ...(file.fileIdentity === undefined ? {} : { fileIdentity: file.fileIdentity }),
+            stableId: prev?.stableId ?? `ino:${fileIdentityKey(file)}`,
             skipped: reason,
             skippedAt: nowMs,
           };
         };
         const placeholderSet = new Set(scan.placeholders);
+        // A refused alias does not make unrelated paths uncertain. Preserve
+        // only known records under the exact file or directory it replaced.
+        const hasUnsafeAncestor = createUnsafePathMatcher(scan.unsafePaths);
         // Untracked placeholders stay unknown until the bytes are local.
 
         // A folder the scan could not read in full holds no information about
@@ -698,7 +712,7 @@ export default defineSource({
         const disappearedByInode = new Map<string, LocalFileState>();
         const disappearedPaths: string[] = [];
         const currentSet = new Set(allFiles.map((f) => f.absolutePath));
-        const currentInodes = new Set(allFiles.map((f) => `${f.device}:${f.inode}`));
+        const currentInodes = new Set(allFiles.map(fileIdentityKey));
         /**
          * The file this path held before, when it has been replaced in place:
          * its inode is no longer anywhere in the scan. An inode still present
@@ -707,13 +721,19 @@ export default defineSource({
         const replacedAt = (file: LocalFileEntry): LocalFileState | undefined => {
           const prev = previousFileMap[file.absolutePath];
           if (!prev || prev.inode <= 0) return undefined;
-          if (prev.device === file.device && prev.inode === file.inode) return undefined;
-          return currentInodes.has(`${prev.device}:${prev.inode}`) ? undefined : prev;
+          if (fileIdentityKey(prev) === fileIdentityKey(file)) return undefined;
+          return currentInodes.has(fileIdentityKey(prev)) ? undefined : prev;
         };
         for (const [path, stateOf] of Object.entries(previousFileMap)) {
           if (currentSet.has(path)) continue;
           if (placeholderSet.has(path)) continue;
           const root = rootOf(path);
+          if (root !== null && hasUnsafeAncestor(path)) {
+            const rel = relative(root, path).split(sep).join("/");
+            // Explicit exclusions still mean removal; uncertainty about an
+            // alias must not overrule the operator's configured boundary.
+            if (!isExcluded(rel) && !isRefusedPath(rel)) continue;
+          }
           if (root !== null && gappedRoots.has(root)) continue;
           disappearedPaths.push(path);
           // Skipped files carry no raw hash; matching an empty hash against
@@ -723,8 +743,7 @@ export default defineSource({
             if (list) list.push(stateOf);
             else disappearedByHash.set(stateOf.rawHash, [stateOf]);
           }
-          if (stateOf.inode > 0)
-            disappearedByInode.set(`${stateOf.device}:${stateOf.inode}`, stateOf);
+          if (stateOf.inode > 0) disappearedByInode.set(fileIdentityKey(stateOf), stateOf);
         }
         // Disappeared paths leave the cursor only where their deletions are
         // asserted below. Anything else forgets files an incomplete scan
@@ -749,7 +768,9 @@ export default defineSource({
                 recordSkip(file, "too-large");
                 continue;
               }
-              text = new TextDecoder("utf-8", { fatal: false }).decode(readFileBytes(file));
+              text = new TextDecoder("utf-8", { fatal: false }).decode(
+                readLocalFileBytes(file, { roots }),
+              );
             } else {
               if (!extractAttachment || !attachmentConfig.enabled) {
                 // No extractor wired: recorded, retried when one is (or the
@@ -765,7 +786,7 @@ export default defineSource({
                 recordSkip(file, check.reason ?? "excluded");
                 continue;
               }
-              const bytes = readFileBytes(file);
+              const bytes = readLocalFileBytes(file, { roots });
               if (bytes.length === 0) {
                 recordSkip(file, "empty");
                 continue;
@@ -804,15 +825,24 @@ export default defineSource({
             continue;
           }
           const rawHash = computeContentHash(text);
-          const stableId = resolveStableId(
-            rawHash,
-            file.inode,
-            file.device,
-            file.size,
-            disappearedByHash,
-            disappearedByInode,
-            replacedAt(file),
-          );
+          const previousAtPath = previousFileMap[file.absolutePath];
+          const sameFile =
+            previousAtPath !== undefined &&
+            fileIdentityKey(previousAtPath) === fileIdentityKey(file);
+          const upgradingLegacyIdentity =
+            file.fileIdentity !== undefined &&
+            previousAtPath !== undefined &&
+            previousAtPath.fileIdentity === undefined;
+          const stableId =
+            sameFile || upgradingLegacyIdentity
+              ? previousAtPath!.stableId
+              : resolveStableId(
+                  rawHash,
+                  file,
+                  disappearedByHash,
+                  disappearedByInode,
+                  replacedAt(file),
+                );
           // The stableId moved here: any other path still carrying it is the
           // rename source, not a second file (true duplicates never share —
           // the ladder only matches just-vanished paths). Collapse so the
@@ -839,6 +869,7 @@ export default defineSource({
               size: file.size,
               inode: file.inode,
               device: file.device,
+              ...(file.fileIdentity === undefined ? {} : { fileIdentity: file.fileIdentity }),
               stableId,
               partitionKey: doc.partitionKey,
             };
@@ -852,6 +883,7 @@ export default defineSource({
             size: file.size,
             inode: file.inode,
             device: file.device,
+            ...(file.fileIdentity === undefined ? {} : { fileIdentity: file.fileIdentity }),
             stableId,
             partitionKey: doc.partitionKey,
           };

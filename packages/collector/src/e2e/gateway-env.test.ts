@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import { spawn } from "node:child_process";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, test } from "vitest";
 import { e2eGatewayEnv, e2eTsxCommand } from "./gateway-env.js";
 
@@ -75,7 +79,34 @@ describe("e2eGatewayEnv", () => {
     const command = e2eTsxCommand("packages/gateway/src/index.ts");
 
     expect(command.command).toBe(process.execPath);
-    expect(command.args[0]).toMatch(/tsx[/\\]dist[/\\]cli\.mjs$/);
-    expect(command.args[1]).toBe("packages/gateway/src/index.ts");
+    expect(command.args[0]).toBe("--import");
+    expect(command.args[1]).toMatch(/^file:/);
+    expect(command.args[2]).toBe("packages/gateway/src/index.ts");
   });
+});
+
+test("a source entry executes in the exact spawned process without a wrapper child", async () => {
+  const root = mkdtempSync(join(tmpdir(), "gateway source # "));
+  try {
+    const entry = join(root, "entry.ts");
+    writeFileSync(entry, "const pid: number = process.pid; process.stdout.write(String(pid));");
+    const command = e2eTsxCommand(entry);
+    const child = spawn(command.command, command.args, { stdio: ["ignore", "pipe", "pipe"] });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (chunk) => {
+      stdout += String(chunk);
+    });
+    child.stderr.on("data", (chunk) => {
+      stderr += String(chunk);
+    });
+    const code = await new Promise((resolve, reject) => {
+      child.on("error", reject);
+      child.on("close", resolve);
+    });
+    expect(code, stderr).toBe(0);
+    expect(Number(stdout)).toBe(child.pid);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });

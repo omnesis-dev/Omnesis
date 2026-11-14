@@ -44,7 +44,9 @@ test("separate public bootstrap uses the existing key, survives concurrent reade
   expect(new X509Certificate(initial).publicKey.equals(new X509Certificate(direct).publicKey)).toBe(
     true,
   );
-  expect((await stat(certificateFile)).mode & 0o777).toBe(0o600);
+  if (process.platform !== "win32") {
+    expect((await stat(certificateFile)).mode & 0o777).toBe(0o600);
+  }
   expiredCertificate({
     certificateFile,
     privateKeyFile: tls.keyFile,
@@ -117,7 +119,9 @@ test("a dedicated public key is generated once with private permissions and an e
   ]);
   expect(attempts.some((result) => result.status === "fulfilled")).toBe(true);
   const original = await readFile(privateKeyFile, "utf8");
-  expect((await stat(privateKeyFile)).mode & 0o777).toBe(0o600);
+  if (process.platform !== "win32") {
+    expect((await stat(privateKeyFile)).mode & 0o777).toBe(0o600);
+  }
   expect(original).not.toBe(await readFile(tls.keyFile, "utf8"));
   await ensureAcmeBootstrap(options);
   expect(await readFile(privateKeyFile, "utf8")).toBe(original);

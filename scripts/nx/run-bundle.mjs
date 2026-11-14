@@ -3,7 +3,8 @@
 
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
-import { resolve } from "node:path";
+import { delimiter, isAbsolute, resolve } from "node:path";
+import { nodeCommandInvocation } from "../../packages/core/src/node-command.ts";
 import { waitForChild } from "../lib/check-process.mjs";
 import { bundles, bundleTestArgs } from "./bundles.mjs";
 import { assertTreeFingerprint } from "./tree-state.mjs";
@@ -32,8 +33,9 @@ if (bundle.kind === "e2e") {
 } else {
   command = process.env.OMNESIS_NATIVE_DISPATCHER || "omnesis-native-job";
   if (
-    !command.includes("/") &&
-    !process.env.PATH?.split(":").some((dir) => existsSync(resolve(dir, command)))
+    !isAbsolute(command) &&
+    !/[\\/]/u.test(command) &&
+    !process.env.PATH?.split(delimiter).some((dir) => existsSync(resolve(dir, command)))
   ) {
     throw new Error(
       `${command} is unavailable. Install/configure the native dispatcher before running ${name}.`,
@@ -52,5 +54,6 @@ if (bundle.kind === "e2e") {
   if (name === "android-render") args.push("--", "--verify");
 }
 
-const child = spawn(command, args, { stdio: "inherit", env: process.env });
+const invocation = nodeCommandInvocation(command, args);
+const child = spawn(invocation.command, invocation.args, { stdio: "inherit", env: process.env });
 process.exitCode = await waitForChild(child);

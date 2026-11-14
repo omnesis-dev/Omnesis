@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { stableNodeBinDir } from "./node-bin-dir.js";
 
@@ -14,6 +16,22 @@ function realpathWith(links: Record<string, string>): (path: string) => string {
 }
 
 describe("stableNodeBinDir", () => {
+  it("retains literal backslashes in a POSIX Homebrew prefix", () => {
+    const prefix = "/srv/brew\\archive";
+    const execPath = `${prefix}/Cellar/node/24.21.0/bin/node`;
+    const realpath = realpathWith({ [`${prefix}/opt/node/bin/node`]: execPath });
+    expect(stableNodeBinDir(execPath, realpath)).toBe(`${prefix}/opt/node/bin`);
+  });
+
+  it("keeps native path semantics for an ordinary host Node executable", () => {
+    const execPath = join(
+      tmpdir(),
+      "invented runtime",
+      "bin",
+      process.platform === "win32" ? "node.exe" : "node",
+    );
+    expect(stableNodeBinDir(execPath, realpathWith({}))).toBe(dirname(execPath));
+  });
   it("uses Homebrew's opt link when it points at the running keg's binary", () => {
     const execPath = "/opt/homebrew/Cellar/node@24/24.21.0/bin/node";
     const realpath = realpathWith({ "/opt/homebrew/opt/node@24/bin/node": execPath });

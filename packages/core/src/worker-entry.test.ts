@@ -5,12 +5,13 @@ import { spawnSync } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { describe, expect, test } from "vitest";
 import { isCompiledModule, resolveWorkerEntry, resolveSubprocessEntry } from "./worker-entry.js";
 
-const SRC_URL = "file:///repo/packages/gateway/src/index.ts";
-const DIST_URL = "file:///repo/packages/gateway/dist/index.js";
+const fixtureRoot = join(tmpdir(), "worker entry paths");
+const SRC_URL = pathToFileURL(join(fixtureRoot, "packages/gateway/src/index.ts")).href;
+const DIST_URL = pathToFileURL(join(fixtureRoot, "packages/gateway/dist/index.js")).href;
 
 describe("isCompiledModule", () => {
   test("ts source is not compiled", () => {
@@ -26,16 +27,13 @@ describe("isCompiledModule", () => {
 describe("resolveWorkerEntry", () => {
   test("source mode points at the .ts entry with the tsx preload", () => {
     const entry = resolveWorkerEntry("./workers/writer-worker.ts", SRC_URL, "./workers/reg.mjs");
-    expect(entry.url.href).toBe("file:///repo/packages/gateway/src/workers/writer-worker.ts");
-    expect(entry.execArgv).toEqual([
-      "--import",
-      "file:///repo/packages/gateway/src/workers/reg.mjs",
-    ]);
+    expect(entry.url.href).toBe(new URL("./workers/writer-worker.ts", SRC_URL).href);
+    expect(entry.execArgv).toEqual(["--import", new URL("./workers/reg.mjs", SRC_URL).href]);
   });
 
   test("compiled mode points at the emitted .js sibling with no loader", () => {
     const entry = resolveWorkerEntry("./workers/writer-worker.ts", DIST_URL, "./workers/reg.mjs");
-    expect(entry.url.href).toBe("file:///repo/packages/gateway/dist/workers/writer-worker.js");
+    expect(entry.url.href).toBe(new URL("./workers/writer-worker.js", DIST_URL).href);
     expect(entry.execArgv).toEqual([]);
   });
 
@@ -51,7 +49,7 @@ describe("resolveSubprocessEntry", () => {
     expect(entry.args).toEqual([
       "--import",
       expect.stringMatching(/^file:.*\/tsx\/.*\.mjs$/),
-      "/repo/packages/gateway/src/auth-subprocess.ts",
+      fileURLToPath(new URL("./auth-subprocess.ts", SRC_URL)),
     ]);
   });
 
@@ -65,7 +63,12 @@ describe("resolveSubprocessEntry", () => {
         pathToFileURL(join(dir, "caller.ts")).href,
       );
 
-      const result = spawnSync(entry.command, entry.args, { cwd: dir, encoding: "utf8" });
+      const result = spawnSync(entry.command, entry.args, {
+        cwd: dir,
+        encoding: "utf8",
+        // Machine-readable fixture output must not inherit the runner's forced colors.
+        env: { ...process.env, FORCE_COLOR: "0" },
+      });
 
       expect(result.stderr).toBe("");
       expect(result.stdout).toBe("42");
@@ -78,6 +81,6 @@ describe("resolveSubprocessEntry", () => {
   test("compiled mode spawns node on the emitted .js entry", () => {
     const entry = resolveSubprocessEntry("./auth-subprocess.ts", DIST_URL);
     expect(entry.command).toBe(process.execPath);
-    expect(entry.args).toEqual(["/repo/packages/gateway/dist/auth-subprocess.js"]);
+    expect(entry.args).toEqual([fileURLToPath(new URL("./auth-subprocess.js", DIST_URL))]);
   });
 });

@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { mkdtemp, mkdir, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { ProviderId, SourceId } from "@omnesis/types";
@@ -375,7 +375,12 @@ describe("registered provider contract conformance", () => {
       );
       if (!definition || definition.type !== "source" || !definition.create)
         throw new Error(`Missing factory for ${id}`);
-      const root = await mkdtemp(join(tmpdir(), "omnesis-conformance-"));
+      // Windows' OS temp directory is inside protected AppData. Use a fresh
+      // home child, as the provider's security fixtures do, without reading any
+      // existing operator directory or weakening the production boundary.
+      const root = await mkdtemp(
+        join(process.platform === "win32" ? homedir() : tmpdir(), "omnesis-conformance-"),
+      );
       let instance: SourceInstance | undefined;
       try {
         const configs: Record<string, Record<string, unknown>> = {

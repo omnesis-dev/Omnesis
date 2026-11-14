@@ -1,7 +1,17 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, truncateSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+  truncateSync,
+  utimesSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
@@ -27,6 +37,52 @@ beforeEach(() => {
   writeFileSync(join(universe, attachment.assetPath), bytes);
 });
 afterEach(() => rmSync(scratch, { recursive: true, force: true }));
+
+test("flagged fixture delivery is idempotent and preserves flags on the host filesystem", async () => {
+  const root = join(scratch, "maildir");
+  const entries = [
+    {
+      id: "flagged",
+      messageId: "flagged@example.org",
+      from: "self",
+      to: ["self"],
+      subject: "Invented flagged message",
+      body: "An invented message body",
+      sentAt: "2026-01-01T12:00:00Z",
+      folders: ["INBOX"],
+      flags: "SF",
+    },
+  ];
+  materializeMaildir(root, entries, universe);
+  const files = readdirSync(join(root, "INBOX", "cur"));
+  expect(files).toHaveLength(1);
+  expect(files[0]).toMatch(process.platform === "win32" ? /!2,FS$/ : /:2,FS$/);
+  const path = join(root, "INBOX", "cur", files[0]!);
+  utimesSync(path, new Date(1_000), new Date(1_000));
+  materializeMaildir(root, entries, universe);
+  expect(statSync(path).mtimeMs).toBe(1_000);
+  const instance = await realMaildir.create!({
+    accountId: "flagged",
+    sourceId: SourceId("maildir:flagged"),
+    providerId: ProviderId("maildir:flagged"),
+    config: { path: root, exclude: [] },
+    host: fakeSourceHost({ stateDir: scratch }),
+  });
+  try {
+    let cursor: MaildirCursor | null = null;
+    const documents = [];
+    for (let page = 0; page < 20; page++) {
+      const result = await instance.sync(cursor);
+      documents.push(...result.documents);
+      cursor = result.cursor;
+      if (!result.hasMore) break;
+    }
+    expect(documents).toHaveLength(1);
+    expect(documents[0]!.metadata.extra?.flagged).toBe(true);
+  } finally {
+    await instance.dispose?.();
+  }
+});
 
 test("binary MIME parts reach the production extraction seam byte-for-byte", async () => {
   const root = join(scratch, "maildir");

@@ -12,7 +12,7 @@ import {
 } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import {
@@ -171,13 +171,15 @@ describe("portable check entrypoint", () => {
     const bin = join(cwd, "bin");
     mkdirSync(bin);
     const npm = join(bin, "npm");
-    writeFileSync(
-      npm,
-      '#!/usr/bin/env node\nimport fs from "node:fs"; fs.appendFileSync(process.env.SEQUENCE, `npm ${process.argv.slice(2).join(" ")}\\n`);\n',
-    );
+    const npmCli = join(bin, "npm-cli.mjs");
+    const npmSource =
+      '#!/usr/bin/env node\nimport fs from "node:fs"; fs.appendFileSync(process.env.SEQUENCE, `npm ${process.argv.slice(2).join(" ")}\\n`);\n';
+    writeFileSync(npm, npmSource);
+    writeFileSync(npmCli, npmSource);
     chmodSync(npm, 0o755);
     const result = invoke(cwd, ["unit-all"], {
-      PATH: `${bin}:${process.env.PATH}`,
+      PATH: `${bin}${delimiter}${process.env.PATH}`,
+      npm_execpath: npmCli,
       SEQUENCE: sequence,
     });
     expect(result.status).toBe(0);

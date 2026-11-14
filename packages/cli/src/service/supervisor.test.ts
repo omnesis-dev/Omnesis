@@ -12,7 +12,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, posix } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { CliError } from "@omnesis/cli-shared";
 import {
@@ -34,6 +34,7 @@ import {
   generateLaunchdPlist,
   launchdLogPaths,
   systemdWritablePaths,
+  systemdEscapeArg,
 } from "./units.js";
 import type { GatewayLockHolder } from "@omnesis/core";
 import type { ServiceSpec } from "./types.js";
@@ -105,7 +106,7 @@ describe("SystemdSupervisor", () => {
     expect(readFileSync(unitPath, "utf8")).toContain(
       "ExecStart=/usr/local/bin/omnesis gateway serve",
     );
-    expect(statSync(unitPath).mode & 0o777).toBe(0o600);
+    if (process.platform !== "win32") expect(statSync(unitPath).mode & 0o777).toBe(0o600);
     expect(calls).toEqual([
       ["systemctl", "--user", "daemon-reload"],
       ["systemctl", "--user", "enable", "--now", "omnesis-gateway.service"],
@@ -133,7 +134,7 @@ describe("SystemdSupervisor", () => {
     const listed = unit.split("\n").find((line) => line.startsWith("ReadWritePaths="));
     expect(listed).toBeTruthy();
     for (const path of writable) {
-      expect(listed).toContain(path);
+      expect(listed).toContain(systemdEscapeArg(path));
       expect(existsSync(path), `${path} must exist before the unit starts`).toBe(true);
     }
   });
@@ -487,12 +488,18 @@ describe("LaunchdSupervisor", () => {
     expect(existsSync(plistPath)).toBe(true);
     expect(existsSync(darwinLogsDir(home))).toBe(true);
     expect(readFileSync(plistPath, "utf8")).toContain("<string>dev.omnesis.gateway</string>");
-    expect(statSync(plistPath).mode & 0o777).toBe(0o600);
-    expect(statSync(darwinLogsDir(home)).mode & 0o777).toBe(0o700);
+    if (process.platform !== "win32") expect(statSync(plistPath).mode & 0o777).toBe(0o600);
+    if (process.platform !== "win32")
+      expect(statSync(darwinLogsDir(home)).mode & 0o777).toBe(0o700);
     expect(calls).toEqual([
       ["launchctl", "bootout", "gui/501/dev.omnesis.gateway"],
       ["launchctl", "print", "gui/501/dev.omnesis.gateway"],
-      ["launchctl", "bootstrap", "gui/501", plistPath],
+      [
+        "launchctl",
+        "bootstrap",
+        "gui/501",
+        posix.join(home, "Library", "LaunchAgents", "dev.omnesis.gateway.plist"),
+      ],
       // RunAtLoad spawns are not reliable outside a real GUI login context
       // (SSH installs leave the job pended) — install always kickstarts.
       ["launchctl", "kickstart", "-k", "gui/501/dev.omnesis.gateway"],

@@ -20,6 +20,8 @@ import {
   codexPaths,
   CODEX_SUPPORTED_ROLES,
   createLogger,
+  nodeCommandInvocation,
+  execWindowsJob,
   type CapabilityRole,
   type CodexBackendStatus,
   type CodexLoginFlow,
@@ -527,12 +529,17 @@ export class CodexRuntimeService {
       );
     }
 
-    const result = await execFileAsync(command, [...this.cliArgsPrefix, "debug", "models"], {
-      env: childEnv,
-      timeout: this.refreshTimeoutMs,
-      maxBuffer: CODEX_MODEL_LIST_MAX_BUFFER,
-      windowsHide: true,
-    });
+    const invocation = nodeCommandInvocation(command, [...this.cliArgsPrefix, "debug", "models"]);
+    const result = await (process.platform === "win32" ? execWindowsJob : execFileAsync)(
+      invocation.command,
+      invocation.args,
+      {
+        env: childEnv,
+        timeout: this.refreshTimeoutMs,
+        maxBuffer: CODEX_MODEL_LIST_MAX_BUFFER,
+        windowsHide: true,
+      },
+    );
     return {
       discovery: "debug-models",
       modelDetails: parseCodexModelsJson(String(result.stdout)),
@@ -544,11 +551,16 @@ export class CodexRuntimeService {
     env: NodeJS.ProcessEnv,
   ): Promise<{ ok: true } | { ok: false; reason: string }> {
     try {
-      await execFileAsync(command, [...this.cliArgsPrefix, "login", "status"], {
-        env,
-        timeout: this.refreshTimeoutMs,
-        windowsHide: true,
-      });
+      const invocation = nodeCommandInvocation(command, [...this.cliArgsPrefix, "login", "status"]);
+      await (process.platform === "win32" ? execWindowsJob : execFileAsync)(
+        invocation.command,
+        invocation.args,
+        {
+          env,
+          timeout: this.refreshTimeoutMs,
+          windowsHide: true,
+        },
+      );
       return { ok: true };
     } catch (err) {
       return { ok: false, reason: `Codex is not logged in (${conciseError(err)}).` };

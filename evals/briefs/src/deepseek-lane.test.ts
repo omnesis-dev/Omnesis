@@ -10,7 +10,7 @@
  */
 
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
 import {
@@ -110,12 +110,18 @@ describe("resolveDeepseekBackend", () => {
 
 describe("config path helpers", () => {
   test("honour env overrides and fall back to the defaults", () => {
-    expect(defaultOperatorConfigPath({ OMNESIS_CONFIG_DIR: "/x" })).toBe("/x/omnesis.json");
-    expect(defaultOperatorConfigPath({})).toMatch(/\.config\/omnesis\/omnesis\.json$/);
-    expect(defaultDurableLedgerPath({ OMNESIS_BRIEFS_SPEND_LEDGER: "/y/ledger.jsonl" })).toBe(
-      "/y/ledger.jsonl",
+    const configDir = join(tmpdir(), "briefs-config-fixture");
+    const ledger = join(tmpdir(), "briefs-spend-fixture", "ledger.jsonl");
+    expect(defaultOperatorConfigPath({ OMNESIS_CONFIG_DIR: configDir })).toBe(
+      join(configDir, "omnesis.json"),
     );
-    expect(defaultDurableLedgerPath({})).toMatch(/\.config\/omnesis-epic\/briefs-spend\.jsonl$/);
+    expect(defaultOperatorConfigPath({})).toBe(
+      join(homedir(), ".config", "omnesis", "omnesis.json"),
+    );
+    expect(defaultDurableLedgerPath({ OMNESIS_BRIEFS_SPEND_LEDGER: ledger })).toBe(ledger);
+    expect(defaultDurableLedgerPath({})).toBe(
+      join(homedir(), ".config", "omnesis-epic", "briefs-spend.jsonl"),
+    );
   });
 });
 

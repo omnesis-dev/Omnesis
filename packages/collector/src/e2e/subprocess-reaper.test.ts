@@ -8,11 +8,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { WindowsProcessTree, killWindowsProcessTree } from "@omnesis/core";
 import {
   killSubprocessGroup,
   liveGroupCountForTest,
   registerSubprocessGroup,
 } from "./subprocess-reaper.js";
+
+const parentControlUrl = new URL("../../../core/src/parent-shutdown.ts", import.meta.url).href;
 
 /** True iff `pid` is still alive (signal 0 probes without delivering). */
 function isAlive(pid: number): boolean {
@@ -62,6 +65,31 @@ describe("subprocess-reaper", () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
+  it("joins concurrent teardown requests before releasing the owned process", async () => {
+    const child = spawn(
+      process.execPath,
+      ["-e", "process.send('ready'); setInterval(() => {}, 1000)"],
+      {
+        detached: true,
+        stdio: ["ignore", "ignore", "ignore", "ipc"],
+      },
+    );
+    parentPid = child.pid;
+    await new Promise<void>((resolve, reject) => {
+      child.once("message", () => resolve());
+      child.once("error", reject);
+    });
+    await registerSubprocessGroup(child);
+    const exited = new Promise<void>((resolve) => child.once("exit", () => resolve()));
+    const first = killSubprocessGroup(child);
+    const second = killSubprocessGroup(child);
+    expect(second).toBe(first);
+    await Promise.all([first, second, exited]);
+    expect(isAlive(child.pid!)).toBe(false);
+    expect(liveGroupCountForTest()).toBe(0);
+    parentPid = undefined;
+  });
+
   it("reaps a detached child group when the runner is SIGTERM'd before cleanup", async () => {
     // A fixture process that mirrors what a harness does: register a
     // detached, long-lived grandchild and then idle. When this fixture is
@@ -77,7 +105,8 @@ describe("subprocess-reaper", () => {
         `import { spawn } from "node:child_process";`,
         // Detached grandchild that never exits on its own.
         `const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1e9)"], { detached: true, stdio: "ignore" });`,
-        `registerSubprocessGroup(child);`,
+        `await registerSubprocessGroup(child);`,
+        `process.on('message', (message) => { if (message === 'terminate') process.emit('SIGTERM'); });`,
         `process.stdout.write("CHILD_PID=" + child.pid + "\\n");`,
         // Keep the fixture alive until signalled.
         `setInterval(() => {}, 1e9);`,
@@ -99,7 +128,7 @@ describe("subprocess-reaper", () => {
         pathToFileURL(join(tsxDist, "loader.mjs")).href,
         fixture,
       ],
-      { cwd: repoRoot, stdio: ["ignore", "pipe", "ignore"] },
+      { cwd: repoRoot, stdio: ["ignore", "pipe", "ignore", "ipc"] },
     );
     parentPid = parent.pid;
 
@@ -125,7 +154,10 @@ describe("subprocess-reaper", () => {
     expect(isAlive(childPid)).toBe(true);
 
     // Kill the runner the way `timeout` would — SIGTERM, no stop() call.
-    parent.kill("SIGTERM");
+    // Windows process.kill forcibly terminates Node without running handlers;
+    // use its inherited control channel to exercise the same reaper handler.
+    if (process.platform === "win32") parent.send!("terminate");
+    else parent.kill("SIGTERM");
 
     // The reaper must take the grandchild down with it.
     const died = await waitUntil(() => !isAlive(childPid), 10000);
@@ -141,16 +173,11 @@ describe("subprocess-reaper", () => {
 });
 
 describe("killSubprocessGroup", () => {
-  const spawned: number[] = [];
+  const spawned: ChildProcess[] = [];
 
-  afterEach(() => {
-    for (const pid of spawned.splice(0)) {
-      try {
-        process.kill(-pid, "SIGKILL");
-      } catch {
-        /* gone */
-      }
-    }
+  afterEach(async () => {
+    for (const child of spawned.splice(0))
+      await killSubprocessGroup(child, { initialSignal: "SIGKILL" });
   });
 
   /** A detached child that traps SIGTERM and refuses to die — stands in for a
@@ -163,10 +190,13 @@ describe("killSubprocessGroup", () => {
   async function spawnTermIgnoringChild(): Promise<ReturnType<typeof spawn>> {
     const proc = spawn(
       process.execPath,
-      ["-e", "process.on('SIGTERM', () => {}); console.log('READY'); setInterval(() => {}, 1000);"],
-      { detached: true, stdio: ["ignore", "pipe", "ignore"] },
+      [
+        "-e",
+        "process.on('SIGTERM', () => {}); process.on('message', () => {}); console.log('READY'); setInterval(() => {}, 1000);",
+      ],
+      { detached: true, stdio: ["ignore", "pipe", "ignore", "ipc"] },
     );
-    spawned.push(proc.pid!);
+    spawned.push(proc);
     await new Promise<void>((resolve, reject) => {
       const t = setTimeout(() => reject(new Error("fixture never signalled READY")), 5000);
       proc.stdout!.on("data", (chunk: Buffer) => {
@@ -185,7 +215,7 @@ describe("killSubprocessGroup", () => {
 
   it("escalates to SIGKILL when the child ignores SIGTERM", async () => {
     const proc = await spawnTermIgnoringChild();
-    registerSubprocessGroup(proc);
+    await registerSubprocessGroup(proc);
     const pid = proc.pid!;
     await waitUntil(() => isAlive(pid), 2000);
 
@@ -200,11 +230,11 @@ describe("killSubprocessGroup", () => {
       process.execPath,
       [
         "-e",
-        "process.on('SIGINT', () => process.exit(0)); console.log('READY'); setInterval(() => {}, 1000);",
+        `import(${JSON.stringify(parentControlUrl)}).then(({ installParentShutdownHandler }) => { installParentShutdownHandler(() => process.exit(0)); process.on('SIGINT', () => process.exit(0)); console.log('READY'); setInterval(() => {}, 1000); });`,
       ],
-      { detached: true, stdio: ["ignore", "pipe", "ignore"] },
+      { detached: true, stdio: ["ignore", "pipe", "ignore", "ipc"] },
     );
-    spawned.push(proc.pid!);
+    spawned.push(proc);
     await new Promise<void>((resolve, reject) => {
       const timer = setTimeout(() => reject(new Error("fixture never signalled READY")), 5000);
       proc.stdout!.on("data", (chunk: Buffer) => {
@@ -217,7 +247,7 @@ describe("killSubprocessGroup", () => {
         reject(new Error("fixture exited before signalling READY"));
       });
     });
-    registerSubprocessGroup(proc);
+    await registerSubprocessGroup(proc);
 
     await killSubprocessGroup(proc, {
       initialSignal: "SIGINT",
@@ -239,17 +269,19 @@ describe("killSubprocessGroup", () => {
     ].join("");
     const leaderProgram = [
       "const { spawn } = require('node:child_process');",
+      `void import(${JSON.stringify(parentControlUrl)}).then(({ installParentShutdownHandler }) => { installParentShutdownHandler(() => process.exit(0));`,
       `const child = spawn(process.execPath, ['-e', ${JSON.stringify(descendantProgram)}], { stdio: ['ignore', 'pipe', 'ignore'] });`,
       "child.stdout.once('data', () => console.log('DESCENDANT_PID=' + child.pid));",
       "process.on('SIGINT', () => process.exit(0));",
       "process.on('SIGTERM', () => process.exit(0));",
       "setInterval(() => {}, 1000);",
+      "});",
     ].join("");
     const proc = spawn(process.execPath, ["-e", leaderProgram], {
       detached: true,
-      stdio: ["ignore", "pipe", "ignore"],
+      stdio: ["ignore", "pipe", "ignore", "ipc"],
     });
-    spawned.push(proc.pid!);
+    spawned.push(proc);
     const descendantPid = await new Promise<number>((resolve, reject) => {
       let output = "";
       const timer = setTimeout(() => reject(new Error("fixture descendant was not ready")), 5000);
@@ -265,7 +297,7 @@ describe("killSubprocessGroup", () => {
         reject(new Error("fixture leader exited before its descendant was ready"));
       });
     });
-    registerSubprocessGroup(proc);
+    await registerSubprocessGroup(proc);
 
     await killSubprocessGroup(proc, {
       initialSignal: "SIGINT",
@@ -288,15 +320,15 @@ describe("killSubprocessGroup", () => {
     const leaderProgram = [
       "const { spawn } = require('node:child_process');",
       `const child = spawn(process.execPath, ['-e', ${JSON.stringify(descendantProgram)}], { stdio: ['ignore', 'pipe', 'ignore'] });`,
-      "child.stdout.once('data', () => { console.log('DESCENDANT_PID=' + child.pid); process.exit(0); });",
+      "child.stdout.once('data', () => console.log('DESCENDANT_PID=' + child.pid));",
+      "process.on('message', (message) => { if (message === 'release') process.exit(0); });",
       "setInterval(() => {}, 1000);",
     ].join("");
     const proc = spawn(process.execPath, ["-e", leaderProgram], {
       detached: true,
-      stdio: ["ignore", "pipe", "ignore"],
+      stdio: ["ignore", "pipe", "ignore", "ipc"],
     });
-    spawned.push(proc.pid!);
-    registerSubprocessGroup(proc);
+    spawned.push(proc);
     const descendantPid = await new Promise<number>((resolve, reject) => {
       let output = "";
       const timer = setTimeout(() => reject(new Error("fixture descendant was not ready")), 5000);
@@ -310,6 +342,9 @@ describe("killSubprocessGroup", () => {
       proc.once("error", reject);
     });
 
+    await registerSubprocessGroup(proc);
+    proc.send!("release");
+
     expect(await waitUntil(() => !isAlive(descendantPid), 3_000)).toBe(true);
     expect(await waitUntil(() => liveGroupCountForTest() === 0, 3_000)).toBe(true);
   }, 15_000);
@@ -320,7 +355,7 @@ describe("killSubprocessGroup", () => {
     // left a live gateway that the exit/signal reaper no longer knew about —
     // teardown had disarmed the net it depends on.
     const proc = await spawnTermIgnoringChild();
-    registerSubprocessGroup(proc);
+    await registerSubprocessGroup(proc);
     expect(liveGroupCountForTest()).toBe(1);
 
     const pending = killSubprocessGroup(proc, { termGraceMs: 1500, killGraceMs: 3000 });
@@ -336,9 +371,10 @@ describe("killSubprocessGroup", () => {
 
   it("untracks and returns promptly for an already-dead child", async () => {
     const proc = await spawnTermIgnoringChild();
-    registerSubprocessGroup(proc);
+    await registerSubprocessGroup(proc);
     const pid = proc.pid!;
-    process.kill(-pid, "SIGKILL");
+    if (process.platform === "win32") await killWindowsProcessTree(pid);
+    else process.kill(-pid, "SIGKILL");
     await waitUntil(() => !isAlive(pid), 5000);
 
     await killSubprocessGroup(proc, { termGraceMs: 5000, killGraceMs: 5000 });
@@ -355,7 +391,13 @@ describe("killSubprocessGroup", () => {
       signalCode: null,
       kill: () => false,
     });
-    registerSubprocessGroup(proc);
+    let treeAlive = true;
+    if (process.platform === "win32") {
+      vi.spyOn(WindowsProcessTree.prototype, "refresh").mockResolvedValue();
+      vi.spyOn(WindowsProcessTree.prototype, "kill").mockResolvedValue();
+      vi.spyOn(WindowsProcessTree.prototype, "alive", "get").mockImplementation(() => treeAlive);
+    }
+    await registerSubprocessGroup(proc);
     const processKill = vi.spyOn(process, "kill").mockImplementation(() => true);
 
     try {
@@ -365,7 +407,10 @@ describe("killSubprocessGroup", () => {
       expect(liveGroupCountForTest()).toBe(1);
     } finally {
       processKill.mockRestore();
+      treeAlive = false;
       proc.emit("exit", null, "SIGKILL");
+      await waitUntil(() => liveGroupCountForTest() === 0, 3_000);
+      vi.restoreAllMocks();
     }
     expect(liveGroupCountForTest()).toBe(0);
   });

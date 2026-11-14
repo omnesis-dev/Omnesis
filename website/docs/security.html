@@ -447,6 +447,13 @@
           anything.
         </p>
 
+        <p>
+          On Windows, permission repair replaces an unsafe idle file with a private copy while
+          preserving its contents, creation and modification times, and read-only setting. It
+          refuses files with multiple hard links, busy unsafe files and unreadable files. Files
+          whose access controls are already private can remain open during the check.
+        </p>
+
         <h2 id="hardened-gateway">Hardened gateway</h2>
         <p>
           By default both daemons run as your login user. Owner-only file modes keep other OS

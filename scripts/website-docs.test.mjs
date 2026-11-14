@@ -683,7 +683,7 @@ describe("website hosting", () => {
   });
 
   it("keeps the website's own README out of the published assets", () => {
-    const ignored = readFileSync(join(WEBSITE, ".assetsignore"), "utf8").split("\n");
+    const ignored = readFileSync(join(WEBSITE, ".assetsignore"), "utf8").split(/\r?\n/u);
     expect(ignored).toContain("README.md");
   });
 
@@ -694,7 +694,7 @@ describe("website hosting", () => {
     expect(robots).not.toMatch(/Disallow:\s*\//);
     expect(robots).toContain("Sitemap: https://omnesis.dev/sitemap.xml");
     const headers = readFileSync(join(WEBSITE, "_headers"), "utf8");
-    expect(headers).toMatch(/^\/docs-edge\/\*\n\s+X-Robots-Tag: noindex$/m);
+    expect(headers).toMatch(/^\/docs-edge\/\*\r?\n[ \t]+X-Robots-Tag: noindex\r?$/m);
     expect(readFileSync(join(WEBSITE, "sitemap.xml"), "utf8")).not.toContain("docs-edge");
 
     const sitemap = readFileSync(join(WEBSITE, "sitemap.xml"), "utf8");

@@ -3,7 +3,7 @@
 
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { delimiter, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { defineCommand, runCommand } from "citty";
 import { describe, test, expect, vi, beforeEach, afterEach } from "vitest";
@@ -119,24 +119,21 @@ function fakeApplyState(initial: string | null = null): {
 }
 
 describe("spawnRunner environment", () => {
-  test.skipIf(process.platform === "win32")(
-    "a spec's variables reach the child on top of this process's own",
-    async () => {
-      const result = await spawnRunner(
-        {
-          command: process.execPath,
-          args: [
-            "-e",
-            "process.stdout.write(`${process.env.OMNESIS_TEST_HEAP}|${process.env.PATH ? 'path' : ''}`)",
-          ],
-          env: { OMNESIS_TEST_HEAP: "--max-old-space-size=4096" },
-        },
-        "capture",
-      );
-      expect(result.code).toBe(0);
-      expect(result.stdout).toBe("--max-old-space-size=4096|path");
-    },
-  );
+  test("a spec's variables reach the child on top of this process's own", async () => {
+    const result = await spawnRunner(
+      {
+        command: process.execPath,
+        args: [
+          "-e",
+          "process.stdout.write(`${process.env.OMNESIS_TEST_HEAP}|${process.env.PATH ? 'path' : ''}`)",
+        ],
+        env: { OMNESIS_TEST_HEAP: "--max-old-space-size=4096" },
+      },
+      "capture",
+    );
+    expect(result.code).toBe(0);
+    expect(result.stdout).toBe("--max-old-space-size=4096|path");
+  });
 });
 
 describe("spawnRunner trust for npm", () => {
@@ -146,7 +143,11 @@ describe("spawnRunner trust for npm", () => {
     const dir = mkdtempSync(join(tmpdir(), "omnesis-npm-trust-"));
     try {
       const npm = join(dir, "npm");
-      writeFileSync(npm, '#!/bin/sh\nprintf %s "$NODE_OPTIONS"\n', { mode: 0o755 });
+      const script = "process.stdout.write(process.env.NODE_OPTIONS ?? '');\n";
+      writeFileSync(npm, "#!/usr/bin/env node\n" + script, { mode: 0o755 });
+      const npmBin = join(dir, "node_modules", "npm", "bin");
+      mkdirSync(npmBin, { recursive: true });
+      writeFileSync(join(npmBin, "npm-cli.js"), script);
       const result = await spawnRunner(
         { command: npm, args, env: { NODE_OPTIONS: "--max-old-space-size=512" } },
         "capture",
@@ -158,21 +159,15 @@ describe("spawnRunner trust for npm", () => {
     }
   };
 
-  test.skipIf(process.platform === "win32")(
-    "npm gets the preload that keeps the distrusted roots out of its CA store",
-    async () => {
-      expect(await runNpm(["ci"])).toMatch(
-        /^--max-old-space-size=512 --import=file:\/\/\S+\/distrust-roots\.mjs$/u,
-      );
-    },
-  );
+  test("npm gets the preload that keeps the distrusted roots out of its CA store", async () => {
+    expect(await runNpm(["ci"])).toMatch(
+      /^--max-old-space-size=512 --import=file:\/\/\S+\/distrust-roots\.mjs$/u,
+    );
+  });
 
-  test.skipIf(process.platform === "win32")(
-    "npm run reaches no registry, so a build keeps exactly the NODE_OPTIONS it was given",
-    async () => {
-      expect(await runNpm(["run", "build"])).toBe("--max-old-space-size=512");
-    },
-  );
+  test("npm run reaches no registry, so a build keeps exactly the NODE_OPTIONS it was given", async () => {
+    expect(await runNpm(["run", "build"])).toBe("--max-old-space-size=512");
+  });
 });
 
 describe("spawnRunner outcome", () => {
@@ -190,44 +185,39 @@ describe("spawnRunner outcome", () => {
 });
 
 describe("spawnRunner cancellation", () => {
-  test.skipIf(process.platform === "win32")(
-    "does not execute a gated command when process-group publication fails",
-    async () => {
-      const dir = mkdtempSync(join(tmpdir(), "omnesis-update-process-group-"));
-      const sentinel = join(dir, "executed");
-      const controller = new AbortController();
-      try {
-        await expect(
-          spawnRunner(
-            {
-              command: process.execPath,
-              args: ["-e", `require("node:fs").writeFileSync(${JSON.stringify(sentinel)}, "yes")`],
+  test("does not execute a gated command when process-group publication fails", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "omnesis-update-process-group-"));
+    const sentinel = join(dir, "executed");
+    const controller = new AbortController();
+    try {
+      await expect(
+        spawnRunner(
+          {
+            command: process.execPath,
+            args: ["-e", `require("node:fs").writeFileSync(${JSON.stringify(sentinel)}, "yes")`],
+          },
+          "capture",
+          {
+            signal: controller.signal,
+            onProcessGroup: () => {
+              throw new Error("lock publication failed");
             },
-            "capture",
-            {
-              signal: controller.signal,
-              onProcessGroup: () => {
-                throw new Error("lock publication failed");
-              },
-            },
-          ),
-        ).rejects.toThrow("lock publication failed");
-        expect(existsSync(sentinel)).toBe(false);
-      } finally {
-        controller.abort();
-        rmSync(dir, { recursive: true, force: true });
-      }
-    },
-  );
+          },
+        ),
+      ).rejects.toThrow("lock publication failed");
+      expect(existsSync(sentinel)).toBe(false);
+    } finally {
+      controller.abort();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
 
-  test.skipIf(process.platform === "win32")(
-    "waits for an npm-like descendant process before resolving an abort",
-    async () => {
-      const dir = mkdtempSync(join(tmpdir(), "omnesis-update-process-group-"));
-      const ready = join(dir, "ready");
-      const signaled = join(dir, "signaled");
-      const exited = join(dir, "exited");
-      const descendant = `
+  test("waits for an npm-like descendant process before resolving an abort", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "omnesis-update-process-group-"));
+    const ready = join(dir, "ready");
+    const signaled = join(dir, "signaled");
+    const exited = join(dir, "exited");
+    const descendant = `
         const fs = require("node:fs");
         const [ready, signaled, exited] = process.argv.slice(1);
         process.on("SIGTERM", () => {
@@ -237,46 +227,53 @@ describe("spawnRunner cancellation", () => {
             process.exit(0);
           }, 100);
         });
-        fs.writeFileSync(ready, "yes");
+        fs.writeFileSync(ready, String(process.pid));
         setInterval(() => {}, 1000);
       `;
-      const parent = `
+    const parent = `
         const { spawn } = require("node:child_process");
         spawn(process.execPath, ["-e", ${JSON.stringify(descendant)}, ${JSON.stringify(ready)}, ${JSON.stringify(signaled)}, ${JSON.stringify(exited)}], { stdio: "ignore" });
         process.on("SIGTERM", () => {});
         setInterval(() => {}, 1000);
       `;
-      const controller = new AbortController();
-      const configDir = join(dir, "config");
-      const lock = acquireUpdateLock(configDir, { owner: "test update" });
-      let settled = false;
-      const run = spawnRunner({ command: process.execPath, args: ["-e", parent] }, "capture", {
-        signal: controller.signal,
-        onProcessGroup: (pid) => lock.setProcessGroup(pid),
-      }).finally(() => {
-        settled = true;
+    const controller = new AbortController();
+    const configDir = join(dir, "config");
+    const lock = acquireUpdateLock(configDir, { owner: "test update" });
+    let settled = false;
+    const run = spawnRunner({ command: process.execPath, args: ["-e", parent] }, "capture", {
+      signal: controller.signal,
+      onProcessGroup: (pid) => lock.setProcessGroup(pid),
+    }).finally(() => {
+      settled = true;
+    });
+    try {
+      await vi.waitFor(() => expect(existsSync(ready)).toBe(true), { timeout: 10_000 });
+      const descendantPid = Number(readFileSync(ready, "utf8"));
+      expect(getUpdateLockProcessGroup(configDir)).toMatchObject({
+        state: "active",
+        pid: expect.any(Number),
       });
-      try {
-        await vi.waitFor(() => expect(existsSync(ready)).toBe(true));
-        expect(getUpdateLockProcessGroup(configDir)).toMatchObject({
-          state: "active",
-          pid: expect.any(Number),
-        });
-        controller.abort();
+      controller.abort();
+      if (process.platform !== "win32") {
         await vi.waitFor(() => expect(existsSync(signaled)).toBe(true));
         expect(settled).toBe(false);
-
-        await expect(run).resolves.toMatchObject({ code: expect.any(Number) });
-        expect(existsSync(exited)).toBe(true);
-        expect(getUpdateLockProcessGroup(configDir)).toEqual({ state: "none" });
-      } finally {
-        controller.abort();
-        await run.catch(() => undefined);
-        lock.release();
-        rmSync(dir, { recursive: true, force: true });
       }
-    },
-  );
+
+      await expect(run).resolves.toMatchObject({ code: expect.any(Number) });
+      if (process.platform === "win32") {
+        // forced Windows job cancellation cannot run a Unix SIGTERM handler.
+        expect(() => process.kill(descendantPid, 0)).toThrow();
+      } else {
+        expect(existsSync(exited)).toBe(true);
+      }
+      expect(getUpdateLockProcessGroup(configDir)).toEqual({ state: "none" });
+    } finally {
+      controller.abort();
+      await run.catch(() => undefined);
+      lock.release();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });
 
 /** The commit a checkout ran before an update, and the one it moved to. */
@@ -1668,7 +1665,7 @@ describe("executing a host's plan", () => {
     );
     expect(executed(runner)).toContain("/home/example/.local/bin/hermes gateway restart");
     const restart = runner.calls.find((call) => call.spec.command.endsWith("/hermes"));
-    expect(restart?.spec.env?.PATH?.split(":")[0]).toBe("/home/example/.local/bin");
+    expect(restart?.spec.env?.PATH?.split(delimiter)[0]).toBe("/home/example/.local/bin");
     expect(output()).not.toContain("Could not restart hermes");
   });
 

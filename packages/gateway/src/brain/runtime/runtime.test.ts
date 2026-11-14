@@ -224,7 +224,8 @@ describe("assembled Brain through the real driver", () => {
       experimental: false,
     };
   });
-  afterEach(() => {
+  afterEach(async () => {
+    await transcripts.close();
     db.close();
     cleanupDb(path);
     vi.unstubAllEnvs();

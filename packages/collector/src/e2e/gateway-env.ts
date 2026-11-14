@@ -3,7 +3,8 @@
 
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 
 /**
  * A spawned E2E gateway exercises the production worker paths, but its tiny
@@ -34,7 +35,7 @@ const E2E_INTERNAL_DEFAULTS: Readonly<NodeJS.ProcessEnv> = {
 };
 
 const require = createRequire(import.meta.url);
-const TSX_ENTRY = join(dirname(require.resolve("tsx/package.json")), "dist", "cli.mjs");
+const TSX_ENTRY = pathToFileURL(require.resolve("tsx")).href;
 
 export function e2eGatewayEnv(base: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
   const inherited = { ...base };
@@ -45,7 +46,7 @@ export function e2eGatewayEnv(base: NodeJS.ProcessEnv = process.env): NodeJS.Pro
 
 /** Avoid the extra `npx → tsx` wrapper processes around every test gateway. */
 export function e2eTsxCommand(entry: string): { command: string; args: string[] } {
-  return { command: process.execPath, args: [TSX_ENTRY, entry] };
+  return { command: process.execPath, args: ["--import", TSX_ENTRY, entry] };
 }
 
 /**

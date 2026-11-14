@@ -14,7 +14,8 @@
  * fail.
  */
 import { readFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
+import { homedir } from "node:os";
 import { stripVTControlCharacters } from "node:util";
 import { parseArgs } from "citty";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -40,6 +41,7 @@ import {
   deviceAccessLevelLine,
   deviceUpdateNoticeLine,
   devicesCommand,
+  expandHomePath,
   deviceCorpusCredentialImpact,
   deviceCorpusCredentialLabel,
   deviceLiveLabel,
@@ -2000,5 +2002,22 @@ describe("recordRedeemedCollector: a collector's pairing, recorded as it is save
   it("records nothing for another kind, or a token saved under another name", () => {
     expect(record("/tmp/collector-token", "cli").done).toBe(false);
     expect(record("/tmp/token.txt").done).toBe(false);
+  });
+});
+
+describe("pairing output paths", () => {
+  it("uses the OS home when HOME is absent", () => {
+    vi.stubEnv("HOME", undefined);
+    try {
+      expect(expandHomePath("~/pairing.json")).toBe(join(homedir(), "pairing.json"));
+      expect(expandHomePath("~")).toBe(homedir());
+      expect(expandHomePath("pairing.json")).toBe(resolve("pairing.json"));
+      expect(expandHomePath("~another/pairing.json")).toBe(resolve("~another/pairing.json"));
+      if (process.platform === "win32") {
+        expect(expandHomePath("~\\pairing.json")).toBe(join(homedir(), "pairing.json"));
+      }
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 });

@@ -1,12 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { describe, test, expect, afterEach, vi } from "vitest";
-import Database from "better-sqlite3";
-type Db = Database.Database;
 import { mkdtempSync, rmSync, mkdirSync, existsSync } from "node:fs";
-import { join, relative } from "node:path";
 import { tmpdir } from "node:os";
+import { join, relative } from "node:path";
+import Database from "better-sqlite3";
+import { describe, test, expect, afterEach, vi } from "vitest";
 import { nodePathProbe, resolveDeclaredPaths } from "@omnesis/source-sdk";
 import { SourceId, ProviderId } from "@omnesis/types";
 import thingsProvider, { findThingsDbPath, thingsPathValidationError } from "./index.js";
@@ -87,7 +86,7 @@ describe("findThingsDbPath", () => {
     const dbPath = join(home, "Library", "Things", "main.sqlite");
     mkdirSync(join(home, "Library", "Things"), { recursive: true });
     createMinimalThingsDb(dbPath);
-    vi.stubEnv("HOME", home);
+    vi.stubEnv("OMNESIS_HOST_HOME", home);
 
     const schema = thingsProvider.config!;
     const pathParam = thingsProvider.params?.find((param) => param.name === "dbPath");

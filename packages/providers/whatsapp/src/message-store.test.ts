@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import * as fs from "node:fs";
 import {
   closeSync,
   existsSync,
@@ -14,7 +15,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import Database from "better-sqlite3";
 import {
   ensureInstallRootKey,
@@ -24,6 +25,15 @@ import {
 } from "@omnesis/core";
 import { MessageStore, inspectMessageStore } from "./message-store.js";
 import type { StoredMessage } from "./types.js";
+
+const filesystem = vi.hoisted(() => ({
+  rename: undefined as unknown as typeof import("node:fs").renameSync,
+}));
+vi.mock("node:fs", async (original) => {
+  const actual = await original<typeof import("node:fs")>();
+  filesystem.rename = actual.renameSync;
+  return { ...actual, renameSync: vi.fn(actual.renameSync) };
+});
 
 function msg(over: Partial<StoredMessage> & { id: string; timestamp: number }): StoredMessage {
   return {
@@ -52,6 +62,7 @@ describe("MessageStore (durable SQLite)", () => {
   });
 
   afterEach(() => {
+    vi.restoreAllMocks();
     store.close();
     rmSync(dir, { recursive: true, force: true });
   });
@@ -410,14 +421,30 @@ describe("MessageStore (durable SQLite)", () => {
         // afterwards is exactly what a machine losing power mid-rekey would be
         // left holding: bytes are only safe if the migration never wrote them.
         const held = openSync(dbPath, "r");
+        let heldOpen = true;
         try {
           await ensureInstallRootKey({ backend: "file", configDir: dir });
           await ensureStorageKey("whatsapp-store", { backend: "file", configDir: dir });
 
-          store = new MessageStore(accountDir);
+          let survivor: Buffer;
+          try {
+            store = new MessageStore(accountDir);
+            survivor = readFileSync(held);
+          } catch (error) {
+            if (process.platform !== "win32") throw error;
+            expect(error).toMatchObject({
+              name: "StoreRekeyFailure",
+              cause: { code: expect.stringMatching(/^(?:EPERM|EACCES|EBUSY)$/) },
+            });
+            survivor = readFileSync(held);
+            closeSync(held);
+            heldOpen = false;
+            expect(readdirSync(accountDir).filter((name) => name.includes(".corrupt-"))).toEqual(
+              [],
+            );
+            store = new MessageStore(accountDir);
+          }
           expect(store.totalMessages).toBe(1);
-
-          const survivor = readFileSync(held);
           expect(survivor.subarray(0, "SQLite format 3\0".length).toString()).toBe(
             "SQLite format 3\0",
           );
@@ -430,7 +457,7 @@ describe("MessageStore (durable SQLite)", () => {
             raw.close();
           }
         } finally {
-          closeSync(held);
+          if (heldOpen) closeSync(held);
         }
         // Nothing of the staging copy outlives a completed migration.
         expect(existsSync(`${dbPath}.rekey`)).toBe(false);
@@ -440,6 +467,58 @@ describe("MessageStore (durable SQLite)", () => {
         } else {
           process.env.OMNESIS_SECRET_STORE = priorSecretStore;
         }
+      }
+    });
+
+    it("preserves a valid archive and wrapped key when rekey publication fails, then retries", async () => {
+      store.close();
+      rmSync(dir, { recursive: true, force: true });
+      dir = mkdtempSync(join(tmpdir(), "omnesis-wa-publication-"));
+      const prior = process.env.OMNESIS_SECRET_STORE;
+      process.env.OMNESIS_SECRET_STORE = "file";
+      let restoreRename = () => {};
+      try {
+        const account = join(dir, "whatsapp", "+15550100005");
+        store = new MessageStore(account);
+        store.addMessages([
+          msg({ id: "retained", timestamp: ts("2026-01-02"), text: "invented retained message" }),
+        ]);
+        store.close();
+        await ensureInstallRootKey({ backend: "file", configDir: dir });
+        await ensureStorageKey("whatsapp-store", { backend: "file", configDir: dir });
+        const path = join(account, "store.db"),
+          keyPath = storageKeyPath("whatsapp-store", dir),
+          key = readFileSync(keyPath);
+        let activeBytes: Buffer | undefined;
+        const rename = filesystem.rename;
+        const blocked = vi.mocked(fs.renameSync).mockImplementation((source, target) => {
+          if (source === path + ".rekey") {
+            activeBytes = readFileSync(path);
+            throw Object.assign(new Error("invented publication sharing failure"), {
+              code: "EPERM",
+            });
+          }
+          return rename(source, target);
+        });
+        restoreRename = () => blocked.mockRestore();
+        expect(() => new MessageStore(account)).toThrow(/encryption failed/);
+        expect(activeBytes).toBeDefined();
+        expect(readFileSync(path)).toEqual(activeBytes);
+        expect(readFileSync(keyPath)).toEqual(key);
+        expect(readdirSync(account).filter((name) => name.includes(".corrupt-"))).toEqual([]);
+        const retained = new Database(path, { readonly: true });
+        try {
+          expect(retained.prepare("SELECT COUNT(*) AS n FROM messages").get()).toEqual({ n: 1 });
+        } finally {
+          retained.close();
+        }
+        blocked.mockRestore();
+        store = new MessageStore(account);
+        expect(store.totalMessages).toBe(1);
+      } finally {
+        restoreRename();
+        if (prior === undefined) delete process.env.OMNESIS_SECRET_STORE;
+        else process.env.OMNESIS_SECRET_STORE = prior;
       }
     });
 
@@ -605,6 +684,27 @@ describe("MessageStore (durable SQLite)", () => {
   });
 
   describe("corrupt-db resilience", () => {
+    it("preserves the active archive and closes the failed handle on an operational open error", () => {
+      store.addMessages([msg({ id: "retained", timestamp: ts("2026-01-02") })]);
+      store.close();
+      const bytes = readFileSync(join(dir, "store.db"));
+      const failure = Object.assign(new Error("invented database busy"), { code: "SQLITE_BUSY" });
+      let failed: Database.Database | undefined;
+      const blocked = vi.spyOn(Database.prototype, "pragma").mockImplementationOnce(function (
+        this: Database.Database,
+      ) {
+        failed = this;
+        throw failure;
+      });
+      expect(() => new MessageStore(dir)).toThrow(failure);
+      expect(failed?.open).toBe(false);
+      expect(readFileSync(join(dir, "store.db"))).toEqual(bytes);
+      expect(readdirSync(dir).some((name) => name.includes(".corrupt-"))).toBe(false);
+      blocked.mockRestore();
+      store = new MessageStore(dir);
+      expect(store.totalMessages).toBe(1);
+    });
+
     it("skips malformed media JSON in retry scheduling without losing the message", () => {
       store.addMessages([
         msg({
@@ -658,8 +758,23 @@ describe("MessageStore (durable SQLite)", () => {
       writeFileSync(join(d, "store.db-wal"), "write-ahead pages");
       writeFileSync(join(d, "store.db-shm"), "shared-memory index");
 
+      const failed: Database.Database[] = [];
+      const prepare = Database.prototype.prepare;
+      const capture = vi.spyOn(Database.prototype, "prepare").mockImplementation(function (
+        this: Database.Database,
+        source,
+      ) {
+        try {
+          return prepare.call(this, source);
+        } catch (error) {
+          failed.push(this);
+          throw error;
+        }
+      });
       const fresh = new MessageStore(d);
       try {
+        expect(failed.length).toBe(1);
+        expect(failed.every((db) => !db.open)).toBe(true);
         fresh.addMessages([msg({ id: "a", timestamp: ts("2026-01-02") })]);
         expect(fresh.totalMessages).toBe(1);
 
@@ -677,6 +792,7 @@ describe("MessageStore (durable SQLite)", () => {
           ).toString(),
         ).toBe("write-ahead pages");
       } finally {
+        capture.mockRestore();
         fresh.close();
         rmSync(d, { recursive: true, force: true });
       }

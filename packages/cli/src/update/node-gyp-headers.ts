@@ -36,7 +36,7 @@
 
 import { spawn } from "node:child_process";
 
-import { distrustingNodeOptions } from "@omnesis/core";
+import { distrustingNodeOptions, resolveNpmInvocation } from "@omnesis/core";
 
 export const NODE_GYP_HEADERS_SCRIPT = `const fs = require("fs"), os = require("os"), path = require("path");
 const option = (name) => ["npm_package_config_node_gyp_", "npm_config_"].map((prefix) =>
@@ -71,9 +71,18 @@ export type HeaderCommandRunner = (
   opts: { cwd: string; capture: boolean },
 ) => Promise<{ code: number; stdout: string }>;
 
-const runCommand: HeaderCommandRunner = (command, args, { cwd, capture }) =>
-  new Promise((resolve) => {
-    const child = spawn(command, args, {
+const runCommand: HeaderCommandRunner = async (command, args, { cwd, capture }) => {
+  let invocation;
+  try {
+    invocation =
+      command === "npm"
+        ? await resolveNpmInvocation(args)
+        : { command: process.platform === "win32" ? process.execPath : command, args };
+  } catch {
+    return { code: 1, stdout: "" };
+  }
+  return new Promise((resolve) => {
+    const child = spawn(invocation.command, invocation.args, {
       cwd,
       env: { ...process.env, NODE_OPTIONS: distrustingNodeOptions() },
       stdio: ["ignore", capture ? "pipe" : "inherit", "inherit"],
@@ -83,6 +92,7 @@ const runCommand: HeaderCommandRunner = (command, args, { cwd, capture }) =>
     child.on("error", () => resolve({ code: 1, stdout }));
     child.on("close", (code) => resolve({ code: code ?? 1, stdout }));
   });
+};
 
 /**
  * Make node-gyp's headers for the `node` on PATH whole, from `cwd` (the

@@ -13,7 +13,7 @@ import {
   utimesSync,
   writeFileSync,
 } from "node:fs";
-import { join, relative } from "node:path";
+import { dirname, join, relative } from "node:path";
 import { tmpdir } from "node:os";
 import { describe, test, expect, beforeEach, afterEach } from "vitest";
 import {
@@ -39,7 +39,7 @@ function createVault(tmpDir: string): string {
 
 function writeNote(vaultPath: string, relativePath: string, content: string, mtime?: Date): void {
   const fullPath = join(vaultPath, relativePath);
-  const dir = fullPath.substring(0, fullPath.lastIndexOf("/"));
+  const dir = dirname(fullPath);
   mkdirSync(dir, { recursive: true });
   writeFileSync(fullPath, content);
   if (mtime) {
@@ -149,7 +149,7 @@ describe("ObsidianNotesSource", () => {
     const paths = result.documents.map((d) => d.metadata.extra!.relativePath as string).sort();
     expect(paths).toEqual(["note1.md", "note2.md", "subfolder/note3.md"]);
     for (const d of result.documents) {
-      expect(d.externalId).toMatch(/^inode:\d+$/);
+      expect(d.externalId).toMatch(/^inode:\d+(?::\d+)?$/);
     }
   });
 
@@ -165,7 +165,7 @@ describe("ObsidianNotesSource", () => {
 
     const doc = result.documents[0];
     expect(doc.title).toBe("alpha");
-    expect(doc.externalId).toMatch(/^inode:\d+$/);
+    expect(doc.externalId).toMatch(/^inode:\d+(?::\d+)?$/);
     expect(doc.metadata.extra!.relativePath).toBe("Projects/alpha.md");
     expect(doc.metadata.documentType).toBe("note");
     expect(doc.metadata.tags).toContain("project");
@@ -599,7 +599,7 @@ describe("ObsidianNotesSource", () => {
     expect(r1.documents).toHaveLength(2);
     expect(byPath(r1.documents, "original.md").externalId).toBe("shared-id");
     const copyId = byPath(r1.documents, "copy.md").externalId;
-    expect(copyId).toMatch(/^inode:\d+$/);
+    expect(copyId).toMatch(/^inode:\d+(?::\d+)?$/);
 
     // The copy is read again on its own; the id stays with the original.
     const future = new Date(Date.now() + 10_000);
@@ -624,7 +624,7 @@ describe("ObsidianNotesSource", () => {
     writeNote(vaultPath, "copy.md", "---\nid: shared-id\n---\n# Original");
     const r2 = await instance.sync(r1.cursor);
     expect(r2.documents).toHaveLength(1);
-    expect(byPath(r2.documents, "copy.md").externalId).toMatch(/^inode:\d+$/);
+    expect(byPath(r2.documents, "copy.md").externalId).toMatch(/^inode:\d+(?::\d+)?$/);
     expect(r2.deletedExternalIds).toEqual([]);
   });
 
@@ -650,7 +650,7 @@ describe("ObsidianNotesSource", () => {
     const r2 = await instance.sync(r1.cursor);
     expect(r2.documents).toHaveLength(2);
     expect(byPath(r2.documents, "moved.md").externalId).toBe("shared-id");
-    expect(byPath(r2.documents, "copy.md").externalId).toMatch(/^inode:\d+$/);
+    expect(byPath(r2.documents, "copy.md").externalId).toMatch(/^inode:\d+(?::\d+)?$/);
     expect(r2.deletedExternalIds).toEqual([]);
   });
 
@@ -664,7 +664,7 @@ describe("ObsidianNotesSource", () => {
     writeNote(vaultPath, "copy.md", "---\nid: shared-id\n---\n# Original");
     const r1 = await instance.sync(null);
     const copyId = byPath(r1.documents, "copy.md").externalId;
-    expect(copyId).toMatch(/^inode:\d+$/);
+    expect(copyId).toMatch(/^inode:\d+(?::\d+)?$/);
 
     rmSync(join(vaultPath, "original.md"));
     const r2 = await instance.sync(r1.cursor);
@@ -683,16 +683,21 @@ describe("ObsidianNotesSource", () => {
 
   test("stable identity: a frontmatter id shaped like another note's inode leaves that note a path identity", async () => {
     writeNote(vaultPath, "plain.md", "# No frontmatter");
-    const plainInode = statSync(join(vaultPath, "plain.md")).ino;
+    const plainPath = join(vaultPath, "plain.md");
+    const stat = statSync(plainPath);
+    const exact = statSync(plainPath, { bigint: true });
+    const plainInodeId = Number.isSafeInteger(stat.ino)
+      ? `inode:${stat.ino}`
+      : `inode:${exact.dev}:${exact.ino}`;
     writeNote(
       vaultPath,
       "squatter.md",
-      `---\nid: inode:${plainInode}\n---\n# Claims the inode`,
+      `---\nid: ${plainInodeId}\n---\n# Claims the inode`,
       new Date(Date.now() - 60_000),
     );
 
     const r1 = await instance.sync(null);
-    expect(byPath(r1.documents, "squatter.md").externalId).toBe(`inode:${plainInode}`);
+    expect(byPath(r1.documents, "squatter.md").externalId).toBe(plainInodeId);
     expect(byPath(r1.documents, "plain.md").externalId).toBe("path:plain.md");
   });
 
@@ -711,7 +716,9 @@ describe("ObsidianNotesSource", () => {
       } finally {
         chmodSync(join(vaultPath, "folder"), 0o755);
       }
-      expect(r2.documents.map((d) => d.externalId)).toEqual([expect.stringMatching(/^inode:\d+$/)]);
+      expect(r2.documents.map((d) => d.externalId)).toEqual([
+        expect.stringMatching(/^inode:\d+(?::\d+)?$/),
+      ]);
       expect(r2.deletedExternalIds).toEqual([]);
 
       // The folder reads again: nothing moved, nothing to re-emit or delete.
@@ -741,7 +748,7 @@ describe("ObsidianNotesSource", () => {
     const final = await instance.sync(page.cursor);
     expect(final.hasMore).toBe(false);
     expect(final.documents.map((d) => d.metadata.extra?.relativePath)).toEqual(["copy.md"]);
-    expect(final.documents[0]!.externalId).toMatch(/^inode:\d+$/);
+    expect(final.documents[0]!.externalId).toMatch(/^inode:\d+(?::\d+)?$/);
     expect(final.deletedExternalIds).toEqual([]);
   });
 
@@ -805,7 +812,7 @@ describe("ObsidianNotesSource", () => {
     // Both current files re-emit with new stable identities.
     expect(result.documents).toHaveLength(2);
     for (const d of result.documents) {
-      expect(d.externalId).toMatch(/^inode:\d+$/);
+      expect(d.externalId).toMatch(/^inode:\d+(?::\d+)?$/);
     }
     // All three legacy externalIds (path-shaped) appear in deletions.
     expect(result.deletedExternalIds).toContain("alpha.md");

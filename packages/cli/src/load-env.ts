@@ -7,10 +7,41 @@
  * `./utils.js`, which freezes `GATEWAY_URL` from `process.env` at import — so
  * a `.env`-provided `OMNESIS_GATEWAY_URL` / `OMNESIS_TOKEN` is honoured.
  */
-import { loadDotEnv } from "@omnesis/config";
+import {
+  DotEnvBootstrapError,
+  loadBootstrapDotEnv,
+  repairBootstrapDotEnvAccess,
+} from "@omnesis/config/dotenv-bootstrap";
 import { bootstrapCliGatewayTransport } from "./trust-preflight.js";
 
-loadDotEnv();
+try {
+  loadBootstrapDotEnv();
+} catch (error) {
+  const args = process.argv.slice(2);
+  if (
+    process.platform !== "win32" ||
+    !(error instanceof DotEnvBootstrapError) ||
+    args.length !== 2 ||
+    args[0] !== "doctor" ||
+    args[1] !== "--fix-permissions"
+  ) {
+    throw error;
+  }
+  // Bootstrap cannot trust even the variables needed to load the normal CLI.
+  // Native repair may replace the file, but never parses it or resumes this process.
+  try {
+    repairBootstrapDotEnvAccess(error);
+  } catch {
+    console.error(
+      `Windows bootstrap permissions could not be repaired for ${error.path}. Review its ownership and access controls manually, then rerun doctor --fix-permissions. No .env contents were loaded.`,
+    );
+    process.exit(2);
+  }
+  console.error(
+    `Repaired Windows access controls for the config directory and ${error.path}. Review the file, then rerun doctor --fix-permissions. No .env contents were loaded.`,
+  );
+  process.exit(2);
+}
 if (typeof process.umask === "function") process.umask(0o077);
 
 if (

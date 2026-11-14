@@ -16,8 +16,8 @@ import { mkdtempSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { inspectWindowsPrivatePathSync, resolveWorkerEntry } from "@omnesis/core";
 
-import { resolveWorkerEntry } from "@omnesis/core";
 import { afterEach, describe, expect, test } from "vitest";
 
 import { listProfileSummaries, type ProfileSummary } from "./flight-recorder.js";
@@ -216,7 +216,11 @@ describe("StallMonitor", () => {
       );
       for (const s of summary!.stalls) expect(s.profileId).toBe(summary!.id);
       expect(JSON.stringify(summary)).not.toContain(CODE_ROOT);
-      expect(statSync(join(profileDir, `${summary!.id}.json`)).mode & 0o777).toBe(0o600);
+      if (process.platform === "win32")
+        expect(
+          inspectWindowsPrivatePathSync(join(profileDir, `${summary!.id}.json`), "file").private,
+        ).toBe(true);
+      else expect(statSync(join(profileDir, `${summary!.id}.json`)).mode & 0o777).toBe(0o600);
 
       const report = await eventually(async () => {
         const r = await read(monitor);

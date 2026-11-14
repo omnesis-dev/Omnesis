@@ -22,6 +22,8 @@
  * so a yield can be forced in the same synchronous turn as the dispatch.
  */
 
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
 import { existsSync, unlinkSync } from "node:fs";
 import Database from "better-sqlite3";
@@ -84,7 +86,7 @@ describe("knowledge cascade on the writer against an ingest backlog", () => {
   let pressureSeq = 0;
 
   beforeAll(async () => {
-    dbPath = `/tmp/omnesis-test-${randomUUID()}.db`;
+    dbPath = join(tmpdir(), `omnesis-test-${randomUUID()}.db`);
     seedBacklog(dbPath);
     scheduler = new Scheduler({ enablePreemption: true });
     scheduler.registerRunner(

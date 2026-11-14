@@ -8,9 +8,10 @@
  * failure to raise at all.
  */
 
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { setFixtureMode } from "@omnesis/source-sdk/testing";
 import Database from "better-sqlite3";
 import { describe, expect, test, beforeEach, afterEach } from "vitest";
 import { CONTACTS_DB_FILENAME } from "../paths.js";
@@ -91,7 +92,7 @@ describe("ContactsDbHelper — the reason nothing could be read", () => {
 
   test.skipIf(!canDenyReads)("a denied address book is the failure the source raises", () => {
     const path = seedAddressBook(join(sourcesDir, "DDDD-4444"));
-    chmodSync(path, 0o000);
+    setFixtureMode(path, 0o000);
 
     const helper = new ContactsDbHelper(dir);
     try {
@@ -104,7 +105,7 @@ describe("ContactsDbHelper — the reason nothing could be read", () => {
         summary: expect.stringMatching(/full disk access is required/i),
       });
     } finally {
-      chmodSync(path, 0o644);
+      setFixtureMode(path, 0o644);
       helper.close();
     }
   });
@@ -114,7 +115,7 @@ describe("ContactsDbHelper — the reason nothing could be read", () => {
   test.skipIf(!canDenyReads)("a denial outranks an address book that is merely missing", () => {
     mkdirSync(join(sourcesDir, "AAAA-0000"), { recursive: true });
     const path = seedAddressBook(join(sourcesDir, "EEEE-5555"));
-    chmodSync(path, 0o000);
+    setFixtureMode(path, 0o000);
 
     const helper = new ContactsDbHelper(dir);
     try {
@@ -122,7 +123,7 @@ describe("ContactsDbHelper — the reason nothing could be read", () => {
       expect(helper.getLastOpenFailure()?.kind).toBe("denied");
       expect(helper.getLastOpenFailure()?.message).toContain("EEEE-5555");
     } finally {
-      chmodSync(path, 0o644);
+      setFixtureMode(path, 0o644);
       helper.close();
     }
   });
@@ -131,7 +132,7 @@ describe("ContactsDbHelper — the reason nothing could be read", () => {
   // process cannot even list must not end that pass.
   test.skipIf(!canDenyReads)("a directory that cannot be listed is recorded, not thrown", () => {
     seedAddressBook(join(sourcesDir, "FFFF-6666"));
-    chmodSync(sourcesDir, 0o000);
+    setFixtureMode(sourcesDir, 0o000);
 
     const helper = new ContactsDbHelper(dir);
     try {
@@ -141,7 +142,7 @@ describe("ContactsDbHelper — the reason nothing could be read", () => {
         remediation: { summary: expect.stringMatching(/full disk access is required/i) },
       });
     } finally {
-      chmodSync(sourcesDir, 0o755);
+      setFixtureMode(sourcesDir, 0o755);
       helper.close();
     }
   });

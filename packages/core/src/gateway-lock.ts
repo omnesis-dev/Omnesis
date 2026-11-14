@@ -15,7 +15,7 @@
  * Linux holds a kernel advisory lease for the gateway's entire lifetime, so
  * containers sharing a directory do not mistake each other's PID namespaces
  * or hostnames for process liveness. The record holds the owner's identity
- * for diagnostics. macOS and legacy records use PID/start-time liveness.
+ * for diagnostics. Windows, macOS and legacy records use PID/start-time liveness.
  * A live holder is waited for
  * up to `waitMs`, which is how a replacement gateway rides out its
  * predecessor's shutdown under a supervisor that restarts on exit.
@@ -36,6 +36,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
+import { windowsPowerShellExecutable, windowsProcessStart } from "./windows-process-tree.js";
 
 export const GATEWAY_LOCK_FILE = "gateway.lock";
 
@@ -57,8 +58,8 @@ export interface GatewayLockHolder {
   processStart: string | null;
   hostname: string;
   startedAt: string;
-  /** Linux ownership is a kernel lease, independent of container PID/host names. */
-  locking?: "flock-v1";
+  /** Linux uses a kernel lease; Windows records the process identity. */
+  locking?: "flock-v1" | "windows-process-v1";
   leaseId?: string;
 }
 
@@ -120,7 +121,7 @@ export async function acquireGatewayLock(
     let pendingLease: number | undefined;
     let attempt;
     try {
-      attempt = await withClaimGuard(path, () => {
+      attempt = await withClaimGuard(path, pid, (births) => {
         // flock's FD mode locks the inherited open-file description. The parent
         // retains that description after the utility exits, so only closing our
         // FD (including SIGKILL) releases ownership. No keeper process can die
@@ -143,12 +144,12 @@ export async function acquireGatewayLock(
             const holder = readHolder(path);
             // An older gateway does not hold the lifetime lease. Preserve its
             // PID/host evidence instead of stealing its stores during upgrade.
-            if (holder && holder.locking !== "flock-v1" && holderIsAlive(holder)) {
+            if (holder && holder.locking !== "flock-v1" && isHolderAlive(holder, births)) {
               closeSync(lease);
               return { claimed: false as const, holder };
             }
             retire(path, pid);
-            if (!tryClaim(path, pid, now, true))
+            if (!tryClaim(path, pid, now, true, births))
               throw new Error("Gateway claim changed while guarded");
             pendingLease = lease;
             return { claimed: true as const, lease };
@@ -157,11 +158,11 @@ export async function acquireGatewayLock(
             throw error;
           }
         }
-        if (tryClaim(path, pid, now)) return { claimed: true as const };
+        if (tryClaim(path, pid, now, false, births)) return { claimed: true as const };
         const holder = readHolder(path);
-        if (!holder || !holderIsAlive(holder)) {
+        if (!holder || !isHolderAlive(holder, births)) {
           retire(path, pid);
-          return { claimed: tryClaim(path, pid, now) };
+          return { claimed: tryClaim(path, pid, now, false, births) };
         }
         return { claimed: false as const, holder };
       });
@@ -188,20 +189,46 @@ export async function acquireGatewayLock(
  * The sidecar inode is never removed: the kernel drops its advisory lock if a
  * starter crashes, so no stale guard needs its own unsafe cleanup protocol.
  */
-async function withClaimGuard<T>(path: string, operation: () => T): Promise<T> {
+type GuardBirths = ReadonlyMap<number, string | null>;
+async function withClaimGuard<T>(
+  path: string,
+  pid: number,
+  operation: (births?: GuardBirths) => T,
+): Promise<T> {
   const command =
-    process.platform === "darwin" ? "lockf" : process.platform === "linux" ? "flock" : null;
+    process.platform === "win32"
+      ? windowsPowerShellExecutable()
+      : process.platform === "darwin"
+        ? "lockf"
+        : process.platform === "linux"
+          ? "flock"
+          : null;
   if (!command) throw new Error(`Gateway locking is unsupported on ${process.platform}`);
   const args = process.platform === "linux" ? ["-x", `${path}.guard`] : [`${path}.guard`];
   const keeper = spawn(
     command,
-    [
-      ...args,
-      process.execPath,
-      "-e",
-      "process.stdout.write('ready\\n'); process.stdin.resume(); process.stdin.on('end', () => process.exit(0));",
-    ],
-    { stdio: ["pipe", "pipe", "pipe"] },
+    process.platform === "win32"
+      ? ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", WINDOWS_CLAIM_GUARD]
+      : [
+          ...args,
+          process.execPath,
+          "-e",
+          "process.stdout.write('ready\\n'); process.stdin.resume(); process.stdin.on('end', () => process.exit(0));",
+        ],
+    {
+      stdio: ["pipe", "pipe", "pipe"],
+      ...(process.platform === "win32"
+        ? {
+            windowsHide: true,
+            env: {
+              ...process.env,
+              OMNESIS_GATEWAY_GUARD_PATH: `${path}.guard`,
+              OMNESIS_GATEWAY_RECORD_PATH: path,
+              OMNESIS_GATEWAY_OWNER_PID: String(pid),
+            },
+          }
+        : {}),
+    },
   );
   let errorOutput = "";
   keeper.stderr!.on("data", (chunk: Buffer) => {
@@ -212,6 +239,7 @@ async function withClaimGuard<T>(path: string, operation: () => T): Promise<T> {
   let result: T | undefined;
   let failure: unknown;
   let failed = false;
+  let births: GuardBirths | undefined;
   try {
     await new Promise<void>((resolve, reject) => {
       keeper.once("error", reject);
@@ -222,14 +250,44 @@ async function withClaimGuard<T>(path: string, operation: () => T): Promise<T> {
           ),
         ),
       );
-      keeper.stdout!.once("data", (chunk: Buffer) => {
-        if (String(chunk) !== "ready\n")
-          reject(new Error(`Unexpected gateway guard response: ${String(chunk)}`));
-        else resolve();
+      let response = "";
+      keeper.stdout!.on("data", (chunk: Buffer) => {
+        response += String(chunk);
+        if (response.length > 65536) {
+          reject(new Error("Gateway guard response is too large"));
+          return;
+        }
+        if (!response.includes("\n")) return;
+        if (process.platform !== "win32") {
+          if (response !== "ready\n") reject(new Error("Unexpected gateway guard response"));
+          else resolve();
+          return;
+        }
+        try {
+          if (!response.startsWith("ready:") || !response.endsWith("\n")) throw new Error();
+          const entries = JSON.parse(response.slice(6)) as Record<string, unknown>;
+          if (!entries || typeof entries !== "object" || Array.isArray(entries)) throw new Error();
+          const snapshot = new Map<number, string | null>();
+          for (const [key, value] of Object.entries(entries)) {
+            const identityPid = Number(key);
+            if (
+              !Number.isSafeInteger(identityPid) ||
+              identityPid <= 0 ||
+              (value !== null && (typeof value !== "string" || !/^[0-9]+$/u.test(value)))
+            )
+              throw new Error();
+            snapshot.set(identityPid, value as string | null);
+          }
+          if (!snapshot.has(pid)) throw new Error();
+          births = snapshot;
+          resolve();
+        } catch {
+          reject(new Error("Unexpected Windows gateway guard response"));
+        }
       });
     });
     ready = true;
-    result = operation();
+    result = operation(births);
   } catch (error) {
     failed = true;
     failure = error;
@@ -245,6 +303,55 @@ async function withClaimGuard<T>(path: string, operation: () => T): Promise<T> {
   if (failed) throw failure;
   return result as T;
 }
+
+/**
+ * FileShare.None serializes claims through a stable kernel-owned file handle.
+ * A crashed starter closes stdin; a crashed guard releases the handle. The path
+ * is passed through the environment so PowerShell never interprets its content.
+ */
+const WINDOWS_CLAIM_GUARD = `
+$ErrorActionPreference = 'Stop'
+$guard = $null
+try {
+  while ($null -eq $guard) {
+    try {
+      $guard = [System.IO.File]::Open($env:OMNESIS_GATEWAY_GUARD_PATH, [System.IO.FileMode]::OpenOrCreate, [System.IO.FileAccess]::ReadWrite, [System.IO.FileShare]::None)
+    } catch [System.IO.IOException] {
+      $cause = $_.Exception
+      while ($null -ne $cause.InnerException) { $cause = $cause.InnerException }
+      $code = $cause.HResult -band 65535
+      if ($code -ne 32 -and $code -ne 33) { throw }
+      Start-Sleep -Milliseconds 50
+    }
+  }
+  # Sample identities while holding the same claim guard. The caller consumes
+  # this snapshot only in its synchronous guarded callback; no foreign birth is
+  # cached beyond this claim attempt. Failed probes stay conservatively unknown.
+  $births = @{}
+  $identityPids = @([int]$env:OMNESIS_GATEWAY_OWNER_PID)
+  try {
+    $record = [IO.File]::ReadAllText($env:OMNESIS_GATEWAY_RECORD_PATH)
+    if ($record.Length -le 65536) {
+      $holder = ConvertFrom-Json -InputObject $record
+      if ($holder.pid -gt 0 -and $holder.pid -le [int]::MaxValue) { $identityPids += [int]$holder.pid }
+    }
+  } catch { }
+  foreach ($identityPid in $identityPids) {
+    $birth = $null
+    $target = $null
+    try {
+      $target = [Diagnostics.Process]::GetProcessById($identityPid)
+      $birth = $target.StartTime.ToUniversalTime().Ticks.ToString([Globalization.CultureInfo]::InvariantCulture)
+    } catch { } finally { if ($null -ne $target) { $target.Dispose() } }
+    $births[[string]$identityPid] = $birth
+  }
+  [Console]::Out.Write("ready:" + (ConvertTo-Json -InputObject $births -Compress) + "\`n")
+  [Console]::Out.Flush()
+  [Console]::In.ReadToEnd() | Out-Null
+} finally {
+  if ($null -ne $guard) { $guard.Dispose() }
+}
+`;
 
 /** Only call while holding the stable advisory sidecar guard. */
 function retire(path: string, pid: number): void {
@@ -275,6 +382,9 @@ export function liveGatewayHolder(configDir: string): GatewayLockHolder | null {
 
 /** Whether the recorded holder is still the process that took the lock. */
 export function holderIsAlive(holder: GatewayLockHolder): boolean {
+  return isHolderAlive(holder);
+}
+function isHolderAlive(holder: GatewayLockHolder, births?: GuardBirths): boolean {
   if (holder.locking === "flock-v1") {
     const path = holderPaths.get(holder);
     if (!path || process.platform !== "linux") return true;
@@ -289,12 +399,14 @@ export function holderIsAlive(holder: GatewayLockHolder): boolean {
     return true;
   }
   if (holder.pid === process.pid) {
+    if (holder.locking === "windows-process-v1")
+      return sameProcess(holder.pid, holder.processStart, births);
     // A same-host legacy record naming this process is from an earlier life
     // of this PID. Foreign-host records must stay conservative even when
     // their namespace happens to assign the same PID as ours.
     return false;
   }
-  return sameProcess(holder.pid, holder.processStart);
+  return sameProcess(holder.pid, holder.processStart, births);
 }
 
 /**
@@ -303,13 +415,22 @@ export function holderIsAlive(holder: GatewayLockHolder): boolean {
  * into place, so a competing reader never sees a claim before its content:
  * `link` is atomic and fails with EEXIST when a holder exists.
  */
-function tryClaim(path: string, pid: number, now: () => Date, advisory = false): boolean {
+function tryClaim(
+  path: string,
+  pid: number,
+  now: () => Date,
+  advisory = false,
+  births?: GuardBirths,
+): boolean {
   const owner: GatewayLockHolder = {
     pid,
-    processStart: processStart(pid),
+    processStart: birthWithinGuard(pid, births),
     hostname: hostname(),
     startedAt: now().toISOString(),
     ...(advisory ? { locking: "flock-v1" as const, leaseId: randomUUID() } : {}),
+    ...(process.platform === "win32" && !advisory
+      ? { locking: "windows-process-v1" as const, leaseId: randomUUID() }
+      : {}),
   };
   const record = `${JSON.stringify(owner)}\n`;
   const draft = `${path}.${pid}.claim`;
@@ -371,6 +492,9 @@ function readHolder(path: string): GatewayLockHolder | null {
       hostname: typeof parsed.hostname === "string" ? parsed.hostname : "",
       startedAt: typeof parsed.startedAt === "string" ? parsed.startedAt : "",
       ...(parsed.locking === "flock-v1" ? { locking: "flock-v1" as const } : {}),
+      ...(parsed.locking === "windows-process-v1"
+        ? { locking: "windows-process-v1" as const }
+        : {}),
       ...(typeof parsed.leaseId === "string" ? { leaseId: parsed.leaseId } : {}),
     };
     holderPaths.set(holder, path);
@@ -400,7 +524,7 @@ function takeLease(path: string): number | null {
   }
 }
 
-function sameProcess(pid: number, expectedStart: string | null): boolean {
+function sameProcess(pid: number, expectedStart: string | null, births?: GuardBirths): boolean {
   // 0 and negatives address process groups; a lock never names those.
   if (pid <= 0) return false;
   try {
@@ -409,16 +533,21 @@ function sameProcess(pid: number, expectedStart: string | null): boolean {
     if ((err as NodeJS.ErrnoException).code !== "EPERM") return false;
   }
   if (expectedStart === null) return true;
-  const start = processStart(pid);
+  const start = birthWithinGuard(pid, births);
   return start === null || start === expectedStart;
 }
 
 /**
  * A stable identity for a running process beyond its reusable PID: the
  * kernel's start tick (plus the boot id, so a reboot never matches) on
- * Linux, `ps`'s start time on macOS.
+ * Linux, `ps`'s start time on macOS, UTC creation ticks on Windows.
  */
+function birthWithinGuard(pid: number, births?: GuardBirths): string | null {
+  return births?.has(pid) ? births.get(pid)! : processStart(pid);
+}
+
 function processStart(pid: number): string | null {
+  if (process.platform === "win32") return windowsProcessStart(pid);
   if (process.platform === "darwin") {
     try {
       return execFileSync("ps", ["-o", "lstart=", "-p", String(pid)], {

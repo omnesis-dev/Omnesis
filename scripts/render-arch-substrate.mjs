@@ -439,4 +439,4 @@ async function main() {
   if (!check) console.log(`arch-substrate rendered into ${TARGETS.length} pages`);
 }
 
-if (process.argv[1] && import.meta.url === `file://${process.argv[1]}`) await main();
+if (import.meta.main) await main();

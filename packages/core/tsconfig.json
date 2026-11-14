@@ -5,7 +5,12 @@
     "rootDir": "./src",
     "composite": true
   },
-  "references": [{ "path": "../types" }, { "path": "../config" }, { "path": "../source-sdk" }],
+  "references": [
+    { "path": "../platform" },
+    { "path": "../types" },
+    { "path": "../config" },
+    { "path": "../source-sdk" }
+  ],
   "include": ["src"],
   "exclude": ["src/**/*.test.ts"]
 }

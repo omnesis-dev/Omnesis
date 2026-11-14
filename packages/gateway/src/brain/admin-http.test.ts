@@ -101,8 +101,11 @@ function post(path: string, token = ADMIN_TOKEN) {
   return app.request(path, { method: "POST", headers: { authorization: `Bearer ${token}` } });
 }
 
+const transcriptStores = new Set<FsCognitionTranscriptStore>();
 function transcriptStore(): FsCognitionTranscriptStore {
-  return new FsCognitionTranscriptStore(cognitionTranscriptsDir(configDir));
+  const store = new FsCognitionTranscriptStore(cognitionTranscriptsDir(configDir));
+  transcriptStores.add(store);
+  return store;
 }
 
 function seedLoop(
@@ -290,7 +293,10 @@ beforeEach(() => {
   });
 });
 
-afterEach(() => {
+afterEach(async () => {
+  await app.close();
+  await Promise.all([...transcriptStores].map((store) => store.close()));
+  transcriptStores.clear();
   db.close();
   cleanupDb(dbPath);
   rmSync(configDir, { recursive: true, force: true });
@@ -342,12 +348,16 @@ describe("inert-when-off + scopes", () => {
 
   test("every /admin/brain route 404s when no status getter is wired at all", async () => {
     const bare = createServer(db, dbPath, { configDir });
-    for (const route of ALL_ROUTES) {
-      const res = await bare.request(route.path, {
-        method: route.method,
-        headers: { authorization: `Bearer ${ADMIN_TOKEN}` },
-      });
-      expect(res.status, `${route.method} ${route.path}`).toBe(404);
+    try {
+      for (const route of ALL_ROUTES) {
+        const res = await bare.request(route.path, {
+          method: route.method,
+          headers: { authorization: `Bearer ${ADMIN_TOKEN}` },
+        });
+        expect(res.status, `${route.method} ${route.path}`).toBe(404);
+      }
+    } finally {
+      await bare.close();
     }
   });
 
@@ -1331,6 +1341,19 @@ describe("GET /admin/brain/runs/:id", () => {
 });
 
 describe("transcripts", () => {
+  test("server disposal closes its transcript handles without closing the caller database", async () => {
+    seedTranscript({ runId: "run_disposal", finishedAt: 1000 });
+    expect((await get("/admin/brain/transcripts")).status).toBe(200);
+    await Promise.all([...transcriptStores].map((store) => store.close()));
+    transcriptStores.clear();
+    await app.close();
+    await app.close();
+    expect(db.prepare("SELECT 1 AS alive").get()).toEqual({ alive: 1 });
+    const directory = cognitionTranscriptsDir(configDir);
+    rmSync(directory, { recursive: true });
+    expect(existsSync(directory)).toBe(false);
+  });
+
   test("lists refs newest-finished first, filterable by runId", async () => {
     seedTranscript({ runId: "run_1", finishedAt: 1000 });
     seedTranscript({ runId: "run_2", finishedAt: 2000 });
@@ -2357,25 +2380,29 @@ describe("/admin/brain/clock (the replay time cursor)", () => {
       configDir,
       briefsClock: clock,
     });
-    const before = await virtualApp.request("/admin/brain/clock", {
-      headers: { authorization: `Bearer ${ADMIN_TOKEN}` },
-    });
-    expect(((await before.json()) as { virtual: boolean }).virtual).toBe(true);
+    try {
+      const before = await virtualApp.request("/admin/brain/clock", {
+        headers: { authorization: `Bearer ${ADMIN_TOKEN}` },
+      });
+      expect(((await before.json()) as { virtual: boolean }).virtual).toBe(true);
 
-    const set = await virtualApp.request("/admin/brain/clock", {
-      method: "POST",
-      headers: { authorization: `Bearer ${ADMIN_TOKEN}`, "content-type": "application/json" },
-      body: JSON.stringify({ now: "2026-05-10T12:00:00.000Z" }),
-    });
-    expect(set.status).toBe(200);
-    expect(clock()).toBe(Date.parse("2026-05-10T12:00:00.000Z"));
+      const set = await virtualApp.request("/admin/brain/clock", {
+        method: "POST",
+        headers: { authorization: `Bearer ${ADMIN_TOKEN}`, "content-type": "application/json" },
+        body: JSON.stringify({ now: "2026-05-10T12:00:00.000Z" }),
+      });
+      expect(set.status).toBe(200);
+      expect(clock()).toBe(Date.parse("2026-05-10T12:00:00.000Z"));
 
-    const bad = await virtualApp.request("/admin/brain/clock", {
-      method: "POST",
-      headers: { authorization: `Bearer ${ADMIN_TOKEN}`, "content-type": "application/json" },
-      body: JSON.stringify({ now: "not a time" }),
-    });
-    expect(bad.status).toBe(400);
+      const bad = await virtualApp.request("/admin/brain/clock", {
+        method: "POST",
+        headers: { authorization: `Bearer ${ADMIN_TOKEN}`, "content-type": "application/json" },
+        body: JSON.stringify({ now: "not a time" }),
+      });
+      expect(bad.status).toBe(400);
+    } finally {
+      await virtualApp.close();
+    }
   });
 });
 

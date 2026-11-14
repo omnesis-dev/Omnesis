@@ -179,7 +179,9 @@ test("account sign-in takes a single gateway without asking and preserves truste
   expect(f.requests[0]).not.toHaveProperty("requireApproval");
   expect(f.requests[0]).not.toHaveProperty("proof");
   expect(f.publiclyLogged).toHaveBeenCalledWith(candidate, expect.any(AbortSignal));
-  expect((await stat(f.deviceKeyFile)).mode & 0o777).toBe(0o600);
+  if (process.platform !== "win32") {
+    expect((await stat(f.deviceKeyFile)).mode & 0o777).toBe(0o600);
+  }
   expect(result).toMatchObject({
     token: "stable-device-credential",
     kind: "cli",

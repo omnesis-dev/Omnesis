@@ -15,6 +15,7 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 import { atomicWriteFileSync } from "./atomic-write.js";
+import { windowsProcessStart } from "./windows-process-tree.js";
 
 export const UPDATE_LOCK_ENV = "OMNESIS_UPDATE_LOCK_ID";
 
@@ -474,9 +475,9 @@ export function getUpdateLockProcessGroup(configDir: string): UpdateLockProcessG
 }
 
 function processGroupExists(pid: number): boolean {
-  if (process.platform === "win32") return false;
   try {
-    process.kill(-pid, 0);
+    // Windows publishes the job owner's PID; POSIX publishes a process group.
+    process.kill(process.platform === "win32" ? pid : -pid, 0);
     return true;
   } catch (err) {
     return (err as NodeJS.ErrnoException).code !== "ESRCH";
@@ -683,6 +684,7 @@ function releaseGuard(claim: string): void {
 }
 
 function processStart(pid: number): string | null {
+  if (process.platform === "win32") return windowsProcessStart(pid);
   if (process.platform === "darwin") {
     try {
       return execFileSync("ps", ["-o", "lstart=", "-p", String(pid)], {

@@ -40,7 +40,9 @@ export function expandHostPath(input: string): string {
   const trimmed = input.trim();
   if (trimmed === "") return trimmed;
   if (trimmed === "~") return hostHomeDir();
-  if (trimmed.startsWith("~/")) return join(hostHomeDir(), trimmed.slice(2));
+  if (trimmed.startsWith("~/") || (process.platform === "win32" && trimmed.startsWith("~\\"))) {
+    return join(hostHomeDir(), trimmed.slice(2));
+  }
   return isAbsolute(trimmed) ? trimmed : resolve(trimmed);
 }
 

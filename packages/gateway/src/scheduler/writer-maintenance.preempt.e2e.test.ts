@@ -20,6 +20,8 @@
  * calls are. `OMNESIS_WRITER_MAINTENANCE_DOCS` sizes the corpus for a bench.
  */
 
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { randomBytes, randomUUID } from "node:crypto";
 import { existsSync, unlinkSync } from "node:fs";
 import { createLogger } from "@omnesis/core";
@@ -113,7 +115,7 @@ describe("writer maintenance against a large encrypted corpus", () => {
   let pressureSeq = 0;
 
   beforeAll(async () => {
-    dbPath = `/tmp/omnesis-test-${randomUUID()}.db`;
+    dbPath = join(tmpdir(), `omnesis-test-${randomUUID()}.db`);
     const seed = createDatabase(dbPath, { encryptionKey: key }) as unknown as Database.Database;
     try {
       setActiveAlgoVersion(seed as never, PILOT_ALGO);

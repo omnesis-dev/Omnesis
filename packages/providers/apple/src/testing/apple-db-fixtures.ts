@@ -9,18 +9,20 @@
  * macOS's privacy layer produces for a database behind a grant the process
  * does not hold: SQLite reports both as `SQLITE_CANTOPEN: unable to open
  * database file`, which is the string `classifyOpenError` reads. Root ignores
- * the mode, so a test that stages one must skip there.
+ * the mode, so a test that stages one must skip there. Windows uses an explicit
+ * current-user read denial on its owned fixture instead of chmod.
  */
 
 import { mkdtempSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { canDenyFixtureReads } from "@omnesis/source-sdk/testing";
 import Database from "better-sqlite3";
 import { APPLE_EPOCH_OFFSET_SECONDS } from "../epoch.js";
 import { AppleProvider } from "../provider.js";
 
 /** Root reads through a 000 file mode, so the denial cannot be staged there. */
-export const canDenyReads = (process.getuid?.() ?? 0) !== 0;
+export const canDenyReads = canDenyFixtureReads;
 
 export interface AppleDbFixture {
   dir: string;

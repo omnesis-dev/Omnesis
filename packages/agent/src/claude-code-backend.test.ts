@@ -14,7 +14,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 
 import {
@@ -295,6 +295,62 @@ describe("Claude Code wire parsing", () => {
       "/opt/claude",
     );
   });
+});
+
+describe("Claude Code JavaScript executable portability", () => {
+  it("probes and starts a JavaScript entry with literal spaces and shell metacharacters", async () => {
+    const dir = scratch();
+    const command = join(dir, "claude entry & $().mjs");
+    writeFileSync(command, readFileSync(fakeClaude), { mode: 0o700 });
+    const runtime = new ClaudeCodeRuntime({
+      workspaceDir: join(dir, "workspace"),
+      command,
+      env: process.env,
+      managedSettingsDirs: [],
+    });
+    await expect(runtime.probeVersion()).resolves.toMatchObject({ command, supported: true });
+    await expect(runtime.authStatus()).resolves.toMatchObject({ loggedIn: true });
+    expect((await runtime.listModels()).map((model) => model.value)).toEqual(["sonnet", "haiku"]);
+  });
+
+  it.each(process.platform === "win32" ? [false, true] : [false])(
+    "closes the session and its JavaScript wrapper (wrapperExits=%s)",
+    async (wrapperExits) => {
+      const dir = scratch();
+      const command = join(dir, "claude wrapper.mjs");
+      const childPidFile = join(dir, "child.pid");
+      const wrapperPidFile = join(dir, "wrapper.pid");
+      writeFileSync(
+        command,
+        `#!/usr/bin/env node
+import { spawn } from 'node:child_process';
+import { writeFileSync } from 'node:fs';
+writeFileSync(${JSON.stringify(wrapperPidFile)}, String(process.pid));
+const child = spawn(process.execPath, [${JSON.stringify(fakeClaude)}, ...process.argv.slice(2)], { detached: ${wrapperExits}, stdio: 'inherit' });
+child.once('spawn', () => {
+  writeFileSync(${JSON.stringify(childPidFile)}, String(child.pid));
+  if (${wrapperExits}) { child.unref(); process.exit(0); }
+});
+child.on('exit', (code) => process.exit(code ?? 1));
+process.on('SIGTERM', () => child.kill('SIGTERM'));
+`,
+        { mode: 0o700 },
+      );
+      const runtime = new ClaudeCodeRuntime({
+        workspaceDir: join(dir, "workspace"),
+        command,
+        env: process.env,
+        managedSettingsDirs: [],
+      });
+      await expect(runtime.listModels()).resolves.toHaveLength(2);
+      const childPid = Number(readFileSync(childPidFile, "utf8"));
+      const wrapperPid = Number(readFileSync(wrapperPidFile, "utf8"));
+      await vi.waitFor(() => {
+        expect(() => process.kill(childPid, 0)).toThrow();
+        expect(() => process.kill(wrapperPid, 0)).toThrow();
+      });
+    },
+  );
 });
 
 describe("Claude Code runtime against a scripted CLI", () => {

@@ -102,6 +102,7 @@ afterEach(async () => {
   releaseAnalytics();
   analyticsGate = null;
   await service.whenIdle();
+  await app.close();
   db.close();
   cleanupDb(dbPath);
   rmSync(configDir, { recursive: true, force: true });

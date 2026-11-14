@@ -100,7 +100,7 @@ async function loadProvider(
         case "tesseract": {
           if (!(await tesseractAvailable(deps.loadTesseract))) {
             log.warn(
-              "Tesseract OCR needs the optional `node-tesseract-ocr` dependency and the `tesseract` binary — install them to enable it.",
+              "Tesseract OCR needs the `tesseract` binary and its language data installed on this host.",
             );
             return null;
           }

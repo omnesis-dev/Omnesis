@@ -131,7 +131,9 @@ describe("scaffoldDotEnv", () => {
     const env: NodeJS.ProcessEnv = {};
     loadDotEnv({ dir, env });
     expect(Object.keys(env)).toHaveLength(0);
-    expect(statSync(path).mode & 0o777).toBe(0o600);
+    if (process.platform !== "win32") {
+      expect(statSync(path).mode & 0o777).toBe(0o600);
+    }
   });
 
   it("never overwrites an existing .env", () => {
@@ -159,7 +161,9 @@ describe("upsertDotEnv", () => {
     const { changed } = upsertDotEnv(dir, { OMNESIS_TLS_CERT: "/x/c.crt" });
     expect(changed).toEqual(["OMNESIS_TLS_CERT"]);
     expect(read()).toBe("OMNESIS_TLS_CERT=/x/c.crt\n");
-    expect(statSync(join(dir, ".env")).mode & 0o777).toBe(0o600);
+    if (process.platform !== "win32") {
+      expect(statSync(join(dir, ".env")).mode & 0o777).toBe(0o600);
+    }
   });
 
   it("updates an existing key in place rather than appending a duplicate", () => {

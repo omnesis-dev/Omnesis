@@ -3,10 +3,10 @@
 
 import { execFileSync } from "node:child_process";
 import { createRequire } from "node:module";
-import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
-import { dirname, resolve } from "node:path";
-import { unlinkSync } from "node:fs";
+import { dirname, resolve, join } from "node:path";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import Database from "better-sqlite3";
 import { DupeStore } from "../store/repository.js";
@@ -107,7 +107,7 @@ function runAnnotate(dupesPath: string, omnesisPath: string): void {
       `--omnesisDb=${omnesisPath}`,
       `--algoVersion=${ALGO}`,
     ],
-    { stdio: ["ignore", "ignore", "pipe"] },
+    { stdio: ["ignore", "ignore", "pipe"], env: { ...process.env, HOME: undefined } },
   );
 }
 
@@ -131,24 +131,17 @@ function readPair(path: string, docX: string, docY: string): AnnotatedRow {
 }
 
 describe("annotate containment guard boundary (Math.min(shA, shB) === 0)", () => {
+  let directory: string;
   let dupesPath: string;
   let omnesisPath: string;
 
   beforeEach(() => {
-    dupesPath = `/tmp/omnesis-annotate-boundary-dupes-${randomUUID()}.db`;
-    omnesisPath = `/tmp/omnesis-annotate-boundary-corpus-${randomUUID()}.db`;
+    directory = mkdtempSync(join(tmpdir(), "omnesis-annotate-fixture-"));
+    dupesPath = join(directory, "dupes.db");
+    omnesisPath = join(directory, "corpus.db");
   });
-
   afterEach(() => {
-    for (const p of [dupesPath, omnesisPath]) {
-      for (const s of ["", "-wal", "-shm"]) {
-        try {
-          unlinkSync(p + s);
-        } catch {
-          // ignore
-        }
-      }
-    }
+    rmSync(directory, { recursive: true, force: true });
   });
 
   it("a zero shingle_count yields a clean below-threshold decision (containment falls back to finite 0, not NaN)", () => {

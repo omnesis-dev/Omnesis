@@ -1,10 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import { execFileSync } from "node:child_process";
+
 import { generateKeyPairSync } from "node:crypto";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
+import { atomicWriteFileSync, ensurePrivateDirSync, ensurePrivateFileSync } from "@omnesis/core";
 
 import { APNS_WAKE_JSON, FCM_WAKE_DATA } from "@omnesis/core/push";
 import { afterEach, describe, expect, it } from "vitest";
@@ -16,6 +19,20 @@ const dirs: string[] = [];
 afterEach(() => {
   for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
 });
+
+function writePrivateFixture(path: string, data: string, options?: { mode: number }): void {
+  if (process.platform === "win32") {
+    ensurePrivateDirSync(dirname(path));
+    atomicWriteFileSync(path, data, { mode: 0o600 });
+  } else writeFileSync(path, data, options);
+}
+function broadenRead(path: string): void {
+  execFileSync(
+    join(process.env.SystemRoot!, "System32", "icacls.exe"),
+    [path, "/grant", "*S-1-1-0:(R)"],
+    { windowsHide: true, timeout: 10_000 },
+  );
+}
 
 function privateKey(type: "ec" | "rsa"): string {
   const pair =
@@ -42,11 +59,28 @@ class FakeApnsRequest implements ApnsRequest {
 }
 
 describe("ApnsRelayCarrier", () => {
+  it.runIf(process.platform === "win32")(
+    "refuses a credential made unsafe before first signing and retries after private repair",
+    async () => {
+      const { carrier, request, keyPath } = apnsFixture();
+      const before = readFileSync(keyPath);
+      broadenRead(keyPath);
+      await expect(carrier.sendWake(iosTarget())).rejects.toMatchObject({
+        kind: "credential_mint_failed",
+      });
+      expect(request.received).toEqual([]);
+      expect(readFileSync(keyPath)).toEqual(before);
+      ensurePrivateFileSync(keyPath);
+      await carrier.sendWake(iosTarget());
+      expect(request.received).toHaveLength(1);
+      expect(readFileSync(keyPath)).toEqual(before);
+    },
+  );
   it("sends the exact core wake bytes and a distinct possession challenge", async () => {
     const dir = mkdtempSync(join(tmpdir(), "relay-apns-"));
     dirs.push(dir);
     const keyPath = join(dir, "AuthKey_TEST.p8");
-    writeFileSync(keyPath, privateKey("ec"), { mode: 0o600 });
+    writePrivateFixture(keyPath, privateKey("ec"), { mode: 0o600 });
     const request = new FakeApnsRequest();
     const carrier = new ApnsRelayCarrier({
       keyPath,
@@ -103,7 +137,7 @@ describe("ApnsRelayCarrier", () => {
     const dir = mkdtempSync(join(tmpdir(), "relay-apns-"));
     dirs.push(dir);
     const keyPath = join(dir, "AuthKey_TEST.p8");
-    writeFileSync(keyPath, privateKey("ec"));
+    writePrivateFixture(keyPath, privateKey("ec"));
     const request = new FakeApnsRequest();
     request.response = { statusCode, body: JSON.stringify({ reason }) };
     const carrier = new ApnsRelayCarrier({
@@ -147,7 +181,7 @@ describe("FcmRelayCarrier", () => {
     const dir = mkdtempSync(join(tmpdir(), "relay-fcm-"));
     dirs.push(dir);
     const serviceAccountPath = join(dir, "service-account.json");
-    writeFileSync(
+    writePrivateFixture(
       serviceAccountPath,
       JSON.stringify({
         client_email: "relay@example.com",
@@ -175,8 +209,24 @@ describe("FcmRelayCarrier", () => {
       fetchFn,
       clock: { now: () => 1_700_000_000_000 },
     });
-    return { carrier, calls };
+    return { carrier, calls, serviceAccountPath };
   }
+
+  it.runIf(process.platform === "win32")(
+    "refuses an account made unsafe before first token mint without fetching, then retries after repair",
+    async () => {
+      const { carrier, calls, serviceAccountPath } = fixture();
+      const before = readFileSync(serviceAccountPath);
+      broadenRead(serviceAccountPath);
+      await expect(carrier.sendWake(androidTarget())).rejects.toMatchObject({ kind: "other" });
+      expect(calls).toEqual([]);
+      expect(readFileSync(serviceAccountPath)).toEqual(before);
+      ensurePrivateFileSync(serviceAccountPath);
+      await carrier.sendWake(androidTarget());
+      expect(calls).toHaveLength(2);
+      expect(readFileSync(serviceAccountPath)).toEqual(before);
+    },
+  );
 
   it("sends exact core wake data through the service account's Firebase project", async () => {
     const { carrier, calls } = fixture();
@@ -266,7 +316,7 @@ function apnsFixture(key = privateKey("ec")) {
   const dir = mkdtempSync(join(tmpdir(), "relay-apns-"));
   dirs.push(dir);
   const keyPath = join(dir, "AuthKey_TEST.p8");
-  writeFileSync(keyPath, key);
+  writePrivateFixture(keyPath, key);
   const request = new FakeApnsRequest();
   const carrier = new ApnsRelayCarrier({
     keyPath,
@@ -276,5 +326,5 @@ function apnsFixture(key = privateKey("ec")) {
     request,
     clock: { now: () => 2_000 },
   });
-  return { carrier, request };
+  return { carrier, request, keyPath };
 }

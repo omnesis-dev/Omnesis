@@ -12,7 +12,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { resolveAttachmentConfig } from "@omnesis/core";
 import { expectUnchangedUpstreamIsNoOp } from "@omnesis/source-sdk/testing";
 import { MaildirSource } from "./source.js";
@@ -23,15 +23,51 @@ import {
   setThunderbirdStatus,
   storeThunderbirdMessage,
 } from "./testing/maildir-writer.js";
+import { deniedFixturePaths } from "./testing/permission-fixture.js";
 import type { AttachmentExtractFn } from "@omnesis/core";
 import type { DocumentInput } from "@omnesis/types";
 import type { MaildirCursor, MaildirLimits } from "./source.js";
 import type { FixtureMessage } from "./testing/maildir-writer.js";
 
+vi.mock("node:fs", async (original) => {
+  const actual = await original<typeof import("node:fs")>();
+  const { withFixturePermissions } = await import("./testing/permission-fixture.js");
+  // Read denial does not hide an entry's metadata: chmod(000) still allows
+  // lstat of that file. Enumeration and content reads carry the denial.
+  return {
+    ...actual,
+    readdirSync: withFixturePermissions(actual.readdirSync),
+    openSync: withFixturePermissions(actual.openSync),
+  };
+});
+
+vi.mock("@omnesis/core", async (original) => {
+  const actual = await original<typeof import("@omnesis/core")>();
+  const { withFixturePermissions } = await import("./testing/permission-fixture.js");
+  return {
+    ...actual,
+    readWindowsRegularFilePrefix: withFixturePermissions(actual.readWindowsRegularFilePrefix),
+  };
+});
+
+function setFixtureMode(path: string, mode: number): void {
+  if (process.platform !== "win32") chmodSync(path, mode);
+  else if (mode === 0) deniedFixturePaths.add(path);
+  else deniedFixturePaths.delete(path);
+}
+
 const isRoot = process.getuid?.() === 0;
 const SELF = { name: "Maya Reeves", address: "maya.reeves@example.com" };
 const JAMIE = { name: "Jamie Lopez", address: "jamie.lopez@example.org" };
 const DAVID = { name: "David Lin", address: "david.lin@example.io" };
+
+const ownedSources = new Set<MaildirSource>();
+
+function ownSource(options: ConstructorParameters<typeof MaildirSource>[0]): MaildirSource {
+  const source = new MaildirSource(options);
+  ownedSources.add(source);
+  return source;
+}
 
 let scratch: string;
 let root: string;
@@ -39,8 +75,21 @@ beforeEach(() => {
   scratch = mkdtempSync(join(tmpdir(), "omnesis-maildir-source-"));
   root = join(scratch, "Mail");
 });
-afterEach(() => {
-  rmSync(scratch, { recursive: true, force: true });
+afterEach(async () => {
+  const disposed = await Promise.allSettled(
+    [...ownedSources].map((source) => Promise.resolve().then(() => source.dispose())),
+  );
+  ownedSources.clear();
+  const failures: unknown[] = disposed.flatMap((result) =>
+    result.status === "rejected" ? [result.reason] : [],
+  );
+  deniedFixturePaths.clear();
+  try {
+    rmSync(scratch, { recursive: true, force: true });
+  } catch (error) {
+    failures.push(error);
+  }
+  if (failures.length) throw new AggregateError(failures, "Maildir fixture cleanup failed");
 });
 
 function message(overrides: Partial<FixtureMessage> & { messageId?: string } = {}): FixtureMessage {
@@ -112,7 +161,7 @@ function makeSource(
     indexPath?: string;
   } = {},
 ): MaildirSource {
-  return new MaildirSource({
+  return ownSource({
     sourceId: "maildir:fixture",
     providerId: "maildir:fixture",
     root,
@@ -352,7 +401,7 @@ describe("a sync that runs long", () => {
       );
     }
     let clock = 0;
-    const source = new MaildirSource({
+    const source = ownSource({
       sourceId: "maildir:fixture",
       providerId: "maildir:fixture",
       root,
@@ -633,28 +682,35 @@ describe("a Thunderbird profile's mail folder", () => {
     expect(gateway.byTitle("Welcome to the team").metadata.extra?.flagged).toBe(true);
   });
 
-  test.skipIf(isRoot)(
-    "a changed file that will not open keeps its message until it reads again",
-    async () => {
-      const path = storeThunderbirdMessage(join(root, "Inbox"), "1.a", message(), {
-        status: READ,
-      });
-      const gateway = new FakeGateway();
-      const source = makeSource();
-      await gateway.cycle(source);
-      setThunderbirdStatus(path, { status: READ | STARRED }, later(1));
-      chmodSync(path, 0o000);
-      try {
-        const blocked = await gateway.cycle(source);
-        expect(blocked.present).toContain(gateway.byTitle("Welcome to the team").externalId);
-        expect(gateway.docs.size).toBe(1);
-      } finally {
-        chmodSync(path, 0o644);
-      }
-      await gateway.cycle(source);
-      expect(gateway.byTitle("Welcome to the team").metadata.extra?.flagged).toBe(true);
-    },
-  );
+  for (const denial of ["POSIX mode", "read boundary"] as const) {
+    test.skipIf(denial === "POSIX mode" && (isRoot || process.platform === "win32"))(
+      `a changed file that will not open keeps its message until it reads again (${denial})`,
+      async () => {
+        const path = storeThunderbirdMessage(join(root, "Inbox"), "1.a", message(), {
+          status: READ,
+        });
+        const gateway = new FakeGateway();
+        const source = makeSource();
+        await gateway.cycle(source);
+        setThunderbirdStatus(path, { status: READ | STARRED }, later(1));
+        if (denial === "read boundary") deniedFixturePaths.add(path);
+        else setFixtureMode(path, 0o000);
+        try {
+          const blocked = await gateway.cycle(source);
+          expect(blocked.present).toContain(gateway.byTitle("Welcome to the team").externalId);
+          expect(blocked.issues).toEqual([]);
+          expect(blocked.emitted).toEqual([]);
+          expect(gateway.byTitle("Welcome to the team").metadata.extra?.flagged).toBeUndefined();
+          expect(gateway.docs.size).toBe(1);
+        } finally {
+          if (denial === "read boundary") deniedFixturePaths.delete(path);
+          else setFixtureMode(path, 0o644);
+        }
+        await gateway.cycle(source);
+        expect(gateway.byTitle("Welcome to the team").metadata.extra?.flagged).toBe(true);
+      },
+    );
+  }
 
   test("a Maildir copied without its new directory keeps the flags in its file names", async () => {
     const copy = join(root, "Backup");
@@ -745,14 +801,14 @@ describe("the gateway's cursor is the commit point", () => {
       const lost = await source.sync(committed);
       expect(lost.documents).toHaveLength(1);
       // Before the retry the file stops opening, so it cannot be re-emitted.
-      chmodSync(starred, 0o000);
+      setFixtureMode(starred, 0o000);
       try {
         const retried = await source.sync(committed);
         expect(retried.documents).toEqual([]);
         // Still on disk, so still named, from what the gateway did commit.
         expect(retried.presentExternalIds).toEqual([...gateway.docs.keys()]);
       } finally {
-        chmodSync(starred, 0o644);
+        setFixtureMode(starred, 0o644);
       }
     },
   );
@@ -979,7 +1035,7 @@ describe("gaps withhold the snapshot", () => {
       await gateway.cycle(source);
       expect(gateway.docs.size).toBe(2);
 
-      chmodSync(join(archive, "cur"), 0o000);
+      setFixtureMode(join(archive, "cur"), 0o000);
       try {
         rmSync(join(inbox, "cur", maildirFileName("1.a.host", "cur", "S")));
         const impaired = await gateway.cycle(source);
@@ -987,7 +1043,7 @@ describe("gaps withhold the snapshot", () => {
         expect(impaired.issues).toHaveLength(1);
         expect(gateway.docs.size).toBe(2);
       } finally {
-        chmodSync(join(archive, "cur"), 0o755);
+        setFixtureMode(join(archive, "cur"), 0o755);
       }
       const healed = await gateway.cycle(source);
       expect(healed.emitted).toEqual([]);
@@ -1013,7 +1069,7 @@ describe("gaps withhold the snapshot", () => {
         "3.c.host",
         message({ messageId: "c@example.org", subject: "Archived" }),
       );
-      chmodSync(locked, 0o000);
+      setFixtureMode(locked, 0o000);
       const gateway = new FakeGateway();
       const source = makeSource();
       try {
@@ -1025,7 +1081,7 @@ describe("gaps withhold the snapshot", () => {
         expect(first.present).toHaveLength(2);
         expect(first.issues).toEqual([]);
       } finally {
-        chmodSync(locked, 0o644);
+        setFixtureMode(locked, 0o644);
       }
       const healed = await gateway.cycle(source);
       expect(healed.emitted.map((d) => d.title)).toEqual(["Locked"]);
@@ -1050,7 +1106,7 @@ describe("gaps withhold the snapshot", () => {
       const gateway = new FakeGateway();
       const source = makeSource();
       await gateway.cycle(source);
-      chmodSync(join(archive, "cur"), 0o000);
+      setFixtureMode(join(archive, "cur"), 0o000);
       try {
         for (let cycle = 0; cycle < 3; cycle++) {
           const impaired = await gateway.cycle(source);
@@ -1059,7 +1115,7 @@ describe("gaps withhold the snapshot", () => {
           expect(gateway.docs.size).toBe(2);
         }
       } finally {
-        chmodSync(join(archive, "cur"), 0o755);
+        setFixtureMode(join(archive, "cur"), 0o755);
       }
       const healed = await gateway.cycle(source);
       expect(healed.emitted).toEqual([]);
@@ -1080,13 +1136,13 @@ describe("gaps withhold the snapshot", () => {
       // and that file will not open this cycle.
       rmSync(join(inbox, "cur", maildirFileName("1.a.host", "cur", "S")));
       const moved = deliverMessage(archive, "2.b.host", message(), { flags: "S" });
-      chmodSync(moved, 0o000);
+      setFixtureMode(moved, 0o000);
       try {
         const impaired = await gateway.cycle(source);
         expect(impaired.present).toBeUndefined();
         expect(gateway.docs.size).toBe(1);
       } finally {
-        chmodSync(moved, 0o644);
+        setFixtureMode(moved, 0o644);
       }
       const healed = await gateway.cycle(source);
       expect(healed.present).toHaveLength(1);
@@ -1111,7 +1167,7 @@ describe("gaps withhold the snapshot", () => {
       const gateway = new FakeGateway();
       const source = makeSource();
       await gateway.cycle(source);
-      chmodSync(join(root, "cur"), 0o000);
+      setFixtureMode(join(root, "cur"), 0o000);
       try {
         rmSync(join(archive, "cur", maildirFileName("2.b.host", "cur", "S")));
         deliverMessage(
@@ -1125,7 +1181,7 @@ describe("gaps withhold the snapshot", () => {
         expect(impaired.present).toBeUndefined();
         expect(gateway.docs.size).toBe(3);
       } finally {
-        chmodSync(join(root, "cur"), 0o755);
+        setFixtureMode(join(root, "cur"), 0o755);
       }
       await gateway.cycle(source);
       expect([...gateway.docs.values()].map((d) => d.title).sort()).toEqual([
@@ -1168,7 +1224,7 @@ test("two sources over two trees share nothing", async () => {
   const two = new FakeGateway();
   await one.cycle(makeSource({ indexPath: join(scratch, "one.sqlite") }));
   await two.cycle(
-    new MaildirSource({
+    ownSource({
       sourceId: "maildir:other",
       providerId: "maildir:other",
       root: otherRoot,

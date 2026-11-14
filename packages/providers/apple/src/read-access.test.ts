@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { chmodSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { setFixtureMode } from "@omnesis/source-sdk/testing";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { appleFileReadAccess, probeAppleStoresReadAccess } from "./read-access.js";
 import { contactsDbFile } from "./paths.js";
@@ -36,7 +37,7 @@ describe("Apple fresh read-access probes", () => {
         { provider: fixture.provider } as never,
       );
       expect(await source.probeReadAccess!({ signal: signal() })).toEqual({ status: "readable" });
-      chmodSync(fixture.notesPath, 0o000);
+      setFixtureMode(fixture.notesPath, 0o000);
       const denied = await source.probeReadAccess!({ signal: signal() });
       expect(denied).toMatchObject({
         status: "denied",
@@ -45,7 +46,7 @@ describe("Apple fresh read-access probes", () => {
       expect(JSON.stringify(denied)).not.toContain(fixture.dir);
       expect(fixture.provider.getNotesDb()).toBe(cached);
       expect(fixture.provider.getNotesOpenFailure()).toBeNull();
-      chmodSync(fixture.notesPath, 0o600);
+      setFixtureMode(fixture.notesPath, 0o600);
       expect(await source.probeReadAccess!({ signal: signal() })).toEqual({ status: "readable" });
     },
   );
@@ -142,11 +143,11 @@ describe("Apple fresh read-access probes", () => {
         mkdirSync(join(root, "Sources", name), { recursive: true });
         writeFileSync(contactsDbFile(join(root, "Sources", name)), "");
       }
-      chmodSync(contactsDbFile(join(root, "Sources", "second")), 0o000);
+      setFixtureMode(contactsDbFile(join(root, "Sources", "second")), 0o000);
       expect(await probeAppleStoresReadAccess(root, "contacts", signal())).toMatchObject({
         status: "denied",
       });
-      chmodSync(fixture.notesPath, 0o000);
+      setFixtureMode(fixture.notesPath, 0o000);
       expect(await appleFileReadAccess(fixture.notesPath, false)({ signal: signal() })).toEqual({
         status: "denied",
       });

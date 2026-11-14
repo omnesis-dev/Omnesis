@@ -22,6 +22,8 @@
  * `OMNESIS_NEAR_DUP_BACKLOG_DOCS` sizes the corpus for a bench run.
  */
 
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
 import { existsSync, unlinkSync } from "node:fs";
 import Database from "better-sqlite3";
@@ -196,7 +198,7 @@ describe("nearDup.applyBatch on the writer against a drive-sized signed corpus",
   let nextBatch = 0;
 
   beforeAll(async () => {
-    dbPath = `/tmp/omnesis-test-${randomUUID()}.db`;
+    dbPath = join(tmpdir(), `omnesis-test-${randomUUID()}.db`);
     seedCorpus(dbPath);
     scheduler = new Scheduler({ enablePreemption: true });
     scheduler.registerRunner(

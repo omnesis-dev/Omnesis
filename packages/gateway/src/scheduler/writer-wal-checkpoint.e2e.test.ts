@@ -41,6 +41,8 @@
  * `OMNESIS_WAL_BENCH_BACKLOG_KIB` and `OMNESIS_WAL_BENCH_DF_ROWS` size it for a bench.
  */
 
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { randomBytes, randomUUID } from "node:crypto";
 import { existsSync, statSync, unlinkSync } from "node:fs";
 import { Worker } from "node:worker_threads";
@@ -217,7 +219,7 @@ interface Bench {
 
 async function startBench(seedExtra?: (db: Database.Database) => void): Promise<Bench> {
   const key = randomBytes(32);
-  const dbPath = `/tmp/omnesis-test-${randomUUID()}.db`;
+  const dbPath = join(tmpdir(), `omnesis-test-${randomUUID()}.db`);
   const seed = createDatabase(dbPath, { encryptionKey: key }) as unknown as Database.Database;
   try {
     seedPilotCorpus(seed, { docs: DOCS });

@@ -3,7 +3,7 @@
 
 import { writeFileSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve, sep } from "node:path";
 import { describe, it, expect } from "vitest";
 import { loadSuite, resolveSuitePath, collectAllUrls } from "./suite.js";
 
@@ -16,13 +16,28 @@ function writeSuite(yaml: string): string {
 
 describe("resolveSuitePath", () => {
   it("maps bare names under configDir/evals/suites/<name>.yaml", () => {
-    expect(resolveSuitePath("my-eval", "/tmp/cfg")).toBe("/tmp/cfg/evals/suites/my-eval.yaml");
+    const configDir = join(tmpdir(), "eval-config-fixture");
+    expect(resolveSuitePath("my-eval", configDir)).toBe(
+      join(configDir, "evals", "suites", "my-eval.yaml"),
+    );
   });
   it("treats *.yaml as an explicit path", () => {
-    expect(resolveSuitePath("/abs/path.yaml")).toBe("/abs/path.yaml");
+    const explicit = join(tmpdir(), "eval-suite-fixture", "path.yaml");
+    expect(resolveSuitePath(explicit)).toBe(explicit);
+  });
+  it("treats the host path separator as an explicit path without a YAML extension", () => {
+    const path = join("local-suites", "daily");
+    expect(resolveSuitePath(path, join(tmpdir(), "eval-config-fixture"))).toBe(resolve(path));
+  });
+  it("treats backslashes as Windows separators and preserves them in POSIX suite names", () => {
+    const path = String.raw`local-suites\daily`;
+    const configDir = join(tmpdir(), "eval-config-fixture");
+    const expected =
+      sep === "\\" ? resolve(path) : join(configDir, "evals", "suites", `${path}.yaml`);
+    expect(resolveSuitePath(path, configDir)).toBe(expected);
   });
   it("treats './' prefix as a relative path", () => {
-    expect(resolveSuitePath("./local.yaml").endsWith("/local.yaml")).toBe(true);
+    expect(resolveSuitePath("./local.yaml")).toBe(resolve("local.yaml"));
   });
 });
 

@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import { createHostMinter } from "./minters.js";
 
 const signal = () => new AbortController().signal;
@@ -150,18 +150,28 @@ describe("createHostMinter", () => {
   test("a real CLI process that hangs is killed at the bound and said so", async () => {
     const dir = mkdtempSync(join(tmpdir(), "omnesis-minter-hung-"));
     try {
-      const cli = join(dir, "tailscale");
-      writeFileSync(cli, "#!/bin/sh\nexec sleep 30\n", { mode: 0o755 });
+      const preload = join(dir, "block.cjs");
+      const ready = join(dir, "ready");
+      // Block before Node interprets the issuer's argv, so the real executable
+      // exercises runBinary's cancellation on every supported platform.
+      writeFileSync(
+        preload,
+        `require("node:fs").writeFileSync(${JSON.stringify(ready)}, "ready");Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0);\n`,
+      );
+      vi.stubEnv("NODE_OPTIONS", `--require ${JSON.stringify(preload)}`);
+      const cli = process.execPath;
       const minter = createHostMinter({
         tailscaleStatusTimeoutMs: 200,
         tailscaleCandidates: [{ file: cli, bundledApp: false }],
       });
       const started = Date.now();
       await expect(minter.mint("tailscale", ["gw.tail.example"], signal())).rejects.toThrow(
-        /`.*tailscale status` did not answer in time/u,
+        `\`${process.execPath} status\` did not answer in time`,
       );
+      expect(readFileSync(ready, "utf8")).toBe("ready");
       expect(Date.now() - started).toBeLessThan(5_000);
     } finally {
+      vi.unstubAllEnvs();
       rmSync(dir, { recursive: true, force: true });
     }
   });

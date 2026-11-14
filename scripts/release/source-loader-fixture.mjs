@@ -39,6 +39,7 @@ cat > node_modules/@omnesis/core/package.json <<'OMNESIS_TEST_CORE'
 OMNESIS_TEST_CORE
 cat > node_modules/@omnesis/core/index.mjs <<'OMNESIS_TEST_CORE'
 export function atomicWriteFileSync() { throw new Error("pure renderer unexpectedly wrote a file"); }
+export function resolveNpmInvocation() { throw new Error("pure renderer unexpectedly invoked npm"); }
 export function distrustingNodeOptions(current = process.env.NODE_OPTIONS) { return current ?? ""; }
 export const PRELOAD_SOURCE = ${JSON.stringify(preloadSource)};
 OMNESIS_TEST_CORE

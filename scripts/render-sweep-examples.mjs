@@ -294,4 +294,4 @@ async function main() {
   console.log(`==> rendered ${SWEEPS.length} sweeps into ${TARGET}`);
 }
 
-if (process.argv[1] && import.meta.url === `file://${process.argv[1]}`) await main();
+if (import.meta.main) await main();

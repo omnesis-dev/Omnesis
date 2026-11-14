@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { readFileSync } from "node:fs";
-import { resolve as pathResolve, isAbsolute, join } from "node:path";
+import { resolve as pathResolve, isAbsolute, join, sep } from "node:path";
 import { homedir } from "node:os";
 import { createHash } from "node:crypto";
 import { parse as parseYaml } from "yaml";
@@ -22,7 +22,11 @@ import {
  */
 export function resolveSuitePath(arg: string, configDir?: string): string {
   const isExplicitPath =
-    arg.includes("/") || arg.startsWith(".") || arg.endsWith(".yaml") || arg.endsWith(".yml");
+    arg.includes("/") ||
+    arg.includes(sep) ||
+    arg.startsWith(".") ||
+    arg.endsWith(".yaml") ||
+    arg.endsWith(".yml");
   if (isExplicitPath) return isAbsolute(arg) ? arg : pathResolve(process.cwd(), arg);
   const dir = configDir ?? process.env["OMNESIS_CONFIG_DIR"] ?? join(homedir(), ".config/omnesis");
   return join(dir, "evals", "suites", `${arg}.yaml`);

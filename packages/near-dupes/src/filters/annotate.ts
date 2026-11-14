@@ -2,14 +2,16 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import { homedir } from "node:os";
+import { join } from "node:path";
 import Database from "better-sqlite3";
 import { defineCommand, runMain } from "citty";
 import { DupeStore, defaultDupeDbPath } from "../store/repository.js";
 import { isExactDupe, isSameThread, type FilterDocMeta } from "./edge-filters.js";
 import { gatePair, type PairScores, type GateDocMeta } from "./edge-gate.js";
 
-const HOME = process.env.HOME ?? "";
-const DEFAULT_OMNESIS_DB = `${HOME}/.config/omnesis/omnesis.db`;
+const HOME = process.env.HOME || homedir();
+const DEFAULT_OMNESIS_DB = join(HOME, ".config", "omnesis", "omnesis.db");
 
 interface OmnesisDocRow {
   id: string;

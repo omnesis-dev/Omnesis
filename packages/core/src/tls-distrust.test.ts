@@ -195,7 +195,7 @@ registerHooks({
         "--import",
         "tsx",
         "--import",
-        shim,
+        pathToFileURL(shim).href,
         "--input-type=module",
         "-e",
         `const m = await import(${JSON.stringify(moduleUrl)});

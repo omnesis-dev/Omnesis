@@ -37,6 +37,8 @@
  * that cannot itself be interrupted. It needs no scheduler and no worker.
  */
 
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
 import { existsSync, unlinkSync } from "node:fs";
 import Database from "better-sqlite3";
@@ -125,7 +127,7 @@ describe("A source wipe against a chunking page", () => {
   }
 
   beforeEach(async () => {
-    dbPath = `/tmp/omnesis-priority-limits-${randomUUID()}.db`;
+    dbPath = join(tmpdir(), `omnesis-priority-limits-${randomUUID()}.db`);
     const seed = createDatabase(dbPath);
     seed.close();
     scheduler = new Scheduler({ enablePreemption: true });

@@ -7,6 +7,7 @@
  * Omnesis checkout and shares no runtime code with the collector's.
  */
 
+import { delimiter, dirname } from "node:path";
 import { EventEmitter } from "node:events";
 import { afterEach, describe, expect, test, vi } from "vitest";
 
@@ -26,6 +27,15 @@ import {
 import { DEVICE_UPDATE_DETAIL_MAX_CHARS } from "./protocol.js";
 import type { RawData } from "ws";
 import type { HarnessRestart, HarnessSelfUpdater, HarnessUpdateAttempt } from "./self-update.js";
+
+const HARNESS_BINARY =
+  process.platform === "win32"
+    ? String.raw`C:\Example\bin\openclaw.exe`
+    : "/opt/example/bin/openclaw";
+const NODE_BINARY =
+  process.platform === "win32"
+    ? String.raw`C:\Example\node\node.exe`
+    : "/opt/example/node/bin/node";
 
 class FakeSocket extends EventEmitter {
   readyState = 1;
@@ -140,7 +150,7 @@ describe("the harness plugin's device.update handler", () => {
     let release: (attempt: HarnessUpdateAttempt) => void = () => {};
     const order: string[] = [];
     const restart: HarnessRestart = {
-      command: "/opt/example/bin/openclaw gateway restart",
+      command: `${HARNESS_BINARY} gateway restart`,
       start: vi.fn(() => {
         order.push("restart");
       }),
@@ -375,7 +385,7 @@ describe("createHarnessCliUpdater", () => {
       harness: "openclaw",
       cliPath: "/usr/local/bin/omnesis",
       spawnFn: spawnFn as never,
-      resolveHarness: () => "/opt/example/bin/openclaw",
+      resolveHarness: () => HARNESS_BINARY,
     });
     const attempt = await updater.run({ version: "0.5.0" });
     expect(spawnFn).toHaveBeenCalledTimes(1);
@@ -385,7 +395,7 @@ describe("createHarnessCliUpdater", () => {
       expect.anything(),
     );
     expect(attempt.state).toBe("installed");
-    expect(attempt.restart?.command).toBe("/opt/example/bin/openclaw gateway restart");
+    expect(attempt.restart?.command).toBe(`${HARNESS_BINARY} gateway restart`);
     expect(attempt.detail).toContain("restarting openclaw now");
 
     attempt.restart?.start(() => {});
@@ -395,11 +405,11 @@ describe("createHarnessCliUpdater", () => {
       string[],
       { detached: boolean; stdio: string; env: NodeJS.ProcessEnv },
     ];
-    expect(command).toBe("/opt/example/bin/openclaw");
+    expect(command).toBe(HARNESS_BINARY);
     expect(args).toEqual(["gateway", "restart"]);
     expect(options.detached).toBe(true);
     expect(options.stdio).toBe("ignore");
-    expect(options.env.PATH?.startsWith("/opt/example/bin")).toBe(true);
+    expect(options.env.PATH?.startsWith(dirname(HARNESS_BINARY))).toBe(true);
     expect(child.unref).toHaveBeenCalled();
   });
 
@@ -526,10 +536,10 @@ describe("detachedHarnessRestart", () => {
     detachedHarnessRestart({
       harness: "openclaw",
       version: "0.5.0",
-      binary: "/opt/example/bin/openclaw",
+      binary: HARNESS_BINARY,
       spawnFn: spawnFn as never,
       env: { PATH: "/usr/bin" },
-      execPath: "/opt/example/node/bin/node",
+      execPath: NODE_BINARY,
     });
 
   test("a spawn that throws reports the restart owed with the manual command", () => {
@@ -538,7 +548,7 @@ describe("detachedHarnessRestart", () => {
       throw new Error("EINVAL");
     }).start((detail) => failures.push(detail));
     expect(failures).toEqual([
-      "Installed 0.5.0. Restarting openclaw failed: `/opt/example/bin/openclaw gateway restart` " +
+      `Installed 0.5.0. Restarting openclaw failed: \`${HARNESS_BINARY} gateway restart\` ` +
         "could not be started (EINVAL). Restart openclaw to load it: openclaw gateway restart",
     ]);
   });
@@ -573,7 +583,9 @@ describe("detachedHarnessRestart", () => {
     const options = (
       spawnFn.mock.calls[0] as unknown as [string, string[], { env: { PATH: string } }]
     )[2];
-    expect(options.env.PATH).toBe("/opt/example/bin:/opt/example/node/bin:/usr/bin");
+    expect(options.env.PATH).toBe(
+      [dirname(HARNESS_BINARY), dirname(NODE_BINARY), "/usr/bin"].join(delimiter),
+    );
   });
 });
 
@@ -583,6 +595,7 @@ describe("resolveHarnessBinary", () => {
     const isExecutable = (path: string) => present.has(path);
     expect(
       resolveHarnessBinary("openclaw", {
+        platform: "linux",
         env: { PATH: "/usr/bin:/srv/tools", HOME: "/home/example" },
         execPath: "/opt/example/node/bin/node",
         isExecutable,
@@ -590,6 +603,7 @@ describe("resolveHarnessBinary", () => {
     ).toBe("/srv/tools/openclaw");
     expect(
       resolveHarnessBinary("openclaw", {
+        platform: "linux",
         env: { PATH: "/usr/bin:/bin", HOME: "/home/example" },
         execPath: "/opt/example/node/bin/node",
         isExecutable,
@@ -603,6 +617,7 @@ describe("resolveHarnessBinary", () => {
     expect(
       resolveHarnessBinary("hermes", {
         env,
+        platform: "linux",
         execPath,
         isExecutable: (path) => path === "/home/example/.local/bin/hermes",
       }),
@@ -610,13 +625,19 @@ describe("resolveHarnessBinary", () => {
     expect(
       resolveHarnessBinary("openclaw", {
         env,
+        platform: "linux",
         execPath,
         isExecutable: (path) => path === "/opt/homebrew/bin/openclaw",
       }),
     ).toBe("/opt/homebrew/bin/openclaw");
-    expect(resolveHarnessBinary("openclaw", { env, execPath, isExecutable: () => false })).toBe(
-      null,
-    );
+    expect(
+      resolveHarnessBinary("openclaw", {
+        env,
+        execPath,
+        platform: "linux",
+        isExecutable: () => false,
+      }),
+    ).toBe(null);
   });
 });
 

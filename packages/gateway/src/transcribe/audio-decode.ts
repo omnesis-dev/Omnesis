@@ -26,7 +26,7 @@
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createLogger } from "@omnesis/core";
+import { createLogger, ensurePrivateDirs } from "@omnesis/core";
 import { processLauncher } from "../process-launcher/index.js";
 import { streamableCaf } from "./caf-stream.js";
 
@@ -124,7 +124,7 @@ export async function decodeToPcm16kMono(
 
   let dir: string;
   try {
-    // mkdtemp makes the folder owner-only (0700); the copy is 0600 within it.
+    // POSIX mkdtemp is 0700; Windows ACL preparation below precedes any bytes.
     dir = await mkdtemp(join(opts.tempDir ?? tmpdir(), "omnesis-audio-"));
   } catch (err) {
     throw new AudioDecodeError(
@@ -132,6 +132,15 @@ export async function decodeToPcm16kMono(
     );
   }
   try {
+    if (process.platform === "win32") {
+      try {
+        await ensurePrivateDirs([dir]);
+      } catch (err) {
+        throw new AudioDecodeError(
+          `could not protect the temporary audio folder: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    }
     const path = join(dir, "input");
     try {
       await writeFile(path, bytes, { mode: 0o600, flag: "wx" });

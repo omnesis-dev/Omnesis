@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { chmodSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { summarizeCommandFailure } from "@omnesis/core";
+import { resolveNpmInvocation, summarizeCommandFailure } from "@omnesis/core";
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
@@ -12,6 +12,7 @@ import {
   buildToolsRefusal,
   missingBuildTools,
   nodeBuildToolProbe,
+  nodeNpmRefusal,
   npmRefusal,
   REQUIRED_BUILD_TOOLS,
   type BuildToolProbe,
@@ -145,22 +146,30 @@ describe("npmRefusal on a named host", () => {
 
 // The probe itself, against real processes: the fakes above cannot show that
 // "npm is not on this PATH" is something the real question detects.
-describe.skipIf(process.platform === "win32")("nodeBuildToolProbe on a real PATH", () => {
+describe("npm availability on a real PATH", () => {
   const originalPath = process.env.PATH;
   let dir: string | undefined;
 
   /** A PATH holding this Node and whatever else the test puts beside it. */
   function isolatedPath(): string {
     dir = mkdtempSync(join(tmpdir(), "omnesis-npm-probe-"));
-    symlinkSync(process.execPath, join(dir, "node"));
+    copyFileSync(process.execPath, join(dir, process.platform === "win32" ? "node.exe" : "node"));
     process.env.PATH = dir;
     return dir;
   }
 
-  function script(path: string, body: string): void {
-    writeFileSync(path, `#!/bin/sh\n${body}\n`);
-    chmodSync(path, 0o755);
+  function script(directory: string, body: string): void {
+    writeFileSync(join(directory, "npm"), `#!/usr/bin/env node\n${body}\n`, { mode: 0o755 });
+    const bin = join(directory, "node_modules", "npm", "bin");
+    mkdirSync(bin, { recursive: true });
+    writeFileSync(join(bin, "npm-cli.js"), body);
   }
+
+  const resolveIsolatedNpm: typeof resolveNpmInvocation = (args) =>
+    resolveNpmInvocation(args, {
+      env: process.env,
+      nodePath: join(dir!, process.platform === "win32" ? "node.exe" : "node"),
+    });
 
   afterEach(() => {
     process.env.PATH = originalPath;
@@ -168,28 +177,59 @@ describe.skipIf(process.platform === "win32")("nodeBuildToolProbe on a real PATH
     dir = undefined;
   });
 
-  it("finds no npm on a service PATH whose Node stands alone", () => {
+  it("finds no npm on a service PATH whose Node stands alone", async () => {
     const nodeDir = isolatedPath();
     expect(nodeBuildToolProbe.runs("node")).toBe(true);
-    expect(nodeBuildToolProbe.runs("npm")).toBe(false);
-    expect(npmRefusal(nodeBuildToolProbe, { nodeDir, path: process.env.PATH })).toContain(
+    expect(await nodeNpmRefusal({ nodeDir, path: process.env.PATH }, resolveIsolatedNpm)).toContain(
       `That node is in ${nodeDir}, and the PATH is ${nodeDir}.`,
     );
   });
 
-  it("finds the npm placed beside that Node, which is the fix the refusal names", () => {
-    script(join(isolatedPath(), "npm"), "echo 11.0.0");
-    expect(nodeBuildToolProbe.runs("npm")).toBe(true);
-    expect(npmRefusal(nodeBuildToolProbe)).toBeNull();
+  it("finds the npm placed beside that Node, which is the fix the refusal names", async () => {
+    script(isolatedPath(), "process.stdout.write('11.0.0');");
+    expect(await nodeNpmRefusal(undefined, resolveIsolatedNpm)).toBeNull();
   });
 
-  it("does not take an npm that exits the way a missing command does for one that runs", () => {
-    script(join(isolatedPath(), "npm"), "exit 127");
-    expect(nodeBuildToolProbe.runs("npm")).toBe(false);
+  it("does not take an npm that exits the way a missing command does for one that runs", async () => {
+    script(isolatedPath(), "process.exit(127);");
+    expect(await nodeNpmRefusal(undefined, resolveIsolatedNpm)).toContain("npm` does not run");
   });
 
-  it("does not take a dangling npm symlink for one that runs", () => {
-    symlinkSync("/nonexistent/npm", join(isolatedPath(), "npm"));
-    expect(nodeBuildToolProbe.runs("npm")).toBe(false);
+  it("does not take a launcher with no npm installation for one that runs", async () => {
+    const directory = isolatedPath();
+    if (process.platform === "win32") {
+      writeFileSync(join(directory, "npm.cmd"), "@echo off\r\nnode missing-npm-cli.js\r\n");
+    } else {
+      symlinkSync("/nonexistent/npm", join(directory, "npm"));
+    }
+    expect(await nodeNpmRefusal(undefined, resolveIsolatedNpm)).toContain("npm` does not run");
+  });
+});
+
+describe("npm executable probe", () => {
+  it("accepts a resolved executable that runs successfully", async () => {
+    expect(
+      await nodeNpmRefusal(undefined, async () => ({
+        command: process.execPath,
+        args: ["-e", "process.exit(0)"],
+      })),
+    ).toBeNull();
+  });
+
+  it("refuses an npm executable that fails", async () => {
+    expect(
+      await nodeNpmRefusal(undefined, async () => ({
+        command: process.execPath,
+        args: ["-e", "process.exit(1)"],
+      })),
+    ).toContain("npm` does not run");
+  });
+
+  it("reports an unresolved npm installation without mutating it", async () => {
+    expect(
+      await nodeNpmRefusal(undefined, async () => {
+        throw new Error("npm not installed");
+      }),
+    ).toContain("Nothing has been changed");
   });
 });

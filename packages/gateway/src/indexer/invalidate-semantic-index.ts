@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { closeSync, fsyncSync, openSync, unlinkSync } from "node:fs";
+import { unlinkSync } from "node:fs";
 import { dirname } from "node:path";
+import { fsyncDirSync } from "@omnesis/core";
 import {
   setLexicalWrites,
   setUsearchBackfillCursor,
@@ -34,12 +35,7 @@ function unlinkGraphFiles(graphPath: string): void {
     }
   }
   // Make unlink durable before clearing the SQLite recovery marker.
-  const directory = openSync(dirname(graphPath), "r");
-  try {
-    fsyncSync(directory);
-  } finally {
-    closeSync(directory);
-  }
+  fsyncDirSync(dirname(graphPath), { strict: true });
 }
 
 /** Call only after replacement-model warmup, before opening any graph handle. */

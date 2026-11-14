@@ -16,6 +16,25 @@ import {
   type DeviceId,
   type TokenId,
 } from "@omnesis/types";
+const bootstrapFiles = vi.hoisted(() => ({
+  ensureFailure: undefined as Error | undefined,
+  writeFailure: undefined as Error | undefined,
+}));
+vi.mock("@omnesis/core", async (original) => {
+  const core = await original<typeof import("@omnesis/core")>();
+  return {
+    ...core,
+    ensurePrivateDirSync: (...args: Parameters<typeof core.ensurePrivateDirSync>) => {
+      if (bootstrapFiles.ensureFailure) throw bootstrapFiles.ensureFailure;
+      return core.ensurePrivateDirSync(...args);
+    },
+    writeSecretTextFileSync: (...args: Parameters<typeof core.writeSecretTextFileSync>) => {
+      if (bootstrapFiles.writeFailure) throw bootstrapFiles.writeFailure;
+      return core.writeSecretTextFileSync(...args);
+    },
+  };
+});
+import { writeSecretTextFileSync } from "@omnesis/core";
 import { createDatabase } from "../../db.js";
 import { createDevice } from "./DeviceRepository.js";
 import {
@@ -43,13 +62,17 @@ let db: ReturnType<typeof createDatabase>;
 let configDir: string;
 
 beforeEach(() => {
-  dbPath = `/tmp/omnesis-tokens-test-${randomUUID()}.db`;
-  db = createDatabase(dbPath);
+  bootstrapFiles.ensureFailure = undefined;
+  bootstrapFiles.writeFailure = undefined;
   configDir = mkdtempSync(join(tmpdir(), "omnesis-tokens-"));
+  dbPath = join(configDir, "gateway.db");
+  db = createDatabase(dbPath);
 });
 
 afterEach(() => {
   vi.useRealTimers();
+  bootstrapFiles.ensureFailure = undefined;
+  bootstrapFiles.writeFailure = undefined;
   db.close();
   for (const suffix of ["", "-wal", "-shm", "-journal"]) {
     if (existsSync(dbPath + suffix)) unlinkSync(dbPath + suffix);
@@ -311,6 +334,57 @@ describe("deleting device cascades to tokens", () => {
 });
 
 describe("ensureBootstrapToken", () => {
+  test.each(["ensureFailure", "writeFailure"] as const)(
+    "rolls back all bootstrap rows on %s, preserves prior bytes, and can retry",
+    (stage) => {
+      const tokenPath = join(configDir, "token");
+      const prior = "invented retained credential\n";
+      writeSecretTextFileSync(tokenPath, prior, { configDir });
+      const failure = new Error("Invented private bootstrap file failure");
+      bootstrapFiles[stage] = failure;
+      expect(() => ensureBootstrapToken(db, configDir)).toThrow(failure);
+      expect(hasTokens(db)).toBe(false);
+      expect(db.prepare("SELECT id FROM devices WHERE name = 'bootstrap'").all()).toEqual([]);
+      expect(readFileSync(tokenPath, "utf8")).toBe(prior);
+      bootstrapFiles[stage] = undefined;
+      const token = ensureBootstrapToken(db, configDir)!;
+      expect(validateToken(db, token)?.scopes).toEqual([SCOPE_ADMIN, SCOPE_READ, SCOPE_WRITE_ALL]);
+      expect(readFileSync(tokenPath, "utf8").trim()).toBe(token);
+      expect(db.prepare("SELECT id FROM devices WHERE name = 'bootstrap'").all()).toHaveLength(1);
+      expect(listTokens(db)).toHaveLength(1);
+    },
+  );
+
+  test("a failed nested bootstrap rolls back its savepoint and leaves the caller's transaction usable", () => {
+    const failure = new Error("Invented nested bootstrap publication failure");
+    bootstrapFiles.writeFailure = failure;
+    db.transaction(() => {
+      const unrelated = newDevice("invented retained device");
+      expect(() => ensureBootstrapToken(db, configDir)).toThrow(failure);
+      expect(hasTokens(db)).toBe(false);
+      expect(db.prepare("SELECT id FROM devices WHERE name = 'bootstrap'").all()).toEqual([]);
+      expect(db.prepare("SELECT id FROM devices WHERE id = ?").get(unrelated)).toEqual({
+        id: unrelated,
+      });
+      bootstrapFiles.writeFailure = undefined;
+      const token = ensureBootstrapToken(db, configDir)!;
+      expect(validateToken(db, token)?.scopes).toContain(SCOPE_ADMIN);
+    })();
+    expect(listTokens(db)).toHaveLength(1);
+    expect(db.prepare("SELECT id FROM devices").all()).toHaveLength(2);
+  });
+
+  test("existing bootstrap credentials remain valid without touching file publication", () => {
+    const token = ensureBootstrapToken(db, configDir)!;
+    const prior = readFileSync(join(configDir, "token"));
+    bootstrapFiles.ensureFailure = new Error("Unexpected directory mutation");
+    bootstrapFiles.writeFailure = new Error("Unexpected credential replacement");
+    expect(ensureBootstrapToken(db, configDir)).toBeNull();
+    expect(readFileSync(join(configDir, "token"))).toEqual(prior);
+    expect(validateToken(db, token)?.scopes).toContain(SCOPE_ADMIN);
+    expect(listTokens(db)).toHaveLength(1);
+  });
+
   test("creates bootstrap device + token + writes token file on first call", () => {
     mkdirSync(configDir, { recursive: true });
     const token = ensureBootstrapToken(db, configDir);

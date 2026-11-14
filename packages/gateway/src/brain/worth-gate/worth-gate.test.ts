@@ -78,6 +78,7 @@ describe("worth gate", () => {
   let dbPath: string;
   let db: Db;
   let dir: string;
+  const transcriptStores: FsCognitionTranscriptStore[] = [];
   let now: number;
   let seq = 0;
 
@@ -87,7 +88,8 @@ describe("worth gate", () => {
     dir = mkdtempSync(join(tmpdir(), "omnesis-worth-gate-"));
     now = Date.parse("2026-09-01T09:00:00.000Z");
   });
-  afterEach(() => {
+  afterEach(async () => {
+    await Promise.all(transcriptStores.splice(0).map((store) => store.close()));
     db.close();
     for (const suffix of ["", "-wal", "-shm", "-journal"]) {
       if (existsSync(dbPath + suffix)) unlinkSync(dbPath + suffix);
@@ -534,6 +536,7 @@ describe("worth gate", () => {
         },
       };
       const transcripts = new FsCognitionTranscriptStore(join(dir, "t"));
+      transcriptStores.push(transcripts);
       const driver = new CognitionRunDriver({
         resolveBackend: () => backend,
         transcripts,

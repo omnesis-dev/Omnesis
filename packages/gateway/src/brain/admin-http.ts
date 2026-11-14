@@ -105,7 +105,10 @@ export interface MountBrainAdminRoutesOpts {
   io?: (BootstrapBacklogReader & BootstrapTimelineReader) | undefined;
 }
 
-export function mountBrainAdminRoutes(app: RouteApp, opts: MountBrainAdminRoutesOpts): void {
+export function mountBrainAdminRoutes(
+  app: RouteApp,
+  opts: MountBrainAdminRoutesOpts,
+): { close(): Promise<void> } {
   const requireActive = (): void => {
     if (!opts.getStatus?.().active) throw new NotFoundError("Not found");
   };
@@ -193,4 +196,5 @@ export function mountBrainAdminRoutes(app: RouteApp, opts: MountBrainAdminRoutes
       isLaneEnabled: opts.getSweepsEnabled ?? (() => false),
     });
   }
+  return { close: () => query.close() };
 }

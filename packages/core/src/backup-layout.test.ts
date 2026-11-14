@@ -12,9 +12,11 @@ import {
   statSync,
   writeFileSync,
 } from "node:fs";
+import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
+import { inspectWindowsPrivatePathSync } from "./windows-private-file.js";
 import {
   backupConfigCopyNames,
   backupManifestSchema,
@@ -101,7 +103,9 @@ describe("writeOfflineBackup", () => {
     expect(readFileSync(join(path, "keyring", "storage-keys", "main-db.json"), "utf8")).toBe(
       "wrapped-key",
     );
-    expect(statSync(join(path, "token")).mode & 0o777).toBe(0o600);
+    if (process.platform === "win32")
+      expect(inspectWindowsPrivatePathSync(join(path, "token"), "file").private).toBe(true);
+    else expect(statSync(join(path, "token")).mode & 0o777).toBe(0o600);
 
     const manifest = backupManifestSchema.parse(
       JSON.parse(readFileSync(join(path, "backup-manifest.json"), "utf8")),
@@ -158,15 +162,41 @@ describe("writeOfflineBackup", () => {
     expect(readdirSync(join(configDir, "backups"))).toEqual([]);
   });
 
-  test.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
+  test.skipIf(process.platform !== "win32" && process.getuid?.() === 0)(
     "a copy that fails part-way leaves no backup behind",
     () => {
       const configDir = stoppedGateway();
       // Readable to stat and size, unreadable to copy: the store copies land,
       // then the config material fails.
-      chmodSync(join(configDir, "token"), 0o000);
+      const token = join(configDir, "token");
+      let restoreRead: () => void;
+      if (process.platform === "win32") {
+        const system32 = join(process.env.SystemRoot!, "System32");
+        const identity = execFileSync(
+          join(system32, "whoami.exe"),
+          ["/user", "/fo", "csv", "/nh"],
+          { encoding: "utf8", timeout: 10_000 },
+        );
+        const sids = identity.match(/\bS-1-\d+(?:-\d+)+\b/gu);
+        if (sids?.length !== 1) throw new Error("Fixture owner SID unavailable");
+        const sid = `*${sids[0]}`;
+        const acl = (args: string[]): void => {
+          execFileSync(join(system32, "icacls.exe"), [token, ...args, "/Q"], {
+            encoding: "utf8",
+            timeout: 10_000,
+          });
+        };
+        acl(["/deny", `${sid}:(RD)`]);
+        restoreRead = () => acl(["/remove:d", sid]);
+      } else {
+        chmodSync(token, 0o000);
+        restoreRead = () => chmodSync(token, 0o600);
+      }
       try {
-        expect(() =>
+        // Windows backup privilege can let Node read through a deny DACL; the
+        // native copy must still refuse it without publishing a partial backup.
+        if (process.platform !== "win32") expect(() => readFileSync(token)).toThrow();
+        const backup = () =>
           writeOfflineBackup({
             configDir,
             stores: gatewayStoreFiles(configDir, { includeIndex: false, env: {} }),
@@ -174,11 +204,13 @@ describe("writeOfflineBackup", () => {
             version: "9.9.0",
             purpose: "pre-update",
             statfs: roomy,
-          }),
-        ).toThrow(/EACCES/);
+          });
+        if (process.platform === "win32")
+          expect(backup).toThrow(expect.objectContaining({ code: "EPRIVATE" }));
+        else expect(backup).toThrow(/EACCES/);
         expect(readdirSync(join(configDir, "backups"))).toEqual([]);
       } finally {
-        chmodSync(join(configDir, "token"), 0o600);
+        restoreRead();
       }
     },
   );

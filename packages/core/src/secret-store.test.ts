@@ -36,6 +36,10 @@ import {
   openRecoveryEnvelope,
 } from "./recovery-envelope.js";
 
+import { passphraseSecretEntryPaths } from "./secret-store-paths.js";
+
+import { inspectWindowsPrivatePaths } from "./windows-private-file.js";
+
 const dirs: string[] = [];
 
 function tmp(prefix: string): string {
@@ -119,10 +123,26 @@ describe("file secret store", () => {
     await store.write("demo", "secret-value");
     expect(await store.read("demo")).toBe("secret-value");
 
-    const secretPath = join(configDir, "keyring", "dev.omnesis", "ZGVtbw.secret");
-    expect(statSync(join(configDir, "keyring")).mode & 0o777).toBe(0o700);
-    expect(statSync(join(configDir, "keyring", "dev.omnesis")).mode & 0o777).toBe(0o700);
-    expect(statSync(secretPath).mode & 0o777).toBe(0o600);
+    const secretDirectory = join(configDir, "keyring", "dev.omnesis");
+    const secretPath =
+      process.platform === "win32"
+        ? join(
+            secretDirectory,
+            readdirSync(secretDirectory).find((name) => name.endsWith(".secret"))!,
+          )
+        : join(secretDirectory, "ZGVtbw.secret");
+    if (process.platform === "win32") {
+      const results = await inspectWindowsPrivatePaths([
+        { path: join(configDir, "keyring"), kind: "directory" },
+        { path: join(configDir, "keyring", "dev.omnesis"), kind: "directory" },
+        { path: secretPath, kind: "file" },
+      ]);
+      expect(results.every((entry) => entry.private)).toBe(true);
+    } else {
+      expect(statSync(join(configDir, "keyring")).mode & 0o777).toBe(0o700);
+      expect(statSync(join(configDir, "keyring", "dev.omnesis")).mode & 0o777).toBe(0o700);
+      expect(statSync(secretPath).mode & 0o777).toBe(0o600);
+    }
 
     await store.delete("demo");
     expect(await store.read("demo")).toBeNull();
@@ -438,9 +458,8 @@ describe("passphrase backend", () => {
     const store = createSecretStore({ backend: "passphrase", configDir });
     await store.write("first-name", "secret value");
 
-    const dir = join(configDir, "keyring", "passphrase");
-    const from = join(dir, `${Buffer.from("first-name", "utf8").toString("base64url")}.json`);
-    const to = join(dir, `${Buffer.from("second-name", "utf8").toString("base64url")}.json`);
+    const from = passphraseSecretEntryPaths(configDir, "first-name").path;
+    const to = passphraseSecretEntryPaths(configDir, "second-name").path;
     renameSync(from, to);
 
     await expect(store.read("second-name")).rejects.toThrow(PassphraseMismatchError);

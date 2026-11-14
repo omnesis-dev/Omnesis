@@ -24,8 +24,13 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, relative } from "node:path";
-import { acquireUpdateLock, type GatewayLockHolder } from "@omnesis/core";
+import { basename, dirname, join, relative } from "node:path";
+import {
+  acquireUpdateLock,
+  ensurePrivateFileSync,
+  inspectWindowsPrivatePaths,
+  type GatewayLockHolder,
+} from "@omnesis/core";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { CliError } from "@omnesis/cli-shared";
 import { LaunchdSupervisor, SystemdSupervisor, type ExecResult } from "../service/supervisor.js";
@@ -50,6 +55,11 @@ import {
 import type { UninstallComponent } from "../uninstall/types.js";
 
 // ── The machine ────────────────────────────────────────────────────────
+
+function commandName(path: string): string {
+  const name = basename(path);
+  return process.platform === "win32" ? name.replace(/\.exe$/iu, "") : name;
+}
 
 type Reply = Partial<ExecResult> | undefined;
 type Handler = (argv: string[], opts: RunOptions) => Reply;
@@ -80,10 +90,10 @@ beforeEach(() => {
 });
 
 class Machine {
-  readonly root = mkdtempSync(join(tmpdir(), "omnesis-uninstall-"));
-  readonly home = join(this.root, "home");
-  readonly system = join(this.root, "system");
-  readonly configDir = join(this.home, ".config", "omnesis");
+  readonly root: string;
+  readonly home: string;
+  readonly system: string;
+  readonly configDir: string;
   readonly calls: Call[] = [];
   readonly interactiveCalls: string[][] = [];
   readonly handlers: Handler[] = [];
@@ -94,7 +104,14 @@ class Machine {
   /** Whether each unit is running, as systemctl/launchctl would report it. */
   readonly running = new Set<string>();
 
-  constructor(readonly platform: "linux" | "darwin") {
+  constructor(
+    readonly platform: "linux" | "darwin",
+    rootPrefix = "omnesis-uninstall-",
+  ) {
+    this.root = mkdtempSync(join(tmpdir(), rootPrefix));
+    this.home = join(this.root, "home");
+    this.system = join(this.root, "system");
+    this.configDir = join(this.home, ".config", "omnesis");
     roots.push(this.root);
     mkdirSync(this.home, { recursive: true });
     vi.stubEnv("HOME", this.home);
@@ -107,7 +124,7 @@ class Machine {
       if (
         !prefix.every(
           (token, index) =>
-            argv[index] === token || (index === 0 && argv[0]!.endsWith(`/${token}`)),
+            argv[index] === token || (index === 0 && commandName(argv[0]!) === token),
         )
       ) {
         return undefined;
@@ -368,13 +385,20 @@ class Machine {
       0o600,
     );
     // An executable where resolveHarnessBinary looks.
-    this.write(this.path(".npm-global", "bin", "openclaw"), "#!/bin/sh\n", 0o755);
+    if (process.platform === "win32") {
+      const executable = this.path(".npm-global", "bin", "openclaw.exe");
+      mkdirSync(dirname(executable), { recursive: true });
+      symlinkSync(process.execPath, executable, "file");
+    } else {
+      this.write(this.path(".npm-global", "bin", "openclaw"), "#!/bin/sh\n", 0o755);
+    }
     vi.stubEnv("PATH", this.path(".npm-global", "bin"));
     return operator;
   }
 
   hermes(): string {
     const home = this.path(".hermes");
+    vi.stubEnv("HERMES_HOME", home);
     const config =
       "display:\n  background_process_notifications: all\nplugins:\n  enabled:\n    - omnesis-integration\n    - weather-tools\n";
     this.write(join(home, "config.yaml"), config);
@@ -450,9 +474,11 @@ describe("a full uninstall on Linux, source install", () => {
     const zshrcBefore = m.profile(".zshrc");
     const openclawConfig = m.openclaw();
 
+    const originalCwd = process.cwd();
     const { code, text } = await uninstall(m);
 
     expect(code).toBe(0);
+    expect(process.cwd()).toBe(originalCwd);
     // Services: stopped through systemd, collector before gateway, files gone.
     const disables = m.ran("systemctl", "--user", "disable").map((c) => c.argv[4]);
     expect(disables).toEqual(["omnesis-collector.service", "omnesis-gateway.service"]);
@@ -466,7 +492,7 @@ describe("a full uninstall on Linux, source install", () => {
     expect(existsSync(m.path(".local", "lib", "omnesis"))).toBe(false);
     expect(readFileSync(m.path(".zshrc"), "utf8")).toBe(zshrcBefore);
     // OpenClaw: unregistered through its own CLI, every Omnesis file gone, the rest kept.
-    const unregister = m.calls.filter((c) => c.argv[0]!.endsWith("/openclaw"));
+    const unregister = m.calls.filter((c) => commandName(c.argv[0]!) === "openclaw");
     expect(unregister.map((c) => c.argv.slice(1))).toEqual([
       ["plugins", "uninstall", "omnesis-integration", "--force"],
       ["plugins", "uninstall", "omnesis-bridge", "--force"],
@@ -1251,12 +1277,29 @@ describe("safety", () => {
     expect(existsSync(m.path(".env"))).toBe(true);
   });
 
-  test("file modes survive an edit", async () => {
+  test.each([0o600, 0o400])("file mode %i survives an edit", async (mode) => {
     const m = new Machine("linux");
     m.openclaw();
-    chmodSync(m.path(".openclaw", "openclaw.json"), 0o600);
-    await uninstall(m, { components: ["openclaw"] });
-    expect(statSync(m.path(".openclaw", "openclaw.json")).mode & 0o777).toBe(0o600);
+    const config = m.path(".openclaw", "openclaw.json");
+    ensurePrivateFileSync(config);
+    chmodSync(config, mode);
+    if (process.platform === "win32") {
+      const [before] = await inspectWindowsPrivatePaths([{ path: config, kind: "file" }], {
+        protect: true,
+      });
+      expect(before?.private).toBe(true);
+    }
+    const { code, text } = await uninstall(m, { components: ["openclaw"] });
+    expect(code, text()).toBe(0);
+    if (process.platform === "win32") {
+      const [status] = await inspectWindowsPrivatePaths([{ path: config, kind: "file" }], {
+        protect: true,
+      });
+      expect(status?.private).toBe(true);
+      expect(statSync(config).mode & 0o200).toBe(mode & 0o200);
+    } else {
+      expect(statSync(config).mode & 0o777).toBe(mode);
+    }
   });
 });
 
@@ -1337,18 +1380,25 @@ describe("what the review found", () => {
     expect(existsSync(compose)).toBe(false);
   });
 
-  test("the command stays while another instance's service runs it", async () => {
-    const m = new Machine("linux").config().services().packageInstall();
-    const staging = join(m.home, ".config", "omnesis-b");
-    m.write(join(staging, "omnesis.json"), "{}\n");
-    m.unit("gateway", "b", staging);
+  test.each([
+    ["linux", "omnesis-uninstall-", "omnesis-gateway-b.service"],
+    ["linux", "omnesis-uninstall-% space-", "omnesis-gateway-b.service"],
+    ["darwin", "omnesis-uninstall-& space-", "dev.omnesis.gateway.b"],
+  ] as const)(
+    "the command stays while another instance's %s service runs it (%s)",
+    async (platform, rootPrefix, unitName) => {
+      const m = new Machine(platform, rootPrefix).config().services().packageInstall();
+      const staging = join(m.home, ".config", "omnesis-b");
+      m.write(join(staging, "omnesis.json"), "{}\n");
+      m.unit("gateway", "b", staging);
 
-    const { code, text } = await uninstall(m);
-    expect(code).toBe(0);
-    expect(existsSync(m.path(".npm-global", "lib", "node_modules", "omnesis"))).toBe(true);
-    expect(text()).toContain("The omnesis command stays: omnesis-gateway-b.service still run it");
-    await expect(uninstall(m, { components: ["cli"] })).rejects.toThrow(/still run it/);
-  });
+      const { code, text } = await uninstall(m);
+      expect(code).toBe(0);
+      expect(existsSync(m.path(".npm-global", "lib", "node_modules", "omnesis"))).toBe(true);
+      expect(text()).toContain(`The omnesis command stays: ${unitName} still run it.`);
+      await expect(uninstall(m, { components: ["cli"] })).rejects.toThrow(/still run it/);
+    },
+  );
 
   test("a profile linked from a dotfiles repository is edited where it lives", async () => {
     const m = new Machine("linux").config().sourceInstall();

@@ -3,10 +3,10 @@
 
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
-import { randomUUID, X509Certificate } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { once } from "node:events";
 import { z } from "zod";
-import { DEFAULT_CONFIG_DIR, resolveTlsMaterial } from "@omnesis/core";
+import { DEFAULT_CONFIG_DIR, resolveTlsMaterial, readWindowsPrivateFile } from "@omnesis/core";
 import { accountRuntimeConfiguration } from "./account-runtime-configuration.js";
 import { RelayAccounts } from "./accounts.js";
 import { googleIdentityProvider, localIdentityProvider, RelaySessions } from "./identity.js";
@@ -29,7 +29,7 @@ import { AcmeDnsChallenges } from "./acme-dns.js";
 import { cloudflareDnsProvider, fixtureDnsApiUrl } from "./cloudflare-dns.js";
 import { DEFAULT_TUNNEL_LIMITS } from "./tunnels.js";
 import { runGoogleRelayLogin, runAccountDevicePairing } from "./google-commands.js";
-import { bindingOrigin, certificateFingerprint } from "./gateway-binding.js";
+import { bindingOrigin, certificateFingerprint, publicLeafCertificate } from "./gateway-binding.js";
 import { readPrivateJson, savePrivateJson } from "./google-credentials.js";
 import { runGatewayGoogleLink } from "./gateway-google-link.js";
 import { registerGatewayKey, prepareGatewayOwner } from "./gateway-key-client.js";
@@ -45,6 +45,9 @@ import type { RelayWebLoginOptions } from "./relay-web-login.js";
 import type { AddressInfo } from "node:net";
 
 const positive = z.coerce.number().int().positive().max(2_147_483_647);
+function readPrivateInput(path: string): Promise<Buffer> {
+  return process.platform === "win32" ? readWindowsPrivateFile(path, 65_536) : readFile(path);
+}
 const envSchema = z.object({
   OMNESIS_CLOUD_RELAY_BIND: z.string().default("127.0.0.1"),
   OMNESIS_CLOUD_RELAY_METRICS_PORT: z.coerce.number().int().min(0).max(65535).optional(),
@@ -201,7 +204,7 @@ export async function startRelayDaemon(
     ]),
   ];
   const identity = mockKey
-    ? localIdentityProvider(await readFile(mockKey), config.OMNESIS_CLOUD_RELAY_BIND)
+    ? localIdentityProvider(await readPrivateInput(mockKey), config.OMNESIS_CLOUD_RELAY_BIND)
     : audiences.length
       ? googleIdentityProvider(audiences, fixture?.keys, {
           authorizedParties: [...new Set([...audiences, ...androidClients])],
@@ -211,10 +214,13 @@ export async function startRelayDaemon(
   const googleBrowser = await googleBrowserConfiguration(env, webLogin, deviceAudiences, [
     ...new Set([...deviceAudiences, ...androidClients]),
   ]);
-  const sessions = new RelaySessions(await readFile(config.OMNESIS_CLOUD_RELAY_KEY_FILE));
+  const sessions = new RelaySessions(await readPrivateInput(config.OMNESIS_CLOUD_RELAY_KEY_FILE));
   const tls =
     tlsCert && tlsKey
-      ? { cert: await readFile(tlsCert, "utf8"), key: await readFile(tlsKey, "utf8") }
+      ? {
+          cert: await readFile(tlsCert, "utf8"),
+          key: (await readPrivateInput(tlsKey)).toString("utf8"),
+        }
       : undefined;
   await mkdir(dirname(config.OMNESIS_CLOUD_RELAY_DB), { recursive: true, mode: 0o700 });
   const accounts = new RelayAccounts(
@@ -368,7 +374,9 @@ export async function loginRelay(options: {
   const response = await fetch(new URL("/_relay/v1/login", relay), {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ idToken: (await readFile(options.idTokenFile, "utf8")).trim() }),
+    body: JSON.stringify({
+      idToken: (await readPrivateInput(options.idTokenFile)).toString("utf8").trim(),
+    }),
     signal: AbortSignal.timeout(15_000),
     redirect: "error",
   });
@@ -428,7 +436,7 @@ export async function runRelayCommand(
         OMNESIS_CLOUD_RELAY_PUBLIC_ORIGIN: z.string().min(1),
       })
       .parse(env);
-    const sessions = new RelaySessions(await readFile(config.OMNESIS_CLOUD_RELAY_KEY_FILE));
+    const sessions = new RelaySessions(await readPrivateInput(config.OMNESIS_CLOUD_RELAY_KEY_FILE));
     const enrollmentToken = await sessions.issueEnrollmentInvitation(
       config.OMNESIS_CLOUD_RELAY_GATEWAY_ID,
       config.OMNESIS_CLOUD_RELAY_PUBLIC_ORIGIN,
@@ -545,9 +553,8 @@ export async function runRelayCommand(
         .parse(await readPrivateJson(env.OMNESIS_CLOUD_RELAY_DEVICE_FILE))
     : undefined;
   if (paired) {
-    const certificate = new X509Certificate(paired.gatewayCertificate);
+    const certificate = publicLeafCertificate(paired.gatewayCertificate);
     if (
-      certificate.toString().trim() !== paired.gatewayCertificate.trim() ||
       !certificate.checkHost(bindingOrigin(paired.gatewayUrl).hostname) ||
       certificateFingerprint(paired.gatewayCertificate) !== paired.gatewayFingerprint ||
       (paired.tlsSpkiFingerprint !== undefined &&

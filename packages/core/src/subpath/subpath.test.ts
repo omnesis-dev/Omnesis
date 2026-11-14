@@ -124,3 +124,16 @@ describe("subpath ↔ root parity", () => {
     expect(config.omnesisConfigSchema).toBe(root.omnesisConfigSchema);
   });
 });
+
+describe("@omnesis/core/private-files", () => {
+  test("exports canonical durable private writers through the narrow package subpath", async () => {
+    const facade = await import("@omnesis/core/private-files");
+    const atomic = await import("../atomic-write.js");
+    const security = await import("../security-files.js");
+    expect(facade.atomicWriteFile).toBe(atomic.atomicWriteFile);
+    expect(facade.atomicWriteFileSync).toBe(atomic.atomicWriteFileSync);
+    expect(facade.fsyncDir).toBe(atomic.fsyncDir);
+    expect(facade.ensurePrivateDirs).toBe(security.ensurePrivateDirs);
+    expect(facade.ensurePrivateDirSync).toBe(security.ensurePrivateDirSync);
+  });
+});

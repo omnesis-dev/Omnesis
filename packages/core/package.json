@@ -7,6 +7,7 @@
   "types": "src/index.ts",
   "exports": {
     ".": "./src/index.ts",
+    "./private-files": "./src/subpath/private-files.ts",
     "./protocol": "./src/subpath/protocol.ts",
     "./config": "./src/subpath/config.ts",
     "./sources": "./src/subpath/sources.ts",
@@ -26,6 +27,7 @@
   },
   "dependencies": {
     "@omnesis/config": "*",
+    "@omnesis/platform": "*",
     "@omnesis/source-sdk": "*",
     "@omnesis/types": "*",
     "bonjour-service": "^1.4.4",

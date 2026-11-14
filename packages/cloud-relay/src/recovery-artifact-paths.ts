@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { realpathSync } from "node:fs";
+import { lstatSync, realpathSync, statSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 
 function missing(error: unknown): boolean {
@@ -10,10 +10,15 @@ function missing(error: unknown): boolean {
 
 function canonicalDirectory(path: string): string {
   try {
-    return realpathSync(path);
+    const resolved = realpathSync(path);
+    if (!statSync(resolved).isDirectory())
+      throw new Error("Recovery output ancestor is not a directory");
+    return resolved;
   } catch (error) {
     if (!missing(error)) throw error;
-    return join(canonicalDirectory(dirname(path)), basename(path));
+    const parent = dirname(path);
+    if (parent === path) throw error;
+    return join(canonicalDirectory(parent), basename(path));
   }
 }
 
@@ -21,6 +26,29 @@ function canonicalDirectory(path: string): string {
 function destination(path: string): string {
   const absolute = resolve(path);
   return join(canonicalDirectory(dirname(absolute)), basename(absolute));
+}
+
+/** Compare actual entries without folding case in case-sensitive directories. */
+function sameEntry(left: string, right: string): boolean {
+  try {
+    const a = lstatSync(left, { bigint: true }),
+      b = lstatSync(right, { bigint: true });
+    return a.dev === b.dev && a.ino === b.ino;
+  } catch (error) {
+    if (!missing(error)) throw error;
+    return false;
+  }
+}
+
+function sameTargetEntry(entry: string, path: string): boolean {
+  try {
+    const a = lstatSync(entry, { bigint: true }),
+      b = statSync(path, { bigint: true });
+    return a.dev === b.dev && a.ino === b.ino;
+  } catch (error) {
+    if (!missing(error)) throw error;
+    return false;
+  }
 }
 
 /** Operator-only protection against replacing an identity, including aliases through parent directories. */
@@ -32,7 +60,8 @@ export function assertRecoveryArtifactDestination(
     const target = destination(output);
     for (const path of protectedPaths) {
       if (path === undefined) continue;
-      if (target === destination(path)) throw new Error();
+      if (target === destination(path) || sameEntry(target, path) || sameTargetEntry(target, path))
+        throw new Error();
       // Identity reads follow a leaf symlink; protect its real target as well as its configured entry.
       try {
         if (target === realpathSync(path)) throw new Error();

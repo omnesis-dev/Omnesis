@@ -24,6 +24,7 @@ import { cp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { applyTestManifest } from "./test-manifest.mjs";
+import { withoutPanelSection } from "./panel-template.mjs";
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const outdir = process.env.OMNESIS_EXTENSION_DIST_DIR ?? join(root, "dist");
@@ -63,17 +64,10 @@ async function main() {
   await cp(join(root, "public"), outdir, { recursive: true });
   // Render independent pages from one template, using the same bundled components.
   const panelHtml = await readFile(join(root, "public/notes.html"), "utf8");
-  const withoutSection = (html, section) => {
-    const block = new RegExp(
-      `    <!-- ${section}:start -->[\\s\\S]*?    <!-- ${section}:end -->\\n`,
-    );
-    if (!block.test(html)) throw new Error(`Missing ${section} section in panel template.`);
-    return html.replace(block, "");
-  };
-  await writeFile(join(outdir, "notes.html"), withoutSection(panelHtml, "find"));
+  await writeFile(join(outdir, "notes.html"), withoutPanelSection(panelHtml, "find"));
   await writeFile(
     join(outdir, "find.html"),
-    withoutSection(panelHtml, "notes")
+    withoutPanelSection(panelHtml, "notes")
       .replace('<body class="notes-panel">', '<body class="notes-panel find-page">')
       .replace('<section id="find-section" hidden>', '<section id="find-section">'),
   );

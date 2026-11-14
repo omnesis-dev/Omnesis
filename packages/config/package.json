@@ -6,9 +6,12 @@
   "main": "src/index.ts",
   "types": "src/index.ts",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./dotenv": "./src/dotenv-reader.ts",
+    "./dotenv-bootstrap": "./src/dotenv-bootstrap.ts"
   },
   "dependencies": {
+    "@omnesis/platform": "*",
     "@omnesis/types": "*",
     "zod": "^4.6.7"
   },

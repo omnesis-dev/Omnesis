@@ -508,7 +508,7 @@ export interface SourceFreshness {
    * doesn't distinguish a dead feed from a quiet fortnight.
    */
   requiresProcess?: {
-    /** Executable name, matched exactly against the process table (`pgrep -x`). */
+    /** Exact executable name; Windows accepts an optional .exe suffix and ignores case. */
     processName: string;
     /**
      * How the collector may start that program itself when it finds it not

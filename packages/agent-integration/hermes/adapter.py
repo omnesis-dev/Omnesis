@@ -14,6 +14,9 @@ chat are retained in Hermes' transcript but are never routed to a human chat.
 from __future__ import annotations
 
 import asyncio
+import errno
+import queue
+import subprocess
 import functools
 import hashlib
 import http.client
@@ -188,7 +191,106 @@ _MCP_LIST_MAX_PAGES = 64
 _MCP_REJECTION_MAX_CHARS = 500
 
 
+def _uses_windows_files() -> bool:
+    return os.name == "nt"
+
+
+def _windows_node_command(operation: str, path: str) -> list[str]:
+    # Do not let Windows executable discovery search the working directory.
+    for directory in os.get_exec_path():
+        if not os.path.isabs(directory):
+            continue
+        candidate = Path(directory) / "node.exe"
+        if candidate.is_file():
+            return [str(candidate), str(Path(__file__).resolve().parent / "windows-files.mjs"), operation, path]
+    raise RuntimeError("Windows Hermes requires Node.js 24 or newer on PATH")
+
+
+def _windows_bridge_error(stderr: bytes, path: str) -> None:
+    try:
+        code = json.loads(stderr.splitlines()[-1]).get("code")
+    except (ValueError, AttributeError, IndexError):
+        code = None
+    if code == "ENOENT":
+        raise FileNotFoundError(errno.ENOENT, "Integration state is absent", path)
+    raise PermissionError(errno.EACCES, "Windows integration persistence failed; check Node.js 24 and private file access", path)
+
+
+# Credentials and forwarded-tool catalog JSON are already materialized by the
+# caller. This high bound accommodates catalog serialization while rejecting
+# unbounded bridge input; the versioned frame is shared with windows-files.mjs.
+_WINDOWS_WRITE_MAX_BYTES = 1024 * 1024 * 1024
+_WINDOWS_WRITE_MAGIC = b"OMNESIS_HERMES_WRITE_V1\0"
+_WINDOWS_WRITE_COMMIT = b"\0OMNESIS_HERMES_WRITE_COMMIT_V1\0"
+
+
+def _windows_bridge(operation: str, path: str, data: bytes | None = None) -> bytes:
+    request = data or b""
+    if operation == "write":
+        if len(request) > _WINDOWS_WRITE_MAX_BYTES:
+            raise ValueError("Windows integration state exceeds the bridge input limit")
+        # EOF alone cannot authorize publication: an abruptly killed Python
+        # owner may leave only part of this frame in the inherited pipe.
+        request = _WINDOWS_WRITE_MAGIC + len(request).to_bytes(4, "little") + request + _WINDOWS_WRITE_COMMIT
+    command = _windows_node_command(operation, path)
+    if operation == "write":
+        # Older bridges reject extra argv instead of persisting this frame as
+        # raw credential bytes during a partially replaced installation.
+        command.append("framed-v1")
+    result = subprocess.run(command, input=request, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=60, check=False)
+    if result.returncode:
+        _windows_bridge_error(result.stderr, path)
+    return result.stdout
+
+
+def _read_private_text(path: Path) -> str:
+    if _uses_windows_files():
+        return _windows_bridge("read", str(path.absolute())).decode("utf-8")
+    return path.read_text(encoding="utf-8")
+
+
+class _WindowsRefreshLease:
+    """Node retains a DELETE-sharing lease; closing stdin releases and joins it."""
+    def __init__(self, path: Path):
+        self.path = str(path.absolute())
+        self.process = subprocess.Popen(_windows_node_command("lease", self.path), stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        ready: queue.Queue[bytes] = queue.Queue(maxsize=1)
+        reader = threading.Thread(target=lambda: ready.put(self.process.stdout.readline(1025)), daemon=True)
+        reader.start()
+        try:
+            line = ready.get(timeout=OAUTH_REFRESH_LOCK_TIMEOUT_SECONDS + 15)
+            if line != b'{"ready":true}\n':
+                _, stderr = self.process.communicate(timeout=30)
+                _windows_bridge_error(stderr, self.path)
+        except BaseException as error:
+            try:
+                self.release()
+            except Exception as cleanup_error:
+                raise error from cleanup_error
+            raise
+        finally:
+            reader.join(timeout=1)
+
+    def release(self) -> None:
+        try:
+            if self.process.stdin is not None:
+                try:
+                    self.process.stdin.close()
+                except BrokenPipeError:
+                    pass
+                self.process.stdin = None
+            _, stderr = self.process.communicate(timeout=30)
+        except subprocess.TimeoutExpired:
+            self.process.kill()
+            self.process.communicate()
+            raise RuntimeError("Windows OAuth refresh lease did not release") from None
+        if self.process.returncode:
+            _windows_bridge_error(stderr, self.path)
+
+
 def _process_is_alive(pid: int) -> bool:
+    if _uses_windows_files():
+        return _windows_bridge("alive", str(pid)) == b"true"
     try:
         os.kill(pid, 0)
         return True
@@ -200,6 +302,9 @@ def _process_is_alive(pid: int) -> bool:
 
 def _remove_stale_refresh_lock(path: Path) -> None:
     """Remove only the stale directory entry inspected by this process."""
+    if _uses_windows_files():
+        _windows_bridge("reap", str(path.absolute()))
+        return
     try:
         descriptor = os.open(path, os.O_RDONLY)
     except FileNotFoundError:
@@ -225,8 +330,11 @@ def _remove_stale_refresh_lock(path: Path) -> None:
         os.close(descriptor)
 
 
-def _release_owned_refresh_lock(path: Path, descriptor: int) -> None:
+def _release_owned_refresh_lock(path: Path, descriptor: int | _WindowsRefreshLease) -> None:
     """Release an exclusive-create lease without deleting a successor's lease."""
+    if isinstance(descriptor, _WindowsRefreshLease):
+        descriptor.release()
+        return
     try:
         owned = os.fstat(descriptor)
         try:
@@ -239,8 +347,11 @@ def _release_owned_refresh_lock(path: Path, descriptor: int) -> None:
         os.close(descriptor)
 
 
-def _acquire_refresh_lock(path: Path) -> int:
+def _acquire_refresh_lock(path: Path) -> int | _WindowsRefreshLease:
     """Acquire the existence-based lease shared with the TypeScript plugin."""
+    if _uses_windows_files():
+        # Node adds the suffix shared by both runtimes.
+        return _WindowsRefreshLease(Path(str(path).removesuffix(".refresh.lock")))
     deadline = time.monotonic() + OAUTH_REFRESH_LOCK_TIMEOUT_SECONDS
     while True:
         try:
@@ -259,6 +370,9 @@ def _acquire_refresh_lock(path: Path) -> int:
 
 def _write_private_json(path: Path, raw: Dict[str, Any]) -> None:
     """Atomically replace a JSON document readable only by its owner."""
+    if _uses_windows_files():
+        _windows_bridge("write", str(path.absolute()), (json.dumps(raw, indent=2) + "\n").encode("utf-8"))
+        return
     temporary = path.with_name(f".omnesis-{uuid.uuid4().hex}.tmp")
     try:
         descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
@@ -1129,7 +1243,7 @@ def _normalize_fingerprint(value: str) -> str:
 
 
 def _load_credentials(path: Path) -> Credentials:
-    raw = json.loads(path.read_text(encoding="utf-8"))
+    raw = json.loads(_read_private_text(path))
     if not isinstance(raw, dict):
         raise ConfigurationError("credential file must contain an object")
     # Unknown top-level keys are tolerated on purpose. `omnesis connect` writes
@@ -1593,8 +1707,12 @@ def _authorization_pending(
         return True
     try:
         recorded = json.loads(
-            _pending_authorization_path(credential_path).read_text(encoding="utf-8")
+            _read_private_text(_pending_authorization_path(credential_path))
         )
+    except PermissionError:
+        if _uses_windows_files():
+            raise
+        return True
     except (OSError, ValueError):
         return True
     expires_at = recorded.get("expiresAt") if isinstance(recorded, dict) else None
@@ -1621,7 +1739,7 @@ def _record_gateway_capabilities(path: Path, subscriptions: bool) -> None:
     lock_path = Path(f"{path}.refresh.lock")
     descriptor = _acquire_refresh_lock(lock_path)
     try:
-        raw = json.loads(path.read_text(encoding="utf-8"))
+        raw = json.loads(_read_private_text(path))
         if not isinstance(raw, dict):
             raise ConfigurationError("credential file must contain an object")
         capabilities = raw.get("capabilities")
@@ -1648,7 +1766,7 @@ def _record_system_trust(path: Path, pinned_fingerprint: str) -> Optional[Creden
     lock_path = Path(f"{path}.refresh.lock")
     descriptor = _acquire_refresh_lock(lock_path)
     try:
-        raw = json.loads(path.read_text(encoding="utf-8"))
+        raw = json.loads(_read_private_text(path))
         if not isinstance(raw, dict):
             raise ConfigurationError("credential file must contain an object")
         tls = raw.get("tls")
@@ -1744,7 +1862,7 @@ def _read_forwarded_tools_cache(
     if credentials.oauth_client_id is None:
         return []
     try:
-        raw = json.loads(path.read_text(encoding="utf-8"))
+        raw = json.loads(_read_private_text(path))
     except (OSError, ValueError):
         return []
     if (
@@ -2266,9 +2384,15 @@ class DurableState:
     def __init__(self, path: Path):
         self.path = path
         path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-        os.chmod(path.parent, 0o700)
+        if _uses_windows_files():
+            # Protect inheritable directory ACLs before SQLite creates any DB,
+            # journal, WAL or shared-memory bytes, and repair trusted old state.
+            _windows_bridge("state", str(path.absolute()))
+        else:
+            os.chmod(path.parent, 0o700)
         self.connection = sqlite3.connect(path)
-        os.chmod(path, 0o600)
+        if not _uses_windows_files():
+            os.chmod(path, 0o600)
         self.connection.execute("PRAGMA journal_mode = WAL")
         self.connection.executescript(
             """
@@ -3258,7 +3382,7 @@ class OmnesisAdapter(BasePlatformAdapter):
     def _subscriptions_available(self) -> bool:
         """Use the last successful gateway probe for an already-registered tool."""
         try:
-            raw = json.loads(self._credential_path.read_text(encoding="utf-8"))
+            raw = json.loads(_read_private_text(self._credential_path))
         except (OSError, ValueError):
             # A legacy credential has no recorded capability. Registration is
             # optimistic for that file shape, so an existing tool call must be
@@ -3372,7 +3496,7 @@ class OmnesisAdapter(BasePlatformAdapter):
         if current.oauth_access_token is None:
             self._recover_missing_oauth_tokens()
             return
-        raw = json.loads(self._credential_path.read_text(encoding="utf-8"))
+        raw = json.loads(_read_private_text(self._credential_path))
         if not _refresh_keepalive_due(raw, int(time.time() * 1000), self._credential_path):
             return
         if current.oauth_refresh_token is None:
@@ -5274,7 +5398,7 @@ class OmnesisAdapter(BasePlatformAdapter):
                 # Another process may have repaired it while this one waited.
                 if self._credentials.oauth_access_token is not None:
                     return self._credentials.oauth_access_token
-                raw = json.loads(self._credential_path.read_text(encoding="utf-8"))
+                raw = json.loads(_read_private_text(self._credential_path))
                 return self._reissue_oauth_tokens_locked(raw)
             finally:
                 _release_owned_refresh_lock(lock_path, descriptor)
@@ -5313,7 +5437,7 @@ class OmnesisAdapter(BasePlatformAdapter):
                 "Omnesis corpus authorization needs repair. "
                 "Run `omnesis connect hermes --refresh` on this machine."
             )
-        raw = json.loads(self._credential_path.read_text(encoding="utf-8"))
+        raw = json.loads(_read_private_text(self._credential_path))
         # Nothing to trade: the headless re-issue is the whole repair.
         if self._credentials.oauth_refresh_token is None:
             return self._reissue_oauth_tokens_locked(raw)
@@ -5932,7 +6056,7 @@ def _registered_subscriptions_available() -> bool:
     """
     try:
         path = _credentials_path()
-        raw = json.loads(path.read_text(encoding="utf-8"))
+        raw = json.loads(_read_private_text(path))
     except (OSError, ValueError):
         return True
     try:

@@ -162,7 +162,7 @@ describe.each([false, true])("AnalyticsConnectionPool (encrypted=%s)", (encrypte
     const refused = () => {
       const probe = otherProcessAttach(dbPath, keyHex);
       expect(probe.opened).toBe(false);
-      expect(probe.error).toMatch(/conflicting lock is held/i);
+      expect(probe.error).toMatch(/conflicting lock is held|being used by another process/i);
     };
 
     refused();
@@ -370,7 +370,7 @@ describe.each([false, true])("AnalyticsConnectionPool (encrypted=%s)", (encrypte
     expect(existsSync(join(`${dbPath}.tmp`, "stage"))).toBe(true);
   });
 
-  it("names the process holding the store when it cannot open it", async () => {
+  it("diagnoses a held store and retains its native owner identity when supplied", async () => {
     const seed = new AnalyticsConnectionPool(dbPath, {
       encryptionKeyHex: keyHex,
       extensionRepository: UNREACHABLE_REPOSITORY,
@@ -388,7 +388,13 @@ describe.each([false, true])("AnalyticsConnectionPool (encrypted=%s)", (encrypte
       expect(failure).toBeInstanceOf(AnalyticsStoreOpenError);
       const message = (failure as Error).message;
       expect(message).toMatch(/Another process holds the store/);
-      expect(message).toContain(`PID ${holder.pid}`);
+      const native = [
+        (failure as AnalyticsStoreOpenError).openError,
+        (failure as AnalyticsStoreOpenError).plaintextOpenError ?? "",
+      ].join("\n");
+      // Windows may report a sharing violation without identifying its owner.
+      if (process.platform !== "win32" || /\bPID\s+\d+/u.test(native))
+        expect(message).toContain(`PID ${holder.pid}`);
       expect(message).toMatch(/Keep the file/);
       if (keyHex) expect(message).not.toContain(keyHex);
     } finally {
@@ -604,6 +610,7 @@ describe("AnalyticsConnectionPool shipped DuckDB extensions", () => {
       "linux_arm64",
       "osx_amd64",
       "osx_arm64",
+      "windows_amd64",
     ]);
     const pin = manifest.extensions.httpfs![host.platform];
     expect(pin, `no httpfs pin for ${host.platform}`).toBeDefined();
@@ -692,19 +699,36 @@ describe("AnalyticsConnectionPool shipped DuckDB extensions", () => {
     );
     await mkdir(dirname(storeCopy), { recursive: true });
     await copyFile(bundledHttpfs, storeCopy);
-    pool = new AnalyticsConnectionPool(dbPath, {
-      encryptionKeyHex: keyHex,
-      bundledExtensionDirectory: join(directory, "nothing-shipped"),
-      extensionRepository: UNREACHABLE_REPOSITORY,
-    });
-    await pool.open(async (conn) => {
-      await conn.run("CREATE TABLE sample AS SELECT 13 AS id");
-    });
-    expect(
-      await pool.withConn(async ({ conn }) =>
-        (await conn.runAndReadAll("SELECT id FROM sample")).getRows(),
-      ),
-    ).toEqual([[13]]);
+    // A loaded extension is a DLL on Windows and remains mapped until its
+    // process exits. Own that process so cleanup never races a live module.
+    const script = `
+      const { AnalyticsConnectionPool } = await import(${JSON.stringify(new URL("./connection-pool.ts", import.meta.url).href)});
+      const pool = new AnalyticsConnectionPool(${JSON.stringify(dbPath)}, {
+        encryptionKeyHex: ${JSON.stringify(keyHex)},
+        bundledExtensionDirectory: ${JSON.stringify(join(directory, "nothing-shipped"))},
+        extensionRepository: ${JSON.stringify(UNREACHABLE_REPOSITORY)},
+      });
+      try {
+        await pool.open(async (conn) => { await conn.run("CREATE TABLE sample AS SELECT 13 AS id"); });
+        const rows = await pool.withConn(async ({ conn }) =>
+          (await conn.runAndReadAll("SELECT id FROM sample")).getRows());
+        process.stdout.write(JSON.stringify({ rows }));
+      } finally {
+        await pool.close();
+      }
+    `;
+    const result = execFileSync(
+      process.execPath,
+      [
+        "--import",
+        new URL("../workers/register-tsx.mjs", import.meta.url).href,
+        "--input-type=module",
+        "-e",
+        script,
+      ],
+      { encoding: "utf8", timeout: 30_000, env: { ...process.env, OMNESIS_LOG_LEVEL: "error" } },
+    );
+    expect(JSON.parse(result)).toEqual({ rows: [[13]] });
   });
 
   it("names the missing shipped copy when nothing can be loaded or downloaded", async () => {
@@ -746,5 +770,41 @@ describe("AnalyticsConnectionPool shipped DuckDB extensions", () => {
     );
     pool = null;
     expect(failure?.message).toMatch(/The copy Omnesis ships is refused by DuckDB \(.*signature/);
+  });
+});
+
+const WINDOWS_SHARING =
+  'IO Error: Cannot open file "C:\\Example\\analytics.db": ' +
+  "The process cannot access the file because it is being used by another process.";
+
+describe("analytics store opening diagnostics", () => {
+  it.each([
+    'IO Error: Could not set lock on file "/var/example/analytics.db": Conflicting lock is held in /usr/bin/example-runtime (PID 4242)',
+    WINDOWS_SHARING + "\n\nFile is already open in\nC:\\ExampleRuntime\\node.exe (PID 4242)",
+    "IO Error: File is already open in C:\\ExampleRuntime\\node.exe (PID 4242)",
+  ])("diagnoses a native lock and retains the reported owner: %s", (nativeMessage) => {
+    const failure = new AnalyticsStoreOpenError("fixture-analytics.db", nativeMessage);
+    expect(failure.message).toContain("Another process holds the store open");
+    expect(failure.message).toContain(nativeMessage);
+    expect(failure.message).toContain("PID 4242");
+    expect(failure.message).toContain("Keep the file and its .wal exactly as they are");
+    expect(failure.openError).toBe(nativeMessage);
+  });
+
+  it("a Windows sharing failure without owner details does not invent a process identity", () => {
+    const failure = new AnalyticsStoreOpenError("fixture-analytics.db", WINDOWS_SHARING);
+    expect(failure.message).toContain("Another process holds the store open");
+    expect(failure.message).toContain(WINDOWS_SHARING);
+    expect(failure.message).not.toMatch(/\bPID\b/iu);
+  });
+
+  it("keeps permission failures distinct from another holder and retains both native verdicts", () => {
+    const denied = "IO Error: Cannot open the analytics file: Access is denied.";
+    const plaintext = "IO Error: Cannot read the analytics file: Access is denied.";
+    const failure = new AnalyticsStoreOpenError("fixture-analytics.db", denied, plaintext);
+    expect(failure.message).not.toContain("Another process holds the store open");
+    expect(failure.message).toContain(denied);
+    expect(failure.message).toContain(plaintext);
+    expect(failure.plaintextOpenError).toBe(plaintext);
   });
 });

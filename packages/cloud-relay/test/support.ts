@@ -10,13 +10,14 @@ import { once } from "node:events";
 import { execFileSync } from "node:child_process";
 import { join } from "node:path";
 import { SignJWT } from "jose";
-import { parseWebSocketAuthProtocolHeader } from "@omnesis/core";
+import { parseWebSocketAuthProtocolHeader, ensurePrivateFileSync } from "@omnesis/core";
 import { WebSocketServer, WebSocket } from "ws";
 import { RelayAccounts } from "../src/accounts.js";
 import { RelaySessions, localIdentityProvider } from "../src/identity.js";
 import { createCloudRelay, type CloudRelayOptions } from "../src/server.js";
 import { GatewayTunnel } from "../src/tunnel-client.js";
 import { createRelayClientProxy } from "../src/client-proxy.js";
+import { addIpv6Loopback } from "./loopback-peers.js";
 import type { Server } from "node:http";
 import type { AddressInfo } from "node:net";
 
@@ -47,7 +48,10 @@ export async function localToken(
     .sign(secret);
 }
 
-export async function fixture(extra: Partial<CloudRelayOptions> = {}) {
+export async function fixture(
+  extra: Partial<CloudRelayOptions> = {},
+  options: { ipv6Loopback?: boolean } = {},
+) {
   const key = randomBytes(32);
   const accounts = new RelayAccounts(":memory:");
   const sessions = new RelaySessions(randomBytes(32));
@@ -64,6 +68,17 @@ export async function fixture(extra: Partial<CloudRelayOptions> = {}) {
   relay.dataServer.listen(0, "127.0.0.1");
   await once(relay.dataServer, "listening");
   const dataPort = (relay.dataServer.address() as AddressInfo).port;
+  const aliases: Awaited<ReturnType<typeof addIpv6Loopback>>[] = [];
+  try {
+    if (options.ipv6Loopback) {
+      aliases.push(await addIpv6Loopback(relay.server));
+      aliases.push(await addIpv6Loopback(relay.dataServer));
+    }
+  } catch (error) {
+    await Promise.allSettled([...aliases.map((alias) => alias.close()), relay.close()]);
+    accounts.close();
+    throw error;
+  }
   const gatewayUrl = `https://gateway.example.test:${dataPort}`;
   const login = async (
     subject = "fictional-account",
@@ -153,6 +168,7 @@ export async function fixture(extra: Partial<CloudRelayOptions> = {}) {
     },
     async close() {
       for (const tunnel of tunnels) tunnel.stop();
+      for (const alias of aliases) await alias.close();
       await relay.close();
       accounts.close();
     },
@@ -296,6 +312,7 @@ export function tlsFiles(
     ],
     { stdio: "ignore" },
   );
+  if (process.platform === "win32") ensurePrivateFileSync(keyFile);
   return { keyFile, certFile };
 }
 

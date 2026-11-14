@@ -10,6 +10,10 @@ import { promisify } from "node:util";
 import { buildCodexEnv, ensureCodexHome } from "@omnesis/agent";
 import {
   createLogger,
+  nodeCommandInvocation,
+  terminateChildProcess,
+  spawnWindowsJob,
+  execWindowsJob,
   type CodexBackendStatus,
   type CodexLoginFlow,
   type CodexRuntimeStatus,
@@ -31,6 +35,7 @@ interface ActiveLogin {
   running: boolean;
   closed: Promise<void>;
   timer: NodeJS.Timeout;
+  termination: Promise<void> | null;
 }
 
 interface CodexRuntimeLifecycleOptions {
@@ -62,7 +67,11 @@ export class CodexRuntimeLifecycle {
   }
 
   get busy(): boolean {
-    return this.activeLogin?.running === true || this.claim !== null;
+    return (
+      this.activeLogin?.running === true ||
+      this.activeLogin?.termination != null ||
+      this.claim !== null
+    );
   }
 
   async runAgentSetup<T>(operation: () => Promise<T>): Promise<T> {
@@ -72,7 +81,7 @@ export class CodexRuntimeLifecycle {
         "Wait for the Codex runtime update to finish before setting up Agent.",
       );
     }
-    if (this.activeLogin?.running || this.claim) {
+    if (this.busy) {
       throw new CodexRuntimeLifecycleConflictError(
         "Another Codex lifecycle operation is in progress.",
       );
@@ -94,10 +103,10 @@ export class CodexRuntimeLifecycle {
     if (active.flow.status === "pending") {
       active.flow = { ...active.flow, status: "canceled", reason: "Gateway stopped." };
     }
-    if (active.running) active.proc.kill("SIGTERM");
+    if (active.running || active.termination) await this.stopLogin(active, "SIGTERM");
     await Promise.race([active.closed, new Promise<void>((resolve) => setTimeout(resolve, 2_000))]);
     if (active.running) {
-      active.proc.kill("SIGKILL");
+      await this.stopLogin(active, "SIGKILL");
       await active.closed;
     }
     this.activeLogin = null;
@@ -116,7 +125,7 @@ export class CodexRuntimeLifecycle {
       );
     }
     if (this.activeLogin?.flow.status === "pending") return this.activeLogin.flow;
-    if (this.activeLogin?.running) {
+    if (this.activeLogin?.running || this.activeLogin?.termination) {
       throw new CodexRuntimeLifecycleConflictError(
         "Wait for the previous Codex login process to finish.",
       );
@@ -150,11 +159,23 @@ export class CodexRuntimeLifecycle {
         status: "pending",
         expiresAt: new Date(Date.now() + this.opts.loginTtlMs).toISOString(),
       };
-      const proc = spawn(
-        commandInfo.command,
-        [...this.opts.cliArgsPrefix, "login", "--device-auth"],
-        { env: childEnv, stdio: ["ignore", "pipe", "pipe"], windowsHide: true },
-      );
+      const invocation = nodeCommandInvocation(commandInfo.command, [
+        ...this.opts.cliArgsPrefix,
+        "login",
+        "--device-auth",
+      ]);
+      const job =
+        process.platform === "win32"
+          ? spawnWindowsJob(invocation.command, invocation.args, { env: childEnv })
+          : null;
+      const proc =
+        job ??
+        spawn(invocation.command, invocation.args, {
+          env: childEnv,
+          stdio: ["ignore", "pipe", "pipe"],
+          windowsHide: true,
+        });
+      job?.stdin.end();
       const closed = new Promise<void>((resolve) => {
         proc.once("close", () => resolve());
         proc.once("error", () => resolve());
@@ -184,10 +205,17 @@ export class CodexRuntimeLifecycle {
           status: "failed",
           reason: "The Codex device login expired.",
         };
-        proc.kill("SIGTERM");
+        void this.stopLogin(this.activeLogin, "SIGTERM");
       };
       const expiryTimer = setTimeout(expireLogin, this.opts.loginTtlMs + 5_000);
-      this.activeLogin = { flow, proc, running: true, closed, timer: expiryTimer };
+      this.activeLogin = {
+        flow,
+        proc,
+        running: true,
+        closed,
+        timer: expiryTimer,
+        termination: null,
+      };
 
       return await new Promise<CodexLoginFlow>((resolve, reject) => {
         startTimer = setTimeout(() => {
@@ -198,7 +226,7 @@ export class CodexRuntimeLifecycle {
               reason: "Codex did not return a device login code.",
             };
           }
-          proc.kill("SIGTERM");
+          if (this.activeLogin?.flow.id === id) void this.stopLogin(this.activeLogin, "SIGTERM");
           failStart(reject, "Codex did not return a device login code.");
         }, this.opts.loginStartTimeoutMs);
 
@@ -223,6 +251,16 @@ export class CodexRuntimeLifecycle {
           if (this.activeLogin?.flow.id === id) {
             this.activeLogin.running = false;
             clearTimeout(this.activeLogin.timer);
+            this.activeLogin.flow = {
+              ...this.activeLogin.flow,
+              status: "failed",
+              reason: conciseError(err),
+            };
+          }
+          failStart(reject, conciseError(err));
+        });
+        void job?.jobReady.catch((err: unknown) => {
+          if (this.activeLogin?.flow.id === id) {
             this.activeLogin.flow = {
               ...this.activeLogin.flow,
               status: "failed",
@@ -283,7 +321,7 @@ export class CodexRuntimeLifecycle {
     }
     active.flow = { ...active.flow, status: "canceled", reason: "Login canceled." };
     clearTimeout(active.timer);
-    active.proc.kill("SIGTERM");
+    void this.stopLogin(active, "SIGTERM");
     return { ok: true, canceled: true, flow: { ...active.flow } };
   }
 
@@ -304,14 +342,14 @@ export class CodexRuntimeLifecycle {
       await this.opts.ensureSelectedRuntime();
       if (this.activeLogin) {
         clearTimeout(this.activeLogin.timer);
-        if (this.activeLogin.running) {
-          this.activeLogin.proc.kill("SIGTERM");
+        if (this.activeLogin.running || this.activeLogin.termination) {
+          await this.stopLogin(this.activeLogin, "SIGTERM");
           await Promise.race([
             this.activeLogin.closed,
             new Promise<void>((resolve) => setTimeout(resolve, 2_000)),
           ]);
           if (this.activeLogin.running) {
-            this.activeLogin.proc.kill("SIGKILL");
+            await this.stopLogin(this.activeLogin, "SIGKILL");
             await this.activeLogin.closed;
           }
         }
@@ -320,11 +358,19 @@ export class CodexRuntimeLifecycle {
       const childEnv = buildCodexEnv(this.opts.env, this.opts.codexHome);
       try {
         const commandInfo = await this.opts.supervisor.current.runtime.resolveCommandInfo();
-        await execFileAsync(commandInfo.command, [...this.opts.cliArgsPrefix, "logout"], {
-          env: childEnv,
-          timeout: this.opts.refreshTimeoutMs,
-          windowsHide: true,
-        });
+        const invocation = nodeCommandInvocation(commandInfo.command, [
+          ...this.opts.cliArgsPrefix,
+          "logout",
+        ]);
+        await (process.platform === "win32" ? execWindowsJob : execFileAsync)(
+          invocation.command,
+          invocation.args,
+          {
+            env: childEnv,
+            timeout: this.opts.refreshTimeoutMs,
+            windowsHide: true,
+          },
+        );
       } catch (err) {
         log.warn(`Codex logout command failed; removing local auth file: ${conciseError(err)}`);
       }
@@ -346,6 +392,29 @@ export class CodexRuntimeLifecycle {
     } finally {
       if (this.claim === "logout") this.claim = null;
     }
+  }
+
+  private stopLogin(active: ActiveLogin, signal: NodeJS.Signals): Promise<void> {
+    if (process.platform === "win32" && active.termination) return active.termination;
+    const stopping =
+      process.platform === "win32"
+        ? (async () => {
+            if (active.proc.exitCode === null && active.proc.signalCode === null)
+              active.proc.kill("SIGKILL");
+            await active.closed;
+          })()
+        : terminateChildProcess(active.proc, signal);
+    active.termination = stopping;
+    void stopping.then(
+      () => {
+        if (active.termination === stopping) active.termination = null;
+      },
+      (err: unknown) => {
+        if (active.termination === stopping) active.termination = null;
+        log.warn(`Could not stop Codex login process: ${conciseError(err)}`);
+      },
+    );
+    return stopping;
   }
 }
 

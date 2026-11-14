@@ -6,7 +6,6 @@ import {
   closeSync,
   copyFileSync,
   existsSync,
-  fsyncSync,
   openSync,
   readSync,
   renameSync,
@@ -16,7 +15,7 @@ import {
 import { dirname } from "node:path";
 import Database from "better-sqlite3";
 import EncryptedDatabase from "better-sqlite3-multiple-ciphers";
-import { storageKeyHex } from "@omnesis/core";
+import { fsyncDirSync, fsyncFileSync, storageKeyHex } from "@omnesis/core";
 
 const HEADER = Buffer.from("SQLite format 3\0");
 
@@ -57,11 +56,18 @@ export function openTranscriptDatabase(
       },
     };
   } catch (error) {
-    try {
-      db?.close();
-    } finally {
-      guard.close();
+    const failures: unknown[] = [error];
+    for (const owned of [db, guard]) {
+      try {
+        owned?.close();
+      } catch (cleanup) {
+        failures.push(cleanup);
+      }
     }
+    if (failures.length > 1)
+      throw new AggregateError(failures, "Transcript database initialization cleanup failed", {
+        cause: error,
+      });
     throw error;
   }
 }
@@ -117,15 +123,6 @@ function clearStaging(path: string): void {
     rmSync(`${path}${suffix}`, { force: true });
 }
 
-function syncPath(path: string): void {
-  const fd = openSync(path, "r");
-  try {
-    fsyncSync(fd);
-  } finally {
-    closeSync(fd);
-  }
-}
-
 /**
  * Rekey a disposable copy, validate it, then atomically replace the original.
  * The source is switched out of WAL before copying; a locked checkpoint or
@@ -146,6 +143,7 @@ function migrate(path: string, key: Buffer): void {
   } finally {
     plain.close();
   }
+  const failures: unknown[] = [];
   try {
     clearStaging(staging);
     copyFileSync(path, staging);
@@ -167,10 +165,20 @@ function migrate(path: string, key: Buffer): void {
     } finally {
       verified.close();
     }
-    syncPath(staging);
+    fsyncFileSync(staging);
     renameSync(staging, path);
-    syncPath(dirname(path));
-  } finally {
-    clearStaging(staging);
+    fsyncDirSync(dirname(path), { strict: true });
+  } catch (error) {
+    failures.push(error);
   }
+  try {
+    clearStaging(staging);
+  } catch (cleanup) {
+    failures.push(cleanup);
+  }
+  if (failures.length > 1)
+    throw new AggregateError(failures, "Transcript cache migration cleanup failed", {
+      cause: failures[0],
+    });
+  if (failures.length) throw failures[0];
 }

@@ -17,11 +17,12 @@ import {
   rmSync,
   statSync,
 } from "node:fs";
-import { join, relative, resolve, sep } from "node:path";
+import { join, resolve } from "node:path";
 import {
   atomicWriteFileSync,
   clearMarkerKeyringState,
   createSecretStore,
+  inspectWindowsPrivatePathSync,
   OMNESIS_INSTALL_ROOT_KEY,
   OMNESIS_SECRET_SERVICE,
   type SecureMarkerKind,
@@ -35,6 +36,7 @@ import {
   stripOpenClawConfig,
 } from "./harness-config.js";
 import { removeInstallerPathLines } from "./profile.js";
+import { pathIsInside as isInside } from "./path-containment.js";
 import type { UninstallContext } from "./context.js";
 import type { Action, PrivilegedCommand, Step, StepResult } from "./types.js";
 
@@ -84,11 +86,6 @@ function canonical(path: string): string {
   }
 }
 
-function isInside(child: string, parent: string): boolean {
-  const rel = relative(parent, child);
-  return rel === "" || (!rel.startsWith("..") && !rel.startsWith(sep) && rel !== "..");
-}
-
 /** Refuse a recursive delete of `/`, the home directory or anything above it. */
 function assertRemovable(ctx: UninstallContext, path: string): void {
   const target = canonical(path);
@@ -117,7 +114,16 @@ function editFile(path: string, edit: (text: string) => string | null): string |
     if (target !== path) rmSync(path, { force: true });
     return "it held only Omnesis settings, so it was removed";
   }
-  atomicWriteFileSync(target, next, { mode: statSync(target).mode & 0o7777 });
+  // NTFS stat mode does not encode the DACL. Preserve an already-private
+  // leaf through the protected atomic writer without repairing its ancestry.
+  const previousMode = statSync(target).mode & 0o7777;
+  const mode =
+    process.platform === "win32" && inspectWindowsPrivatePathSync(target, "file").private
+      ? previousMode & 0o200
+        ? 0o600
+        : 0o400
+      : previousMode;
+  atomicWriteFileSync(target, next, { mode });
   return undefined;
 }
 

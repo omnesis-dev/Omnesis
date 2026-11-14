@@ -26,6 +26,7 @@
  */
 
 import { spawnSync } from "node:child_process";
+import { resolveNpmInvocation } from "@omnesis/core";
 
 /** The commands a native build invokes, in the order an operator reads them. */
 export const REQUIRED_BUILD_TOOLS = ["make", "cc", "c++", "python3"] as const;
@@ -112,6 +113,22 @@ export function npmRefusal(
     "Nothing has been changed, so the installation is still on its current release." +
     (host ? ` That node is in ${host.nodeDir}, and the PATH is ${host.path || "empty"}.` : "")
   );
+}
+
+/** Probe npm through its JavaScript entry on Windows, without a batch shell. */
+export async function nodeNpmRefusal(
+  host?: { nodeDir: string; path: string | undefined },
+  resolveNpm: typeof resolveNpmInvocation = resolveNpmInvocation,
+): Promise<string | null> {
+  let available = false;
+  try {
+    const invocation = await resolveNpm(["--version"]);
+    const result = spawnSync(invocation.command, invocation.args, { stdio: "ignore" });
+    available = !result.error && result.status === 0;
+  } catch {
+    // A missing or unreadable npm installation is the same actionable refusal.
+  }
+  return npmRefusal({ platform: process.platform, runs: () => available }, host);
 }
 
 function versionRuns(command: string): boolean {

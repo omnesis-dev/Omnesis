@@ -3,7 +3,7 @@
 
 import { mkdirSync, mkdtempSync, rmSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
-import { homedir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 const fixture = vi.hoisted(() => ({ home: "" }));
 vi.mock("node:os", async (importOriginal) => ({
@@ -13,7 +13,7 @@ vi.mock("node:os", async (importOriginal) => ({
 import { assertDemoIsolation } from "./synthetic-demo-host.js";
 
 beforeEach(() => {
-  fixture.home = mkdtempSync("/tmp/synthetic-isolation-test-");
+  fixture.home = mkdtempSync(join(tmpdir(), "synthetic-isolation-test-"));
   mkdirSync(join(fixture.home, ".config"), { recursive: true });
 });
 afterEach(() => {

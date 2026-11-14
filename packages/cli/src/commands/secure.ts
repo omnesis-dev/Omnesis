@@ -298,7 +298,7 @@ export async function runSecure(deps: SecureDeps, opts: SecureOptions): Promise<
       passphrasePending = true;
     } else {
       // A dry run only reads the file: this process alone looks through it.
-      prepareDockerPassphrase(opts.dryRun ? { kind: "configured", file: pass.file } : pass);
+      await prepareDockerPassphrase(opts.dryRun ? { kind: "configured", file: pass.file } : pass);
     }
     recordKeyring = () => {
       if (pass.kind === "configured") {
@@ -611,7 +611,7 @@ export async function runVerify(
   if (deps.docker && backend === "passphrase") {
     const pass = planDockerPassphrase(deps.docker, configDir);
     if (pass.kind === "configured" || pass.kind === "reuse" || pass.kind === "record") {
-      prepareDockerPassphrase({ kind: "configured", file: pass.file });
+      await prepareDockerPassphrase({ kind: "configured", file: pass.file });
     }
   }
   const hosts = detectHosts(configDir, opts.hosts);

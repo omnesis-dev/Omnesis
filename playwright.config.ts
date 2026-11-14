@@ -70,14 +70,14 @@ export default defineConfig({
   webServer: {
     // Boot the real gateway under tsx — the same `npm run gateway` entrypoint
     // dev uses. NOT bun: there is no bun on the dev box or the CI runner.
-    command: [
-      `OMNESIS_GATEWAY_PORT=${port}`,
-      `OMNESIS_LOG_LEVEL=warn`,
-      `OMNESIS_CONFIG_DIR=${tempDir}`,
-      `OMNESIS_DB_PATH=${join(tempDir, "omnesis.db")}`,
-      `OMNESIS_ANALYTICS_DB_PATH=${join(tempDir, "analytics.db")}`,
-      `npx tsx packages/gateway/src/index.ts`,
-    ].join(" "),
+    command: "node --import tsx packages/gateway/src/index.ts",
+    env: {
+      OMNESIS_GATEWAY_PORT: String(port),
+      OMNESIS_LOG_LEVEL: "warn",
+      OMNESIS_CONFIG_DIR: tempDir,
+      OMNESIS_DB_PATH: join(tempDir, "omnesis.db"),
+      OMNESIS_ANALYTICS_DB_PATH: join(tempDir, "analytics.db"),
+    },
     // Wait on the public /health route over HTTPS — a deterministic readiness
     // signal, never `networkidle` (which never fires on the portal's SSE/WS
     // pages). ignoreHTTPSErrors lets the probe trust the self-signed cert.

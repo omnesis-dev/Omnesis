@@ -26,6 +26,8 @@ import WebSocket from "ws";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
 
 import { createFakeOpenClawHost } from "../../../../scripts/test-fixtures/openclaw-host-fixture.mjs";
+import { prepareHermesRuntimeAssets } from "../../../cli/src/commands/integration-runtime.js";
+import { hermesProbeAdapter } from "./hermes-runtime-fixture.js";
 import { waitForMessageMatching, waitForOpen } from "./helpers.js";
 import {
   authorizeMcpClient,
@@ -1128,15 +1130,16 @@ describe("privacy-brokered MCP OAuth — spawned replay gateway", () => {
       expect(integrationAccessToken(openClawHome)).not.toBe(oldOpenClawAccess);
 
       const probe = await execFileAsync(
-        "python3",
+        process.platform === "win32" ? "python" : "python3",
         [resolve(import.meta.dirname, "../../../agent-integration/test/hermes_gateway_probe.py")],
         {
           env: {
             ...process.env,
             HERMES_HOME: hermesHome,
-            OMNESIS_HERMES_ADAPTER_PATH: resolve(
-              import.meta.dirname,
-              "../../../agent-integration/hermes/adapter.py",
+            OMNESIS_HERMES_ADAPTER_PATH: hermesProbeAdapter(
+              hermesHome,
+              resolve(import.meta.dirname, "../../../.."),
+              prepareHermesRuntimeAssets,
             ),
             OMNESIS_HERMES_REAL_MCP: "1",
             OMNESIS_HERMES_QUESTION: QUESTION,

@@ -25,6 +25,7 @@
 
 import { Worker } from "node:worker_threads";
 import { createLogger, resolveWorkerEntry } from "@omnesis/core";
+import { shutdownWorker } from "./shutdown-worker.js";
 import { PendingRequest } from "./pending-request.js";
 import type { EmbedderEncoding } from "../indexer/embedder-prefixes.js";
 import type { Embedder } from "../indexer/types.js";
@@ -33,6 +34,8 @@ import type { BuildEmbedderInit, BuildEmbedderToMain, MainToBuildEmbedder } from
 const log = createLogger("gateway:build-embedder");
 
 export interface BuildWorkerEmbedderOptions {
+  /** Test seam for scripted worker lifecycle coverage without inference. */
+  createWorker?: () => Worker;
   modelPath: string;
   embedDim: number;
   encoding: EmbedderEncoding;
@@ -58,7 +61,7 @@ export class BuildWorkerEmbedder implements Embedder {
   private pendingEmbed = new Map<number, PendingRequest<Float32Array[]>>();
   private pendingQuery = new Map<number, PendingRequest<Float32Array>>();
   private shutdownPromise: Promise<void> | null = null;
-  private shutdownResolve: (() => void) | null = null;
+  private disposed = false;
 
   constructor(opts: BuildWorkerEmbedderOptions) {
     // Source mode runs the .ts entry under tsx (preloading register-tsx.mjs so
@@ -69,20 +72,26 @@ export class BuildWorkerEmbedder implements Embedder {
       import.meta.url,
       "./register-tsx.mjs",
     );
-    this.worker = new Worker(entry.url, { execArgv: entry.execArgv });
+    this.worker = opts.createWorker?.() ?? new Worker(entry.url, { execArgv: entry.execArgv });
     this.worker.on("message", (msg: BuildEmbedderToMain) => this.handleMessage(msg));
     this.worker.on("error", (err) => {
+      this.disposed = true;
       log.error(`build-embedder worker error: ${err.message ?? String(err)}`);
-      if (!this.readySettled) {
-        this.readySettled = true;
-        this.rejectReady(err instanceof Error ? err : new Error(String(err)));
-      }
+      this.failPending(err instanceof Error ? err : new Error(String(err)));
+    });
+
+    this.worker.on("exit", (code) => {
+      this.disposed = true;
+      this.failPending(new Error(`build embedder worker exited code=${code}`));
     });
 
     this.ready = new Promise<void>((resolve, reject) => {
       this.resolveReady = resolve;
       this.rejectReady = reject;
     });
+
+    // Disposal during startup may precede the first caller awaiting ready.
+    void this.ready.catch(() => {});
 
     const init: BuildEmbedderInit = {
       type: "init",
@@ -99,6 +108,7 @@ export class BuildWorkerEmbedder implements Embedder {
 
   async embed(texts: string[]): Promise<Float32Array[]> {
     await this.ready;
+    if (this.disposed) throw new Error("build embedder disposed");
     if (texts.length === 0) return [];
     const id = this.nextId++;
     const req = new PendingRequest<Float32Array[]>(EMBED_TIMEOUT_MS, () => {
@@ -114,6 +124,7 @@ export class BuildWorkerEmbedder implements Embedder {
 
   async embedQuery(query: string): Promise<Float32Array> {
     await this.ready;
+    if (this.disposed) throw new Error("build embedder disposed");
     const id = this.nextId++;
     const req = new PendingRequest<Float32Array>(EMBED_TIMEOUT_MS, () => {
       const p = this.pendingQuery.get(id);
@@ -126,38 +137,27 @@ export class BuildWorkerEmbedder implements Embedder {
     return req.promise;
   }
 
-  async dispose(): Promise<void> {
+  dispose(): Promise<void> {
     if (this.shutdownPromise) return this.shutdownPromise;
-    this.shutdownPromise = new Promise<void>((resolve) => {
-      this.shutdownResolve = resolve;
-    });
-    this.post({ type: "shutdown" });
+    this.disposed = true;
+    this.failPending(new Error("build embedder shut down"));
+    this.shutdownPromise = shutdownWorker(
+      this.worker,
+      () => this.post({ type: "shutdown" }),
+      () => log.warn("build-embedder worker shutdown waiting for native cleanup"),
+      { waitForNativeDrain: true },
+    );
+    return this.shutdownPromise;
+  }
 
-    // Fallback: terminate ourselves if the worker doesn't ack within 5s so a
-    // wedged native embed can't block the swap's teardown.
-    const fallback = setTimeout(() => {
-      log.warn("build-embedder worker shutdown timed out — terminating");
-      try {
-        this.worker.terminate();
-      } catch {
-        /* best-effort */
-      }
-      if (this.shutdownResolve) this.shutdownResolve();
-    }, 5_000);
-    fallback.unref?.();
-
-    await this.shutdownPromise;
-    clearTimeout(fallback);
-
-    // Reject anything still in flight so an aborted build's pending embed
-    // doesn't leak a promise.
+  private failPending(error: Error): void {
     if (!this.readySettled) {
       this.readySettled = true;
-      this.rejectReady(new Error("build embedder disposed before ready"));
+      this.rejectReady(error);
     }
-    for (const [, p] of this.pendingEmbed) p.fail(new Error("build embedder shut down"));
+    for (const p of this.pendingEmbed.values()) p.fail(error);
     this.pendingEmbed.clear();
-    for (const [, p] of this.pendingQuery) p.fail(new Error("build embedder shut down"));
+    for (const p of this.pendingQuery.values()) p.fail(error);
     this.pendingQuery.clear();
   }
 
@@ -218,12 +218,7 @@ export class BuildWorkerEmbedder implements Embedder {
         break;
       }
       case "shutdownComplete":
-        try {
-          this.worker.terminate();
-        } catch {
-          /* best-effort */
-        }
-        if (this.shutdownResolve) this.shutdownResolve();
+        // shutdownWorker joins the actual thread exit.
         break;
     }
   }

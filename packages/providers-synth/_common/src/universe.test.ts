@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { formatDecisionCassetteEntry } from "@omnesis/core/models";
@@ -39,7 +39,7 @@ afterEach(() => {
 describe("universe loader — repo-root resolution", () => {
   it("finds evals/universes via walk-up from this module", () => {
     const dir = getUniversesDir();
-    expect(dir).toMatch(/evals\/universes$/);
+    expect([basename(dirname(dir)), basename(dir)]).toEqual(["evals", "universes"]);
   });
 });
 
@@ -48,7 +48,7 @@ describe("universe loader — name resolution", () => {
     const u = loadUniverse("default");
     expect(u.manifest.name).toBe("default");
     expect(u.manifest.sources.length).toBeGreaterThan(0);
-    expect(u.dir).toMatch(/evals\/universes\/default$/);
+    expect(u.dir).toBe(join(getUniversesDir(), "default"));
   });
 
   it("falls back to `default` when OMNESIS_SYNTH_UNIVERSE is unset", () => {

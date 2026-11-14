@@ -5,7 +5,7 @@
  * CLI end-to-end coverage.
  *
  * Boots a real gateway against the `e2e-minimal` universe, syncs every
- * source, then execs `npx tsx packages/cli/src/index.ts <cmd>` against
+ * source, then runs the CLI with Node and its tsx loader against
  * it and asserts on exit code + stdout shape. Covers the dozen most-used
  * read + admin commands so a refactor of the CLI router, an HTTP-route
  * rename, or an auth/scope regression surfaces before it ships.
@@ -27,6 +27,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { describe, test, expect, beforeAll, afterAll } from "vitest";
+import { inspectWindowsPrivatePaths } from "@omnesis/core";
+import { e2eTsxCommand } from "./gateway-env.js";
 import { SyntheticE2EHarness } from "./synth-harness.js";
 
 const execFileAsync = promisify(execFile);
@@ -336,8 +338,15 @@ describe("CLI end-to-end (e2e-minimal)", () => {
       expect(r.stdout).toContain("e2e-redeem-cli");
       expect(r.stdout).toContain(tokenPath);
 
-      // Saved token: parent dir created, file mode 0600, authenticates.
-      expect(statSync(tokenPath).mode & 0o777).toBe(0o600);
+      // Saved token: parent dir created, private access, authenticates.
+      if (process.platform === "win32") {
+        const [status] = await inspectWindowsPrivatePaths([{ path: tokenPath, kind: "file" }], {
+          protect: true,
+        });
+        expect(status?.private).toBe(true);
+      } else {
+        expect(statSync(tokenPath).mode & 0o777).toBe(0o600);
+      }
       const token = readFileSync(tokenPath, "utf8").trim();
       expect(token.length).toBeGreaterThan(8);
       const who = await fetch(`${harness.gatewayUrl}/whoami`, {
@@ -483,7 +492,8 @@ async function execCli(
     NO_COLOR: "1",
     CI: "1",
   };
-  const { stdout, stderr } = await execFileAsync("npx", ["tsx", CLI_ENTRY, ...args], {
+  const cli = e2eTsxCommand(CLI_ENTRY);
+  const { stdout, stderr } = await execFileAsync(cli.command, [...cli.args, ...args], {
     cwd: REPO_ROOT,
     env,
     timeout: CLI_TIMEOUT_MS,

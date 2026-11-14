@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
 import { SyncError } from "@omnesis/types";
+import { inspectWindowsPrivatePathSync } from "./windows-private-file.js";
 import {
   BrokerCredentialError,
   BrokeredCredentials,
@@ -135,7 +136,11 @@ describe("broker configuration and bindings", () => {
       { broker: "nango", connections: { default: BINDING.connections.gmail! } },
       cfg,
     );
-    expect(statSync(brokerBindingPath("notion", "ws-1", cfg)).mode & 0o777).toBe(0o600);
+    if (process.platform === "win32")
+      expect(
+        inspectWindowsPrivatePathSync(brokerBindingPath("notion", "ws-1", cfg), "file").private,
+      ).toBe(true);
+    else expect(statSync(brokerBindingPath("notion", "ws-1", cfg)).mode & 0o777).toBe(0o600);
   });
 
   test("the default purpose resolves to a lone connection, and an unbound purpose throws", () => {

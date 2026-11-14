@@ -697,10 +697,7 @@ class DurableStateTests(unittest.TestCase):
         _, replay = self.state.delivery_for_commit(wake["deliveryId"])
         self.assertTrue(replay["duplicate"])
         self.assertEqual(replay["localRunId"], "hermes:adl_fictional_1")
-        self.assertEqual(
-            stat.S_IMODE(self.path.stat().st_mode),
-            0o600,
-        )
+        _assert_private_fixture(self, self.path)
 
     def test_lost_ack_rotates_authority_without_changing_identity(self):
         wake = delivery()
@@ -4121,6 +4118,21 @@ class StatelessMcpAnswerTests(unittest.TestCase):
             )
 
 
+def _write_private_fixture(path, text, encoding="utf-8"):
+    if os.name == "nt":
+        adapter_module._windows_bridge("write", str(path.resolve()), text.encode(encoding))
+    else:
+        path.write_text(text, encoding=encoding)
+
+
+def _assert_private_fixture(test, path):
+    if os.name == "nt":
+        # Real native verified read proves the current owner-only DACL.
+        adapter_module._windows_bridge("read", str(path.resolve()))
+    else:
+        test.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
+
+
 class OAuthRefreshTests(unittest.TestCase):
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory()
@@ -4151,7 +4163,7 @@ class OAuthRefreshTests(unittest.TestCase):
                 },
             },
         }
-        self.path.write_text(json.dumps(self.raw), encoding="utf-8")
+        _write_private_fixture(self.path, json.dumps(self.raw), encoding="utf-8")
         os.chmod(self.path, 0o600)
         self.instance = adapter_module.OmnesisAdapter.for_tools()
         self.instance._credential_path = self.path
@@ -4308,7 +4320,7 @@ class OAuthRefreshTests(unittest.TestCase):
             (503, json.dumps({"error": "server_error"}).encode("utf-8")),
         ):
             with self.subTest(lost=lost):
-                self.path.write_text(json.dumps(self.raw), encoding="utf-8")
+                _write_private_fixture(self.path, json.dumps(self.raw), encoding="utf-8")
                 self.instance._credentials = adapter_module._load_credentials(self.path)
                 bodies = []
                 connection = self._http_connection_answering([lost, (200, rotated)], bodies)
@@ -4487,7 +4499,7 @@ class OAuthRefreshTests(unittest.TestCase):
         # reads it; refusing its fields would strand the installation.
         raw = json.loads(self.path.read_text(encoding="utf-8"))
         raw["somethingTheNextVersionAdds"] = {"any": "shape"}
-        self.path.write_text(json.dumps(raw), encoding="utf-8")
+        _write_private_fixture(self.path, json.dumps(raw), encoding="utf-8")
         loaded = adapter_module._load_credentials(self.path)
         self.assertEqual(loaded.management_token, "omn_management_example")
 
@@ -4498,11 +4510,14 @@ class OAuthRefreshTests(unittest.TestCase):
 
         def refresh_locked():
             captured["body"] = Path(f"{self.path}.refresh.lock").read_text(encoding="utf-8")
+            captured["alive"] = adapter_module._process_is_alive(int(captured["body"].strip()))
             return "access_new_fictional"
 
         with patch.object(self.instance, "_refresh_oauth_token_locked", refresh_locked):
             self.instance._refresh_oauth_token("access_old_fictional")
-        self.assertEqual(captured["body"].strip(), str(os.getpid()))
+        self.assertTrue(captured["alive"])
+        if os.name != "nt":
+            self.assertEqual(captured["body"].strip(), str(os.getpid()))
 
     def test_waits_for_the_exclusive_create_lease_held_by_node(self):
         lock_path = Path(f"{self.path}.refresh.lock")
@@ -4578,7 +4593,7 @@ class OAuthRefreshTests(unittest.TestCase):
     def test_keepalive_refreshes_a_quiet_credential(self):
         raw = json.loads(self.path.read_text(encoding="utf-8"))
         raw["oauth"]["tokensObtainedAt"] = 1
-        self.path.write_text(json.dumps(raw), encoding="utf-8")
+        _write_private_fixture(self.path, json.dumps(raw), encoding="utf-8")
         with patch.object(
             self.instance, "_refresh_oauth_token", return_value="access_new_fictional"
         ) as refresh:
@@ -4590,7 +4605,7 @@ class OAuthRefreshTests(unittest.TestCase):
         raw = json.loads(self.path.read_text(encoding="utf-8"))
         raw["oauth"]["tokens"] = {}
         raw["oauth"].update(oauth_extra)
-        self.path.write_text(json.dumps(raw), encoding="utf-8")
+        _write_private_fixture(self.path, json.dumps(raw), encoding="utf-8")
         self.instance._credentials = adapter_module._load_credentials(self.path)
 
     _REISSUED = {
@@ -4615,7 +4630,7 @@ class OAuthRefreshTests(unittest.TestCase):
         # load; the corpus tools answer with the repair.
         raw = json.loads(self.path.read_text(encoding="utf-8"))
         raw["oauth"]["clientInformation"] = {}
-        self.path.write_text(json.dumps(raw), encoding="utf-8")
+        _write_private_fixture(self.path, json.dumps(raw), encoding="utf-8")
         credentials = adapter_module._load_credentials(self.path)
         self.assertEqual(credentials.delivery_token, "omn_delivery_example")
         self.assertIsNone(credentials.oauth_client_id)
@@ -4676,9 +4691,9 @@ class OAuthRefreshTests(unittest.TestCase):
         record = adapter_module._pending_authorization_path(self.path)
         # A verifier no record dates is somebody's live attempt.
         self.assertFalse(adapter_module._refresh_keepalive_due(raw, now, self.path))
-        record.write_text(json.dumps({"expiresAt": now + 1}), encoding="utf-8")
+        _write_private_fixture(record, json.dumps({"expiresAt": now + 1}), encoding="utf-8")
         self.assertFalse(adapter_module._refresh_keepalive_due(raw, now, self.path))
-        record.write_text(json.dumps({"expiresAt": now}), encoding="utf-8")
+        _write_private_fixture(record, json.dumps({"expiresAt": now}), encoding="utf-8")
         self.assertTrue(adapter_module._refresh_keepalive_due(raw, now, self.path))
 
     def test_cross_origin_https_refresh_uses_system_trust(self):
@@ -4686,7 +4701,7 @@ class OAuthRefreshTests(unittest.TestCase):
         raw["oauth"]["discoveryState"]["authorizationServerMetadata"][
             "token_endpoint"
         ] = "https://auth.example.org/oauth/token"
-        self.path.write_text(json.dumps(raw), encoding="utf-8")
+        _write_private_fixture(self.path, json.dumps(raw), encoding="utf-8")
         self.instance._credentials = adapter_module._load_credentials(self.path)
         system_context = object()
         captured = {}
@@ -4762,7 +4777,7 @@ class OAuthRefreshTests(unittest.TestCase):
             "refresh_token": "refresh_rotated_elsewhere",
             "token_type": "Bearer",
         }
-        self.path.write_text(json.dumps(updated), encoding="utf-8")
+        _write_private_fixture(self.path, json.dumps(updated), encoding="utf-8")
         os.chmod(self.path, 0o600)
         calls = []
 
@@ -4874,7 +4889,7 @@ class OAuthRefreshTests(unittest.TestCase):
                 "refresh_token": "refresh_new_fictional",
                 "token_type": "Bearer",
             }
-            self.path.write_text(json.dumps(updated), encoding="utf-8")
+            _write_private_fixture(self.path, json.dumps(updated), encoding="utf-8")
             os.chmod(self.path, 0o600)
             return "access_new_fictional"
 
@@ -4923,7 +4938,7 @@ class OAuthRefreshTests(unittest.TestCase):
                 "token_type": "Bearer",
             }
             temporary = self.path.with_name(".cross-process-refresh.tmp")
-            temporary.write_text(json.dumps(updated), encoding="utf-8")
+            _write_private_fixture(temporary, json.dumps(updated), encoding="utf-8")
             os.chmod(temporary, 0o600)
             os.replace(temporary, self.path)
             return "access_new_fictional"
@@ -4961,7 +4976,7 @@ class OAuthRefreshTests(unittest.TestCase):
             "deliveryToken": "omn_delivery_legacy",
             "ingestionToken": "omn_ingestion_legacy",
         }
-        self.path.write_text(json.dumps(legacy), encoding="utf-8")
+        _write_private_fixture(self.path, json.dumps(legacy), encoding="utf-8")
         os.chmod(self.path, 0o600)
 
         loaded = adapter_module._load_credentials(self.path)
@@ -4990,7 +5005,7 @@ class OAuthRefreshTests(unittest.TestCase):
     def test_an_ask_without_tokens_and_nothing_approved_answers_with_the_repair(self):
         raw = json.loads(self.path.read_text(encoding="utf-8"))
         raw["oauth"]["tokens"] = {}
-        self.path.write_text(json.dumps(raw), encoding="utf-8")
+        _write_private_fixture(self.path, json.dumps(raw), encoding="utf-8")
         tool_adapter = adapter_module.OmnesisAdapter.for_tools()
         tool_adapter._credential_path = self.path
         tool_adapter._credentials = adapter_module._load_credentials(self.path)
@@ -5051,7 +5066,7 @@ class OAuthRefreshTests(unittest.TestCase):
         self.assertEqual(
             persisted["oauth"]["tokens"]["refresh_token"], "refresh_new_fictional"
         )
-        self.assertEqual(stat.S_IMODE(self.path.stat().st_mode), 0o600)
+        _assert_private_fixture(self, self.path)
         form = adapter_module.urllib.parse.parse_qs(captured["body"].decode("ascii"))
         self.assertEqual(form["refresh_token"], ["refresh_old_fictional"])
         self.assertEqual(form["client_id"], ["client_fictional"])
@@ -5067,7 +5082,7 @@ class OAuthRefreshTests(unittest.TestCase):
             "refresh_token": "refresh_rotated_elsewhere",
             "token_type": "Bearer",
         }
-        self.path.write_text(json.dumps(updated), encoding="utf-8")
+        _write_private_fixture(self.path, json.dumps(updated), encoding="utf-8")
         os.chmod(self.path, 0o600)
         self.instance._refresh_oauth_token_locked = Mock()
 
@@ -5076,7 +5091,7 @@ class OAuthRefreshTests(unittest.TestCase):
             "access_rotated_elsewhere",
         )
         self.instance._refresh_oauth_token_locked.assert_not_called()
-        self.assertEqual(stat.S_IMODE(self.path.stat().st_mode), 0o600)
+        _assert_private_fixture(self, self.path)
 
     def test_failed_refresh_keeps_existing_credentials_and_does_not_leak_response(self):
         injected = "private-response-must-not-leak"
@@ -5473,7 +5488,7 @@ class RegistrationTests(unittest.TestCase):
         }
         if capabilities is not None:
             credentials["capabilities"] = capabilities
-        path.write_text(json.dumps(credentials), encoding="utf-8")
+        _write_private_fixture(path, json.dumps(credentials), encoding="utf-8")
         context = Mock()
         with (
             patch.object(
@@ -5539,8 +5554,7 @@ class RegistrationTests(unittest.TestCase):
         with patch.dict(os.environ, {"HERMES_HOME": temp.name}):
             path = Path(temp.name) / "omnesis" / "integration.json"
             path.parent.mkdir(parents=True)
-            path.write_text(
-                json.dumps(
+            _write_private_fixture(path, json.dumps(
                     {
                         "gatewayUrl": "http://127.0.0.1:7600",
                         "deliveryToken": "omn_delivery_example",
@@ -5555,9 +5569,7 @@ class RegistrationTests(unittest.TestCase):
                         },
                         "capabilities": {"subscriptions": True},
                     }
-                ),
-                encoding="utf-8",
-            )
+                ), encoding="utf-8")
             context = Mock()
             with (
                 patch.object(
@@ -5592,7 +5604,7 @@ class RegistrationTests(unittest.TestCase):
             },
             "capabilities": {"subscriptions": True, "futureFlag": "kept"},
         }
-        path.write_text(json.dumps(original), encoding="utf-8")
+        _write_private_fixture(path, json.dumps(original), encoding="utf-8")
         with (
             patch.object(
                 adapter_module.OmnesisAdapter,
@@ -5775,8 +5787,7 @@ class ForwardedToolTests(unittest.TestCase):
         self.addCleanup(environment.stop)
         self.credentials_path = Path(self.directory.name) / "omnesis" / "integration.json"
         self.credentials_path.parent.mkdir(parents=True)
-        self.credentials_path.write_text(
-            json.dumps(
+        _write_private_fixture(self.credentials_path, json.dumps(
                 {
                     "gatewayUrl": "http://127.0.0.1:1",
                     "deliveryToken": "omn_delivery_example",
@@ -5791,9 +5802,7 @@ class ForwardedToolTests(unittest.TestCase):
                         },
                     },
                 }
-            ),
-            encoding="utf-8",
-        )
+            ), encoding="utf-8")
         self.instance = adapter_module.OmnesisAdapter.for_tools()
         self.addCleanup(
             lambda: self.instance._state.close()
@@ -5973,7 +5982,7 @@ class ForwardedToolTests(unittest.TestCase):
             tools = adapter_module._refresh_forwarded_tools(self.credentials_path, 3.0)
         self.assertEqual([tool["name"] for tool in tools], ["list_tables", "add_note"])
         cache = self.credentials_path.with_name("mcp-tools.json")
-        self.assertEqual(stat.S_IMODE(cache.stat().st_mode), 0o600)
+        _assert_private_fixture(self, cache)
         credentials = adapter_module._load_credentials(self.credentials_path)
         self.assertEqual(adapter_module._read_forwarded_tools_cache(cache, credentials), tools)
 
@@ -7052,14 +7061,14 @@ class GatewayTrustTests(unittest.TestCase):
             },
             "capabilities": {"subscriptions": True},
         }
-        self.path.write_text(json.dumps(self.raw), encoding="utf-8")
+        _write_private_fixture(self.path, json.dumps(self.raw), encoding="utf-8")
 
     def tearDown(self):
         adapter_module._SSL_CONTEXTS.clear()
         self.home.cleanup()
 
     def write(self, raw):
-        self.path.write_text(json.dumps(raw), encoding="utf-8")
+        _write_private_fixture(self.path, json.dumps(raw), encoding="utf-8")
 
     def test_the_loader_accepts_system_trust_or_the_exact_legacy_pin(self):
         loaded = adapter_module._load_credentials(self.path)
@@ -7313,6 +7322,133 @@ class GatewayTrustHandshakeTests(unittest.TestCase):
         port = self.serve("impostor", ("bare",))
         with self.assertRaises(ssl.SSLCertVerificationError):
             self.handshake(_pinned_credentials(self.minted["bare"]), port)
+
+
+class WindowsPersistenceRoutingTests(unittest.TestCase):
+    def test_secret_reads_and_writes_use_the_canonical_bridge(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "invented.json"
+            # The native bridge owns no-follow validation. Preserve the lexical
+            # absolute path, including macOS /var aliases, rather than resolving it.
+            expected = str(path.absolute())
+            with patch.object(Path, "resolve", side_effect=AssertionError("Bridge routing must not resolve aliases")), patch.object(adapter_module, "_uses_windows_files", return_value=True), patch.object(adapter_module, "_windows_bridge", return_value=b'{"invented":true}') as bridge:
+                self.assertEqual(adapter_module._read_private_text(path), '{"invented":true}')
+                bridge.assert_called_with("read", expected)
+                adapter_module._write_private_json(path, {"invented": True})
+                operation, target, data = bridge.call_args.args
+                self.assertEqual((operation, target), ("write", expected))
+                self.assertEqual(json.loads(data), {"invented": True})
+                self.assertFalse(path.exists())
+
+    def test_bridge_frames_complete_binary_writes_and_rejects_oversize_before_launch(self):
+        payload = b"\x00\xffinvented\n"
+        completed = types.SimpleNamespace(returncode=0, stdout=b"", stderr=b"")
+        with patch.object(adapter_module, "_windows_node_command", return_value=["fixture-node"]), patch.object(adapter_module.subprocess, "run", return_value=completed) as run:
+            adapter_module._windows_bridge("write", "invented.json", payload)
+            self.assertEqual(run.call_args.args[0], ["fixture-node", "framed-v1"])
+            frame = run.call_args.kwargs["input"]
+            magic = b"OMNESIS_HERMES_WRITE_V1\0"
+            self.assertEqual(frame[:len(magic)], magic)
+            self.assertEqual(int.from_bytes(frame[len(magic):len(magic) + 4], "little"), len(payload))
+            self.assertEqual(frame[len(magic) + 4:], payload + b"\0OMNESIS_HERMES_WRITE_COMMIT_V1\0")
+            run.reset_mock()
+            with patch.object(adapter_module, "_WINDOWS_WRITE_MAX_BYTES", len(payload) - 1):
+                with self.assertRaisesRegex(ValueError, "input limit"):
+                    adapter_module._windows_bridge("write", "invented.json", payload)
+            run.assert_not_called()
+
+    def test_windows_liveness_never_calls_python_console_signal_api(self):
+        with patch.object(adapter_module, "_uses_windows_files", return_value=True), patch.object(adapter_module, "_windows_bridge", return_value=b"false") as bridge, patch.object(adapter_module.os, "kill") as kill:
+            self.assertFalse(adapter_module._process_is_alive(12345))
+            bridge.assert_called_once_with("alive", "12345")
+            kill.assert_not_called()
+
+    def test_unsafe_pending_verifier_is_actionable_on_windows(self):
+        with patch.object(adapter_module, "_uses_windows_files", return_value=True), patch.object(adapter_module, "_windows_bridge", side_effect=PermissionError("invented unsafe ACL")):
+            with self.assertRaises(PermissionError):
+                adapter_module._authorization_pending({"oauth": {"codeVerifier": "invented"}}, Path("invented.json"), 1)
+
+    @unittest.skipUnless(os.name == "nt", "requires native Windows DACL and process APIs")
+    def test_native_bridge_privacy_and_joined_lease(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "invented [$&].json"
+            adapter_module._write_private_json(path, {"invented": "private value"})
+            self.assertEqual(json.loads(adapter_module._read_private_text(path)), {"invented": "private value"})
+            lock = Path(f"{path}.refresh.lock")
+            lease = adapter_module._acquire_refresh_lock(lock)
+            try:
+                self.assertEqual(int(lock.read_text().strip()), lease.process.pid)
+                self.assertTrue(adapter_module._process_is_alive(lease.process.pid))
+            finally:
+                adapter_module._release_owned_refresh_lock(lock, lease)
+            self.assertFalse(lock.exists())
+            self.assertEqual(lease.process.returncode, 0)
+            original = path.read_bytes()
+            command = str(Path(os.environ["SystemRoot"]) / "System32" / "icacls.exe")
+            subprocess.run([command, str(path), "/grant", "*S-1-1-0:(R)"], check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=20)
+            with self.assertRaises(PermissionError):
+                adapter_module._read_private_text(path)
+            self.assertEqual(path.read_bytes(), original)
+
+    @unittest.skipUnless(os.name == "nt", "requires native Windows inherited DACLs")
+    def test_state_directory_is_private_before_sqlite_writes_and_existing_sidecars_are_repaired(self):
+        with tempfile.TemporaryDirectory() as directory:
+            parent = Path(directory) / "state"
+            parent.mkdir()
+            path = parent / "integration.sqlite"
+            command = str(Path(os.environ["SystemRoot"]) / "System32" / "icacls.exe")
+            subprocess.run([command, str(parent), "/grant", "*S-1-1-0:(OI)(CI)(R)"], check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=20)
+            existing = sqlite3.connect(path)
+            existing.execute("PRAGMA journal_mode = WAL")
+            existing.execute("CREATE TABLE invented_existing(value TEXT)")
+            existing.execute("INSERT INTO invented_existing VALUES ('invented retained value')")
+            existing.commit()
+            self.assertTrue(Path(f"{path}-wal").exists())
+            self.assertTrue(Path(f"{path}-shm").exists())
+            started = time.perf_counter()
+            try:
+                state = adapter_module.DurableState(path)
+                try:
+                    self.assertEqual(state.connection.execute("SELECT value FROM invented_existing").fetchone()[0], "invented retained value")
+                    for file in [path, Path(f"{path}-wal"), Path(f"{path}-shm")]:
+                        self.assertEqual(json.loads(adapter_module._windows_bridge("inspect", str(file.absolute()))), {"private": True})
+                    # A future SQLite sidecar inherits private access before bytes.
+                    future = parent / "invented-future-sidecar"
+                    future.write_bytes(b"invented private inherited bytes")
+                    self.assertEqual(adapter_module._windows_bridge("read", str(future.absolute())), b"invented private inherited bytes")
+                finally:
+                    state.close()
+            finally:
+                existing.close()
+            print(f"Windows Hermes state preparation + 3 ACL inspections + inherited-file read: {(time.perf_counter() - started) * 1000:.1f} ms", flush=True)
+
+    def test_state_privacy_precedes_sqlite_and_preserves_an_open_error(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "state" / "integration.sqlite"
+            events = []
+            original = sqlite3.OperationalError("invented open failure")
+            def connect(_path):
+                events.append("sqlite")
+                raise original
+            with patch.object(adapter_module, "_uses_windows_files", return_value=True), patch.object(adapter_module, "_windows_bridge", side_effect=lambda *_args: events.append("private")), patch.object(adapter_module.sqlite3, "connect", side_effect=connect):
+                with self.assertRaises(sqlite3.OperationalError) as result:
+                    adapter_module.DurableState(path)
+            self.assertIs(result.exception, original)
+            self.assertEqual(events, ["private", "sqlite"])
+
+    def test_refused_state_directory_never_opens_sqlite(self):
+        with tempfile.TemporaryDirectory() as directory:
+            original = PermissionError("invented unsafe state owner")
+            with patch.object(adapter_module, "_uses_windows_files", return_value=True), patch.object(adapter_module, "_windows_bridge", side_effect=original), patch.object(adapter_module.sqlite3, "connect") as connect:
+                with self.assertRaises(PermissionError) as result:
+                    adapter_module.DurableState(Path(directory) / "integration.sqlite")
+                self.assertIs(result.exception, original)
+                connect.assert_not_called()
+
+    def test_error_bridge_never_repeats_secret_native_diagnostics(self):
+        with self.assertRaises(PermissionError) as result:
+            adapter_module._windows_bridge_error(b'invented-secret-not-json', "invented.json")
+        self.assertNotIn("invented-secret", str(result.exception))
 
 
 if __name__ == "__main__":

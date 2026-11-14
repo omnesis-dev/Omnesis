@@ -357,7 +357,7 @@ describe("serviceDefinitionUpdater", () => {
     const before = readFileSync(path, "utf8");
     await expect(updater.refresh("gateway")).resolves.toEqual({ kind: "replaced" });
     expect(readFileSync(path, "utf8")).toBe(current);
-    expect(statSync(path).mode & 0o777).toBe(0o600);
+    if (process.platform !== "win32") expect(statSync(path).mode & 0o777).toBe(0o600);
 
     await expect(updater.restore()).resolves.toEqual(["gateway"]);
     expect(readFileSync(path, "utf8")).toBe(before);

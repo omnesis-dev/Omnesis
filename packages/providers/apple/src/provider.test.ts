@@ -9,7 +9,8 @@
  * database costs exactly the sources that read it, and nothing else.
  */
 
-import { chmodSync, existsSync, rmSync } from "node:fs";
+import { existsSync, rmSync } from "node:fs";
+import { setFixtureMode } from "@omnesis/source-sdk/testing";
 import { describe, expect, test, beforeEach, afterEach } from "vitest";
 import {
   canDenyReads,
@@ -38,7 +39,7 @@ describe("AppleProvider — per-database tolerance", () => {
   test.skipIf(!canDenyReads)(
     "an unreadable Notes database leaves the other databases open and usable",
     async () => {
-      chmodSync(fixture.notesPath, 0o000);
+      setFixtureMode(fixture.notesPath, 0o000);
 
       await expect(fixture.provider.authenticate()).resolves.toBeUndefined();
 
@@ -49,7 +50,7 @@ describe("AppleProvider — per-database tolerance", () => {
   );
 
   test.skipIf(!canDenyReads)("the failure is attributed to Notes and no one else", async () => {
-    chmodSync(fixture.notesPath, 0o000);
+    setFixtureMode(fixture.notesPath, 0o000);
     await fixture.provider.authenticate();
 
     expect(fixture.provider.getNotesOpenFailure()).toMatchObject({ kind: "denied" });
@@ -67,7 +68,7 @@ describe("AppleProvider — per-database tolerance", () => {
         fixture.calendarPath,
         fixture.callLogPath,
       ]) {
-        chmodSync(path, 0o000);
+        setFixtureMode(path, 0o000);
       }
 
       await expect(fixture.provider.authenticate()).rejects.toThrow(/full disk access/i);
@@ -97,11 +98,11 @@ describe("AppleProvider — per-database tolerance", () => {
   test.skipIf(!canDenyReads)(
     "a database that becomes readable again opens, without a restart",
     async () => {
-      chmodSync(fixture.notesPath, 0o000);
+      setFixtureMode(fixture.notesPath, 0o000);
       await fixture.provider.authenticate();
       expect(fixture.provider.getNotesDb()).toBeNull();
 
-      chmodSync(fixture.notesPath, 0o644);
+      setFixtureMode(fixture.notesPath, 0o644);
 
       expect(fixture.provider.getNotesDb()).not.toBeNull();
       expect(fixture.provider.getNotesOpenFailure()).toBeNull();
@@ -111,11 +112,11 @@ describe("AppleProvider — per-database tolerance", () => {
   // A denial that outlives the database it was recorded against would tell the
   // operator to grant access to a file that is no longer there.
   test.skipIf(!canDenyReads)("a database that disappears stops being a failure", async () => {
-    chmodSync(fixture.notesPath, 0o000);
+    setFixtureMode(fixture.notesPath, 0o000);
     await fixture.provider.authenticate();
     expect(fixture.provider.getNotesOpenFailure()).not.toBeNull();
 
-    chmodSync(fixture.notesPath, 0o644);
+    setFixtureMode(fixture.notesPath, 0o644);
     rmSync(fixture.notesPath, { force: true });
 
     expect(fixture.provider.getNotesDb()).toBeNull();

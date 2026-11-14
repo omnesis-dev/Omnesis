@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import { delimiter, dirname } from "node:path";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import {
   harnessRestartQuestion,
@@ -78,7 +79,7 @@ describe("restartHarness", () => {
     expect(restart?.mode).toBe("inherit");
     expect(restart?.spec.env?.OPENCLAW_STATE_DIR).toBe("/home/example/.openclaw");
     // The executable's own directory leads PATH, so a service-manager PATH still finds node.
-    expect(restart?.spec.env?.PATH?.split(":")[0]).toBe("/opt/example/bin");
+    expect(restart?.spec.env?.PATH?.split(delimiter)[0]).toBe(dirname("/opt/example/bin/openclaw"));
   });
 
   test("a declined restart runs nothing and names the command", async () => {
@@ -246,7 +247,13 @@ describe("reloadConnectedHarness", () => {
 describe("spawnHarnessCommand", () => {
   test("captures stdout and the exit code", async () => {
     await expect(
-      spawnHarnessCommand({ command: "sh", args: ["-c", "echo ready; exit 3"] }, "capture"),
+      spawnHarnessCommand(
+        {
+          command: process.execPath,
+          args: ["-e", 'process.stdout.write("ready\\n"); process.exitCode=3'],
+        },
+        "capture",
+      ),
     ).resolves.toEqual({ code: 3, stdout: "ready\n" });
   });
 
@@ -258,7 +265,11 @@ describe("spawnHarnessCommand", () => {
 
   test("the spec's environment reaches the command", async () => {
     const result = await spawnHarnessCommand(
-      { command: "sh", args: ["-c", 'printf %s "$HERMES_HOME"'], env: { HERMES_HOME: "/h" } },
+      {
+        command: process.execPath,
+        args: ["-e", "process.stdout.write(process.env.HERMES_HOME)"],
+        env: { HERMES_HOME: "/h" },
+      },
       "capture",
     );
     expect(result.stdout).toBe("/h");

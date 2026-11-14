@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { execFileSync, spawn, type ChildProcess } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { hostname, tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -17,6 +17,18 @@ import {
 
 let dir: string;
 let sleeper: ChildProcess | null;
+let ownedRacers: Map<ChildProcess, Promise<void>>;
+let stoppingRacers: boolean;
+function trackRacer(racer: ChildProcess): ChildProcess {
+  ownedRacers.set(racer, new Promise<void>((resolve) => racer.once("close", () => resolve())));
+  return racer;
+}
+async function stopRacers(racers: readonly ChildProcess[]): Promise<void> {
+  for (const racer of racers) {
+    if (racer.exitCode === null && racer.signalCode === null) racer.kill("SIGKILL");
+  }
+  await Promise.all(racers.map((racer) => ownedRacers.get(racer)));
+}
 
 /** A live process that is not this one, so liveness is tested for real. */
 async function spawnSleeper(): Promise<number> {
@@ -28,6 +40,8 @@ async function spawnSleeper(): Promise<number> {
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), "omnesis-gateway-lock-"));
   sleeper = null;
+  ownedRacers = new Map();
+  stoppingRacers = false;
 });
 
 describe.skipIf(process.platform === "win32")("macOS process identity across locales", () => {
@@ -228,7 +242,87 @@ describe.skipIf(process.platform !== "linux")("Linux gateway lifetime lease", ()
   });
 });
 
+describe("Windows process ownership records", () => {
+  it("keeps a same-process Windows claim live", () => {
+    writeFileSync(
+      join(dir, GATEWAY_LOCK_FILE),
+      JSON.stringify({
+        pid: process.pid,
+        processStart: null,
+        hostname: hostname(),
+        startedAt: new Date().toISOString(),
+        locking: "windows-process-v1",
+        leaseId: "current-claim",
+      }),
+    );
+    expect(liveGatewayHolder(dir)).toMatchObject({
+      pid: process.pid,
+      locking: "windows-process-v1",
+    });
+  });
+
+  it("rejects a same-process Windows claim with another start identity", () => {
+    writeFileSync(
+      join(dir, GATEWAY_LOCK_FILE),
+      JSON.stringify({
+        pid: process.pid,
+        processStart: "retired-process-start",
+        hostname: hostname(),
+        startedAt: new Date().toISOString(),
+        locking: "windows-process-v1",
+      }),
+    );
+    expect(liveGatewayHolder(dir)).toBeNull();
+  });
+});
+
+describe.skipIf(process.platform !== "win32")("Windows gateway claim guard", () => {
+  it("records a start identity and refuses a duplicate in the same process", async () => {
+    const lock = await acquireGatewayLock(dir, { waitMs: 0 });
+    try {
+      expect(readGatewayLockHolder(dir)).toMatchObject({
+        pid: process.pid,
+        processStart: expect.stringMatching(/^[0-9]+$/u),
+        locking: "windows-process-v1",
+        leaseId: expect.any(String),
+      });
+      await expect(acquireGatewayLock(dir, { waitMs: 0 })).rejects.toBeInstanceOf(
+        GatewayLockHeldError,
+      );
+    } finally {
+      lock.release();
+    }
+  });
+
+  it("accepts guard paths containing spaces and PowerShell metacharacters", async () => {
+    const nested = join(dir, "space ' quote $() ; bracket [name]");
+    mkdirSync(nested);
+    const lock = await acquireGatewayLock(nested, { waitMs: 0 });
+    expect(liveGatewayHolder(nested)?.pid).toBe(process.pid);
+    lock.release();
+    expect(liveGatewayHolder(nested)).toBeNull();
+  });
+
+  it("never releases a successor's claim with the same PID", async () => {
+    const previous = await acquireGatewayLock(dir, { waitMs: 0 });
+    const record = readGatewayLockHolder(dir)!;
+    writeFileSync(previous.path, JSON.stringify({ ...record, leaseId: "successor-claim" }));
+    previous.release();
+    expect(readGatewayLockHolder(dir)?.leaseId).toBe("successor-claim");
+  });
+
+  it("rejects an invalid guard path instead of retrying forever", async () => {
+    mkdirSync(join(dir, `${GATEWAY_LOCK_FILE}.guard`));
+    await expect(acquireGatewayLock(dir, { waitMs: 0 })).rejects.toThrow(
+      "exited before acquiring gateway guard",
+    );
+    expect(readGatewayLockHolder(dir)).toBeNull();
+  });
+});
+
 afterEach(async () => {
+  stoppingRacers = true;
+  await stopRacers([...ownedRacers.keys()]);
   vi.unstubAllEnvs();
   if (sleeper && sleeper.exitCode === null && sleeper.signalCode === null) {
     sleeper.kill("SIGKILL");
@@ -320,7 +414,7 @@ describe("acquireGatewayLock", () => {
         (error) => { process.stdout.write("held:" + error.name); process.exit(0); },
       );
     `;
-    for (let round = 0; round < 5; round++) {
+    for (let round = 0; round < 5 && !stoppingRacers; round++) {
       writeFileSync(
         join(dir, GATEWAY_LOCK_FILE),
         JSON.stringify({
@@ -331,10 +425,12 @@ describe("acquireGatewayLock", () => {
         }),
       );
       const racers = Array.from({ length: 6 }, () =>
-        spawn(process.execPath, ["--import", "tsx", "--input-type=module", "-e", script], {
-          cwd: join(import.meta.dirname, "../../.."),
-          stdio: ["ignore", "pipe", "ignore"],
-        }),
+        trackRacer(
+          spawn(process.execPath, ["--import", "tsx", "--input-type=module", "-e", script], {
+            cwd: join(import.meta.dirname, "../../.."),
+            stdio: ["ignore", "pipe", "ignore"],
+          }),
+        ),
       );
       const outcomes = await Promise.all(
         racers.map(
@@ -355,18 +451,7 @@ describe("acquireGatewayLock", () => {
         const winner = racers[outcomes.indexOf("won")]!;
         expect(readGatewayLockHolder(dir)?.pid).toBe(winner.pid);
       } finally {
-        for (const racer of racers) {
-          if (racer.exitCode === null && racer.signalCode === null) racer.kill("SIGKILL");
-        }
-        await Promise.all(
-          racers.map(
-            (racer) =>
-              new Promise<void>((resolve) => {
-                if (racer.exitCode !== null || racer.signalCode !== null) resolve();
-                else racer.once("exit", () => resolve());
-              }),
-          ),
-        );
+        await stopRacers(racers);
       }
     }
   });

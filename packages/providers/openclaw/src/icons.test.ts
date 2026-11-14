@@ -11,8 +11,9 @@ describe("openclaw source identity", () => {
     expect(uri).toMatch(/^data:image\/svg[+]xml;base64,/);
     const original = readFileSync(
       new URL("../../../gateway/portal/img/agents/openclaw.svg", import.meta.url),
-    );
-    expect(Buffer.from(uri!.split(",")[1], "base64")).toEqual(original);
+      "utf8",
+    ).replace(/\r\n/g, "\n");
+    expect(Buffer.from(uri!.split(",")[1], "base64").toString("utf8")).toBe(original);
     expect(source.icon?.url).toBeUndefined();
     expect(source.icon?.sfSymbol).toBeTruthy();
   });

@@ -25,9 +25,10 @@
  * run driver for a file that is at most a few kilobytes.
  */
 
-import { readFileSync, rmSync, statSync, type Stats } from "node:fs";
+import { readFileSync, statSync, type Stats } from "node:fs";
+import { rm } from "node:fs/promises";
 import { join } from "node:path";
-import { atomicWriteFileSync, createLogger, OPERATOR_INSTRUCTIONS_FILENAME } from "@omnesis/core";
+import { atomicWriteFile, createLogger, OPERATOR_INSTRUCTIONS_FILENAME } from "@omnesis/core";
 
 const log = createLogger("gateway:instructions");
 
@@ -161,6 +162,7 @@ const ABSENT: OperatorInstructions = {
 export class OperatorInstructionsStore {
   private readonly file: string;
   private cache: CacheEntry | null = null;
+  private mutations: Promise<void> = Promise.resolve();
 
   constructor(configDir: string) {
     this.file = join(configDir, OPERATOR_INSTRUCTIONS_FILENAME);
@@ -261,25 +263,41 @@ export class OperatorInstructionsStore {
    * read: passing it turns a blind overwrite into a conflict when someone else
    * (a terminal editor, another portal tab) has written since.
    */
-  write(content: string, opts: ExpectedVersion = {}): OperatorInstructions {
-    const bytes = Buffer.byteLength(content, "utf8");
-    if (bytes > MAX_OPERATOR_INSTRUCTIONS_BYTES) throw new OperatorInstructionsTooLargeError(bytes);
-    this.assertRegularFile();
-    this.assertUnchanged(opts);
-    atomicWriteFileSync(this.file, content, { mode: 0o600, ensureDir: true });
-    this.cache = null;
-    return this.read();
+  write(content: string, opts: ExpectedVersion = {}): Promise<OperatorInstructions> {
+    return this.mutate(async () => {
+      const bytes = Buffer.byteLength(content, "utf8");
+      if (bytes > MAX_OPERATOR_INSTRUCTIONS_BYTES)
+        throw new OperatorInstructionsTooLargeError(bytes);
+      this.assertRegularFile();
+      this.assertUnchanged(opts);
+      await atomicWriteFile(this.file, content, { mode: 0o600, ensureDir: true });
+      this.cache = null;
+      return this.read();
+    });
   }
 
   /** Delete the file. Returns false when there was nothing to delete. */
-  remove(opts: ExpectedVersion = {}): boolean {
-    this.assertRegularFile();
-    const before = this.read();
-    this.assertUnchanged(opts);
-    if (!before.exists) return false;
-    rmSync(this.file, { force: true });
-    this.cache = null;
-    return true;
+  remove(opts: ExpectedVersion = {}): Promise<boolean> {
+    return this.mutate(async () => {
+      this.assertRegularFile();
+      const before = this.read();
+      this.assertUnchanged(opts);
+      if (!before.exists) return false;
+      await rm(this.file, { force: true });
+      this.cache = null;
+      return true;
+    });
+  }
+
+  /** Serialize mutations and their version checks without blocking synchronous prompt reads. */
+  private mutate<T>(operation: () => Promise<T>): Promise<T> {
+    const result = this.mutations.then(operation);
+    // Only the continuation absorbs errors; the mutation's caller keeps its rejection.
+    this.mutations = result.then(
+      () => undefined,
+      () => undefined,
+    );
+    return result;
   }
 
   /**

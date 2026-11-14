@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { isToolResultError } from "openclaw/plugin-sdk/agent-harness-runtime";
 import { afterEach, describe, expect, test, vi } from "vitest";
+import { writePrivateFixture as writeFileSync } from "../test/private-fixtures.js";
 
 import { AgentIntegrationClient } from "./client.js";
 import {

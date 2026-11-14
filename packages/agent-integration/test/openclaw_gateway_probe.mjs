@@ -15,18 +15,20 @@ import { randomBytes } from "node:crypto";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { createRequire } from "node:module";
 import { promisify } from "node:util";
-
 import { startFictionalGateway } from "./fictional-mcp-gateway.ts";
+import { listPublishablePackages, stagePackage } from "../../../scripts/release/stage-packages.mjs";
+
+const require = createRequire(import.meta.url);
+const { resolveNpmInvocation } = await import(
+  new URL("./node-command.ts", pathToFileURL(require.resolve("@omnesis/core"))).href
+);
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
-const openClawBin = join(
-  repositoryRoot,
-  "node_modules",
-  ".bin",
-  process.platform === "win32" ? "openclaw.cmd" : "openclaw",
-);
+// Execute the pinned package entry directly; Windows cannot exec a .cmd shim.
+const openClawEntry = join(repositoryRoot, "node_modules", "openclaw", "openclaw.mjs");
 
 function delay(milliseconds) {
   return new Promise((resolveDelay) => setTimeout(resolveDelay, milliseconds));
@@ -88,8 +90,9 @@ const GATEWAY_TOKEN = randomBytes(24).toString("hex");
 async function invokeTool(environment, port, name, args, deadline = Date.now() + 30_000) {
   for (;;) {
     const { stdout } = await promisify(execFile)(
-      openClawBin,
+      process.execPath,
       [
+        openClawEntry,
         "gateway",
         "call",
         "tools.invoke",
@@ -112,11 +115,32 @@ async function invokeTool(environment, port, name, args, deadline = Date.now() +
 }
 
 try {
+  // The standalone archive includes canonical private helpers rather than
+  // depending on an unpublished workspace package at plugin installation.
+  const compiler = join(repositoryRoot, "node_modules", "typescript", "bin", "tsc");
   execFileSync(
-    "npm",
-    ["pack", "./packages/agent-integration", "--pack-destination", probeRoot, "--silent"],
-    { cwd: repositoryRoot, stdio: "ignore" },
+    process.execPath,
+    [
+      compiler,
+      "--build",
+      join(repositoryRoot, "packages", "platform"),
+      join(repositoryRoot, "packages", "agent-integration"),
+    ],
+    { cwd: repositoryRoot, stdio: ["ignore", "pipe", "pipe"] },
   );
+  const integration = listPublishablePackages().find(
+    ({ pkg }) => pkg.name === "@omnesis/agent-integration",
+  );
+  if (!integration) throw new Error("Missing standalone integration package");
+  const stagedIntegration = stagePackage(integration, join(probeRoot, "staging"));
+  const npmPack = await resolveNpmInvocation([
+    "pack",
+    stagedIntegration,
+    "--pack-destination",
+    probeRoot,
+    "--silent",
+  ]);
+  execFileSync(npmPack.command, npmPack.args, { cwd: repositoryRoot, stdio: "ignore" });
   const archive = readdirSync(probeRoot).find((file) => file.endsWith(".tgz"));
   if (!archive) throw new Error("npm pack did not produce an OpenClaw plugin archive");
 
@@ -162,8 +186,9 @@ try {
   // The pinned OpenClaw gates plugin installs on capability consent, which
   // `omnesis connect` gives on the operator's behalf; the probe does the same.
   execFileSync(
-    openClawBin,
+    process.execPath,
     [
+      openClawEntry,
       "plugins",
       "install",
       "--force",
@@ -174,8 +199,8 @@ try {
   );
   const inspection = JSON.parse(
     execFileSync(
-      openClawBin,
-      ["plugins", "inspect", "omnesis-integration", "--runtime", "--json"],
+      process.execPath,
+      [openClawEntry, "plugins", "inspect", "omnesis-integration", "--runtime", "--json"],
       {
         cwd: repositoryRoot,
         env: environment,
@@ -254,8 +279,9 @@ try {
     if (chunks.length > 200) chunks.splice(0, chunks.length - 200);
   };
   gateway = spawn(
-    openClawBin,
+    process.execPath,
     [
+      openClawEntry,
       "gateway",
       "run",
       "--port",

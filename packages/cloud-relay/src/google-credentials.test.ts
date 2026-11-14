@@ -1,14 +1,16 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, stat, writeFile, symlink } from "node:fs/promises";
 import * as files from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomBytes } from "node:crypto";
+import * as core from "@omnesis/core";
 import { SignJWT } from "jose";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import {
+  savePrivateJson,
   saveGoogleCredentials,
   googleRoutingTokenSource,
   googleRelaySessionSource,
@@ -29,6 +31,7 @@ let dir: string;
 let file: string;
 beforeEach(async () => {
   dir = await mkdtemp(join(tmpdir(), "omnesis-google-credentials-"));
+  if (process.platform === "win32") await core.ensurePrivateDirs([dir]);
   file = join(dir, "private", "credentials.json");
 });
 afterEach(async () => {
@@ -56,8 +59,10 @@ async function credentials(
 test("writes credentials atomically with private permissions and verifies cached identity locally", async () => {
   const first = await credentials();
   await saveGoogleCredentials(file, clientId, first);
-  expect((await stat(file)).mode & 0o777).toBe(0o600);
-  expect((await stat(join(dir, "private"))).mode & 0o777).toBe(0o700);
+  if (process.platform !== "win32") {
+    expect((await stat(file)).mode & 0o777).toBe(0o600);
+    expect((await stat(join(dir, "private"))).mode & 0o777).toBe(0o700);
+  }
   const fetch = vi.fn<typeof globalThis.fetch>();
   const source = googleRoutingTokenSource({ credentialsFile: file, clientId, identity, fetch });
   expect(await source()).toEqual({
@@ -140,9 +145,14 @@ test("a fresh login without offline consent persists no refresh token", async ()
 
 test("credential files are bounded and validated before contacting Google", async () => {
   await writeFile(join(dir, "large.json"), "x".repeat(65_537));
-  await expect(
-    googleRoutingTokenSource({ credentialsFile: join(dir, "large.json"), clientId, identity })(),
-  ).rejects.toThrow("too large");
+  const oversized = googleRoutingTokenSource({
+    credentialsFile: join(dir, "large.json"),
+    clientId,
+    identity,
+  })();
+  if (process.platform === "win32")
+    await expect(oversized).rejects.toMatchObject({ code: "EPRIVATE" });
+  else await expect(oversized).rejects.toThrow("too large");
   await writeFile(join(dir, "invalid.json"), "{}");
   await expect(
     googleRoutingTokenSource({ credentialsFile: join(dir, "invalid.json"), clientId, identity })(),
@@ -207,7 +217,9 @@ test("relay exchange checks account, lifetime and response bounds and saves only
       fetch: transport,
     }),
   ).toEqual(session);
-  expect((await stat(sessionFile)).mode & 0o777).toBe(0o600);
+  if (process.platform !== "win32") {
+    expect((await stat(sessionFile)).mode & 0o777).toBe(0o600);
+  }
   expect(JSON.parse(await readFile(sessionFile, "utf8"))).toEqual(session);
   for (const value of [
     { ...session, accountId: "a".repeat(64) },
@@ -307,3 +319,83 @@ test("long-running gateway session refresh is single-flight and retries transien
   expect(await source()).toBe("relay-token-3");
   expect(transport).toHaveBeenCalledTimes(3);
 });
+
+test("Windows JSON uses the bounded held private reader and preserves missing and unsafe errors", async () => {
+  const descriptor = Object.getOwnPropertyDescriptor(process, "platform")!;
+  const read = vi
+    .spyOn(core, "readWindowsPrivateFile")
+    .mockResolvedValueOnce(Buffer.from('{"fixture":"owned"}'));
+  Object.defineProperty(process, "platform", { ...descriptor, value: "win32" });
+  try {
+    expect(await readPrivateJson(file)).toEqual({ fixture: "owned" });
+    expect(read).toHaveBeenCalledWith(file, 65_536);
+    for (const code of ["ENOENT", "EPRIVATE"]) {
+      const failure = Object.assign(new Error("Invented private read refusal"), { code });
+      read.mockRejectedValueOnce(failure);
+      await expect(readPrivateJson(file)).rejects.toBe(failure);
+    }
+  } finally {
+    Object.defineProperty(process, "platform", descriptor);
+  }
+});
+
+test("missing credentials stay absent while an existing non-directory ancestor fails closed", async () => {
+  await expect(readPrivateJson(join(dir, "absent.json"))).rejects.toMatchObject({ code: "ENOENT" });
+  await expect(readPrivateJson(join(dir, "missing-parent", "absent.json"))).rejects.toMatchObject({
+    code: "ENOENT",
+  });
+  const obstruction = join(dir, "owned-obstruction");
+  await writeFile(obstruction, "invented existing file");
+  await expect(readPrivateJson(join(obstruction, "missing.json"))).rejects.toMatchObject({
+    code: process.platform === "win32" ? "EPRIVATE" : "ENOTDIR",
+  });
+  expect(await readFile(obstruction, "utf8")).toBe("invented existing file");
+});
+
+test.skipIf(process.platform !== "win32")(
+  "Windows private JSON refuses an unsafe owned file DACL without changing bytes",
+  async () => {
+    const path = join(dir, "owned-unsafe.json");
+    const value = { token: "invented private credential" };
+    await savePrivateJson(path, value);
+    expect(await readPrivateJson(path)).toEqual(value);
+    try {
+      await core.execWindowsJob(join(process.env.SystemRoot!, "System32", "icacls.exe"), [
+        path,
+        "/grant",
+        "*S-1-1-0:(R)",
+        "/Q",
+      ]);
+      expect(core.inspectWindowsPrivatePathSync(path, "file").private).toBe(false);
+      await expect(readPrivateJson(path)).rejects.toMatchObject({ code: "EPRIVATE" });
+      expect(JSON.parse(await readFile(path, "utf8"))).toEqual(value);
+    } finally {
+      const restored = await core.inspectWindowsPrivatePaths([{ path, kind: "file" }], {
+        repair: true,
+        protect: true,
+      });
+      expect(restored[0]?.private).toBe(true);
+    }
+  },
+);
+
+test.skipIf(process.platform !== "win32")(
+  "Windows private JSON refuses a junction ancestor while the original remains readable",
+  async () => {
+    const target = join(dir, "owned-target");
+    const path = join(target, "credentials.json");
+    const value = { token: "invented junction fixture" };
+    await savePrivateJson(path, value);
+    expect(await readPrivateJson(path)).toEqual(value);
+    const alias = join(dir, "owned-alias");
+    await symlink(target, alias, "junction");
+    try {
+      await expect(readPrivateJson(join(alias, "credentials.json"))).rejects.toMatchObject({
+        code: "EPRIVATE",
+      });
+      expect(await readPrivateJson(path)).toEqual(value);
+    } finally {
+      await rm(alias, { recursive: true });
+    }
+  },
+);

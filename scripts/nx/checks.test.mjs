@@ -17,7 +17,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { pathToFileURL } from "node:url";
-import { afterEach, describe, expect, test, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import {
   allE2EBundles,
   behavioralBundles,
@@ -62,6 +62,7 @@ describe("Nx change selection", () => {
     ]);
     expect(behavioralBundles(["packages/gateway/src/search/hybrid.ts"])).toContain("search-graph");
     expect(behavioralBundles(["packages/config/src/config-schema.ts"])).toContain("gateway-core");
+    expect(behavioralBundles(["packages/platform/src/windows-job.ts"])).toContain("gateway-core");
     expect(behavioralBundles(["packages/gateway/portal/js/view.ts"])).toEqual(["portal"]);
     expect(behavioralBundles(["ios/Sources/Omnesis/App.swift"])).toEqual(["ios-logic"]);
     expect(behavioralBundles(["ios/Sources/Omnesis/UI/SettingsView.swift"])).toEqual([
@@ -349,42 +350,47 @@ describe("Nx change selection", () => {
     expect(state.files).toContain("kept.ts");
   });
 
-  test("the Nx parent forwards cancellation and exits after child cleanup", async () => {
-    const root = mkdtempSync(join(tmpdir(), "omnesis-nx-cancel-"));
-    roots.push(root);
-    const ready = join(root, "ready");
-    const terminated = join(root, "terminated");
-    const childScript = join(root, "child.mjs");
-    const parentScript = join(root, "parent.mjs");
-    writeFileSync(
-      childScript,
-      `import fs from "node:fs";
+  // Windows does not deliver catchable POSIX SIGTERM to a Node child.
+  // Owned Windows job cancellation and descendant joining have portable tests.
+  test.skipIf(process.platform === "win32")(
+    "the POSIX Nx parent forwards cancellation and exits after child cleanup",
+    async () => {
+      const root = mkdtempSync(join(tmpdir(), "omnesis-nx-cancel-"));
+      roots.push(root);
+      const ready = join(root, "ready");
+      const terminated = join(root, "terminated");
+      const childScript = join(root, "child.mjs");
+      const parentScript = join(root, "parent.mjs");
+      writeFileSync(
+        childScript,
+        `import fs from "node:fs";
 fs.writeFileSync(${JSON.stringify(ready)}, "ready");
 process.on("SIGTERM", () => { fs.writeFileSync(${JSON.stringify(terminated)}, "terminated"); process.exit(0); });
 setInterval(() => {}, 1000);
 `,
-    );
-    writeFileSync(
-      parentScript,
-      `import { execute } from ${JSON.stringify(pathToFileURL(join(originalCwd, "scripts/nx/checks.mjs")).href)};
+      );
+      writeFileSync(
+        parentScript,
+        `import { execute } from ${JSON.stringify(pathToFileURL(join(originalCwd, "scripts/nx/checks.mjs")).href)};
 try { process.exitCode = await execute(process.execPath, [${JSON.stringify(childScript)}]); }
 catch { process.exitCode = 1; }
 `,
-    );
-    const parent = spawn(process.execPath, [parentScript], {
-      cwd: originalCwd,
-      stdio: "ignore",
-    });
-    for (let attempt = 0; attempt < 100 && !existsSync(ready); attempt += 1) await sleep(20);
-    expect(existsSync(ready)).toBe(true);
-    parent.kill("SIGTERM");
-    const exit = await new Promise((resolve, reject) => {
-      parent.once("error", reject);
-      parent.once("exit", (code, signal) => resolve({ code, signal }));
-    });
-    expect(exit).toEqual({ code: 1, signal: null });
-    expect(readFileSync(terminated, "utf8")).toBe("terminated");
-  });
+      );
+      const parent = spawn(process.execPath, [parentScript], {
+        cwd: originalCwd,
+        stdio: "ignore",
+      });
+      for (let attempt = 0; attempt < 100 && !existsSync(ready); attempt += 1) await sleep(20);
+      expect(existsSync(ready)).toBe(true);
+      parent.kill("SIGTERM");
+      const exit = await new Promise((resolve, reject) => {
+        parent.once("error", reject);
+        parent.once("exit", (code, signal) => resolve({ code, signal }));
+      });
+      expect(exit).toEqual({ code: 1, signal: null });
+      expect(readFileSync(terminated, "utf8")).toBe("terminated");
+    },
+  );
 
   test.each([false, true])(
     "the Android render validation bundle verifies tracked goldens (inherited plan: %s)",
@@ -438,6 +444,7 @@ fs.writeFileSync(process.env.OMNESIS_ARGS_OUTPUT, JSON.stringify(process.argv.sl
 });
 
 describe("Nx query failures", () => {
+  beforeEach(() => vi.stubEnv("FORCE_COLOR", "0"));
   /** A command that behaves as `script` says, with `runs` counting its starts. */
   function command(script) {
     const root = mkdtempSync(join(tmpdir(), "omnesis-nx-query-"));
@@ -484,7 +491,8 @@ console.log(JSON.stringify(["alpha"]));
 
     expect(query.runs()).toBe(2);
     const warning = warned.mock.calls.map(([text]) => String(text)).join("");
-    expect(warning).toContain(`${query.path} show was killed by SIGKILL`);
+    if (process.platform === "win32") expect(warning).toMatch(/show exited [1-9]\d*/u);
+    else expect(warning).toContain(`${query.path} show was killed by SIGKILL`);
     expect(warning).toContain("Trying once more.");
   });
 

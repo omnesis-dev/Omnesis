@@ -25,7 +25,11 @@ import { promisify } from "node:util";
 
 import {
   createLogger,
+  nodeCommandInvocation,
+  spawnWindowsJob,
+  execWindowsJob,
   readPackageVersion,
+  atomicWriteFile,
   type AgentContextAssessment,
   type AgentEvent,
   type Logger,
@@ -34,6 +38,7 @@ import {
 
 import { readJsonRpcLines, encodeJsonRpcLine } from "./json-rpc-lines.js";
 import { markActivity } from "./activity.js";
+import { codexPoolAuthOwner, prepareCodexPrivateState } from "./codex-private-state.js";
 import { toolInputJsonSchema } from "./zod-to-json-schema.js";
 import { stripLocalTimeAnnotationsDeep } from "./local-times.js";
 import { serializeToolResultForModel } from "./tool-result-text.js";
@@ -573,7 +578,9 @@ export class CodexAppServerRuntime {
   }
 
   private async startClient(): Promise<CodexJsonRpcClient> {
-    await ensureCodexRuntimeDirs(this.codexHome, this.workspaceDir);
+    const owner = codexPoolAuthOwner(this);
+    if (process.platform === "win32" && owner) await prepareCodexPrivateState([owner.home]);
+    await ensureRuntimeDirs(this.codexHome, this.workspaceDir, owner?.path);
     const commandInfo = await this.resolveCommandInfo();
     await assertSupportedCodexRuntime({
       command: commandInfo.command,
@@ -1157,6 +1164,24 @@ export async function ensureCodexRuntimeDirs(
   codexHome: string,
   workspaceDir: string,
 ): Promise<void> {
+  await ensureRuntimeDirs(codexHome, workspaceDir);
+}
+
+async function ensureRuntimeDirs(
+  codexHome: string,
+  workspaceDir: string,
+  sharedAuthPath?: string,
+): Promise<void> {
+  if (process.platform === "win32") {
+    await prepareCodexPrivateState(
+      [codexHome, workspaceDir],
+      sharedAuthPath ? { home: codexHome, target: sharedAuthPath } : undefined,
+    );
+    await atomicWriteFile(join(codexHome, "config.toml"), STRICT_CODEX_CONFIG_TOML, {
+      mode: 0o600,
+    });
+    return;
+  }
   await ensurePrivateDirectory(codexHome);
   await ensurePrivateDirectory(workspaceDir);
   const configPath = join(codexHome, "config.toml");
@@ -1165,10 +1190,18 @@ export async function ensureCodexRuntimeDirs(
   await chmod(configPath, 0o600);
 }
 
-export function buildCodexEnv(env: NodeJS.ProcessEnv, codexHome: string): NodeJS.ProcessEnv {
+export function buildCodexEnv(
+  env: NodeJS.ProcessEnv,
+  codexHome: string,
+  platform: NodeJS.Platform = process.platform,
+): NodeJS.ProcessEnv {
   const childEnv: NodeJS.ProcessEnv = { CODEX_HOME: codexHome };
   for (const key of SAFE_CODEX_ENV_KEYS) {
-    const value = env[key];
+    const actual =
+      platform === "win32"
+        ? Object.keys(env).find((name) => name.toUpperCase() === key.toUpperCase())
+        : key;
+    const value = actual === undefined ? undefined : env[actual];
     if (value !== undefined) childEnv[key] = value;
   }
   for (const [key, value] of Object.entries(env)) {
@@ -1233,9 +1266,10 @@ export async function assertSupportedCodexRuntime(opts: {
 }): Promise<CodexRuntimeProbe> {
   let stdout: string;
   try {
-    const result = await execFileAsync(
-      opts.command,
-      [...(opts.args ?? DEFAULT_CODEX_VERSION_ARGS)],
+    const invocation = nodeCommandInvocation(opts.command, opts.args ?? DEFAULT_CODEX_VERSION_ARGS);
+    const result = await (process.platform === "win32" ? execWindowsJob : execFileAsync)(
+      invocation.command,
+      invocation.args,
       {
         env: opts.env,
         timeout: opts.timeoutMs ?? 10_000,
@@ -1350,12 +1384,22 @@ class CodexJsonRpcClient {
 
   start(): void {
     if (this.proc) return;
-    this.proc = spawn(this.opts.command, [...this.opts.args], {
-      cwd: this.opts.cwd,
-      env: this.opts.env,
-      stdio: ["pipe", "pipe", "pipe"],
-      windowsHide: true,
-    });
+    const invocation = nodeCommandInvocation(this.opts.command, this.opts.args);
+    const job =
+      process.platform === "win32"
+        ? spawnWindowsJob(invocation.command, invocation.args, {
+            cwd: this.opts.cwd,
+            env: this.opts.env,
+          })
+        : null;
+    this.proc =
+      job ??
+      spawn(invocation.command, invocation.args, {
+        cwd: this.opts.cwd,
+        env: this.opts.env,
+        stdio: ["pipe", "pipe", "pipe"],
+        windowsHide: true,
+      });
 
     readJsonRpcLines(this.proc.stdout, (line) =>
       markActivity("agent.codex.message", () => this.handleLine(line)),
@@ -1366,17 +1410,23 @@ class CodexJsonRpcClient {
       if (trimmed) this.opts.log.warn(`Codex app-server wrote stderr (${trimmed.length} chars)`);
     });
 
-    this.proc.once("error", (err) => {
+    const startFailed = (err: Error): void => {
+      if (this.exited || this.disposed) return;
       this.exited = true;
       this.rejectAll(
         codexSpawnPermissionFailure(err) ??
           new Error(`Codex app-server failed to start: ${err.message}`),
       );
       this.opts.onExit(null, null);
-    });
+    };
+    this.proc.once("error", startFailed);
+    void job?.jobReady.catch((err: unknown) =>
+      startFailed(err instanceof Error ? err : new Error(String(err))),
+    );
     this.proc.once("exit", (code, sig) => {
+      const alreadyExited = this.exited;
       this.exited = true;
-      if (!this.disposed) {
+      if (!this.disposed && !alreadyExited) {
         this.rejectAll(new Error(`Codex app-server exited (${sig ?? code ?? "unknown"})`));
         this.opts.onExit(code, sig);
       }
@@ -1421,6 +1471,14 @@ class CodexJsonRpcClient {
     // A spawn failure emits error/close without exit and never owns a live PID.
     if (proc.pid === undefined) return;
     if (proc.exitCode !== null || proc.signalCode !== null) return;
+
+    if (process.platform === "win32") {
+      // The Node CLI wrapper may own a native Codex child holding these pipes.
+      const closed = new Promise<void>((resolve) => proc.once("close", () => resolve()));
+      proc.kill("SIGKILL");
+      await closed;
+      return;
+    }
 
     await new Promise<void>((resolve) => {
       const killTimer = setTimeout(() => {

@@ -3,7 +3,7 @@
 
 /** A roster-aware, real-ingestion host for materialised demonstration universes. */
 import { readFileSync, existsSync, realpathSync } from "node:fs";
-import { join, resolve, dirname, basename } from "node:path";
+import { join, resolve, dirname, basename, relative, isAbsolute, sep } from "node:path";
 import { homedir } from "node:os";
 import { setTimeout as delay } from "node:timers/promises";
 import { pathToFileURL } from "node:url";
@@ -34,16 +34,17 @@ function canonicalLocation(path: string): string {
     if (parent === candidate) break;
     candidate = parent;
   }
-  return join(realpathSync(candidate), ...suffix);
+  return join(realpathSync.native(candidate), ...suffix);
 }
 
 export function assertDemoIsolation(configDir: string, gatewayUrl: string): void {
   const location = canonicalLocation(configDir),
     live = canonicalLocation(join(homedir(), ".config", "omnesis"));
   const url = new URL(gatewayUrl);
+  const fromLive = relative(live, location);
+  const insideLive = fromLive !== ".." && !fromLive.startsWith(`..${sep}`) && !isAbsolute(fromLive);
   if (
-    location === live ||
-    location.startsWith(live + "/") ||
+    insideLive ||
     url.protocol !== "https:" ||
     url.port === "7600" ||
     !url.port ||
