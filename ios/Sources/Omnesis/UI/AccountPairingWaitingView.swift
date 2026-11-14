@@ -28,7 +28,7 @@ struct AccountPairingWaitingView: View {
                 .font(.system(size: 36))
                 .foregroundStyle(Theme.accent)
                 .accessibilityHidden(true)
-            Text(PairingWaitingPresentation.title)
+            Text(approved ? PairingWaitingPresentation.approvedTitle : PairingWaitingPresentation.title)
                 .font(.title2.bold())
                 .foregroundStyle(Theme.textPrimary)
                 .fixedSize(horizontal: false, vertical: true)

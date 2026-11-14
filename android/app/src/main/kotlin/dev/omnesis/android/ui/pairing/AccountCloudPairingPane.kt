@@ -221,7 +221,7 @@ private fun WaitingForOk(state: AccountPairingState, onPair: () -> Unit, onCance
     val pairing = state.phase == AccountPairingPhase.Pairing
     Column(Modifier.fillMaxWidth().testTag("pairing.account.waitingForOk"), verticalArrangement = Arrangement.spacedBy(16.dp)) {
         Icon(if (state.approved) Icons.Outlined.CheckCircle else Icons.Outlined.Schedule, contentDescription = null, tint = colors.accent, modifier = Modifier.size(36.dp))
-        Text(PAIRING_WAITING_TITLE, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold, color = colors.textPrimary, modifier = Modifier.semantics { heading() })
+        Text(if (state.approved) "Approved" else PAIRING_WAITING_TITLE, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold, color = colors.textPrimary, modifier = Modifier.semantics { heading() })
         when {
             state.approved && state.continues -> Text(PAIRING_WAITING_APPROVED, color = colors.textPrimary)
             state.approved -> Text(PAIRING_WAITING_COMPARE, color = colors.textPrimary)
@@ -281,7 +281,7 @@ internal const val PAIRING_WAITING_TITLE = "Waiting for your OK"
 internal const val PAIRING_WAITING_FROM_ANOTHER_DEVICE = "Approve this phone from a device you already use:"
 internal val PAIRING_WAITING_PLACES = listOf("the Omnesis portal on your computer, or", "the Omnesis app on another phone.")
 internal const val PAIRING_WAITING_CODE_LEAD = "It will show this code:"
-internal const val PAIRING_WAITING_COMPARE = "Approved. Continue only if the device you approved on showed this same code."
+internal const val PAIRING_WAITING_COMPARE = "Continue only if the device you approved on showed this same code."
 internal const val PAIRING_WAITING_CONFIRM = "Codes match, connect this phone"
 internal const val PAIRING_WAITING_APPROVED = "Approved. Connecting this phone…"
 

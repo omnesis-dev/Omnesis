@@ -73,15 +73,8 @@ internal const val PAIRING_APPROVAL_OTHER_GOOGLE_ACCOUNT = "This isn't the Googl
 
 internal fun pairingApprovalHeadline(name: String) = "$name wants to connect"
 
-/** The question above the code, naming the kind of device the owner should look at. */
-internal fun pairingApprovalQuestion(kind: String) = "Does the ${pairingDeviceNoun(kind)} show this code?"
-
-internal fun pairingDeviceNoun(kind: String) = when (kind) {
-    "ios" -> "iPhone"
-    "android" -> "phone"
-    "portal" -> "browser"
-    else -> "computer"
-}
+/** The question above the code, naming the device the owner should look at by its own name. */
+internal fun pairingApprovalQuestion(name: String) = "Does $name show this code?"
 
 /** "Remember this Google account" or "Remember this passkey": the sign-in, not the device. */
 internal fun pairingApprovalRemember(signIn: String?) = if (signIn == "passkey") "Remember this passkey" else "Remember this Google account"
@@ -178,7 +171,7 @@ fun GatewayPairingApprovalContent(
                     )
                     if (request.revokedDevice) Text(PAIRING_APPROVAL_REVOKED, style = MaterialTheme.typography.bodyMedium, color = c.danger, modifier = Modifier.testTag("pairingApproval.revoked"))
                     if (request.status == "pending" && request.expiresAt > now) {
-                        Text(pairingApprovalQuestion(request.kind), style = MaterialTheme.typography.bodyMedium, color = c.textPrimary, modifier = Modifier.testTag("pairingApproval.explanation"))
+                        Text(pairingApprovalQuestion(request.name), style = MaterialTheme.typography.bodyMedium, color = c.textPrimary, modifier = Modifier.testTag("pairingApproval.explanation"))
                         VerificationCode(request.verificationCode, Modifier.fillMaxWidth().padding(vertical = OmSpacing.sm).testTag("pairingApproval.code"), TextAlign.Center, large = true)
                         if (request.otherGoogleAccount) Text(PAIRING_APPROVAL_OTHER_GOOGLE_ACCOUNT, style = MaterialTheme.typography.bodySmall, color = c.textSecondary)
                         else if (request.canTrustSignIn) {

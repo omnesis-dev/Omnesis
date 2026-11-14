@@ -85,7 +85,7 @@ struct GatewayPairingApprovalView: View {
                 .fixedSize(horizontal: false, vertical: true)
                 .accessibilityIdentifier("pairingApproval.revoked")
         }
-        Text(PairingApprovalPresentation.question(kind: request.kind))
+        Text(PairingApprovalPresentation.question(name: request.name))
             .foregroundStyle(Theme.textPrimary)
             .fixedSize(horizontal: false, vertical: true)
             .accessibilityIdentifier("pairingApproval.explanation")

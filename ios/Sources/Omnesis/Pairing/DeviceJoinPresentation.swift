@@ -50,24 +50,14 @@ public enum PairingApprovalPresentation {
         "\(name) wants to connect"
     }
 
-    /// The question above the code, naming the kind of device the owner should look at.
-    public static func question(kind: String) -> String {
-        "Does the \(deviceNoun(kind)) show this code?"
+    /// The question above the code, naming the device the owner should look at by its own name.
+    public static func question(name: String) -> String {
+        "Does \(name) show this code?"
     }
 
     /// "Remember this Google account" or "Remember this passkey": the sign-in, not the device.
     public static func remember(signIn: String?) -> String {
         signIn == "passkey" ? "Remember this passkey" : "Remember this Google account"
-    }
-
-    /// The kind of device in words a person uses for the thing in their hand.
-    public static func deviceNoun(_ kind: String) -> String {
-        switch kind {
-        case "ios": "iPhone"
-        case "android": "phone"
-        case "portal": "browser"
-        default: "computer"
-        }
     }
 }
 
@@ -82,7 +72,8 @@ public enum PairingWaitingPresentation {
     public static let withFaceID = "Approve this iPhone with Face ID on your gateway's secure page. It will show this code:"
     public static let approveWithFaceID = "Approve with Face ID"
     /// Approved by a gateway this iPhone could not verify on its own: the person confirms the codes.
-    public static let compare = "Approved. Continue only if the device you approved on showed this same code."
+    public static let approvedTitle = "Approved"
+    public static let compare = "Continue only if the device you approved on showed this same code."
     public static let confirm = "Codes match, connect this iPhone"
     public static let connecting = "Connecting…"
     public static let approved = "Approved. Connecting this iPhone…"

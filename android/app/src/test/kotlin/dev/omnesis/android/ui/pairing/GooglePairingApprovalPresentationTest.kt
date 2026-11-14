@@ -55,8 +55,8 @@ class GooglePairingApprovalPresentationTest {
         compose.onNodeWithTag("pairingApproval.approve").performScrollTo().assertIsEnabled().performClick()
         compose.onNodeWithText("Yes, approve").assertExists()
         compose.onNodeWithText("Test phone wants to connect").assertExists()
-        compose.onNodeWithText(pairingApprovalQuestion("android")).assertExists()
-        assertEquals("Does the phone show this code?", pairingApprovalQuestion("android"))
+        compose.onNodeWithText(pairingApprovalQuestion("Test phone")).assertExists()
+        assertEquals("Does Test phone show this code?", pairingApprovalQuestion("Test phone"))
         // Nothing else explains the request: the one sentence, the code and the two actions.
         for (gone in listOf("Reject request", "Codes match — approve device", "Signed in to your Omnesis account with Google")) compose.onNodeWithText(gone).assertDoesNotExist()
         compose.onNodeWithText("Compare every code group", substring = true).assertDoesNotExist()
