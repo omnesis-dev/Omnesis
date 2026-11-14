@@ -649,6 +649,7 @@ import { applyTranscriptionVocabularyBatch } from "../transcribe/vocabulary/stor
 import {
   advanceFilterValuePasses,
   applyFilterValueWork,
+  mergeFilterPostings,
   type FilterValueWork,
 } from "../access/filter-values.js";
 import { advanceTranscriptionVocabularyRebuild } from "../transcribe/vocabulary/rebuild.js";
@@ -2127,6 +2128,11 @@ export const writerYieldableHandlers = {
     const result = applyFilterValueWork(db, work, sliceDeadline(token, BACKGROUND_BATCH_SLICE_MS));
     if (result.remaining.length) return { kind: "yield" as const, resume: [result.remaining] };
     return { applied: result.applied };
+  },
+  "filterValues.mergePostings": (db: Db, token: PreemptToken, level: number) => {
+    const result = mergeFilterPostings(db, level, sliceDeadline(token, BACKGROUND_BATCH_SLICE_MS));
+    if (!result.done) return { kind: "yield" as const, resume: [level] };
+    return { moved: result.moved };
   },
   "vocabulary.applyBatch": (db: Db, token: PreemptToken, docs: ExtractedVocabularyDocument[]) => {
     const result = applyTranscriptionVocabularyBatch(db, docs, token);

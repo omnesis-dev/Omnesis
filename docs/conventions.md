@@ -121,6 +121,11 @@ draft filter and the count of records that cannot be placed are read from the
 filter rows `access/filter-values.ts` keeps for every record: one indexed row
 per id or people-key a record carries, written in the transaction that stores
 the record, so a count costs the records it matches rather than the account.
+Those rows are ordered by value, so a record's few rows belong on as many
+pages far apart in a large table, and a write pays for every page it touches;
+they are written to a small fresh level that stays in cache and moved into
+the ordered run in bulk by a bounded background step, and records are
+numbered by their rowid so nothing else is inserted at a random place.
 A statement over many records under a share-only filter is narrowed by the
 same rows before the check reads any record. The rows are never the answer
 to whether a record is readable, and an account whose rows are not ready (an

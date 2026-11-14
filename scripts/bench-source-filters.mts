@@ -2,8 +2,9 @@
 // Copyright (c) 2026 Adrien Conrath
 
 /**
- * Benchmark for the source-filter check, which reads each record's own
- * version and metadata and keeps no table of which record has which value.
+ * Benchmark for the source-filter check: the check itself, which reads each
+ * record's own version and metadata, and the counts, previews and listings
+ * read from the filter rows kept for every record (`access/filter-values.ts`).
  *
  *   npx tsx scripts/bench-source-filters.mts [documents=1000000] [contentBytes=900] [scans=3] [points=200]
  *
@@ -39,7 +40,18 @@ import {
   filterReadableDocumentIds,
   type DocumentAccessGrant,
 } from "../packages/gateway/src/access/filter-decision.js";
-import { readFilterOptions } from "../packages/gateway/src/access/filter-editor-reads.js";
+import {
+  readFilterOptions,
+  readFilterPreview,
+} from "../packages/gateway/src/access/filter-editor-reads.js";
+import {
+  advanceFilterValuePasses,
+  applyFilterValueWork,
+  filterPostingLevelToMerge,
+  mergeFilterPostings,
+  readFilterValueWork,
+} from "../packages/gateway/src/access/filter-values.js";
+import { upsertDocuments } from "../packages/gateway/src/data/repositories/DocumentRepository.js";
 import { filterFieldsFor } from "../packages/gateway/src/access/filter-fields.js";
 import { registerFilterSqlFunctions } from "../packages/gateway/src/access/filter-people.js";
 import { countUnmatchedRecords } from "../packages/gateway/src/access/filter-readiness.js";
@@ -328,10 +340,117 @@ try {
     chatRows.push(["member", `chat-${n}`, "email", address(next())]);
   }
   publishList(db, "extra.chatId", chatRows);
-  db.pragma("wal_checkpoint(TRUNCATE)");
-  db.exec("ANALYZE");
   const buildMs = performance.now() - buildStart;
   process.stderr.write(`built ${TOTAL} records in ${ms(buildMs)}\n`);
+
+  // As on an upgrade, the records were stored before the triggers that queue
+  // them: cut them the way the background task does, a batch at a time,
+  // reading on a reader handle and applying on the writer.
+  db.exec("DELETE FROM document_filter_value_queue");
+  // Every merge of a full level into the next, timed a slice at a time as
+  // the background task runs them: per level, what all of them moved and
+  // took, the slowest slice, and the last one, which went into the largest
+  // next level.
+  type MergeStats = { merges: number; moved: number; ms: number; worst: number; last: string };
+  const merges = new Map<number, MergeStats>();
+  const levelSize = db.prepare<[number], { n: number }>(
+    "SELECT count(*) AS n FROM document_filter_postings WHERE level = ?",
+  );
+  const mergeFull = (): number => {
+    let spent = 0;
+    for (
+      let level = filterPostingLevelToMerge(db);
+      level !== null;
+      level = filterPostingLevelToMerge(db)
+    ) {
+      const into = levelSize.get(level + 1)!.n;
+      const stats = merges.get(level) ?? { merges: 0, moved: 0, ms: 0, worst: 0, last: "" };
+      let moved = 0;
+      let took = 0;
+      for (;;) {
+        const start = performance.now();
+        const step = mergeFilterPostings(db, level, () => true);
+        const slice = performance.now() - start;
+        db.pragma("wal_checkpoint(PASSIVE)");
+        moved += step.moved;
+        took += slice;
+        stats.worst = Math.max(stats.worst, slice);
+        if (step.done) break;
+      }
+      stats.merges++;
+      stats.moved += moved;
+      stats.ms += took;
+      stats.last = `${moved} postings into ${into} in ${ms(took)}`;
+      merges.set(level, stats);
+      spent += took;
+    }
+    return spent;
+  };
+  const mergeRows = (operation: string): void => {
+    for (const [level, stats] of [...merges].sort((a, b) => a[0] - b[0])) {
+      table.push([
+        `${operation}: level ${level} into ${level + 1}`,
+        "writer, a slice at a time",
+        `${stats.merges} merges moved ${stats.moved} postings in ${ms(stats.ms)} (${ms((stats.ms / Math.max(1, stats.moved)) * 1000)} per 1,000), slowest slice ${ms(stats.worst)}; last: ${stats.last}`,
+      ]);
+    }
+    merges.clear();
+  };
+  const cutAll = (operation: string): void => {
+    const cutReader = openReadOnlyDatabase(dbPath, {
+      encryptionKey: key,
+      cacheSizeBytes: READ_CACHE_BYTES,
+    });
+    let readMs = 0;
+    let applyMs = 0;
+    let mergeMs = 0;
+    let records = 0;
+    for (;;) {
+      let start = performance.now();
+      const work = readFilterValueWork(cutReader, 500);
+      readMs += performance.now() - start;
+      if (work.length > 0) {
+        start = performance.now();
+        applyFilterValueWork(db, work);
+        applyMs += performance.now() - start;
+        // As the background task does between batches.
+        mergeMs += mergeFull();
+        records += work.length;
+        // The gateway's writer copies the WAL back between operations.
+        db.pragma("wal_checkpoint(PASSIVE)");
+        continue;
+      }
+      if (!advanceFilterValuePasses(db, 500).changed) break;
+    }
+    cutReader.close();
+    table.push([
+      operation,
+      "io worker reads, writer applies",
+      `${records} records: read ${ms(readMs)}, writer ${ms(applyMs)} applying (${ms((applyMs / Math.max(1, records)) * 500)} per 500) and ${ms(mergeMs)} merging`,
+    ]);
+    mergeRows(operation);
+  };
+  cutAll("filter rows: cut every record stored before them (an upgrade's background pass)");
+  const sideBytes = db
+    .prepare<[], { bytes: number }>(
+      `SELECT coalesce(sum(pgsize), 0) AS bytes FROM dbstat
+        WHERE name LIKE 'document_filter_%' OR name LIKE 'idx_document_filter_%'
+           OR name LIKE 'sqlite_autoindex_document_filter_%'`,
+    )
+    .get()!.bytes;
+  const levels = db
+    .prepare<[], { level: number; n: number }>(
+      "SELECT level, count(*) AS n FROM document_filter_postings GROUP BY level ORDER BY level",
+    )
+    .all();
+  const postings = levels.reduce((sum, row) => sum + row.n, 0);
+  table.push([
+    "filter rows: size",
+    "",
+    `${postings} postings (${(postings / TOTAL).toFixed(1)} per record; by level ${levels.map((row) => `${row.level}: ${row.n}`).join(", ")}), ${(sideBytes / 1048576).toFixed(0)} MiB`,
+  ]);
+  db.pragma("wal_checkpoint(TRUNCATE)");
+  db.exec("ANALYZE");
 
   // ── filters ──────────────────────────────────────────────────────────────
   const label = (n: number): FilterRef => ({
@@ -407,6 +526,9 @@ try {
       for (const action of ["share", "hide"] as const) {
         const access = grant([filter(action, match)]);
         const kind = action === "share" ? "share-only" : "hide";
+        // The listing's first call comes before anything else reads this
+        // filter's postings.
+        const first = time(1, () => newest(access))[0]!;
         let readable = 0;
         record(
           `count readable: ${kind}, ${name}${suffix}`,
@@ -420,6 +542,7 @@ try {
           `20 newest readable: ${kind}, ${name}${suffix}`,
           "reader",
           time(Math.min(POINTS, 20), () => newest(access)),
+          `first call ${ms(first)}`,
         );
         record(
           `one document decided: ${kind}, ${name}${suffix}`,
@@ -471,6 +594,24 @@ try {
     }),
     `${offered} entries`,
   );
+  const preview = (membersOf: boolean): void => {
+    const suffix = membersOf ? ", people also from chat members" : "";
+    for (const [name, match] of membersOf ? scenarios.slice(3) : scenarios) {
+      for (const action of ["share", "hide"] as const) {
+        let totals = "";
+        record(
+          `editor: preview of a ${action === "share" ? "share-only" : "hide"} filter, ${name}${suffix}`,
+          "reader",
+          time(SCANS, () => {
+            const result = readFilterPreview(reader, SOURCE, filter(action, match));
+            if (!result.ok) throw new Error(result.error);
+            totals = `${result.value.visible} shared, ${result.value.hidden} hidden, ${result.value.unmatched} unknown`;
+          }),
+          totals,
+        );
+      }
+    }
+  };
   for (const field of ["extra.labelIds", "extra.folderIds", "$people"]) {
     let unmatched: number | null = 0;
     record(
@@ -482,6 +623,70 @@ try {
       `${unmatched} records`,
     );
   }
+  preview(false);
+
+  // ── a sync page through the write path ───────────────────────────────────
+  const pageOf = (sourceId: string, from: number) =>
+    Array.from({ length: 500 }, (_unused, n) => {
+      const index = from + n;
+      const at = new Date(Date.parse("2020-01-01T00:00:00Z") + index * 60_000).toISOString();
+      return {
+        providerId: sourceId,
+        sourceId,
+        externalId: `message-${index}`,
+        title: `message ${index}`,
+        content: contentAt(index),
+        contentHash: `hash-${index}`,
+        metadata: JSON.parse(metadataAt(index + 1)) as never,
+        sourceCreatedAt: at,
+        sourceUpdatedAt: at,
+      };
+    }) as unknown as Parameters<typeof upsertDocuments>[1];
+  // The same page for a source that declares nothing filterable is the
+  // write without rows; five pages each, alternating, for a median. A page
+  // is written in one transaction, and the way the writer's sync operation
+  // writes it: five records per transaction, giving the writer back between.
+  // The background task merges full levels between pages; that work is
+  // timed apart (see the merge rows) and is the pages' too.
+  const PLAIN = "bench-notes:reader";
+  const ROUNDS = 10;
+  let pageFrom = TOTAL;
+  for (const [mode, chunked] of [
+    ["in one transaction", false],
+    ["five records per transaction", true],
+  ] as const) {
+    const pageTimes = { [SOURCE]: [] as number[], [PLAIN]: [] as number[] };
+    let mergeMs = 0;
+    for (let round = 0; round < ROUNDS; round++) {
+      for (const sourceId of [SOURCE, PLAIN]) {
+        const page = pageOf(sourceId, pageFrom);
+        pageFrom += 500;
+        db.pragma("wal_checkpoint(TRUNCATE)");
+        pageTimes[sourceId]!.push(
+          time(1, () =>
+            upsertDocuments(db, page, {
+              sourceVersions: { [sourceId]: 2 },
+              ...(chunked ? { token: { requested: () => false }, chunkSize: 5 } : {}),
+            }),
+          )[0]!,
+        );
+      }
+      db.pragma("wal_checkpoint(TRUNCATE)");
+      mergeMs += mergeFull();
+    }
+    record(
+      `sync page of 500 new records, ${mode}, with their filter rows`,
+      "writer",
+      pageTimes[SOURCE]!.sort((a, b) => a - b),
+      `merges during these pages ${ms(mergeMs)}`,
+    );
+    mergeRows(`merges during the pages written ${mode}`);
+    record(
+      `sync page of 500 new records, ${mode}, of a source with nothing filterable`,
+      "writer",
+      pageTimes[PLAIN]!.sort((a, b) => a - b),
+    );
+  }
 
   // ── people that also come from a chat's members ──────────────────────────
   upsertSourceDocumentProfiles(
@@ -489,8 +694,16 @@ try {
     [{ sourceType: "bench-mail", outputRevision: 2, profile: profile(true) as never }],
     Date.now(),
   );
+  // A changed declaration: every record's rows are cut again.
+  cutAll("filter rows: cut every record again after the declaration changed");
   db.pragma("wal_checkpoint(TRUNCATE)");
   measure(true);
+  preview(true);
+  record(
+    "records that cannot be placed for $people, people also from chat members",
+    "reader",
+    time(SCANS, () => countUnmatchedRecords(reader, SOURCE, "$people")),
+  );
 
   // ── the copy in the search index ─────────────────────────────────────────
   const indexDb = createIndexDatabase(indexPath, { encryptionKey: key });

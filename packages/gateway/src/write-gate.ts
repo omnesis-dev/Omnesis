@@ -708,6 +708,7 @@ import {
 import {
   advanceFilterValuePasses,
   applyFilterValueWork,
+  mergeFilterPostings,
   type FilterValueWork,
 } from "./access/filter-values.js";
 import { buildSafeUrlCanonicalizerRegistry } from "./known-url-pattern-safety.js";
@@ -1711,6 +1712,8 @@ export interface WriteGate extends KnowledgeWriteGate {
   applyFilterValueWork(work: FilterValueWork[]): Promise<{ applied: number }>;
   /** Queue the next records of an account whose filter rows must be cut again. */
   advanceFilterValuePasses(limit: number): Promise<{ queued: number; changed: boolean }>;
+  /** Move the filter postings of a full level into the next. */
+  mergeFilterPostings(level: number): Promise<void>;
 
   // ── briefs (the Brain run queue) ─────────────────────────────
   /** Enqueue one Brain run (or fold into a pending row by dedupe key). */
@@ -2808,6 +2811,9 @@ export function writeGateFromCall(call: WriterCallFn): WriteGate {
     sweepFilterListRows: (cursor, limit) => call("filterLists.sweep", [cursor, limit]),
     applyFilterValueWork: (work) => call("filterValues.apply", [work]),
     advanceFilterValuePasses: (limit) => call("filterValues.advancePasses", [limit]),
+    mergeFilterPostings: async (level) => {
+      await call("filterValues.mergePostings", [level]);
+    },
 
     enqueueCognitionRun: (input, now) => call("cognition.enqueue", [input, now]),
     claimDueCognitionRuns: (opts) => call("cognition.claimDue", [opts]),
@@ -3488,6 +3494,9 @@ export function directWriteGate(db: Db): WriteGate {
     sweepFilterListRows: async (cursor, limit) => sweepFilterListRows(db, cursor, limit),
     applyFilterValueWork: async (work) => ({ applied: applyFilterValueWork(db, work).applied }),
     advanceFilterValuePasses: async (limit) => advanceFilterValuePasses(db, limit),
+    mergeFilterPostings: async (level) => {
+      mergeFilterPostings(db, level);
+    },
 
     enqueueCognitionRun: async (input, now) => enqueueCognitionRun(db, input, now),
     claimDueCognitionRuns: async (opts) => claimDueCognitionRuns(db, opts),

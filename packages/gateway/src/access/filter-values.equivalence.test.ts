@@ -56,7 +56,12 @@ import {
   filterValueVerdicts,
   filterValueVerdictsSql,
 } from "./filter-value-sql.js";
-import { filterValueDeclaration, filterValuesReady, settleFilterValues } from "./filter-values.js";
+import {
+  filterValueDeclaration,
+  filterValuesReady,
+  mergeFilterPostings,
+  settleFilterValues,
+} from "./filter-values.js";
 import { filterPersonKey } from "./filter-people.js";
 import type { Db } from "../data/types.js";
 
@@ -283,6 +288,14 @@ function filters(
   });
 }
 
+function postingsAt(db: Db, level: number): number {
+  return db
+    .prepare<[number], { n: number }>(
+      "SELECT count(*) AS n FROM document_filter_postings WHERE level = ?",
+    )
+    .get(level)!.n;
+}
+
 function rows<T>(db: Db, sql: FilterSql, ...extra: unknown[]): T[] {
   return db.prepare<unknown[], T>(sql.sql).all(...sql.params, ...extra);
 }
@@ -379,6 +392,13 @@ describe("the filter rows answer what the records answer", () => {
         const { db } = fixture;
         seed(fixture, n, 160);
         settleFilterValues(db);
+        // Odd seeds read postings spread over three levels.
+        if (n % 2 === 1) {
+          const third = Math.floor(postingsAt(db, 0) / 3);
+          mergeFilterPostings(db, 0, () => true, 2 * third);
+          mergeFilterPostings(db, 1, () => true, third);
+          expect([0, 1, 2].map((level) => postingsAt(db, level) > 0)).toEqual([true, true, true]);
+        }
         for (const [sourceId, refs] of [
           [LEDGER, LEDGER_REFS],
           [PARLEY, PARLEY_REFS],

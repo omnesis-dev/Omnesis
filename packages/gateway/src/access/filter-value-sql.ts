@@ -26,7 +26,8 @@
  * their cost follows how many records match, not the account's size. Every
  * posting carries the version and known details of the record it stands for,
  * so a matched posting is checked without reading anything else. A record is
- * identified by its number (`seq`) throughout.
+ * identified by its number (`seq`, its rowid) throughout, and a value's
+ * postings are read at both levels.
  *
  * Use these only on an account whose rows are ready (`filterValuesReady`),
  * inside the transaction that asked; anything else is decided from the
@@ -59,6 +60,7 @@ import {
   filterValuesReadySql,
   manyValuesField,
   personKeyRows,
+  postingOfTerm,
   type FilterValueDeclaration,
 } from "./filter-values.js";
 import type { SourceFilterFields } from "./filter-fields.js";
@@ -123,7 +125,7 @@ function postingsOf(
   return `CROSS JOIN document_filter_slots ${p}s
           ON ${p}s.source_id = ${sql.bind(plan.sourceId)} AND ${p}s.field = ${sql.bind(field)} AND ${p}s.device_id = ${device}
         CROSS JOIN document_filter_terms ${p}t ON ${p}t.slot = ${p}s.slot AND ${p}t.value = ${value}
-        CROSS JOIN document_filter_postings ${p} ON ${p}.term = ${p}t.term`;
+        CROSS JOIN document_filter_postings ${p} ON ${postingOfTerm(p, `${p}t.term`)}`;
 }
 
 /**
@@ -137,7 +139,7 @@ function unlistedRecordsSql(sql: SqlBuilder, plan: Plan): string {
       (detail) => `SELECT p.seq AS seq
           FROM document_filter_slots s
           JOIN document_filter_terms t ON t.slot = s.slot
-          CROSS JOIN document_filter_postings p ON p.term = t.term
+          CROSS JOIN document_filter_postings p ON ${postingOfTerm("p", "t.term")}
          WHERE s.source_id = ${sql.bind(plan.sourceId)} AND s.field = ${sql.bind(detail.path)}
            AND t.value <> ''
            AND NOT EXISTS (SELECT 1 FROM ${MAP.items} fi
@@ -232,14 +234,14 @@ function personRowsSql(sql: SqlBuilder, plan: Plan, ranges: string): string {
   return `SELECT fk.idx AS idx, p.seq AS seq
       FROM (${entries(sql.bind(ranges))}) fk
       CROSS JOIN document_filter_terms pt ON pt.slot = ${slot()} AND pt.value = fk.value
-      CROSS JOIN document_filter_postings p ON p.term = pt.term
+      CROSS JOIN document_filter_postings p ON ${postingOfTerm("p", "pt.term")}
      WHERE fk.value IS NOT NULL AND ${qualifies(sql, plan, "p")}
     UNION ALL
     SELECT fk.idx AS idx, p.seq AS seq
       FROM (${entries(sql.bind(ranges))}) fk
       CROSS JOIN document_filter_terms pt
         ON pt.slot = ${slot()} AND pt.value >= fk.low AND pt.value < fk.high
-      CROSS JOIN document_filter_postings p ON p.term = pt.term
+      CROSS JOIN document_filter_postings p ON ${postingOfTerm("p", "pt.term")}
      WHERE fk.low IS NOT NULL AND ${qualifies(sql, plan, "p")}`;
 }
 
@@ -409,14 +411,15 @@ export function filterValueItemCountsSql(
         several(seq, device) AS MATERIALIZED (
           SELECT p.seq, s.device_id FROM document_filter_slots s
             CROSS JOIN document_filter_terms t ON t.slot = s.slot AND t.value = ''
-            CROSS JOIN document_filter_postings p ON p.term = t.term
+            CROSS JOIN document_filter_postings p ON ${postingOfTerm("p", "t.term")}
            WHERE s.source_id = ${sql.bind(plan.sourceId)} AND s.field = ${sql.bind(manyValuesField(detail.path))}
              AND ${qualifies(sql, plan, "p")}),
         extra(idx, n) AS MATERIALIZED (
           SELECT idx, sum(held - 1) FROM (
             SELECT sel.idx AS idx, count(*) AS held FROM several
-              CROSS JOIN document_filter_postings v ON v.seq = several.seq
-              CROSS JOIN document_filter_terms vt ON vt.term = v.term
+              CROSS JOIN document_filter_records vr ON vr.seq = several.seq
+              CROSS JOIN json_each(vr.terms) v
+              CROSS JOIN document_filter_terms vt ON vt.term = v.value
               CROSS JOIN document_filter_slots vs
                 ON vs.slot = vt.slot AND vs.source_id = ${sql.bind(plan.sourceId)}
                AND vs.field = ${sql.bind(detail.path)} AND vs.device_id = several.device
@@ -451,7 +454,7 @@ export function filterValueDeviceCountsSql(
       SELECT s.device_id AS device, count(*) AS n
         FROM document_filter_slots s
         CROSS JOIN document_filter_terms t ON t.slot = s.slot AND t.value = ''
-        CROSS JOIN document_filter_postings p ON p.term = t.term
+        CROSS JOIN document_filter_postings p ON ${postingOfTerm("p", "t.term")}
        WHERE s.source_id = ${sql.bind(plan.sourceId)} AND s.field = ${sql.bind(detail.path)}
          AND ${qualifies(sql, plan, "p")} AND p.seq NOT IN bad
        GROUP BY s.device_id`;
@@ -530,12 +533,11 @@ export function filterCandidateSql(
     const source = sql.bind(plan.sourceId);
     for (const value of ready.params) sql.bind(value);
     const few = `(SELECT count(*) FROM (${matchRowsSql(sql, plan)} LIMIT ${FILTER_CANDIDATE_LIMIT + 1})) <= ${FILTER_CANDIDATE_LIMIT}`;
-    const records = `SELECT fr.document_id FROM document_filter_records fr
-        WHERE fr.seq IN (${matchRowsSql(sql, plan)})`;
+    // A record's number is its rowid.
     const inside =
       "row" in target
-        ? `${target.row}.rowid IN (SELECT fd.rowid FROM documents fd WHERE fd.id IN (${records}))`
-        : `${target.id} IN (${records})`;
+        ? `${target.row}.rowid IN (${matchRowsSql(sql, plan)})`
+        : `${target.id} IN (SELECT fd.id FROM documents fd WHERE fd.rowid IN (${matchRowsSql(sql, plan)}))`;
     return `(${sourceColumn} <> ${source} OR NOT (${ready.sql} AND ${few}) OR ${inside})`;
   });
 }

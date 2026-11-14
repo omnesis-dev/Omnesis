@@ -449,9 +449,11 @@ const WRITE_OP_DEFS: readonly WriteOpDef[] = [
   { name: "filterLists.sweep", priority: "background" },
   // Filter rows of records left queued: those a write outside the page path
   // changed, and every record of an account whose rows are cut again. Applied
-  // in bounded sub-batches that give the writer back between them.
+  // in bounded sub-batches that give the writer back between them, as is the
+  // move of fresh postings into the term-ordered run.
   { name: "filterValues.apply", priority: "background" },
   { name: "filterValues.advancePasses", priority: "background" },
+  { name: "filterValues.mergePostings", priority: "background" },
 
   // ── the Brain run queue ───────────────────────────────────────
   // Agent runs are asynchronous background work that must never contend

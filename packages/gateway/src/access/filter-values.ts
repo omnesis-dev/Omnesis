@@ -7,8 +7,8 @@
  * index lookups rather than a read of every record's metadata.
  *
  * **What a record's rows say.** A record of an account whose source declares
- * a filterable detail has a row in `document_filter_records`, which numbers
- * it (`seq`, in the order records are first cut) and says how it is decided:
+ * a filterable detail has a row in `document_filter_records`, numbered by the
+ * record's rowid in `documents` (`seq`), which says how it is decided:
  * `S` on its own details, `D` as an attachment decided through the record it
  * was attached to, `U` when it cannot be decided (its metadata cannot be
  * read, or it is an attachment whose record is missing, unreadable or itself
@@ -26,10 +26,23 @@
  * A value is stored once, numbered, in `document_filter_terms`, so a posting
  * is a few bytes: term, record number, and the version and bitmask of
  * declared details known of the record it is decided through, so a count
- * asks only the postings it reads. Postings are keyed by term then record
- * number, and record numbers only grow, so a new record's postings land at
- * the end of each term's run rather than at a random point of a large table:
- * a sync page dirties a few pages per term it touches, not one per row.
+ * asks only the postings it reads.
+ *
+ * **What a write costs.** Every page a transaction changes is encrypted and
+ * written to the WAL, and a page not in cache is read first, so the cost of a
+ * sync page is the number of distinct pages it touches. Postings ordered by
+ * term put a record's half-dozen postings on as many pages far apart in a
+ * large table. They are therefore written at level 0, keyed like the rest
+ * but small enough to stay in cache, and moved up a level at a time by
+ * {@link mergeFilterPostings}, many to a page, each level about ten times
+ * the size of the one below (see "Merging postings a level up"). A record
+ * is numbered by its rowid, so its record row lands at the end of the table
+ * instead of in an index of random document ids. The record row lists the
+ * terms of its postings, which is how a record's postings are found, so no
+ * index of postings by record has an entry to move when a posting changes
+ * level. The rowid of a record is kept by an upsert and by `VACUUM`; a
+ * deleted record's rows go with it, before its rowid can be used again.
+ *
  * Records are counted by state, version and known details in
  * `document_filter_record_counts`. An attachment's postings are copies of its
  * record's. Which
@@ -86,14 +99,32 @@ export function manyValuesField(path: string): string {
   return `[many]${path}`;
 }
 
-/** Values of the `[record]` row. */
+/** How a record is decided: the `state` of its row in `document_filter_records`. */
 export const RECORD_SELF = "S";
 export const RECORD_DERIVED = "D";
 export const RECORD_UNKNOWN = "U";
 
+/**
+ * How many levels postings are kept at. A posting is written at level 0;
+ * level `k` holds about ten times what level `k - 1` may, and the last level
+ * holds the rest.
+ */
+export const POSTING_LEVELS = 6;
+
+const LEVEL_LIST = Array.from({ length: POSTING_LEVELS }, (_unused, level) => level).join(", ");
+
+/**
+ * The condition that `alias` is a posting of `term`, at any level: one seek
+ * of the postings' key per level.
+ */
+export function postingOfTerm(alias: string, term: string): string {
+  return `${alias}.level IN (${LEVEL_LIST}) AND ${alias}.term = ${term}`;
+}
+
 /** The tables {@link createDocumentFilterValueTables} creates, children first. */
 export const FILTER_VALUE_TABLES = [
   "document_filter_postings",
+  "document_filter_levels",
   "document_filter_record_counts",
   "document_filter_records",
   "document_filter_terms",
@@ -116,18 +147,21 @@ export function createDocumentFilterValueTables(db: Db): void {
   // The attachments waiting on a record of this key.
   const queueAttachments = (row: "OLD" | "NEW") =>
     `INSERT INTO document_filter_value_queue (document_id, source_id, revision)
-       SELECT r.document_id, ${row}.source_id, 1
+       SELECT d.id, ${row}.source_id, 1
          FROM document_filter_slots s
          JOIN document_filter_terms t ON t.slot = s.slot AND t.value = ${row}.external_id
-         JOIN document_filter_postings p ON p.term = t.term
-         JOIN document_filter_records r ON r.seq = p.seq
+         JOIN document_filter_postings p ON ${postingOfTerm("p", "t.term")}
+         JOIN documents d ON d.rowid = p.seq
         WHERE s.source_id = ${row}.source_id AND s.field = '${FILTER_VALUE_PARENT}'
-          AND s.device_id = ${row}.stream_id AND r.document_id <> ${row}.id
+          AND s.device_id = ${row}.stream_id AND d.id <> ${row}.id
        ON CONFLICT(document_id) DO UPDATE SET revision = revision + 1;`;
-  const forget = (id: string) => `
+  const forget = (row: "OLD" | "NEW") => `
     DELETE FROM document_filter_postings
-     WHERE seq = (SELECT seq FROM document_filter_records WHERE document_id = ${id});
-    DELETE FROM document_filter_records WHERE document_id = ${id};`;
+     WHERE level IN (${LEVEL_LIST}) AND term IN (
+             SELECT j.value FROM document_filter_records r, json_each(r.terms) j
+              WHERE r.seq = ${row}.rowid)
+       AND seq = ${row}.rowid;
+    DELETE FROM document_filter_records WHERE seq = ${row}.rowid;`;
   const countKey = (row: "OLD" | "NEW") =>
     `source_id = ${row}.source_id AND state = ${row}.state AND source_version = ${row}.source_version AND known = ${row}.known`;
   const countAdd = `
@@ -155,17 +189,17 @@ export function createDocumentFilterValueTables(db: Db): void {
       value TEXT NOT NULL,
       UNIQUE (slot, value)
     );
-    -- One row per record with filter rows, numbered in the order records are
-    -- first cut, with how it is decided (the state is '${RECORD_SELF}', '${RECORD_DERIVED}'
-    -- or '${RECORD_UNKNOWN}') and the version and known details of the record it is
-    -- decided through.
+    -- One row per record with filter rows, numbered by the record's rowid in
+    -- documents, with how it is decided (the state is '${RECORD_SELF}', '${RECORD_DERIVED}'
+    -- or '${RECORD_UNKNOWN}'), the version and known details of the record it is
+    -- decided through, and the terms of its postings as a JSON array.
     CREATE TABLE IF NOT EXISTS document_filter_records (
       seq INTEGER PRIMARY KEY,
-      document_id TEXT NOT NULL UNIQUE,
       source_id TEXT NOT NULL,
       state TEXT NOT NULL,
       source_version INTEGER NOT NULL,
-      known INTEGER NOT NULL
+      known INTEGER NOT NULL,
+      terms TEXT NOT NULL
     );
     -- How many records of an account are in each state, version and set of
     -- known details: kept by the triggers below.
@@ -178,18 +212,25 @@ export function createDocumentFilterValueTables(db: Db): void {
       PRIMARY KEY (source_id, state, source_version, known)
     ) WITHOUT ROWID;
     -- One posting per value a record carries, with the record's version and
-    -- known details copied so a count reads nothing else. Keyed by term, then
-    -- by record number: a new record's postings land at the end of each
-    -- term's run, not at a random point of the table.
+    -- known details copied so a count reads nothing else. Keyed by level,
+    -- term, record number: a posting is written at level 0, a run small
+    -- enough to stay in cache, and moved a level up in term order by
+    -- mergeFilterPostings once its level is full. A reader asks every level.
     CREATE TABLE IF NOT EXISTS document_filter_postings (
+      level INTEGER NOT NULL,
       term INTEGER NOT NULL,
       seq INTEGER NOT NULL,
       source_version INTEGER NOT NULL,
       known INTEGER NOT NULL,
-      PRIMARY KEY (term, seq)
+      PRIMARY KEY (level, term, seq)
     ) WITHOUT ROWID;
-    CREATE INDEX IF NOT EXISTS idx_document_filter_postings_record
-      ON document_filter_postings(seq);
+    -- How many postings each level above 0 was given by merges, less what
+    -- merges took from it. Postings deleted with their record are not taken
+    -- off, so a level holds at most this many.
+    CREATE TABLE IF NOT EXISTS document_filter_levels (
+      level INTEGER PRIMARY KEY,
+      postings INTEGER NOT NULL
+    );
     -- The declaration an account's rows were cut under, and the pass that
     -- queues its records again: the rowid it has reached, NULL once done.
     CREATE TABLE IF NOT EXISTS document_filter_value_sources (
@@ -238,11 +279,11 @@ export function createDocumentFilterValueTables(db: Db): void {
       AFTER UPDATE OF source_id, stream_id, external_id, provider_id ON documents
       WHEN OLD.source_id IS NOT NEW.source_id OR OLD.stream_id IS NOT NEW.stream_id
         OR OLD.external_id IS NOT NEW.external_id OR OLD.provider_id IS NOT NEW.provider_id
-    BEGIN${forget("NEW.id")}
+    BEGIN${forget("NEW")}
       ${queueAttachments("OLD")}
     END;
     CREATE TRIGGER IF NOT EXISTS document_filter_values_document_delete
-      AFTER DELETE ON documents BEGIN${forget("OLD.id")}
+      AFTER DELETE ON documents BEGIN${forget("OLD")}
       DELETE FROM document_filter_value_queue WHERE document_id = OLD.id;
       ${queueAttachments("OLD")}
     END;
@@ -494,11 +535,14 @@ interface Cut {
   postings: Array<{ slot: number; value: string }>;
 }
 
-interface RecordRow {
+/** A record's row, found through its document, `null` columns when it has none. */
+interface FoundRecord {
   seq: number;
-  state: string;
-  source_version: number;
-  known: number;
+  found: number | null;
+  state: string | null;
+  source_version: number | null;
+  known: number | null;
+  terms: string | null;
 }
 
 /** Statements and caches for one batch of writes. */
@@ -517,7 +561,6 @@ class RowWriter {
   private readonly createRecord;
   private readonly updateRecord;
   private readonly deleteRecord;
-  private readonly readPostings;
   private readonly readTerms;
   private readonly insertPosting;
   private readonly deletePosting;
@@ -541,42 +584,44 @@ class RowWriter {
     this.createTerm = db.prepare<[number, string]>(
       "INSERT INTO document_filter_terms (slot, value) VALUES (?, ?)",
     );
-    this.findRecord = db.prepare<[string], RecordRow>(
-      "SELECT seq, state, source_version, known FROM document_filter_records WHERE document_id = ?",
+    this.findRecord = db.prepare<[string], FoundRecord>(
+      `SELECT d.rowid AS seq, r.seq AS found, r.state, r.source_version, r.known, r.terms
+         FROM documents d LEFT JOIN document_filter_records r ON r.seq = d.rowid
+        WHERE d.id = ?`,
     );
-    this.createRecord = db.prepare<[string, string, string, number, number]>(
-      `INSERT INTO document_filter_records (document_id, source_id, state, source_version, known)
-       VALUES (?, ?, ?, ?, ?)`,
+    this.createRecord = db.prepare<[number, string, string, number, number, string]>(
+      `INSERT INTO document_filter_records (seq, source_id, state, source_version, known, terms)
+       VALUES (?, ?, ?, ?, ?, ?)`,
     );
-    this.updateRecord = db.prepare<[string, string, number, number, number]>(
-      "UPDATE document_filter_records SET source_id = ?, state = ?, source_version = ?, known = ? WHERE seq = ?",
+    this.updateRecord = db.prepare<[string, string, number, number, string, number]>(
+      `UPDATE document_filter_records
+          SET source_id = ?, state = ?, source_version = ?, known = ?, terms = ?
+        WHERE seq = ?`,
     );
     this.deleteRecord = db.prepare<[number]>("DELETE FROM document_filter_records WHERE seq = ?");
-    this.readPostings = db.prepare<[number], { term: number }>(
-      "SELECT term FROM document_filter_postings WHERE seq = ?",
-    );
     this.readTerms = db.prepare<[number], { slot: number; value: string }>(
-      `SELECT t.slot, t.value FROM document_filter_postings p
-         JOIN document_filter_terms t ON t.term = p.term WHERE p.seq = ?`,
+      `SELECT t.slot, t.value FROM document_filter_records r, json_each(r.terms) j
+         JOIN document_filter_terms t ON t.term = j.value WHERE r.seq = ?`,
     );
     this.insertPosting = db.prepare<[number, number, number, number]>(
-      "INSERT INTO document_filter_postings (term, seq, source_version, known) VALUES (?, ?, ?, ?)",
+      `INSERT INTO document_filter_postings (level, term, seq, source_version, known)
+       VALUES (0, ?, ?, ?, ?)`,
     );
     this.deletePosting = db.prepare<[number, number]>(
-      "DELETE FROM document_filter_postings WHERE term = ? AND seq = ?",
+      `DELETE FROM document_filter_postings WHERE ${postingOfTerm("document_filter_postings", "?")} AND seq = ?`,
     );
-    this.updatePostings = db.prepare<[number, number, number, number, number]>(
+    this.updatePostings = db.prepare<[number, number, number, number]>(
       `UPDATE document_filter_postings SET source_version = ?, known = ?
-        WHERE seq = ? AND (source_version IS NOT ? OR known IS NOT ?)`,
+        WHERE ${postingOfTerm("document_filter_postings", "?")} AND seq = ?`,
     );
     this.dequeue = db.prepare<[string]>(
       "DELETE FROM document_filter_value_queue WHERE document_id = ?",
     );
     this.attachments = db.prepare<[number, string, string], { document_id: string }>(
-      `SELECT r.document_id FROM document_filter_terms t
-         JOIN document_filter_postings p ON p.term = t.term
-         JOIN document_filter_records r ON r.seq = p.seq
-        WHERE t.slot = ? AND t.value = ? AND r.document_id <> ?`,
+      `SELECT d.id AS document_id FROM document_filter_terms t
+         JOIN document_filter_postings p ON ${postingOfTerm("p", "t.term")}
+         JOIN documents d ON d.rowid = p.seq
+        WHERE t.slot = ? AND t.value = ? AND d.id <> ?`,
     );
     this.parent = db.prepare<[string, string, string, string, string], { id: string }>(
       `SELECT id FROM documents
@@ -625,28 +670,37 @@ class RowWriter {
    * rose rewrites only the copies of its version.
    */
   replace(document: { id: string; sourceId: string }, cut: Cut): void {
-    let record = this.findRecord.get(document.id);
-    if (!record) {
-      const seq = Number(
-        this.createRecord.run(document.id, document.sourceId, cut.state, cut.version, cut.known)
-          .lastInsertRowid,
-      );
-      record = { seq, state: cut.state, source_version: cut.version, known: cut.known };
-    } else if (
+    const record = this.findRecord.get(document.id);
+    if (!record) return;
+    const seq = record.seq;
+    if (this.pendingRecords.has(seq)) this.flush();
+    const terms = [
+      ...new Set(cut.postings.map((posting) => this.term(posting.slot, posting.value))),
+    ].sort((left, right) => left - right);
+    const list = JSON.stringify(terms);
+    const held = record.found === null ? [] : (JSON.parse(record.terms!) as number[]);
+    const added = new Set(terms);
+    const changed =
+      record.found === null ||
       record.state !== cut.state ||
       record.source_version !== cut.version ||
-      record.known !== cut.known
-    ) {
-      this.updateRecord.run(document.sourceId, cut.state, cut.version, cut.known, record.seq);
-      this.updatePostings.run(cut.version, cut.known, record.seq, cut.version, cut.known);
+      record.known !== cut.known;
+    for (const term of held) {
+      if (added.delete(term)) {
+        if (record.source_version !== cut.version || record.known !== cut.known) {
+          this.updatePostings.run(cut.version, cut.known, term, seq);
+        }
+      } else {
+        this.deletePosting.run(term, seq);
+      }
     }
-    if (this.pendingRecords.has(record.seq)) this.flush();
-    const wanted = new Set(cut.postings.map((posting) => this.term(posting.slot, posting.value)));
-    for (const { term } of this.readPostings.all(record.seq)) {
-      if (!wanted.delete(term)) this.deletePosting.run(term, record.seq);
+    if (record.found === null) {
+      this.createRecord.run(seq, document.sourceId, cut.state, cut.version, cut.known, list);
+    } else if (changed || record.terms !== list) {
+      this.updateRecord.run(document.sourceId, cut.state, cut.version, cut.known, list, seq);
     }
-    for (const term of wanted) this.pending.push([term, record.seq, cut.version, cut.known]);
-    if (wanted.size > 0) this.pendingRecords.add(record.seq);
+    for (const term of added) this.pending.push([term, seq, cut.version, cut.known]);
+    if (added.size > 0) this.pendingRecords.add(seq);
   }
 
   /**
@@ -660,11 +714,12 @@ class RowWriter {
     this.pendingRecords.clear();
   }
 
+  /** Remove the rows of a stored record; a deleted record's went with it. */
   forget(documentId: string): void {
     const record = this.findRecord.get(documentId);
-    if (!record) return;
+    if (record?.found == null) return;
     if (this.pendingRecords.has(record.seq)) this.flush();
-    for (const { term } of this.readPostings.all(record.seq)) {
+    for (const term of JSON.parse(record.terms!) as number[]) {
       this.deletePosting.run(term, record.seq);
     }
     this.deleteRecord.run(record.seq);
@@ -727,19 +782,20 @@ class RowWriter {
             document.streamId,
             document.id,
           )?.id;
-    const parent = parentId === undefined ? undefined : this.findRecord.get(parentId);
+    const found = parentId === undefined ? undefined : this.findRecord.get(parentId);
+    const parent = found?.found == null ? undefined : found;
     if (parent?.state !== RECORD_SELF) {
       this.replace(document, { ...unknown, postings: own });
       return;
     }
     // A record decided on its own has no `[parent]` posting, so its postings
-    // are exactly the details the attachment is decided by.
-    if (this.pendingRecords.has(parent.seq)) this.flush();
+    // are exactly the details the attachment is decided by. Its row lists
+    // them, postings still held back included.
     const copied = this.readTerms.all(parent.seq);
     this.replace(document, {
       state: RECORD_DERIVED,
-      version: parent.source_version,
-      known: parent.known,
+      version: parent.source_version!,
+      known: parent.known!,
       postings: [...own, ...copied],
     });
   }
@@ -933,8 +989,11 @@ export function readFilterValueWork(db: Db, limit: number): FilterValueWork[] {
   });
 }
 
-/** The drain's read, as a read port for the io worker. */
-export const FILTER_VALUE_READS = { filterValueWork: readFilterValueWork };
+/** The drain's and the merge's reads, as a read port for the io worker. */
+export const FILTER_VALUE_READS = {
+  filterValueWork: readFilterValueWork,
+  filterPostingLevelToMerge,
+};
 
 /**
  * Apply rows cut by {@link readFilterValueWork}. A record queued again since
@@ -978,6 +1037,112 @@ export function applyFilterValueWork(
     })();
   }
   return { applied, remaining: [] };
+}
+
+// ── Merging postings a level up ─────────────────────────────────────────────
+//
+// A merge moves every posting of one level into the next, lowest terms first.
+// Moving postings in term order into a level about ten times larger touches
+// each page of that level about once, for some tens of postings each; writing
+// them one by one where they belong would touch a page per posting. Each
+// posting is moved once per level, so its share of the merges is a fraction of
+// a page.
+
+/** Postings level 0 holds before it is merged; level `k` holds ten times level `k - 1`. */
+export const FILTER_POSTING_LEVEL_BASE = 15_000;
+/** About how many postings one transaction of a merge moves. */
+export const FILTER_POSTING_MERGE_SLICE = 500;
+
+/** How many postings level `level` holds before it is merged into the next. */
+export function filterPostingLevelCapacity(level: number): number {
+  return level >= POSTING_LEVELS - 1 ? Infinity : FILTER_POSTING_LEVEL_BASE * 10 ** level;
+}
+
+/**
+ * The lowest level that is full and must be merged into the next, or `null`.
+ * Read-only, and bounded: level 0 is counted up to its capacity, the others
+ * are read from `document_filter_levels`.
+ */
+export function filterPostingLevelToMerge(db: Db): number | null {
+  const fresh = db
+    .prepare<[number], { n: number }>(
+      `SELECT count(*) AS n FROM (
+         SELECT 1 FROM document_filter_postings WHERE level = 0 LIMIT ?)`,
+    )
+    .get(filterPostingLevelCapacity(0))!.n;
+  if (fresh >= filterPostingLevelCapacity(0)) return 0;
+  const full = db
+    .prepare<[], { level: number; postings: number }>(
+      "SELECT level, postings FROM document_filter_levels ORDER BY level",
+    )
+    .all()
+    .find((row) => row.postings >= filterPostingLevelCapacity(row.level));
+  return full?.level ?? null;
+}
+
+/**
+ * Move the postings of `level` into the next level, lowest terms first, in
+ * transactions of about `slice` postings (every posting of the last term
+ * taken), until the level is empty. Stops between transactions once
+ * `shouldYield` says so; calling it again goes on where it stopped.
+ */
+export function mergeFilterPostings(
+  db: Db,
+  level: number,
+  shouldYield: () => boolean = () => false,
+  slice: number = FILTER_POSTING_MERGE_SLICE,
+): { moved: number; done: boolean } {
+  if (!Number.isInteger(level) || level < 0 || level >= POSTING_LEVELS - 1) {
+    throw new Error(`No filter posting level ${level} to merge.`);
+  }
+  const bound = db.prepare<[number, number], { term: number }>(
+    "SELECT term FROM document_filter_postings WHERE level = ? ORDER BY term LIMIT 1 OFFSET ?",
+  );
+  const move = db.prepare<[number, number, number]>(
+    `INSERT INTO document_filter_postings (level, term, seq, source_version, known)
+     SELECT ?, term, seq, source_version, known FROM document_filter_postings
+      WHERE level = ? AND term <= ? ORDER BY term, seq`,
+  );
+  const clear = db.prepare<[number, number]>(
+    "DELETE FROM document_filter_postings WHERE level = ? AND term <= ?",
+  );
+  const count = db.prepare<[number, number]>(
+    `INSERT INTO document_filter_levels (level, postings) VALUES (?, ?)
+     ON CONFLICT(level) DO UPDATE SET postings = max(0, postings + excluded.postings)`,
+  );
+  const empty = db.prepare<[number]>(
+    "UPDATE document_filter_levels SET postings = 0 WHERE level = ?",
+  );
+  const step = Math.max(1, Math.floor(slice));
+  let moved = 0;
+  for (let first = true; ; first = false) {
+    if (!first && shouldYield()) return { moved, done: false };
+    const last = db.transaction(() => {
+      const term = bound.get(level, step - 1)?.term ?? Number.MAX_SAFE_INTEGER;
+      const n = move.run(level + 1, level, term).changes;
+      clear.run(level, term);
+      moved += n;
+      count.run(level + 1, n);
+      if (term === Number.MAX_SAFE_INTEGER) {
+        empty.run(level);
+        return true;
+      }
+      if (level > 0) count.run(level, -n);
+      return false;
+    })();
+    if (last) return { moved, done: true };
+  }
+}
+
+/**
+ * Merge every full level, on one handle and in one go. For tools, tests and
+ * the benchmark; the gateway merges a bounded slice at a time.
+ */
+export function mergeFullFilterPostingLevels(db: Db): void {
+  for (let level = filterPostingLevelToMerge(db); level !== null;) {
+    mergeFilterPostings(db, level);
+    level = filterPostingLevelToMerge(db);
+  }
 }
 
 // ── Accounts ────────────────────────────────────────────────────────────────
@@ -1065,7 +1230,8 @@ export function advanceFilterValuePasses(
       db.prepare(
         `DELETE FROM document_filter_terms
           WHERE slot IN (SELECT slot FROM document_filter_slots WHERE source_id = ?)
-            AND NOT EXISTS (SELECT 1 FROM document_filter_postings p WHERE p.term = document_filter_terms.term)`,
+            AND NOT EXISTS (SELECT 1 FROM document_filter_postings p
+                             WHERE ${postingOfTerm("p", "document_filter_terms.term")})`,
       ).run(sourceId);
       db.prepare(
         `DELETE FROM document_filter_slots WHERE source_id = ?

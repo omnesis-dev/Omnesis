@@ -11,6 +11,10 @@
  * All fixture data is invented.
  */
 
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import Database from "better-sqlite3";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ProviderId, SourceId, sourceTypeOf, type DocumentInput } from "@omnesis/types";
 import {
@@ -33,8 +37,12 @@ import {
   advanceFilterValuePasses,
   applyFilterValueWork,
   createDocumentFilterValueTables,
+  POSTING_LEVELS,
+  filterPostingLevelCapacity,
+  filterPostingLevelToMerge,
   filterValueDeclaration,
   filterValuesReady,
+  mergeFilterPostings,
   readFilterValueWork,
   settleFilterValues,
 } from "./filter-values.js";
@@ -120,13 +128,14 @@ function queued(): string[] {
  * by number: its state as a `[record]` row, then each posting.
  */
 const ROWS = `
-  SELECT r.document_id AS document_id, r.source_id AS source_id, '[record]' AS field, '' AS device_id,
+  SELECT d.id AS document_id, r.source_id AS source_id, '[record]' AS field, '' AS device_id,
          r.state AS value, r.source_version AS source_version, r.known AS known
     FROM document_filter_records r
+    JOIN documents d ON d.rowid = r.seq
   UNION ALL
-  SELECT r.document_id, s.source_id, s.field, s.device_id, t.value, p.source_version, p.known
+  SELECT d.id, s.source_id, s.field, s.device_id, t.value, p.source_version, p.known
     FROM document_filter_postings p
-    JOIN document_filter_records r ON r.seq = p.seq
+    JOIN documents d ON d.rowid = p.seq
     JOIN document_filter_terms t ON t.term = p.term
     JOIN document_filter_slots s ON s.slot = t.slot`;
 
@@ -158,6 +167,22 @@ function versionsOf(externalId: string): number[] {
     .map((row) => row.v);
 }
 
+function postingsAt(level: number): number {
+  return db
+    .prepare<[number], { n: number }>(
+      "SELECT count(*) AS n FROM document_filter_postings WHERE level = ?",
+    )
+    .get(level)!.n;
+}
+
+function recordedAt(level: number): number | undefined {
+  return db
+    .prepare<[number], { postings: number }>(
+      "SELECT postings FROM document_filter_levels WHERE level = ?",
+    )
+    .get(level)?.postings;
+}
+
 function ready(sourceId: string): boolean {
   return filterValuesReady(
     db,
@@ -183,7 +208,16 @@ function expectConsistent(): void {
     .all()
     .map((row) => row.line);
   expect(counts).toEqual(aggregated);
-  // Every posting belongs to a record that has a row.
+  // Every record row is a stored record of its account, every posting belongs
+  // to a record row, and no posting is at both levels.
+  expect(
+    db
+      .prepare(
+        `SELECT count(*) AS n FROM document_filter_records r
+          WHERE NOT EXISTS (SELECT 1 FROM documents d WHERE d.rowid = r.seq AND d.source_id = r.source_id)`,
+      )
+      .get(),
+  ).toEqual({ n: 0 });
   expect(
     db
       .prepare(
@@ -192,7 +226,29 @@ function expectConsistent(): void {
       )
       .get(),
   ).toEqual({ n: 0 });
+  expect(
+    db
+      .prepare(
+        `SELECT count(*) AS n FROM (SELECT term, seq FROM document_filter_postings
+          GROUP BY term, seq HAVING count(*) > 1)`,
+      )
+      .get(),
+  ).toEqual({ n: 0 });
+  // A record row lists exactly the terms of its postings.
+  expect(
+    db
+      .prepare(
+        `SELECT count(*) AS n FROM document_filter_records r
+          WHERE r.terms IS NOT (SELECT json_group_array(term) FROM (
+                  SELECT term FROM document_filter_postings p WHERE p.seq = r.seq ORDER BY term))`,
+      )
+      .get(),
+  ).toEqual({ n: 0 });
   const before = rows();
+  // Moving postings up a level changes no posting.
+  mergeFilterPostings(db, 0, () => false, 3);
+  expect(postingsAt(0)).toBe(0);
+  expect(rows()).toEqual(before);
   db.exec(`DELETE FROM document_filter_postings;
            DELETE FROM document_filter_records;
            DELETE FROM document_filter_value_sources;
@@ -371,6 +427,117 @@ describe("deletion and resync", () => {
     ]) {
       expect(db.prepare(`SELECT count(*) AS n FROM ${table}`).get(), table).toEqual({ n: 0 });
     }
+  });
+});
+
+describe("record numbers and posting levels", () => {
+  it("keeps a record's rows on its rowid through VACUUM and VACUUM INTO", () => {
+    write(
+      ["m-1", "m-2", "m-3", "m-4", "m-5"].map((id) => mail(id, { labelIds: [`l-${id}`] })),
+      3,
+    );
+    deleteDocuments(db, LEDGER, LEDGER, ["m-2", "m-4"]);
+    const numbered = () =>
+      db
+        .prepare<[], { id: string; seq: number }>(
+          "SELECT id, rowid AS seq FROM documents ORDER BY id",
+        )
+        .all();
+    const before = numbered();
+    const dir = mkdtempSync(join(tmpdir(), "omnesis-filter-rowid-"));
+    try {
+      const copyPath = join(dir, "copy.db");
+      db.exec(`VACUUM INTO '${copyPath}'`);
+      const copy = new Database(copyPath, { readonly: true });
+      try {
+        expect(copy.prepare("SELECT id, rowid AS seq FROM documents ORDER BY id").all()).toEqual(
+          before,
+        );
+      } finally {
+        copy.close();
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+    db.exec("VACUUM");
+    expect(numbered()).toEqual(before);
+    expectConsistent();
+  });
+
+  it("gives a record stored on a reused rowid only its own rows", () => {
+    write([mail("m-1", { labelIds: ["l-1"] }), mail("m-2", { labelIds: ["l-2"] })], 3);
+    const last = db.prepare<[], { n: number }>("SELECT max(rowid) AS n FROM documents").get()!.n;
+    deleteDocuments(db, LEDGER, LEDGER, ["m-2"]);
+    write([mail("m-3", { labelIds: ["l-3"] })], 3);
+    expect(
+      db
+        .prepare<[string], { n: number }>("SELECT rowid AS n FROM documents WHERE id = ?")
+        .get(idOf("m-3"))!.n,
+    ).toBe(last);
+    expect(rowsOf("m-3").filter(([field]) => field === "extra.labelIds")).toEqual([
+      ["extra.labelIds", "l-3"],
+    ]);
+    expectConsistent();
+  });
+
+  it("moves a level up a slice at a time, each step leaving the rows whole", () => {
+    write(
+      Array.from({ length: 12 }, (_, n) =>
+        mail(`m-${n}`, { labelIds: [`l-${n % 3}`], folderIds: [`f-${n}`] }),
+      ),
+      3,
+    );
+    const before = rows();
+    const fresh = postingsAt(0);
+    expect(fresh).toBeGreaterThan(12);
+    // One slice, then a yield.
+    const first = mergeFilterPostings(db, 0, () => true, 5);
+    expect(first.done).toBe(false);
+    expect(first.moved).toBeGreaterThanOrEqual(5);
+    expect(postingsAt(0)).toBe(fresh - first.moved);
+    expect(postingsAt(1)).toBe(first.moved);
+    expect(recordedAt(1)).toBe(first.moved);
+    expect(rows()).toEqual(before);
+    // A record rewritten between slices: its postings at both levels change.
+    write([mail("m-0", { labelIds: ["l-2"], folderIds: ["f-0"] })], 3);
+    expect(mergeFilterPostings(db, 0, () => false, 5).done).toBe(true);
+    expect(postingsAt(0)).toBe(0);
+    expect(rowsOf("m-0").filter(([field]) => field === "extra.labelIds")).toEqual([
+      ["extra.labelIds", "l-2"],
+    ]);
+    // Level 1 into level 2: the count moves with the postings.
+    const atOne = postingsAt(1);
+    expect(mergeFilterPostings(db, 1, () => false, 4)).toEqual({ moved: atOne, done: true });
+    expect([postingsAt(1), recordedAt(1), postingsAt(2), recordedAt(2)]).toEqual([
+      0,
+      0,
+      atOne,
+      atOne,
+    ]);
+    expectConsistent();
+  });
+
+  it("merges the lowest full level, and never the last", () => {
+    write([mail("m-1", { labelIds: ["l-1"] })], 3);
+    expect(filterPostingLevelToMerge(db)).toBeNull();
+    db.prepare("INSERT INTO document_filter_levels (level, postings) VALUES (?, ?)").run(
+      2,
+      filterPostingLevelCapacity(2),
+    );
+    db.prepare("INSERT INTO document_filter_levels (level, postings) VALUES (?, ?)").run(
+      POSTING_LEVELS - 1,
+      Number.MAX_SAFE_INTEGER,
+    );
+    expect(filterPostingLevelToMerge(db)).toBe(2);
+    db.prepare("INSERT INTO document_filter_levels (level, postings) VALUES (1, ?)").run(
+      filterPostingLevelCapacity(1) - 1,
+    );
+    expect(filterPostingLevelToMerge(db)).toBe(2);
+    expect(() => mergeFilterPostings(db, POSTING_LEVELS - 1)).toThrow();
+    // Merging an emptied level clears its count.
+    expect(mergeFilterPostings(db, 2)).toEqual({ moved: 0, done: true });
+    expect(recordedAt(2)).toBe(0);
+    expect(filterPostingLevelToMerge(db)).toBeNull();
   });
 });
 

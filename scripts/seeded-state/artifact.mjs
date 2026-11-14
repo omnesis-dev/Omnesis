@@ -172,11 +172,13 @@ const SAFE_TABLES = new Set([
   // Derived work: documents whose source version rose with nothing else
   // changed, waiting for whoever keeps a copy of that version.
   "document_filter_index_queue",
-  // The filter details of every record as indexed postings, the numbered
+  // The filter details of every record as indexed postings and the size of
+  // each of their levels, the numbered
   // records and values they refer to, the running counts of records, which
   // declaration each account's rows were cut under, and the records waiting
   // to be cut. Derived from the documents: a clone starts with none and the
   // background pass cuts its own.
+  "document_filter_levels",
   "document_filter_postings",
   "document_filter_record_counts",
   "document_filter_records",
@@ -387,6 +389,7 @@ const SAFE_ROW_FILTERS = new Map([
   // Pending derived work restarts empty; a clone's copies of a document's
   // source version are rebuilt from the documents themselves.
   ["document_filter_index_queue", "0"],
+  ["document_filter_levels", "0"],
   ["document_filter_postings", "0"],
   ["document_filter_record_counts", "0"],
   ["document_filter_records", "0"],
