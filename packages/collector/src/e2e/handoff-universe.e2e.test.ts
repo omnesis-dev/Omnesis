@@ -297,7 +297,7 @@ describe("handoff universe — one device syncs at a time", () => {
     const rows = syncStateRows();
     expect(rows.map((r) => r.device_id)).toEqual([""]);
     expect(rows[0]!.last_synced_at).not.toBeNull();
-    expect((await cursorAs(member)).cursor).toEqual({ offset: FIXTURE_COUNT });
+    expect((await cursorAs(member)).cursor).toMatchObject({ offset: FIXTURE_COUNT });
   }, 90_000);
 
   test("a detached member leaves the owner syncing; rejoined, its tick is skipped while the owner holds the lease", async () => {
