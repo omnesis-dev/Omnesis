@@ -33,6 +33,7 @@ import {
   assignCapability,
   removeHttpBackend,
   probeBackend,
+  probeBackendDecisionModels,
   verifyBackendModel,
   refreshAnthropicBackend,
   refreshCodexBackend,
@@ -222,6 +223,35 @@ export function claudeCodeBackendRow(overview) {
 const plural = (n, noun) => `${n} ${noun}${n !== 1 ? "s" : ""}`;
 
 /**
+ * Mirror the three chat-API probe outcomes: ok (listed models), reachable
+ * (host up but model list unavailable), fail (unreachable / bad credentials).
+ */
+function chatTestState(result) {
+  return result.status === "ok" ? "ok" : result.status === "reachable" ? "reachable" : "fail";
+}
+
+/**
+ * Whether a backend with only a decision API has something to test: the
+ * Decision model it serves, or the model list of a server on this host. A
+ * cloud decision API with no model assigned has neither.
+ */
+export function decisionTestable(overview, key, status) {
+  if (!status.decision) return false;
+  return assignedDecisionBackend(overview)?.key === key || status.decision.onHost === true;
+}
+
+/**
+ * Test a decision-only backend: one test decision to the Decision model it
+ * serves, otherwise list the models its server offers.
+ */
+async function testDecisionBackend(overview, key) {
+  const assigned = assignedDecisionBackend(overview);
+  if (assigned?.key === key) return (await verifyBackendDecision(key, assigned.model)).ok ? "ok" : "fail";
+  const listing = await probeBackendDecisionModels(key);
+  return !listing.ok ? "fail" : listing.listed ? "ok" : "reachable";
+}
+
+/**
  * One HTTP backend on the Backends page: what it serves (chat models,
  * decision models or both), where, its key and models, and for its decision
  * API the Decision model it serves. A backend serving
@@ -357,7 +387,7 @@ function BackendsDetail({ overview, anthropicRefreshBusy, codexRefreshBusy, code
           backendKey=${key}
           status=${status}
           overview=${overview}
-          testButton=${status.url ? testBtn(key) : null}
+          testButton=${status.url || decisionTestable(overview, key, status) ? testBtn(key) : null}
           onChangeKey=${onChangeKey}
           onDisableDecisions=${onDisableDecisions}
           onRemove=${onRemoveBackend}
@@ -1020,10 +1050,9 @@ export function ModelsView({ section, onModelsRefresh }) {
   const onTestBackend = async (key) => {
     setTestStates((s) => ({ ...s, [key]: "testing" }));
     try {
-      const result = await probeBackend(key);
-      // Mirror the three probe outcomes: ok (listed models), reachable (host up
-      // but model list unavailable), fail (unreachable / bad credentials).
-      const state = result.status === "ok" ? "ok" : result.status === "reachable" ? "reachable" : "fail";
+      const state = overview.inference.backends[key]?.url
+        ? chatTestState(await probeBackend(key))
+        : await testDecisionBackend(overview, key);
       setTestStates((s) => ({ ...s, [key]: state }));
       await refresh();
     } catch {

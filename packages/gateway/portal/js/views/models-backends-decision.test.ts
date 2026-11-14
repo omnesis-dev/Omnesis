@@ -511,14 +511,47 @@ describe("Models — backends that serve decisions", () => {
       expect(row("Fireworks AI").querySelector(".backend-serves").textContent).toBe("OpenAI-compatible and decision models");
       expect(row("Ollaya").querySelector(".backend-serves").textContent).toBe("Decision models");
       expect(row("vllm").querySelector(".backend-serves").textContent).toBe("OpenAI-compatible models");
-      // A decision-only backend has no model list to test, and shows its decision endpoint.
-      expect([...row("Ollaya").querySelectorAll("button")].map((b) => b.textContent.trim())).toEqual(["Change key", "Remove"]);
+      // A decision-only backend is tested through its decision API, and shows its decision endpoint.
+      expect([...row("Ollaya").querySelectorAll("button")].map((b) => b.textContent.trim())).toEqual(["Test", "Change key", "Remove"]);
       expect(row("Ollaya").querySelector("code").textContent).toBe("http://127.0.0.1:11435/v1/systemone");
       expect(row("Ollaya").textContent).toContain("Decision model: kev");
       expect([...row("Fireworks AI").querySelectorAll("button")].map((b) => b.textContent.trim())).toEqual(["Test", "Change key", "Disable decisions", "Remove"]);
       expect(row("vllm").textContent).not.toContain("Disable decisions");
       // Only backends with an OpenAI-compatible API are probed for models.
       expect(api.probeBackend.mock.calls.map(([key]) => key).sort()).toEqual(["fireworks", "vllm"]);
+    });
+
+    it("tests a decision-only backend with one decision to the Decision model it serves", async () => {
+      current = overviewWith(onOllaya());
+      await mount("backends");
+      const test = () => [...row("Ollaya").querySelectorAll("button")].find((b) => /Test|Connected|Failed/.test(b.textContent));
+      await click(test());
+      expect(api.verifyBackendDecision).toHaveBeenCalledWith("ollaya", "kev");
+      expect(api.probeBackend).not.toHaveBeenCalledWith("ollaya");
+      expect(test().textContent.trim()).toBe("Connected ✓");
+    });
+
+    it("shows Failed when the Decision model's test decision fails", async () => {
+      current = overviewWith(onOllaya());
+      api.verifyBackendDecision.mockResolvedValue({ ok: false, failure: "unreachable", reason: "Could not reach the server" });
+      await mount("backends");
+      await click([...row("Ollaya").querySelectorAll("button")].find((b) => b.textContent.trim() === "Test"));
+      expect([...row("Ollaya").querySelectorAll("button")].map((b) => b.textContent.trim())).toContain("Failed ✗");
+    });
+
+    it("tests an unassigned decision server on this host by listing its models", async () => {
+      current = overviewWith({ backends: { ollaya: OLLAYA } });
+      await mount("backends");
+      await click([...row("Ollaya").querySelectorAll("button")].find((b) => b.textContent.trim() === "Test"));
+      expect(api.probeBackendDecisionModels).toHaveBeenCalledWith("ollaya");
+      expect(api.verifyBackendDecision).not.toHaveBeenCalled();
+      expect([...row("Ollaya").querySelectorAll("button")].map((b) => b.textContent.trim())).toContain("Connected ✓");
+    });
+
+    it("offers no Test for a cloud decision API with no model assigned", async () => {
+      current = overviewWith({ backends: { fireworks: { type: "http", status: "ok", preset: "fireworks", hasApiKey: true, decision: FIREWORKS_DECISION } } });
+      await mount("backends");
+      expect([...row("Fireworks AI").querySelectorAll("button")].map((b) => b.textContent.trim())).toEqual(["Change key", "Remove"]);
     });
 
     it("changes a backend's key in place, sending only the key", async () => {
