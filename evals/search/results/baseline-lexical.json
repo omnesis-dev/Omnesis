@@ -1,0 +1,287 @@
+{
+  "name": "baseline-lexical",
+  "mode": "lexical",
+  "startedAt": "2026-11-14T18:05:48.719Z",
+  "source": {
+    "commit": "08f05e41a7915e8979fbc6953f56ef8b23c88155",
+    "packagesTree": "b5100301c1cf8c01387a0a63a36810d84494c857",
+    "dirty": false,
+    "branch": "search-eval-bridge"
+  },
+  "dataset": {
+    "name": "miracl-dev-pools",
+    "poolSize": 100000,
+    "revisions": {
+      "topics": "5be20db9509754dadad47689368639fcec739c00",
+      "corpus": "d921ec7e349ce0d28daf30b2da9da5ee698bef0d"
+    }
+  },
+  "limits": {
+    "maxPassages": null,
+    "maxQueries": null
+  },
+  "embedder": null,
+  "gatewayConfig": {
+    "search": {
+      "params": {
+        "candidateLimit": 100
+      },
+      "temporal": {
+        "enabled": false
+      }
+    }
+  },
+  "macro": {
+    "ndcg10": 0.40020796352278387,
+    "recall100": 0.7221993548976927,
+    "mrr10": 0.4150669594892632
+  },
+  "languages": [
+    {
+      "language": "ar",
+      "queries": 2896,
+      "passages": 100000,
+      "emptyResults": 0,
+      "lexicalEngines": {
+        "memory": 2896
+      },
+      "pool": "e26fe5124bab1715",
+      "ndcg10": 0.5449664775382586,
+      "recall100": 0.8876929316846444,
+      "mrr10": 0.5446623147417331
+    },
+    {
+      "language": "bn",
+      "queries": 411,
+      "passages": 100000,
+      "emptyResults": 0,
+      "lexicalEngines": {
+        "memory": 411
+      },
+      "pool": "67847eb792a97416",
+      "ndcg10": 0.36601883513735817,
+      "recall100": 0.7580031282586028,
+      "mrr10": 0.39838856061483785
+    },
+    {
+      "language": "de",
+      "queries": 305,
+      "passages": 100000,
+      "emptyResults": 0,
+      "lexicalEngines": {
+        "memory": 305
+      },
+      "pool": "0123053cc38dc173",
+      "ndcg10": 0.35987117210891983,
+      "recall100": 0.7692505854800936,
+      "mrr10": 0.3947358834244081
+    },
+    {
+      "language": "en",
+      "queries": 799,
+      "passages": 100000,
+      "emptyResults": 0,
+      "lexicalEngines": {
+        "memory": 799
+      },
+      "pool": "1b185c56741e3ee2",
+      "ndcg10": 0.5575262101298839,
+      "recall100": 0.9515976409906323,
+      "mrr10": 0.5411680274946855
+    },
+    {
+      "language": "es",
+      "queries": 648,
+      "passages": 100000,
+      "emptyResults": 0,
+      "lexicalEngines": {
+        "memory": 648
+      },
+      "pool": "6e4ccef26671dcbb",
+      "ndcg10": 0.5668679071600918,
+      "recall100": 0.9052781452087009,
+      "mrr10": 0.6590890162649415
+    },
+    {
+      "language": "fa",
+      "queries": 632,
+      "passages": 100000,
+      "emptyResults": 0,
+      "lexicalEngines": {
+        "memory": 632
+      },
+      "pool": "95d5fe65f06f70f9",
+      "ndcg10": 0.42158148705789866,
+      "recall100": 0.852443113321278,
+      "mrr10": 0.4145513110307414
+    },
+    {
+      "language": "fi",
+      "queries": 1271,
+      "passages": 100000,
+      "emptyResults": 0,
+      "lexicalEngines": {
+        "memory": 1271
+      },
+      "pool": "f7289397d02da781",
+      "ndcg10": 0.540716364207056,
+      "recall100": 0.8194597429845263,
+      "mrr10": 0.5648092990146493
+    },
+    {
+      "language": "fr",
+      "queries": 343,
+      "passages": 100000,
+      "emptyResults": 0,
+      "lexicalEngines": {
+        "memory": 343
+      },
+      "pool": "39f54fd5e41ccd6c",
+      "ndcg10": 0.39536598777793613,
+      "recall100": 0.8695821185617106,
+      "mrr10": 0.3725797121569717
+    },
+    {
+      "language": "hi",
+      "queries": 350,
+      "passages": 100000,
+      "emptyResults": 0,
+      "lexicalEngines": {
+        "memory": 350
+      },
+      "pool": "660fb0951af8aee5",
+      "ndcg10": 0.259612364773993,
+      "recall100": 0.588063492063492,
+      "mrr10": 0.28792290249433106
+    },
+    {
+      "language": "id",
+      "queries": 960,
+      "passages": 100000,
+      "emptyResults": 0,
+      "lexicalEngines": {
+        "memory": 960
+      },
+      "pool": "fe185f5943d5e051",
+      "ndcg10": 0.5343737093253603,
+      "recall100": 0.9283700847763344,
+      "mrr10": 0.5923044808201059
+    },
+    {
+      "language": "ja",
+      "queries": 860,
+      "passages": 100000,
+      "emptyResults": 582,
+      "lexicalEngines": {
+        "memory": 860
+      },
+      "pool": "a50f1574a7cf8ffb",
+      "ndcg10": 0.138169745040583,
+      "recall100": 0.27106589147286825,
+      "mrr10": 0.13101836471022515
+    },
+    {
+      "language": "ko",
+      "queries": 213,
+      "passages": 100000,
+      "emptyResults": 1,
+      "lexicalEngines": {
+        "memory": 213
+      },
+      "pool": "9af6011e32f90f10",
+      "ndcg10": 0.351952424088871,
+      "recall100": 0.6396483276764968,
+      "mrr10": 0.3931906252328788
+    },
+    {
+      "language": "ru",
+      "queries": 1252,
+      "passages": 100000,
+      "emptyResults": 0,
+      "lexicalEngines": {
+        "memory": 1252
+      },
+      "pool": "ffc3317fad86567f",
+      "ndcg10": 0.36898806916808186,
+      "recall100": 0.6677584551586153,
+      "mrr10": 0.416450821542674
+    },
+    {
+      "language": "sw",
+      "queries": 482,
+      "passages": 100000,
+      "emptyResults": 0,
+      "lexicalEngines": {
+        "memory": 482
+      },
+      "pool": "18da7a8728fbe3b4",
+      "ndcg10": 0.4766482493224569,
+      "recall100": 0.8065426793123889,
+      "mrr10": 0.49374711848778213
+    },
+    {
+      "language": "te",
+      "queries": 828,
+      "passages": 100000,
+      "emptyResults": 0,
+      "lexicalEngines": {
+        "memory": 828
+      },
+      "pool": "c31072b58ba6464d",
+      "ndcg10": 0.25276469189860556,
+      "recall100": 0.5813204508856683,
+      "mrr10": 0.21975883751246073
+    },
+    {
+      "language": "th",
+      "queries": 733,
+      "passages": 100000,
+      "emptyResults": 0,
+      "lexicalEngines": {
+        "memory": 733
+      },
+      "pool": "705a1da55a77cded",
+      "ndcg10": 0.44022598244756467,
+      "recall100": 0.8085493406093681,
+      "mrr10": 0.43602016067909594
+    },
+    {
+      "language": "yo",
+      "queries": 119,
+      "passages": 49043,
+      "emptyResults": 0,
+      "lexicalEngines": {
+        "memory": 119
+      },
+      "pool": "3e7bd772febe04ab",
+      "ndcg10": 0.6213291554099399,
+      "recall100": 0.8767507002801121,
+      "mrr10": 0.604295051353875
+    },
+    {
+      "language": "zh",
+      "queries": 393,
+      "passages": 100000,
+      "emptyResults": 381,
+      "lexicalEngines": {
+        "memory": 393
+      },
+      "pool": "107d0e48ab5375d0",
+      "ndcg10": 0.006764510817247522,
+      "recall100": 0.01821155943293348,
+      "mrr10": 0.006512783230340481
+    }
+  ],
+  "totals": {
+    "passages": 1749043,
+    "chunks": 1757074,
+    "queries": 13495
+  },
+  "timing": {
+    "ingestSeconds": 2281,
+    "indexSeconds": 1411,
+    "querySeconds": 77,
+    "queryMsP50": 20,
+    "queryMsP95": 44
+  }
+}
