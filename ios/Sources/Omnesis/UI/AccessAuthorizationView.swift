@@ -237,9 +237,6 @@ struct AccessAuthorizationSheet: View {
                     levelNameRefused: levelNameTaken
                 )
             }
-        case .permissions:
-            AccessHeader(title: AccessStepCopy.title(.permissions))
-            AccessPermissionsStep(decisions: decisions)
         case .review:
             filtersUnavailableBanner(decisions.wrappedValue)
             AccessAuthorizationReviewSection(
@@ -250,23 +247,25 @@ struct AccessAuthorizationSheet: View {
                 // A decision is changed on its own screen, when this approval asks it.
                 change: { decision in if flow.contains(decision) { step = decision } }
             )
+        case .permissions:
+            AccessHeader(title: AccessStepCopy.title(.permissions))
+            decisionControls(current, decisions: decisions)
         default:
             filtersUnavailableBanner(decisions.wrappedValue)
             AccessHeader(title: AccessStepCopy.title(current), subtitle: AccessStepCopy.subtitle(current))
-            dataContent(current, decisions: decisions)
+            decisionControls(current, decisions: decisions)
         }
     }
 
-    /// One decision about data, drawn by the step the level editor draws it with.
-    @ViewBuilder
-    private func dataContent(_ page: AccessFlowStep, decisions: Binding<AccessDraftDecisions>) -> some View {
-        switch page {
-        case .directChoice: AccessDirectChoiceStep(decisions: decisions)
-        case .directData: AccessSourcesStep(decisions: decisions, capability: "direct") { filter = .init(source: $0, capability: "direct") }
-        case .future: AccessNewSourcesStep(decisions: decisions)
-        case .release: AccessReleaseStep(decisions: decisions) { policyText = .init(familyId: $0.id, name: $0.name) }
-        default: AccessSourcesStep(decisions: decisions, capability: "answer") { filter = .init(source: $0, capability: "answer") }
-        }
+    /// One decision of the new level, drawn as the level editor draws it.
+    private func decisionControls(_ step: AccessFlowStep, decisions: Binding<AccessDraftDecisions>) -> some View {
+        AccessDecisionControls(
+            decisions: decisions,
+            step: step,
+            isEditing: false,
+            editFilter: { filter = .init(source: $0, capability: $1) },
+            readPolicy: { policyText = .init(familyId: $0.id, name: $0.name) }
+        )
     }
 
     /// Says that the level this approval draws cannot be created, on a gateway that does not offer writing the

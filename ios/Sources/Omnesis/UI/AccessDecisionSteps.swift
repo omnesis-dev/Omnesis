@@ -86,12 +86,10 @@ struct AccessPermissionsStep: View {
 }
 
 /// The source accounts one capability reads: a searchable list of accounts, each with what it shares and the way into its filter.
-/// A `frozen` list only shows them: no search, nothing to tick or change, its checkboxes grey.
 @available(iOS 17.0, *)
 struct AccessSourcesStep: View {
     @Binding var decisions: AccessDraftDecisions
     let capability: String
-    var frozen = false
     let editFilter: (AccessSourceInstance) -> Void
     @State private var query = ""
 
@@ -101,19 +99,17 @@ struct AccessSourcesStep: View {
 
     var body: some View {
         let all = decisions.sources(capability)
-        let visible = frozen ? all : accessSourcesMatching(all, query: query)
+        let visible = accessSourcesMatching(all, query: query)
         if all.isEmpty {
             Text(accessNoConnectedAccountsMessage).accessText(.rowSecondary, color: AccessUI.secondary)
         } else {
-            if !frozen { AccessSearchField(prompt: "Search sources", text: $query).padding(.bottom, 16) }
+            AccessSearchField(prompt: "Search sources", text: $query).padding(.bottom, 16)
             VStack(alignment: .leading, spacing: 0) {
                 HStack(spacing: 20) {
                     Text(decisions.allowedCountLabel(capability)).accessText(.rowSecondary, color: AccessUI.secondary).monospacedDigit()
                     Spacer(minLength: 0)
-                    if !frozen {
-                        bulkButton("Allow all", allowed: true, visible: visible)
-                        bulkButton("Block all", allowed: false, visible: visible)
-                    }
+                    bulkButton("Allow all", allowed: true, visible: visible)
+                    bulkButton("Block all", allowed: false, visible: visible)
                 }
                 .padding(.bottom, 12)
                 AccessDivider()
@@ -121,12 +117,11 @@ struct AccessSourcesStep: View {
                     row(source, last: index == visible.count - 1)
                 }
             }
-            .disabled(frozen)
             if visible.isEmpty {
                 Text("No accounts match this search.").accessText(.rowSecondary, color: AccessUI.secondary).padding(.top, 12)
             }
         }
-        if !frozen { AccessProblemText(text: decisions.problem(step)) }
+        AccessProblemText(text: decisions.problem(step))
     }
 
     private func bulkButton(_ title: String, allowed: Bool, visible: [AccessSourceInstance]) -> some View {
@@ -149,9 +144,9 @@ struct AccessSourcesStep: View {
             selected: decisions.isAllowed(source.id, capability: capability),
             status: decisions.status(source, capability: capability),
             last: last,
-            toggle: frozen ? nil : { if let next { decisions.setSourceSelection(next, capability: capability) } },
+            toggle: { if let next { decisions.setSourceSelection(next, capability: capability) } },
             trailing: {
-                if !frozen, decisions.filterEntryVisible(source, capability: capability) {
+                if decisions.filterEntryVisible(source, capability: capability) {
                     AccessChangeButton(label: "Change \(capability) filter for \(accessAccountLineText(source))") { editFilter(source) }
                 }
             }
@@ -160,40 +155,54 @@ struct AccessSourcesStep: View {
     }
 }
 
-/// Direct's sources on a level being edited. While Direct follows Answer, Answer's list is shown frozen with the way to
-/// give Direct a list of its own; while Direct has its own list, that list is editable with the way back to Answer's.
-/// Switching only changes the draft, so Cancel undoes it. A level without Answer shows Direct's list alone.
+/// Direct's sources on a level being edited. Beside Answer, the screen first asks whether Direct follows Answer, as a
+/// new level's own step asks it, and lists Direct's own accounts under that choice while it has its own. Switching
+/// only changes the draft, so Cancel undoes it. A level without Answer, or a new level that asked on its own step,
+/// shows Direct's list alone.
 @available(iOS 17.0, *)
 struct AccessDirectDataStep: View {
     @Binding var decisions: AccessDraftDecisions
-    /// Whether this screen offers following Answer's sources; a flow that asks that on its own screen passes false.
+    /// Whether this screen asks if Direct follows Answer; a flow that asks that on its own screen passes false.
     let offersLink: Bool
     let editFilter: (AccessSourceInstance) -> Void
 
     var body: some View {
         if offersLink, decisions.holds("answer") {
-            if decisions.directSameAsAnswer {
-                Text("Uses the same sources and filters as Answer.")
-                    .accessText(.subtitle)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .padding(.bottom, 12)
-                action("Choose different sources", same: false)
-                AccessSourcesStep(decisions: $decisions, capability: "answer", frozen: true) { _ in }
-            } else {
-                action(AccessStepCopy.sameAsAnswer, same: true)
+            AccessDirectChoiceStep(decisions: $decisions)
+            if !decisions.directSameAsAnswer {
+                Color.clear.frame(height: AccessUI.sectionGap)
                 AccessSourcesStep(decisions: $decisions, capability: "direct", editFilter: editFilter)
             }
         } else {
             AccessSourcesStep(decisions: $decisions, capability: "direct", editFilter: editFilter)
         }
     }
+}
 
-    private func action(_ title: String, same: Bool) -> some View {
-        Button(title) { decisions.setDirectSameAsAnswer(same) }
-            .buttonStyle(AccessSecondaryButtonStyle())
-            .disabled(!decisions.canUseAnswerSourcesForDirect)
-            .padding(.bottom, 20)
-            .accessibilityIdentifier(same ? "access-direct-same-as-answer" : "access-direct-own-sources")
+/// The controls of one decision of an access level, below its question. The level editor and the approval of a new
+/// level both draw every decision through this, so a decision looks and behaves the same in both. The level page,
+/// the name and the review are drawn by each flow.
+@available(iOS 17.0, *)
+struct AccessDecisionControls: View {
+    @Binding var decisions: AccessDraftDecisions
+    let step: AccessFlowStep
+    /// Whether the level is saved: its Direct data then asks whether Direct follows Answer, which a new level asks on
+    /// its own step.
+    let isEditing: Bool
+    /// Opens one account's filter for a capability ("answer" or "direct").
+    let editFilter: (AccessSourceInstance, String) -> Void
+    let readPolicy: (AccessPolicyFamilySummary) -> Void
+
+    var body: some View {
+        switch step {
+        case .permissions: AccessPermissionsStep(decisions: $decisions)
+        case .answerData: AccessSourcesStep(decisions: $decisions, capability: "answer") { editFilter($0, "answer") }
+        case .directData: AccessDirectDataStep(decisions: $decisions, offersLink: isEditing) { editFilter($0, "direct") }
+        case .directChoice: AccessDirectChoiceStep(decisions: $decisions)
+        case .future: AccessNewSourcesStep(decisions: $decisions)
+        case .release: AccessReleaseStep(decisions: $decisions, readPolicy: readPolicy)
+        case .overview, .name, .review: EmptyView()
+        }
     }
 }
 
@@ -219,7 +228,7 @@ struct AccessDirectChoiceStep: View {
             ForEach(Array(shared.enumerated()), id: \.element.id) { index, source in
                 AccessAccountRow(source: source, status: decisions.status(source, capability: "answer"), last: index == shared.count - 1)
             }
-            if shared.isEmpty { Text("No sources selected for Answer.").accessText(.rowSecondary, color: AccessUI.secondary) }
+            if shared.isEmpty { Text("No accounts selected.").accessText(.rowSecondary, color: AccessUI.secondary) }
         }
     }
 }
@@ -396,14 +405,10 @@ private struct AccessDecisionStepsPreview: View {
     var body: some View {
         AccessScroll {
             AccessHeader(title: AccessStepCopy.title(step), subtitle: AccessStepCopy.subtitle(step))
-            switch step {
-            case .permissions: AccessPermissionsStep(decisions: $decisions)
-            case .directChoice: AccessDirectChoiceStep(decisions: $decisions)
-            case .future: AccessNewSourcesStep(decisions: $decisions)
-            case .release: AccessReleaseStep(decisions: $decisions) { _ in }
-            case .overview: AccessDecisionRows(lines: decisions.decisionLines) { _ in }
-            case .directData: AccessDirectDataStep(decisions: $decisions, offersLink: true) { _ in }
-            default: AccessSourcesStep(decisions: $decisions, capability: "answer") { _ in }
+            if step == .overview {
+                AccessDecisionRows(lines: decisions.decisionLines) { _ in }
+            } else {
+                AccessDecisionControls(decisions: $decisions, step: step, isEditing: true, editFilter: { _, _ in }, readPolicy: { _ in })
             }
         }
         .background(Theme.bgPrimary)

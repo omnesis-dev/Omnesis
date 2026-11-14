@@ -160,14 +160,15 @@ struct AccessLevelEditorView: View {
             VStack(spacing: 0) { AccessDecisionRows(lines: [name] + decisions.wrappedValue.decisionLines) { edit($0) } }
                 .padding(.top, -AccessUI.rowPadding)
         case .name: AccessLevelNameField(name: $draft.name, problem: nameProblem)
-        case .permissions: AccessPermissionsStep(decisions: decisions)
-        case .answerData: AccessSourcesStep(decisions: decisions, capability: "answer") { filter = .init(source: $0, capability: "answer") }
-        case .directData:
-            AccessDirectDataStep(decisions: decisions, offersLink: isEditing) { filter = .init(source: $0, capability: "direct") }
-        case .directChoice: AccessDirectChoiceStep(decisions: decisions)
-        case .future: AccessNewSourcesStep(decisions: decisions)
-        case .release: AccessReleaseStep(decisions: decisions) { policyText = .init(familyId: $0.id, name: $0.name) }
         case .review: reviewContent
+        default:
+            AccessDecisionControls(
+                decisions: decisions,
+                step: current,
+                isEditing: isEditing,
+                editFilter: { filter = .init(source: $0, capability: $1) },
+                readPolicy: { policyText = .init(familyId: $0.id, name: $0.name) }
+            )
         }
     }
 
@@ -291,7 +292,11 @@ struct AccessLevelEditorView: View {
                 )
                 // A gone account's preview names its entries but counts nothing.
                 if preview.connected {
-                    scopeTotals[canonicalAccessPolicy(policy)] = .init(shared: preview.visible, hidden: preview.hidden)
+                    scopeTotals[canonicalAccessPolicy(policy)] = .init(
+                        shared: preview.visible,
+                        hidden: preview.hidden,
+                        undecided: preview.undecidedLines
+                    )
                 }
             } catch { /* Saved labels remain readable when optional lookup fails. */ }
         }

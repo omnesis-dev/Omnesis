@@ -18,7 +18,8 @@ object ResyncCopy {
 
     /** The confirmation on a gateway that predates resync modes, where a resync always deletes first. */
     const val WIPE_ONLY_TITLE = "Resync this source?"
-    const val WIPE_ONLY_BODY = "This deletes the source's documents and refetches everything from scratch."
+    const val WIPE_ONLY_BODY =
+        "All ingested documents for this source will be deleted and re-fetched from scratch. Large sources can take a while."
     const val WIPE_ONLY_CONFIRM = "Resync"
 
     fun title(sourceName: String): String = "Resync $sourceName"

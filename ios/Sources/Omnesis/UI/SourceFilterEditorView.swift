@@ -186,8 +186,8 @@ struct SourceFilterEditorView: View {
                     AccessHeader(title: title) { AccessAccountLine(source: source) }
                     if !writable {
                         Text(authoringEnabled
-                            ? "This filter uses settings this editor cannot change. It stays in place exactly as saved."
-                            : "Source filter editing requires experimental mode. This saved filter stays in place and is shown here.")
+                            ? "This filter uses settings this editor cannot change. It stays in force as saved."
+                            : "Source filter editing requires experimental mode. This saved filter stays in force and is shown here.")
                             .accessText(.rowSecondary, color: AccessUI.secondary)
                             .padding(.bottom, 16)
                         reviewContent
@@ -443,14 +443,7 @@ extension SourceFilterEditorView {
             }
         } else if let preview = currentPreview, preview.connected {
             AccessStatPair(shared: preview.visible, hidden: preview.hidden)
-            let lines = preview.undecidedLines
-            if !lines.isEmpty {
-                VStack(alignment: .leading, spacing: 8) {
-                    ForEach(lines, id: \.self) { Text($0).accessText(.rowSecondary, color: AccessUI.secondary) }
-                }
-                .fixedSize(horizontal: false, vertical: true)
-                .padding(.top, 12)
-            }
+            AccessUndecidedLines(lines: preview.undecidedLines, top: 12)
         }
     }
 

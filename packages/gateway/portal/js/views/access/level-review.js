@@ -9,6 +9,9 @@ import {
 } from "../../components/access-pills.js";
 import {
   CountsUnavailable,
+  HiddenRecordLines,
+  SharedHiddenCounts,
+  countedPreview,
   useSourceFilterPreview,
 } from "../../components/source-filter-preview.js";
 import { CountingRecords, SourceFilterTable } from "../../components/source-filter-table.js";
@@ -107,23 +110,29 @@ function useAccountPolicy(rule, source) {
   };
 }
 
-/** The status line of a boundary: its counts when filtered, then its pill. */
+/**
+ * The status line of a boundary: its counts when filtered, then its pill,
+ * and under them the gateway's sentences for records the filter keeps hidden
+ * whatever it says, as the filter dialog shows them.
+ */
 function BoundaryLine({ rule, source, state, header = null }) {
   const { policy, preview, active, editable } = state;
+  const counted = policy && !preview.pending && !preview.error ? countedPreview(preview.data) : null;
   return html`<div class="compact-account-line">
-    ${header}
-    <span class="compact-account-state">
-      ${
-        policy
-          ? html`<span class="compact-policy-impact" role="status">
-              ${preview.pending ? html`<${CountingRecords} />` : preview.error ? html`<${CountsUnavailable} onRetry=${preview.retry} />` : preview.data?.connected !== false && Number.isFinite(preview.data?.visible) && Number.isFinite(preview.data?.hidden) ? html`<span><strong>${preview.data.visible.toLocaleString()}</strong> shared</span><span><strong>${preview.data.hidden.toLocaleString()}</strong> hidden</span>` : null}
-              ${!editable ? html`<span>Other content: ${policy.otherwise === "share" ? "shared" : "hidden"}</span>` : null}
-            </span>`
-          : null
-      }
-      <${BoundaryPill} rule=${rule} source=${source} policy=${policy} active=${active} />
-    </span>
-  </div>`;
+      ${header}
+      <span class="compact-account-state">
+        ${
+          policy
+            ? html`<span class="compact-policy-impact" role="status">
+                ${preview.pending ? html`<${CountingRecords} />` : preview.error ? html`<${CountsUnavailable} onRetry=${preview.retry} />` : counted ? html`<${SharedHiddenCounts} data=${counted} />` : null}
+                ${!editable ? html`<span>Other content: ${policy.otherwise === "share" ? "shared" : "hidden"}</span>` : null}
+              </span>`
+            : null
+        }
+        <${BoundaryPill} rule=${rule} source=${source} policy=${policy} active=${active} />
+      </span>
+    </div>
+    ${counted ? html`<${HiddenRecordLines} data=${counted} />` : null}`;
 }
 
 /** The typed table of each saved rule. */

@@ -442,18 +442,10 @@ private fun AuthorizationWizard(
                 AccessAuthorizationStep.CONNECTION -> item {
                     ConnectionStep(request, overview, form, nowMillis, levelNameTaken, onFormChange)
                 }
-                AccessAuthorizationStep.PERMISSIONS -> item {
-                    LevelStep(AccessLevelPage.PERMISSIONS) { AccessPermissionsQuestion(draft, overview, requiredAnswer = request.requiresAnswer, update = change) }
-                }
-                AccessAuthorizationStep.DATA -> item {
-                    val page = position.dataPage ?: AccessLevelPage.ANSWER_DATA
+                AccessAuthorizationStep.PERMISSIONS, AccessAuthorizationStep.DATA -> item {
+                    val page = if (position.step == AccessAuthorizationStep.PERMISSIONS) AccessLevelPage.PERMISSIONS else position.dataPage ?: AccessLevelPage.ANSWER_DATA
                     LevelStep(page) {
-                        when (page) {
-                            AccessLevelPage.DIRECT_CHOICE -> AccessDirectQuestion(draft, overview, iconFor, nameFor, change, onEditFilter)
-                            AccessLevelPage.FUTURE -> AccessFutureQuestion(draft, overview, change)
-                            AccessLevelPage.RELEASE -> AccessReleaseQuestion(draft, overview, readPolicy = onShowPolicy, update = change)
-                            else -> AccessDataQuestion(draft, overview, page.capability() ?: AccessCapability.ANSWER, iconFor, nameFor, change, onEditFilter)
-                        }
+                        AccessLevelDecisionControls(page, draft, overview, iconFor, nameFor, onShowPolicy, change, onEditFilter, requiredAnswer = request.requiresAnswer)
                     }
                 }
                 AccessAuthorizationStep.REVIEW -> item {

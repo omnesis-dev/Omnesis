@@ -20,6 +20,8 @@ import {
   waitingFieldGroups,
 } from "./source-filter-fields.js";
 import {
+  FILTER_EDITING_OFF_NOTICE,
+  UNEDITABLE_FILTER_NOTICE,
   cloneFilter,
   newSourcePolicy,
   editableSourcePolicy,
@@ -155,7 +157,7 @@ export function SourceFilterEditor({
       </div>
       <div class="filter-task-scroll">
         <h3 ref=${heading} tabindex="-1" class="sr-only">${title}</h3>
-        ${readOnly ? html`<p class="source-filter-notice" role="status">${!enabled ? "Source filter editing requires experimental mode. This saved filter remains enforced and is shown here." : "This filter uses settings this editor cannot change. The complete saved policy is preserved."}</p>` : null}
+        ${readOnly ? html`<p class="source-filter-notice" role="status">${!enabled ? FILTER_EDITING_OFF_NOTICE : UNEDITABLE_FILTER_NOTICE}</p>` : null}
         ${
           !readOnly && step === "mode"
             ? html`<div class="source-filter-mode">

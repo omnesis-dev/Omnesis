@@ -314,9 +314,13 @@ export function LevelDecision({
   const validation = levelDecisionError(step, rules, sources);
   const locked = () => disabled || isLocked?.() === true;
   const linked = directFollowsAnswer(rules, linkDirect);
-  const dataCapability = dataDecisionCapability(step);
-  // An existing level's linked Direct shows Answer's accounts, read-only.
-  const followsAnswer = step === "direct-data" && !isNew && linked;
+  // Whether Direct follows Answer is one choice wherever it is asked: its own
+  // step on a new level, and the top of Direct data on a saved level, where
+  // Direct's own accounts follow it on the same screen.
+  const directChoice =
+    step === "direct-choice" || (step === "direct-data" && !isNew && Boolean(rules.answer));
+  const dataCapability =
+    step === "direct-data" && directChoice && linked ? null : dataDecisionCapability(step);
   // Direct linked to Answer follows every change to Answer's sources and filters.
   const update = (capability, next) => {
     if (locked()) return;
@@ -379,44 +383,29 @@ export function LevelDecision({
           : null
       }
       ${
-        step === "direct-data" && !isNew && rules.answer
-          ? html`<div class="guided-direct-link">
-              ${linked ? html`<p>Uses the same sources and filters as Answer.</p>` : null}
-              <button
-                type="button"
-                class="btn-secondary"
-                disabled=${disabled || (!linked && copyBlocked)}
-                onClick=${linked ? separate : reuse}
-              >
-                ${linked ? OWN_SOURCES_LABEL : SAME_AS_ANSWER_LABEL}
-              </button>
-            </div>`
-          : null
-      }
-      ${dataCapability ? html`<${LevelDataDecision} capability=${dataCapability} rule=${followsAnswer ? rules.answer : rules[dataCapability]} frozen=${followsAnswer} onChange=${(value) => update(dataCapability, value)} sources=${sources} enabled=${sourceFiltersEnabled} disabled=${disabled} accessLevel=${accessLevel} />` : null}
-      ${
-        step === "direct-choice"
+        directChoice
           ? html`<div class="guided-choices">
-              <label class=${`guided-choice${linkDirect ? " is-selected" : ""}`}
+              <label class=${`guided-choice${linked ? " is-selected" : ""}`}
                 ><input
                   type="radio"
                   name="direct-data-choice"
-                  checked=${linkDirect}
+                  checked=${linked}
                   disabled=${disabled || copyBlocked}
                   onChange=${reuse}
                 /><span><strong>${SAME_AS_ANSWER_LABEL}</strong></span></label
-              ><label class=${`guided-choice${!linkDirect ? " is-selected" : ""}`}
+              ><label class=${`guided-choice${!linked ? " is-selected" : ""}`}
                 ><input
                   type="radio"
                   name="direct-data-choice"
-                  checked=${!linkDirect}
+                  checked=${!linked}
                   disabled=${disabled}
                   onChange=${separate}
                 /><span><strong>${OWN_SOURCES_LABEL}</strong></span></label
-              >${linkDirect ? html`<div class="guided-reuse-summary"><${LevelDecisionSummary} decision="answer-data" rules=${rules} sources=${sources} policies=${policies} /></div>` : null}
+              >${linked ? html`<div class="guided-reuse-summary"><${LevelDecisionSummary} decision="answer-data" rules=${rules} sources=${sources} policies=${policies} /></div>` : null}
             </div>`
           : null
       }
+      ${dataCapability ? html`<${LevelDataDecision} capability=${dataCapability} rule=${rules[dataCapability]} onChange=${(value) => update(dataCapability, value)} sources=${sources} enabled=${sourceFiltersEnabled} disabled=${disabled} accessLevel=${accessLevel} />` : null}
       ${
         step === "future"
           ? html`<div class="guided-future-choices">

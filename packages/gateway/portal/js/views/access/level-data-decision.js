@@ -23,9 +23,6 @@ import { AccountStatusPill } from "./level-review.js";
  * The accounts one capability reads, each with its checkbox, its status and
  * the Change that opens its filter. The level editor and the approval sheet
  * both render this list.
- *
- * `frozen` shows the list read-only and muted, for a Direct that uses
- * Answer's sources and filters: what is shared stays visible, nothing changes.
  */
 export function LevelDataDecision({
   capability,
@@ -33,7 +30,6 @@ export function LevelDataDecision({
   sources,
   enabled,
   disabled,
-  frozen = false,
   accessLevel,
   onChange,
 }) {
@@ -64,7 +60,7 @@ export function LevelDataDecision({
     aria-label=${`${capabilityName(capability)} source selection`}
   >
     ${
-      all.length && !frozen
+      all.length
         ? html`<label class="guided-source-search"
               >Find an account<input
                 type="search"
@@ -93,7 +89,7 @@ export function LevelDataDecision({
             </div>`
         : null
     }
-    <div class=${`guided-source-list${frozen ? " is-frozen" : ""}`}>
+    <div class="guided-source-list">
       ${visible.map((source) => {
         const id = sourceId(source),
           allowed = isSourceAllowed(rule, id),
@@ -105,7 +101,7 @@ export function LevelDataDecision({
             ><input
               type="checkbox"
               checked=${allowed}
-              disabled=${disabled || frozen || locked}
+              disabled=${disabled || locked}
               aria-label=${`Share ${sourceLabel(source)} ${sourceAccountOf(id) || "account"}`}
               onChange=${() => onChange(candidate)}
             /><${SourceAccountHeader}
@@ -116,9 +112,9 @@ export function LevelDataDecision({
             <${AccountStatusPill}
               rule=${rule}
               source=${source}
-            />${!frozen && ((allowed && enabled && source.filterable) || policy) ? html`<button type="button" class="btn-secondary" disabled=${disabled} aria-label=${`${enabled ? "Change" : "View"} ${sourceLabel(source)} content`} onClick=${() => setEditing(source)}>${enabled ? "Change" : "View"}</button>` : null}
+            />${(allowed && enabled && source.filterable) || policy ? html`<button type="button" class="btn-secondary" disabled=${disabled} aria-label=${`${enabled ? "Change" : "View"} ${sourceLabel(source)} content`} onClick=${() => setEditing(source)}>${enabled ? "Change" : "View"}</button>` : null}
           </div>
-          ${locked && !frozen ? html`<p class="source-filter-notice">${SAVED_FILTER_SOURCE_MESSAGE}</p>` : null}
+          ${locked ? html`<p class="source-filter-notice">${SAVED_FILTER_SOURCE_MESSAGE}</p>` : null}
         </article>`;
       })}
     </div>

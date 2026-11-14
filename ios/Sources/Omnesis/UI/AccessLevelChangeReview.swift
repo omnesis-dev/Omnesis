@@ -3,10 +3,12 @@
 
 import Foundation
 
-/// How much of an account one filter leaves shared and hidden.
+/// How much of an account one filter leaves shared and hidden, with the gateway's sentences for records it keeps
+/// hidden whatever it says.
 struct AccessFilterTotals: Equatable {
     var shared: Int
     var hidden: Int
+    var undecided: [String] = []
 }
 
 /// What an account shares on one side of a change, as that side's Before or After line shows it.
@@ -20,6 +22,9 @@ struct AccessAccountSide: Equatable {
     /// The items of this side's filter, listed unmarked directly under its line. Empty when the side holds no filter,
     /// and when both sides hold a filter the editor can express, whose items are listed once after both lines.
     var items: [ScopeRef]
+    /// The gateway's sentences for records this side's filter keeps hidden whatever it says, shown under its line as
+    /// the filter editor's result shows them.
+    var undecided: [String] = []
 }
 
 /// One account whose share changed. A filter's items are shown under the side that holds them: when only one side
@@ -135,7 +140,14 @@ struct AccessLevelChangeReview {
         guard allowed, let policy = decisions.policy(sourceId, capability: capability) else {
             return (.init(status: AccessAccountStatus(allowed: allowed, policy: nil), counts: nil, items: []), nil)
         }
-        let counts = totals[canonicalAccessPolicy(policy)].map { "\($0.shared.formatted()) shared · \($0.hidden.formatted()) hidden" }
-        return (.init(status: accessFilterModeStatus(policy), counts: counts, items: policy.rules.flatMap(\.match)), policy)
+        let total = totals[canonicalAccessPolicy(policy)]
+        let counts = total.map { "\($0.shared.formatted()) shared · \($0.hidden.formatted()) hidden" }
+        let side = AccessAccountSide(
+            status: accessFilterModeStatus(policy),
+            counts: counts,
+            items: policy.rules.flatMap(\.match),
+            undecided: total?.undecided ?? []
+        )
+        return (side, policy)
     }
 }

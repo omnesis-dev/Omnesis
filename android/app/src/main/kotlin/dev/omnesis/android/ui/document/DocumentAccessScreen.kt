@@ -67,6 +67,12 @@ import javax.inject.Inject
 /** The name of the page, and of the entry to it from a document's details. */
 internal const val WHO_CAN_READ_TITLE = "Who can read this?"
 
+/** What the page says when there is no access level at all. */
+internal const val NO_LEVELS = "There are no access levels, so no agent can read this document."
+
+/** What the page says while the gateway checks each level. */
+internal const val CHECKING_LEVELS = "Checking each access level…"
+
 /** What a level without connected agents says where its agents would be listed. */
 internal const val NO_CONNECTIONS = "No connections"
 
@@ -138,7 +144,7 @@ fun DocumentAccessContent(
             )
             AccessGap(AccessUi.ContentGap)
             when (state) {
-                Loadable.Loading -> AccessProgressLine("Checking each access level…")
+                Loadable.Loading -> AccessProgressLine(CHECKING_LEVELS)
                 is Loadable.Error -> {
                     // A gateway refusal says what to do; anything else is a page that could not be read.
                     val failure = state.throwable
@@ -160,7 +166,7 @@ private fun AuditBody(audit: DocumentAccessAudit) {
     }
     if (audit.levels.isEmpty()) {
         AccessGap(AccessUi.SectionGap)
-        Text("There are no access levels yet.", style = AccessType.Subtitle, color = colors.secondary)
+        Text(NO_LEVELS, style = AccessType.Subtitle, color = colors.secondary)
     }
     audit.levels.forEach { level ->
         AccessGap(AccessUi.SectionGap)

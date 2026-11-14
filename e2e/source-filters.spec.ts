@@ -347,20 +347,22 @@ test("owner reviews mixed source filters, copies independently and keeps a stale
   await page.setViewportSize({ width: 1280, height: 900 });
   await dialog.getByRole("button", { name: "Apply filter", exact: true }).click();
   await page.getByRole("button", { name: "Done", exact: true }).click();
-  // Direct data has one way in, and opens on Direct's own list with the link to Answer above it.
+  // Direct data has one way in, and asks whether Direct follows Answer as a new level does,
+  // above Direct's own list.
   const directData = page
     .locator(".guided-overview-decision")
     .filter({ has: page.getByRole("heading", { name: "Direct data", exact: true }) });
   await expect(directData.getByRole("button")).toHaveText(["Change"]);
   await directData.getByRole("button", { name: "Change", exact: true }).click();
-  await page
-    .getByRole("button", { name: "Use same sources and filters as Answer", exact: true })
-    .click();
-  await expect(page.getByText("Uses the same sources and filters as Answer.")).toBeVisible();
-  await expect(page.locator(".guided-source-list.is-frozen input[type=checkbox]")).toBeDisabled();
   await expect(
-    page.getByRole("button", { name: "Choose different sources", exact: true }),
-  ).toBeVisible();
+    page.getByRole("radio", { name: "Choose different sources", exact: true }),
+  ).toBeChecked();
+  await page
+    .getByRole("radio", { name: "Use same sources and filters as Answer", exact: true })
+    .check();
+  // Linked, Direct lists Answer's accounts with nothing to tick.
+  await expect(page.locator(".guided-reuse-summary")).toBeVisible();
+  await expect(page.locator(".guided-source-select input[type=checkbox]")).toHaveCount(0);
   await page.getByRole("button", { name: "Done", exact: true }).click();
   await page.getByRole("button", { name: "Review changes", exact: true }).click();
   await expect(page.locator(".guided-review-decision")).toHaveCount(2);

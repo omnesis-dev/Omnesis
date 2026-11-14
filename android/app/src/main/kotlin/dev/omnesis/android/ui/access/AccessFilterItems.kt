@@ -5,6 +5,7 @@ package dev.omnesis.android.ui.access
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.unit.dp
 import dev.omnesis.android.transport.dto.*
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.ensureActive
@@ -189,6 +190,22 @@ internal fun PolicyCounts(state: PolicyPreviewState, after: Boolean) {
         // An account that is no longer connected has nothing to count.
         !preview.connected -> Unit
         else -> AccessChangeValue("${accessCount(preview.visible)} shared · ${accessCount(preview.hidden)} hidden", after)
+    }
+}
+
+/** The preview whose counts [PolicyCounts] shows, once they have arrived for an account that is still connected. */
+internal val PolicyPreviewState.counted: FilterPreview? get() = preview?.takeIf { policy.editable && settled && it.connected }
+
+/**
+ * The gateway's sentences for records a filter keeps hidden whatever it says — too old to carry what it needs, or
+ * whose detail is unknown — each only when there are any. The filter editor's result and a review's counts both
+ * show them under the counts.
+ */
+@Composable
+internal fun HiddenRecordLines(preview: FilterPreview) {
+    listOfNotNull(preview.tooOldText, preview.unmatchedText).filter { it.isNotBlank() }.forEach { line ->
+        AccessGap(12.dp)
+        Text(line, style = AccessType.RowSecondary, color = AccessUi.colors.secondary)
     }
 }
 

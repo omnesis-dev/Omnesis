@@ -14,15 +14,16 @@ export function filterDetailValue(field) {
 /**
  * The details a filter decides this record by — its labels, folder, chat or
  * people, by name — and the source version that wrote it, so the owner can
- * see why a filter does or does not match it.
+ * see why a filter does or does not match it. A source no filter can use
+ * has no details, and the section is left out.
  */
 export function DocumentFilterDetails({ details }) {
-  if (!details) return null;
+  if (!details?.fields?.length) return null;
   return html`<section class="meta-section meta-filter-details" aria-label="Filter details">
     <div class="meta-section-title">Filter details</div>
-    ${(details.fields ?? []).map((field) => {
-      // "Chat", "People", "Labels: None"; a field the record cannot answer for is named once.
-      const many = field.state === "present" && (field.items ?? []).length !== 1;
+    ${details.fields.map((field) => {
+      // "Chat", "People", "Labels: None"; one item takes the singular, anything else the plural.
+      const many = field.state !== "present" || (field.items ?? []).length !== 1;
       const name = capitalized(fieldNoun(field, many));
       return html`<div class="meta-row" key=${field.field}>
         <span class="meta-key">${name}</span>

@@ -11,10 +11,12 @@ struct DocumentFilterDetailRow: Equatable {
 
 /// What a filter can see on one document, a line per field and then the source version that wrote it: "Chat:
 /// Workshop planning", "People: Maya Reeves, Jamie Lopez", "Source version: 1". A field the record is too old to
-/// carry, or whose detail is not known, says so in the gateway's words.
+/// carry, or whose detail is not known, says so in the gateway's words. A source no filter can use has no rows at
+/// all, so the inspector leaves the section out instead of showing a lone source version.
 func documentFilterDetailRows(_ details: DocumentFilterDetails) -> [DocumentFilterDetailRow] {
+    guard !details.fields.isEmpty else { return [] }
     let rows = details.fields.map { field in
-        let noun = field.items.count == 1 ? field.noun.one : field.noun.many
+        let noun = field.state == "present" && field.items.count == 1 ? field.noun.one : field.noun.many
         let key = noun.prefix(1).uppercased() + noun.dropFirst()
         guard field.state == "present" else {
             return DocumentFilterDetailRow(key: key, value: field.stateText.isEmpty ? "Not recorded" : field.stateText)

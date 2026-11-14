@@ -187,9 +187,16 @@ function filterEntryCount(match) {
   );
 }
 
+/** What a saved filter this editor cannot express says, wherever it is shown. */
+export const UNEDITABLE_FILTER_NOTICE =
+  "This filter uses settings this editor cannot change. It stays in force as saved.";
+
+/** What a saved filter says while filters cannot be edited on this gateway. */
+export const FILTER_EDITING_OFF_NOTICE =
+  "Source filter editing requires experimental mode. This saved filter stays in force and is shown here.";
+
 export function filterDraftError(policy) {
-  if (!editableSourcePolicy(policy))
-    return "This filter uses settings this editor cannot change. Its saved policy is preserved.";
+  if (!editableSourcePolicy(policy)) return UNEDITABLE_FILTER_NOTICE;
   if (!policy.rules[0].match.length) return "Select at least one item.";
   if (filterEntryCount(policy.rules[0].match) > MAX_FILTER_ENTRIES)
     return `A filter can include at most ${MAX_FILTER_ENTRIES} items.`;

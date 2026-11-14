@@ -150,8 +150,8 @@ internal fun SourceFilterEditor(
                     }
                 } else {
                     val notice = when {
-                        !policy.editable -> "This filter uses settings that cannot be changed here. It stays in force as saved."
-                        !writable -> "Filters cannot be changed right now. This saved filter stays in force."
+                        !policy.editable -> "This filter uses settings this editor cannot change. It stays in force as saved."
+                        !writable -> "Source filter editing requires experimental mode. This saved filter stays in force and is shown here."
                         // A gone account, or one with nothing to filter on, is explained in the gateway's words.
                         removeOnly -> editor?.profileText
                         else -> null
@@ -196,12 +196,8 @@ internal fun SourceFilterEditor(
  */
 @Composable
 private fun FilterResult(result: FilterPreview) {
-    val colors = AccessUi.colors
     AccessStatPair(result.visible, result.hidden)
-    listOfNotNull(result.tooOldText, result.unmatchedText).forEach { line ->
-        AccessGap(12.dp)
-        Text(line, style = AccessType.RowSecondary, color = colors.secondary)
-    }
+    HiddenRecordLines(result)
 }
 
 /** A saved filter this editor cannot author, stated rule by rule as it is stored. */

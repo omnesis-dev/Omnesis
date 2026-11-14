@@ -156,13 +156,6 @@ internal fun AccessLevelEditor(
             val openFilter: (AccessSourceInstance, AccessCapability) -> Unit = { source, capability -> if (!state.loading) filter = source.id to capability }
             when (page) {
                 AccessLevelPage.OVERVIEW -> AccessLevelOverview(draft, overview) { if (!state.loading) enter(it) }
-                AccessLevelPage.NAME -> AccessNameField(draft, overview, edit)
-                AccessLevelPage.PERMISSIONS -> AccessPermissionsQuestion(draft, overview, update = edit)
-                AccessLevelPage.ANSWER_DATA -> AccessDataQuestion(draft, overview, AccessCapability.ANSWER, iconFor, nameFor, edit, openFilter)
-                AccessLevelPage.DIRECT_DATA -> AccessDirectDataQuestion(draft, overview, iconFor, nameFor, edit, openFilter)
-                AccessLevelPage.DIRECT_CHOICE -> AccessDirectQuestion(draft, overview, iconFor, nameFor, edit, openFilter)
-                AccessLevelPage.FUTURE -> AccessFutureQuestion(draft, overview, edit)
-                AccessLevelPage.RELEASE -> AccessReleaseQuestion(draft, overview, readPolicy = readPolicy, update = edit)
                 AccessLevelPage.REVIEW -> AccessLevelReview(draft, overview, session, iconFor, nameFor, edit) { target ->
                     if (!state.loading) {
                         reviewCapabilities = draft.readingCapabilities.toSet(); requiredReviewPages = emptyList(); returnToReview = true
@@ -170,6 +163,7 @@ internal fun AccessLevelEditor(
                         enter(if (creating && target == AccessLevelPage.DIRECT_DATA && draft.rule(AccessCapability.ANSWER) != null) AccessLevelPage.DIRECT_CHOICE else target)
                     }
                 }
+                else -> AccessLevelDecisionControls(page, draft, overview, iconFor, nameFor, readPolicy, edit, openFilter)
             }
         }
     }

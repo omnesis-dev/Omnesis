@@ -315,24 +315,6 @@
   background: transparent;
   font-size: 12px;
 }
-/* Direct's link to Answer: the line saying so, then the one action that changes it. */
-.guided-direct-link {
-  display: grid;
-  justify-items: start;
-  gap: 10px;
-  margin-bottom: 16px;
-}
-.guided-direct-link > p {
-  margin: 0;
-  color: var(--text-secondary);
-}
-/* Answer's list, shown read-only under a linked Direct. */
-.guided-source-list.is-frozen .guided-source-row strong {
-  color: var(--text-secondary);
-}
-.guided-source-list.is-frozen .guided-source-select {
-  cursor: default;
-}
 .guided-source-row > .source-filter-notice {
   grid-column: 1 / -1;
   margin: 0;

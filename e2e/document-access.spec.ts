@@ -89,7 +89,7 @@ async function signIn(page: Page) {
   const token = readFileSync(join(configDir, "token"), "utf8").trim();
   expect((await page.request.post("/portal/api/login", { data: { token } })).ok()).toBe(true);
 }
-async function serveDocument(page: Page, withDetails: boolean) {
+async function serveDocument(page: Page, withDetails: boolean, served = details) {
   for (const [path, body] of [
     ["", document],
     ["/people", { people: [] }],
@@ -106,7 +106,7 @@ async function serveDocument(page: Page, withDetails: boolean) {
     );
   await page.route(`**/admin/documents/${documentId}/filter-details`, (route) =>
     withDetails
-      ? route.fulfill({ json: details })
+      ? route.fulfill({ json: served })
       : route.fulfill({ status: 404, json: { error: "Not found" } }),
   );
 }
@@ -190,6 +190,17 @@ test("a gateway without filter details shows the document without them or the en
   await expect(page.getByText("Metadata", { exact: true })).toBeVisible();
   await expect(page.getByRole("region", { name: "Filter details" })).toHaveCount(0);
   await expect(page.getByRole("link", { name: "Who can read this?" })).toHaveCount(0);
+});
+
+test("a source no filter can use shows no filter details but still opens who can read it", async ({
+  page,
+}) => {
+  await signIn(page);
+  await serveDocument(page, true, { ...details, fields: [] });
+  await page.goto(`/portal/doc/${documentId}`);
+  await expect(page.getByRole("link", { name: "Who can read this?" })).toBeVisible();
+  await expect(page.getByRole("region", { name: "Filter details" })).toHaveCount(0);
+  await expect(page.getByText("Source version")).toHaveCount(0);
 });
 
 test("the access page of a document that is gone says so", async ({ page }) => {

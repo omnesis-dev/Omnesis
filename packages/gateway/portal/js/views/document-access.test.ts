@@ -127,7 +127,7 @@ describe("Who can read this?", () => {
     api.getDocumentAccess.mockResolvedValue({ ...audit, levels: [] });
     await show();
     expect(host.querySelector(".doc-access-empty")?.textContent).toBe(
-      "No access levels yet. An agent can read nothing until you give it one.",
+      "There are no access levels, so no agent can read this document.",
     );
   });
 
@@ -151,7 +151,7 @@ describe("a document's filter details", () => {
       { field: "extra.chatJid", noun: { one: "chat", many: "chats" }, state: "present", stateText: "", items: [{ id: "c1", label: "Workshop planning", listed: true }] },
       { field: "$people", noun: { one: "person", many: "people" }, state: "present", stateText: "", items: [{ id: "a", label: "Maya Reeves", listed: true }, { id: "b", label: "Jamie Lopez", listed: true }] },
       { field: "extra.labelIds", noun: { one: "label", many: "labels" }, state: "present", stateText: "", items: [] },
-      { field: "extra.folderId", noun: { one: "folder", many: "folders" }, state: "too-old", stateText: "Too old to carry its folder. Resync Google Drive to add it.", items: [] },
+      { field: "extra.folderId", noun: { one: "folder", many: "folders" }, state: "too-old", stateText: "Written before this source recorded its folders. Resync the source to add them.", items: [] },
       { field: "extra.projectFolder", noun: { one: "project folder", many: "project folders" }, state: "unknown", stateText: "Not recorded", items: [] },
     ],
   };
@@ -166,8 +166,8 @@ describe("a document's filter details", () => {
       ["Chat", "Workshop planning"],
       ["People", "Maya Reeves, Jamie Lopez"],
       ["Labels", "None"],
-      ["Folder", "Too old to carry its folder. Resync Google Drive to add it."],
-      ["Project folder", "Not recorded"],
+      ["Folders", "Written before this source recorded its folders. Resync the source to add them."],
+      ["Project folders", "Not recorded"],
       ["Source version", "2"],
     ]);
     expect(filterDetailValue({ state: "unknown", stateText: "", items: [] })).toBe("Not recorded");
@@ -175,6 +175,11 @@ describe("a document's filter details", () => {
 
   test("nothing is shown until the details arrive", async () => {
     await act(async () => render(h(DocumentFilterDetails, { details: null }), host));
+    expect(host.innerHTML).toBe("");
+  });
+
+  test("a source no filter can use shows no section, not a lone source version", async () => {
+    await act(async () => render(h(DocumentFilterDetails, { details: { ...details, fields: [] } }), host));
     expect(host.innerHTML).toBe("");
   });
 });

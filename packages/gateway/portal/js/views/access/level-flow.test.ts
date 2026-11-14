@@ -782,6 +782,13 @@ const openDecision = (title: string) =>
   act(async () => overviewDecision(title).querySelector<HTMLButtonElement>("button")!.click());
 const sourceChecks = () => [...host.querySelectorAll<HTMLInputElement>(".guided-source-select input")];
 const ticked = (input: HTMLInputElement) => input.checked === true || input.hasAttribute("checked");
+const SAME_AS_ANSWER = "Use same sources and filters as Answer";
+const OWN_SOURCES = "Choose different sources";
+/** One of the two answers to whether Direct follows Answer, as a new level and Direct data both ask it. */
+const directChoice = (label: string) =>
+  [...host.querySelectorAll<HTMLElement>(".guided-choice")]
+    .find((choice) => choice.querySelector("strong")?.textContent === label)!
+    .querySelector<HTMLInputElement>("input")!;
 
 test("choosing separate Direct data after a copy restores the boundary the copy replaced", async () => {
   const other = await editLevel([
@@ -794,23 +801,20 @@ test("choosing separate Direct data after a copy restores the boundary the copy 
   // The level page offers one way into Direct data.
   expect([...overviewDecision("Direct data").querySelectorAll("button")].map((item) => item.textContent?.trim())).toEqual(["Change"]);
   await openDecision("Direct data");
-  // Direct's own list opens editable, with the one action that links it to Answer above it.
-  expect(host.querySelector(".guided-direct-link p")).toBeNull();
+  // Direct data asks the new level's question first, then lists Direct's own accounts, editable.
+  expect(ticked(directChoice(OWN_SOURCES))).toBe(true);
+  expect(host.querySelector(".guided-reuse-summary")).toBeNull();
   expect(sourceChecks().map((input) => input.disabled)).toEqual([false, false]);
-  await click("Use same sources and filters as Answer");
-  expect(host.querySelector(".guided-direct-link p")?.textContent).toBe(
-    "Uses the same sources and filters as Answer.",
-  );
-  expect(sourceChecks().map((input) => [ticked(input), input.disabled])).toEqual([
-    [true, true],
-    [true, true],
-  ]);
+  await change(directChoice(SAME_AS_ANSWER));
+  // Linked, Direct shows Answer's accounts as the new level shows them, with nothing to change.
+  expect(host.querySelector(".guided-reuse-summary")).not.toBeNull();
+  expect(sourceChecks()).toEqual([]);
   await click("Done");
   expect(button("Review changes").disabled).toBe(false);
   // Change reopens Direct as it now stands: linked, with the way back out.
   await openDecision("Direct data");
-  expect(host.querySelector(".guided-source-list.is-frozen")).not.toBeNull();
-  await click("Choose different sources");
+  expect(ticked(directChoice(SAME_AS_ANSWER))).toBe(true);
+  await change(directChoice(OWN_SOURCES));
   expect(sourceChecks().map((input) => [ticked(input), input.disabled])).toEqual([
     [true, false],
     [false, false],
@@ -829,16 +833,13 @@ test("a saved Direct that mirrors Answer opens linked, follows Answer's edits an
     { ...newGrantRule("direct"), sources: { mode: "allowlist", sourceIds: [source.id] } },
   ]);
   await openDecision("Direct data");
-  expect(host.querySelector(".guided-direct-link p")?.textContent).toBe(
-    "Uses the same sources and filters as Answer.",
-  );
-  // The frozen list shows each account's status but offers no checkbox or filter to change.
-  expect(sourceChecks().every((input) => input.disabled)).toBe(true);
+  expect(ticked(directChoice(SAME_AS_ANSWER))).toBe(true);
+  // Answer's accounts are listed with their status, and offer no checkbox or filter to change.
+  expect(sourceChecks()).toEqual([]);
   expect(host.querySelector(".guided-source-boundary button")).toBeNull();
-  expect([...host.querySelectorAll(".guided-readable-boundary")].map((item) => item.textContent)).toEqual([
-    "All content",
-    "Not shared",
-  ]);
+  expect(
+    [...host.querySelectorAll(".guided-reuse-summary .guided-readable-boundary")].map((item) => item.textContent),
+  ).toEqual(["All content"]);
   await click("Cancel");
   // Answer's edit carries over to the Direct linked to it.
   await openDecision("Answer data");
@@ -870,7 +871,7 @@ test("Direct data without Answer is only the editable list", async () => {
     { ...newGrantRule("direct"), sources: { mode: "allowlist", sourceIds: [source.id] } },
   ]);
   await openDecision("Direct data");
-  expect(host.querySelector(".guided-direct-link")).toBeNull();
+  expect(host.querySelector(".guided-choice")).toBeNull();
   expect(sourceChecks().map((input) => input.disabled)).toEqual([false, false]);
 });
 
@@ -891,8 +892,8 @@ test("switching Answer on beside Direct's own accounts keeps them and leaves Dir
   await click("Done");
   await openDecision("Direct data");
   // Direct opens on its own list, not on Answer's.
-  expect(host.querySelector(".guided-source-list.is-frozen")).toBeNull();
-  expect(button("Use same sources and filters as Answer")).toBeTruthy();
+  expect(host.querySelector(".guided-reuse-summary")).toBeNull();
+  expect(ticked(directChoice(OWN_SOURCES))).toBe(true);
   expect(sourceChecks().map((input) => [ticked(input), input.disabled])).toEqual([
     [true, false],
     [false, false],
@@ -944,8 +945,8 @@ test("Direct switched on while editing starts linked to Answer, filters included
   await change(preset("Direct"));
   await click("Done");
   // Direct never reads an account more widely than Answer does.
-  expect(host.textContent).toContain("Uses the same sources and filters as Answer.");
-  expect(host.querySelector(".guided-source-list.is-frozen")).not.toBeNull();
+  expect(ticked(directChoice(SAME_AS_ANSWER))).toBe(true);
+  expect(host.querySelector(".guided-reuse-summary")).not.toBeNull();
   await click("Done");
   await click("Review changes");
   await click("Save changes");

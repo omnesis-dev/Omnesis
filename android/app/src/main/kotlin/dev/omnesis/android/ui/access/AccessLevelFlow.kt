@@ -102,8 +102,7 @@ internal fun scopePolicySummary(policy: SourceFilter?): String {
     if (policy == null) return ALL_CONTENT
     if (!policy.editable) return SAVED_FILTER
     val refs = policy.rules.single().match
-    if (refs.isEmpty()) return if (policy.otherwise == "share") ALL_CONTENT else "No matching content"
-    return "${scopePolicyActionLabel(policy)} · ${refs.size} ${if (refs.size == 1) "item" else "items"}"
+    return "${scopePolicyActionLabel(policy)} · ${accessCount(refs.size.toLong())} ${if (refs.size == 1) "item" else "items"}"
 }
 /** What a filter does with its matches, as a short pill label. */
 internal fun scopePolicyActionLabel(policy: SourceFilter): String = when (policy.rules.singleOrNull()?.action.takeIf { policy.editable }) {
@@ -167,8 +166,6 @@ internal fun releaseSummary(rule: AccessGrantRule?, overview: AccessOverview): S
 }
 internal const val DIRECT_SAME_AS_ANSWER_LABEL = "Use same sources and filters as Answer"
 internal const val DIRECT_OWN_LIST_LABEL = "Choose different sources"
-/** What the Direct data screen says while Direct is linked to Answer. */
-internal const val DIRECT_LINKED_NOTE = "Uses the same sources and filters as Answer."
 
 /** Which of Answer, Direct and Notes a level allows, as its capability pills show them. */
 internal data class AccessCapabilityHoldings(val answer: Boolean, val direct: Boolean, val notes: Boolean) {

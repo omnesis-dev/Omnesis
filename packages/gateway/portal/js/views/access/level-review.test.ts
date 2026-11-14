@@ -403,6 +403,28 @@ describe("a filter's items show under the side that holds them", () => {
     });
   });
 
+  test("the gateway's sentences for records a filter keeps hidden follow the side's counts, as the dialog shows them", async () => {
+    const tooOldText = "3 older items could not be resynced and stay hidden from agents using this filter.";
+    api.previewSourceFilter.mockImplementation(async (sourceId: string, draft: ReturnType<typeof filter>) => ({
+      sourceId,
+      visible: 20,
+      hidden: 7,
+      status: "ready",
+      tooOld: 3,
+      unmatched: 0,
+      tooOldText,
+      unmatchedText: null,
+      items: draft.rules[0]!.match.map((item) => ({ ref: item, label: labels[item.id], count: 3 })),
+    }));
+    await review(
+      { answer: rule("answer", [source.id]) },
+      { answer: rule("answer", [source.id], [filter(source.id, "answer", "hide", [ref])]) },
+    );
+    const sides = [...host.querySelectorAll(".guided-change-pair > section")];
+    expect(sides[0]!.querySelector(".source-filter-unchecked")).toBeNull();
+    expect(sides[1]!.querySelector(".source-filter-unchecked")?.textContent).toBe(tooOldText);
+  });
+
   test("a filter removed shows under Before, and After reads All content", async () => {
     await review(
       { answer: rule("answer", [source.id], [filter(source.id, "answer", "hide", [ref])]) },

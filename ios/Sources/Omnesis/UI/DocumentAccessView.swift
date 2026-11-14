@@ -34,7 +34,7 @@ struct DocumentAccessView: View {
                 } else if let error {
                     GatewayErrorView(context: "check who can read this document", error: error, onRetry: { attempt += 1 })
                 } else {
-                    SourceFilterLoadingLine()
+                    SourceFilterLoadingLine(text: DocumentAccessCopy.checking)
                 }
             }
         } footer: {
@@ -76,6 +76,7 @@ struct DocumentAccessView: View {
 enum DocumentAccessCopy {
     static let title = "Who can read this?"
     static let noLevels = "There are no access levels, so no agent can read this document."
+    static let checking = "Checking each access level…"
     static let noConnections = "No connections"
     static let canRead = "Can read"
     static let cannotRead = "Can’t read"
@@ -192,9 +193,12 @@ struct DocumentAccessSection: View {
         }
         .buttonStyle(.plain)
         .padding(.top, Theme.Spacing.sm)
-        FlatSection("Filter details") {
-            VStack(alignment: .leading, spacing: 6) {
-                ForEach(documentFilterDetailRows(details), id: \.key) { row in InspectorKeyValue(key: row.key, value: row.value) }
+        let rows = documentFilterDetailRows(details)
+        if !rows.isEmpty {
+            FlatSection("Filter details") {
+                VStack(alignment: .leading, spacing: 6) {
+                    ForEach(rows, id: \.key) { row in InspectorKeyValue(key: row.key, value: row.value) }
+                }
             }
         }
     }

@@ -301,6 +301,8 @@ extension AccessSourceFilterClientTests {
             .init(key: "Chats", value: "None"),
             .init(key: "Source version", value: "2"),
         ])
+        // A source no filter can use has no details, so the inspector shows no section rather than a lone version.
+        XCTAssertEqual(documentFilterDetailRows(DocumentFilterDetails(documentId: "doc_8d1e", sourceVersion: 2, fields: [])), [])
         session.body = """
         {"documentId":"doc_8d1e","title":"Q4 budget review","sourceId":"gmail:maya.reeves@example.org",
          "sourceName":"Gmail (maya.reeves@example.org)","sourceVersion":2,

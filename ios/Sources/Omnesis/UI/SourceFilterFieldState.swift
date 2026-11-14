@@ -55,6 +55,26 @@ struct SourceFilterFieldStateView: View {
     }
 }
 
+/// The gateway's sentences for records a filter keeps hidden whatever it says — too old to carry what it needs, or
+/// whose detail is unknown. The filter editor's result and a review's Before and After lines both show them under the
+/// counts; nothing is drawn when there are none.
+struct AccessUndecidedLines: View {
+    let lines: [String]
+    var top: CGFloat = 0
+    var leading: CGFloat = 0
+
+    var body: some View {
+        if !lines.isEmpty {
+            VStack(alignment: .leading, spacing: 8) {
+                ForEach(lines, id: \.self) { Text($0).accessText(.rowSecondary, color: AccessUI.secondary) }
+            }
+            .fixedSize(horizontal: false, vertical: true)
+            .padding(.top, top)
+            .padding(.leading, leading)
+        }
+    }
+}
+
 /// The button that resyncs an account in place so its records carry what a filter needs: "Resync Gmail".
 func sourceFilterResyncTitle(_ sourceName: String) -> String {
     "Resync " + sourceName
@@ -65,12 +85,15 @@ func sourceFilterResyncStartingText(_ sourceName: String) -> String {
     "Resyncing \(sourceName)…"
 }
 
-/// A spinner and "Loading…", while the account's fields or a page of its items are on their way.
+/// A spinner and "Loading…", or what is being waited for, while the account's fields, a page of its items or
+/// another page's answer are on their way.
 struct SourceFilterLoadingLine: View {
+    var text = "Loading…"
+
     var body: some View {
         HStack(spacing: 10) {
             AccessCountingSpinner()
-            Text("Loading…").accessText(.rowSecondary, color: AccessUI.secondary)
+            Text(text).accessText(.rowSecondary, color: AccessUI.secondary)
         }
         .frame(minHeight: 44)
         .accessibilityElement(children: .combine)

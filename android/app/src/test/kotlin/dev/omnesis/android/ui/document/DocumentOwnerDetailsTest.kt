@@ -66,6 +66,18 @@ class DocumentOwnerDetailsTest {
         assertEquals(1, opened)
     }
 
+    @Test fun aSourceNoFilterCanUseShowsNoFilterDetailsButStillLeadsToWhoCanReadIt() {
+        val bundle = DocumentFixtures.bundle(SourceIconModel(fallbackInitial = "W"))
+        val noFields = bundle.copy(filterDetails = DocumentFixtures.filterDetails.copy(fields = emptyList()))
+        assertEquals(emptyList<FilterDetailLine>(), noFields.filterDetails?.lines())
+        compose.setContent { CompositionLocalProvider(LocalInspectionMode provides true) { OmnesisTheme {
+            InspectorContent(noFields, onDone = {}, onOpenAccess = {})
+        } } }
+        compose.onNodeWithText(WHO_CAN_READ_TITLE).assertExists()
+        compose.onNodeWithText("Filter details", substring = true, ignoreCase = true).assertDoesNotExist()
+        compose.onNodeWithText("Source version").assertDoesNotExist()
+    }
+
     @Test fun anotherDevicesDetailsHaveNoEntryToWhoCanReadIt() {
         compose.setContent { CompositionLocalProvider(LocalInspectionMode provides true) { OmnesisTheme {
             InspectorContent(DocumentFixtures.bundle(SourceIconModel(fallbackInitial = "W")).copy(owner = false, filterDetails = null), onDone = {})

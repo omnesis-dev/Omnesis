@@ -94,7 +94,7 @@ export function DocumentAccessReport({ audit, documentId }) {
       ? html`<div class="doc-access-levels">
           ${audit.levels.map((level) => html`<${LevelVerdicts} key=${level.id} level=${level} />`)}
         </div>`
-      : html`<p class="doc-access-empty">No access levels yet. An agent can read nothing until you give it one.</p>`}
+      : html`<p class="doc-access-empty">There are no access levels, so no agent can read this document.</p>`}
   `;
 }
 

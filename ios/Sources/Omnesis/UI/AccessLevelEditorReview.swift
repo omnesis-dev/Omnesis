@@ -80,8 +80,10 @@ extension AccessLevelEditorView {
             AccessAccountLine(source: source).padding(.bottom, 10)
             VStack(alignment: .leading, spacing: 8) {
                 AccessBeforeAfterLine(side: .before) { sideValue(change.before, color: AccessUI.secondary) }
+                AccessUndecidedLines(lines: change.before.undecided, leading: AccessUI.beforeAfterLabelWidth)
                 sideItems(change.before.items, capability: capability, source: source)
                 AccessBeforeAfterLine(side: .after) { sideValue(change.after, color: Theme.textPrimary) }
+                AccessUndecidedLines(lines: change.after.undecided, leading: AccessUI.beforeAfterLabelWidth)
                 sideItems(change.after.items, capability: capability, source: source)
             }
             if !change.merged.isEmpty {

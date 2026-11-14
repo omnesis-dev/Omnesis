@@ -135,13 +135,20 @@ private fun ChangedAccounts(draft: AccessLevelDraft, overview: AccessOverview, c
     } }
 }
 
-/** One side of an account's change: how many records its filter shares and hides, then the pill that says what the side reads. */
+/**
+ * One side of an account's change: how many records its filter shares and hides, then the pill that says what the
+ * side reads, and under them the gateway's sentences for records the filter keeps hidden whatever it says, as the
+ * filter editor's result shows them.
+ */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun AccountSideValue(share: AccountShare, state: PolicyPreviewState?, after: Boolean) {
-    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        state?.takeIf { it.policy.editable }?.let { Column(Modifier.align(Alignment.CenterVertically)) { PolicyCounts(it, after) } }
-        Box(Modifier.align(Alignment.CenterVertically)) { AccessPill(share.status, share.tone) }
+    Column {
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            state?.takeIf { it.policy.editable }?.let { Column(Modifier.align(Alignment.CenterVertically)) { PolicyCounts(it, after) } }
+            Box(Modifier.align(Alignment.CenterVertically)) { AccessPill(share.status, share.tone) }
+        }
+        state?.counted?.let { HiddenRecordLines(it) }
     }
 }
 

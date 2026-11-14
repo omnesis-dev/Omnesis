@@ -253,10 +253,12 @@ class AccessLevelFlowInteractionTest {
         show(AccessLevelDraft.opening(level, catalogue), catalogue)
         compose.onNodeWithContentDescription("Change Answer data").performClick()
         compose.onNodeWithText("Mail").performClick()
-        compose.onNodeWithText("Not shared · saved filter kept").assertExists()
+        // Not shared, as the other clients say it; the kept filter can still be opened.
+        compose.onNodeWithText(NOT_SHARED).assertExists()
+        compose.onNodeWithContentDescription("Change Mail for Answer").assertExists()
         compose.onNodeWithText("Done").assertIsEnabled()
         compose.onNodeWithText("Mail").performClick()
-        compose.onNodeWithText("Not shared · saved filter kept").assertDoesNotExist()
+        compose.onNodeWithText(NOT_SHARED).assertDoesNotExist()
         compose.onNodeWithText("Share matching content · 1 item").assertExists()
         compose.onNodeWithText("Done").assertIsEnabled()
     }
@@ -306,7 +308,7 @@ class AccessLevelFlowInteractionTest {
         compose.onNodeWithText("Answer and Direct", substring = false).assertExists()
         assertEquals(0, saved)
     }
-    @Test fun aSavedLevelsDirectDataSwitchesBetweenItsOwnListAndAnswersFrozenList() {
+    @Test fun aSavedLevelsDirectDataAsksTheNewLevelsChoiceAboveItsOwnList() {
         val other = AccessSourceInstance("mail:other@example.org", "Other mail", sourceType = "mail")
         val answer = AccessGrantRule.answer(AccessSourceBoundary(AccessSourceMode.ALLOWLIST, listOf(source.id, other.id)), AccessAnswerRelease.unreviewed())
         val direct = AccessGrantRule.direct(AccessSourceBoundary(AccessSourceMode.ALLOWLIST, listOf(source.id)))
@@ -317,26 +319,47 @@ class AccessLevelFlowInteractionTest {
             AccessHomeContent(AccessManagementState(catalogue, draft), gateway, onClose = {}, onUpdate = { draft = it })
         } } }
         compose.onNodeWithContentDescription("Change Direct data").performClick()
-        compose.onNodeWithText(DIRECT_LINKED_NOTE).assertDoesNotExist()
-        compose.onNodeWithText(DIRECT_OWN_LIST_LABEL).assertDoesNotExist()
+        // Direct data asks the new level's question first, with Direct's own accounts under it.
+        compose.onNodeWithText(DIRECT_OWN_LIST_LABEL).assertIsSelected()
         compose.onNodeWithText("Other mail").assertIsOff().assertIsEnabled()
         compose.onNodeWithText(DIRECT_SAME_AS_ANSWER_LABEL).performClick()
-        // Linked, Direct shows Answer's accounts as they stand and cannot change them here.
-        compose.onNodeWithText(DIRECT_LINKED_NOTE).assertExists()
-        compose.onNodeWithText(DIRECT_SAME_AS_ANSWER_LABEL).assertDoesNotExist()
-        compose.onNodeWithText("Other mail").assertIsOn().assertIsNotEnabled()
+        // Linked, Direct lists Answer's accounts as a new level does, with nothing to tick or search.
+        compose.onNodeWithText(DIRECT_SAME_AS_ANSWER_LABEL).assertIsSelected()
+        compose.onNodeWithText("Other mail").assertExists()
         compose.onNodeWithContentDescription("Search sources").assertDoesNotExist()
         compose.onNodeWithText("Done").performClick()
         compose.onNodeWithText("Same sources and filters as Answer").assertExists()
         compose.runOnIdle { assertEquals(answer.sources, draft.serializedRules.single { it.capability == AccessCapability.DIRECT }.sources) }
         // Opened again it is still linked; leaving the link restores the list this edit had, and Cancel puts the link back.
         compose.onNodeWithContentDescription("Change Direct data").performClick()
+        compose.onNodeWithText(DIRECT_SAME_AS_ANSWER_LABEL).assertIsSelected()
         compose.onNodeWithText(DIRECT_OWN_LIST_LABEL).performClick()
-        compose.onNodeWithText(DIRECT_LINKED_NOTE).assertDoesNotExist()
         compose.onNodeWithText("Other mail").assertIsOff().assertIsEnabled()
-        compose.onNodeWithText(DIRECT_SAME_AS_ANSWER_LABEL).assertExists()
+        compose.onNodeWithText(DIRECT_SAME_AS_ANSWER_LABEL).assertIsNotSelected()
         compose.onNodeWithText("Cancel").performClick()
         compose.runOnIdle { assertTrue(draft.directLinked) }
+    }
+    @Test fun aReviewedFiltersCountsCarryTheGatewaysSentencesForRecordsItKeepsHidden() {
+        val labels = readyField("extra.labelIds", FilterRef.MEMBERSHIP, "label", "labels")
+        val filtered = source.copy(filterable = true)
+        val ref = FilterRef.item(FilterRef.MEMBERSHIP, "extra.labelIds", "invented-label")
+        val answer = AccessGrantRule.answer(AccessSourceBoundary(AccessSourceMode.ALLOWLIST, listOf(filtered.id)), AccessAnswerRelease.unreviewed())
+        val level = AccessLevelSummary("saved-level", "Project helper", 7, listOf(answer), 0)
+        val catalogue = overview.copy(sources = listOf(filtered), levels = listOf(level), sourceFilters = SourceFiltersAvailability(true))
+        val policy = SourceFilter(filtered.id, FilterAudience("saved-level", "answer"), listOf(FilterRule(listOf(ref), "hide")), "share")
+        val draft = AccessLevelDraft.opening(level, catalogue).setPolicy(policy, filtered.id, AccessCapability.ANSWER)
+        val tooOld = "3 older items could not be resynced and stay hidden from agents using this filter."
+        val filterGateway = FakeFilterGateway(
+            editorFor = { FilterEditor(it, "mail", fields = listOf(labels)) },
+            previewFor = { readyPreview(it.sourceId, 6, 3, tooOldText = tooOld) },
+        )
+        compose.setContent { CompositionLocalProvider(LocalInspectionMode provides true) { OmnesisTheme {
+            AccessHomeContent(AccessManagementState(catalogue, draft), filterGateway, onClose = {})
+        } } }
+        compose.onNodeWithText("Review changes").performClick()
+        // The After side states its counts, then the gateway's sentence, as the filter editor's result does.
+        compose.onNodeWithText("3 shared · 3 hidden").performScrollTo().assertExists()
+        compose.onNodeWithText(tooOld).performScrollTo().assertExists()
     }
     @Test fun switchingDirectOnWhileEditingShowsItLinkedToAnswerNext() {
         val answer = AccessGrantRule.answer(AccessSourceBoundary(AccessSourceMode.ALLOWLIST, listOf(source.id)), AccessAnswerRelease.unreviewed())
@@ -350,9 +373,8 @@ class AccessLevelFlowInteractionTest {
         compose.onNodeWithText("Direct").performClick()
         compose.onNodeWithText("Done").performClick()
         compose.onNodeWithText("Which sources can Direct read?").assertExists()
-        compose.onNodeWithText(DIRECT_LINKED_NOTE).assertExists()
-        compose.onNodeWithText(DIRECT_OWN_LIST_LABEL).assertExists()
-        compose.onNodeWithText(DIRECT_SAME_AS_ANSWER_LABEL).assertDoesNotExist()
+        compose.onNodeWithText(DIRECT_SAME_AS_ANSWER_LABEL).assertIsSelected()
+        compose.onNodeWithText(DIRECT_OWN_LIST_LABEL).assertIsNotSelected()
         compose.runOnIdle { assertTrue(draft.directLinked) }
         compose.onNodeWithText("Cancel").performClick()
         compose.onNodeWithText("What would you like to change?").assertExists()
@@ -390,11 +412,11 @@ class AccessLevelFlowInteractionTest {
         compose.onNodeWithContentDescription("Change Direct data").performScrollTo().performClick()
         compose.onNodeWithText("Choose different sources").performClick()
         compose.onNodeWithText("Mail", substring = false).performClick()
-        compose.onNodeWithText("Not shared · saved filter kept").assertExists()
         compose.onNodeWithContentDescription("Change Mail for Direct").performClick()
         compose.onNodeWithText("All content", substring = false).performClick()
         compose.onNode(hasText("Done") and hasAnyAncestor(isDialog())).performClick()
-        compose.onNodeWithText("Not shared · saved filter kept").assertDoesNotExist()
+        // With its filter removed, an account that is not shared has nothing left to change.
+        compose.onNodeWithContentDescription("Change Mail for Direct").assertDoesNotExist()
         compose.onNodeWithText("Other mail", substring = false).performClick()
         compose.onNodeWithContentDescription("Change Other mail for Direct").performClick()
         compose.onNodeWithText("Only matching content").performClick()

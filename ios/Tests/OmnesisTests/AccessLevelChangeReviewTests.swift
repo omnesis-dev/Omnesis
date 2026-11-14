@@ -162,6 +162,18 @@ final class AccessLevelChangeReviewTests: XCTestCase {
         ))
     }
 
+    func testASidesCountsCarryTheGatewaysSentencesForRecordsItKeepsHidden() {
+        let added = filter(mail, [jamie], share: false)
+        let tooOld = "3 older items could not be resynced and stay hidden from agents using this filter."
+        let review = reviewing([answer], totals: totals((added, AccessFilterTotals(shared: 40, hidden: 9, undecided: [tooOld])))) {
+            $0.setPolicy(added, sourceId: mail.id, capability: "answer")
+        }
+        let change = review.accountChange("answer", sourceId: mail.id)
+        XCTAssertEqual(change.before.undecided, [])
+        XCTAssertEqual(change.after.undecided, [tooOld])
+        XCTAssertEqual(change.after.counts, "40 shared · 9 hidden")
+    }
+
     func testAFilterRemovedIsListedUnderBeforeAndTheAccountSharesAllContentAfter() {
         let review = reviewing([answer], totals: totals(counted(filesFilter, 18, 102))) {
             $0.setPolicy(nil, sourceId: files.id, capability: "answer")

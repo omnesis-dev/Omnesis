@@ -315,7 +315,9 @@ test("saved filters remain inspectable and immutable when the authoring gate is 
   const onApply = vi.fn(),
     onRemove = vi.fn();
   await mount({ enabled: false, onApply, onRemove });
-  expect(host.textContent).toContain("saved filter remains enforced");
+  expect(host.textContent).toContain(
+    "Source filter editing requires experimental mode. This saved filter stays in force and is shown here.",
+  );
   expect(host.textContent).not.toContain("Apply filter");
   expect(host.querySelector("input[type=search]")).toBeNull();
   expect(onApply).not.toHaveBeenCalled();
@@ -326,7 +328,9 @@ test("an unsupported saved field is retained and never converted to an editable 
   const saved = { ...policy, maxAge: { days: 3 } },
     onApply = vi.fn();
   await mount({ savedPolicy: saved, onApply });
-  expect(host.textContent).toContain("complete saved policy is preserved");
+  expect(host.textContent).toContain(
+    "This filter uses settings this editor cannot change. It stays in force as saved.",
+  );
   expect(host.textContent).not.toContain("Apply filter");
   expect(onApply).not.toHaveBeenCalled();
   expect(saved.maxAge).toEqual({ days: 3 });

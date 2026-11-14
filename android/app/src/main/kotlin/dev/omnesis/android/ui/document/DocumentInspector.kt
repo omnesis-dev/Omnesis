@@ -286,9 +286,9 @@ private fun MetadataPane(
         // The owner's way to the page that says which access levels can read this document.
         onOpenAccess?.let { WhoCanReadRow(it) }
 
-        bundle.filterDetails?.let { details ->
+        bundle.filterDetails?.lines()?.takeIf { it.isNotEmpty() }?.let { lines ->
             FlatSection("Filter details") {
-                details.lines().forEach { Kv(it.label, it.value) }
+                lines.forEach { Kv(it.label, it.value) }
             }
         }
 

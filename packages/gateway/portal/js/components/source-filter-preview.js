@@ -95,19 +95,31 @@ export function HiddenRecordLines({ data }) {
     : null;
 }
 
+/**
+ * The counts a preview has for a connected account, or null: a gone account
+ * has nothing to count, and its preview only names the saved entries.
+ */
+export function countedPreview(data) {
+  return data && data.connected !== false && Number.isFinite(data.visible) && Number.isFinite(data.hidden)
+    ? data
+    : null;
+}
+
+/** "4 shared  2 hidden": a filter's counts, as the dialog and the level's reviews show them. */
+export function SharedHiddenCounts({ data }) {
+  return html`<span><strong>${data.visible.toLocaleString()}</strong> shared</span
+    ><span><strong>${data.hidden.toLocaleString()}</strong> hidden</span>`;
+}
+
 /** The result of a draft filter: how much it shares and hides, and what stays hidden regardless. */
 export function FilterPreview({ preview }) {
   if (preview.pending)
     return html`<p class="source-filter-pending" role="status"><${CountingRecords} /></p>`;
   if (preview.error) return html`<${CountsUnavailable} onRetry=${preview.retry} />`;
-  const data = preview.data;
-  // A gone account has nothing to count; its preview only names the saved entries.
-  if (!data || data.connected === false) return null;
+  const data = countedPreview(preview.data);
+  if (!data) return null;
   return html`<section class="source-filter-preview" aria-label="Filter preview">
-    <div class="source-filter-counts" role="status">
-      <span><strong>${data.visible.toLocaleString()}</strong> shared</span
-      ><span><strong>${data.hidden.toLocaleString()}</strong> hidden</span>
-    </div>
+    <div class="source-filter-counts" role="status"><${SharedHiddenCounts} data=${data} /></div>
     <${HiddenRecordLines} data=${data} />
   </section>`;
 }

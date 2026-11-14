@@ -15,7 +15,6 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
@@ -60,22 +59,16 @@ private fun accountInventory(rule: AccessGrantRule, overview: AccessOverview, na
 /** The pill that states what one capability reads from an account. */
 @Composable
 private fun AccountStatus(allowed: Boolean, policy: SourceFilter?) {
-    when {
-        allowed -> AccessPill(scopePolicySummary(policy), scopePolicyTone(policy))
-        policy != null -> AccessPill("$NOT_SHARED · saved filter kept", AccessPillTone.OUTLINE)
-        else -> AccessPill(NOT_SHARED, AccessPillTone.OUTLINE)
-    }
+    if (allowed) AccessPill(scopePolicySummary(policy), scopePolicyTone(policy))
+    else AccessPill(NOT_SHARED, AccessPillTone.OUTLINE)
 }
 
-/**
- * The accounts one capability reads, each ticked or not, with "Change" opening the account's filter. A
- * [frozen] list only shows them: no search, nothing to tick or change, the whole list muted.
- */
+/** The accounts one capability reads, each ticked or not, with "Change" opening the account's filter. */
 @Composable
 internal fun AccessDataQuestion(
     draft: AccessLevelDraft, overview: AccessOverview, capability: AccessCapability,
     iconFor: (String) -> SourceIconModel, nameFor: (String) -> String?, update: (AccessLevelDraft) -> Unit,
-    filter: (AccessSourceInstance, AccessCapability) -> Unit, frozen: Boolean = false,
+    filter: (AccessSourceInstance, AccessCapability) -> Unit,
 ) {
     val colors = AccessUi.colors
     val rule = draft.rule(capability) ?: return
@@ -84,23 +77,21 @@ internal fun AccessDataQuestion(
     val selection = AccessSourceSelectionState.from(rule.sources, known)
     val sources = accountInventory(rule, overview, nameFor)
     var query by remember(capability) { mutableStateOf("") }
-    val visible = if (frozen) sources else visibleAccounts(sources, query)
-    val editing = LocalAccessEditingEnabled.current && !frozen
+    val visible = visibleAccounts(sources, query)
+    val editing = LocalAccessEditingEnabled.current
     fun choose(next: AccessSourceSelectionState) { update(draft.setBoundary(next.boundary(known), capability, authoring)) }
     fun permitted(next: AccessSourceSelectionState) = draft.canSetBoundary(next.boundary(known), capability, authoring)
-    Column(if (frozen) Modifier.alpha(.5f) else Modifier) {
+    Column {
         if (sources.isEmpty()) AccessNotice("No connected accounts are available. Connect a source before granting data access.")
         else {
-            if (!frozen) { AccessTextField(query, { query = it }, label = "Search sources", enabled = editing, search = true); AccessGap(8.dp) }
+            AccessTextField(query, { query = it }, label = "Search sources", enabled = editing, search = true); AccessGap(8.dp)
             // The bulk actions reach the accounts the search shows.
             Row(Modifier.fillMaxWidth().heightIn(min = 44.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(20.dp)) {
                 val all = selection.settingAll(visible, true)
                 val none = selection.settingAll(visible, false)
                 Text("${sources.count { selection.allows(it.id) }} of ${sources.size} allowed", style = AccessType.RowSecondary, color = colors.secondary, modifier = Modifier.weight(1f))
-                if (!frozen) {
-                    AccessTextAction("Allow all", enabled = editing && permitted(all), alignment = Alignment.CenterEnd) { choose(all) }
-                    AccessTextAction("Block all", enabled = editing && permitted(none), alignment = Alignment.CenterEnd) { choose(none) }
-                }
+                AccessTextAction("Allow all", enabled = editing && permitted(all), alignment = Alignment.CenterEnd) { choose(all) }
+                AccessTextAction("Block all", enabled = editing && permitted(none), alignment = Alignment.CenterEnd) { choose(none) }
             }
             AccessDivider()
             if (visible.isEmpty()) Text("No accounts match this search.", style = AccessType.Subtitle, color = colors.secondary, modifier = Modifier.padding(top = 14.dp))
@@ -114,41 +105,14 @@ internal fun AccessDataQuestion(
             // An account that is no longer connected can be taken out of the level, but not put back in.
             AccessAccountRow(name, accessSourceIcon(source, iconFor), last = index == visible.lastIndex, checked = allowed,
                 enabled = editing && (source.available || allowed) && permitted(next), onToggle = { choose(next) },
-                action = "Change".takeIf { filterable && !frozen }, actionDescription = "Change ${name.source} for ${capability.title}", onAction = { filter(source, capability) }) {
+                action = "Change".takeIf { filterable }, actionDescription = "Change ${name.source} for ${capability.title}", onAction = { filter(source, capability) }) {
                 AccountStatus(allowed, policy)
             }
         }
     }
-    if (!frozen && authoring != true && rule.scopePolicies.isNotEmpty()) {
+    if (authoring != true && rule.scopePolicies.isNotEmpty()) {
         AccessGap(16.dp)
         AccessNotice("Saved filters cannot be changed right now. They stay in force. You can still turn off a permission.")
-    }
-}
-
-/**
- * Direct's accounts on a saved level. Beside Answer, Direct is either linked to Answer, which shows Answer's
- * accounts as they stand and cannot be changed here, or has a list of its own; one action above the list
- * switches between the two. Leaving the link restores the list this draft had before linking, or starts
- * from a copy of Answer's. Without Answer, Direct's own list is all there is.
- */
-@Composable
-internal fun AccessDirectDataQuestion(
-    draft: AccessLevelDraft, overview: AccessOverview, iconFor: (String) -> SourceIconModel, nameFor: (String) -> String?,
-    update: (AccessLevelDraft) -> Unit, filter: (AccessSourceInstance, AccessCapability) -> Unit,
-) {
-    val authoring = overview.sourceFilters?.enabled
-    val editing = LocalAccessEditingEnabled.current
-    if (draft.rule(AccessCapability.ANSWER) == null) return AccessDataQuestion(draft, overview, AccessCapability.DIRECT, iconFor, nameFor, update, filter)
-    if (draft.directLinked) {
-        Text(DIRECT_LINKED_NOTE, style = AccessType.Subtitle, color = AccessUi.colors.primary)
-        AccessGap(12.dp)
-        AccessSecondaryButton(DIRECT_OWN_LIST_LABEL, enabled = editing) { update(draft.withDirectSameAsAnswer(false, authoring)) }
-        AccessGap(20.dp)
-        AccessDataQuestion(draft, overview, AccessCapability.ANSWER, iconFor, nameFor, update, filter, frozen = true)
-    } else {
-        AccessSecondaryButton(DIRECT_SAME_AS_ANSWER_LABEL, enabled = editing && draft.canCopyAnswer(authoring)) { update(draft.withDirectSameAsAnswer(true, authoring)) }
-        AccessGap(20.dp)
-        AccessDataQuestion(draft, overview, AccessCapability.DIRECT, iconFor, nameFor, update, filter)
     }
 }
 
@@ -167,8 +131,9 @@ internal fun AccessAccountList(rule: AccessGrantRule, overview: AccessOverview, 
 }
 
 /**
- * Direct beside Answer in a new level: use Answer's sources and filters, which are then listed as they
- * stand, or choose Direct's own accounts on the same screen.
+ * Direct beside Answer, on a new level and a saved one alike: use Answer's sources and filters, which are then
+ * listed as they stand, or choose Direct's own accounts on the same screen. Leaving the link restores the list
+ * this draft had before linking, or starts from a copy of Answer's.
  */
 @Composable
 internal fun AccessDirectQuestion(
@@ -184,6 +149,31 @@ internal fun AccessDirectQuestion(
     AccessGap(20.dp)
     if (draft.directSameAsAnswer) AccessAccountList(answer, overview, iconFor, nameFor)
     else AccessDataQuestion(draft, overview, AccessCapability.DIRECT, iconFor, nameFor, update, filter)
+}
+
+/**
+ * The controls of one decision of an access level, below its question. The level editor and the approval of a new
+ * level both draw every decision through this, so a decision looks and behaves the same in both. [requiredAnswer]
+ * holds Answer on for an agent that cannot work without it. The overview and the review are drawn by each flow.
+ */
+@Composable
+internal fun AccessLevelDecisionControls(
+    page: AccessLevelPage, draft: AccessLevelDraft, overview: AccessOverview,
+    iconFor: (String) -> SourceIconModel, nameFor: (String) -> String?, readPolicy: ((String) -> Unit)?,
+    update: (AccessLevelDraft) -> Unit, filter: (AccessSourceInstance, AccessCapability) -> Unit, requiredAnswer: Boolean = false,
+) {
+    when (page) {
+        AccessLevelPage.NAME -> AccessNameField(draft, overview, update)
+        AccessLevelPage.PERMISSIONS -> AccessPermissionsQuestion(draft, overview, requiredAnswer, update)
+        AccessLevelPage.ANSWER_DATA -> AccessDataQuestion(draft, overview, AccessCapability.ANSWER, iconFor, nameFor, update, filter)
+        // Beside Answer, Direct data asks first whether Direct follows Answer, as a new level's step does.
+        AccessLevelPage.DIRECT_CHOICE, AccessLevelPage.DIRECT_DATA ->
+            if (draft.rule(AccessCapability.ANSWER) != null) AccessDirectQuestion(draft, overview, iconFor, nameFor, update, filter)
+            else AccessDataQuestion(draft, overview, AccessCapability.DIRECT, iconFor, nameFor, update, filter)
+        AccessLevelPage.FUTURE -> AccessFutureQuestion(draft, overview, update)
+        AccessLevelPage.RELEASE -> AccessReleaseQuestion(draft, overview, readPolicy = readPolicy, update = update)
+        AccessLevelPage.OVERVIEW, AccessLevelPage.REVIEW -> Unit
+    }
 }
 
 /** Whether each reading permission takes in sources connected later. A linked Direct follows Answer. */
