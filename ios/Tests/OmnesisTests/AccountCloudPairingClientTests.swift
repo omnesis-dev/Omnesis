@@ -100,50 +100,6 @@ final class AccountCloudPairingClientTests: XCTestCase {
         )
     }
 
-    /// The gateway behind the pinned connection: its challenge, its config naming its approval page,
-    /// and the request and poll replies for `challenge`.
-    private func makePinned(
-        value: Fixture,
-        challenge: CloudPairingChallenge,
-        publicCertificate: Bool,
-        mutateGateway: Mutation?
-    )
-        -> AccountTestTransport {
-        let gatewayChallenge = gatewayChallenge, clock = value.clock
-        return AccountTestTransport(publicCertificate: publicCertificate) { url, body, bearer in
-            XCTAssertNil(bearer)
-            if url.path.hasSuffix("challenge") {
-                let data = try JSONSerialization.data(withJSONObject: ["challenge": gatewayChallenge, "expiresAt": (clock + 120) * 1000])
-                return try mutateGateway?(url, data) ?? data
-            }
-            if url.path == "/devices/account/config" {
-                XCTAssertNil(body)
-                let data = try JSONSerialization.data(withJSONObject: [
-                    "accountSignIn": true,
-                    "gatewayPasskey": ["rpId": "relay.example.test", "origin": value.gateway.publicOrigin],
-                ])
-                return try mutateGateway?(url, data) ?? data
-            }
-            let input = try XCTUnwrap(JSONSerialization.jsonObject(with: XCTUnwrap(body)) as? [String: Any])
-            XCTAssertEqual(input["secret"] as? String, challenge.secret)
-            if url.path.hasSuffix("request") {
-                XCTAssertEqual(input["identityToken"] as? String, "opaque-scoped-proof")
-            } else {
-                XCTAssertNil(input["identityToken"])
-                XCTAssertTrue(url.path.hasSuffix("/devices/account/poll"))
-            }
-            let polling = url.path.hasSuffix("poll")
-            let data = try JSONEncoder().encode(PairingCodeFixture.reply(
-                to: challenge,
-                fingerprint: value.fingerprint,
-                status: polling ? "approved" : "pending",
-                expiresAt: (clock + 300) * 1000,
-                pairingCode: polling ? "FICTIONAL-CODE" : nil
-            ))
-            return try mutateGateway?(url, data) ?? data
-        }
-    }
-
     private func makeControl(
         value: Fixture,
         enrollmentNonce: String,
@@ -436,6 +392,54 @@ final class AccountCloudPairingClientTests: XCTestCase {
         let nonce = try await client.begin(challenge: CloudPairingChallenge(name: "Fictional phone"))
         XCTAssertEqual(nonce.count, 43)
         await client.close()
+    }
+}
+
+// MARK: - The pinned gateway
+
+extension AccountCloudPairingClientTests {
+    /// The gateway behind the pinned connection: its challenge, its config naming its approval page,
+    /// and the request and poll replies for `challenge`.
+    private func makePinned(
+        value: Fixture,
+        challenge: CloudPairingChallenge,
+        publicCertificate: Bool,
+        mutateGateway: Mutation?
+    )
+        -> AccountTestTransport {
+        let gatewayChallenge = gatewayChallenge, clock = value.clock
+        return AccountTestTransport(publicCertificate: publicCertificate) { url, body, bearer in
+            XCTAssertNil(bearer)
+            if url.path.hasSuffix("challenge") {
+                let data = try JSONSerialization.data(withJSONObject: ["challenge": gatewayChallenge, "expiresAt": (clock + 120) * 1000])
+                return try mutateGateway?(url, data) ?? data
+            }
+            if url.path == "/devices/account/config" {
+                XCTAssertNil(body)
+                let data = try JSONSerialization.data(withJSONObject: [
+                    "accountSignIn": true,
+                    "gatewayPasskey": ["rpId": "relay.example.test", "origin": value.gateway.publicOrigin],
+                ])
+                return try mutateGateway?(url, data) ?? data
+            }
+            let input = try XCTUnwrap(JSONSerialization.jsonObject(with: XCTUnwrap(body)) as? [String: Any])
+            XCTAssertEqual(input["secret"] as? String, challenge.secret)
+            if url.path.hasSuffix("request") {
+                XCTAssertEqual(input["identityToken"] as? String, "opaque-scoped-proof")
+            } else {
+                XCTAssertNil(input["identityToken"])
+                XCTAssertTrue(url.path.hasSuffix("/devices/account/poll"))
+            }
+            let polling = url.path.hasSuffix("poll")
+            let data = try JSONEncoder().encode(PairingCodeFixture.reply(
+                to: challenge,
+                fingerprint: value.fingerprint,
+                status: polling ? "approved" : "pending",
+                expiresAt: (clock + 300) * 1000,
+                pairingCode: polling ? "FICTIONAL-CODE" : nil
+            ))
+            return try mutateGateway?(url, data) ?? data
+        }
     }
 }
 
