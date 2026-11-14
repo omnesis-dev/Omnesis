@@ -38,11 +38,11 @@ function account() {
       ceremonies.set(challenge, binding);
       return { purpose: "step-up", challenge, binding, webauthnChallenge: opaque() };
     }),
-    verifyStepUp: vi.fn(async (proof: unknown, binding: string) => {
+    verifyStepUp: vi.fn((proof: unknown, binding: string) => {
       const challenge = (proof as { challenge: string }).challenge;
       const issued = ceremonies.get(challenge);
       ceremonies.delete(challenge);
-      return state.accept && issued === binding;
+      return Promise.resolve(state.accept && issued === binding);
     }),
   } as unknown as GatewayEnrollment;
   return { enrollment, state };
