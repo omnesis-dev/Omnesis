@@ -251,6 +251,18 @@ says to approve only a request one made oneself. The portal's held screen offers
 "Approve with your passkey" for its own request, and the devices page offers
 "Approve with passkey" for an app's request.
 
+The iOS app sends its own held request there. A passkey sign-in in the app
+presents the relay's origin, so it is always held. While it waits, the app reads
+`gatewayPasskey` from `/devices/account/config` over the connection pinned to
+the gateway's key and opens `${origin}/portal/approve#<requestId>` in the system
+sign-in browser, next to the comparison code, then polls `/devices/account/poll`
+as before. It uses that origin only when it is the pinned gateway's own origin,
+under the RP ID host and never that host itself; otherwise, and on a gateway that
+names none, the request waits for a trusted device. After a Google sign-in the
+app offers the page without opening it, since the account may have no passkey.
+The app also refuses relay passkey options whose `issuedAt` is more than 60
+seconds from the device's clock.
+
 A Google token counts as made in an official app (`native-google`) only when an
 official native client presented it: the Android release or test client as
 `azp` of a token for the web client, or the iOS client as both `aud` and `azp`.
@@ -888,7 +900,8 @@ What remains:
   only makes confirmation or approval fail.
 
 A sign-in in the iOS app presents the relay's own origin, so it is held like a
-relay page's until the app approves through the gateway's page. A compromised relay
+relay page's until the owner approves it on the gateway's page, which the app
+opens for its held request. A compromised relay
 can also show one brand-new device a fake gateway. That fake cannot reach the real
 gateway; first contact requires a publicly trusted, logged certificate, which the
 gateway's certificate monitor reports when it is for the gateway's own name (and

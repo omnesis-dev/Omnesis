@@ -78,6 +78,14 @@ final class PreviewSnapshotTests: XCTestCase {
         }
         snapshot(NavigationStack { PreviewMocks.accountPairingPanel(.comparing, approved: true) }, name: "account-pairing-approved")
         snapshot(
+            NavigationStack { PreviewMocks.accountPairingPanel(.comparing, approvalPage: true) },
+            name: "account-pairing-approval-page"
+        )
+        snapshot(
+            NavigationStack { PreviewMocks.accountPairingPanel(.comparing, approvalPage: true) }.dynamicTypeSize(.accessibility2),
+            name: "account-pairing-approval-page-large"
+        )
+        snapshot(
             NavigationStack { PreviewMocks.accountPairingPanel(.comparing, approved: true) }.dynamicTypeSize(.accessibility2),
             name: "account-pairing-approved-large"
         )

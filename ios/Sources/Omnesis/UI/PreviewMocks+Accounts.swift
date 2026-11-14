@@ -97,7 +97,8 @@ extension PreviewMocks {
     static func accountPairingPanel(
         _ phase: AccountCloudPairingCoordinator.Phase,
         approved: Bool = false,
-        error: AccountPairingError? = nil
+        error: AccountPairingError? = nil,
+        approvalPage: Bool = false
     )
         -> AccountCloudPairingPanel {
         AccountCloudPairingPanel(
@@ -114,7 +115,8 @@ extension PreviewMocks {
             onChoose: { _ in },
             onPair: {},
             onScan: {},
-            onManual: {}
+            onManual: {},
+            approvalPageAvailable: approvalPage
         )
     }
 }

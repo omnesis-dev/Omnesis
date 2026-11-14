@@ -24,7 +24,7 @@ struct AccountCloudPairingView: View {
         self.configuration = configuration
         self.onScan = onScan
         self.onManual = onManual
-        _model = State(initialValue: model ?? AccountCloudPairingCoordinator())
+        _model = State(initialValue: model ?? AccountCloudPairingCoordinator(approvalBrowser: OmnesisAccountSystemBrowser()))
     }
 
     private var choosing: Bool {
@@ -46,7 +46,9 @@ struct AccountCloudPairingView: View {
             onChoose: { model.choose($0) },
             onPair: pair,
             onScan: onScan,
-            onManual: onManual
+            onManual: onManual,
+            approvalPageAvailable: model.approvalPage != nil,
+            onApprovalPage: { model.openApprovalPage() }
         )
         .onChange(of: model.phase) { _, phase in
             // The gateway already joined this device; there is nothing to compare.
@@ -95,6 +97,16 @@ struct AccountCloudPairingPanel: View {
     let onPair: () -> Void
     let onScan: () -> Void
     let onManual: () -> Void
+    /// Whether the gateway offers its own page to approve this request with a passkey.
+    var approvalPageAvailable = false
+    var onApprovalPage: () -> Void = {}
+
+    static let approveWithPasskey = "Approve this device with your passkey on your gateway's own page. "
+        + "Approve only if the page shows this same code."
+
+    private var offersApprovalPage: Bool {
+        approvalPageAvailable && !approved && phase == .comparing
+    }
 
     var body: some View {
         if phase == .idle || phase == .failed {
@@ -178,11 +190,24 @@ struct AccountCloudPairingPanel: View {
                     }
                 case .comparing, .pairing:
                     if let gatewayHost { Text(gatewayHost).font(.footnote.monospaced()).textSelection(.enabled) }
-                    Text(PairingApprovalPresentation.waitingDevice)
+                    Text(offersApprovalPage ? Self.approveWithPasskey : PairingApprovalPresentation.waitingDevice)
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                     if let verificationCode { PairingCodeText(code: verificationCode) }
-                    Text(approved ? "Approved by your gateway." : "Waiting for approval on a trusted device…").foregroundStyle(.secondary)
+                    if offersApprovalPage {
+                        Button(action: onApprovalPage) {
+                            Label("Approve with your passkey", systemImage: "person.badge.key").frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(.bordered)
+                        .accessibilityIdentifier("pairing.account.approvalPage")
+                    }
+                    Text(
+                        approved
+                            ? "Approved by your gateway."
+                            : offersApprovalPage ? "Waiting for your approval…" : "Waiting for approval on a trusted device…"
+                    )
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
                     Button(action: onPair) {
                         Text(phase == .pairing ? "Pairing…" : "Codes match, pair this device").frame(maxWidth: .infinity)
                     }
@@ -285,6 +310,15 @@ struct AccountGatewayRow: View {
 }
 
 #Preview("Waiting for approval") { PreviewMocks.accountPairingPanel(.comparing) }
+#Preview("Approve with your passkey") { PreviewMocks.accountPairingPanel(.comparing, approvalPage: true) }
+#Preview("Approve with your passkey, large text") {
+    PreviewMocks.accountPairingPanel(.comparing, approvalPage: true).dynamicTypeSize(.accessibility2)
+}
+
+#Preview("Approve with your passkey, dark") {
+    PreviewMocks.accountPairingPanel(.comparing, approvalPage: true).preferredColorScheme(.dark)
+}
+
 #Preview("Approved with large text") { PreviewMocks.accountPairingPanel(.comparing, approved: true).dynamicTypeSize(.accessibility2) }
 #Preview("Signing in") { PreviewMocks.accountPairingPanel(.signingIn) }
 #Preview("No linked gateways") { PreviewMocks.accountPairingPanel(.failed).preferredColorScheme(.dark) }
