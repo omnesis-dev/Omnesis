@@ -141,9 +141,11 @@ private val BLOCKED_SCHEMES = setOf("file", "data", "javascript", "about")
 
 private fun externalDocUrl(value: String?): String? {
     if (value.isNullOrBlank()) return null
-    val scheme = value.substringBefore(':', "").lowercase().takeIf { it.isNotEmpty() && value.contains(':') }
-        ?: return null
-    return if (scheme in BLOCKED_SCHEMES) null else value
+    val uri = runCatching { java.net.URI(value) }.getOrNull() ?: return null
+    val scheme = uri.scheme?.lowercase() ?: return null
+    if (scheme in BLOCKED_SCHEMES || uri.rawSchemeSpecificPart.isNullOrBlank()) return null
+    if (scheme in setOf("http", "https") && uri.host.isNullOrBlank()) return null
+    return value
 }
 
 // MARK: - Timestamp parsing

@@ -16563,6 +16563,35 @@ details[open] > .agent-tool-error-summary .agent-tool-error-chevron { transform:
   text-decoration: underline;
 }
 
+/* Separate source action: the title keeps opening the indexed document. */
+.graph-debug-event-source {
+  display: inline-flex;
+  flex: 0 0 24px;
+  width: 24px;
+  height: 24px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  color: var(--text-secondary);
+  text-decoration: none;
+}
+
+/* The title's font bounds sit above the center of its line box. */
+.graph-debug-event-source svg {
+  transform: translateY(-1px);
+}
+
+.graph-debug-event-source:hover,
+.graph-debug-event-source:focus-visible {
+  color: var(--accent);
+  background: var(--bg-hover);
+}
+
+.graph-debug-event-source:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
 /* Tier 2 — the people line. */
 .graph-debug-event-people {
   margin: 3px 0 0;

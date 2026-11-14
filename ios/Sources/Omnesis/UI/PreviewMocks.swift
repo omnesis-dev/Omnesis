@@ -3221,6 +3221,36 @@ enum PreviewMocks {
         ),
     ]
 
+    /// Source-link variants for citation actions: web, native, absent and invalid.
+    static let citationSourceLinks: AgentTrailAnnotations = {
+        let refs = [
+            AgentDocRef(
+                documentId: "source-link-web", sourceType: "google-drive", sourceId: "google-drive:demo",
+                documentType: "document", title: "Observatory project plan", ts: 1_783_069_800_000,
+                url: "https://docs.example.org/document/observatory-plan"
+            ),
+            AgentDocRef(
+                documentId: "source-link-native", sourceType: "apple-notes", sourceId: "apple-notes:demo",
+                documentType: "note", title: "Workshop ideas", ts: 1_783_070_400_000,
+                appUrl: "mobilenotes://showNote?identifier=fictional-workshop-note"
+            ),
+            AgentDocRef(
+                documentId: "source-link-absent", sourceType: "session-transcripts", sourceId: "session-transcripts:demo",
+                documentType: "conversation", title: "Design discussion", ts: 1_783_071_000_000
+            ),
+            AgentDocRef(
+                documentId: "source-link-invalid", sourceType: "web", sourceId: "web",
+                documentType: "webpage", title: "Archived reference without a valid link", ts: 1_783_071_600_000,
+                url: "https:"
+            ),
+        ]
+        var annotations = AgentTrailAnnotations()
+        for ref in refs {
+            annotations.byDoc[ref.documentId] = AgentDocAnnotations(ref: ref, note: nil, quotes: [])
+        }
+        return annotations
+    }()
+
     /// A transcript cites a structured change request while a browser capture
     /// remains as a second representation. Exercises the `same-resource`
     /// related row with deliberately long titles at a narrow snapshot width.
@@ -3238,6 +3268,22 @@ enum PreviewMocks {
                 documentType: "conversation",
                 mimeType: nil
             ),
+            attachments: [
+                AgentTrailEvent(
+                    eventId: "evt-observatory-attachment",
+                    at: "2026-07-03T09:10:00Z",
+                    kind: "document",
+                    doc: AgentTrailEventDoc(
+                        documentId: "doc-observatory-attachment",
+                        title: "Observatory workshop agenda and reference materials.pdf",
+                        sourceId: "google-drive:demo",
+                        sourceUrl: "https://docs.example.org/file/observatory-workshop",
+                        appUrl: nil,
+                        documentType: "attachment",
+                        mimeType: "application/pdf"
+                    )
+                ),
+            ],
             related: [
                 AgentTrailEventRelated(
                     documentId: "doc-change-request-42",

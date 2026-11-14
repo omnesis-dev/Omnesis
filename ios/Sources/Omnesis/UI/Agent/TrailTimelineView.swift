@@ -670,27 +670,27 @@ struct TrailTimelineEventBody: View {
 
     // MARK: - Title row
 
-    /// Tappable title: always pushes the in-app `AgentDocumentDetailView`
-    /// — the document viewer is the single entry point to the original
-    /// source (via its "Open in source" button). Every cited document is
-    /// reachable this way, including sources with no externally-
-    /// addressable URL (WhatsApp, Apple Notes, Reminders, Health, …).
-    ///
-    /// Uses `.onTapGesture` rather than a `Button` because the drawer's
-    /// horizontal-close drag gesture (a simultaneous `DragGesture(0)`)
-    /// races with the button's permissive movement tolerance — a
-    /// finger that lifts off after dragging right to close the panel
-    /// would otherwise fire the button on touch-up and pop open the
-    /// document under the finger. `TapGesture`'s strict
-    /// no-significant-movement contract sidesteps that race.
+    /// Title taps open the in-app viewer; the separate trailing action opens
+    /// the provider's native link, falling back to its web link.
+    /// Tap gestures avoid firing after the drawer's drag-to-close gesture.
     private var titleRow: some View {
-        titleLabel
-            .contentShape(Rectangle())
-            .onTapGesture {
-                if let docId = event.doc?.documentId {
-                    openTrailDocument(docId)
+        HStack(alignment: .center, spacing: 4) {
+            titleLabel
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    if let docId = event.doc?.documentId {
+                        openTrailDocument(docId)
+                    }
                 }
-            }
+                .accessibilityAddTraits(.isButton)
+                .accessibilityHint("View document in Omnesis")
+            DocumentSourceAction(
+                appUrl: event.doc?.appUrl,
+                sourceUrl: event.doc?.sourceUrl,
+                title: event.doc?.title ?? "document"
+            )
+            Spacer(minLength: 0)
+        }
     }
 
     private var titleLabel: some View {
@@ -730,7 +730,6 @@ struct TrailTimelineEventBody: View {
                 .lineLimit(1)
                 .truncationMode(.middle)
                 .multilineTextAlignment(.leading)
-            Spacer(minLength: 0)
         }
     }
 
@@ -1400,7 +1399,7 @@ enum TrailTimelineFormat {
 }
 
 @available(iOS 17.0, *)
-#Preview("TrailTimelineView — URL representations") {
+#Preview("TrailTimelineView — inline source links and attachment") {
     let store = AppStore.preview()
     return ScrollView {
         TrailTimelineView(
