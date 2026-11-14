@@ -12,6 +12,8 @@ vi.mock("./lib/gateway-passkey.js", async (original) => ({
 vi.mock("./lib/step-up-sheet.js", () => ({ confirmStepUp }));
 // @ts-expect-error — portal is plain JS without sibling declarations.
 import { apiFetch } from "./api.js";
+// @ts-expect-error — portal is plain JS without sibling declarations.
+import { GatewayPasskeyError } from "./lib/gateway-passkey.js";
 
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
@@ -159,7 +161,6 @@ test("a passkey the gateway refuses is said in the owner's words, and every step
     stepUp: true,
   });
   // A prompt closed by the person keeps its own message, marked for the page to show.
-  const { GatewayPasskeyError } = await import("./lib/gateway-passkey.js");
   vi.stubGlobal("fetch", vi.fn().mockResolvedValue(required()));
   stepUp.mockRejectedValueOnce(new GatewayPasskeyError("The passkey prompt was closed."));
   await expect(apiFetch("/admin/tokens", { method: "POST", body: "{}" })).rejects.toMatchObject({

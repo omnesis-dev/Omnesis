@@ -12,11 +12,11 @@ const api = vi.hoisted(() => ({
   decideCloudPairing: vi.fn(),
 }));
 vi.mock("../lib/cloud-pairing-api.js", () => api);
-// @ts-expect-error — portal JavaScript has no sibling declarations.
 import {
   CloudPairingDenied,
   CloudPairingRequest,
   CloudPairingRequests,
+  // @ts-expect-error — portal JavaScript has no sibling declarations.
 } from "./cloud-pairing-requests.js";
 /** Rendered text with HTML whitespace collapsed, as a browser shows it. */
 const norm = (value: string | null | undefined) => (value ?? "").replace(/\s+/g, " ");
