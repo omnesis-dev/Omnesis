@@ -234,6 +234,7 @@ public actor AccountCloudPairingClient {
         guard Self.opaque(value.ceremonyId), options.rpId == origin.host, Self.opaque(options.challenge),
               options.userVerification == "required", Self.opaque(value.salt),
               value.issuedAt.range(of: "^[1-9][0-9]{9,10}$", options: .regularExpression) != nil,
+              Self.fresh(value.issuedAt, now: now()),
               try options.challenge == DeviceEnrollmentContract.passkeyProofChallenge(
                   salt: value.salt,
                   issuedAt: value.issuedAt,
@@ -409,6 +410,15 @@ public actor AccountCloudPairingClient {
         return try JSONDecoder().decode(T.self, from: data)
     }
 
+    /// The relay picks the time the passkey signs over. One far from this device's clock would let a
+    /// signature made now pass as fresh later, so it must be within a minute either way.
+    private static func fresh(_ issuedAt: String, now: TimeInterval) -> Bool {
+        guard let seconds = TimeInterval(issuedAt) else { return false }
+        return abs(seconds - now) <= passkeyClockSkew
+    }
+
+    static let passkeyClockSkew: TimeInterval = 60
+
     private static func opaque(_ value: String) -> Bool {
         value.range(of: "^[A-Za-z0-9_-]{43}$", options: .regularExpression) != nil
     }
@@ -578,4 +588,63 @@ extension AccountCloudPairingClient {
         .notConnectedToInternet, .networkConnectionLost, .timedOut, .cannotConnectToHost,
         .cannotFindHost, .dnsLookupFailed, .secureConnectionFailed,
     ]
+}
+
+// MARK: - Approving a held request on the gateway's own page
+
+extension AccountCloudPairingClient {
+    /// The page on which the owner approves this held request with their passkey, when the gateway
+    /// offers one. A sign-in made in this app presents the relay's own origin, so the gateway holds
+    /// it; only an assertion made on the gateway's own page can approve it.
+    ///
+    /// The gateway says where that page is, over the connection pinned to its key. The page is used
+    /// only when it is that same gateway's origin, under the relay's passkey domain and never the
+    /// relay's own host; anything else leaves approval to a trusted device, as before. The poll
+    /// still decides when the device is approved.
+    public func approvalPage() async throws -> URL? {
+        try checkOpen()
+        guard stage == .pairing, let value = pending, !value.approved, !value.joinedAutomatically,
+              let gateway else { return nil }
+        struct Config: Decodable {
+            struct Passkey: Decodable { let rpId: String
+                let origin: String
+            }
+
+            let gatewayPasskey: Passkey?
+        }
+        let data = try await gateway.requestData(
+            url: value.origin.appendingPathComponent("devices/account/config"),
+            method: "GET",
+            body: nil,
+            bearer: nil,
+            form: false
+        )
+        try checkOpen()
+        guard data.count <= 65536 else { throw AccountPairingError.response }
+        guard let advertised = try JSONDecoder().decode(Config.self, from: data).gatewayPasskey else { return nil }
+        return Self.approvalPage(
+            origin: advertised.origin,
+            rpId: advertised.rpId,
+            gateway: value.origin,
+            relay: origin,
+            requestId: value.challenge.requestId
+        )
+    }
+
+    /// `${origin}/portal/approve#<requestId>`, when `origin` is the pinned gateway's own and a name
+    /// under the relay's host, which is the RP ID the owner's passkey belongs to.
+    static func approvalPage(origin advertised: String, rpId: String, gateway: URL, relay: URL, requestId: String) -> URL? {
+        guard let page = try? exactOrigin(advertised), let host = page.host?.lowercased(),
+              let relayHost = relay.host?.lowercased(), rpId.lowercased() == relayHost,
+              host.hasSuffix("." + relayHost), host == gateway.host?.lowercased(),
+              (page.port ?? 443) == (gateway.port ?? 443), gateway.scheme == "https", uuid(requestId)
+        else { return nil }
+        var parts = URLComponents()
+        parts.scheme = "https"
+        parts.host = host
+        parts.port = page.port
+        parts.path = "/portal/approve"
+        parts.fragment = requestId
+        return parts.url
+    }
 }

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+// swiftlint:disable file_length
 import CryptoKit
 import Foundation
 @testable import Omnesis
@@ -15,7 +16,8 @@ final class AccountCloudPairingClientTests: XCTestCase {
     private let origin = "https://relay.example.test"
     private let account = String(repeating: "a", count: 64)
     private let salt = String(repeating: "s", count: 43)
-    private let issuedAt = "1794240000"
+    /// Ten seconds before the fixture's clock: a relay's passkey time must be within a minute of it.
+    private let issuedAt = "1793879990"
     private let gatewayChallenge = PairingCodeFixture.challenge
     private let clientId = "synthetic.apps.googleusercontent.com"
     private struct SessionFixture {
@@ -37,6 +39,7 @@ final class AccountCloudPairingClientTests: XCTestCase {
         reusing: SessionFixture? = nil,
         publicCertificate: Bool = true,
         checksPublicCertificate: Bool = true,
+        issuedAt: String? = nil,
         mutateControl: Mutation? = nil,
         mutateGateway: Mutation? = nil
     ) throws
@@ -62,7 +65,13 @@ final class AccountCloudPairingClientTests: XCTestCase {
             secret: challenge.secret,
             devicePublicKey: key.publicKey
         )
-        let baseControl = makeControl(value: value, enrollmentNonce: enrollmentNonce, signer: signer, attack: attack)
+        let baseControl = makeControl(
+            value: value,
+            enrollmentNonce: enrollmentNonce,
+            signer: signer,
+            attack: attack,
+            issuedAt: issuedAt ?? self.issuedAt
+        )
         let control = AccountTestTransport { url, body, bearer in
             let data = try baseControl.handler(url, body, bearer)
             return try mutateControl?(url, data) ?? data
@@ -72,6 +81,14 @@ final class AccountCloudPairingClientTests: XCTestCase {
             XCTAssertNil(bearer)
             if url.path.hasSuffix("challenge") {
                 let data = try JSONSerialization.data(withJSONObject: ["challenge": gatewayChallenge, "expiresAt": (clock + 120) * 1000])
+                return try mutateGateway?(url, data) ?? data
+            }
+            if url.path == "/devices/account/config" {
+                XCTAssertNil(body)
+                let data = try JSONSerialization.data(withJSONObject: [
+                    "accountSignIn": true,
+                    "gatewayPasskey": ["rpId": "relay.example.test", "origin": value.gateway.publicOrigin],
+                ])
                 return try mutateGateway?(url, data) ?? data
             }
             let input = try XCTUnwrap(JSONSerialization.jsonObject(with: XCTUnwrap(body)) as? [String: Any])
@@ -119,10 +136,11 @@ final class AccountCloudPairingClientTests: XCTestCase {
         value: Fixture,
         enrollmentNonce: String,
         signer: TestIdentitySigner,
-        attack: String?
+        attack: String?,
+        issuedAt: String
     )
         -> AccountTestTransport {
-        let clock = value.clock, account = account, salt = salt, issuedAt = issuedAt
+        let clock = value.clock, account = account, salt = salt
         return AccountTestTransport { url, body, bearer in
             switch url.path {
             case "/oauth2/v3/certs": return signer.jwks
@@ -726,6 +744,152 @@ extension AccountCloudPairingClientTests {
             XCTFail("Retried with no gateway chosen")
         } catch { XCTAssertEqual(error as? AccountPairingError, .response) }
         await setup.client.close()
+    }
+}
+
+// MARK: - The relay's passkey time and the gateway's approval page
+
+extension AccountCloudPairingClientTests {
+    /// The relay picks the time a passkey signs over. One more than a minute from this device's
+    /// clock, either way, is refused before the passkey is asked for anything.
+    func testARelayPasskeyTimeMoreThanAMinuteFromThisDevicesClockIsRefused() async throws {
+        let clock = try fixture().fixture.clock
+        for (offset, accepted) in [(-61.0, false), (61, false), (-3600, false), (86400, false), (-60, true), (60, true), (0, true)] {
+            let setup = try fixture(issuedAt: String(Int(clock + offset)))
+            _ = try await setup.client.begin(challenge: setup.challenge)
+            do {
+                _ = try await setup.client.passkeyOptions()
+                XCTAssertTrue(accepted, "A passkey time \(offset) s from the clock was accepted")
+            } catch {
+                XCTAssertFalse(accepted, "A passkey time \(offset) s from the clock was refused")
+                XCTAssertEqual(error as? AccountPairingError, .response)
+            }
+            XCTAssertFalse(setup.control.paths.contains("/_relay/v3/native/passkeys/complete"))
+            await setup.client.close()
+        }
+    }
+
+    private func approvalPage(_ setup: SessionFixture) throws -> URL {
+        try XCTUnwrap(URL(string: "\(setup.fixture.gateway.publicOrigin)/portal/approve#\(setup.challenge.requestId)"))
+    }
+
+    /// Held, the request is approved on the gateway's own page, which the gateway names over the
+    /// pinned connection; the poll then finds it approved and the device pairs after the comparison.
+    func testAHeldPasskeySignInOpensTheGatewaysOwnApprovalPageAndPollsUntilApproved() async throws {
+        let setup = try fixture()
+        let choices = try await passkeyChoices(setup)
+        var pending = try await setup.client.select(gatewayId: choices[0].gatewayId)
+        XCTAssertFalse(pending.approved)
+        XCTAssertFalse(pending.joinedAutomatically)
+        let page = try await setup.client.approvalPage()
+        XCTAssertEqual(page, try approvalPage(setup))
+        XCTAssertEqual(page?.host, "g-00000000000040008000000000000001.relay.example.test")
+        XCTAssertEqual(setup.pinned.paths, ["/devices/account/challenge", "/devices/account/request", "/devices/account/config"])
+        XCTAssertFalse(setup.control.paths.contains { $0.contains("config") || $0.contains("approve") })
+        let progress = try await setup.client.poll()
+        try pending.receive(progress, now: setup.fixture.clock)
+        XCTAssertTrue(pending.approved)
+        pending.confirmComparison()
+        XCTAssertTrue(try pending.pairingPayload(now: setup.fixture.clock).contains("pinned-key-strict"))
+        await setup.client.close()
+    }
+
+    /// TM-01/TM-02: a held iOS passkey sign-in is approved only on the gateway's own page, never on a
+    /// relay page. Whatever the pinned gateway names, the app opens a page only on that gateway's own
+    /// origin under the relay's passkey domain, never the relay's own host, a sibling gateway or
+    /// another site; anything else leaves approval to a trusted device.
+    func testTM01TM02AHeldIOSPasskeySignInIsApprovedOnlyOnTheGatewaysOwnPageNeverOnARelayPage() async throws {
+        let own = try fixture().fixture.gateway.publicOrigin
+        let refused: [(String, [String: Any])] = [
+            ("the relay's own page", ["rpId": "relay.example.test", "origin": "https://relay.example.test"]),
+            ("a sibling gateway", ["rpId": "relay.example.test", "origin": own.replacingOccurrences(of: "0001.", with: "0002.")]),
+            ("another site", ["rpId": "relay.example.test", "origin": "https://approve.example.org"]),
+            ("a look-alike host", ["rpId": "relay.example.test", "origin": "https://g-1.relay.example.test.example.org"]),
+            ("plain HTTP", ["rpId": "relay.example.test", "origin": own.replacingOccurrences(of: "https://", with: "http://")]),
+            ("another port", ["rpId": "relay.example.test", "origin": own + ":8443"]),
+            ("a path", ["rpId": "relay.example.test", "origin": own + "/elsewhere"]),
+            ("a fragment", ["rpId": "relay.example.test", "origin": own + "#other"]),
+            ("another passkey domain", ["rpId": "example.test", "origin": own]),
+            ("a domain the relay does not serve", ["rpId": "g-00000000000040008000000000000001.relay.example.test", "origin": own]),
+        ]
+        for (name, advertised) in refused {
+            let setup = try fixture(mutateGateway: mutation(path: "/devices/account/config", fields: ["gatewayPasskey": advertised]))
+            let choices = try await passkeyChoices(setup)
+            _ = try await setup.client.select(gatewayId: choices[0].gatewayId)
+            let page = try await setup.client.approvalPage()
+            XCTAssertNil(page, "\(name) was opened as the approval page")
+            await setup.client.close()
+        }
+        // A relay that names its own host as the gateway's origin gets no page on it either.
+        let relay = try XCTUnwrap(URL(string: origin))
+        XCTAssertNil(AccountCloudPairingClient.approvalPage(
+            origin: origin,
+            rpId: "relay.example.test",
+            gateway: relay,
+            relay: relay,
+            requestId: UUID().uuidString.lowercased()
+        ))
+        XCTAssertNil(try AccountCloudPairingClient.approvalPage(
+            origin: own,
+            rpId: "relay.example.test",
+            gateway: XCTUnwrap(URL(string: own)),
+            relay: relay,
+            requestId: "not-a-request"
+        ))
+        // The gateway's own page, named as it is, is the one opened.
+        let setup = try fixture()
+        let choices = try await passkeyChoices(setup)
+        _ = try await setup.client.select(gatewayId: choices[0].gatewayId)
+        let page = try await setup.client.approvalPage()
+        XCTAssertEqual(page, try approvalPage(setup))
+        XCTAssertNotEqual(page?.host, relay.host)
+        await setup.client.close()
+    }
+
+    func testAGatewayWithoutAnApprovalPageOrWithAnOversizedConfigOpensNothing() async throws {
+        let silent = try fixture(mutateGateway: { url, data in
+            url.path == "/devices/account/config" ? Data(#"{"accountSignIn":true}"#.utf8) : data
+        })
+        let choices = try await passkeyChoices(silent)
+        _ = try await silent.client.select(gatewayId: choices[0].gatewayId)
+        let none = try await silent.client.approvalPage()
+        XCTAssertNil(none)
+        await silent.client.close()
+
+        let oversized = try fixture(mutateGateway: { url, data in
+            url.path == "/devices/account/config" ? Data(repeating: 65, count: 65537) : data
+        })
+        let oversizedChoices = try await passkeyChoices(oversized)
+        _ = try await oversized.client.select(gatewayId: oversizedChoices[0].gatewayId)
+        do { _ = try await oversized.client.approvalPage()
+            XCTFail("An oversized config was read")
+        } catch { XCTAssertEqual(error as? AccountPairingError, .response) }
+        await oversized.client.close()
+    }
+
+    /// There is a page to open only for a request this sign-in holds at the gateway: none before one
+    /// was sent, none once the gateway joined it, and none after the attempt was closed.
+    func testOnlyAHeldRequestHasAnApprovalPage() async throws {
+        let early = try fixture()
+        let before = try await early.client.approvalPage()
+        XCTAssertNil(before)
+        _ = try await passkeyChoices(early)
+        let unsent = try await early.client.approvalPage()
+        XCTAssertNil(unsent)
+        XCTAssertTrue(early.pinned.paths.isEmpty)
+        await early.client.close()
+        do { _ = try await early.client.approvalPage()
+            XCTFail("A closed attempt named a page")
+        } catch { XCTAssertEqual(error as? AccountPairingError, .cancelled) }
+
+        let probe = try fixture()
+        let joined = try fixture(reusing: probe, mutateGateway: approved(probe))
+        let choices = try await passkeyChoices(joined)
+        _ = try await joined.client.select(gatewayId: choices[0].gatewayId)
+        let none = try await joined.client.approvalPage()
+        XCTAssertNil(none)
+        XCTAssertFalse(joined.pinned.paths.contains("/devices/account/config"))
+        await joined.client.close()
     }
 }
 
