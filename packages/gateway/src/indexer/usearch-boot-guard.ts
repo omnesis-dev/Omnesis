@@ -51,6 +51,11 @@ const WINDOWS_NATIVE_FAULTS = new Set([
   0xc0000409, // STATUS_STACK_BUFFER_OVERRUN
 ]);
 
+// Node's Windows ABORT() exits directly with kAbort=134, bypassing CRT abort.
+// https://github.com/nodejs/node/blob/v24.21.0/src/util.h
+// https://github.com/nodejs/node/blob/v24.21.0/src/node_exit_code.h
+const WINDOWS_NODE_ABORT = 134;
+
 // How much of the validator's stderr to log; a failed import's stack is long
 // and leads with its cause.
 const VALIDATOR_OUTPUT_LOG_CHARS = 500;
@@ -130,6 +135,12 @@ export function quarantineCorruptUsearch(
   // rejection status (a catchable load error / wrong dimension) or a native
   // abort. Pre-open startup failures remain inconclusive; failure after a
   // reported native open must prevent the gateway from opening the same file.
+  // Node's OOM handler uses the same ABORT() code; resource exhaustion is not
+  // evidence that a derivable graph is corrupt.
+  const nodeOutOfMemory =
+    /^FATAL ERROR: [^\r\n]*Allocation failed - (?:JavaScript heap|process) out of memory\b/imu.test(
+      result.stderr ?? "",
+    );
   const signedStatus = result.status;
   const windowsFault =
     process.platform === "win32" &&
@@ -138,13 +149,14 @@ export function quarantineCorruptUsearch(
     Number.isInteger(signedStatus) &&
     signedStatus >= -0x80000000 &&
     signedStatus <= 0xffffffff &&
-    WINDOWS_NATIVE_FAULTS.has(signedStatus >>> 0);
+    (WINDOWS_NATIVE_FAULTS.has(signedStatus >>> 0) ||
+      (signedStatus === WINDOWS_NODE_ABORT && !nodeOutOfMemory));
   // POSIX prebuilt bindings release allocations at process exit. A native
   // destructor can therefore still expose corruption after the frame.
   const crashedNatively =
     (result.signal != null && CORRUPT_SIGNALS.has(result.signal)) || windowsFault;
   const rejected = result.status === USEARCH_FILE_REJECTED_EXIT_CODE;
-  const isCorrupt = !result.error && (crashedNatively || rejected);
+  const isCorrupt = !result.error && !nodeOutOfMemory && (crashedNatively || rejected);
   if (completedNative && !isCorrupt) {
     throw new Error("Usearch validator failed after native completion; refusing in-process open");
   }

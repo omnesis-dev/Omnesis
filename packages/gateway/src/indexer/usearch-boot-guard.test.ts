@@ -2,7 +2,15 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createLogger, resolveSubprocessEntry } from "@omnesis/core";
@@ -136,7 +144,7 @@ ${body}
       expect(warn.mock.calls.flat().join("\n")).toContain("ERR_MODULE_NOT_FOUND");
     });
 
-    test.each([1, 2, 3])("a plain exit %i is not a verdict on the file", (status) => {
+    test.each([1, 2, 3, 134])("a plain exit %i is not a verdict on the file", (status) => {
       const dir = tmpDir();
       const path = join(dir, "index.usearch");
       writeFileSync(path, "contents the validator never looked at");
@@ -219,6 +227,40 @@ ${body}
           ),
         ).toThrow("native validation did not complete");
         expect(existsSync(path)).toBe(true);
+        expect(quarantinedCopies(dir)).toEqual([]);
+      },
+    );
+
+    test("an actual Node abort during the trusted native-open stage quarantines the file", () => {
+      const dir = tmpDir(),
+        path = join(dir, "index.usearch");
+      writeFileSync(path, "graph whose native open aborted");
+      expect(
+        quarantineCorruptUsearch(path, EMBEDDING_DIM, stagedValidator(dir, "process.abort();")),
+      ).toBe("quarantined");
+      expect(existsSync(path)).toBe(false);
+    });
+
+    test.each(
+      ["JavaScript heap out of memory", "process out of memory"].flatMap((detail) =>
+        ["process.exit(134);", "process.abort();"].map((termination) => ({ detail, termination })),
+      ),
+    )(
+      "Node $detail during validation preserves the graph with $termination",
+      ({ detail, termination }) => {
+        const dir = tmpDir(),
+          path = join(dir, "index.usearch");
+        const original = "graph retained after validator resource failure";
+        writeFileSync(path, original);
+        const message = `FATAL ERROR: Allocation failed - ${detail}\n`;
+        const validator = stagedValidator(
+          dir,
+          `writeSync(2,${JSON.stringify(message)});${termination}`,
+        );
+        expect(() => quarantineCorruptUsearch(path, EMBEDDING_DIM, validator)).toThrow(
+          "native validation did not complete",
+        );
+        expect(readFileSync(path, "utf8")).toBe(original);
         expect(quarantinedCopies(dir)).toEqual([]);
       },
     );
@@ -320,17 +362,20 @@ ${body}
       expect(existsSync(path)).toBe(true);
     });
 
-    test("an exit after completed validation does not quarantine a validated graph", () => {
-      const dir = tmpDir(),
-        path = join(dir, "index.usearch");
-      writeFileSync(path, "validated graph");
-      const validator = stagedValidator(dir, "writeSync(1,complete);process.exit(3);");
-      expect(() => quarantineCorruptUsearch(path, EMBEDDING_DIM, validator)).toThrow(
-        "failed after native completion",
-      );
-      expect(existsSync(path)).toBe(true);
-      expect(quarantinedCopies(dir)).toEqual([]);
-    });
+    test.each([3, 134])(
+      "exit %i after completed validation does not quarantine a validated graph",
+      (status) => {
+        const dir = tmpDir(),
+          path = join(dir, "index.usearch");
+        writeFileSync(path, "validated graph");
+        const validator = stagedValidator(dir, `writeSync(1,complete);process.exit(${status});`);
+        expect(() => quarantineCorruptUsearch(path, EMBEDDING_DIM, validator)).toThrow(
+          "failed after native completion",
+        );
+        expect(existsSync(path)).toBe(true);
+        expect(quarantinedCopies(dir)).toEqual([]);
+      },
+    );
 
     test("POSIX native destruction after completion retains native abort protection", () => {
       const dir = tmpDir(),
@@ -382,6 +427,7 @@ ${body}
         ...process.env,
         npm_config_cache: join(dir, "empty-npm-cache"),
         npm_config_offline: "true",
+        FORCE_COLOR: "0",
       },
     });
 

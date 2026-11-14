@@ -3,6 +3,7 @@
 
 import { createSign } from "node:crypto";
 import { chmod, lstat, readFile, writeFile } from "node:fs/promises";
+import { atomicWriteFile } from "@omnesis/core";
 
 const APP_STORE_CONNECT_BASE_URL = "https://api.appstoreconnect.apple.com";
 const MAX_APP_STORE_CONNECT_RESPONSE_BYTES = 1024 * 1024;
@@ -202,7 +203,12 @@ export async function writeFirebaseLocalPushProperties(
   if (existing?.isSymbolicLink()) {
     throw new Error("refusing to overwrite a symbolic-link local.push.properties");
   }
-  await writeFile(path, renderFirebaseLocalPushProperties(values), {
+  const content = renderFirebaseLocalPushProperties(values);
+  if (process.platform === "win32") {
+    await atomicWriteFile(path, content, { mode: 0o600 });
+    return;
+  }
+  await writeFile(path, content, {
     encoding: "utf8",
     mode: 0o600,
   });

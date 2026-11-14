@@ -105,6 +105,16 @@ export async function buildWindowsUsearch({
               },
             },
           },
+          {
+            target_name: "usearch_abort_proof",
+            sources: [fileURLToPath(new URL("./usearch-windows-abort-proof.cc", import.meta.url))],
+            msvs_settings: {
+              VCCLCompilerTool: {
+                ExceptionHandling: 1,
+                AdditionalOptions: ["/std:c++17", "/Zc:preprocessor"],
+              },
+            },
+          },
         ],
       }),
     );
@@ -115,10 +125,23 @@ export async function buildWindowsUsearch({
         timeoutMs: 180_000,
       })) !== 0
     )
-      throw new Error("Could not compile the Windows 64-bit mapping proof");
+      throw new Error(
+        "Could not compile the Windows 64-bit mapping proof and native abort diagnostic",
+      );
     const probe = fileURLToPath(new URL("./probe-windows-usearch.mjs", import.meta.url));
     const executable = join(mappingProof, "build/Release/usearch-mapping-proof.exe");
-    if ((await run([probe, entry, root, executable], { ...options, timeoutMs: 60_000 })) !== 0)
+    if (
+      (await run(
+        [
+          probe,
+          entry,
+          root,
+          executable,
+          join(mappingProof, "build/Release/usearch_abort_proof.node"),
+        ],
+        { ...options, timeoutMs: 60_000 },
+      )) !== 0
+    )
       throw new Error("Rebuilt Windows USearch binding failed its native publication proof");
     return { root, entry };
   } finally {

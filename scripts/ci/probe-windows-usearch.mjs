@@ -9,8 +9,51 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
+/** Record real CRT outcomes inside isolated Node processes, with native entry proof. */
+export function proveWindowsNativeAbort(
+  addon,
+  {
+    binding,
+    timeoutMs = 15_000,
+    report = (evidence) =>
+      process.stdout.write(JSON.stringify({ windowsNativeAbortProof: evidence }) + "\n"),
+  } = {},
+) {
+  for (const mode of ["abort", "terminate"]) {
+    const program = `${binding ? `require(${JSON.stringify(binding)});` : ""}require(${JSON.stringify(addon)})[${JSON.stringify(mode)}]();`;
+    const result = spawnSync(process.execPath, ["-e", program], {
+      timeout: timeoutMs,
+      maxBuffer: 8_192,
+      encoding: "utf8",
+      windowsHide: true,
+    });
+    const marker = `OMNESIS_NATIVE_ABORT_PROOF:${mode}:entered`;
+    // CRT text stdout may translate the newline; both exact single-line forms
+    // still prove that this native callback executed.
+    const entered = result.stdout === `${marker}\n` || result.stdout === `${marker}\r\n`;
+    report({
+      mode,
+      status: result.status,
+      signal: result.signal,
+      entered,
+      nodeVersion: process.versions.node,
+      arch: process.arch,
+      errorCode: result.error?.code ?? null,
+    });
+    if (result.error) {
+      // Spawn errors retain argv; never include that object or child stderr in
+      // the diagnostic. The bounded evidence above carries its native code.
+      throw new Error(`Native ${mode} proof did not exit within its process bound`);
+    }
+    assert.equal(entered, true, `Native ${mode} proof did not enter its callback`);
+    assert.equal(result.signal, null, `Windows native ${mode} proof ended by an external signal`);
+    assert.notEqual(result.status, null, `Native ${mode} proof returned no process status`);
+    assert.notEqual(result.status, 0, `Native ${mode} callback returned without aborting`);
+  }
+}
+
 /** Exercise the installed binary, including old-generation reads during publication. */
-export async function proveWindowsUsearch(entry, dependencyRoot, mappingProof) {
+export async function proveWindowsUsearch(entry, dependencyRoot, mappingProof, abortProof) {
   const require = createRequire(entry);
   const build = require("node-gyp-build");
   assert.match(
@@ -90,8 +133,9 @@ export async function proveWindowsUsearch(entry, dependencyRoot, mappingProof) {
     next.reset();
     rmSync(scratch, { recursive: true, force: true });
   }
+  if (abortProof) proveWindowsNativeAbort(abortProof, { binding: build.path(dependencyRoot) });
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  await proveWindowsUsearch(process.argv[2], process.argv[3], process.argv[4]);
+  await proveWindowsUsearch(process.argv[2], process.argv[3], process.argv[4], process.argv[5]);
 }

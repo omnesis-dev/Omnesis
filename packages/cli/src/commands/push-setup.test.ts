@@ -7,6 +7,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, test, vi } from "vitest";
+import { execWindowsJob } from "@omnesis/platform/windows-job-exec";
+import { inspectWindowsPrivatePathSync } from "@omnesis/platform/windows-private-file";
+import { windowsPowerShellExecutable } from "@omnesis/platform/windows-powershell";
 import {
   createAppStoreConnectJwt,
   ensureAppIdPushCapability,
@@ -158,17 +161,80 @@ describe("Android local.push.properties", () => {
     expect(shortcuts).not.toContain('android:targetPackage="@string/');
     expect(shortcuts).toContain('android:targetPackage="__OMNESIS_APPLICATION_ID__"');
     expect(gradle).toContain("GenerateShortcutsResource");
-    expect(gitignore.split("\n")).toContain("android/local.push.properties");
+    expect(gitignore.split(/\r?\n/)).toContain("android/local.push.properties");
   });
 
   test("writes an owner-only local file", async () => {
     const dir = mkdtempSync(join(tmpdir(), "omnesis-push-setup-"));
     dirs.push(dir);
     const path = join(dir, "local.push.properties");
-    await writeFirebaseLocalPushProperties(path, values);
-    expect(readFileSync(path, "utf8")).toContain("OMNESIS_FIREBASE_PROJECT_ID");
-    expect(statSync(path).mode & 0o777).toBe(0o600);
+    for (const projectId of [values.projectId, "fictional-project-replacement"]) {
+      const next = { ...values, projectId };
+      await writeFirebaseLocalPushProperties(path, next);
+      expect(readFileSync(path, "utf8")).toBe(renderFirebaseLocalPushProperties(next));
+      if (process.platform === "win32")
+        expect(inspectWindowsPrivatePathSync(path, "file").private).toBe(true);
+      else expect(statSync(path).mode & 0o777).toBe(0o600);
+    }
   });
+
+  test.runIf(process.platform === "win32")(
+    "creates private properties under a readable parent and replaces exposed prior content",
+    async () => {
+      const dir = mkdtempSync(join(tmpdir(), "omnesis-push-setup-acl-"));
+      dirs.push(dir);
+      const path = join(dir, "local.push.properties");
+      const expose = async (target: string, directory: boolean) => {
+        await execWindowsJob(
+          windowsPowerShellExecutable(),
+          [
+            "-NoLogo",
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            `
+$ErrorActionPreference='Stop'
+$path=$env:OMNESIS_PUSH_ACL_TEST_PATH
+if ($env:OMNESIS_PUSH_ACL_TEST_DIRECTORY -eq '1') {
+  $acl=[System.IO.Directory]::GetAccessControl($path)
+  $rule=[System.Security.AccessControl.FileSystemAccessRule]::new([System.Security.Principal.SecurityIdentifier]'S-1-1-0',[System.Security.AccessControl.FileSystemRights]::ReadAndExecute,[System.Security.AccessControl.InheritanceFlags]'ContainerInherit,ObjectInherit',[System.Security.AccessControl.PropagationFlags]::None,[System.Security.AccessControl.AccessControlType]::Allow)
+  $acl.AddAccessRule($rule)
+  [System.IO.Directory]::SetAccessControl($path,$acl)
+} else {
+  $acl=[System.IO.File]::GetAccessControl($path)
+  $rule=[System.Security.AccessControl.FileSystemAccessRule]::new([System.Security.Principal.SecurityIdentifier]'S-1-1-0',[System.Security.AccessControl.FileSystemRights]::Read,[System.Security.AccessControl.AccessControlType]::Allow)
+  $acl.AddAccessRule($rule)
+  [System.IO.File]::SetAccessControl($path,$acl)
+}
+`,
+          ],
+          {
+            env: {
+              ...process.env,
+              OMNESIS_PUSH_ACL_TEST_PATH: target,
+              OMNESIS_PUSH_ACL_TEST_DIRECTORY: directory ? "1" : "0",
+            },
+            timeout: 20_000,
+          },
+        );
+      };
+      await expose(dir, true);
+      const unrelated = join(dir, "unrelated.properties");
+      writeFileSync(unrelated, "preserve=true\n");
+      expect(inspectWindowsPrivatePathSync(unrelated, "file").private).toBe(false);
+      await writeFirebaseLocalPushProperties(path, values);
+      expect(readFileSync(path, "utf8")).toBe(renderFirebaseLocalPushProperties(values));
+      expect(inspectWindowsPrivatePathSync(path, "file").private).toBe(true);
+      await expose(path, false);
+      expect(inspectWindowsPrivatePathSync(path, "file").private).toBe(false);
+      const changed = { ...values, projectId: "fictional-project-replacement" };
+      await writeFirebaseLocalPushProperties(path, changed);
+      expect(readFileSync(path, "utf8")).toBe(renderFirebaseLocalPushProperties(changed));
+      expect(inspectWindowsPrivatePathSync(path, "file").private).toBe(true);
+      expect(readFileSync(unrelated, "utf8")).toBe("preserve=true\n");
+    },
+    60_000,
+  );
 
   test("refuses to follow an existing local-properties symlink", async () => {
     const dir = mkdtempSync(join(tmpdir(), "omnesis-push-setup-"));

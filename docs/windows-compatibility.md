@@ -40,12 +40,12 @@ those failures.
 
 ## Native Windows evidence
 
-The focused x64 run at revision `bbc97b2ac` passed 1,548 tests, failed four
-and skipped 24 across 106 passing and two failing files. Native dependency
-preparation, MSVC vector publication, cache initialization and reuse, explicit
-DOS short-name paths and native security cases passed. Three worker-thread
-loader fixtures and one Maildir read-failure case remain; E2E did not run after
-the unit failure. Their corrections require another native verdict.
+The focused x64 run at revision `7229de62e` passed all 1,657 unit tests across
+112 files, with 25 conditional skips. All 13 gateway E2E tests passed, including
+gateway ownership, replacement during drain and stale-lock recovery. The earlier
+synthetic pipeline teardown failure did not recur in this run; process cleanup
+is still being improved and requires fresh native validation. The full Windows
+portal run at `456dffb02` passed all 70 tests.
 
 The vector proof exercised Unicode paths, replacement with an old mapped reader
 still open, dimensionality changes, read-only targets, failed publication
@@ -71,19 +71,26 @@ Native crash handling now reports an exact nonce-bound native-open stage. Known
 Windows fault statuses can trigger quarantine only inside that unfinished stage;
 unknown failures there refuse an in-process open while preserving the file.
 A failed quarantine also refuses the unsafe open. Ordinary startup exit codes,
-including code 3, remain inconclusive. Automatic recovery for a Windows CRT
-abort remains open until its actual native status contract is established;
+including code 3, remain inconclusive. Node abort status 134 is recognized only inside the trusted native-open stage,
+with explicit Node out-of-memory diagnostics refused without quarantine on both
+Windows and POSIX. Controlled abort and exit fixtures cover this distinction.
+Automatic recovery for a Windows CRT abort remains open until its actual native
+status contract is established;
 Linux signals and explicit file-rejection handling retain regression coverage.
 Fresh Windows control-channel and recovery proof are still required.
 
-A subsequent ARM64 current-module probe passed ownership metadata, cold helper
-compilation and cache reuse, then found that the cache generation could still be
-renamed. Metadata-only Windows handles do not participate in delete-sharing
-exclusion. Deny-delete directory pins now request traversal access; read-only
-metadata inspection keeps its existing access rights. Tests cover each cache
-ancestor and generation, plus the publication parent while streamed plaintext
-is still arriving. Fresh native verification is required before accepting this
-fix or the complete ARM64 facade result.
+An ARM64 current-module probe found that metadata-only directory handles did
+not enforce delete-sharing exclusion. Deny-delete directory pins now request
+traversal access; read-only metadata inspection keeps its existing rights. At
+`7229de62e`, the native rerun passed all 30 platform checks: each cache ancestor
+and generation rejected rename while remaining usable, and a streamed write
+kept its publication parent pinned and its previous bytes intact until commit.
+Other cases covered private ACLs, atomic/readonly/no-clobber publication, literal
+arguments, binary framing, junction and case-sensitive containment, completion,
+cancellation and parent death. Wait was zero seconds; execution took 4 minutes
+1 second, with graceful guest shutdown. x64 Node also ran in that ARM64 guest;
+x64 native dependency preparation and the MSVC vector publication proof also
+passed. Full Gateway/Collector runtime validation remains separate.
 
 ## Broader failing baselines
 
@@ -117,3 +124,9 @@ incomplete installer fixture export and a private-content assertion matching a
 system directory name. Corrections pass 655 focused Linux regressions, including all affected installer
 files; native macOS validation is still required. A final frozen-source Linux
 and macOS verdict, alongside Windows, remains mandatory.
+
+The complete Linux unit run at `7229de62e` passed 38,824 tests and failed eight
+tests in three files. These failures exposed machine-readable subprocess output
+being colored and Node warnings from conflicting color settings. Corrections and
+a fresh complete verdict are required. Queue wait was zero seconds and execution
+took 42 minutes 23 seconds.

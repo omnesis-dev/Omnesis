@@ -53,7 +53,15 @@ function fixture({
         expect(readFileSync(join(headers, "Debug/node.lib"), "utf8")).toBe(
           "invented import library",
         );
-        return opts.cwd === "/fixture/dependency" ? buildCode : mappingBuildCode;
+        if (opts.cwd === "/fixture/dependency") return buildCode;
+        const targets = JSON.parse(readFileSync(join(opts.cwd, "binding.gyp"), "utf8")).targets;
+        expect(targets.map(({ target_name }) => target_name)).toEqual([
+          "usearch-mapping-proof",
+          "usearch_abort_proof",
+        ]);
+        expect(targets[1].sources[0]).toMatch(/usearch-windows-abort-proof\.cc$/u);
+        expect(targets[1].msvs_settings).toEqual(targets[0].msvs_settings);
+        return mappingBuildCode;
       }
       return probeCode;
     },
@@ -89,6 +97,7 @@ test("builds against running Node headers and proves the exact installed Windows
   expect(f.calls[2].cwd).toBe(join(dirname(dirname(f.headers())), "mapping-proof"));
   expect(f.calls[3].args[0]).toMatch(/probe-windows-usearch\.mjs$/u);
   expect(f.calls[3].args[3]).toMatch(/usearch-mapping-proof\.exe$/u);
+  expect(f.calls[3].args[4]).toMatch(/usearch_abort_proof\.node$/u);
   expect(existsSync(dirname(f.headers()))).toBe(false);
   expect(f.env.npm_config_nodedir).toBe("/wrong/headers");
 });
