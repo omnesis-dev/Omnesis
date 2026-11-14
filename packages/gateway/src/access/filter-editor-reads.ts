@@ -278,6 +278,16 @@ export function countFilterEntries(
   fields: SourceFilterFields,
   refs: readonly FilterRef[],
 ): number[] {
+  // One snapshot: whether the filter rows can answer, and their answer.
+  return db.transaction(() => countEntries(db, sourceId, fields, refs))();
+}
+
+function countEntries(
+  db: Db,
+  sourceId: string,
+  fields: SourceFilterFields,
+  refs: readonly FilterRef[],
+): number[] {
   registerFilterSqlFunctions(db);
   const values = filterValueDeclaration(fields);
   const ready = filterValuesReady(db, sourceId, values);
