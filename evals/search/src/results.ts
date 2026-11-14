@@ -69,7 +69,7 @@ export interface QueryRow extends QueryScore {
   queryId: string;
 }
 
-const QUERY_HEADER = "language\tquery\tndcg10\trecall100\tmrr10";
+const QUERY_HEADER = "language\tquery\thit10\tndcg10\trecall100\tmrr10";
 
 function round(value: number): number {
   return Math.round(value * 1e6) / 1e6;
@@ -80,7 +80,7 @@ export function writeRun(summary: RunSummary, rows: readonly QueryRow[], dir = R
   writeFileSync(join(dir, `${summary.name}.json`), `${JSON.stringify(summary, null, 2)}\n`);
   const lines = rows.map(
     (r) =>
-      `${r.language}\t${r.queryId}\t${round(r.ndcg10)}\t${round(r.recall100)}\t${round(r.mrr10)}`,
+      `${r.language}\t${r.queryId}\t${r.hit10}\t${round(r.ndcg10)}\t${round(r.recall100)}\t${round(r.mrr10)}`,
   );
   writeFileSync(
     join(dir, `${summary.name}.queries.tsv`),
@@ -113,10 +113,11 @@ export function readQueryRows(name: string, dir = RESULTS_DIR): QueryRow[] {
     .split("\n")
     .filter(Boolean);
   return lines.slice(1).map((line) => {
-    const [language, queryId, ndcg10, recall100, mrr10] = line.split("\t");
+    const [language, queryId, hit10, ndcg10, recall100, mrr10] = line.split("\t");
     return {
       language: language as Language,
       queryId: queryId!,
+      hit10: Number(hit10),
       ndcg10: Number(ndcg10),
       recall100: Number(recall100),
       mrr10: Number(mrr10),

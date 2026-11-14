@@ -462,6 +462,28 @@ export function hasPerDeviceCursor(mode: MultiDeviceMode): boolean {
 }
 
 /**
+ * The two ways a source is resynced. `in-place` deletes nothing: the source
+ * is read again from the start and each item updates the record it already
+ * has, so record ids, the owner's individual deletions and search all carry
+ * on. `from-scratch` deletes what the source ingested, including the record
+ * of those individual deletions, and imports everything again.
+ */
+export const RESYNC_MODES = ["in-place", "from-scratch"] as const;
+export type ResyncMode = (typeof RESYNC_MODES)[number];
+
+/**
+ * The modes a resync scoped to one member of a source offers. A replicated
+ * member shares its documents with its siblings, so there is nothing of its
+ * own to delete and it can only read the source again; a partitioned member
+ * owns a stream that either mode applies to. Members that share one cursor
+ * have no resync of their own.
+ */
+export function memberResyncModes(mode: MultiDeviceMode): readonly ResyncMode[] {
+  if (mode === "partitioned") return RESYNC_MODES;
+  return mode === "replicated" ? ["in-place"] : [];
+}
+
+/**
  * How a device verifies the gateway's certificate; see `DeviceCapability.tls`.
  * `pinned-ca` pins a certificate that could also act as an issuer; an agent
  * integration reports it and still checks the exact leaf, so a renewal

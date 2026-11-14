@@ -29,7 +29,6 @@ describe("internal source menu", () => {
       multiDevice: true,
       canJoin: true,
       canDetach: true,
-      resyncPerDevice: true,
     }) as MenuItem[];
     expect(items).toEqual([{ action: "recent", label: "See recent" }]);
   });

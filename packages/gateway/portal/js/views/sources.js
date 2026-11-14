@@ -19,9 +19,10 @@
 // Actions:
 //   - Sync       → POST /admin/sources/:id/sync
 //   - Debug      → GET /admin/sources/:id/debug (drawer)
-//   - Resync     → POST /admin/sources/:id/resync — wipes the source's data
-//                  and syncs it again; with a `deviceId`, only that device's
-//                  stream (partitioned) or cursor (replicated) is reset
+//   - Resync     → POST /admin/sources/:id/resync — reads the source again,
+//                  in place (nothing deleted) or from scratch (its data is
+//                  deleted first); with a `deviceId`, only that device is
+//                  resynced
 //   - Remove     → DELETE /admin/sources/:id (only meaningful for registered;
 //                  for discovered, surfaces a hint). Returns
 //                  once the source has stopped; its data drains afterwards and
@@ -62,6 +63,8 @@ import { ExpiringBanner, ReauthBanner } from "./reauth-banner.js";
 import { RemediationBanner } from "./remediation-banner.js";
 import { OverviewBar, PctBar, MigrationBar } from "../components/index-hero.js";
 import { ConfirmModal } from "../components/confirm-modal.js";
+import { ResyncModal } from "../components/resync-modal.js";
+import { RESYNC_WHOLE_SOURCE, resyncChoices, resyncOptions } from "../lib/resync-options.js";
 import { MemberPickerModal } from "../components/member-picker-modal.js";
 import { joinCandidates } from "../lib/join-candidates.js";
 import { ImportHistoryModal } from "../components/import-history-modal.js";
@@ -146,9 +149,9 @@ export function resolveSourceDisplayCount({ documents, units, analytics, primary
 /**
  * The per-row action menu. Membership actions appear only for a source whose
  * type lets several devices contribute (`multiDevice`); an exclusive source
- * has exactly one host and offers neither. "Resync" becomes "Resync…" when a
- * choice follows — the resync can be scoped to one member (`resyncPerDevice`),
- * so a picker headed by the whole source opens first.
+ * has exactly one host and offers neither. "Resync…" opens a dialog that asks
+ * how — in place or from scratch — and, when the source has several devices
+ * on their own cursors, for which of them.
  */
 export function sourceActionMenuItems({
   paused = false,
@@ -158,7 +161,6 @@ export function sourceActionMenuItems({
   multiDevice = false,
   canJoin = false,
   canDetach = false,
-  resyncPerDevice = false,
   internal = false,
 } = {}) {
   // Gateway-internal sources (a dataset the gateway hosts itself) have no sync engine,
@@ -176,9 +178,7 @@ export function sourceActionMenuItems({
         ]
       : []),
     { action: "debug", label: "Debug" },
-    ...(canManualSync
-      ? [{ action: "resync", label: resyncPerDevice ? "Resync…" : "Resync" }]
-      : []),
+    ...(canManualSync ? [{ action: "resync", label: "Resync…" }] : []),
     ...(canImport ? [{ action: "import-history", label: importLabel || "Import full history" }] : []),
     { action: "remove", label: "Remove", danger: true },
   ];
@@ -349,33 +349,14 @@ export function syncNotesReducer(state, event) {
 }
 
 /**
- * The picker entry that resyncs every member's data at once, listed ahead of
- * the members when a resync can be scoped to one device.
- */
-export const RESYNC_WHOLE_SOURCE = "whole-source";
-
-/**
- * How a resync of `source` is offered:
- *   - "single": one member — the plain confirmation, the whole source is wiped.
- *   - "whole": several members that share one cursor (handoff) — the same
- *     plain confirmation; there is no per-device slice to reset.
- *   - "per-device": several members on their own cursors (replicated or
- *     partitioned) — a picker of the members, headed by the whole source.
- */
-export function resyncChoices(source) {
-  if ((source?.members?.length ?? 1) <= 1) return "single";
-  const mode = source?.multiDeviceMode ?? "exclusive";
-  return mode === "replicated" || mode === "partitioned" ? "per-device" : "whole";
-}
-
-/**
  * The note a row shows after a resync, from the route's answer: what each
  * member did with the sync command — started it (`deviceIds`), is restarting
  * the one it had in flight (`restarting`), was already syncing and skipped
  * it (`skipped`), or has the source paused and re-syncs it once resumed
- * (`disabled`) — and, when only one device's slice was reset (`scope`
- * "stream" or "cursor"), what that reset kept. No member in any list means
- * none was online to take the command; the sync waits for one.
+ * (`disabled`) — and what the resync did first: nothing was deleted in place
+ * (`mode`), or one device's contribution was removed (`scope` "stream"). No
+ * member in any list means none was online to take the command; the sync
+ * waits for one.
  */
 export function resyncNote(response, deviceById) {
   const nameOf = (id) => deviceById?.get(id)?.name ?? (id ? id.slice(0, 8) : "device");
@@ -403,14 +384,11 @@ export function resyncNote(response, deviceById) {
   else if (skipped.length > 0) head = `Resync skipped; ${verdicts.join("; ")}`;
   // Only paused members answered: the sync waits, as it does for an offline one.
   else head = `Resync queued; ${verdicts.join("; ")}`;
-  switch (response.scope) {
-    case "stream":
-      return `${head}; its contribution was removed first`;
-    case "cursor":
-      return `${head}; nothing was deleted`;
-    default:
-      return head;
+  // A replicated device's cursor has nothing to delete, whatever was asked.
+  if (response.mode === "in-place" || response.scope === "cursor") {
+    return `${head}; nothing was deleted`;
   }
+  return response.scope === "stream" ? `${head}; its contribution was removed first` : head;
 }
 
 /**
@@ -599,9 +577,12 @@ export function SourcesView({ demo = false } = {}) {
   // Every device the gateway knows, so a row can name its members and offer
   // the ones that could join.
   const [devices, setDevices] = useState([]);
-  // { sourceId, action: "join" | "detach" | "resync" } | null — the row is
-  // looked up on every render so the picker follows the polled membership.
+  // { sourceId, action: "join" | "detach" } | null — the row is looked up on
+  // every render so the picker follows the polled membership.
   const [memberPicker, setMemberPicker] = useState(null);
+  // The source id the Resync dialog is open for; its row is looked up on
+  // every render for the same reason.
+  const [resyncDialog, setResyncDialog] = useState(null);
   // sourceId → { text, until }: "Sync sent to …" / "Resync sent to …", kept
   // for SYNC_NOTE_MS.
   const [syncNotes, dispatchSyncNote] = useReducer(syncNotesReducer, {});
@@ -673,6 +654,8 @@ export function SourcesView({ demo = false } = {}) {
           joinCandidates: Array.isArray(r.joinCandidates) ? r.joinCandidates : undefined,
           enabled: r.enabled,
           pushBased: !!r.pushBased,
+          // The modes a resync of the whole source offers; absent, both.
+          resyncModes: Array.isArray(r.resyncModes) ? r.resyncModes : undefined,
           registered: true,
           discoveredOnly: false,
           syncStatus: null,
@@ -783,6 +766,9 @@ export function SourcesView({ demo = false } = {}) {
         dbSizeBytes: status.dbSizeBytes ?? null,
         diskUsage: status.diskUsage ?? null,
         registeredCount: registered.length,
+        // Whether the gateway runs the Brain: experimental mode with its Lab
+        // opt-in. Only then does a from-scratch resync mention it.
+        brain: status.experimental === true && status.lab?.brain === true,
       });
       setIndexStats(indexRes ?? null);
       dispatchError({ type: "refresh-succeeded" });
@@ -860,6 +846,14 @@ export function SourcesView({ demo = false } = {}) {
     if (memberPicker && !pickerSource) setMemberPicker(null);
   }, [memberPicker, pickerSource]);
 
+  // The row the Resync dialog is about, followed the same way.
+  const resyncSourceRow = resyncDialog
+    ? (sources.find((s) => s.id === resyncDialog && !s.removing) ?? null)
+    : null;
+  useEffect(() => {
+    if (resyncDialog && !resyncSourceRow) setResyncDialog(null);
+  }, [resyncDialog, resyncSourceRow]);
+
   function confirmMemberPick(deviceId) {
     const { sourceId, action } = memberPicker;
     setMemberPicker(null);
@@ -868,36 +862,17 @@ export function SourcesView({ demo = false } = {}) {
         return withBusy(sourceId, "joining", () => joinSourceMember(sourceId, deviceId));
       case "detach":
         return withBusy(sourceId, "detaching", () => detachSourceMember(sourceId, deviceId));
-      case "resync":
-        return runResync(sourceId, deviceId === RESYNC_WHOLE_SOURCE ? undefined : deviceId);
       default:
         return undefined;
     }
   }
 
-  function runResync(sourceId, deviceId) {
+  function confirmResync(sourceId, { scopeId, mode }) {
+    setResyncDialog(null);
+    const deviceId = scopeId === RESYNC_WHOLE_SOURCE ? undefined : scopeId;
     return withBusy(sourceId, "resyncing", async () => {
-      const response = await resyncSource(sourceId, deviceId);
+      const response = await resyncSource(sourceId, { deviceId, mode });
       showSyncNote(sourceId, resyncNote(response, deviceById));
-    });
-  }
-
-  // The warning for wiping every member's data, worded the same whether it
-  // is the plain confirmation or the "Whole source" entry of the picker.
-  const wholeSourceResyncBody = (s) =>
-    `All ingested documents for ${s.id} will be deleted and re-fetched from scratch. This can take a while for large sources.`;
-
-  async function handleResync(s) {
-    if (resyncChoices(s) === "per-device") {
-      setMemberPicker({ sourceId: s.id, action: "resync" });
-      return;
-    }
-    setConfirmState({
-      title: `Resync ${sourceLabel(s.id)}?`,
-      body: wholeSourceResyncBody(s),
-      confirmLabel: "Resync",
-      danger: true,
-      onConfirm: () => runResync(s.id),
     });
   }
 
@@ -1050,7 +1025,7 @@ export function SourcesView({ demo = false } = {}) {
                           joinable=${joinCandidates(s, devices).length > 0}
                           syncNote=${syncNotes[s.id]?.text}
                           onSync=${() => handleSync(s)}
-                          onResync=${() => handleResync(s)}
+                          onResync=${() => setResyncDialog(s.id)}
                           onDebug=${() => handleDebug(s)}
                           onRemove=${() => handleRemove(s)}
                           onPauseToggle=${() => handlePauseToggle(s)}
@@ -1124,31 +1099,6 @@ export function SourcesView({ demo = false } = {}) {
           kind: m.kind,
           hint: m.label,
         }));
-        if (action === "resync") {
-          const partitioned = s.multiDeviceMode === "partitioned";
-          const whole = {
-            id: RESYNC_WHOLE_SOURCE,
-            name: "Whole source",
-            kind: null,
-            hint: "every member",
-            icon: html`<${WholeSourceIcon} />`,
-          };
-          return html`<${MemberPickerModal}
-            key=${`resync:${s.id}`}
-            title=${`Resync ${label}`}
-            body=${(d) =>
-              d.id === RESYNC_WHOLE_SOURCE
-                ? wholeSourceResyncBody(s)
-                : partitioned
-                  ? `${d.name} re-syncs ${s.id} from scratch; everything it contributed is removed first. The other members' data stays.`
-                  : `${d.name} re-syncs ${s.id} from scratch; nothing is deleted.`}
-            devices=${[whole, ...members]}
-            confirmLabel="Resync"
-            destructive=${(d) => d.id === RESYNC_WHOLE_SOURCE || partitioned}
-            onConfirm=${confirmMemberPick}
-            onCancel=${() => setMemberPicker(null)}
-          />`;
-        }
         return html`<${MemberPickerModal}
           key=${`detach:${s.id}`}
           title=${`Detach a device from ${label}`}
@@ -1158,6 +1108,41 @@ export function SourcesView({ demo = false } = {}) {
           destructive
           onConfirm=${confirmMemberPick}
           onCancel=${() => setMemberPicker(null)}
+        />`;
+      })()}
+
+      ${resyncSourceRow && (() => {
+        const s = resyncSourceRow;
+        const label = sourceLabel(s.id);
+        const whole = {
+          id: RESYNC_WHOLE_SOURCE,
+          name: "Whole source",
+          kind: null,
+          hint: "every device",
+          icon: html`<${WholeSourceIcon} />`,
+        };
+        const members =
+          resyncChoices(s) === "per-device"
+            ? buildMemberLines(s, deviceById, s.syncStatus).map((m) => ({
+                id: m.deviceId,
+                name: m.name,
+                kind: m.kind,
+                hint: m.label,
+              }))
+            : [];
+        return html`<${ResyncModal}
+          key=${`resync:${s.id}`}
+          title=${`Resync ${label}`}
+          scopes=${[whole, ...members]}
+          optionsFor=${(scope) =>
+            resyncOptions({
+              source: s,
+              label,
+              device: scope.id === RESYNC_WHOLE_SOURCE ? null : scope,
+              brainNote: overall?.brain === true,
+            })}
+          onConfirm=${(choice) => confirmResync(s.id, choice)}
+          onCancel=${() => setResyncDialog(null)}
         />`;
       })()}
 
@@ -1294,7 +1279,6 @@ function SourceRow({
               multiDevice=${multiDevice}
               canJoin=${joinable}
               canDetach=${(s.members?.length ?? 1) > 1}
-              resyncPerDevice=${resyncChoices(s) === "per-device"}
               onRecent=${onRecent}
               onSync=${onSync}
               onPauseToggle=${onPauseToggle}
@@ -1568,7 +1552,6 @@ function SourceActionMenu({
   multiDevice = false,
   canJoin = false,
   canDetach = false,
-  resyncPerDevice = false,
   internal = false,
   onRecent,
   onSync,
@@ -1603,7 +1586,6 @@ function SourceActionMenu({
     multiDevice,
     canJoin,
     canDetach,
-    resyncPerDevice,
     internal,
   });
 

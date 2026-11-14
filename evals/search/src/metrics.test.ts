@@ -8,7 +8,7 @@ import { pairedBootstrap, percentile, scoreQuery, seededRandom } from "./metrics
 describe("scoreQuery", () => {
   test("a perfect ranking scores 1 on every metric", () => {
     const score = scoreQuery(["a", "b", "x"], new Set(["a", "b"]));
-    expect(score).toEqual({ ndcg10: 1, recall100: 1, mrr10: 1 });
+    expect(score).toEqual({ hit10: 1, ndcg10: 1, recall100: 1, mrr10: 1 });
   });
 
   test("a relevant passage at rank 3 is discounted", () => {
@@ -30,9 +30,15 @@ describe("scoreQuery", () => {
     const filler = Array.from({ length: 120 }, (_, i) => `x${i}`);
     const ranked = [...filler.slice(0, 20), "a", ...filler.slice(20, 110), "b"];
     const score = scoreQuery(ranked, new Set(["a", "b"]));
+    expect(score.hit10).toBe(0);
     expect(score.ndcg10).toBe(0);
     expect(score.mrr10).toBe(0);
     expect(score.recall100).toBe(0.5);
+  });
+
+  test("a relevant passage at rank 10 is a hit, whatever ranks above it", () => {
+    const ranked = [...Array.from({ length: 9 }, (_, i) => `x${i}`), "a"];
+    expect(scoreQuery(ranked, new Set(["a", "b"])).hit10).toBe(1);
   });
 
   test("a passage returned twice is counted once", () => {

@@ -188,3 +188,44 @@ test("the platform fetch and an alternative API origin are used as given", async
   await zone.createTxt(lease, signal());
   expect(seen[0]).toMatch(/^http:\/\/127\.0\.0\.1:9\/zones\//);
 });
+
+/** Fetch as the Workers runtime does it: no "error" redirect mode. */
+function workersFetch(inner: typeof globalThis.fetch) {
+  return async (input: string | URL | Request, init?: RequestInit) => {
+    if (init?.redirect === "error")
+      throw new TypeError('Invalid redirect value, must be one of "follow" or "manual"');
+    return inner(input, init);
+  };
+}
+
+test("records are written under the Workers runtime, which has no error redirect mode", async () => {
+  const cloudflare = fakeCloudflare();
+  cloudflare.add({ type: "A", name: "*.relay.example.test", content: "192.0.2.1" });
+  const zone = cloudflareBrokerZone({
+    zoneId: cloudflare.zoneId,
+    zoneName: "example.test",
+    relayDomain: "relay.example.test",
+    token: cloudflare.token,
+    fetch: workersFetch(cloudflare.fetch),
+  });
+  const at = (name: string) =>
+    cloudflare.records.filter((record) => record.name === name).map((record) => record.type);
+  await zone.createTxt(lease, signal());
+  expect(at(`_acme-challenge.${NAME}`)).toEqual(["TXT"]);
+  await zone.removeTxt(lease, signal());
+  expect(at(`_acme-challenge.${NAME}`)).toEqual([]);
+  await zone.publishName(NAME, CAA, signal());
+  expect(at(NAME).sort()).toEqual(["A", "CAA"]);
+  await zone.removeName(NAME, signal());
+  expect(at(NAME)).toEqual([]);
+});
+
+test("a redirect from the DNS provider is refused, not followed", async () => {
+  const seen: RequestInit[] = [];
+  const { zone } = setup(async (_input, init) => {
+    seen.push(init!);
+    return new Response(null, { status: 302, headers: { location: "https://elsewhere.example/" } });
+  });
+  await expect(zone.createTxt(lease, signal())).rejects.toThrow("DNS provider request refused");
+  expect(seen.map((init) => init.redirect)).toEqual(["manual"]);
+});

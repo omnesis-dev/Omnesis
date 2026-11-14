@@ -539,6 +539,9 @@ enum PreviewMocks {
 
     // MARK: - Sources
 
+    /// What a gateway that resyncs in modes lists for a source it can read again.
+    static let resyncModesBoth = SourceResyncMode.allCases.map(\.rawValue)
+
     static let sourceGmail = SourceRecord(
         id: "gmail:user@example.com",
         type: "gmail",
@@ -547,7 +550,8 @@ enum PreviewMocks {
         config: [:],
         enabled: true,
         createdAt: 0,
-        updatedAt: 0
+        updatedAt: 0,
+        resyncModes: resyncModesBoth
     )
     static let sourceAppleNotes = SourceRecord(
         id: "apple-notes:user@example.com",
@@ -557,7 +561,8 @@ enum PreviewMocks {
         config: [:],
         enabled: true,
         createdAt: 0,
-        updatedAt: 0
+        updatedAt: 0,
+        resyncModes: resyncModesBoth
     )
     static let sourceAppleHealth = SourceRecord(
         id: "apple-health:user@example.com",
@@ -569,7 +574,8 @@ enum PreviewMocks {
         createdAt: 0,
         updatedAt: 0,
         members: ["dev_iphone", "dev_ipad"],
-        multiDeviceMode: "replicated"
+        multiDeviceMode: "replicated",
+        resyncModes: resyncModesBoth
     )
     static let sourceWhatsApp = SourceRecord(
         id: "whatsapp-messages:+15550100000",
@@ -579,7 +585,8 @@ enum PreviewMocks {
         config: [:],
         enabled: true,
         createdAt: 0,
-        updatedAt: 0
+        updatedAt: 0,
+        resyncModes: resyncModesBoth
     )
     static let sourceStrava = SourceRecord(
         id: "strava-activities:1234567",
@@ -589,7 +596,8 @@ enum PreviewMocks {
         config: [:],
         enabled: false,
         createdAt: 0,
-        updatedAt: 0
+        updatedAt: 0,
+        resyncModes: resyncModesBoth
     )
     /// A bank-aggregator source in the forward-looking `auth-expiring` state
     /// — still syncing, but its authorization expires soon. Fictional
@@ -602,7 +610,8 @@ enum PreviewMocks {
         config: [:],
         enabled: true,
         createdAt: 0,
-        updatedAt: 0
+        updatedAt: 0,
+        resyncModes: resyncModesBoth
     )
     /// A task source whose local database is maintained by a desktop app that
     /// isn't currently running, so it syncs successfully over frozen data.
@@ -615,7 +624,8 @@ enum PreviewMocks {
         config: [:],
         enabled: true,
         createdAt: 0,
-        updatedAt: 0
+        updatedAt: 0,
+        resyncModes: resyncModesBoth
     )
     /// A notes vault two Macs both index: one reaches only part of it, the
     /// other cannot read a folder and keeps notes its sibling deleted.
@@ -630,7 +640,8 @@ enum PreviewMocks {
         createdAt: 0,
         updatedAt: 0,
         members: ["dev_studio_mac", "dev_travel_macbook"],
-        multiDeviceMode: "replicated"
+        multiDeviceMode: "replicated",
+        resyncModes: resyncModesBoth
     )
     static let sources: [SourceRecord] = [
         sourceGmail, sourceAppleNotes, sourceAppleHealth,

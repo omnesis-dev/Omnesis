@@ -10,7 +10,7 @@
  * than redeclaring the shapes locally.
  */
 import { z } from "zod";
-import { PERSON_ROLES } from "@omnesis/types";
+import { PERSON_ROLES, RESYNC_MODES } from "@omnesis/types";
 import { DOCUMENT_FIELD_SEMANTICS } from "@omnesis/source-sdk";
 import { isSafeUrlCanonicalizerPattern } from "../../known-url-pattern-safety.js";
 import { accountDescriptorSchema } from "./account-descriptor.js";
@@ -320,9 +320,12 @@ export const sourceMemberConfigBody = z.object({
 export type SourceMemberConfigBody = z.infer<typeof sourceMemberConfigBody>;
 
 // POST /admin/sources/:id/resync — no device: the whole source starts over;
-// a device: that member alone does.
+// a device: that member alone does. `mode` says whether anything is deleted
+// first. A caller that names none gets `from-scratch`: a client that sends
+// no mode tells its user the source will be wiped, so that is what it gets.
 export const sourceResyncBody = z.object({
   deviceId: z.string().optional(),
+  mode: z.enum(RESYNC_MODES).optional(),
 });
 export type SourceResyncBody = z.infer<typeof sourceResyncBody>;
 
