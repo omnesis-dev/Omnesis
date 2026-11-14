@@ -80,7 +80,7 @@ struct AccountPairingWaitingView: View {
         }
     }
 
-    @ViewBuilder private var actions: some View {
+    private var actions: some View {
         VStack(spacing: Theme.Spacing.md) {
             if offersApprovalPage {
                 Button(action: onApprovalPage) {
