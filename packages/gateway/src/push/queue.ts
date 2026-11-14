@@ -13,10 +13,8 @@ import {
   type NotificationRoute,
 } from "@omnesis/core/push";
 import { DeviceId } from "@omnesis/types";
-import {
-  suppressUnsupportedPairingReminders,
-  suppressUnsupportedTailscaleJoinReminders,
-} from "./pairing-delivery.js";
+import { suppressUnsupportedPairingReminders } from "./pairing-delivery.js";
+import { suppressUnsupportedTailscaleJoinReminders } from "./tailscale-join-delivery.js";
 import type { Db } from "../data/types.js";
 
 export const DEFAULT_NOTIFICATION_LEASE_MS = 30_000;
