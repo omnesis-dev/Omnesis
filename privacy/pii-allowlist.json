@@ -8632,7 +8632,8 @@
         "packages/providers/browser-history/src/read-access.test.ts",
         "packages/providers/chrome/src/provider.test.ts",
         "packages/providers/chrome/src/setup.test.ts",
-        "packages/providers/browser-history/src/paths.test.ts"
+        "packages/providers/browser-history/src/paths.test.ts",
+        "packages/providers/browser-history/src/arc-windows.test.ts"
       ],
       "reason": "Chromium profile metadata filename, not a person"
     },
@@ -12883,7 +12884,10 @@
     },
     {
       "value": "User Data",
-      "paths": ["packages/providers/browser-history/src/paths.test.ts"],
+      "paths": [
+        "packages/providers/browser-history/src/paths.test.ts",
+        "packages/providers/browser-history/src/arc-windows.test.ts"
+      ],
       "reason": "Chromium browser profile directory name, not a person"
     },
     {

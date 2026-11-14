@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { posix, win32 } from "node:path";
 import type { BrowserId, BrowserEngine, BrowserInfo } from "./types.js";
@@ -11,6 +11,7 @@ interface BrowserPathsContext {
   home: string;
   localAppData?: string;
   exists: (path: string) => boolean;
+  readText?: (path: string) => string;
 }
 
 function defaultContext(): BrowserPathsContext {
@@ -19,6 +20,7 @@ function defaultContext(): BrowserPathsContext {
     home: homedir(),
     localAppData: process.env.LOCALAPPDATA,
     exists: existsSync,
+    readText: (path) => readFileSync(path, "utf8"),
   };
 }
 
@@ -49,7 +51,8 @@ const BROWSER_DEFS: BrowserDef[] = [
     engine: "chromium",
     darwinSubdir: "Arc/User Data",
     linuxSubdir: null,
-    windowsSubdir: null,
+    // Arc is packaged: its LocalAppData is redirected into its package cache.
+    windowsSubdir: "Packages/TheBrowserCompany.Arc_ttt1ap7aakyb4/LocalCache/Local/Arc/User Data",
   },
   {
     id: "brave",
@@ -104,6 +107,32 @@ function getBaseDir(def: BrowserDef, context: BrowserPathsContext): string | nul
   return null;
 }
 
+/** A Windows package directory alone does not establish a Chromium history store. */
+function hasArcHistory(baseDir: string, context: BrowserPathsContext): boolean {
+  const localState = win32.join(baseDir, "Local State");
+  if (!context.exists(localState)) return false;
+  if (context.exists(win32.join(baseDir, "Default", "History"))) return true;
+  if (!context.readText) return false;
+  try {
+    const state: unknown = JSON.parse(context.readText(localState));
+    if (!state || typeof state !== "object" || !("profile" in state)) return false;
+    const profile = state.profile;
+    if (!profile || typeof profile !== "object" || !("info_cache" in profile)) return false;
+    const cache = profile.info_cache;
+    if (!cache || typeof cache !== "object" || Array.isArray(cache)) return false;
+    return Object.keys(cache).some(
+      (directory) =>
+        directory !== "." &&
+        directory !== ".." &&
+        directory.length > 0 &&
+        !/[\\/]/u.test(directory) &&
+        context.exists(win32.join(baseDir, directory, "History")),
+    );
+  } catch {
+    return false;
+  }
+}
+
 function isBrowserInstalled(def: BrowserDef, context: BrowserPathsContext): boolean {
   const baseDir = getBaseDir(def, context);
   const { join } = context.platform === "win32" ? win32 : posix;
@@ -112,6 +141,7 @@ function isBrowserInstalled(def: BrowserDef, context: BrowserPathsContext): bool
   if (def.engine === "safari") {
     return context.exists(join(baseDir, "History.db"));
   }
+  if (context.platform === "win32" && def.id === "arc") return hasArcHistory(baseDir, context);
   // Chromium — check for at least one profile with a History file
   return (
     context.exists(join(baseDir, "Default", "History")) ||

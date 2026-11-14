@@ -26,6 +26,7 @@ import {
   type SyncProgress,
 } from "@omnesis/source-sdk";
 import { SyncError, type DocumentInput } from "@omnesis/types";
+import { exactNoteIdentity, noteIdentityKey } from "./identity.js";
 import { obsidianIconUrl } from "./icons.js";
 import { OBSIDIAN_STATE_VERSION, obsidianStateSpec } from "./state.js";
 import {
@@ -55,6 +56,7 @@ interface FileEntry {
   size: number;
   inode: number;
   device: number;
+  fileIdentity: string;
 }
 
 // The cursor type is pinned on `create`'s return rather than as a type
@@ -283,6 +285,7 @@ export default defineSource({
               continue;
             }
             const stat = statSync(resolvedPath);
+            const exactStat = statSync(resolvedPath, { bigint: true });
             if (stat.nlink !== 1) {
               log.debug(`Skipping hard-linked note: ${relPath}`);
               continue;
@@ -299,6 +302,7 @@ export default defineSource({
               // colliding.
               inode: stat.ino,
               device: stat.dev,
+              fileIdentity: exactNoteIdentity(exactStat),
             });
           } catch {
             // A note that will not stat is missing from the walk for the same
@@ -344,7 +348,7 @@ export default defineSource({
           !stat.isFile() ||
           stat.nlink !== 1 ||
           stat.dev !== file.device ||
-          stat.ino !== file.inode ||
+          exactNoteIdentity(fstatSync(fd, { bigint: true })) !== file.fileIdentity ||
           stat.size !== file.size ||
           stat.mtimeMs !== file.mtime ||
           stat.ctimeMs !== file.ctime
@@ -388,7 +392,8 @@ export default defineSource({
      *      same stableId twice.
      *   3. A previous entry with the same inode that disappeared this
      *      cycle (rename + edit case where the content hash differs).
-     *   4. `inode:<n>` for newly-discovered notes.
+     *   4. `inode:<n>` for newly-discovered notes with safe integer IDs,
+     *      or `inode:<device>:<inode>` for full-width filesystem IDs.
      *   5. `path:<relativePath>` when even that inode is taken: a volume
      *      reporting every inode as 0, or a frontmatter id spelled like one.
      *
@@ -406,8 +411,9 @@ export default defineSource({
       contentHash: string,
       file: FileEntry,
       disappearedByHash: Map<string, ObsidianFileState[]>,
-      disappearedByInode: Map<number, ObsidianFileState>,
+      disappearedByInode: Map<string, ObsidianFileState>,
       heldStableIds: Map<string, string>,
+      previous: ObsidianFileState | undefined,
     ): string {
       const available = (stableId: string): boolean => {
         const holder = heldStableIds.get(stableId);
@@ -433,13 +439,35 @@ export default defineSource({
         }
       }
 
-      const inodeMatch = file.inode > 0 ? disappearedByInode.get(file.inode) : undefined;
+      const identity = noteIdentityKey(file);
+      const legacyKey = `legacy:${file.inode}`;
+      const matchedKey = disappearedByInode.has(identity)
+        ? identity
+        : Number.isSafeInteger(file.inode)
+          ? legacyKey
+          : identity;
+      const inodeMatch = file.inode > 0 ? disappearedByInode.get(matchedKey) : undefined;
       if (inodeMatch && available(inodeMatch.stableId)) {
-        disappearedByInode.delete(file.inode);
+        disappearedByInode.delete(matchedKey);
         return inodeMatch.stableId;
       }
 
-      const inodeId = `inode:${file.inode}`;
+      // An installed path-based fallback or rounded inode ID must survive the
+      // one-time identity upgrade. Frontmatter changes still take precedence.
+      if (
+        previous &&
+        available(previous.stableId) &&
+        (previous.fileIdentity === undefined
+          ? previous.inode === file.inode
+          : previous.fileIdentity === file.fileIdentity) &&
+        (previous.stableId === `inode:${previous.inode}` ||
+          previous.stableId === `inode:${previous.fileIdentity}` ||
+          previous.stableId.startsWith("path:"))
+      )
+        return previous.stableId;
+      const inodeId = Number.isSafeInteger(file.inode)
+        ? `inode:${file.inode}`
+        : `inode:${file.fileIdentity}`;
       return available(inodeId) ? inodeId : `path:${file.relativePath}`;
     }
 
@@ -502,7 +530,8 @@ export default defineSource({
           if (
             !prev ||
             prev.mtime !== file.mtime ||
-            prev.renderVersion !== OBSIDIAN_RENDER_VERSION
+            prev.renderVersion !== OBSIDIAN_RENDER_VERSION ||
+            prev.fileIdentity !== file.fileIdentity
           ) {
             filesToProcess.push(file);
           }
@@ -513,7 +542,7 @@ export default defineSource({
         // unchanged-content moves; `disappearedByInode` catches
         // rename-and-edit (content hash differs but inode is the same).
         const disappearedByHash = new Map<string, ObsidianFileState[]>();
-        const disappearedByInode = new Map<number, ObsidianFileState>();
+        const disappearedByInode = new Map<string, ObsidianFileState>();
         const disappearedPaths: string[] = [];
         for (const [path, state] of Object.entries(previousFileMap)) {
           if (currentPaths.has(path)) continue;
@@ -526,7 +555,7 @@ export default defineSource({
           const list = disappearedByHash.get(state.contentHash);
           if (list) list.push(state);
           else disappearedByHash.set(state.contentHash, [state]);
-          if (state.inode > 0) disappearedByInode.set(state.inode, state);
+          if (state.inode > 0) disappearedByInode.set(noteIdentityKey(state), state);
         }
 
         // Paginate: process up to PAGE_SIZE files
@@ -569,14 +598,16 @@ export default defineSource({
         // on an earlier page, would take the identity and leave the moved note
         // a stranger to its own history. Only the inode distinguishes a move
         // from a copy; matching content does not.
-        const newPathByInode = new Map<number, string>();
+        const newPathByInode = new Map<string, string>();
         for (const file of allFiles) {
           if (file.inode > 0 && !previousFileMap[file.relativePath]) {
-            newPathByInode.set(file.inode, file.relativePath);
+            newPathByInode.set(noteIdentityKey(file), file.relativePath);
+            if (Number.isSafeInteger(file.inode))
+              newPathByInode.set(`legacy:${file.inode}`, file.relativePath);
           }
         }
         for (const state of disappearedByInode.values()) {
-          const movedTo = newPathByInode.get(state.inode);
+          const movedTo = newPathByInode.get(noteIdentityKey(state));
           if (movedTo) heldStableIds.set(state.stableId, movedTo);
         }
 
@@ -596,6 +627,7 @@ export default defineSource({
               disappearedByHash,
               disappearedByInode,
               heldStableIds,
+              previousFileMap[file.relativePath],
             );
             heldStableIds.set(stableId, file.relativePath);
 
@@ -615,6 +647,7 @@ export default defineSource({
               contentHash,
               size: file.size,
               inode: file.inode,
+              fileIdentity: file.fileIdentity,
               stableId,
               renderVersion: OBSIDIAN_RENDER_VERSION,
             };

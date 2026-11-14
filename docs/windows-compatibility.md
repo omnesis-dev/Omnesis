@@ -130,3 +130,25 @@ tests in three files. These failures exposed machine-readable subprocess output
 being colored and Node warnings from conflicting color settings. Corrections and
 a fresh complete verdict are required. Queue wait was zero seconds and execution
 took 42 minutes 23 seconds.
+
+At the frozen process-cleanup follow-up, an accelerated Windows ARM64 probe
+passed all 33 cases, including the earlier 30 platform checks. Exact process
+births, a one-tick nontermination check, retained-parent handle lifetime,
+termination and socket reuse passed. Warm snapshots took 0.4 seconds; raw Node
+runner cleanup released its detached descendant's port in 2.9 seconds. Cold
+initialization stayed within its unchanged deadline. Queue wait was 2 seconds;
+execution took 4 minutes 30 seconds, including graceful guest shutdown.
+
+The hosted Linux run at `7229de62e` passed 39,221 general unit tests, 161 installer
+regressions and 1,811 relay tests, but failed strict coverage in two relay
+identity-protection files. The follow-up passed all 1,828 relay tests across 188
+files with 100% statements, branches, functions and lines for every covered file.
+Queue wait was zero seconds; execution took 58 seconds.
+
+Provider review additionally found rounded filesystem IDs could mix up Obsidian
+notes during simultaneous rename and edit. Exact identities now distinguish
+those notes while preserving installed IDs during upgrade; replacement files
+retain their separate identities. All 115 provider tests passed. Windows Arc
+discovery now checks the vendor package family and requires an actual Chromium
+history layout; 91 browser-provider tests passed. Actual installed Arc profile
+validation and Obsidian case-sensitive containment proof remain required.

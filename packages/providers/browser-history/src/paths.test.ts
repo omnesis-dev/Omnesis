@@ -79,3 +79,58 @@ describe("browser discovery paths", () => {
     expect(getBrowserInfo("unknown", context)).toBeNull();
   });
 });
+
+const ARC_WINDOWS_SUBDIR =
+  "Packages\\TheBrowserCompany.Arc_ttt1ap7aakyb4\\LocalCache\\Local\\Arc\\User Data";
+
+test.each(["D:\\App Data", "C:\\Users\\Example\\AppData\\Local"])(
+  "discovers an Arc packaged Windows history store under %s",
+  (localAppData) => {
+    const baseDir = `${localAppData}\\${ARC_WINDOWS_SUBDIR}`;
+    const observed = new Set([`${baseDir}\\Local State`, `${baseDir}\\Default\\History`]);
+    const context = {
+      platform: "win32" as const,
+      home: "C:\\Users\\Example",
+      ...(localAppData.startsWith("D:") ? { localAppData } : {}),
+      exists: (path: string) => observed.has(path),
+    };
+    expect(getBrowserInfo("arc", context)).toEqual({
+      id: "arc",
+      name: "Arc",
+      engine: "chromium",
+      baseDir,
+    });
+    expect(detectInstalledBrowsers(context).map(({ id }) => id)).toEqual(["arc"]);
+    observed.delete(`${baseDir}\\Default\\History`);
+    expect(getBrowserInfo("arc", context)).toBeNull();
+  },
+);
+
+test("Arc on Windows discovers a non-default profile only when its history actually exists", () => {
+  const baseDir = `D:\\App Data\\${ARC_WINDOWS_SUBDIR}`;
+  const observed = new Set([`${baseDir}\\Local State`, `${baseDir}\\Profile 3\\History`]);
+  const context = {
+    platform: "win32" as const,
+    home: "C:\\Users\\Example",
+    localAppData: "D:\\App Data",
+    exists: (path: string) => observed.has(path),
+    readText: () =>
+      JSON.stringify({ profile: { info_cache: { "Profile 3": { name: "Invented profile" } } } }),
+  };
+  expect(getBrowserInfo("arc", context)?.baseDir).toBe(baseDir);
+  observed.delete(`${baseDir}\\Profile 3\\History`);
+  expect(getBrowserInfo("arc", context)).toBeNull();
+});
+
+test.each(["not JSON", "{}", '{"profile":{"info_cache":{"..\\\\outside":{}}}}'])(
+  "Arc on Windows refuses missing or malformed profile layout %s",
+  (contents) => {
+    const context = {
+      platform: "win32" as const,
+      home: "C:\\Users\\Example",
+      exists: (path: string) => path.endsWith("\\Local State"),
+      readText: () => contents,
+    };
+    expect(getBrowserInfo("arc", context)).toBeNull();
+  },
+);

@@ -103,6 +103,7 @@ export const FOCUSED_UNIT_FILES = [
   "packages/providers-synth/maildir",
   "packages/providers/local-files",
   "packages/providers/browser-history/src/paths.test.ts",
+  "packages/providers/browser-history/src/arc-windows.test.ts",
   "packages/cloud-relay/src/account-authority-key.test.ts",
   "packages/cloud-relay/src/gateway-binding.test.ts",
   "extension/scripts/panel-template.test.mjs",

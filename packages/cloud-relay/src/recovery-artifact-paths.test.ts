@@ -2,18 +2,26 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import * as fs from "node:fs";
-import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { link, mkdtemp, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { recoveryFixture } from "../test/recovery-fixture.js";
-import { assertRecoveryArtifactDestination } from "./recovery-artifact-paths.js";
+import {
+  assertRecoveryArtifactDestination,
+  recoveryArtifactPaths,
+} from "./recovery-artifact-paths.js";
 import { runRelayRecoveryCommand, rotateRelaySessionKey } from "./relay-recovery-runtime.js";
 import { runRecoveryAuthorityTool } from "./recovery-tool.js";
 
 vi.mock("node:fs", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:fs")>();
-  return { ...actual, realpathSync: vi.fn(actual.realpathSync) };
+  return {
+    ...actual,
+    realpathSync: vi.fn(actual.realpathSync),
+    lstatSync: vi.fn(actual.lstatSync),
+    statSync: vi.fn(actual.statSync),
+  };
 });
 
 let directory: string;
@@ -257,6 +265,9 @@ test("canonical output paths support new directory trees and sanitize filesystem
   ).toBe(join(fs.realpathSync(directory), "not-created", "nested", "request.json"));
   const notDirectory = join(directory, "a-file");
   await writeFile(notDirectory, "preserved");
+  expect(() => assertRecoveryArtifactDestination(join(notDirectory, "out.json"), [])).toThrow(
+    "cannot replace",
+  );
   expect(() => assertRecoveryArtifactDestination(join(notDirectory, "nested", "out"), [])).toThrow(
     "cannot replace",
   );
@@ -315,4 +326,133 @@ test("a missing filesystem root stops canonical resolution without revisiting it
       (await vi.importActual<typeof import("node:fs")>("node:fs")).realpathSync,
     );
   }
+});
+
+test("hard-linked output cannot replace a protected identity or the target of its configured symlink", async () => {
+  const key = join(directory, "identity.key"),
+    output = join(directory, "output.json");
+  const material = "invented identity bytes retained across refused publication";
+  await writeFile(key, material);
+  await link(key, output);
+  expect(() => assertRecoveryArtifactDestination(output, [key])).toThrow("cannot replace");
+  const alias = join(directory, "identity-alias.key");
+  await symlink(key, alias);
+  expect(() => assertRecoveryArtifactDestination(output, [alias])).toThrow("cannot replace");
+  expect(await readFile(key, "utf8")).toBe(material);
+  expect(await readFile(output, "utf8")).toBe(material);
+});
+
+test.each(["lstatSync", "statSync"] as const)(
+  "equal inode numbers on distinct devices remain different entries (%s)",
+  async (method) => {
+    const key = join(directory, "identity.key"),
+      output = join(directory, "output.json");
+    await writeFile(key, "invented identity");
+    await writeFile(output, "invented independent output");
+    const actual = await vi.importActual<typeof import("node:fs")>("node:fs");
+    const identity = actual[method](key, { bigint: true });
+    // Equality of inode alone is insufficient; model a different mounted device
+    // with the same inode number as the output entry.
+    identity.dev += 1n;
+    identity.ino = actual.lstatSync(output, { bigint: true }).ino;
+    const lookup = vi.mocked(fs[method]);
+    lookup.mockImplementation((path, options) => {
+      if (String(path) === key && typeof options === "object" && options.bigint) return identity;
+      return actual[method](path, options);
+    });
+    try {
+      expect(assertRecoveryArtifactDestination(output, [key])).toBe(output);
+      expect(await readFile(output, "utf8")).toBe("invented independent output");
+    } finally {
+      lookup.mockImplementation(actual[method]);
+    }
+  },
+);
+
+test("an existing unrelated output remains usable when the protected identity does not exist", async () => {
+  const output = join(directory, "output.json");
+  await writeFile(output, "invented independent output");
+  expect(assertRecoveryArtifactDestination(output, [join(directory, "missing.key")])).toBe(output);
+  expect(await readFile(output, "utf8")).toBe("invented independent output");
+});
+
+test.each(["lstatSync", "statSync"] as const)(
+  "identity metadata failures fail closed without exposing private paths (%s)",
+  async (method) => {
+    const key = join(directory, "identity.key"),
+      output = join(directory, "output.json");
+    await writeFile(key, "invented identity");
+    await writeFile(output, "invented independent output");
+    const actual = await vi.importActual<typeof import("node:fs")>("node:fs");
+    const lookup = vi.mocked(fs[method]);
+    lookup.mockImplementation((path, options) => {
+      if (String(path) === key && typeof options === "object" && options.bigint)
+        throw Object.assign(new Error("private identity location"), { code: "EACCES" });
+      return actual[method](path, options);
+    });
+    try {
+      let failure: unknown;
+      try {
+        assertRecoveryArtifactDestination(output, [key]);
+      } catch (error) {
+        failure = error;
+      }
+      expect(failure).toBeInstanceOf(Error);
+      expect((failure as Error).message).toBe(
+        "Recovery artifacts cannot replace protected identity files or signing keys",
+      );
+      expect((failure as Error).cause).toBeUndefined();
+      expect(await readFile(key, "utf8")).toBe("invented identity");
+      expect(await readFile(output, "utf8")).toBe("invented independent output");
+    } finally {
+      lookup.mockImplementation(actual[method]);
+    }
+  },
+);
+
+test("resolved identity targets remain protected after transient target metadata absence", async () => {
+  const key = join(directory, "identity.key"),
+    alias = join(directory, "identity-alias.key");
+  await writeFile(key, "invented preserved identity");
+  await symlink(key, alias);
+  const actual = await vi.importActual<typeof import("node:fs")>("node:fs");
+  const lookup = vi.mocked(fs.statSync);
+  lookup.mockImplementation((path, options) => {
+    if (String(path) === alias && typeof options === "object" && options.bigint)
+      throw Object.assign(new Error("transient target metadata disappearance"), { code: "ENOENT" });
+    return actual.statSync(path, options);
+  });
+  try {
+    expect(() => assertRecoveryArtifactDestination(key, [alias])).toThrow("cannot replace");
+    expect(await readFile(key, "utf8")).toBe("invented preserved identity");
+  } finally {
+    lookup.mockImplementation(actual.statSync);
+  }
+});
+
+test("a protected identity realpath permission failure refuses publication and hides its path", async () => {
+  const key = join(directory, "identity.key"),
+    output = join(directory, "output.json");
+  await writeFile(key, "invented preserved identity");
+  await writeFile(output, "invented preserved output");
+  const actual = await vi.importActual<typeof import("node:fs")>("node:fs");
+  const lookup = vi.mocked(fs.realpathSync);
+  lookup.mockImplementation((path) => {
+    if (String(path) === key)
+      throw Object.assign(new Error("private identity location"), { code: "EACCES" });
+    return actual.realpathSync(path);
+  });
+  try {
+    expect(() => assertRecoveryArtifactDestination(output, [key])).toThrow(
+      "Recovery artifacts cannot replace protected identity files or signing keys",
+    );
+    expect(await readFile(key, "utf8")).toBe("invented preserved identity");
+    expect(await readFile(output, "utf8")).toBe("invented preserved output");
+  } finally {
+    lookup.mockImplementation(actual.realpathSync);
+  }
+});
+
+test("an empty relay configuration invents no protected artifact paths", () => {
+  expect(recoveryArtifactPaths({}, false)).toEqual([]);
 });
