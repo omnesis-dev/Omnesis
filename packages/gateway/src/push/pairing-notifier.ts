@@ -13,6 +13,25 @@ function bannerName(name: string): string {
   return line.length > 80 ? `${line.slice(0, 79)}…` : line || "A device";
 }
 
+/**
+ * What the banner calls a device: the name it chose, else what kind of device it is. Both come
+ * from the device, so they only describe it; the code on the approval screen is the check.
+ */
+function deviceLabel(name: string | undefined, kind: string | undefined): string {
+  const named = bannerName(name ?? "");
+  if (named !== "A device" || !kind) return named;
+  return Object.hasOwn(KIND_LABELS, kind) ? KIND_LABELS[kind]! : named;
+}
+
+// What to call a device that sent no printable name of its own.
+const KIND_LABELS: Record<string, string> = {
+  ios: "An iOS device",
+  android: "An Android device",
+  collector: "A collector",
+  cli: "A command-line client",
+  portal: "A browser",
+};
+
 /** Only already authorized administrators may be prompted to review device enrollment. */
 export class PairingNotifier {
   constructor(
@@ -50,9 +69,10 @@ export class PairingNotifier {
       await this.publisher.publish(
         {
           kind: "device-joined",
-          title: "New device joined",
-          body: `${bannerName(joined.name)} joined your gateway. Not you? Remove it in Devices.`,
-          data: {},
+          title: "New device connected",
+          body: `${deviceLabel(joined.name, joined.kind)} connected to your gateway. Not you? Tap to remove it.`,
+          // Opens that device, where it can be removed.
+          data: { deviceId: joined.deviceId },
           collapseId: `device-joined:${joined.deviceId}`,
         },
         targets,
@@ -66,7 +86,17 @@ export class PairingNotifier {
     }
   }
 
-  async notify(request: { requestId: string; expiresAt: number }): Promise<void> {
+  /**
+   * Asks the owner's phones about a device waiting for approval. `name` and `kind` are what the
+   * device says about itself; the banner only describes it, and opening it (`requestId`) shows
+   * the request with the code to compare. There is no approve action on the notification.
+   */
+  async notify(request: {
+    requestId: string;
+    expiresAt: number;
+    name?: string;
+    kind?: string;
+  }): Promise<void> {
     if (request.expiresAt <= Date.now()) return;
     try {
       const administrators = new Set(this.administrators());
@@ -83,9 +113,9 @@ export class PairingNotifier {
       await this.publisher.publish(
         {
           kind: "device-pairing",
-          title: "Device pairing request",
-          body: "Review the new device under Devices → Pairing requests. Compare the verification codes before approving.",
-          data: {},
+          title: "Is this you?",
+          body: `${deviceLabel(request.name, request.kind)} wants to connect to your gateway. Tap to review.`,
+          data: { requestId: request.requestId },
           collapseId: `device-pairing:${request.requestId}`,
         },
         targets,

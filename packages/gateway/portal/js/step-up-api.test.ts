@@ -4,10 +4,12 @@
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 
 const stepUp = vi.hoisted(() => vi.fn());
+const confirmStepUp = vi.hoisted(() => vi.fn());
 vi.mock("./lib/gateway-passkey.js", async (original) => ({
   ...(await original<Record<string, unknown>>()),
   stepUp,
 }));
+vi.mock("./lib/step-up-sheet.js", () => ({ confirmStepUp }));
 // @ts-expect-error — portal is plain JS without sibling declarations.
 import { apiFetch } from "./api.js";
 
@@ -22,7 +24,11 @@ const detail = {
 };
 const required = () => json({ error: "x", code: "STEP_UP_REQUIRED", detail }, 428);
 
-beforeEach(() => stepUp.mockReset());
+beforeEach(() => {
+  stepUp.mockReset();
+  confirmStepUp.mockReset();
+  confirmStepUp.mockResolvedValue(true);
+});
 afterEach(() => vi.unstubAllGlobals());
 
 test("a request the gateway wants a step-up for runs the passkey once and is sent again with its id", async () => {
@@ -86,8 +92,83 @@ test("while no step-up can start, the caller gets an error a person can act on",
     "fetch",
     vi.fn().mockResolvedValue(json({ error: "x", code: "STEP_UP_UNAVAILABLE" }, 403)),
   );
+  await expect(apiFetch("/admin/devices/pair", { method: "POST", body: "{}" })).rejects.toMatchObject({
+    message:
+      "Face ID can't be used on this gateway right now. Make this change on the computer running Omnesis.",
+    stepUp: true,
+  });
+  // During a certificate incident the gateway says so, and so does the page.
+  vi.stubGlobal(
+    "fetch",
+    vi.fn().mockResolvedValue(
+      json({ error: "x", code: "STEP_UP_UNAVAILABLE", detail: { reason: "security-lock" } }, 403),
+    ),
+  );
   await expect(apiFetch("/admin/devices/pair", { method: "POST", body: "{}" })).rejects.toThrow(
-    "Do it on the gateway itself.",
+    "Security lock is on. This change can only be made on the computer running Omnesis right now.",
   );
   expect(stepUp).not.toHaveBeenCalled();
+  expect(confirmStepUp).not.toHaveBeenCalled();
+});
+
+test("an unannounced step-up first says why Face ID is coming; cancelling it changes nothing", async () => {
+  const fetchMock = vi.fn().mockResolvedValue(required());
+  vi.stubGlobal("fetch", fetchMock);
+  confirmStepUp.mockResolvedValueOnce(false);
+  const signal = new AbortController().signal;
+  await expect(
+    apiFetch("/admin/devices/pair", { method: "POST", body: "{}", signal }),
+  ).rejects.toMatchObject({ message: "Nothing changed.", stepUp: true });
+  expect(confirmStepUp).toHaveBeenCalledExactlyOnceWith({ signal });
+  expect(stepUp).not.toHaveBeenCalled();
+  // The request was not sent again.
+  expect(fetchMock).toHaveBeenCalledOnce();
+});
+
+test("a button that already named Face ID goes straight to the passkey, and the flag never reaches the gateway", async () => {
+  const fetchMock = vi
+    .fn()
+    .mockResolvedValueOnce(required())
+    .mockResolvedValueOnce(json({ ok: true }));
+  vi.stubGlobal("fetch", fetchMock);
+  stepUp.mockResolvedValue("step-up-id");
+  const response = await apiFetch("/admin/devices/pair", {
+    method: "POST",
+    body: "{}",
+    stepUpAnnounced: true,
+  });
+  expect(response.status).toBe(200);
+  expect(confirmStepUp).not.toHaveBeenCalled();
+  for (const [, init] of fetchMock.mock.calls) expect(init).not.toHaveProperty("stepUpAnnounced");
+  expect(fetchMock.mock.calls[1]![1].headers).toMatchObject({ "X-Omnesis-Step-Up": "step-up-id" });
+});
+
+test("a passkey the gateway refuses is said in the owner's words, and every step-up failure is shown as it is", async () => {
+  const fetchMock = vi.fn().mockResolvedValueOnce(required());
+  vi.stubGlobal("fetch", fetchMock);
+  // Run the real exchange: options, then the assertion the gateway refuses.
+  stepUp.mockImplementationOnce(async (_detail, { post }) => {
+    expect((await post("/admin/step-up/options", {})).status).toBe(200);
+    await post("/admin/step-up", {});
+  });
+  fetchMock
+    .mockResolvedValueOnce(json({ challenge: "c" }))
+    .mockResolvedValueOnce(json({ error: "x", code: "STEP_UP_REFUSED" }, 403));
+  await expect(apiFetch("/admin/tokens", { method: "POST", body: "{}" })).rejects.toMatchObject({
+    message: "That passkey can't approve changes here. Use the passkey you set up for this gateway.",
+    stepUp: true,
+  });
+  // A prompt closed by the person keeps its own message, marked for the page to show.
+  const { GatewayPasskeyError } = await import("./lib/gateway-passkey.js");
+  vi.stubGlobal("fetch", vi.fn().mockResolvedValue(required()));
+  stepUp.mockRejectedValueOnce(new GatewayPasskeyError("The passkey prompt was closed."));
+  await expect(apiFetch("/admin/tokens", { method: "POST", body: "{}" })).rejects.toMatchObject({
+    message: "The passkey prompt was closed.",
+    stepUp: true,
+  });
+  // Anything else passes through untouched.
+  const network = new TypeError("Failed to fetch");
+  stepUp.mockRejectedValueOnce(network);
+  await expect(apiFetch("/admin/tokens", { method: "POST", body: "{}" })).rejects.toBe(network);
+  expect(network).not.toHaveProperty("stepUp");
 });

@@ -21,7 +21,7 @@ let current: {
   error: string;
   busy: string;
   version: string;
-  run: (op?: string, input?: unknown, method?: string) => Promise<void>;
+  run: (op?: string, input?: unknown, method?: string, options?: unknown) => Promise<void>;
 };
 function Probe() {
   current = useRelayManagement();
@@ -125,6 +125,49 @@ test("errors are static, timeout aborts, and recovery clears the error", async (
   await act(async () => current.run());
   expect(current.error).toBe("");
   expect(current.status).toEqual({ revision: 4 });
+});
+test("a choice that may ask for Face ID waits for the person, and a step-up failure is said in its own words", async () => {
+  request.mockResolvedValueOnce({ revision: 1 });
+  await mount();
+  const slow = pending();
+  request.mockReturnValueOnce(slow.promise);
+  let work!: Promise<void>;
+  await act(async () => {
+    work = current.run("enrollment", { policy: "automatic" }, "PUT", { stepUpAnnounced: true });
+  });
+  expect(request).toHaveBeenLastCalledWith(
+    "enrollment",
+    { policy: "automatic" },
+    expect.any(AbortSignal),
+    "PUT",
+    { stepUpAnnounced: true },
+  );
+  const signal = request.mock.calls[1][2] as AbortSignal;
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(60_000);
+  });
+  expect(signal.aborted).toBe(false);
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(70_000);
+  });
+  expect(signal.aborted).toBe(true);
+  await act(async () => {
+    slow.resolve({ revision: 2 });
+    await work;
+  });
+  request.mockRejectedValueOnce(
+    Object.assign(new Error("Security lock is on. This change can only be made on the computer running Omnesis right now."), {
+      stepUp: true,
+    }),
+  );
+  await act(async () => current.run("enrollment", { policy: "automatic" }, "PUT"));
+  expect(current.error).toBe(
+    "Security lock is on. This change can only be made on the computer running Omnesis right now.",
+  );
+  // Any other failure keeps the page's own words.
+  request.mockRejectedValueOnce(Object.assign(new Error("private detail"), { stepUp: false }));
+  await act(async () => current.run("enrollment", { policy: "automatic" }, "PUT"));
+  expect(current.error).toContain("Couldn't load or update");
 });
 test("unmount aborts and late success or rejection cannot mutate a replacement component", async () => {
   const old = pending();

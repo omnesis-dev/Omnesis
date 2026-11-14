@@ -19,6 +19,7 @@ import {
   type SignInPurpose,
 } from "./device-enrollment.js";
 import { bindingOrigin } from "./gateway-binding.js";
+import { verifiedGoogleEmail } from "./google-group.js";
 import { accountId, type IdentityProvider } from "./identity.js";
 
 /** A proof older than this is refused even when its signature still verifies. */
@@ -159,6 +160,11 @@ export interface VerifiedSignIn {
    * this id with this key for the linked account.
    */
   pin: SignInPin;
+  /**
+   * For a Google sign-in, the address Google verified in the token this gateway itself checked,
+   * when the token carries one. Shown to the owner deciding on the request; never an identifier.
+   */
+  email?: string;
 }
 
 export interface SignInVerifierOptions {
@@ -355,12 +361,14 @@ export class GatewaySignInVerifier {
       anyAge ? { at: issuedAt } : undefined,
     );
     const id = accountId({ ...identity, issuer: "https://accounts.google.com" });
+    const email = verifiedGoogleEmail(proof.idToken);
     return {
       type: "google",
       id,
       trusted: trusted.some((value) => value.type === "google" && value.id === id),
       channel: this.nativeGoogle(proof.idToken) ? "native-google" : "web-google",
       pin: { type: "google", id, addedAt: this.now() },
+      ...(email ? { email } : {}),
     };
   }
 
