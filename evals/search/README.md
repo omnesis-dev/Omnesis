@@ -26,6 +26,12 @@ ordinary documents in one source, waits for indexing to finish, and sends each
 question to `POST /search`. Nothing is stubbed. All languages share one index,
 as they do in a personal corpus, and every question searches all of it.
 
+The gateway ranks keywords with an in-memory index that it rebuilds in the
+background, and with SQLite FTS5 until that index covers the corpus. A run waits
+for the in-memory index after the bulk load, because that is what a settled
+install serves from, and records how many queries each ranker answered: a query
+the in-memory ranker cannot serve still falls back.
+
 Three scores are reported per language, and as a macro average in which every
 language counts equally:
 
@@ -48,8 +54,8 @@ A run has one of two modes:
 
 Compare runs with each other and with nothing else.
 
-- Every judged passage is in its pool, and the pool is about a thousandth of
-  the full corpus. Scores are therefore higher than published full-corpus
+- Every judged passage is in its pool, and the 18 pools together hold about 2%
+  of the full corpus. Scores are therefore higher than published full-corpus
   MIRACL scores and not comparable with them.
 - A passage nobody judged counts as not relevant, though some are. This lowers
   every run alike.
@@ -57,9 +63,12 @@ Compare runs with each other and with nothing else.
   language is handled, not how good search is on a personal corpus.
 - A score is not the share of searches that succeed.
 
-The one setting a run changes from the gateway's defaults is the candidate pool
-(`search.params.candidateLimit`), raised from 50 to 100 so that Recall@100 can
-be measured. Each run records it.
+A run changes two settings from the gateway's defaults, and records them. The
+candidate pool (`search.params.candidateLimit`) is raised from 50 to 100 so that
+Recall@100 can be measured. The temporal lane (`search.temporal.enabled`) is
+off: it reads a question's dates against the day of the run, and every passage
+carries the same date, so with it on a score would change from one day to the
+next.
 
 ## Running it
 
@@ -86,12 +95,19 @@ npm run search-eval:report -- --compare baseline-lexical my-change-lexical
 
 The dataset lives outside the repository, in `~/.cache/omnesis-search-eval` or
 wherever `OMNESIS_SEARCH_EVAL_DATA` or `--data-dir` points. The gateway's
-databases for a run are created under its `work/` directory and removed when the
-run ends. `--languages ko,ja` and `--max-passages` / `--max-queries` make a
-quick partial run; give it a throwaway name and do not commit it.
+databases for a run are created under `work/<run-name>/` there and removed when
+the run ends; a run that was killed leaves them, and the next run of that name
+clears them. `--languages ko,ja` and `--max-passages` / `--max-queries` make a
+quick partial run, which the results page marks as partial; give it a throwaway
+name and do not commit it.
 
-A run refuses a checkout with uncommitted changes, because its record names the
-commit it measured. Commit the change, run, then commit the result.
+A run refuses a checkout with uncommitted or untracked changes, because its
+record names the commit it measured; `--allow-dirty` lifts that for a throwaway
+run. Recorded runs are not part of what is measured, so several runs can follow
+one commit before their results are committed. The record also holds the tree
+of `packages/` at that commit, which identifies the measured code after a
+squash merge has replaced the commit. A run does not replace a recorded run of
+the same name without `--force`.
 
 ## Deciding with it
 
@@ -99,7 +115,8 @@ commit it measured. Commit the change, run, then commit the result.
 2. Run the mode it affects under a new name.
 3. Compare with the baseline. The comparison pairs the two runs query by query
    and gives each language's change with a 95% bootstrap interval. An interval
-   that excludes zero is a real change; one that spans it is noise.
+   that excludes zero is a real change; one that spans it is noise. Runs on
+   different languages, pools or caps are refused.
 4. Commit the run's two files and the regenerated `RESULTS.md` with the change.
 
 A run is kept as a record of what a commit scored. Replace the baseline only

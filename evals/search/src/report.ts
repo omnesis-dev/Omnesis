@@ -67,10 +67,11 @@ export function renderResults(summaries: readonly RunSummary[]): string {
         "nDCG@10",
         "Recall@100",
         "MRR@10",
+        "In-memory ranker",
         "p95 query",
       ],
       summaries.map((s) => [
-        s.name,
+        `${s.name}${s.limits.maxPassages === null && s.limits.maxQueries === null ? "" : " (partial)"}`,
         s.mode,
         `${s.source.commit.slice(0, 9)}${s.source.dirty ? " (dirty)" : ""}`,
         s.totals.passages.toLocaleString("en-US"),
@@ -78,11 +79,13 @@ export function renderResults(summaries: readonly RunSummary[]): string {
         fmt(s.macro.ndcg10),
         fmt(s.macro.recall100),
         fmt(s.macro.mrr10),
+        `${Math.round((100 * s.languages.reduce((n, l) => n + (l.lexicalEngines.memory ?? 0), 0)) / s.totals.queries)}%`,
         `${s.timing.queryMsP95} ms`,
       ]),
     ),
     "",
-    "The three scores are macro averages: every language counts equally.",
+    'The three scores are macro averages: every language counts equally. "In-memory ranker" is the',
+    "share of queries the default keyword ranker served; the FTS5 fallback served the rest.",
   ];
   const languages = [...new Set(summaries.flatMap((s) => s.languages.map((l) => l.language)))].sort(
     (a, b) => LANGUAGE_NAMES[a].localeCompare(LANGUAGE_NAMES[b]),
@@ -117,18 +120,34 @@ function byLanguage(rows: readonly QueryRow[]): Map<Language, Map<string, QueryR
   return grouped;
 }
 
+/** Two runs compare only when they searched the same passages for the same questions. */
+function assertSameDataset(a: RunSummary, b: RunSummary): void {
+  const pools = (s: RunSummary): string =>
+    JSON.stringify([
+      s.dataset,
+      s.limits,
+      s.languages.map((l) => [l.language, l.pool, l.passages]).sort(),
+    ]);
+  if (pools(a) !== pools(b)) {
+    throw new Error(
+      `${a.name} and ${b.name} were not run on the same languages, pools and caps, ` +
+        "so their scores cannot be compared",
+    );
+  }
+}
+
 export function renderComparison(
   base: { summary: RunSummary; rows: readonly QueryRow[] },
   candidate: { summary: RunSummary; rows: readonly QueryRow[] },
   metric: Metric,
 ): string {
+  assertSameDataset(base.summary, candidate.summary);
   const baseRows = byLanguage(base.rows);
   const candidateRows = byLanguage(candidate.rows);
   const random = seededRandom(BOOTSTRAP_SEED);
-  const languages = [...baseRows.keys()]
-    .filter((language) => candidateRows.has(language))
-    .sort((a, b) => LANGUAGE_NAMES[a].localeCompare(LANGUAGE_NAMES[b]));
-  if (languages.length === 0) throw new Error("The two runs share no language");
+  const languages = [...baseRows.keys()].sort((a, b) =>
+    LANGUAGE_NAMES[a].localeCompare(LANGUAGE_NAMES[b]),
+  );
 
   const pairs = new Map<Language, { a: number[]; b: number[] }>();
   for (const language of languages) {

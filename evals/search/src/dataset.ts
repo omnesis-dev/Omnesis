@@ -10,12 +10,13 @@
  * it is committed: the text is downloaded from the public MIRACL release.
  */
 
+import { createHash } from "node:crypto";
 import { createReadStream, existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
 /** Every language the MIRACL development split judges. */
-export const LANGUAGES = [
+const LANGUAGES = [
   "ar",
   "bn",
   "de",
@@ -65,7 +66,7 @@ export interface Passage {
   text: string;
 }
 
-export interface Query {
+interface Query {
   id: string;
   text: string;
 }
@@ -91,6 +92,32 @@ export interface DatasetManifest {
   languages: LanguageManifest[];
 }
 
+/** Where a passage is recorded on the document pushed for it, and read back from a search result. */
+export function passageUrl(language: Language, docid: string): string {
+  return `miracl://${language}/${docid}`;
+}
+
+/**
+ * Search results as the passage ids the judgments use. A result that is not a
+ * passage of `language` is a wrong answer: it keeps its rank under an id no
+ * judgment names.
+ */
+export function rankedPassageIds(
+  results: ReadonlyArray<{ sourceUrl?: string | null }>,
+  language: Language,
+): string[] {
+  const prefix = passageUrl(language, "");
+  return results.map((r, i) =>
+    r.sourceUrl?.startsWith(prefix) ? r.sourceUrl.slice(prefix.length) : `other:${i}`,
+  );
+}
+
+/** One short fingerprint of a language's passages, questions and judgments. */
+export function poolFingerprint(manifest: LanguageManifest): string {
+  const { corpus, queries, qrels } = manifest.sha256;
+  return createHash("sha256").update(`${corpus}\n${queries}\n${qrels}`).digest("hex").slice(0, 16);
+}
+
 export function defaultDataDir(): string {
   return process.env.OMNESIS_SEARCH_EVAL_DATA ?? join(homedir(), ".cache", "omnesis-search-eval");
 }
@@ -99,7 +126,7 @@ export function languageDir(dataDir: string, language: Language): string {
   return join(dataDir, language);
 }
 
-export function isLanguage(value: string): value is Language {
+function isLanguage(value: string): value is Language {
   return (LANGUAGES as readonly string[]).includes(value);
 }
 

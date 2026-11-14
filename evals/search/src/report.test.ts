@@ -9,38 +9,39 @@ import { afterEach, describe, expect, test } from "vitest";
 
 import { renderComparison, renderResults } from "./report.js";
 import { listRuns, readQueryRows, readSummary, writeRun } from "./results.js";
+import type { Language } from "./dataset.js";
 import type { QueryRow, RunSummary } from "./results.js";
 
-function summary(name: string, ndcg: number): RunSummary {
+function summary(name: string, ndcg: number, languages: Language[] = ["ko"]): RunSummary {
   return {
     name,
     mode: "lexical",
     startedAt: `2026-01-0${name === "base" ? 1 : 2}T00:00:00.000Z`,
-    source: { commit: "0123456789abcdef", dirty: false, branch: "main" },
+    source: { commit: "0123456789abcdef", packagesTree: "fedcba", dirty: false, branch: "main" },
     dataset: { name: "miracl-dev-pools", poolSize: 100, revisions: { topics: "t", corpus: "c" } },
+    limits: { maxPassages: null, maxQueries: null },
     embedder: null,
     gatewayConfig: {},
     macro: { ndcg10: ndcg, recall100: 0.5, mrr10: 0.4 },
-    languages: [
-      {
-        language: "ko",
-        queries: 3,
-        passages: 100,
-        emptyResults: 0,
-        ndcg10: ndcg,
-        recall100: 0.5,
-        mrr10: 0.4,
-      },
-    ],
+    languages: languages.map((language) => ({
+      language,
+      queries: 3,
+      passages: 100,
+      emptyResults: 0,
+      lexicalEngines: { memory: 2, fts5: 1 },
+      pool: "0123456789abcdef",
+      ndcg10: ndcg,
+      recall100: 0.5,
+      mrr10: 0.4,
+    })),
     totals: { passages: 100, chunks: 100, queries: 3 },
     timing: { ingestSeconds: 1, indexSeconds: 1, querySeconds: 1, queryMsP50: 5, queryMsP95: 9 },
-    lexicalEngines: { memory: 3 },
   };
 }
 
-function rows(values: readonly number[]): QueryRow[] {
+function rows(values: readonly number[], language: Language = "ko"): QueryRow[] {
   return values.map((v, i) => ({
-    language: "ko",
+    language,
     queryId: `q${i}`,
     ndcg10: v,
     recall100: v,
@@ -75,7 +76,7 @@ describe("renderResults", () => {
   test("lists each run and each language's score", () => {
     const text = renderResults([summary("base", 0.25), summary("next", 0.5)]);
     expect(text).toContain(
-      "| base | lexical | 012345678 | 100 | 3 | 0.250 | 0.500 | 0.400 | 9 ms |",
+      "| base | lexical | 012345678 | 100 | 3 | 0.250 | 0.500 | 0.400 | 67% | 9 ms |",
     );
     expect(text).toContain("| Korean | 0.250 | 0.500 |");
   });
@@ -100,5 +101,45 @@ describe("renderComparison", () => {
         "ndcg10",
       ),
     ).toThrow(/missing from the second run/);
+  });
+
+  test("the overall change weighs a small language as much as a large one", () => {
+    const text = renderComparison(
+      {
+        summary: summary("base", 0.2, ["ko", "th"]),
+        rows: [...rows([0, 0, 0, 0, 0, 0, 0, 0], "ko"), ...rows([0, 0], "th")],
+      },
+      {
+        summary: summary("next", 0.4, ["ko", "th"]),
+        rows: [...rows([0, 0, 0, 0, 0, 0, 0, 0], "ko"), ...rows([0.4, 0.4], "th")],
+      },
+      "ndcg10",
+    );
+    // Two of ten queries gained 0.4; half of the languages did.
+    expect(text).toContain("| **All languages** | 10 | **0.000** | **0.200** | **+0.200** |");
+  });
+
+  test("runs on different pools are refused", () => {
+    const other = summary("next", 0.4);
+    other.languages[0]!.pool = "another pool";
+    expect(() =>
+      renderComparison(
+        { summary: summary("base", 0.2), rows: rows([0.1]) },
+        { summary: other, rows: rows([0.3]) },
+        "ndcg10",
+      ),
+    ).toThrow(/cannot be compared/);
+  });
+
+  test("a partial run is not compared with a full one", () => {
+    const partial = summary("next", 0.4);
+    partial.limits.maxQueries = 1;
+    expect(() =>
+      renderComparison(
+        { summary: summary("base", 0.2), rows: rows([0.1]) },
+        { summary: partial, rows: rows([0.3]) },
+        "ndcg10",
+      ),
+    ).toThrow(/cannot be compared/);
   });
 });

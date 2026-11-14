@@ -21,11 +21,15 @@ export type RunMode = "lexical" | "hybrid";
 
 export interface LanguageResult extends QueryScore {
   language: Language;
-  /** Queries scored: those with at least one relevant passage in the pool. */
+  /** Queries scored: those with at least one passage judged relevant. */
   queries: number;
   passages: number;
   /** Queries the search returned nothing for. */
   emptyResults: number;
+  /** How many queries each keyword ranker served: `memory`, or the `fts5` fallback. */
+  lexicalEngines: Record<string, number>;
+  /** Fingerprint of the pool the language was scored on. */
+  pool: string;
 }
 
 export interface RunSummary {
@@ -33,8 +37,16 @@ export interface RunSummary {
   mode: RunMode;
   startedAt: string;
   /** What the gateway under test was built from. */
-  source: { commit: string; dirty: boolean; branch: string };
+  source: {
+    commit: string;
+    /** Tree of `packages/` at that commit, which a squash merge keeps. */
+    packagesTree: string;
+    dirty: boolean;
+    branch: string;
+  };
   dataset: { name: string; poolSize: number; revisions: { topics: string; corpus: string } };
+  /** Caps of a partial run; both null for a full one. */
+  limits: { maxPassages: number | null; maxQueries: number | null };
   /** Embedding model in `hybrid` mode. */
   embedder: string | null;
   /** Settings the run changes from the gateway's defaults. */
@@ -50,8 +62,6 @@ export interface RunSummary {
     queryMsP50: number;
     queryMsP95: number;
   };
-  /** How many queries each keyword ranker served. */
-  lexicalEngines: Record<string, number>;
 }
 
 export interface QueryRow extends QueryScore {
@@ -76,6 +86,10 @@ export function writeRun(summary: RunSummary, rows: readonly QueryRow[], dir = R
     join(dir, `${summary.name}.queries.tsv`),
     `${[QUERY_HEADER, ...lines].join("\n")}\n`,
   );
+}
+
+export function runExists(name: string, dir = RESULTS_DIR): boolean {
+  return existsSync(join(dir, `${name}.json`));
 }
 
 export function listRuns(dir = RESULTS_DIR): string[] {

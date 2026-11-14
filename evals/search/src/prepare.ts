@@ -75,6 +75,10 @@ function resolveUrl(repo: string, revision: string, path: string): string {
 async function listShards(language: Language): Promise<string[]> {
   const dir = `miracl-corpus-v1.0-${language}`;
   const res = await fetchOk(`${HUB}/api/datasets/${CORPUS_REPO}/tree/${CORPUS_REVISION}/${dir}`);
+  // A pool sampled from part of a corpus would be silently biased.
+  if (res.headers.get("link")?.includes('rel="next"')) {
+    throw new Error(`The shard listing for ${language} is paginated; refusing a partial corpus`);
+  }
   const entries = (await res.json()) as Array<{ path: string; type: string }>;
   return entries
     .filter((e) => e.type === "file" && e.path.endsWith(".jsonl.gz"))
@@ -210,7 +214,9 @@ async function main(): Promise<void> {
       continue;
     }
     const value = argv[i + 1];
-    if (!flag.startsWith("--") || value === undefined) throw new Error(USAGE);
+    if (!["--data-dir", "--languages", "--pool-size"].includes(flag) || value === undefined) {
+      throw new Error(`Unknown or incomplete argument "${flag}".\n${USAGE}`);
+    }
     flags.set(flag, value);
     i += 1;
   }
