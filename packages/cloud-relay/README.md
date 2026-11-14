@@ -46,8 +46,12 @@ the relay still needs independent certificate issuance controls to resist that
 attack, such as a supporting CA's account-bound DNS-01 policy, CAA `accounturi`
 and `validationmethods`, and protected DNS administration. A DNS ownership TXT
 record alone does not provide that protection. See [RFC 8657](https://www.rfc-editor.org/rfc/rfc8657.html)
-and [Let's Encrypt's CAA guidance](https://letsencrypt.org/docs/caa/). This package
-does not configure CAA records, DNS delegation, or a CA's account-bound issuance policy.
+and [Let's Encrypt's CAA guidance](https://letsencrypt.org/docs/caa/). For a
+hosted name served by the DNS broker, the gateway's CAA record binds issuance to
+its own ACME account and DNS-01 (see
+[Certificate issuance monitoring](#certificate-issuance-monitoring)). For a
+user-owned domain this package does not configure CAA records, DNS delegation,
+or a CA's account-bound issuance policy.
 Keep the effective issuance policy under the user's control for every authorized
 CA. A user-owned A/AAAA record avoids delegating CAA lookup to a relay-owned
 CNAME target; using DNS-01 at the gateway alone does not prevent another party
@@ -726,6 +730,19 @@ with `omnesis cloud incidents ack` on the gateway host, or through
 `POST /admin/cloud-relay/incidents/ack` in a request that did not come through
 the relay. The monitor never changes pins, routing credentials or existing
 device grants.
+
+A gateway on the DNS broker also binds its hosted name's CAA record to its own
+ACME account before each order: `issue "letsencrypt.org;
+validationmethods=dns-01; accounturi=<its account>"`, published through the
+broker and only for the broker's CA, so a staging account publishes nothing.
+Every gateway refuses to order a certificate for a name whose CAA record binds
+issuance to another ACME account. At the monitor's interval, the gateway checks
+that the published record still binds its own account; a record removed or
+rewritten puts the gateway on the same incident hold, identified by a digest of
+what DNS showed. A lookup DNS can't answer changes nothing. CAA protects against
+anyone without write access to the zone, including a relay without the DNS
+token; whoever can write the zone, including the DNS provider, can still
+rewrite it, which the monitor then reports.
 
 The portal and CLI expose monitoring status, last completed observation,
 incidents and the hold. An observing status describes the provider results

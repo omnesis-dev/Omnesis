@@ -406,6 +406,8 @@ test("the controller's relay presenter invalidates its own session source on exp
     expect(await presenter.create("a".repeat(43), new AbortController().signal)).toEqual({ id });
     expect(source.invalidate).toHaveBeenCalledOnce();
     expect(transport).toHaveBeenCalledTimes(2);
+    // Through the relay, the gateway sets no CAA record and expects none.
+    expect(await controller!.expectedCaa!()).toBeUndefined();
   } finally {
     await controller!.close();
   }
@@ -611,6 +613,16 @@ test("a gateway with the broker provider issues through the broker only, and onl
     const lease = await presenter.create("a".repeat(43), new AbortController().signal);
     expect(harness.cloudflare.records.filter((record) => record.type === "TXT")).toHaveLength(1);
     await presenter.remove(lease.id, new AbortController().signal);
+    // Claimed, with no CAA record yet; then the account the record was set to bind.
+    expect(await controller!.expectedCaa!()).toBeUndefined();
+    const { savePrivateJson } = await import("./google-credentials.js");
+    await savePrivateJson(`${env.OMNESIS_ACME_CERT_FILE}.acme-account.dns-broker.json`, {
+      claimedAt: 1,
+      accountUri: "https://acme-v02.api.letsencrypt.org/acme/acct/42",
+    });
+    expect(await controller!.expectedCaa!()).toBe(
+      "https://acme-v02.api.letsencrypt.org/acme/acct/42",
+    );
     expect(harness.calls).toEqual([
       "/_dns/v2/health",
       "/_dns/v2/challenge",
