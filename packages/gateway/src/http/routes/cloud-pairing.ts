@@ -20,7 +20,7 @@ import {
   cloudPairingIdentity,
   webGooglePairingConfiguration,
 } from "../services/CloudPairingConfiguration.js";
-import { requireStepUp } from "../step-up.js";
+import { declines, requireStepUp } from "../step-up.js";
 import { clientIp } from "./admin/internals.js";
 import type { RouteApp } from "./types.js";
 import type { WriteGate } from "../../write-gate.js";
@@ -327,7 +327,7 @@ export function mountCloudPairingRoutes(
     scope.admin(),
     boundedBody,
     // Approving a device (and trusting its sign-in) needs a step-up; declining never does.
-    requireStepUp((body) => (body as { approve?: unknown } | null)?.approve === false),
+    requireStepUp(declines),
     validateJson(
       z
         .object({

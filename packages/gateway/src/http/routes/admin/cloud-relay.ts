@@ -7,7 +7,7 @@ import { CloudRelayManagementFailure } from "@omnesis/cloud-relay";
 import { scope } from "../../scope.js";
 import { validateJson, validateQuery } from "../../validate.js";
 import { arrivedThroughRelay } from "../../client-ip.js";
-import { requireStepUp } from "../../step-up.js";
+import { asksFirst, requireStepUp } from "../../step-up.js";
 import {
   cloudRelayConfigureBody,
   cloudRelayEnableBody,
@@ -109,7 +109,7 @@ export function mountCloudRelayManagementRoutes(
     scope.admin(),
     bounded,
     // Choosing automatic joins needs a step-up; "ask me first" never does.
-    requireStepUp((body) => (body as { policy?: unknown } | null)?.policy === "ask"),
+    requireStepUp(asksFirst),
     validateJson(cloudRelayEnrollmentBody),
     async (c) =>
       respond(c, async () => {
