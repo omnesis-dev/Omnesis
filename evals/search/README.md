@@ -95,6 +95,9 @@ npm run search-eval:run -- --name my-change-hybrid --mode hybrid \
 # Rebuild RESULTS.md, and compare two runs query by query.
 npm run search-eval:report
 npm run search-eval:report -- --compare baseline-lexical my-change-lexical
+
+# For a hybrid run: how the keyword and semantic lanes do alone, beside the fused results.
+npm run search-eval:report -- --lanes my-change-hybrid
 ```
 
 The dataset lives outside the repository, in `~/.cache/omnesis-search-eval` or
@@ -135,7 +138,7 @@ when the default search behaviour changes.
 | `src/report.ts`             | `RESULTS.md` and the paired comparison                    |
 | `src/metrics.ts`            | The three scores and the bootstrap                        |
 | `results/<run>.json`        | A run's summary: commit, mode, settings, scores, timings  |
-| `results/<run>.queries.tsv` | One row per scored query, for paired comparisons          |
+| `results/<run>.queries.tsv` | One row per scored query: its scores and each lane's rank |
 
 ## Dataset licence
 

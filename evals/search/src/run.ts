@@ -92,7 +92,10 @@ const INDEX_STALL_MS = 30 * 60_000;
 const RANKER_WAIT_MS = 90 * 60_000;
 
 interface SearchResponse {
-  results?: Array<{ sourceUrl?: string | null }>;
+  results?: Array<{
+    sourceUrl?: string | null;
+    scoreBreakdown?: { bm25Rank?: number; vectorRank?: number };
+  }>;
   stages?: { bm25?: { engine?: string } };
 }
 interface IndexStats {
@@ -420,7 +423,21 @@ async function main(): Promise<void> {
           const results = res.results ?? [];
           if (results.length === 0) emptyResults += 1;
           const ranked = rankedPassageIds(results, language);
-          scored.push({ language, queryId: query.id, ...scoreQuery(ranked, relevant) });
+          let bm25Rank: number | null = null;
+          let vectorRank: number | null = null;
+          results.forEach((result, i) => {
+            if (!relevant.has(ranked[i]!)) return;
+            const lanes = result.scoreBreakdown;
+            if (lanes?.bm25Rank) bm25Rank = Math.min(bm25Rank ?? Infinity, lanes.bm25Rank);
+            if (lanes?.vectorRank) vectorRank = Math.min(vectorRank ?? Infinity, lanes.vectorRank);
+          });
+          scored.push({
+            language,
+            queryId: query.id,
+            ...scoreQuery(ranked, relevant),
+            bm25Rank,
+            vectorRank,
+          });
         }
       };
       await Promise.all(Array.from({ length: QUERY_CONCURRENCY }, worker));
