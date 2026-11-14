@@ -44,6 +44,7 @@ import type {
   ToolCaller,
   ReasoningBound,
   ToolHandle,
+  TurnInput,
   UserPart,
 } from "./backend.js";
 
@@ -162,6 +163,36 @@ export interface SessionOptions {
    * Omitted by interactive sessions; see {@link TurnInput.promptCacheKey}.
    */
   promptCacheKey?: string;
+  /**
+   * A silent follow-up run a turn may get after its first run ends with a
+   * final answer (`end_turn`). See {@link TurnFollowUp}.
+   */
+  turnFollowUp?: TurnFollowUp;
+}
+
+/** One tool call a turn made, with the result it returned. */
+export interface TurnToolCall {
+  tool: string;
+  result: ToolResult;
+}
+
+/**
+ * A silent follow-up run in the same turn.
+ *
+ * `ask` is consulted once, when a turn's first model run ends with an answer.
+ * A returned message gives the model one more run with that message as a
+ * model-only user prompt. Nothing about that run is shown: the message, its
+ * text and thinking, and its tool calls are never broadcast, and only the
+ * calls `records` accepts — with their tool results' own side effects, such as
+ * citations — join the answer's message in history. While it runs, clients
+ * see a turn still in flight after a finished answer. Undefined ends the turn
+ * as usual. At most one follow-up run per turn, so a model that ignores the
+ * message cannot loop, and a turn sent with its own transport-owned backend
+ * is never followed up.
+ */
+export interface TurnFollowUp {
+  ask(calls: ReadonlyArray<TurnToolCall>): string | undefined;
+  records(tool: string): boolean;
 }
 
 export interface SendOptions {
@@ -199,6 +230,7 @@ export class AgentSession {
   private readonly reasoning: ReasoningBound | undefined;
   private readonly rateLimitPatience: RateLimitPatience | undefined;
   private readonly promptCacheKey: string | undefined;
+  private readonly turnFollowUp: TurnFollowUp | undefined;
   private readonly subscribers = new Set<Subscriber>();
 
   private history: ChatMessage[] = [];
@@ -220,6 +252,7 @@ export class AgentSession {
     this.reasoning = opts.reasoning;
     this.rateLimitPatience = opts.rateLimitPatience;
     this.promptCacheKey = opts.promptCacheKey;
+    this.turnFollowUp = opts.turnFollowUp;
     this.historyView = opts.historyView;
     this.systemPromptSection = opts.systemPromptSection;
     if (opts.initialHistory && opts.initialHistory.length > 0) {
@@ -499,6 +532,8 @@ export class AgentSession {
       pendingAssistantParts: [],
       pendingUserParts: [],
       pendingToolUses: new Map(),
+      calls: [],
+      droppedFollowUpCalls: new Set(),
       addedCitationsThisTurn: new Map(),
     };
     this.currentTurn = turn;
@@ -548,8 +583,13 @@ export class AgentSession {
     let terminalToBroadcast: Extract<AgentEvent, { type: "agent.message.end" }> | undefined;
     let pendingToolBoundary: Extract<AgentEvent, { type: "agent.message.end" }> | undefined;
     try {
-      try {
-        const priorHistory = this.historyView ? this.historyView(this.history) : [...this.history];
+      let priorHistory: ChatMessage[] = [];
+      const userMessage = opts.modelNote ? `${text}\n\n${opts.modelNote}` : text;
+      // Built inside the first run's error handling, so a throwing prompt
+      // section fails the turn the way a throwing backend does.
+      let firstInput: TurnInput | undefined;
+      let input: TurnInput | (() => TurnInput) = () => {
+        priorHistory = this.historyView ? this.historyView(this.history) : [...this.history];
         const section = this.systemPromptSection?.() ?? "";
         const systemPrompt = section ? `${this.systemPrompt}\n\n${section}` : this.systemPrompt;
         // Append user turn to canonical history before asking the backend to
@@ -557,95 +597,51 @@ export class AgentSession {
         // leaves a coherent transcript. The backend still receives the
         // pre-turn snapshot per TurnInput's contract.
         this.history.push(userTurn);
-        const stream = (opts.backend ?? this.backend).runTurn(
-          {
-            sessionId: this.sessionId,
-            messageId: turn.messageId,
-            history: priorHistory,
-            userMessage: opts.modelNote ? `${text}\n\n${opts.modelNote}` : text,
-            ...(opts.modelNote ? { modelNote: opts.modelNote } : {}),
-            tools: this.tools,
-            timeZone: this.zone,
-            caller: this.speaksFor,
-            systemPrompt,
-            ...(this.reasoning === undefined ? {} : { reasoning: this.reasoning }),
-            ...(this.rateLimitPatience === undefined
-              ? {}
-              : { rateLimitPatience: this.rateLimitPatience }),
-            ...(this.promptCacheKey === undefined ? {} : { promptCacheKey: this.promptCacheKey }),
-            ...(opts.llmProbe === undefined ? {} : { llmProbe: opts.llmProbe }),
-          },
-          turn.abortController.signal,
-        );
-
-        for await (const rawEvent of stream) {
-          // A provider may flush an abort-shaped error/delta while its stream
-          // unwinds. Once cancellation is authoritative, none of that late
-          // provider output belongs on the client or in canonical history;
-          // the synthesized canceled terminal below is the sole outcome.
-          if (turn.abortController.signal.aborted) break;
-          // A tool_use message-end is ambiguous until the next iterator step:
-          // another event makes it an internal provider-iteration boundary;
-          // clean exhaustion makes it the turn's incomplete terminal.
-          if (pendingToolBoundary) {
-            this.handleEvent(pendingToolBoundary, turn);
-            turn.intermediateUsage = addUsage(
-              turn.intermediateUsage,
-              pendingToolBoundary.payload.usage,
-            );
-            pendingToolBoundary = undefined;
-          }
-
-          const event = this.normalizeEvent(rawEvent, turn);
-          if (event.type === "agent.message.end") {
-            if (event.payload.stopReason === "tool_use") {
-              pendingToolBoundary = event;
-              continue;
-            }
-            this.handleEvent(event, turn);
-            terminalToBroadcast = event;
-            // A non-tool terminal is authoritative. Stop consuming the
-            // iterator so malformed trailing output, rejection, or a provider
-            // that never closes cannot mutate or strand the completed turn.
-            break;
-          }
-          this.handleEvent(event, turn);
-          this.broadcast(event);
-          if (turn.abortController.signal.aborted) break;
-        }
-      } catch (err) {
-        // Backend threw synchronously or the iterator threw mid-stream.
-        // Surface a typed error event so subscribers see a terminal state,
-        // then rethrow so the completion promise rejects for the caller.
-        // Cancellation commonly makes provider iterators reject with an
-        // AbortError. That rejection is the expected unwind path, not a model
-        // failure, so let the canceled terminal synthesis below own it.
-        if (!turn.abortController.signal.aborted) {
-          thrown = err;
-          const message =
-            err instanceof Error ? err.message : typeof err === "string" ? err : "backend failed";
-          const errorEvent = this.normalizeEvent(
-            {
-              type: "agent.error",
-              payload: {
-                sessionId: this.sessionId,
-                messageId: turn.messageId,
-                code:
-                  err instanceof InferenceUrlPolicyError && err.code === "remote_inference_disabled"
-                    ? err.code
-                    : "internal_error",
-                message,
-              },
-            },
-            turn,
-          );
-          this.handleEvent(errorEvent, turn);
-          this.broadcast(errorEvent);
-        }
+        return (firstInput = {
+          sessionId: this.sessionId,
+          messageId: turn.messageId,
+          history: priorHistory,
+          userMessage,
+          ...(opts.modelNote ? { modelNote: opts.modelNote } : {}),
+          tools: this.tools,
+          timeZone: this.zone,
+          caller: this.speaksFor,
+          systemPrompt,
+          ...(this.reasoning === undefined ? {} : { reasoning: this.reasoning }),
+          ...(this.rateLimitPatience === undefined
+            ? {}
+            : { rateLimitPatience: this.rateLimitPatience }),
+          ...(this.promptCacheKey === undefined ? {} : { promptCacheKey: this.promptCacheKey }),
+          ...(opts.llmProbe === undefined ? {} : { llmProbe: opts.llmProbe }),
+        });
+      };
+      // At most two runs: the turn itself, and the one follow-up run
+      // `turnFollowUp` may ask for when the first ends with an answer.
+      for (;;) {
+        const run = await this.consumeRun(turn, input, opts.backend);
+        thrown = run.thrown;
+        terminalToBroadcast = run.terminal;
+        pendingToolBoundary = run.pendingToolBoundary;
+        if (run.message === undefined) break;
+        if (!firstInput) throw new Error("a follow-up run before the first run");
+        // The follow-up run sees the turn so far, answer included, and the
+        // follow-up message in place of a user message. The message is never
+        // recorded; the calls the follow-up keeps join the answer's message.
+        input = {
+          ...firstInput,
+          history: [
+            ...priorHistory,
+            { role: "user", parts: [{ kind: "text", text: userMessage }] },
+            ...turn.segments.map(cloneChatMessage),
+            { role: "assistant", parts: turn.pendingAssistantParts.map((part) => ({ ...part })) },
+          ],
+          userMessage: run.message,
+        };
+        delete input.modelNote;
       }
 
       if (pendingToolBoundary) {
-        if (!turn.abortController.signal.aborted && thrown === undefined) {
+        if (!turn.abortController.signal.aborted && thrown === undefined && !turn.heldAnswer) {
           // The iterator ended cleanly at tool_use, so this is a genuine
           // incomplete terminal rather than an internal iteration boundary.
           const mergedUsage = addUsage(turn.intermediateUsage, pendingToolBoundary.payload.usage);
@@ -694,6 +690,19 @@ export class AgentSession {
         };
         this.handleEvent(stubEvent, turn);
         this.broadcast(stubEvent);
+      }
+
+      // A follow-up run that failed or ended without a final answer of its
+      // own leaves the first run's answer as the turn's outcome: the user
+      // already read it, and the follow-up was the session's idea, not theirs.
+      if (!turn.endEmitted && turn.heldAnswer && !turn.abortController.signal.aborted) {
+        const usage = turn.intermediateUsage;
+        const settled: typeof turn.heldAnswer = {
+          ...turn.heldAnswer,
+          payload: { ...turn.heldAnswer.payload, ...(usage ? { usage } : {}) },
+        };
+        this.handleEvent(settled, turn);
+        terminalToBroadcast = settled;
       }
 
       // If the backend exited without a terminal event (cancelled, threw,
@@ -746,6 +755,179 @@ export class AgentSession {
       throw new Error("agent turn ended without an authoritative terminal event");
     }
     return turn.terminalEnd;
+  }
+
+  /**
+   * Stream one model run of a turn into the turn's state.
+   *
+   * Returns the run's authoritative terminal (already handled, not yet
+   * broadcast), a tool-use boundary the stream ended on, what the backend
+   * threw, or — when the first run ended with an answer and `turnFollowUp`
+   * asked for more — the follow-up message, with the answer held on the turn.
+   *
+   * A follow-up run never fails the turn: its errors, failed terminals and
+   * throws are logged and dropped, and the held answer settles the turn.
+   */
+  private async consumeRun(
+    turn: TurnState,
+    input: TurnInput | (() => TurnInput),
+    backend: ChatBackend | undefined,
+  ): Promise<{
+    terminal?: Extract<AgentEvent, { type: "agent.message.end" }>;
+    pendingToolBoundary?: Extract<AgentEvent, { type: "agent.message.end" }>;
+    thrown?: unknown;
+    message?: string;
+  }> {
+    const following = turn.heldAnswer !== undefined;
+    let pendingToolBoundary: Extract<AgentEvent, { type: "agent.message.end" }> | undefined;
+    try {
+      const stream = (backend ?? this.backend).runTurn(
+        typeof input === "function" ? input() : input,
+        turn.abortController.signal,
+      );
+
+      for await (const rawEvent of stream) {
+        // A provider may flush an abort-shaped error/delta while its stream
+        // unwinds. Once cancellation is authoritative, none of that late
+        // provider output belongs on the client or in canonical history;
+        // the synthesized canceled terminal below is the sole outcome.
+        if (turn.abortController.signal.aborted) break;
+        // A tool_use message-end is ambiguous until the next iterator step:
+        // another event makes it an internal provider-iteration boundary;
+        // clean exhaustion makes it the turn's incomplete terminal.
+        if (pendingToolBoundary) {
+          // A follow-up run's boundaries only count: committing there would
+          // split the answer from the calls the follow-up keeps after it.
+          if (!following) this.handleEvent(pendingToolBoundary, turn);
+          turn.intermediateUsage = addUsage(
+            turn.intermediateUsage,
+            pendingToolBoundary.payload.usage,
+          );
+          pendingToolBoundary = undefined;
+        }
+
+        const event = this.normalizeEvent(rawEvent, turn);
+        if (event.type === "agent.message.end") {
+          if (event.payload.stopReason === "tool_use") {
+            pendingToolBoundary = event;
+            continue;
+          }
+          if (following && event.payload.stopReason !== "end_turn") {
+            // The answer stands; keep the run's usage for the held terminal.
+            log.warn(
+              `session ${this.sessionId} turn ${turn.messageId} follow-up run ended ${event.payload.stopReason}; keeping the answer`,
+            );
+            turn.intermediateUsage = event.payload.usage ?? turn.intermediateUsage;
+            break;
+          }
+          const message = following ? undefined : this.followUpFor(turn, event);
+          if (message !== undefined) {
+            turn.heldAnswer = event;
+            // normalizeEvent already folded the earlier boundaries in.
+            turn.intermediateUsage = event.payload.usage;
+            return { message };
+          }
+          this.handleEvent(event, turn);
+          // A non-tool terminal is authoritative. Stop consuming the
+          // iterator so malformed trailing output, rejection, or a provider
+          // that never closes cannot mutate or strand the completed turn.
+          return { terminal: event };
+        }
+        if (following) {
+          // Nothing of a follow-up run is shown. Its kept calls are recorded
+          // silently; recording a citation still announces the citation.
+          if (this.followUpKeeps(event, turn)) this.handleEvent(event, turn);
+          continue;
+        }
+        this.handleEvent(event, turn);
+        this.broadcast(event);
+        if (turn.abortController.signal.aborted) break;
+      }
+    } catch (err) {
+      // Backend threw synchronously or the iterator threw mid-stream.
+      // Surface a typed error event so subscribers see a terminal state,
+      // then rethrow so the completion promise rejects for the caller.
+      // Cancellation commonly makes provider iterators reject with an
+      // AbortError. That rejection is the expected unwind path, not a model
+      // failure, so let the canceled terminal synthesis below own it.
+      if (!turn.abortController.signal.aborted) {
+        const message =
+          err instanceof Error ? err.message : typeof err === "string" ? err : "backend failed";
+        if (following) {
+          log.warn(
+            `session ${this.sessionId} turn ${turn.messageId} follow-up run failed: ${message}; keeping the answer`,
+          );
+          return pendingToolBoundary ? { pendingToolBoundary } : {};
+        }
+        const errorEvent = this.normalizeEvent(
+          {
+            type: "agent.error",
+            payload: {
+              sessionId: this.sessionId,
+              messageId: turn.messageId,
+              code:
+                err instanceof InferenceUrlPolicyError && err.code === "remote_inference_disabled"
+                  ? err.code
+                  : "internal_error",
+              message,
+            },
+          },
+          turn,
+        );
+        this.handleEvent(errorEvent, turn);
+        this.broadcast(errorEvent);
+        return { thrown: err, ...(pendingToolBoundary ? { pendingToolBoundary } : {}) };
+      }
+    }
+    return pendingToolBoundary ? { pendingToolBoundary } : {};
+  }
+
+  /**
+   * Whether a follow-up run's event joins the turn: only the calls the
+   * follow-up `records`, and their results. Everything else — the run's start,
+   * text, thinking, progress and the calls it does not record — is dropped.
+   */
+  private followUpKeeps(event: AgentEvent, turn: TurnState): boolean {
+    switch (event.type) {
+      case "agent.tool.start":
+        if (this.turnFollowUp?.records(event.payload.tool)) return true;
+        turn.droppedFollowUpCalls.add(event.payload.toolCallId);
+        return false;
+      case "agent.tool.result":
+        return !turn.droppedFollowUpCalls.delete(event.payload.toolCallId);
+      case "agent.error":
+        log.warn(
+          `session ${this.sessionId} turn ${turn.messageId} follow-up run error ${event.payload.code}: ${event.payload.message}`,
+        );
+        return false;
+      default:
+        return false;
+    }
+  }
+
+  /**
+   * The follow-up message `turnFollowUp` asks for when a first run ends with
+   * `end_turn` and an answer, or undefined. A turn that ended with no answer
+   * text has nothing to follow up on.
+   */
+  private followUpFor(
+    turn: TurnState,
+    event: Extract<AgentEvent, { type: "agent.message.end" }>,
+  ): string | undefined {
+    if (!this.turnFollowUp || event.payload.stopReason !== "end_turn") return undefined;
+    // A transport-owned backend (a live voice call) runs only the turns its
+    // transport drives; the session cannot start a run of its own on it.
+    if (turn.backend) return undefined;
+    if (turn.pendingUserParts.length > 0) return undefined;
+    const answered = turn.pendingAssistantParts.some(
+      (part) => part.kind === "text" && part.text.trim().length > 0,
+    );
+    if (!answered) return undefined;
+    const message = this.turnFollowUp.ask(turn.calls);
+    if (message !== undefined) {
+      log.info(`session ${this.sessionId} turn ${turn.messageId} → follow-up run`);
+    }
+    return message;
   }
 
   /**
@@ -952,7 +1134,7 @@ export class AgentSession {
             : {}),
         };
         turn.pendingAssistantParts.push(part);
-        turn.pendingToolUses.set(event.payload.toolCallId, true);
+        turn.pendingToolUses.set(event.payload.toolCallId, event.payload.tool);
         const argsSummary =
           event.payload.argsSummary ?? truncate(JSON.stringify(event.payload.args), 200);
         log.info(
@@ -964,7 +1146,8 @@ export class AgentSession {
         // Drop orphan tool_result events — a tool_result that doesn't
         // match a preceding tool_use would corrupt the history into a
         // shape Anthropic rejects on the next turn.
-        if (!turn.pendingToolUses.has(event.payload.toolCallId)) {
+        const calledTool = turn.pendingToolUses.get(event.payload.toolCallId);
+        if (calledTool === undefined) {
           log.warn(
             `session ${this.sessionId} dropped orphan tool_result for ${event.payload.toolCallId}`,
           );
@@ -981,6 +1164,7 @@ export class AgentSession {
           result: event.payload.result,
         });
         turn.pendingToolUses.delete(event.payload.toolCallId);
+        turn.calls.push({ tool: calledTool, result: event.payload.result });
 
         // Citation update: only annotate results contribute to the Citations
         // panel. Search / fetch / SQL never do — the agent cites explicitly.
@@ -1187,7 +1371,18 @@ interface TurnState {
   segments: ChatMessage[];
   pendingAssistantParts: AssistantPart[];
   pendingUserParts: UserPart[];
-  pendingToolUses: Map<string, true>;
+  /** Open tool calls, by call id, with the tool each one invoked. */
+  pendingToolUses: Map<string, string>;
+  /** Every tool call this turn completed, in completion order. */
+  calls: TurnToolCall[];
+  /**
+   * The first run's final answer, held back while the follow-up run that
+   * {@link SessionOptions.turnFollowUp} asked for is in flight. It is the
+   * turn's terminal if that run fails.
+   */
+  heldAnswer?: Extract<AgentEvent, { type: "agent.message.end" }>;
+  /** Calls a follow-up run made that it does not record, by call id. */
+  droppedFollowUpCalls: Set<string>;
   /** New cited-doc refs added during this turn — keyed by refKey. */
   addedCitationsThisTurn: Map<string, DocRef>;
   /**

@@ -204,7 +204,9 @@
           Recording a document citation requires the agent to fetch its current contents during the
           turn. Any supplied quote must match the read body exactly. For a partial read, a quote
           from the returned passage is required. This checks which source was read, not whether
-          every conclusion is correct.
+          every conclusion is correct. An answer drawn from retrieved documents that cites none of
+          them is not left as it is: the agent is asked once, in the same turn, to read and cite the
+          documents it relied on.
         </p>
         <p>
           For a deliberate, fully orchestrated research pass, type <code>/</code> in the composer
