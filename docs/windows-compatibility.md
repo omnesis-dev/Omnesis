@@ -61,6 +61,25 @@ changes to multi-stage fixture budgets are recorded with their evidence below.
 
 ## Native Windows evidence
 
+Targeted follow-up validation passed all 44 real Gateway/Collector tests across
+eight files on Windows, including Collector parent shutdown and fleet doctor
+commands. The relay suite passed 2,225 tests with 15 conditional skips and 100%
+statement, branch, function and line coverage. Process ownership and encrypted
+bootstrap-reader regressions also passed on Linux and Windows, run sequentially.
+These focused results do not replace the pending complete-suite validation.
+
+Manual acceptance of source revision `686a43ef0` passed on hosted Windows with
+both source and compiled entrypoints. Each mode initialized encrypted storage,
+booted the real Gateway and Collector, paired the Collector, synchronized three
+invented Obsidian documents, and exercised JSON status, search, document reads,
+SQLite and DuckDB analytics. After stopping both daemons, the restart checks
+proved offline status, an actually online Collector, and the same persisted
+document IDs. Keyless encrypted-database opens were refused, with an ordinary
+unencrypted database as the negative control. Every daemon stopped with exit code 0
+and a confirmed process-tree join; no forced fallback or cleanup uncertainty
+occurred. The job waited 4 seconds and ran 11 minutes 14 seconds. This is manual
+runtime evidence for that revision, not a passing broad suite or final tree.
+
 The focused x64 run at revision `11f70451d` passed all 1,889 unit tests across
 137 files, with 27 conditional skips. All 13 gateway E2E tests passed in about
 100 seconds, including gateway ownership, replacement during drain, stale-lock

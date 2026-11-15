@@ -528,6 +528,7 @@ export class GatewayAccountLink {
       verifyProof: (proof, nonce, key) => this.verifyProof(proof, nonce, key),
       canTrust: (signIn) => this.canTrust(signIn),
       trustSignIn: (signIn) => this.trustSignIn(signIn),
+      rememberHint: (signIn) => this.rememberHint(signIn),
       verifyGatewayPasskey: (proof, challenge, nonce) =>
         this.verifyGatewayEnrollment(proof, challenge, nonce),
       approvalCeremony: (binding) => {
@@ -564,6 +565,7 @@ export class GatewayAccountLink {
       verifyStepUp: async (proof, binding) =>
         !this.gatewayOriginAssertionsRefused() &&
         (await this.verifyConfirmed("step-up", proof, binding)),
+      securityLock: () => this.gatewayOriginAssertionsRefused(),
       gatewayPasskey: () => {
         const origin = this.gatewayOrigin();
         return origin
@@ -851,6 +853,26 @@ export class GatewayAccountLink {
     return pin.type === "google"
       ? current.google.includes(pin.id)
       : current.passkeys.some((value) => value.id === pin.id && value.publicKey === pin.publicKey);
+  }
+  /**
+   * How the approval card should offer to remember a sign-in, compared with the sign-in the
+   * gateway was linked with: the pin this gateway verified itself on the link (`link-page`), by
+   * the same id derivation. Nothing the relay lists takes part. Display only.
+   */
+  rememberHint(signIn: VerifiedSignIn): {
+    firstConfirmation: boolean;
+    otherGoogleAccount: boolean;
+  } {
+    const record = this.record?.linked && this.verifiedAccountId() ? this.record : undefined;
+    const linkedWith = (record?.trustedSignIns ?? []).filter(
+      (value) => value.source === "link-page",
+    );
+    const same = linkedWith.some((value) => value.type === signIn.type && value.id === signIn.id);
+    return {
+      firstConfirmation: Boolean(record) && record!.confirmedSignIns.length === 0 && same,
+      otherGoogleAccount:
+        signIn.type === "google" && !same && linkedWith.some((value) => value.type === "google"),
+    };
   }
   /** Confirms the sign-in of a request the owner approved, as `canTrust` allows. */
   async trustSignIn(signIn: VerifiedSignIn): Promise<void> {

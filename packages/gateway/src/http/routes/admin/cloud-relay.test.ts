@@ -53,7 +53,11 @@ beforeEach(() => {
   };
 });
 afterEach(() => vi.unstubAllEnvs());
-function app(auth: AuthContext | null = bearer, configured = true) {
+function app(
+  auth: AuthContext | null = bearer,
+  configured = true,
+  stepUps?: AppEnv["Variables"]["stepUps"],
+) {
   const router = strictRoute(new Hono<AppEnv>());
   router.onError((e, c) => {
     if (e instanceof HttpError) return errorResponse(c, e);
@@ -62,6 +66,7 @@ function app(auth: AuthContext | null = bearer, configured = true) {
   });
   router.use("*", async (c, next) => {
     if (auth) c.set("auth", auth);
+    if (stepUps) c.set("stepUps", stepUps);
     await next();
   });
   mountCloudRelayManagementRoutes(router, configured ? service : undefined, devices);
@@ -87,7 +92,8 @@ test("reads and operates the lifecycle service with exact validated inputs and n
   const router = app();
   const response = await router.request("/admin/cloud-relay");
   expect(response.headers.get("cache-control")).toBe("no-store");
-  expect(await response.json()).toEqual(status);
+  // Without step-up installed, nothing from this session asks for a passkey.
+  expect(await response.json()).toEqual({ ...status, stepUpRequired: false });
   const config = {
     relayUrl: "https://relay.example.test",
     publicOrigin: "https://gateway.example.test",
@@ -108,6 +114,16 @@ test("reads and operates the lifecycle service with exact validated inputs and n
   for (const operation of ["disable", "reconnect", "renew"] as const) {
     expect((await router.request(`/admin/cloud-relay/${operation}`, post())).status).toBe(200);
     expect(service[operation]).toHaveBeenCalledOnce();
+  }
+});
+test("the status says whether this session's loosening actions ask for a passkey first", async () => {
+  for (const required of [true, false]) {
+    const stepUps = {
+      required: vi.fn(() => required),
+    } as unknown as AppEnv["Variables"]["stepUps"];
+    const response = await app(bearer, true, stepUps).request("/admin/cloud-relay");
+    expect(await response.json()).toEqual({ ...status, stepUpRequired: required });
+    expect(stepUps!.required).toHaveBeenCalledOnce();
   }
 });
 test("cookie-based mutations require the portal CSRF token while bearer admin clients work", async () => {

@@ -156,20 +156,23 @@ test("device approval presents the complete comparison code and takes one explic
   await page.goto(`/portal/?token=${encodeURIComponent(token())}`);
   await page.locator("nav.sidebar-nav").waitFor();
   await page.goto("/portal/settings/devices");
-  const section = page.getByRole("region", { name: "Devices waiting for approval" });
+  const section = page.getByRole("region", { name: "Devices waiting for your OK" });
   const card = section.getByRole("article");
   await expect(card).toHaveCount(1);
-  // The card says one thing: who is waiting, the one sentence, the code as the gateway sent it.
+  // The card asks about the device: who is waiting, how it signed in, the question, and the code
+  // the gateway sent, in two groups of three.
+  const name = "Fictional phone with a long device name for comparison";
   await expect(card.locator(":scope > *")).toHaveText([
-    "Fictional phone with a long device name for comparison",
-    "Android app · Google",
-    "A device signed in to your Omnesis account and is waiting for your approval to pair to this gateway. Approve if the code below matches the code shown on the device.",
+    `${name} wants to connect`,
+    "Android app · signed in with Google",
+    `Does ${name} show this code?`,
     verificationCode,
-    /^\s*Approve\s*Deny\s*$/,
+    /^\s*Yes, approve\s*No, deny\s*$/,
   ]);
-  const approve = section.getByRole("button", { name: "Approve", exact: true });
+  await expect(card.locator(".cloud-pairing-code > span")).toHaveText(verificationCode.split(" "));
+  const approve = section.getByRole("button", { name: "Yes, approve", exact: true });
   await expect(approve).toBeEnabled();
-  await expect(section.getByRole("button")).toHaveText(["Approve", "Deny"]);
+  await expect(section.getByRole("button")).toHaveText(["Yes, approve", "No, deny"]);
   await expect(section.getByRole("checkbox")).toHaveCount(0);
   // The same space above the first line and below the last one.
   const space = await card.evaluate((node) => {
@@ -223,9 +226,11 @@ test("a request the gateway still lists as approved, denied or out of time is no
   await page.goto(`/portal/?token=${encodeURIComponent(token())}`);
   await page.locator("nav.sidebar-nav").waitFor();
   await page.goto("/portal/settings/devices");
-  const section = page.getByRole("region", { name: "Devices waiting for approval" });
+  const section = page.getByRole("region", { name: "Devices waiting for your OK" });
   await expect(section.getByRole("article")).toHaveCount(1);
-  await expect(section.getByRole("heading", { level: 3 })).toHaveText(["Fictional tablet"]);
+  await expect(section.getByRole("heading", { level: 3 })).toHaveText([
+    "Fictional tablet wants to connect",
+  ]);
   await expect(section.getByText("000 111", { exact: true })).toBeVisible();
   items = items.slice(1);
   await expect(section).toHaveCount(0);
@@ -321,11 +326,16 @@ test("a device waiting for approval is announced above every page, in the page f
     "A device is waiting for your approval to pair to this gateway.",
     { timeout: 15_000 },
   );
+  // One request left: the strip opens that request.
   await strip.getByRole("button", { name: "Review", exact: true }).click();
-  await expect(page).toHaveURL(/\/portal\/settings\/devices$/);
-  await expect(
-    page.getByRole("region", { name: "Devices waiting for approval" }).getByRole("article"),
-  ).toHaveCount(1);
+  await expect(page).toHaveURL(
+    new RegExp(`/portal/settings/devices\\?request=${items[0]!.requestId as string}$`),
+  );
+  const cards = page
+    .getByRole("region", { name: "Devices waiting for your OK" })
+    .getByRole("article");
+  await expect(cards).toHaveCount(1);
+  await expect(cards).toHaveClass(/cloud-pairing-focused/);
   await expect(page.locator(".cloud-pairing-notice")).toHaveCount(0);
 
   // Nothing waiting any more: no strip on any page.
@@ -460,7 +470,7 @@ test("without the flag the devices page asks for no device approvals", async ({ 
   await page.locator("nav.sidebar-nav").waitFor();
   await page.goto("/portal/settings/devices");
   await expect(page.getByRole("button", { name: "Pair device", exact: true })).toBeVisible();
-  await expect(page.getByRole("region", { name: "Devices waiting for approval" })).toHaveCount(0);
+  await expect(page.getByRole("region", { name: "Devices waiting for your OK" })).toHaveCount(0);
   expect(asked).toBe(false);
 });
 

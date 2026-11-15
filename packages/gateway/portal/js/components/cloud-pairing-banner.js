@@ -28,11 +28,12 @@ export function cloudPairingBannerText(count) {
  */
 export function CloudPairingBanner({ paused = false }) {
   const [available, setAvailable] = useState(false);
-  const [count, setCount] = useState(0);
+  const [waiting, setWaiting] = useState([]);
+  const count = waiting.length;
   const refresh = async () => {
     try {
       const response = await cloudPairingRequests();
-      setCount(waitingCloudPairingRequests(response?.items).length);
+      setWaiting(waitingCloudPairingRequests(response?.items));
     } catch {
       // A failed read keeps the last answer; the next one retries.
     }
@@ -52,7 +53,7 @@ export function CloudPairingBanner({ paused = false }) {
   // Read at once on arrival and when leaving the Devices page, where a request may just have been answered.
   useEffect(() => {
     if (polling) refresh();
-    else setCount(0);
+    else setWaiting([]);
   }, [polling]);
   useVisiblePoll(refresh, POLL_MS, { enabled: polling });
   if (!polling || count === 0) return null;
@@ -64,7 +65,13 @@ export function CloudPairingBanner({ paused = false }) {
         key: "cloud-pairing",
         text: cloudPairingBannerText(count),
         actionLabel: "Review",
-        onAction: () => navigate(CLOUD_PAIRING_DEVICES_PATH),
+        // One request opens that request; several open the list.
+        onAction: () =>
+          navigate(
+            count === 1
+              ? `${CLOUD_PAIRING_DEVICES_PATH}?request=${encodeURIComponent(waiting[0].requestId)}`
+              : CLOUD_PAIRING_DEVICES_PATH,
+          ),
       },
     ]}
   />`;

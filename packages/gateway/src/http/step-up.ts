@@ -13,15 +13,22 @@
  * `POST /admin/step-up` returned for this exact request (method, path, body and device) within
  * the last minute, used once. The gateway's own host, home-network devices paired by code or QR
  * and the local CLI never need it. Actions that make the gateway stricter (deny, "ask me
- * first", removing a sign-in, revoking a device) never need it either.
+ * first", removing a sign-in, revoking a device) never need it either, nor does a phone minting
+ * its own notification credential (`ownPushClaimToken`), which adds no access.
  *
  * A guarded request without a valid step-up is refused with 428 `STEP_UP_REQUIRED`, whose
  * `detail` names what to step up for. While no step-up can start (a certificate incident holds
- * the gateway, or it has no origin of its own), it is refused with 403 `STEP_UP_UNAVAILABLE`.
+ * the gateway, or it has no origin of its own), it is refused with 403 `STEP_UP_UNAVAILABLE`,
+ * whose `detail.reason` is `security-lock` during an incident.
+ *
+ * `required(c)` also answers ahead of time whether this session's loosening actions will ask,
+ * so a page can say so on the button (`stepUpRequired`). That answer only labels: every guarded
+ * request is still checked here, one at a time.
  */
 
 import { createHash, randomBytes } from "node:crypto";
 import { cloudRelayEnabled } from "@omnesis/core";
+import { SCOPE_PUSH_CLAIM } from "@omnesis/types";
 import {
   gatewayPasskeySignInProofSchema,
   gatewayPasskeyStepUpBinding,
@@ -67,6 +74,26 @@ export const declines = (body: unknown): boolean =>
 /** So does choosing "ask me first". */
 export const asksFirst = (body: unknown): boolean =>
   (body as { policy?: unknown } | null | undefined)?.policy === "ask";
+/**
+ * A phone's own notification credential: a token for the requesting device itself whose scopes
+ * are exactly `push:claim`, asked for with a device bearer token that already carries
+ * `push:claim`. That token can do nothing its caller can't: `push:claim` only claims and confirms
+ * the queued notifications of the device it belongs to (`scope.pushClaim()`), and no other scope
+ * is satisfied by it. The iOS and Android apps mint it for their notification handling.
+ */
+export const ownPushClaimToken = (body: unknown, c: Context<AppEnv>): boolean => {
+  const auth = c.get("auth");
+  const value = body as { deviceId?: unknown; scopes?: unknown } | null | undefined;
+  return (
+    auth?.authMethod === "bearer" &&
+    typeof auth.deviceId === "string" &&
+    auth.scopes.includes(SCOPE_PUSH_CLAIM) &&
+    value?.deviceId === auth.deviceId &&
+    Array.isArray(value.scopes) &&
+    value.scopes.length === 1 &&
+    value.scopes[0] === SCOPE_PUSH_CLAIM
+  );
+};
 
 const sha256Hex = (bytes: Uint8Array) => createHash("sha256").update(bytes).digest("hex");
 
@@ -110,6 +137,14 @@ export class StepUps {
   }
 }
 
+/**
+ * Whether this session's loosening actions will ask for a step-up, for a page to say so on the
+ * button. Labels only: `requireStepUp` still checks every guarded request on its own.
+ */
+export function stepUpRequired(c: Context<AppEnv>): boolean {
+  return c.get("stepUps")?.required(c) ?? false;
+}
+
 function binding(
   c: Context<AppEnv>,
   request: { method: string; path: string; bodySha256: string },
@@ -117,7 +152,14 @@ function binding(
   return gatewayPasskeyStepUpBinding({ ...request, deviceId: requester(c.get("auth")) });
 }
 
-function unavailable(): HttpError {
+function unavailable(source: StepUpSource): HttpError {
+  if (source.enrollment()?.securityLock?.())
+    return new HttpError(
+      403,
+      "STEP_UP_UNAVAILABLE",
+      "Security lock is on. This change can only be made on the computer running Omnesis right now.",
+      { reason: "security-lock" },
+    );
   return new HttpError(
     403,
     "STEP_UP_UNAVAILABLE",
@@ -126,10 +168,13 @@ function unavailable(): HttpError {
 }
 
 /**
- * Guards one route. `exempt` sees the JSON body and says whether this request only makes the
- * gateway stricter (a deny, "ask me first"); anything it does not recognise needs a step-up.
+ * Guards one route. `exempt` sees the JSON body (and the request) and says whether this request
+ * adds no access (a deny, "ask me first", a phone's own notification credential); anything it does
+ * not recognise needs a step-up.
  */
-export function requireStepUp(exempt?: (body: unknown) => boolean): MiddlewareHandler<AppEnv> {
+export function requireStepUp(
+  exempt?: (body: unknown, c: Context<AppEnv>) => boolean,
+): MiddlewareHandler<AppEnv> {
   return async (c, next) => {
     const stepUps = c.get("stepUps");
     if (!stepUps?.required(c)) return next();
@@ -141,9 +186,9 @@ export function requireStepUp(exempt?: (body: unknown) => boolean): MiddlewareHa
       } catch {
         body = undefined;
       }
-      if (exempt(body)) return next();
+      if (exempt(body, c)) return next();
     }
-    if (!stepUps.available()) throw unavailable();
+    if (!stepUps.available()) throw unavailable(stepUps.source);
     const url = new URL(c.req.url);
     const request = {
       method: c.req.method.toUpperCase(),
@@ -190,7 +235,7 @@ export function mountStepUp(app: RouteApp, source: StepUpSource): void {
   app.post("/admin/step-up/options", scope.admin(), bounded, validateJson(stepUpRequest), (c) => {
     c.header("Cache-Control", "no-store");
     const ceremony = source.enrollment()?.stepUpCeremony?.(binding(c, c.req.valid("json")));
-    if (!ceremony) throw unavailable();
+    if (!ceremony) throw unavailable(source);
     return c.json(ceremony);
   });
   // The assertion for it, exchanged for an id the request then carries.
@@ -202,7 +247,7 @@ export function mountStepUp(app: RouteApp, source: StepUpSource): void {
       throw new HttpError(
         403,
         "STEP_UP_REFUSED",
-        "Your gateway didn't accept that passkey. Use a passkey you confirmed on this gateway.",
+        "That passkey can't approve changes here. Use the passkey you set up for this gateway.",
       );
     return c.json(stepUps.issue(value));
   });

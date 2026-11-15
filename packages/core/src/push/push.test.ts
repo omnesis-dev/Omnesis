@@ -16,6 +16,7 @@ import {
   claimedNotificationSchema,
   notificationDeliveryHealthReportSchema,
   notificationRoute,
+  notificationRouteSchema,
   notificationTargetId,
   pushPlanRequestSchema,
   pushPlanSchema,
@@ -285,4 +286,37 @@ test("device pairing notifications carry no enrollment secrets or granting autho
     notificationMessageSchema.safeParse({ ...message, data: { verificationCode: "FICTIONAL" } })
       .success,
   ).toBe(false);
+  // A tap opens the waiting request by its id, and only that: still no code or secret.
+  const linked = notificationMessageSchema.parse({ ...message, data: { requestId: "request-1" } });
+  expect(notificationTargetId(linked)).toBe("pairing");
+  expect(notificationRoute(linked)).toEqual({ kind: "device-pairing", requestId: "request-1" });
+  expect(notificationRouteSchema.parse(notificationRoute(linked))).toEqual(
+    notificationRoute(linked),
+  );
+  expect(
+    notificationMessageSchema.safeParse({
+      ...message,
+      data: { requestId: "request-1", verificationCode: "FICTIONAL" },
+    }).success,
+  ).toBe(false);
+});
+
+test("a joined-device notification opens that device, and an older one still reads", () => {
+  const message = notificationMessageSchema.parse({
+    kind: "device-joined",
+    title: "New device connected",
+    body: "Fictional laptop connected to your gateway. Not you? Tap to remove it.",
+    collapseId: "device-joined:fixture",
+    data: { deviceId: "device-1" },
+  });
+  expect(notificationTargetId(message)).toBe("devices");
+  expect(notificationRoute(message)).toEqual({ kind: "device-joined", deviceId: "device-1" });
+  expect(notificationRouteSchema.parse(notificationRoute(message))).toEqual(
+    notificationRoute(message),
+  );
+  const older = notificationMessageSchema.parse({ ...message, data: {} });
+  expect(notificationRoute(older)).toEqual({ kind: "device-joined" });
+  expect(notificationMessageSchema.safeParse({ ...message, data: { deviceId: "" } }).success).toBe(
+    false,
+  );
 });

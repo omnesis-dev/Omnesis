@@ -114,7 +114,7 @@ test("a gateway that cannot say whether sign-in pairing is on shows nothing, and
   expect(api.cloudPairingRequests).not.toHaveBeenCalled();
 });
 
-test("one waiting device: one line and one action that opens the devices page", async () => {
+test("one waiting device: one line and one action that opens that request", async () => {
   api.cloudPairingRequests.mockResolvedValue({ items: [request("a")] });
   await show();
   expect(strip()?.getAttribute("aria-label")).toBe("Devices waiting for approval");
@@ -124,7 +124,7 @@ test("one waiting device: one line and one action that opens the devices page", 
   const action = host.querySelector("button") as HTMLButtonElement;
   expect(action.textContent?.trim()).toBe("Review");
   await act(async () => action.click());
-  expect(router.navigate).toHaveBeenCalledExactlyOnceWith("/portal/settings/devices");
+  expect(router.navigate).toHaveBeenCalledExactlyOnceWith("/portal/settings/devices?request=a");
 });
 
 test("several waiting devices share one strip with a count, and answered ones are not counted", async () => {
@@ -145,6 +145,9 @@ test("several waiting devices share one strip with a count, and answered ones ar
   expect(cloudPairingBannerText(3)).toBe(
     "3 devices are waiting for your approval to pair to this gateway.",
   );
+  // Several open the list, where each one is answered.
+  await act(async () => (host.querySelector("button") as HTMLButtonElement).click());
+  expect(router.navigate).toHaveBeenCalledExactlyOnceWith("/portal/settings/devices");
 });
 
 test("the strip goes once nothing waits, and a failed read keeps the last answer", async () => {

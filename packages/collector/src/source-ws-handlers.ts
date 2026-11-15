@@ -15,8 +15,8 @@
  */
 
 import { spawn, type ChildProcess } from "node:child_process";
+import { authSubprocessEnvironment } from "./auth-subprocess-env.js";
 import {
-  KEYRING_ENV_KEYS,
   collectorHostname,
   createLogger,
   toErrorMessage,
@@ -333,39 +333,7 @@ export function createSourceWsHandlers(deps: SourceWsHandlerDeps): SourceWsHandl
     // shell exports, unrelated cloud-credential env vars, debug
     // tokens — could otherwise leak into a third-party OAuth client
     // library. Mirrors the exec-runner.ts approach (#triggers/exec).
-    const env: Record<string, string> = {};
-    for (const key of [
-      "PATH",
-      "HOME",
-      "LANG",
-      "LC_ALL",
-      "TZ",
-      "TMPDIR",
-      "USER",
-      "LOGNAME",
-      "DBUS_SESSION_BUS_ADDRESS",
-      "XDG_RUNTIME_DIR",
-      ...KEYRING_ENV_KEYS,
-    ]) {
-      const v = process.env[key];
-      if (v !== undefined) env[key] = v;
-    }
-    // Forward the OMNESIS_* keys the auth subprocess actually
-    // consumes (config dir, gateway URL for callback delivery,
-    // credentials path overrides). Subprocess `process.env` reads
-    // beyond this set should fail loudly so we don't accidentally
-    // open new env-deps without auditing them.
-    for (const [key, value] of Object.entries(process.env)) {
-      if (!value) continue;
-      if (!key.startsWith("OMNESIS_")) continue;
-      // Withheld deliberately: the child's logger writes directly to this file
-      // when it is set, which would put provider log lines into the collector's
-      // log without passing the stderr redaction below. Unset, they arrive on
-      // stderr and are redacted.
-      if (key === "OMNESIS_LOG_FILE") continue;
-      env[key] = value;
-    }
-    env.OMNESIS_CONFIG_DIR = sourceManager.getConfigDir();
+    const env = authSubprocessEnvironment(sourceManager.getConfigDir());
 
     // Validate the pasted fields here rather than in the provider: this is the
     // only place that still holds the spec, and it is the last point at which a

@@ -320,7 +320,8 @@ export function CloudPairingLogin({ onReady } = {}) {
     }
   }
 
-  async function start() {
+  /** `method` is the button pressed, so the account page offers only that sign-in. */
+  async function start(method) {
     if (busy) return;
     invalidate();
     const current = attempt.current;
@@ -357,10 +358,9 @@ export function CloudPairingLogin({ onReady } = {}) {
       if (!response.ok) throw new Error("Couldn't start sign-in. Please try again.");
       const value = await response.json();
       if (current !== attempt.current) return;
-      const destination = (config.accountSignIn ? accountAuthorizationUrl : googleAuthorizationUrl)(
-        value.authorizationUrl,
-        config.authorizationRelayOrigin,
-      );
+      const destination = config.accountSignIn
+        ? accountAuthorizationUrl(value.authorizationUrl, config.authorizationRelayOrigin, method)
+        : googleAuthorizationUrl(value.authorizationUrl, config.authorizationRelayOrigin);
       sessionStorage.setItem(GOOGLE_PAIRING_STORAGE_KEY, JSON.stringify(pending));
       window.location.assign(destination);
     } catch (failure) {
@@ -535,7 +535,7 @@ export function CloudPairingLogin({ onReady } = {}) {
                 type="button"
                 class="login-button"
                 disabled=${busy}
-                onClick=${passkeyHere ? passkeySignIn : start}
+                onClick=${passkeyHere ? passkeySignIn : () => start("passkey")}
               >
                 ${busy ? (passkeyHere ? LOGIN_COPY.waitingForPasskey : LOGIN_COPY.opening) : LOGIN_COPY.passkey}
               </button>`
@@ -544,7 +544,7 @@ export function CloudPairingLogin({ onReady } = {}) {
               type="button"
               class="login-button google-sign-in-button"
               disabled=${busy}
-              onClick=${start}
+              onClick=${() => start("google")}
             >
               <img
                 src="/portal/img/google-sign-in-mark.png"

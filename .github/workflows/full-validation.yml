@@ -21,6 +21,7 @@ on:
             config-baseline,
             cache-baseline,
             cache-green,
+            auth-env-baseline,
           ]
         default: regressions
 permissions:
@@ -30,7 +31,7 @@ env:
   TZ: UTC
 jobs:
   process-green:
-    if: ${{ inputs.scope == 'process-green' || inputs.scope == 'cache-green' }}
+    if: ${{ inputs.scope == 'process-green' || inputs.scope == 'cache-green' || inputs.scope == 'auth-env-baseline' }}
     strategy:
       fail-fast: false
       max-parallel: 1
@@ -51,6 +52,13 @@ jobs:
           cache: npm
       - name: Install locked dependencies
         run: node scripts/ci/npm-ci.mjs --no-audit --no-fund
+      - name: Reproduce the restricted authentication environment on the real native credential reader
+        if: ${{ inputs.scope == 'auth-env-baseline' }}
+        run: >-
+          node scripts/run-check.mjs unit
+          packages/collector/src/auth-subprocess-env.test.ts
+          packages/collector/src/source-ws-handlers.auth-begin.test.ts
+          packages/collector/src/auth-subprocess.keyring.test.ts
       - name: Validate scoped keys with existing secret, config, TLS and CI contracts
         if: ${{ inputs.scope == 'cache-green' }}
         run: >-

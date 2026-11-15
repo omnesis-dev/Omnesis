@@ -961,6 +961,43 @@ describe("new devices", () => {
     expect(button("Remove")).toBeUndefined();
     expect(host.querySelector('button[aria-label^="Remove"]')).toBeNull();
   });
+  test("when turning on automatic joins asks for Face ID here, the choice says so before the prompt", async () => {
+    state.status = connected({
+      stepUpRequired: true,
+      deviceEnrollment: { policy: "ask", trustedSignIns: [] },
+    });
+    await show();
+    const hints = [...host.querySelectorAll(".relay-option-face-id")];
+    expect(hints.map((hint) => hint.textContent)).toEqual(["Turns on with Face ID."]);
+    expect(hints[0]!.closest("label")?.querySelector("input")?.getAttribute("value")).toBe(
+      "automatic",
+    );
+    const radios = [...host.querySelectorAll('input[name="relay-policy"]')] as HTMLInputElement[];
+    await act(async () => {
+      radios[0]!.dispatchEvent(new window.Event("change", { bubbles: true }));
+    });
+    expect(state.run).toHaveBeenLastCalledWith("enrollment", { policy: "automatic" }, "PUT", {
+      stepUpAnnounced: true,
+    });
+    // Already automatic: nothing to turn on, and "ask me first" never asks.
+    state.status = connected({ stepUpRequired: true });
+    await show();
+    expect(host.querySelector(".relay-option-face-id")).toBeNull();
+    const again = [...host.querySelectorAll('input[name="relay-policy"]')] as HTMLInputElement[];
+    await act(async () => {
+      again[1]!.dispatchEvent(new window.Event("change", { bubbles: true }));
+    });
+    expect(state.run).toHaveBeenLastCalledWith("enrollment", { policy: "ask" }, "PUT");
+    // Without step-up here, no hint and nothing announced.
+    state.status = connected({ deviceEnrollment: { policy: "ask", trustedSignIns: [] } });
+    await show();
+    expect(host.querySelector(".relay-option-face-id")).toBeNull();
+    const plain = [...host.querySelectorAll('input[name="relay-policy"]')] as HTMLInputElement[];
+    await act(async () => {
+      plain[0]!.dispatchEvent(new window.Event("change", { bubbles: true }));
+    });
+    expect(state.run).toHaveBeenLastCalledWith("enrollment", { policy: "automatic" }, "PUT");
+  });
   test("is absent without an enrollment status or before the gateway is connected", async () => {
     state.status = connected({ deviceEnrollment: undefined });
     await show();

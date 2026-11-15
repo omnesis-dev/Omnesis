@@ -106,6 +106,7 @@ describe("Windows CI coverage", () => {
       "packages/collector/src/e2e/e2e-buffered-command.test.ts",
       "packages/collector/src/e2e/multi-collector-harness-cleanup.test.ts",
       "packages/core/src/config-private-cleanup.test.ts",
+      "packages/core/src/secret-file-cache.test.ts",
     ]) {
       expect(FOCUSED_UNIT_FILES).toContain(file);
     }
