@@ -25,6 +25,7 @@ import dev.omnesis.android.pairing.DeviceTokenRotator
 import dev.omnesis.android.pairing.KeystoreDeviceKeys
 import dev.omnesis.android.pairing.Pairing
 import dev.omnesis.android.pairing.PairingService
+import dev.omnesis.android.pairing.PairingTlsMode
 import dev.omnesis.android.pairing.PairedGatewayRoutes
 import dev.omnesis.android.pairing.GatewayDirectCandidateDiscovery
 import dev.omnesis.android.setup.PhoneSetupStep
@@ -445,6 +446,13 @@ class SessionManager @Inject constructor(
         rebuild()
         return pairing
     }
+
+    /**
+     * The gateway key this install is paired with under a strict key pin. It was learned without
+     * the relay, so a sign-in that reaches this same key can trust the gateway's own decision.
+     */
+    fun pinnedGatewayKey(): String? =
+        pairingService.current()?.takeIf { it.tlsMode == PairingTlsMode.PINNED_KEY_STRICT }?.spkiFingerprint
 
     fun updateGatewayUrl(url: String) {
         pairingService.updateGatewayURL(url)
