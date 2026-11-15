@@ -150,3 +150,5 @@ jobs:
           packages/providers/whatsapp/src/doctor-key-cleanup.test.ts
           packages/providers/telegram/src/doctor-key-cleanup.test.ts
           packages/providers/apple/src/doctor-key-cleanup.test.ts
+          packages/gateway/src/agent/conversation-store-cleanup.test.ts
+          packages/gateway/src/agent/service-publication-cleanup.test.ts
