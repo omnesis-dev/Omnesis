@@ -75,7 +75,7 @@ type Node struct {
 	kick           chan struct{}
 }
 
-// New prepares a node; Run starts it.
+// New prepares a node; Start brings up the backend and Run serves it.
 func New(cfg Config) *Node {
 	if cfg.Fallback == nil {
 		cfg.Fallback = certs.NewFallback("", "")

@@ -416,7 +416,10 @@ export class TailscaleEmbedService {
   }
 
   private async gatewayCertificate(): Promise<Readonly<TlsPem>> {
-    if (this.options.servedMaterial) return this.options.servedMaterial();
+    if (this.options.servedMaterial) {
+      const { cert, key } = this.options.servedMaterial();
+      return { cert, key };
+    }
     const paths = this.options.tlsMaterial();
     return {
       cert: await readFile(paths.cert, "utf8"),

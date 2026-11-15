@@ -18,14 +18,14 @@ import (
 type Fallback struct {
 	certPath, keyPath string
 
-	mu       sync.Mutex
+	mu            sync.Mutex
 	parentManaged bool
-	cert     *tls.Certificate
-	certMod  time.Time
-	keyMod   time.Time
-	checked  time.Time
-	interval time.Duration
-	now      func() time.Time
+	cert          *tls.Certificate
+	certMod       time.Time
+	keyMod        time.Time
+	checked       time.Time
+	interval      time.Duration
+	now           func() time.Time
 }
 
 // NewFallback returns a loader for the given PEM files.

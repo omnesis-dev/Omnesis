@@ -55,6 +55,7 @@ export const FOCUSED_UNIT_FILES = [
   "packages/gateway/src/tailscale-embed/notifier.test.ts",
   "packages/gateway/src/tailscale-embed/protocol.test.ts",
   "packages/gateway/src/tailscale-embed/service.integration.test.ts",
+  "packages/gateway/src/tailscale-embed/service.gateway-certificate.test.ts",
   "packages/gateway/src/tailscale-embed/service.ownership.test.ts",
   "packages/gateway/src/tailscale-embed/settings.test.ts",
   "packages/gateway/src/tailscale-embed/socket-server.test.ts",

@@ -26,9 +26,9 @@ const Version = 2
 // Command types the gateway may send.
 const (
 	CommandGatewayCertificate = "gateway-certificate"
-	CommandConfigure = "configure"
-	CommandLogin     = "login"
-	CommandLogout    = "logout"
+	CommandConfigure          = "configure"
+	CommandLogin              = "login"
+	CommandLogout             = "logout"
 )
 
 // Command is one instruction from the gateway.
@@ -36,14 +36,14 @@ type Command struct {
 	Type string `json:"type"`
 	// Public is set on configure: whether the public address is wanted and
 	// which paths it may serve.
-	Public *PublicConfig `json:"public,omitempty"`
+	Public      *PublicConfig       `json:"public,omitempty"`
 	Certificate *GatewayCertificate `json:"certificate,omitempty"`
 }
 
 // GatewayCertificate is private parent-to-helper material, never emitted in status.
 type GatewayCertificate struct {
 	Cert string `json:"cert"`
-	Key string `json:"key"`
+	Key  string `json:"key"`
 }
 
 // PublicConfig is the gateway's wish for the public (Funnel) address.

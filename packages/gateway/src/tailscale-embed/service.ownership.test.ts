@@ -170,3 +170,26 @@ test("shutdown retains a pending certificate read and refuses to send its result
   expect(close).toHaveBeenCalledOnce();
   expect(service.cleanupFailure()).toBeUndefined();
 });
+
+test("certificate-read cleanup uncertainty remains terminal after independent helper and socket closure", async () => {
+  const { service, supervisor, stop, close } = await boot();
+  const marker = Object.assign(new Error("invented certificate reader cleanup uncertainty"), {
+    cleanupFailure: undefined,
+  });
+  socket.readKey.mockRejectedValueOnce(marker);
+  const send = vi.spyOn(supervisor, "send");
+  await expect(service.refreshGatewayCertificate()).rejects.toBe(marker);
+  expect(ownedProcessCleanupReceipt(service.cleanupFailure())).toEqual({
+    failure: undefined,
+    pending: false,
+  });
+  await expect(service.setEnabled(true)).rejects.toHaveProperty("cleanupFailure", undefined);
+  expect(send).not.toHaveBeenCalled();
+  await service.shutdown();
+  expect(stop).toHaveBeenCalledOnce();
+  expect(close).toHaveBeenCalledOnce();
+  expect(ownedProcessCleanupReceipt(service.cleanupFailure())).toEqual({
+    failure: undefined,
+    pending: false,
+  });
+});

@@ -81,6 +81,9 @@ func main() {
 			os.Exit(1)
 		}
 	}
+	if ctx.Err() != nil {
+		return
+	}
 	n := node.New(node.Config{
 		StateDir:                *stateDir,
 		Hostname:                *hostname,
@@ -137,8 +140,7 @@ type commander interface {
 	Logout(context.Context) error
 }
 
-// readCommands applies the gateway's commands, one JSON line each, until r
-// ends. A line it cannot parse is logged and skipped.
+// commandScanner bounds every private input frame.
 func commandScanner(r io.Reader) *bufio.Scanner {
 	sc := bufio.NewScanner(r)
 	sc.Buffer(make([]byte, 64*1024), 1024*1024)
@@ -158,6 +160,7 @@ func readGatewayCertificateBootstrap(sc *bufio.Scanner, fallback *certs.Fallback
 	return fallback.SetPEM(cmd.Certificate.Cert, cmd.Certificate.Key)
 }
 
+// readCommands applies JSON lines until EOF, skipping invalid commands.
 func readCommands(ctx context.Context, r io.Reader, n commander, logger *log.Logger) {
 	readCommandScanner(ctx, commandScanner(r), n, logger)
 }

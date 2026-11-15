@@ -38,6 +38,11 @@ afterEach(async () => {
       uncertain ||= ownedProcessCleanupReceipt(error) !== undefined;
       errors.push(error);
     }
+    const remaining = fixture.service?.cleanupFailure();
+    if (ownedProcessCleanupReceipt(remaining)) {
+      uncertain = true;
+      errors.push(remaining);
+    }
     if (!uncertain) rmSync(fixture.dir, { recursive: true, force: true });
   }
   vi.unstubAllEnvs();

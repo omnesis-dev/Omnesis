@@ -38,7 +38,6 @@ func TestParseCommandRejects(t *testing.T) {
 		`{"type":"login","certificate":{"cert":"x","key":"y"}}`,
 		`{"type":"configure","certificate":{"cert":"x","key":"y"},"public":{"enabled":false,"paths":[]}}`,
 		`{"type":"login"} {"type":"logout"}`,
-
 	}
 	for _, line := range bad {
 		if _, err := ParseCommand([]byte(line)); err == nil {
