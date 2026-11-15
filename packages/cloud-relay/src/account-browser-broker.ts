@@ -18,6 +18,7 @@ import {
   accountBrowserStart,
   accountBrowserRedemption,
   accountBrowserTranscript,
+  type AccountBrowserMethod,
   type AccountBrowserOwner,
   type AccountBrowserRequest,
 } from "./account-browser-contract.js";
@@ -38,6 +39,8 @@ interface Operation {
   phase: "created" | "launched" | "verifying" | "completed";
   /** Linking signs in to an account; creating one instead is the person's explicit choice. */
   intent: "create" | "existing";
+  /** The sign-in the gateway's page already chose; the account page offers only that one. */
+  method?: AccountBrowserMethod;
   result?: { hash: Buffer; identityToken: string; account: AccountBrowserAccount };
 }
 const opaque = z.string().regex(/^[A-Za-z0-9_-]{43}$/);
@@ -143,7 +146,7 @@ export class AccountBrowserBroker implements AccountOperationBroker {
     };
   }
 
-  launch(id: string, ticket: string) {
+  launch(id: string, ticket: string, method?: AccountBrowserMethod) {
     const operation = this.current(id);
     // The link may be opened again until somebody signs in; each launch drops the previous browser.
     if (
@@ -158,6 +161,8 @@ export class AccountBrowserBroker implements AccountOperationBroker {
     const browser = secret();
     operation.browserHash = digest(browser);
     operation.phase = "launched";
+    // Each launch says it again, so a plain link opened later offers every sign-in.
+    operation.method = method;
     return { location: `/_relay/account?operation=${id}`, cookie: this.cookie(operation, browser) };
   }
 
@@ -169,6 +174,7 @@ export class AccountBrowserBroker implements AccountOperationBroker {
       expiresAt: operation.request.expiresAt,
       needsProof: operation.proof.needed(),
       ...(operation.request.purpose === "owner-link" ? { intent: operation.intent } : {}),
+      ...(operation.method ? { method: operation.method } : {}),
     };
   }
   setIntent(id: string, cookieHeader: string, intent: "create" | "existing"): void {

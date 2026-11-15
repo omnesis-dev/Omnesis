@@ -872,9 +872,19 @@ describe.skipIf(!browserReady)("devices join a gateway by signing in", () => {
     await gateway.pace(3);
     const page = session.page;
     await page.goto(`${gateway.publicOrigin}/portal/`);
-    // "Continue with Google" opens the relay's account page, which offers the passkey too;
-    // "Continue with Face ID" would sign in on the gateway's own page instead.
+    // "Continue with Google" opens the relay's account page for Google alone (this relay has no
+    // Google, so the page offers what it has), and "Continue with Face ID" signs in on the
+    // gateway's own page. A passkey on the relay's page, the case under test, is the same
+    // one-use launch opened without the gateway's choice.
+    const launched = page.waitForRequest((request) =>
+      request.url().includes("/_relay/v3/account-browser/begin"),
+    );
     await clickFirst(page, ["Continue with Google"]);
+    const launch = new URL((await launched).url());
+    expect(launch.searchParams.get("method")).toBe("google");
+    await page.waitForURL((url) => url.pathname === "/_relay/account");
+    launch.searchParams.delete("method");
+    await page.goto(launch.href);
     await clickFirst(page, ["Sign in with Passkey", "Verify with Passkey"]);
     await waitFor(
       () => new URL(page.url()).origin === new URL(gateway.publicOrigin).origin,

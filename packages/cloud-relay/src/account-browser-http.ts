@@ -3,6 +3,7 @@
 
 import { z } from "zod";
 import {
+  ACCOUNT_BROWSER_METHODS,
   ACCOUNT_BROWSER_PATH,
   ACCOUNT_CREDENTIALS_EVIDENCE,
   type AccountBrowserOwner,
@@ -13,7 +14,11 @@ import type { AccountBrowserBroker } from "./account-browser-broker.js";
 import type { LoginAdmission } from "./admission.js";
 
 const launch = z
-  .object({ operationId: z.string().uuid(), ticket: z.string().regex(/^[A-Za-z0-9_-]{43}$/) })
+  .object({
+    operationId: z.string().uuid(),
+    ticket: z.string().regex(/^[A-Za-z0-9_-]{43}$/),
+    method: z.enum(ACCOUNT_BROWSER_METHODS).optional(),
+  })
   .strict();
 const cancel = z.object({ operationId: z.string().uuid() }).strict();
 const empty = z.object({}).strict();
@@ -44,15 +49,18 @@ export class AccountBrowserHttp {
     if (url.pathname === ACCOUNT_BROWSER_PATH + "/begin") {
       if (req.method !== "GET") throw new RelayError(405, "Method not allowed");
       if (
-        url.searchParams.size !== 2 ||
-        url.searchParams.getAll("operationId").length !== 1 ||
-        url.searchParams.getAll("ticket").length !== 1
+        url.searchParams.size !== (url.searchParams.has("method") ? 3 : 2) ||
+        ["operationId", "ticket"].some((key) => url.searchParams.getAll(key).length !== 1)
       )
         throw new RelayError(400, "Invalid account browser launch");
       const input = launch.safeParse(Object.fromEntries(url.searchParams));
       if (!input.success) throw new RelayError(400, "Invalid account browser launch");
       return this.options.admission.run(async () => {
-        const result = this.options.broker.launch(input.data.operationId, input.data.ticket);
+        const result = this.options.broker.launch(
+          input.data.operationId,
+          input.data.ticket,
+          input.data.method,
+        );
         res.writeHead(303, { location: result.location, "set-cookie": result.cookie });
         res.end();
         return true;

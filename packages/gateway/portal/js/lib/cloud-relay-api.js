@@ -170,8 +170,11 @@ export function googleAuthorizationUrl(value, installationRelayUrl) {
   return url.href;
 }
 
-/** Account handoffs accept only a one-use capability at the configured account authority. */
-export function accountAuthorizationUrl(value, installationRelayUrl) {
+/**
+ * Account handoffs accept only a one-use capability at the configured account authority. `method`
+ * names the sign-in this page already chose, so the account page offers only that one.
+ */
+export function accountAuthorizationUrl(value, installationRelayUrl, method) {
   const safe = relayHttpsUrl(value),
     service = relayHttpsUrl(installationRelayUrl);
   if (!safe || !service) throw new Error("Omnesis account sign-in is unavailable.");
@@ -189,5 +192,10 @@ export function accountAuthorizationUrl(value, installationRelayUrl) {
     !/^[A-Za-z0-9_-]{43}$/.test(url.searchParams.get("ticket"))
   )
     throw new Error("Omnesis account sign-in is unavailable.");
+  if (method !== undefined) {
+    if (method !== "google" && method !== "passkey")
+      throw new Error("Omnesis account sign-in is unavailable.");
+    url.searchParams.set("method", method);
+  }
   return url.href;
 }
