@@ -351,6 +351,28 @@ describe("relay only", () => {
     expect(button("Continue")?.className).toBe("btn-primary");
   });
 
+  test("an invite-only relay links to its request-access page before an account and after a refused sign-in", async () => {
+    const signup = { inviteOnly: true, requestAccessUrl: "https://relay.example.test/request-access" };
+    const requestLink = () =>
+      [...host.querySelectorAll<HTMLAnchorElement>(".relay-invite a")].find((a) => a.textContent === "Request access");
+    gateway.relay = { ...relayNone(), signup };
+    await mount(FLAGS.relay);
+    expect(heading()).toBe("Do you want an Omnesis account?");
+    expect(requestLink()?.href).toBe("https://relay.example.test/request-access");
+    expect(requestLink()?.target).toBe("_blank");
+    expect(host.querySelector(".relay-invite-host")?.textContent).toBe("(relay.example.test)");
+    gateway.relay = { ...relayNone(), signup, connect: { state: "failed", error: "not-allowed" } };
+    await remount(FLAGS.relay);
+    expect(requestLink()).toBeDefined();
+    // A relay open to everyone, or a link that is not https, shows no invitation.
+    gateway.relay = { ...relayNone(), signup: { inviteOnly: false, requestAccessUrl: signup.requestAccessUrl } };
+    await remount(FLAGS.relay);
+    expect(requestLink()).toBeUndefined();
+    gateway.relay = { ...relayNone(), signup: { inviteOnly: true, requestAccessUrl: "http://relay.example.test/x" } };
+    await remount(FLAGS.relay);
+    expect(requestLink()).toBeUndefined();
+  });
+
   test("an unavailable installation and a failed connect say why", async () => {
     gateway.relay = { ...relayNone(), serviceConfigured: false, serviceError: "relay-service-unavailable" };
     await mount(FLAGS.relay);
