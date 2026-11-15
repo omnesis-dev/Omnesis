@@ -919,6 +919,7 @@ export async function main() {
     sourceManager: manager,
     gateway,
     emitEvent: (type, payload) => wsClient.emitEvent(type, payload),
+    onOwnershipChanged: () => ownedShutdown.ownershipChanged(),
     onSourcesChanged: () => {
       void engine.refreshAllSourceMeta();
       // Same per-source metadata pushes the sources.snapshot handler fires:
@@ -936,6 +937,7 @@ export async function main() {
       });
     },
   });
+  ownedShutdown.attach(sourceHandlers);
 
   // Commands this collector answers itself, registered through the same typed
   // table the source/auth handlers use: a handler whose answer disagrees with
@@ -1197,8 +1199,8 @@ export async function main() {
   const shutdown = async (): Promise<void> => {
     if (shuttingDown) return;
     shuttingDown = true;
-    const diagnosticCleanup = ownedShutdown.close();
-    void diagnosticCleanup.catch(() => {});
+    const ownedCleanup = ownedShutdown.close();
+    void ownedCleanup.catch(() => {});
     log.info("Shutting down collector...");
     try {
       const { inflight, timedOut } = await engine.stopSyncLoopAndDrain(SHUTDOWN_DRAIN_MS);
@@ -1217,25 +1219,15 @@ export async function main() {
     } catch (err) {
       log.error(`wsClient.disconnect threw: ${toErrorMessage(err)}`);
     }
-    // Stop accepting diagnostics and join their actual probes before their
-    // provider instances can be disposed. A report timeout is not a join.
+    // Diagnostic probes, source commands, imports and auth cleanup each close
+    // independently; every accepted operation must join before process exit.
     try {
-      await diagnosticCleanup;
+      await ownedCleanup;
     } catch (err) {
       ownedShutdown.observeFailure(err);
-      log.error(`Diagnostic cleanup failed: ${toErrorMessage(err)}`);
+      log.error(`Collector cleanup failed: ${toErrorMessage(err)}`);
     }
     if (ownedProcessCleanupReceipt(ownedShutdown.cleanupFailure())) return ownedShutdown.finish(0);
-    // Kill any in-flight auth subprocesses (`tsx`
-    // children spawned by `auth.begin`) before exiting. Without
-    // this, a SIGINT during an OAuth dance leaks orphan processes
-    // that survive the parent and keep `:3000-3003` (callback
-    // server) bound, blocking the next launch.
-    try {
-      await sourceHandlers.shutdown();
-    } catch (err) {
-      log.error(`sourceHandlers.shutdown threw: ${toErrorMessage(err)}`);
-    }
     log.info("Collector stopped");
     return ownedShutdown.finish(0);
   };

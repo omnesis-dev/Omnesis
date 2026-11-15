@@ -3,7 +3,7 @@
 
 import type { SourceInstance, SourceReadAccessResult } from "@omnesis/source-sdk";
 import { ownedProcessCleanupReceipt } from "@omnesis/core";
-import { DoctorOwnedWork } from "./doctor-owned-work.js";
+import { CollectorOwnedWork } from "./owned-work.js";
 
 export interface DoctorReadAccessSource {
   sourceId: string;
@@ -19,14 +19,14 @@ const SCAN_TIMEOUT_MS = 20_000;
 const PROBE_CONCURRENCY = 2;
 
 export class DoctorReadAccess {
-  private readonly work: DoctorOwnedWork;
+  private readonly work: CollectorOwnedWork;
   private readonly stopping = new AbortController();
 
   constructor(
     private readonly budgets = { probeMs: PROBE_TIMEOUT_MS, scanMs: SCAN_TIMEOUT_MS },
     changed?: () => void,
   ) {
-    this.work = new DoctorOwnedWork(changed);
+    this.work = new CollectorOwnedWork(changed);
   }
 
   cleanupFailure(): unknown | undefined {

@@ -16,7 +16,7 @@ import {
 } from "@omnesis/core/doctor";
 import { DoctorLocalStores } from "./doctor-local-stores.js";
 import { DoctorReadAccess, type DoctorReadAccessSource } from "./doctor-read-access.js";
-import { DoctorOwnedWork, doctorCleanupReceipt } from "./doctor-owned-work.js";
+import { CollectorOwnedWork, collectorCleanupReceipt } from "./owned-work.js";
 import type { WsEventPayload, WsResponsePayload } from "@omnesis/core";
 import type { GatewayWsClient } from "@omnesis/gateway-client";
 import type { SourceStatus } from "./source-lifecycle.js";
@@ -56,7 +56,7 @@ export class CollectorDoctor {
   private readonly runTimeoutMs: number;
   private readonly readAccess: DoctorReadAccess;
   private readonly localStores: DoctorLocalStores;
-  private readonly work: DoctorOwnedWork;
+  private readonly work: CollectorOwnedWork;
   private readonly scanner: DoctorSecurityScanner | undefined;
   private readonly systemKey = Symbol("system-info");
   private readonly securityKey = Symbol("security");
@@ -76,7 +76,7 @@ export class CollectorDoctor {
   constructor(private readonly deps: CollectorDoctorDeps) {
     this.runTimeoutMs = deps.runTimeoutMs ?? COLLECTOR_DOCTOR_TIMEOUT_MS;
     const changed = () => deps.onOwnershipChanged?.();
-    this.work = new DoctorOwnedWork(changed);
+    this.work = new CollectorOwnedWork(changed);
     this.readAccess = new DoctorReadAccess(undefined, changed);
     this.localStores = new DoctorLocalStores(undefined, changed);
     this.scanner = deps.collectSecurity
@@ -89,7 +89,7 @@ export class CollectorDoctor {
   }
 
   cleanupFailure(): unknown | undefined {
-    return doctorCleanupReceipt(
+    return collectorCleanupReceipt(
       this.work.cleanupFailure(),
       this.scanner?.cleanupFailure(),
       this.readAccess.cleanupFailure(),
@@ -125,7 +125,7 @@ export class CollectorDoctor {
           ),
         ];
         for (const error of errors) this.work.observe(error);
-        const terminal = doctorCleanupReceipt(...errors, this.cleanupFailure());
+        const terminal = collectorCleanupReceipt(...errors, this.cleanupFailure());
         if (terminal && !ownedProcessCleanupReceipt(terminal)?.pending) throw terminal;
         if (errors.length === 1) throw errors[0];
         if (errors.length) throw new AggregateError(errors, "Collector doctor cleanup failed");

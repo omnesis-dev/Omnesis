@@ -4,7 +4,7 @@
 import { ownedProcessCleanupReceipt } from "@omnesis/core";
 
 /** Terminal uncertainty dominates independently pending, positively joinable work. */
-export function doctorCleanupReceipt(...values: unknown[]): unknown | undefined {
+export function collectorCleanupReceipt(...values: unknown[]): unknown | undefined {
   let pending: unknown;
   for (const value of values) {
     const receipt = ownedProcessCleanupReceipt(value);
@@ -16,13 +16,13 @@ export function doctorCleanupReceipt(...values: unknown[]): unknown | undefined 
 }
 
 /** Raw producer promises remain owned independently of their observation deadline. */
-export class DoctorOwnedWork {
+export class CollectorOwnedWork {
   private readonly active = new Map<unknown, Promise<unknown>>();
   private held = false;
   private terminal: unknown;
   private closed = false;
   private closing: Promise<void> | undefined;
-  private readonly pending = Object.assign(new Error("Collector doctor work remains active"), {
+  private readonly pending = Object.assign(new Error("Collector work remains active"), {
     cleanupFailure: undefined,
     cleanupPending: true as const,
   });
@@ -40,7 +40,7 @@ export class DoctorOwnedWork {
   }
   assertAdmitting(): void {
     if (this.held) throw this.terminal;
-    if (this.closed) throw new Error("Collector doctor work is closed");
+    if (this.closed) throw new Error("Collector work is closed");
   }
   private notify(): { error: unknown } | undefined {
     try {
@@ -55,7 +55,7 @@ export class DoctorOwnedWork {
     if (!receipt) return false;
     if (!this.held) {
       this.terminal = receipt.pending
-        ? Object.assign(new Error("Collector doctor cleanup is unconfirmed", { cause: error }), {
+        ? Object.assign(new Error("Collector cleanup is unconfirmed", { cause: error }), {
             cleanupFailure: receipt.failure,
           })
         : error;
@@ -68,7 +68,7 @@ export class DoctorOwnedWork {
   run<T>(key: unknown, producer: () => Promise<T>): Promise<T> {
     try {
       this.assertAdmitting();
-      if (this.active.has(key)) throw new Error("Collector doctor producer is already active");
+      if (this.active.has(key)) throw new Error("Collector producer is already active");
     } catch (error) {
       return Promise.reject(error);
     }
