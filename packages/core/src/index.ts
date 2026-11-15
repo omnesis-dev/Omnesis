@@ -1419,6 +1419,7 @@ export { nodeCommandInvocation, type NodeCommandInvocation } from "./node-comman
 export { resolveNpmInvocation, type ResolveNpmInvocationOptions } from "./node-command.js";
 export { killWindowsProcessTree, terminateChildProcess } from "./child-termination.js";
 export { installParentShutdownHandler, requestChildShutdown } from "./parent-shutdown.js";
+export { spawnOwnedChildProcess, type OwnedChildProcess } from "./owned-child-process.js";
 export {
   WindowsProcessTree,
   windowsEnvironmentValue,

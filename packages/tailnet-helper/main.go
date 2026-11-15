@@ -28,6 +28,7 @@ import (
 	"github.com/omnesis-dev/omnesis/packages/tailnet-helper/internal/certs"
 	"github.com/omnesis-dev/omnesis/packages/tailnet-helper/internal/node"
 	"github.com/omnesis-dev/omnesis/packages/tailnet-helper/internal/protocol"
+	"github.com/omnesis-dev/omnesis/packages/tailnet-helper/internal/proxy"
 )
 
 // version is set at build time.
@@ -37,7 +38,8 @@ func main() {
 	stateDir := flag.String("state-dir", "", "directory for this device's Tailscale state (required)")
 	hostname := flag.String("hostname", "omnesis", "device name on the tailnet")
 	controlURL := flag.String("control-url", "", "coordination server URL; empty for Tailscale's own")
-	socket := flag.String("socket", "", "the gateway's private Unix socket (required)")
+	socket := flag.String("socket", "", "the gateway's private local endpoint (required)")
+	socketPin := flag.String("socket-certificate-sha256", "", "pinned certificate for the authenticated local transport")
 	certFile := flag.String("fallback-cert", "", "the gateway's certificate, served when Tailscale's cannot be")
 	keyFile := flag.String("fallback-key", "", "the key for -fallback-cert")
 	showVersion := flag.Bool("version", false, "print the version and exit")
@@ -51,17 +53,26 @@ func main() {
 		logger.Println("omnesis-tailnet: -state-dir and -socket are required")
 		os.Exit(2)
 	}
+	token := os.Getenv("OMNESIS_TAILNET_IPC_TOKEN")
+	os.Unsetenv("OMNESIS_TAILNET_IPC_TOKEN")
+	endpoint := proxy.Endpoint{Path: *socket, CertificateSHA256: *socketPin, Token: token}
+	if err := endpoint.Validate(); err != nil {
+		logger.Printf("omnesis-tailnet: %v", err)
+		os.Exit(2)
+	}
 	isolateFromEnvironment()
 
 	out := newEmitter(os.Stdout)
 	n := node.New(node.Config{
-		StateDir:   *stateDir,
-		Hostname:   *hostname,
-		ControlURL: *controlURL,
-		SocketPath: *socket,
-		Fallback:   certs.NewFallback(*certFile, *keyFile),
-		Logf:       logger.Printf,
-		Emit:       func(st protocol.Status) { out.send(st) },
+		StateDir:                *stateDir,
+		Hostname:                *hostname,
+		ControlURL:              *controlURL,
+		SocketPath:              *socket,
+		SocketCertificateSHA256: *socketPin,
+		SocketToken:             token,
+		Fallback:                certs.NewFallback(*certFile, *keyFile),
+		Logf:                    logger.Printf,
+		Emit:                    func(st protocol.Status) { out.send(st) },
 	})
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -95,7 +106,7 @@ func isolateFromEnvironment() {
 		name, _, _ := strings.Cut(kv, "=")
 		// A stray TS_AUTHKEY or TS_CLIENT_SECRET would sign this device in to
 		// whatever account it names without the owner choosing it.
-		if strings.HasPrefix(name, "TS_") {
+		if strings.HasPrefix(strings.ToUpper(name), "TS_") {
 			os.Unsetenv(name)
 		}
 	}

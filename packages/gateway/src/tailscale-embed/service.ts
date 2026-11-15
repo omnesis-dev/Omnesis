@@ -9,7 +9,14 @@
  */
 
 import { join } from "node:path";
-import { createLogger, type TailscaleAdminState, type TailscaleJoinPolicy } from "@omnesis/core";
+import { readFile } from "node:fs/promises";
+import { readTlsPrivateKey } from "../tls-lifecycle/persistence.js";
+import {
+  createLogger,
+  ownedProcessCleanupReceipt,
+  type TailscaleAdminState,
+  type TailscaleJoinPolicy,
+} from "@omnesis/core";
 import { PUBLIC_PATHS } from "./caller.js";
 import { resolveHelperBinary, type HelperBinary } from "./helper-binary.js";
 import { TailscaleJoinRequests, type JoinRequestDeps } from "./join-requests.js";
@@ -64,6 +71,13 @@ export class TailscaleEmbedService {
   private lifecycle: Promise<void> = Promise.resolve();
   /** Set by shutdown; nothing starts the device again afterwards. */
   private closed = false;
+  private closing: Promise<void> | undefined;
+  private pendingOperations = 0;
+  private terminalFailure: unknown;
+  private readonly pending = Object.assign(new Error("Tailscale lifecycle work remains owned"), {
+    cleanupFailure: undefined,
+    cleanupPending: true as const,
+  });
 
   constructor(private readonly options: TailscaleServiceOptions) {
     this.env = options.env ?? process.env;
@@ -105,6 +119,7 @@ export class TailscaleEmbedService {
   }
 
   async setEnabled(enabled: boolean): Promise<TailscaleAdminState> {
+    this.assertAdmitting();
     this.settings.update({ enabled });
     await this.serial(() => (enabled ? this.start(false) : this.stopDevice()));
     return this.state();
@@ -115,6 +130,7 @@ export class TailscaleEmbedService {
     joinPolicy?: TailscaleJoinPolicy;
     deviceName?: string;
   }): Promise<TailscaleAdminState> {
+    this.assertAdmitting();
     const before = this.settings.get();
     const after = this.settings.update(patch);
     if (after.publicAccess !== before.publicAccess) this.configure(after);
@@ -126,11 +142,13 @@ export class TailscaleEmbedService {
   }
 
   signIn(): TailscaleAdminState {
+    this.assertAdmitting();
     this.supervisor.send({ type: "login" });
     return this.state();
   }
 
   signOut(): TailscaleAdminState {
+    this.assertAdmitting();
     this.supervisor.send({ type: "logout" });
     return this.state();
   }
@@ -197,18 +215,71 @@ export class TailscaleEmbedService {
    * Requests already forwarded get up to `drainMs` to finish before the
    * helper, and with it the tailnet and public addresses, goes.
    */
-  async shutdown(drainMs = 0): Promise<void> {
+  shutdown(drainMs = 0): Promise<void> {
+    if (this.closing) return this.closing;
     this.closed = true;
-    await this.serial(async () => {
-      const socket = this.socket;
-      this.socket = null;
-      await socket?.close(drainMs);
-      await this.supervisor.stop();
+    this.closing = this.serial(async () => {
+      const errors: unknown[] = [];
+      try {
+        await this.closeSocket(drainMs);
+      } catch (error) {
+        errors.push(error);
+      }
+      try {
+        await this.supervisor.stop();
+      } catch (error) {
+        errors.push(error);
+      }
+      this.throwCleanupErrors(errors);
     });
+    return this.closing;
+  }
+
+  close(): Promise<void> {
+    return this.shutdown(5_000);
+  }
+
+  cleanupFailure(): unknown {
+    const helper = this.supervisor.cleanupFailure();
+    const receipt = ownedProcessCleanupReceipt(helper);
+    return (
+      this.terminalFailure ??
+      (receipt && !receipt.pending ? helper : undefined) ??
+      (this.pendingOperations ? this.pending : helper)
+    );
+  }
+
+  private assertAdmitting(): void {
+    if (this.terminalFailure) throw this.terminalFailure;
+    const failure = this.supervisor.cleanupFailure();
+    const receipt = ownedProcessCleanupReceipt(failure);
+    if (receipt && !receipt.pending) throw failure;
+    if (this.closed) throw new Error("The Tailscale service is shutting down");
+  }
+
+  private throwCleanupErrors(errors: unknown[]): void {
+    if (!errors.length) return;
+    if (errors.length === 1) throw errors[0];
+    const marked = errors.find((error) => ownedProcessCleanupReceipt(error) !== undefined);
+    throw new AggregateError(errors, "Tailscale cleanup failed", { cause: marked });
   }
 
   private serial(step: () => Promise<void>): Promise<void> {
-    const next = this.lifecycle.then(step, step);
+    this.pendingOperations++;
+    const next = this.lifecycle
+      .then(step, step)
+      .catch((error: unknown) => {
+        const receipt = ownedProcessCleanupReceipt(error);
+        if (receipt)
+          this.terminalFailure ??= Object.assign(
+            new Error("Tailscale cleanup is unconfirmed", { cause: error }),
+            { cleanupFailure: receipt.failure },
+          );
+        throw error;
+      })
+      .finally(() => {
+        this.pendingOperations--;
+      });
     this.lifecycle = next.catch(() => {});
     return next;
   }
@@ -221,13 +292,24 @@ export class TailscaleEmbedService {
     settings: TailscaleSettings,
     snapshot: SupervisorSnapshot,
   ): TailscaleAdminState["helper"] {
+    const receipt = ownedProcessCleanupReceipt(this.cleanupFailure());
+    if (receipt && !receipt.pending)
+      return {
+        state: "unavailable",
+        reason: "Tailscale cleanup is unconfirmed; review is required",
+      };
     if (!settings.enabled) return { state: "off" };
     if (this.unavailable) return { state: "unavailable", reason: this.unavailable };
     switch (snapshot.process) {
       case "running":
         return { state: "running" };
       case "crashed":
-        return { state: "restarting", ...(snapshot.reason ? { reason: snapshot.reason } : {}) };
+        return snapshot.retrying === false
+          ? {
+              state: "unavailable",
+              reason: snapshot.reason ?? "The helper stopped without a restart",
+            }
+          : { state: "restarting", ...(snapshot.reason ? { reason: snapshot.reason } : {}) };
       default:
         return { state: "starting" };
     }
@@ -255,6 +337,7 @@ export class TailscaleEmbedService {
   /** Start the helper, or with `restart`, restart it with the current settings. */
   private async start(restart: boolean): Promise<void> {
     if (this.closed) return;
+    this.assertAdmitting();
     if (!restart && this.supervisor.snapshot().process !== "stopped") {
       this.configure(this.settings.get());
       return;
@@ -272,6 +355,7 @@ export class TailscaleEmbedService {
     try {
       socket = await this.ensureSocket();
     } catch (err) {
+      if (ownedProcessCleanupReceipt(err)) throw err;
       this.unavailable = `The gateway could not open its private socket for Tailscale: ${err instanceof Error ? err.message : String(err)}`;
       log.warn(this.unavailable);
       this.options.onChange?.();
@@ -287,6 +371,7 @@ export class TailscaleEmbedService {
       stateDir: join(this.featureDir, "node"),
       hostname: settings.deviceName,
       socketPath: socket.path,
+      ...(socket.transport ? { transport: socket.transport } : {}),
       fallbackCert: tls.cert,
       fallbackKey: tls.key,
       ...(this.env.OMNESIS_TAILSCALE_EMBED_TEST_CONTROL_URL
@@ -305,15 +390,26 @@ export class TailscaleEmbedService {
 
   private async stopDevice(): Promise<void> {
     this.unavailable = undefined;
-    await this.supervisor.stop();
-    await this.closeSocket();
+    const results = await Promise.allSettled([this.supervisor.stop(), this.closeSocket()]);
+    this.throwCleanupErrors(
+      results.flatMap((result) => (result.status === "rejected" ? [result.reason] : [])),
+    );
     this.options.onChange?.();
   }
 
   private async ensureSocket(): Promise<TailnetSocketServer> {
     if (this.socket) return this.socket;
     const app = this.app!;
+    const paths = this.options.tlsMaterial();
+    const tls =
+      process.platform === "win32"
+        ? {
+            cert: await readFile(paths.cert, "utf8"),
+            key: await readTlsPrivateKey(paths.key, this.options.configDir),
+          }
+        : undefined;
     this.socket = await startTailnetSocketServer({
+      ...(tls ? { tls } : {}),
       path: tailnetSocketPath(this.featureDir, this.env),
       listener: app.listener,
       ...(app.upgrade ? { upgrade: app.upgrade } : {}),
@@ -322,10 +418,22 @@ export class TailscaleEmbedService {
     return this.socket;
   }
 
-  private async closeSocket(): Promise<void> {
+  private async closeSocket(drainMs = 0): Promise<void> {
     const socket = this.socket;
-    this.socket = null;
-    await socket?.close();
+    try {
+      await socket?.close(drainMs);
+    } catch (error) {
+      if (socket?.closedConfirmed) {
+        if (this.socket === socket) this.socket = null;
+        throw error;
+      }
+      if (ownedProcessCleanupReceipt(error)) throw error;
+      throw Object.assign(
+        new Error("Tailscale listener cleanup is unconfirmed", { cause: error }),
+        { cleanupFailure: error },
+      );
+    }
+    if (this.socket === socket) this.socket = null;
   }
 
   private onHelperChange(snapshot: SupervisorSnapshot): void {

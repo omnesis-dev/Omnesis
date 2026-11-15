@@ -246,6 +246,11 @@ jobs:
           go-version-file: packages/tailnet-helper/go.mod
           cache-dependency-path: packages/tailnet-helper/go.sum
 
+      - name: Verify real Go-to-Node private transport
+        env:
+          GOMAXPROCS: "2"
+        run: node --import tsx scripts/ci/tailnet-transport.mjs
+
       - name: lane [linux-unit]
         if: ${{ inputs.scope == 'full' || inputs.projects == 'all' }}
         run: exec node scripts/run-check.mjs unit-all

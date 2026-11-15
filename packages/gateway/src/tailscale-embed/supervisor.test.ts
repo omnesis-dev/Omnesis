@@ -1,12 +1,19 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { spawn } from "node:child_process";
+import type { ChildProcess } from "node:child_process";
+import { EventEmitter } from "node:events";
+import { PassThrough } from "node:stream";
+import {
+  spawnOwnedChildProcess,
+  ownedProcessCleanupReceipt,
+  type OwnedChildProcess,
+} from "@omnesis/core";
 import { writeFileSync, mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { tmpdir } from "node:os";
-import { afterEach, describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import { helperEnvironment, HelperSupervisor, type SupervisorSnapshot } from "./supervisor.js";
 
 const FAKE = fileURLToPath(new URL("./testing/fake-helper.mjs", import.meta.url));
@@ -25,9 +32,8 @@ function nodeSpawner(extraEnv: NodeJS.ProcessEnv = {}, script = FAKE) {
   const spawner = (_binary: string, args: string[], env: NodeJS.ProcessEnv) => {
     seen.env = env;
     seen.args = args;
-    return spawn(process.execPath, [script, ...args], {
+    return spawnOwnedChildProcess(process.execPath, [script, ...args], {
       env: { ...env, ...extraEnv },
-      stdio: ["pipe", "pipe", "pipe"],
     });
   };
   return { spawner, seen };
@@ -68,6 +74,57 @@ function make(...args: ConstructorParameters<typeof HelperSupervisor>): HelperSu
 }
 
 describe("helperEnvironment", () => {
+  test("preserves case-sensitive POSIX proxy variables without inheriting Windows paths", () => {
+    expect(
+      helperEnvironment(
+        {
+          HTTPS_PROXY: "https://upper.example.com",
+          https_proxy: "https://lower.example.com",
+          Path: "/other",
+          SystemRoot: "C:\\Windows",
+        },
+        "linux",
+      ),
+    ).toEqual({
+      HTTPS_PROXY: "https://upper.example.com",
+      https_proxy: "https://lower.example.com",
+    });
+  });
+
+  test("passes Windows host paths and canonicalizes allowed names without credentials", () => {
+    expect(
+      helperEnvironment(
+        {
+          Path: "C:\\Tools",
+          systemroot: "C:\\Windows",
+          windir: "C:\\Windows",
+          userprofile: "C:\\Users\\Example",
+          localappdata: "C:\\Users\\Example\\AppData\\Local",
+          appdata: "C:\\Users\\Example\\AppData\\Roaming",
+          temp: "C:\\Temp",
+          tmp: "C:\\Temp",
+          https_proxy: "https://proxy.example.com",
+          lc_all: "C.UTF-8",
+          ts_authkey: "withheld",
+          omnesis_keyring_passphrase: "withheld",
+          anthropic_api_key: "withheld",
+        },
+        "win32",
+      ),
+    ).toEqual({
+      PATH: "C:\\Tools",
+      SystemRoot: "C:\\Windows",
+      WINDIR: "C:\\Windows",
+      USERPROFILE: "C:\\Users\\Example",
+      LOCALAPPDATA: "C:\\Users\\Example\\AppData\\Local",
+      APPDATA: "C:\\Users\\Example\\AppData\\Roaming",
+      TEMP: "C:\\Temp",
+      TMP: "C:\\Temp",
+      HTTPS_PROXY: "https://proxy.example.com",
+      LC_ALL: "C.UTF-8",
+    });
+  });
+
   test("passes only what the helper needs: no secrets, no Tailscale variables", () => {
     expect(
       helperEnvironment({
@@ -146,7 +203,7 @@ describe("HelperSupervisor", () => {
       crashing,
       `import { existsSync, writeFileSync } from "node:fs";
        if (!existsSync(${JSON.stringify(marker)})) { writeFileSync(${JSON.stringify(marker)}, "1"); process.exit(3); }
-       await import(${JSON.stringify(FAKE)});`,
+       await import(${JSON.stringify(pathToFileURL(FAKE).href)});`,
     );
     const { spawner } = nodeSpawner({ OMNESIS_FAKE_TAILNET_SCENARIO: "connected" }, crashing);
     const sup = make(spawner, {}, [20]);
@@ -172,11 +229,11 @@ describe("HelperSupervisor", () => {
   });
 
   test("starting again and again leaves exactly one helper running", async () => {
-    const children: ReturnType<typeof spawn>[] = [];
+    const children: ChildProcess[] = [];
     const { spawner } = nodeSpawner();
     const sup = make((binary, args, env) => {
       const child = spawner(binary, args, env);
-      children.push(child);
+      children.push(child.child);
       return child;
     }, {});
     await sup.start(launch);
@@ -215,5 +272,138 @@ describe("HelperSupervisor", () => {
     );
     await sup.start(launch);
     expect(sup.snapshot()).toMatchObject({ process: "crashed", reason: "could not start: ENOENT" });
+  });
+});
+
+/** Separate root events from the owner's independently confirmed physical close. */
+function controlledOwner() {
+  const closure = Promise.withResolvers<void>();
+  let confirmed = false;
+  const child = Object.assign(new EventEmitter(), {
+    stdin: new PassThrough(),
+    stdout: new PassThrough(),
+    stderr: new PassThrough(),
+    exitCode: null as number | null,
+    signalCode: null,
+    kill: vi.fn(() => true),
+  });
+  const joined = closure.promise.then(() => {
+    confirmed = true;
+  });
+  const owner: OwnedChildProcess = {
+    child: child as unknown as ChildProcess,
+    ready: Promise.resolve(),
+    joined,
+    get joinedConfirmed() {
+      return confirmed;
+    },
+    stop: vi.fn(() => joined),
+  };
+  return { owner, child, closure };
+}
+
+describe("helper ownership", () => {
+  test("a stream cleanup marker remains terminal after independent closure", async () => {
+    const current = controlledOwner();
+    const spawner = vi.fn(() => current.owner);
+    const sup = new HelperSupervisor(spawner, {}, [1]);
+    await sup.start(launch);
+    const marker = Object.assign(new Error("invented stream ownership uncertainty"), {
+      cleanupFailure: undefined,
+    });
+    current.child.stdout.emit("error", marker);
+    expect(ownedProcessCleanupReceipt(sup.cleanupFailure())).toEqual({
+      failure: undefined,
+      pending: false,
+    });
+    current.closure.resolve();
+    await expect(sup.stop()).rejects.toBe(marker);
+    await expect(sup.start(launch)).rejects.toBe(marker);
+    expect(spawner).toHaveBeenCalledOnce();
+  });
+
+  test("launch credentials override ambient spoofing without entering argv", async () => {
+    const current = controlledOwner();
+    const spawner = vi.fn(() => current.owner);
+    const sup = new HelperSupervisor(spawner, {
+      OMNESIS_TAILNET_IPC_TOKEN: "ambient-spoof",
+      ANTHROPIC_API_KEY: "withheld",
+    });
+    const transport = { certificateSha256: "a".repeat(64), token: "b".repeat(64) };
+    await sup.start({ ...launch, transport });
+    const [, args, env] = spawner.mock.calls[0]! as unknown as [
+      string,
+      string[],
+      NodeJS.ProcessEnv,
+    ];
+    expect(args).toContain(transport.certificateSha256);
+    expect(args).not.toContain(transport.token);
+    expect(env.OMNESIS_TAILNET_IPC_TOKEN).toBe(transport.token);
+    expect(env).not.toHaveProperty("ANTHROPIC_API_KEY");
+    const stopping = sup.stop();
+    current.closure.resolve();
+    await stopping;
+  });
+
+  test("replacement waits for actual closure after root exit and output EOF", async () => {
+    const first = controlledOwner();
+    const second = controlledOwner();
+    const spawner = vi.fn().mockReturnValueOnce(first.owner).mockReturnValueOnce(second.owner);
+    const sup = new HelperSupervisor(spawner, {}, [1]);
+    await sup.start(launch);
+    first.child.exitCode = 0;
+    first.child.stdout.end();
+    first.child.stderr.end();
+    first.child.emit("exit", 0, null);
+    first.child.emit("close", 0, null);
+    let replaced = false;
+    const replacing = sup.start({ ...launch, hostname: "replacement" }).then(() => {
+      replaced = true;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(replaced).toBe(false);
+    expect(spawner).toHaveBeenCalledTimes(1);
+    expect(ownedProcessCleanupReceipt(sup.cleanupFailure())?.pending).toBe(true);
+    first.closure.resolve();
+    await replacing;
+    expect(spawner).toHaveBeenCalledTimes(2);
+    const stopping = sup.stop();
+    second.closure.resolve();
+    await stopping;
+    expect(sup.cleanupFailure()).toBeUndefined();
+  });
+
+  test.each([undefined, new Error("invented join failure")])(
+    "failed closure blocks automatic and explicit replacement (%s)",
+    async (failure) => {
+      const current = controlledOwner();
+      const spawner = vi.fn(() => current.owner);
+      const sup = new HelperSupervisor(spawner, {}, [1]);
+      await sup.start(launch);
+      current.closure.reject(failure);
+      await until(sup, (snapshot) => snapshot.process === "crashed");
+      expect(sup.snapshot().retrying).toBe(false);
+      expect(ownedProcessCleanupReceipt(sup.cleanupFailure())).toEqual({ failure, pending: false });
+      await expect(sup.start(launch)).rejects.toBe(sup.cleanupFailure());
+      await expect(sup.stop()).rejects.toSatisfy(
+        (error: unknown) => ownedProcessCleanupReceipt(error) !== undefined,
+      );
+      expect(spawner).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  test("oversized helper output closes admission and joins before reporting failure", async () => {
+    const current = controlledOwner();
+    const sup = new HelperSupervisor(() => current.owner, {}, [1]);
+    await sup.start(launch);
+    current.child.stdout.write("x".repeat(65_537));
+    expect(current.child.stdin.writableEnded).toBe(true);
+    expect(sup.snapshot().process).toBe("starting");
+    current.closure.resolve();
+    const snapshot = await until(sup, (state) => state.process === "crashed");
+    expect(snapshot.reason).toMatch(/line bound/);
+    expect(snapshot.retrying).toBe(false);
+    await sup.stop();
+    expect(sup.cleanupFailure()).toBeUndefined();
   });
 });

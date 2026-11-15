@@ -10,11 +10,17 @@
 
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { request as httpRequest } from "node:http";
+import { request as httpsRequest } from "node:https";
+import { generateSelfSigned } from "../tls.js";
+import { writeTlsMaterial } from "../tls-lifecycle/persistence.js";
+import { HelperSupervisor } from "./supervisor.js";
+import { TAILNET_TRANSPORT_HEADER, type TailnetSocketServer } from "./socket-server.js";
+import { spawnOwnedChildProcess } from "@omnesis/core";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { getRequestListener } from "@hono/node-server";
-import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, test, vi } from "vitest";
 import { SCOPE_ADMIN, SCOPE_READ } from "@omnesis/types";
 import { createDatabase } from "../db.js";
 import { createDevice, getDevice, listDevices } from "../data/repositories/DeviceRepository.js";
@@ -26,6 +32,10 @@ import type { TailnetCaller } from "./caller.js";
 
 const FAKE = fileURLToPath(new URL("./testing/fake-helper.mjs", import.meta.url));
 
+let material: { cert: string; key: string };
+beforeAll(async () => {
+  material = await generateSelfSigned();
+});
 let dir: string;
 let db: ReturnType<typeof createDatabase>;
 let app: ReturnType<typeof createServer>;
@@ -50,6 +60,8 @@ async function boot(scenario = "connected", { cloudRelay = false } = {}): Promis
   dir = mkdtempSync(join(tmpdir(), "ts-int-"));
   mkdirSync(join(dir, "tailscale", "node"), { recursive: true });
   writeFileSync(join(dir, "tailscale", "node", "fake-scenario"), scenario);
+  if (process.platform === "win32")
+    await writeTlsMaterial(join(dir, "cert.pem"), join(dir, "key.pem"), material, dir);
   const path = join(dir, "gateway.sqlite");
   db = createDatabase(path);
   const device = createDevice(db, { name: "Fictional admin CLI", kind: "cli" });
@@ -57,6 +69,9 @@ async function boot(scenario = "connected", { cloudRelay = false } = {}): Promis
   notified = { waiting: [], joined: [] };
   service = new TailscaleEmbedService({
     configDir: dir,
+    supervisor: new HelperSupervisor((_binary, args, env) =>
+      spawnOwnedChildProcess(process.execPath, [FAKE, ...args], { env }),
+    ),
     tlsMaterial: () => ({ cert: join(dir, "cert.pem"), key: join(dir, "key.pem") }),
     env: { ...process.env, OMNESIS_TAILSCALE_HELPER: FAKE },
     joins: {
@@ -109,16 +124,22 @@ function viaHelper(
   path: string,
   caller: TailnetCaller,
   body?: unknown,
+  extraHeaders: Record<string, string> = {},
 ): Promise<{ status: number; json: any }> {
-  const socketPath = (service as unknown as { socket: { path: string } }).socket.path;
+  const socket = (service as unknown as { socket: TailnetSocketServer }).socket;
+  const socketPath = socket.path;
   return new Promise((resolve, reject) => {
-    const req = httpRequest(
+    const request = socket.transport ? httpsRequest : httpRequest;
+    const req = request(
       {
         socketPath,
+        ...(socket.transport ? { ca: material.cert, servername: "localhost" } : {}),
         method,
         path,
         headers: {
+          ...extraHeaders,
           host: "omnesis.example-net.ts.net",
+          ...(socket.transport ? { [TAILNET_TRANSPORT_HEADER]: socket.transport.token } : {}),
           "x-omnesis-tailnet": encode(caller),
           ...(body ? { "content-type": "application/json" } : {}),
         },
@@ -572,30 +593,15 @@ describe("with the cloud relay on as well", () => {
 
   test("a relay mark on a tailnet request grants nothing: an ask-first join still waits", async () => {
     await adminCall("PATCH", "/admin/tailscale/settings", { joinPolicy: "ask" });
-    const marked = await new Promise<number>((resolve, reject) => {
-      const socketPath = (service as unknown as { socket: { path: string } }).socket.path;
-      const req = httpRequest(
-        {
-          socketPath,
-          method: "POST",
-          path: "/tailscale/join",
-          headers: {
-            host: "omnesis.example-net.ts.net",
-            "x-omnesis-tailnet": encode(tailnet()),
-            "x-omnesis-cloud-relay": "1",
-            "content-type": "application/json",
-          },
-        },
-        (res) => {
-          res.resume();
-          res.on("end", () => resolve(res.statusCode ?? 0));
-        },
-      );
-      req.on("error", reject);
-      req.end(JSON.stringify({ name: "maya-laptop" }));
-    });
+    const marked = await viaHelper(
+      "POST",
+      "/tailscale/join",
+      tailnet(),
+      { name: "maya-laptop" },
+      { "x-omnesis-cloud-relay": "1" },
+    );
     // The mark can only withhold: the join still waits for the owner.
-    expect(marked).toBe(202);
+    expect(marked.status).toBe(202);
     expect(listDevices(db).some((d) => d.name === "maya-laptop")).toBe(false);
   });
 });

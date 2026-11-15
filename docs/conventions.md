@@ -1263,6 +1263,13 @@ POSIX paths preserve their native process behavior. A check lane with explicit
 cleanup uncertainty retains its own PID for review and refuses another command;
 an ordinary joined failure can still report its exit status.
 
+Long-lived child protocols use `spawnOwnedChildProcess` from `@omnesis/core`
+when the actor owns a single executable and must join it before replacement.
+It exposes independent readiness and physical closure promises, retaining the
+whole Windows Job even after the root exits. The actor owns protocol framing,
+input grace and restart admission; stdout EOF is never a closure receipt.
+Collector authentication and the embedded Tailscale supervisor use this owner.
+
 Synchronous Job calls and native-cache bootstrapping require a fresh parent-only
 completion receipt after native cleanup. A helper exit code alone cannot prove
 that its children joined. Preserve an own `cleanupFailure` property through

@@ -50,8 +50,13 @@ ask|automatic|off`, default `ask`): on a collector's machine that runs
 
 The program joins the tailnet in userspace and forwards every request, from
 the tailnet and from the public address, to a Unix socket the gateway opens
-for it alone (`<config>/tailscale/gateway.sock`, or a short path under the
-runtime directory, mode `0600`). It names the caller in one header: the
+for it alone on POSIX (`<config>/tailscale/gateway.sock`, or a short path under
+the runtime directory, mode `0600`). Windows uses a fresh named pipe over TLS:
+the helper pins the gateway certificate loaded for that listener, and the gateway
+authenticates a per-service token passed in the helper's private environment.
+The token never enters command arguments or a persistent file. Both the token
+and caller header are removed before the gateway app sees the request.
+It names the caller in one header: the
 caller's address and, for a tailnet device, what Tailscale says about it
 (device, user, tags, and whether it belongs to the gateway's own user). The
 gateway believes that header only on that socket; any copy a caller sends is
@@ -70,7 +75,7 @@ mirrors it in `packages/gateway/src/tailscale-embed/protocol.ts`.
 
 ## Testing
 
-- `go test ./...` here, also run by the unit lane through `go.test.ts`.
+- `go test ./...` here, also run by the unit lane through `go.test.mjs`.
 - The gateway side: `packages/gateway/src/tailscale-embed/*.test.ts`, with a
   scripted stand-in for this program (`testing/fake-helper.mjs`), and
   `tailscale-embed-flag-off.test.ts` for the flag.

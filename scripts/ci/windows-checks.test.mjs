@@ -102,6 +102,10 @@ describe("Windows CI coverage", () => {
     expect(FOCUSED_E2E_FILES).toContain("packages/collector/src/e2e/synth-pipeline.e2e.test.ts");
     expect(FOCUSED_E2E_FILES).toContain("packages/collector/src/e2e/gateway-lifecycle.e2e.test.ts");
     for (const file of [
+      "packages/gateway/src/tailscale-embed/service.integration.test.ts",
+      "packages/gateway/src/tailscale-embed/service.ownership.test.ts",
+      "packages/gateway/src/tailscale-embed/socket-server.test.ts",
+      "packages/gateway/src/tailscale-embed/supervisor.test.ts",
       "packages/collector/src/e2e/connect-process.test.ts",
       "packages/collector/src/e2e/e2e-buffered-command.test.ts",
       "packages/collector/src/e2e/multi-collector-harness-cleanup.test.ts",

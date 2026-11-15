@@ -13,6 +13,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, test } from "vitest";
+import { inspectWindowsPrivatePathSync } from "@omnesis/core";
 import { DEFAULT_TAILSCALE_SETTINGS, TailscaleSettingsStore } from "./settings.js";
 
 let dir: string;
@@ -41,7 +42,12 @@ test("a choice is saved privately and survives a restart", () => {
     joinPolicy: "automatic",
     deviceName: "Home-Box",
   });
-  expect(statSync(file()).mode & 0o777).toBe(0o600);
+  if (process.platform === "win32") {
+    expect(inspectWindowsPrivatePathSync(file(), "file").private).toBe(true);
+    expect(inspectWindowsPrivatePathSync(join(dir, "tailscale"), "directory").private).toBe(true);
+  } else {
+    expect(statSync(file()).mode & 0o777).toBe(0o600);
+  }
   const reloaded = new TailscaleSettingsStore(dir).get();
   expect(reloaded).toEqual({
     enabled: true,
