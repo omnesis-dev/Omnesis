@@ -220,6 +220,52 @@ export function useCursorPage({
   }, [enabled, resetKey, requestPage]);
 
   const reload = useCallback(() => requestPage(true), [requestPage]);
+  const refreshGenerationRef = useRef(0);
+  /**
+   * Re-reads the first page in the background, for a list the gateway says changed: no loading
+   * state, and the rows on screen stay until the answer replaces them. The first page's rows lead
+   * the list in its order. When only the first page had been loaded, the answer is the whole list
+   * with its own cursor; rows loaded beyond it stay after it, with the cursor that continues them.
+   * A failed read changes nothing. Before the first load it does nothing; that load answers.
+   */
+  const refresh = useCallback(async () => {
+    if (!stateRef.current.loaded) return;
+    const generation = generationRef.current;
+    const owner = ownerRef.current;
+    const sequence = ++refreshGenerationRef.current;
+    const options = optionsRef.current;
+    let payload;
+    try {
+      payload = await options.loadPage({ limit: pageSize });
+    } catch {
+      return;
+    }
+    if (
+      generation !== generationRef.current ||
+      owner !== ownerRef.current ||
+      sequence !== refreshGenerationRef.current
+    ) {
+      return;
+    }
+    const page = cursorPageResult(payload, options.selectItems, options.selectCursor);
+    const keyOf = (item) => (typeof options.itemKey === "function" ? options.itemKey(item) : item);
+    const fresh = page.items.filter((item) => !removedKeysRef.current.has(keyOf(item)));
+    const freshKeys = new Set(fresh.map(keyOf));
+    setState((previous) => {
+      if (!previous.loaded) return previous;
+      const onlyFirstPage = previous.items.length <= pageSize;
+      return {
+        ...previous,
+        items: onlyFirstPage
+          ? fresh
+          : [...fresh, ...previous.items.filter((item) => !freshKeys.has(keyOf(item)))],
+        meta: options.selectMeta(payload),
+        nextCursor: onlyFirstPage ? page.nextCursor : previous.nextCursor,
+        cursorStalled: onlyFirstPage ? false : previous.cursorStalled,
+        error: null,
+      };
+    });
+  }, [pageSize]);
   const loadMore = useCallback(() => requestPage(false), [requestPage]);
   const setItems = useCallback((updater) => {
     setState((previous) => ({
@@ -275,6 +321,7 @@ export function useCursorPage({
     hasMore: state.nextCursor !== null,
     isPartial: state.nextCursor !== null || state.cursorStalled,
     reload,
+    refresh,
     loadMore,
     setItems,
     removeItem,

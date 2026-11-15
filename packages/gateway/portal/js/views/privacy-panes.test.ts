@@ -25,12 +25,17 @@ vi.mock("../lib/router.js", async (importOriginal) => ({
   navigate: vi.fn(),
 }));
 
+const signals = vi.hoisted(() => ({ emit: (_topic: string | null) => {} }));
+vi.mock("../lib/portal-signals.js", async (importOriginal) =>
+  (await import("../lib/portal-signals-fake.js")).mockPortalSignals(await importOriginal(), signals));
+
 vi.mock("../api.js", () => ({
   approvePrivacyApproval: vi.fn(),
   deletePrivacyConversation: vi.fn(),
   denyPrivacyApproval: vi.fn(),
   getPrivacyApproval: vi.fn(),
   getPrivacyConversation: vi.fn(),
+  getPrivacyReviewerHealth: vi.fn(async () => null),
   listPrivacyAuditEvents: vi.fn(),
   listPrivacyExchangeFeed: vi.fn(),
   listPrivacyExchanges: vi.fn(),
@@ -48,6 +53,8 @@ import {
 import { navigate } from "../lib/router.js";
 // @ts-expect-error — portal is plain JS without sibling declarations.
 import { PrivacyActivityPane } from "./audit/activity.js";
+// @ts-expect-error — portal is plain JS without sibling declarations.
+import { PrivacyView } from "./privacy.js";
 // @ts-expect-error — portal is plain JS without sibling declarations.
 import { PrivacyExchangeDetailRoute } from "./audit/exchange-detail.js";
 
@@ -188,6 +195,38 @@ describe("Privacy panes, mounted", () => {
     // The pinned exchange is not also listed below it.
     expect(rows[0]?.textContent).toContain("week 2");
     expect(text()).toContain("One answer is waiting for you");
+  });
+
+  test("a held answer signalled by the gateway is pinned without a reload or a loading state", async () => {
+    await mountActivity([sharedExchange(2)]);
+    expect(host.querySelectorAll(".privacy-review-card")).toHaveLength(0);
+    (listPrivacyExchangeFeed as ReturnType<typeof vi.fn>).mockResolvedValue({
+      exchanges: [pendingExchange(3), sharedExchange(2)],
+      nextCursor: null,
+    });
+    signals.emit("watches");
+    await act(async () => {});
+    expect(listPrivacyExchangeFeed).toHaveBeenCalledTimes(1);
+    signals.emit("answers");
+    expect(host.textContent).not.toContain("Loading activity");
+    for (let i = 0; i < 4; i += 1) await act(async () => { await Promise.resolve(); });
+    expect(listPrivacyExchangeFeed).toHaveBeenCalledTimes(2);
+    expect(host.querySelectorAll(".privacy-review-card")).toHaveLength(1);
+    expect(host.querySelectorAll(".privacy-feed-row")).toHaveLength(1);
+  });
+
+  test("the Answer tab carries the attention mark while answers wait, and nothing otherwise", async () => {
+    (listPrivacyExchangeFeed as ReturnType<typeof vi.fn>).mockResolvedValue({ exchanges: [], nextCursor: null });
+    await act(async () => {
+      render(h(PrivacyView, { waitingAnswers: 2 }), host);
+    });
+    const tab = [...host.querySelectorAll(".config-tab")].find((button) => button.textContent?.includes("Answer"));
+    expect(tab?.querySelector(".attention-icon")?.getAttribute("aria-label")).toBe("2 answers are waiting for your review.");
+    expect(host.querySelectorAll(".attention-icon")).toHaveLength(1);
+    await act(async () => {
+      render(h(PrivacyView, { waitingAnswers: 0 }), host);
+    });
+    expect(host.querySelector(".attention-icon")).toBeNull();
   });
 
   test("pending exchanges past the pin cap stay visible as feed rows", async () => {

@@ -28,6 +28,7 @@ import {
 import { LoadMore } from "../components/load-more.js";
 import { Loading } from "../components/loading.js";
 import { navigate, replaceRoute } from "../lib/router.js";
+import { usePortalSignal } from "../lib/portal-signals.js";
 import { useCursorPage } from "../lib/use-cursor-page.js";
 import { errorMessage, privacyCollection } from "./shared/privacy-vocabulary.js";
 import { SubscriptionApprovalList, SubscriptionApprovalRoute } from "./watches/approval.js";
@@ -94,6 +95,8 @@ function WatchesDashboard() {
       totalCount: Number.isFinite(payload?.totalCount) ? payload.totalCount : null,
     }),
   });
+  // A watch request arriving or decided elsewhere moves the pinned requests at once.
+  usePortalSignal("watches", approvalPage.refresh);
 
   return html`
     <div class="privacy-view">

@@ -13,8 +13,11 @@ const cloud = vi.hoisted(() => ({
   askBeforeEveryNewDevice: vi.fn(),
 }));
 const tailscale = vi.hoisted(() => ({ tailscaleJoinRequests: vi.fn(), decideTailscaleJoin: vi.fn() }));
+const signals = vi.hoisted(() => ({ emit: (_topic: string | null) => {} }));
 vi.mock("../lib/cloud-pairing-api.js", () => cloud);
 vi.mock("../lib/tailscale-api.js", () => tailscale);
+vi.mock("../lib/portal-signals.js", async (importOriginal) =>
+  (await import("../lib/portal-signals-fake.js")).mockPortalSignals(await importOriginal(), signals));
 
 // @ts-expect-error — portal modules are plain JS.
 import { WaitingDevices } from "./waiting-devices.js";
@@ -192,6 +195,48 @@ describe("WaitingDevices", () => {
         vi.advanceTimersByTime(8000);
       });
       expect(text()).not.toContain("Denied studio-laptop.");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  test("both kinds are read again when the gateway signals waiting devices changed, and only then", async () => {
+    cloud.cloudPairingRequests.mockResolvedValue({ items: [] });
+    await show({ cloudRelay: true, tailscaleEmbed: true });
+    expect(cloud.cloudPairingRequests).toHaveBeenCalledTimes(1);
+    expect(tailscale.tailscaleJoinRequests).toHaveBeenCalledTimes(1);
+    signals.emit("answers");
+    await settle();
+    expect(tailscale.tailscaleJoinRequests).toHaveBeenCalledTimes(1);
+    cloud.cloudPairingRequests.mockResolvedValue({ items: [relayRequest] });
+    tailscale.tailscaleJoinRequests.mockResolvedValue({ requests: [join("t1")] });
+    signals.emit("devices");
+    await settle();
+    expect(cloud.cloudPairingRequests).toHaveBeenCalledTimes(2);
+    expect(tailscale.tailscaleJoinRequests).toHaveBeenCalledTimes(2);
+    expect(host.querySelectorAll("article")).toHaveLength(2);
+    expect(titles()).toEqual(["Waiting for your OK"]);
+  });
+
+  test("a join request is read again just after it expires, and slowly in case the stream is down", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval", "Date"] });
+    try {
+      tailscale.tailscaleJoinRequests.mockResolvedValue({
+        requests: [join("t1", { expiresAt: new Date(Date.now() + 20_000).toISOString() })],
+      });
+      await show({ tailscaleEmbed: true });
+      expect(host.querySelectorAll("article")).toHaveLength(1);
+      tailscale.tailscaleJoinRequests.mockResolvedValue({ requests: [] });
+      await act(async () => {
+        vi.advanceTimersByTime(20_500);
+      });
+      await settle();
+      expect(tailscale.tailscaleJoinRequests).toHaveBeenCalledTimes(2);
+      expect(host.querySelectorAll("article")).toHaveLength(0);
+      await act(async () => {
+        vi.advanceTimersByTime(60_000);
+      });
+      expect(tailscale.tailscaleJoinRequests).toHaveBeenCalledTimes(3);
     } finally {
       vi.useRealTimers();
     }

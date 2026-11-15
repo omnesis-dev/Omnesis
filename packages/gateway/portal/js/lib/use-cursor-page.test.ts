@@ -438,3 +438,100 @@ function deferred<T>(): {
   });
   return { promise, resolve };
 }
+
+describe("useCursorPage background refresh", () => {
+  let host: HTMLElement;
+  let page: any;
+
+  beforeEach(() => {
+    const parsed = parseHTML("<html><body><main id='root'></main></body></html>");
+    vi.stubGlobal("document", parsed.document);
+    vi.stubGlobal("window", parsed.window);
+    host = parsed.document.querySelector("#root") as unknown as HTMLElement;
+  });
+  afterEach(() => {
+    render(null, host);
+    vi.unstubAllGlobals();
+  });
+
+  const ids = () => page.items.map((item: { id: string }) => item.id);
+  async function mount(loadPage: ReturnType<typeof vi.fn>, pageSize = 2) {
+    const Harness = () => {
+      page = useCursorPage({ resetKey: "refresh", pageSize, loadPage, selectMeta: (p: any) => p?.meta ?? null });
+      return null;
+    };
+    await act(async () => render(h(Harness, {}), host));
+    await act(async () => { await Promise.resolve(); });
+  }
+
+  test("before the first load answers, refresh reads nothing", async () => {
+    const first = deferred<unknown>();
+    const loadPage = vi.fn().mockReturnValueOnce(first.promise);
+    await mount(loadPage);
+    await act(async () => { await page.refresh(); });
+    expect(loadPage).toHaveBeenCalledTimes(1);
+  });
+
+  test("a first-page list is replaced in place, with no loading state, and takes the new cursor", async () => {
+    const loadPage = vi
+      .fn()
+      .mockResolvedValueOnce({ items: [{ id: "a" }, { id: "b" }], nextCursor: null, meta: 1 })
+      .mockResolvedValueOnce({ items: [{ id: "c" }, { id: "a" }], nextCursor: "next", meta: 2 });
+    await mount(loadPage);
+    let pending: Promise<void> | undefined;
+    await act(async () => { pending = page.refresh(); });
+    expect(page.loading).toBe(false);
+    await act(async () => { await pending; });
+    expect(ids()).toEqual(["c", "a"]);
+    expect(page.nextCursor).toBe("next");
+    expect(page.meta).toBe(2);
+  });
+
+  test("rows loaded beyond the first page stay after it, with the cursor that continues them", async () => {
+    const loadPage = vi
+      .fn()
+      .mockResolvedValueOnce({ items: [{ id: "a" }, { id: "b" }], nextCursor: "p2" })
+      .mockResolvedValueOnce({ items: [{ id: "c" }, { id: "d" }], nextCursor: "p3" })
+      .mockResolvedValueOnce({ items: [{ id: "new" }, { id: "a" }], nextCursor: "fresh" });
+    await mount(loadPage);
+    await act(async () => { await page.loadMore(); });
+    expect(ids()).toEqual(["a", "b", "c", "d"]);
+    await act(async () => { await page.refresh(); });
+    expect(ids()).toEqual(["new", "a", "b", "c", "d"]);
+    expect(page.nextCursor).toBe("p3");
+  });
+
+  test("a failed refresh, or one overtaken by a newer one, changes nothing", async () => {
+    const slow = deferred<unknown>();
+    const loadPage = vi
+      .fn()
+      .mockResolvedValueOnce({ items: [{ id: "a" }], nextCursor: null })
+      .mockRejectedValueOnce(new Error("offline"))
+      .mockReturnValueOnce(slow.promise)
+      .mockResolvedValueOnce({ items: [{ id: "newest" }], nextCursor: null });
+    await mount(loadPage);
+    await act(async () => { await page.refresh(); });
+    expect(ids()).toEqual(["a"]);
+    expect(page.error).toBeNull();
+    let older: Promise<void> | undefined;
+    await act(async () => { older = page.refresh(); });
+    await act(async () => { await page.refresh(); });
+    expect(ids()).toEqual(["newest"]);
+    await act(async () => {
+      slow.resolve({ items: [{ id: "stale" }], nextCursor: null });
+      await older;
+    });
+    expect(ids()).toEqual(["newest"]);
+  });
+
+  test("a removed row is not brought back by a refresh", async () => {
+    const loadPage = vi
+      .fn()
+      .mockResolvedValueOnce({ items: [{ id: "a" }, { id: "b" }], nextCursor: null })
+      .mockResolvedValueOnce({ items: [{ id: "a" }, { id: "b" }], nextCursor: null });
+    await mount(loadPage);
+    await act(async () => { page.removeItem("b"); });
+    await act(async () => { await page.refresh(); });
+    expect(ids()).toEqual(["a"]);
+  });
+});

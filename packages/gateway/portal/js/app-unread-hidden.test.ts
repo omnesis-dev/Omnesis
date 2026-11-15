@@ -43,6 +43,7 @@ vi.mock("./api.js", () => ({
   isAuthenticated: vi.fn(() => true),
   login: vi.fn(async () => ({ ok: true })),
   logout: vi.fn(async () => {}),
+  getPendingAccessRequests: vi.fn(async () => ({ pendingRequests: [] })),
   listPrivacyApprovals: vi.fn(async () => ({ totalCount: 0 })),
   listSubscriptionApprovals: vi.fn(async () => ({ totalCount: 0 })),
   startHostFleetUpdate: vi.fn(),

@@ -1025,6 +1025,10 @@ export const revokeTokenById = (id) =>
 export const getAccessOverview = () =>
   request("GET", "/admin/access", { cache: "no-store" });
 
+/** Only the agent access requests waiting for the owner, light enough to read from every page. */
+export const getPendingAccessRequests = () =>
+  request("GET", "/portal/api/access/pending", { cache: "no-store" });
+
 /**
  * Resolve the short code shown by an MCP client's authorization window: the
  * pending request, and the gateway's `connection` proposal for it — a default

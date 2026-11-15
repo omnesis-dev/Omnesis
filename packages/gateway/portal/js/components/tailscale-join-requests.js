@@ -10,9 +10,10 @@
 import { html } from "htm/preact";
 import { useEffect, useRef, useState } from "preact/hooks";
 import { decideTailscaleJoin, tailscaleJoinRequests } from "../lib/tailscale-api.js";
+import { SIGNAL_FALLBACK_MS, usePortalSignal } from "../lib/portal-signals.js";
+import { earliestExpiry, useRefreshAt } from "../lib/use-refresh-at.js";
 import { useVisiblePoll } from "../lib/use-visible-poll.js";
 
-const POLL_MS = 3000;
 /** How long "Approved studio-mac." stays after a decision. */
 const NOTICE_MS = 8000;
 
@@ -95,8 +96,9 @@ const DECIDED = {
 };
 
 /**
- * The waiting collectors, read every few seconds while the page is visible. `onCount` hears how
- * many wait, so the Devices page can title the list it shares with other requests.
+ * The waiting collectors, read when the gateway signals one arrived or was decided, when the first
+ * one expires, and slowly in case the signal stream is down. `onCount` hears how many wait, so the
+ * Devices page can title the list it shares with other requests.
  */
 export function TailscaleJoinRequests({ onCount = () => {}, load = tailscaleJoinRequests }) {
   const [requests, setRequests] = useState([]);
@@ -122,11 +124,13 @@ export function TailscaleJoinRequests({ onCount = () => {}, load = tailscaleJoin
   useEffect(() => {
     refresh();
   }, []);
-  useVisiblePoll(refresh, POLL_MS);
+  usePortalSignal("devices", refresh);
+  useVisiblePoll(refresh, SIGNAL_FALLBACK_MS);
   // A request leaves once it is out of time, also between two reads.
   const waiting = requests.filter(
     (request) => !decidedIds.current.has(request.id) && expiresIn(request.expiresAt) !== "expired",
   );
+  useRefreshAt(earliestExpiry(waiting), refresh);
   useEffect(() => onCount(waiting.length), [waiting.length]);
   const decided = (request, outcome) => {
     decidedIds.current.add(request.id);
