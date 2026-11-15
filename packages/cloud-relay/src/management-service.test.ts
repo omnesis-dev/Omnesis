@@ -1422,8 +1422,8 @@ test(
       GatewayAccountLink["passkeyConfirmation"]
     >;
     const options = vi
-      .spyOn(GatewayAccountLink.prototype, "passkeyConfirmation")
-      .mockReturnValue(ceremony);
+      .spyOn(GatewayAccountLink.prototype, "passkeyConfirmationOptions")
+      .mockResolvedValue(ceremony);
     const confirm = vi.spyOn(GatewayAccountLink.prototype, "confirmPasskey").mockResolvedValue();
     expect(await manager.passkeyConfirmation()).toBe(ceremony);
     const confirmed = await manager.confirmPasskey({ type: "gateway-passkey" });

@@ -8,7 +8,7 @@ import { tmpdir } from "node:os";
 import { createLocalJWKSet, exportJWK, generateKeyPair, SignJWT, type JWK } from "jose";
 import { afterEach, beforeAll, beforeEach, expect, test, vi } from "vitest";
 import { passkeyAuthenticator } from "../test/passkey-authenticator.js";
-import { GatewayAccountLink } from "./gateway-account-link.js";
+import { GatewayAccountLink, PasskeyNotOnAccount } from "./gateway-account-link.js";
 import { gatewayKeyAccount } from "./gateway-key-auth.js";
 import { GatewaySignInVerifier, type TrustedSignIn } from "./gateway-sign-in-proof.js";
 import {
@@ -2639,8 +2639,9 @@ test("a device's passkey sign-in on the gateway's page uses the confirmed, pinne
   );
   await f.manager.initialize();
   expect(await signIn(pinnedOnly)).toMatchObject({ id: pinnedOnly.id, trusted: false });
-  // Not listed, made on the relay's page, or listed for another account: nothing.
-  expect(await signIn(stranger)).toBeUndefined();
+  // Not listed: refused, and said apart so the page can name it as another account's.
+  await expect(signIn(stranger)).rejects.toBeInstanceOf(PasskeyNotOnAccount);
+  // Made on the relay's page, or listed for another account: nothing.
   expect(await signIn(listed, { from: origin })).toBeUndefined();
   f.credentials.mockResolvedValueOnce({
     accountId: "b".repeat(64),
@@ -2916,4 +2917,117 @@ test("approving a held sign-in made on the gateway's own page confirms that pass
   expect(f.manager.confirmedSignIns()).toEqual([
     expect.objectContaining({ id: listed.id, via: "gateway-origin", counter: 0 }),
   ]);
+});
+
+test("a passkey the account doesn't list is said apart from one that fails its check, on confirming and signing in", async () => {
+  const f = await confirming();
+  const owner = await passkeyDevice(),
+    leftover = await passkeyDevice();
+  f.list({ id: owner.id, publicKey: owner.publicKey });
+  // Most often an older account's passkey the browser still offers.
+  await expect(
+    f.manager.confirmPasskey(f.assert(leftover, f.manager.passkeyConfirmation())),
+  ).rejects.toMatchObject({ status: 403, code: "passkey-not-on-account" });
+  // A listed passkey whose check fails (here: made on another page) is a refusal like before.
+  await expect(
+    f.manager.confirmPasskey(f.assert(owner, f.manager.passkeyConfirmation(), { from: origin })),
+  ).rejects.toMatchObject({ status: 403, code: "passkey-not-confirmed" });
+  // A passkey pinned here but missing from the listing is this gateway's: never "another account's".
+  await writeFile(
+    f.options.metadataFile,
+    JSON.stringify({
+      ...(await f.saved()),
+      trustedSignIns: [
+        {
+          type: "passkey",
+          id: leftover.id,
+          publicKey: leftover.publicKey,
+          addedAt: 1,
+          source: "link-page",
+        },
+      ],
+    }) + "\n",
+    { mode: 0o600 },
+  );
+  await f.manager.initialize();
+  await expect(
+    f.manager.confirmPasskey(f.assert(leftover, f.manager.passkeyConfirmation())),
+  ).rejects.toMatchObject({ status: 403, code: "passkey-not-confirmed" });
+});
+
+test("each passkey prompt names the passkeys its ceremony would take, as a hint only", async () => {
+  const f = await confirming();
+  const enrollment = f.manager.pairingIdentity()!.enrollment;
+  const owner = await passkeyDevice(),
+    other = await passkeyDevice();
+  // Confirming offers the passkeys the account lists.
+  f.list(
+    { id: owner.id, publicKey: owner.publicKey },
+    { id: other.id, publicKey: other.publicKey },
+  );
+  expect((await f.manager.passkeyConfirmationOptions()).allowCredentials).toEqual([
+    owner.id,
+    other.id,
+  ]);
+  // A listing it can't use (none, another account's, unreachable) leaves the browser to offer any.
+  f.list();
+  expect(await f.manager.passkeyConfirmationOptions()).not.toHaveProperty("allowCredentials");
+  f.credentials.mockResolvedValueOnce({ accountId: "b".repeat(64), google: [], passkeys: [owner] });
+  expect(await f.manager.passkeyConfirmationOptions()).not.toHaveProperty("allowCredentials");
+  f.credentials.mockRejectedValueOnce(new Error("offline"));
+  expect(await f.manager.passkeyConfirmationOptions()).not.toHaveProperty("allowCredentials");
+  // Before any passkey is confirmed: no approval with a passkey, and nothing to sign in with.
+  const binding = opaque();
+  expect(enrollment.passkeyApproval!()).toBe(false);
+  expect(enrollment.accountPasskey!()).toBe(false);
+  expect(enrollment.signInPasskeys!()).toEqual([]);
+  expect(enrollment.approvalCeremony!(binding)).not.toHaveProperty("allowCredentials");
+  // The passkey is listed and the ceremony still checks the key the account lists for it.
+  f.list({ id: owner.id, publicKey: owner.publicKey });
+  const ceremony = await f.manager.passkeyConfirmationOptions();
+  expect(ceremony.allowCredentials).toEqual([owner.id]);
+  await f.manager.confirmPasskey(f.assert(owner, ceremony));
+  expect(enrollment.passkeyApproval!()).toBe(true);
+  expect(enrollment.accountPasskey!()).toBe(true);
+  // Approvals and step-ups take only confirmed passkeys; a sign-in also takes pinned ones.
+  expect(enrollment.approvalCeremony!(binding)!.allowCredentials).toEqual([owner.id]);
+  expect(enrollment.stepUpCeremony!(binding)!.allowCredentials).toEqual([owner.id]);
+  await writeFile(
+    f.options.metadataFile,
+    JSON.stringify({
+      ...(await f.saved()),
+      trustedSignIns: [
+        {
+          type: "passkey",
+          id: other.id,
+          publicKey: other.publicKey,
+          addedAt: 1,
+          source: "endorsed",
+        },
+        {
+          type: "passkey",
+          id: owner.id,
+          publicKey: owner.publicKey,
+          addedAt: 1,
+          source: "link-page",
+        },
+      ],
+      // A confirmed Google account is no passkey to offer.
+      confirmedSignIns: [
+        ...((await f.saved()) as unknown as { confirmedSignIns: unknown[] }).confirmedSignIns,
+        { type: "google", id: f.google, at: 1, via: "native-google-approval" },
+      ],
+    }) + "\n",
+    { mode: 0o600 },
+  );
+  await f.manager.initialize();
+  expect(enrollment.signInPasskeys!()).toEqual([owner.id, other.id]);
+  expect(enrollment.approvalCeremony!(binding)!.allowCredentials).toEqual([owner.id]);
+  // A certificate incident turns passkey approval off.
+  expect(await f.manager.holdForCertificateIncident([ROGUE])).toBe(true);
+  expect(enrollment.passkeyApproval!()).toBe(false);
+  // Unlinked, none of it is offered.
+  await f.manager.unlink();
+  expect(enrollment.accountPasskey!()).toBe(false);
+  expect(enrollment.signInPasskeys!()).toEqual([]);
 });

@@ -129,6 +129,24 @@ describe("gateway passkey ceremonies in the portal", () => {
     expect(unsignalled.mock.calls[0]![0]).not.toHaveProperty("signal");
   });
 
+  test("the prompt offers only the passkeys the gateway named, and any when it named none", async () => {
+    const get = vi.fn().mockResolvedValue(assertion());
+    await gatewayPasskeyProof(
+      { ...ceremony, allowCredentials: ["Y3JlZA", "b3RoZXI", "not base64url!", 7] },
+      { credentials: { get }, location: { origin: ORIGIN } },
+    );
+    const offered = get.mock.calls[0]![0].publicKey.allowCredentials;
+    expect(offered.map((item: { type: string }) => item.type)).toEqual(["public-key", "public-key"]);
+    expect(
+      offered.map((item: { id: Uint8Array }) => Buffer.from(item.id).toString("base64url")),
+    ).toEqual(["Y3JlZA", "b3RoZXI"]);
+    await gatewayPasskeyProof(
+      { ...ceremony, allowCredentials: "Y3JlZA" },
+      { credentials: { get }, location: { origin: ORIGIN } },
+    );
+    expect(get.mock.calls[1]![0].publicKey.allowCredentials).toEqual([]);
+  });
+
   test("a closed prompt or a passkey without an account handle says what to do", async () => {
     await expect(
       gatewayPasskeyProof(ceremony, {
@@ -190,8 +208,8 @@ describe("approving a held request with a passkey", () => {
     const signal = new AbortController().signal;
     for (const [responses, deviceKey, message] of [
       [[new Response("{}", { status: 404 })], undefined, "can't be approved here anymore"],
-      [[ok({ challenge: CHALLENGE }), new Response("{}", { status: 403 })], undefined, "Use a passkey you confirmed on this gateway."],
-      [[ok({ challenge: CHALLENGE }), new Response("{}", { status: 403 })], {}, "in the browser that asked to join"],
+      [[ok({ challenge: CHALLENGE }), new Response("{}", { status: 403 })], undefined, "That passkey is for a different Omnesis account. It may be from an account you deleted. Choose another passkey."],
+      [[ok({ challenge: CHALLENGE }), new Response("{}", { status: 403 })], {}, "Approve in the browser that asked to join."],
       [[ok({ challenge: CHALLENGE }), new Response("{}", { status: 500 })], undefined, "Couldn't approve this request."],
     ] as const) {
       const transport = vi.fn();
@@ -253,7 +271,7 @@ describe("stepping up for one administrative action", () => {
           .mockResolvedValueOnce(new Response("{}", { status: 403 })),
         prove,
       }),
-    ).rejects.toThrow("Use a passkey you confirmed on this gateway.");
+    ).rejects.toThrow("That passkey is for a different Omnesis account.");
     // With the real prompt, a page off the gateway's origin is sent there.
     vi.stubGlobal("location", { origin: "https://elsewhere.example.test" });
     await expect(

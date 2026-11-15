@@ -19387,6 +19387,18 @@ summary.decision-card-head {
 .relay-confirm .relay-actions { margin-top: 12px; }
 .relay-section > .relay-confirm { margin-top: 10px; }
 .relay-strong { font-weight: 500; }
+/* Finish setting up: the checklist that ends connecting an account. */
+.relay-setup { padding: 4px 0 28px; }
+.relay-setup-steps { list-style: none; margin: 14px 0 0; padding: 0; max-width: 64ch; }
+.relay-setup-step { display: grid; grid-template-columns: 26px minmax(0, 1fr); gap: 12px; padding: 10px 0; border-top: 1px solid var(--border); }
+.relay-setup-step:first-child { border-top: none; }
+.relay-setup-mark { display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; border-radius: 50%; border: 1px solid var(--border); font-size: 12px; font-weight: 600; color: var(--text-primary); }
+.relay-setup-done .relay-setup-mark { border-color: var(--success, var(--accent)); color: var(--success, var(--accent)); }
+.relay-setup-detail { margin-left: 10px; font-weight: 400; color: var(--text-secondary); overflow-wrap: anywhere; }
+.relay-setup-body .relay-hint { margin-top: 4px !important; font-size: 13px; color: var(--text-secondary); }
+.relay-setup-body .relay-actions { margin-top: 12px; align-items: center; }
+.relay-setup-reminder .relay-quiet { padding: 0; min-height: 0; }
+.cloud-pairing-quiet { margin-top: 16px; padding: 0; background: none; border: 0; color: var(--text-secondary); font-size: 13px; text-decoration: underline; cursor: pointer; }
 .relay-sign-ins { margin-top: 16px; }
 .relay-sign-in-list { list-style: none; margin: 6px 0 0; padding: 0; }
 .relay-sign-in { display: flex; flex-direction: column; gap: 2px; padding: 7px 0; border-top: 1px solid var(--border); }
