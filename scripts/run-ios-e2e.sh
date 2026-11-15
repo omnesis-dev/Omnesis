@@ -139,7 +139,7 @@ echo "→ Running OmnesisTests/GatewayLiveE2ETests against the gateway…"
 # this wrapper script skips the suite cleanly.
 CONFIG_FILE=/tmp/omnesis-ios-e2e-config.json
 # Pair a real owner phone; the helper writes its short-lived config owner-only.
-node "$ROOT/scripts/ci/native-e2e-pair.mjs" "$URL" "$OMNESIS_CONFIG_DIR/token" ios "$CONFIG_FILE"
+node "$ROOT/scripts/ci/native-e2e-pair.mjs" "$URL" "$OMNESIS_CONFIG_DIR/token" "$OMNESIS_CONFIG_DIR/tls/cert.pem" ios "$CONFIG_FILE"
 RESULT_DIR="$(mktemp -d)"
 trap 'cleanup; rm -f "$CONFIG_FILE"; rm -rf "$RESULT_DIR"' EXIT
 

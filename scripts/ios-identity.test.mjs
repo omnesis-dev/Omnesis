@@ -841,7 +841,7 @@ describe("iOS live gateway wrapper", () => {
           exit 0
         fi
         if [[ "$1" == */native-e2e-pair.mjs ]]; then
-          echo "pair:$4" >> "$TEST_CALLS"
+          echo "pair:$5" >> "$TEST_CALLS"
           exit 0
         fi
         echo "prepare:$*" >> "$TEST_CALLS"

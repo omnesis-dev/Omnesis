@@ -22,15 +22,16 @@ function localGateway(value) {
   return url;
 }
 
-function postJson(base, path, body, token) {
+function postJson(base, path, body, token, ca) {
   return new Promise((resolveReply, reject) => {
     const encoded = JSON.stringify(body);
-    // Only the isolated test gateway uses a fresh self-signed certificate.
+    // The isolated test gateway serves its own self-signed certificate; trust
+    // exactly that certificate rather than turning verification off.
     const pending = request(
       new URL(path, base),
       {
         method: "POST",
-        rejectUnauthorized: false,
+        ca,
         headers: {
           "Content-Type": "application/json",
           "Content-Length": Buffer.byteLength(encoded),
@@ -61,18 +62,26 @@ function postJson(base, path, body, token) {
 }
 
 /** Exercise real pairing: a bootstrap or a collector token is not an owner phone. */
-export async function pairNativeOwner({ gatewayURL, bootstrapToken, kind, post = postJson }) {
+export async function pairNativeOwner({ gatewayURL, bootstrapToken, kind, ca, post = postJson }) {
   const base = localGateway(gatewayURL);
   if (kind !== "ios" && kind !== "android") throw new Error("Use a native phone device kind.");
+  if (!ca) throw new Error("Native E2E pairing needs the test gateway's certificate.");
   const pending = await post(
     base,
     "/admin/devices/pair",
     { kind, name: "Native scope test phone" },
     bootstrapToken,
+    ca,
   );
   if (typeof pending.pairingCode !== "string" || !pending.pairingCode)
     throw new Error("Native E2E pairing did not return a code.");
-  const paired = await post(base, "/devices/pair", { pairingCode: pending.pairingCode });
+  const paired = await post(
+    base,
+    "/devices/pair",
+    { pairingCode: pending.pairingCode },
+    undefined,
+    ca,
+  );
   if (
     typeof paired.token !== "string" ||
     !paired.token ||
@@ -95,12 +104,13 @@ export function writeNativeConfig(path, config) {
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  const [gatewayURL, tokenFile, kind, output, tlsFingerprint] = process.argv.slice(2);
+  const [gatewayURL, tokenFile, certFile, kind, output, tlsFingerprint] = process.argv.slice(2);
   try {
     const config = await pairNativeOwner({
       gatewayURL,
       bootstrapToken: readFileSync(tokenFile, "utf8").trim(),
       kind,
+      ca: readFileSync(certFile),
     });
     writeNativeConfig(output, { ...config, ...(tlsFingerprint ? { tlsFingerprint } : {}) });
   } catch (error) {

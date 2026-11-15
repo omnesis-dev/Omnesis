@@ -14,8 +14,9 @@ describe("isolated native owner pairing", () => {
       gatewayURL: "https://localhost:17601",
       bootstrapToken: "fictional-bootstrap",
       kind: "ios",
-      post: async (base, path, body, token) => {
-        calls.push({ base: base.origin, path, body, token });
+      ca: "fixture-certificate",
+      post: async (base, path, body, token, ca) => {
+        calls.push({ base: base.origin, path, body, token, ca });
         return path === "/admin/devices/pair"
           ? { pairingCode: "fixture-code" }
           : {
@@ -31,16 +32,33 @@ describe("isolated native owner pairing", () => {
         path: "/admin/devices/pair",
         body: { kind: "ios", name: "Native scope test phone" },
         token: "fictional-bootstrap",
+        ca: "fixture-certificate",
       },
       {
         base: "https://localhost:17601",
         path: "/devices/pair",
         body: { pairingCode: "fixture-code" },
         token: undefined,
+        ca: "fixture-certificate",
       },
     ]);
     expect(config.apiToken).toBe("fictional-paired-owner");
     expect(config.deviceId).toBe("fixture-device");
+  });
+  it("refuses to pair without the test gateway's certificate to verify against", async () => {
+    let called = false;
+    await expect(
+      pairNativeOwner({
+        gatewayURL: "https://localhost:17601",
+        bootstrapToken: "fixture",
+        kind: "ios",
+        post: async () => {
+          called = true;
+          return {};
+        },
+      }),
+    ).rejects.toThrow("certificate");
+    expect(called).toBe(false);
   });
   it.each(["https://gateway.example:17601", "https://localhost:7600", "http://localhost:17601"])(
     "refuses non-isolated targets: %s",
@@ -66,6 +84,7 @@ describe("isolated native owner pairing", () => {
         gatewayURL: "https://localhost:17700",
         bootstrapToken: "fixture",
         kind: "android",
+        ca: "fixture-certificate",
         post: async (_base, path) =>
           path === "/admin/devices/pair"
             ? { pairingCode: "fixture-code" }

@@ -91,7 +91,7 @@ if [[ "$catalogue_ready" != 1 ]]; then
 fi
 
 # Pair a real owner phone; the helper writes its short-lived config owner-only.
-node "$ROOT/scripts/ci/native-e2e-pair.mjs" "$URL" "$OMNESIS_CONFIG_DIR/token" android "$CONFIG_FILE" "$FINGERPRINT"
+node "$ROOT/scripts/ci/native-e2e-pair.mjs" "$URL" "$OMNESIS_CONFIG_DIR/token" "$OMNESIS_CONFIG_DIR/tls/cert.pem" android "$CONFIG_FILE" "$FINGERPRINT"
 echo "→ Config written to $CONFIG_FILE (fingerprint=$FINGERPRINT)"
 
 echo "→ Running Android live-gateway E2E (host JVM, real TLS pinning)…"
