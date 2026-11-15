@@ -34,6 +34,7 @@ export const INSTALLER_TEST_EXCLUSIONS = [
 // and service decision matrices run in the complete daily/manual unit lane.
 export const FOCUSED_UNIT_FILES = [
   "scripts/lib/check-process.test.mjs",
+  "scripts/run-e2e-status.test.mjs",
   "packages/cli/src/commands/status-json.test.ts",
   "packages/collector/src/owned-process-shutdown.test.ts",
   "packages/collector/src/doctor-deadlines.test.ts",
