@@ -68,12 +68,15 @@ const stdinReceiver = createStdinReceiver(process.stdin);
 // warns rather than terminates on unhandled rejection) and surfaced
 // after the Bun → Node migration.
 //
+// Explicit native cleanup uncertainty retains this process instead of being
+// treated as a transient provider rejection.
 // The handler also covers any analogous transient rejections from
 // other provider auth flows. Routing to stderr (not stdout) keeps the
 // NDJSON protocol the parent parses clean, and the parent's stderr
 // listener surfaces these as `debug` logs.
 process.on("unhandledRejection", (reason) => {
   void processExit.preserveCleanupFailure(reason);
+  if (processExit.cleanupUncertain) return;
   const msg = reason instanceof Error ? (reason.stack ?? reason.message) : String(reason);
   process.stderr.write(`[auth-subprocess] swallowed unhandledRejection: ${msg}\n`);
 });

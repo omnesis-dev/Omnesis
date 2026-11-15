@@ -19,7 +19,7 @@ const registry = new URL("./source-descriptors.ts", import.meta.url).href;
 const repository = fileURLToPath(new URL("../../../", import.meta.url));
 
 interface Scenario {
-  stage: "prime" | "legacy" | "session";
+  stage: "prime" | "legacy" | "session" | "background";
   failure: "marked" | "ordinary" | "none";
   nested?: boolean;
 }
@@ -33,6 +33,7 @@ async function runScenario(scenario: Scenario) {
   const discovered = join(root, "discovered.txt");
   const invoked = join(root, "invoked.txt");
   const held = join(root, "held.txt");
+  const terminal = join(root, "terminal.txt");
   const preload = join(root, "fixture-preload.mjs");
   const failure =
     scenario.failure === "marked"
@@ -53,8 +54,8 @@ export async function primeSecretFileKeyCache(){
 }
 export function secretFileEncryptionRequired(){return false;}
 `;
-  const operation = `async()=>{writeFileSync(${JSON.stringify(invoked)},'invoked');${scenario.stage !== "prime" && scenario.failure !== "none" ? `throw ${thrown};` : scenario.stage === "session" ? "return {accounts:[{accountId:'fixture-account',state:{}}]};" : "return 'fixture-account';"}}`;
-  const provider = `import {writeFileSync} from 'node:fs';writeFileSync(${JSON.stringify(discovered)},'discovered');export const allDescriptors=[{id:'fixture-auth',provider:{id:'fixture-provider'},${scenario.stage === "session" ? "authenticate" : "authFlow"}:${operation}}];`;
+  const operation = `async()=>{writeFileSync(${JSON.stringify(invoked)},'invoked');${scenario.stage === "background" ? `void Promise.reject(${thrown});await new Promise(resolve=>setTimeout(resolve,150));return {accounts:[{accountId:'fixture-account',state:{}}]};` : scenario.stage !== "prime" && scenario.failure !== "none" ? `throw ${thrown};` : scenario.stage === "session" ? "return {accounts:[{accountId:'fixture-account',state:{}}]};" : "return 'fixture-account';"}}`;
+  const provider = `import {writeFileSync} from 'node:fs';writeFileSync(${JSON.stringify(discovered)},'discovered');export const allDescriptors=[{id:'fixture-auth',provider:{id:'fixture-provider'},${scenario.stage === "session" || scenario.stage === "background" ? "authenticate" : "authFlow"}:${operation}}];`;
   writeFileSync(
     preload,
     `
@@ -79,7 +80,7 @@ registerHooks({load(url,context,nextLoad){
     "fixture-auth",
   ];
   const init = JSON.stringify({ type: "init", flowId: "fixture-flow" }) + "\n";
-  const driver = `import {spawn} from 'node:child_process';const child=spawn(process.execPath,${JSON.stringify(args)},{stdio:['pipe','inherit','inherit']});child.stdin.on('error',()=>{});child.stdin.end(${JSON.stringify(init)});child.once('error',()=>{process.exitCode=1;});child.once('exit',code=>{process.exitCode=code??1;});`;
+  const driver = `import {writeFileSync} from 'node:fs';import {spawn} from 'node:child_process';const child=spawn(process.execPath,${JSON.stringify(args)},{stdio:['pipe','pipe','inherit']});let output='';child.stdout.on('data',chunk=>{output+=String(chunk);if(/\"type\":\"(?:complete|error)\"/.test(output))writeFileSync(${JSON.stringify(terminal)},'terminal');});child.stdin.on('error',()=>{});child.stdin.end(${JSON.stringify(init)});child.once('error',()=>{process.exitCode=1;});child.once('exit',code=>{process.exitCode=code??1;});`;
   const running = runCheckCommand(process.execPath, ["--input-type=module", "-e", driver], {
     cwd: repository,
     env: authSubprocessEnvironment(root, {
@@ -102,30 +103,52 @@ registerHooks({load(url,context,nextLoad){
     if (scenario.failure === "marked") {
       expect(existsSync(held), "cleanup uncertainty must reach the process exit fence").toBe(true);
       expect(settled, "the uncertain process must retain its original PID").toBe(false);
+      // Let a provider that continues after a background rejection try to report success.
+      if (scenario.stage === "background") await new Promise((resolve) => setTimeout(resolve, 250));
+      expect(
+        existsSync(terminal),
+        "uncertainty must not become an ordinary terminal auth event",
+      ).toBe(false);
       expect(existsSync(discovered)).toBe(scenario.stage !== "prime");
       expect(existsSync(invoked)).toBe(scenario.stage !== "prime");
     } else {
       expect(settled, "ordinary outcomes must remain able to exit").toBe(true);
       expect(existsSync(held)).toBe(false);
+      expect(existsSync(terminal), "ordinary outcomes must report their terminal auth event").toBe(
+        true,
+      );
       expect(existsSync(discovered)).toBe(true);
       expect(existsSync(invoked)).toBe(true);
       const result = await running;
-      expect(result).toBe(scenario.failure === "ordinary" && scenario.stage !== "prime" ? 1 : 0);
+      expect(result).toBe(
+        scenario.failure === "ordinary" &&
+          scenario.stage !== "prime" &&
+          scenario.stage !== "background"
+          ? 1
+          : 0,
+      );
     }
   } finally {
-    if (!settled) signals.emit("SIGTERM");
+    const stopping = !settled;
+    if (stopping) signals.emit("SIGTERM");
     try {
       await running;
     } catch (error) {
       retained = ownedProcessCleanupReceipt(error) !== undefined;
-      throw error;
+      const cancelled =
+        error instanceof Error &&
+        error.message ===
+          (process.platform === "win32"
+            ? "Check process did not complete normally"
+            : "Check terminated after SIGTERM");
+      if (retained || !stopping || !cancelled) throw error;
     } finally {
       if (!retained) rmSync(root, { recursive: true, force: true });
     }
   }
 }
 
-for (const stage of ["prime", "legacy", "session"] as const) {
+for (const stage of ["prime", "legacy", "session", "background"] as const) {
   test.each([false, true])(
     `the real ${stage} path retains cleanup uncertainty (nested=%s)`,
     async (nested) => runScenario({ stage, failure: "marked", nested }),
@@ -140,5 +163,11 @@ for (const stage of ["prime", "legacy", "session"] as const) {
 test(
   "the real successful session path remains able to exit",
   async () => runScenario({ stage: "session", failure: "none" }),
+  30_000,
+);
+
+test(
+  "the real successful legacy path remains able to exit",
+  async () => runScenario({ stage: "legacy", failure: "none" }),
   30_000,
 );

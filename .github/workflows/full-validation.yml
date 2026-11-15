@@ -97,6 +97,9 @@ jobs:
           packages/collector/src/auth-subprocess-error.test.ts
           packages/collector/src/auth-subprocess-result.test.ts
           packages/collector/src/source-ws-handlers.auth-begin.test.ts
+      - name: Inspect stopped SQLite driver interoperability
+        if: ${{ !cancelled() && inputs.scope == 'auth-owned-green' && runner.os == 'Windows' }}
+        run: node --import tsx scripts/ci/windows-sqlite-restart-diagnostic.mjs
       - name: Validate scoped keys with existing secret, config, TLS and CI contracts
         if: ${{ inputs.scope == 'cache-green' }}
         run: >-
