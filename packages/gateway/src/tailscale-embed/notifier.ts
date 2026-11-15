@@ -79,7 +79,7 @@ export class TailscaleJoinNotifier {
           kind: "tailscale-joined",
           title: "New device joined",
           body: `${bannerName(device.name)} joined your gateway through Tailscale. Not you? Remove it in Devices.`,
-          data: {},
+          data: { deviceId: device.id },
           collapseId: `tailscale-joined:${device.id}`,
         },
         targets,

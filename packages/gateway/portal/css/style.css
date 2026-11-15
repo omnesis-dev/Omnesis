@@ -19584,6 +19584,24 @@ summary.decision-card-head {
 .cloud-pairing-trust small { display: block; color: var(--text-secondary); font-size: 12px; }
 .cloud-pairing-revoked { margin: 12px 0 0; padding: 10px 14px; border-radius: 8px; font-size: 13px; color: var(--text-primary); border: 1px solid color-mix(in srgb, var(--warning) 45%, var(--border)); background: color-mix(in srgb, var(--warning) 8%, transparent); }
 .cloud-pairing-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 16px; }
+.cloud-pairing-request p.cloud-pairing-question { margin: 16px 0 0; font-size: 14px; font-weight: 600; color: var(--text-primary); }
+/* A six-digit code reads as two groups of three. */
+.cloud-pairing-code > span + span { margin-left: 0.35em; }
+.cloud-pairing-email { display: block; margin: 2px 0; font-size: 15px; font-weight: 600; color: var(--text-primary); overflow-wrap: anywhere; }
+/* The request a notification opened. */
+.cloud-pairing-request.cloud-pairing-focused { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.cloud-pairing-denied { margin-top: 12px; padding: 14px 18px; border-radius: var(--radius-lg); font-size: 13px; line-height: 1.55; color: var(--text-primary); border: 1px solid color-mix(in srgb, var(--warning) 45%, var(--border)); background: color-mix(in srgb, var(--warning) 8%, transparent); }
+.cloud-pairing-denied p { margin: 0; }
+.cloud-pairing-denied .cloud-pairing-actions { margin-top: 12px; }
+/* The note before a Face ID prompt the button didn't announce. It sits above the page, at the
+   bottom on a phone, until the person continues or cancels. */
+.relay-option-face-id { display: block; margin-top: 4px; font-size: 12px; font-weight: 600; color: var(--accent); }
+.relay-step-up-sheet { position: fixed; inset: 0; z-index: 1000; display: flex; align-items: flex-end; justify-content: center; padding: 16px; background: color-mix(in srgb, var(--bg-primary, #000) 40%, transparent); }
+.relay-step-up-card { width: 100%; max-width: 420px; padding: 18px 20px; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--bg-secondary); box-shadow: 0 8px 28px rgba(0, 0, 0, 0.25); }
+.relay-step-up-title { margin: 0 0 6px; font-size: 15px; font-weight: 600; color: var(--text-primary); }
+.relay-step-up-text { margin: 0; font-size: 13px; line-height: 1.55; color: var(--text-secondary); }
+.relay-step-up-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 16px; }
+@media (min-width: 601px) { .relay-step-up-sheet { align-items: center; } }
 /* The waiting strip above every page. It is part of the page flow, so it never covers content. */
 .cloud-pairing-notice { flex: none; }
 .cloud-pairing-notice .access-pending-client { color: var(--text-primary); font-size: 13px; }

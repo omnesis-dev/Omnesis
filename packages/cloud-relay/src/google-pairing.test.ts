@@ -259,9 +259,12 @@ test("only verified new pending enrollments emit one notification hint and hints
   const value = await request();
   const pending = await start(service, value);
   await start(service, value);
+  // The device's own name and kind come along for the notification text, nothing secret.
   expect(onPending).toHaveBeenCalledExactlyOnceWith({
     requestId: value.requestId,
     expiresAt: pending.expiresAt,
+    kind: value.kind,
+    name: value.name,
   });
   expect(createPairing).not.toHaveBeenCalled();
   onPending.mockImplementationOnce(() => {

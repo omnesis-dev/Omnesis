@@ -11,6 +11,8 @@ import {
 } from "./cloud-relay-api.js";
 
 /** While a connect is under way the page follows it closely; otherwise a slow poll is enough. */
+// An operation that may ask for Face ID first waits for the person, not only for the network.
+const STEP_UP_OPERATIONS = new Set(["enrollment"]);
 const IN_PROGRESS = ["waiting", "registering", "linking"];
 export function relayPollInterval(status) {
   return IN_PROGRESS.includes(status?.connect?.state) ? 2000 : 5000;
@@ -28,7 +30,7 @@ export function useRelayManagement() {
   const [busy, setBusy] = useState("");
   const active = useRef(null);
   const mounted = useRef(false);
-  const run = async (operation = "", input = {}, method = "POST") => {
+  const run = async (operation = "", input = {}, method = "POST", options) => {
     if (!mounted.current) return undefined;
     if (operation && active.current?.operation) return undefined;
     if (!operation && active.current) return undefined;
@@ -38,9 +40,18 @@ export function useRelayManagement() {
     active.current = attempt;
     setBusy(operation || "refresh");
     setError("");
-    const timeout = setTimeout(() => controller.abort(), 10_000);
+    const timeout = setTimeout(
+      () => controller.abort(),
+      STEP_UP_OPERATIONS.has(operation) ? 130_000 : 10_000,
+    );
     try {
-      const result = await relayManagement(operation, input, controller.signal, method);
+      const result = await relayManagement(
+        operation,
+        input,
+        controller.signal,
+        method,
+        ...(options ? [options] : []),
+      );
       if (controller.signal.aborted) throw new Error("Request expired");
       // Replacement and unmount both abort this request before clearing it.
       if (operation === "google/link")
@@ -56,7 +67,9 @@ export function useRelayManagement() {
     } catch (error) {
       if (mounted.current && active.current === attempt)
         setError(
-          relayError(error?.code) ||
+          // A Face ID step that couldn't go ahead says why in its own words.
+          (error?.stepUp === true && error.message) ||
+            relayError(error?.code) ||
             "Couldn't load or update your Omnesis account settings. Check the connection and try again.",
         );
       return undefined;

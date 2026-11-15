@@ -18,7 +18,12 @@
  *
  * A guarded request without a valid step-up is refused with 428 `STEP_UP_REQUIRED`, whose
  * `detail` names what to step up for. While no step-up can start (a certificate incident holds
- * the gateway, or it has no origin of its own), it is refused with 403 `STEP_UP_UNAVAILABLE`.
+ * the gateway, or it has no origin of its own), it is refused with 403 `STEP_UP_UNAVAILABLE`,
+ * whose `detail.reason` is `security-lock` during an incident.
+ *
+ * `required(c)` also answers ahead of time whether this session's loosening actions will ask,
+ * so a page can say so on the button (`stepUpRequired`). That answer only labels: every guarded
+ * request is still checked here, one at a time.
  */
 
 import { createHash, randomBytes } from "node:crypto";
@@ -132,6 +137,14 @@ export class StepUps {
   }
 }
 
+/**
+ * Whether this session's loosening actions will ask for a step-up, for a page to say so on the
+ * button. Labels only: `requireStepUp` still checks every guarded request on its own.
+ */
+export function stepUpRequired(c: Context<AppEnv>): boolean {
+  return c.get("stepUps")?.required(c) ?? false;
+}
+
 function binding(
   c: Context<AppEnv>,
   request: { method: string; path: string; bodySha256: string },
@@ -139,7 +152,14 @@ function binding(
   return gatewayPasskeyStepUpBinding({ ...request, deviceId: requester(c.get("auth")) });
 }
 
-function unavailable(): HttpError {
+function unavailable(source: StepUpSource): HttpError {
+  if (source.enrollment()?.securityLock?.())
+    return new HttpError(
+      403,
+      "STEP_UP_UNAVAILABLE",
+      "Security lock is on. This change can only be made on the computer running Omnesis right now.",
+      { reason: "security-lock" },
+    );
   return new HttpError(
     403,
     "STEP_UP_UNAVAILABLE",
@@ -168,7 +188,7 @@ export function requireStepUp(
       }
       if (exempt(body, c)) return next();
     }
-    if (!stepUps.available()) throw unavailable();
+    if (!stepUps.available()) throw unavailable(stepUps.source);
     const url = new URL(c.req.url);
     const request = {
       method: c.req.method.toUpperCase(),
@@ -215,7 +235,7 @@ export function mountStepUp(app: RouteApp, source: StepUpSource): void {
   app.post("/admin/step-up/options", scope.admin(), bounded, validateJson(stepUpRequest), (c) => {
     c.header("Cache-Control", "no-store");
     const ceremony = source.enrollment()?.stepUpCeremony?.(binding(c, c.req.valid("json")));
-    if (!ceremony) throw unavailable();
+    if (!ceremony) throw unavailable(source);
     return c.json(ceremony);
   });
   // The assertion for it, exchanged for an id the request then carries.
@@ -227,7 +247,7 @@ export function mountStepUp(app: RouteApp, source: StepUpSource): void {
       throw new HttpError(
         403,
         "STEP_UP_REFUSED",
-        "Your gateway didn't accept that passkey. Use a passkey you confirmed on this gateway.",
+        "That passkey can't approve changes here. Use the passkey you set up for this gateway.",
       );
     return c.json(stepUps.issue(value));
   });

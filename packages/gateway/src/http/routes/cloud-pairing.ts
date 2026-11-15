@@ -21,7 +21,7 @@ import {
   cloudPairingIdentity,
   webGooglePairingConfiguration,
 } from "../services/CloudPairingConfiguration.js";
-import { declines, requireStepUp } from "../step-up.js";
+import { declines, requireStepUp, stepUpRequired } from "../step-up.js";
 import { clientIp } from "./admin/internals.js";
 import type { RouteApp } from "./types.js";
 import type { WriteGate } from "../../write-gate.js";
@@ -336,7 +336,11 @@ export function mountCloudPairingRoutes(
   }
   app.get("/admin/cloud-pairing/requests", scope.admin(), (c) => {
     c.header("Cache-Control", "no-store");
-    return c.json({ items: current().pairing.list() });
+    return c.json({
+      items: current().pairing.list(),
+      // Whether approving from this session asks for a passkey first, so the button can say so.
+      stepUpRequired: stepUpRequired(c),
+    });
   });
   app.post(
     "/admin/cloud-pairing/decision",

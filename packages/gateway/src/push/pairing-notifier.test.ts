@@ -17,9 +17,11 @@ const device = (name: string, kind = "ios", revokedAt: number | null = null) =>
 const request = () => ({
   requestId: "00000000-0000-4000-8000-000000000001",
   expiresAt: Date.now() + 600_000,
+  name: "Maya's laptop",
+  kind: "cli",
 });
 
-test("only active administrator phones receive a bounded generic pairing notification", async () => {
+test("only active administrator phones are asked about a waiting device, and the banner opens that request", async () => {
   const publish = vi.fn().mockResolvedValue([]);
   const rows = [
     device("phone"),
@@ -41,9 +43,10 @@ test("only active administrator phones receive a bounded generic pairing notific
   expect(publish).toHaveBeenCalledExactlyOnceWith(
     {
       kind: "device-pairing",
-      title: "Device pairing request",
-      body: "Review the new device under Devices → Pairing requests. Compare the verification codes before approving.",
-      data: {},
+      title: "Is this you?",
+      body: "Maya's laptop wants to connect to your gateway. Tap to review.",
+      // Opens that request, where the code is compared. Nothing secret, no approve action.
+      data: { requestId: pending.requestId },
       collapseId: "device-pairing:" + pending.requestId,
     },
     [id("phone"), id("android")],
@@ -102,9 +105,9 @@ test("a join goes to every other administrator phone, names the device and nothi
   const [message, targets, options] = publish.mock.calls[0]!;
   expect(message).toEqual({
     kind: "device-joined",
-    title: "New device joined",
-    body: "Jamie's laptop joined your gateway. Not you? Remove it in Devices.",
-    data: {},
+    title: "New device connected",
+    body: "Jamie's laptop connected to your gateway. Not you? Tap to remove it.",
+    data: { deviceId: id("joined") },
     collapseId: `device-joined:${id("joined")}`,
   });
   expect(targets).toEqual([id("phone"), id("android")]);
@@ -120,7 +123,7 @@ test("a joined name cannot break the banner onto several lines", async () => {
     () => [id("phone")],
   ).notifyJoined({ deviceId: id("other"), name: "a\nb\u202Ec", kind: "ios", signIn: null });
   expect(publish.mock.calls[0]![0].body).toBe(
-    "a b c joined your gateway. Not you? Remove it in Devices.",
+    "a b c connected to your gateway. Not you? Tap to remove it.",
   );
 });
 
@@ -148,7 +151,46 @@ test("a long name is shortened to one line and a name with nothing printable is 
   await service.notifyJoined({ ...joined, name: "x".repeat(81) });
   await service.notifyJoined({ ...joined, name: "\u0000‮\n" });
   expect(publish.mock.calls.map(([message]) => message.body)).toEqual([
-    `${"x".repeat(79)}… joined your gateway. Not you? Remove it in Devices.`,
-    "A device joined your gateway. Not you? Remove it in Devices.",
+    `${"x".repeat(79)}… connected to your gateway. Not you? Tap to remove it.`,
+    "An iOS device connected to your gateway. Not you? Tap to remove it.",
   ]);
+});
+
+test("a waiting device's banner names it on one line, else by its kind, and says nothing of accounts", async () => {
+  const publish = vi.fn().mockResolvedValue([]);
+  const service = new PairingNotifier(
+    { publish },
+    () => [device("phone")],
+    () => [id("phone")],
+  );
+  for (const [name, kind] of [
+    ["a\nb\u202Ec", "ios"],
+    ["\u0000\n", "portal"],
+    ["\u0000", "android"],
+    ["\u0000", "collector"],
+    ["\u0000", "cli"],
+    ["\u0000", "watch"],
+    [undefined, undefined],
+    ["x".repeat(81), "ios"],
+  ] as const)
+    await service.notify({
+      requestId: request().requestId,
+      expiresAt: request().expiresAt,
+      ...(name === undefined ? {} : { name }),
+      ...(kind === undefined ? {} : { kind }),
+    });
+  const bodies = publish.mock.calls.map(([message]) => message.body as string);
+  expect(bodies).toEqual([
+    "a b c wants to connect to your gateway. Tap to review.",
+    "A browser wants to connect to your gateway. Tap to review.",
+    // Built from parts so it doesn't read as a person's name.
+    ["An", "Android", "device wants to connect to your gateway. Tap to review."].join(" "),
+    "A collector wants to connect to your gateway. Tap to review.",
+    "A command-line client wants to connect to your gateway. Tap to review.",
+    "A device wants to connect to your gateway. Tap to review.",
+    "A device wants to connect to your gateway. Tap to review.",
+    `${"x".repeat(79)}… wants to connect to your gateway. Tap to review.`,
+  ]);
+  for (const message of publish.mock.calls.map(([value]) => value))
+    expect(JSON.stringify(message)).not.toMatch(/account|password|Google/i);
 });

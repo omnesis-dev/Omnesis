@@ -89,6 +89,7 @@ describe("TailscaleJoinNotifier", () => {
     expect(publish).toHaveBeenCalledWith(
       expect.objectContaining({
         kind: "tailscale-joined",
+        data: { deviceId: E },
         body: "maya-laptop joined your gateway through Tailscale. Not you? Remove it in Devices.",
         collapseId: `tailscale-joined:${E}`,
       }),

@@ -17,6 +17,7 @@ import {
   mountStepUp,
   ownPushClaimToken,
   requireStepUp,
+  stepUpRequired,
 } from "./step-up.js";
 import type { AppEnv, AuthContext } from "./routes/types.js";
 import type { DeviceId, TokenId } from "@omnesis/types";
@@ -35,9 +36,10 @@ const CSRF = { "X-Omnesis-CSRF": "x" };
 /** A stand-in for the linked account: one confirmed passkey, and ceremonies it can answer. */
 function account() {
   const ceremonies = new Map<string, string>();
-  const state = { confirmed: true, origin: true as boolean, accept: true };
+  const state = { confirmed: true, origin: true as boolean, accept: true, locked: false };
   const enrollment = {
     stepUpRequired: () => state.confirmed,
+    securityLock: () => state.locked,
     gatewayPasskey: () =>
       state.origin ? { rpId: "relay.example.test", origin: "https://g-1.example.test" } : undefined,
     stepUpCeremony: vi.fn((binding: string) => {
@@ -298,7 +300,30 @@ test("during a certificate incident (no origin of its own) no step-up starts and
     json("POST", PAIR.body, { ...RELAYED, "X-Omnesis-Step-Up": stepUpId }),
   );
   expect(held.status).toBe(403);
-  expect(await held.json()).toMatchObject({ code: "STEP_UP_UNAVAILABLE" });
+  const heldBody = await held.json();
+  expect(heldBody).toMatchObject({ code: "STEP_UP_UNAVAILABLE" });
+  // Without an origin but no incident, nothing calls it a security lock.
+  expect(JSON.stringify(heldBody)).not.toContain("security-lock");
+  // During an incident the refusal says so, for the page to name it.
+  linked!.state.locked = true;
+  for (const locked of [
+    await router.request(PAIR.path, json("POST", PAIR.body, RELAYED)),
+    await router.request(
+      "/admin/step-up/options",
+      json(
+        "POST",
+        JSON.stringify({ method: "POST", path: PAIR.path, bodySha256: sha256(PAIR.body) }),
+        RELAYED,
+      ),
+    ),
+  ]) {
+    expect(locked.status).toBe(403);
+    expect(await locked.json()).toMatchObject({
+      code: "STEP_UP_UNAVAILABLE",
+      error: expect.stringContaining("Security lock is on."),
+      detail: { reason: "security-lock" },
+    });
+  }
   // A stricter action still goes through.
   const ask = await router.request(
     "/admin/cloud-relay/enrollment",
@@ -399,7 +424,30 @@ test("nothing changes before the owner confirms a passkey, without an account, o
   vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "1");
   const bare = strictRoute(new Hono<AppEnv>());
   bare.post("/admin/devices/pair", scope.public(), requireStepUp(), (c) => c.json({ ok: true }));
+  bare.get("/label", scope.public(), (c) => c.json({ stepUpRequired: stepUpRequired(c) }));
   expect((await bare.request(PAIR.path, json("POST", PAIR.body, RELAYED))).status).toBe(200);
+  // And a page is told nothing will ask.
+  expect(await (await bare.request("/label", { headers: RELAYED })).json()).toEqual({
+    stepUpRequired: false,
+  });
+});
+
+test("a page is told ahead whether this session's loosening actions will ask, by the same rule", async () => {
+  const router = app();
+  router.get("/label", scope.admin(), (c) => c.json({ stepUpRequired: stepUpRequired(c) }));
+  const label = async (headers: Record<string, string> = {}) =>
+    ((await (await router.request("/label", { headers })).json()) as { stepUpRequired: boolean })
+      .stepUpRequired;
+  expect(await label()).toBe(false);
+  expect(await label(RELAYED)).toBe(true);
+  methods[DEVICE] = "automatic";
+  expect(await label()).toBe(true);
+  linked!.state.confirmed = false;
+  expect(await label(RELAYED)).toBe(false);
+  // A label is not a step-up: the guarded request is still refused without one.
+  linked!.state.confirmed = true;
+  expect(await label(RELAYED)).toBe(true);
+  expect((await router.request(PAIR.path, json("POST", PAIR.body, RELAYED))).status).toBe(428);
 });
 
 test("at most 64 step-ups wait at once; the oldest goes first", async () => {

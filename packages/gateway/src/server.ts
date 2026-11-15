@@ -670,7 +670,13 @@ export function createServer(
     cloudIdentitySource?: () =>
       import("./http/services/CloudPairingConfiguration.js").CloudPairingIdentity | undefined;
     cloudPairingPublicOrigin?: () => string | undefined;
-    onCloudPairingRequest?: (request: { requestId: string; expiresAt: number }) => void;
+    /** A device waits for approval. `name` and `kind` are its own, untrusted description. */
+    onCloudPairingRequest?: (request: {
+      requestId: string;
+      expiresAt: number;
+      name: string;
+      kind: string;
+    }) => void;
     /** A device joined with nobody approving it; see `PairingServiceDeps`. */
     onDeviceJoined?: import("./http/services/PairingService.js").PairingServiceDeps["onDeviceJoined"];
     /** The gateway's own tailnet device; present only with OMNESIS_TAILSCALE_EMBED_ENABLED=1. */
