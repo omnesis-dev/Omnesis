@@ -120,6 +120,7 @@ describe("LexicalIndexService", () => {
           terminated = true;
         },
       }),
+      switchVersion: async () => true,
       activeVersion: () => 0,
       countChanges: () => 0,
       publish: (d) => published.push(d.docCount),
@@ -139,6 +140,7 @@ describe("LexicalIndexService", () => {
         builds++;
         return { done: new Promise(() => {}), terminate: async () => {} };
       },
+      switchVersion: async () => true,
       activeVersion: () => 0,
       countChanges: () => 1_000_000,
       publish: () => {},
