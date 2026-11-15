@@ -20,6 +20,7 @@ on:
             process-green,
             config-baseline,
             cache-baseline,
+            cache-green,
           ]
         default: regressions
 permissions:
@@ -29,7 +30,7 @@ env:
   TZ: UTC
 jobs:
   process-green:
-    if: ${{ inputs.scope == 'process-green' }}
+    if: ${{ inputs.scope == 'process-green' || inputs.scope == 'cache-green' }}
     strategy:
       fail-fast: false
       max-parallel: 1
@@ -50,7 +51,17 @@ jobs:
           cache: npm
       - name: Install locked dependencies
         run: node scripts/ci/npm-ci.mjs --no-audit --no-fund
+      - name: Validate scoped keys with existing secret, config, TLS and CI contracts
+        if: ${{ inputs.scope == 'cache-green' }}
+        run: >-
+          node scripts/run-check.mjs unit
+          packages/core/src/secret-file-cache.test.ts
+          packages/core/src/secret-file.test.ts
+          packages/core/src/config.test.ts
+          packages/core/src/tls-material.test.ts
+          scripts/ci/windows-checks.test.mjs
       - name: Validate registration, buffered ownership and encrypted bootstrap reads
+        if: ${{ inputs.scope == 'process-green' }}
         run: >-
           node scripts/run-check.mjs unit
           packages/collector/src/e2e/connect-process.test.ts

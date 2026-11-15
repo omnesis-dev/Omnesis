@@ -3,7 +3,11 @@
 
 import { resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
-import { readInstallRootKey, readInstallRootKeySync } from "./secret-store.js";
+import {
+  readInstallRootKey,
+  readInstallRootKeySync,
+  type CreateSecretStoreOptions,
+} from "./secret-store.js";
 import { writeSecureMarker, writeSecureMarkerSync } from "./secure-marker.js";
 import {
   clearSecretFileKeyCacheForTests,
@@ -71,6 +75,41 @@ describe("secret-file cached installation identity", () => {
     clearSecretFileKeyCacheForTests();
     vi.unstubAllEnvs();
   });
+
+  test("concurrent installation priming cannot replace an accepted write's marker key", async () => {
+    await Promise.all([
+      writeSecretTextFile(pathA, "invented-value-a", optionsA),
+      primeSecretFileKeyCache(optionsB),
+    ]);
+    expect(writeSecureMarker).toHaveBeenCalledWith(
+      "secret-files",
+      expect.objectContaining({ configDir: configA, rootKeyValue: keyA }),
+    );
+    clearSecretFileKeyCacheForTests();
+    expect(await decodeSecretTextFileValue(pathA, serialized(pathA), optionsA)).toBe(
+      "invented-value-a",
+    );
+  });
+
+  const changedContexts: [string, CreateSecretStoreOptions][] = [
+    ["service", { service: "invented-other-service" }],
+    ["platform", { platform: process.platform === "win32" ? "linux" : "win32" }],
+    ["backend", { backend: "passphrase" }],
+    ["command runner", { runCommand: async () => ({ stdout: "", stderr: "", code: 0 }) }],
+  ];
+  for (const [label, change] of changedContexts) {
+    test(`an explicit ${label} change selects its own store`, async () => {
+      vi.mocked(readInstallRootKey).mockResolvedValueOnce(keyA).mockResolvedValue(keyB);
+      await primeSecretFileKeyCache(optionsA);
+      const opts = { ...optionsA, ...change };
+      await writeSecretTextFile(pathA, "invented-other-context", opts);
+      expect(readInstallRootKey).toHaveBeenCalledTimes(2);
+      clearSecretFileKeyCacheForTests();
+      expect(await decodeSecretTextFileValue(pathA, serialized(pathA), opts)).toBe(
+        "invented-other-context",
+      );
+    });
+  }
 
   for (const sync of [false, true]) {
     const label = sync ? "sync" : "async";
