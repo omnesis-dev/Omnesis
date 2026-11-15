@@ -1,17 +1,23 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { existsSync, rmSync } from "node:fs";
-import { dirname } from "node:path";
+import { existsSync, rmSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { afterEach, expect, test, vi } from "vitest";
 import { MultiCollectorHarness } from "./multi-collector-harness.js";
 
 const operations = vi.hoisted(() => ({
   exec: vi.fn<(...args: unknown[]) => Promise<{ stdout: string; stderr: string }>>(),
+  readToken: vi.fn<(...args: unknown[]) => Promise<string | undefined>>(),
   kill: vi.fn(async () => {}),
-  spawn: vi.fn(() => {
+  spawn: vi.fn<() => unknown>(() => {
     throw new Error("unexpected gateway admission");
   }),
+}));
+vi.mock("@omnesis/core", async (original) => ({
+  ...(await original<typeof import("@omnesis/core")>()),
+  execWindowsJob: operations.exec,
+  readSecretTextFile: operations.readToken,
 }));
 vi.mock("node:child_process", async (original) => {
   const { promisify } = await import("node:util");
@@ -26,9 +32,9 @@ vi.mock("./subprocess-reaper.js", () => ({
 }));
 vi.mock("./e2e-owned-process.js", () => ({
   spawnE2ESubprocess: operations.spawn,
-  e2eApplicationStatus: vi.fn(),
+  e2eApplicationStatus: vi.fn(() => ({ exitCode: null, signalCode: null })),
   e2eApplicationPid: vi.fn(),
-  e2eProcessOutput: vi.fn(),
+  e2eProcessOutput: vi.fn(() => ({})),
   requestE2EProcessShutdown: vi.fn(),
 }));
 const fixtures: MultiCollectorHarness[] = [];
@@ -56,6 +62,73 @@ afterEach(async () => {
   operations.exec.mockReset();
   operations.kill.mockReset();
   operations.kill.mockResolvedValue(undefined);
+  operations.readToken.mockReset();
+  operations.spawn.mockReset().mockImplementation(() => {
+    throw new Error("unexpected gateway admission");
+  });
+  vi.unstubAllGlobals();
+});
+
+test("Gateway readiness authenticates with a decoded token and the daemon's secret backend", async () => {
+  const harness = new MultiCollectorHarness({ extraGatewayEnv: { OMNESIS_SECRET_STORE: "file" } });
+  fixtures.push(harness);
+  writeFileSync(join(harness.gatewayConfigDir, "token"), "invented encrypted envelope");
+  operations.spawn.mockReturnValue({ invented: true });
+  operations.readToken.mockResolvedValue("fixture-token\n");
+  const transport = vi.fn(
+    async (url: string, options?: RequestInit) =>
+      new Response(null, {
+        status:
+          url.endsWith("/health") ||
+          (options?.headers as Record<string, string> | undefined)?.Authorization ===
+            "Bearer fixture-token"
+            ? 200
+            : 401,
+      }),
+  );
+  vi.stubGlobal("fetch", transport);
+  await harness.start();
+  expect(harness.bootstrapToken).toBe("fixture-token");
+  expect(operations.readToken).toHaveBeenCalledWith(join(harness.gatewayConfigDir, "token"), {
+    configDir: harness.gatewayConfigDir,
+    backend: "file",
+  });
+  expect(transport).toHaveBeenCalledTimes(2);
+});
+
+test.each([false, true])(
+  "bootstrap read uncertainty retains the fixture after independent Gateway join (nested=%s)",
+  async (nested) => {
+    const { harness, gateway, root } = fixture();
+    const failure = marker(nested);
+    operations.spawn.mockReturnValue(gateway);
+    operations.readToken.mockRejectedValue(failure);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(null, { status: 200 })),
+    );
+    await expect(harness.start()).rejects.toBe(failure);
+    await expect(harness.start()).rejects.toBe(failure);
+    await expect(harness.destroy()).rejects.toBe(failure);
+    expect(operations.kill).toHaveBeenCalledWith(gateway, {});
+    expect(existsSync(root)).toBe(true);
+  },
+);
+
+test("a bootstrap read completing beyond the shared budget cannot publish readiness", async () => {
+  const { harness, gateway } = fixture();
+  let now = 1000;
+  vi.spyOn(Date, "now").mockImplementation(() => now);
+  operations.spawn.mockReturnValue(gateway);
+  operations.readToken.mockImplementation(async () => {
+    now += 90_001;
+    return "fixture-token";
+  });
+  const transport = vi.fn(async () => new Response(null, { status: 200 }));
+  vi.stubGlobal("fetch", transport);
+  await expect(harness.start()).rejects.toThrow("shared boot budget");
+  expect(transport).toHaveBeenCalledOnce();
+  expect(harness.bootstrapToken).toBe("");
 });
 
 test.each([false, true])(

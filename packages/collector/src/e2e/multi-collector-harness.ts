@@ -20,14 +20,18 @@
  * is covered by the `SyntheticE2EHarness` suites.
  */
 import { createHash } from "node:crypto";
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { createServer, type AddressInfo } from "node:net";
-import { execFile, type ChildProcess } from "node:child_process";
-import { promisify } from "node:util";
+import type { ChildProcess } from "node:child_process";
 import { GatewayWsClient } from "@omnesis/gateway-client";
-import { ownedProcessCleanupReceipt } from "@omnesis/core";
+import {
+  ownedProcessCleanupReceipt,
+  parseSecretStoreBackend,
+  readSecretTextFile,
+} from "@omnesis/core";
+import { execE2EBufferedCommand } from "./e2e-buffered-command.js";
 import {
   createRecordingUpdater,
   registerSelfUpdateCommand,
@@ -52,7 +56,6 @@ import type {
 import type { DoctorReport } from "@omnesis/core/doctor";
 import type { DeviceCapability } from "@omnesis/types";
 
-const execFileAsync = promisify(execFile);
 const REPO_ROOT = join(import.meta.dirname, "../../../..");
 const CLI_ENTRY = "packages/cli/src/index.ts";
 
@@ -127,6 +130,9 @@ export class MultiCollectorHarness {
   private gatewayProcess: ChildProcess | null = null;
   private gatewayCleanupUnconfirmed = false;
   private gatewayCleanupFailure: unknown;
+  private auxiliaryCleanupFailure: { error: unknown } | undefined;
+  private readonly acceptedOperations = new Set<Promise<unknown>>();
+  private destroying = false;
   private gatewayOutput = "";
   collectors: PairedCollector[] = [];
 
@@ -144,6 +150,7 @@ export class MultiCollectorHarness {
   }
 
   async start(): Promise<void> {
+    this.assertAdmitting();
     this.gatewayPort = await getFreePort();
     this.gatewayUrl = `https://localhost:${this.gatewayPort}`;
     await this.startGateway();
@@ -184,6 +191,7 @@ export class MultiCollectorHarness {
    * its stores; SIGKILL leaves them for the replacement to reclaim.
    */
   async restartGateway(opts: { signal?: NodeJS.Signals } = {}): Promise<void> {
+    this.assertAdmitting();
     for (const c of this.collectors) {
       try {
         c.ws.disconnect();
@@ -501,6 +509,7 @@ export class MultiCollectorHarness {
   }
 
   async destroy(opts: { retainFiles?: boolean } = {}): Promise<void> {
+    this.destroying = true;
     for (const c of this.collectors) {
       try {
         c.ws.disconnect();
@@ -508,7 +517,25 @@ export class MultiCollectorHarness {
         /* best effort */
       }
     }
-    await this.killGateway();
+    // Gateway shutdown starts independently of commands or private reads that
+    // were already accepted. Their own completion proofs still precede removal.
+    const results = await Promise.allSettled([this.killGateway(), ...this.acceptedOperations]);
+    const errors = results
+      .filter((result) => result.status === "rejected")
+      .map((result) => result.reason as unknown);
+    const failure =
+      this.auxiliaryCleanupFailure?.error ??
+      errors.find((error) => ownedProcessCleanupReceipt(error) !== undefined);
+    if (ownedProcessCleanupReceipt(failure) !== undefined) {
+      const others = errors.filter((error) => error !== failure);
+      if (!others.length) throw failure;
+      throw Object.assign(
+        new AggregateError([failure, ...others], "E2E fixture cleanup failed", { cause: failure }),
+        { cleanupFailure: ownedProcessCleanupReceipt(failure)!.failure },
+      );
+    }
+    if (errors.length === 1) throw errors[0];
+    if (errors.length) throw new AggregateError(errors, "E2E fixture cleanup failed");
     if (opts.retainFiles) return;
     try {
       rmSync(this.tempDir, { recursive: true, force: true });
@@ -517,12 +544,13 @@ export class MultiCollectorHarness {
     }
   }
 
-  /** Run the CLI as a subprocess pointing at this gateway. Resolves with the
-   * exit code + outputs regardless of success/failure (caller asserts). */
+  /** Run the isolated CLI and return ordinary exit status/output. Unconfirmed
+   * process cleanup rejects and retains the fixture for review. */
   async runCli(
     args: string[],
     opts: { token?: string; extraEnv?: NodeJS.ProcessEnv; timeoutMs?: number } = {},
   ): Promise<{ stdout: string; stderr: string; exitCode: number }> {
+    this.assertAdmitting();
     const env: NodeJS.ProcessEnv = {
       ...process.env,
       OMNESIS_GATEWAY_URL: this.gatewayUrl,
@@ -543,14 +571,17 @@ export class MultiCollectorHarness {
     delete env.OMNESIS_INSECURE_TLS;
     try {
       const cli = e2eTsxCommand(CLI_ENTRY);
-      const { stdout, stderr } = await execFileAsync(cli.command, [...cli.args, ...args], {
-        cwd: REPO_ROOT,
-        env,
-        timeout: opts.timeoutMs ?? 30_000,
-        maxBuffer: 8 * 1024 * 1024,
-      });
+      const { stdout, stderr } = await this.ownOperation(() =>
+        execE2EBufferedCommand(cli.command, [...cli.args, ...args], {
+          cwd: REPO_ROOT,
+          env,
+          timeout: opts.timeoutMs ?? 30_000,
+          maxBuffer: 8 * 1024 * 1024,
+        }),
+      );
       return { stdout, stderr, exitCode: 0 };
     } catch (err) {
+      if (ownedProcessCleanupReceipt(err) !== undefined) throw err;
       const e = err as { stdout?: string; stderr?: string; code?: number | string };
       return {
         stdout: typeof e.stdout === "string" ? e.stdout : "",
@@ -558,6 +589,31 @@ export class MultiCollectorHarness {
         exitCode: typeof e.code === "number" ? e.code : Number(e.code ?? -1),
       };
     }
+  }
+
+  private assertAdmitting(): void {
+    if (this.auxiliaryCleanupFailure) throw this.auxiliaryCleanupFailure.error;
+    if (this.gatewayCleanupUnconfirmed) throw this.gatewayCleanupFailure;
+    if (this.destroying) throw new Error("E2E fixture is closing");
+  }
+
+  private ownOperation<T>(operation: () => Promise<T>): Promise<T> {
+    this.assertAdmitting();
+    const running = (async () => {
+      try {
+        return await operation();
+      } catch (error) {
+        if (ownedProcessCleanupReceipt(error) !== undefined)
+          this.auxiliaryCleanupFailure ??= { error };
+        throw error;
+      }
+    })();
+    this.acceptedOperations.add(running);
+    void running.then(
+      () => this.acceptedOperations.delete(running),
+      () => this.acceptedOperations.delete(running),
+    );
+    return running;
   }
 
   /**
@@ -581,7 +637,7 @@ export class MultiCollectorHarness {
   }
 
   private async startGateway(): Promise<void> {
-    if (this.gatewayCleanupUnconfirmed) throw this.gatewayCleanupFailure;
+    this.assertAdmitting();
     const env = this.gatewayLaunchEnv;
     const startTime = Date.now();
     const timeout = gatewayBootBudgetMs();
@@ -619,15 +675,28 @@ export class MultiCollectorHarness {
         if (status.exitCode !== null || status.signalCode !== null) break;
       }
       try {
-        const health = await fetch(`${this.gatewayUrl}/health`);
+        const health = await fetch(`${this.gatewayUrl}/health`, {
+          signal: AbortSignal.timeout(Math.max(1, timeout - (Date.now() - startTime))),
+        });
+        if (Date.now() - startTime >= timeout) break;
         if (!health.ok) {
           await sleep(100);
           continue;
         }
         let token: string;
         try {
-          token = readFileSync(tokenPath, "utf-8").trim();
-        } catch {
+          token = (
+            (await this.ownOperation(() =>
+              readSecretTextFile(tokenPath, {
+                configDir: this.configDir,
+                backend: parseSecretStoreBackend(env.OMNESIS_SECRET_STORE),
+              }),
+            )) ?? ""
+          ).trim();
+          this.assertAdmitting();
+          if (Date.now() - startTime >= timeout) break;
+        } catch (error) {
+          if (ownedProcessCleanupReceipt(error) !== undefined || this.destroying) throw error;
           await sleep(100);
           continue;
         }
@@ -637,12 +706,15 @@ export class MultiCollectorHarness {
         }
         const whoami = await fetch(`${this.gatewayUrl}/whoami`, {
           headers: { Authorization: `Bearer ${token}` },
+          signal: AbortSignal.timeout(Math.max(1, timeout - (Date.now() - startTime))),
         });
+        if (Date.now() - startTime >= timeout) break;
         if (whoami.ok) {
           this.bootstrapToken = token;
           return;
         }
-      } catch {
+      } catch (error) {
+        if (ownedProcessCleanupReceipt(error) !== undefined || this.destroying) throw error;
         /* not reachable yet */
       }
       await sleep(100);

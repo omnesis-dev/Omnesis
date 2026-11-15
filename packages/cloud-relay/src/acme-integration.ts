@@ -189,7 +189,8 @@ export async function createGatewayAcmeController(
       if (ownedProcessCleanupReceipt(error) === undefined) ownedDns = undefined;
       throw error;
     }
-    if (ownedDns === dns) ownedDns = undefined;
+    // Initialization and final teardown serialize access to this DNS owner.
+    ownedDns = undefined;
   };
   let initializing: Promise<void> | undefined;
   const brokerMarker = `${accountKeyFile}.dns-broker.json`;

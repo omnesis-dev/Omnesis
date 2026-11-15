@@ -18,6 +18,35 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+test("the automatic CAA timer retains uncertainty and stops admitting lookups", async () => {
+  vi.useFakeTimers();
+  const failure = Object.assign(new Error("invented automatic CAA cleanup uncertainty"), {
+    cleanupFailure: undefined,
+  });
+  const caa = vi.fn(async () => {
+    throw failure;
+  });
+  const lookup = vi.fn(async () => [] as string[]);
+  const monitor = new GatewayCertificateMonitor({
+    env: { OMNESIS_CLOUD_RELAY_CERTIFICATE_MONITOR_INTERVAL_MS: "60000" },
+    configDir: "invented-fixture",
+    identity: () => undefined,
+    caa,
+    caaLookup: lookup,
+  });
+  try {
+    monitor.start();
+    await vi.advanceTimersByTimeAsync(120_000);
+    expect(caa).toHaveBeenCalledOnce();
+    expect(lookup).not.toHaveBeenCalled();
+    expect(monitor.cleanupFailure()).toBe(failure);
+    await expect(monitor.close()).rejects.toBe(failure);
+    expect(vi.getTimerCount()).toBe(0);
+  } finally {
+    await Promise.allSettled([monitor.close()]);
+  }
+});
+
 test.each(["account", "dns"] as const)(
   "close joins an accepted %s lookup without admitting a later phase",
   async (phase) => {
