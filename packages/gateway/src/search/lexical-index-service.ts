@@ -65,6 +65,8 @@ export class LexicalIndexService {
   private building: LexicalIndexBuild | null = null;
   /** The version a switch is being prepared for, while one is. */
   private switching: number | null = null;
+  /** A switch reported while a build or another switch ran; prepared when that finishes. */
+  private pendingSwitch: number | null = null;
   /** Consecutive failed builds of the in-memory index a switch to `version` waits for. */
   private switchBuildFailures = { version: -1, count: 0 };
   private timer: ReturnType<typeof setInterval> | null = null;
@@ -99,11 +101,15 @@ export class LexicalIndexService {
   /**
    * Complete the rebuild to `version`, which holds every chunk: build its
    * in-memory index, switch, publish. Called each time the indexer reports the
-   * rebuild waiting, so a call that finds the service busy is simply dropped;
-   * the next report retries.
+   * rebuild waiting. A call that finds the service busy is remembered and
+   * prepared as soon as the build or switch in progress finishes.
    */
   async prepareSwitch(version: number): Promise<void> {
-    if (this.stopped || this.building || this.switching !== null) return;
+    if (this.stopped) return;
+    if (this.building || this.switching !== null) {
+      this.pendingSwitch = version;
+      return;
+    }
     // A report sent before the switch it asked for: nothing is waiting.
     if (this.readActiveVersion() === version) return;
     if (this.switchBuildFailures.version !== version) {
@@ -161,7 +167,14 @@ export class LexicalIndexService {
     } finally {
       this.switching = null;
       if (rebuildAfter) void this.rebuild("keyword index switched to a new version");
+      else this.preparePendingSwitch();
     }
+  }
+
+  private preparePendingSwitch(): void {
+    const version = this.pendingSwitch;
+    this.pendingSwitch = null;
+    if (version !== null) void this.prepareSwitch(version);
   }
 
   private checkDue(): void {
@@ -211,6 +224,14 @@ export class LexicalIndexService {
   // See #514 — planned: skip a build the host does not have the memory for.
   private async rebuild(reason: string): Promise<void> {
     if (this.stopped || this.building || this.switching !== null) return;
+    try {
+      await this.buildAndPublish(reason);
+    } finally {
+      this.preparePendingSwitch();
+    }
+  }
+
+  private async buildAndPublish(reason: string): Promise<void> {
     log.info(`lexical index build started (${reason})`);
     let built: { data: LexicalIndexData; ms: number };
     try {

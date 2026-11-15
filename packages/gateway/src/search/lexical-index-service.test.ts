@@ -307,7 +307,8 @@ describe("LexicalIndexService.prepareSwitch", () => {
     await service.stop();
   });
 
-  test("a report that arrives while a switch is being prepared is dropped", async () => {
+  test("a report that arrives while a switch is being prepared waits for it, then finds nothing to do", async () => {
+    let active = 0;
     let release!: () => void;
     const gate = new Promise<void>((resolve) => (release = resolve));
     const builds: LexicalIndexSource[] = [];
@@ -320,8 +321,11 @@ describe("LexicalIndexService.prepareSwitch", () => {
         }));
         return { done, terminate: async () => {} };
       },
-      switchVersion: async () => true,
-      activeVersion: () => 0,
+      switchVersion: async (version) => {
+        active = version;
+        return true;
+      },
+      activeVersion: () => active,
       countChanges: () => 0,
       publish: () => {},
       checkIntervalMs: 1000,
@@ -331,6 +335,46 @@ describe("LexicalIndexService.prepareSwitch", () => {
     expect(builds).toEqual(["building"]);
     release();
     await first;
+    await vi.advanceTimersByTimeAsync(0);
+    // The waiting report ran once the switch finished and found version 1 active.
+    expect(builds).toEqual(["building"]);
+    await service.stop();
+  });
+
+  test("a report that arrives during the startup build is prepared as soon as it finishes", async () => {
+    const events: string[] = [];
+    let finishStartup!: () => void;
+    const startup = new Promise<void>((resolve) => (finishStartup = resolve));
+    const service = new LexicalIndexService({
+      build: (source) => {
+        events.push(`build ${source}`);
+        const done =
+          source === "active"
+            ? startup.then(() => ({ data: fakeData(10, 10, 0), ms: 1 }))
+            : Promise.resolve({ data: fakeData(10, 10, 1), ms: 1 });
+        return { done, terminate: async () => {} };
+      },
+      switchVersion: async (version) => {
+        events.push(`switch ${version}`);
+        return true;
+      },
+      activeVersion: () => 0,
+      countChanges: () => 0,
+      publish: (d) => events.push(`publish ${d.version}`),
+      checkIntervalMs: 60_000,
+    });
+    service.start();
+    await service.prepareSwitch(1);
+    expect(events).toEqual(["build active"]);
+    finishStartup();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(events).toEqual([
+      "build active",
+      "publish 0",
+      "build building",
+      "switch 1",
+      "publish 1",
+    ]);
     await service.stop();
   });
 
