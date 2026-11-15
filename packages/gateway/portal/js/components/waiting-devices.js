@@ -21,7 +21,7 @@ export function WaitingDevices({ cloudRelay = false, tailscaleEmbed = false }) {
   // section is empty and takes no room.
   return html`<section class="cloud-pairing-requests" aria-label="Devices waiting for your OK">
     ${cloudCount + tailscaleCount > 0 && html`<h2 class="devices-group-title">Waiting for your OK</h2>`}
-    ${cloudRelay && html`<${CloudPairingRequests} bare onCount=${setCloudCount} />`}
+    ${cloudRelay && html`<${CloudPairingRequests} onCount=${setCloudCount} />`}
     ${tailscaleEmbed && html`<${TailscaleJoinRequests} onCount=${setTailscaleCount} />`}
   </section>`;
 }

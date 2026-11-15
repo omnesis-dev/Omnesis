@@ -13,6 +13,8 @@ import { decideTailscaleJoin, tailscaleJoinRequests } from "../lib/tailscale-api
 import { useVisiblePoll } from "../lib/use-visible-poll.js";
 
 const POLL_MS = 3000;
+/** How long "Approved studio-mac." stays after a decision. */
+const NOTICE_MS = 8000;
 
 /** "expires in 9 min": how long a request still waits, rounded up to the minute. */
 export function expiresIn(iso, now = Date.now()) {
@@ -100,6 +102,9 @@ export function TailscaleJoinRequests({ onCount = () => {}, load = tailscaleJoin
   const [requests, setRequests] = useState([]);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  // Requests answered here. A read that was already on its way when one was answered still
+  // lists it; the card stays gone all the same.
+  const decidedIds = useRef(new Set());
   const refresh = async () => {
     try {
       const response = await load();
@@ -110,13 +115,21 @@ export function TailscaleJoinRequests({ onCount = () => {}, load = tailscaleJoin
     }
   };
   useEffect(() => {
+    if (!notice) return undefined;
+    const timer = setTimeout(() => setNotice(""), NOTICE_MS);
+    return () => clearTimeout(timer);
+  }, [notice]);
+  useEffect(() => {
     refresh();
   }, []);
   useVisiblePoll(refresh, POLL_MS);
   // A request leaves once it is out of time, also between two reads.
-  const waiting = requests.filter((request) => expiresIn(request.expiresAt) !== "expired");
+  const waiting = requests.filter(
+    (request) => !decidedIds.current.has(request.id) && expiresIn(request.expiresAt) !== "expired",
+  );
   useEffect(() => onCount(waiting.length), [waiting.length]);
   const decided = (request, outcome) => {
+    decidedIds.current.add(request.id);
     setNotice(DECIDED[outcome](request.name));
     setRequests((current) => current.filter((item) => item.id !== request.id));
     refresh();

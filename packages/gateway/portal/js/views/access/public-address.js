@@ -162,6 +162,8 @@ export const NO_TAILSCALE = Object.freeze({ state: "none" });
  *   the network. Nothing about it is shown.
  * - `on`: `url` is also the device's public address and answers from the Internet.
  * - `starting`: the public address is being opened.
+ * - `refused`: the owner asked for it and Tailscale does not allow it yet
+ *   (Funnel not enabled for the tailnet, or unavailable).
  * - `off`: `url` answers only on the owner's Tailscale network.
  *
  * `url` is the agent address the gateway authorizes on the device's origin;
@@ -179,7 +181,9 @@ export function tailscalePublicAddress(tailscaleEmbed, state, oauth) {
   const url = authorized.map((entry) => entry.resource).find((resource) => originOf(resource) === origin);
   if (!url) return NO_TAILSCALE;
   const publicState = state.public?.state;
-  return { state: publicState === "on" ? "on" : publicState === "starting" ? "starting" : "off", url };
+  if (publicState === "on" || publicState === "starting") return { state: publicState, url };
+  if (publicState === "needs-enable" || publicState === "unavailable") return { state: "refused", url };
+  return { state: "off", url };
 }
 
 /** Why the Tailscale device's address cannot serve an agent on the Internet, and what to do. */
@@ -191,6 +195,10 @@ const TAILSCALE_PRIVATE = {
   starting: {
     headline: "This address's public access is still opening.",
     action: ["This takes up to a minute. Follow it in ", TAILSCALE_SETTINGS, "."],
+  },
+  refused: {
+    headline: "Tailscale is not letting this address be public yet.",
+    action: ["See what it needs in ", TAILSCALE_SETTINGS, "."],
   },
 };
 
@@ -416,9 +424,12 @@ export function hostedClientAddress(agent, resource, relay = NO_RELAY, choices =
   }
   const waiting = others.find((option) => option.problem)?.problem;
   const tailnet = others.find((option) => option.kind === "tailnet")?.private;
-  const publish = tailnet
-    ? [[`This gateway's Tailscale device has an address. ${tailnet.headline} `, ...tailnet.action]]
-    : [PUBLISH_IT_YOURSELF, ...(relay.state === "not-connected" ? [CONNECT_AN_ACCOUNT] : [])];
+  // The device's own address is the shortest way to a public one; with it, publishing the
+  // gateway some other way goes unmentioned.
+  const publish = [
+    tailnet ? [`This gateway's Tailscale device has an address. ${tailnet.headline} `, ...tailnet.action] : PUBLISH_IT_YOURSELF,
+    ...(relay.state === "not-connected" ? [CONNECT_AN_ACCOUNT] : []),
+  ];
   if (own.reachable) {
     // With an Omnesis or Tailscale address in the list, nothing more needs publishing.
     const managed = relay.url !== undefined || choices.tailscale?.url !== undefined;
@@ -467,11 +478,14 @@ export function localClientAddress(resource, relay = NO_RELAY, choices = { optio
 /**
  * What a page that leads with a localhost address says about hosted agents, or
  * null when neither the relay nor the Tailscale device changes anything and the
- * page keeps its own sentence. The relay's wording comes first when there is one.
+ * page keeps its own sentence. A working address is named first: the relay's,
+ * then the device's; otherwise the relay's advice comes before the device's.
  */
 export function hostedClientsHint(relay = NO_RELAY, tailscale = NO_TAILSCALE) {
+  if (tailscale.state === "on" && relay.state !== "ready") {
+    return ["ChatGPT and Claude apps can use this gateway's Tailscale public address."];
+  }
   if (relay.state === "none") {
-    if (tailscale.state === "on") return ["ChatGPT and Claude apps can use this gateway's Tailscale public address."];
     if (tailscale.state === "none") return null;
     return [
       "ChatGPT and Claude apps need an Internet-reachable address. Turning on the public address in ",

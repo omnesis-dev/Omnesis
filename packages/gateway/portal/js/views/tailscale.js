@@ -390,7 +390,6 @@ const JOIN_CHOICES = [
   { value: "off", title: "Off", text: "Every device pairs with a pairing code." },
 ];
 
-/** "in 9 min" until a request expires, from the gateway's own timestamp. */
 function JoinSection({ state, busy, run }) {
   const [pending, setPending] = useState(null);
   const policy = pending ?? state.joinPolicy;
@@ -409,7 +408,7 @@ function JoinSection({ state, busy, run }) {
     ${waiting > 0 &&
     html`<p class="tailscale-notice tailscale-waiting-devices" role="status">
       ${waiting === 1 ? "A collector is waiting for your OK." : `${waiting} collectors are waiting for your OK.`}
-      ${" "}<a href=${DEVICES_ROUTE} onClick=${openDevices}>Review it in Devices</a>
+      ${" "}<a href=${DEVICES_ROUTE} onClick=${openDevices}>Review in Devices</a>
     </p>`}
     <p class="tailscale-section-text">
       What happens when a collector on one of your Tailscale devices asks to join this gateway.

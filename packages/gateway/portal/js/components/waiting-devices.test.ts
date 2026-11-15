@@ -168,6 +168,35 @@ describe("WaitingDevices", () => {
     expect(card.querySelector('[role="alert"]')?.textContent).toBe("Your passkey was not accepted.");
   });
 
+  test("a read that still lists an answered request does not bring its card back", async () => {
+    tailscale.tailscaleJoinRequests.mockResolvedValue({ requests: [join("t1")] });
+    await show({ tailscaleEmbed: true });
+    tailscale.decideTailscaleJoin.mockResolvedValue({ status: "approved" });
+    // The gateway's list has not caught up yet.
+    await click("Yes, approve");
+    expect(tailscale.tailscaleJoinRequests).toHaveBeenCalledTimes(2);
+    expect(host.querySelectorAll("article")).toHaveLength(0);
+    expect(titles()).toEqual([]);
+  });
+
+  test("the line about an answer fades after a few seconds", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      tailscale.tailscaleJoinRequests.mockResolvedValue({ requests: [join("t1")] });
+      await show({ tailscaleEmbed: true });
+      tailscale.decideTailscaleJoin.mockResolvedValue({ status: "denied" });
+      tailscale.tailscaleJoinRequests.mockResolvedValue({ requests: [] });
+      await click("No, deny");
+      expect(text()).toContain("Denied studio-laptop.");
+      await act(async () => {
+        vi.advanceTimersByTime(8000);
+      });
+      expect(text()).not.toContain("Denied studio-laptop.");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   test("a failed read shows the reason and the next read clears it", async () => {
     tailscale.tailscaleJoinRequests.mockRejectedValueOnce(Object.assign(new Error("x"), { serverMessage: "Gateway busy." }));
     await show({ tailscaleEmbed: true });

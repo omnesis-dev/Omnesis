@@ -19719,7 +19719,7 @@ summary.decision-card-head {
 .tailscale-option:has(input:disabled) { cursor: default; }
 
 
-/* A join request decided on Settings → Devices, and the line after it. */
+/* The line saying what became of a join request answered on Settings → Devices. */
 .tailscale-join-notice { margin: 12px 0 0; font-size: 13px; color: var(--text-secondary); }
 
 /* The device's own settings, at the foot of the main card. */

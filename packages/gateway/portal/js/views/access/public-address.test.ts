@@ -544,8 +544,9 @@ describe("the gateway's own Tailscale device", () => {
     expect(tailscalePublicAddress(true, device("on"), oauth(LOCAL, []))).toEqual(NONE);
     expect(tailscalePublicAddress(true, device("on"), oauth(LOCAL, [DEVICE]))).toEqual(ON);
     expect(tailscalePublicAddress(true, device("starting"), oauth(LOCAL, [DEVICE]))).toEqual({ state: "starting", url: DEVICE });
-    for (const other of ["off", "needs-enable", "unavailable"]) {
-      expect(tailscalePublicAddress(true, device(other), oauth(LOCAL, [DEVICE]))).toEqual(OFF);
+    expect(tailscalePublicAddress(true, device("off"), oauth(LOCAL, [DEVICE]))).toEqual(OFF);
+    for (const refused of ["needs-enable", "unavailable"]) {
+      expect(tailscalePublicAddress(true, device(refused), oauth(LOCAL, [DEVICE]))).toEqual({ state: "refused", url: DEVICE });
     }
   });
 
@@ -594,6 +595,24 @@ describe("the gateway's own Tailscale device", () => {
     ]);
   });
 
+  test("a public address Tailscale refuses says so instead of asking to turn it on", () => {
+    const { notice } = choose(LOCAL, [DEVICE], NO_RELAY_FOR_TEST, { state: "refused", url: DEVICE }, DEVICE);
+    expect(paragraphs(notice)).toEqual([
+      "Tailscale is not letting this address be public yet. Claude connects from Anthropic's servers, so it cannot reach this gateway there.",
+      "See what it needs in Settings, Tailscale.",
+    ]);
+  });
+
+  test("a relay not yet connected is still suggested beside the device's address", () => {
+    const relay = { state: "not-connected" };
+    const choices = addressChoices(oauth(LOCAL, [DEVICE]), relay, OFF);
+    const lead = hostedClientAddress(CLAUDE, LOCAL, relay, choices);
+    expect(paragraphs(lead).slice(-2)).toEqual([
+      "This gateway's Tailscale device has an address. This address only answers on your Tailscale network. Turn on its public address in Settings, Tailscale.",
+      "Or connect this gateway to an Omnesis account in Settings, Account to give it a public address.",
+    ]);
+  });
+
   test("all three are additive: the owner's own address, the relay's and the device's are each offered", () => {
     const relay = { state: "ready", url: RELAY };
     const { choices } = choose(OWN, [RELAY, DEVICE], relay, ON);
@@ -617,6 +636,13 @@ describe("the gateway's own Tailscale device", () => {
       "ChatGPT and Claude apps need an Internet-reachable address. Turning on the public address in Settings, Tailscale gives this gateway one.",
     );
     expect(text(hostedClientsHint({ state: "ready", url: RELAY }, OFF)!)).toBe(
+      "ChatGPT and Claude apps can use this gateway's Omnesis address.",
+    );
+    // A relay that cannot serve yet does not hide a device address that already works.
+    expect(text(hostedClientsHint({ state: "not-connected" }, ON)!)).toBe(
+      "ChatGPT and Claude apps can use this gateway's Tailscale public address.",
+    );
+    expect(text(hostedClientsHint({ state: "ready", url: RELAY }, ON)!)).toBe(
       "ChatGPT and Claude apps can use this gateway's Omnesis address.",
     );
   });

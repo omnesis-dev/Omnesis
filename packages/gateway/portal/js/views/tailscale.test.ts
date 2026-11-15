@@ -298,12 +298,17 @@ describe("TailscaleView", () => {
     expect(host.querySelector(".tailscale-waiting-devices")).toBeNull();
     expect(link("Settings, Devices")?.getAttribute("href")).toBe("/portal/settings/devices");
     render(null, host);
+    await show(connected({ joinRequests: [request] }));
+    expect(host.querySelector(".tailscale-waiting-devices")?.textContent).toContain(
+      "A collector is waiting for your OK.",
+    );
+    render(null, host);
     await show(connected({ joinRequests: [request, { ...request, id: "req-2" }] }));
     expect(host.querySelector(".tailscale-waiting-devices")?.textContent).toContain(
       "2 collectors are waiting for your OK.",
     );
-    expect(link("Review it in Devices")?.getAttribute("href")).toBe("/portal/settings/devices");
-    await act(async () => link("Review it in Devices").click());
+    expect(link("Review in Devices")?.getAttribute("href")).toBe("/portal/settings/devices");
+    await act(async () => link("Review in Devices").click());
     expect(router.navigate).toHaveBeenCalledExactlyOnceWith("/portal/settings/devices");
     expect(button("Approve")).toBeUndefined();
     expect(api.decideTailscaleJoin).not.toHaveBeenCalled();
