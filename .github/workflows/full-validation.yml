@@ -19,6 +19,7 @@ on:
             connect-baseline,
             process-green,
             config-baseline,
+            cache-baseline,
           ]
         default: regressions
 permissions:
@@ -80,7 +81,7 @@ jobs:
           packages/cloud-relay/src/acme-renewal-cleanup.test.ts
           packages/cloud-relay/src/acme-integration.test.ts
   process-baseline:
-    if: ${{ inputs.scope == 'multi-cli-baseline' || inputs.scope == 'connect-baseline' || inputs.scope == 'config-baseline' }}
+    if: ${{ inputs.scope == 'multi-cli-baseline' || inputs.scope == 'connect-baseline' || inputs.scope == 'config-baseline' || inputs.scope == 'cache-baseline' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
@@ -105,6 +106,9 @@ jobs:
       - name: Reproduce private token-reader receipt loss
         if: ${{ inputs.scope == 'config-baseline' }}
         run: node scripts/run-check.mjs unit packages/core/src/config-private-cleanup.test.ts
+      - name: Reproduce cross-installation cached root-key reuse
+        if: ${{ inputs.scope == 'cache-baseline' }}
+        run: node scripts/run-check.mjs unit packages/core/src/secret-file-cache.test.ts
   upstream-baseline:
     if: ${{ inputs.scope == 'upstream-baseline' }}
     runs-on: ubuntu-latest
