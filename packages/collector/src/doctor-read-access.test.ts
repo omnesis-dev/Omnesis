@@ -69,24 +69,32 @@ test("timeouts abort providers and prevent overlapping retries until late work s
 
 test("total deadline bounds concurrency and leaves unstarted sources unverified", async () => {
   vi.useFakeTimers();
-  const probe = vi.fn(() => new Promise<SourceReadAccessResult>(() => {}));
+  const gates = Array.from({ length: 2 }, () => Promise.withResolvers<SourceReadAccessResult>());
+  let started = 0;
+  const probe = vi.fn(() => gates[started++]!.promise);
   const sources = Array.from({ length: 7 }, (_, index) => ({
     sourceId: `demo-files:fixture-${index}`,
     instance: { probeReadAccess: probe },
   }));
   const runner = new DoctorReadAccess({ probeMs: 100, scanMs: 10 });
-  const result = runner.collect(sources, new AbortController().signal);
-  await vi.advanceTimersByTimeAsync(11);
-  expect(probe).toHaveBeenCalledTimes(2);
-  expect((await result).every((entry) => entry.status === "unavailable")).toBe(true);
-  const sibling = vi.fn(async (): Promise<SourceReadAccessResult> => ({ status: "readable" }));
-  expect(
-    await runner.collect(
-      [{ sourceId: "demo-files:new", instance: { probeReadAccess: sibling } }],
-      new AbortController().signal,
-    ),
-  ).toEqual([{ sourceId: "demo-files:new", status: "unavailable" }]);
-  expect(sibling).not.toHaveBeenCalled();
+  try {
+    const result = runner.collect(sources, new AbortController().signal);
+    await vi.advanceTimersByTimeAsync(11);
+    expect(probe).toHaveBeenCalledTimes(2);
+    expect((await result).every((entry) => entry.status === "unavailable")).toBe(true);
+    const sibling = vi.fn(async (): Promise<SourceReadAccessResult> => ({ status: "readable" }));
+    expect(
+      await runner.collect(
+        [{ sourceId: "demo-files:new", instance: { probeReadAccess: sibling } }],
+        new AbortController().signal,
+      ),
+    ).toEqual([{ sourceId: "demo-files:new", status: "unavailable" }]);
+    expect(sibling).not.toHaveBeenCalled();
+  } finally {
+    for (const gate of gates) gate.resolve({ status: "readable" });
+    await vi.advanceTimersByTimeAsync(0);
+    await runner.close();
+  }
 });
 
 test("caller cancellation stops pending work without starting additional probes", async () => {

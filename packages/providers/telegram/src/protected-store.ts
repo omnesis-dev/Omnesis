@@ -33,6 +33,8 @@ import EncryptedDatabase from "better-sqlite3-multiple-ciphers";
 import {
   createLogger,
   readStorageKeySync,
+  readStorageKey,
+  ownedProcessCleanupReceipt,
   storageEncryptionRequired,
   storageKeyHex,
   toErrorMessage,
@@ -112,18 +114,19 @@ export function openProtectedDatabase(path: string, key: Buffer | null, label: s
  * What is on disk at `path` and whether this host's key opens it, for the
  * doctor. Read-only: never migrates, repairs or writes.
  */
-export function inspectProtectedStore(
+export async function inspectProtectedStore(
   path: string,
   label: string,
   configDir: string,
-): LocalStoreProbeResult {
+): Promise<LocalStoreProbeResult> {
   const keyName = TELEGRAM_STORE_KEY;
   if (!fileExists(path)) return { keyName, label, state: "absent" };
   if (sqliteFileLooksPlaintext(path)) return { keyName, label, state: "plaintext" };
   let key: Buffer | null;
   try {
-    key = readStorageKeySync(keyName, { configDir });
-  } catch {
+    key = await readStorageKey(keyName, { configDir });
+  } catch (error) {
+    if (ownedProcessCleanupReceipt(error)) throw error;
     return { keyName, label, state: "locked", detail: "Its key could not be read." };
   }
   if (!key) return { keyName, label, state: "locked", detail: "No wrapped key exists for it." };

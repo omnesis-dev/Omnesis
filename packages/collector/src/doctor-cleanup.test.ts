@@ -141,14 +141,22 @@ test("doctor close joins injected raw work and suppresses late emission and repl
 test("ownership admission callback can refuse a run before either raw producer is invoked", async () => {
   vi.useFakeTimers();
   const refused = new Error("Invented watchdog claim already held");
+  let current: ProbeOwner | undefined;
+  let pendingReceipt: unknown;
   const notify = vi.fn(() => {
-    throw refused;
+    const receipt = current?.cleanupFailure?.();
+    if (receipt !== undefined) {
+      pendingReceipt = receipt;
+      throw refused;
+    }
   });
   const { doctor, owner, system, security } = fixture({ onOwnershipChanged: notify });
+  current = owner;
   try {
     doctor.start("claimed");
     await vi.advanceTimersByTimeAsync(0);
     expect(notify).toHaveBeenCalled();
+    expect(pendingReceipt).toMatchObject({ cleanupPending: true });
     expect(system).not.toHaveBeenCalled();
     expect(security).not.toHaveBeenCalled();
   } finally {
@@ -171,4 +179,18 @@ test("joined ordinary unavailable security remains retryable", async () => {
   } finally {
     await closeFixture(owner);
   }
+});
+
+test("closing before a cached replay microtask prevents post-close emission", async () => {
+  vi.useFakeTimers();
+  const { doctor, emit } = fixture();
+  doctor.start("cached");
+  await vi.advanceTimersByTimeAsync(0);
+  expect(emit).toHaveBeenCalledOnce();
+  expect(doctor.start("cached")).toEqual({ accepted: true });
+  const closing = doctor.close();
+  await vi.advanceTimersByTimeAsync(0);
+  await closing;
+  expect(emit).toHaveBeenCalledOnce();
+  expect(doctor.start("cached")).toMatchObject({ accepted: false });
 });

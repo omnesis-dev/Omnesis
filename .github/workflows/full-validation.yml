@@ -4,7 +4,7 @@ on:
     inputs:
       scope:
         type: choice
-        options: [regressions, collector-baseline, provider-baseline]
+        options: [regressions, collector-baseline, provider-baseline, deadline-baseline]
         default: regressions
 permissions:
   contents: read
@@ -152,3 +152,30 @@ jobs:
           packages/providers/apple/src/doctor-key-cleanup.test.ts
           packages/gateway/src/agent/conversation-store-cleanup.test.ts
           packages/gateway/src/agent/service-publication-cleanup.test.ts
+
+  deadline-baseline:
+    if: ${{ inputs.scope == 'deadline-baseline' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: "24"
+          cache: npm
+      - name: Install locked dependencies
+        run: node scripts/ci/npm-ci.mjs --no-audit --no-fund
+      - name: Reproduce expired observations before timer dispatch
+        run: node scripts/run-check.mjs unit packages/collector/src/doctor-deadlines.test.ts
+      - name: Reproduce discarded prior-agent ownership on model changes
+        if: ${{ !cancelled() }}
+        run: node scripts/run-check.mjs unit packages/gateway/src/agent/agent-lifecycle.test.ts
+      - name: Reproduce unbounded archive headers and masked live-store key receipts
+        if: ${{ !cancelled() }}
+        run: >-
+          node scripts/run-check.mjs unit
+          packages/providers/whatsapp/src/message-store-header.test.ts
+          packages/providers/telegram/src/protected-store-key-cleanup.test.ts

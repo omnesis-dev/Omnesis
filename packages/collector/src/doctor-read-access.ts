@@ -2,6 +2,8 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import type { SourceInstance, SourceReadAccessResult } from "@omnesis/source-sdk";
+import { ownedProcessCleanupReceipt } from "@omnesis/core";
+import { DoctorOwnedWork } from "./doctor-owned-work.js";
 
 export interface DoctorReadAccessSource {
   sourceId: string;
@@ -17,13 +19,29 @@ const SCAN_TIMEOUT_MS = 20_000;
 const PROBE_CONCURRENCY = 2;
 
 export class DoctorReadAccess {
-  private readonly pending = new Set<DoctorReadAccessSource["instance"]>();
+  private readonly work: DoctorOwnedWork;
+  private readonly stopping = new AbortController();
 
-  constructor(private readonly budgets = { probeMs: PROBE_TIMEOUT_MS, scanMs: SCAN_TIMEOUT_MS }) {}
+  constructor(
+    private readonly budgets = { probeMs: PROBE_TIMEOUT_MS, scanMs: SCAN_TIMEOUT_MS },
+    changed?: () => void,
+  ) {
+    this.work = new DoctorOwnedWork(changed);
+  }
+
+  cleanupFailure(): unknown | undefined {
+    return this.work.cleanupFailure();
+  }
+  close(): Promise<void> {
+    const joined = this.work.close();
+    this.stopping.abort();
+    return joined;
+  }
 
   async collect(sources: DoctorReadAccessSource[], signal: AbortSignal): Promise<AccessEntry[]> {
+    this.work.assertAdmitting();
     const controller = new AbortController();
-    const scanSignal = AbortSignal.any([signal, controller.signal]);
+    const scanSignal = AbortSignal.any([signal, controller.signal, this.stopping.signal]);
     const timer = setTimeout(() => controller.abort(), this.budgets.scanMs);
     timer.unref();
     const results: AccessEntry[] = new Array(sources.length);
@@ -52,7 +70,8 @@ export class DoctorReadAccess {
     instance: DoctorReadAccessSource["instance"],
     signal: AbortSignal,
   ): Promise<SourceReadAccessResult> {
-    if (signal.aborted || this.pending.has(instance) || this.pending.size >= PROBE_CONCURRENCY) {
+    this.work.assertAdmitting();
+    if (signal.aborted || this.work.has(instance) || this.work.size >= PROBE_CONCURRENCY) {
       return { status: "unavailable" };
     }
     if (!instance.probeReadAccess) return { status: "unsupported" };
@@ -65,14 +84,15 @@ export class DoctorReadAccess {
     });
     const timer = setTimeout(() => controller.abort(), this.budgets.probeMs);
     timer.unref();
-    this.pending.add(instance);
-    const work = Promise.resolve()
-      .then(() => {
+    const work = this.work
+      .run(instance, async () => {
         probeSignal.throwIfAborted();
         return instance.probeReadAccess!({ signal: probeSignal });
       })
-      .catch((): SourceReadAccessResult => ({ status: "unavailable" }))
-      .finally(() => this.pending.delete(instance));
+      .catch((error: unknown): SourceReadAccessResult => {
+        if (ownedProcessCleanupReceipt(error) !== undefined) throw error;
+        return { status: "unavailable" };
+      });
     try {
       const result = await Promise.race([work, aborted]);
       return probeSignal.aborted ? { status: "unavailable" } : result;

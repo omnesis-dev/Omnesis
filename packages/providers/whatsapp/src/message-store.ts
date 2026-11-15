@@ -20,6 +20,8 @@ import {
   normalizePhone,
   assertNever,
   readStorageKeySync,
+  readStorageKey,
+  ownedProcessCleanupReceipt,
   storageEncryptionRequired,
   storageKeyHex,
   AUDIO_UNREADABLE,
@@ -299,7 +301,7 @@ function clearStagingRekey(staging: string): void {
  * leave its WAL side files beside a WAL-mode archive, as any reader does.
  * A store that does not exist yet is simply absent.
  */
-export function inspectMessageStore(dir: string): LocalStoreProbeResult {
+export async function inspectMessageStore(dir: string): Promise<LocalStoreProbeResult> {
   const label = "WhatsApp message archive";
   const keyName = "whatsapp-store";
   const path = join(dir, "store.db");
@@ -308,8 +310,9 @@ export function inspectMessageStore(dir: string): LocalStoreProbeResult {
   const configDir = dirname(dirname(dir));
   let key: Buffer | null;
   try {
-    key = readStorageKeySync(keyName, { configDir });
-  } catch {
+    key = await readStorageKey(keyName, { configDir });
+  } catch (error) {
+    if (ownedProcessCleanupReceipt(error)) throw error;
     return { keyName, label, state: "locked", detail: "Its key could not be read." };
   }
   if (!key) return { keyName, label, state: "locked", detail: "No wrapped key exists for it." };

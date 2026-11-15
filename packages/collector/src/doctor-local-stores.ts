@@ -17,17 +17,35 @@
 import type { LocalStoreProbeResult } from "@omnesis/source-sdk";
 import type { DoctorLocalStore } from "@omnesis/core/doctor";
 import type { DoctorReadAccessSource } from "./doctor-read-access.js";
+import { ownedProcessCleanupReceipt } from "@omnesis/core";
+import { DoctorOwnedWork } from "./doctor-owned-work.js";
 
 const PROBE_TIMEOUT_MS = 10_000;
 const PROBE_CONCURRENCY = 4;
 
 export class DoctorLocalStores {
-  constructor(private readonly probeMs = PROBE_TIMEOUT_MS) {}
+  private readonly work: DoctorOwnedWork;
+  private readonly stopping = new AbortController();
+  constructor(
+    private readonly probeMs = PROBE_TIMEOUT_MS,
+    changed?: () => void,
+  ) {
+    this.work = new DoctorOwnedWork(changed);
+  }
+  cleanupFailure(): unknown | undefined {
+    return this.work.cleanupFailure();
+  }
+  close(): Promise<void> {
+    const joined = this.work.close();
+    this.stopping.abort();
+    return joined;
+  }
 
   async collect(
     sources: DoctorReadAccessSource[],
     signal: AbortSignal,
   ): Promise<DoctorLocalStore[]> {
+    this.work.assertAdmitting();
     const results: DoctorLocalStore[][] = new Array(sources.length).fill([]);
     let next = 0;
     await Promise.all(
@@ -52,9 +70,17 @@ export class DoctorLocalStores {
     instance: DoctorReadAccessSource["instance"],
     signal: AbortSignal,
   ): Promise<LocalStoreProbeResult[]> {
-    if (signal.aborted || !instance.probeLocalStores) return [];
+    this.work.assertAdmitting();
+    if (
+      signal.aborted ||
+      this.stopping.signal.aborted ||
+      !instance.probeLocalStores ||
+      this.work.has(instance) ||
+      this.work.size >= PROBE_CONCURRENCY
+    )
+      return [];
     const controller = new AbortController();
-    const probeSignal = AbortSignal.any([signal, controller.signal]);
+    const probeSignal = AbortSignal.any([signal, controller.signal, this.stopping.signal]);
     const timer = setTimeout(() => controller.abort(), this.probeMs);
     timer.unref();
     let onAbort: () => void = () => {};
@@ -63,12 +89,15 @@ export class DoctorLocalStores {
       probeSignal.addEventListener("abort", onAbort, { once: true });
     });
     try {
-      const work = Promise.resolve()
-        .then(() => {
+      const work = this.work
+        .run(instance, async () => {
           probeSignal.throwIfAborted();
           return instance.probeLocalStores!({ signal: probeSignal });
         })
-        .catch((): LocalStoreProbeResult[] => []);
+        .catch((error: unknown): LocalStoreProbeResult[] => {
+          if (ownedProcessCleanupReceipt(error) !== undefined) throw error;
+          return [];
+        });
       const result = await Promise.race([work, aborted]);
       return probeSignal.aborted ? [] : result;
     } finally {
