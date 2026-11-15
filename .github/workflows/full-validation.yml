@@ -27,6 +27,7 @@ on:
             focus-cost,
             auth-owned-baseline,
             auth-owned-green,
+            windows-restart,
           ]
         default: regressions
 permissions:
@@ -393,7 +394,7 @@ jobs:
         run: npm run test:hermes
 
   windows-e2e:
-    if: ${{ inputs.scope == 'performance' || inputs.scope == 'e2e' || inputs.scope == 'focus-cost' }}
+    if: ${{ inputs.scope == 'performance' || inputs.scope == 'e2e' || inputs.scope == 'focus-cost' || inputs.scope == 'windows-restart' }}
     runs-on: windows-latest
     timeout-minutes: 45
     env:
@@ -436,6 +437,13 @@ jobs:
           packages/gateway/src/scheduler/writer-wal-checkpoint.e2e.test.ts
           packages/gateway/src/scheduler/writer-maintenance.preempt.e2e.test.ts
           packages/gateway/src/scheduler/near-dup-apply-backlog.preempt.e2e.test.ts
+      - name: Diagnose broad-sweep restart and Collector readiness failures
+        if: ${{ inputs.scope == 'windows-restart' }}
+        run: >-
+          node scripts/run-check.mjs e2e
+          packages/collector/src/e2e/brain-initial-inventory.e2e.test.ts
+          packages/collector/src/e2e/restart-durability.e2e.test.ts
+          packages/collector/src/e2e/collector-parent-shutdown.e2e.test.ts
       - name: Validate affected real Gateway and Collector fixtures
         if: ${{ inputs.scope == 'e2e' }}
         run: >-

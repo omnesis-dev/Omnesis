@@ -135,6 +135,21 @@ it.each([
         "SELECT COUNT(*) AS count FROM knowledge_discovery_coverage WHERE phase='organization' AND status='gated'",
       )
       .get()!.count;
+    if (discovers && coverage === 0)
+      console.error("inventory-coverage-diagnostic", {
+        changes: bench.sql
+          .prepare("SELECT kind,count(*) AS n FROM knowledge_changes GROUP BY kind")
+          .all(),
+        work: bench.sql
+          .prepare(
+            "SELECT reason,status,tier,count(*) AS n FROM knowledge_work GROUP BY reason,status,tier",
+          )
+          .all(),
+        failed: (await bench.obs.runs({ status: "failed" })).items.map((x) => ({
+          kind: x.kind,
+          lastError: x.lastError,
+        })),
+      });
     if (discovers) {
       expect(coverage).toBeGreaterThan(0);
       const initialWork = bench.sql

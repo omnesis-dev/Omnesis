@@ -163,6 +163,7 @@ test(
       );
     } catch (error) {
       if (ownedProcessCleanupReceipt(error) !== undefined) retained = true;
+      console.error("collector-readiness-diagnostic", output);
       throw error;
     } finally {
       clearTimeout(timer);

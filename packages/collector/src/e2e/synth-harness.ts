@@ -18,7 +18,7 @@ import { ownedProcessCleanupReceipt } from "@omnesis/core";
  *   pre-built `RegisteredProvider` objects, so the test exercises the real
  *   definition → descriptor → instance pipeline.
  */
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { createServer, type AddressInfo } from "node:net";
@@ -1249,7 +1249,23 @@ export class SyntheticE2EHarness {
     // still answering mid-shutdown, and the caller would measure the OLD process
     // (the new one may even fail to bind the port behind it).
     await this.waitForGatewayDown();
-    await options.whileStopped?.();
+    try {
+      await options.whileStopped?.();
+    } catch (error) {
+      const files = ["", "-wal", "-shm"].map((suffix) => {
+        try {
+          const s = statSync(this.getDbPath() + suffix);
+          return { suffix, size: s.size, mode: s.mode };
+        } catch {
+          return { suffix, missing: true };
+        }
+      });
+      console.error("offline-restart-diagnostic", {
+        code: error && typeof error === "object" && "code" in error ? error.code : null,
+        files,
+      });
+      throw error;
+    }
     this.gatewayMode = gatewayMode;
     await this.startGateway();
     for (const [id, enabled] of Object.entries(options.labFeatures ?? {}))
