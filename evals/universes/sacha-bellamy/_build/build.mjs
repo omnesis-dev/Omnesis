@@ -80,8 +80,12 @@ export function mergeSources(...sets) {
   return merged;
 }
 
-/** Build from original fictional authoring modules; never reads another universe or a live store. */
-export async function buildUniverse({ asOf = REFERENCE_DAY, outDir = root, media = true } = {}) {
+/**
+ * The universe as of `asOf`, in memory: its manifest, its source fixtures and
+ * its demo facts, from original fictional authoring modules only. Never reads
+ * another universe or a live store, and writes nothing.
+ */
+export async function assembleUniverse({ asOf = REFERENCE_DAY } = {}) {
   const ctx = context(asOf);
   const { buildBackground } = await import("./background.mjs");
   const background = buildBackground(ctx);
@@ -131,6 +135,12 @@ export async function buildUniverse({ asOf = REFERENCE_DAY, outDir = root, media
         };
       }),
   };
+  return { ctx, scenarios, finance, sources, facts, manifest };
+}
+
+/** Writes the universe as of `asOf` to `outDir`, as `assembleUniverse` assembles it. */
+export async function buildUniverse({ asOf = REFERENCE_DAY, outDir = root, media = true } = {}) {
+  const { ctx, scenarios, finance, sources, facts, manifest } = await assembleUniverse({ asOf });
   const style = await resolveConfig(fileURLToPath(import.meta.url));
   const write = async (path, data) => {
     await mkdir(dirname(path), { recursive: true });
