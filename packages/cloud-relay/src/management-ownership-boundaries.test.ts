@@ -133,6 +133,43 @@ test("close during the public probe cannot schedule another retry", async () => 
     await Promise.allSettled([closing, manager?.close()]);
   }
 });
+
+test("a late actor receipt after the public probe prevents another scheduled command", async () => {
+  const f = fixture();
+  const failure = markedFileError("EPRIVATE", "cause");
+  let probeComplete = false,
+    published = false;
+  f.options.probe = async () => {
+    probeComplete = true;
+    return true;
+  };
+  f.controller.cleanupFailure = () => {
+    if (published) return failure;
+    if (probeComplete) {
+      probeComplete = false;
+      // A producer can publish its retained receipt after a successful read
+      // but before the caller's next asynchronous continuation.
+      queueMicrotask(() => {
+        published = true;
+      });
+    }
+    return undefined;
+  };
+  let enabling: Promise<unknown> | undefined;
+  try {
+    manager = await GatewayCloudRelayManagement.open(f.options);
+    await manager.configure({ relayUrl: "https://relay.example.test", termsAccepted: true });
+    vi.useFakeTimers();
+    enabling = manager.enable().catch((error: unknown) => error);
+    await vi.waitFor(() => expect(published).toBe(true));
+    await enabling;
+    expect(manager.cleanupFailure()).toBe(failure);
+    expect(vi.getTimerCount()).toBe(0);
+    await expect(manager.renew()).rejects.toBe(failure);
+  } finally {
+    await Promise.allSettled([enabling, manager?.close()]);
+  }
+});
 function fixture() {
   const monitor = {
     start: vi.fn(),

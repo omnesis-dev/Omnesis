@@ -11,7 +11,9 @@ vi.mock("./secret-file.js", async (original) => ({
   ...(await original<typeof import("./secret-file.js")>()),
   readSecretTextFileSync: operations.read,
 }));
-afterEach(() => operations.read.mockReset());
+afterEach(() => {
+  operations.read.mockReset();
+});
 
 const readers = [
   { leaf: "token", read: readTokenFile },
@@ -35,7 +37,13 @@ for (const reader of readers) {
       operations.read.mockImplementation(() => {
         throw failure;
       });
-      expect(() => reader.read(directory)).toThrow(failure);
+      let caught: unknown;
+      try {
+        reader.read(directory);
+      } catch (error) {
+        caught = error;
+      }
+      expect(caught).toBe(failure);
       expect(operations.read).toHaveBeenCalledExactlyOnceWith(join(directory, reader.leaf), {
         configDir: directory,
       });

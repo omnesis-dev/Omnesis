@@ -796,7 +796,11 @@ export class GatewayCloudRelayManagement implements CloudRelayManagement {
    * prompt second look the Relay page would call a working address unreachable for an hour.
    */
   private scheduleNext(attempt: number): void {
-    // Launch/recheck validate their accepted operation before scheduling.
+    try {
+      this.assertAdmitting();
+    } catch {
+      return;
+    }
     const soon = this.options.probeRetryMs ?? 15_000;
     if (this.enrollment.state !== "enrolled" && this.registrationRetries < PROBE_RETRIES) {
       // A registration that failed is tried again by itself: one hiccup must not cost an hour.
