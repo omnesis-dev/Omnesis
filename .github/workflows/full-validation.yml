@@ -89,7 +89,11 @@ jobs:
       - name: Install locked Windows dependencies
         id: dependencies
         run: node scripts/ci/npm-ci.mjs --no-audit --no-fund
+      - name: Baseline owner-relative descriptor compatibility
+        if: ${{ !cancelled() && steps.dependencies.outcome == 'success' }}
+        run: node scripts/run-check.mjs unit packages/platform/src/windows-private-owner-rights.windows.test.ts
       - name: Compare real Hermes operations under sibling temp origins
+        if: ${{ !cancelled() && steps.dependencies.outcome == 'success' }}
         env:
           TARGET_SHA: ${{ github.sha }}
         run: node --import tsx scripts/ci/hermes-temp-diagnostic/run-temp-diagnostic.mjs "$env:GITHUB_WORKSPACE" "$env:RUNNER_TEMP\hermes-temp-diagnostic" "$env:TARGET_SHA"
@@ -110,3 +114,20 @@ jobs:
           if-no-files-found: warn
           retention-days: 7
           path: ${{ runner.temp }}/hermes-temp-diagnostic/public-diagnostic.json
+
+  watchdog-baseline:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: "24"
+          cache: npm
+      - name: Install locked dependencies
+        run: node scripts/ci/npm-ci.mjs --no-audit --no-fund
+      - name: Baseline watchdog owned-operation exit hold
+        run: node scripts/run-check.mjs unit packages/collector/src/event-loop-watchdog-owned-work.test.ts
