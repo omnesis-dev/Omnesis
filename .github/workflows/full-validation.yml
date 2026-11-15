@@ -26,6 +26,7 @@ on:
             auth-env-diagnostic,
             focus-cost,
             auth-owned-baseline,
+            auth-owned-green,
           ]
         default: regressions
 permissions:
@@ -52,7 +53,7 @@ jobs:
       - name: Inspect bounded process identity calls under curated host contexts
         run: node --import tsx scripts/ci/auth-env-diagnostic.mjs
   process-green:
-    if: ${{ inputs.scope == 'process-green' || inputs.scope == 'cache-green' || inputs.scope == 'auth-env-baseline' || inputs.scope == 'auth-env-green' }}
+    if: ${{ inputs.scope == 'process-green' || inputs.scope == 'cache-green' || inputs.scope == 'auth-env-baseline' || inputs.scope == 'auth-env-green' || inputs.scope == 'auth-owned-green' }}
     strategy:
       fail-fast: false
       max-parallel: 1
@@ -85,6 +86,17 @@ jobs:
           packages/core/src/windows-process-tree.test.ts
           packages/platform/src/native/windows-job-source.test.ts
           packages/platform/src/windows-worker-cache.windows.test.ts
+      - name: Validate real auth entry ownership and ordinary auth compatibility
+        if: ${{ inputs.scope == 'auth-owned-green' }}
+        run: >-
+          node scripts/run-check.mjs unit
+          packages/collector/src/auth-subprocess-ownership.test.ts
+          packages/collector/src/auth-subprocess.keyring.test.ts
+          packages/collector/src/auth-subprocess-env.test.ts
+          packages/collector/src/auth-subprocess-emit.test.ts
+          packages/collector/src/auth-subprocess-error.test.ts
+          packages/collector/src/auth-subprocess-result.test.ts
+          packages/collector/src/source-ws-handlers.auth-begin.test.ts
       - name: Validate scoped keys with existing secret, config, TLS and CI contracts
         if: ${{ inputs.scope == 'cache-green' }}
         run: >-
