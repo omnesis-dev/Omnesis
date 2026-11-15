@@ -432,7 +432,7 @@ test("the owner signature does not cover the intent, so the same request starts 
     new URL(started.authorizeUrl).searchParams.get("ticket")!,
     "",
   );
-  expect(f.signup.describe(started.operationId, launch.cookie.split(";")[0]!)).toMatchObject({
+  expect(f.signup.describe(started.operationId, launch.cookie!.split(";")[0]!)).toMatchObject({
     intent: "create",
   });
 });
@@ -495,7 +495,7 @@ test("an admission from an earlier launch of the same ID cannot admit a later on
   const replay = f.signup.start(op.signed);
   const cookie = f.signup
     .launch(replay.operationId, new URL(replay.authorizeUrl).searchParams.get("ticket")!, "")
-    .cookie.split(";")[0]!;
+    .cookie!.split(";")[0]!;
   expect(() => admission.assertCurrent()).toThrow();
   expect(f.signup.creationAdmission(replay.operationId, cookie)).toBeDefined();
 });

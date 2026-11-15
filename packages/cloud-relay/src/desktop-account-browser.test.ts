@@ -359,7 +359,7 @@ test("a desktop sign-in completed elsewhere, by link or by code, only ever relea
       challenge: createHash("sha256").update(verifier).digest("base64url"),
       loopbackPort: 49154,
     });
-  const cookie = codes.claim(typed.code, "").cookie.split(";")[0]!;
+  const cookie = codes.claim(typed.code, "").cookie!.split(";")[0]!;
   expect(broker.describe(typed.operationId, cookie)).toMatchObject({ approvalRequired: true });
   broker.recordProof(typed.operationId, cookie, {
     type: "google",

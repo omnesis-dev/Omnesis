@@ -206,12 +206,12 @@ test("browser launch/callback checks cannot be bypassed with a result handle, an
     await expect(f.broker.callback(callback, cookies)).rejects.toThrow("browser state");
   const duplicate = new URL(callback);
   duplicate.searchParams.append("state", duplicate.searchParams.get("state")!);
-  await expect(f.broker.callback(duplicate, launched.cookie)).rejects.toThrow("callback");
+  await expect(f.broker.callback(duplicate, launched.cookie!)).rejects.toThrow("callback");
   const wrong = new URL(callback);
   wrong.searchParams.set("state", "wrong");
-  await expect(f.broker.callback(wrong, launched.cookie)).rejects.toThrow("callback");
-  const result = await f.broker.callback(callback, launched.cookie);
-  await expect(f.broker.callback(callback, launched.cookie)).rejects.toThrow("callback");
+  await expect(f.broker.callback(wrong, launched.cookie!)).rejects.toThrow("callback");
+  const result = await f.broker.callback(callback, launched.cookie!);
+  await expect(f.broker.callback(callback, launched.cookie!)).rejects.toThrow("callback");
   const redemption = {
     operationId: pending.input.operationId,
     result: new URL(result.redirectUrl).searchParams.get("brokerResult")!,
