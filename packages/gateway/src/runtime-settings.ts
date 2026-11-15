@@ -34,6 +34,7 @@
 import { availableParallelism } from "node:os";
 import { createLogger, parseDuration } from "@omnesis/core";
 import {
+  CONFIG_DEFAULTS,
   isSafeHttpsOrigin,
   isSafeMcpResourceUrl,
   isSafePublicBaseUrl,
@@ -284,8 +285,8 @@ const DEFAULTS = {
   catchUpEnabled: true,
   catchUpMaxPageSize: 1000,
   catchUpMinSleep: "10ms",
-  lexicalRebuildBatchSize: 1000,
-  lexicalRebuildPause: "50ms",
+  lexicalRebuildBatchSize: CONFIG_DEFAULTS.indexer.lexicalRebuild.batchSize,
+  lexicalRebuildPause: CONFIG_DEFAULTS.indexer.lexicalRebuild.pause,
   reindexMissingAtBoot: false,
   // Gateway-process timing budgets — moved out of inline magic
   // numbers (ws.ts, auth-flows.ts, DeviceRepository.ts pairing,
