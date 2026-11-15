@@ -59,7 +59,7 @@ const PRODUCTION_VERSIONS: readonly LexicalVersion[] = [VERSION_0];
  * reverses every word, so a query cut by the wrong version matches nothing.
  * They are known only on a synthetic gateway.
  */
-export const TEST_LEXICAL_VERSIONS: readonly number[] = [9001, 9002];
+const TEST_LEXICAL_VERSIONS: readonly number[] = [9001, 9002];
 
 function reverseWords(text: string): string {
   return text.replace(/[\p{L}\p{N}\p{M}]+/gu, (word) => [...word].reverse().join(""));
@@ -97,7 +97,7 @@ function testTargetVersion(): number | null {
 }
 
 /** Every version this build can search with. */
-export function knownLexicalVersions(): readonly LexicalVersion[] {
+function knownLexicalVersions(): readonly LexicalVersion[] {
   return syntheticEnabled() ? [...PRODUCTION_VERSIONS, ...testVersions()] : PRODUCTION_VERSIONS;
 }
 

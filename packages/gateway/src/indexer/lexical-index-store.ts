@@ -26,12 +26,18 @@
  *    the active triggers at it and records the new active version. Search
  *    reads the version and the table in one snapshot, so it never cuts a query
  *    for one version and matches it against the other.
- * 5. **Retire.** The retired table is dropped in a later step of its own.
+ * 5. **Retire.** Later steps empty the retired table in batches, then drop
+ *    it; dropping a large index in one statement would hold the write lock
+ *    for seconds.
  *
  * A build whose version is no longer the target (a newer version arrived, or
- * the active index already matches) is dropped and, when needed, a build of the
- * current target starts from scratch. There is at most one active index and
- * one being built.
+ * the active index already matches) is retired the same way and, when needed,
+ * a build of the current target starts from scratch. There is at most one
+ * active index and one being built.
+ *
+ * An active index recorded at a version this build does not know (a newer
+ * release built it) and built from rewritten text cannot be kept current, so
+ * it keeps no triggers: it stays as it was until the rebuild replaces it.
  *
  * Every step is small and runs on whichever connection owns index.db writes;
  * nothing here blocks startup beyond creating an empty table.
