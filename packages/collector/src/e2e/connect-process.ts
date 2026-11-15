@@ -144,8 +144,8 @@ export function spawnConnect(
     exitResult: null,
     exit: Promise.resolve({ code: null, signal: null }),
   };
-  child.once("error", (error) => {
-    spawned.spawnError = error;
+  child.on("error", (error) => {
+    spawned.spawnError ??= error;
     failures.push(error);
     void stop().catch(() => {});
   });

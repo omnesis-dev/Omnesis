@@ -165,34 +165,42 @@ describe("spawned connect process cleanup", () => {
     }
   }, 20_000);
 
-  test("a later registration receipt dominates an earlier ordinary child error", async () => {
-    let rejectRegistration!: (error: unknown) => void;
-    const registration = new Promise<void>((_yes, no) => {
-      rejectRegistration = no;
-    });
-    void registration.catch(() => {});
-    const holdRegistration = (ready: Promise<void>) =>
-      Promise.all([ready, registration]).then(() => {});
-    const { running } = fixture('process.stdout.write("finished");', holdRegistration);
-    try {
-      await new Promise<void>((resolve) => running.child.once("close", () => resolve()));
-      await joinPhysicalFixture(running);
-      running.child.emit("error", new Error("invented ordinary child failure"));
-      const marker = Object.assign(new Error("invented later registration uncertainty"), {
-        cleanupFailure: undefined,
+  test.each(["registration", "child"] as const)(
+    "a later %s receipt dominates an earlier ordinary child error",
+    async (producer) => {
+      let rejectRegistration!: (error: unknown) => void;
+      const registration = new Promise<void>((_yes, no) => {
+        rejectRegistration = no;
       });
-      rejectRegistration(marker);
-      await expect(waitForExit(running, 10_000)).rejects.toMatchObject({
-        cleanupFailure: undefined,
-        cause: marker,
-      });
-      await expect(terminateConnect(running)).rejects.toHaveProperty("cleanupFailure");
-    } finally {
-      rejectRegistration(new Error("invented registration fixture cleanup"));
-      // This synthetic failure is injected only after positive physical cleanup.
-      runningProcesses.splice(runningProcesses.indexOf(running), 1);
-    }
-  }, 20_000);
+      void registration.catch(() => {});
+      const holdRegistration = (ready: Promise<void>) =>
+        Promise.all([ready, registration]).then(() => {});
+      const { running } = fixture('process.stdout.write("finished");', holdRegistration);
+      try {
+        await new Promise<void>((resolve) => running.child.once("close", () => resolve()));
+        await joinPhysicalFixture(running);
+        running.child.emit("error", new Error("invented ordinary child failure"));
+        const marker = Object.assign(new Error("invented later registration uncertainty"), {
+          cleanupFailure: undefined,
+        });
+        if (producer === "registration") rejectRegistration(marker);
+        else {
+          running.child.emit("error", marker);
+          rejectRegistration(new Error("invented joined registration refusal"));
+        }
+        await expect(waitForExit(running, 10_000)).rejects.toMatchObject({
+          cleanupFailure: undefined,
+          cause: marker,
+        });
+        await expect(terminateConnect(running)).rejects.toHaveProperty("cleanupFailure");
+      } finally {
+        rejectRegistration(new Error("invented registration fixture cleanup"));
+        // This synthetic failure is injected only after positive physical cleanup.
+        runningProcesses.splice(runningProcesses.indexOf(running), 1);
+      }
+    },
+    20_000,
+  );
 
   test("capture preserves a UTF-8 character split across stream chunks", async () => {
     const stream = new PassThrough();
