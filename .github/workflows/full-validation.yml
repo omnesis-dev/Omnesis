@@ -41,6 +41,7 @@ on:
             macos-tailnet,
             duckdb-arm-crypto,
             certificate-baseline,
+            stream-timeout,
             provider-ownership,
           ]
         default: regressions
@@ -58,6 +59,37 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
   TZ: UTC
 jobs:
+  stream-timeout:
+    if: ${{ inputs.scope == 'stream-timeout' }}
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    env:
+      OMNESIS_UNIT_WORKERS: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: "24"
+          cache: npm
+      - name: Materialize dependencies for the isolated process-control fixture
+        run: node scripts/ci/npm-ci.mjs --ignore-scripts --no-audit --no-fund
+      - name: Validate timeout after target admission and independent helper closure
+        run: node scripts/run-check.mjs unit packages/platform/src/windows-job-stream.test.ts
+      - name: Validate all TypeScript and lint the fixture
+        if: ${{ runner.os == 'Linux' }}
+        env:
+          NODE_OPTIONS: --max-old-space-size=6144
+        run: >-
+          node scripts/run-check.mjs typecheck && node scripts/run-check.mjs types-tests &&
+          node node_modules/eslint/bin/eslint.js packages/platform/src/windows-job-stream.test.ts
   certificate-baseline:
     if: ${{ inputs.scope == 'certificate-baseline' }}
     strategy:
