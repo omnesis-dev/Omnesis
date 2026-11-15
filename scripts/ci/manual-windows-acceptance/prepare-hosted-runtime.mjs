@@ -8,6 +8,7 @@ import {
   readFileSync,
   writeFileSync,
   mkdirSync,
+  mkdtempSync,
   readdirSync,
   statSync,
   symlinkSync,
@@ -15,6 +16,7 @@ import {
 } from "node:fs";
 import { join, resolve, relative, dirname, sep } from "node:path";
 import { createRequire } from "node:module";
+import { tmpdir } from "node:os";
 import { pathToFileURL } from "node:url";
 const [checkoutArg, workArg, sha] = process.argv.slice(2);
 assert.match(sha, /^[0-9a-f]{40}$/);
@@ -138,7 +140,7 @@ const common = {
   sourceManifestSha256: hash(readFileSync(sourceManifestPath)),
   sourceBootBudgetFile: join(checkout, "scripts/lib/gateway-boot-budget.json"),
   gracefulObservationMs: 35000,
-  fixtureParent: join(work, "private-fixtures"),
+  fixtureParent: mkdtempSync(join(tmpdir(), "omnesis-manual-private-fixtures-")),
 };
 for (const mode of ["source", "compiled"]) {
   const compiled = mode === "compiled";
