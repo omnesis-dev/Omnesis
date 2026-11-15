@@ -23,6 +23,7 @@ on:
             cache-green,
             auth-env-baseline,
             auth-env-green,
+            auth-env-diagnostic,
           ]
         default: regressions
 permissions:
@@ -31,6 +32,23 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
   TZ: UTC
 jobs:
+  auth-env-diagnostic:
+    if: ${{ inputs.scope == 'auth-env-diagnostic' }}
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: "24"
+          cache: npm
+      - name: Install locked dependencies
+        run: node scripts/ci/npm-ci.mjs --no-audit --no-fund
+      - name: Inspect bounded process identity calls under curated host contexts
+        run: node --import tsx scripts/ci/auth-env-diagnostic.mjs
   process-green:
     if: ${{ inputs.scope == 'process-green' || inputs.scope == 'cache-green' || inputs.scope == 'auth-env-baseline' || inputs.scope == 'auth-env-green' }}
     strategy:
