@@ -81,6 +81,8 @@ jobs:
           cache: npm
       - name: Materialize dependencies for the isolated process-control fixture
         run: node scripts/ci/npm-ci.mjs --ignore-scripts --no-audit --no-fund
+      - name: Apply dependency source and type-export patches without native builds
+        run: node node_modules/patch-package/index.js
       - name: Validate timeout after target admission and independent helper closure
         run: node scripts/run-check.mjs unit packages/platform/src/windows-job-stream.test.ts
       - name: Validate all TypeScript and lint the fixture
