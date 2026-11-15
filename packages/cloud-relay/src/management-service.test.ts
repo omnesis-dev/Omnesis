@@ -2632,20 +2632,26 @@ test("closing aborts an accepted account refresh and waits for its completion", 
   const refresh = vi
     .spyOn(GatewayAccountLink.prototype, "refresh")
     .mockImplementation(() => new Promise<void>((resolve) => (finish = resolve)));
-  const reading = manager!.refreshAccount();
+  const reading = manager!.refreshAccount().then(
+    () => undefined,
+    (error: unknown) => error,
+  );
   await vi.waitFor(() => expect(refresh).toHaveBeenCalledOnce());
   let closed = false;
   const closing = manager!.close().then(() => {
     closed = true;
   });
+  let result: unknown;
   try {
     await new Promise((resolve) => setImmediate(resolve));
     expect(refresh.mock.calls[0]![0]!.aborted).toBe(true);
     expect(closed).toBe(false);
   } finally {
     finish();
-    await Promise.all([reading, closing]);
+    [result] = await Promise.all([reading, closing]);
   }
+  // The accepted work is drained, but shutdown refuses its subsequent status read.
+  expect(result).toMatchObject({ status: 409, code: "configuration-invalid" });
 });
 
 test("a queued account refresh retains cleanup uncertainty and closes admission", async () => {
