@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { isIPv4, isIPv6 } from "node:net";
 import { RelayError } from "./tunnels.js";
 import { connectionClientAddress } from "./proxy-protocol.js";
 import { forwardedClientAddress } from "./cdn-front.js";
+import { clientBucket } from "./client-bucket.js";
 
 /**
  * Where a request came from: the client a trusted reverse proxy named for it,
@@ -22,28 +22,10 @@ export type AdmissionClient =
     }
   | undefined;
 
-/**
- * The rate-limit bucket for a peer address: IPv4 as is (including the
- * IPv4-mapped IPv6 form), IPv6 by its /64, which one subscriber usually holds whole.
- */
+/** The rate-limit bucket for a request's client; see {@link clientBucket}. */
 export function admissionClientKey(client: AdmissionClient): string | undefined {
   const address = forwardedClientAddress(client) ?? connectionClientAddress(client?.socket);
-  if (!address) return undefined;
-  if (address.toLowerCase().startsWith("::ffff:") && isIPv4(address.slice(7)))
-    return address.slice(7);
-  if (!isIPv6(address)) return address;
-  const [head = "", tail] = address.toLowerCase().split("%")[0]!.split("::");
-  const front = head ? head.split(":") : [];
-  const back = tail ? tail.split(":") : [];
-  const groups =
-    tail === undefined
-      ? front
-      : [...front, ...Array<string>(8 - front.length - back.length).fill("0"), ...back];
-  return groups
-    .slice(0, 4)
-    .map((group) => group.replace(/^0+(?=.)/, ""))
-    .join(":")
-    .concat("::/64");
+  return address ? clientBucket(address) : undefined;
 }
 
 export interface LoginLimits {
@@ -53,6 +35,31 @@ export interface LoginLimits {
   maxConcurrentPerClient?: number;
   /** Defaults to a third of the global rate, rounded up. */
   maxPerMinutePerClient?: number;
+}
+
+/**
+ * Gateways proving their keys for a routing session (about once an hour each, and all at once
+ * after a relay restart) and DNS challenges for their certificates. They have their own budget,
+ * so a flood of sign-ins can never stop gateways renewing their tunnels.
+ */
+export const DEFAULT_GATEWAY_LOGIN_LIMITS = {
+  maxConcurrent: 32,
+  maxPerMinute: 600,
+  maxConcurrentPerClient: 4,
+  maxPerMinutePerClient: 30,
+} as const satisfies Required<LoginLimits>;
+
+/** Fills each limit `limits` leaves unset from `defaults`. */
+export function withLoginDefaults(
+  limits: Partial<LoginLimits> | undefined,
+  defaults: Required<LoginLimits>,
+): Required<LoginLimits> {
+  return {
+    maxConcurrent: limits?.maxConcurrent ?? defaults.maxConcurrent,
+    maxPerMinute: limits?.maxPerMinute ?? defaults.maxPerMinute,
+    maxConcurrentPerClient: limits?.maxConcurrentPerClient ?? defaults.maxConcurrentPerClient,
+    maxPerMinutePerClient: limits?.maxPerMinutePerClient ?? defaults.maxPerMinutePerClient,
+  };
 }
 
 interface ClientUse {

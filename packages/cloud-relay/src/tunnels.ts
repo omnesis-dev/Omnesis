@@ -6,6 +6,7 @@ import { isIP } from "node:net";
 import { type Duplex } from "node:stream";
 import { createWebSocketStream, WebSocket } from "ws";
 import { CloudRelayMetrics } from "./metrics.js";
+import { clientBucket } from "./client-bucket.js";
 
 export class RelayError extends Error {
   constructor(
@@ -20,20 +21,33 @@ export interface TunnelLimits {
   maxGateways: number;
   maxStreams: number;
   maxStreamsPerGateway: number;
+  /** Data connections one client address (an IPv6 /64) may hold on the data listener. */
+  maxStreamsPerClient: number;
+  /** Streams one client address (an IPv6 /64) may hold to one gateway. */
+  maxStreamsPerClientPerGateway: number;
   connectTimeoutMs: number;
   heartbeatMs: number;
+  /** A routed connection with no bytes either way for this long is closed. */
+  idleTimeoutMs: number;
 }
 
 export const DEFAULT_TUNNEL_LIMITS: TunnelLimits = {
   maxGateways: 100,
   maxStreams: 256,
   maxStreamsPerGateway: 16,
+  // An eighth of the relay's, and half of one gateway's, so one client never holds them all.
+  // A browser opens up to six connections to one name.
+  maxStreamsPerClient: 32,
+  maxStreamsPerClientPerGateway: 8,
   connectTimeoutMs: 10_000,
   heartbeatMs: 30_000,
+  // Gateways ping device WebSockets and send SSE keep-alives every 15 to 30 seconds.
+  idleTimeoutMs: 600_000,
 };
 
 interface Pending {
   owner: Tunnel;
+  client: string | undefined;
   timer: ReturnType<typeof setTimeout>;
   resolve: (stream: Duplex) => void;
   reject: (error: Error) => void;
@@ -43,6 +57,8 @@ interface Tunnel {
   socket: WebSocket;
   streams: Set<Duplex>;
   pending: Set<string>;
+  /** Streams and pending reservations by client bucket. */
+  clients: Map<string, number>;
   expiry: ReturnType<typeof setTimeout>;
   heartbeat: ReturnType<typeof setInterval>;
   revoke(): void;
@@ -77,6 +93,7 @@ export class TunnelBroker {
       socket,
       streams: new Set(),
       pending: new Set(),
+      clients: new Map(),
       expiry: setTimeout(
         () => {
           this.metrics.tunnel("session_expired");
@@ -150,6 +167,16 @@ export class TunnelBroker {
       this.metrics.stream("capacity");
       throw new RelayError(429, "Stream capacity reached");
     }
+    const address = normalizeAddress(client);
+    const bucket = address === undefined ? undefined : clientBucket(address);
+    if (
+      bucket !== undefined &&
+      (tunnel.clients.get(bucket) ?? 0) >= this.limits.maxStreamsPerClientPerGateway
+    ) {
+      this.metrics.stream("client_capacity");
+      throw new RelayError(429, "Stream capacity reached for this client");
+    }
+    if (bucket !== undefined) tunnel.clients.set(bucket, (tunnel.clients.get(bucket) ?? 0) + 1);
     const ticket = randomBytes(32).toString("hex");
     return new Promise<Duplex>((resolve, reject) => {
       const abort = (): void => {
@@ -159,6 +186,7 @@ export class TunnelBroker {
       const clean = (): void => signal.removeEventListener("abort", abort);
       this.pending.set(ticket, {
         owner: tunnel,
+        client: bucket,
         timer: setTimeout(() => {
           this.metrics.stream("timeout");
           this.fail(ticket, new RelayError(504, "Gateway connection timed out"));
@@ -174,7 +202,6 @@ export class TunnelBroker {
       });
       tunnel.pending.add(ticket);
       signal.addEventListener("abort", abort, { once: true });
-      const address = normalizeAddress(client);
       tunnel.socket.send(
         JSON.stringify({
           type: "open",
@@ -216,6 +243,7 @@ export class TunnelBroker {
     const keepAlive = setInterval(() => socket.ping(), this.limits.heartbeatMs);
     stream.once("close", () => {
       clearInterval(keepAlive);
+      release(pending.owner, pending.client);
       pending.owner.streams.delete(stream);
       this.activeStreams--;
       this.metrics.stream("closed");
@@ -228,6 +256,7 @@ export class TunnelBroker {
     if (!pending) return;
     this.pending.delete(ticket);
     pending.owner.pending.delete(ticket);
+    release(pending.owner, pending.client);
     clearTimeout(pending.timer);
     pending.reject(error);
   }
@@ -263,6 +292,14 @@ export class TunnelBroker {
       tunnel.socket.terminate();
     }
   }
+}
+
+/** Returns a client's reservation on a gateway. */
+function release(tunnel: Tunnel, bucket: string | undefined): void {
+  if (bucket === undefined) return;
+  const held = (tunnel.clients.get(bucket) ?? 0) - 1;
+  if (held > 0) tunnel.clients.set(bucket, held);
+  else tunnel.clients.delete(bucket);
 }
 
 /** An IP address in its plain form, or undefined for anything else. */
