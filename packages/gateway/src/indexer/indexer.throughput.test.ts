@@ -17,7 +17,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import Database from "better-sqlite3";
 import { createLogger } from "@omnesis/core";
-import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { createDatabase, upsertDocuments } from "../db.js";
 import { DocumentChunker } from "./chunker.js";
 import { createIndexDatabase, EMBEDDING_DIM, getAllIndexedDocumentIds } from "./db.js";
@@ -43,6 +43,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.useRealTimers();
   indexDb.close();
   gatewayReader.close();
   gatewayWriter.close();
@@ -169,6 +170,16 @@ async function backlog(total: number, indexedShare: number, chunksPerDoc: number
   return total - done;
 }
 
+/**
+ * Stops `performance.now()`, the clock the pacer measures page time with, so
+ * every page counts as fast and the page sizes follow from the pressure signal
+ * alone, however slow the machine running the test. Timers stay real, so the
+ * embedder's cost and the pauses between pages still elapse.
+ */
+function freezePageClock(): void {
+  vi.useFakeTimers({ toFake: ["performance"] });
+}
+
 function reset(): void {
   indexDb.exec("DELETE FROM chunks; DELETE FROM indexed_documents; DELETE FROM watermark;");
 }
@@ -211,22 +222,28 @@ describe("indexing scan throughput", () => {
   });
 
   test("a backed-up index WAL drops the page to the configured size until it clears", async () => {
-    const pending = await backlog(600, 0.8, 1);
+    // Ten pages read at most 10+20+40+80+160+320 documents, then four of the
+    // configured 10: 670. A larger corpus always leaves an eleventh page,
+    // wherever the random document ids put the pending ones (a page that
+    // reaches the embedding bound ends early, so where they fall decides how
+    // far each page reads).
+    const pending = await backlog(800, 0.8, 1);
+    freezePageClock();
     let calls = 0;
     const held = await scan({ ...CATCH_UP, sleepMs: 1 }, 1, () => {
       calls += 1;
       return { userActive: false, walPendingFrames: calls >= 6 && calls < 10 ? 50_000 : 0 };
     });
     expect(held.indexed).toBe(pending);
-    // Pages 1-5 grow; settles 6-9 see the WAL over its limit, so pages 7-10
-    // are back at the configured size; growth resumes after.
-    expect(held.pages[5]).toBeGreaterThan(10);
-    expect(held.pages.slice(6, 10)).toEqual([10, 10, 10, 10]);
-    expect(Math.max(...held.pages.slice(10))).toBeGreaterThan(10);
+    // Pages 1-6 double; settles 6-9 see the WAL over its limit, so pages 7-10
+    // are back at the configured size; the clear settle after page 10 doubles
+    // it again.
+    expect(held.pages.slice(0, 11)).toEqual([10, 20, 40, 80, 160, 320, 10, 10, 10, 10, 20]);
   });
 
   test("the missing-document pass grows its batches while catching up and holds them under pressure", async () => {
     seed(400, "gap", 1);
+    freezePageClock();
     const batches = (userActive: boolean) => {
       const sizes: number[] = [];
       const inner = new DirectDocumentSource(gatewayReader);
