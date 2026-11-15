@@ -57,7 +57,7 @@ const PRODUCTION_VERSIONS: readonly LexicalVersion[] = [VERSION_0];
 /**
  * Versions that exist only so the rebuild can be tested end to end. Each
  * reverses every word, so a query cut by the wrong version matches nothing.
- * They are known, and selectable as the target, only on a synthetic gateway.
+ * They are known only on a synthetic gateway.
  */
 export const TEST_LEXICAL_VERSIONS: readonly number[] = [9001, 9002];
 
@@ -83,13 +83,17 @@ function reverseAllButLast(text: string): string {
   return reverseWords(text.slice(0, match.index)) + text.slice(match.index);
 }
 
-/** The test-only target selected by `OMNESIS_LEXICAL_TEST_VERSION`, on a synthetic gateway only. */
+/**
+ * A target selected by `OMNESIS_LEXICAL_TEST_VERSION`, on a synthetic gateway
+ * only: any version this build knows, so a test can start a gateway on an
+ * older version and then upgrade it.
+ */
 function testTargetVersion(): number | null {
   if (!syntheticEnabled()) return null;
   const raw = process.env.OMNESIS_LEXICAL_TEST_VERSION;
   if (!raw) return null;
   const version = Number(raw);
-  return TEST_LEXICAL_VERSIONS.includes(version) ? version : null;
+  return knownLexicalVersions().some((v) => v.version === version) ? version : null;
 }
 
 /** Every version this build can search with. */
