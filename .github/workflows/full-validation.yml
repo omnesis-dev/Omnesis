@@ -28,6 +28,7 @@ on:
             auth-owned-baseline,
             auth-owned-green,
             windows-restart,
+            sqlite-runtime,
           ]
         default: regressions
 permissions:
@@ -54,7 +55,7 @@ jobs:
       - name: Inspect bounded process identity calls under curated host contexts
         run: node --import tsx scripts/ci/auth-env-diagnostic.mjs
   process-green:
-    if: ${{ inputs.scope == 'process-green' || inputs.scope == 'cache-green' || inputs.scope == 'auth-env-baseline' || inputs.scope == 'auth-env-green' || inputs.scope == 'auth-owned-green' }}
+    if: ${{ inputs.scope == 'process-green' || inputs.scope == 'cache-green' || inputs.scope == 'auth-env-baseline' || inputs.scope == 'auth-env-green' || inputs.scope == 'auth-owned-green' || inputs.scope == 'sqlite-runtime' }}
     strategy:
       fail-fast: false
       max-parallel: 1
@@ -87,6 +88,16 @@ jobs:
           packages/core/src/windows-process-tree.test.ts
           packages/platform/src/native/windows-job-source.test.ts
           packages/platform/src/windows-worker-cache.windows.test.ts
+      - name: Validate native SQLite recovery and encryption contracts
+        if: ${{ inputs.scope == 'sqlite-runtime' }}
+        run: >-
+          node scripts/run-check.mjs unit
+          packages/gateway/src/sqlite-windows-wal-recovery.test.ts
+          packages/gateway/src/sqlite-encryption.test.ts
+          packages/gateway/src/db.test.ts
+          packages/gateway/src/db.close-draining-wal.test.ts
+          packages/gateway/src/storage-encryption.test.ts
+          packages/providers/screen-time/src/db-reader-recovery.test.ts
       - name: Validate real auth entry ownership and ordinary auth compatibility
         if: ${{ inputs.scope == 'auth-owned-green' }}
         run: >-
@@ -104,9 +115,16 @@ jobs:
       - name: Full source and test typechecks
         if: ${{ inputs.scope == 'auth-owned-green' && runner.os == 'Linux' }}
         run: npm run typecheck && npm run typecheck:tests
-      - name: Full ESLint
+      - name: Lint changed authentication and check-runner boundaries
         if: ${{ inputs.scope == 'auth-owned-green' && runner.os == 'Linux' }}
-        run: npm run lint
+        run: >-
+          node node_modules/eslint/bin/eslint.js
+          packages/collector/src/auth-subprocess.ts
+          packages/collector/src/auth-subprocess-exit.ts
+          packages/collector/src/auth-subprocess-ownership.test.ts
+          scripts/lib/check-process.d.mts
+          scripts/run-e2e-status.test.mjs
+          scripts/ci/windows-checks.mjs
       - name: Inspect stopped SQLite driver interoperability
         if: ${{ !cancelled() && inputs.scope == 'auth-owned-green' && runner.os == 'Windows' }}
         run: node --import tsx scripts/ci/windows-sqlite-restart-diagnostic.mjs

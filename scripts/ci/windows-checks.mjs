@@ -79,6 +79,7 @@ export const FOCUSED_UNIT_FILES = [
   "packages/gateway/src/indexer/usearch-validation.test.ts",
   "packages/core/src/default-config-dir.test.ts",
   "packages/core/src/sqlite-snapshot-races.test.ts",
+  "packages/gateway/src/sqlite-windows-wal-recovery.test.ts",
   "packages/core/src/sqlite-snapshot.test.ts",
   "packages/core/src/collector-pairing-state.test.ts",
   "evals/briefs/src/deepseek-lane.test.ts",

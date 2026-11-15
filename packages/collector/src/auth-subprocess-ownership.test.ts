@@ -25,6 +25,30 @@ interface Scenario {
   pending?: boolean;
 }
 
+async function closeScenario(
+  running: Promise<number>,
+  signals: EventEmitter,
+  stopping: boolean,
+  root: string,
+): Promise<void> {
+  let retained = false;
+  if (stopping) signals.emit("SIGTERM");
+  try {
+    await running;
+  } catch (error) {
+    retained = ownedProcessCleanupReceipt(error) !== undefined;
+    const cancelled =
+      error instanceof Error &&
+      error.message ===
+        (process.platform === "win32"
+          ? "Check process did not complete normally"
+          : "Check terminated after SIGTERM");
+    if (retained || !stopping || !cancelled) throw error;
+  } finally {
+    if (!retained) rmSync(root, { recursive: true, force: true });
+  }
+}
+
 /** Observe the real entry script, substituting its public keyring/provider seams.
  * The injected uncertainty launches no native operation. The outer command owns
  * and positively joins the held fixture before its generated inputs are removed. */
@@ -75,7 +99,6 @@ registerHooks({load(url,context,nextLoad){
   );
   const signals = new EventEmitter();
   let settled = false;
-  let retained = false;
   const args = [
     "--import",
     pathToFileURL(require.resolve("tsx/esm")).href,
@@ -139,22 +162,7 @@ registerHooks({load(url,context,nextLoad){
       );
     }
   } finally {
-    const stopping = !settled;
-    if (stopping) signals.emit("SIGTERM");
-    try {
-      await running;
-    } catch (error) {
-      retained = ownedProcessCleanupReceipt(error) !== undefined;
-      const cancelled =
-        error instanceof Error &&
-        error.message ===
-          (process.platform === "win32"
-            ? "Check process did not complete normally"
-            : "Check terminated after SIGTERM");
-      if (retained || !stopping || !cancelled) throw error;
-    } finally {
-      if (!retained) rmSync(root, { recursive: true, force: true });
-    }
+    await closeScenario(running, signals, !settled, root);
   }
 }
 
