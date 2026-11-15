@@ -413,10 +413,33 @@ describe("Windows job exec capture", () => {
   });
 
   it("times out the whole job and waits for helper close", async () => {
-    const run = execWindowsJob("fixture", [], { timeout: 1 });
-    helper.rawStderr.write("OMNESIS_JOB:0\n");
-    await expect(run).rejects.toMatchObject({ code: "ETIMEDOUT", killed: true });
-    expect(helper.kill).toHaveBeenCalledOnce();
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    vi.spyOn(Date, "now").mockReturnValue(1000);
+    helper.kill.mockImplementation(() => true);
+    try {
+      const run = execWindowsJob("fixture", [], { timeout: 1 });
+      const rejected = expect(run).rejects.toMatchObject({ code: "ETIMEDOUT", killed: true });
+      let settled = false;
+      void run.then(
+        () => {
+          settled = true;
+        },
+        () => {
+          settled = true;
+        },
+      );
+      helper.rawStderr.write("OMNESIS_JOB:0\n");
+      await vi.advanceTimersByTimeAsync(0);
+      expect(mocks.spawn).toHaveBeenCalledOnce();
+      await vi.advanceTimersByTimeAsync(1);
+      expect(helper.kill).toHaveBeenCalledOnce();
+      expect(settled).toBe(false);
+      await helper.close(null, "SIGKILL");
+      await rejected;
+      expect(settled).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("times out cold initialization before starting a target beyond the probe deadline", async () => {
