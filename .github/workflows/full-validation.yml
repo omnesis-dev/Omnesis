@@ -24,6 +24,7 @@ on:
             auth-env-baseline,
             auth-env-green,
             auth-env-diagnostic,
+            focus-cost,
           ]
         default: regressions
 permissions:
@@ -366,7 +367,7 @@ jobs:
         run: npm run test:hermes
 
   windows-e2e:
-    if: ${{ inputs.scope == 'performance' || inputs.scope == 'e2e' }}
+    if: ${{ inputs.scope == 'performance' || inputs.scope == 'e2e' || inputs.scope == 'focus-cost' }}
     runs-on: windows-latest
     timeout-minutes: 45
     env:
@@ -392,6 +393,11 @@ jobs:
         run: node scripts/ci/npm-ci.mjs --no-audit --no-fund
       - name: Build supported Windows vector dependency
         run: node scripts/ci/build-windows-usearch.mjs
+      - name: Measure bounded focused Windows checks
+        if: ${{ inputs.scope == 'focus-cost' }}
+        env:
+          OMNESIS_UNIT_WORKERS: "2"
+        run: node scripts/ci/windows-checks.mjs focused
       - name: Install browser for functional fixtures
         if: ${{ inputs.scope == 'e2e' }}
         run: npm exec --workspace packages/collector -- playwright install chromium

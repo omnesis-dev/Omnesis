@@ -30,6 +30,8 @@ export const INSTALLER_TEST_EXCLUSIONS = [
   { pattern: "scripts/release/docker-install-context.test.mjs", reason: "Docker installer layout" },
 ];
 
+// PRs keep native boundaries and runtime integration coverage. Expensive CLI
+// and service decision matrices run in the complete daily/manual unit lane.
 export const FOCUSED_UNIT_FILES = [
   "scripts/lib/check-process.test.mjs",
   "packages/cli/src/commands/status-json.test.ts",
@@ -46,9 +48,9 @@ export const FOCUSED_UNIT_FILES = [
   "packages/agent-integration/src/hermes-windows-bridge.test.ts",
   "packages/platform/src/windows-private-repair-streams.windows.test.ts",
   "packages/cloud-relay/src/private-inputs.test.ts",
+  "packages/cloud-relay/src/management-ownership-boundaries.test.ts",
   "packages/cloud-relay/src/dns-broker-node.test.ts",
   "packages/cloud-relay/src/dns-broker-registry.test.ts",
-  "packages/cloud-relay/src/management-service.test.ts",
   "packages/cloud-relay/src/gateway-integration.test.ts",
   "packages/cloud-relay/src/recovery-authority.test.ts",
   "packages/core/src/update-lock.test.ts",
@@ -66,9 +68,7 @@ export const FOCUSED_UNIT_FILES = [
   "packages/cloud-relay/src/runtime-key.test.ts",
   "packages/cloud-relay/src/runtime-acme.test.ts",
   "packages/cli/src/command-display.test.ts",
-  "packages/cli/src/commands/connect.test.ts",
   "packages/cli/src/commands/connect.integration.test.ts",
-  "packages/gateway/src/workers/indexer-worker-boot.test.ts",
   "packages/collector/src/e2e/windows-tree-drain.test.ts",
   "scripts/ci/test-shell.test.mjs",
   "scripts/pii-scan.test.mjs",
@@ -87,7 +87,6 @@ export const FOCUSED_UNIT_FILES = [
   "packages/gateway/src/disk-usage.test.ts",
   "packages/cli/src/update/source-launcher.test.ts",
   "packages/cli/src/update/build-heap.test.ts",
-  "packages/cli/src/commands/secure-docker.test.ts",
   "packages/agent/src/codex-private-state.test.ts",
   "packages/platform/src/windows-private-traversal.windows.test.ts",
   "packages/agent/src/codex-runtime-pool.test.ts",
@@ -99,7 +98,6 @@ export const FOCUSED_UNIT_FILES = [
   "packages/gateway/src/tls-lifecycle/persistence.test.ts",
   "packages/gateway/src/owned-process-shutdown-fence.test.ts",
   "packages/core/src/backup-layout.test.ts",
-  "packages/gateway/src/http/services/BackupService.test.ts",
   "packages/gateway/src/privacy/policy-store.test.ts",
   "packages/gateway/src/instructions/store.test.ts",
   "packages/gateway/src/http/routes/instructions.test.ts",
@@ -135,7 +133,6 @@ export const FOCUSED_UNIT_FILES = [
   "packages/gateway/src/transcribe/audio-decode.test.ts",
   "packages/core/src/tls-material.test.ts",
   "packages/core/src/tls-distrust.test.ts",
-  "packages/gateway/src/storage-encryption.test.ts",
   "packages/core/src/storage-readiness.test.ts",
   "packages/core/src/secret-store.test.ts",
   "packages/agent-integration/src/harness-update-process.windows.test.ts",
