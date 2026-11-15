@@ -170,6 +170,25 @@ beforeEach(() => {
 });
 
 describe("auth.begin → runFlowSubprocess", () => {
+  test("a successful protocol message and stdout EOF do not prove the auth process has closed", async () => {
+    const { handlers, emitted } = setup([authDescriptor()]);
+    await handlers.handle(
+      makeCommand("auth.begin", { flowId: "join-proof", sourceType: "test-auth-source" }),
+    );
+    const child = spawnedChildren[0];
+    child.emitLine({ type: "complete", accountIds: ["one@example.com"] });
+    child.endStdout();
+    try {
+      for (let turn = 0; turn < 6; turn++) await new Promise((done) => setImmediate(done));
+      expect(emitted.filter((event) => event.type === "auth.complete")).toEqual([]);
+    } finally {
+      child.exitCode = 0;
+      child.emit("exit", 0, null);
+      child.emit("close", 0, null);
+      await handlers.shutdown();
+    }
+  });
+
   test("forwards url as auth.update, then emits exactly one terminal auth.complete on success", async () => {
     const { handlers, emitted } = setup([authDescriptor()]);
 

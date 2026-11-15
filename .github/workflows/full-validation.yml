@@ -69,6 +69,7 @@ jobs:
         run: >-
           node scripts/run-check.mjs unit
           packages/collector/src/source-ws-handlers.ownership.test.ts
+          packages/collector/src/source-ws-handlers.auth-begin.test.ts
           packages/collector/src/owned-process-shutdown.test.ts
   sqlite-mmap-baseline:
     if: ${{ inputs.scope == 'sqlite-mmap-baseline' }}
