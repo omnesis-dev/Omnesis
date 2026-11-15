@@ -35,8 +35,10 @@ final class SourceFilterFolderGestureUITests: XCTestCase {
         let level = try gateway.prepareFolderScrollLevel()
         app.launchEnvironment["DEMO_PAIRING_JSON"] = pairing
         app.launch()
-        tap(app.buttons["menu.toggle"])
-        tap(button(startingWith: "Settings"))
+        openSettings()
+        // Settings lists Access once the gateway has said it supports editing levels, right under Policies.
+        reveal(app.buttons["Policies"], within: app)
+        XCTAssertTrue(app.buttons["Access"].waitForExistence(timeout: 120), "Settings never offered Access")
         revealAndTap(app.buttons["Access"])
         revealAndTap(app.buttons.matching(NSPredicate(format: "label CONTAINS %@", level.name)).firstMatch)
         tap(app.buttons["Change Direct data"])
@@ -128,6 +130,22 @@ final class SourceFilterFolderGestureUITests: XCTestCase {
         attach("folder-saved-level")
     }
 
+    /// Opens Settings from the menu. A tap on the menu button can go unanswered while the app is still
+    /// settling, and a drawer row stays in the tree, disabled, while the drawer is closed.
+    private func openSettings() {
+        let settings = app.buttons["menu.settings"]
+        let usable = NSPredicate(format: "exists == true AND enabled == true")
+        for _ in 0 ..< 3 {
+            tap(app.buttons["menu.toggle"])
+            if XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: usable, object: settings)], timeout: 15) == .completed { break }
+        }
+        XCTAssertTrue(settings.isEnabled, "The menu did not open")
+        let frame = settings.frame
+        settings.coordinate(withNormalizedOffset: .zero)
+            .withOffset(CGVector(dx: min(frame.width / 2, 34), dy: frame.height / 2))
+            .tap()
+    }
+
     private func button(startingWith prefix: String) -> XCUIElement {
         app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", prefix)).firstMatch
     }
@@ -167,11 +185,6 @@ final class SourceFilterFolderGestureUITests: XCTestCase {
         for _ in 0 ..< 20 {
             if element.exists, element.isHittable { return }
             container.swipeUp()
-        }
-        // A row that arrives once the gateway has answered can land above where the swipes have reached.
-        for _ in 0 ..< 20 {
-            if element.exists, element.isHittable { return }
-            container.swipeDown()
         }
         XCTFail("Actual swipes did not reveal \(element)")
     }
