@@ -17,6 +17,32 @@ const log = createLogger("indexer:http-embedder");
 
 const DEFAULT_TIMEOUT_MS = 60_000;
 /**
+ * A request whose connection dropped before any response arrived is sent again
+ * this many more times. `fetch` reports that as a TypeError ("fetch failed"),
+ * typically a keep-alive socket the server closed just as it was reused.
+ * Embedding is idempotent, and the request's deadline still bounds every
+ * attempt, so a server that is really down fails as before.
+ */
+const DROPPED_CONNECTION_RETRIES = 2;
+
+async function retryDroppedConnection(
+  send: () => Promise<Response>,
+  deadline: AbortSignal,
+): Promise<Response> {
+  for (let retry = 0; ; retry += 1) {
+    try {
+      return await send();
+    } catch (err) {
+      if (!(err instanceof TypeError) || deadline.aborted || retry >= DROPPED_CONNECTION_RETRIES)
+        throw err;
+      log.warn(
+        `embedding request lost its connection (${String(err.cause ?? err.message)}); retrying`,
+      );
+      await new Promise((resolve) => setTimeout(resolve, 250 * (retry + 1)));
+    }
+  }
+}
+/**
  * How an embedding server is shared between search and indexing. A server
  * such as vLLM queues every input of a request as its own sequence and serves
  * them first come, first served, so a query embed waits for every background
@@ -210,15 +236,19 @@ export class HttpEmbedder implements Embedder {
       const deadline = AbortSignal.timeout(this.timeoutMs);
       const res = await retryRateLimitedRequest(
         () =>
-          fetchWithInferenceUrlPolicy(
-            url,
-            {
-              method: "POST",
-              headers,
-              body: JSON.stringify(body),
-              signal: deadline,
-            },
-            { allowRemoteInference: this.allowRemoteInference },
+          retryDroppedConnection(
+            () =>
+              fetchWithInferenceUrlPolicy(
+                url,
+                {
+                  method: "POST",
+                  headers,
+                  body: JSON.stringify(body),
+                  signal: deadline,
+                },
+                { allowRemoteInference: this.allowRemoteInference },
+              ),
+            deadline,
           ),
         {
           signal: deadline,
