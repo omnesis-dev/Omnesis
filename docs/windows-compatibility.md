@@ -38,6 +38,16 @@ Runner occupancy and feedback time still matter; completed broad-run timings
 must establish the daily workload before the audit is complete. GitHub also
 documents that [scheduled runs can be delayed](https://docs.github.com/en/actions/how-tos/troubleshoot-workflows).
 
+The measured broad PR selection took 34 minutes, including 25 minutes for its
+unit phase. Six CLI/service decision matrices accounted for more than half of
+reported unit-file runtime. Those matrices run in the complete daily/manual
+Windows unit sweep; PRs retain native filesystem/process boundaries, lifecycle
+regressions, CLI integration and real Gateway/Collector smoke tests. The complete
+sweep continues to discover every portable unit suite normally.
+The revised selection passed 3,618 unit tests and 14 real Gateway/Collector smoke
+tests. Its unit phase took 10 minutes and the complete job took 18 minutes;
+runner admission waited 4 seconds.
+
 `node scripts/ci/windows-checks.mjs unit --list` prints the broad unit plan.
 The same entrypoint accepts `focused`, `e2e` and `portal`. Installer exclusions
 have explicit reasons. Manual dispatch defaults to the complete sweep and can

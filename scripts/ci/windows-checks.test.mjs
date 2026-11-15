@@ -151,6 +151,31 @@ describe("Windows CI coverage", () => {
       expect(FOCUSED_UNIT_FILES).toContain(file);
   });
 
+  test("expensive decision matrices use the complete Windows sweep alongside focused native boundaries", () => {
+    for (const file of [
+      "packages/cli/src/commands/connect.test.ts",
+      "packages/cloud-relay/src/management-service.test.ts",
+      "packages/gateway/src/http/services/BackupService.test.ts",
+      "packages/cli/src/commands/secure-docker.test.ts",
+      "packages/gateway/src/workers/indexer-worker-boot.test.ts",
+      "packages/gateway/src/storage-encryption.test.ts",
+    ]) {
+      expect(FOCUSED_UNIT_FILES).not.toContain(file);
+      expect(INSTALLER_TEST_EXCLUSIONS.some(({ pattern }) => pattern === file)).toBe(false);
+    }
+    for (const file of [
+      "packages/cli/src/commands/connect.integration.test.ts",
+      "packages/cloud-relay/src/management-ownership-boundaries.test.ts",
+      "packages/core/src/encrypted-artifact-publication.test.ts",
+      "packages/gateway/src/workers/worker-module-graph.test.ts",
+    ]) {
+      expect(FOCUSED_UNIT_FILES).toContain(file);
+    }
+    expect(windowsCheckTasks("unit")[0].slice(2)).toEqual(
+      INSTALLER_TEST_EXCLUSIONS.flatMap(({ pattern }) => ["--exclude", pattern]),
+    );
+  });
+
   test("daily unit coverage builds source declarations and checks every suite config", () => {
     const step = workflow().jobs.windows.steps.find(
       ({ name }) => name === "Typecheck all TypeScript source and test projects",
