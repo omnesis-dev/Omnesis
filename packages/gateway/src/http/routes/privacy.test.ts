@@ -52,6 +52,7 @@ describe("privacy admin routes", () => {
   let db: Database.Database;
   let dir: string;
   let previousExperimental: string | undefined;
+  let approvalDecided: ReturnType<typeof vi.fn<() => void>>;
 
   beforeEach(() => {
     previousExperimental = process.env.OMNESIS_EXPERIMENTAL;
@@ -92,13 +93,18 @@ describe("privacy admin routes", () => {
       });
       await next();
     });
-    mountPrivacyRoutes(strictRoute(app), {
-      privacyAdminService: new PrivacyAdminService({
-        db,
-        policyStore: new PrivacyPolicyStore(dir, { db, writeGate }),
-        writeGate,
-      }),
-    });
+    approvalDecided = vi.fn();
+    mountPrivacyRoutes(
+      strictRoute(app),
+      {
+        privacyAdminService: new PrivacyAdminService({
+          db,
+          policyStore: new PrivacyPolicyStore(dir, { db, writeGate }),
+          writeGate,
+        }),
+      },
+      () => approvalDecided(),
+    );
   });
 
   afterEach(() => {
@@ -637,11 +643,19 @@ describe("privacy admin routes", () => {
       },
     });
 
+    const missing = await app.request("/admin/privacy/approvals/approval-missing/approve", {
+      method: "POST",
+      headers: POLICY_MUTATION_HEADERS,
+    });
+    expect(missing.status).toBe(404);
+    expect(approvalDecided).not.toHaveBeenCalled();
     const approved = await app.request("/admin/privacy/approvals/approval-1/approve", {
       method: "POST",
       headers: POLICY_MUTATION_HEADERS,
     });
     expect(approved.status).toBe(200);
+    // Open portals re-read what waits for the owner.
+    expect(approvalDecided).toHaveBeenCalledTimes(1);
     await expect(approved.json()).resolves.toMatchObject({
       status: "released",
       answer: "Held synthetic answer",

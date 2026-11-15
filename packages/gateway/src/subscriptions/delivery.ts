@@ -110,7 +110,10 @@ export interface SubscriptionDeliveryServiceDeps {
   id?: () => string;
   /** Live experimental gate. Disabled delivery rows remain parked. */
   isEnabled?: () => boolean;
-  /** Refresh the orchestrator snapshot after durable expiry disabled triggers. */
+  /**
+   * Watches expired, or a policy revision re-opened or closed their requests:
+   * refresh whatever reads them (the orchestrator snapshot, the owner's portals).
+   */
   onExpired?: () => void;
   /**
    * Re-evaluate pending compatible watches after a privacy-policy revision.

@@ -243,8 +243,13 @@ export class AccessService {
   overview() {
     return {
       ...listAccessOverview(this.reader),
-      pendingRequests: listPendingAuthorizationRequests(this.reader),
+      pendingRequests: this.pendingRequests(),
     };
+  }
+
+  /** The agent access requests waiting for the owner, without the rest of the overview. */
+  pendingRequests() {
+    return listPendingAuthorizationRequests(this.reader);
   }
 
   /** The access ledger, newest first. */

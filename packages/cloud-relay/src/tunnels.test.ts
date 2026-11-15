@@ -87,6 +87,26 @@ test("bounds per-gateway and global pending reservations separately", async () =
   await Promise.all([rejectedA, rejectedB]);
 });
 
+test("F16: each client's share of a gateway is reserved per /64 and returned when a stream ends", async () => {
+  const broker = new TunnelBroker({ ...DEFAULT_TUNNEL_LIMITS, maxStreamsPerClientPerGateway: 1 });
+  const control = new Control();
+  broker.attach("a", control.socket, 3600);
+  const first = new AbortController();
+  const pending = broker.open("a", first.signal, "2001:db8:1:2::1");
+  const failed = expect(pending).rejects.toThrow("disconnected");
+  expect(() => broker.open("a", new AbortController().signal, "2001:db8:1:2::ff")).toThrow(
+    "this client",
+  );
+  // Another client, and a caller with no address, are not counted against it.
+  const other = broker.open("a", new AbortController().signal, "203.0.113.9");
+  const unnamed = broker.open("a", new AbortController().signal);
+  first.abort();
+  await failed;
+  const again = broker.open("a", new AbortController().signal, "2001:db8:1:2::2");
+  broker.close();
+  await Promise.all([other, unnamed, again].map((work) => work.catch(() => {})));
+});
+
 test("heartbeats require pong, contain socket errors, and end expired sessions", async () => {
   const broker = new TunnelBroker({ ...DEFAULT_TUNNEL_LIMITS, heartbeatMs: 100 });
   const control = new Control();

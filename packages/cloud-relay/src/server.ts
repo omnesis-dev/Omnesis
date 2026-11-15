@@ -20,7 +20,12 @@ import {
 import { verifyRoutingHostname } from "./hostname-proof.js";
 import { hostedGatewayHostname } from "./hosted-name.js";
 import { createTlsRouter } from "./tls-router.js";
-import { LoginAdmission, type LoginLimits } from "./admission.js";
+import {
+  DEFAULT_GATEWAY_LOGIN_LIMITS,
+  LoginAdmission,
+  withLoginDefaults,
+  type LoginLimits,
+} from "./admission.js";
 import { acceptProxyProtocol, type ProxyProtocolPeers } from "./proxy-protocol.js";
 import {
   GatewayKeyAuthentication,
@@ -58,6 +63,8 @@ export interface CloudRelayOptions {
   accounts: RelayAccounts;
   limits?: TunnelLimits;
   loginLimits?: LoginLimits;
+  /** Gateway key sign-ins and DNS challenges; unset values take DEFAULT_GATEWAY_LOGIN_LIMITS. */
+  gatewayLoginLimits?: Partial<LoginLimits>;
   tls?: { key: string; cert: string };
   relayDomain?: string;
   publicDataPort?: number;
@@ -108,6 +115,9 @@ export function createCloudRelay(options: CloudRelayOptions): {
   const metrics = options.metrics ?? new CloudRelayMetrics();
   const cdn = options.cdn;
   const loginAdmission = LoginAdmission.fromLimits(options.loginLimits);
+  const gatewayAdmission = LoginAdmission.fromLimits(
+    withLoginDefaults(options.gatewayLoginLimits, DEFAULT_GATEWAY_LOGIN_LIMITS),
+  );
   const googleBrowser = options.googleBrowser
     ? createGoogleBrowserRoutes(
         options.googleBrowser,
@@ -159,7 +169,9 @@ export function createCloudRelay(options: CloudRelayOptions): {
       recovery ? recovery.accountForHostname(host) : options.accounts.accountForHostname(host),
     open: (account, signal, client) => broker.open(account, signal, client),
     maxConnections: options.limits?.maxStreams,
+    maxConnectionsPerClient: options.limits?.maxStreamsPerClient,
     helloTimeoutMs: options.limits?.connectTimeoutMs,
+    idleTimeoutMs: options.limits?.idleTimeoutMs,
   });
   const accountOwner = (account: string) => {
     const binding = gatewayBinding(account);
@@ -415,7 +427,7 @@ export function createCloudRelay(options: CloudRelayOptions): {
           throw new RelayError(403, "A raw gateway owner-key session is required");
         if (req.method !== "POST" && req.method !== "DELETE")
           throw new RelayError(405, "Method not allowed");
-        return loginAdmission.run(async () => {
+        return gatewayAdmission.run(async () => {
           if (!req.headers["content-type"]?.startsWith("application/json"))
             throw new RelayError(415, "JSON required");
           const parts: Buffer[] = [];
@@ -459,7 +471,8 @@ export function createCloudRelay(options: CloudRelayOptions): {
       }
       if (req.url === "/_relay/v2/key/challenge" || req.url === "/_relay/v2/key/complete") {
         if (req.method !== "POST") throw new RelayError(405, "Method not allowed");
-        return loginAdmission.run(async () => {
+        // A gateway renewing its routing session: never behind people's sign-ins.
+        return gatewayAdmission.run(async () => {
           if (!req.headers["content-type"]?.startsWith("application/json"))
             throw new RelayError(415, "JSON required");
           const parts: Buffer[] = [];

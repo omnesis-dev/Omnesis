@@ -167,6 +167,11 @@ export interface AnswerServiceDeps {
     ) => Promise<T | null>;
   };
   notifyApproval?: (approvalId: string) => Promise<void>;
+  /**
+   * An answer was just held for the owner. Called for every hold, unlike
+   * `notifyApproval`, which the phone-push cooldown spaces out.
+   */
+  onApprovalHeld?: () => void;
   now?: () => number;
   idGen?: (kind: "workflow" | "conversation" | "task" | "approval" | "release") => string;
   workflowTtlMs?: number;
@@ -486,6 +491,7 @@ export class AnswerService {
           );
       assertAnswerTaskScopeCurrent(this.deps.db, task.taskId);
       if (response.status === "approval_required") {
+        this.deps.onApprovalHeld?.();
         this.notifyApprovalBestEffort(request.ownerId, response.approvalId);
       }
       return {

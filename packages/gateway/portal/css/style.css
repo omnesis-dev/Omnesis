@@ -656,24 +656,6 @@ a:hover { text-decoration: underline; }
 }
 .sidebar-item:hover .sidebar-icon { color: var(--text-secondary); }
 .sidebar-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-/* How many decisions are waiting on the Privacy page. Decorative — the
-   adjacent .sr-only sentence carries the count into the link's accessible
-   name, where it reads as a sentence rather than a bare numeral. The label
-   above takes the remaining width, so the pill sits hard against the right
-   edge without needing a margin of its own. */
-.sidebar-badge {
-  flex-shrink: 0;
-  min-width: 18px;
-  padding: 0 5px;
-  border-radius: 9px;
-  background: var(--accent);
-  color: var(--bg-primary);
-  font-size: 11px;
-  font-weight: 600;
-  line-height: 18px;
-  text-align: center;
-  font-variant-numeric: tabular-nums;
-}
 /* Generic "Experimental" pill, shared by any surface that gates on
    experimental mode (experimental capability model cards, the Watches and
    Privacy views). */
@@ -19245,9 +19227,10 @@ summary.decision-card-head {
   flex-shrink: 0;
 }
 .config-tab .warning-triangle { margin-left: 5px; }
-/* Devices waiting for the owner's approval, beside Settings and its Devices tab. */
-.waiting-devices-icon { color: var(--accent); display: inline-flex; vertical-align: middle; flex-shrink: 0; }
-.config-tab .waiting-devices-icon { margin-left: 5px; }
+/* Something waiting for the owner's decision, beside a sidebar item or a tab. */
+.attention-icon { color: var(--accent); display: inline-flex; vertical-align: middle; flex-shrink: 0; }
+/* A tab's mark sits on the label's line without growing it, so a marked tab's label stays level with its neighbours. */
+.config-tab .attention-icon { margin: -2px 0 -2px 5px; }
 .model-health-warnings { display: grid; gap: 12px; margin-bottom: 20px; }
 .model-health-warning {
   display: flex;

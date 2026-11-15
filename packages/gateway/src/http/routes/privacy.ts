@@ -113,7 +113,12 @@ const policyFamilyRenameBody = z
 const policyFamilyUpdateBody = z.union([policyFamilyRenameBody, policyFamilyEditBody]);
 const policyFamilyForkBody = z.object({ name: z.string().trim().min(1).max(120) }).strict();
 
-export function mountPrivacyRoutes(app: RouteApp, deps: AgentRoutesDeps): void {
+export function mountPrivacyRoutes(
+  app: RouteApp,
+  deps: AgentRoutesDeps,
+  /** An approval was decided here, so the owner's open portals re-read what waits. */
+  onApprovalDecided?: () => void,
+): void {
   const requireDeps = () => {
     if (!deps.privacyAdminService) {
       throw new ServiceUnavailableError("Privacy boundary is not available on this gateway.");
@@ -392,6 +397,7 @@ export function mountPrivacyRoutes(app: RouteApp, deps: AgentRoutesDeps): void {
           deviceId: auth.deviceId,
         });
         if (!response) throw new NotFoundError("Privacy approval not found.");
+        onApprovalDecided?.();
         return c.json(response);
       } catch (error) {
         const storeError = rehydrateAnswerStoreError(error);
