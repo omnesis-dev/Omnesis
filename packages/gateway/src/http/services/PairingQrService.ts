@@ -150,7 +150,8 @@ export interface PairingQrServiceOptions {
    * access): a phone is offered the relay's address before the gateway's
    * tailnet address. Read on every request. It comes only from the owner's
    * local setting, as the enrollment policy does; nothing the relay sends
-   * (its status, account data or listings) may set it.
+   * (its status, account data or listings) may set it. See #978 — the apps
+   * do not yet follow it at run time.
    */
   preferRelay?: () => boolean;
 }
