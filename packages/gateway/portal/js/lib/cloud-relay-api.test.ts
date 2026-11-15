@@ -28,6 +28,15 @@ test("uses authenticated same-origin status and mutation calls with cancellation
     method: "POST",
     body: '{"invitation":"fictional-invitation"}',
   });
+  // A choice that already said Face ID comes next tells the request so.
+  await relayManagement("enrollment", { policy: "automatic" }, signal, "PUT", { stepUpAnnounced: true });
+  expect(request).toHaveBeenLastCalledWith("/admin/cloud-relay/enrollment", {
+    cache: "no-store",
+    signal,
+    method: "PUT",
+    body: '{"policy":"automatic"}',
+    stepUpAnnounced: true,
+  });
 });
 test("never displays server bodies, unknown codes, paths or credentials", async () => {
   request.mockResolvedValue({ ok: false, text: () => "private-key-secret" });

@@ -389,9 +389,18 @@ The exchange:
 
 While no step-up can start (a certificate incident hold, or a gateway with no
 origin of its own), a guarded action that needs one and the options route answer
-`403 STEP_UP_UNAVAILABLE`; the owner acts on the gateway itself. The portal runs
+`403 STEP_UP_UNAVAILABLE`, with `detail: { reason: "security-lock" }` during an
+incident hold; the owner acts on the gateway itself. The portal runs
 the exchange inside its request helper: a guarded action prompts for the passkey
-and is sent again once. The native admin apps don't run it yet: through the relay,
+and is sent again once.
+
+So that the prompt never comes unannounced, `GET /admin/cloud-relay` and
+`GET /admin/cloud-pairing/requests` carry `stepUpRequired`: whether this session's
+loosening actions will ask, by the same rule as above. The portal then labels the
+button ("Yes, approve with Face ID", "Turns on with Face ID"). A `428` that arrives
+anyway first shows a short note ("Confirm it's you") before the browser's prompt.
+These are labels only: every guarded request is still checked on its own, and a
+label never stands in for a step-up. The native admin apps don't run it yet: through the relay,
 those actions answer `428 STEP_UP_REQUIRED` (or `403 STEP_UP_UNAVAILABLE`).
 
 ## Comparison code
@@ -500,6 +509,25 @@ Approving devices show `verificationCode` as listed by
 `GET /admin/cloud-pairing/requests`: the portal's pairing requests, the iOS and
 Android approval sheets, and `omnesis cloud requests`. `omnesis cloud approve
 <id> --code` takes the code typed from the new device.
+
+Each listed request also carries what the approval card shows about it:
+`createdAt`; `signInEmail`, the address Google verified in the token the gateway
+checked itself (never a label from the relay or the device); and, for the choice
+to remember the sign-in, `rememberByDefault` (offered as remembered only when
+nothing is confirmed on this gateway yet, the sign-in is the one the gateway
+verified when it was linked, the device was never removed, and a Google sign-in
+shows its address) and `otherGoogleAccount` (a Google account other than the one
+the gateway was linked with, compared by the same account digest; it can't be
+remembered from the card). These only decide how the card reads: approving and
+confirming still go through `canTrustSignIn` and the gateway's own checks.
+
+The administrator phones' notification for a held request reads "Is this you?"
+and names the device; tapping it opens that request, whose id the notification
+route carries (`route.requestId` on `device-pairing`). The notification for a
+device that joined on its own ("New device connected") carries
+`route.deviceId`. Neither carries a code or an approve action. After a deny, the
+portal offers "Make new devices always ask me", which writes `ask` and so needs
+no step-up.
 
 ## Device rows
 
