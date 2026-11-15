@@ -15,6 +15,8 @@
  * Once the counter has not moved for the stall limit, the worker pauses the
  * main thread through the inspector to record the JavaScript stack it is
  * stuck in, writes that to stderr and the log file, and kills the process.
+ * Retained diagnostic work fences that restart until its real operation has
+ * joined: a report deadline cannot authorize killing its Native-capable owner.
  * The service manager restarts the killed collector: systemd's
  * `Restart=on-failure` on its own, launchd through the collector's relaunch
  * guard (`startRelaunchGuard` in `service-restart.ts`).
@@ -41,6 +43,8 @@ const HEARTBEAT_INTERVAL_MS = 1_000;
 export interface EventLoopWatchdogOptions {
   stallLimitMs?: number;
   heartbeatIntervalMs?: number;
+  /** Native-capable work publishes its hold synchronously before launch. */
+  exitHold?: Int32Array;
 }
 
 /**
@@ -68,6 +72,7 @@ export function startEventLoopWatchdog(options: EventLoopWatchdogOptions = {}): 
   );
   const workerData: WatchdogWorkerData = {
     heartbeat,
+    exitHold: options.exitHold,
     stallLimitMs,
     checkIntervalMs: Math.max(250, Math.min(10_000, Math.floor(stallLimitMs / 10))),
     captureTimeoutMs: 10_000,

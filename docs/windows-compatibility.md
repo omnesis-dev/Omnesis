@@ -299,6 +299,26 @@ work after restart, independent updater ownership, Maildir fixture disposal and
 write/checkpoint latency. These are unresolved until their fixes pass Windows;
 performance budgets and durability requirements remain unchanged.
 
+The complete two-shard Windows E2E baseline at `391fc2566` passed 1,389 tests,
+failed 13 and skipped 15 across 258 files. Twelve files failed. Both shards
+finished inside their existing 180-minute limits; neither is a passing verdict.
+
+A controlled follow-up compared identical SQLite checkpoint workloads on both
+temporary-storage locations of one hosted Windows runner. Moving only `TMP` and
+`TEMP` to runner temporary storage reduced scattered 2,048-page checkpoints from
+roughly 2.3–2.5 seconds to 147–208 milliseconds across the ordinary SQLite driver,
+the encryption-capable driver without encryption, and the encrypted driver.
+The original writer checkpoint, maintenance and near-duplicate backlog suites
+then passed all 10 tests at `29c0ab57a` using that storage. Their latency limits
+and durability settings were unchanged. The Windows workflow uses the same
+isolated test storage; product data-directory defaults are unchanged.
+
+At that checkpoint the retained-exit and watchdog suites also passed all 15
+tests on Linux, including real stalled-process controls. The new test first
+failed against the preceding watchdog because active owned work did not prevent
+its forced restart. Final integrated Collector and whole-suite evidence is still
+required.
+
 The hosted Linux general unit phase at `ee42b7905` passed 39,941 tests, its script
 smoke phase passed 162, and its relay phase passed 1,999. The job nevertheless
 failed the strict per-file relay coverage gate in seven changed files. Passing

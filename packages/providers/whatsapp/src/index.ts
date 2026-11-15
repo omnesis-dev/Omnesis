@@ -243,8 +243,11 @@ export default defineSource<WhatsAppSyncCursor>({
       },
       sync: (cursor, opts) => source.sync(cursor, opts) as Promise<SyncResult<WhatsAppSyncCursor>>,
       credentialState: () => provider.credentialState(),
-      probeLocalStores: async () => [
-        inspectMessageStore(join(host?.configDir ?? DEFAULT_CONFIG_DIR, "whatsapp", accountId)),
+      probeLocalStores: async ({ signal }: { signal: AbortSignal }) => [
+        await inspectMessageStore(
+          join(host?.configDir ?? DEFAULT_CONFIG_DIR, "whatsapp", accountId),
+          signal,
+        ),
       ],
       onPushEvent: (cb: () => void) => source.onPushEvent(cb),
       onSourceError: (cb: (error: string) => void) => source.onSourceError(cb),

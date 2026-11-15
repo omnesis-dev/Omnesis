@@ -76,6 +76,33 @@ import { getDocumentCount } from "./helpers.js";
 
 const browserReady = browserSuiteAvailable("account-enrollment-devices.e2e");
 
+/** Local status can refresh before the public tunnel is ready for a new TLS client. */
+async function waitForPublicTlsHealth(gateway: EnrollmentGateway): Promise<void> {
+  const timeoutMs = gatewayBootBudgetMs(),
+    deadline = performance.now() + timeoutMs;
+  await waitFor(
+    async () => {
+      const remaining = deadline - performance.now();
+      if (remaining <= 0) throw new Error("Public TLS readiness budget exhausted");
+      const health = await devicePinnedJson(
+        { publicOrigin: gateway.publicOrigin, certificate: gateway.leaf.cert },
+        "/health",
+        undefined,
+        AbortSignal.timeout(Math.ceil(remaining)),
+      );
+      return (
+        performance.now() < deadline &&
+        health !== null &&
+        typeof health === "object" &&
+        "status" in health &&
+        health.status === "ok"
+      );
+    },
+    "the pinned public TLS health response",
+    timeoutMs,
+  );
+}
+
 describe.skipIf(!browserReady)("devices join a gateway by signing in", () => {
   let directory: string;
   let world: EnrollmentWorld;
@@ -103,6 +130,7 @@ describe.skipIf(!browserReady)("devices join a gateway by signing in", () => {
     },
   ) {
     await gateway.pace(2);
+    await waitForPublicTlsHealth(gateway);
     const comparisons: string[] = [];
     let printed!: (value: { connectUrl: string; code: string }) => void;
     const code = new Promise<{ connectUrl: string; code: string }>(

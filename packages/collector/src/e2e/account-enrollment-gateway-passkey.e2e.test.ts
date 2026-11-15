@@ -172,8 +172,13 @@ describe.skipIf(!browserReady)("passkeys on the gateway's own page", () => {
     expect(confirmed.deviceEnrollment.trustedSignIns).toEqual([
       expect.objectContaining({ source: "link-page", confirmed: true }),
     ]);
-    await expectText(page, "Confirmed on this gateway");
-    expect(await page.getByText("Confirm your passkey on this gateway").count()).toBe(0);
+    await expectText(page, /(?:^| · )Confirmed on this gateway$/);
+    await page
+      .locator("#relay-passkey-confirm-title")
+      .waitFor({ state: "detached", timeout: 20_000 });
+    expect(
+      await page.getByText("Confirm your passkey on this gateway", { exact: true }).count(),
+    ).toBe(0);
     await shot(page, "confirmed");
     // The list the CLI reads says the same.
     const listed = await gateway.json<{ items: Array<{ confirmed: boolean; via?: string }> }>(

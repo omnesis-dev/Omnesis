@@ -119,6 +119,7 @@ import { isLoopbackIp, reverseProxyTrusted } from "./http/client-ip.js";
 import { createHostMinter } from "./tls-lifecycle/minters.js";
 import { TlsLifecycleService } from "./tls-lifecycle/service.js";
 import { OwnedProcessShutdownFence } from "./owned-process-shutdown-fence.js";
+import { ownedProcessCleanupReceipt } from "./owned-process-cleanup.js";
 import { closeOptionalServices, OptionalServiceCleanup } from "./optional-service-cleanup.js";
 import { createAcmeRenewalTask } from "./tls-lifecycle/acme-task.js";
 import { createTlsLifecycleTask } from "./tls-lifecycle/task.js";
@@ -3963,12 +3964,45 @@ const codexCleanup = {
   receipt: () => codexRuntimeService.cleanupFailure(),
   settle: () => codexRuntimeService.dispose(),
 };
+const conversationCleanupOwner = {
+  cleanupFailure: (): unknown => {
+    // The shared store also retains failures from an earlier service instance.
+    const failures = [
+      conversationStore.cleanupFailure(),
+      agentLifecycle.routeDeps.agentService?.cleanupFailure(),
+    ];
+    return (
+      failures.find((failure) => {
+        const receipt = ownedProcessCleanupReceipt(failure);
+        return receipt !== undefined && !receipt.pending;
+      }) ?? failures.find((failure) => ownedProcessCleanupReceipt(failure) !== undefined)
+    );
+  },
+  close: async (): Promise<void> => {
+    // Aborted turns can still publish their last transcript. Drain their
+    // service before closing admission to the one store shared across swaps.
+    await agentLifecycle.shutdown();
+    await conversationStore.close();
+  },
+};
+const conversationCleanup = new OptionalServiceCleanup(
+  "Agent conversations",
+  () => conversationCleanupOwner,
+);
 const ownedProcessShutdown = new OwnedProcessShutdownFence(() => {
   process.exitCode = 1;
   log.error(
     "Owned process cleanup is unconfirmed; the gateway PID and lock are retained for review",
   );
-}, [tlsCleanup, codexCleanup, acmeCleanup, relayCleanup, tunnelCleanup, doctorCleanup]);
+}, [
+  tlsCleanup,
+  codexCleanup,
+  acmeCleanup,
+  relayCleanup,
+  tunnelCleanup,
+  doctorCleanup,
+  conversationCleanup,
+]);
 
 const doShutdown = async (): Promise<void> => {
   const optionalCleanup = [
@@ -4066,7 +4100,7 @@ const doShutdown = async (): Promise<void> => {
     );
   }
 
-  await agentLifecycle.shutdown();
+  await ownedProcessShutdown.join(conversationCleanup);
   // Voice notes: stop picking up queued notes. One being transcribed right now
   // is not awaited — it stays queued and is transcribed again after restart.
   voiceNoteService?.dispose();

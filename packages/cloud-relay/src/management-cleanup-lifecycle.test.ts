@@ -165,7 +165,10 @@ test("close joins accepted registration and retires every actor without creating
   expect(f.tunnel).not.toHaveBeenCalled();
   expect(f.controller.close).toHaveBeenCalledOnce();
   expect(f.monitor.close).toHaveBeenCalledOnce();
-  await expect(manager.renew()).rejects.toThrow("closed");
+  await expect(manager.renew()).rejects.toMatchObject({
+    code: "configuration-invalid",
+    status: 409,
+  });
 });
 
 test("closing during discovery joins the lookup without preparing keys or publishing settings", async () => {

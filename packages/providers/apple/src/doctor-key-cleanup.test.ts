@@ -5,13 +5,17 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
-const { readKey } = vi.hoisted(() => ({ readKey: vi.fn() }));
+const { readKey, readKeySync } = vi.hoisted(() => {
+  const readKey = vi.fn();
+  return { readKey, readKeySync: vi.fn((...args) => readKey(...args)) };
+});
 vi.mock("@omnesis/core", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@omnesis/core")>()),
-  readStorageKeySync: readKey,
+  readStorageKeySync: readKeySync,
+  readStorageKey: readKey,
 }));
 import apple from "./index.js";
-const probe = async (root: string) => {
+const probe = async (root: string, signal?: AbortSignal) => {
   const definition = apple.sources.find((source) => source.id === "apple-imessage")!;
   const source = await definition.create(
     {
@@ -22,7 +26,7 @@ const probe = async (root: string) => {
     { provider: { hasIMessage: false, imessageDbFilePath: join(root, "missing.db") } } as never,
   );
   try {
-    return (await source.probeLocalStores!({ signal: new AbortController().signal }))[0];
+    return (await source.probeLocalStores!({ signal: signal ?? new AbortController().signal }))[0];
   } finally {
     await source.dispose?.();
   }
@@ -30,6 +34,7 @@ const probe = async (root: string) => {
 let root: string;
 beforeEach(() => {
   readKey.mockReset();
+  readKeySync.mockClear();
   root = mkdtempSync(join(tmpdir(), "provider-doctor-key-"));
 });
 afterEach(() => rmSync(root, { recursive: true, force: true }));
@@ -53,4 +58,62 @@ test("ordinary joined key-read failure remains a locked-store result", async () 
   });
   await expect(probe(root)).resolves.toMatchObject({ state: "locked" });
   expect(readKey).toHaveBeenCalledOnce();
+});
+
+test("the health probe awaits the asynchronous key operation without invoking its synchronous counterpart", async () => {
+  let release!: (key: null) => void;
+  const gate = new Promise<null>((resolve) => {
+    release = resolve;
+  });
+  let entered!: () => void;
+  const started = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  readKey.mockImplementation(() => {
+    entered();
+    return gate;
+  });
+  let settled = false;
+  const inspection = probe(root).finally(() => {
+    settled = true;
+  });
+  try {
+    await started;
+    expect(readKey).toHaveBeenCalledOnce();
+    expect(readKeySync).not.toHaveBeenCalled();
+    expect(settled).toBe(false);
+  } finally {
+    release(null);
+    await inspection;
+  }
+  expect(settled).toBe(true);
+});
+
+test("cancellation during a key read joins that operation and clears its key without opening a database", async () => {
+  let release!: (key: Buffer) => void, entered!: () => void;
+  const started = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  const gate = new Promise<Buffer>((resolve) => {
+    release = resolve;
+  });
+  readKey.mockImplementation(() => {
+    entered();
+    return gate;
+  });
+  const key = Buffer.alloc(32, 17);
+  const controller = new AbortController();
+  const inspection = probe(root, controller.signal);
+  const refused = expect(inspection).rejects.toMatchObject({ name: "AbortError" });
+  try {
+    await started;
+    controller.abort();
+    release(key);
+    await refused;
+    expect(key).toEqual(Buffer.alloc(32));
+    expect(readKey).toHaveBeenCalledOnce();
+  } finally {
+    release(key);
+    await Promise.allSettled([inspection, refused]);
+  }
 });

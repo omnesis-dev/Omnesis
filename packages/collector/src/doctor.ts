@@ -135,7 +135,9 @@ export class CollectorDoctor {
         // A settled callback cannot invalidate positive joins or start new work.
         try {
           this.deps.onOwnershipChanged?.();
-        } catch {}
+        } catch {
+          // A read-only notification cannot undo the completed ownership proof.
+        }
       });
     return this.closing;
   }
@@ -175,14 +177,19 @@ export class CollectorDoctor {
     runId: string,
     identity: ReturnType<GatewayWsClient["getIdentity"]>,
   ): Promise<void> {
+    const deadline = performance.now() + this.runTimeoutMs;
+    const timeoutMessage = `Collector doctor run ${runId} timed out after ${this.runTimeoutMs}ms`;
     let result: WsEventPayload<"device.doctor.result">;
     const controller = new AbortController();
     this.controller = controller;
     try {
-      result = await withTimeout(
-        this.work.run(Symbol(runId), () => this.collect(runId, identity, controller.signal)),
-        this.runTimeoutMs,
-        `Collector doctor run ${runId} timed out after ${this.runTimeoutMs}ms`,
+      result = await withDeadline(
+        this.work.run(Symbol(runId), async () => {
+          if (performance.now() >= deadline) throw new Error(timeoutMessage);
+          return this.collect(runId, identity, controller.signal, deadline);
+        }),
+        deadline,
+        timeoutMessage,
         controller.signal,
       );
     } catch (err) {
@@ -206,12 +213,21 @@ export class CollectorDoctor {
     runId: string,
     identity: ReturnType<GatewayWsClient["getIdentity"]>,
     signal: AbortSignal,
+    deadline: number,
   ): Promise<WsEventPayload<"device.doctor.result">> {
+    const bounded =
+      <T>(producer: () => Promise<T>) =>
+      async (): Promise<T> => {
+        signal.throwIfAborted();
+        if (performance.now() >= deadline)
+          throw new Error("Collector health check deadline elapsed");
+        return producer();
+      };
     const tasks = [
       this.work
         .run(
           this.systemKey,
-          this.deps.getSystemInfo ?? (() => collectorSystemInfo(this.deps.configDir)),
+          bounded(this.deps.getSystemInfo ?? (() => collectorSystemInfo(this.deps.configDir))),
         )
         .catch((err: unknown) => {
           if (ownedProcessCleanupReceipt(err) !== undefined) throw err;
@@ -221,7 +237,10 @@ export class CollectorDoctor {
           return null;
         }),
       this.work
-        .run(this.securityKey, this.deps.collectSecurity ?? (() => this.scanner!.collect()))
+        .run(
+          this.securityKey,
+          bounded(this.deps.collectSecurity ?? (() => this.scanner!.collect())),
+        )
         .then((security) => ({ security, error: null as string | null }))
         .catch((err: unknown) => {
           if (ownedProcessCleanupReceipt(err) !== undefined) throw err;
@@ -230,8 +249,8 @@ export class CollectorDoctor {
           );
           return { security: null, error: GENERIC_SECURITY_ERROR };
         }),
-      this.readAccess.collect(this.deps.getReadAccessSources(), signal),
-      this.localStores.collect(this.deps.getReadAccessSources(), signal),
+      this.readAccess.collect(this.deps.getReadAccessSources(), signal, deadline),
+      this.localStores.collect(this.deps.getReadAccessSources(), signal, deadline),
     ] as const;
     const settled = await Promise.allSettled(tasks);
     for (const result of settled)
@@ -284,15 +303,15 @@ export class CollectorDoctor {
   }
 }
 
-async function withTimeout<T>(
+async function withDeadline<T>(
   work: Promise<T>,
-  timeoutMs: number,
+  deadline: number,
   message: string,
   signal: AbortSignal,
 ): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | null = null;
   const timeout = new Promise<never>((_resolve, reject) => {
-    timer = setTimeout(() => reject(new Error(message)), timeoutMs);
+    timer = setTimeout(() => reject(new Error(message)), Math.max(0, deadline - performance.now()));
     timer.unref();
   });
   let onAbort = () => {};
@@ -302,7 +321,10 @@ async function withTimeout<T>(
     else signal.addEventListener("abort", onAbort, { once: true });
   });
   try {
-    return await Promise.race([work, timeout, aborted]);
+    const result = await Promise.race([work, timeout, aborted]);
+    signal.throwIfAborted();
+    if (performance.now() >= deadline) throw new Error(message);
+    return result;
   } finally {
     if (timer) clearTimeout(timer);
     signal.removeEventListener("abort", onAbort);

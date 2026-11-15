@@ -2,6 +2,7 @@
 # Copyright (c) 2026 Adrien Conrath
 
 import asyncio
+from contextlib import closing
 import dataclasses
 import hashlib
 import importlib.util
@@ -604,7 +605,7 @@ class DeliveryContractTests(unittest.TestCase):
     def test_transcript_authorship_never_infers_owner_from_session_or_body(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "state.db"
-            with sqlite3.connect(path) as connection:
+            with closing(sqlite3.connect(path)) as connection, connection:
                 connection.executescript("""
                     CREATE TABLE sessions(id TEXT PRIMARY KEY, source TEXT, chat_id TEXT,
                         chat_type TEXT, display_name TEXT, origin_json TEXT);
@@ -626,7 +627,7 @@ class DeliveryContractTests(unittest.TestCase):
     def test_transcript_projection_skips_internal_turns_and_advances_the_cursor(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "state.db"
-            with sqlite3.connect(path) as connection:
+            with closing(sqlite3.connect(path)) as connection, connection:
                 connection.executescript("""
                     CREATE TABLE sessions(id TEXT PRIMARY KEY, source TEXT, chat_id TEXT,
                         chat_type TEXT, display_name TEXT, origin_json TEXT);
@@ -668,7 +669,7 @@ class DurableStateTests(unittest.TestCase):
 
     def test_legacy_origins_gain_nullable_home_without_losing_bindings(self):
         self.state.close()
-        with sqlite3.connect(self.path) as connection:
+        with closing(sqlite3.connect(self.path)) as connection, connection:
             connection.execute("DROP TABLE integration_answer_origins")
             connection.execute("CREATE TABLE integration_answer_origins(request_id TEXT PRIMARY KEY, native_conversation_id TEXT UNIQUE, native_session_id TEXT, task_id TEXT UNIQUE, created_at INTEGER)")
             connection.execute("INSERT INTO integration_answer_origins VALUES ('request-old', 'origin-old', 'session-old', 'task-old', 0)")
@@ -697,7 +698,7 @@ class DurableStateTests(unittest.TestCase):
         _, replay = self.state.delivery_for_commit(wake["deliveryId"])
         self.assertTrue(replay["duplicate"])
         self.assertEqual(replay["localRunId"], "hermes:adl_fictional_1")
-        _assert_private_fixture(self, self.path)
+        _assert_private_fixture(self, self.path, open_database=True)
 
     def test_lost_ack_rotates_authority_without_changing_identity(self):
         wake = delivery()
@@ -2347,7 +2348,7 @@ class AdapterLifecycleTests(unittest.IsolatedAsyncioTestCase):
         }
         self.instance._post_json = lambda *args, **kwargs: released
         subscription = json.loads(self.instance.answer_subscription(args, "session-authorized"))
-        with sqlite3.connect(Path(self.temp.name) / "state.db") as connection:
+        with closing(sqlite3.connect(Path(self.temp.name) / "state.db")) as connection, connection:
             connection.execute("INSERT INTO sessions VALUES (?, ?, ?)",
                                ("session-human", "telegram", "fictional-chat"))
         self.instance._await_mcp_answer = Mock(return_value=released)
@@ -2952,7 +2953,7 @@ class AdapterLifecycleTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_api_completion_uses_raw_session_with_no_chat_id_and_retries_failure(self):
         wake, _source, _entry, source_adapter, _session_module = self._completion_chat()
-        with sqlite3.connect(Path(self.temp.name) / "state.db") as connection:
+        with closing(sqlite3.connect(Path(self.temp.name) / "state.db")) as connection, connection:
             connection.execute("UPDATE sessions SET source = 'api_server', chat_id = NULL")
         runner = self.instance.gateway_runner
         api = types.SimpleNamespace(supports_async_delivery=False)
@@ -2979,7 +2980,7 @@ class AdapterLifecycleTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(wake_module.deliver_wake.await_count, 2)
 
     async def test_transcript_sweep_persists_progress_across_an_internal_only_page(self):
-        with sqlite3.connect(Path(self.temp.name) / "state.db") as connection:
+        with closing(sqlite3.connect(Path(self.temp.name) / "state.db")) as connection, connection:
             connection.executescript("""
                 CREATE TABLE sessions(id TEXT PRIMARY KEY, source TEXT, chat_id TEXT,
                     chat_type TEXT, display_name TEXT, origin_json TEXT);
@@ -3004,7 +3005,7 @@ class AdapterLifecycleTests(unittest.IsolatedAsyncioTestCase):
     async def test_api_completion_notice_is_excluded_after_restart_without_hiding_human_replies(self):
         wake, _source, _entry, _adapter, _session_module = self._completion_chat()
         state_db = Path(self.temp.name) / "state.db"
-        with sqlite3.connect(state_db) as connection:
+        with closing(sqlite3.connect(state_db)) as connection, connection:
             connection.executescript("""
                 ALTER TABLE sessions ADD COLUMN display_name TEXT;
                 ALTER TABLE sessions ADD COLUMN origin_json TEXT;
@@ -3020,13 +3021,13 @@ class AdapterLifecycleTests(unittest.IsolatedAsyncioTestCase):
 
         async def deliver(_adapter, *, text, session_id):
             # Provenance is durable before the HTTP request can append a row.
-            with sqlite3.connect(self.instance._state.path) as state:
+            with closing(sqlite3.connect(self.instance._state.path)) as state, state:
                 self.assertIsNotNone(state.execute(
                     "SELECT 1 FROM integration_api_completion_messages "
                     "WHERE native_session_id = ? AND content_hash = ?",
                     (session_id, hashlib.sha256(text.encode()).hexdigest()),
                 ).fetchone())
-            with sqlite3.connect(state_db) as connection:
+            with closing(sqlite3.connect(state_db)) as connection, connection:
                 connection.executemany("INSERT INTO messages VALUES (?, ?, ?, ?, ?)", [
                     (1, session_id, "user", text, 1800000000),
                     (2, session_id, "user", "Please explain that answer.", 1800000001),
@@ -3056,7 +3057,7 @@ class AdapterLifecycleTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_named_api_completion_uses_profile_route_and_key_with_retryable_http_failures(self):
         wake, _source, _entry, _adapter, _session_module = self._completion_chat()
-        with sqlite3.connect(Path(self.temp.name) / "state.db") as connection:
+        with closing(sqlite3.connect(Path(self.temp.name) / "state.db")) as connection, connection:
             connection.execute(
                 "UPDATE sessions SET source = 'api_server', chat_id = NULL, profile_name = ?",
                 ("fictional-profile",),
@@ -3132,7 +3133,7 @@ class AdapterLifecycleTests(unittest.IsolatedAsyncioTestCase):
             refused = await dispatch_frame(self.instance, "moved-profile", "answer-completion.commit", control)
             self.assertEqual(refused["error"]["code"], "retryable_start_failure")
             self.assertEqual(requests, [])
-        with sqlite3.connect(Path(self.temp.name) / "state.db") as connection:
+        with closing(sqlite3.connect(Path(self.temp.name) / "state.db")) as connection, connection:
             connection.execute("UPDATE sessions SET profile_name = 'replacement-profile'")
         # Even a valid API credential cannot authorize another profile's row.
         with self.assertRaisesRegex(RuntimeError, "session changed"):
@@ -3140,7 +3141,7 @@ class AdapterLifecycleTests(unittest.IsolatedAsyncioTestCase):
                 api, "fictional-profile", "session-human", "Fictional outcome", Path(self.temp.name)
             )
         self.assertEqual(requests, [])
-        with sqlite3.connect(Path(self.temp.name) / "state.db") as connection:
+        with closing(sqlite3.connect(Path(self.temp.name) / "state.db")) as connection, connection:
             connection.execute("UPDATE sessions SET profile_name = 'fictional-profile'")
         for status in (401, 404, 302):
             response.status = status
@@ -3239,7 +3240,7 @@ class AdapterLifecycleTests(unittest.IsolatedAsyncioTestCase):
         self._completion_chat()
         profile_home = Path(self.temp.name) / "profiles" / "fictional-profile"
         profile_home.mkdir(parents=True)
-        with sqlite3.connect(profile_home / "state.db") as connection:
+        with closing(sqlite3.connect(profile_home / "state.db")) as connection, connection:
             connection.execute("CREATE TABLE sessions(id TEXT PRIMARY KEY, source TEXT, chat_id TEXT, chat_type TEXT, thread_id TEXT, profile_name TEXT)")
             connection.execute("INSERT INTO sessions VALUES ('session-human', 'api_server', NULL, NULL, NULL, 'fictional-profile')")
         host = types.ModuleType("hermes_constants")
@@ -4125,12 +4126,29 @@ def _write_private_fixture(path, text, encoding="utf-8"):
         path.write_text(text, encoding=encoding)
 
 
-def _assert_private_fixture(test, path):
+def _assert_private_fixture(test, path, *, open_database=False):
     if os.name == "nt":
-        # Real native verified read proves the current owner-only DACL.
-        adapter_module._windows_bridge("read", str(path.resolve()))
+        if open_database:
+            # SQLite keeps a writable handle open. Inspect its actual DACL without
+            # requesting a private-file read that deliberately excludes writers.
+            test.assertEqual(json.loads(adapter_module._windows_bridge("inspect", str(path.resolve()))), {"private": True})
+        else:
+            adapter_module._windows_bridge("read", str(path.resolve()))
     else:
         test.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
+
+
+def _join_refresh_fixture_threads(test, threads):
+    # Use the existing protocol observation horizon for real Native leases;
+    # both fixture threads must join before results or state cleanup.
+    deadline = time.monotonic() + adapter_module.OAUTH_REFRESH_LOCK_TIMEOUT_SECONDS + 30
+    try:
+        for thread in threads:
+            thread.join(timeout=max(0, deadline - time.monotonic()))
+        test.assertTrue(all(not thread.is_alive() for thread in threads))
+    finally:
+        for thread in threads:
+            thread.join()
 
 
 class OAuthRefreshTests(unittest.TestCase):
@@ -4911,8 +4929,7 @@ class OAuthRefreshTests(unittest.TestCase):
         threads = [threading.Thread(target=invoke) for _ in range(2)]
         for thread in threads:
             thread.start()
-        for thread in threads:
-            thread.join(timeout=3)
+        _join_refresh_fixture_threads(self, threads)
         self.assertFalse(errors)
         self.assertEqual(results, [{}, {}])
         self.assertEqual(calls_at_old_token, 2)
@@ -4961,8 +4978,7 @@ class OAuthRefreshTests(unittest.TestCase):
         ]
         for thread in threads:
             thread.start()
-        for thread in threads:
-            thread.join(timeout=3)
+        _join_refresh_fixture_threads(self, threads)
 
         self.assertFalse(errors)
         self.assertEqual(sorted(results), ["access_new_fictional", "access_new_fictional"])
@@ -7391,36 +7407,50 @@ class WindowsPersistenceRoutingTests(unittest.TestCase):
             self.assertEqual(path.read_bytes(), original)
 
     @unittest.skipUnless(os.name == "nt", "requires native Windows inherited DACLs")
-    def test_state_directory_is_private_before_sqlite_writes_and_existing_sidecars_are_repaired(self):
+    def test_state_preparation_refuses_unsafe_existing_files_and_new_sidecars_inherit_private_access(self):
         with tempfile.TemporaryDirectory() as directory:
             parent = Path(directory) / "state"
             parent.mkdir()
             path = parent / "integration.sqlite"
             command = str(Path(os.environ["SystemRoot"]) / "System32" / "icacls.exe")
             subprocess.run([command, str(parent), "/grant", "*S-1-1-0:(OI)(CI)(R)"], check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=20)
+
+            def acl_bytes(file):
+                script = "$ErrorActionPreference='Stop';$PSModuleAutoLoadingPreference='None';$sections=[Security.AccessControl.AccessControlSections]'Owner,Group,Access';$sddl=[IO.File]::GetAccessControl($env:OMNESIS_FIXTURE_FILE,$sections).GetSecurityDescriptorSddlForm($sections);$descriptor=[Security.AccessControl.RawSecurityDescriptor]::new($sddl);if($null -eq $descriptor.Owner -or $null -eq $descriptor.DiscretionaryAcl -or $descriptor.DiscretionaryAcl.Count -eq 0){throw 'Missing fixture owner or access rules'};[Console]::Out.Write($sddl);"
+                powershell = Path(os.environ["SystemRoot"]) / "System32" / "WindowsPowerShell" / "v1.0" / "powershell.exe"
+                output = subprocess.run([str(powershell), "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", script], env={**os.environ, "OMNESIS_FIXTURE_FILE": str(file)}, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=20).stdout
+                self.assertTrue(output.startswith(b"O:") and b"D:" in output, "Missing fixture owner or access rules")
+                return output
+
             existing = sqlite3.connect(path)
-            existing.execute("PRAGMA journal_mode = WAL")
-            existing.execute("CREATE TABLE invented_existing(value TEXT)")
-            existing.execute("INSERT INTO invented_existing VALUES ('invented retained value')")
-            existing.commit()
-            self.assertTrue(Path(f"{path}-wal").exists())
-            self.assertTrue(Path(f"{path}-shm").exists())
-            started = time.perf_counter()
             try:
-                state = adapter_module.DurableState(path)
-                try:
-                    self.assertEqual(state.connection.execute("SELECT value FROM invented_existing").fetchone()[0], "invented retained value")
-                    for file in [path, Path(f"{path}-wal"), Path(f"{path}-shm")]:
-                        self.assertEqual(json.loads(adapter_module._windows_bridge("inspect", str(file.absolute()))), {"private": True})
-                    # A future SQLite sidecar inherits private access before bytes.
-                    future = parent / "invented-future-sidecar"
-                    future.write_bytes(b"invented private inherited bytes")
-                    self.assertEqual(adapter_module._windows_bridge("read", str(future.absolute())), b"invented private inherited bytes")
-                finally:
-                    state.close()
+                existing.execute("PRAGMA journal_mode = WAL")
+                existing.execute("CREATE TABLE invented_existing(value TEXT)")
+                existing.execute("INSERT INTO invented_existing VALUES ('invented retained value')")
+                existing.commit()
+                files = [path, Path(f"{path}-wal"), Path(f"{path}-shm")]
+                self.assertTrue(all(file.exists() for file in files))
+                snapshots = [(file.read_bytes(), acl_bytes(file)) for file in files]
+                with self.assertRaises(PermissionError):
+                    adapter_module.DurableState(path)
+                for file, (data, acl) in zip(files, snapshots):
+                    self.assertEqual(file.read_bytes(), data)
+                    self.assertTrue(acl_bytes(file) == acl, "Refusal changed an existing file's access rules")
+                self.assertEqual(existing.execute("SELECT value FROM invented_existing").fetchone()[0], "invented retained value")
             finally:
                 existing.close()
-            print(f"Windows Hermes state preparation + 3 ACL inspections + inherited-file read: {(time.perf_counter() - started) * 1000:.1f} ms", flush=True)
+
+            # A fresh store protects its parent before SQLite creates any bytes.
+            fresh = Path(directory) / "fresh-state" / "integration.sqlite"
+            state = adapter_module.DurableState(fresh)
+            try:
+                for file in [fresh, Path(f"{fresh}-wal"), Path(f"{fresh}-shm")]:
+                    self.assertEqual(json.loads(adapter_module._windows_bridge("inspect", str(file.absolute()))), {"private": True})
+                future = fresh.parent / "invented-future-sidecar"
+                future.write_bytes(b"invented private inherited bytes")
+                self.assertEqual(adapter_module._windows_bridge("read", str(future.absolute())), b"invented private inherited bytes")
+            finally:
+                state.close()
 
     def test_state_privacy_precedes_sqlite_and_preserves_an_open_error(self):
         with tempfile.TemporaryDirectory() as directory:

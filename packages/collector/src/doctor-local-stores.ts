@@ -44,6 +44,7 @@ export class DoctorLocalStores {
   async collect(
     sources: DoctorReadAccessSource[],
     signal: AbortSignal,
+    outerDeadline = Number.POSITIVE_INFINITY,
   ): Promise<DoctorLocalStore[]> {
     this.work.assertAdmitting();
     const results: DoctorLocalStore[][] = new Array(sources.length).fill([]);
@@ -53,13 +54,15 @@ export class DoctorLocalStores {
         while (next < sources.length) {
           const index = next++;
           const source = sources[index]!;
-          results[index] = (await this.probe(source.instance, signal)).map((store) => ({
-            sourceId: source.sourceId,
-            keyName: store.keyName,
-            label: store.label,
-            state: store.state,
-            ...(store.detail ? { detail: store.detail } : {}),
-          }));
+          results[index] = (await this.probe(source.instance, signal, outerDeadline)).map(
+            (store) => ({
+              sourceId: source.sourceId,
+              keyName: store.keyName,
+              label: store.label,
+              state: store.state,
+              ...(store.detail ? { detail: store.detail } : {}),
+            }),
+          );
         }
       }),
     );
@@ -69,10 +72,13 @@ export class DoctorLocalStores {
   private async probe(
     instance: DoctorReadAccessSource["instance"],
     signal: AbortSignal,
+    outerDeadline: number,
   ): Promise<LocalStoreProbeResult[]> {
+    const deadline = Math.min(outerDeadline, performance.now() + this.probeMs);
     this.work.assertAdmitting();
     if (
       signal.aborted ||
+      performance.now() >= deadline ||
       this.stopping.signal.aborted ||
       !instance.probeLocalStores ||
       this.work.has(instance) ||
@@ -81,7 +87,7 @@ export class DoctorLocalStores {
       return [];
     const controller = new AbortController();
     const probeSignal = AbortSignal.any([signal, controller.signal, this.stopping.signal]);
-    const timer = setTimeout(() => controller.abort(), this.probeMs);
+    const timer = setTimeout(() => controller.abort(), Math.max(0, deadline - performance.now()));
     timer.unref();
     let onAbort: () => void = () => {};
     const aborted = new Promise<LocalStoreProbeResult[]>((resolve) => {
@@ -92,6 +98,7 @@ export class DoctorLocalStores {
       const work = this.work
         .run(instance, async () => {
           probeSignal.throwIfAborted();
+          if (performance.now() >= deadline) return [];
           return instance.probeLocalStores!({ signal: probeSignal });
         })
         .catch((error: unknown): LocalStoreProbeResult[] => {
@@ -99,7 +106,7 @@ export class DoctorLocalStores {
           return [];
         });
       const result = await Promise.race([work, aborted]);
-      return probeSignal.aborted ? [] : result;
+      return probeSignal.aborted || performance.now() >= deadline ? [] : result;
     } finally {
       clearTimeout(timer);
       probeSignal.removeEventListener("abort", onAbort);

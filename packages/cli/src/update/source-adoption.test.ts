@@ -226,6 +226,7 @@ describe("source adoption directory spellings", () => {
     if (args.join(" ") === "rev-parse --show-toplevel") return { code: 0, stdout: alias + "\n" };
     if (["rev-parse --absolute-git-dir", "rev-parse --git-common-dir"].includes(args.join(" ")))
       return { code: 0, stdout: join(alias, ".git") + "\n" };
+    return undefined;
   }
   test("accepts verified Windows spellings for the same root and standalone metadata", async () => {
     const { deps, state } = fakeDeps({ fs: aliasedFs(), override: aliasOutput });

@@ -70,6 +70,50 @@ jobs:
           scripts/ci/npm-ci-node.test.mjs
           packages/cli/src/commands/integration-runtime.test.ts
           packages/agent/src/replay-backend.test.ts
+          packages/agent-integration/src/hermes-windows-bridge.test.ts
+      - name: Validate Collector ownership and absolute deadlines
+        if: ${{ !cancelled() }}
+        run: >-
+          node scripts/run-check.mjs unit
+          packages/collector/src/doctor.test.ts
+          packages/collector/src/doctor-cleanup.test.ts
+          packages/collector/src/doctor-deadlines.test.ts
+          packages/collector/src/doctor-read-access.test.ts
+          packages/collector/src/doctor-read-access-cleanup.test.ts
+          packages/collector/src/doctor-local-stores.test.ts
+          packages/collector/src/doctor-local-stores-cleanup.test.ts
+          packages/collector/src/doctor-scanner-cleanup.test.ts
+          packages/collector/src/owned-process-shutdown.test.ts
+          packages/collector/src/event-loop-watchdog-owned-work.test.ts
+          packages/collector/src/event-loop-watchdog.test.ts
+      - name: Validate retained conversation publication and service swaps
+        if: ${{ !cancelled() }}
+        run: >-
+          node scripts/run-check.mjs unit
+          packages/gateway/src/agent/conversation-store.test.ts
+          packages/gateway/src/agent/conversation-store-cleanup.test.ts
+          packages/gateway/src/agent/service-publication-cleanup.test.ts
+          packages/gateway/src/agent/service-interactive-writes.test.ts
+          packages/gateway/src/agent/agent-lifecycle.test.ts
+      - name: Validate provider health and live store contracts
+        if: ${{ !cancelled() }}
+        run: >-
+          node scripts/run-check.mjs unit
+          packages/providers/whatsapp/src
+          packages/providers/telegram/src
+          packages/providers/apple/src
+      - name: Validate owned E2E process protocol and independent readers
+        if: ${{ !cancelled() }}
+        run: >-
+          node scripts/run-check.mjs unit
+          packages/collector/src/e2e/e2e-owned-process.test.ts
+          packages/collector/src/e2e/subprocess-reaper.test.ts
+          packages/collector/src/e2e/synth-harness.test.ts
+      - name: Validate trusted owner relative private permissions
+        if: ${{ !cancelled() && runner.os == 'Windows' }}
+        run: >-
+          node scripts/run-check.mjs unit
+          packages/platform/src/windows-private-owner-rights.windows.test.ts
   relay-coverage:
     if: ${{ inputs.scope == 'regressions' }}
     runs-on: ubuntu-latest
@@ -87,6 +131,14 @@ jobs:
         run: node scripts/ci/npm-ci.mjs --no-audit --no-fund
       - name: Full strict relay coverage
         run: npm run test:cloud-relay
+      - name: Preserve strict coverage branch evidence
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: relay-coverage-branches
+          path: coverage/cloud-relay/coverage-final.json
+          if-no-files-found: warn
+          retention-days: 3
   source-and-test-types:
     if: ${{ inputs.scope == 'regressions' }}
     runs-on: ubuntu-latest
@@ -107,6 +159,28 @@ jobs:
       - name: Full test typecheck
         if: ${{ !cancelled() }}
         run: npm run typecheck:tests
+
+  hermes-adapter:
+    if: ${{ inputs.scope == 'regressions' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: "24"
+          cache: npm
+      - name: Install locked dependencies
+        run: node scripts/ci/npm-ci.mjs --no-audit --no-fund
+      - name: Full adapter filesystem and protocol regressions
+        run: npm run test:hermes
 
   collector-baseline:
     if: ${{ inputs.scope == 'collector-baseline' }}

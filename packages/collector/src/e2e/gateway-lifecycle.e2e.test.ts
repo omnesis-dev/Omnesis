@@ -14,14 +14,22 @@
 
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { spawn, type ChildProcess } from "node:child_process";
-import { afterAll, beforeAll, describe, expect, test } from "vitest";
-import { GATEWAY_LOCK_FILE } from "@omnesis/core";
+import type { ChildProcess } from "node:child_process";
+import { afterAll, beforeAll, beforeEach, describe, expect, test } from "vitest";
+import { GATEWAY_LOCK_FILE, ownedProcessCleanupReceipt } from "@omnesis/core";
 import { MultiCollectorHarness, getFreePort } from "./multi-collector-harness.js";
 import { e2eTsxCommand } from "./gateway-env.js";
 import { killSubprocessGroup, registerSubprocessGroup } from "./subprocess-reaper.js";
+import {
+  spawnE2ESubprocess,
+  e2eProcessOutput,
+  e2eProcessExit,
+  e2eApplicationPid,
+} from "./e2e-owned-process.js";
 
 const REPO_ROOT = join(import.meta.dirname, "../../../..");
+let retainGatewayFixture = false;
+let gatewayFixtureFailure: unknown;
 
 const schema = {
   tableName: "gateway_lifecycle_rows",
@@ -44,23 +52,55 @@ interface SpawnedGateway {
 
 /** Boot a gateway against the harness's stores, on `port`, the way the harness does. */
 function spawnGateway(env: NodeJS.ProcessEnv, port: number, lockWaitMs: number): SpawnedGateway {
+  if (retainGatewayFixture) throw gatewayFixtureFailure;
   const command = e2eTsxCommand("packages/gateway/src/index.ts");
-  const child = spawn(command.command, command.args, {
-    env: {
-      ...env,
-      OMNESIS_GATEWAY_PORT: String(port),
-      OMNESIS_LOG_LEVEL: "info",
-      OMNESIS_GATEWAY_LOCK_WAIT_MS: String(lockWaitMs),
-    },
-    cwd: REPO_ROOT,
-    stdio: ["ignore", "pipe", "pipe", "ipc"],
-    detached: true,
-  });
-  registerSubprocessGroup(child);
+  let child: ChildProcess;
+  try {
+    child = spawnE2ESubprocess(command.command, command.args, {
+      env: {
+        ...env,
+        OMNESIS_GATEWAY_PORT: String(port),
+        OMNESIS_LOG_LEVEL: "info",
+        OMNESIS_GATEWAY_LOCK_WAIT_MS: String(lockWaitMs),
+      },
+      cwd: REPO_ROOT,
+      stdio: ["ignore", "pipe", "pipe", "ipc"],
+      detached: true,
+    });
+  } catch (error) {
+    if (ownedProcessCleanupReceipt(error) !== undefined) {
+      retainGatewayFixture = true;
+      gatewayFixtureFailure = error;
+    }
+    throw error;
+  }
+  const registered = registerSubprocessGroup(child);
   let output = "";
-  child.stdout?.on("data", (chunk: Buffer) => (output += String(chunk)));
-  child.stderr?.on("data", (chunk: Buffer) => (output += String(chunk)));
-  const exited = new Promise<number | null>((resolve) => child.on("close", resolve));
+  const streams = e2eProcessOutput(child);
+  streams.stdout?.on("data", (chunk: Buffer) => (output += String(chunk)));
+  streams.stderr?.on("data", (chunk: Buffer) => (output += String(chunk)));
+  const exited = Promise.allSettled([registered, e2eProcessExit(child)]).then((results) => {
+    const errors = results
+      .filter((result) => result.status === "rejected")
+      .map((result) => result.reason as unknown);
+    if (errors.length) {
+      const marked = errors.find((error) => ownedProcessCleanupReceipt(error) !== undefined);
+      const receipt = ownedProcessCleanupReceipt(marked);
+      const failure = new AggregateError(errors, "Gateway fixture startup or close failed", {
+        cause: marked ?? errors[0],
+      });
+      if (receipt !== undefined) {
+        retainGatewayFixture = true;
+        gatewayFixtureFailure = failure;
+        Object.assign(failure, { cleanupFailure: receipt.failure });
+      }
+      throw failure;
+    }
+    const result = results[1]!;
+    if (result.status !== "fulfilled") throw Error("Missing gateway fixture close result");
+    return result.value as number | null;
+  });
+  void exited.catch(() => {});
   return { child, output: () => output, exited };
 }
 
@@ -107,13 +147,16 @@ describe("gateway ownership of a config dir", () => {
       })
     ).rows[0]![0];
 
+  beforeEach(() => {
+    if (retainGatewayFixture) throw gatewayFixtureFailure;
+  });
   beforeAll(async () => {
     harness = new MultiCollectorHarness();
     await harness.start();
   }, 120_000);
 
   afterAll(async () => {
-    await harness?.destroy();
+    await harness?.destroy({ retainFiles: retainGatewayFixture });
   });
 
   test("a duplicate gateway is refused before it opens a store, and the owner keeps writing", async () => {
@@ -152,7 +195,7 @@ describe("gateway ownership of a config dir", () => {
       await waitFor(
         () => {
           const holder = lockHolder(configDir);
-          return holder !== null && belongsTo(holder.pid, replacement.child.pid!);
+          return holder !== null && belongsTo(holder.pid, e2eApplicationPid(replacement.child)!);
         },
         90_000,
         "the replacement to take the lock",

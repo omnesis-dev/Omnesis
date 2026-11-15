@@ -38,11 +38,19 @@ export class DoctorReadAccess {
     return joined;
   }
 
-  async collect(sources: DoctorReadAccessSource[], signal: AbortSignal): Promise<AccessEntry[]> {
+  async collect(
+    sources: DoctorReadAccessSource[],
+    signal: AbortSignal,
+    outerDeadline = Number.POSITIVE_INFINITY,
+  ): Promise<AccessEntry[]> {
+    const scanDeadline = Math.min(outerDeadline, performance.now() + this.budgets.scanMs);
     this.work.assertAdmitting();
     const controller = new AbortController();
     const scanSignal = AbortSignal.any([signal, controller.signal, this.stopping.signal]);
-    const timer = setTimeout(() => controller.abort(), this.budgets.scanMs);
+    const timer = setTimeout(
+      () => controller.abort(),
+      Math.max(0, scanDeadline - performance.now()),
+    );
     timer.unref();
     const results: AccessEntry[] = new Array(sources.length);
     let next = 0;
@@ -53,7 +61,7 @@ export class DoctorReadAccess {
             const index = next++;
             const source = sources[index]!;
             results[index] = {
-              ...(await this.probe(source.instance, scanSignal)),
+              ...(await this.probe(source.instance, scanSignal, scanDeadline)),
               sourceId: source.sourceId,
             };
           }
@@ -69,9 +77,16 @@ export class DoctorReadAccess {
   private async probe(
     instance: DoctorReadAccessSource["instance"],
     signal: AbortSignal,
+    scanDeadline: number,
   ): Promise<SourceReadAccessResult> {
+    const deadline = Math.min(scanDeadline, performance.now() + this.budgets.probeMs);
     this.work.assertAdmitting();
-    if (signal.aborted || this.work.has(instance) || this.work.size >= PROBE_CONCURRENCY) {
+    if (
+      signal.aborted ||
+      performance.now() >= deadline ||
+      this.work.has(instance) ||
+      this.work.size >= PROBE_CONCURRENCY
+    ) {
       return { status: "unavailable" };
     }
     if (!instance.probeReadAccess) return { status: "unsupported" };
@@ -82,11 +97,12 @@ export class DoctorReadAccess {
       onAbort = () => resolve({ status: "unavailable" });
       probeSignal.addEventListener("abort", onAbort, { once: true });
     });
-    const timer = setTimeout(() => controller.abort(), this.budgets.probeMs);
+    const timer = setTimeout(() => controller.abort(), Math.max(0, deadline - performance.now()));
     timer.unref();
     const work = this.work
       .run(instance, async () => {
         probeSignal.throwIfAborted();
+        if (performance.now() >= deadline) return { status: "unavailable" as const };
         return instance.probeReadAccess!({ signal: probeSignal });
       })
       .catch((error: unknown): SourceReadAccessResult => {
@@ -95,7 +111,9 @@ export class DoctorReadAccess {
       });
     try {
       const result = await Promise.race([work, aborted]);
-      return probeSignal.aborted ? { status: "unavailable" } : result;
+      return probeSignal.aborted || performance.now() >= deadline
+        ? { status: "unavailable" }
+        : result;
     } finally {
       clearTimeout(timer);
       probeSignal.removeEventListener("abort", onAbort);

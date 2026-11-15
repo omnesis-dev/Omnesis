@@ -24,10 +24,10 @@ import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "nod
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { createServer, type AddressInfo } from "node:net";
-import { execFile, spawn, type ChildProcess } from "node:child_process";
+import { execFile, type ChildProcess } from "node:child_process";
 import { promisify } from "node:util";
 import { GatewayWsClient } from "@omnesis/gateway-client";
-import { requestChildShutdown } from "@omnesis/core";
+import { ownedProcessCleanupReceipt } from "@omnesis/core";
 import {
   createRecordingUpdater,
   registerSelfUpdateCommand,
@@ -36,6 +36,13 @@ import {
 import { createCommandDispatch } from "../ws-command-dispatch.js";
 import { e2eGatewayEnv, e2eTsxCommand, gatewayBootBudgetMs } from "./gateway-env.js";
 import { killSubprocessGroup, registerSubprocessGroup } from "./subprocess-reaper.js";
+import {
+  spawnE2ESubprocess,
+  e2eApplicationStatus,
+  e2eApplicationPid,
+  e2eProcessOutput,
+  requestE2EProcessShutdown,
+} from "./e2e-owned-process.js";
 import type {
   WsCommandType,
   WsRequestPayload,
@@ -118,6 +125,8 @@ export class MultiCollectorHarness {
   private configDir: string;
   private dbPath: string;
   private gatewayProcess: ChildProcess | null = null;
+  private gatewayCleanupUnconfirmed = false;
+  private gatewayCleanupFailure: unknown;
   private gatewayOutput = "";
   collectors: PairedCollector[] = [];
 
@@ -152,7 +161,7 @@ export class MultiCollectorHarness {
 
   /** The PID of the gateway process this harness spawned, or null before boot. */
   get gatewayPid(): number | null {
-    return this.gatewayProcess?.pid ?? null;
+    return this.gatewayProcess ? (e2eApplicationPid(this.gatewayProcess) ?? null) : null;
   }
 
   /** Ask the owned gateway to drain while allowing a replacement to start at once. */
@@ -160,7 +169,7 @@ export class MultiCollectorHarness {
     const proc = this.gatewayProcess;
     if (!proc?.pid) throw new Error("No gateway is running");
     if (process.platform === "win32") {
-      if (!(await requestChildShutdown(proc)))
+      if (!(await requestE2EProcessShutdown(proc)))
         throw new Error("The gateway parent channel is unavailable");
     } else {
       process.kill(-proc.pid, "SIGTERM");
@@ -572,30 +581,43 @@ export class MultiCollectorHarness {
   }
 
   private async startGateway(): Promise<void> {
+    if (this.gatewayCleanupUnconfirmed) throw this.gatewayCleanupFailure;
     const env = this.gatewayLaunchEnv;
+    const startTime = Date.now();
+    const timeout = gatewayBootBudgetMs();
     const gatewayCommand = e2eTsxCommand("packages/gateway/src/index.ts");
-    this.gatewayProcess = spawn(gatewayCommand.command, gatewayCommand.args, {
-      env,
-      cwd: REPO_ROOT,
-      stdio: ["ignore", "pipe", "pipe", "ipc"],
-      detached: true,
-    });
+    try {
+      this.gatewayProcess = spawnE2ESubprocess(gatewayCommand.command, gatewayCommand.args, {
+        env,
+        cwd: REPO_ROOT,
+        stdio: ["ignore", "pipe", "pipe", "ipc"],
+        detached: true,
+      });
+    } catch (error) {
+      if (ownedProcessCleanupReceipt(error) !== undefined) {
+        this.gatewayCleanupUnconfirmed = true;
+        this.gatewayCleanupFailure = error;
+      }
+      throw error;
+    }
     const recordOutput = (chunk: Buffer | string): void => {
       this.gatewayOutput = `${this.gatewayOutput}${String(chunk)}`.slice(-8_000);
     };
-    this.gatewayProcess.stdout?.on("data", recordOutput);
-    this.gatewayProcess.stderr?.on("data", recordOutput);
+    const output = e2eProcessOutput(this.gatewayProcess);
+    output.stdout?.on("data", recordOutput);
+    output.stderr?.on("data", recordOutput);
     // Reap this detached group if the runner dies before teardown runs —
     // otherwise the gateway orphans and holds ~1.5 GB indefinitely.
     await registerSubprocessGroup(this.gatewayProcess);
 
     // Same handshake pattern as E2EHarness — wait for /health AND /whoami
     // with our bootstrap token so we're definitely talking to this gateway.
-    const startTime = Date.now();
-    const timeout = gatewayBootBudgetMs();
     const tokenPath = join(this.configDir, "token");
     while (Date.now() - startTime < timeout) {
-      if (this.gatewayProcess?.exitCode !== null || this.gatewayProcess?.signalCode) break;
+      if (this.gatewayProcess) {
+        const status = e2eApplicationStatus(this.gatewayProcess);
+        if (status.exitCode !== null || status.signalCode !== null) break;
+      }
       try {
         const health = await fetch(`${this.gatewayUrl}/health`);
         if (!health.ok) {
@@ -626,11 +648,12 @@ export class MultiCollectorHarness {
       await sleep(100);
     }
     const proc = this.gatewayProcess;
+    const status = proc ? e2eApplicationStatus(proc) : null;
     const fate =
-      proc?.exitCode !== null && proc?.exitCode !== undefined
-        ? `the gateway process exited with code ${proc.exitCode}`
-        : proc?.signalCode
-          ? `the gateway process was killed by ${proc.signalCode}`
+      status?.exitCode !== null && status?.exitCode !== undefined
+        ? `the gateway process exited with code ${status.exitCode}`
+        : status?.signalCode
+          ? `the gateway process was killed by ${status.signalCode}`
           : "the gateway process was still running — this is the harness giving up on a slow boot, not a gateway that failed";
     const output = this.gatewayOutput.trim();
     throw new Error(
@@ -639,9 +662,18 @@ export class MultiCollectorHarness {
   }
 
   private async killGateway(signal?: NodeJS.Signals): Promise<void> {
+    if (this.gatewayCleanupUnconfirmed) throw this.gatewayCleanupFailure;
     const proc = this.gatewayProcess;
     if (!proc) return;
-    await killSubprocessGroup(proc, signal ? { initialSignal: signal } : {});
+    try {
+      await killSubprocessGroup(proc, signal ? { initialSignal: signal } : {});
+    } catch (error) {
+      if (ownedProcessCleanupReceipt(error) !== undefined) {
+        this.gatewayCleanupUnconfirmed = true;
+        this.gatewayCleanupFailure = error;
+      }
+      throw error;
+    }
   }
 }
 

@@ -22,7 +22,7 @@ public static partial class OmnesisPrivateFile {
       string sid=rule.SecurityIdentifier.Value;
       // Create-file/subdirectory alone cannot substitute an existing pinned
       // child. Delete/rename, ACL/owner control and mutable metadata can.
-      if(!Trusted(sid) && !(installer && sid==Installer) && ((uint)rule.AccessMask&0x500D0150U)!=0) throw new UnauthorizedAccessException();
+      if(!TrustedGrant(sid,descriptor.Owner) && !(installer && sid==Installer) && ((uint)rule.AccessMask&0x500D0150U)!=0) throw new UnauthorizedAccessException();
     }
   }
 
