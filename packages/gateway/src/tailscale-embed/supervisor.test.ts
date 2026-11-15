@@ -303,6 +303,29 @@ function controlledOwner() {
 }
 
 describe("helper ownership", () => {
+  test("launch credentials override ambient spoofing without entering argv", async () => {
+    const current = controlledOwner();
+    const spawner = vi.fn(() => current.owner);
+    const sup = new HelperSupervisor(spawner, {
+      OMNESIS_TAILNET_IPC_TOKEN: "ambient-spoof",
+      ANTHROPIC_API_KEY: "withheld",
+    });
+    const transport = { certificateSha256: "a".repeat(64), token: "b".repeat(64) };
+    await sup.start({ ...launch, transport });
+    const [, args, env] = spawner.mock.calls[0]! as unknown as [
+      string,
+      string[],
+      NodeJS.ProcessEnv,
+    ];
+    expect(args).toContain(transport.certificateSha256);
+    expect(args).not.toContain(transport.token);
+    expect(env.OMNESIS_TAILNET_IPC_TOKEN).toBe(transport.token);
+    expect(env).not.toHaveProperty("ANTHROPIC_API_KEY");
+    const stopping = sup.stop();
+    current.closure.resolve();
+    await stopping;
+  });
+
   test("replacement waits for actual closure after root exit and output EOF", async () => {
     const first = controlledOwner();
     const second = controlledOwner();

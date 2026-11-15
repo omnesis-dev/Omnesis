@@ -35,6 +35,8 @@ export interface HelperLaunch {
   fallbackKey: string;
   /** Coordination server; empty for Tailscale's own. Set only by tests. */
   controlUrl?: string;
+  /** Internal pipe credentials; the public pin is an argument, the token stays in the environment. */
+  transport?: { certificateSha256: string; token: string };
 }
 
 export type HelperProcessState = "stopped" | "starting" | "running" | "crashed";
@@ -280,11 +282,17 @@ export class HelperSupervisor {
       "-fallback-key",
       launch.fallbackKey,
       ...(launch.controlUrl ? ["-control-url", launch.controlUrl] : []),
+      ...(launch.transport
+        ? ["-socket-certificate-sha256", launch.transport.certificateSha256]
+        : []),
     ];
     let owner: OwnedChildProcess;
     this.startedAt = Date.now();
     try {
-      owner = this.spawner(launch.binary, args, helperEnvironment(this.env));
+      owner = this.spawner(launch.binary, args, {
+        ...helperEnvironment(this.env),
+        ...(launch.transport ? { OMNESIS_TAILNET_IPC_TOKEN: launch.transport.token } : {}),
+      });
     } catch (error) {
       if (!this.observe(error))
         this.onExit(`could not start: ${error instanceof Error ? error.message : String(error)}`);

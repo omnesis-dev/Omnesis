@@ -34,6 +34,8 @@ type Config struct {
 	Hostname   string
 	ControlURL string
 	SocketPath string
+    SocketCertificateSHA256 string
+    SocketToken string
 	Fallback   *certs.Fallback
 	Logf       func(string, ...any)
 	// Emit receives every distinct status.
@@ -93,7 +95,7 @@ func New(cfg Config) *Node {
 		Logf:     func(string, ...any) {},
 		UserLogf: func(string, ...any) {},
 	}
-	n.proxy = proxy.New(cfg.SocketPath, resolver{n}, cfg.Logf)
+	n.proxy = proxy.NewEndpoint(proxy.Endpoint{Path: cfg.SocketPath, CertificateSHA256: cfg.SocketCertificateSHA256, Token: cfg.SocketToken}, resolver{n}, cfg.Logf)
 	return n
 }
 

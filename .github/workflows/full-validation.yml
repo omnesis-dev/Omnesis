@@ -105,7 +105,7 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 25
+    timeout-minutes: 35
     env:
       OMNESIS_UNIT_WORKERS: "1"
       GOMAXPROCS: "2"
@@ -124,15 +124,40 @@ jobs:
           cache-dependency-path: packages/tailnet-helper/go.sum
       - name: Install locked dependencies
         run: node scripts/ci/npm-ci.mjs --no-audit --no-fund
-      - name: Baseline embedded Tailscale TypeScript runtime
+      - name: Format Go sources with the authoritative toolchain and retain exact evidence
+        run: node scripts/ci/audit-format-go.mjs
+      - name: Validate embedded Tailscale TypeScript runtime
         id: typescript
         continue-on-error: true
-        run: node scripts/run-check.mjs unit packages/gateway/src/tailscale-embed
+        run: >-
+          node scripts/run-check.mjs unit packages/gateway/src/tailscale-embed
+          packages/collector/src/auth-process.test.ts
+          packages/collector/src/source-ws-handlers.physical-ownership.test.ts
+          packages/gateway/src/optional-service-cleanup.test.ts
+          packages/core/src/owned-process-shutdown-fence.test.ts
       - name: Baseline native Tailscale helper tests
         id: native
         continue-on-error: true
         working-directory: packages/tailnet-helper
         run: go test -p 2 ./...
+      - name: Validate source and test TypeScript
+        if: ${{ runner.os == 'Linux' }}
+        run: node scripts/run-check.mjs typecheck && node scripts/run-check.mjs types-tests
+      - name: Lint the owned helper and IPC boundary
+        if: ${{ runner.os == 'Linux' }}
+        env:
+          NODE_OPTIONS: --max-old-space-size=6144
+        run: >-
+          node node_modules/eslint/bin/eslint.js
+          packages/core/src/owned-child-process.ts
+          packages/collector/src/auth-process.ts
+          packages/gateway/src/tailscale-embed/supervisor.ts
+          packages/gateway/src/tailscale-embed/supervisor.test.ts
+          packages/gateway/src/tailscale-embed/service.ts
+          packages/gateway/src/tailscale-embed/service.integration.test.ts
+          packages/gateway/src/tailscale-embed/service.ownership.test.ts
+          packages/gateway/src/tailscale-embed/socket-server.ts
+          packages/gateway/src/tailscale-embed/socket-server.test.ts
       - name: Preserve both baseline verdicts
         env:
           TS_OUTCOME: ${{ steps.typescript.outcome }}

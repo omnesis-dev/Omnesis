@@ -4040,6 +4040,7 @@ const conversationCleanup = new OptionalServiceCleanup(
   "Agent conversations",
   () => conversationCleanupOwner,
 );
+const tailnetCleanup = new OptionalServiceCleanup("Embedded Tailscale", () => tailscaleEmbed);
 const ownedProcessShutdown = new OwnedProcessShutdownFence(() => {
   process.exitCode = 1;
   log.error(
@@ -4053,6 +4054,7 @@ const ownedProcessShutdown = new OwnedProcessShutdownFence(() => {
   tunnelCleanup,
   doctorCleanup,
   conversationCleanup,
+  tailnetCleanup,
 ]);
 
 const doShutdown = async (): Promise<void> => {
@@ -4064,6 +4066,7 @@ const doShutdown = async (): Promise<void> => {
     { owner: acmeCleanup, warning: "ACME DNS cleanup deferred to the persisted challenge journal" },
     { owner: tunnelCleanup, warning: "Cloud relay tunnel cleanup failed" },
     { owner: doctorCleanup, warning: "Host security audit cleanup is unconfirmed" },
+    { owner: tailnetCleanup, warning: "Embedded Tailscale cleanup is unconfirmed" },
   ];
   const optionalDrain = Promise.allSettled(
     optionalCleanup.map(({ owner }) => ownedProcessShutdown.join(owner)),
@@ -4074,13 +4077,9 @@ const doShutdown = async (): Promise<void> => {
   wsServer.stop();
   collectorDescriptors.close();
   const httpDrain = httpShutdown.close(server, 5_000);
-  // Tailnet requests drain alongside the main listener's; then closing the
-  // helper's input closes the public address before the gateway goes.
-  const [httpDrained] = await Promise.all([
-    httpDrain,
-    realtimeService.dispose(),
-    tailscaleEmbed?.shutdown(5_000),
-  ]);
+  // The optional Tailscale owner drains its listener and joins its helper
+  // alongside HTTP; its closure proof also participates in the shutdown fence.
+  const [httpDrained] = await Promise.all([httpDrain, realtimeService.dispose()]);
   if (!httpDrained) log.warn("HTTP shutdown drain timed out; remaining connections closed");
   try {
     await app.close();
