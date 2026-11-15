@@ -31,6 +31,7 @@ on:
             sqlite-runtime,
             sqlite-mmap-baseline,
             portable-fixtures,
+            merge-refresh,
           ]
         default: regressions
 permissions:
@@ -124,7 +125,7 @@ jobs:
       - name: Inspect bounded process identity calls under curated host contexts
         run: node --import tsx scripts/ci/auth-env-diagnostic.mjs
   process-green:
-    if: ${{ inputs.scope == 'process-green' || inputs.scope == 'cache-green' || inputs.scope == 'auth-env-baseline' || inputs.scope == 'auth-env-green' || inputs.scope == 'auth-owned-green' || inputs.scope == 'sqlite-runtime' }}
+    if: ${{ inputs.scope == 'process-green' || inputs.scope == 'cache-green' || inputs.scope == 'auth-env-baseline' || inputs.scope == 'auth-env-green' || inputs.scope == 'auth-owned-green' || inputs.scope == 'sqlite-runtime' || inputs.scope == 'merge-refresh' }}
     strategy:
       fail-fast: false
       max-parallel: 1
@@ -188,12 +189,32 @@ jobs:
           scripts/lib/check-process.test.mjs
           packages/cloud-relay/src/management-service.test.ts
           packages/cloud-relay/src/management-ownership-boundaries.test.ts
+      - name: Validate joined and uncertain account refresh work
+        if: ${{ inputs.scope == 'merge-refresh' }}
+        run: >-
+          node scripts/run-check.mjs unit
+          packages/cloud-relay/src/management-service.test.ts
+          -t "closing aborts an accepted account refresh|a queued account refresh retains cleanup uncertainty"
       - name: Full source and test typechecks
-        if: ${{ inputs.scope == 'auth-owned-green' && runner.os == 'Linux' }}
+        if: ${{ (inputs.scope == 'auth-owned-green' || inputs.scope == 'merge-refresh') && runner.os == 'Linux' }}
         run: npm run typecheck && npm run typecheck:tests
       - name: Run complete lint with the repository batched runner
         if: ${{ inputs.scope == 'auth-owned-green' && runner.os == 'Linux' }}
         run: npm run lint
+      - name: Lint the portable fixture and merged relay follow-up
+        if: ${{ inputs.scope == 'merge-refresh' && runner.os == 'Linux' }}
+        env:
+          NODE_OPTIONS: --max-old-space-size=6144
+        run: >-
+          node node_modules/eslint/bin/eslint.js
+          scripts/lib/retained-fixture-command.mjs
+          scripts/lib/retained-fixture-command.test.mjs
+          scripts/test-fixtures/retained-command-driver.mjs
+          scripts/dev-scripts-smoke.test.mjs
+          scripts/ci/windows-checks.mjs
+          packages/cloud-relay/src/management-service.ts
+          packages/cloud-relay/src/management-service.test.ts
+          vitest.config.ts
       - name: Inspect stopped SQLite driver interoperability
         if: ${{ !cancelled() && inputs.scope == 'auth-owned-green' && runner.os == 'Windows' }}
         run: node --import tsx scripts/ci/windows-sqlite-restart-diagnostic.mjs
