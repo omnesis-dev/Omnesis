@@ -6,6 +6,7 @@ import { win32 } from "node:path";
 import { promisify } from "node:util";
 import { createRequire } from "node:module";
 export {
+  windowsEnvironmentValue,
   windowsPowerShellExecutable,
   windowsProcessStart,
 } from "@omnesis/platform/windows-powershell";

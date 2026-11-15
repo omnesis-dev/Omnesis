@@ -322,17 +322,8 @@ export function createSourceWsHandlers(deps: SourceWsHandlerDeps): SourceWsHandl
     const args = [...entry.args, body.sourceType];
     if (body.params) args.push(JSON.stringify(body.params));
 
-    //
-    // Pass an explicit minimal env instead of inheriting
-    // process.env. The subprocess only needs PATH (programs it starts),
-    // HOME (token-cache lookups), LANG (locale-sensitive parsers),
-    // D-Bus session handles for OS keyring access on Linux, whatever the
-    // secret store declares it reads (`KEYRING_ENV_KEYS` — without those the
-    // child selects a backend it cannot open, so no keyring-encrypted store
-    // opens), and Omnesis's own configuration knobs. Anything else — random
-    // shell exports, unrelated cloud-credential env vars, debug
-    // tokens — could otherwise leak into a third-party OAuth client
-    // library. Mirrors the exec-runner.ts approach (#triggers/exec).
+    // Forward the host paths and keyring settings authentication needs, while
+    // withholding unrelated credentials and the parent's private log file.
     const env = authSubprocessEnvironment(sourceManager.getConfigDir());
 
     // Validate the pasted fields here rather than in the provider: this is the

@@ -32,32 +32,35 @@ test.each(["LOCALAPPDATA", "USERPROFILE", "SystemRoot", "WINDIR", "TEMP", "TMP"]
   },
 );
 
-test("POSIX authentication retains its host context and excludes unrelated secrets and preloads", () => {
-  const environment = {
-    PATH: "/invented/bin",
-    HOME: "/invented/home",
-    DBUS_SESSION_BUS_ADDRESS: "unix:path=/invented/bus",
-    XDG_RUNTIME_DIR: "/invented/runtime",
-    LOCALAPPDATA: "invented-windows-data",
-    AWS_SECRET_ACCESS_KEY: "unrelated-secret",
-    NODE_OPTIONS: "--require /invented/preload.cjs",
-    LD_PRELOAD: "/invented/preload.so",
-    OMNESIS_LOG_FILE: "/invented/provider.log",
-    OMNESIS_CONFIG_DIR: "/invented/wrong-config",
-    OMNESIS_GATEWAY_URL: "https://gateway.example.test",
-    ...Object.fromEntries(KEYRING_ENV_KEYS.map((key) => [key, `invented-${key}`])),
-  };
-  const result = authSubprocessEnvironment("/invented/config", environment, "linux");
-  expect(result).toEqual({
-    PATH: environment.PATH,
-    HOME: environment.HOME,
-    DBUS_SESSION_BUS_ADDRESS: environment.DBUS_SESSION_BUS_ADDRESS,
-    XDG_RUNTIME_DIR: environment.XDG_RUNTIME_DIR,
-    OMNESIS_CONFIG_DIR: "/invented/config",
-    OMNESIS_GATEWAY_URL: environment.OMNESIS_GATEWAY_URL,
-    ...Object.fromEntries(KEYRING_ENV_KEYS.map((key) => [key, `invented-${key}`])),
-  });
-});
+test.each(["linux", "darwin"] as const)(
+  "%s authentication retains its host context and excludes unrelated secrets and preloads",
+  (platform) => {
+    const environment = {
+      PATH: "/invented/bin",
+      HOME: "/invented/home",
+      DBUS_SESSION_BUS_ADDRESS: "unix:path=/invented/bus",
+      XDG_RUNTIME_DIR: "/invented/runtime",
+      LOCALAPPDATA: "invented-windows-data",
+      AWS_SECRET_ACCESS_KEY: "unrelated-secret",
+      NODE_OPTIONS: "--require /invented/preload.cjs",
+      LD_PRELOAD: "/invented/preload.so",
+      OMNESIS_LOG_FILE: "/invented/provider.log",
+      OMNESIS_CONFIG_DIR: "/invented/wrong-config",
+      OMNESIS_GATEWAY_URL: "https://gateway.example.test",
+      ...Object.fromEntries(KEYRING_ENV_KEYS.map((key) => [key, `invented-${key}`])),
+    };
+    const result = authSubprocessEnvironment("/invented/config", environment, platform);
+    expect(result).toEqual({
+      PATH: environment.PATH,
+      HOME: environment.HOME,
+      DBUS_SESSION_BUS_ADDRESS: environment.DBUS_SESSION_BUS_ADDRESS,
+      XDG_RUNTIME_DIR: environment.XDG_RUNTIME_DIR,
+      OMNESIS_CONFIG_DIR: "/invented/config",
+      OMNESIS_GATEWAY_URL: environment.OMNESIS_GATEWAY_URL,
+      ...Object.fromEntries(KEYRING_ENV_KEYS.map((key) => [key, `invented-${key}`])),
+    });
+  },
+);
 
 test.each(["OMNESIS_LOG_FILE", "OMNESIS_log_file", "omnesis_log_file"])(
   "Windows authentication withholds %s regardless of spelling",
