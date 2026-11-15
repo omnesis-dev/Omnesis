@@ -95,7 +95,24 @@ npm run search-eval:run -- --name my-change-hybrid --mode hybrid \
 # Rebuild RESULTS.md, and compare two runs query by query.
 npm run search-eval:report
 npm run search-eval:report -- --compare baseline-lexical my-change-lexical
+
+# For a hybrid run: how the keyword and semantic lanes do alone, beside the fused results.
+npm run search-eval:report -- --lanes my-change-hybrid
+
+# Score the same index again after a restart, and under other search settings.
+echo '{"settled": {}, "k20": {"rrfK": 20}}' > variants.json
+npm run search-eval:run -- --name my-change-hybrid --mode hybrid --variants variants.json
 ```
+
+A run scores its questions as soon as the index covers every passage. Right
+after a bulk load, the gateway's in-memory keyword index still carries the
+corpus statistics of its last build, and recently embedded passages may not be
+in the vector index yet; both catch up in the background within minutes on a
+real install. `--variants` restarts the gateway in place after the main run
+(the databases persist) and scores again once per label, recording each as
+`<name>.<label>`: a label with no overrides measures the settled gateway, and
+the others change `search.params` such as `rrfK`, `bm25Weight` or
+`vectorWeight` without re-indexing.
 
 The dataset lives outside the repository, in `~/.cache/omnesis-search-eval` or
 wherever `OMNESIS_SEARCH_EVAL_DATA` or `--data-dir` points. The gateway's
@@ -135,7 +152,7 @@ when the default search behaviour changes.
 | `src/report.ts`             | `RESULTS.md` and the paired comparison                    |
 | `src/metrics.ts`            | The three scores and the bootstrap                        |
 | `results/<run>.json`        | A run's summary: commit, mode, settings, scores, timings  |
-| `results/<run>.queries.tsv` | One row per scored query, for paired comparisons          |
+| `results/<run>.queries.tsv` | One row per scored query: its scores and each lane's rank |
 
 ## Dataset licence
 

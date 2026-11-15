@@ -117,14 +117,15 @@ test("the checklist: account and address done, then one step for a Google-only a
   expect(text()).toContain("Secure address g-abcdefgh.relay.example.test");
   expect(text()).toContain("Connect your phone");
   expect(text()).toContain("approve it here and this gateway will remember your Google account");
-  expect(text()).not.toMatch(/passkey/i);
+  // The account has no passkey yet: the only mention is the link to add one.
+  expect(text().replace("Add a passkey instead", "")).not.toMatch(/passkey/i);
   expect(links()).toEqual([
     "https://omnesis.dev/docs/apps",
     "https://relay.example.test/_relay/account",
   ]);
   await click(button("Not now"));
   expect(onDismiss).toHaveBeenCalledOnce();
-  // Without a usable relay address there's no link to add Face ID; the gateway's name stands in
+  // Without a usable relay address there's no link to add a passkey; the gateway's name stands in
   // for an address of its own.
   await show({
     enrollment: { ...enrollment, trustedSignIns: [GOOGLE], confirmOrigin: undefined },
@@ -138,14 +139,16 @@ test("the checklist: account and address done, then one step for a Google-only a
   expect(host.innerHTML).toBe("");
 });
 
-test("on the gateway's own address, Continue with Face ID confirms the passkey, then refreshes", async () => {
+test("on the gateway's own address, Continue with passkey confirms the passkey, then refreshes", async () => {
   const proof = { type: "gateway-passkey", credential: { id: "credential-fictional" } };
   const request = confirming();
   const prove = vi.fn().mockResolvedValue(proof);
   const run = vi.fn().mockResolvedValue({});
   await show({ request, prove, run });
-  expect(text()).toContain("Let your Face ID add devices");
-  await click(button("Continue with Face ID"));
+  expect(text()).toContain("Let your passkey add devices");
+  // The page can't tell which device unlocks the passkey, so it names none.
+  expect(text()).toContain("Your device will ask for your face, fingerprint or screen lock.");
+  await click(button("Continue with passkey"));
   expect(request.mock.calls).toEqual([
     ["passkeys/confirm/options", {}],
     ["passkeys/confirm", { proof }],
@@ -159,8 +162,8 @@ test("on the gateway's own address, Continue with Face ID confirms the passkey, 
   // While the prompt is open the button says so and can't be pressed again.
   let answer!: (value: unknown) => void;
   prove.mockReturnValueOnce(new Promise((resolve) => (answer = resolve)));
-  await click(button("Continue with Face ID"));
-  expect(primary()!.textContent?.trim()).toBe("Waiting for Face ID…");
+  await click(button("Continue with passkey"));
+  expect(primary()!.textContent?.trim()).toBe("Waiting for your passkey…");
   expect(primary()!.disabled).toBe(true);
   await act(async () => answer(proof));
 });
@@ -171,7 +174,7 @@ test("a refused passkey says why, in words that don't blame the person", async (
     [refusal("passkey-not-confirmed"), "Your gateway couldn't check that passkey. Try again."],
     [new GatewayPasskeyError("Prompt closed."), "Prompt closed."],
     [refusal("passkey-origin-unavailable"), "This gateway has no address of its own"],
-    [new Error("offline"), "Couldn't start Face ID. Try again."],
+    [new Error("offline"), "Couldn't use your passkey. Try again."],
   ];
   for (const [failure, message] of cases) {
     const prove =
@@ -179,7 +182,7 @@ test("a refused passkey says why, in words that don't blame the person", async (
         ? vi.fn().mockRejectedValue(failure)
         : vi.fn().mockResolvedValue({});
     await show({ request: confirming(failure), prove });
-    await click(button("Continue with Face ID"));
+    await click(button("Continue with passkey"));
     expect(alert()).toContain(message);
   }
 });
@@ -191,7 +194,7 @@ test("opened by the button elsewhere, the prompt starts by itself once, and a cl
   await settle();
   expect(prove).toHaveBeenCalledOnce();
   expect(alert()).toBeUndefined();
-  expect(button("Continue with Face ID")!.disabled).toBe(false);
+  expect(button("Continue with passkey")!.disabled).toBe(false);
   // A real refusal is said even then.
   handoff.next.mockReturnValueOnce("confirm-passkey");
   render(null, host);
@@ -213,7 +216,7 @@ test("elsewhere, the same button opens the gateway's address signed in; without 
   // The handoff's request is only for the gateway's own page.
   expect(handoff.next).not.toHaveBeenCalled();
   expect(links()).toEqual([]);
-  await click(button("Continue with Face ID"));
+  await click(button("Continue with passkey"));
   expect(open).toHaveBeenCalledExactlyOnceWith(ORIGIN, {
     next: "confirm-passkey",
     location: elsewhere,
@@ -223,7 +226,7 @@ test("elsewhere, the same button opens the gateway's address signed in; without 
   // A refusal is said, and the button comes back.
   render(null, host);
   await show({ location: elsewhere, open: vi.fn().mockRejectedValue(new Error("nope")) });
-  await click(button("Continue with Face ID"));
+  await click(button("Continue with passkey"));
   expect(alert()).toBe("Couldn't open your gateway's secure address. Try again.");
   expect(primary()!.disabled).toBe(false);
   // Until the certificate is ready there is nothing to open, and step 2 says it's coming.
@@ -232,8 +235,9 @@ test("elsewhere, the same button opens the gateway's address signed in; without 
   expect(text()).toContain("Getting a secure address… usually under a minute");
   // On the gateway's address in a browser without passkeys.
   await show({ supported: false });
-  expect(button("Continue with Face ID")).toBeUndefined();
-  expect(text()).toContain("This browser can't use Face ID or passkeys.");
+  expect(button("Continue with passkey")).toBeUndefined();
+  expect(text()).toContain("This browser can't use passkeys.");
+  expect(text()).not.toContain("Your device will ask");
   // Another change in progress holds the button; a refresh does not.
   await show({ busy: "enrollment" });
   expect(primary()!.disabled).toBe(true);
@@ -274,4 +278,20 @@ test("opening the gateway's own page follows only a link to that page", async ()
       "Couldn't open your gateway's secure address. Try again.",
     );
   expect(location.assign).toHaveBeenCalledTimes(2);
+});
+
+test("the portal names the passkey, never one maker's way of unlocking it", async () => {
+  const { readdir, readFile } = await import("node:fs/promises");
+  const { join, dirname } = await import("node:path");
+  const { fileURLToPath } = await import("node:url");
+  const portal = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
+  const files = (await readdir(portal, { recursive: true })).filter(
+    (name) => /\.(js|html|css)$/.test(name) && !name.includes("vendor"),
+  );
+  expect(files.length).toBeGreaterThan(10);
+  const named: string[] = [];
+  for (const name of files)
+    if (/Face ID|Touch ID/.test(await readFile(join(portal, name), "utf8")))
+      named.push(name);
+  expect(named).toEqual([]);
 });

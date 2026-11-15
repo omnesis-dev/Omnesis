@@ -106,7 +106,7 @@ export function ApproveView({
                     // An older gateway doesn't say; only an explicit false hides the button.
                     request.passkeyApproval === false
                       ? html`<p class="login-subtitle" role="status">
-                          This gateway doesn't have Face ID approval set up yet. Approve this
+                          This gateway doesn't have passkey approval set up yet. Approve this
                           device from the Omnesis portal on your computer.
                         </p>`
                       : html`<button

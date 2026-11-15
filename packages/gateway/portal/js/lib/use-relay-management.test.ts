@@ -126,7 +126,7 @@ test("errors are static, timeout aborts, and recovery clears the error", async (
   expect(current.error).toBe("");
   expect(current.status).toEqual({ revision: 4 });
 });
-test("a choice that may ask for Face ID waits for the person, and a step-up failure is said in its own words", async () => {
+test("a choice that may ask for the passkey waits for the person, and a step-up failure is said in its own words", async () => {
   request.mockResolvedValueOnce({ revision: 1 });
   await mount();
   const slow = pending();
@@ -322,4 +322,70 @@ test("reads the gateway version once, for the details a person copies", async ()
     await vi.advanceTimersByTimeAsync(15_000);
   });
   expect(gatewayVersion).toHaveBeenCalledTimes(1);
+});
+
+// @ts-expect-error portal JS
+import { useAccountRefresh } from "./use-relay-management.js";
+test("asks the gateway to read the account on opening and on coming back into view, then rereads the status", async () => {
+  const refreshed = vi.fn();
+  function Refresher() {
+    useAccountRefresh(refreshed);
+    return null;
+  }
+  const shown = async (value: "visible" | "hidden", event = "visibilitychange") => {
+    Object.defineProperty(document, "visibilityState", { configurable: true, value });
+    await act(async () => {
+      (event === "focus" ? window : document).dispatchEvent(
+        new (globalThis.window as unknown as { Event: typeof Event }).Event(event),
+      );
+    });
+  };
+  request.mockResolvedValue({ revision: 1 });
+  await act(async () => render(h(Refresher, {}), host));
+  expect(request).toHaveBeenCalledExactlyOnceWith("account/refresh", {}, expect.any(AbortSignal));
+  expect(refreshed).toHaveBeenCalledOnce();
+  // Leaving the tab for the account page asks nothing.
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(3000);
+  });
+  await shown("hidden");
+  expect(request).toHaveBeenCalledOnce();
+  // Coming back fires both events; one refresh follows, then the status is read again.
+  await shown("visible");
+  await shown("visible", "focus");
+  expect(request).toHaveBeenCalledTimes(2);
+  expect(refreshed).toHaveBeenCalledTimes(2);
+  // A refusal (say, a gateway without the account feature) is quiet and reads nothing more.
+  request.mockRejectedValueOnce(new Error("private detail"));
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(3000);
+  });
+  await shown("visible", "focus");
+  expect(request).toHaveBeenCalledTimes(3);
+  expect(refreshed).toHaveBeenCalledTimes(2);
+  // A slow gateway is given up on, and the page never waits on it.
+  const slow = pending();
+  request.mockReturnValueOnce(slow.promise);
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(3000);
+  });
+  await shown("visible", "focus");
+  const signal = request.mock.calls[3][2] as AbortSignal;
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(15_000);
+  });
+  expect(signal.aborted).toBe(true);
+  // Leaving the page stops listening and a late answer calls nothing.
+  const late = pending();
+  request.mockReturnValueOnce(late.promise);
+  await shown("visible", "focus");
+  await act(async () => render(null, host));
+  await act(async () => late.resolve({ revision: 2 }));
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(3000);
+  });
+  await shown("visible", "focus");
+  await shown("visible");
+  expect(request).toHaveBeenCalledTimes(5);
+  expect(refreshed).toHaveBeenCalledTimes(2);
 });

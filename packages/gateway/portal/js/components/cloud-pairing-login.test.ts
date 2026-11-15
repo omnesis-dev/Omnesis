@@ -584,9 +584,9 @@ test("neutral account sign-in offers Google and passkey choices and uses only th
   expect(host.querySelector("h2")?.textContent).toBe("Sign in to your gateway");
   expect(host.querySelector("section")?.getAttribute("aria-label")).toBe("Omnesis account sign-in");
   expect(button("Continue with Google").querySelector("img")).not.toBeNull();
-  // Away from the gateway's own page, Face ID signs in on the account page, which then offers only
+  // Away from the gateway's own page, the passkey signs in on the account page, which then offers only
   // the passkey; Google likewise offers only Google there.
-  await act(async () => button("Continue with Face ID").click());
+  await act(async () => button("Continue with passkey").click());
   await vi.waitFor(() =>
     expect(location.assign).toHaveBeenCalledWith(`${destination}&method=passkey`),
   );

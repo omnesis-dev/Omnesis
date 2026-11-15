@@ -20,6 +20,7 @@ import {
   gatewayPasskeyProof,
   onGatewayOrigin,
   PASSKEY_CHECK_FAILED,
+  PASSKEY_HINT,
   PASSKEY_OTHER_ACCOUNT,
   passkeysSupported,
 } from "../lib/gateway-passkey.js";
@@ -31,20 +32,21 @@ export const SETUP_COPY = {
   accountDone: "Connected",
   address: "Secure address",
   addressWaiting: "Getting a secure address… usually under a minute",
-  passkeyStep: "Let your Face ID add devices",
+  passkeyStep: "Let your passkey add devices",
   passkeyBody:
-    "Use Face ID once on your gateway's secure address. After that, signing in with Face ID on a new device connects it straight away.",
-  passkeyButton: "Continue with Face ID",
-  passkeyWorking: "Waiting for Face ID…",
+    "Use your passkey once on your gateway's secure address. After that, a new device that signs in with it connects straight away.",
+  passkeyHint: PASSKEY_HINT,
+  passkeyButton: "Continue with passkey",
+  passkeyWorking: "Waiting for your passkey…",
   opening: "Opening…",
   openFailed: "Couldn't open your gateway's secure address. Try again.",
-  noPasskeys: "This browser can't use Face ID or passkeys. Open this page in a browser that can.",
-  startFailed: "Couldn't start Face ID. Try again.",
+  noPasskeys: "This browser can't use passkeys. Open this page in a browser that can.",
+  startFailed: "Couldn't use your passkey. Try again.",
   googleStep: "Connect your phone",
   googleBody:
     "Install the Omnesis app and sign in with Google. Your phone will ask to join; approve it here and this gateway will remember your Google account.",
   getApp: "Get the app",
-  addPasskey: "Add Face ID sign-in instead",
+  addPasskey: "Add a passkey instead",
   notNow: "Not now",
   reminder: "New devices wait for your OK until you finish setup.",
   finish: "Finish setup",
@@ -151,7 +153,8 @@ function PasskeyStep({ enrollment, ready, busy, run, request, prove, open, locat
     ${
       here && !supported
         ? html`<p class="relay-hint">${SETUP_COPY.noPasskeys}</p>`
-        : html`<div class="relay-actions">
+        : html`<p class="relay-hint">${SETUP_COPY.passkeyHint}</p>
+          <div class="relay-actions">
             <button
               type="button"
               class="btn-primary"

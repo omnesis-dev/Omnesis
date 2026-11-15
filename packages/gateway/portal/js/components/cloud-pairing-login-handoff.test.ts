@@ -231,7 +231,7 @@ test("a handed-over sign-in that cannot be used fails safely and leaves the norm
     for (const response of failure.responses ?? []) transport.mockResolvedValueOnce(response);
     await show();
     await alerted(failure.message);
-    expect(host.querySelector("button")?.textContent).toContain("Continue with Face ID");
+    expect(host.querySelector("button")?.textContent).toContain("Continue with passkey");
     expect(api.login).not.toHaveBeenCalled();
     expect(api.setPortalDeviceName).not.toHaveBeenCalled();
     render(null, host);
