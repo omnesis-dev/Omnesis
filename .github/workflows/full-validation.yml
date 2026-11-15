@@ -439,6 +439,9 @@ jobs:
           packages/gateway/src/scheduler/writer-wal-checkpoint.e2e.test.ts
           packages/gateway/src/scheduler/writer-maintenance.preempt.e2e.test.ts
           packages/gateway/src/scheduler/near-dup-apply-backlog.preempt.e2e.test.ts
+      - name: Prove the installed SQLite drivers after graceful and abrupt process exit
+        if: ${{ inputs.scope == 'windows-restart' }}
+        run: node --import tsx scripts/ci/windows-sqlite-restart-diagnostic.mjs
       - name: Diagnose broad-sweep restart and Collector readiness failures
         if: ${{ inputs.scope == 'windows-restart' }}
         run: >-

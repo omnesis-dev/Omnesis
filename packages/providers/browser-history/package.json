@@ -10,7 +10,7 @@
     "@omnesis/core": "*",
     "@omnesis/source-sdk": "*",
     "@omnesis/types": "*",
-    "better-sqlite3": "^13.0.3"
+    "better-sqlite3": "^13.2.0"
   },
   "files": [
     "dist"
