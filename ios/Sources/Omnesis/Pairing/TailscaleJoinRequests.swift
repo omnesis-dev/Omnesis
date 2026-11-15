@@ -75,28 +75,35 @@ public enum TailscaleJoinDecision: String, Decodable, Equatable, Sendable {
     case denied
 }
 
-/// The admin routes behind the Waiting to join sheet. `AdminClient` speaks them.
+/// The admin routes behind the Tailscale requests in Waiting for your OK. `AdminClient` speaks them.
 public protocol TailscaleJoinDeciding: Sendable {
+    /// Throws `GatewayClient.Error.notFound` from a gateway that does not run its own Tailscale device.
     func tailscaleJoinRequests() async throws -> [TailscaleJoinRequest]
     /// Throws `GatewayClient.Error.notFound` when the request has expired or was decided.
     func decideTailscaleJoin(requestId: String, approve: Bool) async throws -> TailscaleJoinDecision
 }
 
-/// The words of the Waiting to join sheet.
+/// The words of a device waiting to join through Tailscale, as Waiting for your OK lists it
+/// beside the devices that signed in.
 public enum TailscaleJoinPresentation {
-    public static let title = "Waiting to join"
-    public static let explanation = "These devices reached this gateway through your Tailscale network. "
-        + "Approve only the ones you recognise."
-    public static let empty = "No devices are waiting."
+    /// What every Tailscale request says it came through, beside its kind.
+    public static let via = "via Tailscale"
+    public static let recognise = "Approve only if you recognise this machine and Tailscale account."
     public static let gone = "That request has expired or was already decided."
+    public static let expired = "Expired"
     public static let approve = "Approve"
     public static let deny = "Deny"
 
-    /// "on maya-laptop · macOS", or nil when the gateway named no machine.
+    /// "Collector · via Tailscale": what joins, and how it asked.
+    public static func kindLine(_ request: TailscaleJoinRequest) -> String {
+        "\(DeviceKindMeta.label(request.kind)) · \(via)"
+    }
+
+    /// "On maya-laptop · macOS", or nil when the gateway named no machine.
     public static func machineLine(_ request: TailscaleJoinRequest) -> String? {
         guard let machine = nonEmpty(request.machine) else { return nil }
-        guard let os = nonEmpty(request.os) else { return "on \(machine)" }
-        return "on \(machine) · \(os)"
+        guard let os = nonEmpty(request.os) else { return "On \(machine)" }
+        return "On \(machine) · \(os)"
     }
 
     /// "Tailscale account maya@example.com", or nil when the gateway named none.
@@ -108,9 +115,23 @@ public enum TailscaleJoinPresentation {
     /// little behind the gateway's, "Requested just now".
     public static func requestedLine(_ request: TailscaleJoinRequest, now: Date) -> String {
         guard now.timeIntervalSince(request.requestedAt) >= 60 else { return "Requested just now" }
+        return "Requested \(relative(request.requestedAt, now: now))"
+    }
+
+    /// "Requested 4 minutes ago · Expires in 6 minutes", or nil once the request has run out.
+    public static func timingLine(_ request: TailscaleJoinRequest, now: Date) -> String? {
+        guard !isExpired(request, now: now) else { return nil }
+        return "\(requestedLine(request, now: now)) · Expires \(relative(request.expiresAt, now: now))"
+    }
+
+    public static func isExpired(_ request: TailscaleJoinRequest, now: Date) -> Bool {
+        request.expiresAt <= now
+    }
+
+    private static func relative(_ date: Date, now: Date) -> String {
         let formatter = RelativeDateTimeFormatter()
         formatter.unitsStyle = .full
-        return "Requested \(formatter.localizedString(for: request.requestedAt, relativeTo: now))"
+        return formatter.localizedString(for: date, relativeTo: now)
     }
 
     private static func nonEmpty(_ value: String?) -> String? {
@@ -119,7 +140,7 @@ public enum TailscaleJoinPresentation {
     }
 }
 
-/// The Waiting to join sheet's state: the requests the gateway lists, and one
+/// The Tailscale half of Waiting for your OK: the requests the gateway lists, and one
 /// decision at a time on them.
 @MainActor
 @Observable
@@ -193,39 +214,15 @@ public final class TailscaleJoinRequestsModel {
             guard operation == generation else { return }
             requests = incoming.sorted { $0.requestedAt < $1.requestedAt }
             error = nil
+        } catch GatewayClient.Error.notFound {
+            // A gateway without its own Tailscale device has no such list: nothing waits.
+            guard operation == generation else { return }
+            requests = []
+            error = nil
         } catch {
             guard operation == generation else { return }
             self.error = error
         }
         loaded = true
-    }
-}
-
-/// A notification tap's request to open Waiting to join, which Devices takes once.
-@MainActor
-@Observable
-public final class TailscaleJoinRequestOpener {
-    public static let shared = TailscaleJoinRequestOpener()
-
-    /// Bumped to ask Devices to open Waiting to join.
-    public private(set) var openRequests = 0
-    private var consumedOpenRequests = 0
-
-    public init() {}
-
-    /// The admin routes need the admin scope.
-    public nonisolated static func eligible(scopes: [String]?) -> Bool {
-        scopes?.contains("admin") == true
-    }
-
-    public func requestOpen() {
-        openRequests &+= 1
-    }
-
-    /// True once per request to open, so a screen that appears again later does not reopen it.
-    public func consumeOpen() -> Bool {
-        guard openRequests != consumedOpenRequests else { return false }
-        consumedOpenRequests = openRequests
-        return true
     }
 }

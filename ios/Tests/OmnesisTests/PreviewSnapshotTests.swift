@@ -344,40 +344,93 @@ final class PreviewSnapshotTests: XCTestCase {
         )
     }
 
-    /// Waiting to join: two devices, none, a request gone by its decision, an unreachable
-    /// gateway, two devices at a large text size, and two devices as the sheet Devices opens.
-    func testTailscaleWaitingToJoin() async {
-        func loaded(_ client: PreviewMocks.PreviewTailscaleJoinRequests) async -> TailscaleJoinRequestsModel {
+    /// Waiting for your OK with devices that asked through Tailscale: beside one that signed in,
+    /// on their own, none of either kind, a Tailscale request gone by its decision, an
+    /// unreachable gateway, a request that ran out, a large text size, and as the sheet
+    /// Devices opens.
+    func testWaitingForYourOKWithTailscaleRequests() async {
+        func joins(_ client: PreviewMocks.PreviewTailscaleJoinRequests) async -> TailscaleJoinRequestsModel {
             let model = TailscaleJoinRequestsModel()
             await model.refresh(client: client)
             return model
         }
-        let two = await loaded(PreviewMocks.tailscaleJoinRequestsTwo)
-        snapshot(TailscaleJoinRequestsView(client: nil, model: two), name: "tailscale-join-two")
-        let none = await loaded(PreviewMocks.PreviewTailscaleJoinRequests(rows: []))
-        snapshot(TailscaleJoinRequestsView(client: nil, model: none), name: "tailscale-join-empty")
-
-        let rows = PreviewMocks.tailscaleJoinRows
-        let gone = await loaded(PreviewMocks.PreviewTailscaleJoinRequests(rows: rows))
-        await gone.decide(rows[0], approve: true, client: PreviewMocks.PreviewTailscaleJoinRequests(rows: [rows[1]], decisionGone: true))
-        snapshot(TailscaleJoinRequestsView(client: nil, model: gone), name: "tailscale-join-request-gone")
-
-        let unavailable = await loaded(PreviewMocks.PreviewTailscaleJoinRequests(rows: [], unavailable: true))
-        snapshot(TailscaleJoinRequestsView(client: nil, model: unavailable), name: "tailscale-join-unavailable")
-
-        let large = await loaded(PreviewMocks.tailscaleJoinRequestsTwo)
-        snapshot(
-            TailscaleJoinRequestsView(client: nil, model: large).dynamicTypeSize(.accessibility2),
-            name: "tailscale-join-two-large",
+        func signedIn(_ client: PreviewMocks.PreviewPairingRequests) async -> GatewayPairingApprovalModel {
+            let model = GatewayPairingApprovalModel()
+            await model.refresh(client: client)
+            return model
+        }
+        func sheet(_ tailscale: TailscaleJoinRequestsModel, cloud: GatewayPairingApprovalModel? = nil) -> GatewayPairingApprovalView {
+            GatewayPairingApprovalView(client: nil, model: cloud, tailscaleModel: tailscale)
+        }
+        let two = PreviewMocks.tailscaleJoinRequestsTwo
+        await snapshot(sheet(joins(two), cloud: signedIn(PreviewMocks.pairingRequestsWithTrust)), name: "waiting-for-ok-both-kinds")
+        await snapshot(
+            sheet(joins(two), cloud: signedIn(PreviewMocks.pairingRequestsWithTrust)),
+            name: "waiting-for-ok-both-kinds-full",
             size: CGSize(width: 393, height: 1500)
         )
-        let presented = await loaded(PreviewMocks.tailscaleJoinRequestsTwo)
-        snapshotPresented(
-            Theme.bgPrimary.ignoresSafeArea().sheet(isPresented: .constant(true)) {
-                TailscaleJoinRequestsView(client: nil, model: presented)
-            },
-            name: "tailscale-join-in-sheet"
+        await snapshot(sheet(joins(two)), name: "waiting-for-ok-tailscale-only")
+        let noJoins = PreviewMocks.PreviewTailscaleJoinRequests(rows: [])
+        await snapshot(
+            sheet(joins(noJoins), cloud: signedIn(PreviewMocks.PreviewPairingRequests(rows: []))),
+            name: "waiting-for-ok-both-kinds-none"
         )
+
+        let rows = PreviewMocks.tailscaleJoinRows
+        let gone = await joins(PreviewMocks.PreviewTailscaleJoinRequests(rows: rows))
+        await gone.decide(rows[0], approve: true, client: PreviewMocks.PreviewTailscaleJoinRequests(rows: [rows[1]], decisionGone: true))
+        snapshot(sheet(gone), name: "waiting-for-ok-tailscale-request-gone")
+
+        let unavailable = PreviewMocks.PreviewTailscaleJoinRequests(rows: [], unavailable: true)
+        await snapshot(sheet(joins(unavailable)), name: "waiting-for-ok-tailscale-unavailable")
+        await snapshot(
+            sheet(joins(PreviewMocks.PreviewTailscaleJoinRequests(rows: [PreviewMocks.tailscaleJoinExpired]))),
+            name: "waiting-for-ok-tailscale-expired"
+        )
+        await snapshot(
+            sheet(joins(two)).dynamicTypeSize(.accessibility2),
+            name: "waiting-for-ok-tailscale-large",
+            size: CGSize(width: 393, height: 1700)
+        )
+        let presented = await joins(two)
+        let presentedCloud = await signedIn(PreviewMocks.pairingRequestsWithTrust)
+        snapshotPresented(
+            Theme.bgPrimary.ignoresSafeArea().sheet(isPresented: .constant(true)) { sheet(presented, cloud: presentedCloud) },
+            name: "waiting-for-ok-both-kinds-in-sheet"
+        )
+    }
+
+    /// The Devices entry to Waiting for your OK is there for whichever kind this phone reviews,
+    /// and with neither the screen's toolbar is exactly as it is without the entry at all.
+    func testWaitingForYourOKEntryFollowsTheKinds() throws {
+        func toolbar(_ kinds: DeviceApprovalKinds?) -> some View {
+            NavigationStack {
+                Theme.bgPrimary.ignoresSafeArea()
+                    .navigationTitle("Devices")
+                    .navigationBarTitleDisplayMode(.inline)
+                    .toolbar {
+                        ToolbarItem(placement: .topBarTrailing) {
+                            if let kinds {
+                                GatewayPairingRequestsButton(kinds: kinds, client: nil, tailscale: nil)
+                            }
+                        }
+                    }
+            }
+        }
+        let bar = CGSize(width: 393, height: 140)
+        snapshot(toolbar(nil), name: "waiting-for-ok-entry-absent", size: bar)
+        snapshot(toolbar(DeviceApprovalKinds.neither), name: "waiting-for-ok-entry-flags-off", size: bar)
+        snapshot(
+            toolbar(DeviceApprovalKinds(cloudRelayEnabled: true, tailscaleEmbed: true, scopes: ["read"])),
+            name: "waiting-for-ok-entry-not-admin",
+            size: bar
+        )
+        snapshot(toolbar(DeviceApprovalKinds(cloud: false, tailscale: true)), name: "waiting-for-ok-entry-tailscale", size: bar)
+        snapshot(toolbar(DeviceApprovalKinds(cloud: true, tailscale: false)), name: "waiting-for-ok-entry-cloud", size: bar)
+        try assertSameImage("waiting-for-ok-entry-absent", "waiting-for-ok-entry-flags-off")
+        try assertSameImage("waiting-for-ok-entry-absent", "waiting-for-ok-entry-not-admin")
+        try assertDifferentImage("waiting-for-ok-entry-absent", "waiting-for-ok-entry-tailscale")
+        try assertSameImage("waiting-for-ok-entry-tailscale", "waiting-for-ok-entry-cloud")
     }
 
     /// The two sign-in buttons are the same rounded rectangle at the same height, stretched

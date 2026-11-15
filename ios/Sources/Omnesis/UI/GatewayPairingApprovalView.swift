@@ -4,40 +4,52 @@
 import SwiftUI
 
 #if canImport(UIKit)
+/// Waiting for your OK: every new device waiting for the owner's approval, however it asked.
+/// Devices that signed in with the owner's Omnesis account come first, each with the code it
+/// shows; devices that reached the gateway through the owner's Tailscale network follow, each
+/// labelled so. A kind without a client is not asked: Devices passes only the kinds this
+/// build and gateway offer (`DeviceApprovalKinds`).
 @available(iOS 17.0, *)
 @MainActor
 struct GatewayPairingApprovalView: View {
     let client: (any GatewayPairingApproving)?
+    let tailscale: (any TailscaleJoinDeciding)?
     /// The request a notification named: listed first, so the tap lands on it.
     let focus: String?
     @State private var model: GatewayPairingApprovalModel
+    @State private var tailscaleModel: TailscaleJoinRequestsModel
     @Environment(\.dismiss) private var dismiss
     @Environment(\.openURL) private var openURL
 
-    init(client: (any GatewayPairingApproving)?, model: GatewayPairingApprovalModel? = nil, focus: String? = nil) {
+    /// The models let a preview or snapshot show lists it already loaded.
+    init(
+        client: (any GatewayPairingApproving)?,
+        tailscale: (any TailscaleJoinDeciding)? = nil,
+        model: GatewayPairingApprovalModel? = nil,
+        tailscaleModel: TailscaleJoinRequestsModel? = nil,
+        focus: String? = nil
+    ) {
         self.client = client
+        self.tailscale = tailscale
         self.focus = focus
         _model = State(initialValue: model ?? GatewayPairingApprovalModel())
+        _tailscaleModel = State(initialValue: tailscaleModel ?? TailscaleJoinRequestsModel())
     }
 
     var body: some View {
         NavigationStack {
             List {
-                if let error = GatewayErrorView.signInError(model.error) {
-                    if model.requests.isEmpty {
-                        GatewayErrorView(context: "manage pairing requests", error: error, onRetry: { Task { await refresh() } })
-                            .frame(minHeight: GatewayErrorView.minScrollHeight)
-                            .listRowBackground(Color.clear)
-                    } else {
-                        let kind = GatewayErrorView.classify(error)
-                        Label(kind.title, systemImage: kind.symbol).foregroundStyle(kind.tint)
-                            .listRowBackground(Theme.bgSecondary)
-                    }
-                }
+                errors
                 if model.denied != nil {
                     Section { deniedFollowUp }.listRowBackground(Theme.bgSecondary)
                 }
-                if model.requests.isEmpty, !model.busy, model.error == nil {
+                if let notice = tailscaleModel.notice {
+                    Label(notice, systemImage: "clock.badge.xmark")
+                        .foregroundStyle(Theme.textSecondary)
+                        .listRowBackground(Theme.bgSecondary)
+                        .accessibilityIdentifier("tailscaleJoin.notice")
+                }
+                if nothingWaiting {
                     Text(PairingApprovalPresentation.empty)
                         .foregroundStyle(Theme.textSecondary)
                         .listRowBackground(Color.clear)
@@ -46,6 +58,17 @@ struct GatewayPairingApprovalView: View {
                     Section { requestRows(request) }
                         .listRowBackground(Theme.bgSecondary)
                         .listRowSeparator(.hidden)
+                }
+                ForEach(tailscaleModel.requests) { request in
+                    Section {
+                        TailscaleJoinRequestRow(
+                            request: request,
+                            deciding: tailscaleModel.deciding == request.id,
+                            busy: tailscaleModel.busy,
+                            onDecide: { approve in decide(request, approve: approve) }
+                        )
+                    }
+                    .listRowBackground(Theme.bgSecondary)
                 }
             }
             // The list draws on the app's own background, like every other screen, instead
@@ -58,16 +81,48 @@ struct GatewayPairingApprovalView: View {
                 ToolbarItem(placement: .cancellationAction) { Button("Done") { dismiss() } }
                 ToolbarItem(placement: .primaryAction) {
                     Button("Refresh", systemImage: "arrow.clockwise") { Task { await refresh() } }
-                        .disabled(model.busy)
+                        .disabled(model.busy || tailscaleModel.busy)
                 }
             }
             .toolbarBackground(Theme.bgPrimary, for: .navigationBar)
-            .overlay { if model.busy { ProgressView() } }
+            .overlay { if model.busy || (tailscaleModel.busy && !tailscaleModel.loaded) { ProgressView() } }
             .task { await refresh() }
             .refreshable { await refresh() }
-            .onDisappear { model.stop() }
+            .onDisappear {
+                model.stop()
+                tailscaleModel.stop()
+            }
         }
         .presentationBackground(Theme.bgPrimary)
+    }
+
+    /// A failure in place of an empty list, or one line above the requests that did load.
+    /// With both kinds failing and nothing listed, the first failure takes the page.
+    @ViewBuilder
+    private var errors: some View {
+        let cloudError = GatewayErrorView.signInError(model.error)
+        let joinError = tailscaleModel.error
+        if model.requests.isEmpty, tailscaleModel.requests.isEmpty, let error = cloudError ?? joinError {
+            GatewayErrorView(context: "manage pairing requests", error: error, onRetry: { Task { await refresh() } })
+                .frame(minHeight: GatewayErrorView.minScrollHeight)
+                .listRowBackground(Color.clear)
+            if cloudError != nil, let joinError { errorLine(joinError) }
+        } else {
+            if let cloudError { errorLine(cloudError) }
+            if let joinError { errorLine(joinError) }
+        }
+    }
+
+    private func errorLine(_ error: Error) -> some View {
+        let kind = GatewayErrorView.classify(error)
+        return Label(kind.title, systemImage: kind.symbol).foregroundStyle(kind.tint)
+            .listRowBackground(Theme.bgSecondary)
+    }
+
+    /// Nothing waits, and every kind this sheet asks about has answered without failing.
+    private var nothingWaiting: Bool {
+        model.requests.isEmpty && !model.busy && model.error == nil
+            && tailscaleModel.requests.isEmpty && (tailscale == nil || tailscaleModel.loaded) && tailscaleModel.error == nil
     }
 
     /// One waiting device as a question: who wants to connect, whether it shows this code, then
@@ -205,9 +260,14 @@ struct GatewayPairingApprovalView: View {
         ].compactMap(\.self).joined(separator: " · ")
     }
 
+    /// Both kinds are read at once; a kind without a client is not asked.
     private func refresh() async {
-        guard let client else { return }
-        await model.refresh(client: client)
+        let cloud = model, joins = tailscaleModel
+        let cloudClient = client, joinClient = tailscale
+        await withTaskGroup(of: Void.self) { group in
+            if let cloudClient { group.addTask { @MainActor in await cloud.refresh(client: cloudClient) } }
+            if let joinClient { group.addTask { @MainActor in await joins.refresh(client: joinClient) } }
+        }
     }
 
     private func decide(_ request: GatewayPairingApprovalRequest, approve: Bool) {
@@ -219,6 +279,11 @@ struct GatewayPairingApprovalView: View {
                 await model.decide(request, approve: false, client: client)
             }
         }
+    }
+
+    private func decide(_ request: TailscaleJoinRequest, approve: Bool) {
+        guard let tailscale else { return }
+        Task { await tailscaleModel.decide(request, approve: approve, client: tailscale) }
     }
 }
 
@@ -247,6 +312,42 @@ struct GatewayPairingApprovalView: View {
                 await model.confirmAndApprove(request, client: PreviewMocks.pairingRequestsNeedingStepUp)
             }
         }
+}
+
+@available(iOS 17.0, *)
+#Preview("Waiting for your OK — both kinds") {
+    GatewayPairingApprovalView(client: PreviewMocks.pairingRequestsWithTrust, tailscale: PreviewMocks.tailscaleJoinRequestsTwo)
+}
+
+@available(iOS 17.0, *)
+#Preview("Waiting for your OK — Tailscale only") {
+    GatewayPairingApprovalView(client: nil, tailscale: PreviewMocks.tailscaleJoinRequestsTwo)
+}
+
+@available(iOS 17.0, *)
+#Preview("Waiting for your OK — Tailscale only, dark") {
+    GatewayPairingApprovalView(client: nil, tailscale: PreviewMocks.tailscaleJoinRequestsTwo).preferredColorScheme(.dark)
+}
+
+@available(iOS 17.0, *)
+#Preview("Waiting for your OK — both kinds, none waiting") {
+    GatewayPairingApprovalView(
+        client: PreviewMocks.PreviewPairingRequests(rows: []),
+        tailscale: PreviewMocks.PreviewTailscaleJoinRequests(rows: [])
+    )
+}
+
+@available(iOS 17.0, *)
+#Preview("Waiting for your OK — Tailscale request gone") {
+    GatewayPairingApprovalView(
+        client: nil,
+        tailscale: PreviewMocks.PreviewTailscaleJoinRequests(rows: PreviewMocks.tailscaleJoinRows, decisionGone: true)
+    )
+}
+
+@available(iOS 17.0, *)
+#Preview("Waiting for your OK — Tailscale unavailable") {
+    GatewayPairingApprovalView(client: nil, tailscale: PreviewMocks.PreviewTailscaleJoinRequests(rows: [], unavailable: true))
 }
 
 @available(iOS 17.0, *)

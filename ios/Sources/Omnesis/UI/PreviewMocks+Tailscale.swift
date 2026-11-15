@@ -9,7 +9,7 @@ import Foundation
 extension PreviewMocks {
     static let tailnetGatewayHost = "omnesis-gateway.tail0a1b2c.ts.net"
 
-    /// Two devices waiting: a collector requested a few minutes ago and a CLI just now.
+    /// Two collectors waiting: one requested a few minutes ago, one just now.
     static var tailscaleJoinRows: [TailscaleJoinRequest] {
         let now = Date()
         return [
@@ -25,15 +25,30 @@ extension PreviewMocks {
             ),
             TailscaleJoinRequest(
                 id: "tsj-0002",
-                name: "studio-cli",
-                kind: "cli",
-                machine: "studio-desktop",
-                os: "Linux",
+                name: "studio-mac",
+                kind: "collector",
+                machine: "studio-mac",
+                os: "macOS",
                 login: "maya@example.com",
                 requestedAt: now.addingTimeInterval(-20),
                 expiresAt: now.addingTimeInterval(9 * 60)
             ),
         ]
+    }
+
+    /// A collector whose request ran out before anyone decided it.
+    static var tailscaleJoinExpired: TailscaleJoinRequest {
+        let now = Date()
+        return TailscaleJoinRequest(
+            id: "tsj-0003",
+            name: "kitchen-mini",
+            kind: "collector",
+            machine: "kitchen-mini",
+            os: "Linux",
+            login: "maya@example.com",
+            requestedAt: now.addingTimeInterval(-12 * 60),
+            expiresAt: now.addingTimeInterval(-2 * 60)
+        )
     }
 
     static var tailscaleJoinRequestsTwo: PreviewTailscaleJoinRequests {

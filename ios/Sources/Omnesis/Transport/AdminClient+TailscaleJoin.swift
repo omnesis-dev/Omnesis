@@ -3,8 +3,8 @@
 
 import Foundation
 
-/// The admin routes behind Waiting to join: devices that reached the gateway
-/// through the owner's Tailscale network and wait for a decision.
+/// The admin routes behind the Tailscale requests in Waiting for your OK: devices that
+/// reached the gateway through the owner's Tailscale network and wait for a decision.
 extension AdminClient: TailscaleJoinDeciding {
     public func tailscaleJoinRequests() async throws -> [TailscaleJoinRequest] {
         let (data, _) = try await dispatch(method: "GET", path: "/admin/tailscale/join-requests", body: nil)

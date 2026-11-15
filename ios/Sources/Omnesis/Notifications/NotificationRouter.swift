@@ -88,8 +88,8 @@ public enum PushTarget: Equatable, Sendable {
     /// A device joined this gateway on its own, by signing in or through Tailscale. Opens
     /// the device list, where it can be removed.
     case deviceJoined
-    /// Devices wait to join this gateway through Tailscale. Opens the device list with the
-    /// waiting devices over it; the push names none of them.
+    /// Devices wait to join this gateway through Tailscale. Opens the device list with
+    /// Waiting for your OK over it; the push names none of them.
     case tailscaleJoinRequests
     /// A finished agent turn whose answer outlived its spoken budget
     /// (a Siri ask handed off to the push channel) — deep-links into

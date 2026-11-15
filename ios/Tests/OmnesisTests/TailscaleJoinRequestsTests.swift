@@ -4,7 +4,7 @@
 @testable import Omnesis
 import XCTest
 
-/// Waiting to join lists the devices waiting to join through Tailscale and sends one
+/// Waiting for your OK lists the devices waiting to join through Tailscale and sends one
 /// decision at a time; a request that is gone by then is said to be gone, and the list
 /// is read again.
 @MainActor
@@ -135,24 +135,22 @@ final class TailscaleJoinRequestsTests: XCTestCase {
         XCTAssertFalse(model.loaded)
     }
 
-    // MARK: - Opening from a notification
-
-    func testAnOpenRequestIsTakenOnce() {
-        let opener = TailscaleJoinRequestOpener()
-        XCTAssertFalse(opener.consumeOpen())
-        opener.requestOpen()
-        XCTAssertTrue(opener.consumeOpen())
-        XCTAssertFalse(opener.consumeOpen())
-        XCTAssertTrue(TailscaleJoinRequestOpener.eligible(scopes: ["read", "admin"]))
-        XCTAssertFalse(TailscaleJoinRequestOpener.eligible(scopes: ["read"]))
-        XCTAssertFalse(TailscaleJoinRequestOpener.eligible(scopes: nil))
+    /// A gateway without its own Tailscale device has no such list: nothing waits, and no
+    /// error shows beside the devices that signed in.
+    func testAGatewayWithoutTheListHasNothingWaiting() async {
+        let model = TailscaleJoinRequestsModel()
+        await model.refresh(client: ScriptedJoinClient(lists: [], listError: GatewayClient.Error.notFound))
+        XCTAssertTrue(model.loaded)
+        XCTAssertTrue(model.requests.isEmpty)
+        XCTAssertNil(model.error)
     }
 
     // MARK: - Presentation
 
     func testEachRequestReadsAsWhereItCameFromAndWhen() {
         let row = request("a", name: "maya-laptop", minutesAgo: 5)
-        XCTAssertEqual(TailscaleJoinPresentation.machineLine(row), "on maya-laptop · macOS")
+        XCTAssertEqual(TailscaleJoinPresentation.kindLine(row), "Collector · via Tailscale")
+        XCTAssertEqual(TailscaleJoinPresentation.machineLine(row), "On maya-laptop · macOS")
         XCTAssertEqual(TailscaleJoinPresentation.accountLine(row), "Tailscale account maya@example.com")
         XCTAssertTrue(TailscaleJoinPresentation.requestedLine(row, now: base).hasPrefix("Requested "))
         XCTAssertTrue(TailscaleJoinPresentation.requestedLine(row, now: base).contains("5"))
@@ -160,7 +158,22 @@ final class TailscaleJoinRequestsTests: XCTestCase {
         let bare = sparse(machine: " ", login: "")
         XCTAssertNil(TailscaleJoinPresentation.machineLine(bare))
         XCTAssertNil(TailscaleJoinPresentation.accountLine(bare))
-        XCTAssertEqual(TailscaleJoinPresentation.machineLine(sparse(machine: "studio-desktop", login: nil)), "on studio-desktop")
+        XCTAssertEqual(TailscaleJoinPresentation.machineLine(sparse(machine: "studio-mac", login: nil)), "On studio-mac")
+    }
+
+    /// The row says when the device asked and when its request runs out, and nothing to decide
+    /// once it has.
+    func testTheTimingLineCountsDownToTheExpiry() throws {
+        let row = request("a", name: "maya-laptop", minutesAgo: 4)
+        let line = try XCTUnwrap(TailscaleJoinPresentation.timingLine(row, now: base))
+        XCTAssertTrue(line.hasPrefix("Requested "), line)
+        XCTAssertTrue(line.contains(" · Expires "), line)
+        XCTAssertTrue(line.contains("10"), "The request runs out ten minutes from now: \(line)")
+        XCTAssertFalse(TailscaleJoinPresentation.isExpired(row, now: base))
+        let later = base.addingTimeInterval(600)
+        XCTAssertTrue(TailscaleJoinPresentation.isExpired(row, now: later))
+        XCTAssertNil(TailscaleJoinPresentation.timingLine(row, now: later))
+        XCTAssertEqual(TailscaleJoinPresentation.expired, "Expired")
     }
 
     /// A request the gateway described with less: no operating system, and the given machine and login.
