@@ -57,18 +57,11 @@ final class SourceFilterFolderGestureUITests: XCTestCase {
         let before = last.frame
         attach("folder-second-page-before-selection")
         tap(last)
-        tap(app.buttons["View selected"])
+        // The footer stays in reach from page two; the review replaces the list, and Back returns to it.
+        tap(app.buttons["Review filter"])
         XCTAssertTrue(app.staticTexts["Journey folder 064"].waitForExistence(timeout: 20))
-        attach("folder-selection-retained")
-        tap(app.buttons["Cancel"])
-        let discard = app.alerts["Discard filter changes?"]
-        XCTAssertTrue(discard.waitForExistence(timeout: 20))
-        XCTAssertEqual(discard.buttons.count, 2, "The draft decision has only Keep and Discard actions")
-        attach("folder-keep-editing-alert")
-        tap(discard.buttons["Keep editing"])
-        XCTAssertTrue(app.staticTexts["Journey folder 064"].waitForExistence(timeout: 20))
-        attach("folder-keep-editing-retained")
-        tap(app.buttons["Done"])
+        attach("folder-selection-reviewed")
+        tap(app.buttons["Back"])
         XCTAssertTrue(last.waitForExistence(timeout: 20))
         let restored = XCTNSPredicateExpectation(predicate: NSPredicate(format: "hittable == true"), object: last)
         XCTAssertEqual(
@@ -84,6 +77,19 @@ final class SourceFilterFolderGestureUITests: XCTestCase {
             if search.exists, search.isHittable { break }
             picker.swipeDown()
         }
+        // The selection count and its list sit above the first row.
+        tap(app.buttons["View selected"])
+        XCTAssertTrue(app.staticTexts["Journey folder 064"].waitForExistence(timeout: 20))
+        attach("folder-selection-retained")
+        tap(app.buttons["Cancel"])
+        let discard = app.alerts["Discard filter changes?"]
+        XCTAssertTrue(discard.waitForExistence(timeout: 20))
+        XCTAssertEqual(discard.buttons.count, 2, "The draft decision has only Keep and Discard actions")
+        attach("folder-keep-editing-alert")
+        tap(discard.buttons["Keep editing"])
+        XCTAssertTrue(app.staticTexts["Journey folder 064"].waitForExistence(timeout: 20))
+        attach("folder-keep-editing-retained")
+        tap(app.buttons["Done"])
         tap(search)
         let first = app.buttons["Select Journey folder 042"]
         XCTAssertFalse(first.isHittable, "The distinct query result must not already be visible before typing")

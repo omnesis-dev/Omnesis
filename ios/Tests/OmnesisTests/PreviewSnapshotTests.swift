@@ -9299,12 +9299,15 @@ final class PreviewSnapshotTests: XCTestCase {
         // Recording that bookmark from a real swipe is covered by the UI journey.
         let options = try appendScopeOptions(secondPage, to: firstPage)
         let last = try XCTUnwrap(options.items.last)
+        // A bookmark names the row leading the viewport, so it is a page-two row with the final rows under it.
+        let leadingIndex = 57
+        let leading = ScopePickerAnchor.item(.init(options.items[leadingIndex].ref))
         for scheme in [ColorScheme.light, .dark] {
             let name = scheme == .dark ? "dark" : "light"
             var saved = ScopePickerSession(field: PreviewMocks.accessFolderField, sourceId: source.id)
             let location = saved.location(for: source.id)
             saved.catalogues[location] = options
-            saved.positions[location] = .init(itemId: .item(.init(last.ref)), index: options.items.count - 1)
+            saved.positions[location] = .init(itemId: leading, index: leadingIndex)
             var installedRestored: SourceFilterPickerView?
             let restored = try mountScopePicker(
                 source: source, session: saved, scheme: scheme, mounted: { installedRestored = $0 }
@@ -9323,7 +9326,7 @@ final class PreviewSnapshotTests: XCTestCase {
             let scroll = try XCTUnwrap(scopePickerScroll(in: restored.1.view))
             XCTAssertGreaterThan(scroll.contentSize.height, scroll.bounds.height * 2, "The fixture must require scrolling")
             XCTAssertGreaterThan(scroll.contentOffset.y, 0, "A page-two bookmark must not render at the top")
-            try captureScopePicker(
+            try await captureScopePicker(
                 restored.0,
                 name: "scope-picker-provided-bookmark-\(name)",
                 visibleLabel: last.label
@@ -9359,7 +9362,7 @@ final class PreviewSnapshotTests: XCTestCase {
             // and the actual first result pixels instead of an inset-only offset.
             XCTAssertEqual(installedFresh?.pendingRestore?.location, freshLocation)
             XCTAssertEqual(installedFresh?.pendingRestore?.target, .top)
-            try captureScopePicker(
+            try await captureScopePicker(
                 fresh.0,
                 name: "scope-picker-new-search-\(name)",
                 visibleLabel: XCTUnwrap(options.items.first).label
@@ -9433,7 +9436,7 @@ final class PreviewSnapshotTests: XCTestCase {
                 && picker.options?.items.count == 65 && picker.session.positions[location]?.itemId == leading
         }
         XCTAssertEqual(picker.session.positions[location]?.itemId, leading)
-        try captureScopePicker(
+        try await captureScopePicker(
             mounted.0,
             name: "scope-picker-current-retry-restored",
             visibleLabel: XCTUnwrap(options.items.last).label
@@ -9543,28 +9546,38 @@ final class PreviewSnapshotTests: XCTestCase {
         }
     }
 
-    private func captureScopePicker(_ window: UIWindow, name: String, visibleLabel: String) throws {
-        let image = UIGraphicsImageRenderer(size: window.bounds.size).image { _ in
-            window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
-        }
-        try writeSnapshotPNG(image, to: Self.outputDir.appendingPathComponent(name + ".png"))
-        // Lazy scroll offsets are estimates. Recognize the actual captured pixels
-        // so a viewport showing earlier rows cannot pass as the final row.
-        let request = VNRecognizeTextRequest()
-        request.recognitionLevel = .accurate
-        request.recognitionLanguages = ["en-US"]
-        request.usesLanguageCorrection = false
-        try VNImageRequestHandler(cgImage: XCTUnwrap(image.cgImage), options: [:]).perform([request])
-        let observations = request.results ?? []
+    /// Captures the picker once its scroll has come to rest on `visibleLabel`. A lazy stack places a restored
+    /// offset from estimated row heights and corrects it as rows are laid out, so the first frames after the
+    /// scroll is issued can still show earlier rows.
+    private func captureScopePicker(_ window: UIWindow, name: String, visibleLabel: String) async throws {
         func normalized(_ value: String) -> String {
             String(value.lowercased().filter { $0.isLetter || $0.isNumber })
         }
-        let visible = observations.contains { observation in
-            CGRect(x: 0, y: 0, width: 1, height: 1).contains(observation.boundingBox)
-                && observation.topCandidates(1).first.map { normalized($0.string) == normalized(visibleLabel) } == true
+        let deadline = Date().addingTimeInterval(5)
+        var recognized = ""
+        while true {
+            let image = UIGraphicsImageRenderer(size: window.bounds.size).image { _ in
+                window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
+            }
+            // Recognize the actual captured pixels so a viewport showing other rows cannot pass.
+            let request = VNRecognizeTextRequest()
+            request.recognitionLevel = .accurate
+            request.recognitionLanguages = ["en-US"]
+            request.usesLanguageCorrection = false
+            try VNImageRequestHandler(cgImage: XCTUnwrap(image.cgImage), options: [:]).perform([request])
+            let observations = request.results ?? []
+            let visible = observations.contains { observation in
+                CGRect(x: 0, y: 0, width: 1, height: 1).contains(observation.boundingBox)
+                    && observation.topCandidates(1).first.map { normalized($0.string) == normalized(visibleLabel) } == true
+            }
+            recognized = observations.compactMap { $0.topCandidates(1).first?.string }.joined(separator: " | ")
+            if visible || Date() >= deadline {
+                try writeSnapshotPNG(image, to: Self.outputDir.appendingPathComponent(name + ".png"))
+                XCTAssertTrue(visible, "The captured viewport must visibly contain \(visibleLabel): \(recognized)")
+                return
+            }
+            try await Task.sleep(nanoseconds: 100_000_000)
         }
-        let recognized = observations.compactMap { $0.topCandidates(1).first?.string }.joined(separator: " | ")
-        XCTAssertTrue(visible, "The captured viewport must visibly contain \(visibleLabel): \(recognized)")
     }
 
     /// The gallery's example data, checked against what each provider's contract puts on the wire.
