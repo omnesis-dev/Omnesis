@@ -411,7 +411,10 @@ export class GatewayAccountLink {
    */
   async passkeyConfirmationOptions(): Promise<GatewayPasskeyCeremony> {
     const ceremony = this.passkeyConfirmation();
-    const listing = await this.browser.credentials?.(this.abort.signal).catch(() => undefined);
+    const listing = await this.browser.credentials?.(this.abort.signal).catch((error: unknown) => {
+      if (ownedProcessCleanupReceipt(error) !== undefined) throw error;
+      return undefined;
+    });
     const record = this.requireLinked();
     if (!listing || (listing.accountId !== undefined && listing.accountId !== record.accountId))
       return ceremony;
@@ -430,7 +433,10 @@ export class GatewayAccountLink {
     const parsed = gatewayPasskeySignInProofSchema.safeParse(input);
     if (!parsed.success || !this.ceremonies.take("pin-passkey", parsed.data.challenge, binding))
       throw new CloudRelayManagementFailure(409, "passkey-not-confirmed");
-    const listing = await this.browser.credentials?.(this.abort.signal).catch(() => undefined);
+    const listing = await this.browser.credentials?.(this.abort.signal).catch((error: unknown) => {
+      if (ownedProcessCleanupReceipt(error) !== undefined) throw error;
+      return undefined;
+    });
     if (!listing || (listing.accountId !== undefined && listing.accountId !== record.accountId))
       throw new CloudRelayManagementFailure(503, "account-unavailable");
     // A passkey the account doesn't list, and this gateway never knew, is most likely left over
@@ -590,7 +596,12 @@ export class GatewayAccountLink {
     );
     let publicKey = confirmed?.publicKey ?? pinned?.publicKey;
     if (!publicKey) {
-      const listing = await this.browser.credentials?.(this.abort.signal).catch(() => undefined);
+      const listing = await this.browser
+        .credentials?.(this.abort.signal)
+        .catch((error: unknown) => {
+          if (ownedProcessCleanupReceipt(error) !== undefined) throw error;
+          return undefined;
+        });
       if (listing && (listing.accountId === undefined || listing.accountId === record.accountId)) {
         if (unknownPasskey(record, listing, id)) throw new PasskeyNotOnAccount();
         publicKey = listing.passkeys.find((value) => value.id === id)?.publicKey;
@@ -673,7 +684,10 @@ export class GatewayAccountLink {
       },
       this.abort.signal,
       record,
-    ).catch(() => undefined);
+    ).catch((error: unknown) => {
+      if (ownedProcessCleanupReceipt(error) !== undefined) throw error;
+      return undefined;
+    });
   }
   /**
    * A sign-in made on the relay's account page or in an app. It is trusted only when no relay page
@@ -824,7 +838,10 @@ export class GatewayAccountLink {
       signIn.channel === "web-google"
     )
       return false;
-    const current = await this.browser.credentials?.(this.abort.signal).catch(() => undefined);
+    const current = await this.browser.credentials?.(this.abort.signal).catch((error: unknown) => {
+      if (ownedProcessCleanupReceipt(error) !== undefined) throw error;
+      return undefined;
+    });
     if (
       !current ||
       (current.accountId !== undefined && current.accountId !== this.record?.accountId)

@@ -16,6 +16,7 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { afterEach, describe, expect, test } from "vitest";
 import { execute, nxInvocation } from "./checks.mjs";
+import { ownedProcessCleanupReceipt } from "../../packages/core/src/owned-process-cleanup.ts";
 
 const repoRoot = join(import.meta.dirname, "../..");
 const roots = [];
@@ -39,6 +40,23 @@ const cases = [
 ];
 
 describe("real Node entrypoints through a URL-escaped source path", () => {
+  test.each([0, 7, 126, 127])(
+    "Nx execution preserves actual status %s and literal arguments",
+    async (exitCode) => {
+      const { root } = entryTree();
+      const receipt = join(root, "literal result.json");
+      const args = ["", "literal $&", 'quote"value', "invented-雪"];
+      const program = `require('node:fs').writeFileSync(${JSON.stringify(receipt)},JSON.stringify(process.argv.slice(1)));process.exitCode=${exitCode};`;
+      try {
+        expect(await execute(process.execPath, ["-e", program, ...args])).toBe(exitCode);
+        expect(JSON.parse(readFileSync(receipt, "utf8"))).toEqual(args);
+      } catch (error) {
+        if (ownedProcessCleanupReceipt(error) !== undefined) roots.splice(roots.indexOf(root), 1);
+        throw error;
+      }
+    },
+    60000,
+  );
   test("checks resolves Nx only when an Nx invocation is requested", () => {
     const { root } = entryTree();
     const preload = join(root, "without-nx.cjs");

@@ -2549,6 +2549,7 @@ test("CAA drift raises the incident hold, which the owner acknowledges on the ga
     onIncidentHold: held,
   });
   f.options.controller = vi.fn(async () => ({
+    cleanupFailure: () => undefined,
     close: f.close,
     renew: f.renew,
     fingerprintSha256: () => "b".repeat(64),

@@ -1241,10 +1241,12 @@ members exit. Configuration precedes raw stdin, and `jobReady` distinguishes
 native creation errors from target exit codes. Bounded probes use `execWindowsJob`
 so timeouts, cancellation and output limits stop the entire job and await closure.
 `runWindowsJob` adds buffered output and a publication gate before target start.
-Finite build commands explicitly use `completion: "root"`: after capturing the
+Finite build and check commands explicitly use `completion: "root"`: after capturing the
 root's status, the owner terminates remaining Job members and joins their exit
 and output. Streamed commands retain the default tree lifetime.
-POSIX paths preserve their native process behavior.
+POSIX paths preserve their native process behavior. A check lane with explicit
+cleanup uncertainty retains its own PID for review and refuses another command;
+an ordinary joined failure can still report its exit status.
 
 Synchronous Job calls and native-cache bootstrapping require a fresh parent-only
 completion receipt after native cleanup. A helper exit code alone cannot prove

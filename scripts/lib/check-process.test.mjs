@@ -17,6 +17,48 @@ afterEach(() => vi.restoreAllMocks());
 
 const entry = new URL("./check-process.mjs", import.meta.url).href;
 const success = { exitCode: 0, signal: null, stdout: Buffer.alloc(0), stderr: "" };
+
+test("Windows npm resolves its actual JavaScript entry and preserves literal argv", async () => {
+  const root = mkdtempSync(join(tmpdir(), "check npm literal "));
+  const npm = join(root, "npm # literal.mjs");
+  writeFileSync(npm, "// Invented npm transport fixture.\n");
+  const invocation = vi.fn(async () => success);
+  try {
+    const args = ["run", "literal $&", 'quote"value', ""];
+    expect(
+      await runCheckCommand("npm", args, {
+        platform: "win32",
+        env: { ...process.env, npm_execpath: npm },
+        runWindows: invocation,
+        signalEmitter: new EventEmitter(),
+      }),
+    ).toBe(0);
+    expect(invocation).toHaveBeenCalledExactlyOnceWith(
+      process.execPath,
+      [npm, ...args],
+      expect.objectContaining({ completion: "root" }),
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test.skipIf(process.platform === "win32").each([false, true])(
+  "POSIX detached=%s retains the caller's actual process-group contract",
+  (detached) => {
+    const group = `Number(require('node:child_process').execFileSync('ps',['-o','pgid=','-p',String(process.pid)],{encoding:'utf8'}).trim())`;
+    const target = `process.stdout.write(JSON.stringify({pid:process.pid,group:${group}})+'\\n')`;
+    const program = `import {createRequire} from 'node:module';const require=createRequire(import.meta.url);import {runCheckCommand} from ${JSON.stringify(entry)};process.stdout.write(JSON.stringify({parentGroup:${group}})+'\\n');process.exitCode=await runCheckCommand(process.execPath,['-e',${JSON.stringify(target)}],{detached:${detached}});`;
+    const result = spawnSync(process.execPath, ["--input-type=module", "-e", program]);
+    expect(result.status, result.stderr.toString()).toBe(0);
+    const [parent, child] = result.stdout
+      .toString()
+      .trim()
+      .split("\n")
+      .map((row) => JSON.parse(row));
+    expect(child.group).toBe(detached ? child.pid : parent.parentGroup);
+  },
+);
 for (const payload of [undefined, Error("invented unconfirmed cleanup")])
   test.each([0, 7])("own cleanup marker cannot become an ordinary status %s", async (exitCode) => {
     const signals = new EventEmitter();
@@ -130,6 +172,7 @@ test("command adapter imports without dependencies or workspace aliases", () => 
       "scripts/lib/bootstrap-platform.mjs",
       "packages/core/src/parent-shutdown.ts",
       "packages/core/src/owned-process-cleanup.ts",
+      "packages/core/src/node-command.ts",
     ]) {
       const path = join(root, file);
       mkdirSync(dirname(path), { recursive: true });
@@ -182,53 +225,78 @@ test("default uncertainty hold prevents natural exit until its whole owned fixtu
   }
 }, 90000);
 
-test("actual Windows lane entry catches marked rejection without bypassing its referenced hold", async () => {
-  const root = mkdtempSync(join(tmpdir(), "check entry retained fixture "));
-  const marker = join(root, "held.txt"),
-    preload = join(root, "controlled-result.mjs");
-  const replacement = `import {runCheckCommand as real} from ${JSON.stringify(entry + "?owned-fixture-original")};import {writeFileSync} from 'node:fs';export async function runCheckCommand(command,args,options){try{return await real(command,args,{...options,platform:'win32',runWindows:async()=>({exitCode:0,signal:null,cleanupFailure:undefined})});}catch(error){writeFileSync(${JSON.stringify(marker)},'held');throw error;}}`;
-  writeFileSync(
-    preload,
-    `import {registerHooks} from 'node:module';registerHooks({load(url,context,nextLoad){if(url!==${JSON.stringify(entry)})return nextLoad(url,context);return{format:'module',shortCircuit:true,source:${JSON.stringify(replacement)}}}});`,
-  );
-  const signals = new EventEmitter();
-  let settled = false,
-    failure;
-  const running = runCheckCommand(
-    process.execPath,
-    [
-      "--import",
-      pathToFileURL(preload).href,
-      fileURLToPath(new URL("../ci/windows-checks.mjs", import.meta.url)),
-      "unit",
-    ],
-    { cwd: root, env: { ...process.env, OMNESIS_WINDOWS_E2E_FILES: "" }, signalEmitter: signals },
-  ).then(
-    () => {
-      settled = true;
-    },
-    (error) => {
-      failure = error;
-      settled = true;
-    },
-  );
-  try {
-    const deadline = Date.now() + 60000;
-    while (!existsSync(marker) && !settled && Date.now() < deadline) await delay(25);
-    expect(existsSync(marker)).toBe(true);
-    await delay(100);
-    expect(settled).toBe(false);
-    signals.emit("SIGTERM");
-    await running;
-    expect(failure).toBeInstanceOf(Error);
-    expect(ownedProcessCleanupReceipt(failure)).toBeUndefined();
-  } finally {
-    if (!settled) signals.emit("SIGTERM");
-    await running;
-    if (ownedProcessCleanupReceipt(failure) === undefined)
-      rmSync(root, { recursive: true, force: true });
-  }
-}, 90000);
+test.each([
+  ["../ci/windows-checks.mjs", ["unit"]],
+  ["../nx/run-global-guards.mjs", []],
+  ["../nx/run-full.mjs", []],
+  ["../nx/run-bundle.mjs", ["gateway-core"]],
+  ["../nx/run-project-task.mjs", ["unit", "packages/cli"]],
+])(
+  "actual entry %s catches marked rejection without bypassing its referenced hold",
+  async (script, args) => {
+    const root = mkdtempSync(join(tmpdir(), "check entry retained fixture "));
+    const marker = join(root, "held.txt"),
+      preload = join(root, "controlled-result.mjs");
+    const replacement = `import {runCheckCommand as real} from ${JSON.stringify(entry + "?owned-fixture-original")};export {checkFailureMessage} from ${JSON.stringify(entry + "?owned-fixture-original")};import {writeFileSync} from 'node:fs';export async function runCheckCommand(command,args,options){try{return await real(command,args,{...options,platform:'win32',runWindows:async()=>({exitCode:0,signal:null,cleanupFailure:undefined})});}catch(error){writeFileSync(${JSON.stringify(marker)},'held');throw error;}}`;
+    const npmEntry = join(root, "invented-npm.mjs");
+    writeFileSync(npmEntry, "// Invented transport fixture; no package operation runs.\n");
+    writeFileSync(
+      preload,
+      `import {registerHooks} from 'node:module';registerHooks({load(url,context,nextLoad){if(url!==${JSON.stringify(entry)})return nextLoad(url,context);return{format:'module',shortCircuit:true,source:${JSON.stringify(replacement)}}}});`,
+    );
+    const signals = new EventEmitter();
+    const fixtureEnv = {
+      ...process.env,
+      OMNESIS_WINDOWS_E2E_FILES: "",
+      OMNESIS_TREE_FINGERPRINT: "",
+      OMNESIS_E2E_ALREADY_SELECTED: "",
+    };
+    for (const name of Object.keys(fixtureEnv))
+      if (name.toLowerCase() === "npm_execpath") delete fixtureEnv[name];
+    fixtureEnv.npm_execpath = npmEntry;
+    let settled = false,
+      failure;
+    const running = runCheckCommand(
+      process.execPath,
+      [
+        "--import",
+        pathToFileURL(preload).href,
+        fileURLToPath(new URL(script, import.meta.url)),
+        ...args,
+      ],
+      {
+        cwd: join(import.meta.dirname, "../.."),
+        env: fixtureEnv,
+        signalEmitter: signals,
+      },
+    ).then(
+      () => {
+        settled = true;
+      },
+      (error) => {
+        failure = error;
+        settled = true;
+      },
+    );
+    try {
+      const deadline = Date.now() + 60000;
+      while (!existsSync(marker) && !settled && Date.now() < deadline) await delay(25);
+      expect(existsSync(marker)).toBe(true);
+      await delay(100);
+      expect(settled).toBe(false);
+      signals.emit("SIGTERM");
+      await running;
+      expect(failure).toBeInstanceOf(Error);
+      expect(ownedProcessCleanupReceipt(failure)).toBeUndefined();
+    } finally {
+      if (!settled) signals.emit("SIGTERM");
+      await running;
+      if (ownedProcessCleanupReceipt(failure) === undefined)
+        rmSync(root, { recursive: true, force: true });
+    }
+  },
+  90000,
+);
 
 test("real command boundary preserves literal argv, binary pipes and application status", () => {
   const root = mkdtempSync(join(tmpdir(), "check command literal "));

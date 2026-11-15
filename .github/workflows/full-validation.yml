@@ -90,6 +90,11 @@ jobs:
           packages/cli/src/commands/integration-runtime.test.ts
           packages/agent/src/replay-backend.test.ts
           packages/agent-integration/src/hermes-windows-bridge.test.ts
+          scripts/lib/check-process.test.mjs
+          scripts/ci/windows-checks.test.mjs
+          scripts/run-check.test.mjs
+          scripts/run-e2e.test.mjs
+          scripts/nx/entrypoints.test.mjs
       - name: Validate Collector ownership and absolute deadlines
         if: ${{ !cancelled() }}
         run: >-
@@ -114,6 +119,17 @@ jobs:
           packages/gateway/src/agent/service-publication-cleanup.test.ts
           packages/gateway/src/agent/service-interactive-writes.test.ts
           packages/gateway/src/agent/agent-lifecycle.test.ts
+      - name: Validate CLI JSON status contract
+        if: ${{ !cancelled() }}
+        run: node scripts/run-check.mjs unit packages/cli/src/commands/status-json.test.ts
+      - name: Validate broker and passkey cleanup boundaries
+        if: ${{ !cancelled() }}
+        run: >-
+          node scripts/run-check.mjs unit
+          packages/cloud-relay/src/gateway-account-link-cleanup.test.ts
+          packages/cloud-relay/src/dns-broker-marker-cleanup.test.ts
+          packages/cloud-relay/src/acme-caa-cleanup.test.ts
+          packages/cloud-relay/src/gateway-caa-cleanup.test.ts
       - name: Validate provider health and live store contracts
         if: ${{ !cancelled() }}
         run: >-
@@ -248,6 +264,7 @@ jobs:
         run: >-
           node scripts/run-check.mjs e2e
           packages/collector/src/e2e/gateway-lifecycle.e2e.test.ts
+          packages/collector/src/e2e/collector-parent-shutdown.e2e.test.ts
           packages/collector/src/e2e/watch-runtime.e2e.test.ts
           packages/collector/src/e2e/things-multi-device.e2e.test.ts
           packages/collector/src/e2e/advanced.e2e.test.ts

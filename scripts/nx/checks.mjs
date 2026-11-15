@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { execFileSync, spawn } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { createRequire } from "node:module";
 import { isDeepStrictEqual } from "node:util";
 import { nodeCommandInvocation } from "../../packages/core/src/node-command.ts";
-import { waitForChild } from "../lib/check-process.mjs";
+import { runCheckCommand, checkFailureMessage } from "../lib/check-process.mjs";
 import {
   allE2EBundles,
   allNativeBundles,
@@ -90,12 +90,7 @@ export function jsonCommand(command, args) {
 }
 
 export async function execute(command, args, env = process.env) {
-  const child = spawn(command, args, {
-    stdio: "inherit",
-    env,
-    detached: process.platform !== "win32",
-  });
-  return waitForChild(child);
+  return runCheckCommand(command, args, { env });
 }
 
 function isGlobal(file) {
@@ -642,7 +637,7 @@ if (import.meta.main) {
   main()
     .then((code) => (process.exitCode = code))
     .catch((error) => {
-      process.stderr.write(`${error.message}\n`);
+      process.stderr.write(`${checkFailureMessage(error)}\n`);
       process.exitCode = 1;
     });
 }
