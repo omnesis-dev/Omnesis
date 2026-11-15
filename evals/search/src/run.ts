@@ -501,6 +501,8 @@ async function main(): Promise<void> {
         },
         languages: languageResults,
         totals: { passages: pushed - 1, chunks: stats.totalChunks ?? 0, queries: rows.length },
+        // A variant scores the main run's index, so it carries that run's
+        // ingest and index times.
         timing: {
           ingestSeconds: Math.round(ingestSeconds),
           indexSeconds: Math.round(indexSeconds),

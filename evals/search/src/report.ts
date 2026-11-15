@@ -52,7 +52,9 @@ function table(header: readonly string[], rows: readonly (readonly string[])[]):
 /**
  * For a run with a semantic lane: how often each lane, alone, has a relevant
  * passage in its own first ten, beside what the fused results achieve. A lane
- * that beats the fused column is being held back by the fusion.
+ * that beats the fused column is being held back by the fusion. Lane ranks are
+ * read from the fused results' score breakdowns, so a passage a lane ranked in
+ * its first ten but the fusion pushed past the hundredth result is not counted.
  */
 export function renderLanes(summary: RunSummary, rows: readonly QueryRow[]): string {
   const share = (hits: number, total: number): string => fmt(total === 0 ? 0 : hits / total);
@@ -74,7 +76,8 @@ export function renderLanes(summary: RunSummary, rows: readonly QueryRow[]): str
     "",
     table(["Language", "Keyword lane", "Semantic lane", "Either lane", "Fused results"], lines),
     "",
-    "A lane's column counts the questions with a relevant passage in that lane's own first ten.",
+    "A lane's column counts the questions with a relevant passage in that lane's own first ten",
+    "(among the hundred passages the fused results returned).",
     '"Either lane" is the ceiling a fusion of the two first pages could reach.',
   ].join("\n");
 }
