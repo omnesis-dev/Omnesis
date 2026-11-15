@@ -96,6 +96,7 @@ export type {
 } from "./management.js";
 
 export { CloudRelayManagementFailure } from "./management.js";
+export { PasskeyNotOnAccount } from "./gateway-account-link.js";
 
 export { GatewayCloudRelayManagement } from "./management-service.js";
 export type { CloudRelayManagerOptions } from "./management-service.js";

@@ -2,7 +2,11 @@
 // Copyright (c) 2026 Adrien Conrath
 
 // First, so a sign-in handed over in the URL fragment leaves the address bar before anything reads it.
-import { takeAccountSignIn } from "./lib/cloud-pairing-handoff.js";
+import {
+  redeemPortalHandoff,
+  takeAccountSignIn,
+  takePortalHandoff,
+} from "./lib/cloud-pairing-handoff.js";
 import { html, render } from "htm/preact";
 import { Component } from "preact";
 import { useState, useEffect, useLayoutEffect, useRef } from "preact/hooks";
@@ -117,11 +121,15 @@ if (typeof window !== "undefined") {
   });
 }
 
-// Sign-in appears only when the gateway advertises the optional cloud relay.
+// Sign-in appears only when the gateway advertises the optional cloud relay. With Omnesis account
+// sign-in on offer, it comes first and the token or pairing-code form waits behind a quiet link.
 function LoginView({ reason, cloudRelay = false } = {}) {
   const [token, setToken] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [accountSignIn, setAccountSignIn] = useState(false);
+  const [showForm, setShowForm] = useState(false);
+  const collapsed = cloudRelay && accountSignIn && !showForm;
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -148,8 +156,8 @@ function LoginView({ reason, cloudRelay = false } = {}) {
         <h1 class="login-title">Omnesis</h1>
         ${reason
           ? html`<p class="login-subtitle login-reason">${reason}</p>`
-          : html`<p class="login-subtitle">Enter an API token or a pairing code to continue</p>`}
-        <form onSubmit=${handleSubmit}>
+          : !collapsed && html`<p class="login-subtitle">Enter an API token or a pairing code to continue</p>`}
+        ${!collapsed && html`<form onSubmit=${handleSubmit}>
           <input
             type="password"
             class="login-input"
@@ -164,12 +172,16 @@ function LoginView({ reason, cloudRelay = false } = {}) {
           <button type="submit" class="login-button" disabled=${loading || !token.trim()}>
             ${loading ? "Authenticating..." : "Log in"}
           </button>
-        </form>
-        ${cloudRelay && html`<${CloudPairingLogin} />`}
-        <p class="login-hint">
-          Your default token is in <code>~/.config/omnesis/token</code>, or run
-          ${" "}<code>omnesis devices pair</code> with <code>kind=portal</code> for a one-shot code.
-        </p>
+        </form>`}
+        ${cloudRelay && html`<${CloudPairingLogin} onReady=${() => setAccountSignIn(true)} />`}
+        ${collapsed
+          ? html`<button type="button" class="cloud-pairing-quiet" onClick=${() => setShowForm(true)}>
+              Have a pairing code? Enter it
+            </button>`
+          : html`<p class="login-hint">
+              Your default token is in <code>~/.config/omnesis/token</code>, or run
+              ${" "}<code>omnesis devices pair</code> with <code>kind=portal</code> for a one-shot code.
+            </p>`}
       </div>
     </div>
   `;
@@ -884,7 +896,17 @@ async function consumeUrlToken() {
 // Check session, prefetch icons, then render
 async function init() {
   await consumeUrlToken();
-  const session = await checkSession();
+  let session = await checkSession();
+  // A signed-in portal on another address opened this one: sign in with what it handed over.
+  // Only the cloud relay mints one, and a browser already signed in here doesn't need it.
+  const handoff = takePortalHandoff();
+  let handoffReason;
+  if (handoff && !session.authenticated && session.cloudRelay === true) {
+    if (await redeemPortalHandoff(handoff)) session = await checkSession();
+    else
+      handoffReason =
+        "That link expired or was already used. Go back to the page you came from and open it again, or sign in below.";
+  }
   await loadSourceMeta();
 
   // Only the cloud relay's sign-in view can use a handed-over sign-in; anywhere else it is dropped.
@@ -898,7 +920,7 @@ async function init() {
   if (session.authenticated) {
     render(html`<${ErrorBoundary}><${App} /></${ErrorBoundary}>`, document.getElementById("app"));
   } else {
-    render(html`<${ErrorBoundary}><${LoginView} cloudRelay=${session.cloudRelay === true} /></${ErrorBoundary}>`, document.getElementById("app"));
+    render(html`<${ErrorBoundary}><${LoginView} reason=${handoffReason} cloudRelay=${session.cloudRelay === true} /></${ErrorBoundary}>`, document.getElementById("app"));
   }
 }
 

@@ -108,7 +108,7 @@ test("without the flag the login page offers no sign-in and never asks for its c
   });
   await page.goto("/portal/");
   await expect(page.getByRole("button", { name: "Log in", exact: true })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Sign in with Google" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Continue with Google" })).toHaveCount(0);
   expect(asked).toBe(false);
 });
 
@@ -119,7 +119,7 @@ test("optional Google sign-in stays hidden when configuration is absent", async 
   );
   await page.goto("/portal/");
   await expect(page.getByRole("button", { name: "Log in", exact: true })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Sign in with Google" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Continue with Google" })).toHaveCount(0);
 });
 
 test("device approval presents the complete comparison code and takes one explicit action", async ({
@@ -484,9 +484,10 @@ test("remote approval cannot pair a browser until its user confirms the locally 
   await expect(page.getByText(verificationCode, { exact: true })).toBeVisible();
   expect(verificationCode).toMatch(/^[0-9]{3} [0-9]{3}$/);
   await expect(
-    page.getByText(
-      "Check that this code matches the one shown on your other device, then approve it there.",
-    ),
+    page.getByRole("heading", { name: "Waiting for your OK", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByText("Make sure your phone shows this code.", { exact: true }),
   ).toBeVisible();
   await page.screenshot({
     path: test.info().outputPath("browser-waiting-desktop.png"),
@@ -510,7 +511,7 @@ test("a substituted gateway code fails closed even when a remote response says a
     page.getByRole("button", { name: "Codes match, pair this device", exact: true }),
   ).toHaveCount(0);
   expect(await page.evaluate(() => sessionStorage.getItem("omnesis.google-pairing"))).toBeNull();
-  await expect(page.getByRole("button", { name: "Sign in with Google" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Continue with Google" })).toBeVisible();
 });
 
 test("with account sign-in the login page offers the Omnesis account, with a passkey or Google", async ({
@@ -523,6 +524,8 @@ test("with account sign-in the login page offers the Omnesis account, with a pas
         webSignIn: true,
         accountSignIn: true,
         automaticEnrollment: true,
+        // The linked account has a passkey this gateway knows, so it is offered.
+        accountPasskey: true,
       },
     }),
   );
@@ -530,11 +533,17 @@ test("with account sign-in the login page offers the Omnesis account, with a pas
   await page.goto("/portal/");
   const signIn = page.getByRole("region", { name: "Omnesis account sign-in" });
   await expect(
-    signIn.getByRole("heading", { name: "Sign in with your Omnesis account", exact: true }),
+    signIn.getByRole("heading", { name: "Sign in to your gateway", exact: true }),
   ).toBeVisible();
-  await expect(signIn.getByRole("button", { name: "Sign in with Passkey" })).toBeVisible();
-  await expect(signIn.getByRole("button", { name: "Sign in with Google" })).toBeVisible();
-  // Token login stays the first option.
-  await expect(page.getByRole("button", { name: "Log in", exact: true })).toBeVisible();
+  await expect(signIn.getByRole("button", { name: "Continue with Face ID" })).toBeVisible();
+  await expect(signIn.getByRole("button", { name: "Continue with Google" })).toBeVisible();
+  await expect(
+    signIn.getByText("You'll approve this browser on your phone.", { exact: true }),
+  ).toBeVisible();
+  // Token login is still there, one quiet step away.
+  await expect(page.getByRole("button", { name: "Log in", exact: true })).toHaveCount(0);
   await page.screenshot({ path: test.info().outputPath("account-login.png"), fullPage: true });
+  await page.getByRole("button", { name: "Have a pairing code? Enter it", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Log in", exact: true })).toBeVisible();
+  await expect(page.locator(".login-input")).toBeVisible();
 });

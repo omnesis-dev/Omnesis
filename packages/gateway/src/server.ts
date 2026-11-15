@@ -112,6 +112,7 @@ import { DeviceService } from "./http/services/DeviceService.js";
 import { PushRegistrationService } from "./http/services/PushRegistrationService.js";
 import { mountStatusRoutes, mountDbSizeRoute } from "./http/routes/status.js";
 import { mountPortalRoutes } from "./http/routes/portal.js";
+import { mountPortalHandoffRoutes } from "./http/routes/portal-handoff.js";
 import { devicePathObservation } from "./http/device-path-observation.js";
 import { mountAdminRoutes } from "./http/routes/admin.js";
 import { mountDirectCandidateRoutes } from "./http/routes/direct-candidates.js";
@@ -1529,6 +1530,15 @@ export function createServer(
     sourceService,
     sessionTtlMs: opts?.timings?.sessionTtlMs,
     sessionCookieName: cookieName,
+  });
+  // Opening the gateway's own address already signed in (cloud relay only).
+  mountPortalHandoffRoutes(app, {
+    db,
+    writeGate: w,
+    gatewayOrigin: () =>
+      opts?.cloudRelayManagement?.accountPairingIdentity?.()?.enrollment.gatewayPasskey?.()?.origin,
+    sessionCookieName: cookieName,
+    sessionTtlMs: opts?.timings?.sessionTtlMs,
   });
 
   // /db-size — registered between portal and admin in the original.

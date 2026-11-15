@@ -313,6 +313,8 @@ describe("a device signs in with a passkey on the gateway's own page", () => {
       createPairing: vi.fn(),
     });
     expect(bare.gatewayPasskey()).toBeUndefined();
+    expect(bare.passkeyApproval()).toBe(false);
+    expect(bare.accountPasskey()).toBe(false);
     void passkeyProofChallenge;
   });
 });
@@ -414,7 +416,13 @@ describe("a person approves a held request with a passkey on the gateway's own p
       expiresAt: held.expiresAt,
       signIn: "passkey",
       deviceKeyRequired: false,
+      // This enrollment says nothing about passkey approval, so the page offers none.
+      passkeyApproval: false,
     });
+    // It follows the gateway: a passkey confirmed here, an origin, no incident.
+    f.enrollment.passkeyApproval = () => true;
+    expect(f.requests.approvalView(f.d.value.requestId)).toMatchObject({ passkeyApproval: true });
+    expect(f.requests.passkeyApproval()).toBe(true);
     const ceremony = f.requests.approvalCeremony(f.d.value.requestId);
     expect(ceremony.binding).toBe(
       gatewayPasskeyApprovalBinding({
@@ -536,4 +544,21 @@ describe("a person approves a held request with a passkey on the gateway's own p
       f.requests.approveWithPasskey({ requestId: f.d.value.requestId }),
     ).rejects.toThrow();
   });
+});
+
+test("a sign-in prompt on the gateway's page names the passkeys the gateway knows, as a hint only", async () => {
+  const f = setup(),
+    d = device();
+  const options = { ...d.value, devicePublicKey: d.publicKey };
+  // Nothing known: the browser offers any passkey, as before.
+  expect(f.requests.passkeyCeremony(options)).not.toHaveProperty("allowCredentials");
+  f.enrollment.signInPasskeys = () => [];
+  expect(f.requests.passkeyCeremony(options)).not.toHaveProperty("allowCredentials");
+  f.enrollment.signInPasskeys = () => [f.owner.id];
+  expect(f.requests.passkeyCeremony(options).allowCredentials).toEqual([f.owner.id]);
+  f.enrollment.accountPasskey = () => true;
+  expect(f.requests.accountPasskey()).toBe(true);
+  // The hint changes nothing about what verifies: the owner's assertion still signs in.
+  const { body } = signIn(f, d);
+  expect((await f.requests.start(body)).status).toBe("approved");
 });
