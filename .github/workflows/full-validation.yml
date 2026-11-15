@@ -29,7 +29,7 @@ jobs:
           node-version: "24"
           cache: npm
       - name: Reject incomplete operation success at the portable result boundary
-        run: node --test scripts/ci/manual-windows-acceptance/result-acceptance.node-test.mjs scripts/ci/manual-windows-acceptance/preflight.node-test.mjs scripts/ci/manual-windows-acceptance/operation-diagnostic.node-test.mjs
+        run: node --test scripts/ci/manual-windows-acceptance/result-acceptance.node-test.mjs scripts/ci/manual-windows-acceptance/preflight.node-test.mjs scripts/ci/manual-windows-acceptance/operation-diagnostic.node-test.mjs scripts/ci/manual-windows-acceptance/cli-failure-kinds.node-test.mjs
       - name: Check immutable target and native prerequisites
         env:
           TARGET_SHA: ${{ github.sha }}

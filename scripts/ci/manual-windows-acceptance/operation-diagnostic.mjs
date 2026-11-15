@@ -2,6 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 import assert from "node:assert/strict";
 import { preflightDiagnostic } from "./preflight-state.mjs";
+import { validateCliFailureKinds } from "./cli-failure-kinds.mjs";
 const stages = new Set([
   "none",
   "lexical-index-ready",
@@ -22,6 +23,12 @@ const stages = new Set([
   "duckdb-value",
   "analytics-key-read",
   "analytics-key-size",
+  "restart-offline-status-command",
+  "restart-offline-status-json",
+  "restart-collector",
+  "restart-persistence-read",
+  "restart-persistence-match",
+  "restart-status-command",
   "shutdown-request",
   "shutdown-join",
   "shutdown-receipt",
@@ -50,6 +57,9 @@ export function validateOperationDiagnostic(value) {
     subphase: value.subphase,
     errorCode: diagnostic.errorCode,
     assertionId: value.assertionId,
+    ...(value.cliFailureKinds === undefined
+      ? {}
+      : { cliFailureKinds: validateCliFailureKinds(value.cliFailureKinds) }),
     ...(value.applicationExitCode === undefined
       ? {}
       : { applicationExitCode: value.applicationExitCode }),
@@ -63,6 +73,9 @@ export function operationDiagnostic(subphase, error, assertionId = null) {
     ...diagnostic,
     subphase,
     assertionId,
+    ...(error?.manualCliFailureKinds === undefined
+      ? {}
+      : { cliFailureKinds: error.manualCliFailureKinds }),
     ...(Number.isInteger(error?.manualApplicationExitCode)
       ? { applicationExitCode: error.manualApplicationExitCode }
       : {}),

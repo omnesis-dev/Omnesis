@@ -11,6 +11,7 @@ import {
 
 import assert from "node:assert/strict";
 import { operationDiagnostic } from "./operation-diagnostic.mjs";
+import { cliFailureKinds } from "./cli-failure-kinds.mjs";
 import { recordReadiness, manualAcceptance } from "./readiness-acceptance.mjs";
 import { verifyRuntimeProvenance } from "./verify-runtime-provenance.mjs";
 import { createRequire } from "node:module";
@@ -314,6 +315,7 @@ async function cli(args, label, timeout = 180000) {
   } catch (error) {
     operationAssertion = "operation-assert-007";
     error.manualApplicationExitCode = fate.code;
+    error.manualCliFailureKinds = cliFailureKinds(r.stderr);
     throw error;
   }
   return r.stdout;
@@ -418,8 +420,9 @@ async function startCollector() {
         });
       const list = await api("/admin/devices");
       return (
-        list.items?.some((d) => d.kind === "collector" && d.name === "audit-notes-collector") &&
-        existsSync(join(cfg, "collector-token"))
+        list.items?.some(
+          (d) => d.kind === "collector" && d.name === "audit-notes-collector" && d.online === true,
+        ) && existsSync(join(cfg, "collector-token"))
       );
     },
     diagnosticDaemonBudget,
@@ -688,12 +691,20 @@ try {
     agent.destroy();
     agent = undefined;
     await startGateway();
+    pendingOperation("restart-offline-status-command");
+    const offlineStatus = await cli(["status", "--json"], "restart-offline-status");
+    pendingOperation("restart-offline-status-json");
+    JSON.parse(offlineStatus);
+    pendingOperation("restart-collector");
     await startCollector();
+    pendingOperation("restart-persistence-read");
     const persisted = await api("/documents/search?q=Invented&limit=20");
+    pendingOperation("restart-persistence-match");
     assert.deepEqual(
       persisted.results.map((d) => d.id ?? d.documentId).sort(),
       receipt.documentIds.slice().sort(),
     );
+    pendingOperation("restart-status-command");
     await cli(["status", "--json"], "restart-status");
   });
   await step("final-graceful-joined-shutdown", async () => {
