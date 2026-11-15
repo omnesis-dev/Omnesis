@@ -37,6 +37,10 @@ on:
             source-ownership,
           ]
         default: regressions
+      codex_diagnostic:
+        type: boolean
+        default: false
+        description: Include the separately instrumented Windows Codex E2E diagnostic
 permissions:
   contents: read
 env:
@@ -93,10 +97,10 @@ jobs:
           packages/collector/src/source-ws-handlers.test.ts
           packages/collector/src/source-ws-handlers.auth-begin.test.ts
       - name: Build native libraries for the bounded Codex Gateway diagnostic
-        if: ${{ runner.os == 'Windows' }}
+        if: ${{ runner.os == 'Windows' && inputs.codex_diagnostic }}
         run: node scripts/ci/build-windows-sqlite.mjs && node scripts/ci/build-windows-usearch.mjs
       - name: Investigate the Codex native-output timeout without extending its deadline
-        if: ${{ runner.os == 'Windows' }}
+        if: ${{ runner.os == 'Windows' && inputs.codex_diagnostic }}
         env:
           OMNESIS_E2E_WORKERS: "1"
         run: node scripts/run-check.mjs e2e packages/collector/src/e2e/codex-agent.e2e.test.ts
