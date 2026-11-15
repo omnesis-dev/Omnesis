@@ -5,7 +5,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { Hono } from "hono";
 import { HTTPException } from "hono/http-exception";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
-import { SCOPE_ADMIN } from "@omnesis/types";
+import { SCOPE_ADMIN, SCOPE_PUSH_CLAIM } from "@omnesis/types";
 import { gatewayPasskeyStepUpBinding, type GatewayEnrollment } from "@omnesis/cloud-relay";
 import { scope, strictRoute } from "./scope.js";
 import { HttpError, errorResponse } from "./errors.js";
@@ -15,6 +15,7 @@ import {
   asksFirst,
   declines,
   mountStepUp,
+  ownPushClaimToken,
   requireStepUp,
 } from "./step-up.js";
 import type { AppEnv, AuthContext } from "./routes/types.js";
@@ -495,4 +496,35 @@ test("ids keep the real clock when no other is given", () => {
   const { stepUpId, expiresAt } = stepUps.issue("binding");
   expect(expiresAt).toBeGreaterThan(Date.now());
   expect(stepUps.take(stepUpId, "binding")).toBe(true);
+});
+
+test("only a phone's own push:claim token, asked for with a token that already claims, is exempt", () => {
+  const phone: AuthContext = { ...bearer, scopes: [SCOPE_ADMIN, SCOPE_PUSH_CLAIM] };
+  const as = (auth: AuthContext | undefined) =>
+    ({ get: (key: string) => (key === "auth" ? auth : undefined) }) as unknown as Parameters<
+      typeof ownPushClaimToken
+    >[1];
+  const own = { deviceId: DEVICE, scopes: ["push:claim"], name: "notifications" };
+  expect(ownPushClaimToken(own, as(phone))).toBe(true);
+  expect(ownPushClaimToken({ ...own, ttlMs: 1000 }, as(phone))).toBe(true);
+  for (const body of [
+    { ...own, deviceId: "dev_fictional_other" },
+    { ...own, scopes: ["push:claim", "read"] },
+    { ...own, scopes: ["push:claim", "push:claim"] },
+    { ...own, scopes: ["admin"] },
+    { ...own, scopes: [] },
+    { ...own, scopes: "push:claim" },
+    { deviceId: DEVICE },
+    null,
+    undefined,
+  ])
+    expect(ownPushClaimToken(body, as(phone)), JSON.stringify(body)).toBe(false);
+  // Who asks matters as much as what is asked for.
+  for (const auth of [
+    undefined,
+    bearer,
+    { ...phone, deviceId: null },
+    { ...phone, authMethod: "portal-session", credentialDeviceId: DEVICE, csrfToken: "x" },
+  ] as Array<AuthContext | undefined>)
+    expect(ownPushClaimToken(own, as(auth))).toBe(false);
 });
