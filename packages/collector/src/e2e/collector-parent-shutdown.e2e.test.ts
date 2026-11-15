@@ -4,7 +4,13 @@
 import { join } from "node:path";
 import type { ChildProcess } from "node:child_process";
 import { afterAll, beforeAll, expect, test } from "vitest";
-import { ensureInstallRootKey, ownedProcessCleanupReceipt } from "@omnesis/core";
+import {
+  ensureInstallRootKey,
+  ensureStorageKey,
+  markStorageEncryptionRequired,
+  ownedProcessCleanupReceipt,
+  storageKeyNamesForHost,
+} from "@omnesis/core";
 import { MultiCollectorHarness, waitForCondition } from "./multi-collector-harness.js";
 import { e2eTsxCommand, gatewayBootBudgetMs } from "./gateway-env.js";
 import {
@@ -28,7 +34,16 @@ beforeAll(async () => {
     extraGatewayEnv: { OMNESIS_SECRET_STORE: "file" },
   });
   try {
-    await ensureInstallRootKey({ backend: "file", configDir: harness.gatewayConfigDir });
+    const storage = { backend: "file" as const, configDir: harness.gatewayConfigDir };
+    await ensureInstallRootKey(storage);
+    // Match keyring storage-init --host all: provisioning belongs to fixture
+    // setup, while daemon readiness observes an already configured install.
+    for (const host of ["gateway", "collector"] as const)
+      for (const keyName of storageKeyNamesForHost(host)) {
+        const state = await ensureStorageKey(keyName, storage);
+        expect(state).toMatchObject({ valid: true, encrypted: true });
+      }
+    await markStorageEncryptionRequired(storage.configDir, storage);
     await harness.start();
   } catch (error) {
     if (ownedProcessCleanupReceipt(error) !== undefined) retained = true;

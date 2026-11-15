@@ -89,11 +89,13 @@ jobs:
           scripts/ci/npm-ci-node.test.mjs
           packages/cli/src/commands/integration-runtime.test.ts
           packages/agent/src/replay-backend.test.ts
+          packages/gateway/src/agent/replay-factory.test.ts
           packages/agent-integration/src/hermes-windows-bridge.test.ts
           scripts/lib/check-process.test.mjs
           scripts/ci/windows-checks.test.mjs
           scripts/run-check.test.mjs
           scripts/run-e2e.test.mjs
+          scripts/ci/with-test-embedder.test.mjs
           scripts/nx/entrypoints.test.mjs
       - name: Validate Collector ownership and absolute deadlines
         if: ${{ !cancelled() }}
@@ -130,6 +132,9 @@ jobs:
           packages/cloud-relay/src/dns-broker-marker-cleanup.test.ts
           packages/cloud-relay/src/acme-caa-cleanup.test.ts
           packages/cloud-relay/src/gateway-caa-cleanup.test.ts
+          packages/cloud-relay/src/runtime.test.ts
+          packages/cloud-relay/src/gateway-key-client.test.ts
+          packages/relay/src/carriers/carriers.test.ts
       - name: Validate provider health and live store contracts
         if: ${{ !cancelled() }}
         run: >-

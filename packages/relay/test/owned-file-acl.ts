@@ -54,9 +54,7 @@ $sddl=$acl.GetSecurityDescriptorSddlForm([Security.AccessControl.AccessControlSe
 $descriptor=[Security.AccessControl.RawSecurityDescriptor]::new($sddl)
 $protected=$acl.AreAccessRulesProtected
 $flags=[int]$descriptor.ControlFlags
-if ($protected) {
-  $flags=$flags -band (-bnot [int]([Security.AccessControl.ControlFlags]::DiscretionaryAclAutoInherited))
-}
+$flags=$flags -band (-bnot [int]([Security.AccessControl.ControlFlags]::DiscretionaryAclAutoInherited))
 $aces=@(foreach ($ace in $descriptor.DiscretionaryAcl) {
   $bytes=[byte[]]::new($ace.BinaryLength)
   $ace.GetBinaryForm($bytes,0)
@@ -88,8 +86,9 @@ $aces=@(foreach ($ace in $descriptor.DiscretionaryAcl) {
       original.sddl,
     );
     const restored = await capture();
-    // Windows can mark a protected DACL auto-inherited and materialize its inherited
-    // ACEs as explicit. Preserve every other control bit and ordered ACE byte.
+    // Windows can mark a restored DACL auto-inherited. A protected DACL can also
+    // materialize inherited ACEs as explicit. Preserve every other control bit
+    // and ordered ACE byte, including inherited flags on unprotected DACLs.
     const comparable = (acl: typeof original) => ({
       owner: acl.owner,
       protected: acl.protected,

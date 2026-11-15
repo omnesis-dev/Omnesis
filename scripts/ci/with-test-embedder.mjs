@@ -2,7 +2,6 @@
 // Copyright (c) 2026 Adrien Conrath
 
 /** Run a Node check with the reference embedding model, without requiring Docker. */
-import { spawn } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { createReadStream, createWriteStream, readFileSync } from "node:fs";
 import { mkdir, rename, rm } from "node:fs/promises";
@@ -13,7 +12,18 @@ import { join } from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { pathToFileURL } from "node:url";
-import { waitForChild } from "../lib/check-process.mjs";
+import { runCheckCommand, checkFailureMessage } from "../lib/check-process.mjs";
+import { ownedProcessCleanupReceipt } from "../../packages/core/src/owned-process-cleanup.ts";
+
+const retainedRuntimes = new Set();
+let retainedRuntimeHold;
+const retainedRuntimeError = Object.assign(new Error("Embedding runtime cleanup requires review"), {
+  cleanupFailure: undefined,
+});
+function retainRuntime(runtime) {
+  retainedRuntimes.add(runtime);
+  retainedRuntimeHold ??= setInterval(() => {}, 60_000);
+}
 
 // The same model, revision and quantization as scripts/test-embedder.sh.
 export const REFERENCE_MODEL = Object.freeze(
@@ -109,6 +119,7 @@ export function embeddingServer(embed, modelId = REFERENCE_MODEL.id) {
 }
 
 export async function main(args = process.argv.slice(2)) {
+  if (retainedRuntimes.size) throw retainedRuntimeError;
   if (args.length === 0)
     throw new Error("Expected Node script and arguments to run with the test embedder");
   const port = Number(process.env.OMNESIS_TEST_EMBEDDER_PORT ?? 8001);
@@ -120,9 +131,28 @@ export async function main(args = process.argv.slice(2)) {
   const require = createRequire(new URL("../../packages/gateway/package.json", import.meta.url));
   const { getLlama } = await import(pathToFileURL(require.resolve("node-llama-cpp")).href);
   const llama = await getLlama({ gpu: false, maxThreads: 2 });
+  return runWithEmbeddingRuntime(args, { modelPath, port, llama });
+}
+
+/** Keep embedding resources alive until the owned check has confirmed its cleanup. */
+export async function runWithEmbeddingRuntime(
+  args,
+  { modelPath, port, llama, retainUnconfirmed = retainRuntime },
+  run = runCheckCommand,
+) {
+  if (retainedRuntimes.size) throw retainedRuntimeError;
   let model;
   let context;
   let server;
+  let cleanupUnconfirmed = false;
+  let failed = false;
+  let failure;
+  let exitCode;
+  const cleanupErrors = [];
+  const retain = () => {
+    cleanupUnconfirmed = true;
+    retainUnconfirmed({ server, context, model, llama });
+  };
   try {
     model = await llama.loadModel({ modelPath });
     context = await model.createEmbeddingContext({
@@ -143,34 +173,65 @@ export async function main(args = process.argv.slice(2)) {
     });
     // Prove native inference works before the suite starts, not just the HTTP socket.
     await context.getEmbeddingFor("readiness probe");
-    process.stderr.write(`[embedder] ${REFERENCE_MODEL.id} ready on port ${port}\n`);
-    return await waitForChild(
-      spawn(process.execPath, args, {
-        stdio: "inherit",
-        detached: process.platform !== "win32",
-        env: {
-          ...process.env,
-          OMNESIS_TEST_EMBEDDER_URL: `http://127.0.0.1:${port}`,
-          OMNESIS_TEST_EMBEDDER_MODEL_PATH: modelPath,
-        },
-      }),
-    );
+    const boundPort = server.address().port;
+    process.stderr.write(`[embedder] ${REFERENCE_MODEL.id} ready on port ${boundPort}\n`);
+    exitCode = await run(process.execPath, args, {
+      env: {
+        ...process.env,
+        OMNESIS_TEST_EMBEDDER_URL: `http://127.0.0.1:${boundPort}`,
+        OMNESIS_TEST_EMBEDDER_MODEL_PATH: modelPath,
+      },
+    });
+  } catch (error) {
+    failed = true;
+    failure = error;
+    if (ownedProcessCleanupReceipt(error) !== undefined) retain();
   } finally {
-    if (server?.listening) {
-      server.closeAllConnections();
-      await new Promise((resolve) => server.close(resolve));
+    if (!cleanupUnconfirmed) {
+      for (const cleanup of [
+        async () => {
+          if (server?.listening) {
+            server.closeAllConnections();
+            await new Promise((resolve, reject) =>
+              server.close((error) => (error ? reject(error) : resolve())),
+            );
+          }
+        },
+        () => context?.dispose(),
+        () => model?.dispose(),
+        () => llama.dispose(),
+      ]) {
+        try {
+          await cleanup();
+        } catch (error) {
+          cleanupErrors.push(error);
+          if (ownedProcessCleanupReceipt(error) !== undefined) {
+            retain();
+            break;
+          }
+        }
+      }
     }
-    await context?.dispose();
-    await model?.dispose();
-    await llama.dispose();
   }
+  if (cleanupErrors.length) {
+    const reasons = [...(failed ? [failure] : []), ...cleanupErrors];
+    const marked = reasons.find((error) => ownedProcessCleanupReceipt(error) !== undefined);
+    const receipt = ownedProcessCleanupReceipt(marked);
+    const error = new AggregateError(reasons, "Embedding runtime cleanup failed", {
+      cause: receipt === undefined ? cleanupErrors[0] : marked,
+    });
+    if (receipt !== undefined) Object.assign(error, { cleanupFailure: receipt.failure });
+    throw error;
+  }
+  if (failed) throw failure;
+  return exitCode;
 }
 
 if (import.meta.main) {
   try {
     process.exitCode = await main();
   } catch (error) {
-    process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+    process.stderr.write(`${checkFailureMessage(error)}\n`);
     process.exitCode = 1;
   }
 }
