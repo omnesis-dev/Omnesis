@@ -626,6 +626,80 @@ test("the link callback pins its own sign-in, and enrollment choices stay local 
   await expect(f.manager.removeTrustedSignIn(google.id)).rejects.toMatchObject({ status: 409 });
 });
 
+test("the approval card's suggestion compares a sign-in with the one this gateway verified on its link", async () => {
+  const f = await fixture();
+  const device = passkeyAuthenticator();
+  f.browser.redeem.mockImplementationOnce(((pending: AccountBrowserPending) =>
+    Promise.resolve({
+      identityToken: "verified-role-proof",
+      identity: { issuer: origin + "/_relay/account", subject: f.accountId, expiresAt: 1 },
+      signInProof: registrationProof(device, linkNonce(pending.nonce)),
+    })) as never);
+  const google = (id: string) => ({
+    type: "google" as const,
+    id,
+    trusted: false,
+    channel: "native-google" as const,
+    pin: { type: "google" as const, id, addedAt: 1 },
+    email: "maya.reeves@example.com",
+  });
+  const passkey = (id: string) => ({
+    type: "passkey" as const,
+    id,
+    trusted: false,
+    channel: "android-app" as const,
+    pin: { type: "passkey" as const, id, publicKey: "fictional-key", addedAt: 1 },
+  });
+  const neither = { firstConfirmation: false, otherGoogleAccount: false };
+  // Not linked: there is nothing to compare with.
+  expect(f.manager.rememberHint(google("b".repeat(64)))).toEqual(neither);
+  await f.link();
+  const enrollment = f.manager.pairingIdentity()!.enrollment;
+  // Linked with a passkey: that passkey is the first confirmation, nothing else is.
+  expect(enrollment.rememberHint!(passkey(device.id))).toEqual({
+    firstConfirmation: true,
+    otherGoogleAccount: false,
+  });
+  expect(enrollment.rememberHint!(passkey("another-passkey"))).toEqual(neither);
+  // With no Google account linked, none is called another one.
+  expect(enrollment.rememberHint!(google("b".repeat(64)))).toEqual(neither);
+  // Linked with Google: the same account by the same derivation, or another one.
+  const record = JSON.parse(await readFile(f.options.metadataFile, "utf8"));
+  record.trustedSignIns.push({
+    type: "google",
+    id: "b".repeat(64),
+    addedAt: 1,
+    source: "link-page",
+  });
+  // A Google account pinned some other way is not the one the gateway was linked with.
+  record.trustedSignIns.push({
+    type: "google",
+    id: "d".repeat(64),
+    addedAt: 1,
+    source: "approval",
+  });
+  await writeFile(f.options.metadataFile, JSON.stringify(record), { mode: 0o600 });
+  const manager = new GatewayAccountLink(f.options);
+  await manager.initialize();
+  expect(manager.rememberHint(google("b".repeat(64)))).toEqual({
+    firstConfirmation: true,
+    otherGoogleAccount: false,
+  });
+  for (const other of ["c".repeat(64), "d".repeat(64)])
+    expect(manager.rememberHint(google(other))).toEqual({
+      firstConfirmation: false,
+      otherGoogleAccount: true,
+    });
+  // Once anything is confirmed here, the first confirmation is over.
+  (f.browser as AccountBrowserPort).credentials = async () => ({
+    accountId: f.accountId,
+    google: ["b".repeat(64)],
+    passkeys: [{ id: device.id, publicKey: "unused" }],
+  });
+  await manager.trustSignIn(google("b".repeat(64)));
+  expect(manager.rememberHint(google("b".repeat(64)))).toEqual(neither);
+});
+
 test("sign-in checks use this installation's relay, Android origins and Google audiences only", async () => {
   const f = await fixture();
   const device = passkeyAuthenticator();
@@ -2854,7 +2928,9 @@ test("F21 (step-up): only a passkey confirmed here steps up, once, for the actio
   expect(f.manager.confirmedSignIns()).toEqual([expect.objectContaining({ counter: 3 })]);
   // During a certificate incident no step-up starts, and one started before counts for nothing.
   const early = enrollment.stepUpCeremony!(binding)!;
+  expect(enrollment.securityLock!()).toBe(false);
   expect(await f.manager.holdForCertificateIncident([ROGUE])).toBe(true);
+  expect(enrollment.securityLock!()).toBe(true);
   expect(enrollment.stepUpRequired!()).toBe(true);
   expect(enrollment.stepUpCeremony!(binding)).toBeUndefined();
   expect(await stepUp(owner, early, { counter: 4 })).toBe(false);

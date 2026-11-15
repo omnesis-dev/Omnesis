@@ -7,7 +7,7 @@ import { CloudRelayManagementFailure } from "@omnesis/cloud-relay";
 import { scope } from "../../scope.js";
 import { validateJson, validateQuery } from "../../validate.js";
 import { arrivedThroughRelay } from "../../client-ip.js";
-import { asksFirst, requireStepUp } from "../../step-up.js";
+import { asksFirst, requireStepUp, stepUpRequired } from "../../step-up.js";
 import {
   cloudRelayConfigureBody,
   cloudRelayEnableBody,
@@ -39,7 +39,11 @@ export function mountCloudRelayManagementRoutes(
     respond(c, async () => {
       // Only this read asks the relay; other callers of status() never reach the network.
       await service.refreshSignupAccess?.();
-      return service.status();
+      return {
+        ...(await service.status()),
+        // Whether loosening actions from this session ask for a passkey first. Labels only.
+        stepUpRequired: stepUpRequired(c),
+      };
     }),
   );
   app.post(

@@ -47,6 +47,19 @@ export function installAccountUI() {
       automatic: true,
     },
   };
+  // The one sign-in a gateway's page already chose, such as its "Continue with Google" button.
+  const methodCopy = {
+    google: {
+      title: "Continue with Google",
+      signIn: "Sign in to this gateway with the Google account you use for Omnesis.",
+      action: "Continue with Google",
+    },
+    passkey: {
+      title: "Continue with your passkey",
+      signIn: "Sign in to this gateway with the passkey you use for Omnesis.",
+      action: "Continue with passkey",
+    },
+  };
   // Shown instead of the sign-in copy when the person chose to create an account.
   const createCopy = {
     title: "Create your Omnesis account",
@@ -558,22 +571,36 @@ export function installAccountUI() {
         throw new Error("Invalid account handoff");
       window.location.assign(url.href);
     },
-    signInChoices(session) {
-      ui.button("Sign in with Passkey", () => ui.enter(false));
-      if (session.googleAvailable)
-        ui.googleButton("Sign in with Google", () => ui.enter(true), true);
+    /** `only` is the one sign-in the gateway's page already chose, when it chose one. */
+    signInChoices(session, only) {
+      if (only !== "google")
+        ui.button(only ? methodCopy.passkey.action : "Sign in with Passkey", () => ui.enter(false));
+      if (session.googleAvailable && only !== "passkey")
+        ui.googleButton(
+          only ? methodCopy.google.action : "Sign in with Google",
+          () => ui.enter(true),
+          !only,
+        );
     },
     /** An account is created only from here, by the sign-in the person picks on this view. */
-    createChoices(session) {
-      if (session.googleAvailable) ui.googleButton("Create with Google", () => ui.google(false));
-      if (session.canCreateAccount)
-        ui.button("Create with a passkey", () => ui.signIn(true), session.googleAvailable);
+    createChoices(session, only) {
+      const google = session.googleAvailable && only !== "passkey";
+      if (google) ui.googleButton("Create with Google", () => ui.google(false));
+      if (session.canCreateAccount && only !== "google")
+        ui.button("Create with a passkey", () => ui.signIn(true), google);
       const note = ui.node(
         "p",
         "If this Google account already has an Omnesis account, you'll be signed in to it instead.",
       );
       note.className = "note";
-      if (session.googleAvailable) root.append(note);
+      if (google) root.append(note);
+    },
+    /** The sign-in a gateway's page chose, if this page can offer it. */
+    method(session) {
+      const { method } = session.pending;
+      return method === "passkey" || (method === "google" && session.googleAvailable)
+        ? method
+        : undefined;
     },
     async setIntent(intent) {
       await ui.api("intent", { intent });
@@ -629,9 +656,19 @@ export function installAccountUI() {
       const { pending } = session,
         copy = pendingCopy[pending.purpose],
         signedIn = session.authenticated && !pending.needsProof,
-        creating = pending.intent === "create" && !signedIn && !pending.denied;
+        creating = pending.intent === "create" && !signedIn && !pending.denied,
+        only = signedIn || pending.denied ? undefined : ui.method(session),
+        // Signing in with the one sign-in the gateway's page chose is the whole step.
+        sole = !creating && only && methodCopy[only];
       root.append(
-        ui.node("h1", creating ? createCopy.title : (signedIn && copy.readyTitle) || copy.title),
+        ui.node(
+          "h1",
+          creating
+            ? createCopy.title
+            : sole
+              ? sole.title
+              : (signedIn && copy.readyTitle) || copy.title,
+        ),
       );
       const name = ui.node("p", pending.deviceName ?? pending.gatewayName ?? pending.hostname);
       name.className = "pending-host";
@@ -650,13 +687,13 @@ export function installAccountUI() {
       }
       if (creating) {
         root.append(...createCopy.lines.map((line) => ui.node("p", line)));
-        ui.createChoices(session);
+        ui.createChoices(session, only);
         ui.button("I already have an account", () => ui.setIntent("existing"), true);
         return;
       }
       if (!signedIn) {
-        root.append(ui.node("p", copy.signIn));
-        ui.signInChoices(session);
+        root.append(ui.node("p", sole ? sole.signIn : copy.signIn));
+        ui.signInChoices(session, only);
         if (pending.intent)
           ui.button("Create an account instead", () => ui.setIntent("create"), true);
         return;
