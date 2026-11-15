@@ -231,6 +231,8 @@ export const FOCUSED_UNIT_FILES = [
   "packages/providers/telegram/src/protected-store.test.ts",
   "packages/providers/telegram/src/message-store.test.ts",
   "packages/providers/whatsapp/src/message-store.test.ts",
+  "packages/providers/whatsapp/src/import/importer.test.ts",
+  "packages/providers/whatsapp/src/import/importer-ownership.test.ts",
   "packages/cli/src/credentials-wizard.test.ts",
   "packages/cli/src/load-env.test.ts",
   "packages/cli/src/commands/devices.test.ts",

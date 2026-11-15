@@ -238,7 +238,8 @@ collector    omnesis-collector.service                running        41283</pre>
           Collector shutdown refuses new source-management commands, cancels history imports, and
           waits for accepted commands and imports to finish. Authentication waits for its process to
           finish before reporting success. Unconfirmed cleanup is logged and keeps the process
-          running for investigation.
+          running for investigation. Import working files are kept when their worker's cleanup
+          cannot be confirmed.
         </p>
         <p>
           A collector whose event loop stops turning for five minutes (alive, but stuck and syncing

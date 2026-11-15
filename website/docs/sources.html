@@ -527,9 +527,11 @@
           <li>
             <strong>Recovery.</strong> A wrong password or key fails the import with a clear message
             rather than a partial result. A backup in an unrecognized or unsupported format is
-            refused by name instead of crashing. Cancelling stops the import and deletes its
-            decrypted working files; messages already imported stay, and running the import again
-            adds the rest without duplicating them.
+            refused by name instead of crashing. Cancelling stops new import batches and deletes
+            decrypted working files once the worker has stopped. If cleanup cannot be confirmed,
+            Omnesis keeps those files private and logs the failure for investigation. Messages
+            already imported stay, and running the import again adds the rest without duplicating
+            them.
           </li>
         </ul>
 
