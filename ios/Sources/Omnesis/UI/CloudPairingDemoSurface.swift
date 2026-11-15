@@ -63,7 +63,7 @@ struct CloudPairingDemoSurface: View {
                         ),
                         client: approvals
                     )
-                        .navigationTitle("Device access")
+                    .navigationTitle("Device access")
                 }.environment(AppStore.preview())
             case .status:
                 ScrollView {

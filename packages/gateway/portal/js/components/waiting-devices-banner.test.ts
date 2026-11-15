@@ -60,10 +60,15 @@ async function settle() {
   }
 }
 /** The strip as the portal shell mounts it: the shared answer, read with the gateway's features. */
-function Shell({ cloudRelay = true, tailscaleEmbed = false, paused = false }: Record<string, boolean>) {
+interface ShellProps {
+  cloudRelay?: boolean;
+  tailscaleEmbed?: boolean;
+  paused?: boolean;
+}
+function Shell({ cloudRelay = true, tailscaleEmbed = false, paused = false }: ShellProps) {
   return h(WaitingDevicesBanner, { waiting: useWaitingDevices({ cloudRelay, tailscaleEmbed }), paused });
 }
-async function show(props: Record<string, unknown> = {}) {
+async function show(props: ShellProps = {}) {
   await act(async () => render(h(Shell, props), host));
   await settle();
 }
