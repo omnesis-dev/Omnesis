@@ -18,6 +18,10 @@
 // still parses its path and the view — which knows the mode — decides whether
 // to render it or fall back.
 //
+// `cloudRelay` and `tailscaleEmbed` mark a tab that only exists when the
+// gateway runs with that optional feature on; like experimental tabs, the
+// router keeps their keys and the view decides.
+//
 // `ownsSection` marks a tab that addresses one level deeper
 // (`/portal/settings/models/<capability>`). Without it the router would have
 // to know one tab's shape by name.
@@ -35,6 +39,7 @@ const TABS = [
   { key: "policies", label: "Policies" },
   { key: "devices", label: "Devices" },
   { key: "account", label: "Omnesis account", cloudRelay: true },
+  { key: "tailscale", label: "Tailscale", tailscaleEmbed: true },
 ];
 
 /** Every tab key — what the router accepts as a path segment. */
@@ -50,8 +55,8 @@ export const SETTINGS_TABS_WITH_SECTION = TABS.filter((t) => t.ownsSection).map(
 export const EXPERIMENTAL_SETTINGS_TABS = TABS.filter((t) => t.experimental).map((t) => t.key);
 
 /** The tab set to render, in display order. */
-export function settingsTabs({ experimental = false, brain = experimental, labAvailable = false, cloudRelay = false } = {}) {
-  return TABS.filter((t) => (!t.experimental || experimental) && (t.key !== "sweeps" || brain) && (t.key !== "lab" || labAvailable) && (!t.cloudRelay || cloudRelay)).map(({ key, label }) => ({
+export function settingsTabs({ experimental = false, brain = experimental, labAvailable = false, cloudRelay = false, tailscaleEmbed = false } = {}) {
+  return TABS.filter((t) => (!t.experimental || experimental) && (t.key !== "sweeps" || brain) && (t.key !== "lab" || labAvailable) && (!t.cloudRelay || cloudRelay) && (!t.tailscaleEmbed || tailscaleEmbed)).map(({ key, label }) => ({
     key,
     label,
   }));

@@ -37,6 +37,21 @@ describe("Settings header actions", () => {
     else globalThis.window = originalWindow;
   });
 
+  test("marks the Devices tab while devices wait for approval, with the count in words", async () => {
+    await act(async () => {
+      render(h(SettingsView, { tab: "config", waitingDevices: 2 }), host);
+    });
+    const mark = host.querySelector(
+      '.config-tab [aria-label="2 devices are waiting for your approval to pair to this gateway."]',
+    );
+    expect(mark).not.toBeNull();
+    expect(mark?.closest("button")?.textContent).toContain("Devices");
+    await act(async () => {
+      render(h(SettingsView, { tab: "config", waitingDevices: 0 }), host);
+    });
+    expect(host.querySelector(".config-tab .waiting-devices-icon")).toBeNull();
+  });
+
   test("marks the Models tab while another settings page is open and clears on recovery", async () => {
     await act(async () => {
       render(h(SettingsView, { tab: "config", modelHealth: { warnings: [{ role: "agent" }] } }), host);
@@ -59,6 +74,22 @@ describe("Settings header actions", () => {
     await act(async () => { render(h(SettingsView, { tab: "account", cloudRelay: true }), host); });
     expect(host.querySelector(".settings-view")?.getAttribute("class")).toBe("settings-view relay-on");
     expect([...host.querySelectorAll(".config-tab")].map((tab) => tab.textContent)).toContain("Omnesis account");
+  });
+
+  test("the Tailscale tab appears only when the gateway runs its own Tailscale device", async () => {
+    const labels = () => [...host.querySelectorAll(".config-tab")].map((tab) => tab.textContent?.trim());
+    await act(async () => { render(h(SettingsView, { tab: "tailscale" }), host); });
+    expect(labels()).not.toContain("Tailscale");
+    // A link into the tab with the feature off lands on the default tab, with no Tailscale page.
+    expect(host.querySelector(".config-tab.active")?.textContent).toBe("Config");
+    expect(host.querySelector(".settings-view")?.getAttribute("class")).toBe("settings-view");
+    await act(async () => { render(h(SettingsView, { tab: "tailscale", tailscaleEmbed: true }), host); });
+    expect(labels().at(-1)).toBe("Tailscale");
+    expect(host.querySelector(".config-tab.active")?.textContent).toBe("Tailscale");
+    expect(host.querySelector(".settings-view")?.getAttribute("class")).toBe("settings-view");
+    const tab = [...host.querySelectorAll(".config-tab")].find((t) => t.textContent?.trim() === "Devices") as HTMLButtonElement;
+    await act(async () => { tab.click(); });
+    expect(router.replaceRoute).toHaveBeenCalledWith("/portal/settings/devices");
   });
 
   test("renders logout in the settings header and invokes the app handler", async () => {

@@ -4,13 +4,15 @@
 // The addresses the connect dialog can give an agent, and what the page says
 // about the one that is selected. An agent that connects from its vendor's
 // servers needs an address the Internet can reach: one the owner published
-// themselves or, with the optional cloud relay, the Omnesis address the
-// gateway's account gives it.
+// themselves, the Omnesis address the optional cloud relay gives the gateway,
+// or the public address of the gateway's own Tailscale device. Each of these
+// only adds a choice: a gateway with all three offers all three.
 //
 // Every agent's notice comes from `hostedClientAddress` or
 // `localClientAddress`, so the same situation reads the same for each of them.
-// Without the relay (`state: "none"`) there is one address, nothing to pick,
-// and the wording is the one the page had before the relay existed.
+// Without the relay and the Tailscale device (`state: "none"`) there is one
+// address, nothing to pick, and the wording is the one the page had before
+// either existed.
 //
 // Text is a list of parts: a string, `{ strong }`, `{ href, text }` for a docs
 // link, or `{ route, text }` for a link inside the portal.
@@ -18,6 +20,7 @@
 import { useEffect, useState } from "preact/hooks";
 
 import { relayManagement } from "../../lib/cloud-relay-api.js";
+import { getTailscale } from "../../lib/tailscale-api.js";
 
 /** The gateway does not serve the docs; these are the published pages. */
 export const DOCS = "https://omnesis.dev/docs";
@@ -27,6 +30,9 @@ export const PUBLISH_DOMAIN = `${DOCS}/setup#public-domain`;
 /** Where remote access is turned on, and where a gateway connects to an Omnesis account. */
 export const ACCOUNT_SETTINGS_ROUTE = "/portal/settings/account";
 const ACCOUNT_SETTINGS = { route: ACCOUNT_SETTINGS_ROUTE, text: "Settings, Account" };
+/** Where the gateway's own Tailscale device and its public address are managed. */
+export const TAILSCALE_SETTINGS_ROUTE = "/portal/settings/tailscale";
+const TAILSCALE_SETTINGS = { route: TAILSCALE_SETTINGS_ROUTE, text: "Settings, Tailscale" };
 
 const PRIVATE_SUFFIXES = [".local", ".internal", ".lan", ".home.arpa", ".localhost"];
 
@@ -97,6 +103,14 @@ function sameAddress(left, right) {
   return a !== null && a === b;
 }
 
+function originOf(value) {
+  try {
+    return new URL(value).origin;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Whether the address the dialog leads with only works on the gateway's own
  * machine. The gateway marks every overview without a configured public URL,
@@ -138,6 +152,55 @@ export function relayPublicAddress(cloudRelay, status, oauth) {
   if (status.publicMcp.lastError) return { state: "unreachable", url };
   return { state: status.tunnel?.state === "online" ? "checking" : "disconnected", url };
 }
+
+export const NO_TAILSCALE = Object.freeze({ state: "none" });
+
+/**
+ * The address of the gateway's own Tailscale device, from `GET /admin/tailscale`:
+ *
+ * - `none`: the feature is off, its state is unknown, or the device is not on
+ *   the network. Nothing about it is shown.
+ * - `on`: `url` is also the device's public address and answers from the Internet.
+ * - `starting`: the public address is being opened.
+ * - `refused`: the owner asked for it and Tailscale does not allow it yet
+ *   (Funnel not enabled for the tailnet, or unavailable).
+ * - `off`: `url` answers only on the owner's Tailscale network.
+ *
+ * `url` is the agent address the gateway authorizes on the device's origin;
+ * an origin the gateway does not authorize is never offered.
+ *
+ * @param {boolean} tailscaleEmbed whether the gateway advertises the feature
+ * @param {object | null} state the device's state, when it was read
+ * @param {{ resource: string, resources?: Array<{ resource: string }> } | null} oauth
+ */
+export function tailscalePublicAddress(tailscaleEmbed, state, oauth) {
+  if (!tailscaleEmbed || !state || state.connection !== "connected") return NO_TAILSCALE;
+  const origin = originOf(state.url);
+  if (!origin) return NO_TAILSCALE;
+  const authorized = oauth?.resources?.length ? oauth.resources : [{ resource: oauth?.resource }];
+  const url = authorized.map((entry) => entry.resource).find((resource) => originOf(resource) === origin);
+  if (!url) return NO_TAILSCALE;
+  const publicState = state.public?.state;
+  if (publicState === "on" || publicState === "starting") return { state: publicState, url };
+  if (publicState === "needs-enable" || publicState === "unavailable") return { state: "refused", url };
+  return { state: "off", url };
+}
+
+/** Why the Tailscale device's address cannot serve an agent on the Internet, and what to do. */
+const TAILSCALE_PRIVATE = {
+  off: {
+    headline: "This address only answers on your Tailscale network.",
+    action: ["Turn on its public address in ", TAILSCALE_SETTINGS, "."],
+  },
+  starting: {
+    headline: "This address's public access is still opening.",
+    action: ["This takes up to a minute. Follow it in ", TAILSCALE_SETTINGS, "."],
+  },
+  refused: {
+    headline: "Tailscale is not letting this address be public yet.",
+    action: ["See what it needs in ", TAILSCALE_SETTINGS, "."],
+  },
+};
 
 /**
  * What is wrong with an Omnesis address that cannot be used right now, how its
@@ -186,11 +249,14 @@ const OR_PICK_ANOTHER = ["Or pick another address from the list above."];
  * One address the gateway authorizes, as the dialog's list names it:
  *
  * - `relay`: the Omnesis address, with `problem` when it cannot be used now.
+ * - `tailscale`: the Tailscale device's address while its public address is on.
+ * - `tailnet`: the Tailscale device's address, reachable only on the owner's
+ *   Tailscale network for now, with `private` saying why and what to do.
  * - `public`: an address the owner published themselves.
  * - `network` and `machine`: reachable only from the gateway's networks, or
  *   only on its own machine.
  */
-function describeAddress(resource, relay) {
+function describeAddress(resource, relay, tailscale = NO_TAILSCALE) {
   if (relay.url !== undefined && sameAddress(resource, relay.url)) {
     const problem = RELAY_UNAVAILABLE[relay.state];
     return {
@@ -200,6 +266,16 @@ function describeAddress(resource, relay) {
       text: `Omnesis address (${problem ? problem.marker : "remote access"}): ${resource}`,
       ...(problem ? { problem } : {}),
     };
+  }
+  if (tailscale.url !== undefined && sameAddress(resource, tailscale.url)) {
+    return tailscale.state === "on"
+      ? { resource, kind: "tailscale", text: `Tailscale public address: ${resource}` }
+      : {
+          resource,
+          kind: "tailnet",
+          text: `Tailscale network only: ${resource}`,
+          private: TAILSCALE_PRIVATE[tailscale.state],
+        };
   }
   if (isLoopbackAddress(resource)) {
     return { resource, kind: "machine", text: `This machine only: ${resource}` };
@@ -214,31 +290,42 @@ function describeAddress(resource, relay) {
  * authorizes, the one it leads with first.
  *
  * - `selectable` says the person picks between them. That takes more than one
- *   address and the relay: without it the dialog shows the one address it
- *   always showed.
+ *   address and the relay or the Tailscale device: without either the dialog
+ *   shows the one address it always showed.
  * - `initial` is the address selected until they pick: one the owner
  *   published themselves, since that is their explicit choice and the agents
- *   they already connected use it; else a ready Omnesis address; else the one
- *   the gateway leads with.
+ *   they already connected use it; else a ready Omnesis address; else the
+ *   Tailscale device's public address; else the one the gateway leads with.
+ * - `tailscale` is the Tailscale device's address as given, for the notices.
  *
  * @param {{ resource: string, resources?: Array<{ resource: string }> }} oauth
  * @param {{ state: string, url?: string }} [relay] from `relayPublicAddress`
+ * @param {{ state: string, url?: string }} [tailscale] from `tailscalePublicAddress`
  */
-export function addressChoices(oauth, relay = NO_RELAY) {
+export function addressChoices(oauth, relay = NO_RELAY, tailscale = NO_TAILSCALE) {
   const resources = [...new Set([oauth.resource, ...(oauth.resources ?? []).map((entry) => entry.resource)])];
-  const options = resources.map((resource) => describeAddress(resource, relay));
-  const selectable = relay.state !== "none" && options.length > 1;
+  const options = resources.map((resource) => describeAddress(resource, relay, tailscale));
+  const selectable = (relay.state !== "none" || tailscale.state !== "none") && options.length > 1;
   const preferred = selectable
     ? (options.find((option) => option.kind === "public") ??
-      options.find((option) => option.kind === "relay" && !option.problem))
+      options.find((option) => option.kind === "relay" && !option.problem) ??
+      options.find((option) => option.kind === "tailscale"))
     : undefined;
-  return { options, selectable, initial: preferred?.resource ?? oauth.resource };
+  return { options, selectable, initial: preferred?.resource ?? oauth.resource, tailscale };
+}
+
+/** The selected address as the dialog's list describes it. */
+function selectedAddress(resource, relay, choices) {
+  return (
+    choices.options.find((option) => sameAddress(option.resource, resource)) ??
+    describeAddress(resource, relay, choices.tailscale)
+  );
 }
 
 /** Whether an agent that dials in from the Internet can use an address right now. */
 function hostedClientCanUse(agent, option) {
   if (agent.standardPortOnly && usesNonStandardPort(option.resource)) return false;
-  return option.kind === "public" || (option.kind === "relay" && !option.problem);
+  return option.kind === "public" || option.kind === "tailscale" || (option.kind === "relay" && !option.problem);
 }
 
 /** What an address means for an agent that dials in from the Internet. */
@@ -288,7 +375,7 @@ function ownAddress(agent, resource) {
  * @param {{ options: Array<object>, selectable: boolean }} [choices] from `addressChoices`
  */
 export function hostedClientAddress(agent, resource, relay = NO_RELAY, choices = { options: [], selectable: false }) {
-  const selected = describeAddress(resource, relay);
+  const selected = selectedAddress(resource, relay, choices);
   const others = choices.selectable
     ? choices.options.filter((option) => !sameAddress(option.resource, resource))
     : [];
@@ -309,8 +396,24 @@ export function hostedClientAddress(agent, resource, relay = NO_RELAY, choices =
       },
     };
   }
+  if (selected.kind === "tailnet") {
+    return {
+      usable: false,
+      notice: {
+        warning: true,
+        paragraphs: [
+          [
+            { strong: selected.private.headline },
+            ` ${agent.needsPublicAddress}, so it cannot reach this gateway there.`,
+          ],
+          selected.private.action,
+          ...(another ? [OR_PICK_ANOTHER] : []),
+        ],
+      },
+    };
+  }
   const own = ownAddress(agent, resource);
-  if (selected.kind === "relay" && own.reachable) {
+  if ((selected.kind === "relay" || selected.kind === "tailscale") && own.reachable) {
     return {
       usable: true,
       notice: {
@@ -320,12 +423,19 @@ export function hostedClientAddress(agent, resource, relay = NO_RELAY, choices =
     };
   }
   const waiting = others.find((option) => option.problem)?.problem;
-  const publish = [PUBLISH_IT_YOURSELF, ...(relay.state === "not-connected" ? [CONNECT_AN_ACCOUNT] : [])];
+  const tailnet = others.find((option) => option.kind === "tailnet")?.private;
+  // The device's own address is the shortest way to a public one; with it, publishing the
+  // gateway some other way goes unmentioned.
+  const publish = [
+    tailnet ? [`This gateway's Tailscale device has an address. ${tailnet.headline} `, ...tailnet.action] : PUBLISH_IT_YOURSELF,
+    ...(relay.state === "not-connected" ? [CONNECT_AN_ACCOUNT] : []),
+  ];
   if (own.reachable) {
-    // With an Omnesis address in the list, nothing more needs publishing.
+    // With an Omnesis or Tailscale address in the list, nothing more needs publishing.
+    const managed = relay.url !== undefined || choices.tailscale?.url !== undefined;
     return {
       usable: true,
-      notice: { warning: false, paragraphs: [own.text, ...(relay.url === undefined ? publish : [])] },
+      notice: { warning: false, paragraphs: [own.text, ...(managed ? [] : publish)] },
     };
   }
   return {
@@ -350,7 +460,7 @@ export function hostedClientAddress(agent, resource, relay = NO_RELAY, choices =
  * there is nothing to say.
  */
 export function localClientAddress(resource, relay = NO_RELAY, choices = { options: [], selectable: false }) {
-  const { problem } = describeAddress(resource, relay);
+  const { problem } = selectedAddress(resource, relay, choices);
   if (!problem) return null;
   return {
     usable: false,
@@ -367,10 +477,22 @@ export function localClientAddress(resource, relay = NO_RELAY, choices = { optio
 
 /**
  * What a page that leads with a localhost address says about hosted agents, or
- * null when the relay changes nothing and the page keeps its own sentence.
+ * null when neither the relay nor the Tailscale device changes anything and the
+ * page keeps its own sentence. A working address is named first: the relay's,
+ * then the device's; otherwise the relay's advice comes before the device's.
  */
-export function hostedClientsHint(relay = NO_RELAY) {
-  if (relay.state === "none") return null;
+export function hostedClientsHint(relay = NO_RELAY, tailscale = NO_TAILSCALE) {
+  if (tailscale.state === "on" && relay.state !== "ready") {
+    return ["ChatGPT and Claude apps can use this gateway's Tailscale public address."];
+  }
+  if (relay.state === "none") {
+    if (tailscale.state === "none") return null;
+    return [
+      "ChatGPT and Claude apps need an Internet-reachable address. Turning on the public address in ",
+      TAILSCALE_SETTINGS,
+      " gives this gateway one.",
+    ];
+  }
   if (relay.state === "not-connected") {
     return [
       "ChatGPT and Claude apps need an Internet-reachable address. Connecting this gateway to an Omnesis account in ",
@@ -383,7 +505,7 @@ export function hostedClientsHint(relay = NO_RELAY) {
   return unavailable ? [`${uses} ${unavailable.headline} `, ...unavailable.action] : [uses];
 }
 
-/** While the dialog is open the page follows the relay closely; otherwise with the overview. */
+/** While the dialog is open the page follows the relay and the Tailscale device closely; otherwise with the overview. */
 const RELAY_POLL_OPEN_MS = 5_000;
 const RELAY_POLL_IDLE_MS = 30_000;
 
@@ -419,4 +541,38 @@ export function useRelayStatus(cloudRelay, watching = false) {
     };
   }, [cloudRelay, watching]);
   return status;
+}
+
+/**
+ * The gateway's own Tailscale device, read only where the gateway advertises
+ * the feature. A failed read keeps the last answer; before the first one it is null.
+ */
+export function useTailscaleState(tailscaleEmbed, watching = false) {
+  const [state, setState] = useState(null);
+  useEffect(() => {
+    if (!tailscaleEmbed) {
+      setState(null);
+      return undefined;
+    }
+    let current = true;
+    const read = () => {
+      getTailscale()
+        .then((next) => {
+          if (current) setState(next);
+        })
+        .catch(() => {});
+    };
+    read();
+    const timer = setInterval(
+      () => {
+        if (globalThis.document?.visibilityState !== "hidden") read();
+      },
+      watching ? RELAY_POLL_OPEN_MS : RELAY_POLL_IDLE_MS,
+    );
+    return () => {
+      current = false;
+      clearInterval(timer);
+    };
+  }, [tailscaleEmbed, watching]);
+  return state;
 }

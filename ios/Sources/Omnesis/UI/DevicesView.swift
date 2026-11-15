@@ -33,10 +33,22 @@ struct DevicesView: View {
     @State private var loadError: Error?
     @State private var showPairSheet = false
     @State private var showPairingRequests = false
+    /// A `tailscale-join` notification opened this screen: the gateway serves Tailscale join
+    /// requests even if this phone has not read its status yet.
+    @State private var tailscaleNotified = false
     @State private var repairTarget: DeviceRecord?
 
     /// Every sign-in enrollment surface below sits behind the cloud build flag.
     private let cloudRelayEnabled: Bool
+
+    /// The kinds of waiting device this phone reviews from Waiting for your OK.
+    private var approvalKinds: DeviceApprovalKinds {
+        DeviceApprovalKinds(
+            cloudRelayEnabled: cloudRelayEnabled,
+            tailscaleEmbed: store.statusSnapshot?.tailscaleEmbed == true || tailscaleNotified,
+            scopes: store.pairing?.scopes
+        )
+    }
 
     /// Preview-only flag: when true, `.task` never reaches the gateway, so a
     /// seeded snapshot renders deterministically. Always false in production.
@@ -76,9 +88,16 @@ struct DevicesView: View {
                 ToolbarItem(placement: .topBarLeading) {
                     SettingsBackButton()
                 }
-                if cloudRelayEnabled {
+                if approvalKinds.any {
                     ToolbarItem(placement: .topBarTrailing) {
-                        GatewayPairingRequestsButton(scopes: store.pairing?.scopes, client: store.admin, isPresented: $showPairingRequests)
+                        GatewayPairingRequestsButton(
+                            kinds: approvalKinds,
+                            client: store.admin,
+                            tailscale: store.admin,
+                            isPresented: $showPairingRequests,
+                            // A device approved there is in the list underneath once it closes.
+                            onDismiss: { Task { await load() } }
+                        )
                     }
                 }
                 ToolbarItem(placement: .topBarTrailing) {
@@ -131,12 +150,12 @@ struct DevicesView: View {
         }
     }
 
-    /// A notification tap or the home banner asked for Pairing requests. The request is used
+    /// A notification tap or the home banner asked for Waiting for your OK. The request is used
     /// once, also on a phone that may not open the list, so it never opens on a later visit.
     private func openRequestedPairingRequests() async {
-        let pending = PendingPairingRequests.shared
-        guard pending.consumeOpen(), cloudRelayEnabled,
-              PendingPairingRequests.eligible(cloudRelayEnabled: true, scopes: store.pairing?.scopes) else { return }
+        guard let open = PendingPairingRequests.shared.consumeOpen() else { return }
+        if open.tailscale { tailscaleNotified = true }
+        guard approvalKinds.any else { return }
         // Devices is itself still arriving; a sheet asked for mid-transition is dropped.
         guard await (try? Task.sleep(for: .milliseconds(450))) != nil else { return }
         showPairingRequests = true
@@ -613,33 +632,52 @@ func deviceGatewayMessage(_ error: Error) -> String {
     }
 }
 
-/// The admin-scoped presentation owns its sheet independently of the device list's refresh lifecycle.
-/// The screen that holds it can open the sheet too, through `isPresented`.
+/// The Waiting for your OK entry and the sheet it opens, for the kinds of waiting device this
+/// phone reviews; with none, it is absent. It owns its sheet independently of the device
+/// list's refresh lifecycle; the screen that holds it can open the sheet too, through
+/// `isPresented`.
 @available(iOS 17.0, *)
 struct GatewayPairingRequestsButton: View {
-    let scopes: [String]?
+    let kinds: DeviceApprovalKinds
     let client: (any GatewayPairingApproving)?
+    let tailscale: (any TailscaleJoinDeciding)?
     private let isPresented: Binding<Bool>?
+    private let onDismiss: (() -> Void)?
     @State private var ownPresented = false
 
-    init(scopes: [String]?, client: (any GatewayPairingApproving)?, isPresented: Binding<Bool>? = nil) {
-        self.scopes = scopes
+    init(
+        kinds: DeviceApprovalKinds,
+        client: (any GatewayPairingApproving)?,
+        tailscale: (any TailscaleJoinDeciding)? = nil,
+        isPresented: Binding<Bool>? = nil,
+        onDismiss: (() -> Void)? = nil
+    ) {
+        self.kinds = kinds
         self.client = client
+        self.tailscale = tailscale
         self.isPresented = isPresented
+        self.onDismiss = onDismiss
     }
 
     var body: some View {
         let presented = isPresented ?? $ownPresented
-        if PendingPairingRequests.eligible(cloudRelayEnabled: true, scopes: scopes) {
+        if kinds.any {
             Button(PairingApprovalPresentation.title, systemImage: "checkmark.shield") { presented.wrappedValue = true }
                 .accessibilityIdentifier("devices.pairingRequests")
                 .sheet(
                     isPresented: presented,
-                    // The home banner counts what is still waiting, not what was just decided.
-                    onDismiss: { PendingPairingRequests.shared.requestRefresh() },
+                    onDismiss: {
+                        // The home banner counts what is still waiting, not what was just decided.
+                        PendingPairingRequests.shared.requestRefresh()
+                        onDismiss?()
+                    },
                     content: {
-                        GatewayPairingApprovalView(client: client, focus: PendingPairingRequests.shared.focusedRequestId)
-                            .omnesisColorScheme()
+                        GatewayPairingApprovalView(
+                            client: kinds.cloud ? client : nil,
+                            tailscale: kinds.tailscale ? tailscale : nil,
+                            focus: PendingPairingRequests.shared.focusedRequestId
+                        )
+                        .omnesisColorScheme()
                     }
                 )
         }
@@ -670,6 +708,24 @@ struct GatewayPairingRequestsButton: View {
         )
     }
     .environment(AppStore.preview())
+}
+
+@available(iOS 17.0, *)
+#Preview("Devices — Waiting for your OK entry") {
+    NavigationStack {
+        Theme.bgPrimary.ignoresSafeArea()
+            .navigationTitle("Devices")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    GatewayPairingRequestsButton(
+                        kinds: DeviceApprovalKinds(cloud: true, tailscale: true),
+                        client: PreviewMocks.pairingRequestsWithTrust,
+                        tailscale: PreviewMocks.tailscaleJoinRequestsTwo
+                    )
+                }
+            }
+    }
 }
 
 @available(iOS 17.0, *)

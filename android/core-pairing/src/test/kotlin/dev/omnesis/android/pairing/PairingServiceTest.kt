@@ -162,6 +162,8 @@ abstract class PairingServiceCases(private val cloudRelay: Boolean) {
         } == true)
         assertEquals("dev.omnesis.android", caps?.get("pushAppId")?.jsonPrimitive?.content)
         assertNull(caps?.get("syncLease"))
+        // Every build routes Tailscale join notifications, with or without cloud connectivity.
+        assertEquals("true", caps?.get("tailscaleJoinNotifications")?.jsonPrimitive?.content)
     }
 
     @Test

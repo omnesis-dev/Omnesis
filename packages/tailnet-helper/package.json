@@ -1,0 +1,10 @@
+{
+  "name": "@omnesis/tailnet-helper",
+  "license": "AGPL-3.0-or-later",
+  "private": true,
+  "type": "module",
+  "description": "The Go helper program that joins an Omnesis gateway to its owner's Tailscale network as its own device. Built with the gateway's product version.",
+  "scripts": {
+    "build": "node ../../scripts/tailnet-helper/build.mjs"
+  }
+}

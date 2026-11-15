@@ -203,7 +203,7 @@ class CloudFeaturesOffTest {
                 asked++; return dev.omnesis.android.transport.dto.GatewayPasskeyLocation("relay.example.test", "https://g-abcdefgh.relay.example.test")
             }
         }
-        compose.setContent { OmnesisTheme { GatewayPairingApprovalSheet(client) {} } }
+        compose.setContent { OmnesisTheme { DeviceApprovalsSheet(client) {} } }
         compose.waitForIdle()
         compose.onNodeWithTag("pairingApproval.approve").assertExists()
         compose.onNodeWithTag("pairingApproval.approveWithPasskey").assertDoesNotExist()
@@ -267,10 +267,36 @@ class CloudFeaturesOffTest {
         assertEquals("Forget device?", forgetDeviceTitle(enrolled, cloudFeatures = true))
     }
 
-    @Test fun `the main screen never reads pairing requests when off`() {
-        assertFalse(dev.omnesis.android.access.PairingPendingRequests.polls())
-        assertFalse(dev.omnesis.android.access.PairingPendingRequests.polls(cloudEnabled = false))
-        org.junit.Assert.assertTrue(dev.omnesis.android.access.PairingPendingRequests.polls(cloudEnabled = true))
+    @Test fun `the main screen never reads pairing requests when off and the gateway advertises no Tailscale joins`() {
+        assertFalse(dev.omnesis.android.access.PairingPendingRequests.polls(tailscaleEmbed = false))
+        assertFalse(dev.omnesis.android.access.PairingPendingRequests.polls(cloudEnabled = false, tailscaleEmbed = false))
+        assertFalse(dev.omnesis.android.access.PairingPendingRequests.eligible(cloudEnabled = false, scopes = listOf("admin")))
+    }
+
+    /** A gateway that advertises the feature but then answers 404 still leaves the screen as it was. */
+    @Test fun `a gateway without Tailscale joins leaves the Devices screen as it was when off`() {
+        val gateway = object : dev.omnesis.android.transport.dto.TailscaleJoinApproving {
+            override suspend fun tailscaleJoinRequests(): List<dev.omnesis.android.transport.dto.TailscaleJoinRequest> =
+                throw GatewayException.NotFound("Not Found")
+            override suspend fun decideTailscaleJoin(id: String, approve: Boolean) = "approved"
+        }
+        val joins = TailscaleJoinRequestsViewModel { gateway }
+        joins.refresh()
+        compose.waitUntil(timeoutMillis = 5_000) { joins.state.value.loaded }
+        assertEquals(false, joins.state.value.available)
+        assertFalse(deviceApprovalsOffered(null, joins.state.value.available))
+        compose.setContent {
+            CompositionLocalProvider(LocalInspectionMode provides true) {
+                OmnesisTheme {
+                    DevicesContent(
+                        devices = Loadable.Content(listOf(enrolled)), tokens = emptyMap(), onBack = {}, onRetry = {},
+                        onPairingRequests = if (deviceApprovalsOffered(null, joins.state.value.available)) ({}) else null,
+                        cloudFeatures = false,
+                    )
+                }
+            }
+        }
+        compose.onNodeWithContentDescription("Pairing requests").assertDoesNotExist()
     }
 
     @Test fun `no cloud notification kind is routed when off`() {

@@ -19,11 +19,14 @@
  * direct client choose its own rate-limit bucket. The loopback exemption
  * stays closed either way, since the socket peer must itself be loopback.
  * Requests through this gateway's own cloud relay tunnel are counted by the
- * address the relay reported for them instead (`relayedClientBucket`).
+ * address the relay reported for them instead (`relayedClientBucket`), and
+ * requests through its own tailnet device by the address Tailscale reported
+ * (`tailnetClientBucket`).
  */
 
 import { isRelayTunnelPeer, relayedClientAddress } from "@omnesis/cloud-relay";
 import { cloudRelayEnabled } from "@omnesis/core";
+import { tailnetCallerAddress, tailnetCallerOfEnv } from "../tailscale-embed/caller.js";
 
 const exposedRequests = new WeakMap<object, number>();
 
@@ -97,13 +100,29 @@ export function relayedClientBucket(env: unknown): string | undefined {
 }
 
 /**
+ * The address Tailscale reported for a request that came through this
+ * gateway's own tailnet device: `tailnet:<address>` for a device on the
+ * tailnet, `tailscale-public:<address>` for a request through the public
+ * address. Only the gateway's private socket listener records these, so no
+ * header can produce one.
+ */
+export function tailnetClientBucket(env: unknown): string | undefined {
+  const caller = tailnetCallerOfEnv(env);
+  if (!caller) return undefined;
+  const prefix = caller.via === "public" ? "tailscale-public" : "tailnet";
+  return `${prefix}:${tailnetCallerAddress(caller)}`;
+}
+
+/**
  * Best-effort client address for rate limits and audit lines, never for
- * authorization: the relay's word for a relayed request (a relayed client's
- * own forwarded headers are never trusted), else the trusted proxy's word,
- * else the socket peer.
+ * authorization: the tailnet device's word for a request it forwarded, the
+ * relay's word for a relayed request (a relayed client's own forwarded
+ * headers are never trusted), else the trusted proxy's word, else the socket
+ * peer.
  */
 export function clientAddress(header: HeaderReader, env: unknown): string {
   return (
+    tailnetClientBucket(env) ??
     relayedClientBucket(env) ??
     forwardedClientAddress(header) ??
     socketPeerAddress(env) ??

@@ -7,6 +7,7 @@ import {
   PairingQrService,
   relayPairingAddress,
   type RelayPairingAddress,
+  type TailnetPairingAddress,
 } from "./PairingQrService.js";
 import type { DeviceKind } from "@omnesis/types";
 
@@ -40,6 +41,7 @@ function qr(
     tlsSpkiFingerprint?: string | (() => string);
     strictPinSpkiFingerprint?: () => string | undefined;
     relayAddress?: () => Promise<RelayPairingAddress | null>;
+    tailnetAddress?: () => TailnetPairingAddress | null;
   } = {},
 ): PairingQrService {
   return new PairingQrService({
@@ -48,6 +50,7 @@ function qr(
     tlsSpkiFingerprint: extra.tlsSpkiFingerprint,
     strictPinSpkiFingerprint: extra.strictPinSpkiFingerprint,
     relayAddress: extra.relayAddress,
+    tailnetAddress: extra.tailnetAddress,
     systemTrustOrigins,
     pairingKind: () => kind,
     discoverIdentities: async () => extra.identities ?? IDENTITIES,
@@ -1198,6 +1201,75 @@ describe("the gateway's Omnesis address", () => {
     expect((await service.pairingAddresses(input)).addresses[0]).toMatchObject({
       label: "Omnesis address",
       kind: "relay",
+    });
+  });
+});
+
+describe("the gateway's own tailnet device", () => {
+  const fingerprint = "a".repeat(64);
+  const tailnetOrigin = "https://omnesis.example-net.ts.net";
+  const lanOnly: NetworkIdentity[] = [
+    { address: "192.168.1.20", label: "LAN (en0)", kind: "lan", offLan: false },
+  ];
+  const input = { pairingCode: "fictional", requestHost: "192.168.1.20", requestPort: "7600" };
+  const withTailnet = (address: TailnetPairingAddress | null, kind: DeviceKind = "ios") =>
+    qr(fingerprint, [], kind, {
+      identities: lanOnly,
+      listenPort: 7600,
+      tailnetAddress: () => address,
+    });
+  const encoded = (service: PairingQrService, gatewayUrl: string) =>
+    JSON.parse(service.encode({ pairingCode: "ABCDEF0123", gatewayUrl })) as Record<
+      string,
+      unknown
+    >;
+
+  it("is never read without its opt-in", async () => {
+    vi.stubEnv("OMNESIS_TAILSCALE_EMBED_ENABLED", "");
+    const read = vi.fn(() => ({ origin: tailnetOrigin, trusted: true }));
+    const service = qr(fingerprint, [], "android", {
+      identities: lanOnly,
+      listenPort: 7600,
+      tailnetAddress: read,
+    });
+    const listed = (await service.pairingAddresses(input)).addresses.map((a) => a.gatewayUrl);
+    expect(listed).not.toContain(tailnetOrigin);
+    expect(encoded(service, "https://192.168.1.20:7600")).not.toHaveProperty("tailnet");
+    expect(read).not.toHaveBeenCalled();
+  });
+
+  describe("with the opt-in", () => {
+    beforeEach(() => vi.stubEnv("OMNESIS_TAILSCALE_EMBED_ENABLED", "1"));
+
+    it("offers a trusted tailnet name first, under system trust, marked as on the tailnet", async () => {
+      const service = withTailnet({ origin: `${tailnetOrigin}/`, trusted: true });
+      const result = await service.pairingAddresses(input);
+      expect(result.addresses[0]).toMatchObject({
+        gatewayUrl: tailnetOrigin,
+        label: "Tailscale (this gateway's own device)",
+      });
+      expect(encoded(service, tailnetOrigin)).toMatchObject({
+        tls: { mode: "system" },
+        tailnet: true,
+      });
+      // Another address on the same gateway is not marked.
+      expect(encoded(service, "https://192.168.1.20:7600")).not.toHaveProperty("tailnet");
+    });
+
+    it("pins the gateway's own certificate when the tailnet cannot certify its name, still marked", () => {
+      const service = withTailnet({ origin: tailnetOrigin, trusted: false }, "android");
+      const payload = encoded(service, tailnetOrigin);
+      expect(payload).toMatchObject({ tailnet: true });
+      expect(payload).not.toMatchObject({ tls: { mode: "system" } });
+    });
+
+    it("offers nothing when the device is not connected, or reports an address that is not an origin", async () => {
+      for (const address of [null, { origin: "not an origin", trusted: true }]) {
+        const service = withTailnet(address);
+        const listed = (await service.pairingAddresses(input)).addresses.map((a) => a.label);
+        expect(listed).not.toContain("Tailscale (this gateway's own device)");
+        expect(encoded(service, "https://192.168.1.20:7600")).not.toHaveProperty("tailnet");
+      }
     });
   });
 });

@@ -79,6 +79,16 @@ export const notificationMessageSchema = z.discriminatedUnion("kind", [
   ),
   // The device a tap opens, where it can be removed.
   message("device-joined", z.object({ deviceId: z.string().min(1).max(256).optional() }).strict()),
+  // Carries no request id: a tap opens the list of waiting Tailscale join
+  // requests, which only an authenticated administrator can read.
+  message("tailscale-join", z.object({}).strict()),
+  // A collector joined through Tailscale with nobody approving it. Like
+  // device-joined, a tap opens the device, where it can be removed; it is a kind
+  // of its own because only clients of the Tailscale feature know it.
+  message(
+    "tailscale-joined",
+    z.object({ deviceId: z.string().min(1).max(256).optional() }).strict(),
+  ),
 ]);
 
 export type NotificationMessage = z.infer<typeof notificationMessageSchema>;
@@ -141,6 +151,14 @@ export const notificationRouteSchema = z.discriminatedUnion("kind", [
       deviceId: z.string().min(1).max(256).optional(),
     })
     .strict(),
+  z.object({ kind: z.literal("tailscale-join") }).strict(),
+  z
+    .object({
+      kind: z.literal("tailscale-joined"),
+      /** The collector that joined through Tailscale, to open for removal. */
+      deviceId: z.string().min(1).max(256).optional(),
+    })
+    .strict(),
 ]);
 
 export type NotificationRoute = z.infer<typeof notificationRouteSchema>;
@@ -164,6 +182,8 @@ export const claimedNotificationSchema = z
       "access-authorization",
       "device-pairing",
       "device-joined",
+      "tailscale-join",
+      "tailscale-joined",
     ]),
     targetId: z.string().min(1).max(512),
     /** Device that owns the condition, when a reminder may be claimed elsewhere. */
@@ -203,6 +223,10 @@ export function notificationTargetId(message: NotificationMessage): string {
     case "device-pairing":
       return "pairing";
     case "device-joined":
+      return "devices";
+    case "tailscale-join":
+      return "tailscale-join";
+    case "tailscale-joined":
       return "devices";
     default:
       return assertNever(message);
@@ -246,6 +270,7 @@ export function notificationRoute(message: NotificationMessage): NotificationRou
     case "privacy-approval":
       return { kind: message.kind, approvalId: message.data.approvalId };
     case "access-authorization":
+    case "tailscale-join":
       return { kind: message.kind };
     case "device-pairing":
       return {
@@ -253,6 +278,7 @@ export function notificationRoute(message: NotificationMessage): NotificationRou
         ...(message.data.requestId === undefined ? {} : { requestId: message.data.requestId }),
       };
     case "device-joined":
+    case "tailscale-joined":
       return {
         kind: message.kind,
         ...(message.data.deviceId === undefined ? {} : { deviceId: message.data.deviceId }),

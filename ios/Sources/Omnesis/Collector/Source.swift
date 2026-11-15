@@ -83,6 +83,10 @@ public struct PairingCapabilities: Codable, Equatable, Sendable {
     public let tls: TLS?
     /// Advertises support without requiring older paired phones to understand a new reminder kind.
     public var pairingNotifications: Bool?
+    /// This app routes a device waiting to join through Tailscale (`tailscale-join`) and
+    /// one that joined (`tailscale-joined`). Sent by every build; optional so a capability
+    /// set from an older app still decodes.
+    public var tailscaleJoinNotifications: Bool?
 
     /// Wire shape of ``tls``: `{"mode": "system" | "pinned-leaf" | "legacy"}`.
     public struct TLS: Codable, Equatable, Sendable {
@@ -122,7 +126,8 @@ public struct PairingCapabilities: Codable, Equatable, Sendable {
             syncLease: contracts.contains { $0.multiDeviceMode == .replicated },
             tls: tlsMode.map { TLS(mode: $0.rawValue) },
             // Absent, not false, off the cloud build flag: the wire body stays as it was.
-            pairingNotifications: pairingNotifications ? true : nil
+            pairingNotifications: pairingNotifications ? true : nil,
+            tailscaleJoinNotifications: true
         )
     }
 
@@ -136,6 +141,7 @@ public struct PairingCapabilities: Codable, Equatable, Sendable {
             "syncLease": .bool(syncLease),
         ]
         if let pairingNotifications { result["pairingNotifications"] = .bool(pairingNotifications) }
+        if let tailscaleJoinNotifications { result["tailscaleJoinNotifications"] = .bool(tailscaleJoinNotifications) }
         if let hostname { result["hostname"] = .string(hostname) }
         if let version { result["version"] = .string(version) }
         if let suggestedName { result["suggestedName"] = .string(suggestedName) }

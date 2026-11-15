@@ -94,6 +94,26 @@ RUN --mount=type=bind,from=workspace-install,source=/app/node_modules,target=/op
 # from the hoisted tree. Keep that resolution path in the compiled image.
 RUN node --input-type=module -e 'import { stageWorkspaceDependencies } from "./scripts/runtime/stage-runtime.mjs"; stageWorkspaceDependencies("/opt/workspace-dependencies")'
 
+# ── Tailscale helper ──────────────────────────────────────────────────────────
+# The Go program the gateway runs, only with OMNESIS_TAILSCALE_EMBED_ENABLED=1,
+# to join its owner's Tailscale network as its own device. Built on the build
+# machine and cross-compiled for the image's architecture, so a multi-arch
+# build never runs Go under emulation. Statically linked: nothing in the
+# runtime image has to match it.
+FROM --platform=$BUILDPLATFORM golang:1.27.4-trixie AS tailnet-helper
+ARG TARGETOS
+ARG TARGETARCH
+WORKDIR /src
+COPY packages/tailnet-helper/go.mod packages/tailnet-helper/go.sum ./
+RUN go mod download
+COPY packages/tailnet-helper/ ./
+# The helper carries the gateway's product version.
+COPY packages/gateway/package.json /src-gateway/package.json
+RUN version="$(sed -n 's/^  "version": "\(.*\)",$/\1/p' /src-gateway/package.json)" \
+    && test -n "$version" \
+    && CGO_ENABLED=0 GOOS="$TARGETOS" GOARCH="$TARGETARCH" \
+       go build -trimpath -ldflags "-s -w -X main.version=${version}" -o /out/omnesis-tailnet .
+
 # ── Hardened runtime base ─────────────────────────────────────────────────────
 # Shared by both daemon images: no JavaScript package managers, a fixed non-root uid/gid,
 # and the state directory the daemons own. `curl` is the gateway's healthcheck
@@ -133,6 +153,9 @@ ENV HOME=/home/omnesis \
 FROM runtime-base AS gateway-runtime
 COPY --from=runtime-build /opt/omnesis-runtime/packages ./packages
 COPY --from=runtime-build --chmod=0555 /app/scripts/seeded-state ./scripts/seeded-state
+# Inert unless the gateway runs with OMNESIS_TAILSCALE_EMBED_ENABLED=1.
+COPY --from=tailnet-helper --chmod=0555 /out/omnesis-tailnet /usr/local/bin/omnesis-tailnet
+ENV OMNESIS_TAILSCALE_HELPER=/usr/local/bin/omnesis-tailnet
 EXPOSE 7600
 USER 10001:10001
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
