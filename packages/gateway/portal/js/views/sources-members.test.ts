@@ -11,12 +11,15 @@ import {
   buildMemberLines,
   memberDetachBody,
   wholeSourceRemovalBody,
-  resyncChoices,
   resyncNote,
   syncNotesReducer,
   syncTargetNote,
   // @ts-expect-error — sibling .js module, no .d.ts in the portal tree.
 } from "./sources.js";
+import {
+  resyncChoices,
+  // @ts-expect-error — sibling .js module, no .d.ts in the portal tree.
+} from "../lib/resync-options.js";
 import {
   joinCandidates,
   // @ts-expect-error — sibling .js module, no .d.ts in the portal tree.
@@ -399,6 +402,20 @@ describe("resyncNote", () => {
     expect(resyncNote({ ok: true, scope: "cursor", deviceIds: [phone.id] }, deviceById)).toBe(
       "Resync sent to Jamie-Phone; nothing was deleted",
     );
+  });
+
+  test("says an in-place resync deleted nothing, whatever it was scoped to", () => {
+    for (const scope of ["source", "stream", "cursor"]) {
+      expect(
+        resyncNote({ ok: true, mode: "in-place", scope, deviceIds: [mini.id] }, deviceById),
+      ).toBe("Resync sent to Studio-Mini; nothing was deleted");
+    }
+    expect(
+      resyncNote(
+        { ok: true, mode: "from-scratch", scope: "source", deviceIds: [mini.id] },
+        deviceById,
+      ),
+    ).toBe("Resync sent to Studio-Mini");
   });
 
   test("a resync nobody was online to take is queued, not sent", () => {

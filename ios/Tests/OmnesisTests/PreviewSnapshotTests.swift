@@ -76,9 +76,32 @@ final class PreviewSnapshotTests: XCTestCase {
         ] {
             snapshot(NavigationStack { PreviewMocks.accountPairingPanel(phase) }, name: "account-pairing-\(name)")
         }
-        snapshot(NavigationStack { PreviewMocks.accountPairingPanel(.comparing, approved: true) }, name: "account-pairing-approved")
         snapshot(
-            NavigationStack { PreviewMocks.accountPairingPanel(.comparing, approved: true) }.dynamicTypeSize(.accessibility2),
+            NavigationStack { PreviewMocks.accountPairingPanel(.comparing, approved: true, continues: false) },
+            name: "account-pairing-approved"
+        )
+        snapshot(
+            NavigationStack { PreviewMocks.accountPairingPanel(.joining, approvedHeld: true) },
+            name: "account-pairing-approved-joining"
+        )
+        for (approvalPage, name) in [(false, "account-pairing-waiting-for-ok"), (true, "account-pairing-waiting-face-id")] {
+            snapshot(
+                ScrollView { PreviewMocks.accountPairingWaiting(approvalPage: approvalPage).padding() }.background(Theme.bgPrimary),
+                name: name
+            )
+        }
+        snapshot(
+            NavigationStack { PreviewMocks.accountPairingPanel(.comparing, approvalPage: true) },
+            name: "account-pairing-approval-page"
+        )
+        snapshot(
+            NavigationStack { PreviewMocks.accountPairingPanel(.comparing, approvalPage: true) }.dynamicTypeSize(.accessibility2),
+            name: "account-pairing-approval-page-large"
+        )
+        snapshot(
+            NavigationStack {
+                PreviewMocks.accountPairingPanel(.comparing, approved: true, continues: false)
+            }.dynamicTypeSize(.accessibility2),
             name: "account-pairing-approved-large"
         )
     }
@@ -267,6 +290,21 @@ final class PreviewSnapshotTests: XCTestCase {
             name: "pairing-requests-several-large",
             size: CGSize(width: 393, height: 1700)
         )
+        let revoked = await loaded(PreviewMocks.pairingRequestRevoked)
+        snapshot(GatewayPairingApprovalView(client: nil, model: revoked), name: "pairing-requests-removed-before")
+        let stepUp = await loaded(PreviewMocks.pairingRequestsNeedingStepUp)
+        if let request = stepUp.requests.first {
+            await stepUp.confirmAndApprove(request, client: PreviewMocks.pairingRequestsNeedingStepUp)
+        }
+        snapshot(
+            GatewayPairingApprovalView(client: PreviewMocks.pairingRequestsNeedingStepUp, model: stepUp),
+            name: "pairing-requests-confirm-its-you"
+        )
+        let denied = await loaded(PreviewMocks.pairingRequestsWithTrust)
+        if let request = denied.requests.first {
+            await denied.decide(request, approve: false, client: PreviewMocks.pairingRequestsWithTrust)
+        }
+        snapshot(GatewayPairingApprovalView(client: PreviewMocks.PreviewPairingPolicy(), model: denied), name: "pairing-requests-denied")
         let presented = await loaded(PreviewMocks.pairingRequestsWithTrust)
         snapshotPresented(
             Theme.bgPrimary.ignoresSafeArea().sheet(isPresented: .constant(true)) {
@@ -3704,6 +3742,28 @@ final class PreviewSnapshotTests: XCTestCase {
         )
     }
 
+    /// The Resync sheet on each selection, with and without the Brain line
+    /// under From scratch, then presented the way the source detail opens it.
+    func testSourceResyncChoice() {
+        func sheet(_ initial: SourceResyncMode, brainNote: Bool = false) -> some View {
+            SourceResyncSheet(
+                sourceName: humanName(for: PreviewMocks.sourceGmail.type),
+                modes: SourceResyncMode.allCases,
+                brainNote: brainNote,
+                initialMode: initial,
+                onConfirm: { _ in }
+            )
+        }
+        let size = CGSize(width: 393, height: 480)
+        snapshot(sheet(.inPlace), name: "50h-source-resync-in-place", size: size)
+        snapshot(sheet(.fromScratch), name: "50i-source-resync-from-scratch", size: size)
+        snapshot(sheet(.fromScratch, brainNote: true), name: "50j-source-resync-from-scratch-brain", size: size)
+        snapshotPresented(
+            Color.clear.sheet(isPresented: .constant(true)) { sheet(.inPlace) },
+            name: "50k-source-resync-presented"
+        )
+    }
+
     // MARK: - Settings
 
     func testSettingsConnected() async throws {
@@ -6498,6 +6558,24 @@ final class PreviewSnapshotTests: XCTestCase {
         )
     }
 
+    func testCitationSourceActions() {
+        let store = AppStore.preview()
+        let view = ZStack {
+            Theme.bgPrimary.ignoresSafeArea()
+            CitationsDrawer(
+                trailAnnotations: PreviewMocks.citationSourceLinks,
+                isOpen: .constant(true)
+            )
+        }
+        .environment(store)
+        snapshot(view.preferredColorScheme(.dark), name: "citation-source-actions-dark")
+        snapshot(view.preferredColorScheme(.light), name: "citation-source-actions-light")
+        snapshot(
+            view.preferredColorScheme(.dark).dynamicTypeSize(.accessibility3),
+            name: "citation-source-actions-large-text"
+        )
+    }
+
     /// Drawer open on the unified Timeline. Voucher-journey fixture
     /// exercises every annotation shape (event-level note + doc quote
     /// + doc note + doc note-only) across Gmail and WhatsApp spine
@@ -6656,6 +6734,7 @@ final class PreviewSnapshotTests: XCTestCase {
         snapshot(view, name: "105-trail-timeline-long")
     }
 
+    /// Narrow titles and a file attachment keep their source actions inline.
     func testTrailTimelineViewUrlRepresentations() {
         let store = AppStore.preview()
         let view = ScrollView {

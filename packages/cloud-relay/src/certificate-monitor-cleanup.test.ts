@@ -64,7 +64,10 @@ test("ordinary polling failures retain normal unavailable status and retry", asy
 
 test("gateway close joins accepted initialization and prevents a late poller", async () => {
   const entered = deferred<void>(),
-    gate = deferred<{ check: ReturnType<typeof vi.fn>; status: () => CertificateMonitorStatus }>();
+    gate = deferred<{
+      check: () => Promise<CertificateMonitorStatus>;
+      status: () => CertificateMonitorStatus;
+    }>();
   const check = vi.fn(async () => status);
   const create = vi.fn(async () => {
     entered.resolve();

@@ -79,12 +79,12 @@ final class CloudPairingInteractionUITests: XCTestCase {
         XCTAssertFalse(app.switches["pairingApproval.compare"].exists)
         XCTAssertTrue(approve.isEnabled)
         approve.tap()
-        XCTAssertTrue(app.staticTexts["No pending pairing requests."].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["No devices are waiting for your OK."].waitForExistence(timeout: 5))
         XCTAssertEqual(app.staticTexts["cloud.fixture.receipt"].label, "Device approved")
         launch("approval")
         XCTAssertTrue(app.buttons["pairingApproval.deny"].waitForExistence(timeout: 5))
         app.buttons["pairingApproval.deny"].tap()
-        XCTAssertTrue(app.staticTexts["No pending pairing requests."].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["No devices are waiting for your OK."].waitForExistence(timeout: 5))
         XCTAssertEqual(app.staticTexts["cloud.fixture.receipt"].label, "Device rejected")
     }
 
@@ -93,14 +93,14 @@ final class CloudPairingInteractionUITests: XCTestCase {
         XCTAssertTrue(app.buttons["Retry"].waitForExistence(timeout: 5))
         app.buttons["Retry"].tap()
         XCTAssertTrue(app.buttons["pairingApproval.approve"].waitForExistence(timeout: 5))
-        app.navigationBars["Pairing requests"].buttons["Refresh"].tap()
+        app.navigationBars["Waiting for your OK"].buttons["Refresh"].tap()
         XCTAssertTrue(app.buttons["pairingApproval.approve"].exists)
         launch("devices-read-only")
         XCTAssertFalse(app.buttons["devices.pairingRequests"].exists)
         launch("devices-admin")
         app.buttons["devices.pairingRequests"].tap()
         XCTAssertTrue(app.buttons["pairingApproval.approve"].waitForExistence(timeout: 5))
-        app.navigationBars["Pairing requests"].buttons["Done"].tap()
+        app.navigationBars["Waiting for your OK"].buttons["Done"].tap()
         XCTAssertTrue(app.buttons["devices.pairingRequests"].waitForExistence(timeout: 5))
     }
 
@@ -123,7 +123,7 @@ final class CloudPairingInteractionUITests: XCTestCase {
         // An expired request is still listed, marked so; one already decided is not listed at all.
         for (scenario, shown) in [
             ("approval-expired", "Expired"),
-            ("approval-completed", "No pending pairing requests."),
+            ("approval-completed", "No devices are waiting for your OK."),
         ] {
             launch(scenario)
             XCTAssertTrue(app.staticTexts[shown].waitForExistence(timeout: 5))

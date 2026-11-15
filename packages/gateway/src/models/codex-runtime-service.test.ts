@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it, vi } from "vitest";
 import { CODEX_RUNTIME_COMPAT, CodexAppServerRuntime } from "@omnesis/agent";
 import { z } from "zod";
-import { CODEX_SUPPORTED_ROLES, type AgentEvent } from "@omnesis/core";
+import { CODEX_SUPPORTED_ROLES, ownedProcessCleanupReceipt, type AgentEvent } from "@omnesis/core";
 import { ConfigStore } from "../config-store.js";
 import { AgentSetupUnavailableError } from "./agent-assignment-setup.js";
 import {
@@ -966,6 +966,8 @@ describe("CodexRuntimeService parsers", () => {
     let restoreTermination: (() => void) | undefined;
     let primaryFailure: unknown;
     let failed = false;
+    let cleanupFailed = false;
+    let cleanupFailure: unknown;
     try {
       const confirmation = new Promise<void>((resolve) => {
         releaseConfirmation = resolve;
@@ -1032,36 +1034,37 @@ describe("CodexRuntimeService parsers", () => {
     } catch (error) {
       failed = true;
       primaryFailure = error;
-      throw error;
     } finally {
       releaseConfirmation();
       configStore.stop();
       try {
         await service.dispose();
       } catch (cleanupError) {
-        restoreTermination?.();
-        if (failed) {
-          const aggregate = new AggregateError(
-            [primaryFailure, cleanupError],
-            "Canceled login fixture cleanup was not confirmed",
-            { cause: cleanupError },
-          );
-          if (
-            cleanupError !== null &&
-            (typeof cleanupError === "object" || typeof cleanupError === "function") &&
-            Object.hasOwn(cleanupError, "cleanupFailure")
-          ) {
-            Object.assign(aggregate, {
-              cleanupFailure: (cleanupError as { cleanupFailure: unknown }).cleanupFailure,
-            });
-          }
-          throw aggregate;
-        }
-        throw cleanupError;
+        cleanupFailed = true;
+        cleanupFailure = cleanupError;
       }
       restoreTermination?.();
-      await rm(dir, { recursive: true, force: true });
+      if (!cleanupFailed)
+        await rm(dir, { recursive: true, force: true }).catch((error: unknown) => {
+          cleanupFailed = true;
+          cleanupFailure = error;
+        });
     }
+    if (cleanupFailed) {
+      if (!failed) throw cleanupFailure;
+      const marked = [cleanupFailure, primaryFailure].find(
+        (error) => ownedProcessCleanupReceipt(error) !== undefined,
+      );
+      const receipt = ownedProcessCleanupReceipt(marked);
+      const aggregate = new AggregateError(
+        [primaryFailure, cleanupFailure],
+        "Canceled login fixture cleanup was not confirmed",
+        { cause: receipt === undefined ? cleanupFailure : marked },
+      );
+      if (receipt !== undefined) Object.assign(aggregate, { cleanupFailure: receipt.failure });
+      throw aggregate;
+    }
+    if (failed) throw primaryFailure;
   });
 
   it("reschedules login expiry to the lifetime advertised by Codex", async () => {

@@ -4,6 +4,7 @@
 import { join } from "node:path";
 import { cleanupReceipt, OwnedCleanupLifecycle } from "./owned-cleanup-lifecycle.js";
 import { bindingOrigin } from "./gateway-binding.js";
+import { caaBinding, caaObservationDigest, lookupCaa, type CaaLookup } from "./acme-caa.js";
 import type {
   CertificateIncident,
   CertificateMonitorOptions,
@@ -33,6 +34,14 @@ export interface GatewayCertificateMonitorOptions {
   onIncident?(incidents: CertificateIncident[]): Promise<void>;
   create?: (options: Omit<CertificateMonitorOptions, "provider">) => Promise<Monitor>;
   now?: () => number;
+  /**
+   * The ACME account the name's CAA record binds, once the gateway published it. Checked at the
+   * monitor's interval; anything else at the name is drift.
+   */
+  caa?(): Promise<{ hostname: string; accountUri: string } | undefined>;
+  /** Called with a digest of what DNS showed, the same digest for the same records. */
+  onCaaDrift?(digest: string): Promise<void>;
+  caaLookup?: CaaLookup;
 }
 
 /**
@@ -49,20 +58,25 @@ export class GatewayCertificateMonitor {
   private retryAt = 0;
   private failure: GatewayCertificateMonitorStatus["lastError"] | undefined;
   private hostname: string | undefined;
+  private caaTimer: ReturnType<typeof setInterval> | undefined;
   constructor(private readonly options: GatewayCertificateMonitorOptions) {
     // Automatic enrollment relies on this to spot a substituted certificate, so opting out is explicit.
     this.enabled = options.env.OMNESIS_CLOUD_RELAY_CERTIFICATE_MONITOR_ENABLED !== "0";
     this.now = options.now ?? Date.now;
   }
   start(): void {
-    if (
-      !this.enabled ||
-      this.closed ||
-      this.cleanup.uncertain ||
-      this.initializing ||
-      this.now() < this.retryAt
-    )
-      return;
+    if (!this.enabled || this.closed || this.cleanup.uncertain) return;
+    if (this.options.caa && !this.caaTimer) {
+      const configured = Number(
+        this.options.env.OMNESIS_CLOUD_RELAY_CERTIFICATE_MONITOR_INTERVAL_MS,
+      );
+      this.caaTimer = setInterval(
+        () => void this.checkCaa().catch(() => {}),
+        configured >= 60_000 && configured <= 86_400_000 ? configured : 900_000,
+      );
+      this.caaTimer.unref();
+    }
+    if (this.initializing || this.now() < this.retryAt) return;
     if (this.poller) {
       try {
         const identity = this.options.identity();
@@ -161,6 +175,33 @@ export class GatewayCertificateMonitor {
         this.initializing = undefined;
       });
   }
+  /**
+   * Whether the name's CAA record still binds the gateway's own account. A record removed or
+   * rewritten to allow anyone else is drift; a lookup DNS couldn't answer is not.
+   */
+  async checkCaa(): Promise<void> {
+    if (!this.enabled || this.closed || this.cleanup.uncertain) return;
+    try {
+      await this.cleanup.run(async () => {
+        const expected = await this.options.caa?.();
+        this.cleanup.assertAdmitting();
+        if (!expected) return;
+        const issue = await (this.options.caaLookup ?? lookupCaa)(
+          expected.hostname,
+          AbortSignal.timeout(15_000),
+        );
+        this.cleanup.assertAdmitting();
+        if (issue === undefined || caaBinding(issue, expected.accountUri) === "bound") return;
+        await this.options.onCaaDrift?.(caaObservationDigest(expected.hostname, issue));
+        this.cleanup.assertAdmitting();
+      });
+    } catch (error) {
+      this.cleanup.observe(error);
+      if (this.cleanup.uncertain) throw error;
+      // Ordinary lookup failures are checked again at the next interval.
+    }
+  }
+
   status(): GatewayCertificateMonitorStatus {
     this.start();
     if (!this.enabled || this.closed)
@@ -185,6 +226,7 @@ export class GatewayCertificateMonitor {
   }
   close(): Promise<void> {
     this.closed = true;
+    clearInterval(this.caaTimer);
     return this.cleanup.close(async () => {
       await this.poller?.stop();
       this.poller = undefined;

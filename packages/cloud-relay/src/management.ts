@@ -21,7 +21,8 @@ export type CloudRelayManagementError =
   | "certificate-renewal-failed"
   | "public-endpoint-unreachable"
   | "passkey-origin-unavailable"
-  | "passkey-not-confirmed";
+  | "passkey-not-confirmed"
+  | "passkey-not-on-account";
 
 export interface CloudRelayNetworkIdentity {
   id: "direct" | "cloud";

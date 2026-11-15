@@ -39,7 +39,7 @@ final class CloudRelayGateTests: XCTestCase {
         XCTAssertEqual(PushTarget.fromUserInfo(["omnesis": ["kind": "device-joined"]], cloudRelayEnabled: true), .deviceJoined)
         XCTAssertEqual(PushTarget.deviceJoined.kindName, "device-joined")
         XCTAssertTrue(PushTarget.deviceJoined.opensDevices)
-        XCTAssertTrue(PushTarget.pairingRequests.opensDevices)
+        XCTAssertTrue(PushTarget.pairingRequests().opensDevices)
         XCTAssertFalse(PushTarget.accessAuthorization.opensDevices)
     }
 

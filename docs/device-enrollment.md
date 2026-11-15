@@ -157,20 +157,40 @@ how it was confirmed (`via`). The field is top-level so that a gateway version
 that predates it drops it on save, which leaves nothing confirmed; an entry the
 running version can't read is dropped the same way. A new link starts with none.
 
-The owner confirms a passkey on the account page of the gateway's own origin
-(Settings → Omnesis account, where linking returns to). The card appears while
-the gateway has an origin of its own and no confirmed passkey:
+The owner confirms a passkey as the last step of connecting: the account page
+(Settings → Omnesis account) shows a "Finish setting up" checklist while nothing
+is confirmed. What the step asks depends only on what the account has, so a relay
+that lies about it can only make the step fail:
+
+- a passkey pinned here and an origin of its own: "Continue with Face ID" runs the
+  `pin-passkey` ceremony below on the gateway's own page. On any other address
+  (the LAN or tailnet portal) the same button opens the gateway's own page
+  already signed in (the portal handoff below) and the ceremony starts on load;
+- otherwise, under automatic joins, "Connect your phone": the first phone that
+  signs in with Google in an official app waits, and approving it with the sign-in
+  trusted confirms that Google account.
+
+"Not now" keeps a one-line reminder under New devices. Connecting from another
+address ends on the gateway's own page once its certificate is valid, for an
+account with a passkey.
+
+The ceremony itself:
 
 1. `POST /admin/cloud-relay/passkeys/confirm/options` (admin) issues a
    `pin-passkey` ceremony: `{ purpose, rpId, origin, challenge, binding,
 webauthnChallenge, expiresAt }`. The binding is `gatewayPasskeyPinBinding(gatewayId,
 accountId)`.
-2. The page asks for any of the account's passkeys (discoverable credentials).
+2. The page asks for one of the account's passkeys. The options name the
+   passkeys the account lists (`allowCredentials`), so the browser doesn't offer
+   a passkey of an older, deleted account. The list is a hint for the prompt only.
 3. `POST /admin/cloud-relay/passkeys/confirm` (`{ proof }`) verifies the assertion
    against the public key the relay lists for that credential id on the linked
    account. A wrong key in the listing only makes the check fail: the private key
    never leaves the owner's authenticator. Confirming lifts the owner's own decline
-   or a withdrawal of that passkey.
+   or a withdrawal of that passkey. A passkey that neither the listing nor this
+   gateway knows is refused as `passkey-not-on-account` (and on
+   `/devices/account/request` as `PASSKEY_NOT_ON_ACCOUNT`), so a page can say it
+   belongs to another account; a failed check stays `passkey-not-confirmed`.
 
 A confirmation goes away when the account stops listing the sign-in, or when the
 owner removes it. `GET /admin/cloud-relay/trusted-sign-ins` lists each pin with
@@ -195,8 +215,70 @@ the relay's account page:
    attestation needed, since the passkey itself signed on the gateway's page. An
    assertion that does not verify is refused outright.
 
-The portal offers this as "Sign in with Passkey" when it is on the gateway's own
-origin; "Sign in on the Omnesis account page" keeps the relay's handoff.
+The ceremony's options name the passkeys confirmed or pinned here
+(`allowCredentials`); approval and step-up ceremonies name only confirmed ones.
+`/devices/account/config` also says `accountPasskey` (a passkey is pinned or
+confirmed here) and `passkeyApproval` (a passkey is confirmed here, the gateway
+has an origin of its own and no incident holds it); the approval view of a held
+request carries `passkeyApproval` too. Pages offer a passkey button only when
+these say it can work.
+
+The portal's login page offers "Continue with Face ID" (only when the account has
+a passkey; on the gateway's own origin it signs in here, elsewhere through the
+account page) and "Continue with Google", which always waits for approval. The
+token and pairing-code form sits behind "Have a pairing code? Enter it". A
+browser with its own device key continues by itself once its request is approved;
+the keyless Google pairing keeps its "Codes match" button.
+
+### Opening the gateway's own page from another address
+
+A portal signed in at a home address can open the gateway's own page signed in
+(`packages/gateway/src/http/routes/portal-handoff.ts`, cloud relay only):
+
+1. `POST /portal/api/handoff` (portal session, admin, CSRF) returns
+   `<origin>/portal/settings/account#portal-handoff=<code>[&next=confirm-passkey]`.
+   It is refused while the gateway has no origin of its own, which includes a
+   certificate incident.
+2. The page there takes the code out of the address bar on load and sends it to
+   `POST /portal/api/handoff/redeem`, which opens a session for the same credential
+   with at most the minting session's scopes.
+
+A code lives in memory for one minute and is spent by any attempt to redeem it.
+It is redeemed only with an `Origin` equal to the gateway's own origin, only while
+that is still the gateway's origin, and only while the minting session is valid.
+It travels in the fragment, so no server (the relay included) receives it, and it
+is never logged. The new session's requests arrive through the relay, so step-up
+applies to them as to any other.
+
+The Android app joins the same way after a passkey sign-in, with one more
+passkey prompt. The relay's ceremony only finds the account's gateways; the
+join is signed again, in the app, for the gateway's own challenge:
+
+1. Over the pinned connection, the app reads `/devices/account/config`. Only a
+   gateway that advertises `gatewayPasskey` with the build's relay host as
+   `rpId` gets an assertion; any other gets the relay's ceremony as evidence and
+   holds the request for a person.
+2. It asks for `/devices/account/challenge` with an empty body, so the gateway
+   commits to its part of the comparison code before it learns the request's
+   secret, as for every app request. (`/devices/account/passkey/options` needs
+   the secret first, so the app does not use it.)
+3. It computes `gatewayPasskeyChallenge("device-enrollment", appOrigin,
+challenge, enrollmentNonce)` with its own `android:apk-key-hash:` origin (the
+   SHA-256 of its signing certificate), never an origin a server names, and
+   refuses an assertion whose client data names another origin, challenge or
+   type, or a cross-site frame.
+4. It sends `/devices/account/request` with that `challenge` in `deviceKey` and
+   the `gateway-passkey` proof.
+
+A Google sign-in is not signed again. The relay's `issuedAt` must be within a
+minute of the phone's clock.
+
+The Android approval sheet offers "Approve with passkey" for an app's request
+when the gateway advertises `gatewayPasskey` for the build's relay: it gets the
+`approve-request` ceremony from `/devices/account/approval/options`, signs it
+with the app's origin (the gateway's `origin` and `webauthnChallenge` are for its
+web page and are ignored), and posts `/devices/account/approval` with `{
+requestId, proof, trustSignIn? }`.
 
 A held request can be approved with the owner's passkey on the gateway's page:
 
@@ -221,10 +303,92 @@ says to approve only a request one made oneself. The portal's held screen offers
 "Approve with your passkey" for its own request, and the devices page offers
 "Approve with passkey" for an app's request.
 
+The iOS app sends its own held request there. A passkey sign-in in the app
+presents the relay's origin, so it is always held. While it waits, the app reads
+`gatewayPasskey` and `passkeyApproval` from `/devices/account/config` over the
+connection pinned to the gateway's key and, only when `passkeyApproval` is true
+(a passkey is confirmed here and no security lock is on; absent counts as false),
+opens `${origin}/portal/approve#<requestId>` in the system sign-in browser, next to
+the comparison code, then polls `/devices/account/poll` as before. It uses that
+origin only when it is the pinned gateway's own origin, under the RP ID host and
+never that host itself; otherwise, and on a gateway that names none, the request
+waits for the owner's OK on a device they already use (the portal on their
+computer or the app on another phone), which shows the same code. After a Google
+sign-in the app offers the page without opening it. The Android app's "Approve
+with fingerprint" on a held request follows the same `passkeyApproval` rule. The
+app also refuses relay passkey options whose `issuedAt` is more than 60 seconds
+from the device's clock.
+
+Once a held request is approved, an app whose signed request went to a gateway
+whose certificate passed the public checks continues on its own: the code the
+gateway reports is checked against the app's own computation, and the owner
+compared it on the approving screen. That is the same footing an automatic join
+stands on. An app that could not verify the certificate (`requireApproval`) still
+asks the person to confirm that the codes matched before it pairs.
+
+On a `428 STEP_UP_REQUIRED` the apps say "Confirm it's you" and, for an approval,
+open the gateway's own approval page for that request (the Android app first
+offers its own `approve-request` ceremony when `passkeyApproval` allows it); on
+`403 STEP_UP_UNAVAILABLE` they say the change can only be made on the computer
+running Omnesis. A pairing notification whose route names a `requestId` opens
+the list with that request first.
+
 A Google token counts as made in an official app (`native-google`) only when an
 official native client presented it: the Android release or test client as
 `azp` of a token for the web client, or the iOS client as both `aud` and `azp`.
 A token without `azp`, or from a client of unknown type, never does.
+
+### Step-up
+
+Once the owner has confirmed a passkey on the gateway, an administrative action
+that loosens it needs that passkey on the gateway's own page first, so an admin
+credential alone (a stolen portal cookie, a session a compromised relay rides on)
+cannot add a device. The gateway checks this in `gateway/src/http/step-up.ts`.
+
+- **Who steps up:** a request that arrived through the relay (the portal or an app
+  on the relay's name), and a device that joined by signing in on its own
+  (`enrollment_method = automatic`, or a portal session opened with such a
+  device's credential), wherever it connects from. The gateway's own host, the
+  local CLI, and devices paired by code, QR or approval never do.
+- **For:** approving a held request (`POST /admin/cloud-pairing/decision` with
+  `approve: true`, which also covers trusting its sign-in), choosing `automatic`
+  (`PUT /admin/cloud-relay/enrollment`), confirming a passkey
+  (`POST /admin/cloud-relay/passkeys/confirm`), minting a pairing code
+  (`POST /admin/devices/pair`), registering a device with its token
+  (`POST /admin/devices`), creating a token (`POST /admin/tokens`) and moving a
+  device to another access level (`PUT /admin/access/devices/:id/level`).
+- **Never for** what makes the gateway stricter: declining a request, `ask`,
+  removing a sign-in, revoking a device. Anything else sent to a guarded route
+  needs the step-up.
+- Nothing changes without `OMNESIS_CLOUD_RELAY_ENABLED`, before the owner confirms
+  a passkey, or for a gateway with no account.
+
+The exchange:
+
+1. The action is refused with `428` and
+   `{ code: "STEP_UP_REQUIRED", detail: { method, path, bodySha256, options:
+"/admin/step-up/options", header: "X-Omnesis-Step-Up" } }`. `path` includes the
+   query string; `bodySha256` is the lowercase hex SHA-256 of the exact body bytes
+   (of the empty string when there is none).
+2. `POST /admin/step-up/options` (admin) with `{ method, path, bodySha256 }`
+   returns a `step-up` ceremony bound to
+   `gatewayPasskeyStepUpBinding(method, path, bodySha256, device)`, where the
+   device is the caller's own (for a portal session, the device its credential
+   belongs to).
+3. The owner's passkey asserts on the gateway's own origin (or, for the Android
+   app, its compiled origin) and `POST /admin/step-up` with
+   `{ method, path, bodySha256, proof }` returns `{ stepUpId, expiresAt }`. Only a
+   passkey confirmed on this gateway counts; otherwise `403 STEP_UP_REFUSED`.
+4. The same request is sent again with `X-Omnesis-Step-Up: <stepUpId>`. The id is
+   good for that one request by that device, for sixty seconds, once: another
+   body, path, method or device, a second use, or a late one gets `428` again.
+
+While no step-up can start (a certificate incident hold, or a gateway with no
+origin of its own), a guarded action that needs one and the options route answer
+`403 STEP_UP_UNAVAILABLE`; the owner acts on the gateway itself. The portal runs
+the exchange inside its request helper: a guarded action prompts for the passkey
+and is sent again once. The native admin apps don't run it yet: through the relay,
+those actions answer `428 STEP_UP_REQUIRED` (or `403 STEP_UP_UNAVAILABLE`).
 
 ## Comparison code
 
@@ -559,7 +723,8 @@ gateway goes on an incident hold:
 - the owner's administrator phones get a generic notification;
 - the portal's Omnesis account page and `omnesis cloud status` say so;
 - a sign-in made on a page served under the gateway's own name proves nothing
-  while it lasts (`gatewayOriginAssertionsRefused`).
+  while it lasts (`gatewayOriginAssertionsRefused`), and no step-up starts or
+  counts, so an action that needs one is refused until the hold is lifted.
 
 The hold is saved with the owner's other local choices before the monitor
 records the incident, so it survives restarts, unlinking and linking again, and
@@ -834,6 +999,9 @@ What a compromised relay can no longer do:
 - Stockpile assertions: a `gateway-passkey` challenge is one-use, issued by the
   gateway, and lives three minutes; the confirmed passkey's signature counter is
   kept.
+- Add a device with an admin session it rides on: approving, minting a code or a
+  token and choosing `automatic` through the relay need the owner's passkey on the
+  gateway's page for that one action (step-up).
 
 What remains:
 
@@ -858,7 +1026,8 @@ What remains:
   only makes confirmation or approval fail.
 
 A sign-in in the iOS app presents the relay's own origin, so it is held like a
-relay page's until the app approves through the gateway's page. A compromised relay
+relay page's until the owner approves it on the gateway's page, which the app
+opens for its held request. A compromised relay
 can also show one brand-new device a fake gateway. That fake cannot reach the real
 gateway; first contact requires a publicly trusted, logged certificate, which the
 gateway's certificate monitor reports when it is for the gateway's own name (and

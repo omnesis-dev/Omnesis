@@ -31,6 +31,7 @@ import {
   readPackageVersion,
   runningSourceCommit,
   ownedProcessCleanupReceipt,
+  installParentShutdownHandler,
   SOURCE_CONTRACT_WIRE_RANGE,
   type AudioTranscribeFn,
   type OcrFn,
@@ -1245,6 +1246,7 @@ export async function main() {
   process.on("SIGTERM", () => {
     void shutdown();
   });
+  installParentShutdownHandler(() => void shutdown());
 }
 
 // Errors nobody caught. An unhandled rejection is reported and the collector

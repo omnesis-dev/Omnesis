@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
-import { waitForChild } from "../lib/check-process.mjs";
+import { runCheckCommand } from "../lib/check-process.mjs";
+import { ownedProcessCleanupReceipt } from "../../packages/core/src/owned-process-cleanup.ts";
 
 /** Installation is outside the Windows runtime compatibility contract. */
 export const INSTALLER_TEST_EXCLUSIONS = [
@@ -31,6 +31,13 @@ export const INSTALLER_TEST_EXCLUSIONS = [
 ];
 
 export const FOCUSED_UNIT_FILES = [
+  "scripts/lib/check-process.test.mjs",
+  "packages/cli/src/commands/status-json.test.ts",
+  "packages/collector/src/owned-process-shutdown.test.ts",
+  "packages/collector/src/doctor-deadlines.test.ts",
+  "packages/collector/src/e2e/e2e-owned-process.test.ts",
+  "packages/platform/src/windows-private-owner-rights.windows.test.ts",
+  "packages/agent-integration/src/hermes-windows-bridge.test.ts",
   "packages/platform/src/windows-private-repair-streams.windows.test.ts",
   "packages/cloud-relay/src/private-inputs.test.ts",
   "packages/cloud-relay/src/dns-broker-node.test.ts",
@@ -242,6 +249,7 @@ export const FOCUSED_UNIT_FILES = [
 ];
 
 export const FOCUSED_E2E_FILES = [
+  "packages/collector/src/e2e/collector-parent-shutdown.e2e.test.ts",
   "packages/collector/src/e2e/gateway-lifecycle.e2e.test.ts",
   "packages/collector/src/e2e/synth-pipeline.e2e.test.ts",
   "packages/collector/src/e2e/source-descriptors.e2e.test.ts",
@@ -311,13 +319,9 @@ export function windowsCheckTasks(lane, shard, files = []) {
 export async function runWindowsCheckTasks(tasks) {
   let exitCode = 0;
   for (const task of tasks) {
-    const code = await waitForChild(
-      spawn(process.execPath, task, {
-        stdio: "inherit",
-        env: process.env,
-        detached: process.platform !== "win32",
-      }),
-    );
+    const code = await runCheckCommand(process.execPath, task, {
+      env: process.env,
+    });
     if (code !== 0 && exitCode === 0) exitCode = code;
   }
   return exitCode;
@@ -341,4 +345,15 @@ async function main(args) {
   return runWindowsCheckTasks(tasks);
 }
 
-if (import.meta.main) process.exitCode = await main(process.argv.slice(2));
+if (import.meta.main) {
+  try {
+    process.exitCode = await main(process.argv.slice(2));
+  } catch (error) {
+    process.stderr.write(
+      ownedProcessCleanupReceipt(error) !== undefined
+        ? "Windows check cleanup remains unconfirmed; review is required.\n"
+        : `${error instanceof Error ? error.message : "Windows check failed"}\n`,
+    );
+    process.exitCode = 1;
+  }
+}

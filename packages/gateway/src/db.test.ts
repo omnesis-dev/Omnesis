@@ -30,6 +30,7 @@ import {
   getWipeEpoch,
   bumpWipeEpoch,
   resetMemberCursor,
+  resetSourceCursors,
   beginSyncAttempt,
   revokeSyncAttempt,
   setSyncState,
@@ -1183,6 +1184,85 @@ describe("deleteAllByStream", () => {
       last_synced_at: null,
     });
     expect(getWipeEpoch(db, "gmail", "device-b")).toBe(1);
+  });
+
+  test("resetSourceCursors sends a shared-cursor source back to the start and deletes nothing", () => {
+    upsertDocuments(db, [
+      makeDoc({ externalId: "kept-1" }),
+      makeDoc({ externalId: "kept-2" }),
+      makeDoc({ externalId: "gone-1" }),
+    ]);
+    deleteDocumentForUser(db, "google", "gmail", "gone-1");
+    setSyncState(db, "gmail", { page: 4 }, { icon: "📧", label: "Mail" }, undefined, true);
+    const claimed = beginSyncAttempt(db, "gmail");
+    setSyncError(db, "gmail", "auth lapsed");
+    const documentIds = () =>
+      db
+        .prepare<[], { id: string }>(
+          "SELECT id FROM documents WHERE source_id = 'gmail' ORDER BY id",
+        )
+        .all()
+        .map((row) => row.id);
+    const before = documentIds();
+    const cursorRows = () => listSyncStates(db).filter((row) => row.source_id === "gmail").length;
+    const rowsBefore = cursorRows();
+
+    resetSourceCursors(db, "gmail", false);
+
+    expect(getSyncState(db, "gmail")).toMatchObject({
+      cursor: "{}",
+      last_synced_at: null,
+      last_error: null,
+      errored_at: null,
+      label: "Mail",
+    });
+    expect(getWipeEpoch(db, "gmail")).toBe(claimed + 1);
+    // The sync that was in flight cannot write its cursor back.
+    expect(setSyncState(db, "gmail", { page: 5 }, undefined, undefined, false, claimed)).toBe(
+      false,
+    );
+    expect(documentIds()).toEqual(before);
+    // The owner's deletion is still on record: the item is refused when read again.
+    expect(
+      upsertDocuments(db, [makeDoc({ externalId: "gone-1" })]).suppressedDocuments,
+    ).toHaveLength(1);
+    // No member row was invented for a source that syncs on the shared one.
+    expect(cursorRows()).toBe(rowsBefore);
+  });
+
+  test("resetSourceCursors gives every member of a per-device source a reset row, the owner included", () => {
+    const owner = createDevice(db, { name: "reset-owner", kind: "collector" }).id;
+    const sibling = createDevice(db, { name: "reset-sibling", kind: "collector" }).id;
+    const late = createDevice(db, { name: "reset-late", kind: "collector" }).id;
+    const source = createSource(db, {
+      type: SourceType("notes-synth"),
+      accountId: AccountId("local"),
+      deviceId: owner,
+      multiDeviceMode: "replicated",
+    });
+    if (!source) throw new Error("fixture source was not created");
+    addSourceMember(db, source.id, sibling);
+    addSourceMember(db, source.id, late);
+    // The shared row the source synced on before it was replicated, the
+    // owner's and the sibling's own rows; the late member never synced.
+    setSyncState(db, source.id, { page: 1 });
+    setSyncState(db, source.id, { page: 7 }, undefined, undefined, false, undefined, owner);
+    setSyncState(db, source.id, { page: 9 }, undefined, undefined, false, undefined, sibling);
+    const siblingClaim = beginSyncAttempt(db, source.id, sibling);
+
+    resetSourceCursors(db, source.id, true);
+
+    for (const row of ["", owner, sibling, late]) {
+      expect(getSyncState(db, source.id, row), `row "${row}"`).toMatchObject({
+        cursor: "{}",
+        last_synced_at: null,
+      });
+      expect(getWipeEpoch(db, source.id, row), `epoch of "${row}"`).toBeGreaterThan(0);
+    }
+    expect(getWipeEpoch(db, source.id, sibling)).toBe(siblingClaim + 1);
+    expect(
+      setSyncState(db, source.id, { page: 10 }, undefined, undefined, false, siblingClaim, sibling),
+    ).toBe(false);
   });
 });
 

@@ -141,7 +141,6 @@ test("doctor close joins injected raw work and suppresses late emission and repl
 test("ownership admission callback can refuse a run before either raw producer is invoked", async () => {
   vi.useFakeTimers();
   const refused = new Error("Invented watchdog claim already held");
-  let current: ProbeOwner | undefined;
   let pendingReceipt: unknown;
   const notify = vi.fn(() => {
     const receipt = current?.cleanupFailure?.();
@@ -151,7 +150,7 @@ test("ownership admission callback can refuse a run before either raw producer i
     }
   });
   const { doctor, owner, system, security } = fixture({ onOwnershipChanged: notify });
-  current = owner;
+  const current = owner;
   try {
     doctor.start("claimed");
     await vi.advanceTimersByTimeAsync(0);

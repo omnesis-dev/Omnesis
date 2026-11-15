@@ -366,8 +366,16 @@ describe.skipIf(!browserReady)("leave an Omnesis account", () => {
           hostname: first.hostname,
           gateway_id: expect.stringMatching(/^sha256:[a-f0-9]{64}$/),
         });
+        // And a digest of its passkey, so the account page can tell a browser that offers it
+        // again that its account was deleted.
+        expect(rows.get("omnesis_deleted_passkeys")).toEqual([
+          JSON.stringify({
+            credential_digest: createHash("sha256").update(passkey!).digest("hex"),
+          }),
+        ]);
         for (const [table, values] of rows)
-          if (table !== "relay_hosted_names") expect(values, table).toEqual([]);
+          if (table !== "relay_hosted_names" && table !== "omnesis_deleted_passkeys")
+            expect(values, table).toEqual([]);
 
         // ── The old address routes nowhere ──────────────────────────────────
         await expect(servedCertificate(world, first.hostname, authority.root)).rejects.toThrow();

@@ -92,6 +92,17 @@ interface Ceremony {
   authorization?: PasskeyRegistrationAuthorization;
 }
 
+/**
+ * A passkey this relay has no account for. Only the browser that holds it learns this, inside a
+ * ceremony it started. `deleted` says the relay deleted its account, so nothing will ever accept it
+ * again and the browser's password manager may drop it.
+ */
+export class UnknownPasskey extends RelayError {
+  constructor(readonly deleted: boolean) {
+    super(401, "This passkey belongs to no Omnesis account");
+  }
+}
+
 /** WebAuthn verifies credential possession; device enrollment and gateway encryption remain independent. */
 export class Passkeys {
   private readonly pending = new Map<string, Ceremony>();
@@ -256,7 +267,7 @@ export class Passkeys {
       const credential = authenticationSchema.parse(response);
       if (credential.id !== credential.rawId) throw new Error("Credential identifier mismatch");
       const stored = this.accounts.passkey(credential.id);
-      if (!stored) throw new Error("Passkey is not registered");
+      if (!stored) throw new UnknownPasskey(this.accounts.passkeyDeleted(credential.id));
       const expectedHandle = Buffer.from(stored.accountId, "hex").toString("base64url");
       const actualHandle = credential.response.userHandle;
       if (
@@ -289,7 +300,8 @@ export class Passkeys {
         credentialId: credential.id,
         credentialPublicKey: Buffer.from(stored.credential.publicKey).toString("base64url"),
       };
-    } catch {
+    } catch (error) {
+      if (error instanceof UnknownPasskey) throw error;
       throw new RelayError(401, "Passkey sign-in did not complete; try again");
     }
   }

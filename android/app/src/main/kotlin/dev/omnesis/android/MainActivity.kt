@@ -25,6 +25,7 @@ import dev.omnesis.android.designsystem.theme.OmTheme
 import dev.omnesis.android.designsystem.theme.OmnesisTheme
 import dev.omnesis.android.notes.NotesRepository
 import dev.omnesis.android.notifications.NotificationLaunchBus
+import dev.omnesis.android.notifications.validNotificationId
 import dev.omnesis.android.session.SessionManager
 import dev.omnesis.android.transport.SourceMembership
 import dev.omnesis.android.ui.capture.CaptureLaunchBus
@@ -279,7 +280,9 @@ class MainActivity : ComponentActivity() {
         val stamp = launchIntent.getLongExtra(EXTRA_DEVICES_LAUNCH_STAMP, 0L)
         if (!launches.accept(KIND_DEVICES, launchIntent, stamp, delivery)) return false
         if (launchIntent.getBooleanExtra(EXTRA_DEVICES_PAIRING_REQUESTS, false)) {
-            notificationLaunchBus.postPairingRequests()
+            notificationLaunchBus.postPairingRequests(
+                launchIntent.getStringExtra(EXTRA_DEVICES_PAIRING_REQUEST_ID)?.takeIf(::validNotificationId),
+            )
         } else {
             notificationLaunchBus.postDevices(launchIntent.getStringExtra(EXTRA_DEVICES_DEVICE_ID))
         }
@@ -334,6 +337,7 @@ class MainActivity : ComponentActivity() {
         const val ACTION_DEVICES = "dev.omnesis.android.action.DEVICES"
         const val EXTRA_DEVICES_DEVICE_ID = "devices_device_id"
         const val EXTRA_DEVICES_PAIRING_REQUESTS = "devices_pairing_requests"
+        const val EXTRA_DEVICES_PAIRING_REQUEST_ID = "devices_pairing_request_id"
         const val EXTRA_DEVICES_LAUNCH_STAMP = "devices_launch_stamp"
 
         /** How long after a tile tap the capture screen may still open for it. */

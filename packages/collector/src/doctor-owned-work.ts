@@ -72,7 +72,6 @@ export class DoctorOwnedWork {
     } catch (error) {
       return Promise.reject(error);
     }
-    let refused: { error: unknown } | undefined;
     const work = Promise.resolve()
       .then(() => {
         if (refused) throw refused.error;
@@ -90,7 +89,7 @@ export class DoctorOwnedWork {
       });
     this.active.set(key, work);
     // The pending receipt is visible to the watchdog gate before any producer runs.
-    refused = this.notify();
+    const refused = this.notify();
     return work;
   }
 

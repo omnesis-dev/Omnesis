@@ -94,13 +94,7 @@ test.each([
       expect(await readFile(file)).toEqual(journal);
     } finally {
       // The marked publication is wholly injected; all physical writes above are joined Node I/O.
-      if (!closed) {
-        try {
-          await service.close();
-        } catch (error) {
-          if (error !== failure) throw error;
-        }
-      }
+      if (!closed) await expect(service.close()).rejects.toBe(failure);
       await rm(directory, { recursive: true, force: true });
     }
   },
@@ -156,13 +150,7 @@ test.each([false, true])(
       expect(publish).toHaveBeenCalledOnce();
       expect(await readFile(file)).toEqual(journal);
     } finally {
-      if (!closed) {
-        try {
-          await service.close();
-        } catch (error) {
-          if (error !== failure) throw error;
-        }
-      }
+      if (!closed) await expect(service.close()).rejects.toBe(failure);
       await rm(directory, { recursive: true, force: true });
     }
   },

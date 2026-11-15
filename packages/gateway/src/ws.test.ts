@@ -588,7 +588,6 @@ describe("DeviceWsServer", () => {
     } catch (error) {
       primaryFailed = true;
       primaryFailure = error;
-      throw error;
     } finally {
       const errors: unknown[] = [];
       let joined = false;
@@ -611,12 +610,15 @@ describe("DeviceWsServer", () => {
       } catch (error) {
         errors.push(error);
       }
-      if (errors.length)
-        throw fixtureFailure(
+      if (errors.length) {
+        primaryFailure = fixtureFailure(
           [...(primaryFailed ? [primaryFailure] : []), ...errors],
           "Hermes probe operation and cleanup failed",
         );
+        primaryFailed = true;
+      }
     }
+    if (primaryFailed) throw primaryFailure;
   });
 
   test("upgrade token plus hello authenticates and returns deviceId + scopes", async () => {

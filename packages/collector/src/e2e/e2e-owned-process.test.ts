@@ -464,6 +464,8 @@ test.runIf(process.platform === "win32")(
     let joined = false,
       primary: unknown,
       failed = false,
+      cleanupFailed = false,
+      cleanupFailure: unknown,
       output = "";
     outer.stdout.on("data", (bytes) => {
       output += String(bytes);
@@ -502,26 +504,38 @@ test.runIf(process.platform === "win32")(
     } catch (error) {
       failed = true;
       primary = error;
-      throw error;
     } finally {
       if (!joined) {
-        try {
-          outer.kill("SIGKILL");
-          await outer.jobClosed;
-          joined = true;
-        } catch (error) {
+        const cleanup = await Promise.allSettled([
+          Promise.resolve().then(() => outer.kill("SIGKILL")),
+          outer.jobClosed,
+        ]);
+        joined = cleanup[1]!.status === "fulfilled";
+        const errors = cleanup
+          .filter((result) => result.status === "rejected")
+          .map((result) => result.reason as unknown);
+        if (errors.length) {
+          cleanupFailed = true;
+          cleanupFailure = new AggregateError(errors, "Parent-death fixture join failed", {
+            cause:
+              errors.find((error) => ownedProcessCleanupReceipt(error) !== undefined) ?? errors[0],
+          });
           roots.splice(roots.indexOf(root), 1);
-          throw Object.assign(
-            new AggregateError(
-              [...(failed ? [primary] : []), error],
-              "Parent-death fixture cleanup was not confirmed",
-              { cause: error },
-            ),
-            { cleanupFailure: error },
-          );
         }
       }
     }
+    if (cleanupFailed) {
+      const receipt = ownedProcessCleanupReceipt(cleanupFailure);
+      throw Object.assign(
+        new AggregateError(
+          [...(failed ? [primary] : []), cleanupFailure],
+          "Parent-death fixture cleanup was not confirmed",
+          { cause: cleanupFailure },
+        ),
+        { cleanupFailure: receipt === undefined ? cleanupFailure : receipt.failure },
+      );
+    }
+    if (failed) throw primary;
   },
   60000,
 );

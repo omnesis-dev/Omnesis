@@ -48,6 +48,36 @@ class DeviceEnrollmentContractTest {
         DeviceEnrollmentContract.tokenRotationTranscript("99999999-8888-4777-8666-555555555555", gatewaySpkiFingerprint, challenge, devicePublicKey).toString(Charsets.UTF_8),
     )
 
+    /** `packages/cloud-relay/src/gateway-passkey.test.ts`'s vectors, on the gateway page's origin. */
+    @Test fun `gateway passkey challenges match the gateway's vectors for every purpose`() {
+        val origin = "https://g-abcdefgh.relay.example.test"
+        fun vector(purpose: String, binding: String) = DeviceEnrollmentContract.gatewayPasskeyChallenge(purpose, origin, challenge, binding)
+        assertEquals("N54-1Hc8nIzZyGGjgVB2es2v2ut0AeLrQLlHiV9NaXM", vector("device-enrollment", nonce))
+        assertEquals("s4TEruSndQL9XUX4vOZB8gLvPAjWmLWDn4hs6rqiev8", vector("approve-request", "l0NtUMoLWQPEqbViKuTTcNl21YlGfRT9uywbHtmcvzg"))
+        assertEquals("mofVzFt_O3rjnPh-MGYHJ_17o3SpvObuqvY5jOi1uX4", vector("pin-passkey", "EAANDVb7NFK6CvK8jvrrt_qCOpVZtuhWoCGrICUHhsM"))
+        assertEquals("uGxFctH1-FqRi73bqDy4iwjDPFJHx37qF8RGHMyJfnU", vector("step-up", "wAjeH2mnCBFwRS4nJrk5RaSmRfbLwLkGbSi1aF5o9bg"))
+    }
+
+    /** The same function in TypeScript (`gatewayPasskeyChallenge`), with the app's own origin. */
+    @Test fun `in the app the challenge names the app's apk-key-hash origin`() {
+        val app = "android:apk-key-hash:TPfeOsd2u2Uq8rCtF9DeGgc1m50jt6fPpDJYcUvAaCo"
+        assertEquals("9of2vsQM7O9WUvlPVEJcoR6hDB_em4mPWcd_w7HLotY", DeviceEnrollmentContract.gatewayPasskeyChallenge("device-enrollment", app, challenge, nonce))
+        assertEquals("Ya-uH3WpYI-yOGaMvUJTWj7vlpoa1QppRbGipQO4dyU",
+            DeviceEnrollmentContract.gatewayPasskeyChallenge("approve-request", app, challenge, "l0NtUMoLWQPEqbViKuTTcNl21YlGfRT9uywbHtmcvzg"))
+        // An assertion made for a page's origin and one made in the app never share a challenge.
+        assertNotEquals(DeviceEnrollmentContract.gatewayPasskeyChallenge("device-enrollment", "https://g-abcdefgh.relay.example.test", challenge, nonce),
+            DeviceEnrollmentContract.gatewayPasskeyChallenge("device-enrollment", app, challenge, nonce))
+    }
+
+    @Test fun `malformed gateway passkey parts are refused rather than hashed`() {
+        assertThrows(IllegalArgumentException::class.java) { DeviceEnrollmentContract.gatewayPasskeyChallenge("other", "o", challenge, nonce) }
+        assertThrows(IllegalArgumentException::class.java) { DeviceEnrollmentContract.gatewayPasskeyChallenge("step-up", "o", "short", nonce) }
+    }
+
+    @Test fun `the apk-key-hash origin is the base64url SHA-256 of the signing certificate`() {
+        assertEquals("android:apk-key-hash:ungWv48Bz-pBQUDeXa4iI7ADYaOWF3qctBD_YfIAFa0", DeviceEnrollmentContract.androidApkKeyHashOrigin("abc".toByteArray()))
+    }
+
     @Test fun `a device key publishes a base64url SPKI and signs DER the gateway can verify`() {
         val key = softwareDeviceKey()
         assertTrue(Regex("^[A-Za-z0-9_-]+$").matches(key.publicKey))

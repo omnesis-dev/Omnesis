@@ -73,3 +73,49 @@ export function memoryStore(): BrokerStore & { values: Map<string, unknown> } {
       new Map([...values].filter(([key]) => key.startsWith(prefix)).map(([k, v]) => [k, v])),
   };
 }
+
+/**
+ * A broker with its registry in memory and a fake Cloudflare behind it, reachable as `fetch` at
+ * `origin`. Requests to any other origin go to `fallback`.
+ */
+export async function brokerHarness(
+  options: {
+    origin?: string;
+    relayDomain?: string;
+    accountUriPrefix?: string;
+    fallback?: typeof fetch;
+  } = {},
+) {
+  const { DnsBroker } = await import("../src/dns-broker-core.js");
+  const { cloudflareBrokerZone } = await import("../src/dns-broker-zone.js");
+  const { fakeCloudflare } = await import("./fake-cloudflare.js");
+  const origin = options.origin ?? "https://dns.example.test";
+  const relayDomain = options.relayDomain ?? "relay.example.test";
+  const cloudflare = fakeCloudflare();
+  cloudflare.add({ type: "A", name: `*.${relayDomain}`, content: "192.0.2.10" });
+  const store = memoryStore();
+  const broker = new DnsBroker({
+    origin,
+    relayDomain,
+    store,
+    caa: options.accountUriPrefix ? { accountUriPrefix: options.accountUriPrefix } : {},
+    zone: cloudflareBrokerZone({
+      zoneId: cloudflare.zoneId,
+      zoneName: relayDomain.split(".").slice(1).join("."),
+      relayDomain,
+      token: cloudflare.token,
+      fetch: cloudflare.fetch,
+    }),
+  });
+  const calls: string[] = [];
+  const fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+    const url = new URL(String(input instanceof Request ? input.url : input));
+    if (url.origin !== origin) {
+      if (!options.fallback) throw new TypeError("fetch failed");
+      return options.fallback(input, init);
+    }
+    calls.push(url.pathname);
+    return broker.handle(new Request(url, init));
+  }) as typeof globalThis.fetch;
+  return { origin, broker, store, cloudflare, fetch, calls };
+}

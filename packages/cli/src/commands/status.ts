@@ -22,6 +22,7 @@ import {
   CliError,
   EXIT_AUTH,
   EXIT_GATEWAY_DOWN,
+  EXIT_USER_ERROR,
   GATEWAY_REQUEST_URL,
   missingTokenMessage,
 } from "../utils.js";
@@ -261,8 +262,13 @@ async function fetchStatus(): Promise<StatusData> {
   };
 }
 
-async function runOnce(): Promise<void> {
+async function runOnce(json = false): Promise<void> {
   try {
+    if (json) {
+      const data = await fetchStatus();
+      process.stdout.write(`${JSON.stringify(data)}\n`);
+      return;
+    }
     const [data, fx] = await withSpinner("Loading status", () =>
       Promise.all([fetchStatus(), buildCliFx()]),
     );
@@ -541,10 +547,12 @@ export const statusCommand = defineCommand({
     },
   },
   async run(ctx) {
+    if (ctx.args.watch && ctx.args.json)
+      throw new CliError("--json cannot be combined with --watch", EXIT_USER_ERROR);
     if (ctx.args.watch) {
       await runWatch();
     } else {
-      await runOnce();
+      await runOnce(ctx.args.json);
     }
   },
 });

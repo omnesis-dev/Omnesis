@@ -6,6 +6,7 @@ import type { DeviceId, Scope, TokenId } from "@omnesis/types";
 import type { RequestContext } from "../request-context.js";
 import type { WsUpgradeAuth } from "../../ws.js";
 import type { AccessGrantCapability } from "../../access/types.js";
+import type { StepUps } from "../step-up.js";
 
 interface AuthContextBase {
   deviceId: DeviceId | null;
@@ -56,6 +57,8 @@ export type AppEnv = {
     ctx: RequestContext;
     wsAuth: WsUpgradeAuth;
     wsClientIp: string;
+    /** Set only with the cloud relay opt-in; see `step-up.ts`. */
+    stepUps: StepUps | undefined;
   };
 };
 

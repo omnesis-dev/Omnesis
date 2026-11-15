@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { EventEmitter } from "node:events";
+import type { EventEmitter } from "node:events";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import * as scans from "./security-worker.js";
 import type { SecurityData } from "./types.js";
@@ -101,8 +101,7 @@ test("a completed payload cannot settle collection or close before natural worke
 });
 
 test("the observation deadline remains failed after late positive join and blocks duplicate work", async () => {
-  let owner!: Scanner;
-  owner = scanner(() => {
+  const owner: Scanner = scanner(() => {
     fixtures.events.push(owner.cleanupFailure() ? "ownership-changed" : "ownership-cleared");
   });
   const collecting = owner.collect();
@@ -208,8 +207,7 @@ test("a failed synchronous ownership notification cannot launch a worker", async
 });
 
 test("a close triggered by the ownership notification refuses a later worker launch", async () => {
-  let owner!: Scanner;
-  owner = scanner(() => {
+  const owner: Scanner = scanner(() => {
     void owner.close();
   });
   await expect(owner.collect()).rejects.toThrow("closed");
@@ -220,8 +218,7 @@ test("a close triggered by the ownership notification refuses a later worker lau
 test("synchronous setup cannot start a worker after the observation budget is exhausted", async () => {
   let now = 0;
   vi.spyOn(performance, "now").mockImplementation(() => now);
-  let owner!: Scanner;
-  owner = scanner(() => {
+  const owner: Scanner = scanner(() => {
     if (owner.cleanupFailure()) now = 30_000;
   });
   await expect(owner.collect()).rejects.toThrow("timed out after 30000ms");

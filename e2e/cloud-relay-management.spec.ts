@@ -185,6 +185,11 @@ test("portal offers no manual setup form; connected it is three plain sections, 
       deviceEnrollment: {
         policy: "automatic",
         trustedSignIns: [{ type: "passkey", id: "fictional-credential", addedAt: 1 }],
+        // Set up: the passkey is confirmed here, so the page shows its ordinary headline
+        // rather than the setup checklist.
+        confirmedSignIns: [
+          { type: "passkey", id: "fictional-credential", at: 1, via: "gateway-origin" },
+        ],
       },
     },
   );
@@ -289,7 +294,7 @@ test("portal offers no manual setup form; connected it is three plain sections, 
     "Public certificate: valid, expires 2029-01-01T00:00:00.000Z, last renewed not recorded",
     "Home certificate: self-signed, valid, expires 2029-01-01T00:00:00.000Z",
     "Account: linked",
-    "New devices: automatic, 0 confirmed sign-ins, 1 on record",
+    "New devices: automatic, 1 confirmed sign-ins, 1 on record",
   ])
     expect(copied.split(/\r?\n/)).toContain(line);
   expect(copied).toMatch(/\nGateway version: \d+\.\d+\.\d+/);
@@ -648,7 +653,9 @@ test("a freshly linked gateway shows its settings at once with automatic joining
       },
     },
   );
-  // No first step stands in front of the settings.
+  // Nothing is confirmed yet, so the setup checklist leads; the settings are all there below it,
+  // with no first step standing in front of them.
+  await expect(page.getByRole("heading", { name: "Finish setting up", exact: true })).toBeVisible();
   await expect(
     page.getByText("This gateway is linked to your Omnesis account.", { exact: true }),
   ).toBeVisible();

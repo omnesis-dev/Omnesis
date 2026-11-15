@@ -165,7 +165,10 @@ test.each(["configure", "enable"] as const)(
     manager = await GatewayCloudRelayManagement.open(f.options);
     if (phase === "enable") await manager.configure({ termsAccepted: true });
     const error = markedFileError("ENOENT", "cause");
-    const publish = vi.spyOn(credentials, "savePrivateJson").mockRejectedValueOnce(error);
+    const publish = vi
+      .spyOn(credentials, "savePrivateJson")
+      .mockClear()
+      .mockRejectedValueOnce(error);
     await expect(
       phase === "configure" ? manager.configure({ termsAccepted: true }) : manager.enable(),
     ).rejects.toBe(error);
@@ -316,11 +319,10 @@ test("a disabled installation cannot serve a private key whose reader is unjoine
 
 test("start observes a previously returned actor's terminal receipt before launching work", async () => {
   const f = fixture();
-  let receipt: unknown;
   f.options.certificateMonitor = { ...f.monitor, cleanupFailure: () => receipt };
   manager = await GatewayCloudRelayManagement.open(f.options);
   const error = markedFileError("EPRIVATE", "own");
-  receipt = error;
+  const receipt = error;
   manager.start();
   expect(f.monitor.start).not.toHaveBeenCalled();
   expect(f.register).not.toHaveBeenCalled();

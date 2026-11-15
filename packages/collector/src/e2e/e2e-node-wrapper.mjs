@@ -20,13 +20,17 @@ function fail(code) {
   process.exitCode = 1;
   try {
     emit({ type: "failed", code });
-  } catch {}
+  } catch {
+    // Failed publication cannot authorize success; the owner still must join.
+  }
   // This uses the exact retained ChildProcess. The outer canonical Job owns
   // descendants and its parent still must cancel/join that entire Job.
   if (child && child.exitCode === null && child.signalCode === null)
     try {
       child.kill("SIGKILL");
-    } catch {}
+    } catch {
+      // The outer Job retains descendant termination and join responsibility.
+    }
   if (!child) process.stdin.destroy();
 }
 async function receive(frame) {
