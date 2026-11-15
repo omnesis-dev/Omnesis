@@ -43,7 +43,7 @@ JS
 read_instance_token() (
   local root directory
   directory="${1:?instance config directory required}"
-  case "$directory" in /*) ;; *) directory="${PWD}/${directory}" ;; esac
+  case "$directory" in /*|[[:alpha:]]:[/\\]*) ;; *) directory="${PWD}/${directory}" ;; esac
   root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
   cd "$root"
   node --import tsx scripts/lib/instance-token.mjs "$directory" "${2:-}"

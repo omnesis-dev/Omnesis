@@ -78,6 +78,7 @@ jobs:
       - name: Measure durable voice and hot-journal fixture completion
         run: >-
           node scripts/run-check.mjs unit
+          scripts/instance-token.test.mjs
           packages/gateway/src/agent/service-live-voice.test.ts
           packages/providers/screen-time/src/db-reader-recovery.test.ts
       - name: Validate portable developer shell fixtures
