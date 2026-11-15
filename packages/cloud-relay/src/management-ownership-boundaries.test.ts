@@ -10,6 +10,8 @@ import { GatewaySignupClient } from "./gateway-signup-client.js";
 import * as credentials from "./google-credentials.js";
 import * as releases from "./gateway-release.js";
 import * as privateInputs from "./private-inputs.js";
+import * as gatewayKeys from "./gateway-key-client.js";
+import { DNS_BROKER_PROTOCOL } from "./dns-broker-contract.js";
 import { markedFileError } from "../test/private-operation-fixture.js";
 import {
   GatewayCloudRelayManagement,
@@ -71,8 +73,103 @@ afterEach(async () => {
   manager = undefined;
   vi.restoreAllMocks();
   vi.unstubAllEnvs();
+  vi.useRealTimers();
   await rm(directory, { recursive: true, force: true });
   expect(sockets.created).toBe(0);
+});
+
+test("a hosted-name claim retains its private owner-key cleanup receipt", async () => {
+  const f = fixture();
+  f.options.discover = vi.fn(f.options.discover);
+  const failure = markedFileError("ENOENT", "cause");
+  vi.spyOn(gatewayKeys, "readOrCreateGatewayOwnerKey").mockRejectedValue(failure);
+  f.options.env = {
+    ...f.options.env,
+    OMNESIS_ACME_DNS_PROVIDER: "broker",
+    OMNESIS_ACME_DNS_BROKER_URL: "https://dns.example.test",
+  };
+  f.options.fetch = vi.fn(async () =>
+    Response.json({
+      protocol: DNS_BROKER_PROTOCOL,
+      relayDomain: "relay.example.test",
+      caa: { issuer: "ca.example.test", accountUriPrefix: "https://ca.example.test/acme/acct/" },
+    }),
+  );
+  manager = await GatewayCloudRelayManagement.open(f.options);
+  await expect(
+    manager.configure({ relayUrl: "https://relay.example.test", termsAccepted: true }),
+  ).rejects.toBe(failure);
+  expect(manager.cleanupFailure()).toBe(failure);
+  expect(f.options.discover).not.toHaveBeenCalled();
+  expect(f.register).not.toHaveBeenCalled();
+  await expect(manager.configure({ termsAccepted: true })).rejects.toBe(failure);
+});
+
+test("close during the public probe cannot schedule another retry", async () => {
+  const f = fixture();
+  let release!: () => void;
+  const gate = new Promise<boolean>((resolve) => {
+    release = () => resolve(false);
+  });
+  const probe = vi.fn(async () => gate);
+  f.options.probe = probe;
+  f.options.probeRetryMs = 1;
+  let closing: Promise<void> | undefined;
+  try {
+    manager = await GatewayCloudRelayManagement.open(f.options);
+    await manager.configure({ relayUrl: "https://relay.example.test", termsAccepted: true });
+    await manager.enable();
+    await vi.waitFor(() => expect(probe).toHaveBeenCalledOnce());
+    vi.useFakeTimers();
+    closing = manager.close();
+    void closing.catch(() => {});
+    release();
+    const failure: unknown = await closing.catch((error: unknown) => error);
+    expect(ownedProcessCleanupReceipt(failure)).toBeUndefined();
+    await vi.advanceTimersByTimeAsync(600_000);
+    expect(probe).toHaveBeenCalledOnce();
+    expect(vi.getTimerCount()).toBe(0);
+  } finally {
+    release();
+    await Promise.allSettled([closing, manager?.close()]);
+  }
+});
+
+test("a late actor receipt after the public probe prevents another scheduled command", async () => {
+  const f = fixture();
+  const failure = markedFileError("EPRIVATE", "cause");
+  let probeComplete = false,
+    published = false;
+  f.options.probe = async () => {
+    probeComplete = true;
+    return true;
+  };
+  f.controller.cleanupFailure = () => {
+    if (published) return failure;
+    if (probeComplete) {
+      probeComplete = false;
+      // A producer can publish its retained receipt after a successful read
+      // but before the caller's next asynchronous continuation.
+      queueMicrotask(() => {
+        published = true;
+      });
+    }
+    return undefined;
+  };
+  let enabling: Promise<unknown> | undefined;
+  try {
+    manager = await GatewayCloudRelayManagement.open(f.options);
+    await manager.configure({ relayUrl: "https://relay.example.test", termsAccepted: true });
+    vi.useFakeTimers();
+    enabling = manager.enable().catch((error: unknown) => error);
+    await vi.waitFor(() => expect(published).toBe(true));
+    await enabling;
+    expect(manager.cleanupFailure()).toBe(failure);
+    expect(vi.getTimerCount()).toBe(0);
+    await expect(manager.renew()).rejects.toBe(failure);
+  } finally {
+    await Promise.allSettled([enabling, manager?.close()]);
+  }
 });
 function fixture() {
   const monitor = {

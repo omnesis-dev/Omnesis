@@ -1,11 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { delimiter, isAbsolute, resolve } from "node:path";
 import { nodeCommandInvocation } from "../../packages/core/src/node-command.ts";
-import { waitForChild } from "../lib/check-process.mjs";
+import { runCheckCommand, checkFailureMessage } from "../lib/check-process.mjs";
 import { bundles, bundleTestArgs } from "./bundles.mjs";
 import { assertTreeFingerprint } from "./tree-state.mjs";
 
@@ -55,5 +54,12 @@ if (bundle.kind === "e2e") {
 }
 
 const invocation = nodeCommandInvocation(command, args);
-const child = spawn(invocation.command, invocation.args, { stdio: "inherit", env: process.env });
-process.exitCode = await waitForChild(child);
+try {
+  process.exitCode = await runCheckCommand(invocation.command, invocation.args, {
+    env: process.env,
+    detached: false,
+  });
+} catch (error) {
+  process.stderr.write(`${checkFailureMessage(error)}\n`);
+  process.exitCode = 1;
+}

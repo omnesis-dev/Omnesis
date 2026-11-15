@@ -7,6 +7,7 @@ import {
 } from "../../packages/core/src/parent-shutdown.ts";
 import { spawn } from "node:child_process";
 import { ownedProcessCleanupReceipt } from "../../packages/core/src/owned-process-cleanup.ts";
+import { resolveNpmInvocation } from "../../packages/core/src/node-command.ts";
 import {
   waitForChild as waitForOwnedChild,
   signalChildTree as signalPosixChildTree,
@@ -21,6 +22,11 @@ const retainedLaneError = Object.assign(new Error("Check lane cleanup requires r
 function retainUnconfirmedCheckLane() {
   retainedLaneHold ??= setInterval(() => {}, 60_000);
 }
+export function checkFailureMessage(error) {
+  if (ownedProcessCleanupReceipt(error) !== undefined)
+    return "Check process cleanup remains unconfirmed; review is required.";
+  return error instanceof Error ? error.message : String(error);
+}
 
 /** Finite check roots own their descendants before target admission on Windows. */
 export async function runCheckCommand(
@@ -32,12 +38,13 @@ export async function runCheckCommand(
     platform = process.platform,
     signalEmitter = process,
     runWindows,
+    detached = true,
     retainUnconfirmed = retainUnconfirmedCheckLane,
   } = {},
 ) {
   if (retainedLaneHold) throw retainedLaneError;
   if (platform !== "win32")
-    return waitForChild(spawn(command, args, { cwd, env, stdio: "inherit", detached: true }), {
+    return waitForChild(spawn(command, args, { cwd, env, stdio: "inherit", detached }), {
       signalEmitter,
     });
   const controller = new AbortController();
@@ -52,6 +59,11 @@ export async function runCheckCommand(
   for (const signal of signals) signalEmitter.on(signal, stop);
   const removeShutdown = installParentShutdownHandler(stop);
   try {
+    if (command === "npm") {
+      const invocation = await resolveNpmInvocation(args, { env, platform });
+      command = invocation.command;
+      args = invocation.args;
+    }
     const run = runWindows ?? (await bootstrapWindowsPlatform()).runWindowsJob;
     controller.signal.throwIfAborted();
     const result = await run(command, args, {

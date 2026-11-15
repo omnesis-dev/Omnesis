@@ -101,6 +101,14 @@ describe("Windows CI coverage", () => {
     expect(e2e).toEqual(["scripts/run-check.mjs", "e2e", ...FOCUSED_E2E_FILES]);
     expect(FOCUSED_E2E_FILES).toContain("packages/collector/src/e2e/synth-pipeline.e2e.test.ts");
     expect(FOCUSED_E2E_FILES).toContain("packages/collector/src/e2e/gateway-lifecycle.e2e.test.ts");
+    for (const file of [
+      "packages/collector/src/e2e/connect-process.test.ts",
+      "packages/collector/src/e2e/e2e-buffered-command.test.ts",
+      "packages/collector/src/e2e/multi-collector-harness-cleanup.test.ts",
+      "packages/core/src/config-private-cleanup.test.ts",
+    ]) {
+      expect(FOCUSED_UNIT_FILES).toContain(file);
+    }
   });
 
   test("every Windows lane proves the rebuilt vector binding before running source checks", () => {

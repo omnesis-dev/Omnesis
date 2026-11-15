@@ -796,7 +796,6 @@ export class GatewayCloudRelayManagement implements CloudRelayManagement {
    * prompt second look the Relay page would call a working address unreachable for an hour.
    */
   private scheduleNext(attempt: number): void {
-    if (this.closed || this.cleanup.uncertain) return;
     try {
       this.assertAdmitting();
     } catch {

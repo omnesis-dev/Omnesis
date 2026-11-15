@@ -242,39 +242,42 @@ describe.skipIf(process.platform !== "linux")("Linux gateway lifetime lease", ()
   });
 });
 
-describe("Windows process ownership records", () => {
-  it("keeps a same-process Windows claim live", () => {
-    writeFileSync(
-      join(dir, GATEWAY_LOCK_FILE),
-      JSON.stringify({
+describe.each(["windows-process-v1", "darwin-process-v1"] as const)(
+  "%s ownership records",
+  (locking) => {
+    it("keeps a same-process claim live", () => {
+      writeFileSync(
+        join(dir, GATEWAY_LOCK_FILE),
+        JSON.stringify({
+          pid: process.pid,
+          processStart: null,
+          hostname: hostname(),
+          startedAt: new Date().toISOString(),
+          locking,
+          leaseId: "current-claim",
+        }),
+      );
+      expect(liveGatewayHolder(dir)).toMatchObject({
         pid: process.pid,
-        processStart: null,
-        hostname: hostname(),
-        startedAt: new Date().toISOString(),
-        locking: "windows-process-v1",
-        leaseId: "current-claim",
-      }),
-    );
-    expect(liveGatewayHolder(dir)).toMatchObject({
-      pid: process.pid,
-      locking: "windows-process-v1",
+        locking,
+      });
     });
-  });
 
-  it("rejects a same-process Windows claim with another start identity", () => {
-    writeFileSync(
-      join(dir, GATEWAY_LOCK_FILE),
-      JSON.stringify({
-        pid: process.pid,
-        processStart: "retired-process-start",
-        hostname: hostname(),
-        startedAt: new Date().toISOString(),
-        locking: "windows-process-v1",
-      }),
-    );
-    expect(liveGatewayHolder(dir)).toBeNull();
-  });
-});
+    it("rejects a same-process claim with another start identity", () => {
+      writeFileSync(
+        join(dir, GATEWAY_LOCK_FILE),
+        JSON.stringify({
+          pid: process.pid,
+          processStart: "retired-process-start",
+          hostname: hostname(),
+          startedAt: new Date().toISOString(),
+          locking,
+        }),
+      );
+      expect(liveGatewayHolder(dir)).toBeNull();
+    });
+  },
+);
 
 describe.skipIf(process.platform !== "win32")("Windows gateway claim guard", () => {
   it("records a start identity and refuses a duplicate in the same process", async () => {
@@ -332,6 +335,27 @@ afterEach(async () => {
 });
 
 describe("acquireGatewayLock", () => {
+  it("keeps this process's active claim live until its exact owner releases it", async () => {
+    const first = await acquireGatewayLock(dir, { waitMs: 0 });
+    try {
+      expect(liveGatewayHolder(dir)?.pid).toBe(process.pid);
+      await expect(acquireGatewayLock(dir, { waitMs: 0 })).rejects.toBeInstanceOf(
+        GatewayLockHeldError,
+      );
+    } finally {
+      first.release();
+    }
+    const replacement = await acquireGatewayLock(dir, { waitMs: 0 });
+    try {
+      first.release();
+      expect(liveGatewayHolder(dir)?.pid).toBe(process.pid);
+      expect(readGatewayLockHolder(dir)?.leaseId).toEqual(expect.any(String));
+    } finally {
+      replacement.release();
+    }
+    expect(liveGatewayHolder(dir)).toBeNull();
+  });
+
   it("takes a free directory and records this process", async () => {
     const lock = await acquireGatewayLock(dir);
     const holder = readGatewayLockHolder(dir);

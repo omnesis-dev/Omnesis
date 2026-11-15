@@ -1,11 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { execFile } from "node:child_process";
-import { join } from "node:path";
-import { promisify } from "node:util";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
-import { e2eTsxCommand } from "./gateway-env.js";
 import { MultiCollectorHarness } from "./multi-collector-harness.js";
 import type { DoctorReport } from "@omnesis/core/doctor";
 
@@ -19,9 +15,6 @@ interface FleetDoctorResponse {
   }>;
 }
 
-const execFileAsync = promisify(execFile);
-const REPO_ROOT = join(import.meta.dirname, "../../../..");
-
 /**
  * The real CLI against this gateway: `omnesis doctor --device` and `--fleet`
  * go through the same fleet routes the portal uses, so the terminal gets
@@ -31,30 +24,11 @@ async function runDoctorCli(
   harness: MultiCollectorHarness,
   args: string[],
 ): Promise<{ stdout: string; exitCode: number }> {
-  try {
-    const cli = e2eTsxCommand("packages/cli/src/index.ts");
-    const { stdout } = await execFileAsync(cli.command, [...cli.args, "doctor", ...args], {
-      cwd: REPO_ROOT,
-      env: {
-        ...process.env,
-        OMNESIS_GATEWAY_URL: harness.gatewayUrl,
-        OMNESIS_TOKEN: harness.bootstrapToken,
-        OMNESIS_CONFIG_DIR: harness.gatewayConfigDir,
-        NODE_TLS_REJECT_UNAUTHORIZED: "0",
-        NO_COLOR: "1",
-        CI: "1",
-      },
-      timeout: 120_000,
-      maxBuffer: 8 * 1024 * 1024,
-    });
-    return { stdout, exitCode: 0 };
-  } catch (err) {
-    const failure = err as { stdout?: string; code?: number };
-    return {
-      stdout: failure.stdout ?? "",
-      exitCode: typeof failure.code === "number" ? failure.code : 1,
-    };
-  }
+  const result = await harness.runCli(["doctor", ...args], { timeoutMs: 120_000 });
+  return {
+    stdout: result.stdout,
+    exitCode: Number.isFinite(result.exitCode) ? result.exitCode : 1,
+  };
 }
 
 const healthyReport = (message: string): DoctorReport => ({

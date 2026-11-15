@@ -9,6 +9,7 @@
 import { createPublicKey, sign, type KeyObject } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
 import { z } from "zod";
+import { ownedProcessCleanupReceipt } from "@omnesis/core";
 import { readBoundedJson, readPrivateJson, savePrivateJson } from "./google-credentials.js";
 import { caaBinding, lookupCaa, type CaaLookup } from "./acme-caa.js";
 import { challengeIsFresh, relayOrigin } from "./network.js";
@@ -177,6 +178,7 @@ export async function readBrokerMarker(
   try {
     return markerSchema.parse(await readPrivateJson(file));
   } catch (error) {
+    if (ownedProcessCleanupReceipt(error) !== undefined) throw error;
     if (error && typeof error === "object" && "code" in error && error.code === "ENOENT")
       return undefined;
     throw error;
