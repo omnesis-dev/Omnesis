@@ -346,10 +346,10 @@ test("no remember choice for an unverified or already confirmed sign-in, and pas
   expect(host.querySelector("button")).toBeNull();
 });
 
-test("when approving here needs Face ID, the button says so and no extra note comes before it", async () => {
+test("when approving here needs the passkey, the button says so and no extra note comes before it", async () => {
   await show(request, vi.fn(), { stepUpRequired: true });
-  expect(button("Yes, approve with Face ID")).toBeDefined();
-  await act(async () => button("Yes, approve with Face ID").click());
+  expect(button("Yes, approve with passkey")).toBeDefined();
+  await act(async () => button("Yes, approve with passkey").click());
   expect(api.decideCloudPairing).toHaveBeenLastCalledWith(request.requestId, true, undefined, {
     stepUpAnnounced: true,
   });
@@ -441,7 +441,7 @@ test("the list offers passkey approval only on the gateway's own origin, when th
     expect(Boolean(button("Approve with passkey"))).toBe(shown);
     render(null, host);
   }
-  // When approving here already asks for Face ID, one Face ID button is enough.
+  // When approving here already asks for the passkey, one passkey button is enough.
   api.cloudPairingConfig.mockResolvedValue({
     gatewayPasskey: { rpId: "relay.example.test", origin: "https://g-abcdefgh.relay.example.test" },
     passkeyApproval: true,
@@ -449,7 +449,7 @@ test("the list offers passkey approval only on the gateway's own origin, when th
   api.cloudPairingRequests.mockResolvedValue({ items: [request], stepUpRequired: true });
   await showRequests();
   expect(button("Approve with passkey")).toBeUndefined();
-  expect(button("Yes, approve with Face ID")).toBeDefined();
+  expect(button("Yes, approve with passkey")).toBeDefined();
 });
 
 test("a notification's link opens its request first", async () => {

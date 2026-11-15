@@ -11,7 +11,7 @@ import {
 } from "./cloud-relay-api.js";
 
 /** While a connect is under way the page follows it closely; otherwise a slow poll is enough. */
-// An operation that may ask for Face ID first waits for the person, not only for the network.
+// An operation that may ask for the passkey first waits for the person, not only for the network.
 const STEP_UP_OPERATIONS = new Set(["enrollment"]);
 const IN_PROGRESS = ["waiting", "registering", "linking"];
 export function relayPollInterval(status) {
@@ -67,7 +67,7 @@ export function useRelayManagement() {
     } catch (error) {
       if (mounted.current && active.current === attempt)
         setError(
-          // A Face ID step that couldn't go ahead says why in its own words.
+          // A passkey step that couldn't go ahead says why in its own words.
           (error?.stepUp === true && error.message) ||
             relayError(error?.code) ||
             "Couldn't load or update your Omnesis account settings. Check the connection and try again.",
@@ -99,4 +99,52 @@ export function useRelayManagement() {
     return () => clearInterval(timer);
   }, [interval]);
   return { status, error, busy, run, version };
+}
+
+/** How long one account refresh may take, and the least time between two the page starts. */
+const ACCOUNT_REFRESH_TIMEOUT_MS = 15_000;
+const ACCOUNT_REFRESH_GAP_MS = 2_000;
+
+/**
+ * Asks the gateway to read the Omnesis account again when the page opens and whenever it comes
+ * back into view (say, after adding a passkey on the account page in another tab), then calls
+ * `onRefreshed` so the page reads the new status at once. The gateway throttles these reads and
+ * they can't make anything trusted. A failure says nothing: the status read reports problems.
+ */
+export function useAccountRefresh(onRefreshed) {
+  const latest = useRef(onRefreshed);
+  latest.current = onRefreshed;
+  useEffect(() => {
+    let live = true,
+      last = -Infinity,
+      controller;
+    const refresh = async () => {
+      // Coming back to a tab fires both events; one refresh is enough.
+      if (document.visibilityState === "hidden" || Date.now() - last < ACCOUNT_REFRESH_GAP_MS)
+        return;
+      last = Date.now();
+      controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), ACCOUNT_REFRESH_TIMEOUT_MS);
+      try {
+        await relayManagement("account/refresh", {}, controller.signal);
+        if (live) latest.current?.();
+      } catch {
+        // The regular status read says what is wrong, if anything.
+      } finally {
+        clearTimeout(timer);
+      }
+    };
+    const shown = () => {
+      if (document.visibilityState !== "hidden") void refresh();
+    };
+    void refresh();
+    document.addEventListener("visibilitychange", shown);
+    window.addEventListener("focus", shown);
+    return () => {
+      live = false;
+      controller?.abort();
+      document.removeEventListener("visibilitychange", shown);
+      window.removeEventListener("focus", shown);
+    };
+  }, []);
 }

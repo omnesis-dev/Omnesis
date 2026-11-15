@@ -99,6 +99,12 @@ encrypted Gateway schema; tests hold a stale mapping through recovery. Linux
 and macOS retain their existing prebuilt libraries. This preparation remains
 separate from Windows installation support, which is outside the audit.
 
+Targeted backport validation passed 208 tests on Windows and 205 on Linux;
+the three mapped-view tests are Windows-specific. Original Windows binaries
+fail those three recovery cases. The rebuilt cipher also passed a full Gateway
+schema check and reads and writes files interchangeably with the original
+cipher binding. These results do not replace the complete runtime sweep.
+
 Authentication subprocesses also exercise an existing encrypted credential in
 a restricted Windows environment. Native process identity uses exact framework
 creation-time ticks, and compiler bootstraps load the system utility module by

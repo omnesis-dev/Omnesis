@@ -96,7 +96,7 @@ test("while no step-up can start, the caller gets an error a person can act on",
   );
   await expect(apiFetch("/admin/devices/pair", { method: "POST", body: "{}" })).rejects.toMatchObject({
     message:
-      "Face ID can't be used on this gateway right now. Make this change on the computer running Omnesis.",
+      "Passkeys can't be used on this gateway right now. Make this change on the computer running Omnesis.",
     stepUp: true,
   });
   // During a certificate incident the gateway says so, and so does the page.
@@ -113,7 +113,7 @@ test("while no step-up can start, the caller gets an error a person can act on",
   expect(confirmStepUp).not.toHaveBeenCalled();
 });
 
-test("an unannounced step-up first says why Face ID is coming; cancelling it changes nothing", async () => {
+test("an unannounced step-up first says why the passkey prompt is coming; cancelling it changes nothing", async () => {
   const fetchMock = vi.fn().mockResolvedValue(required());
   vi.stubGlobal("fetch", fetchMock);
   confirmStepUp.mockResolvedValueOnce(false);
@@ -127,7 +127,7 @@ test("an unannounced step-up first says why Face ID is coming; cancelling it cha
   expect(fetchMock).toHaveBeenCalledOnce();
 });
 
-test("a button that already named Face ID goes straight to the passkey, and the flag never reaches the gateway", async () => {
+test("a button that already named the passkey goes straight to the passkey, and the flag never reaches the gateway", async () => {
   const fetchMock = vi
     .fn()
     .mockResolvedValueOnce(required())

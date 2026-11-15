@@ -49,6 +49,39 @@ function table(header: readonly string[], rows: readonly (readonly string[])[]):
   return [line(header), line(rule), ...rows.map(line)].join("\n");
 }
 
+/**
+ * For a run with a semantic lane: how often each lane, alone, has a relevant
+ * passage in its own first ten, beside what the fused results achieve. A lane
+ * that beats the fused column is being held back by the fusion. Lane ranks are
+ * read from the fused results' score breakdowns, so a passage a lane ranked in
+ * its first ten but the fusion pushed past the hundredth result is not counted.
+ */
+export function renderLanes(summary: RunSummary, rows: readonly QueryRow[]): string {
+  const share = (hits: number, total: number): string => fmt(total === 0 ? 0 : hits / total);
+  const inTen = (rank: number | null): boolean => rank !== null && rank <= 10;
+  const lines = [...byLanguage(rows)]
+    .sort(([a], [b]) => LANGUAGE_NAMES[a].localeCompare(LANGUAGE_NAMES[b]))
+    .map(([language, queries]) => {
+      const list = [...queries.values()];
+      return [
+        LANGUAGE_NAMES[language],
+        share(list.filter((r) => inTen(r.bm25Rank)).length, list.length),
+        share(list.filter((r) => inTen(r.vectorRank)).length, list.length),
+        share(list.filter((r) => inTen(r.bm25Rank) || inTen(r.vectorRank)).length, list.length),
+        share(list.filter((r) => r.hit10 === 1).length, list.length),
+      ];
+    });
+  return [
+    `## Hit@10 of each lane: ${summary.name}`,
+    "",
+    table(["Language", "Keyword lane", "Semantic lane", "Either lane", "Fused results"], lines),
+    "",
+    "A lane's column counts the questions with a relevant passage in that lane's own first ten",
+    "(among the hundred passages the fused results returned).",
+    '"Either lane" is the ceiling a fusion of the two first pages could reach.',
+  ].join("\n");
+}
+
 export function renderResults(summaries: readonly RunSummary[]): string {
   const out: string[] = [
     "# Search eval results",
@@ -244,6 +277,11 @@ async function main(): Promise<void> {
     for (const metric of ["hit10", "ndcg10", "recall100"] as const) {
       process.stdout.write(`${renderComparison(base, candidate, metric)}\n`);
     }
+    return;
+  }
+  if (argv[0] === "--lanes") {
+    if (!argv[1]) throw new Error("usage: search-eval:report -- --lanes <run>");
+    process.stdout.write(`${renderLanes(readSummary(argv[1]), readQueryRows(argv[1]))}\n`);
     return;
   }
   const summaries = listRuns()

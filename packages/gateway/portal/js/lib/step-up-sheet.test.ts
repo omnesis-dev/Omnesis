@@ -10,7 +10,7 @@ const page = () => parseHTML("<html><body><main></main></body></html>").document
 const buttons = (doc: Document) =>
   [...doc.querySelectorAll(".relay-step-up-sheet button")] as HTMLButtonElement[];
 
-test("the note says why Face ID is coming, and Continue goes on to the browser's prompt", async () => {
+test("the note says why the passkey prompt is coming, and Continue goes on to the browser's prompt", async () => {
   const doc = page();
   const answer = confirmStepUp({ doc });
   const sheet = doc.querySelector(".relay-step-up-sheet")!;
@@ -20,7 +20,7 @@ test("the note says why Face ID is coming, and Continue goes on to the browser's
     "Confirm it's you",
   );
   expect(doc.getElementById(sheet.getAttribute("aria-describedby")!)?.textContent).toBe(
-    "You're connected from outside your home, so this needs Face ID.",
+    "You're connected from outside your home, so this needs your passkey.",
   );
   expect(buttons(doc).map((button) => button.textContent)).toEqual(["Cancel", "Continue"]);
   // A second request asked meanwhile shares the one note.

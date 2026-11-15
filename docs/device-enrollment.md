@@ -162,7 +162,7 @@ The owner confirms a passkey as the last step of connecting: the account page
 is confirmed. What the step asks depends only on what the account has, so a relay
 that lies about it can only make the step fail:
 
-- a passkey pinned here and an origin of its own: "Continue with Face ID" runs the
+- a passkey pinned here and an origin of its own: "Continue with passkey" runs the
   `pin-passkey` ceremony below on the gateway's own page. On any other address
   (the LAN or tailnet portal) the same button opens the gateway's own page
   already signed in (the portal handoff below) and the ceremony starts on load;
@@ -223,7 +223,7 @@ has an origin of its own and no incident holds it); the approval view of a held
 request carries `passkeyApproval` too. Pages offer a passkey button only when
 these say it can work.
 
-The portal's login page offers "Continue with Face ID" (only when the account has
+The portal's login page offers "Continue with passkey" (only when the account has
 a passkey; on the gateway's own origin it signs in here, elsewhere through the
 account page) and "Continue with Google", which always waits for approval. The
 token and pairing-code form sits behind "Have a pairing code? Enter it". A
@@ -397,7 +397,7 @@ and is sent again once.
 So that the prompt never comes unannounced, `GET /admin/cloud-relay` and
 `GET /admin/cloud-pairing/requests` carry `stepUpRequired`: whether this session's
 loosening actions will ask, by the same rule as above. The portal then labels the
-button ("Yes, approve with Face ID", "Turns on with Face ID"). A `428` that arrives
+button ("Yes, approve with passkey", "Turns on with your passkey"). A `428` that arrives
 anyway first shows a short note ("Confirm it's you") before the browser's prompt.
 These are labels only: every guarded request is still checked on its own, and a
 label never stands in for a step-up. The native admin apps don't run it yet: through the relay,
@@ -671,7 +671,12 @@ approval. A future-dated proof never verifies.
 Gateways sync hourly, and when a verified sign-in they do not trust arrives,
 Google or passkey, so a device that signs in with a sign-in the account confirmed
 joins at once. A sign-in starts at most one fetch every two seconds, and callers
-share a fetch that is already running.
+share a fetch that is already running. The portal's account page also asks for a
+sync when it opens or regains focus (`POST /admin/cloud-relay/account/refresh`,
+admin only), so a passkey the owner just added on the relay's account page shows
+within seconds. That is the same sync, at most one every 15 seconds, with a call
+inside that window queuing one more at its end; it applies the rules above and
+can trust nothing they would not.
 
 #### Removal is durable
 

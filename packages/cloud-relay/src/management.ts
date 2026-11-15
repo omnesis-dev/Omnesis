@@ -177,6 +177,11 @@ export interface CloudRelayManagement {
   /** Lifts an incident hold. Callers must refuse a request that came through the relay. */
   acknowledgeIncidentHold?(): Promise<CloudRelayManagementStatus>;
   removeTrustedSignIn?(id: string): Promise<CloudRelayManagementStatus>;
+  /**
+   * Reads the account's sign-ins again now, as the periodic check-in does: the owner is looking at
+   * the account page, perhaps just back from changing the account. Throttled; adds no trust.
+   */
+  refreshAccount?(): Promise<CloudRelayManagementStatus>;
   /** Starts confirming a passkey on the gateway's own page (`pin-passkey`). */
   passkeyConfirmation?(): Promise<import("./gateway-account-link.js").GatewayPasskeyCeremony>;
   /** Finishes it with the `gateway-passkey` assertion the page made. */

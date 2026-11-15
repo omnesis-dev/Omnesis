@@ -25,6 +25,7 @@ import {
   gatewayPasskeyProof,
   onGatewayOrigin,
   PASSKEY_CHECK_FAILED,
+  PASSKEY_HINT,
   PASSKEY_OTHER_ACCOUNT,
   passkeysSupported,
 } from "../lib/gateway-passkey.js";
@@ -49,9 +50,10 @@ const gatewayPasskeyHere = (config) =>
 /** Every sentence the sign-in options and the waiting screen say, in one place. */
 export const LOGIN_COPY = {
   title: "Sign in to your gateway",
-  passkey: "Continue with Face ID",
+  passkey: "Continue with passkey",
+  passkeyHint: PASSKEY_HINT,
   google: "Continue with Google",
-  waitingForPasskey: "Waiting for Face ID…",
+  waitingForPasskey: "Waiting for your passkey…",
   opening: "Opening sign-in…",
   openingGoogle: "Opening Google…",
   // Said under Google: a browser's Google sign-in always waits for a person.
@@ -63,7 +65,7 @@ export const LOGIN_COPY = {
   approved: "Approved. Opening your gateway…",
   approvedCompare: "Approved by your gateway.",
   denied: "Your gateway denied this request.",
-  approveHere: "Approve with Face ID here",
+  approveHere: "Approve with passkey here",
   pair: "Codes match, pair this device",
   pairing: "Pairing…",
   cancel: "Cancel",
@@ -538,7 +540,8 @@ export function CloudPairingLogin({ onReady } = {}) {
                 onClick=${passkeyHere ? passkeySignIn : () => start("passkey")}
               >
                 ${busy ? (passkeyHere ? LOGIN_COPY.waitingForPasskey : LOGIN_COPY.opening) : LOGIN_COPY.passkey}
-              </button>`
+              </button>
+              <p class="login-hint">${LOGIN_COPY.passkeyHint}</p>`
             }
             <button
               type="button"

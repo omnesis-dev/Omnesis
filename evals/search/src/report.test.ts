@@ -7,7 +7,7 @@ import { join } from "node:path";
 
 import { afterEach, describe, expect, test } from "vitest";
 
-import { renderComparison, renderResults } from "./report.js";
+import { renderComparison, renderLanes, renderResults } from "./report.js";
 import { listRuns, readQueryRows, readSummary, writeRun } from "./results.js";
 import type { Language } from "./dataset.js";
 import type { QueryRow, RunSummary } from "./results.js";
@@ -48,6 +48,8 @@ function rows(values: readonly number[], language: Language = "ko"): QueryRow[] 
     ndcg10: v,
     recall100: v,
     mrr10: v,
+    bm25Rank: v > 0 ? 1 : null,
+    vectorRank: null,
   }));
 }
 
@@ -81,6 +83,28 @@ describe("renderResults", () => {
       "| base | lexical | 012345678 | 100 | 3 | 0.750 | 0.250 | 0.500 | 0.400 | 67% | 9 ms |",
     );
     expect(text).toContain("| Korean | 0.250 | 0.500 |");
+  });
+});
+
+describe("renderLanes", () => {
+  test("counts each lane's own first page, their union and the fused results", () => {
+    const lanes = (
+      bm25Rank: number | null,
+      vectorRank: number | null,
+      hit10: number,
+    ): QueryRow => ({
+      ...rows([hit10])[0]!,
+      queryId: `${bm25Rank}-${vectorRank}`,
+      bm25Rank,
+      vectorRank,
+    });
+    const text = renderLanes(summary("hybrid", 0.5), [
+      lanes(3, null, 1),
+      lanes(40, 2, 1),
+      lanes(12, 11, 0),
+      lanes(null, 9, 0),
+    ]);
+    expect(text).toContain("| Korean | 0.250 | 0.500 | 0.750 | 0.500 |");
   });
 });
 

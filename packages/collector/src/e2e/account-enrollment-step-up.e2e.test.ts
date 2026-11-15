@@ -403,9 +403,9 @@ describe.skipIf(!browserReady)(
       await page.goto(`${gateway.publicOrigin}/portal/settings/devices`);
       const card = page.getByRole("article", { name: `${name} wants to connect` });
       await card.waitFor({ timeout: 30_000 });
-      // Through the relay with a passkey confirmed, the button says Face ID comes next, so no
+      // Through the relay with a passkey confirmed, the button says the passkey comes next, so no
       // note is shown before the prompt.
-      await card.getByRole("button", { name: "Yes, approve with Face ID", exact: true }).click();
+      await card.getByRole("button", { name: "Yes, approve with passkey", exact: true }).click();
       await waitFor(
         async () => (await requestStatus(requestId)) === "approved",
         "the request to be approved",
