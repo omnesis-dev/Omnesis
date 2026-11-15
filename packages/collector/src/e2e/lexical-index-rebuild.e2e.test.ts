@@ -4,7 +4,8 @@
 /**
  * Keyword-index rebuild across lexical versions, end to end.
  *
- * A real gateway indexes a corpus with lexical version 0, then restarts with a
+ * A real gateway indexes a corpus with the lexical version its code targets
+ * (the base version below), then restarts with a
  * newer version as its target (test-only versions 9001 and 9002, which reverse
  * every word, so a query cut by the wrong version matches nothing). The test
  * proves the agreed behavior of a rebuild:
@@ -55,6 +56,8 @@ function sleep(ms: number): Promise<void> {
 
 describe("Keyword-index rebuild between lexical versions", () => {
   let harness: SyntheticE2EHarness;
+  /** The version the gateway's code targets, read from the first status. */
+  let base = -1;
 
   const search = (text: string, limit = 50) =>
     harness.gatewayJson<SearchAnswer>("/search", {
@@ -163,11 +166,13 @@ describe("Keyword-index rebuild between lexical versions", () => {
     await harness?.destroy();
   });
 
-  test("a new gateway indexes with version 0 and has nothing to rebuild", async () => {
-    expect(await lexical()).toMatchObject({ activeVersion: 0, targetVersion: 0, building: null });
+  test("a new gateway indexes with the version its code targets and has nothing to rebuild", async () => {
+    const status = await lexical();
+    base = status.targetVersion;
+    expect(status).toMatchObject({ activeVersion: base, building: null });
     const answer = await search(PROBE_WORD);
     expect(answer.results).toHaveLength(PROBE_DOCS);
-    expect(answer.stages?.bm25?.lexicalVersion).toBe(0);
+    expect(answer.stages?.bm25?.lexicalVersion).toBe(base);
   });
 
   test("rebuilds to a new version in the background while search keeps answering by the old one", async () => {
@@ -179,10 +184,10 @@ describe("Keyword-index rebuild between lexical versions", () => {
       (s) => s.building?.version === 9001 && s.building.phase === "copying",
       60_000,
     );
-    expect(copying).toMatchObject({ activeVersion: 0, targetVersion: 9001 });
+    expect(copying).toMatchObject({ activeVersion: base, targetVersion: 9001 });
     const answer = await search(PROBE_WORD);
     expect(answer.results).toHaveLength(PROBE_DOCS);
-    expect(answer.stages?.bm25?.lexicalVersion).toBe(0);
+    expect(answer.stages?.bm25?.lexicalVersion).toBe(base);
   }, 120_000);
 
   test("chunks written during the rebuild, a crash and a newer version are all absorbed", async () => {
@@ -215,14 +220,14 @@ describe("Keyword-index rebuild between lexical versions", () => {
     expect(afterCrash.building!.chunksDone).toBeGreaterThanOrEqual(
       beforeCrash.building!.chunksDone,
     );
-    expect(afterCrash.activeVersion).toBe(0);
+    expect(afterCrash.activeVersion).toBe(base);
 
     // A newer version before the copy finished: the unfinished build is discarded.
     const beforeNewer = await until("the copy in progress", lexical, (s) => s.building !== null);
     expect(beforeNewer.building?.phase).toBe("copying");
     await restart({ extraGatewayEnv: { OMNESIS_LEXICAL_TEST_VERSION: "9002" } });
     const superseded = await until("the newer build", lexical, (s) => s.building?.version === 9002);
-    expect(superseded.activeVersion).toBe(0);
+    expect(superseded.activeVersion).toBe(base);
 
     const finished = await until(
       "the switch to version 9002",
@@ -237,11 +242,11 @@ describe("Keyword-index rebuild between lexical versions", () => {
     // Every probe found every probe document: no search ever saw a half-switched index.
     expect(probe.samples.filter((s) => s.count !== PROBE_DOCS)).toEqual([]);
     expect(probe.errors).toEqual([]);
-    // Answered by version 0 before the switch and 9002 after it, and by nothing
-    // else; for a moment at the switch, search workers that have not yet taken
-    // up the new in-memory index still answer, correctly, by version 0.
-    expect(new Set(versions)).toEqual(new Set([0, 9002]));
-    expect(versions[0]).toBe(0);
+    // Answered by the base version before the switch and 9002 after it, and by
+    // nothing else; for a moment at the switch, search workers that have not
+    // yet taken up the new in-memory index still answer, correctly, by the base.
+    expect(new Set(versions)).toEqual(new Set([base, 9002]));
+    expect(versions[0]).toBe(base);
     expect(versions[versions.length - 1]).toBe(9002);
     // Search stayed responsive while the rebuild ran.
     const latencies = probe.samples.map((s) => s.ms).sort((a, b) => a - b);
@@ -285,13 +290,13 @@ describe("Keyword-index rebuild between lexical versions", () => {
     const during = await search(PROBE_WORD);
     expect(during.results).toHaveLength(PROBE_DOCS);
     await until(
-      "the switch back to version 0",
+      "the switch back to the base version",
       lexical,
-      (s) => s.activeVersion === 0 && s.building === null && !s.retiring,
+      (s) => s.activeVersion === base && s.building === null && !s.retiring,
       300_000,
     );
     const answer = await search(PROBE_WORD);
     expect(answer.results).toHaveLength(PROBE_DOCS);
-    expect(answer.stages?.bm25?.lexicalVersion).toBe(0);
+    expect(answer.stages?.bm25?.lexicalVersion).toBe(base);
   }, 400_000);
 });
