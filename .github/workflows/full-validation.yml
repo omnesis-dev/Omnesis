@@ -40,6 +40,7 @@ on:
             portable-tailnet-control,
             macos-tailnet,
             duckdb-arm-crypto,
+            certificate-baseline,
             provider-ownership,
           ]
         default: regressions
@@ -57,6 +58,47 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
   TZ: UTC
 jobs:
+  certificate-baseline:
+    if: ${{ inputs.scope == 'certificate-baseline' }}
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    env:
+      OMNESIS_UNIT_WORKERS: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: "24"
+          cache: npm
+      - name: Install locked dependencies
+        run: node scripts/ci/npm-ci.mjs --no-audit --no-fund
+      - name: Compare real plaintext and wrapped certificate-helper startup
+        id: runtime
+        continue-on-error: true
+        run: node scripts/run-check.mjs unit packages/gateway/src/tailscale-embed/service.gateway-certificate.test.ts
+      - name: Typecheck source and test projects
+        if: ${{ runner.os == 'Linux' }}
+        run: node scripts/run-check.mjs typecheck && node scripts/run-check.mjs types-tests
+      - name: Lint the physical certificate fixture
+        if: ${{ runner.os == 'Linux' }}
+        env:
+          NODE_OPTIONS: --max-old-space-size=6144
+        run: >-
+          node node_modules/eslint/bin/eslint.js
+          packages/gateway/src/tailscale-embed/service.gateway-certificate.test.ts
+          packages/gateway/src/tailscale-embed/testing/certificate-helper.mjs
+      - name: Retain the runtime verdict
+        env:
+          RUNTIME_OUTCOME: ${{ steps.runtime.outcome }}
+        run: node -e "if (process.env.RUNTIME_OUTCOME !== 'success') process.exit(1)"
   duckdb-arm-crypto:
     if: ${{ inputs.scope == 'duckdb-arm-crypto' }}
     runs-on: windows-11-vs2026-arm
