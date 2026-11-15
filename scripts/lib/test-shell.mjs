@@ -6,6 +6,19 @@ import { execFileSync } from "node:child_process";
 import { delimiter, join, win32 } from "node:path";
 import { windowsEnvironmentValue } from "@omnesis/platform/windows-powershell";
 
+/** Bash path operations require separators even when a fixture supplies a native drive path. */
+export function bashFixturePath(value, platform = process.platform) {
+  return platform === "win32" && typeof value === "string" && /^[a-z]:[\\/]/iu.test(value)
+    ? value.replaceAll("\\", "/")
+    : value;
+}
+
+/** Only a direct script entry is path data; command operands and positional data stay literal. */
+export function bashScriptArguments(args, platform = process.platform) {
+  if (!Array.isArray(args) || typeof args[0] !== "string" || args[0].startsWith("-")) return args;
+  return [bashFixturePath(args[0], platform), ...args.slice(1)];
+}
+
 /** Git Bash runs checkout shell fixtures; the Windows WSL launcher does not. */
 export function bashExecutable({
   platform = process.platform,
@@ -33,13 +46,24 @@ export function bashExecutable({
 /** Keep supplied tool overrides ahead of Git utilities, with one native PATH key. */
 export function bashEnvironment(
   env = process.env,
-  { platform = process.platform, executable } = {},
+  { platform = process.platform, executable, pathKeys = [] } = {},
 ) {
   if (platform !== "win32") return { ...env };
   const tools = win32.dirname(executable ?? bashExecutable({ platform, env }));
   const original = windowsEnvironmentValue("PATH", env) ?? "";
   const prepared = { ...env };
-  for (const key of Object.keys(prepared)) if (key.toLowerCase() === "path") delete prepared[key];
+  const paths = new Set(pathKeys.map((key) => key.toLowerCase()));
+  for (const key of Object.keys(prepared)) {
+    if (["path", "msys"].includes(key.toLowerCase())) delete prepared[key];
+    else if (paths.has(key.toLowerCase())) prepared[key] = bashFixturePath(prepared[key], platform);
+  }
+  // Node workspace resolution needs native symlinks rather than ln's copy fallback.
+  prepared.MSYS = [
+    ...(windowsEnvironmentValue("MSYS", env) ?? "")
+      .split(/\s+/u)
+      .filter((option) => option && !/^winsymlinks(?::|$)/iu.test(option)),
+    "winsymlinks:nativestrict",
+  ].join(" ");
   prepared.PATH = original.split(";").includes(tools)
     ? original
     : original

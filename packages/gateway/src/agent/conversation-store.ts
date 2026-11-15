@@ -44,6 +44,7 @@ import {
   assertNever,
   atomicWriteFile,
   createLogger,
+  ownedProcessCleanupReceipt,
   pMap,
   type AgentConversationTerminalFailure,
   type AgentTerminalFailure,
@@ -289,6 +290,10 @@ export interface ConversationSummary {
 }
 
 export interface ConversationStore {
+  /** Retained publication ownership; reading this status starts no work. */
+  cleanupFailure?(): unknown;
+  /** Close admission and join this store before its owning process exits. */
+  close?(): Promise<void>;
   save(rec: ConversationRecord): Promise<void>;
   load(id: string): Promise<ConversationRecord | null>;
   list(): Promise<ConversationSummary[]>;
@@ -391,6 +396,18 @@ export class FsConversationStore implements ConversationStore {
   private readonly retentionCandidateQueue: ConversationRetentionCandidate[] = [];
   private index: Map<string, SummaryIndexEntry> | null = null;
   private indexTail: Promise<void> = Promise.resolve();
+  private queuedOperations = 0;
+  private closed = false;
+  private closing: Promise<void> | undefined;
+  private cleanupHeld = false;
+  private cleanupError: unknown;
+  private readonly pendingCleanup = Object.assign(
+    new Error("Conversation publication remains pending"),
+    {
+      cleanupFailure: true,
+      cleanupPending: true as const,
+    },
+  );
 
   constructor(
     dir: string,
@@ -495,6 +512,13 @@ export class FsConversationStore implements ConversationStore {
     cutoffMs: number,
     limit: number,
   ): Promise<{ items: ConversationRetentionCandidate[]; hasMore: boolean }> {
+    return this.withIndexLock(() => this.scanRetentionCandidates(cutoffMs, limit));
+  }
+
+  private async scanRetentionCandidates(
+    cutoffMs: number,
+    limit: number,
+  ): Promise<{ items: ConversationRetentionCandidate[]; hasMore: boolean }> {
     const wanted = Math.max(1, Math.floor(limit));
     const scanLimit = Math.max(20, wanted * 4);
     const items = this.retentionCandidateQueue.splice(0, wanted);
@@ -583,6 +607,8 @@ export class FsConversationStore implements ConversationStore {
   }
 
   async setPinned(id: string, pinned: boolean): Promise<boolean> {
+    this.assertPublicationHealthy();
+    if (this.closed) throw new Error("Conversation store is closed");
     const rec = await this.load(id);
     if (!rec) return false;
     if (rec.pinned === pinned) return true; // already in the desired state.
@@ -602,9 +628,87 @@ export class FsConversationStore implements ConversationStore {
     return join(this.dir, SUMMARY_INDEX_FILE);
   }
 
+  cleanupFailure(): unknown {
+    return this.cleanupHeld
+      ? this.cleanupError
+      : this.queuedOperations > 0
+        ? this.pendingCleanup
+        : undefined;
+  }
+
+  private assertPublicationHealthy(): void {
+    if (this.cleanupHeld) throw this.cleanupError;
+  }
+
+  private observeCleanup(error: unknown): void {
+    const receipt = ownedProcessCleanupReceipt(error);
+    if (!receipt || this.cleanupHeld) return;
+    this.cleanupHeld = true;
+    this.cleanupError = receipt.pending
+      ? Object.assign(
+          new Error("Conversation publication cleanup is unconfirmed", { cause: error }),
+          {
+            cleanupFailure: receipt.failure,
+          },
+        )
+      : error;
+  }
+
+  /** The process owner closes the shared store after every service has drained. */
+  close(): Promise<void> {
+    if (this.closing) return this.closing;
+    this.closed = true;
+    this.closing = this.indexTail.then(async () => {
+      let cursorError: unknown;
+      let cursorFailed = false;
+      try {
+        await this.retentionDir?.close();
+        this.retentionDir = null;
+      } catch (error) {
+        cursorError = error;
+        cursorFailed = true;
+        this.observeCleanup(error);
+      }
+      if (this.cleanupHeld) {
+        if (!cursorFailed || cursorError === this.cleanupError) throw this.cleanupError;
+        const receipt = ownedProcessCleanupReceipt(this.cleanupError)!;
+        throw Object.assign(
+          new AggregateError(
+            [this.cleanupError, cursorError],
+            "Conversation store cleanup failed",
+            {
+              cause: this.cleanupError,
+            },
+          ),
+          { cleanupFailure: receipt.failure },
+        );
+      }
+      if (cursorFailed) throw cursorError;
+    });
+    return this.closing;
+  }
+
   /** Run `fn` with the index lock held; one holder at a time, in call order. */
   private withIndexLock<T>(fn: () => Promise<T>): Promise<T> {
-    const result = this.indexTail.then(fn);
+    try {
+      this.assertPublicationHealthy();
+      if (this.closed) throw new Error("Conversation store is closed");
+    } catch (error) {
+      return Promise.reject(error);
+    }
+    this.queuedOperations += 1;
+    const result = this.indexTail
+      .then(() => {
+        this.assertPublicationHealthy();
+        return fn();
+      })
+      .catch((error: unknown) => {
+        this.observeCleanup(error);
+        throw error;
+      })
+      .finally(() => {
+        this.queuedOperations -= 1;
+      });
     this.indexTail = result.then(
       () => undefined,
       () => undefined,
@@ -663,6 +767,7 @@ export class FsConversationStore implements ConversationStore {
       const path = this.indexPath();
       await this.publish(path, body);
     } catch (err) {
+      if (ownedProcessCleanupReceipt(err)) throw err;
       // The in-memory index stays authoritative; a start that reads an older
       // file repairs the entries that differ.
       log.warn(`failed to update conversation summary index: ${errorMessage(err)}`);

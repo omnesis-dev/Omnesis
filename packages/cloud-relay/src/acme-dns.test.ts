@@ -6,6 +6,8 @@ import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeEach, afterEach, expect, test, vi } from "vitest";
+import { markedFileError } from "../test/private-operation-fixture.js";
+import * as privateCredentials from "./google-credentials.js";
 import { AcmeDnsChallenges, type DnsChallengeLease } from "./acme-dns.js";
 
 let directory: string;
@@ -217,3 +219,26 @@ test("forgetting a gateway ends its leases and nobody else's", async () => {
     await service.close();
   }
 });
+
+test.each(["own", "cause"] as const)(
+  "marked lease-journal absence cannot create provider state or publish an empty-derived journal (%s)",
+  async (placement) => {
+    const f = fixture(),
+      failure = markedFileError("ENOENT", placement);
+    vi.spyOn(privateCredentials, "readPrivateJson").mockRejectedValueOnce(failure);
+    const publish = vi.spyOn(privateCredentials, "savePrivateJson").mockResolvedValue(undefined);
+    let service: AcmeDnsChallenges | undefined;
+    try {
+      await expect(
+        (async () => {
+          service = await AcmeDnsChallenges.open(f.options);
+          await service.create(owner, hostname, value);
+        })(),
+      ).rejects.toBe(failure);
+      expect(f.create).not.toHaveBeenCalled();
+      expect(publish).not.toHaveBeenCalled();
+    } finally {
+      await service?.close();
+    }
+  },
+);

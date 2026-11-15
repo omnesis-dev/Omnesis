@@ -3,6 +3,7 @@
 
 import { PassThrough } from "node:stream";
 import { randomUUID } from "node:crypto";
+import { ownedProcessCleanupReceipt } from "@omnesis/core";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { GatewayTunnel, type GatewayTunnelOptions } from "./tunnel-client.js";
 import { isRelayTunnelPeer, relayedClientAddress } from "./relay-client-address.js";
@@ -14,6 +15,7 @@ vi.mock("ws", async () => {
   const { EventEmitter } = await import("node:events");
   class Socket extends EventEmitter {
     static OPEN = 1;
+    static CLOSED = 3;
     readyState = 0;
     constructor(
       readonly url: string,
@@ -310,7 +312,7 @@ test("multiple data401s invalidate once per control generation; invalidator fail
   legacy.stop();
 });
 
-test("a session callback that never settles is aborted after a bounded deadline and retried; late failure cannot restart a stopped generation", async () => {
+test("a timed-out acquisition must join before retry; late failure cannot restart a stopped generation", async () => {
   let cancelled: AbortSignal | undefined;
   let finish!: (value: string) => void;
   const session = vi.fn(async (signal?: AbortSignal) => {
@@ -326,12 +328,15 @@ test("a session callback that never settles is aborted after a bounded deadline 
   expect(cancelled!.aborted).toBe(true);
   session.mockResolvedValueOnce("fresh-after-timeout");
   await vi.advanceTimersByTimeAsync(10);
-  expect(sockets()).toHaveLength(1);
-  expect(sockets()[0].options.headers["x-omnesis-relay-session"]).toBe("fresh-after-timeout");
+  expect(session).toHaveBeenCalledOnce();
+  expect(sockets()).toHaveLength(0);
+  expect(ownedProcessCleanupReceipt(tunnel.cleanupFailure())?.pending).toBe(true);
   finish("late-old-session");
   await flush();
+  await vi.advanceTimersByTimeAsync(10);
   expect(sockets()).toHaveLength(1);
-  tunnel.stop();
+  expect(sockets()[0].options.headers["x-omnesis-relay-session"]).toBe("fresh-after-timeout");
+  await tunnel.close();
   let reject!: (error: Error) => void;
   const stopped = new GatewayTunnel({
     ...options(),
@@ -345,7 +350,142 @@ test("a session callback that never settles is aborted after a bounded deadline 
   stopped.stop();
   reject(new Error("late session failure"));
   await flush();
+  await stopped.close();
   expect(stopped.status().state).toBe("disabled");
+  expect(vi.getTimerCount()).toBe(0);
+});
+
+test("close retains the actual session proof after cancellation and refuses late socket creation", async () => {
+  let finish!: (value: string) => void;
+  const session = vi.fn(
+    () =>
+      new Promise<string>((resolve) => {
+        finish = resolve;
+      }),
+  );
+  const tunnel = new GatewayTunnel({ ...options(), session });
+  tunnel.start();
+  await flush();
+  const closing = tunnel.close();
+  expect(tunnel.close()).toBe(closing);
+  let joined = false;
+  void closing.then(() => {
+    joined = true;
+  });
+  await vi.advanceTimersByTimeAsync(30_000);
+  expect(joined).toBe(false);
+  expect(ownedProcessCleanupReceipt(tunnel.cleanupFailure())?.pending).toBe(true);
+  tunnel.start();
+  expect(session).toHaveBeenCalledOnce();
+  finish("late-session");
+  await closing;
+  expect(sockets()).toHaveLength(0);
+  expect(tunnel.cleanupFailure()).toBeUndefined();
+  expect(vi.getTimerCount()).toBe(0);
+});
+
+test.each([undefined, new Error("Invented native join failure")])(
+  "a marked acquisition remains terminal and cannot schedule a second helper: %s",
+  async (cleanupFailure) => {
+    const marker = Object.assign(new Error("Invented session failure"), {
+      cleanupFailure,
+      cleanupPending: true,
+    });
+    const session = vi.fn<GatewayTunnelOptions["session"]>().mockRejectedValue(marker);
+    const tunnel = new GatewayTunnel({ ...options(), session });
+    tunnel.start();
+    await flush();
+    await vi.advanceTimersByTimeAsync(60_000);
+    tunnel.start();
+    expect(session).toHaveBeenCalledOnce();
+    expect(sockets()).toHaveLength(0);
+    expect(ownedProcessCleanupReceipt(tunnel.cleanupFailure())).toEqual({
+      failure: cleanupFailure,
+      pending: false,
+    });
+    await expect(tunnel.close()).rejects.toHaveProperty("cause", marker);
+    expect(vi.getTimerCount()).toBe(0);
+  },
+);
+
+test("closing before start admits no credentials or sockets", async () => {
+  const session = vi.fn<GatewayTunnelOptions["session"]>().mockResolvedValue("unused");
+  const tunnel = new GatewayTunnel({ ...options(), session });
+  expect(tunnel.cleanupFailure()).toBeUndefined();
+  const proof = tunnel.close();
+  expect(tunnel.close()).toBe(proof);
+  await proof;
+  tunnel.start();
+  await vi.advanceTimersByTimeAsync(60_000);
+  expect(session).not.toHaveBeenCalled();
+  expect(sockets()).toHaveLength(0);
+  expect(tunnel.cleanupFailure()).toBeUndefined();
+});
+
+test("marked invalidation survives socket cleanup without reconnecting", async () => {
+  const marker = new Error("Invented invalidation failure", {
+    cause: { cleanupFailure: undefined },
+  });
+  const invalidateSession = vi.fn(() => {
+    throw marker;
+  });
+  const tunnel = new GatewayTunnel({ ...options(), invalidateSession });
+  tunnel.start();
+  await flush();
+  const request = { destroy: vi.fn() };
+  const response = { statusCode: 401, headers: {}, destroy: vi.fn() };
+  sockets()[0].emit("unexpected-response", request, response);
+  await vi.advanceTimersByTimeAsync(60_000);
+  expect(invalidateSession).toHaveBeenCalledOnce();
+  expect(request.destroy).toHaveBeenCalled();
+  expect(response.destroy).toHaveBeenCalled();
+  expect(sockets()).toHaveLength(1);
+  expect(ownedProcessCleanupReceipt(tunnel.cleanupFailure())).toEqual({
+    failure: undefined,
+    pending: false,
+  });
+  await expect(tunnel.close()).rejects.toBe(marker);
+});
+
+test("close joins a late destination and destroys it before its proof clears", async () => {
+  let finish!: (value: PassThrough) => void;
+  mocks.connect.mockImplementationOnce(
+    () =>
+      new Promise<PassThrough>((resolve) => {
+        finish = resolve;
+      }),
+  );
+  const tunnel = new GatewayTunnel(options());
+  tunnel.start();
+  await flush();
+  sockets()[0].open();
+  sockets()[0].emit(
+    "message",
+    Buffer.from(
+      JSON.stringify({
+        type: "open",
+        version: 1,
+        ticket: "a".repeat(64),
+      }),
+    ),
+  );
+  sockets()[1].open();
+  await flush();
+  expect(mocks.connect).toHaveBeenCalledOnce();
+  const closing = tunnel.close();
+  let joined = false;
+  void closing.then(() => {
+    joined = true;
+  });
+  await flush();
+  expect(joined).toBe(false);
+  expect(ownedProcessCleanupReceipt(tunnel.cleanupFailure())?.pending).toBe(true);
+  const destination = new PassThrough();
+  finish(destination);
+  await closing;
+  expect(destination.destroyed).toBe(true);
+  expect(destination.closed).toBe(true);
+  expect(tunnel.cleanupFailure()).toBeUndefined();
   expect(vi.getTimerCount()).toBe(0);
 });
 
@@ -482,4 +622,51 @@ test("a relay behind a proxy moves the tunnel and its channels to the address it
   await vi.advanceTimersByTimeAsync(10);
   expect(sockets()[12].options.headers["x-omnesis-tunnel-direct"]).toBe("1");
   tunnel.stop();
+});
+
+test("a late data-channel open callback cannot create streams after its tunnel closes", async () => {
+  const tunnel = new GatewayTunnel(options());
+  tunnel.start();
+  await flush();
+  const control = sockets()[0];
+  control.open();
+  control.emit(
+    "message",
+    Buffer.from(JSON.stringify({ type: "open", version: 1, ticket: "e".repeat(64) })),
+  );
+  const channel = sockets()[1];
+  const [deliveredOpen] = channel.listeners("open");
+  expect(deliveredOpen).toBeTypeOf("function");
+  tunnel.stop();
+  // The transport may already have handed an event callback to its caller.
+  deliveredOpen!();
+  expect(channel.readyState).toBe(3);
+  expect(mocks.stream).not.toHaveBeenCalled();
+  expect(mocks.connect).not.toHaveBeenCalled();
+  await tunnel.close();
+});
+
+test("a destination that closes before its asynchronous handoff already supplies its join proof", async () => {
+  const tunnel = new GatewayTunnel(options());
+  const destination = new PassThrough();
+  mocks.connect.mockImplementationOnce(async () => {
+    const closed = new Promise<void>((resolve) => destination.once("close", resolve));
+    destination.destroy();
+    await closed;
+    return destination;
+  });
+  tunnel.start();
+  await flush();
+  const control = sockets()[0];
+  control.open();
+  control.emit(
+    "message",
+    Buffer.from(JSON.stringify({ type: "open", version: 1, ticket: "f".repeat(64) })),
+  );
+  sockets()[1].open();
+  await flush();
+  expect(destination.closed).toBe(true);
+  expect(mocks.connect).toHaveBeenCalledOnce();
+  await tunnel.close();
+  expect(tunnel.cleanupFailure()).toBeUndefined();
 });

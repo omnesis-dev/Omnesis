@@ -195,7 +195,20 @@ def _uses_windows_files() -> bool:
     return os.name == "nt"
 
 
+class _WindowsBridgeCleanupUnconfirmed(RuntimeError):
+    cleanupUnconfirmed = True
+
+
+_windows_bridge_cleanup_failure: _WindowsBridgeCleanupUnconfirmed | None = None
+
+
+def _assert_windows_bridge_cleanup_confirmed() -> None:
+    if _windows_bridge_cleanup_failure is not None:
+        raise _windows_bridge_cleanup_failure
+
+
 def _windows_node_command(operation: str, path: str) -> list[str]:
+    _assert_windows_bridge_cleanup_confirmed()
     # Do not let Windows executable discovery search the working directory.
     for directory in os.get_exec_path():
         if not os.path.isabs(directory):
@@ -207,10 +220,19 @@ def _windows_node_command(operation: str, path: str) -> list[str]:
 
 
 def _windows_bridge_error(stderr: bytes, path: str) -> None:
+    global _windows_bridge_cleanup_failure
     try:
-        code = json.loads(stderr.splitlines()[-1]).get("code")
+        response = json.loads(stderr.splitlines()[-1])
+        code = response.get("code")
     except (ValueError, AttributeError, IndexError):
+        response = None
         code = None
+    if isinstance(response, dict) and response.get("cleanupUnconfirmed") is True:
+        if _windows_bridge_cleanup_failure is None:
+            _windows_bridge_cleanup_failure = _WindowsBridgeCleanupUnconfirmed(
+                "Windows integration cleanup was not confirmed; restart the integration after review"
+            )
+        raise _windows_bridge_cleanup_failure
     if code == "ENOENT":
         raise FileNotFoundError(errno.ENOENT, "Integration state is absent", path)
     raise PermissionError(errno.EACCES, "Windows integration persistence failed; check Node.js 24 and private file access", path)
@@ -225,6 +247,7 @@ _WINDOWS_WRITE_COMMIT = b"\0OMNESIS_HERMES_WRITE_COMMIT_V1\0"
 
 
 def _windows_bridge(operation: str, path: str, data: bytes | None = None) -> bytes:
+    _assert_windows_bridge_cleanup_confirmed()
     request = data or b""
     if operation == "write":
         if len(request) > _WINDOWS_WRITE_MAX_BYTES:

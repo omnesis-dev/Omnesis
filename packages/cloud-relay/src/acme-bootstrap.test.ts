@@ -8,9 +8,12 @@ import { join } from "node:path";
 import { X509Certificate } from "node:crypto";
 import { beforeEach, afterEach, expect, test, vi } from "vitest";
 import * as core from "@omnesis/core";
+import { markedFileError, onWindowsBoundary } from "../test/private-operation-fixture.js";
+import { exposeOwnedFixtureRead } from "../test/owned-file-acl.js";
 import { tlsFiles, malformedDateCertificate } from "../test/support.js";
 import { expiredCertificate } from "../test/expired-certificate.js";
 import { ensureAcmeBootstrap } from "./acme-bootstrap.js";
+import * as privateInputs from "./private-inputs.js";
 
 vi.mock("node:fs/promises", async (original) => {
   const module = await original<typeof import("node:fs/promises")>();
@@ -76,24 +79,22 @@ test.skipIf(process.platform !== "win32")(
       privateKeyFile: tls.keyFile,
       signal: new AbortController().signal,
     };
-    const grant = (path: string) =>
-      core.execWindowsJob(join(process.env.SystemRoot!, "System32", "icacls.exe"), [
-        path,
-        "/grant",
-        "*S-1-1-0:(R)",
-        "/Q",
-      ]);
     const previous = await readFile(tls.keyFile, "utf8");
+    const certificateExposure = await exposeOwnedFixtureRead(tls.certFile);
+    let keyExposure: Awaited<ReturnType<typeof exposeOwnedFixtureRead>> | undefined;
     try {
-      await grant(tls.certFile);
       expect(core.inspectWindowsPrivatePathSync(tls.certFile, "file").private).toBe(false);
       await ensureAcmeBootstrap(options);
-      await grant(tls.keyFile);
+      keyExposure = await exposeOwnedFixtureRead(tls.keyFile);
       await expect(ensureAcmeBootstrap(options)).rejects.toMatchObject({ code: "EPRIVATE" });
       expect(await readFile(tls.keyFile, "utf8")).toBe(previous);
+      expect(await keyExposure.snapshot()).toBe(keyExposure.exposed);
+      expect(await certificateExposure.snapshot()).toBe(certificateExposure.exposed);
     } finally {
-      core.ensurePrivateFileSync(tls.keyFile);
+      await keyExposure?.restore();
+      await certificateExposure.restore();
     }
+    await ensureAcmeBootstrap(options);
   },
 );
 test("separate public bootstrap uses the existing key, survives concurrent readers and recovers expiry without modifying direct material", async () => {
@@ -250,13 +251,17 @@ test("key/certificate write races and malformed expired dates never publish a re
     signal: new AbortController().signal,
   };
   let reads = 0;
-  vi.mocked(files.readFile).mockImplementation((async (path, encoding) => {
-    if (String(path) === tls.keyFile && ++reads === 2) return Buffer.from("changed-key");
-    return actualFiles.readFile(path, encoding);
-  }) as typeof files.readFile);
+  const originalPrivateRead = privateInputs.readPrivateInput;
+  const privateRead = vi
+    .spyOn(privateInputs, "readPrivateInput")
+    .mockImplementation(async (path) => {
+      const bytes = await originalPrivateRead(path);
+      if (path === tls.keyFile && ++reads === 2) return Buffer.from("changed-key");
+      return bytes;
+    });
   await expect(ensureAcmeBootstrap(options)).rejects.toThrow("key changed");
   await expect(stat(certificateFile)).rejects.toMatchObject({ code: "ENOENT" });
-  vi.mocked(files.readFile).mockReset().mockImplementation(actualFiles.readFile);
+  privateRead.mockRestore();
   await ensureAcmeBootstrap(options);
   const expiredFile = join(directory, "expired.crt");
   expiredCertificate({ certificateFile, privateKeyFile: tls.keyFile, outputFile: expiredFile });
@@ -273,3 +278,73 @@ test("key/certificate write races and malformed expired dates never publish a re
   await expect(ensureAcmeBootstrap(options)).rejects.toThrow("Invalid public certificate dates");
   expect(await readFile(tls.keyFile)).toEqual(key);
 });
+
+test.each(["key", "certificate"] as const)(
+  "marked bootstrap %s absence never authorizes private-key generation",
+  async (phase) => {
+    const failure = markedFileError("ENOENT", "cause"),
+      key = join(directory, "new.key"),
+      cert = join(directory, "existing.pem");
+    const missing = Object.assign(new Error("Invented key absence"), { code: "ENOENT" });
+    vi.spyOn(core, "readWindowsPrivateFile").mockRejectedValueOnce(
+      phase === "key" ? failure : missing,
+    );
+    const metadata = vi
+      .spyOn(core, "readWindowsRegularFilePrefix")
+      .mockRejectedValueOnce(phase === "certificate" ? failure : missing);
+    const writer = vi
+      .spyOn(core, "atomicWriteFile")
+      .mockRejectedValueOnce(new Error("Invented unexpected key publication"));
+    await onWindowsBoundary(async () => {
+      await expect(
+        ensureAcmeBootstrap({
+          publicOrigin: "https://gateway.example.test",
+          certificateFile: cert,
+          privateKeyFile: key,
+          generatePrivateKey: true,
+          signal: new AbortController().signal,
+        }),
+      ).rejects.toBe(failure);
+      expect(writer).not.toHaveBeenCalled();
+      if (phase === "key") expect(metadata).not.toHaveBeenCalled();
+      await expect(stat(key)).rejects.toMatchObject({ code: "ENOENT" });
+    });
+  },
+);
+
+test.each(["own", "cause", "ordinary"] as const)(
+  "bootstrap staging survives only explicit helper uncertainty (%s)",
+  async (placement) => {
+    const key = join(directory, "bootstrap.key"),
+      certificateFile = join(directory, "bootstrap.pem");
+    const failure =
+      placement === "ordinary"
+        ? new Error("Invented joined publication failure")
+        : markedFileError("EPRIVATE", placement);
+    const missing = Object.assign(new Error("Invented absence"), { code: "ENOENT" });
+    vi.spyOn(core, "readWindowsPrivateFile").mockRejectedValueOnce(missing);
+    vi.spyOn(core, "readWindowsRegularFilePrefix").mockRejectedValueOnce(missing);
+    let temporary: string | undefined;
+    vi.spyOn(core, "atomicWriteFile").mockImplementationOnce(async (target, bytes) => {
+      temporary = target;
+      await writeFile(target, bytes, { mode: 0o600 });
+      throw failure;
+    });
+    await onWindowsBoundary(async () => {
+      await expect(
+        ensureAcmeBootstrap({
+          publicOrigin: "https://gateway.example.test",
+          certificateFile,
+          privateKeyFile: key,
+          generatePrivateKey: true,
+          signal: new AbortController().signal,
+        }),
+      ).rejects.toBe(failure);
+      expect(temporary).toBeDefined();
+      await expect(stat(key)).rejects.toMatchObject({ code: "ENOENT" });
+      if (placement === "ordinary")
+        await expect(stat(temporary!)).rejects.toMatchObject({ code: "ENOENT" });
+      else expect(await readFile(temporary!, "utf8")).toContain("PRIVATE KEY");
+    });
+  },
+);

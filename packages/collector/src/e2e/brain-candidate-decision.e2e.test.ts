@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import "./synth-env.js";
-import { expect, test } from "vitest";
+import { expect, onTestFinished, test } from "vitest";
 import { z } from "zod";
 import { proposeKnowledgeCandidate } from "../../../gateway/src/brain/knowledge/discovery.js";
 import { readKnowledgeSourceRevision } from "../../../gateway/src/brain/knowledge/source-revision.js";
@@ -23,6 +23,16 @@ const pageId = "wiki-observatory-kit";
 test.each([1, 8])(
   "candidate decision work survives restart, defers and publishes with maxSeeds=%i",
   async (maxSeeds) => {
+    const callerClockMode = process.env.OMNESIS_BRIEFS_VIRTUAL_CLOCK;
+    const callerClockInitial = process.env.OMNESIS_BRIEFS_VIRTUAL_CLOCK_INITIAL_MS;
+    // Register before setup: even a refused gateway start must restore the caller.
+    onTestFinished(() => {
+      if (callerClockInitial === undefined)
+        delete process.env.OMNESIS_BRIEFS_VIRTUAL_CLOCK_INITIAL_MS;
+      else process.env.OMNESIS_BRIEFS_VIRTUAL_CLOCK_INITIAL_MS = callerClockInitial;
+    });
+    const inheritedClockInitial = "not-an-owned-bench-instant";
+    process.env.OMNESIS_BRIEFS_VIRTUAL_CLOCK_INITIAL_MS = inheritedClockInitial;
     let publish = false;
     let retryAt = 0;
     let evidenceVersions: Record<string, string> = {};
@@ -114,6 +124,14 @@ test.each([1, 8])(
       },
     });
     try {
+      expect(process.env.OMNESIS_BRIEFS_VIRTUAL_CLOCK).toBe(callerClockMode);
+      expect(process.env.OMNESIS_BRIEFS_VIRTUAL_CLOCK_INITIAL_MS).toBe(inheritedClockInitial);
+      if (maxSeeds === 1) {
+        const initialClock = await bench.clock.now();
+        expect(initialClock.virtual).toBe(true);
+        await bench.restartGateway();
+        expect(await bench.clock.now()).toEqual(initialClock);
+      }
       await bench.drainUntilQuiet();
       const documents = [
         email({
@@ -160,6 +178,9 @@ test.each([1, 8])(
       });
       await bench.restartGateway();
       const afterRestartNow = await bench.clock.advance(2_000);
+      expect(afterRestartNow).toBe(now + 2_000);
+      expect(process.env.OMNESIS_BRIEFS_VIRTUAL_CLOCK).toBe(callerClockMode);
+      expect(process.env.OMNESIS_BRIEFS_VIRTUAL_CLOCK_INITIAL_MS).toBe(inheritedClockInitial);
       try {
         await expect
           .poll(

@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
-import { waitForChild } from "../lib/check-process.mjs";
+import { runCheckCommand } from "../lib/check-process.mjs";
+import { ownedProcessCleanupReceipt } from "../../packages/core/src/owned-process-cleanup.ts";
 
 /** Installation is outside the Windows runtime compatibility contract. */
 export const INSTALLER_TEST_EXCLUSIONS = [
@@ -311,13 +311,9 @@ export function windowsCheckTasks(lane, shard, files = []) {
 export async function runWindowsCheckTasks(tasks) {
   let exitCode = 0;
   for (const task of tasks) {
-    const code = await waitForChild(
-      spawn(process.execPath, task, {
-        stdio: "inherit",
-        env: process.env,
-        detached: process.platform !== "win32",
-      }),
-    );
+    const code = await runCheckCommand(process.execPath, task, {
+      env: process.env,
+    });
     if (code !== 0 && exitCode === 0) exitCode = code;
   }
   return exitCode;
@@ -341,4 +337,15 @@ async function main(args) {
   return runWindowsCheckTasks(tasks);
 }
 
-if (import.meta.main) process.exitCode = await main(process.argv.slice(2));
+if (import.meta.main) {
+  try {
+    process.exitCode = await main(process.argv.slice(2));
+  } catch (error) {
+    process.stderr.write(
+      ownedProcessCleanupReceipt(error) !== undefined
+        ? "Windows check cleanup remains unconfirmed; review is required.\n"
+        : `${error instanceof Error ? error.message : "Windows check failed"}\n`,
+    );
+    process.exitCode = 1;
+  }
+}

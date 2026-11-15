@@ -294,8 +294,9 @@ collector    omnesis-collector.service                running        41283</pre>
           <code>omnesis status</code> prints one row per source: sync state, document count, index
           coverage, last sync, and the ingested and indexed date ranges. It ends with the gateway's
           version and a count of how the paired devices compare to it (see
-          <a href="updating#compatibility">Version compatibility</a>). Pass <code>-w</code>
-          to keep it open as a live view.
+          <a href="updating#compatibility">Version compatibility</a>). Pass <code>-w</code> to keep
+          it open as a live view. Pass <code>--json</code> for one machine-readable status snapshot
+          without terminal formatting. JSON output cannot be combined with <code>--watch</code>.
         </p>
         <div class="term">
           <div class="term-bar"><span></span><span></span><span></span></div>

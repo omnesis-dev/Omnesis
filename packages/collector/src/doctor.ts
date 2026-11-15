@@ -3,9 +3,9 @@
 
 import { statfs } from "node:fs/promises";
 import { arch, freemem, platform, totalmem } from "node:os";
-import { createLogger } from "@omnesis/core";
+import { createLogger, ownedProcessCleanupReceipt } from "@omnesis/core";
 import {
-  collectSecurityDataInWorker,
+  DoctorSecurityScanner,
   evaluateDoctor,
   type ConfigStatusResult,
   type DoctorData,
@@ -16,6 +16,7 @@ import {
 } from "@omnesis/core/doctor";
 import { DoctorLocalStores } from "./doctor-local-stores.js";
 import { DoctorReadAccess, type DoctorReadAccessSource } from "./doctor-read-access.js";
+import { DoctorOwnedWork, doctorCleanupReceipt } from "./doctor-owned-work.js";
 import type { WsEventPayload, WsResponsePayload } from "@omnesis/core";
 import type { GatewayWsClient } from "@omnesis/gateway-client";
 import type { SourceStatus } from "./source-lifecycle.js";
@@ -40,6 +41,8 @@ export interface CollectorDoctorDeps {
   getSystemInfo?: () => Promise<SystemInfoResult>;
   /** Internal budget override for deterministic timeout tests. */
   runTimeoutMs?: number;
+  /** Synchronous watchdog admission notification, before any raw producer starts. */
+  onOwnershipChanged?: () => void;
 }
 
 /**
@@ -51,20 +54,105 @@ export class CollectorDoctor {
   private activeRunId: string | null = null;
   private lastResult: WsEventPayload<"device.doctor.result"> | null = null;
   private readonly runTimeoutMs: number;
-  private readonly readAccess = new DoctorReadAccess();
-  private readonly localStores = new DoctorLocalStores();
+  private readonly readAccess: DoctorReadAccess;
+  private readonly localStores: DoctorLocalStores;
+  private readonly work: DoctorOwnedWork;
+  private readonly scanner: DoctorSecurityScanner | undefined;
+  private readonly systemKey = Symbol("system-info");
+  private readonly securityKey = Symbol("security");
+  private closed = false;
+  private closing: Promise<void> | undefined;
+  private closeSettled = false;
+  private running: Promise<void> | undefined;
+  private controller: AbortController | undefined;
+  private readonly pendingClose = Object.assign(
+    new Error("Collector doctor cleanup remains pending"),
+    {
+      cleanupFailure: undefined,
+      cleanupPending: true as const,
+    },
+  );
 
   constructor(private readonly deps: CollectorDoctorDeps) {
     this.runTimeoutMs = deps.runTimeoutMs ?? COLLECTOR_DOCTOR_TIMEOUT_MS;
+    const changed = () => deps.onOwnershipChanged?.();
+    this.work = new DoctorOwnedWork(changed);
+    this.readAccess = new DoctorReadAccess(undefined, changed);
+    this.localStores = new DoctorLocalStores(undefined, changed);
+    this.scanner = deps.collectSecurity
+      ? undefined
+      : new DoctorSecurityScanner({
+          configDir: deps.configDir,
+          component: "collector",
+          onOwnershipChanged: changed,
+        });
+  }
+
+  cleanupFailure(): unknown | undefined {
+    return doctorCleanupReceipt(
+      this.work.cleanupFailure(),
+      this.scanner?.cleanupFailure(),
+      this.readAccess.cleanupFailure(),
+      this.localStores.cleanupFailure(),
+      this.closing && !this.closeSettled ? this.pendingClose : undefined,
+    );
+  }
+
+  close(): Promise<void> {
+    if (this.closing) return this.closing;
+    this.closed = true;
+    // Close every owner's admission before awaiting any independent closure.
+    const closers = [
+      () => this.work.close(),
+      () => this.scanner?.close(),
+      () => this.readAccess.close(),
+      () => this.localStores.close(),
+    ];
+    const proofs = closers.map((close) => {
+      try {
+        return Promise.resolve(close());
+      } catch (error) {
+        return Promise.reject(error);
+      }
+    });
+    this.controller?.abort();
+    if (this.running) proofs.push(this.running);
+    this.closing = Promise.allSettled(proofs)
+      .then((results) => {
+        const errors = [
+          ...new Set(
+            results.flatMap((result) => (result.status === "rejected" ? [result.reason] : [])),
+          ),
+        ];
+        for (const error of errors) this.work.observe(error);
+        const terminal = doctorCleanupReceipt(...errors, this.cleanupFailure());
+        if (terminal && !ownedProcessCleanupReceipt(terminal)?.pending) throw terminal;
+        if (errors.length === 1) throw errors[0];
+        if (errors.length) throw new AggregateError(errors, "Collector doctor cleanup failed");
+      })
+      .finally(() => {
+        this.closeSettled = true;
+        // A settled callback cannot invalidate positive joins or start new work.
+        try {
+          this.deps.onOwnershipChanged?.();
+        } catch {
+          // A read-only notification cannot undo the completed ownership proof.
+        }
+      });
+    return this.closing;
   }
 
   start(runId: string): WsResponsePayload<"device.doctor"> {
-    if (this.activeRunId === runId) return { accepted: true };
+    if (this.closed) return { accepted: false, reason: "The collector health check is closed." };
     if (this.lastResult?.runId === runId) {
-      queueMicrotask(() => this.deps.emitResult(this.lastResult!));
+      const cached = this.lastResult;
+      queueMicrotask(() => {
+        if (!this.closed) this.deps.emitResult(cached);
+      });
       return { accepted: true };
     }
-    if (this.activeRunId) {
+    if (this.activeRunId === runId) return { accepted: true };
+    if (this.activeRunId || this.cleanupFailure() !== undefined) {
       return { accepted: false, reason: "Another health check is already running." };
     }
 
@@ -73,7 +161,15 @@ export class CollectorDoctor {
     // the client's live identity, but does not retroactively reject this run.
     const identity = this.deps.getIdentity();
     this.activeRunId = runId;
-    void this.run(runId, identity);
+    const running = this.run(runId, identity);
+    this.running = running;
+    void running
+      .catch((error: unknown) => {
+        this.work.observe(error);
+      })
+      .finally(() => {
+        if (this.running === running) this.running = undefined;
+      });
     return { accepted: true };
   }
 
@@ -81,59 +177,90 @@ export class CollectorDoctor {
     runId: string,
     identity: ReturnType<GatewayWsClient["getIdentity"]>,
   ): Promise<void> {
+    const deadline = performance.now() + this.runTimeoutMs;
+    const timeoutMessage = `Collector doctor run ${runId} timed out after ${this.runTimeoutMs}ms`;
     let result: WsEventPayload<"device.doctor.result">;
     const controller = new AbortController();
+    this.controller = controller;
     try {
-      result = await withTimeout(
-        this.collect(runId, identity, controller.signal),
-        this.runTimeoutMs,
-        `Collector doctor run ${runId} timed out after ${this.runTimeoutMs}ms`,
+      result = await withDeadline(
+        this.work.run(Symbol(runId), async () => {
+          if (performance.now() >= deadline) throw new Error(timeoutMessage);
+          return this.collect(runId, identity, controller.signal, deadline);
+        }),
+        deadline,
+        timeoutMessage,
+        controller.signal,
       );
     } catch (err) {
+      this.work.observe(err);
       log.warn(
         `Collector doctor run ${runId} failed: ${err instanceof Error ? err.message : String(err)}`,
       );
       result = { runId, error: GENERIC_DOCTOR_ERROR };
     } finally {
       controller.abort();
+      if (this.controller === controller) this.controller = undefined;
     }
-    this.lastResult = result;
     if (this.activeRunId === runId) this.activeRunId = null;
-    this.deps.emitResult(result);
+    if (!this.closed) {
+      this.lastResult = result;
+      this.deps.emitResult(result);
+    }
   }
 
   private async collect(
     runId: string,
     identity: ReturnType<GatewayWsClient["getIdentity"]>,
     signal: AbortSignal,
+    deadline: number,
   ): Promise<WsEventPayload<"device.doctor.result">> {
-    const [systemInfo, securityResult, sourceReadAccess, localStores] = await Promise.all([
-      (this.deps.getSystemInfo ?? (() => collectorSystemInfo(this.deps.configDir)))().catch(
-        (err: unknown) => {
+    const bounded =
+      <T>(producer: () => Promise<T>) =>
+      async (): Promise<T> => {
+        signal.throwIfAborted();
+        if (performance.now() >= deadline)
+          throw new Error("Collector health check deadline elapsed");
+        return producer();
+      };
+    const tasks = [
+      this.work
+        .run(
+          this.systemKey,
+          bounded(this.deps.getSystemInfo ?? (() => collectorSystemInfo(this.deps.configDir))),
+        )
+        .catch((err: unknown) => {
+          if (ownedProcessCleanupReceipt(err) !== undefined) throw err;
           log.warn(
             `Could not inspect collector storage: ${err instanceof Error ? err.message : String(err)}`,
           );
           return null;
-        },
-      ),
-      (
-        this.deps.collectSecurity ??
-        (() =>
-          collectSecurityDataInWorker({
-            configDir: this.deps.configDir,
-            component: "collector",
-          }))
-      )()
+        }),
+      this.work
+        .run(
+          this.securityKey,
+          bounded(this.deps.collectSecurity ?? (() => this.scanner!.collect())),
+        )
         .then((security) => ({ security, error: null as string | null }))
         .catch((err: unknown) => {
+          if (ownedProcessCleanupReceipt(err) !== undefined) throw err;
           log.warn(
             `Collector security audit unavailable: ${err instanceof Error ? err.message : String(err)}`,
           );
           return { security: null, error: GENERIC_SECURITY_ERROR };
         }),
-      this.readAccess.collect(this.deps.getReadAccessSources(), signal),
-      this.localStores.collect(this.deps.getReadAccessSources(), signal),
-    ]);
+      this.readAccess.collect(this.deps.getReadAccessSources(), signal, deadline),
+      this.localStores.collect(this.deps.getReadAccessSources(), signal, deadline),
+    ] as const;
+    const settled = await Promise.allSettled(tasks);
+    for (const result of settled)
+      if (result.status === "rejected" && ownedProcessCleanupReceipt(result.reason) !== undefined) {
+        this.work.observe(result.reason);
+        throw result.reason;
+      }
+    const [systemInfo, securityResult, sourceReadAccess, localStores] = await Promise.all(tasks);
+    if (this.closed || signal.aborted)
+      throw new Error("Collector health check observation stopped");
     const configStatus = sanitizeConfigStatus(this.deps.getConfigStatus());
     const data: DoctorData = {
       target: "collector",
@@ -176,16 +303,31 @@ export class CollectorDoctor {
   }
 }
 
-async function withTimeout<T>(work: Promise<T>, timeoutMs: number, message: string): Promise<T> {
+async function withDeadline<T>(
+  work: Promise<T>,
+  deadline: number,
+  message: string,
+  signal: AbortSignal,
+): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | null = null;
   const timeout = new Promise<never>((_resolve, reject) => {
-    timer = setTimeout(() => reject(new Error(message)), timeoutMs);
+    timer = setTimeout(() => reject(new Error(message)), Math.max(0, deadline - performance.now()));
     timer.unref();
   });
+  let onAbort = () => {};
+  const aborted = new Promise<never>((_resolve, reject) => {
+    onAbort = () => reject(new Error("Collector health check observation cancelled"));
+    if (signal.aborted) onAbort();
+    else signal.addEventListener("abort", onAbort, { once: true });
+  });
   try {
-    return await Promise.race([work, timeout]);
+    const result = await Promise.race([work, timeout, aborted]);
+    signal.throwIfAborted();
+    if (performance.now() >= deadline) throw new Error(message);
+    return result;
   } finally {
     if (timer) clearTimeout(timer);
+    signal.removeEventListener("abort", onAbort);
   }
 }
 

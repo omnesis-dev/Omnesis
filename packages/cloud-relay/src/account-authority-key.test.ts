@@ -18,6 +18,7 @@ import { join } from "node:path";
 import { generateKeyPairSync } from "node:crypto";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { readWindowsPrivateFile, createWindowsPrivateFile } from "@omnesis/core";
+import { markedFileError, onWindowsBoundary } from "../test/private-operation-fixture.js";
 import { loadAccountEnrollmentAuthority } from "./account-authority-key.js";
 
 const origin = "https://relay.example.test";
@@ -222,6 +223,65 @@ test.each(["not-regular", "wrong-owner", "no-getuid"] as const)(
       else Reflect.deleteProperty(process, "getuid");
       vi.mocked(reader.stat).mockRestore();
       await reader.close();
+      await rm(directory, { recursive: true, force: true });
+    }
+  },
+);
+
+test.each(["own", "cause"] as const)(
+  "marked authority-key absence cannot publish another key (%s)",
+  async (placement) => {
+    const directory = await mkdtemp(join(tmpdir(), "authority-uncertain-")),
+      path = join(directory, "authority.pem");
+    const failure = markedFileError("ENOENT", placement);
+    const reader = vi.mocked(readWindowsPrivateFile),
+      writer = vi.mocked(createWindowsPrivateFile);
+    reader.mockRejectedValueOnce(failure);
+    writer.mockRejectedValueOnce(new Error("Invented unexpected authority publication"));
+    try {
+      await onWindowsBoundary(async () => {
+        await expect(loadAccountEnrollmentAuthority(origin, path)).rejects.toBe(failure);
+        expect(writer).not.toHaveBeenCalled();
+        expect(await readdir(directory)).toEqual([]);
+      });
+    } finally {
+      vi.mocked(readWindowsPrivateFile).mockReset();
+      vi.mocked(createWindowsPrivateFile).mockReset();
+      await rm(directory, { recursive: true, force: true });
+    }
+  },
+);
+
+test.each(["own", "cause", "ordinary"] as const)(
+  "authority publication cleans only positively completed failures (%s)",
+  async (placement) => {
+    const directory = await mkdtemp(join(tmpdir(), "authority-staging-")),
+      path = join(directory, "authority.pem");
+    const failure =
+      placement === "ordinary"
+        ? new Error("Invented joined write failure")
+        : markedFileError("EPRIVATE", placement);
+    let temporary: string | undefined;
+    vi.mocked(readWindowsPrivateFile).mockRejectedValueOnce(
+      Object.assign(new Error("Invented absence"), { code: "ENOENT" }),
+    );
+    vi.mocked(createWindowsPrivateFile).mockImplementationOnce(async (target, bytes) => {
+      temporary = target;
+      await writeFile(target, bytes, { mode: 0o600 });
+      throw failure;
+    });
+    try {
+      await onWindowsBoundary(async () => {
+        await expect(loadAccountEnrollmentAuthority(origin, path)).rejects.toBe(failure);
+        expect(temporary).toBeDefined();
+        await expect(stat(path)).rejects.toMatchObject({ code: "ENOENT" });
+        if (placement === "ordinary")
+          await expect(stat(temporary!)).rejects.toMatchObject({ code: "ENOENT" });
+        else expect(await readFile(temporary!, "utf8")).toContain("PRIVATE KEY");
+      });
+    } finally {
+      vi.mocked(readWindowsPrivateFile).mockReset();
+      vi.mocked(createWindowsPrivateFile).mockReset();
       await rm(directory, { recursive: true, force: true });
     }
   },

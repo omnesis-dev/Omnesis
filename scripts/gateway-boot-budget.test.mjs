@@ -91,6 +91,7 @@ describe("every consumer reads the shared budget", () => {
 
   it.each([
     ["packages/collector/src/e2e/gateway-env.ts", "gateway-boot-budget.json"],
+    ["packages/agent-integration/test/openclaw_gateway_probe.mjs", "gatewayBootBudgetMs"],
     [
       "packages/collector/src/e2e/harness-runtime-conformance.ts",
       "const timeoutMs = gatewayBootBudgetMs();",
@@ -141,7 +142,7 @@ describe("every consumer reads the shared budget", () => {
    * next reads a red lane carefully.
    */
   it("finds no gateway-boot wait that reaches its own number", () => {
-    const searched = ["packages/collector/src/e2e", "scripts"];
+    const searched = ["packages/collector/src/e2e", "packages/agent-integration/test", "scripts"];
     /**
      * Waiting for a gateway inside a container is a different wait: it includes
      * starting the image, and the budget that makes sense for a `tsx` boot in

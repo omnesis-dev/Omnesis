@@ -2,6 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { createHash, X509Certificate } from "node:crypto";
+import { ownedProcessCleanupReceipt } from "@omnesis/core";
 import { z } from "zod";
 import { bindingOrigin } from "./gateway-binding.js";
 import { readPrivateJson, savePrivateJson } from "./google-credentials.js";
@@ -98,6 +99,7 @@ export class CertificateIssuanceMonitor {
       monitor.journal = stored;
       monitor.incidents = stored.incidents;
     } catch (error) {
+      if (ownedProcessCleanupReceipt(error) !== undefined) throw error;
       if (!(
         error !== null &&
         typeof error === "object" &&
@@ -158,12 +160,14 @@ export class CertificateIssuanceMonitor {
     if (fresh.length && this.options.onIncident)
       try {
         await this.options.onIncident(fresh.map((item) => ({ ...item })));
-      } catch {
+      } catch (error) {
+        if (ownedProcessCleanupReceipt(error) !== undefined) throw error;
         throw new CertificateMonitorFailure("ct-journal-write-failed");
       }
     try {
       await savePrivateJson(this.options.journalFile, next);
-    } catch {
+    } catch (error) {
+      if (ownedProcessCleanupReceipt(error) !== undefined) throw error;
       throw new CertificateMonitorFailure("ct-journal-write-failed");
     }
     this.incidents = next.incidents;
@@ -242,6 +246,7 @@ export class CertificateIssuanceMonitor {
       }
       throw new CertificateMonitorFailure("ct-scan-incomplete");
     } catch (error) {
+      if (ownedProcessCleanupReceipt(error) !== undefined) throw error;
       this.error =
         error instanceof CertificateMonitorFailure ? error.code : "ct-provider-unavailable";
       if (error instanceof CertificateMonitorFailure && error.retryAfterMs !== undefined)

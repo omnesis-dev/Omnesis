@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import * as core from "@omnesis/core";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
+import { markedFileError, onWindowsBoundary } from "../test/private-operation-fixture.js";
 import { exposeOwnedFixtureRead } from "../test/owned-file-acl.js";
 import {
   identityArtifactPresent,
@@ -155,6 +156,19 @@ test.skipIf(process.platform !== "win32")(
     });
     await expect(identityArtifactPresent(join(alias, "private.key"))).rejects.toMatchObject({
       code: "EACCES",
+    });
+  },
+);
+
+test.each(["own", "cause"] as const)(
+  "marked Windows metadata absence is not permission to create identity (%s)",
+  async (placement) => {
+    const path = join(directory, "uncertain-presence"),
+      failure = markedFileError("ENOENT", placement);
+    const read = vi.spyOn(core, "readWindowsRegularFilePrefix").mockRejectedValueOnce(failure);
+    await onWindowsBoundary(async () => {
+      await expect(identityArtifactPresent(path)).rejects.toBe(failure);
+      expect(read).toHaveBeenCalledExactlyOnceWith(path, 0);
     });
   },
 );

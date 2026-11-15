@@ -76,6 +76,33 @@ import { getDocumentCount } from "./helpers.js";
 
 const browserReady = browserSuiteAvailable("account-enrollment-devices.e2e");
 
+/** Local status can refresh before the public tunnel is ready for a new TLS client. */
+async function waitForPublicTlsHealth(gateway: EnrollmentGateway): Promise<void> {
+  const timeoutMs = gatewayBootBudgetMs(),
+    deadline = performance.now() + timeoutMs;
+  await waitFor(
+    async () => {
+      const remaining = deadline - performance.now();
+      if (remaining <= 0) throw new Error("Public TLS readiness budget exhausted");
+      const health = await devicePinnedJson(
+        { publicOrigin: gateway.publicOrigin, certificate: gateway.leaf.cert },
+        "/health",
+        undefined,
+        AbortSignal.timeout(Math.ceil(remaining)),
+      );
+      return (
+        performance.now() < deadline &&
+        health !== null &&
+        typeof health === "object" &&
+        "status" in health &&
+        health.status === "ok"
+      );
+    },
+    "the pinned public TLS health response",
+    timeoutMs,
+  );
+}
+
 describe.skipIf(!browserReady)("devices join a gateway by signing in", () => {
   let directory: string;
   let world: EnrollmentWorld;
@@ -103,6 +130,7 @@ describe.skipIf(!browserReady)("devices join a gateway by signing in", () => {
     },
   ) {
     await gateway.pace(2);
+    await waitForPublicTlsHealth(gateway);
     const comparisons: string[] = [];
     let printed!: (value: { connectUrl: string; code: string }) => void;
     const code = new Promise<{ connectUrl: string; code: string }>(
@@ -366,6 +394,11 @@ describe.skipIf(!browserReady)("devices join a gateway by signing in", () => {
     );
     // The account still lists the passkey with its confirmation; a refresh must not bring the pin back.
     await gateway.json("/admin/cloud-relay/reconnect", { method: "POST", body: "{}" });
+    await waitFor(
+      async () => (await gateway.status()).tunnel.state === "online",
+      "the reconnected gateway tunnel to come online",
+      gatewayBootBudgetMs(),
+    );
     expect((await gateway.status()).deviceEnrollment.policy).toBe("automatic");
     const name = "Fictional porch CLI";
     const pairing = await pairBySignIn(second, {
@@ -524,7 +557,12 @@ describe.skipIf(!browserReady)("devices join a gateway by signing in", () => {
       name,
       keyFile: join(directory, "collector", "device.key"),
     });
-    expect((await stat(join(directory, "collector", "device.key"))).mode & 0o077).toBe(0);
+    const deviceKeyPath = join(directory, "collector", "device.key");
+    if (process.platform === "win32") {
+      expect(inspectWindowsPrivatePathSync(deviceKeyPath, "file").private).toBe(true);
+    } else {
+      expect((await stat(deviceKeyPath)).mode & 0o077).toBe(0);
+    }
     expect(bundle.gatewayUrl).toBe(gateway.publicOrigin);
     const row = await deviceRow(bundle.deviceId);
     expect(row).toMatchObject({ kind: "collector", name });

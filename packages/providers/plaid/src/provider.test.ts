@@ -508,9 +508,24 @@ describe("authFlow — Plaid hosted sign-in", () => {
     writeFileSync(join(configDir, "plaid"), "not a directory");
     const calls: { path: string; body: Record<string, unknown> }[] = [];
     const { callbacks } = urlCallbacks();
-    await expect(
-      authFlow(undefined, callbacks, configDir, { fetchImpl: fakeFetch({ calls }) }, fastPoll),
-    ).rejects.toThrow(/ENOTDIR/);
+    const error: unknown = await authFlow(
+      undefined,
+      callbacks,
+      configDir,
+      { fetchImpl: fakeFetch({ calls }) },
+      fastPoll,
+    ).catch((error: unknown) => error);
+    expect(error).toBeInstanceOf(Error);
+    if (process.platform === "win32")
+      expect(error).toHaveProperty(
+        "cause",
+        expect.objectContaining({
+          code: "EPRIVATE",
+          stage: "parent",
+          nativeCode: 267,
+        }),
+      );
+    else expect((error as Error).message).toMatch(/ENOTDIR/);
     const removes = calls.filter((c) => c.path === "/item/remove");
     expect(removes).toHaveLength(1);
     expect(removes[0].body.access_token).toBe("access-a");

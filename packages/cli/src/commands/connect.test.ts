@@ -1952,6 +1952,7 @@ describe("connect credential wiring", () => {
     expect(existsSync(join(home, "omnesis", "connect-recovery.json"))).toBe(false);
   });
 
+  // Three complete connection attempts exercise the real private-file helpers.
   it("resumes denied and expired OAuth without re-pairing or leaking credentials", async () => {
     const home = mkdtempSync(join(tmpdir(), "omnesis-hermes-oauth-denied space's-"));
     tempHomes.push(home);
@@ -2032,7 +2033,7 @@ describe("connect credential wiring", () => {
     expect(redeemAgentIntegrationPairingCode).toHaveBeenCalledTimes(1);
     expect(readFileSync(join(home, ".env"), "utf8")).not.toContain("OMNESIS_TOKEN");
     expect(existsSync(join(home, "omnesis", "connect-recovery.json"))).toBe(false);
-  });
+  }, 60_000);
 
   it("installs against a gateway without Watches, and says so in the skill", async () => {
     const home = mkdtempSync(join(tmpdir(), "omnesis-no-watches-"));

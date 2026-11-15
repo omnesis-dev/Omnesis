@@ -4,7 +4,7 @@
 import { createPublicKey, randomBytes } from "node:crypto";
 import { mkdir, rm } from "node:fs/promises";
 import { dirname } from "node:path";
-import { atomicWriteFileSync, cloudRelayEnabled } from "@omnesis/core";
+import { atomicWriteFileSync, cloudRelayEnabled, ownedProcessCleanupReceipt } from "@omnesis/core";
 import { z } from "zod";
 import {
   ManagedAccountBrowser,
@@ -276,6 +276,7 @@ export class GatewayAccountLink {
       this.bound =
         this.record.linked && this.sameBinding(this.record.binding, await this.binding());
     } catch (error) {
+      if (ownedProcessCleanupReceipt(error) !== undefined) throw error;
       if (!(error && typeof error === "object" && "code" in error && error.code === "ENOENT")) {
         this.activated = true;
         this.bound = false;

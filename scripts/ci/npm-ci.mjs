@@ -77,9 +77,29 @@ export async function completeNodeHeaders(
   }
 }
 
-async function runNode(args, { env, cwd, signal, timeoutMs }) {
+/** Explicit ownership uncertainty survives wrapping; never infer it from error text. */
+export function hasCleanupFailure(error) {
+  const pending = [error];
+  const seen = new Set();
+  while (pending.length) {
+    const entry = pending.pop();
+    if (
+      (typeof entry !== "object" && typeof entry !== "function") ||
+      entry === null ||
+      seen.has(entry)
+    )
+      continue;
+    seen.add(entry);
+    if (Object.hasOwn(entry, "cleanupFailure")) return true;
+    if (Object.hasOwn(entry, "cause")) pending.push(entry.cause);
+    if (entry instanceof AggregateError) pending.push(...entry.errors);
+  }
+  return false;
+}
+
+export async function runNode(args, { env, cwd, signal, timeoutMs, platform = process.platform }) {
   signal?.throwIfAborted();
-  if (process.platform === "win32") {
+  if (platform === "win32") {
     const { runWindowsJob } = await bootstrapWindowsPlatform();
     const result = await runWindowsJob(process.execPath, args, {
       env,
@@ -90,10 +110,13 @@ async function runNode(args, { env, cwd, signal, timeoutMs }) {
       stdout: "inherit",
       onStderr: (bytes) => process.stderr.write(bytes),
     });
-    if (result.failure)
-      throw new Error(
-        `Dependency subprocess ${result.failure}${result.failureMessage ? `: ${result.failureMessage}` : ""}`,
+    if (result.failure || Object.hasOwn(result, "cleanupFailure")) {
+      const error = new Error(
+        `Dependency subprocess ${result.failure ?? "cleanup unconfirmed"}${result.failureMessage ? `: ${result.failureMessage}` : ""}`,
       );
+      if (Object.hasOwn(result, "cleanupFailure")) error.cleanupFailure = result.cleanupFailure;
+      throw error;
+    }
     return result.exitCode ?? 1;
   }
   const child = spawn(process.execPath, args, { env, cwd, stdio: "inherit", detached: true });
@@ -170,6 +193,7 @@ export async function npmCi(
   childEnv.npm_package_config_node_gyp_arch = arch;
   childEnv.npm_package_config_node_gyp_target = version;
   childEnv.npm_package_config_node_gyp_devdir = join(scratch, "headers");
+  let cleanupConfirmed = true;
   try {
     signal?.throwIfAborted();
     const bundled = resolve(dirname(nodePath), "..");
@@ -216,6 +240,7 @@ export async function npmCi(
           completion: "root",
         });
       } catch (error) {
+        if (hasCleanupFailure(error)) throw error;
         signal?.throwIfAborted();
         output(`npm ci subprocess failed: ${error.message}\n`);
         code = 1;
@@ -263,8 +288,11 @@ export async function npmCi(
       await sleep(attempt * retrySeconds * 1000, undefined, { signal });
     }
     return 1;
+  } catch (error) {
+    if (hasCleanupFailure(error)) cleanupConfirmed = false;
+    throw error;
   } finally {
-    await rm(scratch, { recursive: true, force: true });
+    if (cleanupConfirmed) await rm(scratch, { recursive: true, force: true });
   }
 }
 

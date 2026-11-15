@@ -936,8 +936,8 @@ describe("inspectMessageStore", () => {
   });
   const accountDir = () => join(configDir, "whatsapp", "+15550100001");
 
-  it("reports an archive that was never written as absent", () => {
-    expect(inspectMessageStore(accountDir())).toEqual({
+  it("reports an archive that was never written as absent", async () => {
+    expect(await inspectMessageStore(accountDir())).toEqual({
       keyName: "whatsapp-store",
       label: "WhatsApp message archive",
       state: "absent",
@@ -948,7 +948,7 @@ describe("inspectMessageStore", () => {
     const plain = new MessageStore(accountDir());
     plain.addMessages([msg({ id: "a", timestamp: ts("2026-01-02"), text: "plain" })]);
     plain.close();
-    expect(inspectMessageStore(accountDir())).toMatchObject({ state: "plaintext" });
+    expect(await inspectMessageStore(accountDir())).toMatchObject({ state: "plaintext" });
 
     await ensureInstallRootKey({ backend: "file", configDir });
     await ensureStorageKey("whatsapp-store", { backend: "file", configDir });
@@ -957,18 +957,18 @@ describe("inspectMessageStore", () => {
     const encrypted = new MessageStore(accountDir());
     expect(encrypted.totalMessages).toBe(1);
     encrypted.close();
-    expect(inspectMessageStore(accountDir())).toMatchObject({ state: "encrypted" });
+    expect(await inspectMessageStore(accountDir())).toMatchObject({ state: "encrypted" });
 
     // The wrapped key gone: the archive is not plaintext and cannot be verified.
     rmSync(storageKeyPath("whatsapp-store", configDir));
-    expect(inspectMessageStore(accountDir())).toMatchObject({
+    expect(await inspectMessageStore(accountDir())).toMatchObject({
       state: "locked",
       detail: "No wrapped key exists for it.",
     });
 
     // A fresh key that never wrote the archive does not open it.
     await ensureStorageKey("whatsapp-store", { backend: "file", configDir });
-    expect(inspectMessageStore(accountDir())).toMatchObject({
+    expect(await inspectMessageStore(accountDir())).toMatchObject({
       state: "unverifiable",
       detail: "It did not open with this host's key.",
     });

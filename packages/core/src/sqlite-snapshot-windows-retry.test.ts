@@ -1,9 +1,16 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { copyFileSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  copyFileSync,
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { afterEach, expect, test, vi } from "vitest";
 import { openSqliteSnapshot, SqliteSnapshotChangedError } from "./sqlite-snapshot.js";
 import { ensurePrivateDirSync } from "./security-files.js";
@@ -61,3 +68,50 @@ test.each([false, true])(
     expect(readFileSync(source, "utf8")).toBe("invented source bytes");
   },
 );
+
+test.each(
+  ["ENOENT", "copy-source-changed"].flatMap((reason) =>
+    [false, true].flatMap((nested) =>
+      [undefined, new Error("Invented copy join failure")].map((cleanupFailure) => ({
+        reason,
+        nested,
+        cleanupFailure,
+      })),
+    ),
+  ),
+)("an unjoined $reason copy retains scratch and forbids retry ($nested)", (shape) => {
+  const root = mkdtempSync(join(tmpdir(), "snapshot-native-uncertain-"));
+  roots.push(root);
+  const source = join(root, "History");
+  writeFileSync(source, "invented source bytes");
+  Object.defineProperty(process, "platform", { ...nativePlatform, value: "win32" });
+  vi.mocked(ensurePrivateDirSync).mockImplementation(() => {});
+  const marker = { cleanupFailure: shape.cleanupFailure };
+  const failure = Object.assign(
+    new Error("Invented copy refusal", shape.nested ? { cause: marker } : undefined),
+    {
+      ...(shape.reason === "ENOENT"
+        ? { code: "ENOENT" }
+        : { code: "EPRIVATE", stage: shape.reason }),
+      ...(shape.nested ? {} : marker),
+    },
+  );
+  let destination = "";
+  const copy = vi.mocked(copyWindowsPrivateFileSync).mockImplementation((_from, to) => {
+    destination = to;
+    roots.push(dirname(to));
+    writeFileSync(to, "invented unpublished copy");
+    throw failure;
+  });
+  let observed: unknown;
+  try {
+    openSqliteSnapshot(source);
+  } catch (error) {
+    observed = error;
+  }
+  expect(observed).toBe(failure);
+  expect(copy).toHaveBeenCalledOnce();
+  expect(existsSync(destination)).toBe(true);
+  expect(readFileSync(destination, "utf8")).toBe("invented unpublished copy");
+  expect(readFileSync(source, "utf8")).toBe("invented source bytes");
+});

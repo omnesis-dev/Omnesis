@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { expect, test } from "vitest";
-import { buildWindowsUsearch } from "./build-windows-usearch.mjs";
+import { afterEach, expect, test, vi } from "vitest";
+import * as platformBootstrap from "../lib/bootstrap-platform.mjs";
+import { buildWindowsUsearch, runNode } from "./build-windows-usearch.mjs";
 
 function fixture({
   headerCode = 0,
@@ -117,4 +118,61 @@ test.each([
 
 test("rejects an unneeded rebuild on platforms using their existing prebuilt", async () => {
   await expect(buildWindowsUsearch({ platform: "linux" })).rejects.toThrow("requires Windows");
+});
+
+afterEach(() => vi.restoreAllMocks());
+
+test.each([
+  { exitCode: 0, cleanupFailure: undefined },
+  { exitCode: 1, failure: "timeout", cleanupFailure: new Error("fixture join uncertain") },
+])("rejects a marked vector subprocess at exit $exitCode", async (result) => {
+  vi.spyOn(platformBootstrap, "bootstrapWindowsPlatform").mockResolvedValue({
+    runWindowsJob: async () => result,
+  });
+  const error = await runNode([], {}).catch((error) => error);
+  expect(error).toBeInstanceOf(Error);
+  expect(Object.hasOwn(error, "cleanupFailure")).toBe(true);
+  expect(error.cleanupFailure).toBe(result.cleanupFailure);
+});
+
+test.each([1, 2, 3, 4])(
+  "retains all owned staging when subprocess %i has nested cleanup uncertainty",
+  async (failingCall) => {
+    const f = fixture();
+    const originalRun = f.options.run;
+    const marker = Object.assign(new Error("fixture join uncertain"), {
+      cleanupFailure: undefined,
+    });
+    const failure = new Error("wrapped failure", { cause: new AggregateError([marker]) });
+    let calls = 0;
+    f.options.run = async (args, options) => {
+      calls++;
+      const result = await originalRun(args, options);
+      if (calls === failingCall) throw failure;
+      return result;
+    };
+    try {
+      await expect(buildWindowsUsearch(f.options)).rejects.toBe(failure);
+      expect(calls).toBe(failingCall);
+      expect(existsSync(dirname(f.headers()))).toBe(true);
+      if (failingCall >= 3)
+        expect(
+          existsSync(join(dirname(dirname(f.headers())), "mapping-proof", "binding.gyp")),
+        ).toBe(true);
+    } finally {
+      if (f.headers()) rmSync(dirname(dirname(f.headers())), { recursive: true, force: true });
+    }
+  },
+);
+
+test("ordinary joined vector failures remain unmarked and success remains successful", async () => {
+  const runWindowsJob = vi
+    .fn()
+    .mockResolvedValueOnce({ exitCode: 1, failure: "spawn" })
+    .mockResolvedValueOnce({ exitCode: 0 });
+  vi.spyOn(platformBootstrap, "bootstrapWindowsPlatform").mockResolvedValue({ runWindowsJob });
+  const error = await runNode([], {}).catch((error) => error);
+  expect(error).toBeInstanceOf(Error);
+  expect(Object.hasOwn(error, "cleanupFailure")).toBe(false);
+  await expect(runNode([], {})).resolves.toBe(0);
 });

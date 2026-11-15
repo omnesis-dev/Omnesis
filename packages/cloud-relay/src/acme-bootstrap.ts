@@ -12,7 +12,8 @@ import {
   createPrivateKey,
   createPublicKey,
 } from "node:crypto";
-import { acquireGatewayLock, atomicWriteFile } from "@omnesis/core";
+import { acquireGatewayLock, atomicWriteFile, ownedProcessCleanupReceipt } from "@omnesis/core";
+import { isJoinedPrivateFileError } from "./private-file-errors.js";
 import { publicKeyFingerprint } from "./gateway-key-auth.js";
 import { bindingOrigin, validateCertificateDates } from "./gateway-binding.js";
 import { readPrivateInput, identityArtifactPresent } from "./private-inputs.js";
@@ -25,11 +26,7 @@ async function privateKey(
   try {
     return await readPrivateInput(path);
   } catch (error) {
-    if (
-      !generate ||
-      !(typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT")
-    )
-      throw error;
+    if (!generate || !isJoinedPrivateFileError(error, "ENOENT")) throw error;
     if (await identityArtifactPresent(certificateFile)) {
       // Keep private material paths out of recursively rendered error causes.
       // eslint-disable-next-line preserve-caught-error
@@ -37,6 +34,7 @@ async function privateKey(
     }
     await mkdir(dirname(path), { recursive: true, mode: 0o700 });
     const temporary = `${path}.${randomUUID()}.tmp`;
+    let publicationFailure: unknown;
     try {
       const generated = generateKeyPairSync("ec", { namedCurve: "prime256v1" }).privateKey.export({
         type: "pkcs8",
@@ -54,8 +52,12 @@ async function privateKey(
         ))
           throw error;
       }
+    } catch (error) {
+      publicationFailure = error;
+      throw error;
     } finally {
-      await rm(temporary, { force: true });
+      if (ownedProcessCleanupReceipt(publicationFailure) === undefined)
+        await rm(temporary, { force: true });
     }
     return readPrivateInput(path);
   }

@@ -64,10 +64,17 @@ $path=$env:OMNESIS_ATOMIC_ACL_TEST
 $sections=[System.Security.AccessControl.AccessControlSections]::Access -bor [System.Security.AccessControl.AccessControlSections]::Owner -bor [System.Security.AccessControl.AccessControlSections]::Group
 $acl=[System.IO.File]::GetAccessControl($path,$sections)
 if($env:OMNESIS_ATOMIC_REVIEW -eq '1') {
- $acl.SetAccessRuleProtection($true,$true)
- $acl.PurgeAccessRules([System.Security.Principal.SecurityIdentifier]'S-1-1-0')
+ $owner=$acl.GetOwner([System.Security.Principal.SecurityIdentifier])
+ $group=$acl.GetGroup([System.Security.Principal.SecurityIdentifier])
+ $current=[System.Security.Principal.WindowsIdentity]::GetCurrent().User
+ if($owner.Value -notin @($current.Value,'S-1-5-18','S-1-5-32-544')) { throw 'Fixture owner is not trusted' }
+ # PurgeAccessRules skips inherited ACEs. Replace only this owned fixture's
+ # Access section with a reviewed current-user/SYSTEM protected DACL; retain
+ # the supported current-user/SYSTEM/Administrators owner and existing group.
+ $acl.SetSecurityDescriptorSddlForm(('D:P(A;;FA;;;'+$current.Value+')(A;;FA;;;SY)'),[System.Security.AccessControl.AccessControlSections]::Access)
  [System.IO.File]::SetAccessControl($path,$acl)
  $acl=[System.IO.File]::GetAccessControl($path,$sections)
+ if($acl.GetOwner([System.Security.Principal.SecurityIdentifier]) -ne $owner -or $acl.GetGroup([System.Security.Principal.SecurityIdentifier]) -ne $group) { throw 'Fixture permission review changed owner or group' }
 }
 [Console]::Out.Write($acl.GetSecurityDescriptorSddlForm($sections))
 `,
@@ -99,8 +106,10 @@ describe.skipIf(process.platform !== "win32")("Windows private atomic publicatio
     expect(statSync(path, { bigint: true })).toMatchObject({ dev: before.dev, ino: before.ino });
     // The fixture operator reviews its invented Everyone grant explicitly;
     // the product must never make this unsafe online permission change.
-    await fixtureFileAcl(path, true);
+    const reviewedAcl = await fixtureFileAcl(path, true);
+    expect(inspectWindowsPrivatePathSync(path, "file").private).toBe(true);
     secureWindowsPrivatePathSync(path, "file");
+    expect(await fixtureFileAcl(path)).toBe(reviewedAcl);
     expect(readFileSync(path, "utf8")).toBe("invented existing content");
     expect(statSync(path, { bigint: true })).toMatchObject({ dev: before.dev, ino: before.ino });
     const bytes = Buffer.alloc(1024 * 1024);

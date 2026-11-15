@@ -2,6 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { join } from "node:path";
+import { cleanupReceipt, OwnedCleanupLifecycle } from "./owned-cleanup-lifecycle.js";
 import { bindingOrigin } from "./gateway-binding.js";
 import type {
   CertificateIncident,
@@ -39,6 +40,7 @@ export interface GatewayCertificateMonitorOptions {
  * dependency; what an incident changes is decided by `onIncident`.
  */
 export class GatewayCertificateMonitor {
+  private readonly cleanup = new OwnedCleanupLifecycle();
   private readonly enabled: boolean;
   private readonly now: () => number;
   private poller: NonNullable<ReturnType<typeof startCertificateMonitorPoller>> | undefined;
@@ -53,13 +55,23 @@ export class GatewayCertificateMonitor {
     this.now = options.now ?? Date.now;
   }
   start(): void {
-    if (!this.enabled || this.closed || this.initializing || this.now() < this.retryAt) return;
+    if (
+      !this.enabled ||
+      this.closed ||
+      this.cleanup.uncertain ||
+      this.initializing ||
+      this.now() < this.retryAt
+    )
+      return;
     if (this.poller) {
       try {
         const identity = this.options.identity();
         this.failure = undefined;
         if (identity?.spkiFingerprint !== undefined && this.poller.status().state === "pending")
-          void this.poller.check();
+          void this.poller.check().catch((error: unknown) => {
+            this.cleanup.observe(error);
+            this.failure = "ct-provider-unavailable";
+          });
       } catch {
         this.failure = "ct-configuration-invalid";
       }
@@ -106,39 +118,44 @@ export class GatewayCertificateMonitor {
         return undefined;
       }
     };
-    this.initializing = (async () => {
-      const { startCertificateMonitorPoller } = await import("./certificate-monitor-poller.js");
-      const input = {
-        hostname,
-        expectedSpkiFingerprint,
-        journalFile: join(this.options.configDir, "cloud-relay/certificate-incidents.json"),
-        ...(this.options.onIncident ? { onIncident: this.options.onIncident } : {}),
-      };
-      let monitor: Monitor;
-      if (this.options.create) monitor = await this.options.create(input);
-      else {
-        const [{ CertificateIssuanceMonitor }, { CertSpotterProvider }] = await Promise.all([
-          import("./certificate-monitor.js"),
-          import("./certificate-monitor-certspotter.js"),
-        ]);
-        monitor = await CertificateIssuanceMonitor.open({
-          ...input,
-          provider: new CertSpotterProvider({
-            apiKeyFile: this.options.env.OMNESIS_CLOUD_RELAY_CERTSPOTTER_API_KEY_FILE,
-            ...(providerUrl ? { baseUrl: providerUrl } : {}),
-          }),
-        });
-      }
-      if (this.closed) return;
-      // Incidents recorded before a restart, or before a version that acted on them, count too.
-      const recorded = monitor.status().incidents;
-      if (recorded.length) await this.options.onIncident?.(recorded);
-      this.poller = startCertificateMonitorPoller({ monitor, intervalMs: interval });
-      this.failure = undefined;
-    })()
-      .catch(() => {
+    this.initializing = this.cleanup
+      .run(async () => {
+        const { startCertificateMonitorPoller } = await import("./certificate-monitor-poller.js");
+        this.cleanup.assertAdmitting();
+        const input = {
+          hostname,
+          expectedSpkiFingerprint,
+          journalFile: join(this.options.configDir, "cloud-relay/certificate-incidents.json"),
+          ...(this.options.onIncident ? { onIncident: this.options.onIncident } : {}),
+        };
+        let monitor: Monitor;
+        if (this.options.create) monitor = await this.options.create(input);
+        else {
+          const [{ CertificateIssuanceMonitor }, { CertSpotterProvider }] = await Promise.all([
+            import("./certificate-monitor.js"),
+            import("./certificate-monitor-certspotter.js"),
+          ]);
+          this.cleanup.assertAdmitting();
+          monitor = await CertificateIssuanceMonitor.open({
+            ...input,
+            provider: new CertSpotterProvider({
+              apiKeyFile: this.options.env.OMNESIS_CLOUD_RELAY_CERTSPOTTER_API_KEY_FILE,
+              ...(providerUrl ? { baseUrl: providerUrl } : {}),
+            }),
+          });
+        }
+        if (this.closed) return;
+        // Incidents recorded before a restart, or before a version that acted on them, count too.
+        const recorded = monitor.status().incidents;
+        if (recorded.length) await this.options.onIncident?.(recorded);
+        if (this.closed || this.cleanup.uncertain) return;
+        this.poller = startCertificateMonitorPoller({ monitor, intervalMs: interval });
+        this.failure = undefined;
+      })
+      .catch((error: unknown) => {
+        this.cleanup.observe(error);
         this.failure = "ct-provider-unavailable";
-        this.retryAt = this.now() + 60000;
+        if (!this.cleanup.uncertain) this.retryAt = this.now() + 60000;
       })
       .finally(() => {
         this.initializing = undefined;
@@ -163,9 +180,14 @@ export class GatewayCertificateMonitor {
           incidents: [],
         };
   }
-  async close(): Promise<void> {
+  cleanupFailure(): unknown | undefined {
+    return cleanupReceipt(this.cleanup.receipt(), this.poller?.cleanupFailure());
+  }
+  close(): Promise<void> {
     this.closed = true;
-    await this.poller?.stop();
-    this.poller = undefined;
+    return this.cleanup.close(async () => {
+      await this.poller?.stop();
+      this.poller = undefined;
+    });
   }
 }

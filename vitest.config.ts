@@ -59,6 +59,7 @@ export default defineConfig({
       "scripts/record-replay-scenario.test.mjs",
       "scripts/lib/brain-cassette.test.mjs",
       "scripts/lib/patched-files.test.mjs",
+      "scripts/lib/check-process.test.mjs",
       "scripts/lib/decision-cassette.test.mjs",
       "scripts/lib/decision-agreement.test.mjs",
       "scripts/website-docs.test.mjs",

@@ -2,16 +2,85 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import {
-  WindowsProcessTree,
-  killWindowsProcessTree,
-} from "../../packages/core/src/windows-process-tree.ts";
-import { requestChildShutdown } from "../../packages/core/src/parent-shutdown.ts";
+  requestChildShutdown,
+  installParentShutdownHandler,
+} from "../../packages/core/src/parent-shutdown.ts";
+import { spawn } from "node:child_process";
+import { ownedProcessCleanupReceipt } from "../../packages/core/src/owned-process-cleanup.ts";
 import {
   waitForChild as waitForOwnedChild,
   signalChildTree as signalPosixChildTree,
 } from "./check-process-runtime.mjs";
 export { childGroupIsAlive } from "./check-process-runtime.mjs";
 import { bootstrapWindowsPlatform } from "./bootstrap-platform.mjs";
+
+let retainedLaneHold;
+const retainedLaneError = Object.assign(new Error("Check lane cleanup requires review"), {
+  cleanupFailure: undefined,
+});
+function retainUnconfirmedCheckLane() {
+  retainedLaneHold ??= setInterval(() => {}, 60_000);
+}
+
+/** Finite check roots own their descendants before target admission on Windows. */
+export async function runCheckCommand(
+  command,
+  args,
+  {
+    cwd,
+    env = process.env,
+    platform = process.platform,
+    signalEmitter = process,
+    runWindows,
+    retainUnconfirmed = retainUnconfirmedCheckLane,
+  } = {},
+) {
+  if (retainedLaneHold) throw retainedLaneError;
+  if (platform !== "win32")
+    return waitForChild(spawn(command, args, { cwd, env, stdio: "inherit", detached: true }), {
+      signalEmitter,
+    });
+  const controller = new AbortController();
+  let retained = false;
+  const hold = (failure) => {
+    if (retained) return;
+    retained = true;
+    retainUnconfirmed(failure);
+  };
+  const stop = () => controller.abort(new Error("Check stopped by its owner"));
+  const signals = ["SIGTERM", "SIGINT", "SIGHUP"];
+  for (const signal of signals) signalEmitter.on(signal, stop);
+  const removeShutdown = installParentShutdownHandler(stop);
+  try {
+    const run = runWindows ?? (await bootstrapWindowsPlatform()).runWindowsJob;
+    controller.signal.throwIfAborted();
+    const result = await run(command, args, {
+      cwd,
+      env,
+      signal: controller.signal,
+      completion: "root",
+      stdout: "inherit",
+      inputStream: process.stdin,
+      onStderr: (bytes) => process.stderr.write(bytes),
+    });
+    const receipt = ownedProcessCleanupReceipt(result);
+    if (receipt !== undefined) {
+      hold(result);
+      throw Object.assign(new Error("Check process cleanup was not confirmed"), {
+        cleanupFailure: receipt.failure,
+      });
+    }
+    if (result.failure !== undefined || controller.signal.aborted || result.signal !== null)
+      throw new Error("Check process did not complete normally");
+    return result.exitCode ?? 1;
+  } catch (error) {
+    if (ownedProcessCleanupReceipt(error) !== undefined) hold(error);
+    throw error;
+  } finally {
+    removeShutdown();
+    for (const signal of signals) signalEmitter.removeListener(signal, stop);
+  }
+}
 
 let nativeProcessBackend;
 let nativeProcessLoading;
@@ -41,6 +110,8 @@ const windowsBackend = {
 async function signalChildTree(child, signal) {
   if (process.platform === "win32" && typeof child.pid === "number") {
     if (signal !== "SIGKILL" && (await requestChildShutdown(child))) return;
+    const { killWindowsProcessTree } =
+      await import("../../packages/core/src/windows-process-tree.ts");
     await killWindowsProcessTree(child.pid);
     return;
   }
@@ -49,15 +120,35 @@ async function signalChildTree(child, signal) {
 
 /** Platform adapter; the generic runner can also load before dependencies exist. */
 export function waitForChild(child, opts = {}) {
-  const {
-    signalFn = signalChildTree,
-    windowsTree = process.platform === "win32" && child.spawnfile && child.pid
-      ? new WindowsProcessTree(child.pid, {
+  let defaultWindowsTree = null;
+  if (
+    opts.windowsTree === undefined &&
+    process.platform === "win32" &&
+    child.spawnfile &&
+    child.pid
+  ) {
+    let tree;
+    const loading = import("../../packages/core/src/windows-process-tree.ts").then(
+      ({ WindowsProcessTree }) => {
+        tree = new WindowsProcessTree(child.pid, {
           backend: windowsBackend,
           rootIsAlive: () => child.exitCode === null && child.signalCode === null,
-        })
-      : null,
-    ...rest
-  } = opts;
+        });
+        return tree;
+      },
+    );
+    defaultWindowsTree = {
+      get alive() {
+        return tree?.alive ?? true;
+      },
+      async refresh() {
+        return (await loading).refresh();
+      },
+      async kill() {
+        return (await loading).kill();
+      },
+    };
+  }
+  const { signalFn = signalChildTree, windowsTree = defaultWindowsTree, ...rest } = opts;
   return waitForOwnedChild(child, { ...rest, signalFn, windowsTree });
 }

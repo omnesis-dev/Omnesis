@@ -4,6 +4,7 @@
 import { lstatSync, readdirSync } from "node:fs";
 import { join, relative } from "node:path";
 import { inspectWindowsPrivatePaths, type WindowsPrivatePath } from "../windows-private-file.js";
+import { ownedProcessCleanupReceipt } from "../owned-process-cleanup.js";
 import type { SecurityData, SecurityPermissionEntry } from "./types.js";
 
 type PermissionData = Pick<
@@ -44,7 +45,8 @@ export async function collectWindowsPermissionData(
           entry.error ??=
             "Windows access controls are not private; stop related processes and review or recreate unsafe files in the protected directory";
       }
-    } catch {
+    } catch (error) {
+      if (ownedProcessCleanupReceipt(error) !== undefined) throw error;
       for (const entry of inspected) {
         entry.ok = false;
         entry.fixed = false;

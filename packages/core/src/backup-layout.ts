@@ -38,6 +38,7 @@ import {
 } from "./utils.js";
 import { ensurePrivateDirSync } from "./security-files.js";
 import { copyWindowsPrivateFileSync } from "./windows-private-file.js";
+import { ownedProcessCleanupReceipt } from "./owned-process-cleanup.js";
 
 export const BACKUP_MANIFEST_NAME = "backup-manifest.json";
 export const BACKUP_FULL_MANIFEST_NAME = "backup-manifest.full.json";
@@ -452,7 +453,8 @@ export interface OfflineBackupResult {
  * `omnesis restore` puts the files back as they were.
  *
  * The manifest is written last. A copy that fails part-way removes its
- * directory, and one that never got that far is skipped by every reader.
+ * directory only after helper cleanup is confirmed. Unpublished directories
+ * are skipped by every reader.
  */
 export function writeOfflineBackup(opts: OfflineBackupOptions): OfflineBackupResult {
   const backupsDir = opts.backupsDir ?? join(opts.configDir, "backups");
@@ -507,7 +509,8 @@ export function writeOfflineBackup(opts: OfflineBackupOptions): OfflineBackupRes
     );
     return { path, files };
   } catch (err) {
-    rmSync(path, { recursive: true, force: true });
+    if (ownedProcessCleanupReceipt(err) === undefined)
+      rmSync(path, { recursive: true, force: true });
     throw err;
   }
 }

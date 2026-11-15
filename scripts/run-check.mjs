@@ -2,13 +2,12 @@
 // Copyright (c) 2026 Adrien Conrath
 
 /** Portable check entrypoint; shared-host admission is an optional local adapter. */
-import { spawn } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { availableParallelism, homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseCLI } from "vitest/node";
-import { waitForChild } from "./lib/check-process.mjs";
+import { runCheckCommand } from "./lib/check-process.mjs";
 import { progressArgs, progressEnvironment } from "./lib/check-progress.mjs";
 import { assertTreeFingerprint } from "./nx/tree-state.mjs";
 import { resolveNpmInvocation } from "../packages/core/src/node-command.ts";
@@ -77,9 +76,7 @@ async function run(command, args, env) {
     command = invocation.command;
     args = invocation.args;
   }
-  return waitForChild(
-    spawn(command, args, { stdio: "inherit", env, detached: process.platform !== "win32" }),
-  );
+  return runCheckCommand(command, args, { env });
 }
 
 export function focusedUnit(args) {

@@ -233,9 +233,9 @@ export function buildTelegramProvider(
             onSourceError: (callback) => provider.onSourceError(callback),
             suspend: () => provider.suspend(),
             resume: () => provider.resume(),
-            probeLocalStores: () =>
+            probeLocalStores: ({ signal }: { signal: AbortSignal }) =>
               Promise.resolve(
-                stateDir && configDir ? inspectTelegramStores(stateDir, configDir) : [],
+                stateDir && configDir ? inspectTelegramStores(stateDir, configDir, signal) : [],
               ),
             async dispose() {
               source.dispose();

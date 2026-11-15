@@ -3,9 +3,11 @@
 
 import {
   chmodSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   readdirSync,
+  readFileSync,
   rmSync,
   statSync,
   renameSync,
@@ -17,6 +19,13 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { ensurePrivateDirSync } from "../security-files.js";
+import { atomicWriteFileSync } from "../atomic-write.js";
+import {
+  denyOwnedDirectoryReads,
+  ownedWindowsFixtureOperation,
+  snapshotWindowsFixtureAcl,
+  windowsFixtureCleanupMustWait,
+} from "../../test/security-fixture-acl.js";
 import {
   inspectWindowsPrivatePathSync,
   secureWindowsPrivatePathSync,
@@ -57,15 +66,18 @@ function setFixtureMode(path: string, mode: number): void {
   } else if ((mode & 0o077) !== 0) acl(["/grant", "*S-1-1-0:(RD)"]);
   else {
     if (fixtureSid) acl(["/remove:d", `*${fixtureSid}`]);
-    secureWindowsPrivatePathSync(path, statSync(path).isDirectory() ? "directory" : "file");
+    ownedWindowsFixtureOperation(path, () =>
+      secureWindowsPrivatePathSync(path, statSync(path).isDirectory() ? "directory" : "file"),
+    );
   }
 }
 function expectMode(path: string, mode: number): void {
   if (process.platform !== "win32") expect(statSync(path).mode & 0o777).toBe(mode);
   else
     expect(
-      inspectWindowsPrivatePathSync(path, statSync(path).isDirectory() ? "directory" : "file")
-        .private,
+      ownedWindowsFixtureOperation(path, () =>
+        inspectWindowsPrivatePathSync(path, statSync(path).isDirectory() ? "directory" : "file"),
+      ).private,
     ).toBe((mode & 0o077) === 0);
 }
 
@@ -89,12 +101,14 @@ const dirs: string[] = [];
 function tmp(prefix: string): string {
   const dir = mkdtempSync(join(tmpdir(), prefix));
   dirs.push(dir);
-  if (process.platform === "win32") ensurePrivateDirSync(dir);
+  if (process.platform === "win32")
+    ownedWindowsFixtureOperation(dir, () => ensurePrivateDirSync(dir));
   return dir;
 }
 
 afterEach(() => {
-  for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+  for (const dir of dirs.splice(0))
+    if (!windowsFixtureCleanupMustWait(dir)) rmSync(dir, { recursive: true, force: true });
 });
 
 function runner(stdout: string, code = 0): SecurityCommandRunner {
@@ -150,10 +164,21 @@ describe("collectSecurityData — permissions", () => {
     const configDir = tmp("omnesis-security-fix-");
     const providerDir = join(configDir, "provider-auth");
     mkdirSync(providerDir);
-    writeFileSync(join(providerDir, "tokens.json"), "{}\n");
+    const tokenPath = join(providerDir, "tokens.json");
+    writeFileSync(tokenPath, "{}\n");
+    if (process.platform === "win32")
+      expect(
+        ownedWindowsFixtureOperation(tokenPath, () =>
+          inspectWindowsPrivatePathSync(tokenPath, "file"),
+        ).private,
+      ).toBe(true);
     setFixtureMode(configDir, 0o755);
     setFixtureMode(providerDir, 0o755);
-    setFixtureMode(join(providerDir, "tokens.json"), 0o644);
+    setFixtureMode(tokenPath, 0o644);
+    const exposedAcl =
+      process.platform === "win32" ? await snapshotWindowsFixtureAcl(tokenPath) : undefined;
+    const exposedBytes = readFileSync(tokenPath);
+    const exposedIdentity = lstatSync(tokenPath, { bigint: true });
 
     const data = await collectSecurityData({
       configDir,
@@ -166,7 +191,20 @@ describe("collectSecurityData — permissions", () => {
     expect(data.permissionEntries.filter((entry) => entry.fixed).length).toBeGreaterThanOrEqual(2);
     expectMode(configDir, 0o700);
     expectMode(providerDir, 0o700);
-    expectMode(join(providerDir, "tokens.json"), 0o600);
+    if (process.platform === "win32") {
+      expectMode(tokenPath, 0o644);
+      expect(
+        data.permissionEntries.find((entry) => entry.relativePath === "provider-auth/tokens.json"),
+      ).toMatchObject({ kind: "file", ok: false, fixed: false });
+      expect(await snapshotWindowsFixtureAcl(tokenPath)).toEqual(exposedAcl);
+      expect(readFileSync(tokenPath)).toEqual(exposedBytes);
+      const current = lstatSync(tokenPath, { bigint: true });
+      expect([current.dev, current.ino, current.birthtimeNs]).toEqual([
+        exposedIdentity.dev,
+        exposedIdentity.ino,
+        exposedIdentity.birthtimeNs,
+      ]);
+    } else expectMode(tokenPath, 0o600);
     expect(data.diskEncryption.status).toBe("off");
   });
 
@@ -1059,12 +1097,31 @@ describe("unreadable key material", () => {
         const configDir = tmp("omnesis-doctor-unreadable-");
         const keyring = join(configDir, "keyring");
         mkdirSync(keyring, { recursive: true });
-        writeFileSync(
-          join(keyring, "storage-encryption-required"),
-          "omnesis.storage-encryption.required.v1\n",
-        );
-        setFixtureMode(keyring, 0o000);
+        const marker = join(keyring, "storage-encryption-required");
+        const markerBytes = "omnesis.storage-encryption.required.v1\n";
+        let restore: () => void | Promise<void>;
+        if (process.platform === "win32") {
+          ownedWindowsFixtureOperation(keyring, () => ensurePrivateDirSync(keyring));
+          ownedWindowsFixtureOperation(marker, () =>
+            atomicWriteFileSync(marker, markerBytes, { mode: 0o600 }),
+          );
+          restore = await denyOwnedDirectoryReads(keyring, marker);
+        } else {
+          writeFileSync(marker, markerBytes);
+          setFixtureMode(keyring, 0o000);
+          restore = () => setFixtureMode(keyring, 0o700);
+        }
         try {
+          // A list-only denial is insufficient: both backends know the marker path.
+          for (const read of [() => statSync(marker), () => readFileSync(marker)]) {
+            let error: unknown;
+            try {
+              read();
+            } catch (caught) {
+              error = caught;
+            }
+            expect(error).toMatchObject({ code: expect.stringMatching(/^(EACCES|EPERM)$/u) });
+          }
           const data = await collectSecurityData({
             configDir,
             fixPermissions: false,
@@ -1077,7 +1134,7 @@ describe("unreadable key material", () => {
           expect(data.databaseEncryption.status).toBe("blocked");
           expect(data.keyring.valid).toBe(false);
         } finally {
-          setFixtureMode(keyring, 0o700);
+          await restore();
         }
       },
     );

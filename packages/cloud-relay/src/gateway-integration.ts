@@ -4,6 +4,7 @@
 import { lstatSync } from "node:fs";
 import { cloudRelayEnabled, DEFAULT_CONFIG_DIR } from "@omnesis/core";
 import { z } from "zod";
+import { isJoinedPrivateFileError } from "./private-file-errors.js";
 import { gatewayKeySessionSource, GatewayUnregistered } from "./gateway-key-client.js";
 import { GatewayTunnel } from "./tunnel-client.js";
 import { readPrivateJson, googleRelaySessionSource } from "./google-credentials.js";
@@ -100,13 +101,7 @@ export function startGatewayCloudTunnel(
       )
         ownerMode = true;
     } catch (error) {
-      if (!(
-        typeof error === "object" &&
-        error !== null &&
-        "code" in error &&
-        error.code === "ENOENT"
-      ))
-        throw error;
+      if (!isJoinedPrivateFileError(error, "ENOENT")) throw error;
       if (keySource && !googleSource) ownerMode = true;
     }
     if (ownerMode) {

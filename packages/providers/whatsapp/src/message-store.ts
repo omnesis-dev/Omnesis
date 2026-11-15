@@ -2,10 +2,13 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import {
+  closeSync,
   copyFileSync,
   existsSync,
   mkdirSync,
+  openSync,
   readFileSync,
+  readSync,
   renameSync,
   rmSync,
   statSync,
@@ -20,6 +23,8 @@ import {
   normalizePhone,
   assertNever,
   readStorageKeySync,
+  readStorageKey,
+  ownedProcessCleanupReceipt,
   storageEncryptionRequired,
   storageKeyHex,
   AUDIO_UNREADABLE,
@@ -299,7 +304,11 @@ function clearStagingRekey(staging: string): void {
  * leave its WAL side files beside a WAL-mode archive, as any reader does.
  * A store that does not exist yet is simply absent.
  */
-export function inspectMessageStore(dir: string): LocalStoreProbeResult {
+export async function inspectMessageStore(
+  dir: string,
+  signal?: AbortSignal,
+): Promise<LocalStoreProbeResult> {
+  signal?.throwIfAborted();
   const label = "WhatsApp message archive";
   const keyName = "whatsapp-store";
   const path = join(dir, "store.db");
@@ -308,12 +317,18 @@ export function inspectMessageStore(dir: string): LocalStoreProbeResult {
   const configDir = dirname(dirname(dir));
   let key: Buffer | null;
   try {
-    key = readStorageKeySync(keyName, { configDir });
-  } catch {
+    key = await readStorageKey(keyName, { configDir });
+  } catch (error) {
+    if (ownedProcessCleanupReceipt(error)) throw error;
+    signal?.throwIfAborted();
     return { keyName, label, state: "locked", detail: "Its key could not be read." };
   }
-  if (!key) return { keyName, label, state: "locked", detail: "No wrapped key exists for it." };
+  if (!key) {
+    signal?.throwIfAborted();
+    return { keyName, label, state: "locked", detail: "No wrapped key exists for it." };
+  }
   try {
+    signal?.throwIfAborted();
     const db = new EncryptedDatabase(path, { readonly: true }) as unknown as Db;
     try {
       keyStoreDatabase(db, key);
@@ -323,6 +338,7 @@ export function inspectMessageStore(dir: string): LocalStoreProbeResult {
     }
     return { keyName, label, state: "encrypted" };
   } catch (err) {
+    if (signal?.aborted) throw err;
     // SQLite reports a wrong key as "not a database"; anything else is the
     // file being unreadable right now, which is not a verdict on the key.
     return sqliteNotADatabase(err)
@@ -357,7 +373,15 @@ function sqliteFileLooksPlaintext(path: string): boolean {
   if (!existsSync(path)) return false;
   const st = statSync(path);
   if (!st.isFile() || st.size < SQLITE_HEADER.length) return false;
-  return readFileSync(path).subarray(0, SQLITE_HEADER.length).equals(SQLITE_HEADER);
+  const header = Buffer.alloc(SQLITE_HEADER.length);
+  const fd = openSync(path, "r");
+  try {
+    return (
+      readSync(fd, header, 0, header.length, 0) === header.length && header.equals(SQLITE_HEADER)
+    );
+  } finally {
+    closeSync(fd);
+  }
 }
 
 /**

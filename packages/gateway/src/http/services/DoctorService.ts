@@ -19,9 +19,14 @@
  */
 
 import { statSync } from "node:fs";
-import { createLogger, deviceTlsFollowsPublicRenewal, deviceTlsTrustMode } from "@omnesis/core";
 import {
-  collectSecurityDataInWorker,
+  createLogger,
+  deviceTlsFollowsPublicRenewal,
+  deviceTlsTrustMode,
+  ownedProcessCleanupReceipt,
+} from "@omnesis/core";
+import {
+  DoctorSecurityScanner,
   evaluateDoctor,
   PROCESS_VITALS_WINDOW_SECONDS,
   STALLS_MIN_MS,
@@ -92,17 +97,57 @@ export class DoctorService {
    * same tree.
    */
   private inFlightSecurity: Promise<Pick<DoctorData, "security" | "securityError">> | null = null;
+  private readonly scanner: DoctorSecurityScanner | undefined;
+  private readonly reports = new Set<Promise<DoctorReport>>();
+  private closed = false;
+  private closing: Promise<void> | undefined;
 
-  constructor(private readonly deps: DoctorServiceDeps) {}
+  constructor(private readonly deps: DoctorServiceDeps) {
+    if (deps.configDir)
+      this.scanner = new DoctorSecurityScanner({ configDir: deps.configDir, component: "gateway" });
+  }
+
+  cleanupFailure(): unknown | undefined {
+    return this.scanner?.cleanupFailure();
+  }
+
+  close(): Promise<void> {
+    if (this.closing) return this.closing;
+    this.closed = true;
+    this.closing = (async () => {
+      const results = await Promise.allSettled([
+        Promise.resolve().then(() => this.scanner?.close()),
+        ...this.reports,
+      ]);
+      const failures = results.flatMap((result) =>
+        result.status === "rejected" ? [result.reason] : [],
+      );
+      if (failures.length === 1) throw failures[0];
+      if (failures.length) {
+        const marked = failures.find((error) => ownedProcessCleanupReceipt(error) !== undefined);
+        const error = new AggregateError(failures, "Doctor service cleanup failed", {
+          cause: marked ?? failures[0],
+        });
+        const receipt = ownedProcessCleanupReceipt(marked);
+        if (receipt) Object.assign(error, { cleanupFailure: receipt.failure });
+        throw error;
+      }
+    })();
+    return this.closing;
+  }
 
   /**
    * Run every check and return the report. `whoami` is request-scoped —
    * the caller passes the identity resolved from the current request — so
    * the auth section describes the caller rather than the gateway.
    */
-  async report(whoami: WhoAmIResult): Promise<DoctorReport> {
-    const data = await this.collect(whoami);
-    return evaluateDoctor(data);
+  report(whoami: WhoAmIResult): Promise<DoctorReport> {
+    if (this.closed) return Promise.reject(new Error("Doctor service is closed"));
+    const report = this.collect(whoami)
+      .then(evaluateDoctor)
+      .finally(() => this.reports.delete(report));
+    this.reports.add(report);
+    return report;
   }
 
   private async collect(whoami: WhoAmIResult): Promise<DoctorData> {
@@ -226,20 +271,29 @@ export class DoctorService {
   private async collectSecurity(): Promise<Pick<DoctorData, "security" | "securityError">> {
     const { configDir } = this.deps;
     if (!configDir) return { security: null, securityError: null };
+    if (this.closed) return { security: null, securityError: "The security audit is closed." };
 
-    this.inFlightSecurity ??= this.runSecurityWorker(configDir).finally(() => {
+    this.inFlightSecurity ??= this.runSecurityWorker().finally(() => {
       this.inFlightSecurity = null;
     });
     return this.inFlightSecurity;
   }
 
-  private runSecurityWorker(
-    configDir: string,
-  ): Promise<Pick<DoctorData, "security" | "securityError">> {
-    return collectSecurityDataInWorker({ configDir, component: "gateway" })
+  private runSecurityWorker(): Promise<Pick<DoctorData, "security" | "securityError">> {
+    const receipt = ownedProcessCleanupReceipt(this.scanner?.cleanupFailure());
+    const collecting =
+      receipt && !receipt.pending
+        ? Promise.reject(this.scanner!.cleanupFailure())
+        : this.scanner!.collect();
+    return collecting
       .then((security) => ({ security, securityError: null }))
       .catch((err: unknown) => {
-        const reason = err instanceof Error ? err.message : String(err);
+        const reason =
+          ownedProcessCleanupReceipt(err) !== undefined
+            ? "Security audit cleanup is unconfirmed; review the gateway before retrying."
+            : err instanceof Error
+              ? err.message
+              : String(err);
         log.warn(`Security posture scan unavailable: ${reason}`);
         return { security: null, securityError: reason };
       });

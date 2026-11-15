@@ -61,6 +61,12 @@ jobs:
       run:
         shell: pwsh
     steps:
+      - name: Use runner storage for SQLite latency fixtures
+        # Profile temporary storage can serialize scattered SQLite checkpoint
+        # writes. Keep the latency budgets unchanged on the runner's scratch disk.
+        run: |
+          "OMNESIS_TEST_SQLITE_TMP=$env:RUNNER_TEMP" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.sha }}
