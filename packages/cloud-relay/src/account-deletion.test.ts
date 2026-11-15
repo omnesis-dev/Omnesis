@@ -162,11 +162,14 @@ test("deleting an account removes every row about it and its gateways, in every 
     const before = everyRow(path);
     const named = (rows: Map<string, string[]>, value: string) =>
       [...rows].filter(([, values]) => values.some((row) => row.includes(value))).map(([t]) => t);
-    // The fixture really did put the account or its gateways in every table there is.
+    // The fixture really did put the account or its gateways in every table there is, except the
+    // one that remembers deleted passkeys.
     const about = [account, digest, legacy, passkey, first.owner, second.owner, first.gatewayId];
-    expect([...before.keys()].filter((table) => !table.startsWith("sqlite_"))).toEqual(
-      [...new Set(about.flatMap((value) => named(before, value)))].sort(),
-    );
+    const forgotten = "omnesis_deleted_passkeys";
+    expect(before.get(forgotten)).toEqual([]);
+    expect(
+      [...before.keys()].filter((table) => !table.startsWith("sqlite_") && table !== forgotten),
+    ).toEqual([...new Set(about.flatMap((value) => named(before, value)))].sort());
 
     // A session from before a sign-in method changed deletes nothing.
     expect(() => accounts.deleteAccount(account, 2)).toThrow("Account changed; sign in again");
@@ -178,6 +181,12 @@ test("deleting an account removes every row about it and its gateways, in every 
 
     const after = everyRow(path);
     for (const value of [...about, second.gatewayId]) expect(named(after, value)).toEqual([]);
+    // Only a digest of its passkey is kept, so the account page can say the account is gone.
+    expect(after.get(forgotten)).toEqual([
+      JSON.stringify({
+        credential_digest: createHash("sha256").update(passkey).digest("hex"),
+      }),
+    ]);
     // A hosted name keeps a digest in place of its gateway's id: it routes nowhere, nobody else
     // can be granted it, and the same gateway may ask for its address again.
     expect(after.get("relay_hosted_names")!.sort()).toEqual(

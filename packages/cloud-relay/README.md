@@ -145,6 +145,7 @@ it, in one transaction, and closes those gateways' tunnels. What each table keep
 | `omnesis_account_sessions`                                 | Every session of the account is deleted                         |
 | `omnesis_federated_credentials`, `omnesis_google_aliases`  | Its Google sign-in and that sign-in's aliases are deleted       |
 | `omnesis_passkeys`, `omnesis_passkey_endorsements`         | Its passkeys and the sign-ins that vouched for them are deleted |
+| `omnesis_deleted_passkeys`                                 | Keeps a SHA-256 digest of each of its passkeys' credential ids  |
 | `omnesis_passkey_countersignatures`                        | Each passkey's countersignature of the account is deleted       |
 | `omnesis_gateway_links`, `omnesis_account_admissions`      | Rows of the account and of each of its gateways are deleted     |
 | `relay_accounts`, `relay_gateway_bindings`                 | Each gateway's owner row and binding are deleted                |
@@ -161,6 +162,12 @@ registers again. Operator files are not touched: remove the person from
 to create an account again, and remove them from the sign-up Google Group if
 the relay uses one. Request logs and metrics hold no account
 identifiers.
+
+The digests let the account page tell a browser that offers one of those passkeys
+again that its account was deleted, and ask the browser's password manager to
+drop it (`PublicKeyCredential.signalUnknownCredential`). A passkey the relay never
+stored is only reported as unknown and is never dropped: it may still belong to a
+live account.
 
 Disconnecting one gateway from its settings removes that gateway's rows from the
 same routing tables and its link, closes its tunnel, and leaves the account and
@@ -473,6 +480,12 @@ device grants; manage those through the gateway's device controls.
 The relay account page is `/_relay/account`; `/_relay/web` redirects to it. Google
 sign-in there needs the web OAuth configuration and
 `OMNESIS_CLOUD_RELAY_PUBLIC_ORIGIN`.
+Its Google button goes to `/_relay/web/start`, which redirects to Google only when
+the browser labels the request `Sec-Fetch-Site: same-origin` (login CSRF
+protection). Safari sometimes labels that press `none` or `cross-site`, for
+example in a tab another site opened; such a request, or a link from another
+site, is sent back to the account page with the same operation and
+`failed=again`, where the next press continues.
 
 On a CLI or collector machine, enable cloud relay and pair the
 selected component:

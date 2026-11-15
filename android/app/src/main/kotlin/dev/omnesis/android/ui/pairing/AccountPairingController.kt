@@ -28,6 +28,10 @@ data class AccountPairingState(
     val error: String? = null,
     /** An explanation that is not a failure, such as a passkey prompt that found no passkey. */
     val notice: String? = null,
+    /** When the gateway stops waiting for the held request, in Unix milliseconds. */
+    val expiresAt: Long? = null,
+    /** An approval continues by itself, with no "codes match" step on this phone. */
+    val continues: Boolean = false,
 )
 
 /** The person closed the system sign-in dialog. Nothing went wrong, so the choices return without a message. */
@@ -78,6 +82,9 @@ internal interface AccountPairingAttempt : AutoCloseable {
     val host: String
     val approved: Boolean
     val joined: Boolean
+    /** The request went to a gateway whose certificate passed the public checks. */
+    val verified: Boolean get() = false
+    val expiresAtMillis: Long? get() = null
     val retryUntilMillis: Long
     suspend fun poll()
     fun compare()
@@ -170,10 +177,20 @@ internal class AccountPairingController(
             if (active(id)) cancel()
             return
         }
-        publish(AccountPairingState(AccountPairingPhase.Comparing, code = attempt.code, host = attempt.host, approved = attempt.approved))
+        publish(AccountPairingState(AccountPairingPhase.Comparing, code = attempt.code, host = attempt.host, approved = attempt.approved,
+            expiresAt = attempt.expiresAtMillis, continues = attempt.verified))
         while (!attempt.approved) {
             delay(2000); attempt.poll()
             if (!active(id)) return
+        }
+        if (attempt.verified) {
+            // Approved on a device the owner already uses, by a gateway this phone verified: the
+            // code it reports was checked here against this phone's own, so nothing is left to do.
+            publish(state.copy(phase = AccountPairingPhase.Pairing, approved = true))
+            attempt.compare()
+            ports.applyPairing(attempt.payload())
+            if (active(id)) cancel()
+            return
         }
         publish(state.copy(approved = true))
     }

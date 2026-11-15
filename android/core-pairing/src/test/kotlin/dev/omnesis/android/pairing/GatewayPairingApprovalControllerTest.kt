@@ -46,6 +46,71 @@ class GatewayPairingApprovalControllerTest {
         assertTrue(model.state.value.compared.isEmpty())
     }
 
+    /**
+     * Defect 6.2: a phone that joined by signing in is asked to step up before it approves. The
+     * request stays listed with the reason, never a generic error, and is dropped once it is gone.
+     */
+    @Test fun `a step-up refusal keeps the request and says why`() = runTest {
+        val row = request()
+        for ((refusal, unavailable) in listOf(
+            dev.omnesis.android.transport.GatewayException.ServerError(428, "Confirm first.", "STEP_UP_REQUIRED") to false,
+            dev.omnesis.android.transport.GatewayException.Forbidden("Locked.", "STEP_UP_UNAVAILABLE") to true,
+        )) {
+            val client = Client(listOf(row)).apply { decisionError = refusal }
+            val model = createController()
+            model.refresh(client)
+            model.confirmAndApprove(row, client)
+            assertNull(model.state.value.error)
+            assertEquals(GatewayPairingApprovalController.StepUp(row.requestId, unavailable), model.state.value.stepUp)
+            assertEquals(listOf(row), model.state.value.requests)
+            assertFalse(model.state.value.busy)
+            client.rows = emptyList()
+            model.refresh(client)
+            assertNull(model.state.value.stepUp)
+        }
+        // A deny never needs one, and any other failure stays an error.
+        val client = Client(listOf(row)).apply { decisionError = java.io.IOException("synthetic offline") }
+        val model = createController()
+        model.refresh(client)
+        model.confirmAndApprove(row, client)
+        assertNull(model.state.value.stepUp)
+        assertNotNull(model.state.value.error)
+    }
+
+    /** M5: after a denial one tap makes every new device ask first, which never needs a step-up. */
+    @Test fun `a denial offers to make every new device ask first`() = runTest {
+        val row = request()
+        val client = Client(listOf(row))
+        val model = createController()
+        model.askFirst(client)
+        assertTrue("Asked first with nothing denied", client.policies.isEmpty())
+        model.refresh(client)
+        model.decide(row, false, client)
+        assertEquals(row, model.state.value.denied)
+        model.askFirst(client)
+        model.askFirst(client)
+        assertEquals(listOf("ask"), client.policies)
+        assertTrue(model.state.value.askingFirst)
+        model.stop()
+        assertNull(model.state.value.denied)
+    }
+
+    /** M5: the gateway suggests remembering the first confirmation, never for another Google account. */
+    @Test fun `the first confirmation is remembered by default once and another account never`() = runTest {
+        val first = request().copy(canTrustSignIn = true, rememberByDefault = true, signIn = "google", signInEmail = "maya@example.com")
+        val other = request().copy(requestId = "00000000-0000-4000-8000-000000000912", canTrustSignIn = true, otherGoogleAccount = true)
+        val client = Client(listOf(first, other)).apply { stepUpRequired = true }
+        val model = createController()
+        model.refresh(client)
+        assertTrue(model.state.value.stepUpRequired)
+        assertEquals(setOf(first.requestId), model.state.value.trustSignIn)
+        model.setTrustSignIn(other.requestId, true)
+        assertEquals(setOf(first.requestId), model.state.value.trustSignIn)
+        model.setTrustSignIn(first.requestId, false)
+        model.refresh(client)
+        assertTrue("The owner's own choice was overridden", model.state.value.trustSignIn.isEmpty())
+    }
+
     @Test fun `only requests still waiting are listed`() = runTest {
         val approved = request(status = "approved").copy(requestId = "00000000-0000-4000-8000-000000000902")
         val denied = request(status = "denied").copy(requestId = "00000000-0000-4000-8000-000000000903")
@@ -288,8 +353,20 @@ class GatewayPairingApprovalControllerTest {
         }
     }
 
-    private class Client(var rows: List<GatewayPairingApprovalRequest>) : GatewayPairingApproving {
+    private class Client(var rows: List<GatewayPairingApprovalRequest>) : GatewayPairingApproving, dev.omnesis.android.transport.dto.CloudRelayManaging {
         var failure = false
+        var decisionError: Exception? = null
+        var stepUpRequired = false
+        override suspend fun pairingApprovals() = dev.omnesis.android.transport.dto.GatewayPairingApprovals(pairingApprovalRequests(), stepUpRequired)
+        val policies = mutableListOf<String>()
+        override suspend fun setCloudRelayEnrollmentPolicy(policy: String): dev.omnesis.android.transport.dto.CloudRelayStatus {
+            policies += policy
+            return dev.omnesis.android.transport.dto.CloudRelayStatus(enabled = true)
+        }
+        override suspend fun cloudRelayStatus() = error("unused")
+        override suspend fun connectCloudRelay(intent: String) = error("unused")
+        override suspend fun cancelCloudRelayConnect() = error("unused")
+        override suspend fun cloudRelayOperation(operation: String) = error("unused")
         var cancelled = false
         var gate: CompletableDeferred<Unit>? = null
         val decisions = mutableListOf<Boolean>()
@@ -300,7 +377,10 @@ class GatewayPairingApprovalControllerTest {
             if (failure) throw java.io.IOException("synthetic offline")
         }
         override suspend fun pairingApprovalRequests(): List<GatewayPairingApprovalRequest> { waitForResult(); return rows }
-        override suspend fun decidePairingApproval(requestId: String, approve: Boolean, trustSignIn: Boolean) { decisions += approve; trusted += trustSignIn; waitForResult() }
+        override suspend fun decidePairingApproval(requestId: String, approve: Boolean, trustSignIn: Boolean) {
+            decisions += approve; trusted += trustSignIn; waitForResult()
+            decisionError?.let { throw it }
+        }
         var location: GatewayPasskeyLocation? = null
         var locationFails = false
         var ceremony: GatewayPasskeyCeremony? = null

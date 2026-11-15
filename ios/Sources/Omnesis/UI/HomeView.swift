@@ -206,7 +206,7 @@ extension HomeView {
         if target.opensDevices {
             _ = router.consume()
             // A pairing or join request lands on its own list, over the devices it adds to.
-            if target == .pairingRequests { PendingPairingRequests.shared.requestOpen() }
+            if case .pairingRequests(let requestId) = target { PendingPairingRequests.shared.requestOpen(focus: requestId) }
             if target == .tailscaleJoinRequests { TailscaleJoinRequestOpener.shared.requestOpen() }
             settingsDestination = .devices
             return true

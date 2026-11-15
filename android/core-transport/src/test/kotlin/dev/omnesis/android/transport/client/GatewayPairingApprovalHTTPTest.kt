@@ -81,9 +81,40 @@ class GatewayPairingApprovalHTTPTest {
             assertNull(rows[1].enrollment)
         }
     }
+    /**
+     * Defect 6.1 (M4): `gatewayPasskey` names the gateway's page, not whether the owner has a
+     * passkey confirmed there. A Google-only owner would only be refused, so "Approve with passkey"
+     * is offered only when the gateway says `passkeyApproval: true`; an older gateway that sends
+     * nothing, and one that says false, keep the plain approval.
+     */
+    @Test fun `passkey approval is offered only when the gateway says a confirmed passkey can approve`() {
+        val located = """"gatewayPasskey":{"rpId":"relay.example.test","origin":"https://g-abcdefgh.relay.example.test"}"""
+        withClient(
+            MockResponse().setBody("""{"accountSignIn":true,$located}"""),
+            MockResponse().setBody("""{"accountSignIn":true,$located,"passkeyApproval":false}"""),
+            MockResponse().setBody("""{"accountSignIn":true,$located,"passkeyApproval":true}"""),
+        ) { client, _ ->
+            assertNull("An older gateway offered passkey approval", client.pairingPasskeyLocation())
+            assertNull("A gateway with no confirmed passkey offered passkey approval", client.pairingPasskeyLocation())
+            assertEquals("relay.example.test", client.pairingPasskeyLocation()?.rpId)
+        }
+    }
+
+    /** A phone asked to step up opens the gateway's own approval page for exactly that request. */
+    @Test fun `the approval page is the gateway's own address with the request in the fragment`() {
+        withClient { client, server ->
+            val id = "00000000-0000-4000-8000-000000000951"
+            assertNull("A plain-HTTP address names no page", client.approvalPage(id))
+            val base = server.url("/elsewhere?x=1").newBuilder().scheme("https").build()
+            val secure = AdminClient(GatewayHttp(OkHttpClient(), base.toString(), "synthetic-token"))
+            assertEquals("https://${base.host}:${base.port}/portal/approve#$id", secure.approvalPage(id))
+            assertNull(secure.approvalPage("../devices"))
+        }
+    }
+
     @Test fun `passkey approval reads the gateway's ceremony and posts the proof to the public routes`() {
         withClient(
-            MockResponse().setBody("""{"clientId":"","gatewayFingerprint":"f","webSignIn":false,"accountSignIn":true,"gatewayPasskey":{"rpId":"relay.example.test","origin":"https://g-abcdefgh.relay.example.test"}}"""),
+            MockResponse().setBody("""{"clientId":"","gatewayFingerprint":"f","webSignIn":false,"accountSignIn":true,"gatewayPasskey":{"rpId":"relay.example.test","origin":"https://g-abcdefgh.relay.example.test"},"passkeyApproval":true}"""),
             MockResponse().setBody("""{"purpose":"approve-request","rpId":"relay.example.test","origin":"https://g-abcdefgh.relay.example.test","challenge":"${"c".repeat(43)}","binding":"${"b".repeat(43)}","webauthnChallenge":"${"w".repeat(43)}","expiresAt":1100000,"later":1}"""),
             MockResponse().setBody("""{"ok":true}"""), MockResponse().setBody("""{"ok":true}"""),
             MockResponse().setResponseCode(404).setBody("""{"error":"Not found"}"""),

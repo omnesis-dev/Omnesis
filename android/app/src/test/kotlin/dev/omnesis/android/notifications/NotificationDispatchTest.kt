@@ -16,7 +16,17 @@ class NotificationDispatchTest {
     @Test
     fun pairing_reminders_open_pairing_requests_without_an_enrollment_code_or_authorization() {
         assertTrue(knownNotificationKind("device-pairing", cloudEnabled = true))
-        assertEquals(ClaimedPushAction("device-pairing", NotificationTarget.PairingRequests), notificationAction(notification("device-pairing", "pairing", """{"kind":"device-pairing"}"""), cloudEnabled = true))
+        assertEquals(ClaimedPushAction("device-pairing", NotificationTarget.PairingRequests()), notificationAction(notification("device-pairing", "pairing", """{"kind":"device-pairing"}"""), cloudEnabled = true))
+        // A notification for one request opens the list with that request first.
+        val id = "00000000-0000-4000-8000-000000000951"
+        assertEquals(
+            ClaimedPushAction("device-pairing", NotificationTarget.PairingRequests(id)),
+            notificationAction(notification("device-pairing", "pairing", """{"kind":"device-pairing","requestId":"$id"}"""), cloudEnabled = true),
+        )
+        assertEquals(
+            ClaimedPushAction("device-pairing", NotificationTarget.PairingRequests(null)),
+            notificationAction(notification("device-pairing", "pairing", """{"kind":"device-pairing","requestId":"../devices"}"""), cloudEnabled = true),
+        )
         assertNull(notificationAction(notification("device-pairing", "untrusted-request"), cloudEnabled = true))
         assertTrue(knownNotificationKind("device-joined", cloudEnabled = true))
         assertEquals(ClaimedPushAction("device-joined", NotificationTarget.Devices(null)), notificationAction(notification("device-joined", "any"), cloudEnabled = true))

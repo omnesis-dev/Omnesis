@@ -23,8 +23,11 @@ internal sealed interface NotificationTarget {
     ) : NotificationTarget
     /** The Devices screen, on the device a notification names when that device is listed. */
     data class Devices(val deviceId: String?) : NotificationTarget
-    /** The Pairing requests list, where a device that signed in waits for approval. */
-    data object PairingRequests : NotificationTarget
+    /**
+     * The devices waiting for the owner's OK. A notification for one request names it, so the
+     * list opens with that request first; the list itself still comes from the gateway.
+     */
+    data class PairingRequests(val requestId: String? = null) : NotificationTarget
     /** The devices on the owner's Tailscale network that wait to join the gateway. */
     data object TailscaleJoinRequests : NotificationTarget
     data object App : NotificationTarget
@@ -75,7 +78,10 @@ internal fun notificationAction(
     return when (notification.kind) {
         "diagnostic" -> ClaimedPushAction(notification.kind, NotificationTarget.App)
         "device-pairing" -> if (notification.targetId == "pairing") {
-            ClaimedPushAction(notification.kind, NotificationTarget.PairingRequests)
+            ClaimedPushAction(
+                notification.kind,
+                NotificationTarget.PairingRequests(route?.string("requestId")?.takeIf(::validNotificationId)),
+            )
         } else null
         "device-joined" -> ClaimedPushAction(
             notification.kind,

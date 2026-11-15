@@ -7,14 +7,14 @@ import Observation
 /// What the home banner shows while devices that signed in wait for approval: one row
 /// however many wait, with the count in its words.
 public struct PairingRequestBannerOffer: Equatable, Sendable {
-    public static let one = "A device is waiting for your approval to pair to this gateway."
+    public static let one = "A new device is waiting for your OK."
     /// The banner's action, which opens Pairing requests.
     public static let actionTitle = "Review"
 
     public let count: Int
 
     public var text: String {
-        count > 1 ? "\(count) devices are waiting for your approval to pair to this gateway." : Self.one
+        count > 1 ? "\(count) new devices are waiting for your OK." : Self.one
     }
 }
 
@@ -64,6 +64,8 @@ public final class PendingPairingRequests {
     public private(set) var refreshRequests = 0
     /// Bumped to ask Devices to open Pairing requests.
     public private(set) var openRequests = 0
+    /// The request a notification named, listed first when the list opens.
+    public private(set) var focusedRequestId: String?
     private var consumedOpenRequests = 0
     private var generation = 0
     private var frozen = false
@@ -94,7 +96,8 @@ public final class PendingPairingRequests {
         refreshRequests &+= 1
     }
 
-    public func requestOpen() {
+    public func requestOpen(focus requestId: String? = nil) {
+        focusedRequestId = requestId
         openRequests &+= 1
     }
 
@@ -110,6 +113,7 @@ public final class PendingPairingRequests {
         guard !frozen else { return }
         generation += 1
         requests = []
+        focusedRequestId = nil
         consumedOpenRequests = openRequests
     }
 

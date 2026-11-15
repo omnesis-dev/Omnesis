@@ -68,7 +68,9 @@ extension PreviewMocks {
             verificationCode: "465 774",
             expiresAt: (Date().timeIntervalSince1970 + 86400) * 1000,
             signIn: "google",
-            canTrustSignIn: true
+            canTrustSignIn: true,
+            signInEmail: "maya@example.com",
+            rememberByDefault: true
         ),
     ])
 
@@ -85,26 +87,74 @@ extension PreviewMocks {
         ),
     ])
 
+    /// A laptop the owner removed before, back and asking again.
+    static let pairingRequestRevoked = PreviewPairingRequests(rows: [
+        GatewayPairingApprovalRequest(
+            requestId: "00000000-0000-4000-8000-000000000953",
+            kind: "portal",
+            name: "Studio MacBook",
+            status: "pending",
+            verificationCode: "208 517",
+            expiresAt: (Date().timeIntervalSince1970 + 86400) * 1000,
+            signIn: "google",
+            canTrustSignIn: false,
+            revokedDevice: true
+        ),
+    ])
+
     struct PreviewPairingRequests: GatewayPairingApproving {
         let rows: [GatewayPairingApprovalRequest]
+        /// The body of the gateway's 428 to an approval; nil approves.
+        var stepUpBody: String?
         func pairingApprovalRequests() async throws -> [GatewayPairingApprovalRequest] {
             rows
         }
 
-        func decidePairingApproval(requestId: String, approve: Bool) async throws {}
+        func decidePairingApproval(requestId: String, approve: Bool) async throws {
+            if approve, let stepUpBody { throw GatewayClient.Error.serverError(status: 428, body: stepUpBody) }
+        }
+
+        func approvalPage(requestId: String) -> URL? {
+            URL(string: "https://g-1.relay.example.test/portal/approve#\(requestId)")
+        }
     }
+
+    /// An administrator's client that can also make every new device ask first.
+    struct PreviewPairingPolicy: GatewayPairingApproving, CloudRelayManaging {
+        func pairingApprovalRequests() async throws -> [GatewayPairingApprovalRequest] {
+            []
+        }
+
+        func decidePairingApproval(requestId: String, approve: Bool) async throws {}
+
+        func cloudRelayStatus() async throws -> CloudRelayStatus {
+            PreviewMocks.cloudRelayConnected
+        }
+
+        func cloudRelay(_: CloudRelayOperation) async throws -> CloudRelayStatus {
+            PreviewMocks.cloudRelayConnected
+        }
+    }
+
+    /// The gateway asks this phone to confirm it's the owner before it approves.
+    static let pairingRequestsNeedingStepUp = PreviewPairingRequests(
+        rows: pairingRequestsWithTrust.rows,
+        stepUpBody: #"{"error":"Confirm this action first.","code":"STEP_UP_REQUIRED"}"#
+    )
 
     static func accountPairingPanel(
         _ phase: AccountCloudPairingCoordinator.Phase,
         approved: Bool = false,
         error: AccountPairingError? = nil,
-        approvalPage: Bool = false
+        approvalPage: Bool = false,
+        continues: Bool = true,
+        approvedHeld: Bool = false
     )
         -> AccountCloudPairingPanel {
         AccountCloudPairingPanel(
             phase: phase,
             gateways: accountGatewayChoices,
-            verificationCode: phase == .comparing || phase == .pairing ? "003 579" : nil,
+            verificationCode: phase == .comparing || phase == .pairing || approvedHeld ? "003 579" : nil,
             gatewayHost: phase == .comparing || phase == .pairing ? "home.example.test" : nil,
             approved: approved || phase == .pairing,
             error: error ?? (phase == .failed ? AccountPairingError.noGateways : nil),
@@ -116,7 +166,29 @@ extension PreviewMocks {
             onPair: {},
             onScan: {},
             onManual: {},
-            approvalPageAvailable: approvalPage
+            approvalPageAvailable: approvalPage,
+            expiresAt: Date().addingTimeInterval(272),
+            continuesOnApproval: continues
+        )
+    }
+
+    /// The held screen alone, four and a half minutes before the gateway stops waiting.
+    static func accountPairingWaiting(
+        approved: Bool = false,
+        approvalPage: Bool = false,
+        continues: Bool = true
+    )
+        -> AccountPairingWaitingView {
+        AccountPairingWaitingView(
+            code: "465 774",
+            approved: approved,
+            pairing: false,
+            expiresAt: Date().addingTimeInterval(272),
+            continuesOnApproval: continues,
+            approvalPageAvailable: approvalPage,
+            onApprovalPage: {},
+            onPair: {},
+            onCancel: {}
         )
     }
 }

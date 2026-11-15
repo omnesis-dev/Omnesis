@@ -211,7 +211,7 @@ fun PairingContent(
                 )
                 PairingViewModel.Mode.Google -> {
                     val account = state.account
-                    if (account != null) AccountCloudPairingPane(account, state.googleAvailable, state.passkeyAvailable, onGoogleSignIn, onPasskeySignIn, onChooseGateway, onGooglePair, onShowScanner, onShowManual)
+                    if (account != null) AccountCloudPairingPane(account, state.googleAvailable, state.passkeyAvailable, onGoogleSignIn, onPasskeySignIn, onChooseGateway, onGooglePair, onShowScanner, onShowManual, onCancel = onBack)
                     else GoogleCloudPairingPane(state, onGoogleSignIn, onGooglePair)
                 }
             }

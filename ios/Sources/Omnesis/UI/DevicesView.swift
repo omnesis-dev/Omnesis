@@ -616,6 +616,8 @@ struct DevicesList: View {
 /// Shared by the device-management mutation surfaces.
 @available(iOS 17.0, *)
 func deviceGatewayMessage(_ error: Error) -> String {
+    // A phone the gateway asks to confirm it's the owner: say what to do, not what went wrong.
+    if let refusal = StepUpRefusal(error) { return "\(refusal.title). \(refusal.message)" }
     guard let gatewayError = error as? GatewayClient.Error else { return error.localizedDescription }
     return switch gatewayError {
     case .unauthorized: "not authorized"
@@ -652,7 +654,10 @@ struct GatewayPairingRequestsButton: View {
                     isPresented: presented,
                     // The home banner counts what is still waiting, not what was just decided.
                     onDismiss: { PendingPairingRequests.shared.requestRefresh() },
-                    content: { GatewayPairingApprovalView(client: client).omnesisColorScheme() }
+                    content: {
+                        GatewayPairingApprovalView(client: client, focus: PendingPairingRequests.shared.focusedRequestId)
+                            .omnesisColorScheme()
+                    }
                 )
         }
     }

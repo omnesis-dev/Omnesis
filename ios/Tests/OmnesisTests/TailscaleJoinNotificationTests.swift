@@ -44,7 +44,7 @@ final class TailscaleJoinNotificationTests: XCTestCase {
     func testPairingRequestsStayGatedOnTheCloudBuild() {
         let pairing: [AnyHashable: Any] = ["omnesis": ["kind": "device-pairing", "targetId": "pairing"]]
         XCTAssertNil(PushTarget.fromUserInfo(pairing, cloudRelayEnabled: false))
-        XCTAssertEqual(PushTarget.fromUserInfo(pairing, cloudRelayEnabled: true), .pairingRequests)
+        XCTAssertEqual(PushTarget.fromUserInfo(pairing, cloudRelayEnabled: true), .pairingRequests())
     }
 
     @MainActor

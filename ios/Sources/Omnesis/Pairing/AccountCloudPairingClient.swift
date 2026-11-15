@@ -597,10 +597,13 @@ extension AccountCloudPairingClient {
     /// offers one. A sign-in made in this app presents the relay's own origin, so the gateway holds
     /// it; only an assertion made on the gateway's own page can approve it.
     ///
-    /// The gateway says where that page is, over the connection pinned to its key. The page is used
+    /// The gateway says where that page is, over the connection pinned to its key, and whether
+    /// approving there can work at all: `passkeyApproval` is true only once the owner confirmed a
+    /// passkey on the gateway and no security lock is on. An owner with no confirmed passkey (a
+    /// Google-only account) would only be refused there, and a gateway that predates the field
+    /// says nothing, so both leave approval to a device the owner already uses. The page is used
     /// only when it is that same gateway's origin, under the relay's passkey domain and never the
-    /// relay's own host; anything else leaves approval to a trusted device, as before. The poll
-    /// still decides when the device is approved.
+    /// relay's own host. The poll still decides when the device is approved.
     public func approvalPage() async throws -> URL? {
         try checkOpen()
         guard stage == .pairing, let value = pending, !value.approved, !value.joinedAutomatically,
@@ -608,7 +611,9 @@ extension AccountCloudPairingClient {
         struct Passkey: Decodable { let rpId: String
             let origin: String
         }
-        struct Config: Decodable { let gatewayPasskey: Passkey? }
+        struct Config: Decodable { let gatewayPasskey: Passkey?
+            let passkeyApproval: Bool?
+        }
         let data = try await gateway.requestData(
             url: value.origin.appendingPathComponent("devices/account/config"),
             method: "GET",
@@ -618,7 +623,8 @@ extension AccountCloudPairingClient {
         )
         try checkOpen()
         guard data.count <= 65536 else { throw AccountPairingError.response }
-        guard let advertised = try JSONDecoder().decode(Config.self, from: data).gatewayPasskey else { return nil }
+        let config = try JSONDecoder().decode(Config.self, from: data)
+        guard config.passkeyApproval == true, let advertised = config.gatewayPasskey else { return nil }
         return Self.approvalPage(
             origin: advertised.origin,
             rpId: advertised.rpId,
