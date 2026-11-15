@@ -2,9 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { createPublicKey, generateKeyPairSync } from "node:crypto";
-import * as filesystem from "node:fs/promises";
-import * as core from "@omnesis/core";
-import { afterEach, expect, test, vi } from "vitest";
+import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { GatewayAccountLink } from "./gateway-account-link.js";
 import * as credentials from "./google-credentials.js";
 import * as gatewayKeys from "./gateway-key-client.js";
@@ -16,6 +14,24 @@ import { gatewayPasskeyChallenge } from "./device-enrollment.js";
 
 // The real browser client reaches its private registration seam; no filesystem,
 // native worker or transport is started by the injected operation receipts.
+const operations = vi.hoisted(() => ({
+  mkdir: vi.fn(() => Promise.resolve(undefined)),
+  publish: vi.fn<(...args: unknown[]) => void>(),
+}));
+vi.mock("node:fs/promises", async (original) => ({
+  ...(await original<typeof import("node:fs/promises")>()),
+  mkdir: operations.mkdir,
+}));
+vi.mock("@omnesis/core", async (original) => ({
+  ...(await original<typeof import("@omnesis/core")>()),
+  atomicWriteFileSync: operations.publish,
+}));
+beforeEach(() => {
+  operations.mkdir.mockClear();
+  operations.publish.mockReset().mockImplementation(() => {
+    throw new Error("No fixture publication is expected before the counter boundary");
+  });
+});
 afterEach(() => vi.restoreAllMocks());
 
 async function fixture(failure: Error, confirmed?: ReturnType<typeof passkeyAuthenticator>) {
@@ -280,8 +296,7 @@ test("ordinary joined trust-listing unavailability keeps the sign-in ineligible"
 async function counterPublication(failure: Error) {
   const authenticator = passkeyAuthenticator("relay.example.test");
   const f = await fixture(failure, authenticator);
-  vi.spyOn(filesystem, "mkdir").mockResolvedValue(undefined);
-  const write = vi.spyOn(core, "atomicWriteFileSync").mockImplementation(() => {
+  const write = operations.publish.mockImplementation(() => {
     throw failure;
   });
   return { ...f, input: enrollmentProof(f.origin, authenticator), write };
