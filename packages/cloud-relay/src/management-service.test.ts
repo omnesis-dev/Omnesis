@@ -2648,6 +2648,30 @@ test("closing aborts an accepted account refresh and waits for its completion", 
   }
 });
 
+test("a queued account refresh retains cleanup uncertainty and closes admission", async () => {
+  await connectedGateway({ accountRefreshMs: 100 });
+  const now = Date.now();
+  const clock = vi.spyOn(Date, "now").mockReturnValue(now);
+  // This synthetic receipt owns no actual native operation.
+  const failure = Object.assign(new Error("invented account cleanup failure"), {
+    cleanupFailure: undefined,
+  });
+  const refresh = vi
+    .spyOn(GatewayAccountLink.prototype, "refresh")
+    .mockResolvedValueOnce()
+    .mockRejectedValueOnce(failure);
+  await manager!.refreshAccount();
+  await manager!.refreshAccount();
+  clock.mockReturnValue(now + 100);
+  await vi.waitFor(() => expect(manager!.cleanupFailure()).toBe(failure), { timeout: 3_000 });
+  expect(refresh).toHaveBeenCalledTimes(2);
+  await expect(manager!.refreshAccount()).rejects.toBe(failure);
+  await expect(manager!.close()).rejects.toSatisfy(
+    (error: unknown) => core.ownedProcessCleanupReceipt(error)?.pending === false,
+  );
+  manager = undefined;
+});
+
 test("an account refresh on a gateway with no linked account asks the relay nothing", async () => {
   const refresh = vi.spyOn(GatewayAccountLink.prototype, "refresh");
   const f = fixture();

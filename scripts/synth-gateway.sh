@@ -410,7 +410,9 @@ seed_privacy() {
   TOKEN="$(read_instance_token "${CONFIG_DIR}")"
   echo "Driving privacy exchanges from $(basename "$(dirname "${requests}")")/privacy-requests.json…"
   REQUESTS="${requests}" GATEWAY_URL="${URL}" ADMIN_TOKEN="${TOKEN}" python3 - <<'PY'
-import json, os, ssl, urllib.error, urllib.request
+import json, os, ssl, sys, urllib.error, urllib.request
+
+sys.stdout.reconfigure(encoding="utf-8", newline="\n")
 
 url = os.environ["GATEWAY_URL"]
 admin = os.environ["ADMIN_TOKEN"]

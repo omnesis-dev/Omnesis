@@ -92,6 +92,14 @@ jobs:
           scripts/lib/retained-fixture-command.test.mjs
           packages/gateway/src/agent/service-live-voice.test.ts
           packages/providers/screen-time/src/db-reader-recovery.test.ts
+      - name: Validate merged relay refresh ownership
+        run: >-
+          node scripts/run-check.mjs unit
+          packages/cloud-relay/src/management-service.test.ts
+          -t "closing aborts an accepted account refresh|a queued account refresh retains cleanup uncertainty"
+      - name: Validate declaration and fixture discovery
+        if: ${{ !cancelled() && runner.os == 'Linux' }}
+        run: node scripts/run-check.mjs deadcode
       - name: Restore public workflow input for topology fixture assertions
         if: ${{ !cancelled() }}
         run: node -e "require('node:fs').copyFileSync('scripts/ci/audit-public-full-validation.fixture.yml', '.github/workflows/full-validation.yml')"
