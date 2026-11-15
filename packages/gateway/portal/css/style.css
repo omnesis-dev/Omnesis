@@ -19357,6 +19357,9 @@ summary.decision-card-head {
   flex-shrink: 0;
 }
 .config-tab .warning-triangle { margin-left: 5px; }
+/* Devices waiting for the owner's approval, beside Settings and its Devices tab. */
+.waiting-devices-icon { color: var(--accent); display: inline-flex; vertical-align: middle; flex-shrink: 0; }
+.config-tab .waiting-devices-icon { margin-left: 5px; }
 .model-health-warnings { display: grid; gap: 12px; margin-bottom: 20px; }
 .model-health-warning {
   display: flex;

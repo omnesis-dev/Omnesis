@@ -45,7 +45,9 @@ import { TestInstanceCard } from "./components/test-instance-card.js";
 import { countLabel, localDay, supportsTaskConversations } from "./lib/tasks-model.js";
 import { onTaskCounts } from "./lib/task-counts.js";
 import { CloudPairingLogin } from "./components/cloud-pairing-login.js";
-import { WaitingDevicesBanner } from "./components/waiting-devices-banner.js";
+import { WaitingDevicesBanner, waitingDevicesHref } from "./components/waiting-devices-banner.js";
+import { WaitingDevicesIcon } from "./components/waiting-devices-icon.js";
+import { useWaitingDevices } from "./lib/use-waiting-devices.js";
 
 const DocumentView = lazy(() => import("./views/document.js").then((m) => m.DocumentView));
 const PeopleView = lazy(() => import("./views/people.js").then((m) => m.PeopleView));
@@ -330,6 +332,9 @@ function App() {
   // a request for a standing watch on Watches. Each count stands on its own,
   // so one endpoint failing cannot hide the other's waiting decisions.
   const [pendingDecisions, setPendingDecisions] = useState({ privacy: 0, watches: 0 });
+  // Devices waiting for the owner's OK, whichever way they asked: the strip on
+  // every page and the marks on Settings and its Devices tab show this answer.
+  const waitingDevices = useWaitingDevices({ cloudRelay, tailscaleEmbed });
 
   async function refreshPendingDecisions() {
     const [answers, watches] = await Promise.allSettled([
@@ -675,7 +680,13 @@ function App() {
             const isActive = route.view === item.view && !(item.isNewConvo && activeConvoId);
             const pending = pendingDecisions[item.view] ?? 0;
             const modelWarning = item.view === "settings" && modelHealth.warnings.length > 0;
-            const href = modelWarning ? "/portal/settings/models" : item.href;
+            // A waiting device expires within minutes, so it leads where Settings goes.
+            const devicesWaiting = item.view === "settings" && waitingDevices.count > 0;
+            const href = devicesWaiting
+              ? waitingDevicesHref(waitingDevices)
+              : modelWarning
+                ? "/portal/settings/models"
+                : item.href;
             return html`
               <a
                 key=${item.view}
@@ -694,6 +705,7 @@ function App() {
                   >${item.view === "tasks" ? countLabel(item.label, openTasksToday) : item.label}</span
                 >
                 ${modelWarning && html`<${WarningTriangle} label="Models need attention" />`}
+                ${devicesWaiting && html`<${WaitingDevicesIcon} count=${waitingDevices.count} />`}
                 ${pending > 0
                   ? html`<span class="sidebar-badge" aria-hidden="true">${pending > 99 ? "99+" : pending}</span
                       ><span class="sr-only">${pending} ${pending === 1 ? "decision" : "decisions"} waiting for you. </span>`
@@ -808,11 +820,10 @@ function App() {
       </aside>
 
       <main class="app-main">
-        ${(cloudRelay || tailscaleEmbed) && html`<${WaitingDevicesBanner}
-          cloudRelay=${cloudRelay}
-          tailscaleEmbed=${tailscaleEmbed}
+        <${WaitingDevicesBanner}
+          waiting=${waitingDevices}
           paused=${route.view === "settings" && route.tab === "devices"}
-        />`}
+        />
         ${route.view === "document"
           ? html`<${DocumentView} id=${route.id} />`
           : route.view === "people"
@@ -838,6 +849,7 @@ function App() {
               completeAccessInPortal=${route.completeAccessInPortal}
               cloudRelay=${cloudRelay}
               tailscaleEmbed=${tailscaleEmbed}
+              waitingDevices=${waitingDevices.count}
               experimental=${experimental}
               lab=${lab}
               labAvailable=${labAvailable}

@@ -15,6 +15,7 @@ import { html } from "htm/preact";
 import { replaceRoute } from "../lib/router.js";
 import { lazy } from "../lib/lazy.js";
 import { WarningTriangle } from "../components/model-health.js";
+import { WaitingDevicesIcon } from "../components/waiting-devices-icon.js";
 import { TabBar } from "../components/tab-bar.js";
 import {
   settingsTabs,
@@ -56,6 +57,8 @@ export function SettingsView({
   labAvailable = false,
   cloudRelay = false,
   tailscaleEmbed = false,
+  // How many devices wait for the owner's OK, marked on the Devices tab.
+  waitingDevices = 0,
   theme = "dark",
   onThemeToggle,
   onLogout,
@@ -129,7 +132,10 @@ export function SettingsView({
         active=${activeTab}
         onSelect=${switchTab}
         tabs=${settingsTabs({ experimental, brain: lab.brain, labAvailable, cloudRelay, tailscaleEmbed }).map((item) => item.key === "models" && modelHealth?.warnings?.length
-          ? { ...item, label: html`Models <${WarningTriangle} label="Models need attention" />` } : item)}
+          ? { ...item, label: html`Models <${WarningTriangle} label="Models need attention" />` }
+          : item.key === "devices" && waitingDevices > 0
+            ? { ...item, label: html`Devices <${WaitingDevicesIcon} count=${waitingDevices} />` }
+            : item)}
       />
       ${activeTab === "lab" && html`<${LabView} onChange=${onLabChange} />`}
       ${activeTab === "config" && html`<${ConfigView} />`}

@@ -37,6 +37,21 @@ describe("Settings header actions", () => {
     else globalThis.window = originalWindow;
   });
 
+  test("marks the Devices tab while devices wait for approval, with the count in words", async () => {
+    await act(async () => {
+      render(h(SettingsView, { tab: "config", waitingDevices: 2 }), host);
+    });
+    const mark = host.querySelector(
+      '.config-tab [aria-label="2 devices are waiting for your approval to pair to this gateway."]',
+    );
+    expect(mark).not.toBeNull();
+    expect(mark?.closest("button")?.textContent).toContain("Devices");
+    await act(async () => {
+      render(h(SettingsView, { tab: "config", waitingDevices: 0 }), host);
+    });
+    expect(host.querySelector(".config-tab .waiting-devices-icon")).toBeNull();
+  });
+
   test("marks the Models tab while another settings page is open and clears on recovery", async () => {
     await act(async () => {
       render(h(SettingsView, { tab: "config", modelHealth: { warnings: [{ role: "agent" }] } }), host);
