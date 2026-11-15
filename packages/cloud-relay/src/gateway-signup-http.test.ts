@@ -672,6 +672,46 @@ test("a Google failure returns to the operation instead of losing it", async () 
   expect(await f.session(op)).toMatchObject({ pending: { needsProof: true } });
 });
 
+test("a Google press the browser doesn't label same-origin returns to the sign-up page, and the next press signs in", async () => {
+  const f = await fixture({ policy: "open" });
+  // The gateway's portal opened the sign-up in a new tab; there the page's Google button reached
+  // the relay without "same-origin" (Safari sent "cross-site" or "none"), which was a blank 403.
+  const op = await f.launched("create");
+  for (const site of ["cross-site", "none"]) {
+    const pressed = await fetch(`${f.url}/_relay/web/start${op.query}`, {
+      headers: { cookie: op.cookie, "sec-fetch-site": site },
+      redirect: "manual",
+    });
+    expect(pressed.status, site).toBe(303);
+    expect(pressed.headers.get("location"), site).toBe(
+      `/_relay/account?failed=again&signup=${op.id}`,
+    );
+    expect(pressed.headers.getSetCookie(), site).toEqual([]);
+  }
+  // The page it lands on still serves the same sign-up, waiting for a sign-in.
+  const page = await fetch(`${f.url}/_relay/account?failed=again&signup=${op.id}`, {
+    headers: { cookie: op.cookie },
+  });
+  expect(page.status).toBe(200);
+  expect(await f.session(op)).toMatchObject({
+    pending: { purpose: "gateway-signup", needsProof: true },
+  });
+  // Pressed there, Google signs in to this sign-up.
+  const again = await fetch(`${f.url}/_relay/web/start${op.query}`, {
+    headers: { cookie: op.cookie, "sec-fetch-site": "same-origin" },
+    redirect: "manual",
+  });
+  expect(again.status).toBe(303);
+  const authorization = new URL(again.headers.get("location")!),
+    state = again.headers.getSetCookie()[0]!.split(";")[0]!;
+  const callback = await fetch(
+    `${f.url}/_relay/web/callback?state=${authorization.searchParams.get("state")}&code=fictional-code`,
+    { headers: { cookie: `${op.cookie}; ${state}` }, redirect: "manual" },
+  );
+  expect(callback.headers.get("location")).toBe(`${origin}/_relay/account${op.query}`);
+  expect(await f.session(op)).toMatchObject({ pending: { needsProof: false } });
+});
+
 test("an existing account signs in with a passkey, subject to the policy", async () => {
   const listed = await fixture({ policy: "allowlist", allowlistFile: await allowlist({}) });
   const account = listed.identities.signInFederated("google", "a".repeat(64));

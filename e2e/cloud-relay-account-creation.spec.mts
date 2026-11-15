@@ -364,7 +364,9 @@ test("an account is created only by an explicit choice while connecting a gatewa
     await returning.goto(signingIn.authorizeUrl);
     await expect(heading(returning, "Sign in to your Omnesis account")).toBeVisible();
     await expect(
-      returning.getByText("Sign in to connect this gateway to your account.", { exact: true }),
+      returning.getByText("Sign in to connect this gateway to your Omnesis account.", {
+        exact: true,
+      }),
     ).toBeVisible();
     for (const name of ["Create with Google", "Create with a passkey"])
       await expect(button(returning, name)).toHaveCount(0);

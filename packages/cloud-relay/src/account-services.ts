@@ -345,6 +345,9 @@ export class AccountServices {
   googleFailure(context: string | undefined): string {
     return this.web.googleFailure(context);
   }
+  googleRetry(req: IncomingMessage): string {
+    return this.web.googleRetry(req);
+  }
   /** Whether a new gateway can connect here from a sign-in alone. */
   signupOpen(): boolean {
     return this.signup?.enabled() ?? false;
