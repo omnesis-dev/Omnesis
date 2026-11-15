@@ -10,14 +10,14 @@ const running = JSON.stringify({
   Self: { DNSName: "Studio.Example-Net.ts.net." },
 });
 
-function service(answers: Record<string, string | Error>, port = 7600) {
+function service(answers: Record<string, string | Error>, port = 7600, trustProxy = true) {
   const run = vi.fn<RunCli>(async (_candidate, args) => {
     const answer = answers[args.join(" ")];
     if (answer === undefined) throw Object.assign(new Error("unknown command"), { stderr: "" });
     if (answer instanceof Error) throw answer;
     return answer;
   });
-  return { host: new HostTailscaleService(port, [cli], run), run };
+  return { host: new HostTailscaleService(port, [cli], run, () => trustProxy), run };
 }
 
 describe("HostTailscaleService", () => {
@@ -87,6 +87,42 @@ describe("HostTailscaleService", () => {
     expect(run.mock.calls.map(([, args]) => args.join(" "))).toContain(
       `funnel --bg ${gatewayTarget(7600)}`,
     );
+  });
+
+  test("a public address waits until the gateway trusts the proxy in front of it, running nothing", async () => {
+    const { host, run } = service(
+      { "status --json": running, [`funnel --bg ${gatewayTarget(7600)}`]: "" },
+      7600,
+      false,
+    );
+    expect(await host.publish(true)).toEqual({
+      ok: false,
+      reason: expect.stringContaining("OMNESIS_TRUST_PROXY=true"),
+      command: `tailscale funnel --bg ${gatewayTarget(7600)}`,
+    });
+    expect(run).not.toHaveBeenCalled();
+    // The tailnet alone needs no proxy trust.
+    const tailnetOnly = service(
+      { "status --json": running, [`serve --bg ${gatewayTarget(7600)}`]: "" },
+      7600,
+      false,
+    );
+    expect((await tailnetOnly.host.publish(false)).ok).toBe(true);
+  });
+
+  test("Funnel's enable link, printed on stdout, is recognised", async () => {
+    const { host } = service({
+      "status --json": running,
+      [`funnel --bg ${gatewayTarget(7600)}`]: Object.assign(new Error("exit 1"), {
+        stdout:
+          "Funnel is not enabled on your tailnet. To enable, visit: https://login.tailscale.com/f/funnel?node=abc",
+        stderr: "",
+      }),
+    });
+    expect(await host.publish(true)).toMatchObject({
+      ok: false,
+      reason: expect.stringContaining("does not allow Funnel"),
+    });
   });
 
   test("a refusal names why and the exact command to run instead", async () => {

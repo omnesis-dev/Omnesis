@@ -15,6 +15,7 @@ import {
   createLogger,
   parseDuration,
   type HostNetwork,
+  tailscaleEmbedEnabled,
   type WsRequestPayload,
 } from "@omnesis/core";
 import {
@@ -1788,7 +1789,9 @@ export function createServer(
     mountRemoteAccessRoutes(app, {
       settings: remoteAccessSettings,
       checks: new AddressChecks(),
-      ...(opts?.port ? { hostTailscale: new HostTailscaleService(opts.port) } : {}),
+      ...(opts?.port && tailscaleEmbedEnabled()
+        ? { hostTailscale: new HostTailscaleService(opts.port) }
+        : {}),
       servingPublicBaseUrl: () => opts?.publicBaseUrl ?? null,
       configuredPublicBaseUrl: () => configStore?.get().gateway?.publicBaseUrl ?? null,
     });

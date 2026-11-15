@@ -22,6 +22,7 @@ import {
   tailscaleCliEnv,
   tailscaleIsRunningStatus,
 } from "@omnesis/core";
+import { reverseProxyTrusted } from "../http/client-ip.js";
 
 const execFileAsync = promisify(execFile);
 const STATUS_TIMEOUT_MS = 5_000;
@@ -78,6 +79,7 @@ export class HostTailscaleService {
     private readonly port: number,
     private readonly candidates: TailscaleCliCandidate[] = tailscaleCliCandidates(),
     private readonly run: RunCli = liveRun,
+    private readonly trustProxy: () => boolean = reverseProxyTrusted,
   ) {}
 
   async status(): Promise<HostTailscale> {
@@ -112,6 +114,17 @@ export class HostTailscaleService {
   async publish(publicly: boolean): Promise<PublishOutcome> {
     const verb = publicly ? "funnel" : "serve";
     const command = `tailscale ${verb} --bg ${gatewayTarget(this.port)}`;
+    // Funnel hands every Internet request to the gateway from this computer's loopback
+    // address. Until the gateway trusts the proxy's forwarded address, those requests would
+    // pass as local ones and skip the per-address limits on sign-in.
+    if (publicly && !this.trustProxy()) {
+      return {
+        ok: false,
+        reason:
+          "Before a public address, tell the gateway it runs behind a proxy: add OMNESIS_TRUST_PROXY=true to its .env file and restart it.",
+        command,
+      };
+    }
     const found = await this.findRunning();
     if (!found) {
       return { ok: false, reason: "Tailscale is not running on this computer.", command };
@@ -120,7 +133,9 @@ export class HostTailscaleService {
       await this.run(found.candidate, [verb, "--bg", gatewayTarget(this.port)], PUBLISH_TIMEOUT_MS);
       return { ok: true, url: `https://${found.dnsName}` };
     } catch (error) {
-      const output = `${(error as { stderr?: string }).stderr ?? ""}${error instanceof Error ? error.message : ""}`;
+      // Tailscale prints the link that enables Funnel on stdout, its refusals on stderr.
+      const failed = error as { stdout?: string; stderr?: string };
+      const output = `${failed.stdout ?? ""}${failed.stderr ?? ""}${error instanceof Error ? error.message : ""}`;
       const reason = /access denied|permission|operator|not permitted/i.test(output)
         ? "This gateway is not allowed to change Tailscale on this computer. Run the command below as root or as the computer's Tailscale operator."
         : /funnel.*not (enabled|allowed)|enable funnel|nodeAttrs|https:\/\/login\.tailscale\.com/i.test(

@@ -24,6 +24,8 @@ const NONCE_TTL_MS = 30_000;
 /** The most nonces kept at once; older ones are dropped first. */
 const MAX_NONCES = 32;
 const STEP_TIMEOUT_MS = 8_000;
+/** More than any nonce: what answers is read no further. */
+const MAX_ANSWER_BYTES = 128;
 
 export const ADDRESS_CHECK_PATH = "/.well-known/omnesis-address-check";
 
@@ -42,7 +44,11 @@ export interface AddressCheckResult {
 
 export interface AddressCheckDeps {
   resolve(host: string): Promise<string>;
-  /** Connects with the platform's trust and the name as SNI; resolves with an error message, or null when valid. */
+  /**
+   * Connects with the platform's trust and the name as SNI; resolves with a
+   * fixed sentence naming what was wrong, or null when valid. The sentence
+   * never carries what the far end sent, such as another certificate's names.
+   */
   certificateProblem(host: string, port: number): Promise<string | null>;
   fetch(url: string, signal: AbortSignal): Promise<{ status: number; text(): Promise<string> }>;
   now(): number;
@@ -57,13 +63,57 @@ const liveDeps: AddressCheckDeps = {
         socket.destroy();
         resolve(problem);
       };
-      socket.setTimeout(STEP_TIMEOUT_MS, () => done("No answer in time."));
+      socket.setTimeout(STEP_TIMEOUT_MS, () => done("Nothing answered in time."));
       socket.once("secureConnect", () => done(null));
-      socket.once("error", (error) => done(error.message));
+      socket.once("error", (error) => done(certificateSentence(error)));
     }),
-  fetch: (url, signal) => fetch(url, { signal, redirect: "manual" }),
+  fetch: async (url, signal) => {
+    const response = await fetch(url, { signal, redirect: "manual" });
+    return { status: response.status, text: () => readAtMost(response, MAX_ANSWER_BYTES) };
+  },
   now: () => Date.now(),
 };
+
+/** A TLS failure as one of a few fixed sentences. */
+export function certificateSentence(error: Error & { code?: string }): string {
+  switch (error.code) {
+    case "CERT_HAS_EXPIRED":
+      return "It has expired.";
+    case "ERR_TLS_CERT_ALTNAME_INVALID":
+      return "It is for a different name.";
+    case "DEPTH_ZERO_SELF_SIGNED_CERT":
+    case "SELF_SIGNED_CERT_IN_CHAIN":
+    case "UNABLE_TO_VERIFY_LEAF_SIGNATURE":
+    case "UNABLE_TO_GET_ISSUER_CERT_LOCALLY":
+      return "It is not from an authority this computer trusts.";
+    case "ECONNREFUSED":
+    case "ECONNRESET":
+    case "EHOSTUNREACH":
+    case "ENETUNREACH":
+      return "Nothing accepted a connection there.";
+    default:
+      return "It could not be verified.";
+  }
+}
+
+/** The start of a response body, decoded; the rest is never read. */
+async function readAtMost(response: Response, limit: number): Promise<string> {
+  const reader = response.body?.getReader();
+  if (!reader) return "";
+  const chunks: Uint8Array[] = [];
+  let length = 0;
+  try {
+    while (length < limit) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      chunks.push(value);
+      length += value.length;
+    }
+  } finally {
+    void reader.cancel().catch(() => {});
+  }
+  return new TextDecoder().decode(Buffer.concat(chunks).subarray(0, limit));
+}
 
 export class AddressChecks {
   private readonly issued = new Map<string, number>();
@@ -79,7 +129,8 @@ export class AddressChecks {
 
   async check(url: string): Promise<AddressCheckResult> {
     const parsed = new URL(url);
-    const host = parsed.hostname;
+    // An IPv6 literal keeps its brackets in a URL, and neither DNS nor TLS takes them.
+    const host = parsed.hostname.replace(/^\[(.*)\]$/u, "$1");
     const port = parsed.port ? Number(parsed.port) : 443;
     const steps: AddressCheckStep[] = [];
     const finish = () => ({

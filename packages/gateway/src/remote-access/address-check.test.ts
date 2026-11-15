@@ -2,7 +2,12 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { describe, expect, test, vi } from "vitest";
-import { ADDRESS_CHECK_PATH, AddressChecks, type AddressCheckDeps } from "./address-check.js";
+import {
+  ADDRESS_CHECK_PATH,
+  AddressChecks,
+  certificateSentence,
+  type AddressCheckDeps,
+} from "./address-check.js";
 
 /** An address that forwards to `answer`, which stands for whatever serves there. */
 function deps(
@@ -56,6 +61,32 @@ describe("AddressChecks", () => {
     expect(result.ok).toBe(false);
     expect(result.steps).toEqual([expect.objectContaining({ id: "resolves", ok: false })]);
     expect(certificateProblem).not.toHaveBeenCalled();
+  });
+
+  test("an IPv6 literal is resolved and verified without its brackets", async () => {
+    const seen: string[] = [];
+    const { checks } = deps({
+      resolve: async (host) => (seen.push(host), host),
+      certificateProblem: async (host) => (seen.push(host), null),
+    });
+    await checks.check("https://[2001:db8::7]:8443");
+    expect(seen).toEqual(["2001:db8::7", "2001:db8::7"]);
+  });
+
+  test("a TLS failure is told as a fixed sentence, never what the far end sent", () => {
+    const failure = (code: string) =>
+      Object.assign(new Error(`Hostname/IP does not match: DNS:internal.example.net`), { code });
+    expect(certificateSentence(failure("ERR_TLS_CERT_ALTNAME_INVALID"))).toBe(
+      "It is for a different name.",
+    );
+    expect(certificateSentence(failure("CERT_HAS_EXPIRED"))).toBe("It has expired.");
+    expect(certificateSentence(failure("DEPTH_ZERO_SELF_SIGNED_CERT"))).toBe(
+      "It is not from an authority this computer trusts.",
+    );
+    expect(certificateSentence(failure("ECONNREFUSED"))).toBe(
+      "Nothing accepted a connection there.",
+    );
+    expect(certificateSentence(failure("SOMETHING_ELSE"))).toBe("It could not be verified.");
   });
 
   test("stops at a certificate the platform does not accept, naming why", async () => {

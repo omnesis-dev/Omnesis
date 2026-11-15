@@ -513,13 +513,19 @@ export class PairingQrService {
     }
     if (relay && offersRelay) {
       const option = relayPairingAddressOption(relay.origin);
-      // Ahead of every other address, the gateway's own tailnet address included, when the
-      // owner chose the relay first.
-      const rank = this.options.preferRelay?.() ? -1 : pairingReachRank(option);
-      judged.push({ option, rank, index: judged.length });
+      judged.push({ option, rank: pairingReachRank(option), index: judged.length });
     }
     judged.sort((a, b) => a.rank - b.rank || a.index - b.index);
     const addresses = judged.map((j) => j.option);
+    // The owner's order is between the relay and the gateway's own tailnet address only:
+    // relay first moves the relay just ahead of that address, and every other address
+    // keeps its place.
+    if (tailnet && this.options.preferRelay?.()) {
+      const tailnetUrl = new URL(tailnet.origin).origin;
+      const at = addresses.findIndex((a) => a.usable && a.gatewayUrl === tailnetUrl);
+      const relayAt = addresses.findIndex((a) => a.kind === "relay");
+      if (at >= 0 && relayAt > at) addresses.splice(at, 0, ...addresses.splice(relayAt, 1));
+    }
     const reachesBeyondHome = addresses.some(
       (a) => a.usable && (a.reach === "tailnet" || a.reach === "anywhere"),
     );
