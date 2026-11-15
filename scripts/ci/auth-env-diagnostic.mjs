@@ -8,6 +8,7 @@ if (process.platform !== "win32") throw new Error("Windows diagnostic only");
 const base = authSubprocessEnvironment("invented-config", process.env);
 const variants = [
   ["curated", []],
+  ["curated-dotnet", [], true],
   ["program-files", ["ProgramFiles"]],
   ["module-path", ["PSModulePath"]],
   ["both", ["ProgramFiles", "PSModulePath"]],
@@ -20,15 +21,19 @@ const {join}=require('node:path');
 const keys=['SystemRoot','LOCALAPPDATA','USERPROFILE','ProgramFiles','PSModulePath','TEMP'];
 const present=Object.fromEntries(keys.map(key=>[key,Boolean(process.env[key])]));
 const exe=join(process.env.SystemRoot,'System32','WindowsPowerShell','v1.0','powershell.exe');
+const expression=process.env.OMNESIS_AUTH_FIXTURE_DOTNET
+  ? "([System.Diagnostics.Process]::GetProcessById("+process.pid+"))"
+  : "(Get-Process -Id "+process.pid+")";
 const result=spawnSync(exe,['-NoLogo','-NoProfile','-NonInteractive','-Command',
-  "$ErrorActionPreference='Stop';[Console]::Out.Write((Get-Process -Id "+process.pid+").StartTime.ToUniversalTime().Ticks.ToString([System.Globalization.CultureInfo]::InvariantCulture))"],
+  "$ErrorActionPreference='Stop';[Console]::Out.Write("+expression+".StartTime.ToUniversalTime().Ticks.ToString([System.Globalization.CultureInfo]::InvariantCulture))"],
   {encoding:'utf8',timeout:10000,windowsHide:true});
 process.stdout.write(JSON.stringify({present,status:result.status,error:result.error?.code,
   numericTicks:/^[0-9]+$/.test(result.stdout?.trim()??''),stderr:result.stderr?.slice(0,4000)}));
 `;
 const launcher = `import {spawn} from 'node:child_process';const child=spawn(process.execPath,['-e',${JSON.stringify(program)}],{env:JSON.parse(process.env.OMNESIS_AUTH_FIXTURE_ENV),stdio:['ignore','inherit','inherit']});child.once('error',()=>{process.exitCode=1;});child.once('exit',code=>{process.exitCode=code??1;});`;
-for (const [label, extra] of variants) {
+for (const [label, extra, direct] of variants) {
   const env = extra === null ? { ...process.env } : { ...base };
+  if (direct) env.OMNESIS_AUTH_FIXTURE_DOTNET = "1";
   for (const key of extra ?? []) if (process.env[key] !== undefined) env[key] = process.env[key];
   const result = await execWindowsJob(process.execPath, ["--input-type=module", "-e", launcher], {
     env: { ...process.env, OMNESIS_AUTH_FIXTURE_ENV: JSON.stringify(env) },
