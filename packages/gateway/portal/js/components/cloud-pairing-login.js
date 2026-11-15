@@ -24,6 +24,8 @@ import {
   approveWithPasskey,
   gatewayPasskeyProof,
   onGatewayOrigin,
+  PASSKEY_CHECK_FAILED,
+  PASSKEY_OTHER_ACCOUNT,
   passkeysSupported,
 } from "../lib/gateway-passkey.js";
 
@@ -44,8 +46,29 @@ const gatewayPasskeyHere = (config) =>
   onGatewayOrigin(config.gatewayPasskey?.origin) &&
   passkeysSupported();
 
-const NOT_RECOGNISED =
-  "Your gateway didn't recognise that passkey. Use the passkey of the Omnesis account it's linked to, or sign in on the Omnesis account page.";
+/** Every sentence the sign-in options and the waiting screen say, in one place. */
+export const LOGIN_COPY = {
+  title: "Sign in to your gateway",
+  passkey: "Continue with Face ID",
+  google: "Continue with Google",
+  waitingForPasskey: "Waiting for Face ID…",
+  opening: "Opening sign-in…",
+  openingGoogle: "Opening Google…",
+  // Said under Google: a browser's Google sign-in always waits for a person.
+  googleHint: "You'll approve this browser on your phone.",
+  waitingTitle: "Waiting for your OK",
+  waitingBody: "Approve this browser on a device you already use.",
+  codeHint: "Make sure your phone shows this code.",
+  expiresIn: (left) => `Expires in ${left}`,
+  approved: "Approved. Opening your gateway…",
+  approvedCompare: "Approved by your gateway.",
+  denied: "Your gateway denied this request.",
+  approveHere: "Approve with Face ID here",
+  pair: "Codes match, pair this device",
+  pairing: "Pairing…",
+  cancel: "Cancel",
+};
+const NOT_RECOGNISED = PASSKEY_CHECK_FAILED;
 const CHANGED = "The gateway or pairing request changed. Start again.";
 const TOO_MANY_WAITING =
   "Too many devices are waiting for approval. Answer one on a device you already use, then try again.";
@@ -66,7 +89,8 @@ async function requestChallenge(signal) {
   return response.json();
 }
 
-export function CloudPairingLogin() {
+/** `onReady` is told once this sign-in is on offer here, so the page can lead with it. */
+export function CloudPairingLogin({ onReady } = {}) {
   const [config, setConfig] = useState(null);
   const [request, setRequest] = useState(null);
   const [code, setCode] = useState("");
@@ -74,8 +98,8 @@ export function CloudPairingLogin() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(null);
   const [joining, setJoining] = useState(false);
-  // Set once the owner approved this browser's own request here: it then logs in by itself.
-  const approvedHere = useRef(false);
+  // The clock the waiting screen counts down with.
+  const [now, setNow] = useState(() => Date.now());
   const attempt = useRef({ controller: new AbortController(), polling: false });
   function invalidate() {
     attempt.current.controller.abort();
@@ -94,6 +118,8 @@ export function CloudPairingLogin() {
         )
           return;
         setConfig(value);
+        // Only Omnesis account sign-in leads the page; the older Google pairing doesn't.
+        if (value.accountSignIn) onReady?.();
         if (handed && automaticEnrollment(value)) {
           await adopt(handed, value, attempt.current);
           return;
@@ -192,7 +218,14 @@ export function CloudPairingLogin() {
         signal: signal(),
       });
       if (response.status === 429) throw new Error(TOO_MANY_WAITING);
-      if (passkey && response.status === 401) throw new Error(NOT_RECOGNISED);
+      if (passkey && response.status === 401) {
+        // The gateway read the account's passkeys and this isn't one of them: most likely an
+        // older account's, which the browser still offers.
+        const refusal = await response.json().catch(() => null);
+        throw new Error(
+          refusal?.code === "PASSKEY_NOT_ON_ACCOUNT" ? PASSKEY_OTHER_ACCOUNT : NOT_RECOGNISED,
+        );
+      }
       if (!response.ok) throw new Error("Couldn't finish signing in. Start again.");
       const value = await response.json();
       if (current !== attempt.current) return;
@@ -430,7 +463,6 @@ export function CloudPairingLogin() {
       if (!key || key.publicKey !== request.devicePublicKey)
         throw new Error("This browser's sign-in key changed. Start again.");
       await approveWithPasskey({ requestId: request.requestId, deviceKey: key.privateKey });
-      approvedHere.current = true;
       setBusy(false);
       await poll();
     } catch (failure) {
@@ -438,9 +470,17 @@ export function CloudPairingLogin() {
       setBusy(false);
     }
   }
+  // A browser with its own device key continues by itself once approved: it already checked the
+  // gateway's code and nonce against its own, and the person compared the code where they
+  // approved. The older keyless pairing keeps its explicit button.
   useEffect(() => {
-    if (approvedHere.current && result?.status === "approved") pair();
+    if (request?.devicePublicKey && result?.status === "approved") pair();
   }, [result]);
+  useEffect(() => {
+    if (!request) return undefined;
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [request]);
 
   async function pair() {
     if (
@@ -477,17 +517,28 @@ export function CloudPairingLogin() {
       ${error && html`<p class="login-error" role="alert">${error}</p>`}
       <button type="button" class="btn-secondary" onClick=${cancel}>Cancel</button>
     </section>`;
+  // A passkey button only for an account that has one; on the gateway's own page it signs in here.
+  const passkeyHere = gatewayPasskeyHere(config);
+  const passkey = config.accountSignIn && config.accountPasskey === true;
+  const expiresAt = result?.expiresAt ?? request?.expiresAt ?? 0;
+  const left = Math.max(0, Math.ceil((expiresAt - now) / 1000));
+  const countdown = `${Math.floor(left / 60)}:${String(left % 60).padStart(2, "0")}`;
+  const keyed = Boolean(request?.devicePublicKey);
   return html`<section class="cloud-pairing-login" aria-label=${signInLabel}>
     ${
       !request
         ? html`
-            ${config.accountSignIn && html`<h2>Sign in with your Omnesis account</h2>`}
+            ${config.accountSignIn && html`<h2>${LOGIN_COPY.title}</h2>`}
             ${
-              gatewayPasskeyHere(config)
-                ? html`<button type="button" class="login-button" disabled=${busy} onClick=${passkeySignIn}>${busy ? "Waiting for your passkey…" : "Sign in with Passkey"}</button>
-                    <button type="button" class="btn-secondary" disabled=${busy} onClick=${start}>Sign in on the Omnesis account page</button>`
-                : config.accountSignIn &&
-                  html`<button type="button" class="login-button" disabled=${busy} onClick=${start}>${busy ? "Opening sign-in…" : "Sign in with Passkey"}</button>`
+              passkey &&
+              html`<button
+                type="button"
+                class="login-button"
+                disabled=${busy}
+                onClick=${passkeyHere ? passkeySignIn : start}
+              >
+                ${busy ? (passkeyHere ? LOGIN_COPY.waitingForPasskey : LOGIN_COPY.opening) : LOGIN_COPY.passkey}
+              </button>`
             }
             <button
               type="button"
@@ -503,44 +554,31 @@ export function CloudPairingLogin() {
                 aria-hidden="true"
               />
               <span
-                >${busy ? (config.accountSignIn ? "Opening sign-in…" : "Opening Google…") : "Sign in with Google"}</span
+                >${busy ? (config.accountSignIn ? LOGIN_COPY.opening : LOGIN_COPY.openingGoogle) : LOGIN_COPY.google}</span
               >
             </button>
-            <p class="login-hint">
-              ${
-                config.automaticEnrollment
-                  ? "Optional. Depending on your gateway's settings, this browser joins right away or waits for your approval."
-                  : "Optional. Your gateway still needs to approve this browser."
-              }
-            </p>
+            <p class="login-hint">${LOGIN_COPY.googleHint}</p>
           `
         : html`
-            <h2>Confirm this browser</h2>
-            <p>
-              Check that this code matches the one shown on your other device, then approve it
-              there.
-            </p>
+            <h2>${LOGIN_COPY.waitingTitle}</h2>
+            <p>${LOGIN_COPY.waitingBody}</p>
             <code class="cloud-pairing-code">${code}</code>
+            <p class="login-hint">${LOGIN_COPY.codeHint}</p>
             <p aria-live="polite">
               ${
                 result?.status === "approved"
-                  ? "Approved by your gateway."
+                  ? keyed
+                    ? LOGIN_COPY.approved
+                    : LOGIN_COPY.approvedCompare
                   : result?.status === "denied"
-                    ? "Your gateway denied this request."
-                    : "Waiting for approval on a trusted device…"
+                    ? LOGIN_COPY.denied
+                    : LOGIN_COPY.expiresIn(countdown)
               }
             </p>
-            <p class="login-hint">
-              No paired phone? Use the portal on your gateway computer. Requests expire after a
-              short time.
-            </p>
-            <p class="login-hint">
-              This browser trusts the HTTPS certificate for this address. The domain administrator
-              remains part of that trust.
-            </p>
             ${
-              gatewayPasskeyHere(config) &&
-              request.devicePublicKey &&
+              passkeyHere &&
+              config.passkeyApproval === true &&
+              keyed &&
               result?.status !== "approved" &&
               result?.status !== "denied" &&
               html`<button
@@ -549,19 +587,22 @@ export function CloudPairingLogin() {
                 disabled=${busy}
                 onClick=${approveHere}
               >
-                ${busy ? "Waiting for your passkey…" : "Approve with your passkey"}
+                ${busy ? LOGIN_COPY.waitingForPasskey : LOGIN_COPY.approveHere}
               </button>`
             }
-            <button
-              type="button"
-              class="login-button"
-              disabled=${busy || result?.status !== "approved"}
-              onClick=${pair}
-            >
-              ${busy ? "Pairing…" : "Codes match, pair this device"}
-            </button>
+            ${
+              !keyed &&
+              html`<button
+                type="button"
+                class="login-button"
+                disabled=${busy || result?.status !== "approved"}
+                onClick=${pair}
+              >
+                ${busy ? LOGIN_COPY.pairing : LOGIN_COPY.pair}
+              </button>`
+            }
             <button type="button" class="btn-secondary" disabled=${busy} onClick=${cancel}>
-              Cancel
+              ${LOGIN_COPY.cancel}
             </button>
           `
     }

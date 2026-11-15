@@ -5,7 +5,10 @@ import { afterEach, expect, test, vi } from "vitest";
 import {
   captureAccountSignIn,
   parseAccountSignIn,
+  redeemPortalHandoff,
   takeAccountSignIn,
+  takeHandoffNext,
+  takePortalHandoff,
   // @ts-expect-error — portal JavaScript has no sibling declarations.
 } from "./cloud-pairing-handoff.js";
 
@@ -113,4 +116,53 @@ test("only a complete, well-formed sign-in is accepted, and only its known field
     "A".repeat(65_537),
   ])
     expect(parseAccountSignIn(encoded)).toBeNull();
+});
+
+const CODE = "h".repeat(43);
+
+test("a portal handoff leaves the address bar at once, and its code and next step are each given once", () => {
+  const { location, history } = page(`#portal-handoff=${CODE}&next=confirm-passkey`);
+  captureAccountSignIn(location, history);
+  expect(history.replaceState).toHaveBeenCalledExactlyOnceWith(
+    { kept: true },
+    "",
+    "/portal/?view=search",
+  );
+  // It's no account sign-in.
+  expect(takeAccountSignIn()).toBeNull();
+  expect(takePortalHandoff()).toBe(CODE);
+  expect(takePortalHandoff()).toBeNull();
+  expect(takeHandoffNext()).toBe("confirm-passkey");
+  expect(takeHandoffNext()).toBeNull();
+  // Without a next step, or with one this page doesn't know, the code alone.
+  for (const hash of [`#portal-handoff=${CODE}`, `#portal-handoff=${CODE}&next=delete-everything`, `#portal-handoff=${CODE}&next=confirm-passkey&x=1`]) {
+    const other = page(hash);
+    captureAccountSignIn(other.location, other.history);
+    expect(takePortalHandoff()).toBe(CODE);
+    expect(takeHandoffNext()).toBeNull();
+  }
+  // A code of the wrong shape is dropped, and so is its next step.
+  for (const hash of ["#portal-handoff=short&next=confirm-passkey", "#portal-handoff="]) {
+    const other = page(hash);
+    captureAccountSignIn(other.location, other.history);
+    expect(other.history.replaceState).toHaveBeenCalledOnce();
+    expect(takePortalHandoff()).toBeNull();
+    expect(takeHandoffNext()).toBeNull();
+  }
+  expect(takePortalHandoff()).toBeNull();
+});
+
+test("redeeming a handoff posts only its code and says whether it worked, never throwing", async () => {
+  const request = vi.fn().mockResolvedValue(new Response("{}", { status: 200 }));
+  expect(await redeemPortalHandoff(CODE, request)).toBe(true);
+  expect(request).toHaveBeenCalledExactlyOnceWith("/portal/api/handoff/redeem", {
+    method: "POST",
+    credentials: "same-origin",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ code: CODE }),
+  });
+  expect(await redeemPortalHandoff(CODE, vi.fn().mockResolvedValue(new Response("{}", { status: 401 })))).toBe(false);
+  expect(await redeemPortalHandoff(CODE, vi.fn().mockRejectedValue(new Error("offline")))).toBe(false);
+  vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("{}")));
+  expect(await redeemPortalHandoff(CODE)).toBe(true);
 });

@@ -102,14 +102,22 @@ export function ApproveView({
                     Approve only if you asked for this yourself and the device shows this same
                     code. Anyone who sent you this link could be asking for their own device.
                   </p>
-                  <button
-                    type="button"
-                    class="login-button"
-                    disabled=${state === "approving"}
-                    onClick=${confirm}
-                  >
-                    ${state === "approving" ? "Waiting for your passkey…" : "Approve with passkey"}
-                  </button>
+                  ${
+                    // An older gateway doesn't say; only an explicit false hides the button.
+                    request.passkeyApproval === false
+                      ? html`<p class="login-subtitle" role="status">
+                          This gateway doesn't have Face ID approval set up yet. Approve this
+                          device from the Omnesis portal on your computer.
+                        </p>`
+                      : html`<button
+                          type="button"
+                          class="login-button"
+                          disabled=${state === "approving"}
+                          onClick=${confirm}
+                        >
+                          ${state === "approving" ? "Waiting for your passkey…" : "Approve with passkey"}
+                        </button>`
+                  }
                 `
       }
       ${error && html`<p class="login-error" role="alert">${error}</p>`}

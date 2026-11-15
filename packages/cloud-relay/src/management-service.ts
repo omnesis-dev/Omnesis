@@ -1148,7 +1148,7 @@ export class GatewayCloudRelayManagement implements CloudRelayManagement {
     return this.status();
   }
   async passkeyConfirmation() {
-    return this.account!.passkeyConfirmation();
+    return this.account!.passkeyConfirmationOptions();
   }
   async confirmPasskey(proof: unknown): Promise<CloudRelayManagementStatus> {
     await this.account!.confirmPasskey(proof);

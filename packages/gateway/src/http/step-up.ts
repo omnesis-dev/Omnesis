@@ -13,7 +13,8 @@
  * `POST /admin/step-up` returned for this exact request (method, path, body and device) within
  * the last minute, used once. The gateway's own host, home-network devices paired by code or QR
  * and the local CLI never need it. Actions that make the gateway stricter (deny, "ask me
- * first", removing a sign-in, revoking a device) never need it either.
+ * first", removing a sign-in, revoking a device) never need it either, nor does a phone minting
+ * its own notification credential (`ownPushClaimToken`), which adds no access.
  *
  * A guarded request without a valid step-up is refused with 428 `STEP_UP_REQUIRED`, whose
  * `detail` names what to step up for. While no step-up can start (a certificate incident holds
@@ -22,6 +23,7 @@
 
 import { createHash, randomBytes } from "node:crypto";
 import { cloudRelayEnabled } from "@omnesis/core";
+import { SCOPE_PUSH_CLAIM } from "@omnesis/types";
 import {
   gatewayPasskeySignInProofSchema,
   gatewayPasskeyStepUpBinding,
@@ -67,6 +69,26 @@ export const declines = (body: unknown): boolean =>
 /** So does choosing "ask me first". */
 export const asksFirst = (body: unknown): boolean =>
   (body as { policy?: unknown } | null | undefined)?.policy === "ask";
+/**
+ * A phone's own notification credential: a token for the requesting device itself whose scopes
+ * are exactly `push:claim`, asked for with a device bearer token that already carries
+ * `push:claim`. That token can do nothing its caller can't: `push:claim` only claims and confirms
+ * the queued notifications of the device it belongs to (`scope.pushClaim()`), and no other scope
+ * is satisfied by it. The iOS and Android apps mint it for their notification handling.
+ */
+export const ownPushClaimToken = (body: unknown, c: Context<AppEnv>): boolean => {
+  const auth = c.get("auth");
+  const value = body as { deviceId?: unknown; scopes?: unknown } | null | undefined;
+  return (
+    auth?.authMethod === "bearer" &&
+    typeof auth.deviceId === "string" &&
+    auth.scopes.includes(SCOPE_PUSH_CLAIM) &&
+    value?.deviceId === auth.deviceId &&
+    Array.isArray(value.scopes) &&
+    value.scopes.length === 1 &&
+    value.scopes[0] === SCOPE_PUSH_CLAIM
+  );
+};
 
 const sha256Hex = (bytes: Uint8Array) => createHash("sha256").update(bytes).digest("hex");
 
@@ -126,10 +148,13 @@ function unavailable(): HttpError {
 }
 
 /**
- * Guards one route. `exempt` sees the JSON body and says whether this request only makes the
- * gateway stricter (a deny, "ask me first"); anything it does not recognise needs a step-up.
+ * Guards one route. `exempt` sees the JSON body (and the request) and says whether this request
+ * adds no access (a deny, "ask me first", a phone's own notification credential); anything it does
+ * not recognise needs a step-up.
  */
-export function requireStepUp(exempt?: (body: unknown) => boolean): MiddlewareHandler<AppEnv> {
+export function requireStepUp(
+  exempt?: (body: unknown, c: Context<AppEnv>) => boolean,
+): MiddlewareHandler<AppEnv> {
   return async (c, next) => {
     const stepUps = c.get("stepUps");
     if (!stepUps?.required(c)) return next();
@@ -141,7 +166,7 @@ export function requireStepUp(exempt?: (body: unknown) => boolean): MiddlewareHa
       } catch {
         body = undefined;
       }
-      if (exempt(body)) return next();
+      if (exempt(body, c)) return next();
     }
     if (!stepUps.available()) throw unavailable();
     const url = new URL(c.req.url);
