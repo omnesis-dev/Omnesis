@@ -108,9 +108,11 @@ describe("Windows CI coverage", () => {
       "packages/core/src/config-private-cleanup.test.ts",
       "packages/core/src/secret-file-cache.test.ts",
       "packages/collector/src/auth-subprocess-env.test.ts",
+      "packages/collector/src/auth-process.test.ts",
       "packages/collector/src/source-ws-handlers.test.ts",
       "packages/collector/src/source-ws-handlers.auth-begin.test.ts",
       "packages/collector/src/source-ws-handlers.ownership.test.ts",
+      "packages/collector/src/source-ws-handlers.physical-ownership.test.ts",
     ]) {
       expect(FOCUSED_UNIT_FILES).toContain(file);
     }
