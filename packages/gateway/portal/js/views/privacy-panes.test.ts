@@ -25,7 +25,7 @@ vi.mock("../lib/router.js", async (importOriginal) => ({
   navigate: vi.fn(),
 }));
 
-const signals = vi.hoisted(() => ({ emit: (_topic: string | null) => {} }));
+const signals = vi.hoisted(() => ({ emit: (_topic: string | null) => {}, setHealthy: (_healthy: boolean) => {} }));
 vi.mock("../lib/portal-signals.js", async (importOriginal) =>
   (await import("../lib/portal-signals-fake.js")).mockPortalSignals(await importOriginal(), signals));
 

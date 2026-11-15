@@ -24,7 +24,7 @@ const router = vi.hoisted(() => ({ navigate: vi.fn(), replaceRoute: vi.fn() }));
 
 const qr = vi.hoisted(() => ({ toCanvas: vi.fn().mockResolvedValue(undefined) }));
 
-const signals = vi.hoisted(() => ({ emit: (_topic: string | null) => {} }));
+const signals = vi.hoisted(() => ({ emit: (_topic: string | null) => {}, setHealthy: (_healthy: boolean) => {} }));
 
 vi.mock("../api.js", () => api);
 vi.mock("../lib/router.js", () => router);

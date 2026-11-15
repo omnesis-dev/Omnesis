@@ -10,9 +10,8 @@ import {
   decideCloudPairing,
 } from "../lib/cloud-pairing-api.js";
 import { waitingCloudPairingRequests } from "../lib/cloud-pairing-waiting.js";
-import { SIGNAL_FALLBACK_MS, usePortalSignal } from "../lib/portal-signals.js";
+import { usePortalSignal, useSignalFallback } from "../lib/portal-signals.js";
 import { earliestExpiry, useRefreshAt } from "../lib/use-refresh-at.js";
-import { useVisiblePoll } from "../lib/use-visible-poll.js";
 import {
   approveWithPasskey,
   onGatewayOrigin,
@@ -294,10 +293,10 @@ export function CloudPairingRequests({ focusRequestId = requestedId(), onCount }
       active = false;
     };
   }, []);
-  // Read again when the gateway signals a request arrived or was decided, and slowly in case the
-  // signal stream is down.
+  // Read again when the gateway signals a request arrived or was decided, and on an interval while
+  // the signals are not healthy.
   usePortalSignal("devices", refresh, { enabled });
-  useVisiblePoll(refresh, SIGNAL_FALLBACK_MS, { enabled });
+  useSignalFallback(refresh, { enabled });
   // A request leaves as soon as it is approved, denied or out of time, also between two reads.
   // The one a notification opened comes first.
   const waiting = waitingCloudPairingRequests(requests).sort(

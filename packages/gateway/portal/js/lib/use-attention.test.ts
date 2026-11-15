@@ -12,25 +12,7 @@ import { SIGNAL_FALLBACK_MS } from "./portal-signals.js";
 // @ts-expect-error — portal modules are plain JS.
 import { earliestExpiry, notExpired } from "./use-refresh-at.js";
 
-type Signal = { type: "ready" } | { type: "changed"; topic: string };
-
-/** The shared connection, driven by the test. */
-function fakeSignals() {
-  const listeners = new Set<{ listener: (signal: Signal) => void; topic: string | null }>();
-  return {
-    subscribe(listener: (signal: Signal) => void, topic: string | null = null) {
-      const entry = { listener, topic };
-      listeners.add(entry);
-      return () => listeners.delete(entry);
-    },
-    emit(signal: Signal) {
-      for (const { listener, topic } of [...listeners]) {
-        if (signal.type === "changed" && topic !== null && signal.topic !== topic) continue;
-        listener(signal);
-      }
-    },
-  };
-}
+import { fakePortalSignals } from "./portal-signals-fake.js";
 
 const NOW = Date.UTC(2026, 10, 15, 9, 0, 0);
 const cloudRequest = (requestId: string, expiresIn = 600_000, status = "pending") => ({
@@ -56,7 +38,7 @@ const approvals = (count: number, expiresIn = 900_000) => ({
 
 let host: HTMLElement;
 let api: Record<string, ReturnType<typeof vi.fn>>;
-let signals: ReturnType<typeof fakeSignals>;
+let signals: ReturnType<typeof fakePortalSignals>;
 let seen: Record<string, { count: number; [key: string]: unknown }>;
 
 beforeEach(() => {
@@ -74,7 +56,7 @@ beforeEach(() => {
     listPrivacyApprovals: vi.fn(async () => approvals(0)),
     listSubscriptionApprovals: vi.fn(async () => approvals(0)),
   };
-  signals = fakeSignals();
+  signals = fakePortalSignals();
   seen = {};
 });
 afterEach(() => {
@@ -110,7 +92,7 @@ describe("what is read, by feature", () => {
     expect(api.getPendingAccessRequests).toHaveBeenCalledTimes(1);
     expect(api.listPrivacyApprovals).toHaveBeenCalledExactlyOnceWith({ status: "pending", limit: ATTENTION_PAGE_LIMIT });
     // Not even a signal or the fallback reads a feature that is off.
-    signals.emit({ type: "ready" });
+    signals.emit(null);
     await act(async () => { vi.advanceTimersByTime(SIGNAL_FALLBACK_MS); });
     await settle();
     expect(api.tailscaleJoinRequests).not.toHaveBeenCalled();
@@ -158,7 +140,7 @@ describe("what is read, by feature", () => {
     await show({ watches: false });
     expect(seen.watches.count).toBe(0);
     resetCalls();
-    signals.emit({ type: "changed", topic: "watches" });
+    signals.emit("watches");
     await settle();
     expect(api.listSubscriptionApprovals).not.toHaveBeenCalled();
   });
@@ -189,7 +171,7 @@ describe("when a topic is read again", () => {
     await show({ tailscaleEmbed: true, watches: true });
     resetCalls();
     api.tailscaleJoinRequests.mockResolvedValue({ requests: [join("t1")] });
-    signals.emit({ type: "changed", topic: "devices" });
+    signals.emit("devices");
     await settle();
     expect(reads()).toMatchObject({ tailscaleJoinRequests: 1, getPendingAccessRequests: 0, listPrivacyApprovals: 0, listSubscriptionApprovals: 0 });
     expect(seen.devices.count).toBe(1);
@@ -200,7 +182,7 @@ describe("when a topic is read again", () => {
       ["watches", "listSubscriptionApprovals"],
     ]) {
       resetCalls();
-      signals.emit({ type: "changed", topic });
+      signals.emit(topic);
       await settle();
       expect(api[route]).toHaveBeenCalledTimes(1);
       expect(Object.values(reads()).reduce((a, b) => a + b, 0)).toBe(1);
@@ -211,7 +193,7 @@ describe("when a topic is read again", () => {
     await show({ tailscaleEmbed: true, watches: true });
     resetCalls();
     api.listPrivacyApprovals.mockResolvedValue(approvals(3));
-    signals.emit({ type: "ready" });
+    signals.emit(null);
     await settle();
     expect(reads()).toMatchObject({ tailscaleJoinRequests: 1, getPendingAccessRequests: 1, listPrivacyApprovals: 1, listSubscriptionApprovals: 1 });
     expect(seen.answers.count).toBe(3);
@@ -264,7 +246,7 @@ describe("when a topic is read again", () => {
     expect(seen.devices.count).toBe(2);
     api.cloudPairingRequests.mockRejectedValue(new Error("offline"));
     api.tailscaleJoinRequests.mockResolvedValue({ requests: [] });
-    signals.emit({ type: "changed", topic: "devices" });
+    signals.emit("devices");
     await settle();
     expect(seen.devices.count).toBe(1);
     expect(seen.devices.cloud).toHaveLength(1);
@@ -274,7 +256,7 @@ describe("when a topic is read again", () => {
     api.listPrivacyApprovals.mockResolvedValue(approvals(2));
     await show();
     api.listPrivacyApprovals.mockRejectedValue({ status: 503 });
-    signals.emit({ type: "changed", topic: "answers" });
+    signals.emit("answers");
     await settle();
     expect(seen.answers.count).toBe(2);
   });
@@ -285,13 +267,89 @@ describe("when a topic is read again", () => {
     api.listPrivacyApprovals
       .mockReturnValueOnce(new Promise((resolve) => { slow = resolve; }))
       .mockResolvedValueOnce(approvals(1));
-    signals.emit({ type: "changed", topic: "answers" });
-    signals.emit({ type: "changed", topic: "answers" });
+    signals.emit("answers");
+    signals.emit("answers");
     await settle();
     expect(seen.answers.count).toBe(1);
     slow(approvals(9));
     await settle();
     expect(seen.answers.count).toBe(1);
+  });
+});
+
+describe("load", () => {
+  test("while the signals are healthy no topic is read on an interval; while down, every fallback interval", async () => {
+    await show({ tailscaleEmbed: true });
+    await act(async () => { signals.setHealthy(true); });
+    resetCalls();
+    await act(async () => { vi.advanceTimersByTime(SIGNAL_FALLBACK_MS * 4); });
+    await settle();
+    expect(Object.values(reads()).reduce((a, b) => a + b, 0)).toBe(0);
+    await act(async () => { signals.setHealthy(false); });
+    await act(async () => { vi.advanceTimersByTime(SIGNAL_FALLBACK_MS); });
+    await settle();
+    expect(reads()).toMatchObject({ tailscaleJoinRequests: 1, getPendingAccessRequests: 1, listPrivacyApprovals: 1 });
+  });
+
+  test("a hidden tab defers signalled reads to one read when it comes back into view", async () => {
+    await show({ tailscaleEmbed: true });
+    await act(async () => { signals.setHealthy(true); });
+    resetCalls();
+    const setHidden = (hidden: boolean) => {
+      Object.defineProperty(document, "hidden", { configurable: true, get: () => hidden });
+      document.dispatchEvent(new window.Event("visibilitychange"));
+    };
+    await act(async () => { setHidden(true); });
+    signals.emit("answers");
+    signals.emit("answers");
+    signals.emit("devices");
+    await settle();
+    expect(Object.values(reads()).reduce((a, b) => a + b, 0)).toBe(0);
+    await act(async () => { setHidden(false); });
+    await settle();
+    expect(reads()).toMatchObject({ listPrivacyApprovals: 1, tailscaleJoinRequests: 1, getPendingAccessRequests: 0 });
+    // Healthy and nothing missed: coming into view again reads nothing.
+    resetCalls();
+    await act(async () => { setHidden(true); });
+    await act(async () => { setHidden(false); });
+    await settle();
+    expect(Object.values(reads()).reduce((a, b) => a + b, 0)).toBe(0);
+  });
+});
+
+describe("sign-in pairing configuration", () => {
+  test("a failed configuration read is retried on the fallback interval until it answers", async () => {
+    api.cloudPairingConfig.mockRejectedValueOnce(new Error("offline"));
+    api.cloudPairingRequests.mockResolvedValue({ items: [cloudRequest("a")] });
+    await show({ cloudRelay: true });
+    expect(api.cloudPairingRequests).not.toHaveBeenCalled();
+    // Even with healthy signals: the configuration is not something they cover.
+    await act(async () => { signals.setHealthy(true); });
+    await act(async () => { vi.advanceTimersByTime(SIGNAL_FALLBACK_MS); });
+    await settle();
+    expect(api.cloudPairingConfig).toHaveBeenCalledTimes(2);
+    expect(seen.devices.count).toBe(1);
+    // Configured: asked no more.
+    await act(async () => { vi.advanceTimersByTime(SIGNAL_FALLBACK_MS * 2); });
+    signals.emit("devices");
+    await settle();
+    expect(api.cloudPairingConfig).toHaveBeenCalledTimes(2);
+  });
+
+  test("a gateway that said sign-in pairing is off is asked again on a devices signal or a resync", async () => {
+    api.cloudPairingConfig.mockResolvedValueOnce(null).mockResolvedValueOnce(null);
+    api.cloudPairingRequests.mockResolvedValue({ items: [cloudRequest("a")] });
+    await show({ cloudRelay: true });
+    await act(async () => { signals.setHealthy(true); });
+    await act(async () => { vi.advanceTimersByTime(SIGNAL_FALLBACK_MS * 2); });
+    expect(api.cloudPairingConfig).toHaveBeenCalledTimes(1);
+    signals.emit(null);
+    await settle();
+    expect(api.cloudPairingConfig).toHaveBeenCalledTimes(2);
+    signals.emit("devices");
+    await settle();
+    expect(api.cloudPairingConfig).toHaveBeenCalledTimes(3);
+    expect(seen.devices.count).toBe(1);
   });
 });
 

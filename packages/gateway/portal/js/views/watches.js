@@ -91,6 +91,7 @@ function WatchesDashboard() {
       }
     },
     selectItems: (payload) => privacyCollection(payload, "approvals") ?? [],
+    itemKey: (approval) => approval.id,
     selectMeta: (payload) => ({
       totalCount: Number.isFinite(payload?.totalCount) ? payload.totalCount : null,
     }),

@@ -11,7 +11,7 @@ const api = vi.hoisted(() => ({
   cloudPairingRequests: vi.fn(),
   decideCloudPairing: vi.fn(),
 }));
-const signals = vi.hoisted(() => ({ emit: (_topic: string | null) => {} }));
+const signals = vi.hoisted(() => ({ emit: (_topic: string | null) => {}, setHealthy: (_healthy: boolean) => {} }));
 vi.mock("../lib/cloud-pairing-api.js", () => api);
 vi.mock("../lib/portal-signals.js", async (importOriginal) =>
   (await import("../lib/portal-signals-fake.js")).mockPortalSignals(await importOriginal(), signals));
@@ -237,6 +237,7 @@ test("empty, unavailable, and failed polling states stay actionable", async () =
 
 test("the list is read again when the gateway signals devices, on a resync, and just after a request expires", async () => {
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval", "Date"] });
+  signals.setHealthy(true);
   try {
     api.cloudPairingConfig.mockResolvedValue({ clientId: "fictional-client" });
     api.cloudPairingRequests.mockResolvedValue({ items: [] });
@@ -258,7 +259,16 @@ test("the list is read again when the gateway signals devices, on a resync, and 
     await settle();
     expect(api.cloudPairingRequests).toHaveBeenCalledTimes(4);
     expect(host.textContent).toBe("");
+    // While the signals are down the list is read on the fallback interval instead.
+    await act(async () => {
+      signals.setHealthy(false);
+    });
+    await act(async () => {
+      vi.advanceTimersByTime(15_000);
+    });
+    expect(api.cloudPairingRequests).toHaveBeenCalledTimes(5);
   } finally {
+    signals.setHealthy(false);
     vi.useRealTimers();
   }
 });

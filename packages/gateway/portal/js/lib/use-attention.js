@@ -9,22 +9,22 @@
 //   (OMNESIS_CLOUD_RELAY_ENABLED=1, read once the gateway says sign-in pairing
 //   is configured) and Tailscale join requests through the gateway's own
 //   Tailscale device (OMNESIS_TAILSCALE_EMBED_ENABLED=1);
-// - access: MCP clients asking to connect, from the Access overview;
+// - access: MCP clients asking to connect;
 // - answers: Answer releases held for the owner's review;
 // - watches: requests for a standing watch, only where watches are on.
 //
-// A topic is re-read when the gateway signals it changed, when the signal
-// stream (re)connects, when the tab comes back into view, when its earliest
-// waiting item expires — the gateway does not signal expiry — and on a slow
-// interval in case the stream is down. A topic whose feature is off is never
-// read.
+// A topic is re-read when the gateway signals it changed and when the signal
+// stream (re)connects — in a hidden tab, once when it comes back into view —
+// when its earliest waiting item expires, since the gateway does not signal
+// expiry, and on a fallback interval only while the signals are not healthy.
+// A topic whose feature is off is never read.
 
 import { useEffect, useRef, useState } from "preact/hooks";
 import { getPendingAccessRequests, listPrivacyApprovals, listSubscriptionApprovals } from "../api.js";
 import { cloudPairingConfig, cloudPairingRequests } from "./cloud-pairing-api.js";
 import { waitingCloudPairingRequests } from "./cloud-pairing-waiting.js";
 import { tailscaleJoinRequests } from "./tailscale-api.js";
-import { SIGNAL_FALLBACK_MS, usePortalSignal } from "./portal-signals.js";
+import { SIGNAL_FALLBACK_MS, usePortalSignal, useSignalFallback } from "./portal-signals.js";
 import { earliestExpiry, notExpired, useRefreshAt } from "./use-refresh-at.js";
 import { useVisiblePoll } from "./use-visible-poll.js";
 
@@ -120,31 +120,42 @@ function useTopic({ topic, enabled, what = "", empty, read, signals }) {
     }
   }, [enabled, what]);
   usePortalSignal(topic, () => void refresh(), { enabled, signals });
-  useVisiblePoll(() => void refresh(), SIGNAL_FALLBACK_MS, { enabled });
+  useSignalFallback(() => void refresh(), { enabled, signals });
   useRefreshAt(enabled ? value.nextExpiry : null, () => void refresh());
   return value;
 }
 
-/** Whether the gateway offers sign-in pairing, asked once the cloud relay is on. */
-function useCloudPairingConfigured(cloudRelay, api) {
-  const [configured, setConfigured] = useState(false);
-  useEffect(() => {
-    if (!cloudRelay) {
-      setConfigured(false);
-      return undefined;
-    }
-    let active = true;
+/**
+ * Whether the gateway offers sign-in pairing, asked once the cloud relay is on. Until it says yes
+ * it is asked again on every devices signal and resync — a sign-in request means it is now
+ * configured — and, after a failed read, on the fallback interval and when the tab comes back into
+ * view.
+ */
+function useCloudPairingConfigured(cloudRelay, api, signals) {
+  /** "unknown" before an answer, then "configured", "off" or "failed". */
+  const [state, setState] = useState("unknown");
+  const generation = useRef(0);
+  const check = () => {
+    const current = ++generation.current;
     api
       .cloudPairingConfig()
       .then((config) => {
-        if (active && config) setConfigured(true);
+        if (current === generation.current) setState(config ? "configured" : "off");
       })
-      .catch(() => {});
+      .catch(() => {
+        if (current === generation.current) setState("failed");
+      });
+  };
+  useEffect(() => {
+    if (cloudRelay) check();
+    else setState("unknown");
     return () => {
-      active = false;
+      generation.current += 1;
     };
   }, [cloudRelay]);
-  return configured;
+  usePortalSignal("devices", check, { enabled: cloudRelay && state !== "configured", signals });
+  useVisiblePoll(check, SIGNAL_FALLBACK_MS, { enabled: cloudRelay && state === "failed" });
+  return state === "configured";
 }
 
 /**
@@ -160,7 +171,7 @@ export function useAttention(
   { cloudRelay = false, tailscaleEmbed = false, watches = false } = {},
   { api = ATTENTION_API, signals = null } = {},
 ) {
-  const cloud = useCloudPairingConfigured(cloudRelay, api) && cloudRelay;
+  const cloud = useCloudPairingConfigured(cloudRelay, api, signals) && cloudRelay;
   const kinds = { cloud, tailscale: tailscaleEmbed };
   return {
     devices: useTopic({

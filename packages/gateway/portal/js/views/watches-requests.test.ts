@@ -15,7 +15,7 @@ const api = vi.hoisted(() => ({
   getWatchV2Watch: vi.fn(),
   getPrivacySubscription: vi.fn(),
 }));
-const signals = vi.hoisted(() => ({ emit: (_topic: string | null) => {} }));
+const signals = vi.hoisted(() => ({ emit: (_topic: string | null) => {}, setHealthy: (_healthy: boolean) => {} }));
 vi.mock("../api.js", () => api);
 vi.mock("../lib/portal-signals.js", async (importOriginal) =>
   (await import("../lib/portal-signals-fake.js")).mockPortalSignals(await importOriginal(), signals));

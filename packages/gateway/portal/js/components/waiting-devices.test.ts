@@ -13,7 +13,7 @@ const cloud = vi.hoisted(() => ({
   askBeforeEveryNewDevice: vi.fn(),
 }));
 const tailscale = vi.hoisted(() => ({ tailscaleJoinRequests: vi.fn(), decideTailscaleJoin: vi.fn() }));
-const signals = vi.hoisted(() => ({ emit: (_topic: string | null) => {} }));
+const signals = vi.hoisted(() => ({ emit: (_topic: string | null) => {}, setHealthy: (_healthy: boolean) => {} }));
 vi.mock("../lib/cloud-pairing-api.js", () => cloud);
 vi.mock("../lib/tailscale-api.js", () => tailscale);
 vi.mock("../lib/portal-signals.js", async (importOriginal) =>
@@ -218,8 +218,9 @@ describe("WaitingDevices", () => {
     expect(titles()).toEqual(["Waiting for your OK"]);
   });
 
-  test("a join request is read again just after it expires, and slowly in case the stream is down", async () => {
+  test("a join request is read again just after it expires, and on an interval while the signals are down", async () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval", "Date"] });
+    signals.setHealthy(true);
     try {
       tailscale.tailscaleJoinRequests.mockResolvedValue({
         requests: [join("t1", { expiresAt: new Date(Date.now() + 20_000).toISOString() })],
@@ -233,11 +234,20 @@ describe("WaitingDevices", () => {
       await settle();
       expect(tailscale.tailscaleJoinRequests).toHaveBeenCalledTimes(2);
       expect(host.querySelectorAll("article")).toHaveLength(0);
+      // Healthy signals: no reads on an interval.
       await act(async () => {
         vi.advanceTimersByTime(60_000);
       });
+      expect(tailscale.tailscaleJoinRequests).toHaveBeenCalledTimes(2);
+      await act(async () => {
+        signals.setHealthy(false);
+      });
+      await act(async () => {
+        vi.advanceTimersByTime(15_000);
+      });
       expect(tailscale.tailscaleJoinRequests).toHaveBeenCalledTimes(3);
     } finally {
+      signals.setHealthy(false);
       vi.useRealTimers();
     }
   });

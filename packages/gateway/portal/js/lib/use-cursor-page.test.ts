@@ -455,9 +455,9 @@ describe("useCursorPage background refresh", () => {
   });
 
   const ids = () => page.items.map((item: { id: string }) => item.id);
-  async function mount(loadPage: ReturnType<typeof vi.fn>, pageSize = 2) {
+  async function mount(loadPage: ReturnType<typeof vi.fn>, pageSize = 2, itemKey: unknown = (item: any) => item?.id) {
     const Harness = () => {
-      page = useCursorPage({ resetKey: "refresh", pageSize, loadPage, selectMeta: (p: any) => p?.meta ?? null });
+      page = useCursorPage({ resetKey: "refresh", pageSize, loadPage, itemKey, selectMeta: (p: any) => p?.meta ?? null });
       return null;
     };
     await act(async () => render(h(Harness, {}), host));
@@ -499,6 +499,47 @@ describe("useCursorPage background refresh", () => {
     await act(async () => { await page.refresh(); });
     expect(ids()).toEqual(["new", "a", "b", "c", "d"]);
     expect(page.nextCursor).toBe("p3");
+  });
+
+  test("with several pages loaded, a row that left the first page goes and nothing is listed twice", async () => {
+    const loadPage = vi
+      .fn()
+      .mockResolvedValueOnce({ items: [{ id: "a" }, { id: "b" }], nextCursor: "p2" })
+      .mockResolvedValueOnce({ items: [{ id: "c" }, { id: "d" }], nextCursor: "p3" })
+      // b was decided: c moves up into the first page.
+      .mockResolvedValueOnce({ items: [{ id: "a" }, { id: "c" }], nextCursor: "after-c" });
+    await mount(loadPage);
+    await act(async () => { await page.loadMore(); });
+    await act(async () => { await page.refresh(); });
+    expect(ids()).toEqual(["a", "c", "d"]);
+    expect(page.nextCursor).toBe("p3");
+  });
+
+  test("a fresh first page that is the whole collection replaces every loaded page", async () => {
+    const loadPage = vi
+      .fn()
+      .mockResolvedValueOnce({ items: [{ id: "a" }, { id: "b" }], nextCursor: "p2" })
+      .mockResolvedValueOnce({ items: [{ id: "c" }], nextCursor: null })
+      .mockResolvedValueOnce({ items: [{ id: "c" }], nextCursor: null });
+    await mount(loadPage);
+    await act(async () => { await page.loadMore(); });
+    expect(ids()).toEqual(["a", "b", "c"]);
+    await act(async () => { await page.refresh(); });
+    expect(ids()).toEqual(["c"]);
+    expect(page.hasMore).toBe(false);
+  });
+
+  test("rows without a key are never merged: the fresh page replaces the list, with its own cursor", async () => {
+    const loadPage = vi
+      .fn()
+      .mockResolvedValueOnce({ items: [{ id: "a" }, { id: "b" }], nextCursor: "p2" })
+      .mockResolvedValueOnce({ items: [{ id: "c" }, { id: "d" }], nextCursor: "p3" })
+      .mockResolvedValueOnce({ items: [{ id: "a" }, { id: "b" }], nextCursor: "p2" });
+    await mount(loadPage, 2, null);
+    await act(async () => { await page.loadMore(); });
+    await act(async () => { await page.refresh(); });
+    expect(ids()).toEqual(["a", "b"]);
+    expect(page.nextCursor).toBe("p2");
   });
 
   test("a failed refresh, or one overtaken by a newer one, changes nothing", async () => {
