@@ -79,6 +79,9 @@ const RESULT_DEPTH = 100;
  */
 const GATEWAY_CONFIG = {
   search: { params: { candidateLimit: RESULT_DEPTH }, temporal: { enabled: false } },
+  // A hybrid run embeds every passage; the default of one batch in flight
+  // leaves a local embedding server mostly idle.
+  indexer: { embedConcurrency: 8 },
 };
 /**
  * A document only the eval's readiness probe matches. The in-memory keyword
