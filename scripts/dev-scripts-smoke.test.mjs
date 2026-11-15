@@ -58,6 +58,7 @@ import { tmpdir } from "node:os";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { createRequire } from "node:module";
 import { gatewayBootBudgetMs } from "./lib/boot-budget.mjs";
+import { startRetainedWindowsFixture } from "./lib/retained-fixture-command.mjs";
 import {
   bashExecutable,
   bashEnvironment,
@@ -142,6 +143,15 @@ function spawn(command, args, options) {
 }
 function fixtureArguments(command, args) {
   return command === fixtureBash ? bashScriptArguments(args) : args;
+}
+function retainedBashFixture(script, args, options) {
+  const owner = startRetainedWindowsFixture(
+    fixtureBash,
+    fixtureArguments(fixtureBash, [script, ...args]),
+    fixtureOptions(fixtureBash, options),
+  );
+  windowsChildren.push({ child: owner.child, joined: Promise.allSettled([owner.closed]) });
+  return owner.result.then(({ code, stdout, stderr }) => ({ code, out: `${stdout}\n${stderr}` }));
 }
 function execFile(command, args, options, callback) {
   if (typeof options === "function")
@@ -881,6 +891,18 @@ describe("scripts/dev-instance.sh one-command isolated instance", () => {
   // Run dev-instance.sh with an isolated config dir + port, returning the exit
   // code and combined output. Never touches the live gateway / DB / config.
   function runDevInstance(args, { configDir, port, extraEnv = {}, timeout = 120000 }) {
+    if (process.platform === "win32")
+      return retainedBashFixture(devInstance, args, {
+        cwd: repoRoot,
+        env: {
+          ...process.env,
+          ...leanGatewayEnv,
+          OMNESIS_CONFIG_DIR: configDir,
+          OMNESIS_GATEWAY_PORT: String(port),
+          ...extraEnv,
+        },
+        timeout,
+      });
     return new Promise((resolve) => {
       execFile(
         bashExecutable(),
@@ -957,8 +979,9 @@ describe("scripts/dev-instance.sh one-command isolated instance", () => {
     // and an ABSOLUTE CA path (so it resolves from any working directory).
     expect(url).toBe(`https://localhost:${PORT}`);
     expect(token).toBeTruthy();
-    expect(caCert).toMatch(/^\/.*\/tls\/cert\.pem$/);
-    expect(caCert?.startsWith(configDir)).toBe(true);
+    expect(realpathSync.native(nativeBashPath(caCert))).toBe(
+      realpathSync.native(join(configDir, "tls", "cert.pem")),
+    );
     expect(existsSync(caCert)).toBe(true);
 
     // The triple is actually USABLE, not just printed: a probe using EXACTLY
@@ -3444,6 +3467,7 @@ describe("scripts/synth-gateway.sh source seeding", () => {
         writeFileSync(join(config, "logs", "collector.log"), collectorLog);
       }
       const counter = join(root, "adds");
+      const requestArguments = join(root, "request-arguments");
       const curl = join(bin, "curl");
       writeFileSync(
         curl,
@@ -3451,6 +3475,7 @@ describe("scripts/synth-gateway.sh source seeding", () => {
 case "$*" in
   *'/admin/devices'*) printf '{"items":[{"id":"device_fixture","kind":"collector"}]}' ;;
   *'/admin/sources/add'*)
+    printf '%s\\n' "$@" >>'${requestArguments}'
     n=$(( $(cat '${counter}' 2>/dev/null || echo 0) + 1 )); echo "$n" >'${counter}'
     statuses=(${addStatuses.join(" ")})
     status=\${statuses[$(( n <= \${#statuses[@]} ? n - 1 : \${#statuses[@]} - 1 ))]}
@@ -3472,6 +3497,8 @@ esac
           timeout: 60_000,
         },
       );
+      // The interpreter's CRLF stdout must not enter serialized identifiers.
+      expect(readFileSync(requestArguments, "utf8")).not.toContain("\r");
       return { result, adds: Number(readFileSync(counter, "utf8")) };
     } finally {
       rmSync(root, { recursive: true, force: true });
@@ -3627,6 +3654,13 @@ describe("scripts/shot-portal.sh on-demand portal screenshot loop (C9)", () => {
   };
 
   function runShot(args, { extraEnv = {}, timeout = 120000 } = {}) {
+    if (process.platform === "win32")
+      return retainedBashFixture(shotPortal, args, {
+        cwd: repoRoot,
+        env: { ...process.env, ...shotEnv, ...extraEnv },
+        timeout,
+        maxBuffer: 16 * 1024 * 1024,
+      });
     return new Promise((resolve) => {
       execFile(
         bashExecutable(),

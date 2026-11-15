@@ -212,6 +212,7 @@ export const FOCUSED_UNIT_FILES = [
   "packages/gateway/src/indexer/usearch-sidecar-integration.test.ts",
   "scripts/ci/build-windows-usearch.test.mjs",
   "scripts/ci/build-windows-sqlite.test.mjs",
+  "scripts/lib/retained-fixture-command.test.mjs",
   "scripts/ci/probe-windows-usearch.test.mjs",
   "packages/agent/src/claude-code-backend.test.ts",
   "packages/cli/src/unknown-flags.test.ts",

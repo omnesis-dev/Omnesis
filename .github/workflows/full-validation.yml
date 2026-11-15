@@ -60,7 +60,12 @@ jobs:
         run: node scripts/run-check.mjs unit packages/gateway/src/sqlite-windows-wal-recovery.test.ts
   portable-fixtures:
     if: ${{ inputs.scope == 'portable-fixtures' }}
-    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     env:
       OMNESIS_UNIT_WORKERS: "1"
@@ -76,6 +81,7 @@ jobs:
       - name: Install locked dependencies
         run: node scripts/ci/npm-ci.mjs --no-audit --no-fund
       - name: Build native dependencies used by isolated developer instances
+        if: ${{ runner.os == 'Windows' }}
         run: node scripts/ci/build-windows-sqlite.mjs && node scripts/ci/build-windows-usearch.mjs
       - name: Install smoke browser
         run: node node_modules/@playwright/test/cli.js install chromium
@@ -83,11 +89,12 @@ jobs:
         run: >-
           node scripts/run-check.mjs unit
           scripts/instance-token.test.mjs
+          scripts/lib/retained-fixture-command.test.mjs
           packages/gateway/src/agent/service-live-voice.test.ts
           packages/providers/screen-time/src/db-reader-recovery.test.ts
       - name: Restore public workflow input for topology fixture assertions
         if: ${{ !cancelled() }}
-        run: Copy-Item scripts/ci/audit-public-full-validation.fixture.yml .github/workflows/full-validation.yml
+        run: node -e "require('node:fs').copyFileSync('scripts/ci/audit-public-full-validation.fixture.yml', '.github/workflows/full-validation.yml')"
       - name: Validate portable developer shell fixtures
         if: ${{ !cancelled() }}
         run: node scripts/run-check.mjs smoke
