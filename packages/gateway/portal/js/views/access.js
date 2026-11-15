@@ -49,6 +49,7 @@ import {
   updateAccessLevel,
 } from "../api.js";
 import { navigate, replaceRoute } from "../lib/router.js";
+import { usePortalSignal } from "../lib/portal-signals.js";
 import { useVisiblePoll } from "../lib/use-visible-poll.js";
 import { ConfirmModal } from "../components/confirm-modal.js";
 import { AccessList, accessListIsEmpty, levelEditorPath } from "./access/access-list.js";
@@ -94,12 +95,10 @@ const EMPTY_OVERVIEW = { principals: [], levels: [], oauth: null };
 const ACCESS_ROUTE = "/portal/settings/access";
 const NEW_LEVEL_ROUTE = "/portal/settings/access/levels/new";
 const UNLOADABLE_APPROVAL_MESSAGE = "This approval could not be loaded. Reload the page.";
+// How often the open inventory page re-reads the overview for what no signal
+// covers, such as when a connection was last used.
+const INVENTORY_REFRESH_MS = 60_000;
 
-// How often the inventory page re-reads the overview. The pending strip is
-// the page's clock: a request arrives, or is decided on a phone, while the
-// page is open, and the strip must follow without a reload. Half a minute
-// matches the strip's own countdown and is a fraction of a request's life.
-const OVERVIEW_REFRESH_MS = 30_000;
 
 export function AccessView({
   authorizationId = null,
@@ -226,10 +225,14 @@ export function AccessView({
 
   useEffect(() => { refresh(); }, []);
   // Only the inventory page follows the gateway; a detail page holds a review
-  // built from what it loaded, and its own reloads are the conflict path.
+  // built from what it loaded, and its own reloads are the conflict path. A
+  // request arriving, or decided on a phone, is signalled, and the pending
+  // strip follows it at once; the slow read keeps the rest of the inventory —
+  // which no signal covers — current while the page is open.
+  usePortalSignal("access", () => { void refresh({ background: true }); }, { enabled: !detail });
   useVisiblePoll(
     () => { void refresh({ background: true }); },
-    OVERVIEW_REFRESH_MS,
+    INVENTORY_REFRESH_MS,
     { enabled: !detail },
   );
   useEffect(() => {

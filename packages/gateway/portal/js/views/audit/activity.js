@@ -25,6 +25,7 @@ import {
 import { LoadMore } from "../../components/load-more.js";
 import { Loading } from "../../components/loading.js";
 import { Segmented } from "../../components/segmented.js";
+import { usePortalSignal } from "../../lib/portal-signals.js";
 import { navigate } from "../../lib/router.js";
 import { useCursorPage } from "../../lib/use-cursor-page.js";
 import {
@@ -362,6 +363,8 @@ export function PrivacyActivityPane() {
     },
     itemKey: (item) => item.taskId,
   });
+  // A held answer arriving or decided elsewhere moves the pinned reviews at once.
+  usePortalSignal("answers", page.refresh);
 
   const pending = page.items.filter(isPendingReview).slice(0, MAX_PINNED_REVIEWS);
   const pinnedTaskIds = new Set(pending.map((exchange) => exchange.taskId));

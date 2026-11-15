@@ -37,19 +37,45 @@ describe("Settings header actions", () => {
     else globalThis.window = originalWindow;
   });
 
+  const attention = (devices: number, access: number) => ({
+    devices: { cloud: [], tailscale: [], count: devices },
+    access: { requests: [], count: access },
+    answers: { count: 0 },
+    watches: { count: 0 },
+  });
+
   test("marks the Devices tab while devices wait for approval, with the count in words", async () => {
     await act(async () => {
-      render(h(SettingsView, { tab: "config", waitingDevices: 2 }), host);
+      render(h(SettingsView, { tab: "config", attention: attention(2, 0) }), host);
     });
     const mark = host.querySelector(
-      '.config-tab [aria-label="2 devices are waiting for your approval to pair to this gateway."]',
+      '.config-tab .attention-icon[aria-label="2 devices are waiting for your approval to pair to this gateway."]',
     );
     expect(mark).not.toBeNull();
     expect(mark?.closest("button")?.textContent).toContain("Devices");
+    expect(host.querySelectorAll(".config-tab .attention-icon")).toHaveLength(1);
     await act(async () => {
-      render(h(SettingsView, { tab: "config", waitingDevices: 0 }), host);
+      render(h(SettingsView, { tab: "config", attention: attention(0, 0) }), host);
     });
-    expect(host.querySelector(".config-tab .waiting-devices-icon")).toBeNull();
+    expect(host.querySelector(".config-tab .attention-icon")).toBeNull();
+  });
+
+  test("marks the Access tab while agents wait for approval, beside a Devices mark when both wait", async () => {
+    await act(async () => {
+      render(h(SettingsView, { tab: "config", attention: attention(1, 3) }), host);
+    });
+    const access = host.querySelector(
+      '.config-tab .attention-icon[aria-label="3 agents are waiting for your approval to connect."]',
+    );
+    expect(access?.closest("button")?.textContent).toContain("Access");
+    expect(host.querySelectorAll(".config-tab .attention-icon")).toHaveLength(2);
+  });
+
+  test("without an attention answer no tab is marked", async () => {
+    await act(async () => {
+      render(h(SettingsView, { tab: "config" }), host);
+    });
+    expect(host.querySelector(".config-tab .attention-icon")).toBeNull();
   });
 
   test("marks the Models tab while another settings page is open and clears on recovery", async () => {

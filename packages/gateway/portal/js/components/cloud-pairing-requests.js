@@ -10,7 +10,8 @@ import {
   decideCloudPairing,
 } from "../lib/cloud-pairing-api.js";
 import { waitingCloudPairingRequests } from "../lib/cloud-pairing-waiting.js";
-import { useVisiblePoll } from "../lib/use-visible-poll.js";
+import { usePortalSignal, useSignalFallback } from "../lib/portal-signals.js";
+import { earliestExpiry, useRefreshAt } from "../lib/use-refresh-at.js";
 import {
   approveWithPasskey,
   onGatewayOrigin,
@@ -292,12 +293,16 @@ export function CloudPairingRequests({ focusRequestId = requestedId(), onCount }
       active = false;
     };
   }, []);
-  useVisiblePoll(refresh, 3000, { enabled });
+  // Read again when the gateway signals a request arrived or was decided, and on an interval while
+  // the signals are not healthy.
+  usePortalSignal("devices", refresh, { enabled });
+  useSignalFallback(refresh, { enabled });
   // A request leaves as soon as it is approved, denied or out of time, also between two reads.
   // The one a notification opened comes first.
   const waiting = waitingCloudPairingRequests(requests).sort(
     (a, b) => Number(b.requestId === focusRequestId) - Number(a.requestId === focusRequestId),
   );
+  useRefreshAt(earliestExpiry(waiting), refresh);
   const count = enabled ? waiting.length : 0;
   useEffect(() => onCount?.(count), [count]);
   // Nothing waiting is the normal case, so the section stays out of the way.

@@ -24,8 +24,12 @@ const router = vi.hoisted(() => ({ navigate: vi.fn(), replaceRoute: vi.fn() }));
 
 const qr = vi.hoisted(() => ({ toCanvas: vi.fn().mockResolvedValue(undefined) }));
 
+const signals = vi.hoisted(() => ({ emit: (_topic: string | null) => {}, setHealthy: (_healthy: boolean) => {} }));
+
 vi.mock("../api.js", () => api);
 vi.mock("../lib/router.js", () => router);
+vi.mock("../lib/portal-signals.js", async (importOriginal) =>
+  (await import("../lib/portal-signals-fake.js")).mockPortalSignals(await importOriginal(), signals));
 vi.mock("qrcode", () => ({ default: qr }));
 
 // @ts-expect-error — portal modules are plain JS without sibling declarations.
@@ -1489,7 +1493,7 @@ describe("AccessView", () => {
     });
   }
 
-  test("follows the gateway while the inventory is open: a request that arrives shows up without a reload", async () => {
+  test("follows the gateway while the inventory is open: a request that arrives shows up when signalled", async () => {
     vi.useFakeTimers();
     const now = Date.now();
     const arrived = {
@@ -1506,21 +1510,35 @@ describe("AccessView", () => {
     expect(host.querySelector(".access-pending")).toBeNull();
     expect(api.getAccessOverview).toHaveBeenCalledTimes(1);
 
-    // Nothing is read ahead of the interval.
-    await tick(29_999);
+    // Another topic's signal reads nothing here.
+    signals.emit("devices");
+    await tick(0);
     expect(api.getAccessOverview).toHaveBeenCalledTimes(1);
-    expect(host.querySelector(".access-pending")).toBeNull();
 
-    await tick(1);
+    signals.emit("access");
+    await tick(0);
     expect(api.getAccessOverview).toHaveBeenCalledTimes(2);
     expect(host.querySelector(".access-pending h3")?.textContent?.trim()).toBe("1 access request waiting");
     expect(host.querySelector(".access-pending strong")?.textContent).toBe("Fictional planner");
 
-    // A request decided elsewhere leaves the strip the same way.
+    // A request decided elsewhere leaves the strip the same way, and a
+    // reconnected stream's ready reads again too.
     api.getAccessOverview.mockResolvedValue({ ...levelOverview, pendingRequests: [] });
-    await tick(30_000);
+    signals.emit(null);
+    await tick(0);
     expect(api.getAccessOverview).toHaveBeenCalledTimes(3);
     expect(host.querySelector(".access-pending")).toBeNull();
+  });
+
+  test("reads again on a slow interval in case the signal stream is down", async () => {
+    vi.useFakeTimers();
+    api.getAccessOverview.mockResolvedValue(levelOverview);
+    await mount();
+    expect(api.getAccessOverview).toHaveBeenCalledTimes(1);
+    await tick(59_999);
+    expect(api.getAccessOverview).toHaveBeenCalledTimes(1);
+    await tick(1);
+    expect(api.getAccessOverview).toHaveBeenCalledTimes(2);
   });
 
   test("does not follow the gateway from a detail page, whose review is built from what it loaded", async () => {
@@ -1543,6 +1561,7 @@ describe("AccessView", () => {
     expect(host.querySelector(".access-authorization-page")).not.toBeNull();
     expect(api.getAccessOverview).toHaveBeenCalledTimes(1);
 
+    signals.emit("access");
     await tick(60_000);
     expect(api.getAccessOverview).toHaveBeenCalledTimes(1);
   });
@@ -1556,7 +1575,8 @@ describe("AccessView", () => {
 
     // The dialog the owner is typing into stays; no banner is raised.
     api.getAccessOverview.mockRejectedValueOnce(new Error("offline"));
-    await tick(30_000);
+    signals.emit("access");
+    await tick(0);
     expect(api.getAccessOverview).toHaveBeenCalledTimes(2);
     expect(host.querySelector(".access-connect-dialog")).not.toBeNull();
     expect(host.querySelector(".access-error")).toBeNull();
@@ -1564,7 +1584,8 @@ describe("AccessView", () => {
 
     // The next read carries the page forward again.
     api.getAccessOverview.mockResolvedValue({ ...levelOverview, oauth: OAUTH, principals: [], levels: [] });
-    await tick(30_000);
+    signals.emit("access");
+    await tick(0);
     expect(host.querySelector(".access-list")).toBeNull();
     expect(host.querySelector(".access-connect-dialog")).not.toBeNull();
   });

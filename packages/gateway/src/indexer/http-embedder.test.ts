@@ -77,6 +77,30 @@ describe("HttpEmbedder", () => {
     expect(result[2].length).toBe(1);
   });
 
+  test("embed() resends a request whose connection dropped", async () => {
+    mockFetch
+      .mockRejectedValueOnce(new TypeError("fetch failed"))
+      .mockResolvedValueOnce(embedResponse([[0.1, 0.2]]));
+    const embedder = new HttpEmbedder({ baseUrl: "http://localhost:8001", model: "m" });
+    const result = await embedder.embed(["hello"]);
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+    expect(result).toHaveLength(1);
+  });
+
+  test("embed() fails once a connection keeps dropping", async () => {
+    mockFetch.mockRejectedValue(new TypeError("fetch failed"));
+    const embedder = new HttpEmbedder({ baseUrl: "http://localhost:8001", model: "m" });
+    await expect(embedder.embed(["hello"])).rejects.toThrow("fetch failed");
+    expect(mockFetch).toHaveBeenCalledTimes(3);
+  });
+
+  test("embed() does not resend after a server error", async () => {
+    mockFetch.mockResolvedValue(new Response("boom", { status: 500 }));
+    const embedder = new HttpEmbedder({ baseUrl: "http://localhost:8001", model: "m" });
+    await expect(embedder.embed(["hello"])).rejects.toThrow();
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+  });
+
   describe("request lanes", () => {
     /** A server that holds every request until the test answers it, in the order sent. */
     function heldServer() {

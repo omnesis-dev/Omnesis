@@ -35,7 +35,7 @@ export interface TailscaleServiceOptions {
   /** The gateway's own certificate files, served when Tailscale's cannot be. */
   tlsMaterial: () => { cert: string; key: string };
   /** Notifications for join requests; admission is bound later with `useAdmission`. */
-  joins: Pick<JoinRequestDeps, "notifyWaiting" | "notifyJoined">;
+  joins: Pick<JoinRequestDeps, "notifyWaiting" | "notifyJoined" | "onWaitingChanged">;
   env?: NodeJS.ProcessEnv;
   supervisor?: HelperSupervisor;
   resolveBinary?: () => HelperBinary;

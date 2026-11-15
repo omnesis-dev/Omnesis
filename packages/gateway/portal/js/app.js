@@ -27,8 +27,6 @@ import {
   apiFetch,
   getStatus,
   getTaskCounts,
-  listPrivacyApprovals,
-  listSubscriptionApprovals,
 } from "./api.js";
 import { clearOmnesisStorage } from "./lib/storage.js";
 import { getTheme, toggleTheme } from "./lib/theme.js";
@@ -45,9 +43,10 @@ import { TestInstanceCard } from "./components/test-instance-card.js";
 import { countLabel, localDay, supportsTaskConversations } from "./lib/tasks-model.js";
 import { onTaskCounts } from "./lib/task-counts.js";
 import { CloudPairingLogin } from "./components/cloud-pairing-login.js";
-import { WaitingDevicesBanner, waitingDevicesHref } from "./components/waiting-devices-banner.js";
-import { WaitingDevicesIcon } from "./components/waiting-devices-icon.js";
-import { useWaitingDevices } from "./lib/use-waiting-devices.js";
+import { WaitingDevicesBanner } from "./components/waiting-devices-banner.js";
+import { AttentionIcon } from "./components/attention-icon.js";
+import { navAttention } from "./lib/attention.js";
+import { useAttention } from "./lib/use-attention.js";
 
 const DocumentView = lazy(() => import("./views/document.js").then((m) => m.DocumentView));
 const PeopleView = lazy(() => import("./views/people.js").then((m) => m.PeopleView));
@@ -72,9 +71,6 @@ const CONVERSATION_POLL_MS = 60_000;
 // Fallback pace for re-marking a conversation on screen, used until /status
 // reports the window the gateway actually enforces.
 const DEFAULT_SEEN_REFRESH_MS = 45_000;
-// How often a visible tab re-counts the decisions waiting on the operator. An
-// approval expires, so the count has to move without the operator navigating.
-const PRIVACY_PENDING_POLL_MS = 60_000;
 // `/status` is cache-backed and this keeps a release found by the gateway
 // visible without requiring the operator to reload the portal.
 const RELEASE_STATUS_POLL_MS = 60_000;
@@ -327,36 +323,10 @@ function App() {
   // its own.
   const [seenRefreshMs, setSeenRefreshMs] = useState(DEFAULT_SEEN_REFRESH_MS);
 
-  // Decisions waiting on the operator, badged on the nav item where each is
-  // decided: a held answer on Privacy, and — only where watches exist at all —
-  // a request for a standing watch on Watches. Each count stands on its own,
-  // so one endpoint failing cannot hide the other's waiting decisions.
-  const [pendingDecisions, setPendingDecisions] = useState({ privacy: 0, watches: 0 });
-  // Devices waiting for the owner's OK, whichever way they asked: the strip on
-  // every page and the marks on Settings and its Devices tab show this answer.
-  const waitingDevices = useWaitingDevices({ cloudRelay, tailscaleEmbed });
-
-  async function refreshPendingDecisions() {
-    const [answers, watches] = await Promise.allSettled([
-      listPrivacyApprovals({ status: "pending", limit: 1 }),
-      lab.watches
-        ? listSubscriptionApprovals({ status: "pending", limit: 1 })
-        : Promise.resolve(null),
-    ]);
-    // A gateway without the privacy boundary answers 503. A badge is not
-    // worth surfacing an error over; a failed count keeps its last value and
-    // the next tick retries.
-    setPendingDecisions((current) => ({
-      privacy: answers.status === "fulfilled" ? answers.value?.totalCount ?? 0 : current.privacy,
-      watches: watches.status === "fulfilled" ? watches.value?.totalCount ?? 0 : current.watches,
-    }));
-  }
-
-  // Count once on arrival — polling alone would leave a waiting decision
-  // unbadged for a whole interval — and again when /status resolves, since
-  // whether watch requests count at all depends on what it reports.
-  useEffect(() => { refreshPendingDecisions(); }, [lab.watches]);
-  useVisiblePoll(refreshPendingDecisions, PRIVACY_PENDING_POLL_MS);
+  // What waits for the owner's decision — devices, agent access, held
+  // answers, watch requests — kept current by the gateway's signals: the strip
+  // on every page and every attention mark show this one answer.
+  const attention = useAttention({ cloudRelay, tailscaleEmbed, watches: lab.watches });
 
   // Today's open tasks, shown on the Tasks nav item as "Tasks (n)". Read
   // from `/tasks/counts` on arrival, on every navigation and on an interval;
@@ -678,15 +648,10 @@ function App() {
             // composer (and clicking it while already on the hero resets
             // to a brand-new empty session).
             const isActive = route.view === item.view && !(item.isNewConvo && activeConvoId);
-            const pending = pendingDecisions[item.view] ?? 0;
             const modelWarning = item.view === "settings" && modelHealth.warnings.length > 0;
-            // A waiting device expires within minutes, so it leads where Settings goes.
-            const devicesWaiting = item.view === "settings" && waitingDevices.count > 0;
-            const href = devicesWaiting
-              ? waitingDevicesHref(waitingDevices)
-              : modelWarning
-                ? "/portal/settings/models"
-                : item.href;
+            // A decision waiting expires, so it leads where its item goes, ahead of a model problem.
+            const waiting = navAttention(item.view, attention);
+            const href = waiting?.href ?? (modelWarning ? "/portal/settings/models" : item.href);
             return html`
               <a
                 key=${item.view}
@@ -705,11 +670,7 @@ function App() {
                   >${item.view === "tasks" ? countLabel(item.label, openTasksToday) : item.label}</span
                 >
                 ${modelWarning && html`<${WarningTriangle} label="Models need attention" />`}
-                ${devicesWaiting && html`<${WaitingDevicesIcon} count=${waitingDevices.count} />`}
-                ${pending > 0
-                  ? html`<span class="sidebar-badge" aria-hidden="true">${pending > 99 ? "99+" : pending}</span
-                      ><span class="sr-only">${pending} ${pending === 1 ? "decision" : "decisions"} waiting for you. </span>`
-                  : null}
+                ${waiting && html`<${AttentionIcon} label=${waiting.label} />`}
               </a>
             `;
           })}
@@ -821,7 +782,7 @@ function App() {
 
       <main class="app-main">
         <${WaitingDevicesBanner}
-          waiting=${waitingDevices}
+          devices=${attention.devices}
           paused=${route.view === "settings" && route.tab === "devices"}
         />
         ${route.view === "document"
@@ -849,7 +810,7 @@ function App() {
               completeAccessInPortal=${route.completeAccessInPortal}
               cloudRelay=${cloudRelay}
               tailscaleEmbed=${tailscaleEmbed}
-              waitingDevices=${waitingDevices.count}
+              attention=${attention}
               experimental=${experimental}
               lab=${lab}
               labAvailable=${labAvailable}
@@ -872,6 +833,7 @@ function App() {
               taskId=${route.taskId}
               directTab=${route.directTab ?? false}
               directSessionId=${route.directSessionId ?? null}
+              waitingAnswers=${attention.answers.count}
             />`
           : route.view === "watches" && lab.watches
           ? html`<${WatchesView}

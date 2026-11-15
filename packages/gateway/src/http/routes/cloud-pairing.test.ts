@@ -21,6 +21,7 @@ import {
 import { SCOPE_ADMIN, SCOPE_READ, SCOPE_PUSH_CLAIM } from "@omnesis/types";
 import { createDatabase } from "../../db.js";
 import { createServer } from "../../server.js";
+import { PortalSignals } from "../../portal-signals/hub.js";
 import { createDevice, listDevices } from "../../data/repositories/DeviceRepository.js";
 import {
   createToken,
@@ -128,6 +129,46 @@ test("public Google pairing request bodies are bounded before parsing or identit
       code: "PAYLOAD_TOO_LARGE",
     });
   }
+});
+
+test("open portals hear when a sign-in request arrives and when it is decided", async () => {
+  const portalSignals = new PortalSignals();
+  const heard: string[] = [];
+  portalSignals.subscribe((topic) => heard.push(topic));
+  const server = createServer(db, path, {
+    tlsFingerprintSha256: "a".repeat(64),
+    cloudIdentity: { identity, ownerAccountId },
+    portalSignals,
+  });
+  const value = await request();
+  expect((await submit(server, value)).ok).toBe(true);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  expect(heard).toEqual(["devices"]);
+  // A refused decision changes nothing and says nothing.
+  expect(
+    (
+      await post(
+        server,
+        "/admin/cloud-pairing/decision",
+        { requestId: randomUUID(), approve: false },
+        admin,
+      )
+    ).status,
+  ).not.toBe(200);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  expect(heard).toEqual(["devices"]);
+  expect(
+    (
+      await post(
+        server,
+        "/admin/cloud-pairing/decision",
+        { requestId: value.requestId, approve: false },
+        admin,
+      )
+    ).status,
+  ).toBe(200);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  expect(heard).toEqual(["devices", "devices"]);
 });
 
 test("Google login awaits explicit gateway owner approval and a normal device pairing exchange", async () => {
