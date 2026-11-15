@@ -41,6 +41,11 @@ class AccountCloudPairingClient(
     private val deviceKeys: DeviceKeyStore = KeystoreDeviceKeys(),
     /** Null skips the first-contact public-certificate check, for test gateways. */
     private val publicCertificateCheck: ((List<X509Certificate>, String) -> Boolean)? = PublicCertificateCheck()::accepts,
+    /**
+     * SPKI fingerprints (lowercase hex) of gateway keys this install already trusts without the
+     * relay: the key it is paired with now. Only such a gateway can join this device by itself.
+     */
+    private val trustedGatewayKeys: () -> Set<String> = { emptySet() },
 ) : AutoCloseable {
     private val origin = exactOrigin(relayOrigin)
     private val json = Json { ignoreUnknownKeys = true }
@@ -231,7 +236,7 @@ class AccountCloudPairingClient(
             val issued = decode<IssuedChallenge>(gatewayRequest(pinned, "${pending.origin}/devices/account/challenge", "{}", updateRequiredOn404 = true))
             val challenge = issued.challenge
             if (!opaque(challenge)) invalid()
-            val requireApproval = publicCertificateCheck?.let { !it(pinned.peerCertificates, URI(pending.origin).host) } ?: false
+            val requireApproval = !verifiedWithoutRelay(pinned, pending)
             // The join's passkey assertion answers this very challenge and names this device's
             // own enrollment nonce (TM-01): nothing the relay chose is signed for the gateway.
             val signIn = signer?.enrollment(challenge, issued.expiresAt, nonce) ?: relayProof
@@ -256,6 +261,21 @@ class AccountCloudPairingClient(
         // that calls the challenge spent (409) ends this sign-in.
         sent = request
         return decode<CloudPairingProgress>(gatewayRequest(pinned, "${pending.origin}/devices/account/request", request.body)) to request.requireApproval
+    }
+
+    /**
+     * Whether this device can tell, without the relay, that it reached the owner's own gateway (F6).
+     *
+     * The relay chooses which gateway a sign-in is sent to. A hacked relay can list a gateway of its
+     * own, under any name with a valid public certificate, including a name of its own under the
+     * relay's domain, and that gateway would approve this device. Nothing in the sign-in names the
+     * owner's gateway, so a valid certificate proves only that the address is the one listed. Only a
+     * key this install already trusts does: then the gateway decides as usual. Otherwise the device
+     * asks to be held, and a person compares the code on a device they already use.
+     */
+    private fun verifiedWithoutRelay(pinned: CloudPairingTransport, pending: CloudPairingConfirmation): Boolean {
+        if (pending.spkiFingerprint.lowercase() !in trustedGatewayKeys().map { it.lowercase() }) return false
+        return publicCertificateCheck?.invoke(pinned.peerCertificates, URI(pending.origin).host) ?: true
     }
 
     /**

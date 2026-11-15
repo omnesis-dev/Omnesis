@@ -143,3 +143,21 @@ test("an automatic check retains publication uncertainty and permanently stops r
     await poller.stop().catch(() => {});
   }
 });
+
+test("F44: while a CT service is down the next check is at most an hour away, not six", async () => {
+  const f = fixture();
+  f.set({ state: "unavailable", lastError: "ct-provider-unavailable" });
+  const poller = startCertificateMonitorPoller({ monitor: f.monitor })!;
+  await poller.check();
+  for (let index = 0; index < 12; index++) await vi.advanceTimersToNextTimerAsync();
+  const calls = f.monitor.check.mock.calls.length;
+  await vi.advanceTimersByTimeAsync(3_600_000);
+  expect(f.monitor.check).toHaveBeenCalledTimes(calls + 1);
+  // Other failures keep the longer bound.
+  f.set({ state: "unavailable", lastError: "ct-provider-refused" });
+  for (let index = 0; index < 12; index++) await vi.advanceTimersToNextTimerAsync();
+  const later = f.monitor.check.mock.calls.length;
+  await vi.advanceTimersByTimeAsync(3_600_000);
+  expect(f.monitor.check).toHaveBeenCalledTimes(later);
+  await poller.stop();
+});

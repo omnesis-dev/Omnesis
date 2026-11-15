@@ -869,7 +869,7 @@ test("Google browser context commits to the exact desktop intent and records the
     new URL(operation.authorizeUrl).searchParams.get("ticket")!,
     "",
   );
-  const cookie = launched.cookie.split(";")[0]!;
+  const cookie = launched.cookie!.split(";")[0]!;
   const req = {
     url: `/_relay/web/start?desktop=${operation.operationId}`,
     headers: { cookie },

@@ -31,6 +31,14 @@ struct AccountCloudPairingConfiguration: Sendable {
 }
 
 extension AccountCloudPairingConfiguration {
+    /// The gateway key this install is paired with under a strict key pin. It was learned without
+    /// the relay, so a sign-in that reaches this same key can trust the gateway's own decision (F6).
+    static func pinnedGatewayKeys(service: PairingService = PairingService()) -> Set<String> {
+        guard let pairing = try? service.current(), pairing.tlsMode == .pinnedKeyStrict,
+              let key = pairing.spkiFingerprint else { return [] }
+        return [key]
+    }
+
     /// Test gateways have private certificates. Release builds always check.
     fileprivate static func checksPublicCertificate(bundle: Bundle) -> Bool {
         #if DEBUG
@@ -57,13 +65,15 @@ extension AccountCloudPairingClient: AccountPairingSession {}
 
 /// Sign-in commits to this device's key and finds its gateways. With one gateway there is nothing to choose.
 /// The gateway then either joins the device, or holds it until the owner says yes. A held request
-/// is approved with the owner's passkey on the gateway's own page when the gateway says that can
-/// work, or on a device the owner already uses, which shows the same code.
+/// is approved with the owner's passkey on the gateway's own page when this device verified the
+/// gateway and the gateway says that can work, or on a device the owner already uses, which shows
+/// the same code.
 ///
-/// Once approved, a request sent to a gateway whose certificate passed the public checks continues
-/// on its own: the code the gateway reports is checked here against this device's own computation,
-/// and the owner compared it on the approving screen. A request to a gateway this device could not
-/// verify still waits for the person to confirm the codes match.
+/// Once approved, a request sent to a gateway whose key this device already trusted without the relay
+/// continues on its own: the code the gateway reports is checked here against this device's own
+/// computation, and the owner compared it on the approving screen. A request to a gateway only the
+/// relay named (every gateway, for a new device) is held and still waits for the person to confirm
+/// the codes match, because a hacked relay can list a gateway of its own (F6).
 @MainActor @Observable final class AccountCloudPairingCoordinator {
     enum Phase: Equatable { case idle, connecting, signingIn, finding, choosing, waitingForGateway, joining, comparing, pairing, failed }
     enum Method { case google, passkey }
@@ -111,7 +121,8 @@ extension AccountCloudPairingClient: AccountPairingSession {}
             try AccountCloudPairingClient(
                 relayOrigin: $0.relayOrigin,
                 clientId: $0.google?.clientId ?? "",
-                checksPublicCertificate: $0.checksPublicCertificate
+                checksPublicCertificate: $0.checksPublicCertificate,
+                trustedGatewayKeys: { AccountCloudPairingConfiguration.pinnedGatewayKeys() }
             )
         },
         makeTransport: @escaping () -> any CloudPairingTransport = { CloudPairingHTTP() },

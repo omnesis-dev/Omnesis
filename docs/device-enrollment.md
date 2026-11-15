@@ -30,6 +30,10 @@ Rules that must survive every change:
   never dead-ends.
 - A relay-signed attestation (`account-enrollment-proof.ts`) can only admit a held
   request. It can never join a device.
+- The relay also chooses which gateway a new device is sent to, so a device joins by
+  itself only a gateway it can recognise without the relay. The iOS and Android apps
+  ask any other gateway to hold the request (`requireApproval`) and wait for a person
+  to compare the code (see "Which gateway a new device trusts").
 
 ## Device key
 
@@ -74,8 +78,37 @@ for a held request. `POST /devices/account/poll` (`{ requestId, secret }`)
 returns the same shape. The rest of the flow, including `POST /devices/pair`, is
 unchanged.
 
-A device sets `requireApproval` when the proposed certificate failed its public
-checks, so the human comparison replaces them.
+A device sets `requireApproval` when it cannot tell, without the relay, that the
+gateway is the owner's, so a person's comparison takes the place of that check.
+The iOS and Android apps set it for every gateway except one whose key they already
+pin and whose certificate passes the public checks (see "Which gateway a new device
+trusts"); the CLI and collector set it when the certificate fails those checks.
+
+### Which gateway a new device trusts
+
+The relay lists the gateways a sign-in can join and proposes each one's certificate.
+A hacked relay can list a gateway of its own as "your gateway": under any name with a
+valid, logged certificate, including a name of its own under the relay's domain
+(anyone with an owner key can claim a fresh `g-…` name at the DNS broker). That
+gateway would approve the device, and the device would then send its data there. It
+cannot reach the owner's gateway: the device's signature names the stand-in's key.
+But nothing in a Google or passkey sign-in names the owner's gateway, and a valid
+certificate proves only that the address is the one listed. Neither the certificate
+monitor (it watches only the owner's gateway's own name) nor `ask` (set on the
+owner's gateway, which never sees this request) covers it.
+
+So the iOS and Android apps decide:
+
+| The gateway the relay listed                                                                                                                                           | The app                                                                                                                                                                                                                                                     |
+| ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Presents the key of the gateway this install is paired with now (a strict key pin, from a QR code or an earlier sign-in), and its certificate passes the public checks | sends the request as usual: the gateway joins it or holds it, and a later approval continues by itself; iOS may open the gateway's own approval page                                                                                                        |
+| Anything else: every gateway, for a new phone; a key that differs from the pinned one; a certificate that fails the public checks                                      | sets `requireApproval`; shows the code and waits for the owner's OK on a device they already use; after the approval, asks the person to confirm the codes matched before it pairs; iOS opens no approval page, which the listed gateway would serve itself |
+
+The owner's own gateway then holds the request whatever its policy, notifies the
+owner's admin devices, and lists it with the same code. A stand-in can say it
+approved, but the owner never saw the code on a device of theirs, so they do not
+confirm it. This costs a new phone one approval and one confirmation on first
+setup.
 
 ### What the gateway checks
 
@@ -303,8 +336,10 @@ says to approve only a request one made oneself. The portal's held screen offers
 "Approve with your passkey" for its own request, and the devices page offers
 "Approve with passkey" for an app's request.
 
-The iOS app sends its own held request there. A passkey sign-in in the app
-presents the relay's origin, so it is always held. While it waits, the app reads
+The iOS app sends its own held request there, but only to a gateway it recognised
+without the relay (see "Which gateway a new device trusts"): a gateway the relay
+merely listed would serve that page itself. A passkey sign-in in the app presents
+the relay's origin, so it is always held. While it waits, the app reads
 `gatewayPasskey` and `passkeyApproval` from `/devices/account/config` over the
 connection pinned to the gateway's key and, only when `passkeyApproval` is true
 (a passkey is confirmed here and no security lock is on; absent counts as false),
@@ -319,12 +354,12 @@ with fingerprint" on a held request follows the same `passkeyApproval` rule. The
 app also refuses relay passkey options whose `issuedAt` is more than 60 seconds
 from the device's clock.
 
-Once a held request is approved, an app whose signed request went to a gateway
-whose certificate passed the public checks continues on its own: the code the
-gateway reports is checked against the app's own computation, and the owner
-compared it on the approving screen. That is the same footing an automatic join
-stands on. An app that could not verify the certificate (`requireApproval`) still
-asks the person to confirm that the codes matched before it pairs.
+Once a held request is approved, an app whose signed request went to a gateway it
+recognised without the relay continues on its own: the code the gateway reports is
+checked against the app's own computation, and the owner compared it on the
+approving screen. That is the same footing an automatic join stands on. An app that
+could not recognise the gateway (`requireApproval`) still asks the person to
+confirm that the codes matched before it pairs.
 
 On a `428 STEP_UP_REQUIRED` the apps say "Confirm it's you" and, for an approval,
 open the gateway's own approval page for that request (the Android app first
@@ -780,6 +815,7 @@ another one does.
 - Browser and desktop operations need a fresh sign-in on that operation, even with a session cookie. Browser redemption returns `signInProof`; desktop redemption only as below.
 - `POST /_relay/account/api/passkeys/countersign/options?endorse=<id>` and `…/countersign/complete?endorse=<id>` run the new passkey's countersignature (Passkeys added later, step 2), bound to the browser that created it. They sign nobody in.
 - `POST /_relay/account/api/portal/start` and `POST /_relay/account/api/portal/handoff` let the plain account page's sign-in serve a gateway's portal; see the handoff section below.
+- A sign-in link (`GET …/begin?operationId=…&ticket=…` for gateway sign-up, the account browser, Google sign-in and desktop sign-in) changes nothing: it shows a page with one Continue button that posts the same fields back to the same path, same-origin. That press binds the operation to the browser. The first browser keeps it; the same browser reopening the link or typing the connect code goes straight back, and any other browser gets 409 ("opened in another browser"). Link scanners fetch these links without cookies or scripts, so they can neither take a sign-in over nor break the person's.
 
 ## Desktop sign-in proves the same machine
 
@@ -1064,11 +1100,15 @@ What remains:
 
 A sign-in in the iOS app presents the relay's own origin, so it is held like a
 relay page's until the owner approves it on the gateway's page, which the app
-opens for its held request. A compromised relay
-can also show one brand-new device a fake gateway. That fake cannot reach the real
-gateway; first contact requires a publicly trusted, logged certificate, which the
-gateway's certificate monitor reports when it is for the gateway's own name (and
-holds new devices, above); and `ask` mode blocks it.
+opens for its held request when it recognised the gateway without the relay. A
+compromised relay can also send a new device to a gateway of its own, with a valid
+certificate for a name that is not the owner's gateway's. The certificate monitor
+does not see it (it watches the owner's gateway's name) and `ask` does not apply
+(the owner's gateway never sees the request). The apps therefore join by
+themselves only a gateway whose key they already pin, and otherwise wait for a
+person to compare the code on a device they already use (see "Which gateway a new
+device trusts"). The CLI and collector do not yet: they still continue by
+themselves once a gateway with a publicly logged certificate reports an approval.
 
 Operators who want a person to approve every device switch to `ask`, in the
 Omnesis account settings of the portal or the iOS and Android apps, or with

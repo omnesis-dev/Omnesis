@@ -1150,6 +1150,10 @@ export function installConnectUI() {
       });
       if (response.status === 429)
         throw new Error("Too many tries. Wait a minute, then try again.");
+      if (response.status === 409)
+        throw new Error(
+          "This code was already used in another browser. Finish there, or start again on your machine.",
+        );
       if (!response.ok)
         throw new Error("That code didn't work. Check it, or start again on your machine.");
       const { location } = await response.json();

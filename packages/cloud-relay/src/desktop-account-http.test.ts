@@ -5,6 +5,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { request as httpRequest } from "node:http";
 import { afterEach, expect, test, vi } from "vitest";
 import { registeredPasskey, signInOnOperation } from "../test/operation-sign-in.js";
+import { openLaunch } from "../test/browser-launch.js";
 import { listen } from "../test/support.js";
 import { createCloudRelay } from "./server.js";
 import { RelayAccounts } from "./accounts.js";
@@ -54,7 +55,7 @@ test("desktop browser consent keeps account cookies off the native result and re
   const f = await fixture(),
     op = await f.start(49152),
     launchUrl = new URL(op.authorizeUrl);
-  const launch = await fetch(f.url + launchUrl.pathname + launchUrl.search, { redirect: "manual" });
+  const launch = await openLaunch(f.url + launchUrl.pathname + launchUrl.search, origin);
   expect(launch.status).toBe(303);
   expect(launch.headers.get("location")).toBe(`/_relay/account?desktop=${op.operationId}`);
   const cookie = launch.headers.getSetCookie()[0]!.split(";")[0]!;
@@ -151,7 +152,7 @@ test("native desktop boundaries reject browser ambient authority query confusion
     400,
   );
   expect((await fetch(f.url + "/_relay/v3/desktop/begin?" + "x".repeat(2049))).status).toBe(414);
-  expect((await f.post("/_relay/v3/desktop/begin", {})).status).toBe(405);
+  expect((await f.post("/_relay/v3/desktop/begin", {})).status).toBe(403);
   expect((await f.post("/_relay/v3/desktop/complete", {})).status).toBe(405);
   expect((await fetch(f.url + "/_relay/v3/desktop/complete?extra=1")).status).toBe(400);
   expect((await fetch(f.url + "/_relay/v3/desktop/unknown")).status).toBe(404);
@@ -219,9 +220,7 @@ test("the real desktop SDK obtains only nonce-bound discovery through browser co
       fetch: transport,
       openBrowser: async (launch) => {
         const target = new URL(launch);
-        const response = await fetch(f.url + target.pathname + target.search, {
-          redirect: "manual",
-        });
+        const response = await openLaunch(f.url + target.pathname + target.search, origin);
         expect(response.status).toBe(303);
         const cookie = response.headers.getSetCookie()[0]!.split(";")[0]!;
         const query = new URL(response.headers.get("location")!, origin).search;
@@ -247,7 +246,7 @@ test("revoking the browser account during asynchronous desktop token issuance pr
   const f = await fixture(),
     operation = await f.start(),
     target = new URL(operation.authorizeUrl);
-  const launch = await fetch(f.url + target.pathname + target.search, { redirect: "manual" });
+  const launch = await openLaunch(f.url + target.pathname + target.search, origin);
   const cookie = launch.headers.getSetCookie()[0]!.split(";")[0]!;
   await signInOnOperation(f.url, `?desktop=${operation.operationId}`, cookie, f.passkey);
   expect(
@@ -272,4 +271,29 @@ test("revoking the browser account during asynchronous desktop token issuance pr
   });
   expect(response.status).toBe(401);
   expect(await response.text()).not.toContain("discoveryToken");
+});
+
+test("F43: a link scanner fetching a desktop sign-in link, before or after the person, can neither bind it nor break it", async () => {
+  const f = await fixture();
+  for (const scannerFirst of [true, false]) {
+    const op = await f.start(),
+      link = new URL(op.authorizeUrl),
+      at = f.url + link.pathname + link.search;
+    const scan = () => fetch(at, { redirect: "manual" });
+    if (scannerFirst) {
+      const early = await scan();
+      expect(early.status).toBe(200);
+      expect(early.headers.getSetCookie()).toEqual([]);
+    }
+    const launch = await openLaunch(at, origin);
+    expect(launch.status).toBe(303);
+    const cookie = launch.headers.getSetCookie()[0]!.split(";")[0]!;
+    const late = await scan();
+    expect(late.status).toBe(409);
+    expect(late.headers.getSetCookie()).toEqual([]);
+    const session = await fetch(f.url + `/_relay/account/api/session?desktop=${op.operationId}`, {
+      headers: { cookie },
+    });
+    expect(await session.json()).toMatchObject({ pending: { purpose: "desktop-discovery" } });
+  }
 });

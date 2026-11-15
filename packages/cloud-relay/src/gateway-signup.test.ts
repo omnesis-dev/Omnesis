@@ -127,7 +127,7 @@ function fixture(
       started,
       launch,
       id: started.operationId,
-      cookie: launch.cookie.split(";")[0]!,
+      cookie: launch.cookie!.split(";")[0]!,
       redemption: { operationId: started.operationId, redemptionSecret: value.redemptionSecret },
     };
   };
@@ -432,7 +432,7 @@ test("the owner signature does not cover the intent, so the same request starts 
     new URL(started.authorizeUrl).searchParams.get("ticket")!,
     "",
   );
-  expect(f.signup.describe(started.operationId, launch.cookie.split(";")[0]!)).toMatchObject({
+  expect(f.signup.describe(started.operationId, launch.cookie!.split(";")[0]!)).toMatchObject({
     intent: "create",
   });
 });
@@ -495,7 +495,7 @@ test("an admission from an earlier launch of the same ID cannot admit a later on
   const replay = f.signup.start(op.signed);
   const cookie = f.signup
     .launch(replay.operationId, new URL(replay.authorizeUrl).searchParams.get("ticket")!, "")
-    .cookie.split(";")[0]!;
+    .cookie!.split(";")[0]!;
   expect(() => admission.assertCurrent()).toThrow();
   expect(f.signup.creationAdmission(replay.operationId, cookie)).toBeDefined();
 });
@@ -643,49 +643,47 @@ test("a launch needs the ticket or the code, and a crowded browser is refused", 
   expect(claimed.location).toBe(`/_relay/account?signup=${started.operationId}`);
 });
 
-test("the link and the code reopen a request until somebody signs in, each time for a new browser", async () => {
+test("the first browser to open a request keeps it; the link and the code reopen it only there", async () => {
   const f = fixture();
   const ticketOf = (op: { started: { authorizeUrl: string } }) =>
     new URL(op.started.authorizeUrl).searchParams.get("ticket")!;
-  const cookieOf = (launch: { cookie: string }) => launch.cookie.split(";")[0]!;
+  const taken = "opened in another browser";
 
-  // The link, then the code, then the code again, then the link again.
+  // The link, then the code and the link again in the same browser: nothing is rebound.
   const op = f.launched(),
     ticket = ticketOf(op);
-  const typed = cookieOf(f.codes.claim(op.started.code, op.cookie));
-  expect(() => f.signup.describe(op.id, op.cookie)).toThrow("browser binding");
-  expect(f.signup.describe(op.id, typed)).toMatchObject({ code: op.started.code });
-  const retyped = cookieOf(f.codes.claim(op.started.code, typed));
-  expect(() => f.signup.describe(op.id, typed)).toThrow("browser binding");
-  const reopened = cookieOf(f.signup.launch(op.id, ticket, retyped));
-  expect(() => f.signup.describe(op.id, retyped)).toThrow("browser binding");
-  // Only the last browser can sign in and finish.
-  expect(() => f.signIn(op)).toThrow("browser binding");
-  const last = { ...op, cookie: reopened };
-  f.signIn(last);
-  expect(() => f.signup.launch(op.id, ticket, "")).toThrow("refused");
-  expect(() => f.codes.claim(op.started.code, "")).toThrow("refused");
-  expect(f.signup.describe(op.id, reopened)).toMatchObject({ needsProof: false });
-  await f.signup.confirm(op.id, reopened, f.actor);
-  expect(() => f.signup.launch(op.id, ticket, "")).toThrow("refused");
-  expect(() => f.codes.claim(op.started.code, "")).toThrow("refused");
+  expect(f.codes.claim(op.started.code, op.cookie)).toEqual({
+    location: `/_relay/account?signup=${op.id}`,
+  });
+  expect(f.signup.launch(op.id, ticket, op.cookie).cookie).toBeUndefined();
+  expect(f.signup.peekLaunch(op.id, ticket, op.cookie)).toEqual({
+    state: "here",
+    location: `/_relay/account?signup=${op.id}`,
+  });
+  // Another browser is refused by the link and by the code, and looking changes nothing.
+  expect(f.signup.peekLaunch(op.id, ticket, "")).toEqual({ state: "taken" });
+  expect(() => f.signup.launch(op.id, ticket, "")).toThrow(taken);
+  expect(() => f.codes.claim(op.started.code, "")).toThrow(taken);
+  expect(() => f.signup.peekLaunch(op.id, "x".repeat(43), "")).toThrow("refused");
+  f.signIn(op);
+  expect(() => f.signup.launch(op.id, ticket, "")).toThrow(taken);
+  expect(f.signup.describe(op.id, op.cookie)).toMatchObject({ needsProof: false });
+  await f.signup.confirm(op.id, op.cookie, f.actor);
+  expect(() => f.signup.launch(op.id, ticket, "")).toThrow(taken);
+  expect(() => f.codes.claim(op.started.code, "")).toThrow(taken);
+  expect(f.signup.peekLaunch(op.id, ticket, "")).toEqual({ state: "taken" });
   expect(f.signup.poll(op.redemption)).toMatchObject({ status: "approved" });
-  expect(() => f.signup.launch(op.id, ticket, "")).toThrow("refused");
+  expect(() => f.signup.launch(op.id, ticket, "")).toThrow(taken);
 
-  // The code first, then the link.
+  // The code first, then the link: the browser that typed the code keeps it.
   const value = f.request(),
     started = f.signup.start(value.signed);
-  const first = cookieOf(f.codes.claim(started.code, ""));
-  const linked = cookieOf(f.signup.launch(started.operationId, ticketOf({ started }), first));
-  expect(() => f.signup.describe(started.operationId, first)).toThrow("browser binding");
-  expect(f.signup.describe(started.operationId, linked)).toMatchObject({ needsProof: true });
-
-  // A Google identity accepted for this request already ties it to the browser that gave it.
-  const google = f.launched({}, "create");
-  await f.signup.authorizeGoogle(google.id, google.cookie, { subjectDigest: "e".repeat(64) });
-  expect(() => f.signup.launch(google.id, ticketOf(google), "")).toThrow("refused");
-  expect(() => f.codes.claim(google.started.code, "")).toThrow("refused");
-  expect(f.signup.describe(google.id, google.cookie)).toMatchObject({ needsProof: true });
+  expect(f.signup.peekLaunch(started.operationId, ticketOf({ started }), "")).toEqual({
+    state: "open",
+  });
+  const first = f.codes.claim(started.code, "").cookie!.split(";")[0]!;
+  expect(() => f.signup.launch(started.operationId, ticketOf({ started }), "")).toThrow(taken);
+  expect(f.signup.describe(started.operationId, first)).toMatchObject({ needsProof: true });
 });
 
 test("a refused, cancelled or replaced request cannot be reopened", async () => {
@@ -698,8 +696,8 @@ test("a refused, cancelled or replaced request cannot be reopened", async () => 
   await expect(
     listed.signup.authorizeGoogle(denied.id, denied.cookie, { subjectDigest: "e".repeat(64) }),
   ).rejects.toBeInstanceOf(SignupDenied);
-  expect(() => listed.signup.launch(denied.id, ticket, "")).toThrow("refused");
-  expect(() => listed.codes.claim(denied.started.code, "")).toThrow("refused");
+  expect(() => listed.signup.launch(denied.id, ticket, "")).toThrow("opened in another browser");
+  expect(() => listed.codes.claim(denied.started.code, "")).toThrow("opened in another browser");
   expect(listed.signup.describe(denied.id, denied.cookie)).toMatchObject({
     denied: { reason: "not-allowed" },
   });

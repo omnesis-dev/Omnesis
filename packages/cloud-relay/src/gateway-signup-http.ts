@@ -6,6 +6,7 @@ import { GATEWAY_SIGNUP_ACCESS_PATH, GATEWAY_SIGNUP_PATH } from "./gateway-signu
 import { readJsonBody } from "./relay-json-body.js";
 import { RelayError } from "./tunnels.js";
 import { brand } from "./relay-page.js";
+import { serveLaunch } from "./browser-launch.js";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { AccountBrowserOwner } from "./account-browser-contract.js";
 import type { LoginAdmission } from "./admission.js";
@@ -19,6 +20,9 @@ const refusal = JSON.stringify({
   reason: "invitation-required",
   message: "This relay connects new gateways by invitation only. Ask its operator for one.",
 });
+
+const restart =
+  "To use this browser instead, go back to your gateway, press Cancel and connect again.";
 
 /** The gateway has no relay session yet, so its owner signature and redemption secret stand in. */
 export class GatewaySignupHttp {
@@ -65,20 +69,18 @@ export class GatewaySignupHttp {
       return true;
     }
     if (action === "begin") {
-      if (req.method !== "GET") throw new RelayError(405, "Method not allowed");
-      const parsed = launch.safeParse(Object.fromEntries(url.searchParams));
-      if (url.searchParams.size !== 2 || !parsed.success)
-        throw new RelayError(400, "Invalid gateway signup launch");
-      return this.options.admission.run(async () => {
-        const result = this.options.signup.launch(
-          parsed.data.operationId,
-          parsed.data.ticket,
-          req.headers.cookie ?? "",
-        );
-        res.writeHead(303, { location: result.location, "set-cookie": result.cookie });
-        res.end();
-        return true;
-      }, req);
+      const { signup, admission } = this.options;
+      // Opening the link changes nothing; the Continue press binds the sign-up (F43).
+      return serveLaunch(req, res, url, {
+        admission,
+        origin: signup.origin,
+        path: GATEWAY_SIGNUP_PATH + "/begin",
+        names: { required: ["operationId", "ticket"] },
+        parse: (fields) => launch.safeParse(fields).data,
+        peek: (input, cookie) => signup.peekLaunch(input.operationId, input.ticket, cookie),
+        launch: (input, cookie) => signup.launch(input.operationId, input.ticket, cookie),
+        restart,
+      });
     }
     if (!["start", "poll", "link", "cancel"].includes(action))
       throw new RelayError(404, "Gateway signup operation not found");

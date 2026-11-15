@@ -67,6 +67,10 @@ import {
   signInOnThisMachine,
   signedInAccount,
   sha256Hex,
+  startGatewaySignup,
+  clickFirst,
+  connectThisGateway,
+  pressContinue,
   waitFor,
   type GatewayPasskeyCeremony,
   type PasskeySession,
@@ -753,4 +757,49 @@ describe.skipIf(!browserReady)("a relay cannot enroll devices on its own", () =>
     // Its confirmation goes with it.
     expect(after.confirmedSignIns).toEqual([]);
   }, 300_000);
+  test("F43: a link scanner that fetches the sign-up link after the person opened it can neither break nor take over their sign-in", async () => {
+    const signup = await startGatewaySignup(world, "existing");
+    const link = signup.started.authorizeUrl;
+    const page = session.page;
+    // The person opens "Open sign-in" (and presses Continue, where the page asks for it).
+    await page.goto(link);
+    await pressContinue(page, 3_000).catch(() => {});
+    // A link scanner fetches the same URL seconds later: no cookies, no scripts.
+    const scanner = { "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/134.0" };
+    const scanned = await fetch(link, { redirect: "manual", headers: scanner });
+    expect(scanned.headers.getSetCookie()).toEqual([]);
+    // Even a scanner that presses the button gets nothing.
+    const target = new URL(link);
+    const pressed = await fetch(target.origin + target.pathname, {
+      method: "POST",
+      redirect: "manual",
+      headers: {
+        ...scanner,
+        origin: target.origin,
+        "content-type": "application/x-www-form-urlencoded",
+      },
+      body: target.searchParams.toString(),
+    });
+    expect(pressed.status).toBe(409);
+    expect(pressed.headers.getSetCookie()).toEqual([]);
+    const cookies = [...scanned.headers.getSetCookie(), ...pressed.headers.getSetCookie()]
+      .map((value) => value.split(";")[0])
+      .join("; ");
+    expect(
+      (
+        await fetch(
+          `${world.relayOrigin}/_relay/account/api/session?signup=${signup.started.operationId}`,
+          { headers: { ...scanner, cookie: cookies } },
+        )
+      ).status,
+    ).toBe(403);
+    // The person's browser still owns the sign-up and finishes it.
+    await clickFirst(page, ["Sign in with Passkey", "Verify with Passkey"]);
+    await connectThisGateway(page);
+    await waitFor(
+      async () => ((await signup.poll()).status === "approved" ? true : undefined),
+      "the sign-up to be approved for the person's browser",
+    );
+    await signup.cancel();
+  }, 120_000);
 });

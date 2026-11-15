@@ -44,6 +44,15 @@ export interface GatewayCertificateMonitorOptions {
   caaLookup?: CaaLookup;
 }
 
+/** An https base path from the environment, so relative API paths resolve below it. */
+function baseUrl(value: string | undefined): string | undefined {
+  if (value === undefined) return undefined;
+  const url = new URL(value);
+  if (url.protocol !== "https:" || url.username || url.password || url.search || url.hash)
+    throw new Error();
+  return url.href.endsWith("/") ? url.href : `${url.href}/`;
+}
+
 /**
  * Gateway-owned observer. Status polling can initialize it after setup. It has no relay
  * dependency; what an incident changes is decided by `onIncident`.
@@ -91,7 +100,10 @@ export class GatewayCertificateMonitor {
       }
       return;
     }
-    let hostname: string, interval: number | undefined, providerUrl: string | undefined;
+    let hostname: string,
+      interval: number | undefined,
+      providerUrl: string | undefined,
+      fallbackUrl: string | undefined;
     try {
       const identity = this.options.identity();
       if (!identity?.publicOrigin || identity.spkiFingerprint === undefined) return;
@@ -108,14 +120,8 @@ export class GatewayCertificateMonitor {
         )
           throw new Error();
       }
-      providerUrl = this.options.env.OMNESIS_CLOUD_RELAY_CERTSPOTTER_URL;
-      if (providerUrl !== undefined) {
-        const url = new URL(providerUrl);
-        if (url.protocol !== "https:" || url.username || url.password || url.search || url.hash)
-          throw new Error();
-        // A base path, so `v1/issuances` resolves below it.
-        providerUrl = url.href.endsWith("/") ? url.href : `${url.href}/`;
-      }
+      providerUrl = baseUrl(this.options.env.OMNESIS_CLOUD_RELAY_CERTSPOTTER_URL);
+      fallbackUrl = baseUrl(this.options.env.OMNESIS_CLOUD_RELAY_CRTSH_URL);
     } catch {
       this.failure = "ct-configuration-invalid";
       this.retryAt = this.now() + 60000;
@@ -145,10 +151,12 @@ export class GatewayCertificateMonitor {
         let monitor: Monitor;
         if (this.options.create) monitor = await this.options.create(input);
         else {
-          const [{ CertificateIssuanceMonitor }, { CertSpotterProvider }] = await Promise.all([
-            import("./certificate-monitor.js"),
-            import("./certificate-monitor-certspotter.js"),
-          ]);
+          const [{ CertificateIssuanceMonitor }, { CertSpotterProvider }, { CrtShProvider }] =
+            await Promise.all([
+              import("./certificate-monitor.js"),
+              import("./certificate-monitor-certspotter.js"),
+              import("./certificate-monitor-crtsh.js"),
+            ]);
           this.cleanup.assertAdmitting();
           monitor = await CertificateIssuanceMonitor.open({
             ...input,
@@ -156,6 +164,10 @@ export class GatewayCertificateMonitor {
               apiKeyFile: this.options.env.OMNESIS_CLOUD_RELAY_CERTSPOTTER_API_KEY_FILE,
               ...(providerUrl ? { baseUrl: providerUrl } : {}),
             }),
+            // A Cert Spotter stand-in gets a crt.sh one only if named too.
+            ...(providerUrl === undefined || fallbackUrl !== undefined
+              ? { fallback: new CrtShProvider(fallbackUrl ? { baseUrl: fallbackUrl } : {}) }
+              : {}),
           });
         }
         if (this.closed) return;
