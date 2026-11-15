@@ -1542,11 +1542,8 @@ const agentLifecycle = new AgentLifecycle({
   deleteDocumentIndexBatch: async (documentId, limit, sourceDeleted) => {
     return indexerLifecycle.deleteDocumentIndexBatch(documentId, limit, sourceDeleted);
   },
-  notifyPrivacyApproval: (approvalId) => {
-    // Held for the owner: tell open portals at once, and the owner's phones.
-    portalSignals.publish("answers");
-    return privacyApprovalNotifier.notify(approvalId);
-  },
+  notifyPrivacyApproval: (approvalId) => privacyApprovalNotifier.notify(approvalId),
+  onPrivacyApprovalHeld: () => portalSignals.publish("answers"),
   // Slow-answer push: an agent turn requested with `notifyAfterMs` that
   // outlives its budget delivers the finished answer over APNs.
   notifyAgentAnswer: (notification) =>
@@ -3844,6 +3841,7 @@ const subscriptionDeliveryService = new SubscriptionDeliveryService({
     subscriptionService?.reevaluatePendingWatchPolicies() ?? Promise.resolve(0),
   reapplyOperatorApprovals: () =>
     subscriptionService?.reapplyOperatorApprovals() ?? Promise.resolve(0),
+  onExpired: () => portalSignals.publish("watches"),
   config: {
     maxAttempts: subscriptionDeliveryConfig?.maxDeliveryAttempts,
     baseBackoffMs: subscriptionDeliveryConfig?.deliveryBaseBackoffMs,

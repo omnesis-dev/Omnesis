@@ -7,23 +7,33 @@
  * changed (`event: changed`, `data: {"topic":"devices"}`) and nothing more;
  * the portal re-reads that topic's list through its ordinary route. The first
  * frame is `event: ready`, after which the portal re-reads everything it
- * shows, so a reconnect never misses what changed while it was away.
+ * shows, so a reconnect never misses what changed while it was away. An
+ * `event: beat` every few seconds tells the portal the stream is alive.
  *
- * Admin scope, like every list a signal points at. One browser holds one
- * stream for all its tabs; the gateway caps how many it serves at once.
+ * Admin scope, like every list a signal points at, and only for as long as
+ * the credential that opened it: each beat checks it again and ends the
+ * stream once the session or token is gone. One browser holds one stream for
+ * all its tabs; the gateway caps how many it serves at once.
  */
 
 import { scope } from "../scope.js";
 import type { PortalSignals } from "../../portal-signals/hub.js";
-import type { RouteApp } from "./types.js";
+import type { Context } from "hono";
+import type { AppEnv, RouteApp } from "./types.js";
 
 /** Keeps proxies from closing a quiet stream, and finds a dead socket within this long. */
 const HEARTBEAT_MS = 25_000;
 
+export interface PortalSignalRouteOptions {
+  heartbeatMs?: number;
+  /** Whether the credential that opened this stream is still valid; checked on every beat. */
+  stillAuthorized?: (c: Context<AppEnv>) => boolean;
+}
+
 export function mountPortalSignalRoutes(
   app: RouteApp,
   signals: PortalSignals,
-  { heartbeatMs = HEARTBEAT_MS }: { heartbeatMs?: number } = {},
+  { heartbeatMs = HEARTBEAT_MS, stillAuthorized = () => true }: PortalSignalRouteOptions = {},
 ): void {
   app.get("/portal/api/signals", scope.admin(), (c) => {
     // Say so with a status while one still can; a stream that loses the race
@@ -36,14 +46,16 @@ export function mountPortalSignalRoutes(
       );
     }
     const encoder = new TextEncoder();
-    let unsubscribe: () => void = () => {};
     const signal = c.req.raw.signal;
+    // Ends the stream once, whoever notices first: the client leaving, a write
+    // to a socket that is gone, a credential that lapsed, or the stream's reader.
+    let stop: (error?: unknown) => void = () => {};
     const stream = new ReadableStream({
       start(controller) {
         let closed = false;
+        let unsubscribe: () => void = () => {};
         let timer: ReturnType<typeof setInterval> | undefined = undefined;
-        // Once: from the client leaving, or a write to a socket that is gone.
-        const teardown = (error?: unknown): void => {
+        stop = (error?: unknown): void => {
           if (closed) return;
           closed = true;
           if (timer) clearInterval(timer);
@@ -60,7 +72,7 @@ export function mountPortalSignalRoutes(
           try {
             controller.enqueue(encoder.encode(frame));
           } catch (error) {
-            teardown(error);
+            stop(error);
           }
         };
         try {
@@ -68,17 +80,20 @@ export function mountPortalSignalRoutes(
             write(`event: changed\ndata: ${JSON.stringify({ topic })}\n\n`),
           );
         } catch (error) {
-          teardown(error);
+          stop(error);
           return;
         }
         write(`event: ready\ndata: {}\n\n`);
-        timer = setInterval(() => write(`: hb\n\n`), heartbeatMs);
+        timer = setInterval(() => {
+          if (!stillAuthorized(c)) stop();
+          else write(`event: beat\ndata: {}\n\n`);
+        }, heartbeatMs);
         timer.unref?.();
-        if (signal?.aborted) teardown();
-        else signal?.addEventListener("abort", () => teardown());
+        if (signal?.aborted) stop();
+        else signal?.addEventListener("abort", () => stop());
       },
       cancel() {
-        unsubscribe();
+        stop();
       },
     });
     return new Response(stream, {

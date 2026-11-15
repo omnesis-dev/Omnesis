@@ -11,7 +11,12 @@ import { mountPortalSignalRoutes } from "./portal-signals.js";
 import type { DeviceId, TokenId } from "@omnesis/types";
 import type { AppEnv } from "./types.js";
 
-function app(signals: PortalSignals, scopes = [SCOPE_ADMIN], heartbeatMs?: number) {
+function app(
+  signals: PortalSignals,
+  scopes = [SCOPE_ADMIN],
+  heartbeatMs?: number,
+  stillAuthorized?: () => boolean,
+) {
   const router = strictRoute(new Hono<AppEnv>());
   router.onError((e, c) => {
     if (e instanceof HttpError) return errorResponse(c, e);
@@ -26,7 +31,10 @@ function app(signals: PortalSignals, scopes = [SCOPE_ADMIN], heartbeatMs?: numbe
     });
     await next();
   });
-  mountPortalSignalRoutes(router, signals, heartbeatMs ? { heartbeatMs } : {});
+  mountPortalSignalRoutes(router, signals, {
+    ...(heartbeatMs ? { heartbeatMs } : {}),
+    ...(stillAuthorized ? { stillAuthorized } : {}),
+  });
   return router;
 }
 
@@ -74,14 +82,37 @@ describe("GET /portal/api/signals", () => {
     expect(signals.hasRoom()).toBe(true);
   });
 
-  test("keeps a quiet stream alive with comments", async () => {
+  test("beats while quiet, so the portal can tell the stream is alive", async () => {
     const signals = new PortalSignals();
     const controller = new AbortController();
     const res = await app(signals, [SCOPE_ADMIN], 10).request("/portal/api/signals", {
       signal: controller.signal,
     });
-    expect((await frames(res.body!, 2))[1]).toBe(": hb");
+    expect((await frames(res.body!, 2))[1]).toBe("event: beat\ndata: {}");
     controller.abort();
+  });
+
+  test("ends once the credential that opened it is gone, and frees its slot", async () => {
+    const signals = new PortalSignals({ maxListeners: 1 });
+    let valid = true;
+    const res = await app(signals, [SCOPE_ADMIN], 10, () => valid).request("/portal/api/signals");
+    const reader = res.body!.getReader();
+    await reader.read();
+    valid = false;
+    for (;;) {
+      const { done } = await reader.read();
+      if (done) break;
+    }
+    expect(signals.hasRoom()).toBe(true);
+  });
+
+  test("a reader that cancels the stream stops its beat and frees its slot", async () => {
+    const signals = new PortalSignals({ maxListeners: 1 });
+    const res = await app(signals, [SCOPE_ADMIN], 10).request("/portal/api/signals");
+    const reader = res.body!.getReader();
+    await reader.read();
+    await reader.cancel();
+    expect(signals.hasRoom()).toBe(true);
   });
 
   test("a full gateway says so and asks to retry later", async () => {

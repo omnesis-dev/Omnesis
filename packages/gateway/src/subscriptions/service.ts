@@ -464,8 +464,10 @@ export class SubscriptionService {
     });
     if (result.outcome === "replayed") return result.subscription;
     if (result.outcome === "created") {
+      // Reported once the policy had its say: it may already have decided the request.
+      const applied = await this.applyWatchPrivacyPolicy(caller, result.subscription, policy);
       this.deps.onApprovalsChanged?.();
-      return this.applyWatchPrivacyPolicy(caller, result.subscription, policy);
+      return applied;
     }
     return mapWriteOutcome(result.outcome);
   }
@@ -628,7 +630,10 @@ export class SubscriptionService {
       if (decided.status !== "pending_approval") resolved += 1;
     }
     this.watchPolicyRevision = waitingForCompatiblePlugin ? null : policy.revision;
-    if (resolved > 0) log.info(`privacy policy resolved ${resolved} pending watch(es)`);
+    if (resolved > 0) {
+      log.info(`privacy policy resolved ${resolved} pending watch(es)`);
+      this.deps.onApprovalsChanged?.();
+    }
     return resolved;
   }
 
@@ -840,6 +845,7 @@ export class SubscriptionService {
     }
     if (activated > 0) {
       log.info(`activated ${activated} operator watch(es)`);
+      this.deps.onApprovalsChanged?.();
     }
     this.reportStrandedOperatorWatches(now);
     return activated;

@@ -36,7 +36,7 @@ import { strictRoute } from "./http/scope.js";
 import { httpActivityName, withActivity } from "./observability/main-activity.js";
 type Db = Database.Database;
 import { join } from "node:path";
-import { lookupToken, lookupSession } from "./data/repositories/TokenRepository.js";
+import { isTokenActive, lookupToken, lookupSession } from "./data/repositories/TokenRepository.js";
 import { getDevice, isRevokedDeviceKey } from "./data/repositories/DeviceRepository.js";
 import {
   CLIENT_VERSION_PARAM,
@@ -1577,7 +1577,24 @@ export function createServer(
 
   // Portal block (redirect, source-meta, login/logout/session, SPA static)
   // Ahead of the portal's own routes, whose `/portal/*` fallback serves the page.
-  mountPortalSignalRoutes(app, portalSignals);
+  mountPortalSignalRoutes(app, portalSignals, {
+    // A stream lives only as long as what opened it: a portal session that is
+    // still current, or a token that is still active.
+    stillAuthorized: (c) => {
+      const auth = c.get("auth");
+      if (auth.authMethod === "portal-session") {
+        const sessionId = getSessionCookie(c.req.header("Cookie"), cookieName);
+        return (
+          sessionId !== null &&
+          sessionId !== undefined &&
+          lookupSession(db, sessionId).info !== null
+        );
+      }
+      if (auth.authMethod === "bearer" && auth.tokenId && auth.deviceId)
+        return isTokenActive(db, auth.tokenId, auth.deviceId);
+      return false;
+    },
+  });
   mountPortalRoutes(app, {
     db,
     portalRoot: join(import.meta.dirname, "..", "portal"),

@@ -4,7 +4,7 @@
 import "./synth-env.js";
 
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
-import { beginMcpAuthorization } from "./mcp-oauth-helper.js";
+import { beginMcpAuthorization, loginPortal } from "./mcp-oauth-helper.js";
 import { SyntheticE2EHarness } from "./synth-harness.js";
 
 /** Frames of an open signal stream, read as they arrive. */
@@ -20,7 +20,7 @@ class SignalStream {
     this.reader = body.getReader();
   }
 
-  /** The next frame that is not a heartbeat, within `timeoutMs`. */
+  /** The next frame that is not a liveness beat, within `timeoutMs`. */
   async next(timeoutMs = 10_000): Promise<string> {
     const deadline = Date.now() + timeoutMs;
     for (;;) {
@@ -28,7 +28,7 @@ class SignalStream {
       if (end >= 0) {
         const frame = this.buffer.slice(0, end);
         this.buffer = this.buffer.slice(end + 2);
-        if (!frame.startsWith(":")) return frame;
+        if (!frame.startsWith("event: beat")) return frame;
         continue;
       }
       const left = deadline - Date.now();
@@ -41,6 +41,21 @@ class SignalStream {
       ]);
       if (read.done) throw new Error("The signal stream ended.");
       this.buffer += this.decoder.decode(read.value, { stream: true });
+    }
+  }
+
+  /** Whether the gateway ends the stream within `timeoutMs`, reading past any frames. */
+  async endsWithin(timeoutMs: number): Promise<boolean> {
+    const deadline = Date.now() + timeoutMs;
+    for (;;) {
+      const left = deadline - Date.now();
+      if (left <= 0) return false;
+      const read = await Promise.race([
+        this.reader.read(),
+        new Promise<"waiting">((resolve) => setTimeout(() => resolve("waiting"), left)),
+      ]);
+      if (read === "waiting") return false;
+      if (read.done) return true;
     }
   }
 
@@ -66,10 +81,12 @@ describe("portal signals — spawned gateway", () => {
     await harness.destroy();
   }, 15_000);
 
-  async function open(): Promise<SignalStream> {
+  async function open(
+    headers: Record<string, string> = { Authorization: `Bearer ${harness.apiKey}` },
+  ): Promise<SignalStream> {
     const controller = new AbortController();
     const response = await fetch(`${harness.gatewayUrl}/portal/api/signals`, {
-      headers: { Authorization: `Bearer ${harness.apiKey}` },
+      headers,
       signal: controller.signal,
     });
     expect(response.status).toBe(200);
@@ -101,6 +118,23 @@ describe("portal signals — spawned gateway", () => {
       second.close();
     }
   });
+
+  test("a portal session opens it as the browser does, and logging out ends it", async () => {
+    const portal = await loginPortal(harness);
+    const stream = await open({ Cookie: portal.cookie });
+    try {
+      expect(await stream.next()).toBe("event: ready\ndata: {}");
+      const logout = await fetch(`${harness.gatewayUrl}/portal/api/logout`, {
+        method: "POST",
+        headers: { Cookie: portal.cookie, "X-Omnesis-CSRF": portal.csrfToken },
+      });
+      expect(logout.ok).toBe(true);
+      // The next beat finds the session gone and ends the stream.
+      expect(await stream.endsWithin(40_000)).toBe(true);
+    } finally {
+      stream.close();
+    }
+  }, 60_000);
 
   test("a stream needs an admin credential", async () => {
     const response = await fetch(`${harness.gatewayUrl}/portal/api/signals`);

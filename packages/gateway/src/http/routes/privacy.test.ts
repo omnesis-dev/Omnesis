@@ -51,7 +51,7 @@ describe("privacy admin routes", () => {
   let db: Database.Database;
   let dir: string;
   let previousExperimental: string | undefined;
-  let approvalDecided: ReturnType<typeof vi.fn>;
+  let approvalDecided: ReturnType<typeof vi.fn<() => void>>;
 
   beforeEach(() => {
     previousExperimental = process.env.OMNESIS_EXPERIMENTAL;
