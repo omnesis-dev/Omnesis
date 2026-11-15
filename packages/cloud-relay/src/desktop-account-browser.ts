@@ -121,9 +121,8 @@ export class DesktopAccountBrowser implements AccountOperationBroker {
     const operation = this.ticketed(id, ticket);
     if (this.holds(id, operation, cookieHeader))
       return { state: "here", location: this.location(id) };
-    if (operation.phase === "created") return { state: "open" };
-    if (operation.phase === "launched") return { state: "taken" };
-    throw new RelayError(403, "Desktop browser launch refused");
+    // Once a browser holds it, every other one is told so, whatever stage it reached.
+    return operation.phase === "created" ? { state: "open" } : { state: "taken" };
   }
   /** The Continue press on the link's page. */
   launch(id: string, ticket: string, cookieHeader: string) {
@@ -149,8 +148,7 @@ export class DesktopAccountBrowser implements AccountOperationBroker {
    */
   private bind(id: string, operation: Operation, cookieHeader: string) {
     if (this.holds(id, operation, cookieHeader)) return { location: this.location(id) };
-    if (operation.phase === "launched") throw new LaunchTaken();
-    if (operation.phase !== "created") throw new RelayError(403, "Desktop browser launch refused");
+    if (operation.phase !== "created") throw new LaunchTaken();
     if (
       cookieHeader.split(";").filter((part) => part.trim().startsWith("__Host-omnesis-desktop-"))
         .length >= 8

@@ -151,9 +151,8 @@ export class AccountBrowserBroker implements AccountOperationBroker {
   peekLaunch(id: string, ticket: string, cookieHeader: string): LaunchView {
     const operation = this.ticketed(id, ticket);
     if (this.holds(operation, cookieHeader)) return { state: "here", location: this.location(id) };
-    if (operation.phase === "created") return { state: "open" };
-    if (operation.phase === "launched") return { state: "taken" };
-    throw new RelayError(403, "Account browser launch refused");
+    // Once a browser holds it, every other one is told so, whatever stage it reached.
+    return operation.phase === "created" ? { state: "open" } : { state: "taken" };
   }
 
   /**
@@ -163,8 +162,7 @@ export class AccountBrowserBroker implements AccountOperationBroker {
   launch(id: string, ticket: string, cookieHeader: string, method?: AccountBrowserMethod) {
     const operation = this.ticketed(id, ticket);
     if (this.holds(operation, cookieHeader)) return { location: this.location(id) };
-    if (operation.phase === "launched") throw new LaunchTaken();
-    if (operation.phase !== "created") throw new RelayError(403, "Account browser launch refused");
+    if (operation.phase !== "created") throw new LaunchTaken();
     if (
       cookieHeader
         .split(";")

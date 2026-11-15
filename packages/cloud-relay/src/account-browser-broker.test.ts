@@ -274,6 +274,15 @@ test("unbound browsers, replayed launch tickets and mismatched owner signatures 
     state: "here",
   });
   expect(f.broker.describe(started.operationId, cookie)).toMatchObject({ needsProof: true });
+  // A browser already holding eight other operations is refused a ninth.
+  const crowded = f.broker.start(f.authorizedOwner(), f.signed(f.make().unsigned));
+  expect(() =>
+    f.broker.launch(
+      crowded.operationId,
+      new URL(crowded.authorizeUrl).searchParams.get("ticket")!,
+      Array.from({ length: 8 }, (_, i) => `__Host-omnesis-account-operation-${i}=x`).join("; "),
+    ),
+  ).toThrow("Too many");
   for (const header of [
     "",
     cookie + ";" + cookie,

@@ -231,7 +231,6 @@ export class GoogleBrowserBroker {
   peekLaunch(operationId: string, ticket: string, cookieHeader: string): LaunchView {
     const operation = this.ticketed(operationId, ticket);
     if (operation.phase === "created") return { state: "open" };
-    if (operation.phase !== "launched") throw new RelayError(403, "Invalid Google browser launch");
     // The browser that pressed Continue may open the link again and go back to Google.
     return this.holds(operation, cookieHeader)
       ? { state: "here", location: operation.authorization.url }
@@ -245,11 +244,8 @@ export class GoogleBrowserBroker {
     cookieHeader = "",
   ): { authorizeUrl: string; cookie?: string } {
     const operation = this.ticketed(operationId, ticket);
-    if (operation.phase === "launched") {
-      if (this.holds(operation, cookieHeader)) return { authorizeUrl: operation.authorization.url };
-      throw new LaunchTaken();
-    }
-    if (operation.phase !== "created") throw new RelayError(403, "Invalid Google browser launch");
+    if (this.holds(operation, cookieHeader)) return { authorizeUrl: operation.authorization.url };
+    if (operation.phase !== "created") throw new LaunchTaken();
     operation.phase = "launched";
     return {
       authorizeUrl: operation.authorization.url,

@@ -20,14 +20,18 @@ let root: string,
   directory: string,
   served: string,
   rogue: X509Certificate,
-  wildcard: X509Certificate;
+  wildcard: X509Certificate,
+  otherHost: X509Certificate;
 beforeAll(async () => {
   root = await mkdtemp(join(tmpdir(), "ct-crtsh-"));
-  for (const name of ["served", "rogue", "wildcard"]) await mkdir(join(root, name));
+  for (const name of ["served", "rogue", "wildcard", "other"]) await mkdir(join(root, name));
   served = await readFile(tlsFiles(join(root, "served"), hostname).certFile, "utf8");
   rogue = new X509Certificate(await readFile(tlsFiles(join(root, "rogue"), hostname).certFile));
   wildcard = new X509Certificate(
     await readFile(tlsFiles(join(root, "wildcard"), "*.example.test").certFile),
+  );
+  otherHost = new X509Certificate(
+    await readFile(tlsFiles(join(root, "other"), "other.example.org").certFile),
   );
 });
 afterAll(() => rm(root, { recursive: true, force: true }));
@@ -212,4 +216,90 @@ test("a crt.sh that refuses the request is told apart from one that is down", as
       }),
     ),
   ).rejects.toMatchObject({ code: "ct-provider-refused" });
+});
+
+test("crt.sh is asked only for a real name, about the wildcard only when there is a label to spare", async () => {
+  const transport = crtsh({}, {});
+  const provider = new CrtShProvider({ fetch: transport });
+  for (const name of ["Gateway.Example.Test", `${"a".repeat(250)}.test`])
+    await expect(provider.snapshot(name, AbortSignal.timeout(5000))).rejects.toMatchObject({
+      code: "ct-provider-unavailable",
+    });
+  expect(transport).not.toHaveBeenCalled();
+  expect(await provider.snapshot("example.test", AbortSignal.timeout(5000))).toEqual([]);
+  expect(transport.mock.calls.map(([url]) => new URL(String(url)).searchParams.get("q"))).toEqual([
+    "example.test",
+  ]);
+  // An empty answer is not a list.
+  await expect(
+    snapshot(
+      new CrtShProvider({ fetch: vi.fn<typeof fetch>().mockResolvedValue(new Response(null)) }),
+    ),
+  ).rejects.toMatchObject({ code: "ct-provider-invalid" });
+});
+
+test("certificates read before are not read again, and those the name no longer lists are let go", async () => {
+  const rows: Record<string, unknown> = { [hostname]: [{ id: 1 }] };
+  const transport = crtsh(rows, { 1: rogue, 2: rogue });
+  const provider = new CrtShProvider({ fetch: transport });
+  await snapshot(provider);
+  rows[hostname] = [{ id: 2 }];
+  await snapshot(provider);
+  rows[hostname] = [{ id: 1 }];
+  expect(await snapshot(provider)).toHaveLength(1);
+  const reads = transport.mock.calls
+    .map(([url]) => new URL(String(url)).searchParams.get("d"))
+    .filter(Boolean);
+  expect(reads).toEqual(["1", "2", "1"]);
+});
+
+test("without a transport of its own, crt.sh is reached with the global fetch", async () => {
+  const transport = crtsh({}, {});
+  vi.stubGlobal("fetch", transport);
+  try {
+    expect(await snapshot(new CrtShProvider())).toEqual([]);
+    expect(transport).toHaveBeenCalledTimes(2);
+  } finally {
+    vi.unstubAllGlobals();
+  }
+});
+
+test("a main CT service that asks for time is left alone, and crt.sh answers until then", async () => {
+  let now = Date.now();
+  const slow = vi
+    .fn<typeof fetch>()
+    .mockImplementation(async () =>
+      Response.json({}, { status: 429, headers: { "retry-after": "600" } }),
+    );
+  const fallback = crtsh({ [hostname]: [] }, {});
+  const ct = await CertificateIssuanceMonitor.open({
+    hostname,
+    expectedSpkiFingerprint: () => tlsSpkiFingerprint(served),
+    journalFile: join(directory, "journal.json"),
+    provider: new CertSpotterProvider({ fetch: slow }),
+    fallback: new CrtShProvider({ fetch: fallback }),
+    now: () => now,
+  });
+  expect(await ct.check()).toMatchObject({ state: "observing", lastScanProvider: "crtsh" });
+  // A caller's signal reaches the fallback too.
+  expect(await ct.check(AbortSignal.timeout(5000))).toMatchObject({
+    state: "observing",
+    lastScanProvider: "crtsh",
+  });
+  expect(slow).toHaveBeenCalledOnce();
+  now += 601_000;
+  slow.mockResolvedValueOnce(Response.json([]));
+  expect(await ct.check()).toMatchObject({ state: "observing", lastScanProvider: "certspotter" });
+  expect(slow).toHaveBeenCalledTimes(2);
+});
+
+test("a crt.sh answer with a certificate that isn't for the name is refused, and what it held is kept", async () => {
+  const ct = await monitor(
+    new CrtShProvider({
+      fetch: crtsh({ [hostname]: [{ id: 3 }, { id: 4 }] }, { 3: rogue, 4: otherHost }),
+    }),
+  );
+  const status = await ct.check();
+  expect(status).toMatchObject({ state: "unavailable", lastError: "ct-provider-invalid" });
+  expect(status.incidents.map((incident) => incident.providerEntryId)).toEqual(["crtsh-3"]);
 });

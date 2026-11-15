@@ -669,10 +669,11 @@ test("the first browser to open a request keeps it; the link and the code reopen
   expect(() => f.signup.launch(op.id, ticket, "")).toThrow(taken);
   expect(f.signup.describe(op.id, op.cookie)).toMatchObject({ needsProof: false });
   await f.signup.confirm(op.id, op.cookie, f.actor);
-  expect(() => f.signup.launch(op.id, ticket, "")).toThrow("refused");
-  expect(() => f.codes.claim(op.started.code, "")).toThrow("refused");
+  expect(() => f.signup.launch(op.id, ticket, "")).toThrow(taken);
+  expect(() => f.codes.claim(op.started.code, "")).toThrow(taken);
+  expect(f.signup.peekLaunch(op.id, ticket, "")).toEqual({ state: "taken" });
   expect(f.signup.poll(op.redemption)).toMatchObject({ status: "approved" });
-  expect(() => f.signup.launch(op.id, ticket, "")).toThrow("refused");
+  expect(() => f.signup.launch(op.id, ticket, "")).toThrow(taken);
 
   // The code first, then the link: the browser that typed the code keeps it.
   const value = f.request(),

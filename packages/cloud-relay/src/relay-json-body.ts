@@ -5,7 +5,7 @@ import { RelayError } from "./tunnels.js";
 import type { IncomingMessage } from "node:http";
 
 /** A bounded body with a deadline, so an unauthenticated slow sender can't hold admission. */
-export async function readJsonBody(req: IncomingMessage, limit: number): Promise<unknown> {
+export async function readBody(req: IncomingMessage, limit: number): Promise<Buffer> {
   const deadline = setTimeout(() => req.destroy(new Error("Request body deadline")), 5000);
   deadline.unref();
   try {
@@ -16,12 +16,18 @@ export async function readJsonBody(req: IncomingMessage, limit: number): Promise
       if (length > limit) throw new RelayError(413, "Request too large");
       chunks.push(Buffer.from(chunk));
     }
-    try {
-      return JSON.parse(Buffer.concat(chunks).toString("utf8"));
-    } catch {
-      throw new RelayError(400, "Invalid JSON");
-    }
+    return Buffer.concat(chunks);
   } finally {
     clearTimeout(deadline);
+  }
+}
+
+/** {@link readBody}, parsed as JSON. */
+export async function readJsonBody(req: IncomingMessage, limit: number): Promise<unknown> {
+  const body = await readBody(req, limit);
+  try {
+    return JSON.parse(body.toString("utf8"));
+  } catch {
+    throw new RelayError(400, "Invalid JSON");
   }
 }

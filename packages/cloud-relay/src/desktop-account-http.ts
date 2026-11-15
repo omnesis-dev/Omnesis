@@ -4,7 +4,7 @@
 import { z } from "zod";
 import { RelayError } from "./tunnels.js";
 import { brand } from "./relay-page.js";
-import { LaunchTaken, readLaunchForm, sendLaunchPage, sendTakenPage } from "./browser-launch.js";
+import { serveLaunch } from "./browser-launch.js";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { LoginAdmission } from "./admission.js";
 import type { DesktopAccountBrowser } from "./desktop-account-browser.js";
@@ -42,7 +42,18 @@ export class DesktopAccountHttp {
       );
       return true;
     }
-    if (url.pathname === "/_relay/v3/desktop/begin") return this.begin(req, res, url);
+    if (url.pathname === "/_relay/v3/desktop/begin")
+      // Opening the link changes nothing; the Continue press binds the sign-in (F43).
+      return serveLaunch(req, res, url, {
+        admission: this.admission,
+        origin: this.broker.origin,
+        path: "/_relay/v3/desktop/begin",
+        names: { required: ["operationId", "ticket"] },
+        parse: (fields) => launch.safeParse(fields).data,
+        peek: (input, cookie) => this.broker.peekLaunch(input.operationId, input.ticket, cookie),
+        launch: (input, cookie) => this.broker.launch(input.operationId, input.ticket, cookie),
+        restart,
+      });
     if (
       ![
         "/_relay/v3/desktop/start",
@@ -79,56 +90,6 @@ export class DesktopAccountHttp {
       req.resume();
       throw error;
     });
-  }
-  /** Opening the link changes nothing; the Continue press binds the sign-in to this browser (F43). */
-  private async begin(req: IncomingMessage, res: ServerResponse, url: URL): Promise<boolean> {
-    if (req.method === "GET") {
-      const parsed = launch.safeParse(Object.fromEntries(url.searchParams));
-      if (url.searchParams.size !== 2 || !parsed.success)
-        throw new RelayError(400, "Invalid desktop browser launch");
-      // Reading changes nothing, so it is bounded but not counted as a sign-in attempt.
-      return this.admission.poll(async () => {
-        const { operationId, ticket } = parsed.data;
-        const view = this.broker.peekLaunch(operationId, ticket, req.headers.cookie ?? "");
-        if (view.state === "here") {
-          res.writeHead(303, { location: view.location });
-          res.end();
-        } else if (view.state === "taken") sendTakenPage(res, restart);
-        else sendLaunchPage(res, "/_relay/v3/desktop/begin", { operationId, ticket });
-        return true;
-      }, req);
-    }
-    if (req.method !== "POST") throw new RelayError(405, "Method not allowed");
-    if (url.search) throw new RelayError(400, "Invalid desktop browser launch");
-    return this.admission
-      .run(async () => {
-        const parsed = launch.safeParse(
-          await readLaunchForm(req, this.broker.origin, { required: ["operationId", "ticket"] }),
-        );
-        if (!parsed.success) throw new RelayError(400, "Invalid desktop browser launch");
-        let result: { location: string; cookie?: string };
-        try {
-          result = this.broker.launch(
-            parsed.data.operationId,
-            parsed.data.ticket,
-            req.headers.cookie ?? "",
-          );
-        } catch (error) {
-          if (!(error instanceof LaunchTaken)) throw error;
-          sendTakenPage(res, restart);
-          return true;
-        }
-        res.writeHead(303, {
-          location: result.location,
-          ...(result.cookie ? { "set-cookie": result.cookie } : {}),
-        });
-        res.end();
-        return true;
-      }, req)
-      .catch((error: unknown) => {
-        req.resume();
-        throw error;
-      });
   }
 }
 

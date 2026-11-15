@@ -269,6 +269,10 @@ test("only the first browser reopens a request, and a code launch keeps the proo
   // The link again in the same browser keeps its binding; elsewhere it is refused.
   expect(f.broker.launch(op.operationId, ticket, op.cookie).cookie).toBeUndefined();
   expect(f.broker.peekLaunch(op.operationId, ticket, "")).toEqual({ state: "taken" });
+  expect(f.broker.peekLaunch(op.operationId, ticket, op.cookie)).toEqual({
+    state: "here",
+    location: `/_relay/account?desktop=${op.operationId}`,
+  });
   expect(() => f.broker.launch(op.operationId, ticket, "")).toThrow(taken);
   expect(() => f.codes.claim(op.code, "")).toThrow(taken);
   expect(f.broker.describe(op.operationId, op.cookie)).toMatchObject({ approvalRequired: false });
@@ -286,8 +290,8 @@ test("only the first browser reopens a request, and a code launch keeps the proo
   expect(f.broker.confirm(op.operationId, last.cookie, f.actor).location).toBe(
     origin + "/_relay/v3/desktop/complete",
   );
-  expect(() => f.broker.launch(op.operationId, ticket, "")).toThrow("refused");
-  expect(() => f.codes.claim(op.code, "")).toThrow("refused");
+  expect(() => f.broker.launch(op.operationId, ticket, "")).toThrow(taken);
+  expect(() => f.codes.claim(op.code, "")).toThrow(taken);
   const redeemed = await f.broker.redeem({
     operationId: op.operationId,
     ticket: op.ticket,

@@ -23,7 +23,6 @@ export interface CertificateSnapshotProvider {
 const MAX_ROWS = 256;
 /** Certificates fetched in one scan; the rest come on the next, from where this one stopped. */
 const MAX_FETCHES = 32;
-const MAX_CACHED = 1024;
 const row = z.object({ id: z.number().int().positive().max(Number.MAX_SAFE_INTEGER) });
 
 /**
@@ -69,6 +68,9 @@ export class CrtShProvider implements CertificateSnapshotProvider {
           ids.add(parsed.data.id);
         }
       }
+      // Only what the name still lists is kept, so the cache stays as small as the list.
+      for (const id of [...this.certificates.keys()])
+        if (!ids.has(id)) this.certificates.delete(id);
       const entries: CertificateObservation[] = [];
       let fetched = 0;
       for (const id of [...ids].sort((a, b) => a - b)) {
@@ -78,8 +80,6 @@ export class CrtShProvider implements CertificateSnapshotProvider {
           const url = this.url();
           url.search = new URLSearchParams({ d: String(id) }).toString();
           certificateDer = pemCertificate((await this.read(url, 65_536, signal)).toString("ascii"));
-          if (this.certificates.size >= MAX_CACHED)
-            this.certificates.delete(this.certificates.keys().next().value!);
           this.certificates.set(id, certificateDer);
         }
         entries.push({ entryId: `crtsh-${id}`, certificateDer });

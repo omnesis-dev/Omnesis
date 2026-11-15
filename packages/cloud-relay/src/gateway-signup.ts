@@ -237,9 +237,8 @@ export class GatewaySignup implements AccountOperationBroker {
     const operation = this.ticketed(id, ticket);
     if (this.holds(id, operation, cookieHeader))
       return { state: "here", location: this.location(id) };
-    if (operation.phase === "created") return { state: "open" };
-    if (operation.phase === "launched") return { state: "taken" };
-    throw new RelayError(403, "Gateway signup launch refused");
+    // Once a browser holds it, every other one is told so, whatever stage it reached.
+    return operation.phase === "created" ? { state: "open" } : { state: "taken" };
   }
 
   /** The Continue press on the link's page. */
@@ -526,8 +525,7 @@ export class GatewaySignup implements AccountOperationBroker {
    */
   private bind(id: string, operation: Operation, cookieHeader: string) {
     if (this.holds(id, operation, cookieHeader)) return { location: this.location(id) };
-    if (operation.phase === "launched") throw new LaunchTaken();
-    if (operation.phase !== "created") throw new RelayError(403, "Gateway signup launch refused");
+    if (operation.phase !== "created") throw new LaunchTaken();
     if (cookieHeader.split(";").filter((part) => part.trim().startsWith(COOKIE_PREFIX)).length >= 8)
       throw new RelayError(429, "Too many gateway signup requests");
     const browser = randomBytes(32).toString("base64url");

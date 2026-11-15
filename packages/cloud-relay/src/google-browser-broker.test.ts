@@ -194,6 +194,10 @@ test("browser launch/callback checks cannot be bypassed with a result handle, an
   // Another browser can't take the operation over, and looking at the link changes nothing (F43).
   expect(() => f.broker.launch(pending.input.operationId, ticket)).toThrow("another browser");
   expect(f.broker.peekLaunch(pending.input.operationId, ticket, "")).toEqual({ state: "taken" });
+  // The browser that pressed Continue may press it again and go back to Google.
+  expect(
+    f.broker.launch(pending.input.operationId, ticket, launched.cookie!.split(";")[0]!),
+  ).toEqual({ authorizeUrl: launched.authorizeUrl });
   expect(
     f.broker.peekLaunch(pending.input.operationId, ticket, launched.cookie!.split(";")[0]!),
   ).toEqual({ state: "here", location: launched.authorizeUrl });
