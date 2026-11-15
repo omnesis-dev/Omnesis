@@ -37,6 +37,7 @@ on:
             source-ownership,
             tailnet-baseline,
             relay-ownership,
+            portable-tailnet-control,
             provider-ownership,
           ]
         default: regressions
@@ -54,6 +55,29 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
   TZ: UTC
 jobs:
+  portable-tailnet-control:
+    if: ${{ inputs.scope == 'portable-tailnet-control' }}
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    env:
+      GOMAXPROCS: "2"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+        with:
+          go-version-file: packages/tailnet-helper/go.mod
+          cache-dependency-path: packages/tailnet-helper/go.sum
+      - name: Prove a portable local control plane and real encrypted userspace traffic
+        working-directory: scripts/ci/audit-portable-tailnet-control
+        run: go test -mod=mod -p 2 -count=1 -timeout 3m -v ./...
   relay-ownership:
     if: ${{ inputs.scope == 'relay-ownership' }}
     strategy:
