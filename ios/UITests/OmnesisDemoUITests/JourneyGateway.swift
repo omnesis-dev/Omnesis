@@ -175,7 +175,8 @@ struct JourneyGateway {
         let level = levels.first { $0["id"] as? String == levelId }
         let rules = level?["rules"] as? [[String: Any]] ?? []
         guard rules.count == 1, let direct = rules.first, direct["capability"] as? String == "direct",
-              let boundary = direct["sources"] as? [String: Any], boundary["mode"] as? String == "allowlist",
+              // A filtered source's real boundary is `scopeSources`; `sources` leaves it out for older clients.
+              let boundary = direct["scopeSources"] as? [String: Any], boundary["mode"] as? String == "allowlist",
               boundary["sourceIds"] as? [String] == [sourceId],
               let policies = direct["scopePolicies"] as? [[String: Any]], policies.count == 1,
               let policy = policies.first, policy["sourceId"] as? String == sourceId,

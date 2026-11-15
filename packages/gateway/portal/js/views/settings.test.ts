@@ -175,6 +175,7 @@ describe("Settings header actions", () => {
         connectOpen: false,
         completeInPortal: false,
         cloudRelay: false,
+        tailscaleEmbed: false,
       });
       expect(router.replaceRoute).not.toHaveBeenCalled();
       const accessTab = [...host.querySelectorAll("button")].find(
