@@ -3,11 +3,13 @@
 
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { LexicalIndexService } from "./lexical-index-service.js";
-import type { LexicalIndexData } from "./lexical-index-data.js";
+import type { LexicalIndexData, LexicalIndexSource } from "./lexical-index-data.js";
 import type { LexicalIndexBuild } from "../workers/lexical-index-build.js";
 
-function fakeData(docCount: number, changeSeq: number): LexicalIndexData {
+function fakeData(docCount: number, changeSeq: number, version = 0): LexicalIndexData {
   return {
+    version,
+    tokenize: "porter unicode61 remove_diacritics 2",
     docCount,
     changeSeq,
     avgLength: 10,
@@ -23,15 +25,17 @@ function fakeData(docCount: number, changeSeq: number): LexicalIndexData {
 
 function scriptedBuilds(results: Array<LexicalIndexData | Error>) {
   const started: number[] = [];
-  const build = (): LexicalIndexBuild => {
+  const sources: LexicalIndexSource[] = [];
+  const build = (source: LexicalIndexSource): LexicalIndexBuild => {
     started.push(Date.now());
+    sources.push(source);
     const next = results.shift() ?? new Error("no more builds scripted");
     const done =
       next instanceof Error ? Promise.reject(next) : Promise.resolve({ data: next, ms: 1 });
     done.catch(() => {});
     return { done, terminate: async () => {} };
   };
-  return { build, started };
+  return { build, started, sources };
 }
 
 describe("LexicalIndexService", () => {
@@ -44,6 +48,7 @@ describe("LexicalIndexService", () => {
     const { build, started } = scriptedBuilds([fakeData(1000, 1000), fakeData(1030, 1030)]);
     const service = new LexicalIndexService({
       build,
+      switchVersion: async () => true,
       countChanges: () => newer,
       publish: (d) => published.push(d.docCount),
       changeFraction: 0.02,
@@ -68,6 +73,7 @@ describe("LexicalIndexService", () => {
     const { build } = scriptedBuilds([fakeData(5, 5), fakeData(5, 5)]);
     const service = new LexicalIndexService({
       build,
+      switchVersion: async () => true,
       countChanges: () => 0,
       publish: (d) => published.push(d.docCount),
       maxAgeMs: 5000,
@@ -86,6 +92,7 @@ describe("LexicalIndexService", () => {
     const { build, started } = scriptedBuilds([new Error("disk went away"), fakeData(7, 7)]);
     const service = new LexicalIndexService({
       build,
+      switchVersion: async () => true,
       countChanges: () => 0,
       publish: (d) => published.push(d.docCount),
       checkIntervalMs: 1000,
@@ -144,6 +151,7 @@ describe("LexicalIndexService", () => {
     const { build } = scriptedBuilds([fakeData(100, 1), fakeData(100, 2)]);
     const service = new LexicalIndexService({
       build,
+      switchVersion: async () => true,
       countChanges: () => {
         calls++;
         if (calls === 1) throw new Error("database is locked");
@@ -167,6 +175,7 @@ describe("LexicalIndexService", () => {
     ]);
     const service = new LexicalIndexService({
       build,
+      switchVersion: async () => true,
       countChanges: () => 0,
       publish: () => {},
       checkIntervalMs: 1000,
@@ -180,6 +189,134 @@ describe("LexicalIndexService", () => {
     expect(started).toHaveLength(2);
     await vi.advanceTimersByTimeAsync(1000);
     expect(started).toHaveLength(3);
+    await service.stop();
+  });
+});
+
+describe("LexicalIndexService.prepareSwitch", () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
+  test("builds the new version's in-memory index first, then switches, then publishes it", async () => {
+    const events: string[] = [];
+    const { build, sources } = scriptedBuilds([fakeData(10, 10, 0), fakeData(10, 12, 1)]);
+    const service = new LexicalIndexService({
+      build,
+      switchVersion: async (version) => {
+        events.push(`switch ${version}`);
+        return true;
+      },
+      countChanges: () => 0,
+      publish: (d) => events.push(`publish ${d.version}`),
+      checkIntervalMs: 1000,
+    });
+    service.start();
+    await vi.advanceTimersByTimeAsync(0);
+    await service.prepareSwitch(1);
+    expect(sources).toEqual(["active", "building"]);
+    expect(events).toEqual(["publish 0", "switch 1", "publish 1"]);
+    await service.stop();
+  });
+
+  test("publishes nothing when the rebuild was superseded before its switch", async () => {
+    const published: number[] = [];
+    const { build } = scriptedBuilds([fakeData(10, 10, 0), fakeData(10, 12, 1)]);
+    const service = new LexicalIndexService({
+      build,
+      switchVersion: async () => false,
+      countChanges: () => 0,
+      publish: (d) => published.push(d.version),
+      checkIntervalMs: 1000,
+    });
+    service.start();
+    await vi.advanceTimersByTimeAsync(0);
+    await service.prepareSwitch(1);
+    expect(published).toEqual([0]);
+    await service.stop();
+  });
+
+  test("keeps the current index when the switch fails, and retries on the next report", async () => {
+    const published: number[] = [];
+    let attempts = 0;
+    const { build } = scriptedBuilds([
+      fakeData(10, 10, 0),
+      fakeData(10, 12, 1),
+      fakeData(10, 13, 1),
+    ]);
+    const service = new LexicalIndexService({
+      build,
+      switchVersion: async () => {
+        attempts++;
+        if (attempts === 1) throw new Error("worker restarting");
+        return true;
+      },
+      countChanges: () => 0,
+      publish: (d) => published.push(d.version),
+      checkIntervalMs: 1000,
+    });
+    service.start();
+    await vi.advanceTimersByTimeAsync(0);
+    await service.prepareSwitch(1);
+    expect(published).toEqual([0]);
+    await service.prepareSwitch(1);
+    expect(published).toEqual([0, 1]);
+    await service.stop();
+  });
+
+  test("switches without the new in-memory index after repeated build failures", async () => {
+    const events: string[] = [];
+    const { build } = scriptedBuilds([
+      fakeData(10, 10, 0),
+      new Error("out of memory"),
+      new Error("out of memory"),
+      new Error("out of memory"),
+      fakeData(10, 20, 1),
+    ]);
+    const service = new LexicalIndexService({
+      build,
+      switchVersion: async (version) => {
+        events.push(`switch ${version}`);
+        return true;
+      },
+      countChanges: () => 0,
+      publish: (d) => events.push(`publish ${d.version}`),
+      checkIntervalMs: 1000,
+    });
+    service.start();
+    await vi.advanceTimersByTimeAsync(0);
+    await service.prepareSwitch(1);
+    await service.prepareSwitch(1);
+    expect(events).toEqual(["publish 0"]);
+    await service.prepareSwitch(1);
+    await vi.advanceTimersByTimeAsync(0);
+    // Switched without it; the regular build of the new active index follows.
+    expect(events).toEqual(["publish 0", "switch 1", "publish 1"]);
+    await service.stop();
+  });
+
+  test("a report that arrives while a switch is being prepared is dropped", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    const builds: LexicalIndexSource[] = [];
+    const service = new LexicalIndexService({
+      build: (source) => {
+        builds.push(source);
+        const done = gate.then(() => ({
+          data: fakeData(10, 10, source === "active" ? 0 : 1),
+          ms: 1,
+        }));
+        return { done, terminate: async () => {} };
+      },
+      switchVersion: async () => true,
+      countChanges: () => 0,
+      publish: () => {},
+      checkIntervalMs: 1000,
+    });
+    const first = service.prepareSwitch(1);
+    await service.prepareSwitch(1);
+    expect(builds).toEqual(["building"]);
+    release();
+    await first;
     await service.stop();
   });
 });

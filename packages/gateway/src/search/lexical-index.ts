@@ -51,8 +51,10 @@ import {
   buildLexicalIndexData,
   K1,
   type LexicalIndexData,
+  type LexicalIndexSource,
 } from "./lexical-index-data.js";
 import { fts5Tokenizer } from "./lexical-tokenizer.js";
+import { analyze, lexicalVersion, type LexicalVersion } from "./lexical-versions.js";
 
 /**
  * A type-ahead prefix expands to at most this many concrete terms, the most
@@ -80,11 +82,14 @@ export class LexicalIndex implements LexicalRanker {
   private readonly live: LiveChanges;
 
   private readonly limits: Required<LexicalIndexLimits>;
+  /** The lexical version this index was built with; queries and changed chunks are cut by it. */
+  readonly rules: LexicalVersion;
 
   constructor(
     readonly data: LexicalIndexData,
     limits: LexicalIndexLimits = {},
   ) {
+    this.rules = lexicalVersion(data.version) ?? { version: data.version, tokenize: data.tokenize };
     this.limits = {
       changesBatch: limits.changesBatch ?? CHANGES_BATCH,
       changesBudgetMs: limits.changesBudgetMs ?? CHANGES_BUDGET_MS,
@@ -151,7 +156,7 @@ export class LexicalIndex implements LexicalRanker {
   }
 
   /** Build in-process; see {@link buildLexicalIndexData}. */
-  static build(db: Db, opts: { shared?: boolean } = {}): LexicalIndex {
+  static build(db: Db, opts: { shared?: boolean; source?: LexicalIndexSource } = {}): LexicalIndex {
     return new LexicalIndex(buildLexicalIndexData(db, opts));
   }
 
@@ -168,7 +173,8 @@ export class LexicalIndex implements LexicalRanker {
     }
     const words = queryWords(trimmed, opts?.prefixLastToken);
     if (words.length === 0) return [];
-    const tokens = fts5Tokenizer(db).words(words);
+    const tokenizer = fts5Tokenizer(db, this.rules.tokenize);
+    const tokens = tokenizer.words(words);
     const prefixWord = opts?.prefixLastToken ? words.length - 1 : -1;
     const phrases: string[] = [];
     for (let i = 0; i < words.length; i++) {
@@ -180,7 +186,7 @@ export class LexicalIndex implements LexicalRanker {
     }
     let prefix = "";
     if (prefixWord >= 0) {
-      prefix = fts5Tokenizer(db).fold(words[prefixWord]);
+      prefix = tokenizer.fold(words[prefixWord]);
       if (tokens[prefixWord].length > 1) return null;
       // A finished word ("meetings") is indexed under its stem ("meet"), which
       // no completion of the unstemmed text reaches; score the stem as well.
@@ -308,8 +314,14 @@ export class LexicalIndex implements LexicalRanker {
       }
       const rowids = [...new Set(changes.map((c) => c.chunk_rowid))];
       for (const rowid of rowids) this.forget(rowid);
-      const rows = fetch.all(JSON.stringify(rowids));
-      for (const chunk of fts5Tokenizer(db).chunks(rows)) this.addToDelta(chunk);
+      const rows = fetch.all(JSON.stringify(rowids)).map((r) => ({
+        rowid: r.rowid,
+        content: analyze(this.rules, r.content ?? ""),
+        title: analyze(this.rules, r.title ?? ""),
+      }));
+      for (const chunk of fts5Tokenizer(db, this.rules.tokenize).chunks(rows)) {
+        this.addToDelta(chunk);
+      }
       live.lastSeq = changes[changes.length - 1].seq;
       const delta = live.delta;
       if (delta.livePostings > maxDeltaPostings) {

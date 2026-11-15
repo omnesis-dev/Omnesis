@@ -55,6 +55,11 @@ import {
   deleteChunksByDocuments,
 } from "./db.js";
 import { UsearchWriteHandle, UsearchReadHandle } from "./usearch-index.js";
+import {
+  lexicalRebuildStep,
+  readLexicalIndexState,
+  switchLexicalIndex,
+} from "./lexical-index-store.js";
 import type { ChunkUpsertInput } from "./db.js";
 type Db = Database.Database;
 
@@ -1386,7 +1391,7 @@ describe("chunks_fts tokenizer migration", () => {
     expect(ddl?.sql).toContain("remove_diacritics 2");
   });
 
-  test("legacy bare-unicode61 DB is migrated on next open + FTS index is rebuilt", () => {
+  test("a legacy bare-unicode61 index keeps serving and is rebuilt step by step", () => {
     const path = `/tmp/omnesis-fts-migration-${randomUUID()}.db`;
 
     // First open: standard DB so we get all schema, chunks, triggers, etc.
@@ -1432,42 +1437,46 @@ describe("chunks_fts tokenizer migration", () => {
       )
       .get("recipe");
     expect(legacyStemHit?.c ?? 0).toBe(0);
+    // An install from before lexical versions records none.
+    legacy.exec("DELETE FROM lexical_index_state");
     legacy.close();
 
-    // Reopen — the migration in createIndexDatabase should detect the
-    // legacy tokenizer, drop+recreate, and rebuild the FTS index from
-    // the external `chunks` content table.
+    // Reopen: the legacy index is recorded as an unversioned one and keeps
+    // serving as it is — opening does no rebuild.
     const migrated = createIndexDatabase(path);
+    expect(readLexicalIndexState(migrated).active?.version).toBe(-1);
+    const count = (term: string) =>
+      migrated
+        .prepare<[string], { c: number }>(
+          "SELECT COUNT(*) AS c FROM chunks_fts WHERE chunks_fts MATCH ?",
+        )
+        .get(term)?.c ?? 0;
+    expect(count("recipe")).toBe(0);
+
+    // The indexer's steps build the current version beside it and switch.
+    let step;
+    while ((step = lexicalRebuildStep(migrated, { batchSize: 1 })) !== "backfill-complete") {
+      expect(step).not.toBe("idle");
+    }
+    expect(switchLexicalIndex(migrated, 0)).toBe(true);
+    expect(lexicalRebuildStep(migrated, { batchSize: 1 })).toBe("retired-dropped");
+    expect(lexicalRebuildStep(migrated, { batchSize: 1 })).toBe("idle");
+
     const ddl = migrated
       .prepare<[], { sql: string }>("SELECT sql FROM sqlite_master WHERE name = 'chunks_fts'")
       .get();
     expect(ddl?.sql).toContain("porter");
     expect(ddl?.sql).toContain("remove_diacritics 2");
-
-    // Same query that missed under the legacy tokenizer now matches.
-    const stemHit = migrated
-      .prepare<[string], { c: number }>(
-        "SELECT COUNT(*) AS c FROM chunks_fts WHERE chunks_fts MATCH ?",
-      )
-      .get("recipe");
-    expect(stemHit?.c ?? 0).toBeGreaterThanOrEqual(1);
-
-    const accentHit = migrated
-      .prepare<[string], { c: number }>(
-        "SELECT COUNT(*) AS c FROM chunks_fts WHERE chunks_fts MATCH ?",
-      )
-      .get("ceremonie");
-    expect(accentHit?.c ?? 0).toBeGreaterThanOrEqual(1);
-
+    // Same queries that missed under the legacy tokenizer now match.
+    expect(count("recipe")).toBeGreaterThanOrEqual(1);
+    expect(count("ceremonie")).toBeGreaterThanOrEqual(1);
+    migrated.exec("INSERT INTO chunks_fts(chunks_fts) VALUES('integrity-check')");
     migrated.close();
 
-    // Third open: migration is idempotent — DDL already includes
-    // `porter`, the rebuild branch must not fire.
+    // Reopening finds the current version recorded and starts nothing.
     const reopened = createIndexDatabase(path);
-    const ddl2 = reopened
-      .prepare<[], { sql: string }>("SELECT sql FROM sqlite_master WHERE name = 'chunks_fts'")
-      .get();
-    expect(ddl2?.sql).toContain("porter");
+    expect(readLexicalIndexState(reopened).active?.version).toBe(0);
+    expect(lexicalRebuildStep(reopened, { batchSize: 1 })).toBe("idle");
     reopened.close();
   });
 

@@ -1201,8 +1201,9 @@ if (runtime.searchWorkerConcurrency > 0) {
 const lexicalIndexService =
   (config.search?.bm25?.memoryIndex ?? CONFIG_DEFAULTS.search.bm25.memoryIndex)
     ? new LexicalIndexService({
-        build: () =>
+        build: (source) =>
           startLexicalIndexBuild({
+            source,
             indexDbPath,
             indexDbKeyHex: storageEncryption.indexDbKeyHex,
             cacheSizeBytes: SEARCH_WARM_PAGE_CACHE_BYTES,
@@ -1223,6 +1224,7 @@ const lexicalIndexService =
           searchPipeline.setLexicalRanker(new LexicalIndex(data));
           searchWorkerPool?.setLexicalIndex(data);
         },
+        switchVersion: (version) => indexerLifecycle.switchLexicalIndex(version),
       })
     : undefined;
 if (!lexicalIndexService) log.info("in-memory BM25 index disabled by config");
@@ -1832,6 +1834,24 @@ const indexerLifecycle = new IndexerLifecycle({
     modelsDir: MODELS_DIR,
   },
 });
+// A keyword-index rebuild that holds every chunk is switched in once its
+// in-memory index is ready (see LexicalIndexService.prepareSwitch); with the
+// in-memory index disabled, it is switched in at once.
+indexerLifecycle.onLexicalBackfilled = (version) => {
+  if (lexicalIndexService) {
+    void lexicalIndexService.prepareSwitch(version);
+    return;
+  }
+  indexerLifecycle.switchLexicalIndex(version).then(
+    (switched) => {
+      if (switched) log.info(`keyword index switched to version ${version}`);
+    },
+    (err: unknown) =>
+      log.warn(
+        `keyword index switch to version ${version} failed: ${err instanceof Error ? err.message : String(err)}`,
+      ),
+  );
+};
 
 // ── Model manager ────────────────────────────────────────────────────
 // Owns the catalog/manifest/download surface for installable models.

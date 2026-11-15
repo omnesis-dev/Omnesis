@@ -187,6 +187,16 @@
           runs. Set <code>search.bm25.memoryIndex</code> to <code>false</code> in
           <code>omnesis.json</code> and restart the gateway to rank from disk only.
         </p>
+        <p>
+          Keyword matching only works when documents and queries are cut into words by the same
+          rules, so the full-text index records the version of the rules that built it. When an
+          update changes those rules, the gateway starts as usual and rebuilds the index in the
+          background, in small batches that give way to your requests, while search keeps using the
+          existing index and its rules. Once every chunk is in the new index, search switches to it
+          and the old index is deleted; until then the keyword index takes up to twice its usual
+          disk space. The Sources page shows the rebuild's progress, and a restart resumes it where
+          it stopped.
+        </p>
         <figure class="diagram diagram-flat diagram-branches diagram-nested">
           <ol class="flow">
             <li class="flow-step">

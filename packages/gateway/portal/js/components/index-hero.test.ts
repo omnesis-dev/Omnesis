@@ -6,6 +6,8 @@ import {
   // @ts-expect-error — sibling .js module, no .d.ts in the portal tree.
   migrationReadout,
   // @ts-expect-error — sibling .js module, no .d.ts in the portal tree.
+  keywordMigrationReadout,
+  // @ts-expect-error — sibling .js module, no .d.ts in the portal tree.
   diskUsageReadout,
 } from "./index-hero.js";
 
@@ -111,5 +113,72 @@ describe("diskUsageReadout", () => {
       },
     });
     expect(readout.stores).toEqual([{ id: "z", label: "Z", bytes: 10 }]);
+  });
+});
+
+describe("keywordMigrationReadout", () => {
+  test("renders nothing without a rebuild", () => {
+    expect(keywordMigrationReadout(undefined)).toBeNull();
+    expect(
+      keywordMigrationReadout({ activeVersion: 0, targetVersion: 0, building: null }),
+    ).toBeNull();
+  });
+
+  test("reads a rebuild from the active version to the target, in chunks", () => {
+    const r = keywordMigrationReadout({
+      activeVersion: 0,
+      targetVersion: 1,
+      building: {
+        version: 1,
+        chunksDone: 450_000,
+        chunksTotal: 1_200_000,
+        percent: 37,
+        startedAt: "2026-11-16T09:00:00.000Z",
+        phase: "copying",
+      },
+    });
+    expect(r).toMatchObject({
+      kind: "migration",
+      label: "Rebuilding",
+      verb: "Keyword index: version 0 →",
+      model: "version 1",
+      percent: 37,
+      docsBuilt: 450_000,
+      docsTotal: 1_200_000,
+      unit: "chunks",
+    });
+    expect(r?.note).toContain("stays on version 0");
+  });
+
+  test("says when every chunk is copied and the switch is being prepared", () => {
+    const r = keywordMigrationReadout({
+      activeVersion: 0,
+      targetVersion: 1,
+      building: {
+        version: 1,
+        chunksDone: 10,
+        chunksTotal: 10,
+        percent: 100,
+        startedAt: "2026-11-16T09:00:00.000Z",
+        phase: "switching",
+      },
+    });
+    expect(r).toMatchObject({ label: "Finishing", percent: 100 });
+  });
+
+  test("clamps malformed figures", () => {
+    const r = keywordMigrationReadout({
+      activeVersion: null,
+      targetVersion: 1,
+      building: {
+        version: 1,
+        chunksDone: Number.NaN,
+        chunksTotal: -5,
+        percent: 250,
+        startedAt: "",
+        phase: "copying",
+      },
+    });
+    expect(r).toMatchObject({ kind: "build", percent: 100, docsBuilt: 0, docsTotal: 0 });
   });
 });

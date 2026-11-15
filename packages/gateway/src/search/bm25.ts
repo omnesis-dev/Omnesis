@@ -4,6 +4,12 @@
 /**
  * BM25 search over the `chunks_fts` full-text index: ranked by the in-memory
  * lexical index when one is attached, by FTS5 otherwise.
+ *
+ * Each ranker was built by one lexical version (see lexical-versions.ts), and a
+ * query is cut by the version of the ranker that answers it: the in-memory
+ * index's own, or the active index's for FTS5, read in the same snapshot as
+ * the match. While a rebuild switches versions, an in-memory index of the old
+ * version keeps answering by its own rules until its successor is current.
  */
 
 import type Database from "better-sqlite3";
@@ -13,6 +19,8 @@ import { withDocIdRestriction } from "./docid-filter.js";
 import { visibleChunkClause } from "./visible-chunks.js";
 import { createLogger } from "@omnesis/core";
 import type { SearchCandidate, SearchFilters } from "./types.js";
+import { analyze, type LexicalVersion } from "./lexical-versions.js";
+import { activeLexicalRules } from "../indexer/lexical-index-store.js";
 
 const log = createLogger("gateway:search");
 
@@ -139,11 +147,12 @@ export interface CorpusStats {
   documentFrequency(term: string): number;
 }
 
-const corpusStatsByDb = new WeakMap<Db, CorpusStats>();
+const corpusStatsByDb = new WeakMap<Db, { version: number; stats: CorpusStats }>();
 
-function corpusStats(db: Db): CorpusStats {
+/** FTS5's corpus statistics for the active index of `version`; cached per connection and version. */
+function corpusStats(db: Db, version: number): CorpusStats {
   const cached = corpusStatsByDb.get(db);
-  if (cached) return cached;
+  if (cached?.version === version) return cached.stats;
   let count: { at: number; value: number } | undefined;
   const frequencies = new Map<string, { at: number; value: number }>();
   const countChunks = db.prepare<[], { cnt: number }>("SELECT count(*) as cnt FROM chunks");
@@ -165,7 +174,7 @@ function corpusStats(db: Db): CorpusStats {
       return row?.doc ?? 0;
     },
   };
-  corpusStatsByDb.set(db, stats);
+  corpusStatsByDb.set(db, { version, stats });
   return stats;
 }
 
@@ -192,7 +201,7 @@ export function filterCommonTokens(
   db: Db,
   query: string,
   threshold: number,
-  opts: { stats?: CorpusStats; prefixLastToken?: boolean } = {},
+  opts: { stats?: CorpusStats; prefixLastToken?: boolean; version?: number } = {},
 ): { filtered: string; dropped: string[] } {
   if (threshold <= 0 || threshold >= 1) return { filtered: query, dropped: [] };
 
@@ -210,7 +219,7 @@ export function filterCommonTokens(
   let stats: CorpusStats;
   let totalChunks: number;
   try {
-    stats = opts.stats ?? corpusStats(db);
+    stats = opts.stats ?? corpusStats(db, opts.version ?? activeLexicalRules(db)?.version ?? 0);
     totalChunks = stats.chunkCount();
   } catch {
     return { filtered: query, dropped: [] };
@@ -240,8 +249,11 @@ export function filterCommonTokens(
 /**
  * Ranks the chunks matching a query by BM25 without touching `chunks`. The
  * in-memory lexical index implements this; FTS5 itself is the fallback.
+ * Queries reach it already cut by its {@link rules}.
  */
 export interface LexicalRanker {
+  /** The lexical version the ranker's index was built with. */
+  readonly rules: LexicalVersion;
   /**
    * Best-first `{ rowid, score }` pairs (higher score = better), at most `k`.
    * Returns `null` when the ranker cannot serve the query — it needs positions
@@ -283,6 +295,14 @@ const CHUNK_COLUMNS = `c.rowid, c.document_id, c.source_id, c.document_type,
 
 /** Which ranker ordered the BM25 candidates. */
 export type Bm25Ranker = "memory" | "fts5";
+
+export interface Bm25SearchResult {
+  candidates: SearchCandidate[];
+  droppedTokens: string[];
+  ranker: Bm25Ranker;
+  /** The lexical version of the index that ranked; null when none could answer. */
+  lexicalVersion: number | null;
+}
 
 /**
  * Search using BM25.
@@ -331,49 +351,100 @@ export function bm25Search(
     /** In-memory ranker used in place of FTS5 ranking when it can serve the query. */
     ranker?: LexicalRanker;
   },
-): { candidates: SearchCandidate[]; droppedTokens: string[]; ranker: Bm25Ranker } {
+): Bm25SearchResult {
   const docIds = opts?.documentIds;
   if (limit <= 0 || (docIds && docIds.length === 0)) {
-    return { candidates: [], droppedTokens: [], ranker: "fts5" };
+    return { candidates: [], droppedTokens: [], ranker: "fts5", lexicalVersion: null };
   }
   const filter = buildMetadataFilter(filters, "c");
+  const prefixLastToken = opts?.prefixLastToken;
+  const threshold = opts?.commonTokenThreshold ?? 0;
 
-  let ranker = opts?.ranker;
-  let effectiveQuery = query;
-  let droppedTokens: string[] = [];
-  if (opts?.commonTokenThreshold && opts.commonTokenThreshold > 0) {
-    const stats = ranker?.stats?.(db);
-    if (stats === null) ranker = undefined;
-    const result = filterCommonTokens(db, query, opts.commonTokenThreshold, {
-      stats: stats ?? undefined,
-      prefixLastToken: opts.prefixLastToken,
-    });
-    effectiveQuery = result.filtered;
-    droppedTokens = result.dropped;
-  }
-
+  const ranker = opts?.ranker;
   if (!docIds && ranker) {
-    const rows = rankWithRanker(db, ranker, effectiveQuery, filter, limit, opts?.prefixLastToken);
-    if (rows) return { candidates: rows.map(toCandidate), droppedTokens, ranker: "memory" };
+    const stats = threshold > 0 ? ranker.stats?.(db) : undefined;
+    // A ranker that cannot follow the change log just now declines; FTS5 ranks.
+    if (stats !== null) {
+      const { query: cut, droppedTokens } = cutQuery(db, ranker.rules, query, threshold, {
+        stats,
+        prefixLastToken,
+      });
+      const rows = rankWithRanker(db, ranker, cut, filter, limit, prefixLastToken);
+      if (rows) {
+        return {
+          candidates: rows.map(toCandidate),
+          droppedTokens,
+          ranker: "memory",
+          lexicalVersion: ranker.rules.version,
+        };
+      }
+    }
   }
 
-  const ftsQuery = toFts5Query(effectiveQuery, opts?.prefixLastToken);
-  if (!ftsQuery) return { candidates: [], droppedTokens, ranker: "fts5" };
-
-  try {
-    const rows = docIds
-      ? filterFirst(db, ftsQuery, filter, docIds, limit)
-      : rankWithFts(db, ftsQuery, filter, limit);
-    return { candidates: rows.map(toCandidate), droppedTokens, ranker: "fts5" };
-  } catch (err) {
-    // `toFts5Query` should prevent malformed MATCH input, but the
-    // phrase-passthrough path (or an unforeseen edge) could still produce
-    // `fts5: syntax error`. Degrade to no BM25 results rather than 500 the
-    // whole search — vector search still answers.
-    if (err instanceof Error && /fts5: syntax error/i.test(err.message)) {
-      return { candidates: [], droppedTokens, ranker: "fts5" };
+  // The active version and the index it describes are read in one snapshot.
+  return withReadSnapshot(db, (): Bm25SearchResult => {
+    const rules = activeLexicalRules(db);
+    if (!rules) return { candidates: [], droppedTokens: [], ranker: "fts5", lexicalVersion: null };
+    const { query: cut, droppedTokens } = cutQuery(db, rules, query, threshold, {
+      prefixLastToken,
+    });
+    const answer = (candidates: SearchCandidate[]): Bm25SearchResult => ({
+      candidates,
+      droppedTokens,
+      ranker: "fts5",
+      lexicalVersion: rules.version,
+    });
+    const ftsQuery = toFts5Query(cut, prefixLastToken);
+    if (!ftsQuery) return answer([]);
+    try {
+      const rows = docIds
+        ? filterFirst(db, ftsQuery, filter, docIds, limit)
+        : rankWithFts(db, ftsQuery, filter, limit);
+      return answer(rows.map(toCandidate));
+    } catch (err) {
+      // `toFts5Query` should prevent malformed MATCH input, but the
+      // phrase-passthrough path (or an unforeseen edge) could still produce
+      // `fts5: syntax error`. Degrade to no BM25 results rather than 500 the
+      // whole search — vector search still answers.
+      if (err instanceof Error && /fts5: syntax error/i.test(err.message)) return answer([]);
+      throw err;
     }
-    throw err;
+  });
+}
+
+/**
+ * `query` cut by `rules`, then without its common words when `threshold` is
+ * set. Statistics come from `opts.stats` (an in-memory ranker's), else from
+ * the active FTS5 index, which must then be `rules`' index.
+ */
+export function cutQuery(
+  db: Db,
+  rules: LexicalVersion,
+  query: string,
+  threshold: number,
+  opts: { stats?: CorpusStats; prefixLastToken?: boolean } = {},
+): { query: string; droppedTokens: string[] } {
+  const cut = analyze(rules, query, { prefixLastToken: opts.prefixLastToken });
+  if (threshold <= 0) return { query: cut, droppedTokens: [] };
+  const result = filterCommonTokens(db, cut, threshold, {
+    stats: opts.stats,
+    version: rules.version,
+    prefixLastToken: opts.prefixLastToken,
+  });
+  return { query: result.filtered, droppedTokens: result.dropped };
+}
+
+/**
+ * Run `body` inside a read transaction, so every statement in it sees one
+ * snapshot of the database; inside an open transaction it simply runs.
+ */
+export function withReadSnapshot<T>(db: Db, body: () => T): T {
+  if (db.inTransaction) return body();
+  db.exec("BEGIN");
+  try {
+    return body();
+  } finally {
+    db.exec("COMMIT");
   }
 }
 
@@ -408,8 +479,16 @@ function rankWithRanker(
     // Enough rows survived, or the ranking was exhaustive (fewer than `window`
     // chunks match at all), so a wider window cannot add anything.
     if (rows.length === limit || ranked.length < window) return rows;
-    if (window === RANK_FIRST_MAX_K)
-      return filterFirst(db, toFts5Query(query, prefixLastToken), filter, undefined, limit);
+    if (window === RANK_FIRST_MAX_K) {
+      // The filter-first plan matches through FTS5, which takes this query only
+      // when the active index was cut by the ranker's version; otherwise the
+      // caller re-cuts it for FTS5.
+      return withReadSnapshot(db, () =>
+        activeLexicalRules(db)?.version === ranker.rules.version
+          ? filterFirst(db, toFts5Query(query, prefixLastToken), filter, undefined, limit)
+          : null,
+      );
+    }
   }
 }
 
