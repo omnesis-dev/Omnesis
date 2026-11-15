@@ -78,6 +78,33 @@ statement, branch, function and line coverage. Process ownership and encrypted
 bootstrap-reader regressions also passed on Linux and Windows, run sequentially.
 These focused results do not replace the pending complete-suite validation.
 
+Windows source preparation explicitly builds the patched SQLite and vector
+dependencies before starting the product or its compiled entrypoints:
+
+```sh
+node scripts/ci/build-windows-sqlite.mjs
+node scripts/ci/build-windows-usearch.mjs
+```
+
+Run these from an isolated checkout after installing its locked dependencies.
+The native builds require MSVC and Python and verify the running Node version's
+headers before compilation.
+The SQLite backport preserves the existing engine and encryption format. It
+applies the upstream Windows shared-memory recovery fix: under the exclusive
+dead-man-switch lock, a still-mapped shared-memory file is reset by writing its
+header when Windows refuses truncation. This follows SQLite's
+[upstream fix](https://sqlite.org/forum/info/ba7afbd0e81501118563617430fe06d0aca052e55ece2b0d457f8e16fcf85bba?t=c).
+The source preparation verifies the default installed bindings and a complete
+encrypted Gateway schema; tests hold a stale mapping through recovery. Linux
+and macOS retain their existing prebuilt libraries. This preparation remains
+separate from Windows installation support, which is outside the audit.
+
+Targeted backport validation passed 208 tests on Windows and 205 on Linux;
+the three mapped-view tests are Windows-specific. Original Windows binaries
+fail those three recovery cases. The rebuilt cipher also passed a full Gateway
+schema check and reads and writes files interchangeably with the original
+cipher binding. These results do not replace the complete runtime sweep.
+
 Authentication subprocesses also exercise an existing encrypted credential in
 a restricted Windows environment. Native process identity uses exact framework
 creation-time ticks, and compiler bootstraps load the system utility module by
@@ -272,7 +299,10 @@ worker-shutdown slice waited zero seconds and ran for 3 minutes 13 seconds.
 It verifies ongoing vector search through generation and dimension changes,
 publication and worker handoff. Native workers drain inference before shutdown;
 acknowledgment and actual thread exit are both joined before handle cleanup.
-Windows execution of this coverage remains required.
+At `7c825ab28`, Windows passed all four transitions with real CPU embeddings.
+The four-test file took 207 seconds in the broad sweep's second E2E shard;
+that shard passed 691 tests across 130 files, with two conditional skips.
+These immutable-snapshot results still require final-head revalidation.
 
 At `53f02f142`, Linux typechecks, lint, portal E2E, embedding E2E, both Docker
 runtime architectures, Docker smoke tests and integration harnesses passed.

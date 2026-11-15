@@ -113,7 +113,7 @@ describe("Windows CI coverage", () => {
     }
   });
 
-  test("every Windows lane proves the rebuilt vector binding before running source checks", () => {
+  test("every Windows lane proves rebuilt SQLite and vector bindings before source checks", () => {
     const config = workflow();
     expect(config.on.pull_request.paths).toContain("patches/**");
     expect(config.on.pull_request.paths).toContain(".gitattributes");
@@ -124,15 +124,23 @@ describe("Windows CI coverage", () => {
     );
     const selection = steps.findIndex(({ name }) => name === "Validate optional E2E selection");
     expect(selection).toBe(dependencies + 1);
-    expect(prepare).toBe(selection + 1);
+    const sqlite = steps.findIndex(({ run }) => run === "node scripts/ci/build-windows-sqlite.mjs");
+    expect(sqlite).toBe(selection + 1);
+    expect(prepare).toBe(sqlite + 1);
+    expect(steps[sqlite].id).toBe("native_sqlite");
+    expect(steps[sqlite]).not.toHaveProperty("if");
+    expect(steps[sqlite]).not.toHaveProperty("continue-on-error");
     expect(steps[selection]).not.toHaveProperty("continue-on-error");
     expect(steps[prepare]).not.toHaveProperty("if");
     expect(steps[prepare]).not.toHaveProperty("continue-on-error");
     expect(steps[prepare].id).toBe("native_vector");
     const unit = steps.find(({ name }) => name === "Full Windows unit and adapter tests");
     expect(unit.if).toContain("steps.native_vector.outcome == 'success'");
+    expect(unit.if).toContain("steps.native_sqlite.outcome == 'success'");
 
     for (const file of [
+      "packages/gateway/src/sqlite-windows-wal-recovery.test.ts",
+      "scripts/ci/build-windows-sqlite.test.mjs",
       "packages/gateway/src/indexer/usearch-index.test.ts",
       "packages/gateway/src/indexer/usearch-read-registry.test.ts",
       "packages/gateway/src/indexer/usearch-sidecar-integration.test.ts",
@@ -190,7 +198,7 @@ describe("Windows CI coverage", () => {
       ({ name }) => name === "Full Windows unit and adapter tests",
     );
     expect(runtimeStep.if).toBe(
-      "${{ !cancelled() && matrix.lane == 'unit' && steps.dependencies.outcome == 'success' && steps.native_vector.outcome == 'success' }}",
+      "${{ !cancelled() && matrix.lane == 'unit' && steps.dependencies.outcome == 'success' && steps.native_sqlite.outcome == 'success' && steps.native_vector.outcome == 'success' }}",
     );
   });
 

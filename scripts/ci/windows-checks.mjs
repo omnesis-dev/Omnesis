@@ -34,6 +34,7 @@ export const INSTALLER_TEST_EXCLUSIONS = [
 // and service decision matrices run in the complete daily/manual unit lane.
 export const FOCUSED_UNIT_FILES = [
   "scripts/lib/check-process.test.mjs",
+  "scripts/run-e2e-status.test.mjs",
   "packages/cli/src/commands/status-json.test.ts",
   "packages/collector/src/owned-process-shutdown.test.ts",
   "packages/collector/src/doctor-deadlines.test.ts",
@@ -44,6 +45,7 @@ export const FOCUSED_UNIT_FILES = [
   "packages/core/src/config-private-cleanup.test.ts",
   "packages/core/src/secret-file-cache.test.ts",
   "packages/collector/src/auth-subprocess-env.test.ts",
+  "packages/collector/src/auth-subprocess-ownership.test.ts",
   "packages/platform/src/windows-private-owner-rights.windows.test.ts",
   "packages/agent-integration/src/hermes-windows-bridge.test.ts",
   "packages/platform/src/windows-private-repair-streams.windows.test.ts",
@@ -77,6 +79,7 @@ export const FOCUSED_UNIT_FILES = [
   "packages/gateway/src/indexer/usearch-validation.test.ts",
   "packages/core/src/default-config-dir.test.ts",
   "packages/core/src/sqlite-snapshot-races.test.ts",
+  "packages/gateway/src/sqlite-windows-wal-recovery.test.ts",
   "packages/core/src/sqlite-snapshot.test.ts",
   "packages/core/src/collector-pairing-state.test.ts",
   "evals/briefs/src/deepseek-lane.test.ts",
@@ -208,6 +211,7 @@ export const FOCUSED_UNIT_FILES = [
   "packages/gateway/src/indexer/usearch-read-registry.test.ts",
   "packages/gateway/src/indexer/usearch-sidecar-integration.test.ts",
   "scripts/ci/build-windows-usearch.test.mjs",
+  "scripts/ci/build-windows-sqlite.test.mjs",
   "scripts/ci/probe-windows-usearch.test.mjs",
   "packages/agent/src/claude-code-backend.test.ts",
   "packages/cli/src/unknown-flags.test.ts",

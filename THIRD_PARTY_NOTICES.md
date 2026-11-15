@@ -64,6 +64,19 @@ notice. The data license is available at
 
 ---
 
+## SQLite Windows shared-memory recovery backport
+
+`patches/better-sqlite3+13.0.3.patch` and the SQLite portion of
+`patches/better-sqlite3-multiple-ciphers+13.0.3.patch` adapt SQLite's
+[Windows shared-memory recovery fix](https://sqlite.org/src/info/7c103a0b7d)
+to the dependencies' SQLite 3.53.4 amalgamations. The change resets the
+shared-memory header if an existing mapping prevents truncation while SQLite
+holds the exclusive initialization lock. This SQLite code remains in the
+[public domain](https://sqlite.org/copyright.html); it is not relicensed under
+Omnesis's AGPL. The dependency distributions retain their upstream notices.
+
+---
+
 ## Models.dev catalog snapshot
 
 `packages/gateway/models-dev/api.json` is a committed snapshot of the

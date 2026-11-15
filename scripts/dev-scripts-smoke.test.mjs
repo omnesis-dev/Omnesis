@@ -62,6 +62,7 @@ import {
   bashExecutable,
   bashEnvironment,
   bashScriptArguments,
+  bashFixturePath,
   nativeBashPath,
   prependPath,
   localSshFixturePath,
@@ -1655,14 +1656,14 @@ describe("scripts/ios-snapshot.sh macOS-host bridge guards (C10)", () => {
         "-destination",
         "platform=iOS Simulator,name=iPhone Test",
         "-derivedDataPath",
-        join(target, "DerivedData"),
+        bashFixturePath(join(target, "DerivedData")),
         "-only-testing:OmnesisTests/PreviewSnapshotTests",
         ...(coverage === "1"
           ? [
               "-enableCodeCoverage",
               "YES",
               "-resultBundlePath",
-              join(target, ".omnesis-simulator-coverage.xcresult"),
+              bashFixturePath(join(target, ".omnesis-simulator-coverage.xcresult")),
             ]
           : []),
         "OMNESIS_BUNDLE_ID=dev.example.test",
@@ -3580,13 +3581,14 @@ describe("scripts/setup-worktree.sh workspace links", () => {
       });
       expect(result.status, result.stderr).toBe(0);
 
-      const resolved = (name) => realpathSync(join(worktree, "node_modules", "@omnesis", name));
-      const real = realpathSync(worktree);
+      const resolved = (name) =>
+        realpathSync.native(join(worktree, "node_modules", "@omnesis", name));
+      const real = realpathSync.native(worktree);
       expect(resolved("core")).toBe(join(real, "packages/core"));
       expect(resolved("provider-old")).toBe(join(real, "packages/providers/old"));
       expect(resolved("provider-new")).toBe(join(real, "packages/providers/new"));
-      expect(realpathSync(join(worktree, "node_modules", "left-pad"))).toBe(
-        realpathSync(join(primary, "node_modules", "left-pad")),
+      expect(realpathSync.native(join(worktree, "node_modules", "left-pad"))).toBe(
+        realpathSync.native(join(primary, "node_modules", "left-pad")),
       );
       expect(readFileSync(join(worktree, build), "utf8")).toBe("an invented extension build");
     } finally {
@@ -3894,9 +3896,17 @@ describe("scripts/ios-logic.sh sim-less native logic lane guards (C11)", () => {
     mkdirSync(bin);
     const path = localSshFixturePath(bin);
     for (const scratch of [descendant, alias]) {
+      // This operand describes a remote POSIX path. The local SSH stand-in
+      // maps it back to the native fixture directory before Python inspects it.
+      const remoteScratch =
+        process.platform === "win32"
+          ? execFileSync(bashExecutable(), ["-c", '/usr/bin/cygpath -u -- "$1"', "--", scratch], {
+              encoding: "utf8",
+            }).trim()
+          : scratch;
       const result = spawnSync(
         bashExecutable(),
-        [join(repoRoot, "scripts/ios-style.sh"), "check", scratch],
+        [join(repoRoot, "scripts/ios-style.sh"), "check", remoteScratch],
         {
           cwd: repoRoot,
           encoding: "utf8",
