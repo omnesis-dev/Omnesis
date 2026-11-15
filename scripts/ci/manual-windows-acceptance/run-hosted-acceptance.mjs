@@ -5,6 +5,10 @@ import { validatePreflightDiagnostic } from "./preflight-state.mjs";
 
 import { acceptedManualMode } from "./result-acceptance.mjs";
 import assert from "node:assert/strict";
+import {
+  validateOperationDiagnostic,
+  validateCleanupDiagnostics,
+} from "./operation-diagnostic.mjs";
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -116,6 +120,9 @@ async function main() {
         cleanupUnconfirmed: boolean(r.cleanupUnconfirmed) || !joined,
         ungracefulFallback: boolean(r.ungracefulFallback),
         failedPhase: r.failedPhase === null ? null : label(r.failedPhase),
+        operationFailure:
+          r.operationFailure == null ? null : validateOperationDiagnostic(r.operationFailure),
+        cleanupDiagnostics: validateCleanupDiagnostics(r.cleanupDiagnostics ?? []),
         readiness: r.readinessObservations.map((x) => {
           assert.ok(["gateway", "collector"].includes(x.component));
           return {

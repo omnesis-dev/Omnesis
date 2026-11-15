@@ -10,6 +10,7 @@ import {
 } from "./preflight-state.mjs";
 
 import assert from "node:assert/strict";
+import { operationDiagnostic } from "./operation-diagnostic.mjs";
 import { recordReadiness, manualAcceptance } from "./readiness-acceptance.mjs";
 import { verifyRuntimeProvenance } from "./verify-runtime-provenance.mjs";
 import { createRequire } from "node:module";
@@ -194,6 +195,13 @@ let phase = "keyring-init",
   agent,
   sequence = 0;
 const children = [];
+let operationSubphase = "none",
+  operationAssertion = null,
+  cleanupSubphase = "none";
+function pendingOperation(value, assertionId = null) {
+  operationSubphase = value;
+  operationAssertion = assertionId;
+}
 function unknown(error) {
   const seen = new Set();
   while (error && typeof error === "object" && !seen.has(error)) {
@@ -301,7 +309,13 @@ async function cli(args, label, timeout = 180000) {
     throw new Error("CLI fixture deadline " + label);
   }
   if (!fate.joined) throw fate.error;
-  assert.equal(fate.code, 0, "CLI failed " + label);
+  try {
+    assert.equal(fate.code, 0, "CLI failed " + label);
+  } catch (error) {
+    operationAssertion = "operation-assert-007";
+    error.manualApplicationExitCode = fate.code;
+    throw error;
+  }
   return r.stdout;
 }
 async function until(check, budget, label) {
@@ -359,6 +373,7 @@ function api(path, { method = "GET", body } = {}) {
 }
 async function step(name, fn) {
   phase = name;
+  pendingOperation("none");
   const start = Date.now();
   const firstNestedStep = receipt.steps.length;
   await fn();
@@ -419,6 +434,22 @@ async function startCollector() {
   );
 }
 async function stop(r) {
+  cleanupSubphase = "shutdown-request";
+  try {
+    return await stopImpl(r);
+  } catch (error) {
+    (receipt.cleanupDiagnostics ??= []).push({
+      ...operationDiagnostic(cleanupSubphase, error),
+      component: r?.label?.includes("gateway")
+        ? "gateway"
+        : r?.label?.includes("collector")
+          ? "collector"
+          : "other",
+    });
+    throw error;
+  }
+}
+async function stopImpl(r) {
   if (!r) return;
   if (r.fate) {
     if (!r.fate.joined) throw r.fate.error;
@@ -433,6 +464,7 @@ async function stop(r) {
   const start = Date.now();
   r.shutdownRequested = true;
   r.child.stdin.write(JSON.stringify({ type: "shutdown", version: 1 }) + "\n");
+  cleanupSubphase = "shutdown-join";
   const budget = manifest.gracefulObservationMs;
   let timer;
   const fate = await Promise.race([
@@ -451,10 +483,15 @@ async function stop(r) {
   const evidence = lines
     .map((line) => JSON.parse(line.slice("AUDIT_OWNED_CLI:".length)))
     .findLast((row) => row.event === "closed");
+  cleanupSubphase = "shutdown-receipt";
   assert.equal(evidence?.shutdownRequested, true, "Missing graceful shutdown receipt");
+  cleanupSubphase = "shutdown-ipc";
   assert.equal(evidence?.ipcAccepted, true, "Actual CLI refused parent shutdown IPC");
+  cleanupSubphase = "shutdown-application-exit";
   assert.equal(evidence?.code, 0, "Actual CLI drain exit");
+  cleanupSubphase = "shutdown-wrapper-exit";
   assert.equal(fate.code, 0, "Owned wrapper drain exit");
+  cleanupSubphase = "shutdown-budget";
   const elapsedMs = Date.now() - start;
   const withinLegacyGracefulAcceptance = elapsedMs <= legacyGracefulAcceptanceMs;
   if (!withinLegacyGracefulAcceptance) {
@@ -550,6 +587,7 @@ try {
     assert.equal(new Set(receipt.documentIds).size, 3);
   });
   await step("cli-status-search-show-sql", async () => {
+    pendingOperation("lexical-index-ready");
     await until(
       async () => {
         const result = await api("/search", {
@@ -561,25 +599,46 @@ try {
       bootBudget,
       "lexical index ready",
     );
-    JSON.parse(await cli(["status", "--json"], "status"));
-    const found = JSON.parse(await cli(["search", "amber lantern", "--json"], "search", 90000));
+    pendingOperation("status-command");
+    const statusBytes = await cli(["status", "--json"], "status");
+    pendingOperation("status-json");
+    JSON.parse(statusBytes);
+    pendingOperation("search-command");
+    const searchBytes = await cli(["search", "amber lantern", "--json"], "search", 90000);
+    pendingOperation("search-json");
+    const found = JSON.parse(searchBytes);
+    pendingOperation("search-result", "operation-assert-001");
     assert.ok(found.results.length >= 1);
     const id = receipt.documentIds[0];
-    const doc = JSON.parse(await cli(["show", id, "--json"], "show"));
+    pendingOperation("show-command");
+    const showBytes = await cli(["show", id, "--json"], "show");
+    pendingOperation("show-json");
+    const doc = JSON.parse(showBytes);
+    pendingOperation("show-result", "operation-assert-002");
     assert.ok(JSON.stringify(doc).includes("Invented"));
-    const count = JSON.parse(
-      await cli(
-        ["sql", "SELECT COUNT(*) AS count FROM documents", "--db", "sqlite", "--json"],
-        "sqlite-query",
-      ),
+    pendingOperation("sqlite-command");
+    const sqliteBytes = await cli(
+      ["sql", "SELECT COUNT(*) AS count FROM documents", "--db", "sqlite", "--json"],
+      "sqlite-query",
     );
+    pendingOperation("sqlite-json");
+    const count = JSON.parse(sqliteBytes);
+    pendingOperation("sqlite-row-count", "operation-assert-003");
     assert.equal(count.rows.length, 1);
+    pendingOperation("sqlite-document-count", "operation-assert-004");
     assert.equal(Number(count.rows[0][0]), 3);
-    const analytics = JSON.parse(
-      await cli(["sql", "SELECT 17 AS audit_value", "--db", "duckdb", "--json"], "duckdb-query"),
+    pendingOperation("duckdb-command");
+    const duckdbBytes = await cli(
+      ["sql", "SELECT 17 AS audit_value", "--db", "duckdb", "--json"],
+      "duckdb-query",
     );
+    pendingOperation("duckdb-json");
+    const analytics = JSON.parse(duckdbBytes);
+    pendingOperation("duckdb-value", "operation-assert-005");
     assert.equal(analytics.rows[0][0], 17);
+    pendingOperation("analytics-key-read");
     const key = await core.readStorageKey("analytics-db", { configDir: cfg });
+    pendingOperation("analytics-key-size", "operation-assert-006");
     assert.equal(key?.length, 32);
     receipt.encryptedAnalyticsKeyPresent = true;
   });
@@ -651,6 +710,7 @@ try {
     receipt.cleanupUnconfirmed = true;
   }
   receipt.failedPhase = phase;
+  receipt.operationFailure = operationDiagnostic(operationSubphase, error, operationAssertion);
   receipt.errorType = error?.name;
   writeFileSync(
     join(root, "private-error.log"),
@@ -733,6 +793,8 @@ try {
     readinessAcceptanceFailed: receipt.readinessAcceptanceFailed ?? false,
     sourceCommit: receipt.sourceCommit,
     failedPhase: receipt.failedPhase ?? null,
+    operationFailure: receipt.operationFailure ?? null,
+    cleanupDiagnostics: receipt.cleanupDiagnostics ?? [],
     cleanupUnconfirmed: isCleanupUncertain() || (receipt.cleanupUnconfirmed ?? false),
     ungracefulFallback: receipt.ungracefulFallback ?? false,
     readinessObservations: receipt.readinessObservations,
@@ -763,6 +825,8 @@ try {
         cleanupUnconfirmed: isCleanupUncertain() || receipt.cleanupUnconfirmed === true,
         ungracefulFallback: receipt.ungracefulFallback === true,
         failedPhase: receipt.failedPhase ?? null,
+        operationFailure: receipt.operationFailure ?? null,
+        cleanupDiagnostics: receipt.cleanupDiagnostics ?? [],
         readinessObservations: receipt.readinessObservations,
         phaseResults: receipt.steps.map(({ name, passed, elapsedMs }) => ({
           name,
