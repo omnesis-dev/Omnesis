@@ -1264,6 +1264,27 @@ export class SyntheticE2EHarness {
         code: error && typeof error === "object" && "code" in error ? error.code : null,
         files,
       });
+      const { default: Database } = await import("better-sqlite3");
+      for (const delay of [100, 500, 1500]) {
+        await new Promise((resolve) => setTimeout(resolve, delay));
+        let probe;
+        try {
+          probe = new Database(this.getDbPath(), { fileMustExist: true });
+          const tables = probe.prepare("SELECT count(*) AS n FROM sqlite_master").get();
+          console.error("offline-restart-readability", { delay, tables, ok: true });
+        } catch (probeError) {
+          console.error("offline-restart-readability", {
+            delay,
+            ok: false,
+            code:
+              probeError && typeof probeError === "object" && "code" in probeError
+                ? probeError.code
+                : null,
+          });
+        } finally {
+          probe?.close();
+        }
+      }
       throw error;
     }
     this.gatewayMode = gatewayMode;
