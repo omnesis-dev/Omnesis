@@ -273,15 +273,11 @@ class CloudFeaturesOffTest {
         org.junit.Assert.assertTrue(dev.omnesis.android.access.PairingPendingRequests.polls(cloudEnabled = true))
     }
 
-    @Test fun `a pairing request is not routed when off`() {
-        assertFalse(knownNotificationKind("device-pairing", cloudEnabled = false))
-        assertNull(notificationAction(delivery("device-pairing"), cloudEnabled = false))
-    }
-
-    /** The gateway sends `device-joined` for a Tailscale join too, which needs no cloud relay. */
-    @Test fun `a device that joined is routed when off`() {
-        org.junit.Assert.assertTrue(knownNotificationKind("device-joined", cloudEnabled = false))
-        org.junit.Assert.assertNotNull(notificationAction(delivery("device-joined"), cloudEnabled = false))
+    @Test fun `no cloud notification kind is routed when off`() {
+        for (kind in listOf("device-pairing", "device-joined")) {
+            assertFalse(knownNotificationKind(kind, cloudEnabled = false))
+            assertNull(notificationAction(delivery(kind), cloudEnabled = false))
+        }
     }
 
     private fun delivery(kind: String) = ClaimedNotificationDelivery(

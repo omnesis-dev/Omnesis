@@ -46,14 +46,20 @@ class NotificationDispatchTest {
     }
 
     @Test
-    fun device_joined_opens_devices_with_and_without_cloud_connectivity() {
+    fun a_device_that_joined_through_tailscale_opens_devices_with_and_without_cloud_connectivity() {
         for (cloud in listOf(false, true)) {
-            assertTrue(knownNotificationKind("device-joined", cloudEnabled = cloud))
+            assertTrue(knownNotificationKind("tailscale-joined", cloudEnabled = cloud))
             assertEquals(
-                ClaimedPushAction("device-joined", NotificationTarget.Devices(null)),
-                notificationAction(notification("device-joined", "devices", """{"kind":"device-joined"}"""), cloudEnabled = cloud),
+                ClaimedPushAction("tailscale-joined", NotificationTarget.Devices(null)),
+                notificationAction(notification("tailscale-joined", "devices", """{"kind":"tailscale-joined"}"""), cloudEnabled = cloud),
             )
         }
+    }
+
+    @Test
+    fun device_joined_stays_a_cloud_relay_kind() {
+        assertFalse(knownNotificationKind("device-joined", cloudEnabled = false))
+        assertNull(notificationAction(notification("device-joined", "devices", """{"kind":"device-joined"}"""), cloudEnabled = false))
     }
 
     @Test

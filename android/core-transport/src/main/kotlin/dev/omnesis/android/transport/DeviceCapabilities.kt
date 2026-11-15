@@ -55,8 +55,8 @@ data class DeviceCapabilities(
     val tls: TlsCapability? = null,
     val pairingNotifications: Boolean = false,
     /**
-     * This app routes the `tailscale-join` notification and the `device-joined` one a
-     * Tailscale join sends. Every build can; a gateway that never produces them ignores it.
+     * This app routes the Tailscale notifications, `tailscale-join` and `tailscale-joined`.
+     * Every build can; a gateway that never produces them ignores it.
      */
     val tailscaleJoinNotifications: Boolean = false,
 ) {

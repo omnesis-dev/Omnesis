@@ -156,10 +156,11 @@ extension PushTarget {
         -> PushTarget? {
         guard let omnesis = userInfo["omnesis"] as? [String: Any] else { return nil }
         let kind = omnesis["kind"] as? String
-        // Neither carries anything to act on: the gateway sends them only while a
-        // feature that produces them is on, so every build routes them.
-        if kind == "device-joined" { return .deviceJoined }
+        if kind == "device-joined" { return cloudRelayEnabled ? .deviceJoined : nil }
+        // The Tailscale kinds carry nothing to act on, and only a gateway with its
+        // own Tailscale device sends them, so every build routes them.
         if kind == "tailscale-join" { return .tailscaleJoinRequests }
+        if kind == "tailscale-joined" { return .deviceJoined }
         if let targetId = omnesis["targetId"] as? String, !targetId.isEmpty {
             switch kind {
             case "privacy-approval":

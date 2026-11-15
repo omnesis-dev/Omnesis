@@ -49,21 +49,20 @@ internal enum class NotificationRenderOutcome(val shouldConfirm: Boolean) {
     DeferredUnknownKind(false),
 }
 
-/**
- * Only a cloud-relay build routes a pairing request. `device-joined` is routed by every build:
- * the gateway sends it only for a feature that produces it (the cloud relay, or a device that
- * joined through Tailscale) and only to an app that said it can route it.
- */
-private const val CLOUD_ONLY_KIND = "device-pairing"
+private val cloudNotificationKinds = setOf("device-pairing", "device-joined")
 
-/** A build without cloud connectivity defers a pairing request like any kind it has never heard of. */
+/**
+ * A build without cloud connectivity defers the cloud kinds like any kind it has never heard of.
+ * Every build routes the Tailscale kinds: only a gateway with its own Tailscale device sends them,
+ * and only to an app that said it can route them.
+ */
 internal fun knownNotificationKind(kind: String, cloudEnabled: Boolean = BuildConfig.CLOUD_RELAY_ENABLED): Boolean = kind in setOf(
     "diagnostic", "agent-answer", "conversation", "watch", "needs-auth", "privacy-approval",
     "source-permission",
     "access-authorization",
-    "device-joined",
     "tailscale-join",
-) || (cloudEnabled && kind == CLOUD_ONLY_KIND)
+    "tailscale-joined",
+) || (cloudEnabled && kind in cloudNotificationKinds)
 
 /** Strict local routing for shared notification kinds. Unknown/malformed content is ignored. */
 internal fun notificationAction(
@@ -71,7 +70,7 @@ internal fun notificationAction(
     localDeviceId: String? = null,
     cloudEnabled: Boolean = BuildConfig.CLOUD_RELAY_ENABLED,
 ): ClaimedPushAction? {
-    if (!cloudEnabled && notification.kind == CLOUD_ONLY_KIND) return null
+    if (!cloudEnabled && notification.kind in cloudNotificationKinds) return null
     val route = notification.route?.takeIf {
         it.string("kind") == notification.kind
     }
@@ -83,7 +82,7 @@ internal fun notificationAction(
                 NotificationTarget.PairingRequests(route?.string("requestId")?.takeIf(::validNotificationId)),
             )
         } else null
-        "device-joined" -> ClaimedPushAction(
+        "device-joined", "tailscale-joined" -> ClaimedPushAction(
             notification.kind,
             NotificationTarget.Devices(route?.string("deviceId")?.takeIf(::validOpaqueTarget)),
         )

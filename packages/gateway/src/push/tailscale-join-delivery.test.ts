@@ -66,3 +66,33 @@ test("suppressing pairing reminders leaves Tailscale join reminders alone", () =
     db.close();
   }
 });
+
+test("a Tailscale joined notice follows the same capability as a waiting request", () => {
+  const db = new Database(":memory:");
+  try {
+    db.exec("CREATE TABLE devices(id TEXT PRIMARY KEY,capabilities TEXT)");
+    db.prepare("INSERT INTO devices(id,capabilities) VALUES (?,?)").run(deviceId, "{}");
+    createNotificationQueueTables(db);
+    for (const kind of ["tailscale-joined", "device-joined"] as const) {
+      enqueueNotification(db, {
+        message: { kind, title: "Joined", body: "A device joined.", data: {}, collapseId: kind },
+        deviceIds: [deviceId],
+        createdAt: 1_000,
+        expiresAt: 601_000,
+      });
+    }
+    suppressUnsupportedTailscaleJoinReminders(db, deviceId, 1_001, false);
+    const states = Object.fromEntries(
+      db
+        .prepare<[], { kind: string; state: string }>(
+          "SELECT n.kind AS kind, d.state AS state FROM notification_deliveries d JOIN notifications n ON n.id=d.notification_id",
+        )
+        .all()
+        .map((row) => [row.kind, row.state]),
+    );
+    // The cloud relay's device-joined is not this check's to judge.
+    expect(states).toEqual({ "tailscale-joined": "superseded", "device-joined": "pending" });
+  } finally {
+    db.close();
+  }
+});

@@ -5,9 +5,10 @@
 import XCTest
 
 /// A gateway running its own Tailscale device notifies the owner's phone when a device waits
-/// to join (`tailscale-join`) and when one joined (`device-joined`). Every build routes both
+/// to join (`tailscale-join`) and when one joined (`tailscale-joined`). Every build routes both
 /// and says so, through its capabilities and on each claim; a gateway without the feature
-/// never sends either, so nothing changes against it. Pairing requests stay a cloud-build kind.
+/// never sends either, so nothing changes against it. The cloud relay's kinds, pairing
+/// requests and `device-joined`, stay cloud-build kinds.
 final class TailscaleJoinNotificationTests: XCTestCase {
     private let flags = [false, true]
 
@@ -30,21 +31,24 @@ final class TailscaleJoinNotificationTests: XCTestCase {
         XCTAssertTrue(PushTarget.tailscaleJoinRequests.opensDevices)
     }
 
-    func testAJoinedDeviceOpensDevicesInEveryBuild() {
+    func testADeviceThatJoinedThroughTailscaleOpensDevicesInEveryBuild() {
         for enabled in flags {
             XCTAssertEqual(
-                PushTarget.fromUserInfo(["omnesis": ["kind": "device-joined", "targetId": "devices"]], cloudRelayEnabled: enabled),
+                PushTarget.fromUserInfo(["omnesis": ["kind": "tailscale-joined", "targetId": "devices"]], cloudRelayEnabled: enabled),
                 .deviceJoined
             )
-            XCTAssertEqual(PushTarget.fromUserInfo(["omnesis": ["kind": "device-joined"]], cloudRelayEnabled: enabled), .deviceJoined)
+            XCTAssertEqual(PushTarget.fromUserInfo(["omnesis": ["kind": "tailscale-joined"]], cloudRelayEnabled: enabled), .deviceJoined)
         }
         XCTAssertTrue(PushTarget.deviceJoined.opensDevices)
     }
 
-    func testPairingRequestsStayGatedOnTheCloudBuild() {
+    func testTheCloudRelayKindsStayGatedOnTheCloudBuild() {
         let pairing: [AnyHashable: Any] = ["omnesis": ["kind": "device-pairing", "targetId": "pairing"]]
+        let joined: [AnyHashable: Any] = ["omnesis": ["kind": "device-joined", "targetId": "devices"]]
         XCTAssertNil(PushTarget.fromUserInfo(pairing, cloudRelayEnabled: false))
+        XCTAssertNil(PushTarget.fromUserInfo(joined, cloudRelayEnabled: false))
         XCTAssertEqual(PushTarget.fromUserInfo(pairing, cloudRelayEnabled: true), .pairingRequests())
+        XCTAssertEqual(PushTarget.fromUserInfo(joined, cloudRelayEnabled: true), .deviceJoined)
     }
 
     @MainActor
@@ -58,7 +62,7 @@ final class TailscaleJoinNotificationTests: XCTestCase {
     func testClaimedBannersRouteOnTheirKind() throws {
         for (kind, targetId, expected) in [
             ("tailscale-join", "tailscale-join", PushTarget.tailscaleJoinRequests),
-            ("device-joined", "devices", PushTarget.deviceJoined),
+            ("tailscale-joined", "devices", PushTarget.deviceJoined),
         ] {
             let json = #"{"id":"00000000-0000-4000-8000-000000000101","kind":"\#(kind)","targetId":"\#(targetId)","#
                 + #""title":"Device waiting to join","body":"maya-laptop wants to join through Tailscale. Tap to review.","#

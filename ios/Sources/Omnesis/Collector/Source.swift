@@ -84,7 +84,7 @@ public struct PairingCapabilities: Codable, Equatable, Sendable {
     /// Advertises support without requiring older paired phones to understand a new reminder kind.
     public var pairingNotifications: Bool?
     /// This app routes a device waiting to join through Tailscale (`tailscale-join`) and
-    /// one that joined (`device-joined`). Sent by every build; optional so a capability
+    /// one that joined (`tailscale-joined`). Sent by every build; optional so a capability
     /// set from an older app still decodes.
     public var tailscaleJoinNotifications: Bool?
 

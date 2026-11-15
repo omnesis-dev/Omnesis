@@ -243,7 +243,8 @@ class MainActivityLaunchReplayTest {
     fun a_devices_notification_tap_opens_devices_once_and_pairing_requests_only_with_cloud_connectivity() {
         val first = devicesTap(stamp = 1_000, deviceId = "device-joined")
         val activity = created(first)
-        // A device that joined opens Devices in every build.
+        // A device that joined opens Devices in every build: without the cloud relay, only a
+        // Tailscale join sends that tap.
         assertEquals("device-joined", notifications.devices.value?.deviceId)
         notifications.consumeDevices()
         if (!BuildConfig.CLOUD_RELAY_ENABLED) {

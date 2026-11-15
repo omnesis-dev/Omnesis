@@ -5,7 +5,8 @@ import type { DeviceId } from "@omnesis/types";
 import type { Db } from "../data/types.js";
 
 /**
- * Tailscale join requests reach only clients that can show and decide them:
+ * Tailscale join notices (a request waiting, a collector that joined) reach
+ * only clients that can show and decide them:
  * supersede waiting ones unless this claim says the client routes them and its
  * device row agrees. Runs inside the claim transaction, like the pairing
  * reminders' check, so a capability withdrawal cannot strand an older client
@@ -19,7 +20,7 @@ export function suppressUnsupportedTailscaleJoinReminders(
 ): void {
   const waiting = db
     .prepare<[string], { present: number }>(
-      "SELECT 1 AS present FROM notification_deliveries d JOIN notifications n ON n.id=d.notification_id WHERE d.device_id=? AND n.kind='tailscale-join' AND d.state IN ('pending','leased') LIMIT 1",
+      "SELECT 1 AS present FROM notification_deliveries d JOIN notifications n ON n.id=d.notification_id WHERE d.device_id=? AND n.kind IN ('tailscale-join','tailscale-joined') AND d.state IN ('pending','leased') LIMIT 1",
     )
     .get(deviceId);
   if (!waiting) return;
@@ -34,7 +35,7 @@ export function suppressUnsupportedTailscaleJoinReminders(
   db.prepare(
     `UPDATE notification_deliveries SET state='superseded', leased_until=NULL,
       wake_state='terminal', wake_lease_token=NULL, wake_leased_until=NULL, wake_next_attempt_at=NULL
-      WHERE device_id=? AND notification_id IN (SELECT id FROM notifications WHERE kind='tailscale-join')
+      WHERE device_id=? AND notification_id IN (SELECT id FROM notifications WHERE kind IN ('tailscale-join','tailscale-joined'))
       AND (state='pending' OR (state='leased' AND leased_until<=?))`,
   ).run(deviceId, now);
 }

@@ -77,6 +77,10 @@ export const notificationMessageSchema = z.discriminatedUnion("kind", [
   // Carries no request id: a tap opens the list of waiting Tailscale join
   // requests, which only an authenticated administrator can read.
   message("tailscale-join", z.object({}).strict()),
+  // A collector joined through Tailscale with nobody approving it. Like
+  // device-joined, the name is in the banner only and a tap opens Devices; it
+  // is a kind of its own because only clients of the Tailscale feature know it.
+  message("tailscale-joined", z.object({}).strict()),
 ]);
 
 export type NotificationMessage = z.infer<typeof notificationMessageSchema>;
@@ -128,6 +132,7 @@ export const notificationRouteSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("device-pairing") }).strict(),
   z.object({ kind: z.literal("device-joined") }).strict(),
   z.object({ kind: z.literal("tailscale-join") }).strict(),
+  z.object({ kind: z.literal("tailscale-joined") }).strict(),
 ]);
 
 export type NotificationRoute = z.infer<typeof notificationRouteSchema>;
@@ -152,6 +157,7 @@ export const claimedNotificationSchema = z
       "device-pairing",
       "device-joined",
       "tailscale-join",
+      "tailscale-joined",
     ]),
     targetId: z.string().min(1).max(512),
     /** Device that owns the condition, when a reminder may be claimed elsewhere. */
@@ -194,6 +200,8 @@ export function notificationTargetId(message: NotificationMessage): string {
       return "devices";
     case "tailscale-join":
       return "tailscale-join";
+    case "tailscale-joined":
+      return "devices";
     default:
       return assertNever(message);
   }
@@ -239,6 +247,7 @@ export function notificationRoute(message: NotificationMessage): NotificationRou
     case "device-pairing":
     case "device-joined":
     case "tailscale-join":
+    case "tailscale-joined":
       return { kind: message.kind };
     default:
       return assertNever(message);

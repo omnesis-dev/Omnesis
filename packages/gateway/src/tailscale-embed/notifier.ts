@@ -76,11 +76,11 @@ export class TailscaleJoinNotifier {
       if (targets.length === 0) return;
       await this.publisher.publish(
         {
-          kind: "device-joined",
+          kind: "tailscale-joined",
           title: "New device joined",
           body: `${bannerName(device.name)} joined your gateway through Tailscale. Not you? Remove it in Devices.`,
           data: {},
-          collapseId: `device-joined:${device.id}`,
+          collapseId: `tailscale-joined:${device.id}`,
         },
         targets,
         { expiresAt: Date.now() + 24 * 60 * 60 * 1000 },
