@@ -81,6 +81,8 @@ jobs:
           scripts/ci/windows-checks.test.mjs
           packages/platform/src/windows-powershell.test.ts
           packages/core/src/windows-process-tree.test.ts
+          packages/platform/src/native/windows-job-source.test.ts
+          packages/platform/src/windows-worker-cache.windows.test.ts
       - name: Validate scoped keys with existing secret, config, TLS and CI contracts
         if: ${{ inputs.scope == 'cache-green' }}
         run: >-
