@@ -456,10 +456,17 @@ test.describe("Portal", () => {
         onmessage: ((event: { data: string; lastEventId: string }) => void) | null = null;
         onerror: ((event?: unknown) => void) | null = null;
 
-        constructor() {
+        constructor(url: string) {
+          // The portal's signal stream is an EventSource too; only the agent's
+          // event stream is the one this test drives.
+          if (!String(url).includes("/agent/events")) return;
           (window as unknown as { __emitAgentEvent?: (event: unknown) => void }).__emitAgentEvent =
             (event) => this.onmessage?.({ data: JSON.stringify(event), lastEventId: "1" });
         }
+
+        addEventListener() {}
+
+        removeEventListener() {}
 
         close() {}
       }

@@ -325,6 +325,11 @@ export class EnrollmentWorld {
         // The same goes for the per-client limits, which would otherwise see one client.
         OMNESIS_CLOUD_RELAY_MAX_LOGINS_PER_MINUTE_PER_CLIENT: "1000",
         OMNESIS_CLOUD_RELAY_MAX_CONCURRENT_LOGINS_PER_CLIENT: "32",
+        // Every gateway proves its keys, and every device reaches it, from that one address too.
+        OMNESIS_CLOUD_RELAY_MAX_GATEWAY_LOGINS_PER_MINUTE_PER_CLIENT: "1000",
+        OMNESIS_CLOUD_RELAY_MAX_CONCURRENT_GATEWAY_LOGINS_PER_CLIENT: "32",
+        OMNESIS_CLOUD_RELAY_MAX_STREAMS_PER_CLIENT: "256",
+        OMNESIS_CLOUD_RELAY_MAX_STREAMS_PER_CLIENT_PER_GATEWAY: "16",
         ...(this.options.signupPolicy === "allowlist"
           ? { OMNESIS_CLOUD_RELAY_SIGNUP_ALLOWLIST_FILE: this.allowlistFile }
           : {}),

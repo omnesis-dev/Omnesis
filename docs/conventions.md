@@ -424,6 +424,21 @@ without holding it across model work.
 - Media boundary: `packages/gateway/src/realtime/service.ts`, `packages/gateway/src/realtime/route.ts`
 - Native handoff: `ios/Sources/Omnesis/Coordinators/RealtimeConversationHandoff.swift`
 
+### Something waiting for the owner is signalled, then re-read
+
+When the owner must decide something (a device asking to join, an agent asking
+for access, an answer or a watch held for approval), the producer publishes its
+topic on `PortalSignals` (`packages/gateway/src/portal-signals/hub.ts`) once the
+change is final: when an item arrives and when it is decided. Open portals hear
+it on `GET /portal/api/signals` and re-read that topic through its ordinary
+authenticated route; the signal carries no data, so it cannot leak or go stale.
+Expiry is not signalled: each list carries its items' expiry and the portal
+re-reads when the earliest passes. One browser holds one stream for all its
+tabs (`packages/gateway/portal/js/lib/portal-signals.js`), since the gateway
+speaks HTTP/1.1, and `use-attention.js` keeps the one answer every mark and strip
+reads. A new kind of waiting item adds a topic and its publish calls rather than
+a poll of its own.
+
 ### A credential gate answers from the credential, a sync failure from the failure
 
 `credentialState()` says what state an account's credential is in. The

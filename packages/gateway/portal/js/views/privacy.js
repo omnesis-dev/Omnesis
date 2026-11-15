@@ -18,14 +18,16 @@ import { html } from "htm/preact";
 import { useEffect, useState } from "preact/hooks";
 
 import { getPrivacyReviewerHealth } from "../api.js";
+import { AttentionIcon } from "../components/attention-icon.js";
 import { TabBar } from "../components/tab-bar.js";
+import { attentionText } from "../lib/attention.js";
 import { replaceRoute } from "../lib/router.js";
 import { PrivacyActivityPane, PrivacyApprovalRoute } from "./audit/activity.js";
 import { DirectAuditPane, DirectSessionDetailRoute } from "./audit/direct.js";
 import { PrivacyExchangeDetailRoute } from "./audit/exchange-detail.js";
 import { PrivacyHealthBanner } from "./audit/shared.js";
 
-function AuditDashboard({ directTab }) {
+function AuditDashboard({ directTab, waitingAnswers }) {
   const [reviewerHealth, setReviewerHealth] = useState(null);
 
   useEffect(() => {
@@ -60,7 +62,12 @@ function AuditDashboard({ directTab }) {
       <${PrivacyHealthBanner} health=${reviewerHealth} />
       <${TabBar}
         tabs=${[
-          { key: "answer", label: "Answer" },
+          {
+            key: "answer",
+            label: waitingAnswers > 0
+              ? html`Answer <${AttentionIcon} label=${attentionText("answers", waitingAnswers)} />`
+              : "Answer",
+          },
           { key: "direct", label: "Direct" },
         ]}
         active=${tab}
@@ -79,6 +86,8 @@ export function PrivacyView({
   taskId = null,
   directTab = false,
   directSessionId = null,
+  // How many answers wait for review (`useAttention`), marked on the Answer tab.
+  waitingAnswers = 0,
 }) {
   if (approvalId) return html`<${PrivacyApprovalRoute} key=${approvalId} approvalId=${approvalId} />`;
   if (conversationId) {
@@ -91,5 +100,5 @@ export function PrivacyView({
   if (directSessionId) {
     return html`<${DirectSessionDetailRoute} key=${directSessionId} sessionId=${directSessionId} />`;
   }
-  return html`<${AuditDashboard} directTab=${directTab} />`;
+  return html`<${AuditDashboard} directTab=${directTab} waitingAnswers=${waitingAnswers} />`;
 }

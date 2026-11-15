@@ -6,13 +6,19 @@ import { pipeline, type Duplex } from "node:stream";
 import { CloudRelayMetrics, type DataEvent } from "./metrics.js";
 import { clientHelloHostname, MAX_CLIENT_HELLO_BYTES } from "./client-hello.js";
 import { connectionClientAddress } from "./proxy-protocol.js";
+import { clientBucket } from "./client-bucket.js";
+import { DEFAULT_TUNNEL_LIMITS } from "./tunnels.js";
 
 export interface TlsRouterOptions {
   metrics?: CloudRelayMetrics;
   accountForHostname(hostname: string): string | undefined;
   open(account: string, signal: AbortSignal, client: string | undefined): Promise<Duplex>;
   maxConnections?: number;
+  /** Connections one client address (an IPv6 /64) may hold, routed or not yet. */
+  maxConnectionsPerClient?: number;
   helloTimeoutMs?: number;
+  /** A routed connection with no bytes either way for this long is closed. */
+  idleTimeoutMs?: number;
 }
 
 /** Routes encrypted bytes without terminating TLS, parsing HTTP, or seeing credentials. */
@@ -25,11 +31,15 @@ export function createTlsRouter(options: TlsRouterOptions): {
   let closedIngressBytes = 0;
   let closedEgressBytes = 0;
   const maxConnections = options.maxConnections ?? 256;
+  const maxConnectionsPerClient =
+    options.maxConnectionsPerClient ?? DEFAULT_TUNNEL_LIMITS.maxStreamsPerClient;
   const helloTimeoutMs = options.helloTimeoutMs ?? 10_000;
-  for (const limit of [maxConnections, helloTimeoutMs])
+  const idleTimeoutMs = options.idleTimeoutMs ?? DEFAULT_TUNNEL_LIMITS.idleTimeoutMs;
+  for (const limit of [maxConnections, maxConnectionsPerClient, helloTimeoutMs, idleTimeoutMs])
     if (!Number.isSafeInteger(limit) || limit <= 0 || limit > 2_147_483_647)
       throw new Error("Invalid TLS router limits");
   const sockets = new Set<Socket>();
+  const clients = new Map<string, number>();
   const server = createServer((socket) => {
     socket.on("error", () => socket.destroy());
     if (sockets.size >= maxConnections) {
@@ -37,6 +47,16 @@ export function createTlsRouter(options: TlsRouterOptions): {
       socket.destroy();
       return;
     }
+    const address = connectionClientAddress(socket);
+    // An accepted socket always has a peer; one already gone shares the "undefined" bucket.
+    const client = clientBucket(String(address));
+    const held = clients.get(client) ?? 0;
+    if (held >= maxConnectionsPerClient) {
+      metrics.data("client_capacity");
+      socket.destroy();
+      return;
+    }
+    clients.set(client, held + 1);
     sockets.add(socket);
     metrics.data("accepted");
     const controller = new AbortController();
@@ -52,6 +72,9 @@ export function createTlsRouter(options: TlsRouterOptions): {
       closedIngressBytes += socket.bytesRead;
       closedEgressBytes += socket.bytesWritten;
       sockets.delete(socket);
+      const left = clients.get(client)! - 1;
+      if (left > 0) clients.set(client, left);
+      else clients.delete(client);
       metrics.data("closed");
       clearTimeout(timer);
       controller.abort();
@@ -81,7 +104,7 @@ export function createTlsRouter(options: TlsRouterOptions): {
         failure = "connect_failed";
         socket.pause();
         socket.removeListener("data", receive);
-        void options.open(account, controller.signal, connectionClientAddress(socket)).then(
+        void options.open(account, controller.signal, address).then(
           (stream) => {
             if (socket.destroyed) {
               stream.destroy();
@@ -93,6 +116,11 @@ export function createTlsRouter(options: TlsRouterOptions): {
             // Preserve the exact original ClientHello, including its random and key shares.
             stream.write(initial.subarray(0, initialLength));
             clearTimeout(timer);
+            // Node counts reads and writes as activity, so a stream that only sends stays open.
+            socket.setTimeout(idleTimeoutMs, () => {
+              metrics.data("idle_timeout");
+              socket.destroy();
+            });
             pipeline(socket, stream, () => {
               socket.destroy();
               stream.destroy();

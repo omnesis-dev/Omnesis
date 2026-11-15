@@ -43,6 +43,7 @@ function setup(admit?: Admit, revoked: Record<string, number> = {}) {
     revokedAt: vi.fn((identity: string) => revoked[identity] ?? null),
     notifyWaiting: vi.fn(),
     notifyJoined: vi.fn(),
+    onWaitingChanged: vi.fn(),
     now: () => now,
   };
   return {
@@ -164,6 +165,37 @@ describe("ask first", () => {
     });
     expect(deps.notifyWaiting).toHaveBeenCalledWith(view);
     expect(JSON.stringify(view)).not.toContain(out.status === "pending" ? out.secret : "?");
+  });
+
+  test("the waiting list is reported changed when a request arrives and when it is decided, not on a refused decision", async () => {
+    const { joins, deps } = setup();
+    const out = await joins.request({
+      peer: owner(),
+      policy: "ask",
+      name: "maya-laptop",
+      capabilities: {},
+    });
+    if (out.status !== "pending") throw new Error("expected pending");
+    expect(deps.onWaitingChanged).toHaveBeenCalledTimes(1);
+    expect(joins.decide(out.requestId, false)).toBe(true);
+    expect(deps.onWaitingChanged).toHaveBeenCalledTimes(2);
+    expect(joins.decide(out.requestId, true)).toBe(false);
+    expect(deps.onWaitingChanged).toHaveBeenCalledTimes(2);
+  });
+
+  test("a collector joining automatically waits for nobody, so the waiting list is unchanged", async () => {
+    const { joins, deps } = setup();
+    expect(
+      (
+        await joins.request({
+          peer: owner(),
+          policy: "automatic",
+          name: "maya-laptop",
+          capabilities: {},
+        })
+      ).status,
+    ).toBe("joined");
+    expect(deps.onWaitingChanged).not.toHaveBeenCalled();
   });
 
   test("approval is redeemed on the collector's next poll, exactly once", async () => {

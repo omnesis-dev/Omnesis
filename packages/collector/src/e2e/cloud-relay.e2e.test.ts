@@ -137,6 +137,8 @@ describe("native cloud tunnel with real gateway, collector sync engine and CLI",
       OMNESIS_CLOUD_RELAY_DB: join(directory, "accounts.sqlite"),
       OMNESIS_CLOUD_RELAY_PORT: "0",
       OMNESIS_CLOUD_RELAY_DOMAIN: "relay.example.test",
+      // Every client here reaches the data listener from one loopback address.
+      OMNESIS_CLOUD_RELAY_MAX_STREAMS_PER_CLIENT_PER_GATEWAY: "16",
     });
     const sessionFile = join(directory, "session.json");
     wireServer = createTcpServer((client) => {

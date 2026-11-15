@@ -153,6 +153,7 @@ describe("AnswerService", () => {
       },
     );
     const notify = vi.fn(async () => undefined);
+    const held = vi.fn();
     const service = new AnswerService({
       db,
       writeGate: options.writeGate ?? directWriteGate(db),
@@ -164,13 +165,14 @@ describe("AnswerService", () => {
           options.policyCurrent === false ? null : operation(),
       },
       notifyApproval: notify,
+      onApprovalHeld: held,
       now: options.now ?? (() => 1_000),
       idGen: (kind) => `${kind}-${++id}`,
       maxConcurrentPerOwner: options.maxConcurrentPerOwner,
       maxConcurrentTotal: options.maxConcurrentTotal,
       escalationCooldownMs: options.escalationCooldownMs,
     });
-    return { service, candidates, reviewer, notify };
+    return { service, candidates, reviewer, notify, held };
   }
 
   const request = {
@@ -532,7 +534,7 @@ describe("AnswerService", () => {
 
   it("coalesces escalation pushes for one caller within the cooldown", async () => {
     let clock = 1_000;
-    const { service, notify } = makeService(
+    const { service, notify, held } = makeService(
       [{ decision: "ask" }, { decision: "ask" }, { decision: "ask" }],
       { now: () => clock, escalationCooldownMs: 60_000 },
     );
@@ -545,6 +547,8 @@ describe("AnswerService", () => {
     const second = await service.answer({ ...request, clientRequestId: "req-b" });
     expect(second.status).toBe("approval_required");
     expect(notify).toHaveBeenCalledTimes(1);
+    // Open portals hear of every hold, cooldown or not.
+    expect(held).toHaveBeenCalledTimes(2);
 
     // Once the cooldown has elapsed, the caller may push again.
     clock = 1_000 + 60_000;

@@ -415,6 +415,11 @@ export function mountOAuthAuthorizationRoutes(
   app.get("/admin/access", noStore, scope.admin(), async (c) =>
     c.json(await accessOverview(c.req.url)),
   );
+  // Only what waits for the owner, which every portal page reads to mark Settings
+  // and Access: none of the overview's address checks.
+  app.get("/portal/api/access/pending", noStore, scope.admin(), (c) =>
+    c.json({ pendingRequests: access.pendingRequests() }),
+  );
   app.post(
     "/portal/api/access/authorizations/lookup",
     noStore,

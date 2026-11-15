@@ -133,6 +133,7 @@ import { mountRealtimeRoutes } from "./realtime/route.js";
 import { lookupToken, listDeviceIdsWithActiveScope } from "./data/repositories/TokenRepository.js";
 import { PairingNotifier } from "./push/pairing-notifier.js";
 import { TailscaleJoinNotifier } from "./tailscale-embed/notifier.js";
+import { PortalSignals } from "./portal-signals/hub.js";
 import { TailscaleEmbedService } from "./tailscale-embed/service.js";
 import { CertificateIncidentNotifier } from "./push/certificate-incident-notifier.js";
 import { WsEventHandler } from "./http/services/WsEventHandler.js";
@@ -834,6 +835,8 @@ const pairingNotifier = new PairingNotifier(
 );
 // The gateway's own tailnet device, only with OMNESIS_TAILSCALE_EMBED_ENABLED=1.
 // It starts once the HTTP server is listening (`attach` below).
+// Tells the owner's open portals at once when something waits for them.
+const portalSignals = new PortalSignals();
 const tailscaleJoinNotifier = new TailscaleJoinNotifier(
   pushBroadcaster,
   () => listDevices(db),
@@ -853,6 +856,7 @@ const tailscaleEmbed = tailscaleEmbedEnabled()
       joins: {
         notifyWaiting: (request) => void tailscaleJoinNotifier.waiting(request),
         notifyJoined: (device) => void tailscaleJoinNotifier.joined(device),
+        onWaitingChanged: () => portalSignals.publish("devices"),
       },
     })
   : undefined;
@@ -1549,6 +1553,7 @@ const agentLifecycle = new AgentLifecycle({
     return indexerLifecycle.deleteDocumentIndexBatch(documentId, limit, sourceDeleted);
   },
   notifyPrivacyApproval: (approvalId) => privacyApprovalNotifier.notify(approvalId),
+  onPrivacyApprovalHeld: () => portalSignals.publish("answers"),
   // Slow-answer push: an agent turn requested with `notifyAfterMs` that
   // outlives its budget delivers the finished answer over APNs.
   notifyAgentAnswer: (notification) =>
@@ -2674,6 +2679,7 @@ const taskService = new TaskService(db, writeGate, briefsVirtualClock ?? Date.no
 let doctorCleanupOwner: { cleanupFailure(): unknown; close(): Promise<void> } | undefined;
 const doctorCleanup = new OptionalServiceCleanup("Host security audit", () => doctorCleanupOwner);
 const app = createServer(db, DB_PATH, {
+  portalSignals,
   onDoctorCleanupOwner: (owner) => {
     doctorCleanupOwner = owner;
   },
@@ -3870,6 +3876,7 @@ const subscriptionDeliveryService = new SubscriptionDeliveryService({
     subscriptionService?.reevaluatePendingWatchPolicies() ?? Promise.resolve(0),
   reapplyOperatorApprovals: () =>
     subscriptionService?.reapplyOperatorApprovals() ?? Promise.resolve(0),
+  onExpired: () => portalSignals.publish("watches"),
   config: {
     maxAttempts: subscriptionDeliveryConfig?.maxDeliveryAttempts,
     baseBackoffMs: subscriptionDeliveryConfig?.deliveryBaseBackoffMs,
