@@ -13,6 +13,8 @@ const state = vi.hoisted(() => ({
 }));
 vi.mock("../lib/use-relay-management.js", () => ({ useRelayManagement: () => state }));
 // @ts-expect-error portal JS
+import { SETUP_COPY } from "../components/gateway-passkey-confirm.js";
+// @ts-expect-error portal JS
 import { RelayView, relayPhase } from "./relay.js";
 
 let host: HTMLElement;
@@ -67,6 +69,10 @@ function connected(over: Record<string, any> = {}): Record<string, any> {
       trustedSignIns: [
         { type: "google", id: "google:fictional-subject", addedAt: Date.UTC(2028, 0, 3) },
         { type: "passkey", id: "passkey:fictional-credential", addedAt: Date.UTC(2028, 0, 5) },
+      ],
+      // Set up: the passkey is confirmed here, so the page shows its ordinary headline.
+      confirmedSignIns: [
+        { type: "passkey", id: "passkey:fictional-credential", at: 1, via: "gateway-origin" },
       ],
     },
     ...over,
@@ -681,7 +687,7 @@ describe("problems", () => {
       "Certificate monitor: incident, last checked 2028-01-02T00:00:00.000Z",
       `Unexpected certificate: name ${HOST}, public key ${FINGERPRINT}, certificate ${"e".repeat(64)}, issuer Fictional test issuer, serial ABCD, valid 2028-01-01T00:00:00.000Z to 2028-02-01T00:00:00.000Z, seen 2028-01-02T00:00:00.000Z, log entry fixture-entry-1`,
       "Account: linked",
-      "New devices: automatic, 0 confirmed sign-ins, 2 on record",
+      "New devices: automatic, 1 confirmed sign-ins, 2 on record",
       "Recovery receipt: present, expires 2030-03-17T17:46:40.000Z",
       "Relay: https://relay.example.test",
       "Certificate provider: none",
@@ -1026,44 +1032,169 @@ describe("trusted sign-ins and confirming a passkey", () => {
     expect(host.querySelector(".relay-sign-ins")).toBeNull();
   });
 
-  test("right after linking, the card asks for the passkey on the gateway's own page", async () => {
-    state.status = connected({
-      deviceEnrollment: {
-        policy: "automatic",
-        trustedSignIns: [{ type: "passkey", id: "p", addedAt: 1, source: "link-page" }],
-        confirmedSignIns: [],
-        confirmOrigin: ORIGIN,
-      },
-    });
-    await show();
-    expect(text()).toContain("Confirm your passkey on this gateway");
-    // This page isn't on the gateway's own origin, so it links there instead of prompting.
-    expect(button("Confirm with passkey")).toBeUndefined();
-    expect(link("g-abcdefgh.relay.example.test")?.getAttribute("href")).toBe(
-      `${ORIGIN}/portal/settings/account`,
-    );
-    // A gateway with no origin of its own (a custom domain) shows no card, only that every device
-    // waits until a Google account is confirmed from an app.
-    state.status = connected({
+  /** A gateway just linked: nothing confirmed yet. */
+  const fresh = (signIns: Record<string, unknown>[], over: Record<string, unknown> = {}) =>
+    connected({
       deviceEnrollment: {
         policy: "automatic",
         confirmationNeeded: true,
-        trustedSignIns: [],
+        trustedSignIns: signIns,
         confirmedSignIns: [],
+        confirmOrigin: ORIGIN,
+      },
+      ...over,
+    });
+  const PASSKEY = { type: "passkey", id: "p", addedAt: 1, source: "link-page" };
+  const GOOGLE = { type: "google", id: "g".repeat(64), addedAt: 1, source: "link-page" };
+  async function showWith(props: Record<string, unknown>) {
+    await act(async () => render(h(RelayView, props), host));
+  }
+  let storage: Map<string, string>;
+  beforeEach(() => {
+    storage = new Map();
+    vi.stubGlobal("localStorage", {
+      getItem: (key: string) => storage.get(key) ?? null,
+      setItem: (key: string, value: string) => storage.set(key, value),
+      removeItem: (key: string) => storage.delete(key),
+    });
+  });
+
+  test("right after linking an account with a passkey, setup ends with one Face ID on the gateway's address", async () => {
+    state.status = fresh([PASSKEY]);
+    const open = vi.fn().mockResolvedValue(undefined);
+    const location = { origin: "https://192.0.2.1:7600" };
+    await showWith({ open, location });
+    // The checklist stands in for the usual headline.
+    expect(host.querySelector(".relay-hero")).toBeNull();
+    expect(host.querySelector("#relay-setup-title")?.textContent).toBe("Finish setting up");
+    expect(text()).toContain("Omnesis account");
+    expect(text()).toContain("g-abcdefgh.relay.example.test");
+    expect(text()).toContain("Let your Face ID add devices");
+    // Never "open this address": one button goes there, signed in, and starts the prompt.
+    expect(link("g-abcdefgh.relay.example.test")).toBeUndefined();
+    await click("Continue with Face ID");
+    expect(open).toHaveBeenCalledExactlyOnceWith(ORIGIN, { next: "confirm-passkey", location });
+  });
+
+  test("an account with Google only is never asked for a passkey: its last step is a phone", async () => {
+    state.status = fresh([GOOGLE]);
+    await show();
+    expect(text()).not.toMatch(/passkey on this gateway/i);
+    expect(button("Continue with Face ID")).toBeUndefined();
+    expect(text()).toContain("Connect your phone");
+    expect(text()).toContain("Install the Omnesis app and sign in with Google.");
+    expect(link("Get the app")?.getAttribute("href")).toBe("https://omnesis.dev/docs/apps");
+    expect(link(SETUP_COPY.addPasskey)?.getAttribute("href")).toBe(
+      "https://relay.example.test/_relay/account",
+    );
+    // A gateway with no address of its own (a custom domain) says the same, whatever the account has.
+    state.status = fresh([PASSKEY]);
+    delete state.status.deviceEnrollment.confirmOrigin;
+    await show();
+    expect(text()).toContain("Connect your phone");
+    // Under "ask me first" every device waits by choice: nothing is left to set up.
+    state.status = fresh([GOOGLE]);
+    state.status.deviceEnrollment.policy = "ask";
+    await show();
+    expect(host.querySelector("#relay-setup-title")).toBeNull();
+    // Once anything is confirmed, the ordinary headline is back.
+    state.status = fresh([PASSKEY]);
+    state.status.deviceEnrollment.confirmedSignIns = [
+      { type: "google", id: "g", at: 1, via: "native-google-approval" },
+    ];
+    await show();
+    expect(host.querySelector("#relay-setup-title")).toBeNull();
+    expect(headline()).toContain("Connected as");
+  });
+
+  test("Not now leaves one amber line under New devices, remembered here, and Finish setup brings it back", async () => {
+    state.status = fresh([GOOGLE]);
+    await show();
+    await click("Not now");
+    expect(host.querySelector("#relay-setup-title")).toBeNull();
+    expect(headline()).toContain("Connected as");
+    expect(text()).toContain("New devices wait for your OK until you finish setup.");
+    expect(storage.get("omnesis.relay.setup-later")).toBe(state.status.gatewayId);
+    // Remembered for this gateway on the next visit.
+    render(null, host);
+    await show();
+    expect(host.querySelector("#relay-setup-title")).toBeNull();
+    await click("Finish setup");
+    expect(host.querySelector("#relay-setup-title")?.textContent).toBe("Finish setting up");
+    expect(storage.has("omnesis.relay.setup-later")).toBe(false);
+    // Without storage, "Not now" still works for this visit.
+    vi.stubGlobal("localStorage", {
+      getItem: () => {
+        throw new Error("blocked");
+      },
+      setItem: () => {
+        throw new Error("blocked");
+      },
+      removeItem: () => {
+        throw new Error("blocked");
       },
     });
+    render(null, host);
     await show();
-    expect(text()).not.toContain("Confirm your passkey on this gateway");
-    expect(text()).toContain("Every new device waits for your approval");
-    state.status = connected({
-      deviceEnrollment: {
-        policy: "automatic",
-        confirmationNeeded: false,
-        trustedSignIns: [],
-        confirmedSignIns: [{ type: "google", id: "g", at: 1, via: "native-google-approval" }],
-      },
+    await click("Not now");
+    expect(text()).toContain("New devices wait for your OK until you finish setup.");
+    // During a security lock there's nothing to set up or remind about.
+    state.status = fresh([GOOGLE], { incidentHold: { since: "2028-01-02T00:00:00Z", certificates: ["e"] } });
+    render(null, host);
+    await show();
+    expect(host.querySelector("#relay-setup-title")).toBeNull();
+    expect(text()).not.toContain("until you finish setup");
+  });
+
+  test("while the certificate is on its way, step 2 waits and the button can't open the address yet", async () => {
+    state.status = fresh([PASSKEY], {
+      certificate: { state: "pending" },
     });
-    await show();
-    expect(text()).not.toContain("Every new device waits for your approval");
+    const open = vi.fn().mockResolvedValue(undefined);
+    await showWith({ open, location: { origin: "https://192.0.2.1:7600" } });
+    expect(text()).toContain("Getting a secure address… usually under a minute");
+    expect(button("Continue with Face ID").disabled).toBe(true);
+  });
+
+  test("connecting from a home address ends on the gateway's own address once it's ready", async () => {
+    const open = vi.fn().mockResolvedValue(undefined);
+    const location = { origin: "https://192.0.2.1:7600" };
+    state.status = { ...connected(), connect: { state: "linking" } };
+    await showWith({ open, location });
+    // Ready, linked with a passkey and nothing confirmed: open it there, prompt included.
+    state.status = fresh([PASSKEY]);
+    await showWith({ open, location });
+    expect(open).toHaveBeenCalledExactlyOnceWith(ORIGIN, { next: "confirm-passkey", location });
+    // Only once, and never for a page already there, a Google-only account or a later visit.
+    await showWith({ open, location });
+    expect(open).toHaveBeenCalledOnce();
+    for (const [status, where] of [
+      [fresh([PASSKEY]), { origin: ORIGIN }],
+      [fresh([GOOGLE]), location],
+    ] as const) {
+      render(null, host);
+      state.status = { ...connected(), connect: { state: "registering" } };
+      await showWith({ open, location: where });
+      state.status = status;
+      await showWith({ open, location: where });
+    }
+    // A connection that dropped on the way doesn't count as having just connected.
+    render(null, host);
+    state.status = { ...connected(), connect: { state: "linking" } };
+    await showWith({ open, location });
+    state.status = { ...fresh([PASSKEY]), tunnel: { state: "offline" } };
+    await showWith({ open, location });
+    state.status = fresh([PASSKEY]);
+    await showWith({ open, location });
+    expect(open).toHaveBeenCalledOnce();
+    // A failed handoff is quiet: the checklist's own button is still there.
+    render(null, host);
+    const failing = vi.fn().mockRejectedValue(new Error("no"));
+    state.status = { ...connected(), connect: { state: "waiting", authorizeUrl: "x" } };
+    await showWith({ open: failing, location });
+    state.status = fresh([PASSKEY]);
+    await showWith({ open: failing, location });
+    expect(failing).toHaveBeenCalledOnce();
+    expect(button("Continue with Face ID")).toBeDefined();
   });
 });

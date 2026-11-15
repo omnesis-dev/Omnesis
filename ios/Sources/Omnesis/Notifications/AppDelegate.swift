@@ -146,7 +146,7 @@ extension OmnesisAppDelegate: UNUserNotificationCenterDelegate {
         willPresent notification: UNNotification,
         withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
     ) {
-        if PushTarget.fromUserInfo(notification.request.content.userInfo) == .pairingRequests {
+        if case .pairingRequests? = PushTarget.fromUserInfo(notification.request.content.userInfo) {
             Task { @MainActor in PendingPairingRequests.shared.requestRefresh() }
         }
         completionHandler(NotificationPresentationPolicy.foregroundOptions)

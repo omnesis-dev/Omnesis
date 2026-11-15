@@ -3,6 +3,7 @@
 
 package dev.omnesis.android.ui.devices
 
+import dev.omnesis.android.ui.common.stepUpRefusal
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -426,7 +427,8 @@ class DevicesViewModel internal constructor(
 
     private fun failureText(action: String, e: Throwable): String = "$action: ${gatewayMessage(e)}"
 
-    private fun gatewayMessage(e: Throwable): String = when (e) {
+    // A phone the gateway asks to confirm it's the owner: say what to do, not what went wrong.
+    private fun gatewayMessage(e: Throwable): String = stepUpRefusal(e)?.let { "${it.title}. ${it.message}" } ?: when (e) {
         is GatewayException.Unauthorized -> "not authorized"
         is GatewayException.Forbidden -> "this device lacks admin scope"
         is GatewayException.NotFound -> "no longer exists"

@@ -89,8 +89,11 @@ const ERRORS = {
     "The certificate for this gateway's address could not be renewed. The gateway tries again by itself.",
   "passkey-origin-unavailable":
     "This gateway has no address of its own on Omnesis Relay, so a passkey can't be confirmed here.",
-  "passkey-not-confirmed":
-    "This gateway couldn't confirm that passkey. Use the passkey of the Omnesis account this gateway is linked to.",
+  // The same words as PASSKEY_CHECK_FAILED and PASSKEY_OTHER_ACCOUNT in gateway-passkey.js,
+  // which imports this module.
+  "passkey-not-confirmed": "Your gateway couldn't check that passkey. Try again.",
+  "passkey-not-on-account":
+    "That passkey is for a different Omnesis account. It may be from an account you deleted. Choose another passkey, or continue with Google.",
   "public-endpoint-unreachable":
     "This gateway's address does not answer from outside your home network. Check that this gateway is online. It checks again by itself.",
 };

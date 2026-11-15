@@ -147,9 +147,8 @@ struct SourcesView: View {
         return humanName(for: sourceTypeOf(sourceId))
     }
 
-    /// Short one-liner for the inline refresh-failure banner. Routes
-    /// through the same classifier the full-screen view uses so the
-    /// vocabulary stays consistent across surfaces.
+    /// Short one-liner for the inline refresh-failure banner. Routes through the same classifier
+    /// the full-screen view uses so the vocabulary stays consistent across surfaces.
     private func inlineRefreshErrorText(_ error: Error) -> String {
         switch GatewayErrorView.classify(error) {
         case .offline: "This phone is offline — showing cached sources."
@@ -161,6 +160,7 @@ struct SourcesView: View {
         case .server(let status, _): "Gateway returned \(status) while refreshing."
         case .unknown(let message): message
         case .voice(let failure): failure.errorDescription ?? failure.title
+        case .stepUp(let refusal): refusal.message
         }
     }
 
@@ -618,13 +618,13 @@ struct SourceDetailView: View {
                 }
             }
         }
-        .alert("Resync this source?", isPresented: $showResyncConfirm) {
-            Button("Resync", role: .destructive) {
-                Task { await run { try await store.resync(sourceId: sourceId) } }
-            }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text("All ingested documents for this source will be deleted and re-fetched from scratch. Large sources can take a while.")
+        .sourceResyncConfirmation(
+            isPresented: $showResyncConfirm,
+            offer: resyncOffer,
+            sourceName: sourceTitle(),
+            brainNote: sourceResyncBrainNote(status: store.statusSnapshot)
+        ) { mode in
+            Task { await run { try await store.resync(sourceId: sourceId, mode: mode) } }
         }
         .sheet(isPresented: $showDebugSheet) {
             SourceDebugSheet(sourceId: sourceId)
@@ -743,14 +743,16 @@ struct SourceDetailView: View {
                     showDebugSheet = true
                 }
                 Divider().background(Theme.borderLight)
-                actionButton(
-                    label: "Resync",
-                    systemImage: "arrow.counterclockwise.circle",
-                    color: Theme.danger
-                ) {
-                    showResyncConfirm = true
+                if resyncOffer != .unavailable {
+                    actionButton(
+                        label: "Resync",
+                        systemImage: "arrow.counterclockwise.circle",
+                        color: resyncOffer == .wipeOnly ? Theme.danger : Theme.textPrimary
+                    ) {
+                        showResyncConfirm = true
+                    }
+                    Divider().background(Theme.borderLight)
                 }
-                Divider().background(Theme.borderLight)
                 actionButton(
                     label: "Remove entire source",
                     systemImage: "trash",
@@ -899,6 +901,11 @@ struct SourceDetailView: View {
         case "idle": "idle"
         default: state
         }
+    }
+
+    /// What Resync can do for this source on the paired gateway.
+    private var resyncOffer: SourceResyncOffer {
+        SourceResyncOffer(resyncModes: store.sources.first { $0.id == sourceId }?.resyncModes)
     }
 
     private func sourceTitle() -> String {

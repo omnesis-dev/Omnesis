@@ -41,10 +41,11 @@ class NotificationLaunchBus @Inject constructor() {
     fun consumeDevices() { _devices.value = null }
 
     /** A tap on a pairing-request notification: open Pairing requests. Carries nothing from the payload. */
-    data class PairingRequests(val nonce: Long = System.nanoTime())
+    /** [requestId] is the request a notification named, listed first. */
+    data class PairingRequests(val requestId: String? = null, val nonce: Long = System.nanoTime())
     private val _pairingRequests = MutableStateFlow<PairingRequests?>(null)
     val pairingRequests = _pairingRequests.asStateFlow()
-    fun postPairingRequests() { _pairingRequests.value = PairingRequests() }
+    fun postPairingRequests(requestId: String? = null) { _pairingRequests.value = PairingRequests(requestId) }
     fun consumePairingRequests() { _pairingRequests.value = null }
 
     data class SourcePermission(val sourceId: String, val nonce: Long = System.nanoTime())

@@ -16,8 +16,10 @@ vi.mock("../utils.js", async (importOriginal) => {
 import { gatewayFetch, gatewayJson } from "../utils.js";
 import {
   confirmMessage,
+  inPlaceUnsupportedRefusal,
   notMemberRefusal,
   renderResync,
+  replicatedFromScratchRefusal,
   resyncCommand,
   sharedCursorRefusal,
 } from "./resync.js";
@@ -38,6 +40,7 @@ const exclusiveSource: AdminSourceEntry = {
   multiDeviceMode: "exclusive",
   leaseHolder: null,
   pushBased: false,
+  resyncModes: ["in-place", "from-scratch"],
 };
 
 const handoffSource: AdminSourceEntry = {
@@ -85,21 +88,15 @@ function jsonResponse(status: number, body: unknown): Response {
 const deviceName = (id: string): string => devices.find((d) => d.id === id)?.name ?? id;
 
 describe("confirmMessage", () => {
-  test("a whole-source resync says every document goes", () => {
+  test("a whole-source resync from scratch says every document goes", () => {
     expect(confirmMessage("mail-synth:maya@example.com")).toBe(
-      "This will delete all data for mail-synth:maya@example.com and re-sync from scratch. Continue?",
+      "This will delete all data for mail-synth:maya@example.com and import it again from scratch. Continue?",
     );
   });
 
-  test("a partitioned member's resync says its stream goes and the others stay", () => {
-    expect(confirmMessage("health-synth:me", { device: devices[2]!, mode: "partitioned" })).toBe(
-      "This removes everything Maya-Phone contributed to health-synth:me and re-syncs it from that device; the other members' data stays. Continue?",
-    );
-  });
-
-  test("a replicated member's resync says nothing is deleted", () => {
-    expect(confirmMessage("tasks-synth:local", { device: devices[1]!, mode: "replicated" })).toBe(
-      "This resets Studio-Mini's sync position for tasks-synth:local and re-syncs; nothing is deleted. Continue?",
+  test("a member's resync from scratch says its contribution goes and the others stay", () => {
+    expect(confirmMessage("health-synth:me", devices[2]!)).toBe(
+      "This removes everything Maya-Phone contributed to health-synth:me and imports it again from that device; the other members' data stays. Continue?",
     );
   });
 });
@@ -110,6 +107,20 @@ describe("refusals", () => {
     expect(text).toContain("notes-synth:local syncs as handoff");
     expect(text).toContain("its members share one cursor");
     expect(text).toContain("Resync it without --device.");
+  });
+
+  test("replicatedFromScratchRefusal says why and names both ways out", () => {
+    const text = replicatedFromScratchRefusal(replicatedSource, devices[1]!);
+    expect(text).toContain("Studio-Mini shares the documents of tasks-synth:local");
+    expect(text).toContain("drop --from-scratch");
+    expect(text).toContain("drop --device");
+  });
+
+  test("inPlaceUnsupportedRefusal says the gateway would delete and names both ways out", () => {
+    const text = inPlaceUnsupportedRefusal(exclusiveSource);
+    expect(text).toContain("can only resync mail-synth:maya@example.com from scratch");
+    expect(text).toContain("Update the gateway");
+    expect(text).toContain("--from-scratch");
   });
 
   test("notMemberRefusal names the members", () => {
@@ -124,6 +135,7 @@ describe("renderResync", () => {
     const lines = renderResync(
       {
         ok: true,
+        mode: "from-scratch",
         scope: "source",
         deviceIds: ["dev-laptop", "dev-mini"],
         restarting: [],
@@ -140,7 +152,15 @@ describe("renderResync", () => {
 
   test("no online member reads as queued", () => {
     const lines = renderResync(
-      { ok: true, scope: "source", deviceIds: [], restarting: [], skipped: [], disabled: [] },
+      {
+        ok: true,
+        mode: "from-scratch",
+        scope: "source",
+        deviceIds: [],
+        restarting: [],
+        skipped: [],
+        disabled: [],
+      },
       "x",
       deviceName,
     );
@@ -151,6 +171,7 @@ describe("renderResync", () => {
     const lines = renderResync(
       {
         ok: true,
+        mode: "from-scratch",
         scope: "stream",
         deviceIds: ["dev-phone"],
         restarting: [],
@@ -169,7 +190,15 @@ describe("renderResync", () => {
 
   test("a cursor resync says nothing was deleted; an offline device reads as queued", () => {
     const lines = renderResync(
-      { ok: true, scope: "cursor", deviceIds: [], restarting: [], skipped: [], disabled: [] },
+      {
+        ok: true,
+        mode: "in-place",
+        scope: "cursor",
+        deviceIds: [],
+        restarting: [],
+        skipped: [],
+        disabled: [],
+      },
       "tasks-synth:local",
       deviceName,
       devices[1]!,
@@ -204,10 +233,11 @@ describe("sources resync", () => {
     vi.restoreAllMocks();
   });
 
-  test("POSTs an empty body to the source's resync route and prints where it went", async () => {
+  test("--from-scratch POSTs that mode to the source's resync route and prints where it went", async () => {
     (gatewayFetch as Mock).mockResolvedValue(
       jsonResponse(200, {
         ok: true,
+        mode: "from-scratch",
         scope: "source",
         deviceIds: ["dev-laptop"],
         restarting: [],
@@ -215,11 +245,11 @@ describe("sources resync", () => {
         disabled: [],
       }),
     );
-    await run({ _: [handoffSource.id], yes: true });
+    await run({ _: [handoffSource.id], "from-scratch": true, yes: true });
     expect(gatewayFetch).toHaveBeenCalledTimes(1);
     expect(gatewayFetch).toHaveBeenCalledWith("/admin/sources/notes-synth%3Alocal/resync", {
       method: "POST",
-      body: JSON.stringify({}),
+      body: JSON.stringify({ mode: "from-scratch" }),
     });
     expect(logged[0]).toContain("Resync sent to Maya-Laptop:");
     expect(logged[0]).toContain("notes-synth:local");
@@ -231,6 +261,7 @@ describe("sources resync", () => {
       Promise.resolve(
         jsonResponse(200, {
           ok: true,
+          mode: "from-scratch",
           scope: "source",
           deviceIds: [],
           restarting: [],
@@ -239,7 +270,7 @@ describe("sources resync", () => {
         }),
       ),
     );
-    await run({ _: ["notes-synth:", "tasks-synth:"], yes: true });
+    await run({ _: ["notes-synth:", "tasks-synth:"], "from-scratch": true, yes: true });
     expect(gatewayFetch).toHaveBeenCalledTimes(2);
     expect((gatewayFetch as Mock).mock.calls.map((call) => call[0])).toEqual([
       "/admin/sources/notes-synth%3Alocal/resync",
@@ -248,10 +279,11 @@ describe("sources resync", () => {
     expect(logged.filter((l) => l.includes("Resync queued; no member is online:"))).toHaveLength(2);
   });
 
-  test("--device sends the resolved device id and names the stream scope", async () => {
+  test("--from-scratch --device sends the resolved device id and names the stream scope", async () => {
     (gatewayFetch as Mock).mockResolvedValue(
       jsonResponse(200, {
         ok: true,
+        mode: "from-scratch",
         scope: "stream",
         deviceIds: ["dev-phone"],
         restarting: [],
@@ -259,10 +291,10 @@ describe("sources resync", () => {
         disabled: [],
       }),
     );
-    await run({ _: [partitionedSource.id], device: "Maya-Phone", yes: true });
+    await run({ _: [partitionedSource.id], device: "Maya-Phone", "from-scratch": true, yes: true });
     expect(gatewayFetch).toHaveBeenCalledWith("/admin/sources/health-synth%3Ame/resync", {
       method: "POST",
-      body: JSON.stringify({ deviceId: "dev-phone" }),
+      body: JSON.stringify({ deviceId: "dev-phone", mode: "from-scratch" }),
     });
     expect(logged[0]).toContain("Resync sent to Maya-Phone:");
     expect(logged[1]).toContain(
@@ -274,6 +306,7 @@ describe("sources resync", () => {
     (gatewayFetch as Mock).mockResolvedValue(
       jsonResponse(200, {
         ok: true,
+        mode: "in-place",
         scope: "cursor",
         deviceIds: ["dev-mini"],
         restarting: [],
@@ -281,10 +314,10 @@ describe("sources resync", () => {
         disabled: [],
       }),
     );
-    await run({ _: [replicatedSource.id], device: "dev-mini", yes: true });
+    await run({ _: [replicatedSource.id], device: "dev-mini" });
     expect(gatewayFetch).toHaveBeenCalledWith("/admin/sources/tasks-synth%3Alocal/resync", {
       method: "POST",
-      body: JSON.stringify({ deviceId: "dev-mini" }),
+      body: JSON.stringify({ deviceId: "dev-mini", mode: "in-place" }),
     });
     expect(logged[0]).toContain("Resync sent to Studio-Mini:");
     expect(logged[1]).toContain("Studio-Mini's sync position was reset; nothing was deleted.");
@@ -294,6 +327,7 @@ describe("sources resync", () => {
     (gatewayFetch as Mock).mockResolvedValue(
       jsonResponse(200, {
         ok: true,
+        mode: "from-scratch",
         scope: "stream",
         deviceIds: ["dev-phone"],
         restarting: [],
@@ -301,10 +335,17 @@ describe("sources resync", () => {
         disabled: [],
       }),
     );
-    await run({ _: [partitionedSource.id], device: "Maya-Phone", yes: true, json: true });
+    await run({
+      _: [partitionedSource.id],
+      device: "Maya-Phone",
+      "from-scratch": true,
+      yes: true,
+      json: true,
+    });
     expect(JSON.parse(logged[0]!)).toEqual({
       sourceId: "health-synth:me",
       ok: true,
+      mode: "from-scratch",
       scope: "stream",
       deviceIds: ["dev-phone"],
       restarting: [],
@@ -313,13 +354,13 @@ describe("sources resync", () => {
     });
   });
 
-  test("a non-interactive run without --yes is refused before any request", async () => {
+  test("a non-interactive --from-scratch without --yes is refused before any request", async () => {
     // Pinned rather than inherited from the runner, so the test cannot fall
     // through to the prompt and block when it is run from a terminal.
     const isTTY = Object.getOwnPropertyDescriptor(process.stdout, "isTTY");
     Object.defineProperty(process.stdout, "isTTY", { value: false, configurable: true });
     try {
-      await expect(run({ _: [handoffSource.id] })).rejects.toMatchObject({
+      await expect(run({ _: [handoffSource.id], "from-scratch": true })).rejects.toMatchObject({
         exitCode: 2,
         message: expect.stringContaining("Re-run with --yes"),
       });
@@ -438,6 +479,122 @@ describe("sources resync", () => {
     });
     expect(gatewayFetch).not.toHaveBeenCalled();
   });
+  test("in place is the default: no confirmation, the mode is sent, and the output says nothing was deleted", async () => {
+    (gatewayFetch as Mock).mockResolvedValue(
+      jsonResponse(200, {
+        ok: true,
+        mode: "in-place",
+        scope: "source",
+        deviceIds: ["dev-laptop"],
+        restarting: [],
+        skipped: [],
+        disabled: [],
+      }),
+    );
+    // No `--yes` and no terminal: an in-place resync deletes nothing, so it
+    // never asks.
+    const isTTY = Object.getOwnPropertyDescriptor(process.stdout, "isTTY");
+    Object.defineProperty(process.stdout, "isTTY", { value: false, configurable: true });
+    try {
+      await run({ _: [exclusiveSource.id] });
+    } finally {
+      if (isTTY) Object.defineProperty(process.stdout, "isTTY", isTTY);
+      else delete (process.stdout as { isTTY?: boolean }).isTTY;
+    }
+    expect(gatewayFetch).toHaveBeenCalledWith(
+      "/admin/sources/mail-synth%3Amaya%40example.com/resync",
+      { method: "POST", body: JSON.stringify({ mode: "in-place" }) },
+    );
+    expect(logged[0]).toContain("Resync sent to Maya-Laptop:");
+    expect(logged[1]).toContain(
+      "Nothing was deleted; the source is read again and updates the records already here.",
+    );
+  });
+
+  test("in place with --device on a partitioned source resets that member alone", async () => {
+    (gatewayFetch as Mock).mockResolvedValue(
+      jsonResponse(200, {
+        ok: true,
+        mode: "in-place",
+        scope: "stream",
+        deviceIds: ["dev-phone"],
+        restarting: [],
+        skipped: [],
+        disabled: [],
+      }),
+    );
+    await run({ _: [partitionedSource.id], device: "Maya-Phone" });
+    expect(gatewayFetch).toHaveBeenCalledWith("/admin/sources/health-synth%3Ame/resync", {
+      method: "POST",
+      body: JSON.stringify({ deviceId: "dev-phone", mode: "in-place" }),
+    });
+    expect(logged[1]).toContain(
+      "Nothing was deleted; Maya-Phone reads the source again and updates what it contributed.",
+    );
+  });
+
+  test("--from-scratch --device on a replicated source is refused before any request", async () => {
+    await expect(
+      run({ _: [replicatedSource.id], device: "Studio-Mini", "from-scratch": true, yes: true }),
+    ).rejects.toMatchObject({
+      exitCode: 2,
+      message: expect.stringContaining("there is nothing of its own to delete"),
+    });
+    expect(gatewayFetch).not.toHaveBeenCalled();
+  });
+
+  test("in place is never sent to a gateway whose listing names no resync modes", async () => {
+    const { resyncModes: _resyncModes, ...legacy } = exclusiveSource;
+    (gatewayJson as Mock).mockImplementation((path: string): Promise<unknown> => {
+      if (path === "/admin/sources") return Promise.resolve({ items: [legacy] });
+      if (path === "/admin/devices") return Promise.resolve({ items: devices });
+      return Promise.reject(new Error(`unexpected path ${path}`));
+    });
+    await expect(run({ _: [legacy.id] })).rejects.toMatchObject({
+      exitCode: 2,
+      message: expect.stringContaining("can only resync mail-synth:maya@example.com from scratch"),
+    });
+    expect(gatewayFetch).not.toHaveBeenCalled();
+
+    // Asked for by name, the wipe that gateway performs is what was requested.
+    (gatewayFetch as Mock).mockResolvedValue(
+      jsonResponse(200, {
+        ok: true,
+        scope: "source",
+        deviceIds: [],
+        restarting: [],
+        skipped: [],
+        disabled: [],
+      }),
+    );
+    await run({ _: [legacy.id], "from-scratch": true, yes: true });
+    expect(gatewayFetch).toHaveBeenCalledTimes(1);
+    expect(logged[1]).toContain("Every document of the source was deleted.");
+  });
+});
+
+describe("renderResync says what an in-place resync kept", () => {
+  const body = (scope: "source" | "stream" | "cursor") => ({
+    ok: true as const,
+    mode: "in-place" as const,
+    scope,
+    deviceIds: ["dev-phone"],
+    restarting: [],
+    skipped: [],
+    disabled: [],
+  });
+
+  test("the whole source", () => {
+    expect(renderResync(body("source"), "x", deviceName)[1]).toContain(
+      "Nothing was deleted; the source is read again and updates the records already here.",
+    );
+  });
+
+  test("one member's stream", () => {
+    expect(renderResync(body("stream"), "x", deviceName, devices[2]!)[1]).toContain(
+      "Nothing was deleted; Maya-Phone reads the source again and updates what it contributed.",
+    );
+  });
 });
 
 describe("renderResync reads each member's answer", () => {
@@ -445,6 +602,7 @@ describe("renderResync reads each member's answer", () => {
     const lines = renderResync(
       {
         ok: true,
+        mode: "from-scratch",
         scope: "source",
         deviceIds: [],
         restarting: [],
@@ -463,6 +621,7 @@ describe("renderResync reads each member's answer", () => {
     const lines = renderResync(
       {
         ok: true,
+        mode: "from-scratch",
         scope: "source",
         deviceIds: [],
         restarting: ["dev-laptop"],
@@ -479,6 +638,7 @@ describe("renderResync reads each member's answer", () => {
     const lines = renderResync(
       {
         ok: true,
+        mode: "from-scratch",
         scope: "source",
         deviceIds: [],
         restarting: [],
@@ -498,6 +658,7 @@ describe("renderResync reads each member's answer", () => {
     const mixed = renderResync(
       {
         ok: true,
+        mode: "from-scratch",
         scope: "source",
         deviceIds: [],
         restarting: [],
@@ -516,6 +677,7 @@ describe("renderResync reads each member's answer", () => {
     const lines = renderResync(
       {
         ok: true,
+        mode: "from-scratch",
         scope: "source",
         deviceIds: ["dev-laptop"],
         restarting: ["dev-mini"],

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+// swiftlint:disable file_length
 import Foundation
 @testable import Omnesis
 import XCTest
@@ -466,6 +467,226 @@ extension AccountCloudPairingModelTests {
     }
 }
 
+// MARK: - Approving on the gateway's own page
+
+extension AccountCloudPairingModelTests {
+    private func gatewayPage(_ fixture: Fixture) throws -> URL {
+        try XCTUnwrap(URL(string: "\(fixture.gateway.publicOrigin)/portal/approve#00000000-0000-4000-8000-000000000001"))
+    }
+
+    private func waitFor(_ condition: @MainActor () -> Bool) async {
+        for _ in 0 ..< 1000 {
+            if condition() { return }
+            await Task.yield()
+        }
+    }
+
+    /// Held after a passkey sign-in in the app, the request opens the gateway's own approval page with
+    /// the code on screen; once the poll finds it approved the page closes and one action pairs.
+    func testAHeldPasskeySignInOpensTheGatewaysApprovalPageThenPairsOnceThePollFindsItApproved() async throws {
+        let fixture = try fixture(), gate = AccountApprovalGate(), pages = AccountModelApprovalBrowser()
+        let page = try gatewayPage(fixture)
+        let session = AccountModelSession(binding: fixture.gateway, clock: fixture.clock, gate: gate, single: true, page: page)
+        let model = AccountCloudPairingCoordinator(
+            googleBrowser: AccountModelGoogle(),
+            passkeyProvider: AccountModelPasskey(),
+            approvalBrowser: pages,
+            makeClient: { _ in session },
+            sleep: {},
+            now: { fixture.clock }
+        )
+        let started = try model.start(configuration: configuration(), method: .passkey)
+        await waitFor { !pages.opened.isEmpty }
+        XCTAssertEqual(model.phase, .comparing)
+        XCTAssertNotNil(model.verificationCode)
+        XCTAssertEqual(pages.opened, [page])
+        XCTAssertEqual(model.approvalPage, page)
+        XCTAssertFalse(model.gatewayApproved)
+        // Closed by the person, the page opens again from the screen.
+        model.openApprovalPage()
+        XCTAssertEqual(pages.opened, [page, page])
+        var applied: [String] = []
+        await model.complete { applied.append($0)
+            return true
+        }
+        XCTAssertTrue(applied.isEmpty, "Paired before the gateway approved")
+        await gate.release()
+        await started?.value
+        XCTAssertTrue(model.gatewayApproved)
+        XCTAssertNil(model.approvalPage)
+        XCTAssertEqual(pages.closes, 1)
+        model.openApprovalPage()
+        XCTAssertEqual(pages.opened.count, 2, "An approved request reopened its page")
+        await model.complete { applied.append($0)
+            return true
+        }
+        XCTAssertEqual(applied.count, 1)
+        XCTAssertTrue(applied[0].contains("pinned-key-strict"))
+        XCTAssertEqual(model.phase, .idle)
+        let reads = await session.pageReads
+        XCTAssertEqual(reads, 1)
+    }
+
+    /// After a Google sign-in the account may have no passkey, so the page is offered, not opened.
+    /// A Google sign-in the gateway joins at once never looks for a page.
+    func testAGoogleSignInOffersTheApprovalPageWhenHeldAndStillJoinsAutomaticallyWhenConfirmed() async throws {
+        let fixture = try fixture()
+        let google = try GoogleCloudPairingConfiguration(
+            clientId: "fixture-ios.apps.googleusercontent.com",
+            relayOrigin: XCTUnwrap(URL(string: "https://relay.example.test"))
+        )
+        let configuration = AccountCloudPairingConfiguration(relayOrigin: google.relayOrigin, google: google, passkeysEnabled: false)
+        for joins in [false, true] {
+            let browser = AccountModelGoogle(), pages = AccountModelApprovalBrowser(), gate = AccountApprovalGate()
+            browser.succeeds = true
+            let session = try AccountModelSession(
+                binding: fixture.gateway,
+                clock: fixture.clock,
+                gate: gate,
+                single: true,
+                joins: joins,
+                page: gatewayPage(fixture)
+            )
+            let model = AccountCloudPairingCoordinator(
+                googleBrowser: browser,
+                passkeyProvider: AccountModelPasskey(),
+                approvalBrowser: pages,
+                makeClient: { _ in session },
+                makeTransport: { AccountModelTokenTransport() },
+                sleep: {},
+                now: { fixture.clock }
+            )
+            let started = model.start(configuration: configuration, method: .google)
+            if joins {
+                await started?.value
+                XCTAssertEqual(model.phase, .joining)
+                XCTAssertNil(model.approvalPage)
+                let reads = await session.pageReads
+                XCTAssertEqual(reads, 0)
+                var applied = 0
+                await model.complete { _ in applied += 1
+                    return true
+                }
+                XCTAssertEqual(applied, 1)
+            } else {
+                await waitFor { model.approvalPage != nil }
+                XCTAssertEqual(model.phase, .comparing)
+                XCTAssertEqual(model.approvalPage, try gatewayPage(fixture))
+                XCTAssertTrue(pages.opened.isEmpty, "A Google sign-in opened the passkey page by itself")
+                model.openApprovalPage()
+                try XCTAssertEqual(pages.opened, [gatewayPage(fixture)])
+                model.cancel()
+                XCTAssertEqual(pages.closes, 1)
+                XCTAssertNil(model.approvalPage)
+                await gate.release()
+                await started?.value
+            }
+            XCTAssertTrue(pages.opened.count <= 1)
+        }
+    }
+
+    /// A gateway that names no page of its own, which the client also reports for a relay's page,
+    /// leaves approval to a trusted device: nothing opens and the poll still decides.
+    func testWithoutTheGatewaysOwnPageNothingOpensAndATrustedDeviceStillApproves() async throws {
+        let fixture = try fixture(), gate = AccountApprovalGate(), pages = AccountModelApprovalBrowser()
+        let session = AccountModelSession(binding: fixture.gateway, clock: fixture.clock, gate: gate, single: true)
+        let model = AccountCloudPairingCoordinator(
+            googleBrowser: AccountModelGoogle(),
+            passkeyProvider: AccountModelPasskey(),
+            approvalBrowser: pages,
+            makeClient: { _ in session },
+            sleep: {},
+            now: { fixture.clock }
+        )
+        let started = try model.start(configuration: configuration(), method: .passkey)
+        await waitFor { model.phase == .comparing }
+        XCTAssertNil(model.approvalPage)
+        model.openApprovalPage()
+        await gate.release()
+        await started?.value
+        XCTAssertTrue(model.gatewayApproved)
+        XCTAssertTrue(pages.opened.isEmpty)
+        XCTAssertEqual(pages.closes, 0)
+        let reads = await session.pageReads
+        XCTAssertEqual(reads, 1)
+        model.cancel()
+    }
+
+    /// M6: held at a gateway this iPhone verified, the request continues on its own once the owner
+    /// approves it on a device they already use. The code was compared on the approving screen and
+    /// checked here against this device's own computation, so there is no button to press.
+    func testAnApprovalFromAVerifiedGatewayContinuesWithoutAComparisonButton() async throws {
+        let fixture = try fixture(), gate = AccountApprovalGate(), recorded = AccountRecorded()
+        let session = AccountModelSession(binding: fixture.gateway, clock: fixture.clock, gate: gate, single: true)
+        await session.setVerified()
+        let model = makeModel(session, fixture: fixture, recorded: recorded)
+        let passkey = try model.start(configuration: configuration(), method: .passkey)
+        await waitFor { model.phase == .comparing }
+        XCTAssertTrue(model.continuesOnApproval)
+        XCTAssertEqual(model.expiresAt, Date(timeIntervalSince1970: fixture.clock + 300))
+        XCTAssertNotNil(model.verificationCode)
+        var applied: [String] = []
+        await model.complete { applied.append($0)
+            return true
+        }
+        XCTAssertTrue(applied.isEmpty, "Connected before the owner approved")
+        await gate.release()
+        await passkey?.value
+        XCTAssertEqual(model.phase, .joining, "An approval did not continue by itself")
+        XCTAssertNotNil(model.verificationCode)
+        await model.complete { applied.append($0)
+            return true
+        }
+        XCTAssertEqual(applied.count, 1)
+        XCTAssertTrue(applied[0].contains("pinned-key-strict"))
+        XCTAssertEqual(recorded.values.count, 1)
+        XCTAssertEqual(model.phase, .idle)
+    }
+
+    /// A gateway this iPhone could not verify keeps the explicit comparison once approved.
+    func testAnApprovalFromAnUnverifiedGatewayStillWaitsForTheComparison() async throws {
+        let fixture = try fixture(), gate = AccountApprovalGate()
+        await gate.release()
+        let session = AccountModelSession(binding: fixture.gateway, clock: fixture.clock, gate: gate, single: true)
+        let model = makeModel(session, fixture: fixture)
+        try await model.start(configuration: configuration(), method: .passkey)?.value
+        XCTAssertEqual(model.phase, .comparing)
+        XCTAssertFalse(model.continuesOnApproval)
+        XCTAssertTrue(model.gatewayApproved)
+        model.cancel()
+        XCTAssertNil(model.expiresAt)
+        XCTAssertFalse(model.continuesOnApproval)
+    }
+
+    /// A failed poll takes the page down with the code.
+    func testAFailedPollClosesTheApprovalPage() async throws {
+        let fixture = try fixture(), gate = AccountApprovalGate(), pages = AccountModelApprovalBrowser()
+        await gate.release()
+        let session = try AccountModelSession(
+            binding: fixture.gateway,
+            clock: fixture.clock,
+            gate: gate,
+            single: true,
+            pollLie: "code",
+            page: gatewayPage(fixture)
+        )
+        let model = AccountCloudPairingCoordinator(
+            googleBrowser: AccountModelGoogle(),
+            passkeyProvider: AccountModelPasskey(),
+            approvalBrowser: pages,
+            makeClient: { _ in session },
+            sleep: {},
+            now: { fixture.clock }
+        )
+        try await model.start(configuration: configuration(), method: .passkey)?.value
+        XCTAssertEqual(model.phase, .failed)
+        XCTAssertEqual(pages.opened.count, 1)
+        XCTAssertEqual(pages.closes, 1)
+        XCTAssertNil(model.approvalPage)
+        XCTAssertNil(model.verificationCode)
+    }
+}
+
 private actor AccountApprovalGate {
     private var ready = false
     private var continuation: CheckedContinuation<Void, Never>?
@@ -507,6 +728,10 @@ private actor AccountModelSession: AccountPairingSession {
     let single: Bool
     let joins: Bool
     let failure: AccountPairingError?
+    let page: URL?
+    /// The request went to a gateway whose certificate passed the public checks.
+    var verified = false
+    private(set) var pageReads = 0
     private var offlineAttempts: Int
     private var challenge: CloudPairingChallenge?
     /// How a poll lies about the gateway's part of the code, if it does.
@@ -520,9 +745,11 @@ private actor AccountModelSession: AccountPairingSession {
         joins: Bool = false,
         offlineAttempts: Int = 0,
         failure: AccountPairingError? = nil,
-        pollLie: String? = nil
+        pollLie: String? = nil,
+        page: URL? = nil
     ) {
         self.pollLie = pollLie
+        self.page = page
         self.binding = binding
         self.clock = clock
         self.gate = gate
@@ -591,8 +818,14 @@ private actor AccountModelSession: AccountPairingSession {
             value.acceptAutomaticJoin()
         } else {
             try value.receive(value.reply(expiresAt: (clock + 300) * 1000), now: clock)
+            if verified { value.acceptAutomaticJoin() }
         }
         return value
+    }
+
+    func approvalPage() async throws -> URL? {
+        pageReads += 1
+        return page
     }
 
     func poll() async throws -> CloudPairingProgress {
@@ -608,6 +841,18 @@ private actor AccountModelSession: AccountPairingSession {
     }
 
     func close() async {}
+}
+
+@MainActor private final class AccountModelApprovalBrowser: OmnesisAccountBrowsing {
+    var opened: [URL] = []
+    var closes = 0
+    func open(_ url: URL) {
+        opened.append(url)
+    }
+
+    func close() {
+        closes += 1
+    }
 }
 
 @MainActor private final class AccountModelGoogle: GooglePairingBrowser {
@@ -660,6 +905,12 @@ private struct AccountModelTokenTransport: CloudPairingTransport {
     }
 
     func close() {}
+}
+
+extension AccountModelSession {
+    func setVerified() {
+        verified = true
+    }
 }
 
 #endif

@@ -22,7 +22,7 @@ describe("sourceCanManualSync", () => {
     const labels = sourceActionMenuItems({ canManualSync: false }).map((item) => item.label);
     expect(labels).toEqual(["See recent", "Pause sync (keep data)", "Debug", "Remove"]);
     expect(labels).not.toContain("Sync");
-    expect(labels).not.toContain("Resync");
+    expect(labels).not.toContain("Resync…");
   });
 
   test("keeps the pull-based source menu focused on source operations", () => {
@@ -32,7 +32,7 @@ describe("sourceCanManualSync", () => {
       "Sync",
       "Pause sync (keep data)",
       "Debug",
-      "Resync",
+      "Resync…",
       "Remove",
     ]);
   });
@@ -46,7 +46,7 @@ describe("sourceCanManualSync", () => {
       ["Join a device…", false],
       ["Detach a device…", true],
       ["Debug", false],
-      ["Resync", false],
+      ["Resync…", false],
       ["Remove", false],
     ]);
     const full = sourceActionMenuItems({ multiDevice: true, canJoin: false, canDetach: true });
@@ -54,14 +54,12 @@ describe("sourceCanManualSync", () => {
       "Join a device…",
     ]);
     expect(sourceActionMenuItems({ canJoin: true, canDetach: true }).map((i) => i.label)).toEqual(
-      ["See recent", "Sync", "Pause sync (keep data)", "Debug", "Resync", "Remove"],
+      ["See recent", "Sync", "Pause sync (keep data)", "Debug", "Resync…", "Remove"],
     );
   });
 
-  test("offers a per-device resync only when the resync can be scoped to one member", () => {
-    const labels = sourceActionMenuItems({ multiDevice: true, resyncPerDevice: true }).map(
-      (item) => item.label,
-    );
+  test("Resync always opens a dialog, and is not offered for a source that is only pushed to", () => {
+    const labels = sourceActionMenuItems({ multiDevice: true }).map((item) => item.label);
     expect(labels).toEqual([
       "See recent",
       "Sync",
@@ -72,12 +70,9 @@ describe("sourceCanManualSync", () => {
       "Resync…",
       "Remove",
     ]);
-    expect(sourceActionMenuItems({ multiDevice: true }).map((item) => item.label)).toContain(
-      "Resync",
+    expect(sourceActionMenuItems({ canManualSync: false }).map((i) => i.label)).not.toContain(
+      "Resync…",
     );
-    expect(
-      sourceActionMenuItems({ canManualSync: false, resyncPerDevice: true }).map((i) => i.label),
-    ).not.toContain("Resync…");
   });
 });
 

@@ -129,6 +129,11 @@ public final class OmnesisAccountModel {
 
     /// The gateway's own code decides the words; anything else is a connection problem.
     static func failureText(for error: Error) -> String {
+        // "Join automatically" from an auto-joined phone or through the relay needs the owner's passkey.
+        if let refusal = StepUpRefusal(error) {
+            let place = refusal == .required ? " Open Settings, then Omnesis account, in the portal." : ""
+            return "\(refusal.title). \(refusal.message)\(place)"
+        }
         if let code = (error as? GatewayClient.Error)?.gatewayCode, CloudRelayPresentation.knowsError(code) {
             return CloudRelayPresentation.error(code)
         }

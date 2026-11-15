@@ -775,6 +775,86 @@ test("real WebAuthn over HTTP creates, signs out and signs into the same indepen
   ).toBe(400);
 });
 
+test("a passkey whose account is gone is named as unknown, and no other refusal is", async () => {
+  const f = await fixture(),
+    authenticator = passkeyAuthenticator();
+  const begin = await (await f.post("passkeys/register/options", { createAccount: true })).json();
+  await f.post("passkeys/register/complete", {
+    ceremonyId: begin.ceremonyId,
+    credential: authenticator.registration(begin.options.challenge),
+  });
+  const signIn = async (
+    tamper?: (assertion: ReturnType<typeof authenticator.authentication>) => void,
+    holder = authenticator,
+  ) => {
+    const login = await (await f.post("passkeys/authenticate/options", {})).json(),
+      assertion = holder.authentication(login.options.challenge, begin.options.user.id);
+    tamper?.(assertion);
+    return f.post("passkeys/authenticate/complete", {
+      ceremonyId: login.ceremonyId,
+      credential: assertion,
+    });
+  };
+  // While the account exists, a bad signature is the generic refusal.
+  const forged = await signIn((assertion) => {
+    assertion.response.signature = Buffer.from("forged").toString("base64url");
+  });
+  expect(forged.status).toBe(401);
+  expect(await forged.json()).toEqual({ error: "refused" });
+  // A passkey this relay never stored may belong to a live account elsewhere, so it's only unknown.
+  const stranger = await signIn(undefined, passkeyAuthenticator());
+  expect(stranger.status).toBe(401);
+  expect(await stranger.json()).toEqual({ error: "unknown-passkey" });
+  expect(f.accounts.passkeyDeleted(authenticator.id)).toBe(false);
+  const { accountId } = f.accounts.passkey(authenticator.id)!;
+  f.accounts.delete(accountId, f.accounts.sessionVersion(accountId)!);
+  // One whose account was deleted here is gone for good, and the relay keeps no more than a digest.
+  expect(f.accounts.passkeyDeleted(authenticator.id)).toBe(true);
+  const gone = await signIn();
+  expect(gone.status).toBe(401);
+  expect(gone.headers.get("content-type")).toBe("application/json");
+  expect(await gone.json()).toEqual({ error: "deleted-passkey" });
+  expect(gone.headers.getSetCookie()).toEqual([]);
+  // Only inside a ceremony this browser started: a spent or foreign one learns nothing.
+  const login = await (await f.post("passkeys/authenticate/options", {})).json(),
+    assertion = authenticator.authentication(login.options.challenge, begin.options.user.id);
+  const body = { ceremonyId: login.ceremonyId, credential: assertion };
+  const foreign = await f.post(
+    "passkeys/authenticate/complete",
+    body,
+    `__Host-omnesis-account-browser=${"x".repeat(43)}`,
+  );
+  expect(await foreign.json()).toEqual({ error: "refused" });
+});
+
+test("a Google start the browser didn't vouch for returns to the page it came from", async () => {
+  const f = await fixture();
+  const retry = (query: string) =>
+    f.web.googleRetry({ url: "/_relay/web/start" + query } as IncomingMessage);
+  const signup = "0b6f3c1e-8f7a-4c51-9a3e-2d4c5b6a7f80";
+  expect(retry(`?signup=${signup}`)).toBe(`/_relay/account?failed=again&signup=${signup}`);
+  expect(retry(`?desktop=${signup}`)).toBe(`/_relay/account?failed=again&desktop=${signup}`);
+  expect(retry(`?operation=${signup}`)).toBe(`/_relay/account?failed=again&operation=${signup}`);
+  // A new passkey waiting for Google comes back still waiting, a portal handoff keeps its door.
+  expect(retry(`?endorse=${signup}`)).toBe(`/_relay/account?failed=again&endorse=${signup}`);
+  expect(retry(`?open=portal&portal=${signup}`)).toBe(
+    `/_relay/account?failed=again&portal=${signup}&open=portal`,
+  );
+  expect(retry("?open=portal")).toBe("/_relay/account?failed=again&open=portal");
+  // Linking starts again from the account page; a confirmation can't be resumed from a link.
+  expect(retry("?link=1")).toBe("/_relay/account?failed=again");
+  expect(retry("?then=remove-passkey")).toBe("/_relay/account?failed=google");
+  for (const query of [
+    "",
+    "?signup=not-a-uuid",
+    `?signup=${signup}&signup=${signup}`,
+    `?signup=${signup}&desktop=${signup}`,
+    "?open=elsewhere",
+    "?then=sign-out",
+  ])
+    expect(retry(query), query).toBe("/_relay/account?failed=again");
+});
+
 test("Google browser context commits to the exact desktop intent and records the proof on it", async () => {
   const f = await fixture(undefined, true, true),
     desktop = f.desktop!;

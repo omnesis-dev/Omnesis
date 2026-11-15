@@ -11,7 +11,7 @@
 
 import { render } from "preact";
 import { parseHTML } from "linkedom";
-import { afterEach, beforeEach, expect, test, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   session: { authenticated: false } as Record<string, unknown>,
@@ -87,4 +87,72 @@ test("a gateway advertising the cloud relay is asked for its sign-in configurati
   await mountLogin({ authenticated: false, cloudRelay: true });
   await vi.waitFor(() => expect(mocks.cloudPairingConfig).toHaveBeenCalledTimes(1));
   await vi.waitFor(() => expect(host.querySelector(".cloud-pairing-login")).not.toBeNull());
+  // The older Google-only pairing doesn't lead: the token form stays where it was.
+  expect(host.querySelector(".login-input")).not.toBeNull();
+  expect(host.querySelector(".cloud-pairing-quiet")).toBeNull();
+});
+
+test("with account sign-in on offer, it leads and the token form waits behind a quiet link", async () => {
+  mocks.cloudPairingConfig.mockResolvedValueOnce({
+    webSignIn: true,
+    gatewayFingerprint: "a".repeat(64),
+    accountSignIn: true,
+  } as never);
+  await mountLogin({ authenticated: false, cloudRelay: true });
+  await vi.waitFor(() => expect(host.querySelector(".cloud-pairing-login")).not.toBeNull());
+  await vi.waitFor(() => expect(host.querySelector(".login-input")).toBeNull());
+  const quiet = host.querySelector(".cloud-pairing-quiet") as HTMLButtonElement;
+  expect(quiet.textContent?.trim()).toBe("Have a pairing code? Enter it");
+  quiet.click();
+  await vi.waitFor(() => expect(host.querySelector(".login-input")).not.toBeNull());
+  // The sign-in stays where it was.
+  expect(host.querySelector(".cloud-pairing-login")).not.toBeNull();
+});
+
+describe("opening the gateway's own address from a signed-in portal", () => {
+  const CODE = "h".repeat(43);
+  function arriveWith(hash: string) {
+    Object.defineProperty(window, "location", {
+      configurable: true,
+      value: {
+        href: `https://gateway.example.test/portal/settings/account${hash}`,
+        hash,
+        pathname: "/portal/settings/account",
+        search: "",
+        reload: vi.fn(),
+      },
+    });
+    Object.defineProperty(window, "history", {
+      configurable: true,
+      value: { state: null, replaceState: vi.fn() },
+    });
+  }
+  const redeemed = () =>
+    transport.mock.calls.filter(([path]) => path === "/portal/api/handoff/redeem");
+
+  test("a handoff signs this browser in, then the session is read again", async () => {
+    arriveWith(`#portal-handoff=${CODE}`);
+    transport.mockImplementation(async () => new Response("{}"));
+    await mountLogin({ authenticated: false, cloudRelay: true });
+    expect(redeemed()).toHaveLength(1);
+    expect(JSON.parse(redeemed()[0]![1].body)).toEqual({ code: CODE });
+    expect(host.querySelector(".login-reason")).toBeNull();
+  });
+
+  test("a spent or expired handoff says so above the sign-in", async () => {
+    arriveWith(`#portal-handoff=${CODE}`);
+    transport.mockImplementation(async (path: string) =>
+      path === "/portal/api/handoff/redeem" ? new Response("{}", { status: 401 }) : new Response("{}"),
+    );
+    await mountLogin({ authenticated: false, cloudRelay: true });
+    expect(host.querySelector(".login-reason")?.textContent).toContain(
+      "That link expired or was already used.",
+    );
+  });
+
+  test("without the cloud relay, or already signed in here, a handoff is never sent", async () => {
+    arriveWith(`#portal-handoff=${CODE}`);
+    await mountLogin({ authenticated: false });
+    expect(redeemed()).toHaveLength(0);
+  });
 });

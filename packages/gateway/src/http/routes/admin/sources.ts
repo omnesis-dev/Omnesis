@@ -628,8 +628,8 @@ export function mountSourceRoutes(app: RouteApp, deps: AdminRoutesDeps): void {
     async (c) => {
       const id = SourceId(c.req.param("id"));
       assertMutableSource(id);
-      const { deviceId } = c.req.valid("json");
-      const result = await sourceService.resync(id, deviceId);
+      const { deviceId, mode } = c.req.valid("json");
+      const result = await sourceService.resync(id, deviceId, mode ?? "from-scratch");
       return c.json({ ok: true, ...result });
     },
   );

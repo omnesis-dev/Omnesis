@@ -25,4 +25,16 @@ extension AdminClient {
         let body = try encoder.encode(Decision(requestId: requestId, approve: approve, trustSignIn: trustSignIn))
         _ = try await dispatch(method: "POST", path: "/admin/cloud-pairing/decision", body: body)
     }
+
+    public func pairingApprovals() async throws -> GatewayPairingApprovals {
+        let (data, _) = try await dispatch(method: "GET", path: "/admin/cloud-pairing/requests", body: nil)
+        return try decodeOrThrow(GatewayPairingApprovals.self, from: data)
+    }
+
+    /// `/portal/approve#<requestId>` on the address this phone reaches the gateway at. A phone the
+    /// gateway asks to step up reaches it through its secure address, where the passkey works.
+    public func approvalPage(requestId: String) -> URL? {
+        guard UUID(uuidString: requestId) != nil else { return nil }
+        return StepUpRefusal.page(gateway: baseURL, path: "/portal/approve", fragment: requestId)
+    }
 }

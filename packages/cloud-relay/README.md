@@ -46,8 +46,12 @@ the relay still needs independent certificate issuance controls to resist that
 attack, such as a supporting CA's account-bound DNS-01 policy, CAA `accounturi`
 and `validationmethods`, and protected DNS administration. A DNS ownership TXT
 record alone does not provide that protection. See [RFC 8657](https://www.rfc-editor.org/rfc/rfc8657.html)
-and [Let's Encrypt's CAA guidance](https://letsencrypt.org/docs/caa/). This package
-does not configure CAA records, DNS delegation, or a CA's account-bound issuance policy.
+and [Let's Encrypt's CAA guidance](https://letsencrypt.org/docs/caa/). For a
+hosted name served by the DNS broker, the gateway's CAA record binds issuance to
+its own ACME account and DNS-01 (see
+[Certificate issuance monitoring](#certificate-issuance-monitoring)). For a
+user-owned domain this package does not configure CAA records, DNS delegation,
+or a CA's account-bound issuance policy.
 Keep the effective issuance policy under the user's control for every authorized
 CA. A user-owned A/AAAA record avoids delegating CAA lookup to a relay-owned
 CNAME target; using DNS-01 at the gateway alone does not prevent another party
@@ -141,6 +145,7 @@ it, in one transaction, and closes those gateways' tunnels. What each table keep
 | `omnesis_account_sessions`                                 | Every session of the account is deleted                         |
 | `omnesis_federated_credentials`, `omnesis_google_aliases`  | Its Google sign-in and that sign-in's aliases are deleted       |
 | `omnesis_passkeys`, `omnesis_passkey_endorsements`         | Its passkeys and the sign-ins that vouched for them are deleted |
+| `omnesis_deleted_passkeys`                                 | Keeps a SHA-256 digest of each of its passkeys' credential ids  |
 | `omnesis_passkey_countersignatures`                        | Each passkey's countersignature of the account is deleted       |
 | `omnesis_gateway_links`, `omnesis_account_admissions`      | Rows of the account and of each of its gateways are deleted     |
 | `relay_accounts`, `relay_gateway_bindings`                 | Each gateway's owner row and binding are deleted                |
@@ -157,6 +162,12 @@ registers again. Operator files are not touched: remove the person from
 to create an account again, and remove them from the sign-up Google Group if
 the relay uses one. Request logs and metrics hold no account
 identifiers.
+
+The digests let the account page tell a browser that offers one of those passkeys
+again that its account was deleted, and ask the browser's password manager to
+drop it (`PublicKeyCredential.signalUnknownCredential`). A passkey the relay never
+stored is only reported as unknown and is never dropped: it may still belong to a
+live account.
 
 Disconnecting one gateway from its settings removes that gateway's rows from the
 same routing tables and its link, closes its tunnel, and leaves the account and
@@ -469,6 +480,12 @@ device grants; manage those through the gateway's device controls.
 The relay account page is `/_relay/account`; `/_relay/web` redirects to it. Google
 sign-in there needs the web OAuth configuration and
 `OMNESIS_CLOUD_RELAY_PUBLIC_ORIGIN`.
+Its Google button goes to `/_relay/web/start`, which redirects to Google only when
+the browser labels the request `Sec-Fetch-Site: same-origin` (login CSRF
+protection). Safari sometimes labels that press `none` or `cross-site`, for
+example in a tab another site opened; such a request, or a link from another
+site, is sent back to the account page with the same operation and
+`failed=again`, where the next press continues.
 
 On a CLI or collector machine, enable cloud relay and pair the
 selected component:
@@ -727,6 +744,19 @@ with `omnesis cloud incidents ack` on the gateway host, or through
 the relay. The monitor never changes pins, routing credentials or existing
 device grants.
 
+A gateway on the DNS broker also binds its hosted name's CAA record to its own
+ACME account before each order: `issue "letsencrypt.org;
+validationmethods=dns-01; accounturi=<its account>"`, published through the
+broker and only for the broker's CA, so a staging account publishes nothing.
+Every gateway refuses to order a certificate for a name whose CAA record binds
+issuance to another ACME account. At the monitor's interval, the gateway checks
+that the published record still binds its own account; a record removed or
+rewritten puts the gateway on the same incident hold, identified by a digest of
+what DNS showed. A lookup DNS can't answer changes nothing. CAA protects against
+anyone without write access to the zone, including a relay without the DNS
+token; whoever can write the zone, including the DNS provider, can still
+rewrite it, which the monitor then reports.
+
 The portal and CLI expose monitoring status, last completed observation,
 incidents and the hold. An observing status describes the provider results
 checked so far; it is not proof that every issuance has been observed.
@@ -854,6 +884,19 @@ The default hosted flow separates certificate issuance from DNS cooperation:
 
 The broker receives no CSR, ACME account JWS or private keys. The gateway does not
 receive the relay's Cloudflare token and needs no inbound Internet listener.
+
+`OMNESIS_ACME_DNS_PROVIDER` selects who publishes the DNS-01 digest for a hosted
+name. The default, `auto`, sends a gateway of the official relay to the
+[independent DNS broker](#independent-dns-broker) compiled into the gateway
+(`https://dns.omnesis.app`) as soon as that broker answers for the relay's
+domain, and keeps using the relay's DNS cooperation until then; gateways of
+any other relay keep the relay. The broker's address is never taken from the
+relay. A new gateway claims its hosted name at the broker before it first asks
+the relay for its configuration, and draws a new id when the broker binds the
+name to another key. Once a gateway has used the broker it never returns to
+the relay: an unreachable broker then fails the renewal, which retries. `relay`
+keeps the relay's cooperation, and `broker` with `OMNESIS_ACME_DNS_BROKER_URL`
+uses that broker only, with no fallback. Custom domains never use the broker.
 
 The gateway keeps its existing direct TLS certificate and private key. Public
 TLS uses its own stable private key, independent of direct certificate renewal. Configure

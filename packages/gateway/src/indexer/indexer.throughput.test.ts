@@ -240,18 +240,15 @@ describe("indexing scan throughput", () => {
   pacedTest(
     "a backed-up index WAL drops the page to the configured size until it clears",
     async () => {
-      const pending = await backlog(600, 0.8, 1);
+      // Keep an eleventh page even when the first six pages consume their full limits.
+      const pending = await backlog(800, 0.8, 1);
       let calls = 0;
       const held = await scan({ ...CATCH_UP, sleepMs: 1 }, 1, () => {
         calls += 1;
         return { userActive: false, walPendingFrames: calls >= 6 && calls < 10 ? 50_000 : 0 };
       });
       expect(held.indexed).toBe(pending);
-      // Pages 1-5 grow; settles 6-9 see the WAL over its limit, so pages 7-10
-      // are back at the configured size; growth resumes after.
-      expect(held.pages[5]).toBeGreaterThan(10);
-      expect(held.pages.slice(6, 10)).toEqual([10, 10, 10, 10]);
-      expect(Math.max(...held.pages.slice(10))).toBeGreaterThan(10);
+      expect(held.pages.slice(0, 11)).toEqual([10, 20, 40, 80, 160, 320, 10, 10, 10, 10, 20]);
     },
   );
 

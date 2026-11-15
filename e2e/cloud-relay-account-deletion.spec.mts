@@ -525,9 +525,10 @@ test("a person deletes their Omnesis account from the account page, after a fres
 
     // ── Signing in again finds no account ───────────────────────────────────
     await page.getByRole("button", { name: "Sign in with Passkey", exact: true }).click();
-    // Either the relay refuses the passkey, or the browser already dropped it when told to.
+    // Either the relay says the account is gone, or the browser already dropped the passkey when
+    // told to.
     await expect(page.getByRole("alert")).toHaveText(
-      /^(That didn't sign you in\. The passkey may belong to an Omnesis account that no longer exists\.|No passkey was used\.)/,
+      /^(That passkey is for an Omnesis account that no longer exists\. Choose another passkey, or continue with Google\.|No passkey was used\.)/,
     );
     await expect(page.getByRole("heading", { name: "Sign-in methods", exact: true })).toHaveCount(
       0,

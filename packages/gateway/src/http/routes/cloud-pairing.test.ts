@@ -14,6 +14,7 @@ import {
   enrollmentSignatureTranscript,
   signDeviceTranscript,
   EnrollmentChallenges,
+  PasskeyNotOnAccount,
   type GatewayEnrollment,
   type VerifiedSignIn,
 } from "@omnesis/cloud-relay";
@@ -1129,6 +1130,8 @@ function enrollmentServer(options: {
         : undefined,
     ),
     verifyApproval: vi.fn(async () => true),
+    passkeyApproval: () => Boolean(options.gatewayPasskey),
+    accountPasskey: () => Boolean(options.gatewayPasskey),
   };
   const unused = () => Promise.reject(new Error("Unused management operation"));
   const server = createServer(db, path, {
@@ -1218,6 +1221,9 @@ test("a gateway with an origin of its own advertises passkey sign-in there and h
   const { server, spki } = enrollmentServer({ trusted: true, gatewayPasskey: where });
   expect(await (await server.request("/devices/account/config")).json()).toMatchObject({
     gatewayPasskey: where,
+    // Which buttons a page offers: approving with a passkey here, and signing in with one.
+    passkeyApproval: true,
+    accountPasskey: true,
   });
   const { publicKey } = generateKeyPairSync("ec", { namedCurve: "prime256v1" });
   const fields = {
@@ -1247,9 +1253,9 @@ test("a gateway with an origin of its own advertises passkey sign-in there and h
   expect((await post(server, "/devices/account/passkey/options", fields)).status).toBe(429);
   // Without an origin of its own, none is offered.
   const plain = enrollmentServer({ trusted: true }).server;
-  expect(await (await plain.request("/devices/account/config")).json()).not.toHaveProperty(
-    "gatewayPasskey",
-  );
+  const plainConfig = await (await plain.request("/devices/account/config")).json();
+  expect(plainConfig).not.toHaveProperty("gatewayPasskey");
+  expect(plainConfig).toMatchObject({ passkeyApproval: false, accountPasskey: false });
   expect((await post(plain, "/devices/account/passkey/options", fields)).status).toBe(404);
   void spki;
 });
@@ -1271,6 +1277,7 @@ test("a held request is shown on the public approval page and a passkey the gate
     expiresAt: held.expiresAt,
     signIn: "google",
     deviceKeyRequired: false,
+    passkeyApproval: true,
   });
   for (const path of [`/devices/account/approval/${randomUUID()}`, "/devices/account/approval/x"])
     expect((await server.request(path)).status).toBe(404);
@@ -1482,4 +1489,60 @@ test("a request without the gateway's challenge is refused, and the code shown t
   expect(
     (await post(server, "/devices/google/request", { ...(await request()), challenge })).status,
   ).toBe(409);
+});
+
+test("a passkey sign-in on the gateway's page with a passkey the account doesn't have is named as such", async () => {
+  const where = { rpId: "relay.example.test", origin: "https://g-abcdefgh.relay.example.test" };
+  const { server, enrollment, spki } = enrollmentServer({ trusted: true, gatewayPasskey: where });
+  const { privateKey, publicKey } = generateKeyPairSync("ec", { namedCurve: "prime256v1" });
+  const devicePublicKey = publicKey.export({ type: "spki", format: "der" }).toString("base64url");
+  const send = async () => {
+    const fields = {
+      requestId: randomUUID(),
+      kind: "portal" as const,
+      name: "Fictional browser",
+      secret: randomBytes(32).toString("hex"),
+    };
+    const ceremony = await (
+      await post(server, "/devices/account/passkey/options", { ...fields, devicePublicKey })
+    ).json();
+    const signature = signDeviceTranscript(
+      privateKey,
+      enrollmentSignatureTranscript({
+        ...fields,
+        gatewaySpkiFingerprint: spki,
+        challenge: ceremony.challenge,
+        devicePublicKey,
+      }),
+    );
+    return post(server, "/devices/account/request", {
+      ...fields,
+      deviceKey: { publicKey: devicePublicKey, challenge: ceremony.challenge, signature },
+      proof: {
+        type: "gateway-passkey",
+        challenge: ceremony.challenge,
+        credential: {
+          id: "b2xk",
+          rawId: "b2xk",
+          type: "public-key",
+          clientExtensionResults: {},
+          response: {
+            clientDataJSON: "e30",
+            authenticatorData: "YQ",
+            signature: "cw",
+            userHandle: "dQ",
+          },
+        },
+      },
+    });
+  };
+  vi.mocked(enrollment.verifyGatewayPasskey!).mockRejectedValueOnce(new PasskeyNotOnAccount());
+  const refused = await send();
+  expect(refused.status).toBe(401);
+  expect(JSON.stringify(await refused.json())).toContain("PASSKEY_NOT_ON_ACCOUNT");
+  // A check that fails for any other reason stays the generic refusal.
+  vi.mocked(enrollment.verifyGatewayPasskey!).mockResolvedValueOnce(undefined);
+  const failed = await send();
+  expect(failed.status).toBe(401);
+  expect(JSON.stringify(await failed.json())).not.toContain("PASSKEY_NOT_ON_ACCOUNT");
 });

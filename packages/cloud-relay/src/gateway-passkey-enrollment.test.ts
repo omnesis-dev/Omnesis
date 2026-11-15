@@ -29,6 +29,8 @@ const OWNER = accountId({
   expiresAt: 1,
 });
 const opaque = () => randomBytes(32).toString("base64url");
+/** An official Android app's origin, as `OFFICIAL_ANDROID_PASSKEY_ORIGINS` compiles them in. */
+const ANDROID = `android:apk-key-hash:${opaque()}`;
 
 function setup(
   options: {
@@ -41,7 +43,7 @@ function setup(
   const verifier = new GatewaySignInVerifier({
     google: () => undefined,
     relayOrigin: () => RELAY,
-    passkeyOrigins: () => [],
+    passkeyOrigins: () => [ANDROID],
     trusted: () => [],
     gatewayOrigin: () => ("origin" in options ? options.origin : GATEWAY),
   });
@@ -221,6 +223,33 @@ describe("a device signs in with a passkey on the gateway's own page", () => {
     }
   });
 
+  // The app in android/core-pairing (GatewayPasskeySigner) relies on this: it asks for the
+  // request's `/challenge` with an empty body, so the gateway commits to its code nonce before it
+  // learns the request's secret, and signs that value in the app with its own origin.
+  test("the Android app answers its request's own /challenge, signed in the app, also without an origin of its own", async () => {
+    for (const origin of [GATEWAY, undefined]) {
+      const f = setup({ origin }),
+        d = device("cli");
+      const challenge = f.requests.issueChallenge().challenge;
+      const result = await f.requests.start({
+        ...d.value,
+        deviceKey: d.deviceKey(challenge),
+        proof: {
+          type: "gateway-passkey",
+          challenge,
+          credential: f.owner.authentication(
+            gatewayPasskeyChallenge("device-enrollment", ANDROID, challenge, d.nonce),
+            "dXNlcg",
+            0,
+            ANDROID,
+          ),
+        },
+      });
+      expect(result.status).toBe("approved");
+      expect(f.attest).not.toHaveBeenCalled();
+    }
+  });
+
   test("TM-03: the assertion answers this request's one-use challenge; nothing can be prepared ahead", async () => {
     const f = setup(),
       d = device();
@@ -284,6 +313,8 @@ describe("a device signs in with a passkey on the gateway's own page", () => {
       createPairing: vi.fn(),
     });
     expect(bare.gatewayPasskey()).toBeUndefined();
+    expect(bare.passkeyApproval()).toBe(false);
+    expect(bare.accountPasskey()).toBe(false);
     void passkeyProofChallenge;
   });
 });
@@ -385,7 +416,13 @@ describe("a person approves a held request with a passkey on the gateway's own p
       expiresAt: held.expiresAt,
       signIn: "passkey",
       deviceKeyRequired: false,
+      // This enrollment says nothing about passkey approval, so the page offers none.
+      passkeyApproval: false,
     });
+    // It follows the gateway: a passkey confirmed here, an origin, no incident.
+    f.enrollment.passkeyApproval = () => true;
+    expect(f.requests.approvalView(f.d.value.requestId)).toMatchObject({ passkeyApproval: true });
+    expect(f.requests.passkeyApproval()).toBe(true);
     const ceremony = f.requests.approvalCeremony(f.d.value.requestId);
     expect(ceremony.binding).toBe(
       gatewayPasskeyApprovalBinding({
@@ -507,4 +544,21 @@ describe("a person approves a held request with a passkey on the gateway's own p
       f.requests.approveWithPasskey({ requestId: f.d.value.requestId }),
     ).rejects.toThrow();
   });
+});
+
+test("a sign-in prompt on the gateway's page names the passkeys the gateway knows, as a hint only", async () => {
+  const f = setup(),
+    d = device();
+  const options = { ...d.value, devicePublicKey: d.publicKey };
+  // Nothing known: the browser offers any passkey, as before.
+  expect(f.requests.passkeyCeremony(options)).not.toHaveProperty("allowCredentials");
+  f.enrollment.signInPasskeys = () => [];
+  expect(f.requests.passkeyCeremony(options)).not.toHaveProperty("allowCredentials");
+  f.enrollment.signInPasskeys = () => [f.owner.id];
+  expect(f.requests.passkeyCeremony(options).allowCredentials).toEqual([f.owner.id]);
+  f.enrollment.accountPasskey = () => true;
+  expect(f.requests.accountPasskey()).toBe(true);
+  // The hint changes nothing about what verifies: the owner's assertion still signs in.
+  const { body } = signIn(f, d);
+  expect((await f.requests.start(body)).status).toBe("approved");
 });

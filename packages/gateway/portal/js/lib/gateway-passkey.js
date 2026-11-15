@@ -25,6 +25,19 @@ export function onGatewayOrigin(ceremonyOrigin, location = globalThis.location) 
 }
 
 const OPAQUE = /^[A-Za-z0-9_-]{43}$/;
+const CREDENTIAL_ID = /^[A-Za-z0-9_-]{1,1366}$/;
+
+/**
+ * The passkeys a ceremony names (`allowCredentials`), so the browser offers only those. A hint for
+ * the prompt only: the gateway checks every assertion against a key it chose. An empty list lets
+ * the browser offer any of this site's passkeys, as before.
+ */
+function allowedPasskeys(ceremony) {
+  const ids = Array.isArray(ceremony.allowCredentials) ? ceremony.allowCredentials : [];
+  return ids
+    .filter((id) => typeof id === "string" && CREDENTIAL_ID.test(id))
+    .map((id) => ({ type: "public-key", id: fromBase64url(id) }));
+}
 
 /** Thrown with a message a person can act on. */
 export class GatewayPasskeyError extends Error {}
@@ -53,7 +66,7 @@ export async function gatewayPasskeyProof(
       publicKey: {
         challenge: fromBase64url(ceremony.webauthnChallenge),
         rpId: ceremony.rpId,
-        allowCredentials: [],
+        allowCredentials: allowedPasskeys(ceremony),
         userVerification: "required",
         timeout: 120_000,
       },
@@ -85,6 +98,41 @@ export async function gatewayPasskeyProof(
       },
     },
   };
+}
+
+/**
+ * What a page says when the gateway refuses a passkey that the linked account doesn't have, most
+ * often one left over from an account the person deleted. Never "use the right passkey": the
+ * browser offered it, not the person.
+ */
+export const PASSKEY_OTHER_ACCOUNT =
+  "That passkey is for a different Omnesis account. It may be from an account you deleted. Choose another passkey, or continue with Google.";
+/** The same, where there's no Google to continue with (approving, confirming an action). */
+export const PASSKEY_NOT_ACCEPTED =
+  "That passkey is for a different Omnesis account. It may be from an account you deleted. Choose another passkey.";
+/** A passkey the account has, whose check failed: worth another try. */
+export const PASSKEY_CHECK_FAILED = "Your gateway couldn't check that passkey. Try again.";
+
+/** The header a request carries its step-up id in (packages/gateway/src/http/step-up.ts). */
+export const STEP_UP_HEADER = "X-Omnesis-Step-Up";
+
+export const STEP_UP_UNAVAILABLE =
+  "This action needs your passkey, which can't be used on this gateway right now. Do it on the gateway itself.";
+
+/**
+ * The owner confirms one administrative action with a passkey on this gateway's page. The gateway
+ * refused the request with 428 and named it in `detail` (method, path and body hash); this runs
+ * the ceremony for exactly that request and returns the one-use id to send it again with.
+ * `post(path, body, signal)` sends a JSON body with this session's credentials.
+ */
+export async function stepUp(detail, { post, prove = gatewayPasskeyProof, signal } = {}) {
+  const target = { method: detail?.method, path: detail?.path, bodySha256: detail?.bodySha256 };
+  const options = await post("/admin/step-up/options", target, signal);
+  if (!options.ok) throw new GatewayPasskeyError(STEP_UP_UNAVAILABLE);
+  const proof = await prove(await options.json(), signal ? { signal } : {});
+  const response = await post("/admin/step-up", { ...target, proof }, signal);
+  if (!response.ok) throw new GatewayPasskeyError(PASSKEY_NOT_ACCEPTED);
+  return (await response.json()).stepUpId;
 }
 
 /** Byte-for-byte approvalDeviceTranscript from packages/cloud-relay/src/device-enrollment.ts. */
@@ -128,8 +176,8 @@ export async function approveWithPasskey(
   if (response.status === 403)
     throw new GatewayPasskeyError(
       deviceKey === undefined
-        ? "Your gateway didn't accept that passkey. Use a passkey you confirmed on this gateway."
-        : "Your gateway didn't accept this approval. Use a passkey you confirmed on this gateway, in the browser that asked to join.",
+        ? PASSKEY_NOT_ACCEPTED
+        : `${PASSKEY_NOT_ACCEPTED} Approve in the browser that asked to join.`,
     );
   if (!response.ok) throw new GatewayPasskeyError("Couldn't approve this request. Try again.");
 }

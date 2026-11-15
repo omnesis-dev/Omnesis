@@ -25,13 +25,16 @@ export function installAccountUI() {
     },
     "gateway-signup": {
       title: "Sign in to your Omnesis account",
-      signIn: "Sign in to connect this gateway to your account.",
+      signIn: "Sign in to connect this gateway to your Omnesis account.",
+      // Once signed in, the page is the one step left.
+      readyTitle: "Connect this gateway to your Omnesis account",
       ready: "This adds the gateway to your Omnesis account so your devices can find it.",
       action: "Connect this gateway",
     },
     "owner-link": {
       title: "Sign in to your Omnesis account",
       signIn: "Sign in with the Omnesis account you want to connect this gateway to.",
+      readyTitle: "Connect this gateway to your Omnesis account",
       ready: "This adds the gateway to your Omnesis account so your devices can find it.",
       action: "Connect this gateway",
     },
@@ -48,13 +51,18 @@ export function installAccountUI() {
   const createCopy = {
     title: "Create your Omnesis account",
     lines: [
-      "An Omnesis account lets you reach your gateway from anywhere and pair your phone or laptop by signing in.",
+      "An Omnesis account helps your devices find this gateway from anywhere. Only your gateway decides who gets in.",
       "Your data stays on your gateway. The account only knows which gateways are yours and how you sign in.",
       "Creating the account also connects this gateway to it.",
     ],
   };
   const noAccount = "There's no Omnesis account for this sign-in.";
   const signInFailed = "Sign-in did not complete. Please try again.";
+  const signInRefused = "That didn't sign you in. Try again, or use another sign-in method.";
+  // No account has this passkey any more, such as after the account was deleted.
+  const unknownPasskey = "That passkey is for an Omnesis account that no longer exists.";
+  // Back from a Google start the browser didn't vouch for, so nothing happened yet.
+  const googleAgain = "To continue with Google, press the Google button again.";
   // Everything deleting the account does, said before the person confirms it.
   const deletionLines = [
     "All your gateways are disconnected from this account and can no longer be reached from outside your home network.",
@@ -104,10 +112,22 @@ export function installAccountUI() {
       });
       if (response.status === 401 && path !== "session") {
         // Signed out, a refusal is about the sign-in itself, not about a lapsed confirmation.
-        const signedIn = current.authenticated;
+        const signedIn = current.authenticated,
+          reason =
+            response.headers.get("content-type") === "application/json"
+              ? (await response.json()).error
+              : undefined;
         await ui.refresh();
         const error = new Error("Sign in again to manage sign-in methods");
-        error.name = signedIn ? "AccountSignInRequired" : "SignInRefused";
+        error.name =
+          reason === "unknown-passkey" || reason === "deleted-passkey"
+            ? "UnknownPasskey"
+            : signedIn
+              ? "AccountSignInRequired"
+              : "SignInRefused";
+        // Only a passkey whose account the service deleted is gone for good; any other may still
+        // belong to a live account, so the password manager keeps it.
+        error.forget = reason === "deleted-passkey";
         throw error;
       }
       if (!response.ok)
@@ -164,10 +184,12 @@ export function installAccountUI() {
           error?.name === "AccountSignInRequired"
             ? "Sign in again to manage sign-in methods. Use the same Omnesis account, then retry your change."
             : error?.name === "SignInRefused"
-              ? "That didn't sign you in. The passkey may belong to an Omnesis account that no longer exists. Try another sign-in, or create an account from your gateway's settings."
-              : error?.name === "NotAllowedError" || error?.name === "AbortError"
-                ? "No passkey was used. The request may have been cancelled, timed out, or no matching passkey was available. Try again, or sign in with Google to add a passkey."
-                : failure;
+              ? signInRefused
+              : error?.name === "UnknownPasskey"
+                ? `${unknownPasskey} ${current.googleAvailable ? "Choose another passkey, or continue with Google." : "Choose another passkey."}`
+                : error?.name === "NotAllowedError" || error?.name === "AbortError"
+                  ? "No passkey was used. The request may have been cancelled, timed out, or no matching passkey was available. Try again, or sign in with Google to add a passkey."
+                  : failure;
       } finally {
         busy = false;
         for (const element of root.querySelectorAll("button"))
@@ -241,12 +263,30 @@ export function installAccountUI() {
         if (!result.response.userHandle) throw new Error("Discoverable passkey required");
         credential.response.userHandle = ui.encode(result.response.userHandle);
       }
-      const done = await ui.api(
-        `passkeys/${step}/complete`,
-        { ceremonyId: ceremony.ceremonyId, credential },
-        endorse,
-      );
+      let done;
+      try {
+        done = await ui.api(
+          `passkeys/${step}/complete`,
+          { ceremonyId: ceremony.ceremonyId, credential },
+          endorse,
+        );
+      } catch (error) {
+        // The browser offered a passkey nothing will accept again, so it may stop offering it.
+        if (error.forget) await ui.forgetPasskey(result.id);
+        throw error;
+      }
       return { id: result.id, endorse: done.endorse };
+    },
+    /** Best effort: lets the browser's password manager drop a passkey nothing accepts now. */
+    async forgetPasskey(credentialId) {
+      try {
+        await window.PublicKeyCredential.signalUnknownCredential?.({
+          rpId: window.location.hostname,
+          credentialId,
+        });
+      } catch {
+        // The passkey stays in the password manager, where it can be deleted by hand.
+      }
     },
     async signIn(createAccount = false) {
       await ui.passkey(createAccount, createAccount);
@@ -449,15 +489,7 @@ export function installAccountUI() {
       endorsing = undefined;
       // Best effort: the passkey was never stored, so its leftovers are only tidied up.
       await ui.api("passkeys/register/cancel", {}, id).catch(() => {});
-      try {
-        if (credential)
-          await window.PublicKeyCredential.signalUnknownCredential?.({
-            rpId: window.location.hostname,
-            credentialId: credential,
-          });
-      } catch {
-        // The browser keeps an unused passkey; it can be deleted from its password manager.
-      }
+      if (credential) await ui.forgetPasskey(credential);
       notice = "No passkey was added.";
       ui.render();
     },
@@ -492,17 +524,7 @@ export function installAccountUI() {
       }
       confirming = undefined;
       ui.forget();
-      for (const passkey of passkeys) {
-        try {
-          // Best effort: lets the browser's password manager drop a passkey nothing accepts now.
-          await window.PublicKeyCredential.signalUnknownCredential?.({
-            rpId: window.location.hostname,
-            credentialId: passkey.id,
-          });
-        } catch {
-          // The passkey stays in the password manager, where it can be deleted by hand.
-        }
-      }
+      for (const passkey of passkeys) await ui.forgetPasskey(passkey.id);
       await ui.refresh();
       ui.say("Your Omnesis account was deleted.");
     },
@@ -608,7 +630,9 @@ export function installAccountUI() {
         copy = pendingCopy[pending.purpose],
         signedIn = session.authenticated && !pending.needsProof,
         creating = pending.intent === "create" && !signedIn && !pending.denied;
-      root.append(ui.node("h1", creating ? createCopy.title : copy.title));
+      root.append(
+        ui.node("h1", creating ? createCopy.title : (signedIn && copy.readyTitle) || copy.title),
+      );
       const name = ui.node("p", pending.deviceName ?? pending.gatewayName ?? pending.hostname);
       name.className = "pending-host";
       root.append(name);
@@ -1026,6 +1050,7 @@ export function installAccountUI() {
     await ui.refresh();
     if (query.get("failed") === "google")
       alert.textContent = "Google sign-in did not complete. Try again or use a passkey.";
+    if (query.get("failed") === "again") ui.say(googleAgain);
     if (query.get("failed") === "invitation")
       alert.textContent =
         "We couldn't check your invitation right now. Try again in a few minutes.";

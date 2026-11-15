@@ -34,17 +34,20 @@ class AccountPairingControllerTest {
         override var approved = false
         override var joined = false
         override var retryUntilMillis = 0L
+        override var verified = false
+        override var expiresAtMillis: Long? = null
         var compared = false
         var closed = false
         var googleError: Exception? = null
         var selectErrors = mutableListOf<Exception>()
         var joinOnSelect = false
+        val signers = mutableListOf<GatewayPasskeySigner?>()
         override suspend fun begin(challenge: CloudPairingChallenge): String { calls += "begin"; return "server-nonce" }
         override suspend fun google(token: String): List<AccountGatewayChoice> { calls += "google"; assertEquals("google-token", token); googleError?.let { throw it }; return choices }
         override suspend fun passkeyOptions(): AccountCloudPairingClient.PasskeyOptions { calls += "options"; return AccountCloudPairingClient.PasskeyOptions("ceremony", "assertion-options") }
         override suspend fun passkey(options: AccountCloudPairingClient.PasskeyOptions, assertion: String): List<AccountGatewayChoice> { calls += "passkey"; assertEquals("native-assertion", assertion); return choices }
-        override suspend fun select(gatewayId: String) {
-            calls += "select"; assertTrue(choices.any { it.gatewayId == gatewayId })
+        override suspend fun select(gatewayId: String, gatewayPasskey: GatewayPasskeySigner?) {
+            calls += "select"; signers += gatewayPasskey; assertTrue(choices.any { it.gatewayId == gatewayId })
             if (selectErrors.isNotEmpty()) throw selectErrors.removeAt(0)
             if (joinOnSelect) { approved = true; joined = true }
         }
@@ -77,6 +80,51 @@ class AccountPairingControllerTest {
         assertEquals(AccountPairingPhase.Idle, state.phase)
     }
 
+    /**
+     * M6: held at a gateway this phone verified, the request continues on its own once the owner
+     * approves it on a device they already use. The code was compared on the approving screen and
+     * checked here against this phone's own computation, so there is no button to press.
+     */
+    @Test fun `an approval from a verified gateway connects without a codes-match step`() = runTest {
+        val attempt = Attempt(listOf(choice)).apply { verified = true; expiresAtMillis = 1_800_000_272_000 }
+        val states = mutableListOf<AccountPairingState>(); val applied = mutableListOf<String>()
+        val controller = AccountPairingController(this, ports(attempt, applied)) { states += it }
+        controller.start(context, AccountPairingController.Method.Google); runCurrent()
+        val waiting = states.last()
+        assertEquals(AccountPairingPhase.Comparing, waiting.phase)
+        assertTrue(waiting.continues); assertEquals(1_800_000_272_000, waiting.expiresAt); assertEquals("465 774", waiting.code)
+        assertTrue(applied.isEmpty())
+        advanceTimeBy(2000); runCurrent()
+        assertEquals(listOf("strict-pinned-payload"), applied)
+        assertTrue(states.any { it.phase == AccountPairingPhase.Pairing && it.approved && it.code == "465 774" })
+        assertEquals(AccountPairingPhase.Idle, states.last().phase)
+    }
+
+    /** A gateway this phone could not verify keeps the explicit comparison once approved. */
+    @Test fun `an approval from an unverified gateway still waits for the comparison`() = runTest {
+        val attempt = Attempt(listOf(choice)); var state = AccountPairingState(); val applied = mutableListOf<String>()
+        val controller = AccountPairingController(this, ports(attempt, applied)) { state = it }
+        controller.start(context, AccountPairingController.Method.Google); runCurrent()
+        assertFalse(state.continues)
+        advanceTimeBy(2000); runCurrent()
+        assertEquals(AccountPairingPhase.Comparing, state.phase); assertTrue(state.approved)
+        assertTrue(applied.isEmpty())
+        controller.finish(); runCurrent()
+        assertEquals(listOf("strict-pinned-payload"), applied)
+    }
+
+    /** The waiting screen counts down in minutes and seconds, and says what to do once time is up. */
+    @Test fun `the waiting screen counts down`() {
+        assertEquals("Expires in 4:32", pairingExpiryText(272_900))
+        assertEquals("Expires in 1:01", pairingExpiryText(61_000))
+        assertEquals("Expires in 0:09", pairingExpiryText(9_000))
+        assertEquals("Expired. Cancel and sign in again.", pairingExpiryText(400))
+        assertEquals("Expired. Cancel and sign in again.", pairingExpiryText(-30_000))
+        // The review's vocabulary: no mechanism words on the waiting screen.
+        for (text in listOf(PAIRING_WAITING_TITLE, PAIRING_WAITING_FROM_ANOTHER_DEVICE, PAIRING_WAITING_CODE_LEAD, PAIRING_WAITING_COMPARE, PAIRING_CODE_CHECK_TEXT) + PAIRING_WAITING_PLACES)
+            for (word in listOf("trusted device", "held", "relay", "pairing request", "other device")) assertFalse("$word in $text", text.lowercase().contains(word))
+    }
+
     @Test fun `one gateway skips the chooser`() = runTest {
         val attempt = Attempt(listOf(choice)); val states = mutableListOf<AccountPairingState>()
         val controller = AccountPairingController(this, ports(attempt)) { states += it }
@@ -104,6 +152,24 @@ class AccountPairingControllerTest {
         controller.start(context, AccountPairingController.Method.Passkey); runCurrent()
         assertEquals(listOf("begin", "options", "passkey"), attempt.calls)
         assertEquals(AccountPairingPhase.Choosing, state.phase); controller.cancel()
+    }
+
+    @Test fun `only a passkey sign-in signs the join again on the gateway, also after waiting for it`() = runTest {
+        val signer = GatewayPasskeySigner("relay.example.test", "android:apk-key-hash:" + "A".repeat(43)) { error("not prompted here") }
+        val passkey = Attempt(listOf(choice)).apply { retryUntilMillis = 600_000; selectErrors += offline() }
+        val ports = AccountPairingPorts({ _, _ -> error("Wrong provider") }, { _, _ -> "native-assertion" }, { passkey }, {}, { currentTime }, { signer })
+        val controller = AccountPairingController(this, ports) {}
+        controller.start(context, AccountPairingController.Method.Passkey); runCurrent()
+        advanceTimeBy(2_000); runCurrent()
+        assertEquals(listOf<GatewayPasskeySigner?>(signer, signer), passkey.signers)
+        controller.cancel()
+
+        // A Google sign-in never asks for a passkey, even where the app could sign one.
+        val google = Attempt(listOf(choice))
+        val viaGoogle = AccountPairingController(this, AccountPairingPorts({ _, _ -> "google-token" }, { _, _ -> error("Wrong provider") }, { google }, {}, { currentTime }, { signer })) {}
+        viaGoogle.start(context, AccountPairingController.Method.Google); runCurrent()
+        assertEquals(listOf<GatewayPasskeySigner?>(null), google.signers)
+        viaGoogle.cancel()
     }
 
     @Test fun `an offline gateway waits with backoff and continues when it returns`() = runTest {

@@ -156,4 +156,8 @@ test("the Worker's code imports no Node module", async () => {
     "dns-broker-zone.ts",
   ]);
   expect([...bare]).toEqual(["zod"]);
+  // Workers throws a TypeError for `redirect: "error"` before any request goes out, so every DNS
+  // write failed on the deployed broker while Node-based tests passed.
+  for (const file of seen)
+    expect(await readFile(join(root, file), "utf8"), file).not.toMatch(/redirect:\s*["']error["']/);
 });

@@ -252,6 +252,14 @@ class DtoDecodeTest {
     }
 
     @Test
+    fun source_record_decodes_resync_modes_and_their_absence() {
+        fun record(extra: String) = OmnesisJson.decodeFromString<SourceRecord>("""{"id":"notes:local","type":"notes"$extra}""")
+        assertEquals(listOf("in-place", "from-scratch"), record(""","resyncModes":["in-place","from-scratch"]""").resyncModes)
+        assertEquals(emptyList<String>(), record(""","resyncModes":[]""").resyncModes)
+        assertEquals(null, record("").resyncModes)
+    }
+
+    @Test
     fun near_dupes_decodes_with_stat_fields() {
         val resp = OmnesisJson.decodeFromString<DocumentNearDupes>(
             """{"edges":[{"otherDocId":"d2","otherTitle":"Re: Q4 budget review","otherSourceId":"gmail:a","otherDocType":"email","jaccard":0.88,"pairUniqueDf2":2,"containmentMin":0.7,"gateFamily":"text"}],"nextCursor":null}""",

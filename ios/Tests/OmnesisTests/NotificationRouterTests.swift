@@ -10,15 +10,15 @@ final class NotificationRouterTests: XCTestCase {
     func testPairingReminderOnlyNavigatesToTheTrustedDeviceList() throws {
         XCTAssertEqual(
             PushTarget.fromUserInfo(["omnesis": ["kind": "device-pairing", "targetId": "pairing"]], cloudRelayEnabled: true),
-            .pairingRequests
+            .pairingRequests(requestId: nil)
         )
         XCTAssertNil(PushTarget.fromUserInfo(
             ["omnesis": ["kind": "device-pairing", "targetId": "untrusted-request"]],
             cloudRelayEnabled: true
         ))
-        XCTAssertEqual(PushTarget.pairingRequests.kindName, "device-pairing")
+        XCTAssertEqual(PushTarget.pairingRequests().kindName, "device-pairing")
         let route = try JSONDecoder().decode(ClaimedNotificationRoute.self, from: Data(#"{"kind":"device-pairing"}"#.utf8))
-        XCTAssertEqual(route, .devicePairing)
+        XCTAssertEqual(route, .devicePairing(requestId: nil))
         let notification = ClaimedNotification(
             id: "fixture",
             kind: "device-pairing",
@@ -30,6 +30,44 @@ final class NotificationRouterTests: XCTestCase {
             route: route
         )
         XCTAssertEqual(notification.routingPayload, ["kind": "device-pairing", "targetId": "pairing"])
+    }
+
+    /// A notification for one waiting device names it, so the tap opens the list with that request
+    /// first. Only an id in the gateway's shape is kept; anything else opens the plain list.
+    func testAPairingNotificationThatNamesItsRequestOpensThatRequest() throws {
+        let id = "00000000-0000-4000-8000-000000000951"
+        XCTAssertEqual(
+            PushTarget.fromUserInfo(
+                ["omnesis": ["kind": "device-pairing", "targetId": "pairing", "requestId": id]],
+                cloudRelayEnabled: true
+            ),
+            .pairingRequests(requestId: id)
+        )
+        XCTAssertEqual(
+            PushTarget.fromUserInfo(
+                ["omnesis": ["kind": "device-pairing", "targetId": "pairing", "requestId": "../devices"]],
+                cloudRelayEnabled: true
+            ),
+            .pairingRequests(requestId: nil)
+        )
+        XCTAssertTrue(PushTarget.pairingRequests(requestId: id).opensDevices)
+        let route = try JSONDecoder().decode(
+            ClaimedNotificationRoute.self,
+            from: Data(#"{"kind":"device-pairing","requestId":"\#(id)"}"#.utf8)
+        )
+        XCTAssertEqual(route, .devicePairing(requestId: id))
+        let notification = ClaimedNotification(
+            id: "fixture",
+            kind: "device-pairing",
+            targetId: "pairing",
+            title: "Is this you?",
+            body: "A phone wants to connect to your gateway. Tap to review.",
+            collapseId: "device-pairing:\(id)",
+            remaining: 0,
+            route: route
+        )
+        XCTAssertEqual(notification.routingPayload, ["kind": "device-pairing", "targetId": "pairing", "requestId": id])
+        XCTAssertEqual(PushTarget.fromUserInfo(notification.userInfo, cloudRelayEnabled: true), .pairingRequests(requestId: id))
     }
 
     private let policyNow = Date(timeIntervalSince1970: 1_800_000_000)
@@ -478,7 +516,7 @@ extension NotificationRouterTests {
         XCTAssertEqual(homeTab(for: .watchFiring(watchId: "wat_1", firingKey: "wat_1:7")), .watches)
         XCTAssertEqual(homeTab(for: .watch(watchId: "wat_1")), .watches)
         XCTAssertEqual(homeTab(for: .privacyApproval(approvalId: "approval-1")), .privacy)
-        XCTAssertEqual(homeTab(for: .pairingRequests), .agent)
+        XCTAssertEqual(homeTab(for: .pairingRequests()), .agent)
         XCTAssertEqual(homeTab(for: .agentAnswer(conversationId: "conv-9")), .agent)
         XCTAssertEqual(
             homeTab(for: .sourcePermission(
