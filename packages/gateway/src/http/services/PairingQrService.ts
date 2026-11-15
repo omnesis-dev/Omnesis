@@ -148,7 +148,9 @@ export interface PairingQrServiceOptions {
   /**
    * The owner put the Omnesis relay ahead of Tailscale (Settings, Remote
    * access): a phone is offered the relay's address before the gateway's
-   * tailnet address. Read on every request.
+   * tailnet address. Read on every request. It comes only from the owner's
+   * local setting, as the enrollment policy does; nothing the relay sends
+   * (its status, account data or listings) may set it.
    */
   preferRelay?: () => boolean;
 }
