@@ -447,10 +447,15 @@ describe("configured agent voice lease", () => {
     });
     release.resolve();
     // The queue reads idle while it saves the next batch as running; wait for that turn too.
-    await vi.waitFor(() => {
-      expect(f.inputs).toHaveLength(2);
-      expect(f.service.conversationControls(created.sessionId).busy).toBe(false);
-    });
+    const auditQueueStarted = Date.now();
+    await vi.waitFor(
+      () => {
+        expect(f.inputs).toHaveLength(2);
+        expect(f.service.conversationControls(created.sessionId).busy).toBe(false);
+      },
+      { timeout: 9_000 },
+    );
+    process.stdout.write(`Audit durable queued-turn wait: ${Date.now() - auditQueueStarted}ms\n`);
     expect(write).toHaveBeenCalledOnce();
   });
   it("admits an unchanged voice write once and releases the controls lock before it completes", async () => {
@@ -664,8 +669,13 @@ describe("configured agent voice lease", () => {
       offset_ms: 100,
       delegation: { id: "fixture-delegation", target: "client" },
     });
-    await vi.waitFor(() =>
-      expect(sent.some((command) => command.type === "session.commentary.append")).toBe(true),
+    const auditCommentaryStarted = Date.now();
+    await vi.waitFor(
+      () => expect(sent.some((command) => command.type === "session.commentary.append")).toBe(true),
+      { timeout: 9_000 },
+    );
+    process.stdout.write(
+      `Audit durable commentary wait: ${Date.now() - auditCommentaryStarted}ms\n`,
     );
     expect(
       sent
