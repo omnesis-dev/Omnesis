@@ -17,7 +17,10 @@ index e11c5a1..00c41a6 100644
 diff --git a/node_modules/better-sqlite3-multiple-ciphers/deps/sqlite3/sqlite3.c b/node_modules/better-sqlite3-multiple-ciphers/deps/sqlite3/sqlite3.c
 --- a/node_modules/better-sqlite3-multiple-ciphers/deps/sqlite3/sqlite3.c
 +++ b/node_modules/better-sqlite3-multiple-ciphers/deps/sqlite3/sqlite3.c
-@@ -53013,0 +53014,22 @@
+@@ -53011,6 +53011,28 @@
+ }
+ 
+ /*
 +** Handle h is open on the *-shm file. This function zeroes the first
 +** 8 bytes of the file. If SQLITE_ENABLE_SETLK_TIMEOUT is defined, h may
 +** have been opened with FILE_FLAG_OVERLAPPED.
@@ -40,7 +43,13 @@ diff --git a/node_modules/better-sqlite3-multiple-ciphers/deps/sqlite3/sqlite3.c
 +}
 +
 +/*
-@@ -53031 +53053,6 @@
+ ** The DMS lock has not yet been taken on the shm file associated with
+ ** pShmNode. Take the lock. Truncate the *-shm file if required.
+ ** Return SQLITE_OK if successful, or an SQLite error code otherwise.
+@@ -53028,7 +53050,12 @@
+     if( pShmNode->isReadonly ){
+       rc = SQLITE_READONLY_CANTINIT;
+     }else{
 -      rc = winHandleTruncate(h, 0);
 +      if( SQLITE_OK!=winHandleTruncate(h, 0) ){
 +        /* Sometimes the truncate operation may fail because some other
@@ -48,3 +57,6 @@ diff --git a/node_modules/better-sqlite3-multiple-ciphers/deps/sqlite3/sqlite3.c
 +        ** zeroes into the start of the file instead. */
 +        rc = winZeroSharedMemory(h);
 +      }
+     }
+ 
+     /* Release the EXCLUSIVE lock acquired above. */

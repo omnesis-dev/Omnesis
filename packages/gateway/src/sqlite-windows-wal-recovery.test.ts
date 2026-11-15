@@ -109,11 +109,11 @@ const pinSharedMemory = `
 $ErrorActionPreference='Stop'
 $file=$null; $map=$null; $view=$null
 try {
-  $file=[IO.File]::Open($env.OMNESIS_SQLITE_SHM,[IO.FileMode]::Open,[IO.FileAccess]::ReadWrite,[IO.FileShare]::ReadWrite)
+  $file=[IO.File]::Open($env:OMNESIS_SQLITE_SHM,[IO.FileMode]::Open,[IO.FileAccess]::ReadWrite,[IO.FileShare]::ReadWrite)
   $map=[IO.MemoryMappedFiles.MemoryMappedFile]::CreateFromFile($file,$null,0,[IO.MemoryMappedFiles.MemoryMappedFileAccess]::ReadWrite,[IO.HandleInheritability]::None,$true)
   $view=$map.CreateViewAccessor()
-  [IO.File]::WriteAllText($env.OMNESIS_SQLITE_READY,'mapped')
-  while (-not [IO.File]::Exists($env.OMNESIS_SQLITE_RELEASE)) { [Threading.Thread]::Sleep(20) }
+  [IO.File]::WriteAllText($env:OMNESIS_SQLITE_READY,'mapped')
+  while (-not [IO.File]::Exists($env:OMNESIS_SQLITE_RELEASE)) { [Threading.Thread]::Sleep(20) }
 } finally {
   if ($null -ne $view) {$view.Dispose()}
   if ($null -ne $map) {$map.Dispose()}
