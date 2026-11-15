@@ -19,9 +19,10 @@ const registry = new URL("./source-descriptors.ts", import.meta.url).href;
 const repository = fileURLToPath(new URL("../../../", import.meta.url));
 
 interface Scenario {
-  stage: "prime" | "legacy" | "session" | "background";
+  stage: "prime" | "marker" | "discovery" | "legacy" | "session" | "background";
   failure: "marked" | "ordinary" | "none";
   nested?: boolean;
+  pending?: boolean;
 }
 
 /** Observe the real entry script, substituting its public keyring/provider seams.
@@ -37,7 +38,7 @@ async function runScenario(scenario: Scenario) {
   const preload = join(root, "fixture-preload.mjs");
   const failure =
     scenario.failure === "marked"
-      ? `Object.assign(new Error('invented cleanup uncertainty'),{cleanupFailure:undefined})`
+      ? `Object.assign(new Error('invented cleanup uncertainty'),{cleanupFailure:undefined${scenario.pending ? ",cleanupPending:true" : ""}})`
       : `new Error('invented ordinary failure')`;
   const thrown = scenario.nested ? `new Error('invented wrapper',{cause:${failure}})` : failure;
   const original = `${core}?auth-owned-fixture-original`;
@@ -52,10 +53,14 @@ export async function primeSecretFileKeyCache(){
   writeFileSync(${JSON.stringify(primed)},'primed');
   ${scenario.stage === "prime" && scenario.failure !== "none" ? `throw ${thrown};` : "return true;"}
 }
-export function secretFileEncryptionRequired(){return false;}
+export function secretFileEncryptionRequired(){${scenario.stage === "marker" ? `throw ${thrown};` : "return false;"}}
 `;
-  const operation = `async()=>{writeFileSync(${JSON.stringify(invoked)},'invoked');${scenario.stage === "background" ? `void Promise.reject(${thrown});await new Promise(resolve=>setTimeout(resolve,150));return {accounts:[{accountId:'fixture-account',state:{}}]};` : scenario.stage !== "prime" && scenario.failure !== "none" ? `throw ${thrown};` : scenario.stage === "session" ? "return {accounts:[{accountId:'fixture-account',state:{}}]};" : "return 'fixture-account';"}}`;
+  const operation = `async()=>{writeFileSync(${JSON.stringify(invoked)},'invoked');${scenario.stage === "background" ? `void Promise.reject(${thrown});await new Promise(resolve=>setTimeout(resolve,150));return {accounts:[{accountId:'fixture-account',state:{}}]};` : ["legacy", "session"].includes(scenario.stage) && scenario.failure !== "none" ? `throw ${thrown};` : scenario.stage === "session" ? "return {accounts:[{accountId:'fixture-account',state:{}}]};" : "return 'fixture-account';"}}`;
   const provider = `import {writeFileSync} from 'node:fs';writeFileSync(${JSON.stringify(discovered)},'discovered');export const allDescriptors=[{id:'fixture-auth',provider:{id:'fixture-provider'},${scenario.stage === "session" || scenario.stage === "background" ? "authenticate" : "authFlow"}:${operation}}];`;
+  const registrySource =
+    scenario.stage === "discovery"
+      ? `import {writeFileSync} from 'node:fs';writeFileSync(${JSON.stringify(discovered)},'discovered');export const allDescriptors=[];void Promise.reject(${thrown});await new Promise(resolve=>setTimeout(resolve,150));throw new Error('invented descriptor failure');`
+      : provider;
   writeFileSync(
     preload,
     `
@@ -63,7 +68,7 @@ import {registerHooks} from 'node:module';
 registerHooks({load(url,context,nextLoad){
   const base=url.split('?')[0];
   if(base===${JSON.stringify(core)}&&!url.includes('auth-owned-fixture-original'))return{format:'module',shortCircuit:true,source:${JSON.stringify(replacement)}};
-  if(base===${JSON.stringify(registry)}||base===${JSON.stringify(registry.slice(0, -3) + ".js")})return{format:'module',shortCircuit:true,source:${JSON.stringify(provider)}};
+  if(base===${JSON.stringify(registry)}||base===${JSON.stringify(registry.slice(0, -3) + ".js")})return{format:'module',shortCircuit:true,source:${JSON.stringify(registrySource)}};
   return nextLoad(url,context);
 }});
 `,
@@ -104,25 +109,30 @@ registerHooks({load(url,context,nextLoad){
       expect(existsSync(held), "cleanup uncertainty must reach the process exit fence").toBe(true);
       expect(settled, "the uncertain process must retain its original PID").toBe(false);
       // Let a provider that continues after a background rejection try to report success.
-      if (scenario.stage === "background") await new Promise((resolve) => setTimeout(resolve, 250));
+      if (scenario.stage === "background" || scenario.stage === "discovery")
+        await new Promise((resolve) => setTimeout(resolve, 250));
       expect(
         existsSync(terminal),
         "uncertainty must not become an ordinary terminal auth event",
       ).toBe(false);
-      expect(existsSync(discovered)).toBe(scenario.stage !== "prime");
-      expect(existsSync(invoked)).toBe(scenario.stage !== "prime");
+      expect(existsSync(discovered)).toBe(
+        scenario.stage !== "prime" && scenario.stage !== "marker",
+      );
+      expect(existsSync(invoked)).toBe(!["prime", "marker", "discovery"].includes(scenario.stage));
     } else {
       expect(settled, "ordinary outcomes must remain able to exit").toBe(true);
       expect(existsSync(held)).toBe(false);
-      expect(existsSync(terminal), "ordinary outcomes must report their terminal auth event").toBe(
-        true,
-      );
+      expect(
+        existsSync(terminal),
+        "ordinary provider outcomes must report their terminal auth event",
+      ).toBe(scenario.stage !== "discovery");
       expect(existsSync(discovered)).toBe(true);
-      expect(existsSync(invoked)).toBe(true);
+      expect(existsSync(invoked)).toBe(scenario.stage !== "discovery");
       const result = await running;
       expect(result).toBe(
         scenario.failure === "ordinary" &&
           scenario.stage !== "prime" &&
+          scenario.stage !== "marker" &&
           scenario.stage !== "background"
           ? 1
           : 0,
@@ -148,7 +158,7 @@ registerHooks({load(url,context,nextLoad){
   }
 }
 
-for (const stage of ["prime", "legacy", "session", "background"] as const) {
+for (const stage of ["prime", "marker", "discovery", "legacy", "session", "background"] as const) {
   test.each([false, true])(
     `the real ${stage} path retains cleanup uncertainty (nested=%s)`,
     async (nested) => runScenario({ stage, failure: "marked", nested }),
@@ -171,3 +181,10 @@ test(
   async () => runScenario({ stage: "legacy", failure: "none" }),
   30_000,
 );
+
+for (const stage of ["prime", "session"] as const)
+  test(
+    `the real ${stage} path cannot discharge a pending marker without a retained closure proof`,
+    async () => runScenario({ stage, failure: "marked", pending: true }),
+    30_000,
+  );

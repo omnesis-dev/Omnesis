@@ -97,6 +97,13 @@ jobs:
           packages/collector/src/auth-subprocess-error.test.ts
           packages/collector/src/auth-subprocess-result.test.ts
           packages/collector/src/source-ws-handlers.auth-begin.test.ts
+          scripts/ci/windows-checks.test.mjs
+      - name: Full source and test typechecks
+        if: ${{ inputs.scope == 'auth-owned-green' && runner.os == 'Linux' }}
+        run: npm run typecheck && npm run typecheck:tests
+      - name: Full ESLint
+        if: ${{ inputs.scope == 'auth-owned-green' && runner.os == 'Linux' }}
+        run: npm run lint
       - name: Inspect stopped SQLite driver interoperability
         if: ${{ !cancelled() && inputs.scope == 'auth-owned-green' && runner.os == 'Windows' }}
         run: node --import tsx scripts/ci/windows-sqlite-restart-diagnostic.mjs

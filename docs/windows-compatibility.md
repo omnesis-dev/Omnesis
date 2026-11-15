@@ -38,6 +38,16 @@ Runner occupancy and feedback time still matter; completed broad-run timings
 must establish the daily workload before the audit is complete. GitHub also
 documents that [scheduled runs can be delayed](https://docs.github.com/en/actions/how-tos/troubleshoot-workflows).
 
+The measured broad PR selection took 34 minutes, including 25 minutes for its
+unit phase. Six CLI/service decision matrices accounted for more than half of
+reported unit-file runtime. Those matrices run in the complete daily/manual
+Windows unit sweep; PRs retain native filesystem/process boundaries, lifecycle
+regressions, CLI integration and real Gateway/Collector smoke tests. The complete
+sweep continues to discover every portable unit suite normally.
+The revised selection passed 3,618 unit tests and 14 real Gateway/Collector smoke
+tests. Its unit phase took 10 minutes and the complete job took 18 minutes;
+runner admission waited 4 seconds.
+
 `node scripts/ci/windows-checks.mjs unit --list` prints the broad unit plan.
 The same entrypoint accepts `focused`, `e2e` and `portal`. Installer exclusions
 have explicit reasons. Manual dispatch defaults to the complete sweep and can
@@ -67,6 +77,14 @@ commands. The relay suite passed 2,225 tests with 15 conditional skips and 100%
 statement, branch, function and line coverage. Process ownership and encrypted
 bootstrap-reader regressions also passed on Linux and Windows, run sequentially.
 These focused results do not replace the pending complete-suite validation.
+
+Authentication subprocesses also exercise an existing encrypted credential in
+a restricted Windows environment. Native process identity uses exact framework
+creation-time ticks, and compiler bootstraps load the system utility module by
+its absolute path; neither requires an inherited module discovery path. The
+targeted regression run passed all 128 tests on Windows, including native cache
+and bootstrap security cases. Linux passed 103 tests with 25 Windows-specific
+skips. Full source/test typechecks and lint passed for the same source snapshot.
 
 Manual acceptance of source revision `686a43ef0` passed on hosted Windows with
 both source and compiled entrypoints. Each mode initialized encrypted storage,
@@ -254,7 +272,10 @@ worker-shutdown slice waited zero seconds and ran for 3 minutes 13 seconds.
 It verifies ongoing vector search through generation and dimension changes,
 publication and worker handoff. Native workers drain inference before shutdown;
 acknowledgment and actual thread exit are both joined before handle cleanup.
-Windows execution of this coverage remains required.
+At `7c825ab28`, Windows passed all four transitions with real CPU embeddings.
+The four-test file took 207 seconds in the broad sweep's second E2E shard;
+that shard passed 691 tests across 130 files, with two conditional skips.
+These immutable-snapshot results still require final-head revalidation.
 
 At `53f02f142`, Linux typechecks, lint, portal E2E, embedding E2E, both Docker
 runtime architectures, Docker smoke tests and integration harnesses passed.

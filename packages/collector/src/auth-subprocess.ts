@@ -290,5 +290,6 @@ try {
   await main();
 } catch (error) {
   await processExit.preserveCleanupFailure(error);
+  await processExit.beforeFinalEvent();
   throw error;
 }
