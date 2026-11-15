@@ -12,7 +12,15 @@
  * inherited), and deleting either must restore the system sweep byte for byte.
  */
 
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync, existsSync, readFileSync } from "node:fs";
+import {
+  mkdtempSync,
+  mkdirSync,
+  rmSync,
+  writeFileSync,
+  existsSync,
+  readFileSync,
+  utimesSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, test, expect, beforeEach, afterEach } from "vitest";
@@ -176,12 +184,15 @@ describe("SweepService", () => {
   });
 
   test("edits on disk are picked up without a restart", () => {
-    // Both writes are the same byte length on purpose: the read cache is keyed
-    // on mtime AND size, and a size-only key would pass this test while
-    // missing every same-length edit an operator makes.
+    // Equal-sized edits must invalidate the cache when their modification time
+    // changes. Set distinct times explicitly instead of depending on the
+    // filesystem clock advancing between two immediate writes.
     write("commitments-made", "---\ncadence: 7d\n---\n\nFirst..\n");
+    const path = join(configDir, "sweeps", "commitments-made.md");
+    utimesSync(path, new Date("2026-01-01T00:00:00Z"), new Date("2026-01-01T00:00:00Z"));
     expect(svc.get("commitments-made")!.steeringPrompt).toBe("First..");
     write("commitments-made", "---\ncadence: 7d\n---\n\nSecond.\n");
+    utimesSync(path, new Date("2026-01-01T00:00:02Z"), new Date("2026-01-01T00:00:02Z"));
     expect(svc.get("commitments-made")!.steeringPrompt).toBe("Second.");
   });
 

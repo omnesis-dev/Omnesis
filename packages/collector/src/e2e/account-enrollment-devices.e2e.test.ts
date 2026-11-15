@@ -49,6 +49,7 @@ import {
   GatewayRefused,
   PasskeyBrowser,
   addSecondPasskey,
+  assertionOn,
   browserSuiteAvailable,
   chooseAccountMenu,
   clickFirst,
@@ -62,6 +63,7 @@ import {
   passkeyIds,
   printedConnectCode,
   runCli,
+  sha256Hex,
   approveHeld,
   confirmPasskeyHere,
   gatewayPasskeyJoin,
@@ -75,6 +77,33 @@ import { gatewayBootBudgetMs } from "./gateway-env.js";
 import { getDocumentCount } from "./helpers.js";
 
 const browserReady = browserSuiteAvailable("account-enrollment-devices.e2e");
+
+/** Local status can refresh before the public tunnel is ready for a new TLS client. */
+async function waitForPublicTlsHealth(gateway: EnrollmentGateway): Promise<void> {
+  const timeoutMs = gatewayBootBudgetMs(),
+    deadline = performance.now() + timeoutMs;
+  await waitFor(
+    async () => {
+      const remaining = deadline - performance.now();
+      if (remaining <= 0) throw new Error("Public TLS readiness budget exhausted");
+      const health = await devicePinnedJson(
+        { publicOrigin: gateway.publicOrigin, certificate: gateway.leaf.cert },
+        "/health",
+        undefined,
+        AbortSignal.timeout(Math.ceil(remaining)),
+      );
+      return (
+        performance.now() < deadline &&
+        health !== null &&
+        typeof health === "object" &&
+        "status" in health &&
+        health.status === "ok"
+      );
+    },
+    "the pinned public TLS health response",
+    timeoutMs,
+  );
+}
 
 describe.skipIf(!browserReady)("devices join a gateway by signing in", () => {
   let directory: string;
@@ -103,6 +132,7 @@ describe.skipIf(!browserReady)("devices join a gateway by signing in", () => {
     },
   ) {
     await gateway.pace(2);
+    await waitForPublicTlsHealth(gateway);
     const comparisons: string[] = [];
     let printed!: (value: { connectUrl: string; code: string }) => void;
     const code = new Promise<{ connectUrl: string; code: string }>(
@@ -366,6 +396,11 @@ describe.skipIf(!browserReady)("devices join a gateway by signing in", () => {
     );
     // The account still lists the passkey with its confirmation; a refresh must not bring the pin back.
     await gateway.json("/admin/cloud-relay/reconnect", { method: "POST", body: "{}" });
+    await waitFor(
+      async () => (await gateway.status()).tunnel.state === "online",
+      "the reconnected gateway tunnel to come online",
+      gatewayBootBudgetMs(),
+    );
     expect((await gateway.status()).deviceEnrollment.policy).toBe("automatic");
     const name = "Fictional porch CLI";
     const pairing = await pairBySignIn(second, {
@@ -524,7 +559,12 @@ describe.skipIf(!browserReady)("devices join a gateway by signing in", () => {
       name,
       keyFile: join(directory, "collector", "device.key"),
     });
-    expect((await stat(join(directory, "collector", "device.key"))).mode & 0o077).toBe(0);
+    const deviceKeyPath = join(directory, "collector", "device.key");
+    if (process.platform === "win32") {
+      expect(inspectWindowsPrivatePathSync(deviceKeyPath, "file").private).toBe(true);
+    } else {
+      expect((await stat(deviceKeyPath)).mode & 0o077).toBe(0);
+    }
     expect(bundle.gatewayUrl).toBe(gateway.publicOrigin);
     const row = await deviceRow(bundle.deviceId);
     expect(row).toMatchObject({ kind: "collector", name });
@@ -585,7 +625,7 @@ describe.skipIf(!browserReady)("devices join a gateway by signing in", () => {
     }
   }, 240_000);
 
-  test("trusted at once: a CLI that signs in with the confirmed passkey on the gateway's page joins with no comparison, the admin phone hears it joined, and the device removes another device, changes the policy, mints a pairing code and reads the corpus right away, and an older device can still remove it", async () => {
+  test("trusted at once: a CLI that signs in with the confirmed passkey on the gateway's page joins with no comparison, the admin phone hears it joined, and the device removes another device, changes the policy to ask, mints a pairing code after the owner's step-up and reads the corpus right away, and an older device can still remove it", async () => {
     await gateway.setPolicy("automatic");
     // An admin phone that can open pairing notifications.
     const phone = await gateway.json<{ token: string; device: { id: string } }>("/admin/devices", {
@@ -643,9 +683,38 @@ describe.skipIf(!browserReady)("devices join a gateway by signing in", () => {
     });
     expect(policy.ok, await policy.text()).toBe(true);
     expect((await gateway.status()).deviceEnrollment.policy).toBe("ask");
+    // Minting a code loosens the gateway, so a device that joined on its own needs the owner's
+    // passkey on the gateway's page first, even on the gateway's own address (step-up).
+    const pairBody = JSON.stringify({ kind: "cli", name: "Fictional new CLI" });
+    const unconfirmed = await asDevice(joined.token, "/admin/devices/pair", {
+      method: "POST",
+      body: pairBody,
+    });
+    expect(unconfirmed.status).toBe(428);
+    expect(await unconfirmed.json()).toMatchObject({ code: "STEP_UP_REQUIRED" });
+    const target = { method: "POST", path: "/admin/devices/pair", bodySha256: sha256Hex(pairBody) };
+    const ceremony = await (
+      await asDevice(joined.token, "/admin/step-up/options", {
+        method: "POST",
+        body: JSON.stringify(target),
+      })
+    ).json();
+    const issued = await asDevice(joined.token, "/admin/step-up", {
+      method: "POST",
+      body: JSON.stringify({
+        ...target,
+        proof: {
+          type: "gateway-passkey",
+          challenge: ceremony.challenge,
+          credential: await assertionOn(first, gateway.publicOrigin, ceremony.webauthnChallenge),
+        },
+      }),
+    });
+    expect(issued.status, await issued.clone().text()).toBe(200);
     const minted = await asDevice(joined.token, "/admin/devices/pair", {
       method: "POST",
-      body: JSON.stringify({ kind: "cli", name: "Fictional new CLI" }),
+      body: pairBody,
+      headers: { "x-omnesis-step-up": ((await issued.json()) as { stepUpId: string }).stepUpId },
     });
     expect(minted.ok, await minted.text()).toBe(true);
 
@@ -852,8 +921,9 @@ describe.skipIf(!browserReady)("devices join a gateway by signing in", () => {
     await gateway.pace(3);
     const page = session.page;
     await page.goto(`${gateway.publicOrigin}/portal/`);
-    // The relay's account page; signing in on the gateway's own page is the other button.
-    await clickFirst(page, ["Sign in on the Omnesis account page"]);
+    // "Continue with Google" opens the relay's account page, which offers the passkey too;
+    // "Continue with Face ID" would sign in on the gateway's own page instead.
+    await clickFirst(page, ["Continue with Google"]);
     await clickFirst(page, ["Sign in with Passkey", "Verify with Passkey"]);
     await waitFor(
       () => new URL(page.url()).origin === new URL(gateway.publicOrigin).origin,
@@ -866,7 +936,7 @@ describe.skipIf(!browserReady)("devices join a gateway by signing in", () => {
     await gateway.setPolicy("automatic");
     const before = new Set((await gateway.devices()).map((device) => device.id));
     const page = await portalSignIn(first);
-    await expectText(page, "Confirm this browser", 30_000);
+    await expectText(page, "Waiting for your OK", 30_000);
     const held = await waitFor(
       async () =>
         (await gateway.pendingRequests()).find(
@@ -876,7 +946,7 @@ describe.skipIf(!browserReady)("devices join a gateway by signing in", () => {
     );
     expect(held).toMatchObject({ signIn: "passkey", canTrustSignIn: false });
     // Same browser, same device key: the owner's passkey on the gateway's page approves it.
-    await clickFirst(page, ["Approve with your passkey"]);
+    await clickFirst(page, ["Approve with Face ID here"]);
     await page.locator("nav.sidebar-nav").waitFor({ timeout: 30_000 });
     const added = (await gateway.devices()).filter((device) => !before.has(device.id));
     expect(added).toHaveLength(1);
@@ -906,7 +976,7 @@ describe.skipIf(!browserReady)("devices join a gateway by signing in", () => {
       if (frame === page.mainFrame()) visited.push(frame.url());
     });
     await page.locator("a.gateway").click();
-    await expectText(page, "Confirm this browser", 30_000);
+    await expectText(page, "Waiting for your OK", 30_000);
     expect(new URL(page.url()).origin).toBe(new URL(gateway.publicOrigin).origin);
     // The sign-in travelled in the fragment, which the portal takes out of the address bar.
     expect(page.url()).not.toContain("account-signin");
@@ -922,10 +992,13 @@ describe.skipIf(!browserReady)("devices join a gateway by signing in", () => {
     );
     expect(shown).toBe(held.verificationCode);
     expect(await page.locator("nav.sidebar-nav").count()).toBe(0);
-    // The owner compares the code on a device they already use and approves.
+    // The owner compares the code on a device they already use and approves. The browser
+    // checked the code against its own device key already, so it signs in by itself: there is
+    // no "Codes match" to press.
+    expect(await page.getByRole("button", { name: "Codes match, pair this device" }).count()).toBe(
+      0,
+    );
     await gateway.decide(held.requestId, true);
-    await expectText(page, "Approved by your gateway.", 30_000);
-    await clickFirst(page, ["Codes match, pair this device"]);
     await page.locator("nav.sidebar-nav").waitFor({ timeout: 30_000 });
     const added = (await gateway.devices()).filter((device) => !before.has(device.id));
     expect(added).toHaveLength(1);
@@ -944,7 +1017,7 @@ describe.skipIf(!browserReady)("devices join a gateway by signing in", () => {
     const copied = await copyPasskey(first, fresh);
     const page = await portalSignIn(fresh);
     await syncPasskey(fresh, first, copied);
-    await expectText(page, "Confirm this browser", 30_000);
+    await expectText(page, "Waiting for your OK", 30_000);
     const shown = (await page.locator("code.cloud-pairing-code").textContent())?.trim();
     const held = await waitFor(
       async () =>

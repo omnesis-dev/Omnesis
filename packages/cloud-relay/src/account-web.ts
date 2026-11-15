@@ -21,9 +21,9 @@ import {
   type PasskeyRegistrationAuthorization,
 } from "./account-admission.js";
 import { brand } from "./relay-page.js";
+import { UnknownPasskey, type Passkeys } from "./passkeys.js";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { OmnesisAccounts } from "./omnesis-accounts.js";
-import type { Passkeys } from "./passkeys.js";
 import type { GatewayChoice } from "./gateway-directory.js";
 import type { DesktopAccountBrowser } from "./desktop-account-browser.js";
 import type { AccountBrowserBroker } from "./account-browser-broker.js";
@@ -83,7 +83,7 @@ type GoogleContext = z.infer<typeof googleContextSchema>;
 /** Returns to the plain account page, or to the one operation or front-door request it serves. */
 const accountLocation = (
   value?: GoogleContext,
-  failed?: "google" | "no-account" | "invitation",
+  failed?: "google" | "no-account" | "invitation" | "again",
 ) => {
   const query = new URLSearchParams(
       failed ? { failed } : value?.linkSession ? { linked: "google" } : {},
@@ -207,6 +207,23 @@ export class AccountWeb {
     const value =
       context === undefined ? undefined : googleContextSchema.safeParse(JSON.parse(context));
     return accountLocation(value?.success ? value.data : undefined, "google");
+  }
+
+  /**
+   * The page a Google start returns to when the browser didn't vouch for the press that made it,
+   * with the operation it served, so the next press continues. A confirmation can't be resumed from
+   * a link, so it comes back as not completed.
+   */
+  googleRetry(req: IncomingMessage): string {
+    const query = new URL(req.url!, this.origin).searchParams,
+      fields: Record<string, string> = {};
+    for (const key of [...operationKinds, "open", "then"]) {
+      const values = query.getAll(key);
+      if (values.length === 1) fields[key] = values[0]!;
+    }
+    const value = googleContextSchema.safeParse(fields);
+    if (!value.success) return accountLocation(undefined, "again");
+    return accountLocation(value.data, value.data.then ? "google" : "again");
   }
 
   async handle(req: IncomingMessage, res: ServerResponse): Promise<boolean> {
@@ -517,11 +534,20 @@ export class AccountWeb {
     }
     if (path === "/_relay/account/api/passkeys/authenticate/complete") {
       const value = parse(completionBody, body);
-      const account = await this.options.passkeys.finishAuthentication(
-        value.ceremonyId,
-        browser,
-        value.credential,
-      );
+      let account;
+      try {
+        account = await this.options.passkeys.finishAuthentication(
+          value.ceremonyId,
+          browser,
+          value.credential,
+        );
+      } catch (error) {
+        // Still a refused sign-in, but one the page can name, and let the browser forget.
+        if (!(error instanceof UnknownPasskey)) throw error;
+        res.writeHead(401, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: error.deleted ? "deleted-passkey" : "unknown-passkey" }));
+        return true;
+      }
       if (target) {
         if (
           target.kind === "signup" &&

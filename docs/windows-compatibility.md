@@ -27,6 +27,17 @@ coverage uses the pinned CPU model; its pins are checked against the existing
 Docker embedding lane. Scheduled execution begins only after the workflow
 reaches the default branch.
 
+The schedule separates Windows from the existing 01:17 and 13:17 UTC full
+sweeps and avoids the top of the hour, when GitHub documents higher scheduling
+load. This is a spacing decision, not a guarantee of immediate runner admission.
+The broad sweep uses at most four standard runners concurrently; pull requests
+use one focused runner and supersede older runs for the same pull request.
+Standard hosted runners are free for public repositories under GitHub's
+[current billing policy](https://docs.github.com/en/actions/concepts/billing-and-usage).
+Runner occupancy and feedback time still matter; completed broad-run timings
+must establish the daily workload before the audit is complete. GitHub also
+documents that [scheduled runs can be delayed](https://docs.github.com/en/actions/how-tos/troubleshoot-workflows).
+
 `node scripts/ci/windows-checks.mjs unit --list` prints the broad unit plan.
 The same entrypoint accepts `focused`, `e2e` and `portal`. Installer exclusions
 have explicit reasons. Manual dispatch defaults to the complete sweep and can
@@ -36,10 +47,17 @@ repository E2E paths. This creates one unsharded diagnostic job; it does not
 change pull-request or daily coverage. Paths are validated and passed as literal
 Node arguments, never interpolated into shell source.
 
+Platform-specific cases remain explicit in their suites. The Unix topology and
+process-group shell helpers exercise `lsof`/`ss`, `pgrep` and Unix signals on
+Linux/macOS. Windows still runs the portable HTTP liveness checks and the other
+Bash fixtures through Git for Windows. The Screen Time physical Full Disk Access
+fixture remains specific to its macOS permission contract; portable denial
+mapping tests still validate the same remediation logic on Windows.
+
 The first complete Windows unit baseline took about 163 minutes. Its failures
 and helper initialization costs must be resolved before treating that as a
-representative daily runtime. No product or test deadlines were raised to hide
-those failures.
+representative daily runtime. Product operation deadlines remain enforced;
+changes to multi-stage fixture budgets are recorded with their evidence below.
 
 ## Native Windows evidence
 
@@ -281,8 +299,52 @@ work after restart, independent updater ownership, Maildir fixture disposal and
 write/checkpoint latency. These are unresolved until their fixes pass Windows;
 performance budgets and durability requirements remain unchanged.
 
+The complete two-shard Windows E2E baseline at `391fc2566` passed 1,389 tests,
+failed 13 and skipped 15 across 258 files. Twelve files failed. Both shards
+finished inside their existing 180-minute limits; neither is a passing verdict.
+
+A controlled follow-up compared identical SQLite checkpoint workloads on both
+temporary-storage locations of one hosted Windows runner. Moving only `TMP` and
+`TEMP` to runner temporary storage reduced scattered 2,048-page checkpoints from
+roughly 2.3–2.5 seconds to 147–208 milliseconds across the ordinary SQLite driver,
+the encryption-capable driver without encryption, and the encrypted driver.
+The original writer checkpoint, maintenance and near-duplicate backlog suites
+then passed all 10 tests at `29c0ab57a` using that storage. Their latency limits
+and durability settings were unchanged. The workflow selects that storage only
+for these raw SQLite latency fixtures through `OMNESIS_TEST_SQLITE_TMP`; private
+file fixtures keep their normal temporary-directory policy. That narrower
+selection still requires a fresh run of the same 10 tests.
+
+At that checkpoint the retained-exit and watchdog suites also passed all 15
+tests on Linux, including real stalled-process controls. The new test first
+failed against the preceding watchdog because active owned work did not prevent
+its forced restart. Final integrated Collector and whole-suite evidence is still
+required.
+
 The hosted Linux general unit phase at `ee42b7905` passed 39,941 tests, its script
 smoke phase passed 162, and its relay phase passed 1,999. The job nevertheless
 failed the strict per-file relay coverage gate in seven changed files. Passing
 assertions alone do not establish a passing lane; complete coverage and final
 Linux/macOS validation remain required.
+
+At `391fc2566`, hosted Windows focused coverage passed 3,654 tests and failed 14,
+with 38 conditional skips. All 13 smoke E2E tests passed. The remaining focused
+failures include ACL fixture restoration, an output-link expectation, a fixture's
+inherited permission removal and a multi-stage OAuth timeout. The full Windows
+portal run passed all 71 browser tests in 237 seconds. The two full
+spawned-gateway shards completed with the failures recorded above.
+
+The broad unit job completed in about 102 minutes. Its general unit phase passed
+38,886 tests and failed 41; its script smoke phase passed 138 and failed 23.
+These include additional fixture assumptions and runtime failures requiring
+correction. The three-attempt OAuth recovery scenario completed in 19.834 seconds
+in this run but exceeded its 30-second outer test limit in the focused run.
+That scenario has a 60-second test budget for all three complete connection
+attempts, retaining the individual helper deadlines and every recovery assertion.
+
+The targeted restart run at that revision passed Maildir's nine tests and the
+independent updater test. One candidate-decision case still failed: work admitted
+during replacement startup received a due time beyond the restored frozen clock.
+The follow-up initializes the explicitly enabled virtual test clock before
+startup work is admitted, using the harness's last saved instant. Production's
+normal clock is unchanged. Fresh Windows verification remains required.

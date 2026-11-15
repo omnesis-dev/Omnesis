@@ -26,6 +26,9 @@ const accountBrowser = () => ({
   failed: vi.fn<RelayWebLoginOptions["accountBrowser"]["failed"]>(
     () => "/_relay/account?failed=google",
   ),
+  retry: vi.fn<RelayWebLoginOptions["accountBrowser"]["retry"]>(
+    () => "/_relay/account?failed=again",
+  ),
 });
 const webLogin = {
   clientId: "fictional-web-client",
@@ -182,7 +185,7 @@ test("the page path only redirects, and the service keeps a restrictive policy",
   expect(response.headers.get("referrer-policy")).toBe("no-referrer");
   expect(response.headers.get("cache-control")).toBe("no-store");
   expect((await fetch(`${f.url}/_relay/web/style.css`)).status).toBe(404);
-  expect((await fetch(`${f.url}/_relay/web/start`)).status).toBe(403);
+  expect((await fetch(`${f.url}/_relay/web/start`, { redirect: "manual" })).status).toBe(303);
   expect(
     (
       await fetch(`${f.url}/_relay/web/start`, {
@@ -196,6 +199,36 @@ test("the page path only redirects, and the service keeps a restrictive policy",
   expect((await fetch(`${f.url}/documents`)).status).toBe(404);
   f.service.close();
   expect((await fetch(`${f.url}/_relay/web`)).status).toBe(503);
+});
+
+test("a Google start the browser didn't vouch for goes back to the page that offers it, never to Google", async () => {
+  const f = await setup();
+  const signup = "0b6f3c1e-8f7a-4c51-9a3e-2d4c5b6a7f80";
+  f.browser.retry.mockImplementation(
+    (req) => `/_relay/account?failed=again&${new URL(req.url!, origin).search.slice(1)}`,
+  );
+  // A press on the account page, in a tab the gateway's portal opened, reached the relay labelled
+  // "none" or "cross-site" in Safari. A link from another site, or no header, is handled alike.
+  for (const site of ["none", "cross-site", "same-site", undefined]) {
+    const response = await fetch(`${f.url}/_relay/web/start?signup=${signup}`, {
+      headers: site === undefined ? {} : { "sec-fetch-site": site },
+      redirect: "manual",
+    });
+    expect(response.status, site).toBe(303);
+    expect(response.headers.get("location"), site).toBe(
+      `/_relay/account?failed=again&signup=${signup}`,
+    );
+    // Nothing was started: no browser state, no committed nonce, no trip to Google.
+    expect(response.headers.get("set-cookie"), site).toBeNull();
+  }
+  expect(f.browser.begin).not.toHaveBeenCalled();
+  // The press from the page it lands on starts the sign-in.
+  const start = await fetch(`${f.url}/_relay/web/start?signup=${signup}`, {
+    headers: { "sec-fetch-site": "same-origin" },
+    redirect: "manual",
+  });
+  expect(new URL(start.headers.get("location")!).origin).toBe("https://accounts.google.com");
+  expect(f.browser.begin).toHaveBeenCalledOnce();
 });
 
 test("foreign form submissions and callbacks without this browser's exact private state cannot exchange Google codes", async () => {

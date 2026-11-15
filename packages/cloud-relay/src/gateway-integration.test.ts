@@ -1,12 +1,19 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import * as fs from "node:fs";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import * as core from "@omnesis/core";
+import { markedFileError } from "../test/private-operation-fixture.js";
 import { startGatewayCloudTunnel } from "./gateway-integration.js";
 import { GatewayTunnel } from "./tunnel-client.js";
 import * as credentials from "./google-credentials.js";
 import * as privateInputs from "./private-inputs.js";
+
+vi.mock("node:fs", async (original) => {
+  const module = await original<typeof import("node:fs")>();
+  return { ...module, lstatSync: vi.fn(module.lstatSync) };
+});
 
 beforeEach(() => {
   vi.spyOn(privateInputs, "identityArtifactPresent").mockResolvedValue(false);
@@ -379,3 +386,53 @@ test("legacy session-file transport reads valid local records and rejects incomp
     await rm(directory, { recursive: true, force: true });
   }
 });
+
+test.each(["ENOTDIR", "EACCES", "EIO"])(
+  "a synchronous owner metadata failure %s refuses the routing hint before any transport",
+  (code) => {
+    const failure = Object.assign(new Error("Invented owner metadata refusal"), { code });
+    vi.mocked(fs.lstatSync).mockImplementationOnce(() => {
+      throw failure;
+    });
+    const start = vi.spyOn(GatewayTunnel.prototype, "start").mockImplementation(() => {});
+    const google = vi.spyOn(credentials, "googleRelaySessionSource");
+    expect(() =>
+      startGatewayCloudTunnel("https://localhost:1", {
+        OMNESIS_CLOUD_RELAY_ENABLED: "1",
+        OMNESIS_CLOUD_RELAY_URL: "https://relay.example.test",
+        OMNESIS_CLOUD_RELAY_SESSION_FILE: "/synthetic/refused-owner/session",
+        OMNESIS_CLOUD_RELAY_GATEWAY_ID: "00000000-0000-4000-8000-000000000001",
+      }),
+    ).toThrow(failure);
+    expect(start).not.toHaveBeenCalled();
+    expect(google).not.toHaveBeenCalled();
+  },
+);
+
+test.each(["own", "cause"] as const)(
+  "marked saved-session absence cannot fall through to another routing identity (%s)",
+  async (placement) => {
+    vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "1");
+    const failure = markedFileError("ENOENT", placement);
+    vi.spyOn(GatewayTunnel.prototype, "start").mockImplementation(() => {});
+    const google = vi.fn(() => Promise.resolve("invented-google-routing-session"));
+    vi.spyOn(credentials, "googleRelaySessionSource").mockReturnValue(google);
+    vi.spyOn(credentials, "readPrivateJson").mockRejectedValueOnce(failure);
+    const tunnel = startGatewayCloudTunnel("https://localhost:1", {
+      OMNESIS_CLOUD_RELAY_ENABLED: "1",
+      OMNESIS_CLOUD_RELAY_URL: "https://relay.example.test",
+      OMNESIS_CLOUD_RELAY_SESSION_FILE: "/synthetic/uncertain-routing-session",
+      OMNESIS_CLOUD_RELAY_GATEWAY_ID: "00000000-0000-4000-8000-000000000001",
+      OMNESIS_CLOUD_RELAY_GOOGLE_CREDENTIALS_FILE: "/synthetic/google.json",
+      OMNESIS_CLOUD_RELAY_GOOGLE_GATEWAY_CLIENT_ID: "invented-client",
+    })!;
+    try {
+      const session = (tunnel as unknown as { options: { session: () => Promise<string> } }).options
+        .session;
+      await expect(session()).rejects.toBe(failure);
+      expect(google).not.toHaveBeenCalled();
+    } finally {
+      tunnel.stop();
+    }
+  },
+);

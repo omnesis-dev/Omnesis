@@ -150,6 +150,11 @@ try {
     JSON.stringify({
       code,
       message: "Windows integration persistence failed; check Node.js 24 and private file access",
+      ...(error !== null &&
+      (typeof error === "object" || typeof error === "function") &&
+      Object.hasOwn(error, "cleanupFailure")
+        ? { cleanupUnconfirmed: true }
+        : {}),
     }) + "\n",
   );
   process.exitCode = 1;

@@ -11,6 +11,7 @@ import { createServer as createHttpsServer } from "node:https";
 import { open } from "node:fs/promises";
 import { z } from "zod";
 import { readWindowsPrivateFile } from "@omnesis/core";
+import { isJoinedPrivateFileError } from "./private-file-errors.js";
 import { LoginAdmission, type LoginLimits } from "./admission.js";
 import { savePrivateJson } from "./google-credentials.js";
 import { RelayError } from "./tunnels.js";
@@ -41,8 +42,7 @@ export class FileBrokerStore implements BrokerStore {
         }
       }
     } catch (error) {
-      if (error && typeof error === "object" && "code" in error && error.code === "ENOENT")
-        return new FileBrokerStore(file, new Map());
+      if (isJoinedPrivateFileError(error, "ENOENT")) return new FileBrokerStore(file, new Map());
       throw error;
     }
     let parsed: Record<string, unknown>;

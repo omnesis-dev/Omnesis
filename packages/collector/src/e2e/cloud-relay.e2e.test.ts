@@ -161,8 +161,13 @@ describe("native cloud tunnel with real gateway, collector sync engine and CLI",
     await once(wireServer, "listening");
     publicOrigin = `https://${gatewayHostname}:${(wireServer.address() as AddressInfo).port}`;
     const registration = e2eTsxCommand("packages/cloud-relay/src/main.ts");
+    const osEnvironment = Object.fromEntries(
+      Object.entries(process.env).filter(([name]) => !name.toUpperCase().startsWith("OMNESIS_")),
+    );
     await execFileAsync(registration.command, [...registration.args, "register-key"], {
       env: e2eGatewayEnv({
+        ...osEnvironment,
+        OMNESIS_CONFIG_DIR: directory,
         OMNESIS_CLOUD_RELAY_ENABLED: "1",
         OMNESIS_CLOUD_RELAY_URL: relay.url,
         OMNESIS_CLOUD_RELAY_SESSION_FILE: sessionFile,

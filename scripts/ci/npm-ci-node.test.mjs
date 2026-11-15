@@ -19,14 +19,18 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 import {
   completeNodeHeaders,
   droppedOptionalPackages,
+  hasCleanupFailure,
   npmCi,
   npmJavaScriptEntry,
+  runNode,
 } from "./npm-ci.mjs";
 import { npmCiFixture } from "../test-fixtures/npm-ci-fixture.mjs";
+import * as platformBootstrap from "../lib/bootstrap-platform.mjs";
 import { childGroupIsAlive } from "../lib/check-process-runtime.mjs";
 
 const roots = [];
 afterEach(() => {
+  vi.restoreAllMocks();
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
 function temporary() {
@@ -290,4 +294,96 @@ test("importing bootstrap with a nonexistent caller argv never starts installati
   );
   expect(result.stdout).toBe("imported without installation");
   expect(result.stderr).toBe("");
+});
+
+describe("dependency subprocess ownership", () => {
+  test("explicit marker traversal handles cycles and ordinary nested errors", () => {
+    const cycle = new Error("fixture cycle");
+    cycle.cause = cycle;
+    expect(hasCleanupFailure(new AggregateError([cycle, new Error("ordinary")]))).toBe(false);
+    cycle.cause = Object.assign(new Error("fixture marker"), { cleanupFailure: undefined });
+    expect(hasCleanupFailure(new Error("outer", { cause: cycle }))).toBe(true);
+  });
+  test.each([
+    { exitCode: 0, cleanupFailure: undefined },
+    { exitCode: 1, failure: "timeout", cleanupFailure: new Error("fixture join uncertain") },
+  ])("rejects and preserves explicit cleanup markers even at exit $exitCode", async (result) => {
+    vi.spyOn(platformBootstrap, "bootstrapWindowsPlatform").mockResolvedValue({
+      runWindowsJob: async () => result,
+    });
+    const error = await runNode(["invented-entry.js"], { platform: "win32" }).catch(
+      (error) => error,
+    );
+    expect(error).toBeInstanceOf(Error);
+    expect(Object.hasOwn(error, "cleanupFailure")).toBe(true);
+    expect(error.cleanupFailure).toBe(result.cleanupFailure);
+  });
+
+  test("ordinary joined failures remain unmarked and successes return their exit code", async () => {
+    const runWindowsJob = vi
+      .fn()
+      .mockResolvedValueOnce({ exitCode: 1, failure: "spawn" })
+      .mockResolvedValueOnce({ exitCode: 0 });
+    vi.spyOn(platformBootstrap, "bootstrapWindowsPlatform").mockResolvedValue({ runWindowsJob });
+    const error = await runNode([], { platform: "win32" }).catch((error) => error);
+    expect(error).toBeInstanceOf(Error);
+    expect(Object.hasOwn(error, "cleanupFailure")).toBe(false);
+    await expect(runNode([], { platform: "win32" })).resolves.toBe(0);
+  });
+
+  test.each(["headers", "npm"])(
+    "retains headers and prevents retry after uncertain %s completion",
+    async (stage) => {
+      const f = fixture();
+      const marker = Object.assign(new Error("fixture join uncertain"), {
+        cleanupFailure: undefined,
+      });
+      const failure = new AggregateError([
+        new Error("joined unrelated failure"),
+        new Error("wrapped", { cause: marker }),
+      ]);
+      let scratch;
+      let failures = 0;
+      try {
+        await expect(
+          npmCi([], {
+            platform: "win32",
+            nodePath: f.nodePath,
+            cwd: f.root,
+            env: {
+              ...process.env,
+              npm_execpath: f.npmCli,
+              NPM_CI_ATTEMPTS: "3",
+              NPM_CI_RETRY_SECONDS: "0",
+            },
+            output: () => {},
+            run: async (args, options) => {
+              scratch = dirname(options.env.npm_package_config_node_gyp_devdir);
+              if (args[1] === "install" && stage === "npm") {
+                await new Promise((resolve, reject) =>
+                  execFile(
+                    process.execPath,
+                    args,
+                    { env: options.env, cwd: options.cwd },
+                    (error) => (error ? reject(error) : resolve()),
+                  ),
+                );
+                return 0;
+              }
+              failures++;
+              throw failure;
+            },
+          }),
+        ).rejects.toBe(failure);
+        expect(failures).toBe(1);
+        expect(existsSync(scratch)).toBe(true);
+        if (stage === "npm")
+          expect(
+            existsSync(join(scratch, "headers", process.versions.node, "include/node/node.h")),
+          ).toBe(true);
+      } finally {
+        if (scratch) rmSync(scratch, { recursive: true, force: true });
+      }
+    },
+  );
 });

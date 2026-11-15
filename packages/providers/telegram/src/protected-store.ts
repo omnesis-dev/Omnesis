@@ -33,6 +33,8 @@ import EncryptedDatabase from "better-sqlite3-multiple-ciphers";
 import {
   createLogger,
   readStorageKeySync,
+  readStorageKey,
+  ownedProcessCleanupReceipt,
   storageEncryptionRequired,
   storageKeyHex,
   toErrorMessage,
@@ -77,6 +79,7 @@ export function readTelegramStoreKey(configDir: string): Buffer | null {
   try {
     key = readStorageKeySync(TELEGRAM_STORE_KEY, { configDir });
   } catch (err) {
+    if (ownedProcessCleanupReceipt(err)) throw err;
     // A wrapped key exists but cannot be unwrapped: whatever the marker says,
     // something here was encrypted, so opening in plaintext is never right.
     throw new StoreKeyUnavailableError(toErrorMessage(err));
@@ -112,22 +115,30 @@ export function openProtectedDatabase(path: string, key: Buffer | null, label: s
  * What is on disk at `path` and whether this host's key opens it, for the
  * doctor. Read-only: never migrates, repairs or writes.
  */
-export function inspectProtectedStore(
+export async function inspectProtectedStore(
   path: string,
   label: string,
   configDir: string,
-): LocalStoreProbeResult {
+  signal?: AbortSignal,
+): Promise<LocalStoreProbeResult> {
+  signal?.throwIfAborted();
   const keyName = TELEGRAM_STORE_KEY;
   if (!fileExists(path)) return { keyName, label, state: "absent" };
   if (sqliteFileLooksPlaintext(path)) return { keyName, label, state: "plaintext" };
   let key: Buffer | null;
   try {
-    key = readStorageKeySync(keyName, { configDir });
-  } catch {
+    key = await readStorageKey(keyName, { configDir });
+  } catch (error) {
+    if (ownedProcessCleanupReceipt(error)) throw error;
+    signal?.throwIfAborted();
     return { keyName, label, state: "locked", detail: "Its key could not be read." };
   }
-  if (!key) return { keyName, label, state: "locked", detail: "No wrapped key exists for it." };
+  if (!key) {
+    signal?.throwIfAborted();
+    return { keyName, label, state: "locked", detail: "No wrapped key exists for it." };
+  }
   try {
+    signal?.throwIfAborted();
     const db = new EncryptedDatabase(path, { readonly: true }) as unknown as Db;
     try {
       keyDatabase(db, key);
@@ -137,6 +148,7 @@ export function inspectProtectedStore(
     }
     return { keyName, label, state: "encrypted" };
   } catch (err) {
+    if (signal?.aborted) throw err;
     // SQLite reports a wrong key as "not a database"; anything else is the
     // file being unreadable right now, which is not a verdict on the key.
     return sqliteNotADatabase(err)

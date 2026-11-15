@@ -1253,6 +1253,19 @@ wrappers even when its value is `undefined`; that presence means cleanup remains
 unconfirmed. Self-contained filesystem workers have no child tree and use their
 separate process-lifetime contract.
 
+Use `ownedProcessCleanupReceipt` from `@omnesis/core` to recognize an explicit
+cleanup marker through an error's cause chain. Check ownership uncertainty before
+treating `ENOENT` as absence or `EEXIST` as a concurrent publisher's success:
+those filesystem results do not prove that the helper joined. Preserve the cause
+when reporting an unreadable private file, and stop before starting a fallback,
+retry, or legacy cleanup while the prior operation remains unjoined.
+
+Worker threads that invoke native helpers retain their operation and natural
+exit proofs through observation timeouts. A thread's termination does not prove
+that its native child joined. Security-audit timeouts remain failed observations
+even when the retained work later completes; service shutdown joins that work
+before releasing its ownership fence.
+
 Services close admission before joining accepted work. Disposal must retain
 in-flight probes and lifecycle operations as well as active turns; a status read
 that launches a helper is owned work. Recheck admission after an awaited lookup

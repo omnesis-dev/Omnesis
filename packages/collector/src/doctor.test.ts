@@ -332,27 +332,32 @@ describe("CollectorDoctor", () => {
       runTimeoutMs: 20,
       getReadAccessSources: () => [{ sourceId: "demo-files:local", instance }],
     });
-    expect(doctor.start("run-probe-timeout")).toEqual({ accepted: true });
-    await vi.waitFor(() => expect(events).toHaveLength(1));
-    expect(events[0]).toMatchObject({ runId: "run-probe-timeout", error: expect.any(String) });
-    expect(signal?.aborted).toBe(true);
-    expect(doctor.start("run-probe-retry")).toEqual({ accepted: true });
-    await vi.waitFor(() => expect(events).toHaveLength(2));
-    expect(instance.probeReadAccess).toHaveBeenCalledTimes(1);
-    expect(events[1]).toMatchObject({
-      report: {
-        checks: expect.arrayContaining([
-          expect.objectContaining({
-            id: "sources.read-access.demo-files:local",
-            status: "warn",
-          }),
-        ]),
-      },
-    });
-    pending.resolve({ status: "readable" });
+    try {
+      expect(doctor.start("run-probe-timeout")).toEqual({ accepted: true });
+      await vi.waitFor(() => expect(events).toHaveLength(1));
+      expect(events[0]).toMatchObject({ runId: "run-probe-timeout", error: expect.any(String) });
+      expect(signal?.aborted).toBe(true);
+      expect(doctor.start("run-probe-retry")).toMatchObject({ accepted: false });
+      expect(instance.probeReadAccess).toHaveBeenCalledTimes(1);
+      pending.resolve({ status: "readable" });
+      await vi.waitFor(() => expect(doctor.cleanupFailure()).toBeUndefined());
+      expect(doctor.start("run-probe-retry")).toEqual({ accepted: true });
+      await vi.waitFor(() => expect(events).toHaveLength(2));
+      expect(instance.probeReadAccess).toHaveBeenCalledTimes(2);
+      expect(events[1]).toMatchObject({
+        report: {
+          checks: expect.arrayContaining([
+            expect.objectContaining({ id: "sources.read-access.demo-files:local", status: "pass" }),
+          ]),
+        },
+      });
+    } finally {
+      pending.resolve({ status: "readable" });
+      await doctor.close();
+    }
   });
 
-  test("releases a timed-out run so a later health check can start", async () => {
+  test("a timed-out run joins its raw work before a later health check starts", async () => {
     const stuck = Promise.withResolvers<SystemInfoResult>();
     let probes = 0;
     const { doctor, events } = makeDoctor({
@@ -373,12 +378,38 @@ describe("CollectorDoctor", () => {
       },
     });
 
-    expect(doctor.start("run-stuck")).toEqual({ accepted: true });
-    await vi.waitFor(() => expect(events).toHaveLength(1));
-    expect(events[0]).toMatchObject({ runId: "run-stuck", error: expect.any(String) });
-
-    expect(doctor.start("run-next")).toEqual({ accepted: true });
-    await vi.waitFor(() => expect(events).toHaveLength(2));
-    expect(events[1]).toMatchObject({ runId: "run-next", report: expect.any(Object) });
+    try {
+      expect(doctor.start("run-stuck")).toEqual({ accepted: true });
+      await vi.waitFor(() => expect(events).toHaveLength(1));
+      expect(events[0]).toMatchObject({ runId: "run-stuck", error: expect.any(String) });
+      expect(doctor.start("run-next")).toMatchObject({ accepted: false });
+      expect(probes).toBe(1);
+      stuck.resolve({
+        platform: "linux",
+        arch: "x64",
+        totalRamGb: 16,
+        freeRamGb: 8,
+        modelsDir: "/tmp",
+        modelsDirFreeGb: 20,
+        dataDir: "/tmp",
+        dataDirFreeGb: 20,
+      });
+      await vi.waitFor(() => expect(doctor.cleanupFailure()).toBeUndefined());
+      expect(doctor.start("run-next")).toEqual({ accepted: true });
+      await vi.waitFor(() => expect(events).toHaveLength(2));
+      expect(events[1]).toMatchObject({ runId: "run-next", report: expect.any(Object) });
+    } finally {
+      stuck.resolve({
+        platform: "linux",
+        arch: "x64",
+        totalRamGb: 16,
+        freeRamGb: 8,
+        modelsDir: "/tmp",
+        modelsDirFreeGb: 20,
+        dataDir: "/tmp",
+        dataDirFreeGb: 20,
+      });
+      await doctor.close();
+    }
   });
 });

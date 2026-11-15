@@ -47,7 +47,7 @@ function fixture(): { root: string; bridge: string } {
 export function privateWindowsFiles(){return {
 readWindowsPrivateFileContentsSync: readFileSync,
 secureWindowsPrivatePathSync(path,kind){appendFileSync(new URL('./calls.jsonl',import.meta.url),JSON.stringify({path,kind})+'\\n')},
-writeWindowsPrivateFileAtomicSync(path,bytes){if(bytes.toString()==='invented-rejected-secret')throw Object.assign(new Error(bytes.toString()),{code:'EPRIVATE'});writeFileSync(path,bytes)}
+writeWindowsPrivateFileAtomicSync(path,bytes){const text=bytes.toString();if(text==='invented-unconfirmed-undefined'||text==='invented-unconfirmed-error')throw Object.assign(new Error('invented-sensitive-diagnostic'),{code:'ENOENT',cleanupFailure:text.endsWith('undefined')?undefined:new Error('invented-sensitive-cleanup')});if(text==='invented-rejected-secret')throw Object.assign(new Error(text),{code:'EPRIVATE'});writeFileSync(path,bytes)}
 }}`,
   );
   return { root, bridge: join(root, "windows-files.mjs") };
@@ -55,6 +55,93 @@ writeWindowsPrivateFileAtomicSync(path,bytes){if(bytes.toString()==='invented-re
 afterEach(() => {
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
+
+for (const marker of ["undefined", "error"])
+  test(`bridge JSON retains own ${marker} cleanup uncertainty before ENOENT projection`, () => {
+    const { root, bridge } = fixture();
+    const path = join(root, "invented-unconfirmed.json");
+    const failed = spawnSync(process.execPath, [bridge, "write", path, "framed-v1"], {
+      input: writeFrame(Buffer.from(`invented-unconfirmed-${marker}`)),
+    });
+    expect(failed.status).toBe(1);
+    expect(failed.stdout.length).toBe(0);
+    expect(JSON.parse(failed.stderr.toString())).toEqual({
+      code: "ENOENT",
+      message: "Windows integration persistence failed; check Node.js 24 and private file access",
+      cleanupUnconfirmed: true,
+    });
+    expect(failed.stderr.toString()).not.toContain("invented-sensitive");
+    expect(existsSync(path)).toBe(false);
+  });
+
+test("Python retains unconfirmed bridge cleanup across broad catches and blocks new bridge or lease children", () => {
+  const adapterTests = fileURLToPath(new URL("../hermes/test_adapter.py", import.meta.url));
+  const driver = `import runpy,types
+adapter=runpy.run_path(${JSON.stringify(adapterTests)})['adapter_module']
+calls=[]
+def failed(*args,**kwargs):
+ calls.append('bridge')
+ return types.SimpleNamespace(returncode=1,stdout=b'',stderr=b'{"code":"ENOENT","cleanupUnconfirmed":true}')
+adapter.subprocess.run=failed
+adapter.os.get_exec_path=lambda: ['C:/invented' if adapter.os.name=='nt' else '/invented']
+adapter.Path.is_file=lambda self: True
+adapter.subprocess.Popen=lambda *args,**kwargs: calls.append('lease')
+first=None
+try:
+ adapter._windows_bridge('read','invented.json')
+except Exception as error:
+ first=error
+assert first is not None and not isinstance(first,(OSError,ValueError))
+assert getattr(first,'cleanupUnconfirmed',False) is True
+assert 'invented.json' not in str(first)
+for action in [lambda: adapter._windows_bridge('write','invented.json',b'invented'),lambda: adapter._WindowsRefreshLease(adapter.Path('invented.json'))]:
+ try:
+  action()
+ except Exception as error:
+  assert error is first
+ else:
+  raise AssertionError('Unconfirmed bridge cleanup admitted a child')
+assert calls==['bridge']
+print('retained-unconfirmed')
+`;
+  const result = spawnSync(process.platform === "win32" ? "python" : "python3", [
+    "-B",
+    "-c",
+    driver,
+  ]);
+  expect(result.status, result.stderr.toString()).toBe(0);
+  expect(result.stdout.toString().trim()).toBe("retained-unconfirmed");
+}, 30000);
+
+test("Python ordinary joined bridge refusals remain retryable without latching uncertainty", () => {
+  const adapterTests = fileURLToPath(new URL("../hermes/test_adapter.py", import.meta.url));
+  const driver = `import runpy,types
+adapter=runpy.run_path(${JSON.stringify(adapterTests)})['adapter_module']
+calls=[]
+def request(*args,**kwargs):
+ calls.append('bridge')
+ return types.SimpleNamespace(returncode=1 if len(calls)==1 else 0,stdout=b'joined-retry',stderr=b'{"code":"ENOENT"}')
+adapter.subprocess.run=request
+adapter.os.get_exec_path=lambda: ['C:/invented' if adapter.os.name=='nt' else '/invented']
+adapter.Path.is_file=lambda self: True
+try:
+ adapter._windows_bridge('read','invented.json')
+except FileNotFoundError:
+ pass
+else:
+ raise AssertionError('Missing ordinary refusal')
+assert adapter._windows_bridge('read','invented.json')==b'joined-retry'
+assert calls==['bridge','bridge']
+print('ordinary-retry')
+`;
+  const result = spawnSync(process.platform === "win32" ? "python" : "python3", [
+    "-B",
+    "-c",
+    driver,
+  ]);
+  expect(result.status, result.stderr.toString()).toBe(0);
+  expect(result.stdout.toString().trim()).toBe("ordinary-retry");
+}, 30000);
 
 test("standalone bridge passes binary bytes on pipes and sanitizes failed secret writes", () => {
   const { root, bridge } = fixture();

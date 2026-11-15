@@ -14,6 +14,7 @@ import {
 import {
   createLogger,
   parseDuration,
+  ownedProcessCleanupReceipt,
   type HostNetwork,
   type WsRequestPayload,
 } from "@omnesis/core";
@@ -112,11 +113,13 @@ import { DeviceService } from "./http/services/DeviceService.js";
 import { PushRegistrationService } from "./http/services/PushRegistrationService.js";
 import { mountStatusRoutes, mountDbSizeRoute } from "./http/routes/status.js";
 import { mountPortalRoutes } from "./http/routes/portal.js";
+import { mountPortalHandoffRoutes } from "./http/routes/portal-handoff.js";
 import { devicePathObservation } from "./http/device-path-observation.js";
 import { mountAdminRoutes } from "./http/routes/admin.js";
 import { mountDirectCandidateRoutes } from "./http/routes/direct-candidates.js";
 import { mountDeviceEnrollmentRoutes } from "./http/routes/device-enrollment.js";
 import { mountCloudPairingRoutes } from "./http/routes/cloud-pairing.js";
+import { mountStepUp } from "./http/step-up.js";
 import { mountBackupRoutes } from "./http/routes/backup.js";
 import { mountExportRoutes } from "./http/routes/export.js";
 import { mountModelCredentialsRoutes } from "./http/routes/model-credentials.js";
@@ -364,6 +367,8 @@ export function createServer(
     wsServer?: DeviceWsServer;
     /** Shared fleet-doctor coordinator. Production passes the WS lifecycle singleton. */
     deviceDoctorService?: DeviceDoctorService;
+    /** Transfers doctor cleanup ownership to the enclosing process shutdown fence. */
+    onDoctorCleanupOwner?: (owner: Pick<DoctorService, "cleanupFailure" | "close">) => void;
     /**
      * Each connected collector's source descriptors. Production passes the
      * instance the WS lifecycle prefetches into; without one, the routes fill
@@ -1218,6 +1223,14 @@ export function createServer(
     await runWithPriority(priority, () => next());
   });
 
+  // A passkey on the gateway's own page before an administrative action that loosens it, for
+  // requests through the relay and devices that joined on their own. Before any guarded route.
+  mountStepUp(app, {
+    enrollment: () => opts?.cloudRelayManagement?.accountPairingIdentity?.()?.enrollment,
+    enrollmentMethod: (deviceId) =>
+      getDevice(db, deviceId as DeviceId)?.enrollment?.method ?? undefined,
+  });
+
   // ── Closure helpers shared across route modules ─────────────────────
 
   function notifySourceChange<K extends "source.added" | "source.removed" | "source.updated">(
@@ -1521,6 +1534,15 @@ export function createServer(
     sessionTtlMs: opts?.timings?.sessionTtlMs,
     sessionCookieName: cookieName,
   });
+  // Opening the gateway's own address already signed in (cloud relay only).
+  mountPortalHandoffRoutes(app, {
+    db,
+    writeGate: w,
+    gatewayOrigin: () =>
+      opts?.cloudRelayManagement?.accountPairingIdentity?.()?.enrollment.gatewayPasskey?.()?.origin,
+    sessionCookieName: cookieName,
+    sessionTtlMs: opts?.timings?.sessionTtlMs,
+  });
 
   // /db-size — registered between portal and admin in the original.
   mountDbSizeRoute(app, { dbPath });
@@ -1598,6 +1620,7 @@ export function createServer(
         }
       : {}),
   });
+  opts?.onDoctorCleanupOwner?.(doctorService);
   const deviceDoctorService =
     opts?.deviceDoctorService ??
     new DeviceDoctorService({
@@ -2105,11 +2128,22 @@ export function createServer(
         const results = await Promise.allSettled([
           Promise.resolve().then(() => brainAdmin.close()),
           Promise.resolve().then(() => analyticsRoutes.close()),
+          ...(opts?.onDoctorCleanupOwner
+            ? []
+            : [Promise.resolve().then(() => doctorService.close())]),
         ]);
         const failures = results.flatMap((result) =>
           result.status === "rejected" ? [result.reason] : [],
         );
-        if (failures.length) throw new AggregateError(failures, "Gateway route cleanup failed");
+        if (failures.length) {
+          const marked = failures.find((error) => ownedProcessCleanupReceipt(error) !== undefined);
+          const error = new AggregateError(failures, "Gateway route cleanup failed", {
+            cause: marked ?? failures[0],
+          });
+          const receipt = ownedProcessCleanupReceipt(marked);
+          if (receipt) Object.assign(error, { cleanupFailure: receipt.failure });
+          throw error;
+        }
       })()),
   });
 }

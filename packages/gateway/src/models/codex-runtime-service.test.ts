@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it, vi } from "vitest";
 import { CODEX_RUNTIME_COMPAT, CodexAppServerRuntime } from "@omnesis/agent";
 import { z } from "zod";
-import { CODEX_SUPPORTED_ROLES, type AgentEvent } from "@omnesis/core";
+import { CODEX_SUPPORTED_ROLES, ownedProcessCleanupReceipt, type AgentEvent } from "@omnesis/core";
 import { ConfigStore } from "../config-store.js";
 import { AgentSetupUnavailableError } from "./agent-assignment-setup.js";
 import {
@@ -809,12 +809,20 @@ describe("CodexRuntimeService parsers", () => {
       }))
         void event;
     };
-    const runs = Array.from({ length: 5 }, (_, index) => run("background", `background-${index}`));
+    const runs = Array.from({ length: 4 }, (_, index) => run("background", `background-${index}`));
     try {
       await waitUntil(async () => started.length === 4);
-      expect(started).toEqual(["background-0", "background-1", "background-2", "background-3"]);
+      const initial = [...started];
+      expect(initial.sort()).toEqual([
+        "background-0",
+        "background-1",
+        "background-2",
+        "background-3",
+      ]);
+      runs.push(run("background", "background-4"));
       await run("interactive", "interactive");
-      expect(started).toContain("interactive");
+      expect([...started]).toContain("interactive");
+      expect([...started]).not.toContain("background-4");
       finishSecond();
       await waitUntil(async () => started.includes("background-4"));
     } finally {
@@ -848,7 +856,6 @@ describe("CodexRuntimeService parsers", () => {
       const service = new CodexRuntimeService({
         configDir: dir,
         command: join(dir, "missing-codex"),
-        refreshTimeoutMs: 50,
       });
       const result = await service.logout();
 
@@ -869,7 +876,6 @@ describe("CodexRuntimeService parsers", () => {
       const service = new CodexRuntimeService({
         configDir: dir,
         command: join(dir, "missing-codex"),
-        refreshTimeoutMs: 50,
       });
 
       const status = await service.refresh();
@@ -931,7 +937,7 @@ describe("CodexRuntimeService parsers", () => {
     },
   );
 
-  it("keeps canceled login isolated until its child exits and owns it during shutdown", async () => {
+  it("keeps canceled login isolated until cleanup is confirmed and joins it during shutdown", async () => {
     const dir = await mkdtemp(join(tmpdir(), "omnesis-codex-login-shutdown-"));
     const managed = {
       source: "managed" as const,
@@ -956,7 +962,45 @@ describe("CodexRuntimeService parsers", () => {
     const configStore = new ConfigStore({ filePath: join(dir, "omnesis.json") });
     await configStore.load();
 
+    let releaseConfirmation = () => {};
+    let restoreTermination: (() => void) | undefined;
+    let primaryFailure: unknown;
+    let failed = false;
+    let cleanupFailed = false;
+    let cleanupFailure: unknown;
     try {
+      const confirmation = new Promise<void>((resolve) => {
+        releaseConfirmation = resolve;
+      });
+      let markConfirmationEntered!: () => void;
+      const confirmationEntered = new Promise<void>((resolve) => {
+        markConfirmationEntered = resolve;
+      });
+      const core = await import("@omnesis/core");
+      if (process.platform === "win32") {
+        const originalSpawn = core.spawnWindowsJob;
+        const spawning = vi.spyOn(core, "spawnWindowsJob").mockImplementation((...args) => {
+          const child = originalSpawn(...args);
+          // Hold only the receipt after the real kernel Job has joined; a
+          // Windows hard cancellation need not keep the physical child alive.
+          child.jobClosed = child.jobClosed.then(() => {
+            markConfirmationEntered();
+            return confirmation;
+          });
+          return child;
+        });
+        restoreTermination = () => spawning.mockRestore();
+      } else {
+        const originalTerminate = core.terminateChildProcess;
+        const terminating = vi
+          .spyOn(core, "terminateChildProcess")
+          .mockImplementation(async (...args) => {
+            await originalTerminate(...args);
+            markConfirmationEntered();
+            await confirmation;
+          });
+        restoreTermination = () => terminating.mockRestore();
+      }
       const flow = await service.startDeviceLogin();
       expect(flow.status).toBe("pending");
       await expect(service.setupAgent(configStore, "gpt-example-frontier")).rejects.toThrow(
@@ -967,11 +1011,60 @@ describe("CodexRuntimeService parsers", () => {
         "Finish or cancel",
       );
       await expect(service.startDeviceLogin()).rejects.toThrow("previous Codex login process");
-      await expect(service.dispose()).resolves.toBeUndefined();
+      const closing = service.dispose();
+      let settled = false;
+      void closing.then(
+        () => {
+          settled = true;
+        },
+        () => {
+          settled = true;
+        },
+      );
+      await Promise.race([
+        confirmationEntered,
+        closing.then(() => {
+          throw new Error("Disposal skipped the held process confirmation");
+        }),
+      ]);
+      await Promise.resolve();
+      expect(settled).toBe(false);
+      releaseConfirmation();
+      await expect(closing).resolves.toBeUndefined();
+    } catch (error) {
+      failed = true;
+      primaryFailure = error;
     } finally {
+      releaseConfirmation();
       configStore.stop();
-      await rm(dir, { recursive: true, force: true });
+      try {
+        await service.dispose();
+      } catch (cleanupError) {
+        cleanupFailed = true;
+        cleanupFailure = cleanupError;
+      }
+      restoreTermination?.();
+      if (!cleanupFailed)
+        await rm(dir, { recursive: true, force: true }).catch((error: unknown) => {
+          cleanupFailed = true;
+          cleanupFailure = error;
+        });
     }
+    if (cleanupFailed) {
+      if (!failed) throw cleanupFailure;
+      const marked = [cleanupFailure, primaryFailure].find(
+        (error) => ownedProcessCleanupReceipt(error) !== undefined,
+      );
+      const receipt = ownedProcessCleanupReceipt(marked);
+      const aggregate = new AggregateError(
+        [primaryFailure, cleanupFailure],
+        "Canceled login fixture cleanup was not confirmed",
+        { cause: receipt === undefined ? cleanupFailure : marked },
+      );
+      if (receipt !== undefined) Object.assign(aggregate, { cleanupFailure: receipt.failure });
+      throw aggregate;
+    }
+    if (failed) throw primaryFailure;
   });
 
   it("reschedules login expiry to the lifetime advertised by Codex", async () => {

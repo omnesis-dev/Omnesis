@@ -1,94 +1,255 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-// "Confirm your passkey on this gateway": the owner uses their Omnesis account passkey once on
-// this gateway's own page, so the gateway can trust it without taking the relay's word for it.
-// Shown on the account page, which is where linking a gateway returns to.
+// "Finish setting up": the last step of connecting this gateway to an Omnesis account, shown on
+// the account page until something is confirmed here. It follows the account. With a passkey, the
+// owner uses it once on this gateway's own page (`pin-passkey`); from any other address one button
+// opens that page already signed in and starts the prompt there. With Google only, the first phone
+// that signs in with Google in the app waits, and approving it is what confirms Google here.
+//
+// Which step is shown comes from what the relay lists, so it only decides the words: a relay that
+// lies can make the step fail, never make anything confirmed.
 
 import { html } from "htm/preact";
-import { useState } from "preact/hooks";
-import { relayManagement, relayError } from "../lib/cloud-relay-api.js";
+import { useEffect, useRef, useState } from "preact/hooks";
+import { apiFetch } from "../api.js";
+import { relayManagement, relayError, relayHttpsUrl } from "../lib/cloud-relay-api.js";
+import { takeHandoffNext } from "../lib/cloud-pairing-handoff.js";
 import {
   GatewayPasskeyError,
   gatewayPasskeyProof,
   onGatewayOrigin,
+  PASSKEY_CHECK_FAILED,
+  PASSKEY_OTHER_ACCOUNT,
   passkeysSupported,
 } from "../lib/gateway-passkey.js";
 
-/** Whether the owner still has a passkey to confirm here: none confirmed yet, and a place to do it. */
-export function passkeyConfirmationNeeded(enrollment) {
-  return Boolean(
-    enrollment?.confirmOrigin &&
-      !(enrollment.confirmedSignIns ?? []).some((signIn) => signIn.type === "passkey"),
-  );
+/** Every sentence the checklist says, in one place so the wording is easy to change. */
+export const SETUP_COPY = {
+  title: "Finish setting up",
+  account: "Omnesis account",
+  accountDone: "Connected",
+  address: "Secure address",
+  addressWaiting: "Getting a secure address… usually under a minute",
+  passkeyStep: "Let your Face ID add devices",
+  passkeyBody:
+    "Use Face ID once on your gateway's secure address. After that, signing in with Face ID on a new device connects it straight away.",
+  passkeyButton: "Continue with Face ID",
+  passkeyWorking: "Waiting for Face ID…",
+  opening: "Opening…",
+  openFailed: "Couldn't open your gateway's secure address. Try again.",
+  noPasskeys: "This browser can't use Face ID or passkeys. Open this page in a browser that can.",
+  startFailed: "Couldn't start Face ID. Try again.",
+  googleStep: "Connect your phone",
+  googleBody:
+    "Install the Omnesis app and sign in with Google. Your phone will ask to join; approve it here and this gateway will remember your Google account.",
+  getApp: "Get the app",
+  addPasskey: "Add Face ID sign-in instead",
+  notNow: "Not now",
+  reminder: "New devices wait for your OK until you finish setup.",
+  finish: "Finish setup",
+};
+
+/** Where the apps are described, with links to the stores. */
+const APPS_URL = "https://omnesis.dev/docs/apps";
+/** Asks the page opened by a handoff to start the passkey prompt as soon as it loads. */
+export const CONFIRM_ON_LOAD = "confirm-passkey";
+
+/**
+ * Which last step setup still needs: `"passkey"` when the account has a passkey this gateway knows
+ * and a page of its own to use it on, `"google"` when the gateway adds devices automatically and
+ * the owner confirms Google by approving a phone, and null once anything is confirmed (or under
+ * "ask me first" with no passkey, where every device waits by choice).
+ */
+export function accountConfirmation(enrollment) {
+  if (!enrollment || (enrollment.confirmedSignIns ?? []).length > 0) return null;
+  const passkey = (enrollment.trustedSignIns ?? []).some((signIn) => signIn.type === "passkey");
+  if (passkey && enrollment.confirmOrigin) return "passkey";
+  return enrollment.policy === "automatic" ? "google" : null;
 }
 
-export function GatewayPasskeyConfirm({
-  enrollment,
-  busy,
-  run,
-  request = relayManagement,
-  prove = gatewayPasskeyProof,
-  location = globalThis.location,
-  supported = passkeysSupported(),
-}) {
-  const [working, setWorking] = useState(false);
+/**
+ * Opens the gateway's own page already signed in: the gateway hands this session a one-use link
+ * (routes/portal-handoff.ts) carried in the URL fragment. Only a link to `origin` is followed.
+ */
+export async function openOnGateway(
+  origin,
+  { next, request = apiFetch, location = globalThis.location } = {},
+) {
+  const response = await request("/portal/api/handoff", {
+    method: "POST",
+    body: JSON.stringify(next ? { next } : {}),
+  });
+  if (!response.ok) throw new Error(SETUP_COPY.openFailed);
+  const { url } = await response.json();
+  const safe = relayHttpsUrl(url);
+  if (!safe || new URL(safe).origin !== origin) throw new Error(SETUP_COPY.openFailed);
+  location.assign(safe);
+}
+
+function Step({ done, number, title, detail, children }) {
+  return html`<li class=${`relay-setup-step${done ? " relay-setup-done" : ""}`}>
+    <span class="relay-setup-mark" aria-hidden="true">${done ? "✓" : number}</span>
+    <div class="relay-setup-body">
+      <p class="relay-row-value relay-strong">
+        ${title}${detail && html`${" "}<span class="relay-setup-detail">${detail}</span>`}
+      </p>
+      ${children}
+    </div>
+  </li>`;
+}
+
+function PasskeyStep({ enrollment, ready, busy, run, request, prove, open, location, supported, onDismiss }) {
+  const [working, setWorking] = useState("");
   const [error, setError] = useState("");
   const origin = enrollment.confirmOrigin;
   const here = onGatewayOrigin(origin, location);
-  const confirm = async () => {
-    setWorking(true);
+  const held = Boolean(working) || (Boolean(busy) && busy !== "refresh");
+  const confirm = async (auto) => {
+    setWorking("confirm");
     setError("");
     try {
       const ceremony = await request("passkeys/confirm/options", {});
       const proof = await prove(ceremony, { location });
-      // The page's own status refresh shows the result; a refusal is said here.
-      if (!(await run("passkeys/confirm", { proof })))
-        setError(
-          "This gateway couldn't confirm that passkey. Use the passkey of the Omnesis account this gateway is linked to.",
-        );
+      await request("passkeys/confirm", { proof });
+      // The page's own status refresh ends setup.
+      await run();
     } catch (failure) {
+      // A prompt that started by itself and was closed just leaves the button.
+      if (auto && failure instanceof GatewayPasskeyError) return;
       setError(
-        failure instanceof GatewayPasskeyError
-          ? failure.message
-          : relayError(failure?.code) || "Couldn't start the passkey check. Try again.",
+        failure?.code === "passkey-not-on-account"
+          ? PASSKEY_OTHER_ACCOUNT
+          : failure?.code === "passkey-not-confirmed"
+            ? PASSKEY_CHECK_FAILED
+            : failure instanceof GatewayPasskeyError
+              ? failure.message
+              : relayError(failure?.code) || SETUP_COPY.startFailed,
       );
     } finally {
-      setWorking(false);
+      setWorking("");
     }
   };
-  return html`<div class="relay-confirm" role="group" aria-labelledby="relay-passkey-confirm-title">
-    <p class="relay-row-value relay-strong" id="relay-passkey-confirm-title">
-      Confirm your passkey on this gateway
-    </p>
-    <p class="relay-hint">
-      Use your Omnesis passkey once, here on this gateway's own page. The gateway then knows the
-      passkey is yours without relying on the Omnesis relay. Until you do, every new device waits
-      for your approval.
-    </p>
-    <p class="relay-hint">
-      Devices that already joined by signing in are marked “Joined with Omnesis account” in${" "}
-      <a href="/portal/settings/devices">Devices</a>. Remove any you don't recognise.
-    </p>
-    ${
-      !here
-        ? html`<p class="relay-hint">
-            Open this page at${" "}
-            <a href=${`${origin}/portal/settings/account`}>${new URL(origin).host}</a> to confirm.
-          </p>`
-        : !supported
-          ? html`<p class="relay-hint">This browser can't use passkeys.</p>`
-          : html`<div class="relay-actions">
-              <button
-                type="button"
-                class="btn-primary"
-                disabled=${working || (Boolean(busy) && busy !== "refresh")}
-                onClick=${confirm}
-              >
-                ${working ? "Waiting for your passkey…" : "Confirm with passkey"}
-              </button>
-            </div>`
+  // Opened by the button on another address: start the prompt straight away, once.
+  const started = useRef(false);
+  useEffect(() => {
+    if (started.current || !here || !supported) return;
+    started.current = true;
+    if (takeHandoffNext() === CONFIRM_ON_LOAD) void confirm(true);
+  }, [here, supported]);
+  const openHere = async () => {
+    setWorking("open");
+    setError("");
+    try {
+      await open(origin, { next: CONFIRM_ON_LOAD, location });
+    } catch {
+      setError(SETUP_COPY.openFailed);
+      setWorking("");
     }
-    ${error && html`<p role="alert" class="relay-notice">${error}</p>`}
-  </div>`;
+  };
+  return html`<p class="relay-hint">${SETUP_COPY.passkeyBody}</p>
+    ${
+      here && !supported
+        ? html`<p class="relay-hint">${SETUP_COPY.noPasskeys}</p>`
+        : html`<div class="relay-actions">
+            <button
+              type="button"
+              class="btn-primary"
+              disabled=${held || (!here && !ready)}
+              onClick=${() => (here ? confirm(false) : openHere())}
+            >
+              ${
+                working === "confirm"
+                  ? SETUP_COPY.passkeyWorking
+                  : working === "open"
+                    ? SETUP_COPY.opening
+                    : SETUP_COPY.passkeyButton
+              }
+            </button>
+            <button type="button" class="relay-quiet" onClick=${onDismiss}>${SETUP_COPY.notNow}</button>
+          </div>`
+    }
+    ${error && html`<p role="alert" class="relay-notice">${error}</p>`}`;
+}
+
+function GoogleStep({ serviceUrl, onDismiss }) {
+  const service = relayHttpsUrl(serviceUrl);
+  return html`<p class="relay-hint">${SETUP_COPY.googleBody}</p>
+    <div class="relay-actions">
+      <a class="btn-primary relay-button-link" href=${APPS_URL} target="_blank" rel="noopener noreferrer"
+        >${SETUP_COPY.getApp}</a
+      >
+      ${
+        service &&
+        html`<a
+          class="relay-link"
+          href=${new URL("/_relay/account", service).href}
+          target="_blank"
+          rel="noopener noreferrer"
+          >${SETUP_COPY.addPasskey}</a
+        >`
+      }
+      <button type="button" class="relay-quiet" onClick=${onDismiss}>${SETUP_COPY.notNow}</button>
+    </div>`;
+}
+
+/**
+ * The setup checklist. `ready` says the secure address has its certificate, so the gateway's own
+ * page can be opened.
+ */
+export function FinishSetup({
+  enrollment,
+  hostname,
+  ready,
+  serviceUrl,
+  busy,
+  run,
+  onDismiss,
+  request = relayManagement,
+  prove = gatewayPasskeyProof,
+  open = openOnGateway,
+  location = globalThis.location,
+  supported = passkeysSupported(),
+}) {
+  const kind = accountConfirmation(enrollment);
+  if (!kind) return null;
+  const host = enrollment.confirmOrigin ? new URL(enrollment.confirmOrigin).host : hostname;
+  return html`<section class="relay-setup" aria-labelledby="relay-setup-title">
+    <h2 class="relay-headline" id="relay-setup-title">${SETUP_COPY.title}</h2>
+    <ol class="relay-setup-steps">
+      <${Step} done=${true} number="1" title=${SETUP_COPY.account} detail=${SETUP_COPY.accountDone} />
+      <${Step}
+        done=${ready}
+        number="2"
+        title=${SETUP_COPY.address}
+        detail=${ready ? host : SETUP_COPY.addressWaiting}
+      />
+      <${Step} number="3" title=${kind === "passkey" ? SETUP_COPY.passkeyStep : SETUP_COPY.googleStep}>
+        ${
+          kind === "passkey"
+            ? html`<${PasskeyStep}
+                enrollment=${enrollment}
+                ready=${ready}
+                busy=${busy}
+                run=${run}
+                request=${request}
+                prove=${prove}
+                open=${open}
+                location=${location}
+                supported=${supported}
+                onDismiss=${onDismiss}
+              />`
+            : html`<${GoogleStep} serviceUrl=${serviceUrl} onDismiss=${onDismiss} />`
+        }
+      <//>
+    </ol>
+  </section>`;
+}
+
+/** What New devices says while setup waits: one amber line and the way back to it. */
+export function SetupReminder({ onFinish }) {
+  return html`<p class="relay-notice relay-setup-reminder" role="status">
+    ${SETUP_COPY.reminder}${" "}
+    <button type="button" class="relay-quiet" onClick=${onFinish}>${SETUP_COPY.finish}</button>
+  </p>`;
 }

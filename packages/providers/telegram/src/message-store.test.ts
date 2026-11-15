@@ -124,7 +124,7 @@ describe("TelegramArchive storage", () => {
     const reopened = openArchive();
     expect(reopened.getUser(SELF.id)?.displayName).toBe("Maya Reeves");
     reopened.close();
-    expect(inspectTelegramStores(stateDir, configDir)).toEqual([
+    expect(await inspectTelegramStores(stateDir, configDir)).toEqual([
       { keyName: "telegram-store", label: "Telegram message archive", state: "encrypted" },
       { keyName: "telegram-store", label: "Telegram connection cache", state: "absent" },
     ]);
@@ -136,7 +136,7 @@ describe("TelegramArchive storage", () => {
     const id = plain.storeId;
     plain.close();
     expect(header(join(stateDir, "archive.db"))).toBe(HEADER);
-    expect(inspectTelegramStores(stateDir, configDir)[0]?.state).toBe("plaintext");
+    expect((await inspectTelegramStores(stateDir, configDir))[0]?.state).toBe("plaintext");
 
     await mintKey();
     const archive = openArchive();

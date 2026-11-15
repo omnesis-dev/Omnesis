@@ -7,9 +7,12 @@ import { join } from "node:path";
 import { generateKeyPairSync } from "node:crypto";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import * as core from "@omnesis/core";
+import { markedFileError } from "../test/private-operation-fixture.js";
+import { GatewayGoogleWeb } from "./google-gateway-web.js";
 import { tlsFiles } from "../test/support.js";
 import { expiredCertificate } from "../test/expired-certificate.js";
 import { fakeSignupRelay } from "../test/fake-signup-relay.js";
+import { brokerCall, brokerHarness, brokerOwner } from "../test/dns-broker-owner.js";
 import { AccountEnrollmentAuthority } from "./account-enrollment-proof.js";
 import {
   GatewayCloudRelayManagement,
@@ -77,6 +80,7 @@ function fixture(overrides: Partial<CloudRelayManagerOptions> = {}) {
     register,
     probe: vi.fn(async () => true),
     controller: vi.fn(async () => ({
+      cleanupFailure: () => undefined,
       close,
       renew,
       fingerprintSha256: () => "b".repeat(64),
@@ -84,6 +88,8 @@ function fixture(overrides: Partial<CloudRelayManagerOptions> = {}) {
     })),
     startTunnel: vi.fn(() => ({
       stop,
+      close: async () => {},
+      cleanupFailure: () => undefined,
       status: () => ({ state: "online" as const }),
     })) as unknown as CloudRelayManagerOptions["startTunnel"],
     ...overrides,
@@ -1087,6 +1093,7 @@ test("manager exposes only optional local recovery receipt health without keys, 
 
 test("optional certificate observer starts after configuration readiness and shutdown drains cloud work even if observer close refuses", async () => {
   const observer = {
+    cleanupFailure: () => undefined,
     start: vi.fn(),
     status: vi.fn(() => ({
       enabled: true,
@@ -1115,9 +1122,18 @@ test("optional certificate observer starts after configuration readiness and shu
   const stopped = f.stop.mock.calls.length,
     closed = f.close.mock.calls.length;
   observer.close.mockRejectedValueOnce(new CloudRelayManagementFailure(503, "relay-unreachable"));
-  await expect(manager.close()).rejects.toMatchObject({ code: "relay-unreachable" });
-  expect(f.stop).toHaveBeenCalledTimes(stopped + 1);
-  expect(f.close).toHaveBeenCalledTimes(closed + 1);
+  const closing = manager.close();
+  try {
+    expect(manager.close()).toBe(closing);
+    await expect(closing).rejects.toMatchObject({ code: "relay-unreachable" });
+    expect(f.stop).toHaveBeenCalledTimes(stopped + 1);
+    expect(f.close).toHaveBeenCalledTimes(closed + 1);
+  } finally {
+    // Only the joined ordinary refusal releases the fixture. Any unconfirmed native
+    // work must still prevent the suite teardown from deleting its files.
+    if (core.ownedProcessCleanupReceipt(manager.cleanupFailure()) === undefined)
+      manager = undefined;
+  }
 });
 
 test("opted-in default observer sends nothing before setup or local public-key readiness, then initializes independently without portal polling", async () => {
@@ -1480,6 +1496,7 @@ test("account linking is offered only while the optional service is ready and th
   vi.mocked(f.options.controller!).mockImplementationOnce(async () => {
     await held;
     return {
+      cleanupFailure: () => undefined,
       close: f.close,
       renew: f.renew,
       fingerprintSha256: () => "b".repeat(64),
@@ -1589,8 +1606,8 @@ test(
       GatewayAccountLink["passkeyConfirmation"]
     >;
     const options = vi
-      .spyOn(GatewayAccountLink.prototype, "passkeyConfirmation")
-      .mockReturnValue(ceremony);
+      .spyOn(GatewayAccountLink.prototype, "passkeyConfirmationOptions")
+      .mockResolvedValue(ceremony);
     const confirm = vi.spyOn(GatewayAccountLink.prototype, "confirmPasskey").mockResolvedValue();
     expect(await manager.passkeyConfirmation()).toBe(ceremony);
     const confirmed = await manager.confirmPasskey({ type: "gateway-passkey" });
@@ -2272,4 +2289,294 @@ test("by default the gateway asks its relay's public signup path through its own
   await manager.refreshSignupAccess();
   expect(fetch).toHaveBeenCalledTimes(1);
   expect((await manager.status()).signup).toEqual({ inviteOnly: true, requestAccessUrl });
+});
+
+test("a delivered release retry cannot restart work during or after close", async () => {
+  let retry: (() => void) | undefined;
+  const schedule = globalThis.setTimeout;
+  vi.spyOn(globalThis, "setTimeout").mockImplementation((callback, delay, ...args) => {
+    if (delay === 60_001) retry = () => callback(...args);
+    return schedule(callback, delay, ...args);
+  });
+  let entered!: () => void, finish!: () => void;
+  const active = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  const held = new Promise<void>((resolve) => {
+    finish = resolve;
+  });
+  const register = vi
+    .fn<NonNullable<CloudRelayManagerOptions["register"]>>()
+    .mockRejectedValueOnce(new Error("Invented temporary relay refusal"))
+    .mockImplementationOnce(async (options) => {
+      entered();
+      await held;
+      options.signal?.throwIfAborted();
+      throw new Error("Invented joined interrupted release");
+    });
+  const f = fixture({ register, releaseRetryMs: 60_001 });
+  manager = await GatewayCloudRelayManagement.open(f.options);
+  const pending = await pendingRelease();
+  const read = vi.spyOn(privateCredentials, "readPrivateJson");
+  let closing: Promise<void> | undefined;
+  try {
+    manager.start();
+    await vi.waitFor(() => expect(retry).toBeTypeOf("function"));
+    retry!();
+    await active;
+    closing = manager.close();
+    const reads = read.mock.calls.length;
+    retry!();
+    expect(read).toHaveBeenCalledTimes(reads);
+    expect(register).toHaveBeenCalledTimes(2);
+    finish();
+    await closing;
+    retry!();
+    await Promise.resolve();
+    expect(read).toHaveBeenCalledTimes(reads);
+    expect(register).toHaveBeenCalledTimes(2);
+    expect(await readFile(pending.file, "utf8")).toBe(pending.bytes);
+    expect(await readFile(pending.sessionFile, "utf8")).toBe("{}");
+  } finally {
+    finish();
+    await closing;
+  }
+});
+
+test.each(["own", "cause"] as const)(
+  "marked management absence cannot adopt enabled legacy configuration (%s)",
+  async (placement) => {
+    const tls = tlsFiles(directory),
+      failure = markedFileError("ENOENT", placement);
+    const f = fixture({
+      env: {
+        OMNESIS_CLOUD_RELAY_URL: "https://relay.example.test",
+        OMNESIS_CLOUD_RELAY_GATEWAY_ID: "00000000-0000-4000-8000-000000000001",
+        OMNESIS_PUBLIC_BASE_URL: "https://gateway.example.test",
+        OMNESIS_TLS_CERT: tls.certFile,
+        OMNESIS_TLS_KEY: tls.keyFile,
+        OMNESIS_CLOUD_RELAY_SESSION_FILE: join(directory, "legacy-session"),
+      },
+    });
+    const original = privateCredentials.readPrivateJson;
+    vi.spyOn(privateCredentials, "readPrivateJson").mockImplementation((path) =>
+      path === join(directory, "cloud-relay", "management.json")
+        ? Promise.reject(failure)
+        : original(path),
+    );
+    await expect(
+      (async () => {
+        manager = await GatewayCloudRelayManagement.open(f.options);
+        return manager.hasSavedConfiguration();
+      })(),
+    ).rejects.toBe(failure);
+    expect(f.options.startTunnel).not.toHaveBeenCalled();
+    expect(f.register).not.toHaveBeenCalled();
+  },
+);
+
+test.each(["own", "cause"] as const)(
+  "marked account metadata absence cannot select the legacy Google authority (%s)",
+  async (placement) => {
+    const tls = tlsFiles(directory),
+      failure = markedFileError("ENOENT", placement);
+    const f = fixture({
+      env: {
+        OMNESIS_CLOUD_RELAY_URL: "https://relay.example.test",
+        OMNESIS_CLOUD_RELAY_GATEWAY_ID: "00000000-0000-4000-8000-000000000001",
+        OMNESIS_PUBLIC_BASE_URL: "https://gateway.example.test",
+        OMNESIS_TLS_CERT: tls.certFile,
+        OMNESIS_TLS_KEY: tls.keyFile,
+        OMNESIS_CLOUD_RELAY_SESSION_FILE: join(directory, "legacy-session"),
+      },
+    });
+    const original = privateCredentials.readPrivateJson;
+    vi.spyOn(privateCredentials, "readPrivateJson").mockImplementation((path) =>
+      path === join(directory, "cloud-relay", "account-link.json")
+        ? Promise.reject(failure)
+        : original(path),
+    );
+    const google = vi.spyOn(GatewayGoogleWeb.prototype, "start").mockResolvedValue({
+      authorizeUrl: "https://accounts.example.test/start",
+      cookie: "invented-cookie",
+    });
+    await expect(
+      (async () => {
+        manager = await GatewayCloudRelayManagement.open(f.options);
+        return manager.googleLink({ requestOrigin: "https://gateway.example.test" });
+      })(),
+    ).rejects.toBe(failure);
+    expect(google).not.toHaveBeenCalled();
+  },
+);
+
+function brokerEnvironment(origin: string) {
+  return {
+    OMNESIS_CLOUD_RELAY_URL: "https://relay.example.test",
+    OMNESIS_ACME_DNS_PROVIDER: "broker",
+    OMNESIS_ACME_DNS_BROKER_URL: origin,
+  };
+}
+const hostedDiscovery = async (_url: string, gatewayId: string) => ({
+  protocol: 2 as const,
+  gatewayId,
+  publicOrigin: `https://${hostedGatewayHostname(gatewayId, "relay.example.test")}`,
+  invitationRequired: false,
+  dnsChallenges: true,
+});
+
+test("F3: a relay that knows a gateway's id cannot claim its name at the broker before the gateway does", async () => {
+  const harness = await brokerHarness({
+    fallback: async () => new Response(null, { status: 404 }),
+  });
+  const f = fixture({ env: brokerEnvironment(harness.origin), fetch: harness.fetch });
+  const races: unknown[] = [];
+  f.discover.mockImplementation(async (url, gatewayId) => {
+    // The relay learns the id here, and at once tries to take the name with a key of its own.
+    races.push(
+      await brokerCall(
+        (request) => harness.broker.handle(request),
+        brokerOwner("relay.example.test", gatewayId),
+        { type: "claim" },
+      ),
+    );
+    return hostedDiscovery(url, gatewayId);
+  });
+  manager = await GatewayCloudRelayManagement.open(f.options);
+  const status = await manager.configure(input);
+  expect(races).toEqual([{ status: 409, body: { error: "name-taken" } }]);
+  const owner = await readOrCreateGatewayOwnerKey(
+    join(directory, "cloud-relay", "owner.key"),
+    false,
+  );
+  const { createPublicKey } = await import("node:crypto");
+  expect(
+    harness.store.values.get(
+      `name:${hostedGatewayHostname(status.gatewayId!, "relay.example.test")}`,
+    ),
+  ).toMatchObject({
+    gatewayId: status.gatewayId,
+    ownerPublicKey: createPublicKey(owner)
+      .export({ type: "spki", format: "der" })
+      .toString("base64url"),
+  });
+});
+
+test("a name the broker binds to another key costs a new gateway a redraw, and a saved one its configure", async () => {
+  const harness = await brokerHarness({
+    fallback: async () => new Response(null, { status: 404 }),
+  });
+  let taken = 2;
+  const transport = vi.fn<typeof fetch>(async (input, init) =>
+    String(input).endsWith("/_dns/v2/complete") && taken-- > 0
+      ? new Response(JSON.stringify({ error: "name-taken" }), { status: 409 })
+      : harness.fetch(input, init),
+  );
+  const f = fixture({ env: brokerEnvironment(harness.origin), fetch: transport });
+  f.discover.mockImplementation(hostedDiscovery);
+  manager = await GatewayCloudRelayManagement.open(f.options);
+  const status = await manager.configure(input);
+  const claims = [...harness.store.values.keys()].filter((key) => key.startsWith("name:"));
+  expect(claims).toEqual([
+    `name:${hostedGatewayHostname(status.gatewayId!, "relay.example.test")}`,
+  ]);
+  expect(f.discover).toHaveBeenCalledExactlyOnceWith(
+    expect.anything(),
+    status.gatewayId,
+    expect.anything(),
+    expect.anything(),
+  );
+  taken = 1;
+  await expect(manager.configure(input)).rejects.toMatchObject({ code: "relay-unreachable" });
+  taken = 5;
+  await manager.close();
+  await rm(join(directory, "cloud-relay"), { recursive: true, force: true });
+  manager = await GatewayCloudRelayManagement.open(f.options);
+  f.discover.mockClear();
+  await expect(manager.configure(input)).rejects.toMatchObject({ code: "relay-unreachable" });
+  expect(f.discover).not.toHaveBeenCalled();
+});
+
+test("until the official broker answers, a new gateway connects as before", async () => {
+  const transport = vi.fn<typeof fetch>(async () => {
+    throw new TypeError("fetch failed");
+  });
+  const f = fixture({ env: {}, fetch: transport });
+  manager = await GatewayCloudRelayManagement.open(f.options);
+  await manager.configure({ relayUrl: "https://relay.omnesis.app", termsAccepted: true });
+  expect(transport.mock.calls.map(([url]) => String(url))).toEqual([
+    "https://dns.omnesis.app/_dns/v2/health",
+  ]);
+  expect(f.discover).toHaveBeenCalledOnce();
+});
+
+test("a broker the operator requires must answer, and a custom domain never asks it", async () => {
+  const harness = await brokerHarness({
+    fallback: async () => new Response(null, { status: 404 }),
+  });
+  const down = fixture({
+    env: brokerEnvironment(harness.origin),
+    fetch: async () => new Response(null, { status: 503 }),
+  });
+  manager = await GatewayCloudRelayManagement.open(down.options);
+  await expect(manager.configure(input)).rejects.toMatchObject({ code: "relay-unreachable" });
+  expect(down.discover).not.toHaveBeenCalled();
+  await manager.close();
+  const custom = fixture({ env: brokerEnvironment(harness.origin), fetch: harness.fetch });
+  manager = await GatewayCloudRelayManagement.open(custom.options);
+  await manager.configure({ ...input, publicOrigin: "https://gateway.example.test" });
+  expect(harness.calls).toEqual([]);
+  await manager.close();
+  const unset = fixture({
+    env: { ...brokerEnvironment(harness.origin), OMNESIS_ACME_DNS_BROKER_URL: undefined },
+  });
+  manager = await GatewayCloudRelayManagement.open(unset.options);
+  await expect(manager.configure(input)).rejects.toMatchObject({ code: "configuration-invalid" });
+});
+
+test("CAA drift raises the incident hold, which the owner acknowledges on the gateway", async () => {
+  const account = "https://acme-v02.api.letsencrypt.org/acme/acct/42";
+  let issue = [`letsencrypt.org; validationmethods=dns-01; accounturi=${account}`];
+  const held = vi.fn();
+  const f = fixture({
+    env: {
+      OMNESIS_CLOUD_RELAY_URL: "https://relay.example.test",
+      OMNESIS_CLOUD_RELAY_CERTIFICATE_MONITOR_ENABLED: "1",
+      // The certificate transparency side of the monitor fails fast on loopback.
+      OMNESIS_CLOUD_RELAY_CERTSPOTTER_URL: "https://127.0.0.1:9/",
+    },
+    caaLookup: async () => issue,
+    onIncidentHold: held,
+  });
+  f.options.controller = vi.fn(async () => ({
+    close: f.close,
+    renew: f.renew,
+    fingerprintSha256: () => "b".repeat(64),
+    spkiFingerprintSha256: () => "c".repeat(64),
+    expectedCaa: async () => account,
+  }));
+  manager = await GatewayCloudRelayManagement.open(f.options);
+  const monitor = (manager as unknown as { monitor: { checkCaa(): Promise<void> } }).monitor;
+  // Before the gateway publishes anything, there is nothing to drift from.
+  await monitor.checkCaa();
+  await manager.configure(input);
+  await manager.enable();
+  await idle();
+  await monitor.checkCaa();
+  expect((await manager.status()).incidentHold).toBeUndefined();
+  // Someone with write access to the zone points the name at another ACME account.
+  issue = ["letsencrypt.org; accounturi=https://acme-v02.api.letsencrypt.org/acme/acct/666"];
+  await monitor.checkCaa();
+  expect((await manager.status()).incidentHold).toMatchObject({
+    certificates: [expect.stringMatching(/^[a-f0-9]{64}$/)],
+  });
+  expect(held).toHaveBeenCalledOnce();
+  await manager.acknowledgeIncidentHold();
+  // The same records don't hold again once acknowledged; different ones do.
+  await monitor.checkCaa();
+  expect((await manager.status()).incidentHold).toBeUndefined();
+  issue = [];
+  await monitor.checkCaa();
+  expect((await manager.status()).incidentHold).toBeDefined();
+  expect(held).toHaveBeenCalledTimes(2);
 });

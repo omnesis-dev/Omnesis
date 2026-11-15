@@ -201,6 +201,7 @@ describe("Synthetic provider — Outlook Calendar (hybrid: documents + analytics
     );
     expect(reset).toEqual({
       ok: true,
+      mode: "from-scratch",
       scope: "source",
       deviceIds: [],
       restarting: [],

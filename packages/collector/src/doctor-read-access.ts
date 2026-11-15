@@ -2,6 +2,8 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import type { SourceInstance, SourceReadAccessResult } from "@omnesis/source-sdk";
+import { ownedProcessCleanupReceipt } from "@omnesis/core";
+import { DoctorOwnedWork } from "./doctor-owned-work.js";
 
 export interface DoctorReadAccessSource {
   sourceId: string;
@@ -17,14 +19,38 @@ const SCAN_TIMEOUT_MS = 20_000;
 const PROBE_CONCURRENCY = 2;
 
 export class DoctorReadAccess {
-  private readonly pending = new Set<DoctorReadAccessSource["instance"]>();
+  private readonly work: DoctorOwnedWork;
+  private readonly stopping = new AbortController();
 
-  constructor(private readonly budgets = { probeMs: PROBE_TIMEOUT_MS, scanMs: SCAN_TIMEOUT_MS }) {}
+  constructor(
+    private readonly budgets = { probeMs: PROBE_TIMEOUT_MS, scanMs: SCAN_TIMEOUT_MS },
+    changed?: () => void,
+  ) {
+    this.work = new DoctorOwnedWork(changed);
+  }
 
-  async collect(sources: DoctorReadAccessSource[], signal: AbortSignal): Promise<AccessEntry[]> {
+  cleanupFailure(): unknown | undefined {
+    return this.work.cleanupFailure();
+  }
+  close(): Promise<void> {
+    const joined = this.work.close();
+    this.stopping.abort();
+    return joined;
+  }
+
+  async collect(
+    sources: DoctorReadAccessSource[],
+    signal: AbortSignal,
+    outerDeadline = Number.POSITIVE_INFINITY,
+  ): Promise<AccessEntry[]> {
+    const scanDeadline = Math.min(outerDeadline, performance.now() + this.budgets.scanMs);
+    this.work.assertAdmitting();
     const controller = new AbortController();
-    const scanSignal = AbortSignal.any([signal, controller.signal]);
-    const timer = setTimeout(() => controller.abort(), this.budgets.scanMs);
+    const scanSignal = AbortSignal.any([signal, controller.signal, this.stopping.signal]);
+    const timer = setTimeout(
+      () => controller.abort(),
+      Math.max(0, scanDeadline - performance.now()),
+    );
     timer.unref();
     const results: AccessEntry[] = new Array(sources.length);
     let next = 0;
@@ -35,7 +61,7 @@ export class DoctorReadAccess {
             const index = next++;
             const source = sources[index]!;
             results[index] = {
-              ...(await this.probe(source.instance, scanSignal)),
+              ...(await this.probe(source.instance, scanSignal, scanDeadline)),
               sourceId: source.sourceId,
             };
           }
@@ -51,8 +77,16 @@ export class DoctorReadAccess {
   private async probe(
     instance: DoctorReadAccessSource["instance"],
     signal: AbortSignal,
+    scanDeadline: number,
   ): Promise<SourceReadAccessResult> {
-    if (signal.aborted || this.pending.has(instance) || this.pending.size >= PROBE_CONCURRENCY) {
+    const deadline = Math.min(scanDeadline, performance.now() + this.budgets.probeMs);
+    this.work.assertAdmitting();
+    if (
+      signal.aborted ||
+      performance.now() >= deadline ||
+      this.work.has(instance) ||
+      this.work.size >= PROBE_CONCURRENCY
+    ) {
       return { status: "unavailable" };
     }
     if (!instance.probeReadAccess) return { status: "unsupported" };
@@ -63,19 +97,23 @@ export class DoctorReadAccess {
       onAbort = () => resolve({ status: "unavailable" });
       probeSignal.addEventListener("abort", onAbort, { once: true });
     });
-    const timer = setTimeout(() => controller.abort(), this.budgets.probeMs);
+    const timer = setTimeout(() => controller.abort(), Math.max(0, deadline - performance.now()));
     timer.unref();
-    this.pending.add(instance);
-    const work = Promise.resolve()
-      .then(() => {
+    const work = this.work
+      .run(instance, async () => {
         probeSignal.throwIfAborted();
+        if (performance.now() >= deadline) return { status: "unavailable" as const };
         return instance.probeReadAccess!({ signal: probeSignal });
       })
-      .catch((): SourceReadAccessResult => ({ status: "unavailable" }))
-      .finally(() => this.pending.delete(instance));
+      .catch((error: unknown): SourceReadAccessResult => {
+        if (ownedProcessCleanupReceipt(error) !== undefined) throw error;
+        return { status: "unavailable" };
+      });
     try {
       const result = await Promise.race([work, aborted]);
-      return probeSignal.aborted ? { status: "unavailable" } : result;
+      return probeSignal.aborted || performance.now() >= deadline
+        ? { status: "unavailable" }
+        : result;
     } finally {
       clearTimeout(timer);
       probeSignal.removeEventListener("abort", onAbort);

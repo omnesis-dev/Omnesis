@@ -6,6 +6,7 @@
  */
 import { describe, test, expect, beforeAll, afterAll } from "vitest";
 import { E2EHarness } from "./harness.js";
+import { gatewayBootBudgetMs } from "./gateway-env.js";
 import { mockDoc } from "./mock-source.js";
 import { getDocumentCount, getSourceStats } from "./helpers.js";
 import type { MockSource } from "./mock-source.js";
@@ -33,7 +34,7 @@ describe("E2E Advanced: Error handling", () => {
     badSource.setError(new Error("Source failure"));
 
     await harness.start();
-  }, 30000);
+  }, gatewayBootBudgetMs() + 30_000);
 
   afterAll(async () => {
     await harness.destroy();
@@ -87,7 +88,7 @@ describe("E2E Advanced: Multi-account", () => {
     sourceBob.setDocuments([mockDoc("bob-1"), mockDoc("bob-2"), mockDoc("bob-3")]);
 
     await harness.start();
-  }, 30000);
+  }, gatewayBootBudgetMs() + 30_000);
 
   afterAll(async () => {
     await harness.destroy();
@@ -132,7 +133,7 @@ describe("E2E Advanced: Dedup edge cases", () => {
     });
 
     await harness.start();
-  }, 30000);
+  }, gatewayBootBudgetMs() + 30_000);
 
   afterAll(async () => {
     await harness.destroy();
@@ -208,7 +209,7 @@ describe("E2E Advanced: Push events", () => {
     source.setDocuments([mockDoc("push-1")]);
 
     await harness.start();
-  }, 30000);
+  }, gatewayBootBudgetMs() + 30_000);
 
   afterAll(async () => {
     await harness.destroy();
@@ -250,7 +251,7 @@ describe("E2E Advanced: Stats endpoint", () => {
     ]);
 
     await harness.start();
-  }, 30000);
+  }, gatewayBootBudgetMs() + 30_000);
 
   afterAll(async () => {
     await harness.destroy();

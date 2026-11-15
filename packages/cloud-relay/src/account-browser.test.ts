@@ -671,7 +671,10 @@ test("the create view gives way once the person is signed in or was refused", as
   ready.session({ ...authenticated, pending: { ...pending, needsProof: false } });
   installAccountUI();
   await ready.wait("This adds the gateway to your Omnesis account");
-  expect(ready.document.querySelector("h1")?.textContent).toBe("Sign in to your Omnesis account");
+  // Signed in, the page names the one step left.
+  expect(ready.document.querySelector("h1")?.textContent).toBe(
+    "Connect this gateway to your Omnesis account",
+  );
   expect(ready.button("Create with Google")).toBeUndefined();
   await press(ready, "Connect this gateway");
   await vi.waitFor(() => expect(ready.location.assign).toHaveBeenCalledWith(handoffAddress));
@@ -1169,6 +1172,33 @@ test("a failed Google redirect explains the failure without exposing provider de
   );
   expect(f.document.body.textContent).not.toContain("private-provider-detail");
   expect(f.button("Sign in with Passkey").disabled).toBe(false);
+});
+
+test("back from a Google start the browser didn't vouch for, the page asks for one more press", async () => {
+  const again = "To continue with Google, press the Google button again.";
+  const f = setup();
+  f.location.search = `${signupOperation}&failed=again`;
+  f.session({
+    ...signedOut,
+    pending: { purpose: "gateway-signup", gatewayName: "Fictional gateway", needsProof: true },
+  });
+  installAccountUI();
+  await vi.waitFor(() => expect(f.status()).toBe(again));
+  expect(f.alert()).toBe("");
+  await press(f, "Sign in with Google");
+  await vi.waitFor(() =>
+    expect(f.location.assign).toHaveBeenCalledWith(
+      `https://relay.example.test/_relay/web/start${signupOperation}`,
+    ),
+  );
+  // A new passkey that was waiting for Google is still waiting for it.
+  const endorsing = setup();
+  endorsing.location.search = `?endorse=${parked}&failed=again`;
+  endorsing.session(authenticated);
+  installAccountUI();
+  await endorsing.wait("Confirm it's you to finish");
+  expect(endorsing.status()).toBe(again);
+  expect(endorsing.endorsed("register/confirm")).toEqual([]);
 });
 
 test("the plain sign-in page never offers to create an account, whatever the relay would allow", async () => {
@@ -2003,17 +2033,51 @@ test("a confirmation that lapses while the page is open asks again instead of fa
   expect(ended.document.querySelector(".confirm")).toBeNull();
 });
 
-test("a sign-in the relay refuses says the passkey may belong to no account", async () => {
+test("a sign-in the relay refuses for another reason keeps the generic message", async () => {
   const f = setup();
   f.session(signedOut);
   installAccountUI();
   await f.wait("Sign in with Passkey");
   f.request.mockResolvedValueOnce(new Response("{}", { status: 401 }));
   f.button("Sign in with Passkey").click();
-  await vi.waitFor(() => expect(f.alert()).toContain("That didn't sign you in."));
-  expect(f.alert()).toContain("create an account from your gateway's settings");
-  expect(f.alert()).not.toContain("manage sign-in methods");
+  await vi.waitFor(() =>
+    expect(f.alert()).toBe("That didn't sign you in. Try again, or use another sign-in method."),
+  );
   expect(f.button("Sign in with Passkey").disabled).toBe(false);
+});
+
+test("a passkey whose account is gone says so, and only a deleted account's is forgotten", async () => {
+  for (const [reason, googleAvailable, forgotten] of [
+    ["deleted-passkey", true, true],
+    ["unknown-passkey", true, false],
+    ["deleted-passkey", false, true],
+  ] as const) {
+    const f = setup();
+    const signal = vi.fn(async () => {});
+    Object.assign(f.window.PublicKeyCredential, { signalUnknownCredential: signal });
+    f.session({ ...signedOut, googleAvailable });
+    installAccountUI();
+    await f.wait("Sign in with Passkey");
+    // The relay names the passkey only on the step that checks it.
+    f.request.mockImplementationOnce(async () =>
+      Response.json({ ceremonyId: "fixture-ceremony", options: f.options }),
+    );
+    f.request.mockResolvedValueOnce(Response.json({ error: reason }, { status: 401 }));
+    f.button("Sign in with Passkey").click();
+    await vi.waitFor(() =>
+      expect(f.alert()).toBe(
+        "That passkey is for an Omnesis account that no longer exists. " +
+          (googleAvailable
+            ? "Choose another passkey, or continue with Google."
+            : "Choose another passkey."),
+      ),
+    );
+    // A passkey the relay never had may belong to a live account elsewhere: the browser keeps it.
+    expect(signal.mock.calls).toEqual(
+      forgotten ? [[{ rpId: "relay.example.test", credentialId: "AQID" }]] : [],
+    );
+    expect(f.button("Sign in with Passkey").disabled).toBe(false);
+  }
 });
 
 const mine = "a".repeat(64);

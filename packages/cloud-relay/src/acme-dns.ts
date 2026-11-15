@@ -2,9 +2,11 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { randomUUID } from "node:crypto";
+import { ownedProcessCleanupReceipt } from "@omnesis/core";
 import { z } from "zod";
 import { readPrivateJson, savePrivateJson } from "./google-credentials.js";
 import { RelayError } from "./tunnels.js";
+import { OwnedCleanupLifecycle } from "./owned-cleanup-lifecycle.js";
 
 const hostnameSchema = z
   .string()
@@ -37,6 +39,13 @@ export interface AcmeDnsOptions {
 
 /** Only TXT records for a registered gateway's exact hostname may be leased. Intents survive process crashes. */
 export class AcmeDnsChallenges {
+  private readonly cleanup = new OwnedCleanupLifecycle();
+  private closing: Promise<void> | undefined;
+  private closeSettled = false;
+  private readonly closingReceipt = Object.assign(new Error("DNS cleanup remains pending"), {
+    cleanupFailure: true,
+    cleanupPending: true as const,
+  });
   private leases: DnsChallengeLease[] = [];
   private pending: Promise<unknown> = Promise.resolve();
   private closed = false;
@@ -64,6 +73,7 @@ export class AcmeDnsChallenges {
         .max(32)
         .parse(await readPrivateJson(options.file));
     } catch (error) {
+      if (ownedProcessCleanupReceipt(error) !== undefined) throw error;
       if (!(
         typeof error === "object" &&
         error !== null &&
@@ -84,21 +94,37 @@ export class AcmeDnsChallenges {
     service.timer.unref();
     return service;
   }
-  private serialize<T>(run: () => Promise<T>, accountId?: string): Promise<T> {
+  private serialize<T>(run: () => Promise<T>, accountId?: string, allowClosed = false): Promise<T> {
+    try {
+      this.cleanup.assertAdmitting();
+      if (this.closed && !allowClosed) throw new RelayError(503, "DNS challenge service is closed");
+    } catch (error) {
+      return Promise.reject(error);
+    }
     if (accountId !== undefined) {
       if (this.queued >= 8 || (this.admissions.get(accountId) ?? 0) >= 2)
         return Promise.reject(new RelayError(429, "DNS operation admission capacity reached"));
       this.queued++;
       this.admissions.set(accountId, (this.admissions.get(accountId) ?? 0) + 1);
     }
-    const next = this.pending.then(run).finally(() => {
-      if (accountId !== undefined) {
-        this.queued--;
-        const count = this.admissions.get(accountId)! - 1;
-        if (count === 0) this.admissions.delete(accountId);
-        else this.admissions.set(accountId, count);
-      }
-    });
+    const next = this.pending
+      .then(() => {
+        // An earlier queued publication may have failed after this work was admitted.
+        this.cleanup.assertAdmitting();
+        return run();
+      })
+      .catch((error: unknown) => {
+        this.cleanup.observe(error);
+        throw error;
+      })
+      .finally(() => {
+        if (accountId !== undefined) {
+          this.queued--;
+          const count = this.admissions.get(accountId)! - 1;
+          if (count === 0) this.admissions.delete(accountId);
+          else this.admissions.set(accountId, count);
+        }
+      });
     this.pending = next.catch(() => {});
     return next;
   }
@@ -141,17 +167,19 @@ export class AcmeDnsChallenges {
       try {
         await savePrivateJson(this.options.file, this.leases);
       } catch (error) {
-        this.leases.pop();
+        if (ownedProcessCleanupReceipt(error) === undefined) this.leases.pop();
         throw error;
       }
       try {
         signal.throwIfAborted();
         await this.options.provider.create(lease, signal);
         signal.throwIfAborted();
-      } catch {
+      } catch (error) {
+        if (ownedProcessCleanupReceipt(error) !== undefined) throw error;
         try {
           await this.removeLease(lease);
-        } catch {
+        } catch (cleanupError) {
+          if (ownedProcessCleanupReceipt(cleanupError) !== undefined) throw cleanupError;
           /* The durable intent is retained for expiry/restart cleanup. */
         }
         callerSignal?.throwIfAborted();
@@ -200,12 +228,27 @@ export class AcmeDnsChallenges {
     return { dnsLeases: this.leases.length, dnsQueued: this.queued };
   }
 
-  async close(): Promise<void> {
+  cleanupFailure(): unknown | undefined {
+    return (
+      this.cleanup.receipt() ??
+      (this.closing && !this.closeSettled ? this.closingReceipt : undefined)
+    );
+  }
+
+  close(): Promise<void> {
+    if (this.closing) return this.closing;
     this.closed = true;
     clearInterval(this.timer);
     const signal = AbortSignal.timeout(15_000);
-    await this.serialize(async () => {
-      for (const lease of [...this.leases]) await this.removeLease(lease, signal);
+    this.closing = this.serialize(
+      async () => {
+        for (const lease of [...this.leases]) await this.removeLease(lease, signal);
+      },
+      undefined,
+      true,
+    ).finally(() => {
+      this.closeSettled = true;
     });
+    return this.closing;
   }
 }

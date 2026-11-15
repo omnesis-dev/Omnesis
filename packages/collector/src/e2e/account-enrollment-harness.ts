@@ -244,6 +244,14 @@ dns.promises.Resolver.prototype.resolveTxt = async function (name) {
   const response = await fetch(fixtureDns + "/txt?name=" + encodeURIComponent(name));
   return response.json();
 };
+// So do CAA records: none unless a broker published one.
+const resolveCaa = dns.promises.Resolver.prototype.resolveCaa;
+dns.promises.Resolver.prototype.resolveCaa = async function (name) {
+  const fixtureDns = process.env.OMNESIS_E2E_FIXTURE_DNS_URL;
+  if (!fixtureDns || !fixture(name)) return resolveCaa.call(this, name);
+  const response = await fetch(fixtureDns + "/caa?name=" + encodeURIComponent(name));
+  return response.json();
+};
 `;
 
 /** Answers the fixture names with 127.0.0.1 in this test process. */
@@ -288,6 +296,10 @@ export class EnrollmentWorld {
   /** DNS-01 values the relay published, by record id: what a local ACME authority checks. */
   readonly dnsRecords = new Map<string, string>();
   private dnsFixture?: { url: string; close(): Promise<void> };
+  /** The fixture's stand-in for the Cloudflare API, as a DNS broker is configured with it. */
+  dnsApiUrl(): string {
+    return `${this.dnsFixture!.url}/client/v4`;
+  }
   private relayOutput = "";
   private constructor(
     readonly directory: string,
@@ -653,7 +665,22 @@ async function startDnsFixture(values: Map<string, string>) {
       };
       if (url.pathname === "/txt") {
         const name = url.searchParams.get("name");
-        return send([...records.values()].filter((r) => r.name === name).map((r) => [r.content]));
+        return send(
+          [...records.values()]
+            .filter((r) => r.name === name && r.type !== "CAA")
+            .map((r) => [r.content]),
+        );
+      }
+      if (url.pathname === "/caa") {
+        const name = url.searchParams.get("name");
+        return send(
+          [...records.values()]
+            .filter((r) => r.name === name && r.type === "CAA")
+            .map((r) => {
+              const data = r.data as { flags: number; tag: string; value: string };
+              return { critical: data.flags, [data.tag]: data.value };
+            }),
+        );
       }
       const match = /^\/client\/v4\/zones\/[a-f0-9]{32}\/dns_records(?:\/([a-f0-9]{32}))?$/.exec(
         url.pathname,
@@ -878,7 +905,7 @@ export class EnrollmentGateway {
    */
   async throughRelay(
     path: string,
-    init: { method?: string; body?: string; token?: string } = {},
+    init: { method?: string; body?: string; token?: string; headers?: Record<string, string> } = {},
   ): Promise<{ status: number; body: string }> {
     const { request } = await import("node:https");
     return new Promise((resolve, reject) => {
@@ -894,6 +921,7 @@ export class EnrollmentGateway {
             host: `${this.hostname}:${this.world.dataPort}`,
             "content-type": "application/json",
             ...(init.token ? { authorization: `Bearer ${init.token}` } : {}),
+            ...init.headers,
           },
           timeout: 30_000,
         },

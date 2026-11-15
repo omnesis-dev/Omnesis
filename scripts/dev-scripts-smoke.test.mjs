@@ -30,6 +30,7 @@
 
 import { describe, it, expect, afterEach, afterAll, beforeAll } from "vitest";
 import captureAssert from "node:assert/strict";
+import { spawnWindowsJob } from "@omnesis/core";
 import { capturePortalScreenshot } from "./lib/portal-capture.mjs";
 import {
   execFileSync as processExecFileSync,
@@ -51,7 +52,7 @@ import {
   lstatSync,
   statSync,
 } from "node:fs";
-import { join, dirname } from "node:path";
+import { join, dirname, basename } from "node:path";
 import { runInNewContext } from "node:vm";
 import { tmpdir } from "node:os";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -60,30 +61,101 @@ import { gatewayBootBudgetMs } from "./lib/boot-budget.mjs";
 import {
   bashExecutable,
   bashEnvironment,
+  bashScriptArguments,
   nativeBashPath,
   prependPath,
   localSshFixturePath,
 } from "./lib/test-shell.mjs";
 
 const fixtureBash = bashExecutable();
+const bashPathEnvironmentKeys = [
+  "OMNESIS_CONFIG_DIR",
+  "OMNESIS_SHOT_CONFIG_DIR",
+  "OMNESIS_DB_PATH",
+  "OMNESIS_INDEX_DB_PATH",
+  "OMNESIS_ANALYTICS_DB_PATH",
+  "OMNESIS_ANDROID_SDK_HOME",
+  "OMNESIS_EPIC_MACOS_WORKTREE",
+  "OMNESIS_EPIC_MACOS_IOS_LOGIC_WORKTREE",
+  "OMNESIS_EPIC_MACOS_ANDROID_WORKTREE",
+  "OMNESIS_EPIC_MACOS_ANDROID_LOGIC_WORKTREE",
+  "OMNESIS_IOS_SNAPSHOT_OUT",
+  "NODE_EXTRA_CA_CERTS",
+  "DEVELOPER_DIR",
+  "CHAOS_DB_PATH",
+  "CHAOS_TOKEN_PATH",
+  "GRADLE_CALLS",
+  "HARNESS_ROOT",
+  "GITHUB_STEP_SUMMARY",
+  "REMOTE_LOG",
+  "RESOLVED_TARGET",
+  "SWAP_MARKER",
+  "SWAP_OWNED_BACKUP",
+  "SWAP_REPLACEMENT",
+];
+const windowsChildren = [];
 function fixtureOptions(command, options) {
   return command === fixtureBash
-    ? { ...options, env: bashEnvironment(options?.env ?? process.env, { executable: fixtureBash }) }
+    ? {
+        ...options,
+        env: bashEnvironment(options?.env ?? process.env, {
+          executable: fixtureBash,
+          pathKeys: bashPathEnvironmentKeys,
+        }),
+      }
     : options;
 }
 function execFileSync(command, args, options) {
-  return processExecFileSync(command, args, fixtureOptions(command, options));
+  return processExecFileSync(
+    command,
+    fixtureArguments(command, args),
+    fixtureOptions(command, options),
+  );
 }
 function spawnSync(command, args, options) {
-  return processSpawnSync(command, args, fixtureOptions(command, options));
+  return processSpawnSync(
+    command,
+    fixtureArguments(command, args),
+    fixtureOptions(command, options),
+  );
 }
 function spawn(command, args, options) {
-  return processSpawn(command, args, fixtureOptions(command, options));
+  const prepared = fixtureOptions(command, options);
+  const argv = fixtureArguments(command, args);
+  if (process.platform !== "win32") return processSpawn(command, argv, prepared);
+  const child = spawnWindowsJob(command, argv, { cwd: prepared?.cwd, env: prepared?.env });
+  const closed = new Promise((resolve) => child.once("close", resolve));
+  void child.jobReady.catch(() => {});
+  windowsChildren.push({ child, joined: Promise.allSettled([closed, child.jobClosed]) });
+  const stdio = prepared?.stdio ?? "pipe";
+  const mode = (index) => (Array.isArray(stdio) ? (stdio[index] ?? "pipe") : stdio);
+  if (mode(0) === "ignore") child.stdin.end();
+  for (const [index, stream, inherited] of [
+    [1, child.stdout, process.stdout],
+    [2, child.stderr, process.stderr],
+  ]) {
+    if (mode(index) === "ignore") stream.resume();
+    else if (mode(index) === "inherit") stream.pipe(inherited, { end: false });
+  }
+  return child;
+}
+function fixtureArguments(command, args) {
+  return command === fixtureBash ? bashScriptArguments(args) : args;
 }
 function execFile(command, args, options, callback) {
   if (typeof options === "function")
-    return processExecFile(command, args, fixtureOptions(command), options);
-  return processExecFile(command, args, fixtureOptions(command, options), callback);
+    return processExecFile(
+      command,
+      fixtureArguments(command, args),
+      fixtureOptions(command),
+      options,
+    );
+  return processExecFile(
+    command,
+    fixtureArguments(command, args),
+    fixtureOptions(command, options),
+    callback,
+  );
 }
 
 it("Node fixture invocations keep their supplied environment unchanged", () => {
@@ -184,8 +256,27 @@ const cleanups = [];
 // Stopping gateway and collector can each consume the owned-tree helper's
 // five-second TERM grace, followed by forced-exit confirmation and a scoped
 // generation sweep. Give that bounded teardown time to complete.
-afterEach(() => {
-  while (cleanups.length) cleanups.pop()();
+afterEach(async () => {
+  const children = windowsChildren.splice(0);
+  for (const { child } of children) {
+    if (child.exitCode !== null || child.signalCode !== null) continue;
+    try {
+      child.kill("SIGKILL");
+    } catch {
+      /* The retained join proves whether it stopped. */
+    }
+  }
+  const results = (await Promise.all(children.map(({ joined }) => joined))).flat();
+  const failures = results.flatMap((result) =>
+    result.status === "rejected" ? [result.reason] : [],
+  );
+  if (failures.length) {
+    cleanups.length = 0;
+    throw Object.assign(new AggregateError(failures, "Fixture process cleanup is unconfirmed"), {
+      cleanupFailure: failures[0],
+    });
+  }
+  while (cleanups.length) await cleanups.pop()();
 }, 30_000);
 
 function tmpDir(prefix) {
@@ -285,7 +376,8 @@ describe("scripts/test-env.sh", () => {
     const { gatewayUrl, collectorUrl, caCert } = sourcedEnv();
     expect(gatewayUrl).toMatch(/^https:\/\//);
     expect(collectorUrl).toMatch(/^https:\/\//);
-    expect(caCert).toMatch(/\/tls\/cert\.pem$/);
+    expect(basename(caCert)).toBe("cert.pem");
+    expect(basename(dirname(caCert))).toBe("tls");
   });
 
   it("its exported env lets a Node client complete the TLS handshake against an isolated self-signed gateway", async () => {
@@ -564,7 +656,8 @@ describe("scripts/chaos-gateway.mjs cross-platform liveness", () => {
   }, 40000);
 });
 
-describe("scripts/omnesis-where.sh read-only topology", () => {
+// This script inspects Unix listener ownership through lsof/ss and Unix PIDs.
+describe.skipIf(process.platform === "win32")("scripts/omnesis-where.sh read-only topology", () => {
   const whereScript = join(repoRoot, "scripts/omnesis-where.sh");
   // High port well clear of the live gateway (7600) and OAuth ports (3000-3003);
   // a per-test offset keeps reruns from colliding with a lingering listener.
@@ -1153,7 +1246,8 @@ setInterval(() => {}, 1000);`,
   }, 20_000);
 });
 
-describe("scripts/lib/safe_kill helper (C7)", () => {
+// pgrep and Unix process-group signals are the behavior under test.
+describe.skipIf(process.platform === "win32")("scripts/lib/safe_kill helper (C7)", () => {
   // safe_kill kills processes matching a pattern but (1) never the caller or its
   // parent ($$/$PPID), and (2) fail-louds (non-zero, named message) on a
   // zero-match or self-only match rather than silently no-op'ing on a wrong
@@ -3909,12 +4003,7 @@ describe("ios/Package.swift sim-less logic target (C11)", () => {
     // only SwiftUI but exercises the UIKit-gated AppearanceStore — kept excluded.
     const src = readFileSync(pkg, "utf8");
     const testDir = join(repoRoot, "ios/Tests/OmnesisTests");
-    const files = execFileSync(bashExecutable(), ["-c", `ls ${testDir}/*.swift`], {
-      encoding: "utf8",
-    })
-      .trim()
-      .split("\n")
-      .map((p) => p.split("/").pop());
+    const files = readdirSync(testDir).filter((name) => name.endsWith(".swift"));
     for (const f of files) {
       const body = readFileSync(join(testDir, f), "utf8");
       if (/^import UIKit$/m.test(body)) {

@@ -13,7 +13,12 @@ func externalDocURL(_ value: String?) -> URL? {
     guard let value, !value.isEmpty else { return nil }
     guard let url = URL(string: value), let scheme = url.scheme?.lowercased() else { return nil }
     let blocked: Set = ["file", "data", "javascript", "about"]
-    return blocked.contains(scheme) ? nil : url
+    guard !blocked.contains(scheme) else { return nil }
+    guard !(url.host ?? "").isEmpty || !url.path.isEmpty || url.query != nil else { return nil }
+    if scheme == "http" || scheme == "https" {
+        guard let host = url.host, !host.isEmpty else { return nil }
+    }
+    return url
 }
 
 /// The links that open a document outside the app, in preference order:
@@ -35,6 +40,80 @@ func docOpenURLs(appUrl: String?, sourceUrl: String?) -> [URL] {
 
 #if canImport(SwiftUI) && canImport(UIKit)
 import SwiftUI
+
+/// A citation's independent external action. Strict tap recognition prevents
+/// the drawer's drag-to-close gesture from opening a source on touch-up.
+@available(iOS 17.0, *)
+struct DocumentSourceAction: View {
+    let appUrl: String?
+    let sourceUrl: String?
+    let title: String
+    @Environment(\.openURL) private var openURL
+
+    var body: some View {
+        let urls = docOpenURLs(appUrl: appUrl, sourceUrl: sourceUrl)
+        if !urls.isEmpty {
+            SourceExternalOpenGlyph()
+                .stroke(style: StrokeStyle(lineWidth: 1.25, lineCap: .round, lineJoin: .round))
+                .frame(width: 13, height: 13)
+                .foregroundStyle(Theme.textMuted)
+                .frame(width: 28, height: 28, alignment: .leading)
+                .contentShape(Rectangle())
+                .padding(.vertical, -6)
+                .onTapGesture { openFirst(urls[...]) }
+                .accessibilityLabel("Open in source")
+                .accessibilityHint("Open \(title) outside Omnesis")
+                .accessibilityAddTraits(.isButton)
+        }
+    }
+
+    private func openFirst(_ urls: ArraySlice<URL>) {
+        guard let url = urls.first else { return }
+        openURL(url) { accepted in
+            if !accepted { openFirst(urls.dropFirst()) }
+        }
+    }
+}
+
+/// The arrow reaches the square's open upper-right corner.
+private struct SourceExternalOpenGlyph: Shape {
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        path.move(to: CGPoint(x: 7, y: 2))
+        path.addLine(to: CGPoint(x: 3.5, y: 2))
+        path.addQuadCurve(to: CGPoint(x: 2, y: 3.5), control: CGPoint(x: 2, y: 2))
+        path.addLine(to: CGPoint(x: 2, y: 12.5))
+        path.addQuadCurve(to: CGPoint(x: 3.5, y: 14), control: CGPoint(x: 2, y: 14))
+        path.addLine(to: CGPoint(x: 12.5, y: 14))
+        path.addQuadCurve(to: CGPoint(x: 14, y: 12.5), control: CGPoint(x: 14, y: 14))
+        path.addLine(to: CGPoint(x: 14, y: 9))
+        path.move(to: CGPoint(x: 9, y: 2))
+        path.addLine(to: CGPoint(x: 14, y: 2))
+        path.addLine(to: CGPoint(x: 14, y: 7))
+        path.move(to: CGPoint(x: 14, y: 2))
+        path.addLine(to: CGPoint(x: 7, y: 9))
+        return path.applying(CGAffineTransform(
+            a: rect.width / 16,
+            b: 0,
+            c: 0,
+            d: rect.height / 16,
+            tx: rect.minX,
+            ty: rect.minY
+        ))
+    }
+}
+
+#if DEBUG
+@available(iOS 17.0, *)
+#Preview("Inline citation actions — web, native and unavailable") {
+    CitationsDrawer(
+        trailAnnotations: PreviewMocks.citationSourceLinks,
+        isOpen: .constant(true)
+    )
+    .environment(AppStore.preview())
+    .preferredColorScheme(.dark)
+}
+#endif
 
 /// The two ways to delete a document, explained once for every delete prompt.
 /// "For good" writes the gateway's durable tombstone; "this copy" leaves the
@@ -99,9 +178,8 @@ func sourceTypeFromId(_ sourceId: String) -> String {
 }
 
 /// Tappable wrapper around an `AgentDocRef`. Always pushes the in-app
-/// `AgentDocumentDetailView` — the document viewer is the single entry
-/// point to the original source (via its "Open in source" toolbar
-/// button). Wraps any `View` content via the trailing-closure builder
+/// `AgentDocumentDetailView`. The viewer also offers an "Open in source"
+/// toolbar action. Wraps any `View` content via the trailing-closure builder
 /// so the caller renders the card body.
 @available(iOS 17.0, *)
 struct DocumentLink<Content: View>: View {

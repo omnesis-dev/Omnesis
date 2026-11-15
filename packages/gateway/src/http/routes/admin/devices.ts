@@ -43,6 +43,7 @@ import { deviceVersionState } from "../../../device-version.js";
 import { FleetUpdateService } from "../../services/FleetUpdateService.js";
 import { browserExtensionTrust } from "../../../tls-lifecycle/browser-trust.js";
 import { devicesJoinedWithSignIn } from "../../../data/repositories/DeviceRepository.js";
+import { requireStepUp } from "../../step-up.js";
 import { log, type AdminRoutesDeps } from "./internals.js";
 import type { RouteApp, AuthContext } from "../types.js";
 
@@ -271,61 +272,68 @@ export function mountDeviceRoutes(app: RouteApp, deps: AdminRoutesDeps): void {
     return c.json(buildPage(devices, { hasMore: false, limit: devices.length }));
   });
 
-  app.post("/admin/devices", scope.admin(), validateJson(createDeviceBody), async (c) => {
-    const { name, kind, scopes, capabilities } = c.req.valid("json");
-    if (!scopesAllowedForDeviceKind(kind, scopes)) throw new BadRequestError(INTEGRATION_SCOPES);
-    let result;
-    try {
-      result = await w.createOrAdoptDevice({
-        name,
-        kind,
+  // Registering a device hands out its token: a step-up, like minting a code or a token.
+  app.post(
+    "/admin/devices",
+    scope.admin(),
+    requireStepUp(),
+    validateJson(createDeviceBody),
+    async (c) => {
+      const { name, kind, scopes, capabilities } = c.req.valid("json");
+      if (!scopesAllowedForDeviceKind(kind, scopes)) throw new BadRequestError(INTEGRATION_SCOPES);
+      let result;
+      try {
+        result = await w.createOrAdoptDevice({
+          name,
+          kind,
+          scopes,
+          capabilities: (capabilities ?? {}) as DeviceCapability,
+          onlineDeviceIds: connectedDeviceIds(),
+        });
+      } catch (err) {
+        throw new BadRequestError((err as Error).message);
+      }
+      if (result.outcome === "name-taken") {
+        return c.json(
+          {
+            code: "DEVICE_NAME_TAKEN",
+            error:
+              result.kind === kind
+                ? `a device named "${name}" already exists`
+                : `the name "${name}" belongs to a ${result.kind} device — pick a different name, or forget that device first`,
+          },
+          409,
+        );
+      }
+      if (result.outcome === "online") {
+        return c.json(
+          {
+            code: "DEVICE_ONLINE",
+            error: `the revoked device named "${name}" still holds a connection — disconnect it before registering again`,
+          },
+          409,
+        );
+      }
+      const adopted = result.outcome === "adopted";
+      // Any socket still authenticated with a credential this adoption deleted
+      // is evicted before the new one leaves the gateway.
+      if (adopted) wsServer?.disconnectDevice(result.device.id);
+      // Audit trail for direct device registration (typically the local
+      // collector's self-pair, or an operator via the portal). Pairing-flow
+      // device creation is logged at the consumePairing site (admin/pairing.ts).
+      log.info(
+        `Device ${adopted ? "reclaimed" : "created"}: ${name} (${kind}) id=${result.device.id} scopes=[${scopes.join(",")}] tokenId=${result.tokenId}`,
+      );
+      statusCache.bump();
+      return c.json({
+        device: result.device,
+        tokenId: result.tokenId,
+        token: result.token,
         scopes,
-        capabilities: (capabilities ?? {}) as DeviceCapability,
-        onlineDeviceIds: connectedDeviceIds(),
+        ...(adopted ? { reclaimed: true } : {}),
       });
-    } catch (err) {
-      throw new BadRequestError((err as Error).message);
-    }
-    if (result.outcome === "name-taken") {
-      return c.json(
-        {
-          code: "DEVICE_NAME_TAKEN",
-          error:
-            result.kind === kind
-              ? `a device named "${name}" already exists`
-              : `the name "${name}" belongs to a ${result.kind} device — pick a different name, or forget that device first`,
-        },
-        409,
-      );
-    }
-    if (result.outcome === "online") {
-      return c.json(
-        {
-          code: "DEVICE_ONLINE",
-          error: `the revoked device named "${name}" still holds a connection — disconnect it before registering again`,
-        },
-        409,
-      );
-    }
-    const adopted = result.outcome === "adopted";
-    // Any socket still authenticated with a credential this adoption deleted
-    // is evicted before the new one leaves the gateway.
-    if (adopted) wsServer?.disconnectDevice(result.device.id);
-    // Audit trail for direct device registration (typically the local
-    // collector's self-pair, or an operator via the portal). Pairing-flow
-    // device creation is logged at the consumePairing site (admin/pairing.ts).
-    log.info(
-      `Device ${adopted ? "reclaimed" : "created"}: ${name} (${kind}) id=${result.device.id} scopes=[${scopes.join(",")}] tokenId=${result.tokenId}`,
-    );
-    statusCache.bump();
-    return c.json({
-      device: result.device,
-      tokenId: result.tokenId,
-      token: result.token,
-      scopes,
-      ...(adopted ? { reclaimed: true } : {}),
-    });
-  });
+    },
+  );
 
   app.delete("/admin/devices/pair", scope.admin(), validateJson(revokePairingBody), async (c) =>
     c.json({ revoked: await w.revokePairing(c.req.valid("json").pairingCode) }),
@@ -603,119 +611,131 @@ export function mountDeviceRoutes(app: RouteApp, deps: AdminRoutesDeps): void {
     },
   );
 
-  app.post("/admin/devices/pair", scope.admin(), validateJson(createPairingBody), async (c) => {
-    const {
-      name,
-      repairDeviceId,
-      kind,
-      scopes: requestedScopes,
-      ttlMs,
-      selfEmails,
-      selfPhones,
-      accessLevelId,
-    } = c.req.valid("json");
-    // Omitted, the pairing carries the kind's canonical grant; a caller that
-    // wants a different one states it.
-    const scopes = requestedScopes ?? defaultScopesForDeviceKind(kind);
-    if (kind === "agent" && (scopes.length !== 1 || scopes[0] !== SCOPE_SUBSCRIPTIONS_RECEIVE)) {
-      throw new BadRequestError(
-        `agent pairing requires exactly the ${SCOPE_SUBSCRIPTIONS_RECEIVE} scope`,
-      );
-    }
-    if (!scopesAllowedForDeviceKind(kind, scopes)) throw new BadRequestError(INTEGRATION_SCOPES);
-    // An integration is named for what it is, not after the host it runs on:
-    // several can share a host, beside that host's own CLI.
-    if (kind === "integration" && !repairDeviceId && !name?.trim()) {
-      throw new BadRequestError("name the integration when pairing it");
-    }
-    // Which access level an integration answers under is an access decision,
-    // made from a portal session like every other one; a code minted with a
-    // token carries none, and the integration's questions are refused until the
-    // operator chooses.
-    if (accessLevelId !== undefined) {
-      if (kind !== "integration") {
-        throw new BadRequestError("only an integration is put on an access level");
-      }
-      if (c.get("auth").authMethod !== "portal-session") {
-        throw new ForbiddenError("an integration's access level is chosen from a portal session");
-      }
-      if (!accessService.levelCanAnswer(accessLevelId)) {
-        throw new BadRequestError("that access level cannot answer questions");
-      }
-    }
-    // A repair pairing names the exact row it will land on. Redemption pins
-    // the adoption to it, so identity — the device id every source, membership
-    // and cursor hangs off — survives the credential rotation. The target need
-    // not be revoked: redeeming the code rotates whatever credentials the
-    // device holds, which is how an operator replaces a lost or leaked one.
-    // Redemption still refuses a target holding a live socket unless the
-    // redeeming host proves, with a credential of that device, that it is the
-    // installation behind the socket; any other host has to wait for the
-    // device to stop or be revoked.
-    //
-    // Portal sessions are excluded: a portal login consumes its code through
-    // its own path, which resolves the row by install identity and never
-    // reads the repair target, so a bound code would be silently ignored.
-    const repairTargetId = repairDeviceId ? tryDeviceId(repairDeviceId) : null;
-    if (repairDeviceId && !repairTargetId) throw new BadRequestError("invalid repair device id");
-    if (repairTargetId) {
-      if (kind === "portal") {
-        throw new BadRequestError("portal sessions cannot be repaired; mint a fresh pairing code");
-      }
-      const repairTarget = deviceService.getById(repairTargetId);
-      if (!repairTarget) throw new NotFoundError("repair device not found");
-      if (repairTarget.kind !== kind) {
+  app.post(
+    "/admin/devices/pair",
+    scope.admin(),
+    requireStepUp(),
+    validateJson(createPairingBody),
+    async (c) => {
+      const {
+        name,
+        repairDeviceId,
+        kind,
+        scopes: requestedScopes,
+        ttlMs,
+        selfEmails,
+        selfPhones,
+        accessLevelId,
+      } = c.req.valid("json");
+      // Omitted, the pairing carries the kind's canonical grant; a caller that
+      // wants a different one states it.
+      const scopes = requestedScopes ?? defaultScopesForDeviceKind(kind);
+      if (kind === "agent" && (scopes.length !== 1 || scopes[0] !== SCOPE_SUBSCRIPTIONS_RECEIVE)) {
         throw new BadRequestError(
-          `repair target is a ${repairTarget.kind} device, not a ${kind} device`,
+          `agent pairing requires exactly the ${SCOPE_SUBSCRIPTIONS_RECEIVE} scope`,
         );
       }
-      if (name?.trim() && name.trim() !== repairTarget.name) {
-        throw new BadRequestError("repair pairing name must match the selected device");
+      if (!scopesAllowedForDeviceKind(kind, scopes)) throw new BadRequestError(INTEGRATION_SCOPES);
+      // An integration is named for what it is, not after the host it runs on:
+      // several can share a host, beside that host's own CLI.
+      if (kind === "integration" && !repairDeviceId && !name?.trim()) {
+        throw new BadRequestError("name the integration when pairing it");
       }
-    }
+      // Which access level an integration answers under is an access decision,
+      // made from a portal session like every other one; a code minted with a
+      // token carries none, and the integration's questions are refused until the
+      // operator chooses.
+      if (accessLevelId !== undefined) {
+        if (kind !== "integration") {
+          throw new BadRequestError("only an integration is put on an access level");
+        }
+        if (c.get("auth").authMethod !== "portal-session") {
+          throw new ForbiddenError("an integration's access level is chosen from a portal session");
+        }
+        if (!accessService.levelCanAnswer(accessLevelId)) {
+          throw new BadRequestError("that access level cannot answer questions");
+        }
+      }
+      // A repair pairing names the exact row it will land on. Redemption pins
+      // the adoption to it, so identity — the device id every source, membership
+      // and cursor hangs off — survives the credential rotation. The target need
+      // not be revoked: redeeming the code rotates whatever credentials the
+      // device holds, which is how an operator replaces a lost or leaked one.
+      // Redemption still refuses a target holding a live socket unless the
+      // redeeming host proves, with a credential of that device, that it is the
+      // installation behind the socket; any other host has to wait for the
+      // device to stop or be revoked.
+      //
+      // Portal sessions are excluded: a portal login consumes its code through
+      // its own path, which resolves the row by install identity and never
+      // reads the repair target, so a bound code would be silently ignored.
+      const repairTargetId = repairDeviceId ? tryDeviceId(repairDeviceId) : null;
+      if (repairDeviceId && !repairTargetId) throw new BadRequestError("invalid repair device id");
+      if (repairTargetId) {
+        if (kind === "portal") {
+          throw new BadRequestError(
+            "portal sessions cannot be repaired; mint a fresh pairing code",
+          );
+        }
+        const repairTarget = deviceService.getById(repairTargetId);
+        if (!repairTarget) throw new NotFoundError("repair device not found");
+        if (repairTarget.kind !== kind) {
+          throw new BadRequestError(
+            `repair target is a ${repairTarget.kind} device, not a ${kind} device`,
+          );
+        }
+        if (name?.trim() && name.trim() !== repairTarget.name) {
+          throw new BadRequestError("repair pairing name must match the selected device");
+        }
+      }
 
-    // Optional inline self annotation. Reuses the exact validation /
-    // normalization the PATCH /admin/devices/:id (set-self) path uses, so a
-    // staged-at-pairing annotation and a post-pair one land identically:
-    // emails normalizeEmail-d, phones normalizePhone-d to E.164, an
-    // unparseable phone rejected with 400 before the code is minted.
-    const selfInfo = buildSelfInfoPatch({ selfEmails, selfPhones });
+      // Optional inline self annotation. Reuses the exact validation /
+      // normalization the PATCH /admin/devices/:id (set-self) path uses, so a
+      // staged-at-pairing annotation and a post-pair one land identically:
+      // emails normalizeEmail-d, phones normalizePhone-d to E.164, an
+      // unparseable phone rejected with 400 before the code is minted.
+      const selfInfo = buildSelfInfoPatch({ selfEmails, selfPhones });
 
-    // Body-supplied ttlMs wins. When omitted, fall back to the
-    // configured default (gateway.timings.pairingTtl) so an operator
-    // can lengthen pairing windows without code changes.
-    const effectiveTtl = ttlMs ?? pairingTtlMs;
-    // Pass the gateway's TLS leaf-cert fingerprint so the PendingPairing
-    // carries it back to the CLI, which folds it into the V3 QR payload.
-    // iOS pins the fingerprint on first connect (TOFU). Absent on tests
-    // that skip TLS wiring; the CLI falls back to V2 in that case.
-    const pending = await w.createPairing({
-      name,
-      kind,
-      scopes,
-      ttlMs: effectiveTtl,
-      selfEmails: selfInfo.selfEmails,
-      selfPhones: selfInfo.selfPhones,
-      ...(repairTargetId ? { repairDeviceId: repairTargetId } : {}),
-      ...(accessLevelId !== undefined ? { accessLevelId } : {}),
-      tlsFingerprintSha256:
-        typeof tlsFingerprintSha256 === "function" ? tlsFingerprintSha256() : tlsFingerprintSha256,
-    });
-    log.info(`Pairing code issued: ${name || "(unnamed)"} (${kind}) scopes=[${scopes.join(",")}]`);
-    // The extension cannot pin a certificate or click through a warning, so a
-    // browser code says whether Chrome will trust the one served now. The
-    // code is still issued: a browser may trust an authority Omnesis cannot see.
-    const tlsSnapshot = kind === "browser" ? deps.tlsLifecycle?.snapshot() : undefined;
-    if (tlsSnapshot) {
-      return c.json({
-        ...pending,
-        browserCertificate: browserExtensionTrust(tlsSnapshot, {
-          inContainer: deps.inContainer === true,
-        }),
+      // Body-supplied ttlMs wins. When omitted, fall back to the
+      // configured default (gateway.timings.pairingTtl) so an operator
+      // can lengthen pairing windows without code changes.
+      const effectiveTtl = ttlMs ?? pairingTtlMs;
+      // Pass the gateway's TLS leaf-cert fingerprint so the PendingPairing
+      // carries it back to the CLI, which folds it into the V3 QR payload.
+      // iOS pins the fingerprint on first connect (TOFU). Absent on tests
+      // that skip TLS wiring; the CLI falls back to V2 in that case.
+      const pending = await w.createPairing({
+        name,
+        kind,
+        scopes,
+        ttlMs: effectiveTtl,
+        selfEmails: selfInfo.selfEmails,
+        selfPhones: selfInfo.selfPhones,
+        ...(repairTargetId ? { repairDeviceId: repairTargetId } : {}),
+        ...(accessLevelId !== undefined ? { accessLevelId } : {}),
+        tlsFingerprintSha256:
+          typeof tlsFingerprintSha256 === "function"
+            ? tlsFingerprintSha256()
+            : tlsFingerprintSha256,
       });
-    }
-    return c.json(pending);
-  });
+      log.info(
+        `Pairing code issued: ${name || "(unnamed)"} (${kind}) scopes=[${scopes.join(",")}]`,
+      );
+      // The extension cannot pin a certificate or click through a warning, so a
+      // browser code says whether Chrome will trust the one served now. The
+      // code is still issued: a browser may trust an authority Omnesis cannot see.
+      const tlsSnapshot = kind === "browser" ? deps.tlsLifecycle?.snapshot() : undefined;
+      if (tlsSnapshot) {
+        return c.json({
+          ...pending,
+          browserCertificate: browserExtensionTrust(tlsSnapshot, {
+            inContainer: deps.inContainer === true,
+          }),
+        });
+      }
+      return c.json(pending);
+    },
+  );
 
   app.get("/admin/network-identities", scope.admin(), async (c) => {
     const identities = await pairingQrService.networkIdentities();

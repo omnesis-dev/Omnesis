@@ -37,8 +37,10 @@ function toCoreData(date: Date): number {
 function createTestDb(dbPath: string): Db {
   const db = new Database(dbPath);
 
-  db.prepare(
-    `
+  try {
+    db.transaction(() => {
+      db.prepare(
+        `
     CREATE TABLE ZABCDRECORD (
       Z_PK INTEGER PRIMARY KEY,
       Z_ENT INTEGER DEFAULT 22,
@@ -56,10 +58,10 @@ function createTestDb(dbPath: string): Db {
       ZCONTAINERWHERECONTACTISME INTEGER
     )
   `,
-  ).run();
+      ).run();
 
-  db.prepare(
-    `
+      db.prepare(
+        `
     CREATE TABLE ZABCDEMAILADDRESS (
       Z_PK INTEGER PRIMARY KEY,
       Z_ENT INTEGER DEFAULT 11,
@@ -76,10 +78,10 @@ function createTestDb(dbPath: string): Db {
       ZUNIQUEID TEXT
     )
   `,
-  ).run();
+      ).run();
 
-  db.prepare(
-    `
+      db.prepare(
+        `
     CREATE TABLE ZABCDPHONENUMBER (
       Z_PK INTEGER PRIMARY KEY,
       Z_ENT INTEGER DEFAULT 15,
@@ -100,10 +102,10 @@ function createTestDb(dbPath: string): Db {
       ZUNIQUEID TEXT
     )
   `,
-  ).run();
+      ).run();
 
-  db.prepare(
-    `
+      db.prepare(
+        `
     CREATE TABLE ZABCDDELETEDRECORDLOG (
       Z_PK INTEGER PRIMARY KEY,
       Z_ENT INTEGER DEFAULT 10,
@@ -113,13 +115,13 @@ function createTestDb(dbPath: string): Db {
       ZUNIQUEID TEXT
     )
   `,
-  ).run();
+      ).run();
 
-  // Optional auxiliary tables — apple-contacts-missing-fields fix joins
-  // these to surface address / URL / social / date fields. The source uses
-  // safeSelect so a test DB that drops these tables still works.
-  db.prepare(
-    `
+      // Optional auxiliary tables — apple-contacts-missing-fields fix joins
+      // these to surface address / URL / social / date fields. The source uses
+      // safeSelect so a test DB that drops these tables still works.
+      db.prepare(
+        `
     CREATE TABLE ZABCDPOSTALADDRESS (
       Z_PK INTEGER PRIMARY KEY,
       ZOWNER INTEGER,
@@ -132,10 +134,10 @@ function createTestDb(dbPath: string): Db {
       ZORDERINGINDEX INTEGER DEFAULT 0
     )
   `,
-  ).run();
+      ).run();
 
-  db.prepare(
-    `
+      db.prepare(
+        `
     CREATE TABLE ZABCDURLADDRESS (
       Z_PK INTEGER PRIMARY KEY,
       ZOWNER INTEGER,
@@ -144,10 +146,10 @@ function createTestDb(dbPath: string): Db {
       ZORDERINGINDEX INTEGER DEFAULT 0
     )
   `,
-  ).run();
+      ).run();
 
-  db.prepare(
-    `
+      db.prepare(
+        `
     CREATE TABLE ZABCDSOCIALPROFILE (
       Z_PK INTEGER PRIMARY KEY,
       ZOWNER INTEGER,
@@ -158,10 +160,10 @@ function createTestDb(dbPath: string): Db {
       ZORDERINGINDEX INTEGER DEFAULT 0
     )
   `,
-  ).run();
+      ).run();
 
-  db.prepare(
-    `
+      db.prepare(
+        `
     CREATE TABLE ZABCDDATE (
       Z_PK INTEGER PRIMARY KEY,
       ZOWNER INTEGER,
@@ -170,7 +172,12 @@ function createTestDb(dbPath: string): Db {
       ZORDERINGINDEX INTEGER DEFAULT 0
     )
   `,
-  ).run();
+      ).run();
+    })();
+  } catch (error) {
+    db.close();
+    throw error;
+  }
 
   return db;
 }
@@ -1194,16 +1201,21 @@ describe("AppleContactsSource — partial address-book reads", () => {
     rmSync(dbPath, { force: true });
     const db = createTestDb(dbPath);
     const when = new Date(Date.now() - 86400000);
-    for (const e of entries) {
-      insertContact(db, e.pk, {
-        firstName: e.name,
-        uniqueId: e.uniqueId,
-        creationDate: when,
-        modificationDate: when,
-      });
-      insertEmail(db, e.pk, e.pk, `${e.name.toLowerCase()}@example.com`);
+    try {
+      db.transaction(() => {
+        for (const e of entries) {
+          insertContact(db, e.pk, {
+            firstName: e.name,
+            uniqueId: e.uniqueId,
+            creationDate: when,
+            modificationDate: when,
+          });
+          insertEmail(db, e.pk, e.pk, `${e.name.toLowerCase()}@example.com`);
+        }
+      })();
+    } finally {
+      db.close();
     }
-    db.close();
   }
 
   beforeEach(() => {

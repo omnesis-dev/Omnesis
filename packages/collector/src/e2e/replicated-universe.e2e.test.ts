@@ -235,6 +235,47 @@ describe("replicated universe — two hosts per source", () => {
       expect(firstDocs).toBe(3);
       expect(secondSessions).not.toBe(firstSessions);
 
+      // In place first: nothing the Mac contributed goes, and reading the
+      // source again lands on the records and rows it already has.
+      const recordIdsIn = (streamId: string) =>
+        db
+          .prepare<[string, string], { id: string }>(
+            "SELECT id FROM documents WHERE source_id = ? AND stream_id = ? ORDER BY id",
+          )
+          .all(SCREEN_TIME, streamId)
+          .map((row) => row.id);
+      const lastSyncedOf = (deviceId: string) =>
+        db
+          .prepare<[string, string], { last_synced_at: string | null }>(
+            "SELECT last_synced_at FROM sync_state WHERE source_id = ? AND device_id = ?",
+          )
+          .get(SCREEN_TIME, deviceId)?.last_synced_at;
+      const firstRecordIds = recordIdsIn(first.deviceId);
+      const secondSynced = lastSyncedOf(second.deviceId);
+      expect(
+        await harness.gatewayJson(`/admin/sources/${encodeURIComponent(SCREEN_TIME)}/resync`, {
+          method: "POST",
+          body: JSON.stringify({ deviceId: first.deviceId, mode: "in-place" }),
+        }),
+      ).toEqual({
+        ok: true,
+        mode: "in-place",
+        scope: "stream",
+        deviceIds: [],
+        restarting: [],
+        disabled: [],
+        skipped: [],
+      });
+      expect(lastSyncedOf(first.deviceId), "the Mac's cursor is back at the start").toBeNull();
+      expect(lastSyncedOf(second.deviceId), "its sibling's is untouched").toBe(secondSynced);
+      expect(recordIdsIn(first.deviceId)).toEqual(firstRecordIds);
+      expect(await analyticsIn("screen_time_sessions", first.deviceId)).toBe(firstSessions);
+      await harness.triggerSyncAndWait(SCREEN_TIME, 90_000, first);
+      expect(lastSyncedOf(first.deviceId)).not.toBeNull();
+      expect(recordIdsIn(first.deviceId)).toEqual(firstRecordIds);
+      expect(await analyticsIn("screen_time_sessions", first.deviceId)).toBe(firstSessions);
+      expect(await analyticsIn("screen_time_daily", first.deviceId)).toBe(firstDaily);
+
       expect(
         await harness.gatewayJson(`/admin/sources/${encodeURIComponent(SCREEN_TIME)}/resync`, {
           method: "POST",
@@ -242,6 +283,7 @@ describe("replicated universe — two hosts per source", () => {
         }),
       ).toEqual({
         ok: true,
+        mode: "from-scratch",
         scope: "stream",
         deviceIds: [],
         restarting: [],

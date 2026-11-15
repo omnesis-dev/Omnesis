@@ -138,6 +138,7 @@ test("parent aliases and a configured owner leaf symlink cannot redirect exports
   const actual = join(real, "owner.key"),
     ownerLink = join(directory, "owner-link");
   await writeFile(actual, f.owner.privateKey);
+  const originalIdentity = fs.lstatSync(actual, { bigint: true });
   await symlink(actual, ownerLink);
   const env = {
     OMNESIS_CLOUD_RELAY_URL: "https://control.example.test",
@@ -166,7 +167,7 @@ test("parent aliases and a configured owner leaf symlink cannot redirect exports
   const outputLeaf = join(directory, "public-export-link");
   await symlink(actual, outputLeaf);
   if (process.platform === "win32") {
-    // A private Windows input must be canonical; neither input nor output reparse points authorize publication.
+    // Windows private inputs must be canonical; replacing an output entry never follows its target.
     await expect(
       runRelayRecoveryCommand("recovery-request", {
         ...env,
@@ -174,14 +175,15 @@ test("parent aliases and a configured owner leaf symlink cannot redirect exports
       }),
     ).rejects.toMatchObject({ code: "EPRIVATE" });
     expect(fs.lstatSync(outputLeaf).isSymbolicLink()).toBe(true);
-    await expect(
-      runRelayRecoveryCommand("recovery-request", {
-        ...env,
-        OMNESIS_CLOUD_RELAY_OWNER_KEY_FILE: actual,
-        OMNESIS_CLOUD_RELAY_RECOVERY_OUTPUT_FILE: outputLeaf,
-      }),
-    ).rejects.toMatchObject({ code: "EPRIVATE" });
-    expect(fs.lstatSync(outputLeaf).isSymbolicLink()).toBe(true);
+    await runRelayRecoveryCommand("recovery-request", {
+      ...env,
+      OMNESIS_CLOUD_RELAY_OWNER_KEY_FILE: actual,
+      OMNESIS_CLOUD_RELAY_RECOVERY_OUTPUT_FILE: outputLeaf,
+    });
+    expect(fs.lstatSync(outputLeaf).isSymbolicLink()).toBe(false);
+    expect(fs.lstatSync(outputLeaf).isFile()).toBe(true);
+    expect(core.inspectWindowsPrivatePathSync(outputLeaf, "file").private).toBe(true);
+    expect(JSON.parse(await readFile(outputLeaf, "utf8")).ownerPublicKey).toBe(f.owner.publicKey);
     const safeOutput = join(directory, "canonical-export.json");
     await runRelayRecoveryCommand("recovery-request", {
       ...env,
@@ -197,6 +199,13 @@ test("parent aliases and a configured owner leaf symlink cannot redirect exports
     expect(JSON.parse(await readFile(outputLeaf, "utf8")).ownerPublicKey).toBe(f.owner.publicKey);
   }
   expect(await readFile(actual, "utf8")).toBe(f.owner.privateKey);
+  expect(await readFile(ownerLink, "utf8")).toBe(f.owner.privateKey);
+  expect(fs.lstatSync(ownerLink).isSymbolicLink()).toBe(true);
+  const finalIdentity = fs.lstatSync(actual, { bigint: true });
+  expect([finalIdentity.dev, finalIdentity.ino]).toEqual([
+    originalIdentity.dev,
+    originalIdentity.ino,
+  ]);
 });
 
 test("signing outputs preserve key/public/input files through aliases while deliberate receipt/policy publication remains possible", async () => {

@@ -19,9 +19,14 @@
  * `exit` handler alone would miss the `timeout` case the leak came from.
  */
 
-import { requestChildShutdown, WindowsProcessTree } from "@omnesis/core";
+import {
+  requestChildShutdown,
+  WindowsProcessTree,
+  ownedProcessCleanupReceipt,
+} from "@omnesis/core";
 import { waitForWindowsTreeExit } from "./windows-tree-drain.js";
 import type { ChildProcess } from "node:child_process";
+import { getOwnedE2EProcess, type OwnedE2EProcess } from "./e2e-owned-process.js";
 
 /** Process-group leader PIDs of detached children still expected to be alive. */
 const liveGroups = new Set<number>();
@@ -29,10 +34,14 @@ const windowsGroups = new Map<
   number,
   { proc: ChildProcess; tree: WindowsProcessTree; timer?: NodeJS.Timeout }
 >();
+const ownedJobs = new Set<OwnedE2EProcess>();
 let installed = false;
 
 /** Best-effort: SIGKILL every registered process group, then forget them. */
 function reapAll(): void {
+  // Parent death is also fenced by the kernel Job. An exit handler cannot
+  // claim an async join; retain records until their real proof resolves.
+  for (const record of ownedJobs) record.cancel();
   for (const pid of liveGroups) {
     try {
       if (process.platform === "win32") {
@@ -78,6 +87,15 @@ function installHandlers(): void {
  */
 export function registerSubprocessGroup(proc: ChildProcess): Promise<void> {
   installHandlers();
+  const owned = getOwnedE2EProcess(proc);
+  if (owned) {
+    ownedJobs.add(owned);
+    void owned.joined.then(
+      () => ownedJobs.delete(owned),
+      () => {},
+    );
+    return owned.ready;
+  }
   const pid = proc.pid;
   if (typeof pid !== "number") return Promise.resolve();
   liveGroups.add(pid);
@@ -119,6 +137,11 @@ export function registerSubprocessGroup(proc: ChildProcess): Promise<void> {
 
 /** Stop tracking a group the harness has already killed (idempotent). */
 export function unregisterSubprocessGroup(proc: ChildProcess): void {
+  const owned = getOwnedE2EProcess(proc);
+  if (owned) {
+    if (owned.joinConfirmed) ownedJobs.delete(owned);
+    return;
+  }
   if (typeof proc.pid !== "number") return;
   const record = windowsGroups.get(proc.pid);
   if (record && record.proc !== proc) return;
@@ -243,6 +266,20 @@ async function terminateSubprocessGroup(
   proc: ChildProcess,
   opts: { initialSignal?: NodeJS.Signals; termGraceMs?: number; killGraceMs?: number } = {},
 ): Promise<void> {
+  const owned = getOwnedE2EProcess(proc);
+  if (owned) {
+    installHandlers();
+    ownedJobs.add(owned);
+    try {
+      await owned.stop(opts);
+    } catch (error) {
+      if (ownedProcessCleanupReceipt(error) !== undefined) ownedJobs.add(owned);
+      else if (owned.joinConfirmed) ownedJobs.delete(owned);
+      throw error;
+    }
+    if (owned.joinConfirmed) ownedJobs.delete(owned);
+    return;
+  }
   const initialSignal = opts.initialSignal ?? "SIGTERM";
   const termGraceMs = opts.termGraceMs ?? 5_000;
   const killGraceMs = opts.killGraceMs ?? 2_000;
@@ -302,5 +339,5 @@ export function reapAllForTest(): void {
 
 /** Test-only: how many groups are currently tracked. */
 export function liveGroupCountForTest(): number {
-  return liveGroups.size;
+  return liveGroups.size + ownedJobs.size;
 }

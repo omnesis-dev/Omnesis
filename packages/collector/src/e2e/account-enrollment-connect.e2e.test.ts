@@ -224,7 +224,16 @@ describe.skipIf(!browserReady)("connect a gateway by signing in", () => {
         expect(done.deviceEnrollment.trustedSignIns.map((pin) => pin.id)).toEqual(
           await passkeyIds(person),
         );
-        await expectText(page, `Connected as ${hostname}`, 30_000);
+        // Nothing is confirmed here yet, so the setup checklist stands in for the headline, and
+        // its last step uses the account's passkey: the portal opens the gateway's own address,
+        // signed in, to run it there.
+        await waitFor(
+          () => new URL(page.url()).hostname === hostname,
+          "the portal to open the gateway's own address",
+          30_000,
+        );
+        await expectText(page, "Finish setting up", 30_000);
+        await expectText(page, "Let your Face ID add devices", 30_000);
         // Nothing to choose first: the settings are all there, with automatic joining selected.
         await expectText(page, "What happens when a new device signs in", 30_000);
         expect(await page.getByRole("radio", { name: /^Join automatically/ }).isChecked()).toBe(

@@ -4,7 +4,7 @@
 import { createPublicKey, randomBytes } from "node:crypto";
 import { mkdir, rm } from "node:fs/promises";
 import { dirname } from "node:path";
-import { atomicWriteFileSync, cloudRelayEnabled } from "@omnesis/core";
+import { atomicWriteFileSync, cloudRelayEnabled, ownedProcessCleanupReceipt } from "@omnesis/core";
 import { z } from "zod";
 import {
   ManagedAccountBrowser,
@@ -18,6 +18,7 @@ import { readPrivateJson } from "./google-credentials.js";
 import { installationRelayUrl } from "./installation-relay.js";
 import { accountId, googleIdentityProvider, type IdentityProvider } from "./identity.js";
 import { CloudRelayManagementFailure } from "./management.js";
+import { RelayError } from "./tunnels.js";
 import { EnrollmentChallenges } from "./enrollment-challenges.js";
 import {
   GatewaySignInVerifier,
@@ -158,6 +159,31 @@ const callbackSchema = z
   })
   .strict();
 
+/**
+ * A passkey sign-in on this gateway's page with a passkey the linked account doesn't list. Most
+ * often a passkey of an older, deleted account that the browser still offers. Only thrown when the
+ * gateway is sure: it read the account's listing, and never pinned or confirmed that passkey.
+ */
+export class PasskeyNotOnAccount extends RelayError {
+  constructor() {
+    super(401, "That passkey isn't on the Omnesis account this gateway is linked to");
+  }
+}
+
+/** Whether `id` is a passkey neither the account's listing nor this gateway knows. */
+function unknownPasskey(
+  record: Extract<Record, { linked: true }>,
+  listing: { passkeys: readonly { id: string }[] },
+  id: string,
+): boolean {
+  return (
+    !listing.passkeys.some((value) => value.id === id) &&
+    ![...record.trustedSignIns, ...record.confirmedSignIns].some(
+      (value) => value.type === "passkey" && value.id === id,
+    )
+  );
+}
+
 /** What a page or app needs to run a passkey ceremony on this gateway (`gateway-passkey`). */
 export interface GatewayPasskeyCeremony {
   purpose: GatewayPasskeyPurpose;
@@ -172,6 +198,12 @@ export interface GatewayPasskeyCeremony {
   /** `gatewayPasskeyChallenge(purpose, origin, challenge, binding)`. */
   webauthnChallenge: string;
   expiresAt: number;
+  /**
+   * The passkeys this ceremony would accept, so the browser offers only those (WebAuthn
+   * `allowCredentials`). Only a hint for the passkey prompt: the gateway still checks every
+   * assertion against a key it chose itself. Absent when it can't say, and the browser offers any.
+   */
+  allowCredentials?: string[];
 }
 
 /** Account discovery is independent of transport ownership and existing paired-device credentials. */
@@ -276,6 +308,7 @@ export class GatewayAccountLink {
       this.bound =
         this.record.linked && this.sameBinding(this.record.binding, await this.binding());
     } catch (error) {
+      if (ownedProcessCleanupReceipt(error) !== undefined) throw error;
       if (!(error && typeof error === "object" && "code" in error && error.code === "ENOENT")) {
         this.activated = true;
         this.bound = false;
@@ -320,6 +353,7 @@ export class GatewayAccountLink {
     origin: string,
     issued: { challenge: string; expiresAt: number },
     binding: string,
+    allowCredentials?: string[],
   ): GatewayPasskeyCeremony {
     return {
       purpose,
@@ -329,7 +363,25 @@ export class GatewayAccountLink {
       binding,
       webauthnChallenge: gatewayPasskeyChallenge(purpose, origin, issued.challenge, binding),
       expiresAt: issued.expiresAt,
+      ...(allowCredentials?.length ? { allowCredentials } : {}),
     };
+  }
+  /** The ids of the passkeys the owner confirmed here: the only ones approvals and step-ups take. */
+  private confirmedPasskeys(): string[] {
+    return this.confirmedSignIns().flatMap((value) => (value.type === "passkey" ? [value.id] : []));
+  }
+  /**
+   * The ids of the passkeys a device may sign in with on this gateway's page: the confirmed ones,
+   * then the ones pinned here. A hint for the browser's prompt only (`allowCredentials`).
+   */
+  private knownPasskeys(): string[] {
+    const pinned =
+      this.record?.linked && this.verifiedAccountId() !== undefined
+        ? this.record.trustedSignIns.flatMap((value) =>
+            value.type === "passkey" ? [value.id] : [],
+          )
+        : [];
+    return [...new Set([...this.confirmedPasskeys(), ...pinned])];
   }
   private pinBinding(record: Extract<Record, { linked: true }>): string {
     return gatewayPasskeyPinBinding({
@@ -354,6 +406,19 @@ export class GatewayAccountLink {
     );
   }
   /**
+   * `passkeyConfirmation`, naming the passkeys the account lists so the browser offers only those.
+   * The listing only steers the prompt: confirming still checks the assertion against it.
+   */
+  async passkeyConfirmationOptions(): Promise<GatewayPasskeyCeremony> {
+    const ceremony = this.passkeyConfirmation();
+    const listing = await this.browser.credentials?.(this.abort.signal).catch(() => undefined);
+    const record = this.requireLinked();
+    if (!listing || (listing.accountId !== undefined && listing.accountId !== record.accountId))
+      return ceremony;
+    const allowCredentials = listing.passkeys.map((value) => value.id);
+    return allowCredentials.length > 0 ? { ...ceremony, allowCredentials } : ceremony;
+  }
+  /**
    * Confirms the passkey that signed `input` on this gateway's page as the owner's. Its key comes
    * from the account's listing: a relay that lists a key of its own for this id only makes the
    * assertion fail, since the private key stays in the owner's authenticator. Confirming is an
@@ -368,6 +433,10 @@ export class GatewayAccountLink {
     const listing = await this.browser.credentials?.(this.abort.signal).catch(() => undefined);
     if (!listing || (listing.accountId !== undefined && listing.accountId !== record.accountId))
       throw new CloudRelayManagementFailure(503, "account-unavailable");
+    // A passkey the account doesn't list, and this gateway never knew, is most likely left over
+    // from an older account: said apart from a signature that fails, so the page can say so.
+    if (unknownPasskey(record, listing, parsed.data.credential.id))
+      throw new CloudRelayManagementFailure(403, "passkey-not-on-account");
     const verified = await this.verifier.verifyGatewayPasskey(parsed.data, {
       purpose: "pin-passkey",
       challenge: parsed.data.challenge,
@@ -410,6 +479,13 @@ export class GatewayAccountLink {
       this.abort.signal,
       current,
     );
+  }
+  /**
+   * Whether a held request can be approved with a passkey on this gateway's page: a passkey is
+   * confirmed here, the gateway has an origin of its own, and no certificate incident holds it.
+   */
+  passkeyApproval(): boolean {
+    return this.confirmedPasskeys().length > 0 && this.gatewayOrigin() !== undefined;
   }
   verifiedAccountId(): string | undefined {
     return this.bound &&
@@ -456,10 +532,32 @@ export class GatewayAccountLink {
               origin,
               this.ceremonies.issue("approve-request", binding),
               binding,
+              this.confirmedPasskeys(),
             )
           : undefined;
       },
-      verifyApproval: (proof, binding) => this.verifyApproval(proof, binding),
+      passkeyApproval: () => this.passkeyApproval(),
+      accountPasskey: () => this.knownPasskeys().length > 0,
+      signInPasskeys: () => this.knownPasskeys(),
+      verifyApproval: (proof, binding) => this.verifyConfirmed("approve-request", proof, binding),
+      stepUpRequired: () => this.confirmedSignIns().some((value) => value.type === "passkey"),
+      stepUpCeremony: (binding) => {
+        const origin = this.gatewayOrigin();
+        return origin
+          ? this.ceremony(
+              "step-up",
+              origin,
+              this.ceremonies.issue("step-up", binding),
+              binding,
+              this.confirmedPasskeys(),
+            )
+          : undefined;
+      },
+      // While a rogue certificate may exist for this name, no step-up counts, whatever its origin:
+      // the owner acts on the gateway itself until the hold is acknowledged.
+      verifyStepUp: async (proof, binding) =>
+        !this.gatewayOriginAssertionsRefused() &&
+        (await this.verifyConfirmed("step-up", proof, binding)),
       gatewayPasskey: () => {
         const origin = this.gatewayOrigin();
         return origin
@@ -493,8 +591,10 @@ export class GatewayAccountLink {
     let publicKey = confirmed?.publicKey ?? pinned?.publicKey;
     if (!publicKey) {
       const listing = await this.browser.credentials?.(this.abort.signal).catch(() => undefined);
-      if (listing?.accountId === undefined || listing.accountId === record.accountId)
-        publicKey = listing?.passkeys.find((value) => value.id === id)?.publicKey;
+      if (listing && (listing.accountId === undefined || listing.accountId === record.accountId)) {
+        if (unknownPasskey(record, listing, id)) throw new PasskeyNotOnAccount();
+        publicKey = listing.passkeys.find((value) => value.id === id)?.publicKey;
+      }
     }
     if (!publicKey) return undefined;
     const verified = await this.verifier.verifyGatewayPasskey(proof, {
@@ -522,16 +622,21 @@ export class GatewayAccountLink {
     };
   }
   /**
-   * Whether a passkey the owner confirmed here approved a held request on this gateway's page.
-   * Only a confirmed key counts: a key the relay lists could be the relay's own.
+   * Whether a passkey the owner confirmed here signed a ceremony on this gateway's page: approving
+   * a held request, or stepping up for one administrative action. Only a confirmed key counts: a
+   * key the relay lists could be the relay's own. Spends the ceremony's challenge.
    */
-  private async verifyApproval(input: unknown, binding: string): Promise<boolean> {
+  private async verifyConfirmed(
+    purpose: "approve-request" | "step-up",
+    input: unknown,
+    binding: string,
+  ): Promise<boolean> {
     const record = this.record?.linked && this.verifiedAccountId() ? this.record : undefined;
     const parsed = gatewayPasskeySignInProofSchema.safeParse(input);
     if (
       !record ||
       !parsed.success ||
-      !this.ceremonies.take("approve-request", parsed.data.challenge, binding)
+      !this.ceremonies.take(purpose, parsed.data.challenge, binding)
     )
       return false;
     const confirmed = (id: string) =>
@@ -540,7 +645,7 @@ export class GatewayAccountLink {
           value.type === "passkey" && value.id === id,
       );
     const verified = await this.verifier.verifyGatewayPasskey(parsed.data, {
-      purpose: "approve-request",
+      purpose,
       challenge: parsed.data.challenge,
       binding,
       key: (id) => confirmed(id),

@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { createServer, type Server } from "node:net";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
-import { afterEach, describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import {
   dockerReinstallCommand,
   explainDeniedSocket,
@@ -56,6 +56,19 @@ function compose({
     "",
   ].join("\n");
 }
+
+test("Windows never reports a fabricated Unix group for an existing endpoint", () => {
+  const root = mkdtempSync(join(tmpdir(), "omnesis-socket-gid-"));
+  const path = join(root, "owned-endpoint");
+  writeFileSync(path, "invented endpoint");
+  try {
+    vi.stubGlobal("process", { ...process, platform: "win32" });
+    expect(nodeDockerSocketProbeDeps.socketGid(path)).toBeNull();
+  } finally {
+    vi.unstubAllGlobals();
+    rmSync(root, { recursive: true, force: true });
+  }
+});
 
 describe("withUpdaterGroup", () => {
   test("replaces the updater's group, and nothing else", () => {

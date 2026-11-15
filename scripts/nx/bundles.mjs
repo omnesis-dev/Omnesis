@@ -131,6 +131,7 @@ export const bundles = {
       "advanced.e2e.test.ts",
       "analytics-row-key.e2e.test.ts",
       "cli.e2e.test.ts",
+      "collector-parent-shutdown.e2e.test.ts",
       "sources-add-cli.e2e.test.ts",
       "declared-edges.e2e.test.ts",
       "fleet-update.e2e.test.ts",

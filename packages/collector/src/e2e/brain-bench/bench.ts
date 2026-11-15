@@ -233,6 +233,7 @@ export class BrainBench {
   private readonly entailmentServer: VerdictServer | null;
   private readonly decisionServer: DecisionServer | null;
   private readonly virtualClock: boolean;
+  private readonly gatewayEnvironment: Record<string, string>;
   readonly initialInventory: InitialInventoryReport | null;
   private db: Database.Database | null = null;
 
@@ -243,6 +244,7 @@ export class BrainBench {
     entailment: VerdictServer | null;
     decision: DecisionServer | null;
     virtualClock: boolean;
+    gatewayEnvironment: Record<string, string>;
     initialInventory: InitialInventoryReport | null;
   }) {
     this.harness = init.harness;
@@ -251,6 +253,10 @@ export class BrainBench {
     this.entailmentServer = init.entailment;
     this.decisionServer = init.decision;
     this.virtualClock = init.virtualClock;
+    this.gatewayEnvironment = init.gatewayEnvironment;
+    this.lastClockSet = init.virtualClock
+      ? Number(init.gatewayEnvironment.OMNESIS_BRIEFS_VIRTUAL_CLOCK_INITIAL_MS)
+      : null;
     this.initialInventory = init.initialInventory;
     this.obs = new BrainObs(init.harness);
   }
@@ -268,8 +274,6 @@ export class BrainBench {
       throw new Error('BrainBench: `agent: "replay"` serves the cassettes of `cassetteDir`');
     }
     const virtualClock = opts.clock === "virtual";
-    if (virtualClock) process.env.OMNESIS_BRIEFS_VIRTUAL_CLOCK = "1";
-    else delete process.env.OMNESIS_BRIEFS_VIRTUAL_CLOCK;
 
     const backends: Record<string, { type: "http"; url: string }> = {};
     const assignments: Record<string, string> = {};
@@ -310,6 +314,14 @@ export class BrainBench {
       assignments.decision = `typesafe/${decision.modelId}`;
     }
 
+    const gatewayEnvironment: Record<string, string> = {
+      OMNESIS_BRIEFS_VIRTUAL_CLOCK: virtualClock ? "1" : "0",
+      ...(virtualClock ? { OMNESIS_BRIEFS_VIRTUAL_CLOCK_INITIAL_MS: String(Date.now()) } : {}),
+      ...(decision ? { OMNESIS_TYPESAFE_API_KEY: BENCH_TYPESAFE_KEY } : {}),
+      // Replayed conversation turns are paced for demos by default.
+      ...(opts.agent === "replay" ? { OMNESIS_AGENT_REPLAY_IMMEDIATE: "1" } : {}),
+      ...(opts.gatewayLogLevel ? { OMNESIS_LOG_LEVEL: opts.gatewayLogLevel } : {}),
+    };
     const harness = new SyntheticE2EHarness({
       gatewayMode: opts.experimental && !opts.initialInventory ? "experimental" : "stable",
       ...(opts.experimental && !opts.initialInventory
@@ -322,12 +334,7 @@ export class BrainBench {
       // TypeSafe is an off-host provider, so its assignment resolves only with
       // remote inference allowed; the URL policy still admits the loopback
       // stand-in either way.
-      extraGatewayEnv: {
-        ...(decision ? { OMNESIS_TYPESAFE_API_KEY: BENCH_TYPESAFE_KEY } : {}),
-        // Replayed conversation turns are paced for demos by default.
-        ...(opts.agent === "replay" ? { OMNESIS_AGENT_REPLAY_IMMEDIATE: "1" } : {}),
-        ...(opts.gatewayLogLevel ? { OMNESIS_LOG_LEVEL: opts.gatewayLogLevel } : {}),
-      },
+      extraGatewayEnv: gatewayEnvironment,
       extraInference: {
         ...opts.extraInference,
         ...(decision ? { allowRemoteInference: true, typesafeUrl: decision.endpoint } : {}),
@@ -383,6 +390,7 @@ export class BrainBench {
         entailment,
         decision,
         virtualClock,
+        gatewayEnvironment,
         initialInventory,
       });
     } catch (error) {
@@ -394,6 +402,7 @@ export class BrainBench {
         entailment,
         decision,
         virtualClock,
+        gatewayEnvironment,
         initialInventory: null,
       })
         .destroy()
@@ -441,7 +450,7 @@ export class BrainBench {
 
   // ── time ──────────────────────────────────────────────────────────────────
 
-  /** The last instant `clock.set` was asked for, so a restart can restore it. */
+  /** The bench-owned initial or explicitly set instant restored before each restart. */
   private lastClockSet: number | null = null;
 
   readonly clock = {
@@ -497,17 +506,15 @@ export class BrainBench {
   };
 
   /**
-   * Restart the gateway, restoring the virtual clock afterwards — a restart
-   * otherwise silently drops back to wall time, which reads as the engine
-   * skipping days.
+   * Restart with the saved virtual instant in place before maintenance starts.
+   * Rewinding after boot could strand admissions due at the newer boot clock.
    */
   async restartGateway(): Promise<void> {
+    if (this.virtualClock && this.lastClockSet !== null)
+      this.gatewayEnvironment.OMNESIS_BRIEFS_VIRTUAL_CLOCK_INITIAL_MS = String(this.lastClockSet);
     await this.harness.restartGateway();
     this.db?.close();
     this.db = null;
-    if (this.virtualClock && this.lastClockSet !== null) {
-      await this.clock.set(this.lastClockSet);
-    }
   }
 
   private requireVirtualClock(): void {

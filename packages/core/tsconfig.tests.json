@@ -20,7 +20,7 @@
     "noEmit": true,
     "rootDir": "."
   },
-  "include": ["src/**/*.test.ts", "src/**/*.d.ts"],
+  "include": ["src/**/*.test.ts", "src/**/*.d.ts", "test/**/*.test.ts"],
   "exclude": [
     "src/agent-protocol.test.ts",
     "src/config.test.ts",

@@ -137,3 +137,18 @@ test("no request, one that is gone, or an unreachable gateway shows that nothing
   await act(async () => fail(new Error("offline")));
   expect(host.textContent).toBe("");
 });
+
+test("without a confirmed passkey here, the page says where to approve instead of offering a dead end", async () => {
+  transport.mockResolvedValue(new Response(JSON.stringify({ ...held, passkeyApproval: false })));
+  await show({ requestId: REQUEST, approve: vi.fn() });
+  expect(host.querySelector(".cloud-pairing-code")?.textContent).toBe("123 456");
+  expect(button()).toBeNull();
+  expect(text()).toContain(
+    "This gateway doesn't have Face ID approval set up yet. Approve this device from the Omnesis portal on your computer.",
+  );
+  // When it is set up, the button is there.
+  transport.mockResolvedValue(new Response(JSON.stringify({ ...held, passkeyApproval: true })));
+  render(null, host);
+  await show({ requestId: REQUEST, approve: vi.fn() });
+  expect(button()?.textContent?.trim()).toBe("Approve with passkey");
+});

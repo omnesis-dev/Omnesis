@@ -136,6 +136,8 @@ fun HomeScaffold(
     val pairingPending by vm.pairingPending.collectAsStateWithLifecycle()
     val pairingPendingNudge by vm.pairingPendingNudge.collectAsStateWithLifecycle()
     var showPairingRequests by rememberSaveable { mutableStateOf(false) }
+    // The request a notification named, listed first when the sheet opens.
+    var pairingFocus by rememberSaveable { mutableStateOf<String?>(null) }
     val pendingNotes by vm.pendingNotes.collectAsStateWithLifecycle()
     val permissionHealth by vm.permissionHealthState.collectAsStateWithLifecycle()
     val notificationHealth by vm.notificationHealth.collectAsStateWithLifecycle()
@@ -471,6 +473,7 @@ fun HomeScaffold(
     LaunchedEffect(pairingRequestsRequest, setupPresenting) {
         if (vm.setupPresenting.value || pairingRequestsRequest == null) return@LaunchedEffect
         vm.recordExplicitLaunch()
+        pairingFocus = pairingRequestsRequest?.requestId
         openPairingRequests()
         vm.consumePairingRequestsRequest()
     }
@@ -1113,8 +1116,10 @@ fun HomeScaffold(
                     client = approvals,
                     onOpenSettings = openSettings,
                     onRequests = vm::pairingPendingListed,
+                    focus = pairingFocus,
                     onDismiss = {
                         showPairingRequests = false
+                        pairingFocus = null
                         vm.refreshPairingPending()
                     },
                 )

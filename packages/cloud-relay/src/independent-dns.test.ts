@@ -530,7 +530,7 @@ test("independent mode requires an operator broker URL and refuses a local DNS-p
         },
         { configDir: directory, activate: async () => {} },
       ),
-    ).rejects.toThrow("requires the independent DNS provider");
+    ).rejects.toThrow("requires the independent or broker DNS provider");
   } finally {
     vi.unstubAllEnvs();
   }
@@ -613,6 +613,19 @@ test("gateway client refuses swapped broker recipient, operation digest, expiry,
       await expect(oversized).rejects.toMatchObject({ code: "EPRIVATE" });
     else await expect(oversized).rejects.toThrow("too large");
     await writeFile(f.gateway.privateKeyFile, tls);
+    const certificate = await readFile(f.gateway.certificateFile);
+    try {
+      await writeFile(f.gateway.certificateFile, "x".repeat(65_537));
+      await expect(
+        independentDnsPresenter({ brokerUrl: url, gateway: f.gateway }).create(
+          "a".repeat(43),
+          alive(),
+        ),
+      ).rejects.toThrow("Gateway DNS signing material is too large");
+      expect(f.provider.create).not.toHaveBeenCalled();
+    } finally {
+      await writeFile(f.gateway.certificateFile, certificate);
+    }
     const aborted = new AbortController();
     const cancel = vi.fn<typeof fetch>(async (url, init) => {
       const reply = await fetch(url, init);

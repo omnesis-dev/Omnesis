@@ -61,7 +61,38 @@ export async function apiFetch(input, init = {}) {
   };
   const res = await fetch(input, merged);
   if (res.status === 401) fireSessionExpired();
+  if ((res.status === 428 || res.status === 403) && unsafe && isSameOriginInput(input))
+    return stepUpAndRetry(input, init, res, headers);
   return res;
+}
+
+/**
+ * Some administrative actions need the owner's passkey on this gateway's page first (a
+ * "step-up", see packages/gateway/src/http/step-up.ts). The gateway says so with 428
+ * `STEP_UP_REQUIRED`; this runs the passkey prompt for that one request and sends it again,
+ * once. While no step-up can start it answers 403 `STEP_UP_UNAVAILABLE`, which becomes an error
+ * a person can act on. Any other answer goes back to the caller unchanged.
+ */
+async function stepUpAndRetry(input, init, res, headers) {
+  if (Object.keys(headers).some((name) => name.toLowerCase() === "x-omnesis-step-up")) return res;
+  let refusal;
+  try {
+    refusal = await res.clone().json();
+  } catch {
+    return res;
+  }
+  if (refusal?.code === "STEP_UP_UNAVAILABLE") {
+    const { GatewayPasskeyError, STEP_UP_UNAVAILABLE } = await import("./lib/gateway-passkey.js");
+    throw new GatewayPasskeyError(STEP_UP_UNAVAILABLE);
+  }
+  if (res.status !== 428 || refusal?.code !== "STEP_UP_REQUIRED") return res;
+  const { stepUp, STEP_UP_HEADER } = await import("./lib/gateway-passkey.js");
+  const stepUpId = await stepUp(refusal.detail, {
+    post: (path, body, signal) =>
+      apiFetch(path, { method: "POST", body: JSON.stringify(body), ...(signal ? { signal } : {}) }),
+    ...(init.signal ? { signal: init.signal } : {}),
+  });
+  return apiFetch(input, { ...init, headers: { ...(init.headers || {}), [STEP_UP_HEADER]: stepUpId } });
 }
 
 function isSameOriginInput(input) {
@@ -1117,19 +1148,22 @@ export const getSourceWatermark = (sourceId) =>
   request("GET", "/admin/watermarks", { query: { sourceId } });
 
 /**
- * Wipe a source's data and sync it again from scratch. Without `deviceId`
- * every document of the source goes; with one, only what that device holds —
- * its documents, analytics rows and cursor on a partitioned source, just its
- * cursor on a replicated one (siblings are untouched either way). Answers
- * `{ ok, scope: "source" | "stream" | "cursor", deviceIds }` — `scope` is what
- * was wiped, `deviceIds` the devices the sync command reached (empty when
- * none is online; the sync then waits for one). A refusal's `code` is
- * DEVICE_NOT_MEMBER or RESYNC_NOT_PER_DEVICE (a per-device resync on a
- * source whose mode has no per-device cursor).
+ * Resync a source. `mode` is "in-place" — nothing is deleted, the source is
+ * read again and each item updates the record it already has — or
+ * "from-scratch", which deletes what the source ingested first. With
+ * `deviceId`, only that device is resynced: its own stream on a partitioned
+ * source, its cursor on a replicated one (always in place — its records are
+ * shared; siblings are untouched either way). Answers
+ * `{ ok, mode, scope: "source" | "stream" | "cursor", deviceIds, … }` —
+ * `mode` is what was applied, `scope` the slice it applied to, `deviceIds`
+ * the devices the sync command reached (empty when none is online; the sync
+ * then waits for one). A refusal's `code` is DEVICE_NOT_MEMBER,
+ * RESYNC_NOT_PER_DEVICE (a per-device resync on a source whose mode has no
+ * per-device cursor) or RESYNC_PUSH_ONLY.
  */
-export const resyncSource = (sourceId, deviceId) =>
+export const resyncSource = (sourceId, { deviceId, mode }) =>
   request("POST", `/admin/sources/${encodeURIComponent(sourceId)}/resync`, {
-    body: deviceId ? { deviceId } : {},
+    body: deviceId ? { deviceId, mode } : { mode },
   });
 
 export const removeAdminSource = (sourceId) =>

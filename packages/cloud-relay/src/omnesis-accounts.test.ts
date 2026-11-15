@@ -500,6 +500,13 @@ test("a gateway creates another account only after leaving the one it created, w
     expect(accounts.federatedAccount("google", googleA)).toBeUndefined();
     expect(accounts.passkey("first-passkey")).toBeUndefined();
     expect(accounts.passkey("vouched")).toBeUndefined();
+    // Their passkeys are remembered as deleted, by digest only; the bystander's isn't.
+    expect(accounts.passkeyDeleted("first-passkey")).toBe(true);
+    expect(accounts.passkeyDeleted("vouched")).toBe(true);
+    expect(accounts.passkeyDeleted("bystander")).toBe(false);
+    expect(
+      JSON.stringify(db.prepare("SELECT * FROM omnesis_deleted_passkeys").all()),
+    ).not.toContain("first-passkey");
     expect(accounts.activeSession(first, 1, session)).toBe(false);
     expect(() => accounts.list(first)).toThrow("sign-in required");
     expect(Object.values(held(db, first))).toEqual([0, 0, 0, 0, 0, 0, 0]);
