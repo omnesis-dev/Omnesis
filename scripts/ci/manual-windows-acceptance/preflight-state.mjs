@@ -34,6 +34,8 @@ const codes = new Set([
   "ENOTDIR",
   "EEXIST",
   "EPERM",
+  "ENOSPC",
+  "EIO",
 ]);
 const nativeStages = new Set([
   "bootstrap",
@@ -59,6 +61,31 @@ const nativeStages = new Set([
   "storage-resolve",
   "storage-root",
 ]);
+let cleanupUncertain = false;
+export function markCleanupUncertain() {
+  cleanupUncertain = true;
+}
+export function isCleanupUncertain() {
+  return cleanupUncertain;
+}
+export function captureCleanupUncertainty(error) {
+  let at = error;
+  const seen = new Set();
+  for (
+    let depth = 0;
+    depth < 16 && at !== null && (typeof at === "object" || typeof at === "function");
+    depth++
+  ) {
+    if (seen.has(at)) break;
+    seen.add(at);
+    if (Object.hasOwn(at, "cleanupFailure")) {
+      markCleanupUncertain();
+      break;
+    }
+    at = at.cause;
+  }
+  return cleanupUncertain;
+}
 let phase = "module-import",
   assertionId = null;
 export function setPreflightPhase(value) {
@@ -76,18 +103,7 @@ export function taggedAssert(id, fn, ...args) {
   }
 }
 export function preflightDiagnostic(error) {
-  let uncertain = false,
-    at = error;
-  const seen = new Set();
-  for (let depth = 0; depth < 16 && at !== null && typeof at === "object"; depth++) {
-    if (seen.has(at)) break;
-    seen.add(at);
-    if (Object.hasOwn(at, "cleanupFailure")) {
-      uncertain = true;
-      break;
-    }
-    at = at.cause;
-  }
+  const uncertain = captureCleanupUncertainty(error);
   return {
     phase,
     errorCode: codes.has(error?.code) ? error.code : "failed",

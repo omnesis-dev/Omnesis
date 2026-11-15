@@ -1,7 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { setPreflightPhase, taggedAssert } from "./preflight-state.mjs";
+import {
+  setPreflightPhase,
+  taggedAssert,
+  markCleanupUncertain,
+  isCleanupUncertain,
+  captureCleanupUncertainty,
+} from "./preflight-state.mjs";
 
 import assert from "node:assert/strict";
 import { recordReadiness, manualAcceptance } from "./readiness-acceptance.mjs";
@@ -224,6 +230,7 @@ function launchProgram(programArgs, label, childEnv = env, wrapped = false) {
   record.ready = child.jobReady.then(
     () => true,
     (error) => {
+      captureCleanupUncertainty(error);
       record.readyFailure = error;
       return false;
     },
@@ -235,7 +242,10 @@ function launchProgram(programArgs, label, childEnv = env, wrapped = false) {
         code: child.exitCode,
         signal: child.signalCode,
       }),
-    (error) => (record.fate = { joined: false, error }),
+    (error) => {
+      markCleanupUncertain();
+      return (record.fate = { joined: false, error });
+    },
   );
   child.stdout.on("data", (b) => (record.stdout = (record.stdout + b.toString()).slice(-2097152)));
   child.stderr.on("data", (b) => (record.stderr = (record.stderr + b.toString()).slice(-2097152)));
@@ -267,6 +277,7 @@ async function waitJoined(r, budget, label) {
   ]);
   clearTimeout(timer);
   if (!fate) {
+    markCleanupUncertain();
     r.cleanupUnconfirmed = true;
     throw Object.assign(new Error("Owned Job join unresolved: " + label), {
       cleanupFailure: true,
@@ -631,10 +642,14 @@ try {
     await stop(gateway);
   });
   receipt.functionalStepsCompleted = true;
+  if (isCleanupUncertain()) receipt.cleanupUnconfirmed = true;
   receipt.passed = manualAcceptance(receipt);
   if (!receipt.passed) process.exitCode = 1;
   save();
 } catch (error) {
+  if (captureCleanupUncertainty(error)) {
+    receipt.cleanupUnconfirmed = true;
+  }
   receipt.failedPhase = phase;
   receipt.errorType = error?.name;
   writeFileSync(
@@ -655,12 +670,16 @@ try {
       2,
     ),
   );
-  if (unknown(error)) receipt.cleanupUnconfirmed = true;
+  if (unknown(error)) {
+    markCleanupUncertain();
+    receipt.cleanupUnconfirmed = true;
+  }
   save();
   process.exitCode = 1;
 } finally {
   for (const r of [...children].reverse()) {
     if (r.cleanupUnconfirmed) {
+      markCleanupUncertain();
       receipt.cleanupUnconfirmed = true;
       receipt.passed = false;
       process.exitCode = 1;
@@ -668,6 +687,7 @@ try {
     }
     if (r.fate) {
       if (!r.fate.joined) {
+        markCleanupUncertain();
         receipt.cleanupUnconfirmed = true;
         receipt.passed = false;
         process.exitCode = 1;
@@ -680,6 +700,7 @@ try {
       receipt.passed = false;
       process.exitCode = 1;
       if (unknown(error)) {
+        markCleanupUncertain();
         receipt.cleanupUnconfirmed = true;
         continue;
       }
@@ -688,9 +709,15 @@ try {
         r.child.kill("SIGKILL");
         await waitJoined(r, 90000, r.label + "-cleanup");
       } catch {
+        markCleanupUncertain();
         receipt.cleanupUnconfirmed = true;
       }
     }
+  }
+  if (isCleanupUncertain()) {
+    receipt.cleanupUnconfirmed = true;
+    receipt.passed = false;
+    process.exitCode = 1;
   }
   agent?.destroy();
   save();
@@ -706,7 +733,7 @@ try {
     readinessAcceptanceFailed: receipt.readinessAcceptanceFailed ?? false,
     sourceCommit: receipt.sourceCommit,
     failedPhase: receipt.failedPhase ?? null,
-    cleanupUnconfirmed: receipt.cleanupUnconfirmed ?? false,
+    cleanupUnconfirmed: isCleanupUncertain() || (receipt.cleanupUnconfirmed ?? false),
     ungracefulFallback: receipt.ungracefulFallback ?? false,
     readinessObservations: receipt.readinessObservations,
     phaseResults: receipt.steps.map(({ name, passed, elapsedMs }) => ({
@@ -733,7 +760,7 @@ try {
         functionalStepsCompleted: receipt.functionalStepsCompleted === true,
         readinessAcceptanceFailed: receipt.readinessAcceptanceFailed === true,
         gracefulAcceptanceFailed: receipt.gracefulAcceptanceFailed === true,
-        cleanupUnconfirmed: receipt.cleanupUnconfirmed === true,
+        cleanupUnconfirmed: isCleanupUncertain() || receipt.cleanupUnconfirmed === true,
         ungracefulFallback: receipt.ungracefulFallback === true,
         failedPhase: receipt.failedPhase ?? null,
         readinessObservations: receipt.readinessObservations,

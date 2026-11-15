@@ -9,11 +9,11 @@ import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 const sha = "a".repeat(40),
   entry = fileURLToPath(new URL("./manual-entry.mjs", import.meta.url));
-function run(config, { copiedEntry = false } = {}) {
+function run(config, { copiedEntry = false, fakeSmoke } = {}) {
   const root = mkdtempSync(join(tmpdir(), "manual-preflight-contract-"));
   let program = entry;
   try {
-    if (copiedEntry) {
+    if (copiedEntry || fakeSmoke !== undefined) {
       program = join(root, "manual-entry.mjs");
       copyFileSync(entry, program);
       copyFileSync(
@@ -21,6 +21,7 @@ function run(config, { copiedEntry = false } = {}) {
         join(root, "preflight-state.mjs"),
       );
     }
+    if (fakeSmoke !== undefined) writeFileSync(join(root, "manual-smoke.mjs"), fakeSmoke);
     const configPath = join(root, "config.json"),
       summary = join(root, "summary.json");
     writeFileSync(configPath, typeof config === "string" ? config : JSON.stringify(config));
@@ -35,6 +36,7 @@ function run(config, { copiedEntry = false } = {}) {
     assert.equal(value.passed, false);
     assert.equal(value.realCollectorCli, false);
     assert.equal(value.functionalStepsCompleted, false);
+    assert.equal(value.cleanupUnconfirmed, value.preflightFailure.cleanupUnconfirmed);
     const publicBytes = JSON.stringify(value) + result.stdout + result.stderr;
     assert.equal(publicBytes.includes(root), false);
     assert.equal(publicBytes.includes("invented-secret-never-log"), false);
@@ -64,4 +66,36 @@ test("a missing module is captured before any manual-smoke top-level code runs",
   assert.equal(result.phase, "module-import");
   assert.equal(result.errorCode, "ERR_MODULE_NOT_FOUND");
   assert.equal(result.assertionId, null);
+});
+
+test("an own undefined cleanup receipt survives a later ordinary logging error", () => {
+  const diagnostic = run(
+    {},
+    {
+      fakeSmoke: `import {captureCleanupUncertainty,setPreflightPhase} from './preflight-state.mjs';captureCleanupUncertainty(Object.assign(Error('invented-secret-never-log'),{cleanupFailure:undefined}));setPreflightPhase('lifecycle');throw Object.assign(Error('invented-secret-never-log'),{code:'ENOSPC'});`,
+    },
+  );
+  assert.equal(diagnostic.phase, "lifecycle");
+  assert.equal(diagnostic.errorCode, "ENOSPC");
+  assert.equal(diagnostic.cleanupUnconfirmed, true);
+});
+test("an undefined rejected join latches before later finalization fails", () => {
+  const diagnostic = run(
+    {},
+    {
+      fakeSmoke: `import {markCleanupUncertain,setPreflightPhase} from './preflight-state.mjs';await Promise.reject(undefined).catch(()=>markCleanupUncertain());setPreflightPhase('lifecycle');throw Object.assign(Error('invented-secret-never-log'),{code:'EIO'});`,
+    },
+  );
+  assert.equal(diagnostic.errorCode, "EIO");
+  assert.equal(diagnostic.cleanupUnconfirmed, true);
+});
+test("an ordinary unmarked finalization error is not invented cleanup uncertainty", () => {
+  const diagnostic = run(
+    {},
+    {
+      fakeSmoke: `import {setPreflightPhase} from './preflight-state.mjs';setPreflightPhase('lifecycle');throw Object.assign(Error('invented-secret-never-log'),{code:'ENOSPC'});`,
+    },
+  );
+  assert.equal(diagnostic.errorCode, "ENOSPC");
+  assert.equal(diagnostic.cleanupUnconfirmed, false);
 });
