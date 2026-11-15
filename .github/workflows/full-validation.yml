@@ -33,6 +33,7 @@ on:
             portable-fixtures,
             merge-refresh,
             retained-fixture,
+            arm64-runtime,
           ]
         default: regressions
 permissions:
@@ -127,6 +128,38 @@ jobs:
         run: node scripts/ci/npm-ci.mjs --no-audit --no-fund
       - name: Prove finite results, detached daemon retention and actual joined closure
         run: node scripts/run-check.mjs unit scripts/lib/retained-fixture-command.test.mjs
+  arm64-runtime:
+    if: ${{ inputs.scope == 'arm64-runtime' }}
+    runs-on: windows-11-vs2026-arm
+    timeout-minutes: 75
+    env:
+      OMNESIS_UNIT_WORKERS: "1"
+      OMNESIS_E2E_WORKERS: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: "24"
+          architecture: arm64
+          cache: npm
+      - name: Assert a native arm64 runtime and record its actual platform
+        run: node -e "if(process.platform !== 'win32' || process.arch !== 'arm64') throw new Error('A native arm64 Windows process is required'); process.stdout.write(JSON.stringify({platform:process.platform,arch:process.arch,node:process.version,release:require('node:os').release()})+'\n')"
+      - name: Make runner OpenSSL available
+        run: |
+          if (-not (Get-Command openssl -ErrorAction SilentlyContinue)) {
+            $opensslDir = Join-Path $env:ProgramFiles 'Git\usr\bin'
+            if (-not (Test-Path (Join-Path $opensslDir 'openssl.exe'))) { throw 'OpenSSL is required' }
+            $opensslDir | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+          }
+      - name: Install locked dependencies
+        run: node scripts/ci/npm-ci.mjs --no-audit --no-fund
+      - name: Build and prove the native arm64 SQLite and vector libraries
+        run: node scripts/ci/build-windows-sqlite.mjs && node scripts/ci/build-windows-usearch.mjs
+      - name: Validate native filesystem, process, crypto and real Gateway runtime boundaries
+        run: node scripts/ci/windows-checks.mjs focused
   auth-env-diagnostic:
     if: ${{ inputs.scope == 'auth-env-diagnostic' }}
     runs-on: windows-latest
