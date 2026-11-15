@@ -67,9 +67,16 @@ export interface RunSummary {
 export interface QueryRow extends QueryScore {
   language: Language;
   queryId: string;
+  /**
+   * Best rank any returned relevant passage holds in the keyword lane's own
+   * list, before fusion; null when none is in that list.
+   */
+  bm25Rank: number | null;
+  /** The same for the semantic lane; always null in a `lexical` run. */
+  vectorRank: number | null;
 }
 
-const QUERY_HEADER = "language\tquery\thit10\tndcg10\trecall100\tmrr10";
+const QUERY_HEADER = "language\tquery\thit10\tndcg10\trecall100\tmrr10\tbm25Rank\tvectorRank";
 
 function round(value: number): number {
   return Math.round(value * 1e6) / 1e6;
@@ -80,7 +87,7 @@ export function writeRun(summary: RunSummary, rows: readonly QueryRow[], dir = R
   writeFileSync(join(dir, `${summary.name}.json`), `${JSON.stringify(summary, null, 2)}\n`);
   const lines = rows.map(
     (r) =>
-      `${r.language}\t${r.queryId}\t${r.hit10}\t${round(r.ndcg10)}\t${round(r.recall100)}\t${round(r.mrr10)}`,
+      `${r.language}\t${r.queryId}\t${r.hit10}\t${round(r.ndcg10)}\t${round(r.recall100)}\t${round(r.mrr10)}\t${r.bm25Rank ?? ""}\t${r.vectorRank ?? ""}`,
   );
   writeFileSync(
     join(dir, `${summary.name}.queries.tsv`),
@@ -113,7 +120,8 @@ export function readQueryRows(name: string, dir = RESULTS_DIR): QueryRow[] {
     .split("\n")
     .filter(Boolean);
   return lines.slice(1).map((line) => {
-    const [language, queryId, hit10, ndcg10, recall100, mrr10] = line.split("\t");
+    const [language, queryId, hit10, ndcg10, recall100, mrr10, bm25Rank, vectorRank] =
+      line.split("\t");
     return {
       language: language as Language,
       queryId: queryId!,
@@ -121,6 +129,8 @@ export function readQueryRows(name: string, dir = RESULTS_DIR): QueryRow[] {
       ndcg10: Number(ndcg10),
       recall100: Number(recall100),
       mrr10: Number(mrr10),
+      bm25Rank: bm25Rank ? Number(bm25Rank) : null,
+      vectorRank: vectorRank ? Number(vectorRank) : null,
     };
   });
 }

@@ -28,6 +28,7 @@ vi.mock("../lib/gateway-passkey.js", () => ({
   onGatewayOrigin: api.here,
   passkeysSupported: api.supported,
   PASSKEY_CHECK_FAILED: "Your gateway couldn't check that passkey. Try again.",
+  PASSKEY_HINT: "Your device will ask for your face, fingerprint or screen lock.",
   PASSKEY_OTHER_ACCOUNT: "That passkey is for a different Omnesis account.",
 }));
 // @ts-expect-error — portal JavaScript has no sibling declarations.
@@ -143,18 +144,23 @@ test("on the gateway's own page there are two choices: a passkey signs in here, 
   api.loadDeviceKey.mockResolvedValue(key);
   await show();
   expect([...host.querySelectorAll("button")].map((item) => norm(item.textContent).trim())).toEqual(
-    ["Continue with Face ID", "Continue with Google"],
+    ["Continue with passkey", "Continue with Google"],
   );
   expect(button("Omnesis account page")).toBeUndefined();
   expect(norm(host.textContent)).toContain(
     "You'll approve this browser on your phone.",
   );
+  // Which device unlocks the passkey is the browser's business, so the hint names none.
+  expect([...host.querySelectorAll(".login-hint")].map((item) => norm(item.textContent))).toEqual([
+    "Your device will ask for your face, fingerprint or screen lock.",
+    "You'll approve this browser on your phone.",
+  ]);
   let sent: any;
   answers("approved", async (body) => {
     sent = body;
     return cloudPairingVerificationCode(body, config.gatewayFingerprint, NONCE);
   });
-  await act(async () => button("Continue with Face ID")!.click());
+  await act(async () => button("Continue with passkey")!.click());
   await settle(() => expect(location.reload).toHaveBeenCalledOnce());
   expect(transport.mock.calls.map(([path]) => path)).toEqual([
     "/devices/account/passkey/options",
@@ -202,7 +208,7 @@ test("a held passkey sign-in shows the comparison code", async () => {
     code = await cloudPairingVerificationCode(body, config.gatewayFingerprint, NONCE);
     return code;
   });
-  await act(async () => button("Continue with Face ID")!.click());
+  await act(async () => button("Continue with passkey")!.click());
   await settle(() => expect(norm(host.textContent)).toContain("Waiting for your OK"));
   expect(code).toMatch(/^[0-9]{3} [0-9]{3}$/);
   expect(host.querySelector(".cloud-pairing-code")?.textContent).toBe(code);
@@ -212,7 +218,7 @@ test("a held passkey sign-in shows the comparison code", async () => {
   expect(norm(host.textContent)).not.toContain("HTTPS certificate");
   // A browser with its own key continues by itself once approved: no button to press.
   expect(button("Codes match")).toBeUndefined();
-  expect(button("Approve with Face ID here")).toBeDefined();
+  expect(button("Approve with passkey here")).toBeDefined();
   expect(button("Cancel")).toBeDefined();
 });
 
@@ -223,9 +229,9 @@ test("approving here is offered only where the gateway can take a passkey approv
   answers("pending", async (body) =>
     cloudPairingVerificationCode(body, config.gatewayFingerprint, NONCE),
   );
-  await act(async () => button("Continue with Face ID")!.click());
+  await act(async () => button("Continue with passkey")!.click());
   await settle(() => expect(norm(host.textContent)).toContain("Waiting for your OK"));
-  expect(button("Approve with Face ID here")).toBeUndefined();
+  expect(button("Approve with passkey here")).toBeUndefined();
 });
 
 test("approved on another device, a browser with its own key opens the gateway by itself", async () => {
@@ -249,7 +255,7 @@ test("approved on another device, a browser with its own key opens the gateway b
       }),
     );
   });
-  await act(async () => button("Continue with Face ID")!.click());
+  await act(async () => button("Continue with passkey")!.click());
   await settle(() => expect(norm(host.textContent)).toContain("Waiting for your OK"));
   approved = true;
   // The page's next look at the request (every few seconds) finds it approved.
@@ -271,7 +277,7 @@ test("a passkey from another account is named as such, apart from a check that f
       ? new Response(JSON.stringify({ challenge: CHALLENGE, rpId: "relay.example.test" }))
       : new Response(JSON.stringify({ code: "PASSKEY_NOT_ON_ACCOUNT" }), { status: 401 }),
   );
-  await act(async () => button("Continue with Face ID")!.click());
+  await act(async () => button("Continue with passkey")!.click());
   await settle(() =>
     expect(host.querySelector('[role="alert"]')?.textContent).toBe(
       "That passkey is for a different Omnesis account.",
@@ -287,7 +293,7 @@ test("a passkey from another account is named as such, apart from a check that f
         ? new Response(JSON.stringify({ challenge: CHALLENGE, rpId: "relay.example.test" }))
         : refusal,
     );
-    await act(async () => button("Continue with Face ID")!.click());
+    await act(async () => button("Continue with passkey")!.click());
     await settle(() =>
       expect(host.querySelector('[role="alert"]')?.textContent).toBe(
         "Your gateway couldn't check that passkey. Try again.",
@@ -304,21 +310,21 @@ test("a passkey the gateway doesn't recognise, a closed prompt or a refused star
       ? new Response(JSON.stringify({ challenge: CHALLENGE }))
       : new Response("{}", { status: 401 }),
   );
-  await act(async () => button("Continue with Face ID")!.click());
+  await act(async () => button("Continue with passkey")!.click());
   await settle(() =>
     expect(host.querySelector('[role="alert"]')?.textContent).toContain(
       "Your gateway couldn't check that passkey.",
     ),
   );
   api.proof.mockRejectedValueOnce(new Error("The passkey prompt was closed or timed out. Try again."));
-  await act(async () => button("Continue with Face ID")!.click());
+  await act(async () => button("Continue with passkey")!.click());
   await settle(() =>
     expect(host.querySelector('[role="alert"]')?.textContent).toBe(
       "The passkey prompt was closed or timed out. Try again.",
     ),
   );
   transport.mockResolvedValue(new Response("{}", { status: 404 }));
-  await act(async () => button("Continue with Face ID")!.click());
+  await act(async () => button("Continue with passkey")!.click());
   await settle(() =>
     expect(host.querySelector('[role="alert"]')?.textContent).toBe(
       "Couldn't start sign-in. Please try again.",
@@ -329,9 +335,9 @@ test("a passkey the gateway doesn't recognise, a closed prompt or a refused star
   let release!: (value: Response) => void;
   transport.mockReset();
   transport.mockReturnValue(new Promise((resolve) => (release = resolve)));
-  const pressed = button("Continue with Face ID")!;
+  const pressed = button("Continue with passkey")!;
   await act(async () => pressed.click());
-  await act(async () => button("Waiting for Face ID")!.click());
+  await act(async () => button("Waiting for your passkey")!.click());
   expect(transport).toHaveBeenCalledOnce();
   await act(async () => release(new Response("{}", { status: 500 })));
 });
@@ -342,7 +348,7 @@ test("leaving the page while the prompt is open ends the attempt quietly", async
   let answer!: (value: unknown) => void;
   api.proof.mockReturnValue(new Promise((resolve) => (answer = resolve)));
   answers("approved");
-  await act(async () => button("Continue with Face ID")!.click());
+  await act(async () => button("Continue with passkey")!.click());
   render(null, host);
   await act(async () => answer(proof));
   expect(transport.mock.calls.map(([path]) => path)).toEqual(["/devices/account/passkey/options"]);
@@ -350,7 +356,7 @@ test("leaving the page while the prompt is open ends the attempt quietly", async
   await show();
   let fail!: (error: Error) => void;
   api.proof.mockReturnValue(new Promise((_, reject) => (fail = reject)));
-  await act(async () => button("Continue with Face ID")!.click());
+  await act(async () => button("Continue with passkey")!.click());
   render(null, host);
   await act(async () => fail(new Error("closed")));
   expect(host.querySelector('[role="alert"]')).toBeNull();
@@ -365,7 +371,7 @@ test("elsewhere, without passkeys or without an origin of its own, sign-in goes 
   ]) {
     setup();
     await show();
-    expect(button("Continue with Face ID")).toBeDefined();
+    expect(button("Continue with passkey")).toBeDefined();
     expect(button("Continue with Google")).toBeDefined();
     expect(button("Omnesis account page")).toBeUndefined();
     expect(norm(host.textContent)).toContain(
@@ -400,12 +406,12 @@ test("a held request is approved right here with the owner's passkey, and the br
       }),
     );
   });
-  await act(async () => button("Continue with Face ID")!.click());
-  await settle(() => expect(button("Approve with Face ID here")).toBeDefined());
+  await act(async () => button("Continue with passkey")!.click());
+  await settle(() => expect(button("Approve with passkey here")).toBeDefined());
   api.approve.mockImplementationOnce(async () => {
     approved = true;
   });
-  await act(async () => button("Approve with Face ID here")!.click());
+  await act(async () => button("Approve with passkey here")!.click());
   await settle(() => expect(api.login).toHaveBeenCalledExactlyOnceWith("SYNTHETIC-CODE"));
   expect(api.approve).toHaveBeenCalledExactlyOnceWith({
     requestId: expect.any(String),
@@ -421,24 +427,24 @@ test("approving here needs this browser's own key, and a refusal is said in plac
   answers("pending", async (body) =>
     cloudPairingVerificationCode(body, config.gatewayFingerprint, NONCE),
   );
-  await act(async () => button("Continue with Face ID")!.click());
-  await settle(() => expect(button("Approve with Face ID here")).toBeDefined());
+  await act(async () => button("Continue with passkey")!.click());
+  await settle(() => expect(button("Approve with passkey here")).toBeDefined());
   api.approve.mockRejectedValueOnce(new Error("Your gateway didn't accept that passkey."));
-  await act(async () => button("Approve with Face ID here")!.click());
+  await act(async () => button("Approve with passkey here")!.click());
   await settle(() =>
     expect(host.querySelector('[role="alert"]')?.textContent).toBe(
       "Your gateway didn't accept that passkey.",
     ),
   );
   api.loadDeviceKey.mockResolvedValue(await deviceKey());
-  await act(async () => button("Approve with Face ID here")!.click());
+  await act(async () => button("Approve with passkey here")!.click());
   await settle(() =>
     expect(host.querySelector('[role="alert"]')?.textContent).toBe(
       "This browser's sign-in key changed. Start again.",
     ),
   );
   api.loadDeviceKey.mockResolvedValue(null);
-  await act(async () => button("Approve with Face ID here")!.click());
+  await act(async () => button("Approve with passkey here")!.click());
   await settle(() =>
     expect(host.querySelector('[role="alert"]')?.textContent).toBe(
       "This browser's sign-in key changed. Start again.",
@@ -449,9 +455,9 @@ test("approving here needs this browser's own key, and a refusal is said in plac
   api.loadDeviceKey.mockResolvedValue(key);
   let release!: () => void;
   api.approve.mockReturnValueOnce(new Promise<void>((resolve) => (release = resolve)));
-  const pressed = button("Approve with Face ID here")!;
+  const pressed = button("Approve with passkey here")!;
   await act(async () => pressed.click());
-  await act(async () => button("Waiting for Face ID")!.click());
+  await act(async () => button("Waiting for your passkey")!.click());
   expect(api.approve).toHaveBeenCalledTimes(2);
   await act(async () => release());
 });
@@ -479,7 +485,7 @@ test("leaving the page while the gateway's answer is being checked ends the atte
     };
     return { ok: true, status: 200, json: async () => value } as unknown as Response;
   });
-  await act(async () => button("Continue with Face ID")!.click());
+  await act(async () => button("Continue with passkey")!.click());
   await vi.waitFor(() => expect(left).toBe(true));
   await act(async () => new Promise((resolve) => setTimeout(resolve, 20)));
   expect(transport).toHaveBeenCalledTimes(2);

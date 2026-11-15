@@ -48,6 +48,13 @@ class NotificationLaunchBus @Inject constructor() {
     fun postPairingRequests(requestId: String? = null) { _pairingRequests.value = PairingRequests(requestId) }
     fun consumePairingRequests() { _pairingRequests.value = null }
 
+    /** A tap on a Tailscale join notification: open the waiting requests. Carries nothing from the payload. */
+    data class TailscaleJoinRequests(val nonce: Long = System.nanoTime())
+    private val _tailscaleJoinRequests = MutableStateFlow<TailscaleJoinRequests?>(null)
+    val tailscaleJoinRequests = _tailscaleJoinRequests.asStateFlow()
+    fun postTailscaleJoinRequests() { _tailscaleJoinRequests.value = TailscaleJoinRequests() }
+    fun consumeTailscaleJoinRequests() { _tailscaleJoinRequests.value = null }
+
     data class SourcePermission(val sourceId: String, val nonce: Long = System.nanoTime())
     private val _sourcePermission = MutableStateFlow<SourcePermission?>(null)
     val sourcePermission = _sourcePermission.asStateFlow()

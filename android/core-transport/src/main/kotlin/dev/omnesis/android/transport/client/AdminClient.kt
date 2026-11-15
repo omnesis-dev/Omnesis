@@ -16,6 +16,11 @@ import dev.omnesis.android.transport.dto.GatewayPairingApprovalCeremonyRequest
 import dev.omnesis.android.transport.dto.GatewayPairingPasskeyApproval
 import dev.omnesis.android.transport.dto.GatewayPasskeyCeremony
 import dev.omnesis.android.transport.dto.GatewayPasskeyLocation
+import dev.omnesis.android.transport.dto.TailscaleJoinApproving
+import dev.omnesis.android.transport.dto.TailscaleJoinDecisionBody
+import dev.omnesis.android.transport.dto.TailscaleJoinDecisionResult
+import dev.omnesis.android.transport.dto.TailscaleJoinRequest
+import dev.omnesis.android.transport.dto.TailscaleJoinRequests
 import dev.omnesis.android.transport.PermissionHealthSnapshot
 import dev.omnesis.android.transport.ResyncStep
 import dev.omnesis.android.transport.SourceMultiDeviceMode
@@ -140,7 +145,16 @@ import okhttp3.HttpUrl
  * Admin surface (sources, descriptors, sync status, devices) plus the mutating source
  * actions. Mirrors the iOS `AdminClient` routes/shapes exactly.
  */
-class AdminClient(private val http: GatewayHttp) : GatewayPairingApproving, CloudRelayManaging {
+class AdminClient(private val http: GatewayHttp) : GatewayPairingApproving, CloudRelayManaging, TailscaleJoinApproving {
+    override suspend fun tailscaleJoinRequests(): List<TailscaleJoinRequest> =
+        http.getPrivateJson<TailscaleJoinRequests>(listOf("admin", "tailscale", "join-requests")).requests
+
+    override suspend fun decideTailscaleJoin(id: String, approve: Boolean): String =
+        http.postJsonSegments<TailscaleJoinDecisionBody, TailscaleJoinDecisionResult>(
+            listOf("admin", "tailscale", "join-requests", id, "decision"),
+            TailscaleJoinDecisionBody(approve),
+        ).status
+
     override suspend fun pairingApprovalRequests(): List<GatewayPairingApprovalRequest> = pairingApprovals().items
 
     override suspend fun pairingApprovals(): GatewayPairingApprovals = http.getJson("admin/cloud-pairing/requests")

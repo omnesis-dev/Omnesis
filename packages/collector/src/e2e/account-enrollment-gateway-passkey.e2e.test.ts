@@ -156,10 +156,10 @@ describe.skipIf(!browserReady)("passkeys on the gateway's own page", () => {
     // Nothing is confirmed yet, so the checklist stands in for the headline; its last step is
     // the account's passkey, used here on the gateway's own page.
     await expectText(page, "Finish setting up");
-    await expectText(page, "Let your Face ID add devices");
+    await expectText(page, "Let your passkey add devices");
     await expectText(page, "Not confirmed on this gateway");
     await shot(page, "confirm-card");
-    await clickFirst(page, ["Continue with Face ID"]);
+    await clickFirst(page, ["Continue with passkey"]);
     const confirmed = await waitFor(async () => {
       const status = await gateway.status();
       return status.deviceEnrollment.confirmedSignIns?.length ? status : undefined;
@@ -260,7 +260,7 @@ describe.skipIf(!browserReady)("passkeys on the gateway's own page", () => {
       if (frame === fresh.page.mainFrame()) visited.push(frame.url());
     });
     await fresh.page.goto(`${gateway.publicOrigin}/portal/`);
-    await clickFirst(fresh.page, ["Continue with Face ID"]);
+    await clickFirst(fresh.page, ["Continue with passkey"]);
     await fresh.page.locator("nav.sidebar-nav").waitFor({ timeout: 30_000 });
     await syncPasskey(fresh, owner, copied);
     expect(visited.filter((url) => new URL(url).origin === world.relayOrigin)).toEqual([]);

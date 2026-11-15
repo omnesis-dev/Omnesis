@@ -6,7 +6,7 @@ import { scope } from "../../scope.js";
 import { validateJson } from "../../validate.js";
 import { NotFoundError } from "../../errors.js";
 import { createTokenBody } from "../../schemas/index.js";
-import { requireStepUp } from "../../step-up.js";
+import { ownPushClaimToken, requireStepUp } from "../../step-up.js";
 import { log, type AdminRoutesDeps } from "./internals.js";
 import type { RouteApp } from "../types.js";
 
@@ -36,7 +36,8 @@ export function mountTokenRoutes(app: RouteApp, deps: AdminRoutesDeps): void {
   app.post(
     "/admin/tokens",
     scope.admin(),
-    requireStepUp(),
+    // Making a token adds access and needs a step-up, except a phone's own push:claim token.
+    requireStepUp(ownPushClaimToken),
     validateJson(createTokenBody),
     async (c) => {
       const { deviceId, scopes, name, ttlMs } = c.req.valid("json");

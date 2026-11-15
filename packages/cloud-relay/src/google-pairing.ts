@@ -68,6 +68,16 @@ export interface GatewayEnrollment {
   /** Confirms the sign-in of a request a person approved. */
   trustSignIn(signIn: VerifiedSignIn): Promise<void>;
   /**
+   * What the approval card suggests about remembering a sign-in, from this gateway's own record
+   * only. `firstConfirmation`: nothing is confirmed here yet and this is the sign-in the gateway
+   * was linked with. `otherGoogleAccount`: a Google account other than the one the gateway was
+   * linked with. Display only: confirming still goes through `canTrust` and `trustSignIn`.
+   */
+  rememberHint?(signIn: VerifiedSignIn): {
+    firstConfirmation: boolean;
+    otherGoogleAccount: boolean;
+  };
+  /**
    * A passkey assertion made on the gateway's own page for `device-enrollment`, over the request's
    * own gateway challenge and its enrollment nonce. Undefined when it does not verify.
    */
@@ -106,6 +116,8 @@ export interface GatewayEnrollment {
   stepUpCeremony?(binding: string): GatewayPasskeyCeremony | undefined;
   /** Whether a passkey the owner confirmed here signed that ceremony. Spends its challenge. */
   verifyStepUp?(proof: unknown, binding: string): Promise<boolean>;
+  /** Whether a certificate incident holds the gateway, so no step-up can start until it is lifted. */
+  securityLock?(): boolean;
 }
 
 /** A person approving a held request with a passkey on the gateway's own page. */
@@ -199,7 +211,13 @@ export class GooglePairingRequests {
         expiresAt: number;
         enrollment?: PairingEnrollment;
       }): Promise<{ pairingCode: string; expiresAt: number }>;
-      onPending?(request: { requestId: string; expiresAt: number }): void | Promise<void>;
+      /** `kind` and `name` are what the device says about itself: untrusted, for display only. */
+      onPending?(request: {
+        requestId: string;
+        expiresAt: number;
+        kind: GooglePairingRequest["kind"];
+        name: string;
+      }): void | Promise<void>;
       /**
        * Whether the owner revoked a device that signed in with this key. Such a request never
        * joins automatically; a person approves it again.
@@ -474,7 +492,12 @@ export class GooglePairingRequests {
       // Notification delivery never grants access or invalidates an admitted request.
       try {
         void Promise.resolve(
-          this.options.onPending?.({ requestId: request.requestId, expiresAt: request.expiresAt }),
+          this.options.onPending?.({
+            requestId: request.requestId,
+            expiresAt: request.expiresAt,
+            kind: request.kind,
+            name: request.name,
+          }),
         ).catch(() => undefined);
       } catch {
         /* Approval remains available through the trusted device list. */
@@ -571,31 +594,57 @@ export class GooglePairingRequests {
     };
   }
 
+  /**
+   * Held requests as an approving device shows them. `signInEmail` is the address Google verified
+   * in the token this gateway checked, never one the relay or the device named.
+   * `rememberByDefault` and `otherGoogleAccount` only suggest how to show the choice to remember
+   * the sign-in; they decide nothing.
+   */
   list(): Array<{
     requestId: string;
     kind: GooglePairingRequest["kind"];
     name: string;
     status: string;
     verificationCode: string;
+    createdAt: number;
     expiresAt: number;
     signIn?: "google" | "passkey";
+    signInEmail?: string;
     canTrustSignIn: boolean;
+    rememberByDefault?: true;
+    otherGoogleAccount?: true;
     revokedDevice?: true;
   }> {
     this.prune();
     return [...this.requests.values()]
       .filter((row) => row.state !== "verifying")
-      .map((row) => ({
-        requestId: row.requestId,
-        kind: row.kind,
-        name: row.name,
-        status: row.state,
-        verificationCode: row.verificationCode,
-        expiresAt: row.expiresAt,
-        ...(row.signIn ? { signIn: row.signIn.type } : {}),
-        canTrustSignIn: row.trustable === true,
-        ...(row.revokedDevice ? { revokedDevice: true as const } : {}),
-      }));
+      .map((row) => {
+        const signIn = row.signIn;
+        const hint = signIn && this.options.enrollment?.rememberHint?.(signIn);
+        // Remembering is suggested only on the first confirmation, never for a device the owner
+        // removed, and for a Google account only when the owner can see which one it is.
+        const suggested =
+          row.trustable === true &&
+          !row.revokedDevice &&
+          hint?.firstConfirmation === true &&
+          !hint.otherGoogleAccount &&
+          (signIn!.type !== "google" || signIn!.email !== undefined);
+        return {
+          requestId: row.requestId,
+          kind: row.kind,
+          name: row.name,
+          status: row.state,
+          verificationCode: row.verificationCode,
+          createdAt: row.createdAt,
+          expiresAt: row.expiresAt,
+          ...(signIn ? { signIn: signIn.type } : {}),
+          ...(signIn?.email ? { signInEmail: signIn.email } : {}),
+          canTrustSignIn: row.trustable === true,
+          ...(suggested ? { rememberByDefault: true as const } : {}),
+          ...(hint?.otherGoogleAccount ? { otherGoogleAccount: true as const } : {}),
+          ...(row.revokedDevice ? { revokedDevice: true as const } : {}),
+        };
+      });
   }
 
   async decide(

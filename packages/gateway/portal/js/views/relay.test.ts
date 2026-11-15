@@ -11,7 +11,11 @@ const state = vi.hoisted(() => ({
   run: vi.fn(),
   version: "",
 }));
-vi.mock("../lib/use-relay-management.js", () => ({ useRelayManagement: () => state }));
+const accountRefresh = vi.hoisted(() => vi.fn());
+vi.mock("../lib/use-relay-management.js", () => ({
+  useRelayManagement: () => state,
+  useAccountRefresh: accountRefresh,
+}));
 // @ts-expect-error portal JS
 import { SETUP_COPY } from "../components/gateway-passkey-confirm.js";
 // @ts-expect-error portal JS
@@ -961,6 +965,43 @@ describe("new devices", () => {
     expect(button("Remove")).toBeUndefined();
     expect(host.querySelector('button[aria-label^="Remove"]')).toBeNull();
   });
+  test("when turning on automatic joins asks for the passkey here, the choice says so before the prompt", async () => {
+    state.status = connected({
+      stepUpRequired: true,
+      deviceEnrollment: { policy: "ask", trustedSignIns: [] },
+    });
+    await show();
+    const hints = [...host.querySelectorAll(".relay-option-step-up")];
+    expect(hints.map((hint) => hint.textContent)).toEqual(["Turns on with your passkey."]);
+    expect(hints[0]!.closest("label")?.querySelector("input")?.getAttribute("value")).toBe(
+      "automatic",
+    );
+    const radios = [...host.querySelectorAll('input[name="relay-policy"]')] as HTMLInputElement[];
+    await act(async () => {
+      radios[0]!.dispatchEvent(new window.Event("change", { bubbles: true }));
+    });
+    expect(state.run).toHaveBeenLastCalledWith("enrollment", { policy: "automatic" }, "PUT", {
+      stepUpAnnounced: true,
+    });
+    // Already automatic: nothing to turn on, and "ask me first" never asks.
+    state.status = connected({ stepUpRequired: true });
+    await show();
+    expect(host.querySelector(".relay-option-step-up")).toBeNull();
+    const again = [...host.querySelectorAll('input[name="relay-policy"]')] as HTMLInputElement[];
+    await act(async () => {
+      again[1]!.dispatchEvent(new window.Event("change", { bubbles: true }));
+    });
+    expect(state.run).toHaveBeenLastCalledWith("enrollment", { policy: "ask" }, "PUT");
+    // Without step-up here, no hint and nothing announced.
+    state.status = connected({ deviceEnrollment: { policy: "ask", trustedSignIns: [] } });
+    await show();
+    expect(host.querySelector(".relay-option-step-up")).toBeNull();
+    const plain = [...host.querySelectorAll('input[name="relay-policy"]')] as HTMLInputElement[];
+    await act(async () => {
+      plain[0]!.dispatchEvent(new window.Event("change", { bubbles: true }));
+    });
+    expect(state.run).toHaveBeenLastCalledWith("enrollment", { policy: "automatic" }, "PUT");
+  });
   test("is absent without an enrollment status or before the gateway is connected", async () => {
     state.status = connected({ deviceEnrollment: undefined });
     await show();
@@ -1059,7 +1100,7 @@ describe("trusted sign-ins and confirming a passkey", () => {
     });
   });
 
-  test("right after linking an account with a passkey, setup ends with one Face ID on the gateway's address", async () => {
+  test("right after linking an account with a passkey, setup ends with one passkey use on the gateway's address", async () => {
     state.status = fresh([PASSKEY]);
     const open = vi.fn().mockResolvedValue(undefined);
     const location = { origin: "https://192.0.2.1:7600" };
@@ -1069,10 +1110,10 @@ describe("trusted sign-ins and confirming a passkey", () => {
     expect(host.querySelector("#relay-setup-title")?.textContent).toBe("Finish setting up");
     expect(text()).toContain("Omnesis account");
     expect(text()).toContain("g-abcdefgh.relay.example.test");
-    expect(text()).toContain("Let your Face ID add devices");
+    expect(text()).toContain("Let your passkey add devices");
     // Never "open this address": one button goes there, signed in, and starts the prompt.
     expect(link("g-abcdefgh.relay.example.test")).toBeUndefined();
-    await click("Continue with Face ID");
+    await click("Continue with passkey");
     expect(open).toHaveBeenCalledExactlyOnceWith(ORIGIN, { next: "confirm-passkey", location });
   });
 
@@ -1080,7 +1121,7 @@ describe("trusted sign-ins and confirming a passkey", () => {
     state.status = fresh([GOOGLE]);
     await show();
     expect(text()).not.toMatch(/passkey on this gateway/i);
-    expect(button("Continue with Face ID")).toBeUndefined();
+    expect(button("Continue with passkey")).toBeUndefined();
     expect(text()).toContain("Connect your phone");
     expect(text()).toContain("Install the Omnesis app and sign in with Google.");
     expect(link("Get the app")?.getAttribute("href")).toBe("https://omnesis.dev/docs/apps");
@@ -1153,7 +1194,7 @@ describe("trusted sign-ins and confirming a passkey", () => {
     const open = vi.fn().mockResolvedValue(undefined);
     await showWith({ open, location: { origin: "https://192.0.2.1:7600" } });
     expect(text()).toContain("Getting a secure address… usually under a minute");
-    expect(button("Continue with Face ID").disabled).toBe(true);
+    expect(button("Continue with passkey").disabled).toBe(true);
   });
 
   test("connecting from a home address ends on the gateway's own address once it's ready", async () => {
@@ -1195,6 +1236,18 @@ describe("trusted sign-ins and confirming a passkey", () => {
     state.status = fresh([PASSKEY]);
     await showWith({ open: failing, location });
     expect(failing).toHaveBeenCalledOnce();
-    expect(button("Continue with Face ID")).toBeDefined();
+    expect(button("Continue with passkey")).toBeDefined();
   });
+});
+
+test("the page asks the gateway to read the account, and reads its status again once it has", async () => {
+  accountRefresh.mockClear();
+  state.status = connected();
+  await show();
+  expect(accountRefresh).toHaveBeenCalled();
+  const refreshed = accountRefresh.mock.calls.at(-1)![0] as () => void;
+  state.run.mockClear();
+  refreshed();
+  // A plain status read: no operation, so nothing changes on the gateway.
+  expect(state.run).toHaveBeenCalledExactlyOnceWith();
 });

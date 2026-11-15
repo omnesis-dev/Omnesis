@@ -23,7 +23,7 @@ import dev.omnesis.android.transport.dto.DeviceEnrollmentRecord
 import dev.omnesis.android.transport.dto.DeviceRecord
 import dev.omnesis.android.transport.dto.GatewayPairingApprovalRequest
 import dev.omnesis.android.ui.devices.DeviceCard
-import dev.omnesis.android.ui.devices.GatewayPairingApprovalContent
+import dev.omnesis.android.ui.devices.DeviceApprovalsContent
 import dev.omnesis.android.ui.common.Loadable
 import dev.omnesis.android.ui.pairing.AccountCloudPairingPane
 import dev.omnesis.android.ui.pairing.AccountPairingPhase
@@ -84,16 +84,16 @@ class DeviceEnrollmentScreenshotTest {
     private val request = GatewayPairingApprovalRequest("00000000-0000-4000-8000-000000000901", "android", "Test phone", "pending", "465 774", NOW + HOUR, canTrustSignIn = true, signIn = "google")
 
     @Test fun approval_offers_to_trust_the_sign_in() = capture("approval-trust") {
-        GatewayPairingApprovalContent(GatewayPairingApprovalController.State(requests = listOf(request), trustSignIn = setOf(request.requestId)), NOW, {}, { _, _ -> }, {})
+        DeviceApprovalsContent(GatewayPairingApprovalController.State(requests = listOf(request), trustSignIn = setOf(request.requestId)), NOW, {}, { _, _ -> }, {})
     }
 
     @Test fun approval_of_a_passkey_with_the_switch_off() = capture("approval-passkey") {
-        GatewayPairingApprovalContent(GatewayPairingApprovalController.State(requests = listOf(request.copy(signIn = "passkey"))), NOW, {}, { _, _ -> }, {})
+        DeviceApprovalsContent(GatewayPairingApprovalController.State(requests = listOf(request.copy(signIn = "passkey"))), NOW, {}, { _, _ -> }, {})
     }
 
     /** Two devices wait: each has the one sentence, its own code and its two actions. A short code shows the same way. */
     @Test fun approval_of_several_requests() = capture("approval-several") {
-        GatewayPairingApprovalContent(
+        DeviceApprovalsContent(
             GatewayPairingApprovalController.State(
                 requests = listOf(
                     request.copy(canTrustSignIn = false),
@@ -106,11 +106,11 @@ class DeviceEnrollmentScreenshotTest {
 
     /** The gateway offers its passkey ceremony: an app's request can also be approved with the owner's passkey. */
     @Test fun approval_with_a_passkey() = capture("approval-with-passkey") {
-        GatewayPairingApprovalContent(GatewayPairingApprovalController.State(requests = listOf(request), passkeyApproval = true), NOW, {}, { _, _ -> }, {})
+        DeviceApprovalsContent(GatewayPairingApprovalController.State(requests = listOf(request), passkeyApproval = true), NOW, {}, { _, _ -> }, {})
     }
 
     @Test fun approval_with_large_text() = capture("approval-large", large = true) {
-        GatewayPairingApprovalContent(GatewayPairingApprovalController.State(requests = listOf(request)), NOW, {}, { _, _ -> }, {})
+        DeviceApprovalsContent(GatewayPairingApprovalController.State(requests = listOf(request)), NOW, {}, { _, _ -> }, {})
     }
 
     /**
@@ -118,7 +118,7 @@ class DeviceEnrollmentScreenshotTest {
      * "Remember" suggested on; approving from this phone asks for the owner's fingerprint.
      */
     @Test fun approval_of_the_first_confirmation() = capture("approval-first-confirmation") {
-        GatewayPairingApprovalContent(
+        DeviceApprovalsContent(
             GatewayPairingApprovalController.State(
                 requests = listOf(request.copy(kind = "portal", name = "Maya's MacBook", signInEmail = "maya@example.com", rememberByDefault = true)),
                 trustSignIn = setOf(request.requestId),
@@ -129,7 +129,7 @@ class DeviceEnrollmentScreenshotTest {
     }
 
     @Test fun approval_of_another_google_account() = capture("approval-other-account") {
-        GatewayPairingApprovalContent(
+        DeviceApprovalsContent(
             GatewayPairingApprovalController.State(requests = listOf(request.copy(signInEmail = "jamie@example.org", otherGoogleAccount = true))),
             NOW, {}, { _, _ -> }, {},
         )
@@ -137,7 +137,7 @@ class DeviceEnrollmentScreenshotTest {
 
     /** A device the owner removed before is back: a red line above its code. */
     @Test fun approval_of_a_device_removed_before() = capture("approval-removed-before") {
-        GatewayPairingApprovalContent(
+        DeviceApprovalsContent(
             GatewayPairingApprovalController.State(requests = listOf(request.copy(kind = "portal", name = "Studio MacBook", canTrustSignIn = false, revokedDevice = true))),
             NOW, {}, { _, _ -> }, {},
         )
@@ -145,14 +145,14 @@ class DeviceEnrollmentScreenshotTest {
 
     /** The gateway wants the owner's passkey for this approval; the app has no ceremony, so its page takes it. */
     @Test fun approval_needs_the_owner_to_confirm_its_them() = capture("approval-step-up") {
-        GatewayPairingApprovalContent(
+        DeviceApprovalsContent(
             GatewayPairingApprovalController.State(requests = listOf(request), stepUp = GatewayPairingApprovalController.StepUp(request.requestId, unavailable = false)),
             NOW, {}, { _, _ -> }, {}, stepUpPage = { "https://g-1.relay.example.test/portal/approve#$it" },
         )
     }
 
     @Test fun approval_during_a_security_lock() = capture("approval-security-lock") {
-        GatewayPairingApprovalContent(
+        DeviceApprovalsContent(
             GatewayPairingApprovalController.State(requests = listOf(request), stepUp = GatewayPairingApprovalController.StepUp(request.requestId, unavailable = true)),
             NOW, {}, { _, _ -> }, {},
         )
@@ -160,11 +160,11 @@ class DeviceEnrollmentScreenshotTest {
 
     /** Right after a denial: one tap makes every new device ask first. */
     @Test fun approval_denied_offers_to_ask_first() = capture("approval-denied") {
-        GatewayPairingApprovalContent(GatewayPairingApprovalController.State(denied = request), NOW, {}, { _, _ -> }, {}, onAskFirst = {})
+        DeviceApprovalsContent(GatewayPairingApprovalController.State(denied = request), NOW, {}, { _, _ -> }, {}, onAskFirst = {})
     }
 
     @Test fun approval_with_nothing_waiting() = capture("approval-empty") {
-        GatewayPairingApprovalContent(GatewayPairingApprovalController.State(), NOW, {}, { _, _ -> }, {})
+        DeviceApprovalsContent(GatewayPairingApprovalController.State(), NOW, {}, { _, _ -> }, {})
     }
 
     /** A device that joined by signing in, as its card reads before it is opened. */

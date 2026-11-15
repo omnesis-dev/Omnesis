@@ -21,7 +21,7 @@ import {
   SetupReminder,
 } from "../components/gateway-passkey-confirm.js";
 import { onGatewayOrigin } from "../lib/gateway-passkey.js";
-import { useRelayManagement } from "../lib/use-relay-management.js";
+import { useAccountRefresh, useRelayManagement } from "../lib/use-relay-management.js";
 import {
   relayError,
   relayClock,
@@ -543,7 +543,8 @@ const POLICY_CHOICES = [
   },
 ];
 
-function PolicyChoices({ name, value, disabled, onChange }) {
+/** `stepUp`: choosing automatic from this session asks for the passkey first, so it says so. */
+function PolicyChoices({ name, value, disabled, onChange, stepUp = false }) {
   return html`<div class="relay-options" role="radiogroup" aria-label="When a new device signs in">
     ${POLICY_CHOICES.map(
       (choice) =>
@@ -561,6 +562,12 @@ function PolicyChoices({ name, value, disabled, onChange }) {
           <span>
             <span class="relay-option-title">${choice.title}</span>
             <span class="relay-option-text">${choice.text}</span>
+            ${
+              stepUp &&
+              choice.value === "automatic" &&
+              value !== "automatic" &&
+              html`<span class="relay-option-step-up">Turns on with your passkey.</span>`
+            }
           </span>
         </label>`,
     )}
@@ -618,7 +625,7 @@ function TrustedSignIns({ enrollment }) {
   </div>`;
 }
 
-function NewDevices({ enrollment, reminder, onFinish, held, busy, run }) {
+function NewDevices({ enrollment, reminder, onFinish, held, busy, run, stepUpRequired = false }) {
   // While a certificate incident holds the gateway, the choice can't take effect, so it waits.
   const disabled = held || (Boolean(busy) && busy !== "refresh");
   return html`<section class="relay-section" aria-labelledby="relay-new-devices-title">
@@ -635,7 +642,16 @@ function NewDevices({ enrollment, reminder, onFinish, held, busy, run }) {
       name="relay-policy"
       value=${enrollment.policy}
       disabled=${disabled}
-      onChange=${(policy) => policy !== enrollment.policy && run("enrollment", { policy }, "PUT")}
+      stepUp=${stepUpRequired}
+      onChange=${(policy) =>
+        policy !== enrollment.policy &&
+        run(
+          "enrollment",
+          { policy },
+          "PUT",
+          // Only loosening asks, and the choice already said so.
+          ...(stepUpRequired && policy === "automatic" ? [{ stepUpAnnounced: true }] : []),
+        )}
     />
     <${TrustedSignIns} enrollment=${enrollment} />
   </section>`;
@@ -677,6 +693,8 @@ const CONNECTING = ["waiting", "registering", "linking"];
 
 export function RelayView({ open = openOnGateway, location = globalThis.location } = {}) {
   const { status, error, busy, run, version } = useRelayManagement();
+  // A sign-in added on the account page shows here within seconds, not at the hourly check-in.
+  useAccountRefresh(() => void run());
   const [laterChoice, setLater] = useState(null);
   const later = laterChoice ?? setupLater(status?.gatewayId);
   const phase = status ? relayPhase(status) : "loading";
@@ -766,6 +784,7 @@ export function RelayView({ open = openOnGateway, location = globalThis.location
         held=${Boolean(status.incidentHold)}
         busy=${busy}
         run=${run}
+        stepUpRequired=${status.stepUpRequired === true}
       />`
     }
   </div>`;

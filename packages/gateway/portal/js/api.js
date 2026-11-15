@@ -49,7 +49,9 @@ function resetSessionExpired() {
  * custom error-message extraction) that opt out of the consolidated
  * helper.
  */
-export async function apiFetch(input, init = {}) {
+export async function apiFetch(input, options = {}) {
+  // `stepUpAnnounced`: the button already said it asks for the passkey, so no extra sheet before it.
+  const { stepUpAnnounced = false, ...init } = options;
   const method = String(init.method || "GET").toUpperCase();
   const unsafe = !["GET", "HEAD", "OPTIONS"].includes(method);
   const headers = { "Content-Type": "application/json", ...(init.headers || {}) };
@@ -64,8 +66,22 @@ export async function apiFetch(input, init = {}) {
   const res = await fetch(input, merged);
   if (res.status === 401) fireSessionExpired();
   if ((res.status === 428 || res.status === 403) && unsafe && isSameOriginInput(input))
-    return stepUpAndRetry(input, init, res, headers);
+    return stepUpAndRetry(input, init, res, headers, stepUpAnnounced);
   return res;
+}
+
+// What a person reads when a step-up can't go ahead. Never the gateway's own wording.
+const STEP_UP_REFUSED =
+  "That passkey can't approve changes here. Use the passkey you set up for this gateway.";
+const SECURITY_LOCK =
+  "Security lock is on. This change can only be made on the computer running Omnesis right now.";
+const STEP_UP_UNAVAILABLE_HERE =
+  "Passkeys can't be used on this gateway right now. Make this change on the computer running Omnesis.";
+const STEP_UP_CANCELLED = "Nothing changed.";
+
+/** A step-up error a page shows as it is (`stepUp`), whatever error codes it otherwise maps. */
+function stepUpError(GatewayPasskeyError, message) {
+  return Object.assign(new GatewayPasskeyError(message), { stepUp: true });
 }
 
 /**
@@ -74,8 +90,12 @@ export async function apiFetch(input, init = {}) {
  * `STEP_UP_REQUIRED`; this runs the passkey prompt for that one request and sends it again,
  * once. While no step-up can start it answers 403 `STEP_UP_UNAVAILABLE`, which becomes an error
  * a person can act on. Any other answer goes back to the caller unchanged.
+ *
+ * Unless the button already said so (`announced`), a small sheet says why the passkey prompt is coming
+ * before the browser asks. The sheet only explains: the step-up itself stays bound to this one
+ * request, as the gateway issues it.
  */
-async function stepUpAndRetry(input, init, res, headers) {
+async function stepUpAndRetry(input, init, res, headers, announced = false) {
   if (Object.keys(headers).some((name) => name.toLowerCase() === "x-omnesis-step-up")) return res;
   let refusal;
   try {
@@ -84,16 +104,38 @@ async function stepUpAndRetry(input, init, res, headers) {
     return res;
   }
   if (refusal?.code === "STEP_UP_UNAVAILABLE") {
-    const { GatewayPasskeyError, STEP_UP_UNAVAILABLE } = await import("./lib/gateway-passkey.js");
-    throw new GatewayPasskeyError(STEP_UP_UNAVAILABLE);
+    const { GatewayPasskeyError } = await import("./lib/gateway-passkey.js");
+    throw stepUpError(
+      GatewayPasskeyError,
+      refusal.detail?.reason === "security-lock" ? SECURITY_LOCK : STEP_UP_UNAVAILABLE_HERE,
+    );
   }
   if (res.status !== 428 || refusal?.code !== "STEP_UP_REQUIRED") return res;
-  const { stepUp, STEP_UP_HEADER } = await import("./lib/gateway-passkey.js");
-  const stepUpId = await stepUp(refusal.detail, {
-    post: (path, body, signal) =>
-      apiFetch(path, { method: "POST", body: JSON.stringify(body), ...(signal ? { signal } : {}) }),
-    ...(init.signal ? { signal: init.signal } : {}),
-  });
+  const { stepUp, STEP_UP_HEADER, GatewayPasskeyError } = await import("./lib/gateway-passkey.js");
+  if (!announced) {
+    const { confirmStepUp } = await import("./lib/step-up-sheet.js");
+    if (!(await confirmStepUp({ signal: init.signal })))
+      throw stepUpError(GatewayPasskeyError, STEP_UP_CANCELLED);
+  }
+  let stepUpId;
+  try {
+    stepUpId = await stepUp(refusal.detail, {
+      post: async (path, body, signal) => {
+        const response = await apiFetch(path, {
+          method: "POST",
+          body: JSON.stringify(body),
+          ...(signal ? { signal } : {}),
+        });
+        if (path === "/admin/step-up" && response.status === 403)
+          throw stepUpError(GatewayPasskeyError, STEP_UP_REFUSED);
+        return response;
+      },
+      ...(init.signal ? { signal: init.signal } : {}),
+    });
+  } catch (error) {
+    if (error instanceof GatewayPasskeyError) error.stepUp = true;
+    throw error;
+  }
   return apiFetch(input, { ...init, headers: { ...(init.headers || {}), [STEP_UP_HEADER]: stepUpId } });
 }
 

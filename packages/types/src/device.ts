@@ -554,6 +554,8 @@ export interface DeviceCapability {
   pushAppId?: string;
   /** Understands generic device-enrollment reminders; absent on older phones. */
   pairingNotifications?: boolean;
+  /** Shows and decides Tailscale join requests; absent on older phones. */
+  tailscaleJoinNotifications?: boolean;
   /** BCP 47 locale captured from the operating system. */
   locale?: string;
   /** ISO 3166-1 alpha-2 default region for national-format phone numbers. */

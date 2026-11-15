@@ -66,6 +66,10 @@ const SIGNUP_ACCESS_TTL_MS = 10 * 60_000;
 const SIGNUP_ACCESS_RETRY_MS = 60_000;
 /** A status read waits this long at most for the relay's signup answer; a later read has it. */
 const SIGNUP_ACCESS_WAIT_MS = 1500;
+/** At most one account read the portal asked for per this long. */
+const ACCOUNT_REFRESH_MS = 15_000;
+/** How long one account read the portal asked for may take before it is given up. */
+const ACCOUNT_REFRESH_TIMEOUT_MS = 30_000;
 
 const settingsSchema = z
   .object({
@@ -113,6 +117,8 @@ export interface CloudRelayManagerOptions {
   probeRetryMs?: number;
   /** How long to wait before asking the relay again to drop a gateway its owner disconnected. */
   releaseRetryMs?: number;
+  /** At most one account read the portal asks for per this many milliseconds. */
+  accountRefreshMs?: number;
   /**
    * The certificate monitor put the gateway on an incident hold for a certificate it hadn't held
    * for before. The gateway tells its administrators; never with the hostname or the certificate.
@@ -153,6 +159,10 @@ export class GatewayCloudRelayManagement implements CloudRelayManagement {
   private signupAccess:
     { relayUrl: string; value: GatewaySignupAccess | undefined; until: number } | undefined;
   private signupAccessRead: Promise<void> | undefined;
+  /** When the last account read the portal asked for started, the read itself, and one queued. */
+  private accountReadAt = 0;
+  private accountRead: Promise<void> | undefined;
+  private accountReadTimer: ReturnType<typeof setTimeout> | undefined;
   private readonly monitor: Pick<GatewayCertificateMonitor, "start" | "status" | "close">;
   private readonly directory: string;
   private readonly file: string;
@@ -1147,6 +1157,49 @@ export class GatewayCloudRelayManagement implements CloudRelayManagement {
     this.revision++;
     return this.status();
   }
+  /**
+   * The owner opened the Omnesis account page, or came back to it, perhaps from adding a passkey
+   * on the relay's account page: read the account's sign-ins now instead of at the hourly
+   * check-in, so the page follows within seconds. This is the check-in's own read, so it pins only
+   * what that would pin and never trusts anything by itself. One read at a time, at most one per
+   * `accountRefreshMs`; a call inside that window queues one more read at its end, so coming back
+   * soon after opening the page is still noticed. An unlinked gateway has nothing to read.
+   */
+  async refreshAccount(): Promise<CloudRelayManagementStatus> {
+    if (!this.accountRead && this.accountReadable()) {
+      const wait =
+        this.accountReadAt + (this.options.accountRefreshMs ?? ACCOUNT_REFRESH_MS) - Date.now();
+      if (wait <= 0) this.readAccount();
+      else
+        (this.accountReadTimer ??= setTimeout(() => {
+          this.accountReadTimer = undefined;
+          void this.refreshAccount();
+        }, wait)).unref();
+    }
+    await this.accountRead;
+    return this.status();
+  }
+  private accountReadable(): boolean {
+    return Boolean(
+      !this.closed &&
+      this.settings?.enabled &&
+      this.enrollment.state === "enrolled" &&
+      this.account!.status().linked,
+    );
+  }
+  /** A launch may read the account at the same moment; the account link shares that fetch. */
+  private readAccount(): void {
+    this.accountReadAt = Date.now();
+    const signal = AbortSignal.any([
+      this.abort.signal,
+      AbortSignal.timeout(ACCOUNT_REFRESH_TIMEOUT_MS),
+    ]);
+    this.accountRead = this.account!.refresh(signal)
+      .then(() => {
+        this.revision++;
+      })
+      .finally(() => (this.accountRead = undefined));
+  }
   async passkeyConfirmation() {
     return this.account!.passkeyConfirmationOptions();
   }
@@ -1198,6 +1251,7 @@ export class GatewayCloudRelayManagement implements CloudRelayManagement {
   async close(): Promise<void> {
     this.closed = true;
     clearTimeout(this.releaseTimer);
+    clearTimeout(this.accountReadTimer);
     try {
       await this.monitor.close();
     } finally {

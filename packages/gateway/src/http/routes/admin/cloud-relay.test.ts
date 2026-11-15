@@ -53,7 +53,11 @@ beforeEach(() => {
   };
 });
 afterEach(() => vi.unstubAllEnvs());
-function app(auth: AuthContext | null = bearer, configured = true) {
+function app(
+  auth: AuthContext | null = bearer,
+  configured = true,
+  stepUps?: AppEnv["Variables"]["stepUps"],
+) {
   const router = strictRoute(new Hono<AppEnv>());
   router.onError((e, c) => {
     if (e instanceof HttpError) return errorResponse(c, e);
@@ -62,6 +66,7 @@ function app(auth: AuthContext | null = bearer, configured = true) {
   });
   router.use("*", async (c, next) => {
     if (auth) c.set("auth", auth);
+    if (stepUps) c.set("stepUps", stepUps);
     await next();
   });
   mountCloudRelayManagementRoutes(router, configured ? service : undefined, devices);
@@ -87,7 +92,8 @@ test("reads and operates the lifecycle service with exact validated inputs and n
   const router = app();
   const response = await router.request("/admin/cloud-relay");
   expect(response.headers.get("cache-control")).toBe("no-store");
-  expect(await response.json()).toEqual(status);
+  // Without step-up installed, nothing from this session asks for a passkey.
+  expect(await response.json()).toEqual({ ...status, stepUpRequired: false });
   const config = {
     relayUrl: "https://relay.example.test",
     publicOrigin: "https://gateway.example.test",
@@ -108,6 +114,16 @@ test("reads and operates the lifecycle service with exact validated inputs and n
   for (const operation of ["disable", "reconnect", "renew"] as const) {
     expect((await router.request(`/admin/cloud-relay/${operation}`, post())).status).toBe(200);
     expect(service[operation]).toHaveBeenCalledOnce();
+  }
+});
+test("the status says whether this session's loosening actions ask for a passkey first", async () => {
+  for (const required of [true, false]) {
+    const stepUps = {
+      required: vi.fn(() => required),
+    } as unknown as AppEnv["Variables"]["stepUps"];
+    const response = await app(bearer, true, stepUps).request("/admin/cloud-relay");
+    expect(await response.json()).toEqual({ ...status, stepUpRequired: required });
+    expect(stepUps!.required).toHaveBeenCalledOnce();
   }
 });
 test("cookie-based mutations require the portal CSRF token while bearer admin clients work", async () => {
@@ -676,4 +692,52 @@ test("confirming a passkey on the gateway's page and listing sign-ins are admin-
   expect(await (await router.request("/admin/cloud-relay/trusted-sign-ins")).json()).toEqual({
     items: [],
   });
+});
+
+test("an account refresh is an admin action that reads the account and answers with the status", async () => {
+  service.refreshAccount = vi.fn().mockResolvedValue(status);
+  expect((await app(null).request("/admin/cloud-relay/account/refresh", post())).status).toBe(401);
+  expect(
+    (
+      await app({ ...bearer, scopes: [SCOPE_READ] }).request(
+        "/admin/cloud-relay/account/refresh",
+        post(),
+      )
+    ).status,
+  ).toBe(403);
+  expect(
+    (await app().request("/admin/cloud-relay/account/refresh", post({ signIn: "untrusted" })))
+      .status,
+  ).toBe(400);
+  // A portal session must carry its CSRF token like every other action.
+  const csrf = "a".repeat(64);
+  const portal = app({
+    authMethod: "portal-session",
+    deviceId: null,
+    tokenId: null,
+    credentialDeviceId: null,
+    scopes: [SCOPE_ADMIN],
+    csrfToken: csrf,
+  });
+  expect((await portal.request("/admin/cloud-relay/account/refresh", post())).status).toBe(403);
+  expect(service.refreshAccount).not.toHaveBeenCalled();
+  const response = await portal.request(
+    "/admin/cloud-relay/account/refresh",
+    post({}, { "X-Omnesis-CSRF": csrf }),
+  );
+  expect(response.status).toBe(200);
+  expect(response.headers.get("cache-control")).toBe("no-store");
+  expect(await response.json()).toEqual({ ...status, stepUpRequired: false });
+  expect(service.refreshAccount).toHaveBeenCalledOnce();
+  // A service without an account to read says so instead of failing vaguely.
+  service.refreshAccount = undefined;
+  const missing = await app().request("/admin/cloud-relay/account/refresh", post());
+  expect(missing.status).toBe(503);
+  expect(await missing.json()).toMatchObject({ code: "account-unavailable" });
+});
+test("with the cloud relay flag off an account refresh is not a route", async () => {
+  service.refreshAccount = vi.fn().mockResolvedValue(status);
+  vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "0");
+  expect((await app().request("/admin/cloud-relay/account/refresh", post())).status).toBe(404);
+  expect(service.refreshAccount).not.toHaveBeenCalled();
 });

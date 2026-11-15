@@ -144,7 +144,7 @@ test("without a confirmed passkey here, the page says where to approve instead o
   expect(host.querySelector(".cloud-pairing-code")?.textContent).toBe("123 456");
   expect(button()).toBeNull();
   expect(text()).toContain(
-    "This gateway doesn't have Face ID approval set up yet. Approve this device from the Omnesis portal on your computer.",
+    "This gateway doesn't have passkey approval set up yet. Approve this device from the Omnesis portal on your computer.",
   );
   // When it is set up, the button is there.
   transport.mockResolvedValue(new Response(JSON.stringify({ ...held, passkeyApproval: true })));

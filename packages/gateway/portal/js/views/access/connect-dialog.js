@@ -25,7 +25,7 @@ import {
   mainAddressCertificate,
   servesUntrustedCertificate,
 } from "./client-setup.js";
-import { NO_RELAY, addressChoices, leadsWithLocalAddress } from "./public-address.js";
+import { NO_RELAY, NO_TAILSCALE, addressChoices, leadsWithLocalAddress } from "./public-address.js";
 import { AgentIcon } from "./agent-brand.js";
 import { errorMessage } from "./shared.js";
 
@@ -265,7 +265,7 @@ function AgentCommand({ agent, command, labelled }) {
  * picks it there (`addressSelectable`), a managed integration pairs against
  * that address and offers no second choice of its own.
  */
-function AgentSetupPicker({ oauth, relay, addressSelectable }) {
+function AgentSetupPicker({ oauth, relay, tailscale, addressSelectable }) {
   const [selectedId, setSelectedId] = useState(null);
   const [commandIdx, setCommandIdx] = useState(0);
   const [addressIdx, setAddressIdx] = useState(0);
@@ -281,7 +281,7 @@ function AgentSetupPicker({ oauth, relay, addressSelectable }) {
   );
   const addresses = addressSelectable && selectedAddress ? [selectedAddress] : everyAddress;
   const harnessAddress = addresses[Math.min(addressIdx, addresses.length - 1)];
-  const agents = agentSetups(oauth, { harnessAddress, pairingCode: pairing.code ?? undefined, relay });
+  const agents = agentSetups(oauth, { harnessAddress, pairingCode: pairing.code ?? undefined, relay, tailscale });
   const selected = agents.find((agent) => agent.id === selectedId) ?? null;
   const pairsHarness = selected?.pairs ? selected.id : null;
 
@@ -442,14 +442,15 @@ function addressCaption(oauth, selectable) {
 }
 
 /**
- * `relay` is the gateway's relay-hosted address, from `relayPublicAddress`.
+ * `relay` is the gateway's relay-hosted address, from `relayPublicAddress`,
+ * and `tailscale` its Tailscale device's address, from `tailscalePublicAddress`.
  * With it and more than one address the gateway authorizes, step 1 is a
  * choice between them, and the chosen address is the one every agent's setup
  * below is written for.
  */
-export function ConnectAgentDialog({ oauth: overviewOauth, relay = NO_RELAY, onClose }) {
+export function ConnectAgentDialog({ oauth: overviewOauth, relay = NO_RELAY, tailscale = NO_TAILSCALE, onClose }) {
   const [pickedAddress, setPickedAddress] = useState(null);
-  const choices = addressChoices(overviewOauth, relay);
+  const choices = addressChoices(overviewOauth, relay, tailscale);
   const address =
     choices.selectable && choices.options.some((option) => option.resource === pickedAddress)
       ? pickedAddress
@@ -526,7 +527,7 @@ export function ConnectAgentDialog({ oauth: overviewOauth, relay = NO_RELAY, onC
             title="Copy MCP resource"
           />
         </div>
-        <${AgentSetupPicker} oauth=${oauth} relay=${relay} addressSelectable=${choices.selectable} />
+        <${AgentSetupPicker} oauth=${oauth} relay=${relay} tailscale=${tailscale} addressSelectable=${choices.selectable} />
       <//>
       <${ConnectStep}
         number="2"

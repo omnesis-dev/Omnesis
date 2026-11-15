@@ -2272,127 +2272,137 @@ test("a completion follows the stored resource only with the cloud relay opt-in"
   }
 });
 
-test("direct and relay issuers authorize and refresh independently, with issuer-bound resources and Host-independent completion", async () => {
-  vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "1");
-  const relay = "https://opaque-relay.example.net";
-  app = createTestApp({ additionalOAuthIssuerUrls: [relay] });
-  const access = new AccessService(db, directWriteGate(db));
-  const client = await registerClient();
-  for (const [index, origin] of [ORIGIN, relay].entries()) {
-    const other = origin === ORIGIN ? relay : ORIGIN;
-    const metadata = await app.request(`${origin}/.well-known/oauth-authorization-server`);
-    expect(await metadata.json()).toMatchObject({
-      issuer: origin,
-      token_endpoint: `${origin}/oauth/token`,
-    });
-    const protectedMetadata = await app.request(
-      `${origin}/.well-known/oauth-protected-resource/mcp`,
-    );
-    expect(await protectedMetadata.json()).toMatchObject({
-      resource: `${origin}/mcp`,
-      authorization_servers: [origin],
-    });
-    const authorize = new URL(`${origin}/oauth/authorize`);
-    authorize.search = new URLSearchParams({
-      response_type: "code",
-      client_id: client.client_id,
-      redirect_uri: REDIRECT,
-      state: `mixed-${index}`,
-      code_challenge: createHash("sha256").update(VERIFIER).digest("base64url"),
-      code_challenge_method: "S256",
-      resource: `${origin}/mcp`,
-      scope: "omnesis:access",
-    }).toString();
-    const countBefore = db.prepare("SELECT count(*) AS n FROM oauth_authorization_requests").get();
-    const cross = new URL(authorize);
-    cross.searchParams.set("resource", `${other}/mcp`);
-    const refused = await app.request(cross);
-    expect(new URL(refused.headers.get("location")!).searchParams.get("error")).toBe(
-      "invalid_target",
-    );
-    expect(db.prepare("SELECT count(*) AS n FROM oauth_authorization_requests").get()).toEqual(
-      countBefore,
-    );
-    const started = await app.request(authorize);
-    expect(started.status).toBe(303);
-    const handle = new URL(started.headers.get("location")!, origin).searchParams.get("request")!;
-    const pending = access.getAuthorizationByBrowserHandle(handle)!;
-    const lookup = await portalJson("/portal/api/access/authorizations/lookup", {
-      code: pending.userCode,
-    });
-    const approvalId = (lookup.body as { request: { approvalId: string } }).request.approvalId;
+test.each([
+  ["cloud relay", "OMNESIS_CLOUD_RELAY_ENABLED", "https://opaque-relay.example.net"],
+  ["Tailscale device", "OMNESIS_TAILSCALE_EMBED_ENABLED", "https://omnesis.example-net.ts.net"],
+])(
+  "direct and %s issuers authorize and refresh independently, with issuer-bound resources and Host-independent completion",
+  async (_name, flag, relay) => {
+    vi.stubEnv(flag, "1");
+    app = createTestApp({ additionalOAuthIssuerUrls: [relay] });
+    const access = new AccessService(db, directWriteGate(db));
+    const client = await registerClient();
+    for (const [index, origin] of [ORIGIN, relay].entries()) {
+      const other = origin === ORIGIN ? relay : ORIGIN;
+      const metadata = await app.request(`${origin}/.well-known/oauth-authorization-server`);
+      expect(await metadata.json()).toMatchObject({
+        issuer: origin,
+        token_endpoint: `${origin}/oauth/token`,
+      });
+      const protectedMetadata = await app.request(
+        `${origin}/.well-known/oauth-protected-resource/mcp`,
+      );
+      expect(await protectedMetadata.json()).toMatchObject({
+        resource: `${origin}/mcp`,
+        authorization_servers: [origin],
+      });
+      const authorize = new URL(`${origin}/oauth/authorize`);
+      authorize.search = new URLSearchParams({
+        response_type: "code",
+        client_id: client.client_id,
+        redirect_uri: REDIRECT,
+        state: `mixed-${index}`,
+        code_challenge: createHash("sha256").update(VERIFIER).digest("base64url"),
+        code_challenge_method: "S256",
+        resource: `${origin}/mcp`,
+        scope: "omnesis:access",
+      }).toString();
+      const countBefore = db
+        .prepare("SELECT count(*) AS n FROM oauth_authorization_requests")
+        .get();
+      const cross = new URL(authorize);
+      cross.searchParams.set("resource", `${other}/mcp`);
+      const refused = await app.request(cross);
+      expect(new URL(refused.headers.get("location")!).searchParams.get("error")).toBe(
+        "invalid_target",
+      );
+      expect(db.prepare("SELECT count(*) AS n FROM oauth_authorization_requests").get()).toEqual(
+        countBefore,
+      );
+      const started = await app.request(authorize);
+      expect(started.status).toBe(303);
+      const handle = new URL(started.headers.get("location")!, origin).searchParams.get("request")!;
+      const pending = access.getAuthorizationByBrowserHandle(handle)!;
+      const lookup = await portalJson("/portal/api/access/authorizations/lookup", {
+        code: pending.userCode,
+      });
+      const approvalId = (lookup.body as { request: { approvalId: string } }).request.approvalId;
+      expect(
+        (
+          await portalJson(`/portal/api/access/authorizations/${approvalId}/decision`, {
+            decision: "approve",
+            selection: {
+              kind: "new-principal",
+              principalName: `Mixed issuer ${index}`,
+              grantName: "Selected direct access",
+              rules: DIRECT_RULES,
+              credentialLabel: "Synthetic mixed MCP",
+              expiresAt: null,
+            },
+          })
+        ).response.status,
+      ).toBe(200);
+      const callback =
+        index === 0
+          ? new URL(
+              (
+                await app.request(
+                  `https://unconfigured.example.org/oauth/authorize/complete?request=${encodeURIComponent(handle)}`,
+                )
+              ).headers.get("location")!,
+            )
+          : new URL(
+              (await portalJson(`/portal/api/access/authorizations/${approvalId}/complete`, {}))
+                .body.redirectTo as string,
+            );
+      expect(callback.origin + callback.pathname).toBe(REDIRECT);
+      expect(callback.searchParams.get("iss")).toBe(origin);
+      const fields = {
+        grant_type: "authorization_code",
+        code: callback.searchParams.get("code")!,
+        client_id: client.client_id,
+        redirect_uri: REDIRECT,
+        code_verifier: VERIFIER,
+        resource: `${origin}/mcp`,
+      };
+      const post = (target: string, body: Record<string, string>) =>
+        app.request(`${target}/oauth/token`, {
+          method: "POST",
+          headers: { "content-type": "application/x-www-form-urlencoded" },
+          body: new URLSearchParams(body),
+        });
+      const crossToken = await post(other, fields);
+      expect(crossToken.status).toBe(400);
+      expect(await crossToken.json()).toMatchObject({ error: "invalid_target" });
+      const tokens = (await (await post(origin, fields)).json()) as {
+        access_token: string;
+        refresh_token: string;
+      };
+      expect(tokens.access_token).toMatch(/^omn_oat_/);
+      expect(access.lookupAccessToken(tokens.access_token, `${other}/mcp`)).toBeNull();
+      const refresh = {
+        grant_type: "refresh_token",
+        client_id: client.client_id,
+        refresh_token: tokens.refresh_token,
+      };
+      expect((await post(other, refresh)).status).toBe(400);
+      const network = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("relay offline"));
+      try {
+        expect((await post(origin, refresh)).status).toBe(200);
+        expect(network).not.toHaveBeenCalled();
+      } finally {
+        network.mockRestore();
+      }
+    }
     expect(
       (
-        await portalJson(`/portal/api/access/authorizations/${approvalId}/decision`, {
-          decision: "approve",
-          selection: {
-            kind: "new-principal",
-            principalName: `Mixed issuer ${index}`,
-            grantName: "Selected direct access",
-            rules: DIRECT_RULES,
-            credentialLabel: "Synthetic mixed MCP",
-            expiresAt: null,
-          },
-        })
-      ).response.status,
-    ).toBe(200);
-    const callback =
-      index === 0
-        ? new URL(
-            (
-              await app.request(
-                `https://unconfigured.example.org/oauth/authorize/complete?request=${encodeURIComponent(handle)}`,
-              )
-            ).headers.get("location")!,
-          )
-        : new URL(
-            (await portalJson(`/portal/api/access/authorizations/${approvalId}/complete`, {})).body
-              .redirectTo as string,
-          );
-    expect(callback.origin + callback.pathname).toBe(REDIRECT);
-    expect(callback.searchParams.get("iss")).toBe(origin);
-    const fields = {
-      grant_type: "authorization_code",
-      code: callback.searchParams.get("code")!,
-      client_id: client.client_id,
-      redirect_uri: REDIRECT,
-      code_verifier: VERIFIER,
-      resource: `${origin}/mcp`,
-    };
-    const post = (target: string, body: Record<string, string>) =>
-      app.request(`${target}/oauth/token`, {
-        method: "POST",
-        headers: { "content-type": "application/x-www-form-urlencoded" },
-        body: new URLSearchParams(body),
-      });
-    const crossToken = await post(other, fields);
-    expect(crossToken.status).toBe(400);
-    expect(await crossToken.json()).toMatchObject({ error: "invalid_target" });
-    const tokens = (await (await post(origin, fields)).json()) as {
-      access_token: string;
-      refresh_token: string;
-    };
-    expect(tokens.access_token).toMatch(/^omn_oat_/);
-    expect(access.lookupAccessToken(tokens.access_token, `${other}/mcp`)).toBeNull();
-    const refresh = {
-      grant_type: "refresh_token",
-      client_id: client.client_id,
-      refresh_token: tokens.refresh_token,
-    };
-    expect((await post(other, refresh)).status).toBe(400);
-    const network = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("relay offline"));
-    try {
-      expect((await post(origin, refresh)).status).toBe(200);
-      expect(network).not.toHaveBeenCalled();
-    } finally {
-      network.mockRestore();
-    }
-  }
-  expect(
-    (await app.request("https://unconfigured.example.org/.well-known/oauth-protected-resource/mcp"))
-      .status,
-  ).toBe(404);
-});
+        await app.request(
+          "https://unconfigured.example.org/.well-known/oauth-protected-resource/mcp",
+        )
+      ).status,
+    ).toBe(404);
+  },
+);
 
 test("management-configured cloud issuer becomes available without restarting the direct OAuth service", async () => {
   let issuers: readonly string[] = [];

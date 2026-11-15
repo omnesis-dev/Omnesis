@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { randomBytes } from "node:crypto";
-import { cloudRelayEnabled, createLogger } from "@omnesis/core";
+import { cloudRelayEnabled, createLogger, tailscaleEmbedEnabled } from "@omnesis/core";
 import { buildPage, clampLimit, scopeSatisfies, SCOPE_ADMIN, tryDeviceId } from "@omnesis/types";
 
 import {
@@ -133,10 +133,11 @@ export function mountOAuthAuthorizationRoutes(
     },
   );
 
-  // With the cloud relay a completion follows the stored resource, since the
-  // portal may be on another origin. Without it the request's own URL decides.
+  // With a second origin (the cloud relay's, or the gateway's tailnet name) a
+  // completion follows the stored resource, since the portal may be on the
+  // other origin. Without one the request's own URL decides.
   const completionUrls = (requestUrl: string, resource: string) =>
-    cloudRelayEnabled()
+    cloudRelayEnabled() || tailscaleEmbedEnabled()
       ? resolveOAuthResourceUrls(
           resource,
           options.publicBaseUrl,

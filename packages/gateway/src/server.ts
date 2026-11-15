@@ -23,6 +23,7 @@ import {
   type DeviceId,
   type DeviceRecord,
 } from "@omnesis/types";
+import { mountTailscaleRoutes } from "./http/routes/tailscale.js";
 import { markRelayRequestExposure } from "./http/client-ip.js";
 
 import { labFeatureEnabled } from "./lab/store.js";
@@ -672,9 +673,17 @@ export function createServer(
     cloudIdentitySource?: () =>
       import("./http/services/CloudPairingConfiguration.js").CloudPairingIdentity | undefined;
     cloudPairingPublicOrigin?: () => string | undefined;
-    onCloudPairingRequest?: (request: { requestId: string; expiresAt: number }) => void;
+    /** A device waits for approval. `name` and `kind` are its own, untrusted description. */
+    onCloudPairingRequest?: (request: {
+      requestId: string;
+      expiresAt: number;
+      name: string;
+      kind: string;
+    }) => void;
     /** A device joined with nobody approving it; see `PairingServiceDeps`. */
     onDeviceJoined?: import("./http/services/PairingService.js").PairingServiceDeps["onDeviceJoined"];
+    /** The gateway's own tailnet device; present only with OMNESIS_TAILSCALE_EMBED_ENABLED=1. */
+    tailscaleEmbed?: import("./tailscale-embed/service.js").TailscaleEmbedService;
     cloudIdentity?: {
       identity: import("@omnesis/cloud-relay").IdentityProvider;
       ownerAccountId: string;
@@ -1388,6 +1397,37 @@ export function createServer(
     wsServer: opts?.wsServer,
     onDeviceJoined: opts?.onDeviceJoined,
   });
+  // A collector on the owner's tailnet joins as the Tailscale device it proved to be.
+  opts?.tailscaleEmbed?.useAdmission({
+    revokedAt: (identity) => pairingService.provenCollectorRevokedAt(identity),
+    admit: async (input) => {
+      let result: Awaited<ReturnType<typeof pairingService.admitProvenCollector>>;
+      try {
+        result = await pairingService.admitProvenCollector(input);
+      } catch (err) {
+        log.warn(
+          `Tailscale join could not be admitted: ${err instanceof Error ? err.message : String(err)}`,
+        );
+        return {
+          outcome: "failed",
+          error: "The gateway could not admit this collector. Try again.",
+        };
+      }
+      if (result.outcome === "invalid" || result.outcome === "conflict")
+        return { outcome: "failed", error: result.error };
+      if (result.outcome !== "paired-device" || result.device.kind !== "collector")
+        return { outcome: "failed", error: "The gateway could not admit this collector." };
+      return {
+        outcome: "paired-device",
+        credentials: {
+          device: { id: result.device.id, name: result.device.name, kind: "collector" },
+          tokenId: result.tokenId,
+          token: result.token,
+          scopes: result.scopes,
+        },
+      };
+    },
+  });
 
   const authService = new AuthService({
     db,
@@ -1684,6 +1724,16 @@ export function createServer(
     systemTrustPairingOrigins:
       opts?.systemTrustPairingOrigins ?? (opts?.publicBaseUrl ? [opts.publicBaseUrl] : []),
     publiclyTrustedPairingHosts: opts?.publiclyTrustedPairingHosts,
+    ...(opts?.tailscaleEmbed
+      ? {
+          tailnetPairingAddress: () => {
+            const origin = opts.tailscaleEmbed!.tailnetOrigin();
+            return origin
+              ? { origin, trusted: opts.tailscaleEmbed!.tailnetCertificateTrusted() }
+              : null;
+          },
+        }
+      : {}),
     advertisedPairingHost: opts?.advertisedPairingHost,
     certificateRenewsAt: opts?.certificateRenewsAt,
     pairingHostNames: opts?.pairingHostNames,
@@ -1698,6 +1748,7 @@ export function createServer(
     watermarkService,
   });
   mountDirectCandidateRoutes(app, { configDir: opts?.configDir, port: opts?.port });
+  mountTailscaleRoutes(app, opts?.tailscaleEmbed);
   const localSpkiFingerprint = () =>
     typeof opts?.tlsSpkiFingerprintSha256 === "function"
       ? opts.tlsSpkiFingerprintSha256()
@@ -1884,8 +1935,15 @@ export function createServer(
       : {}),
   });
   mountNotificationRoutes(app, {
-    claim: (deviceId, supportsPairingNotifications = false) =>
-      w.claimNotification({ deviceId, now: Date.now(), supportsPairingNotifications }),
+    claim: (deviceId, support = {}) =>
+      w.claimNotification({
+        deviceId,
+        now: Date.now(),
+        supportsPairingNotifications: support.pairingNotifications === true,
+        ...(support.tailscaleJoinNotifications === true
+          ? { supportsTailscaleJoinNotifications: true }
+          : {}),
+      }),
     confirm: (deviceId, deliveryId) =>
       w.confirmNotification({ deviceId, deliveryId, now: Date.now() }),
   });

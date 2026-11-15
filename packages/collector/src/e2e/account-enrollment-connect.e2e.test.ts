@@ -233,7 +233,7 @@ describe.skipIf(!browserReady)("connect a gateway by signing in", () => {
           30_000,
         );
         await expectText(page, "Finish setting up", 30_000);
-        await expectText(page, "Let your Face ID add devices", 30_000);
+        await expectText(page, "Let your passkey add devices", 30_000);
         // Nothing to choose first: the settings are all there, with automatic joining selected.
         await expectText(page, "What happens when a new device signs in", 30_000);
         expect(await page.getByRole("radio", { name: /^Join automatically/ }).isChecked()).toBe(

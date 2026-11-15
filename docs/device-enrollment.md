@@ -162,7 +162,7 @@ The owner confirms a passkey as the last step of connecting: the account page
 is confirmed. What the step asks depends only on what the account has, so a relay
 that lies about it can only make the step fail:
 
-- a passkey pinned here and an origin of its own: "Continue with Face ID" runs the
+- a passkey pinned here and an origin of its own: "Continue with passkey" runs the
   `pin-passkey` ceremony below on the gateway's own page. On any other address
   (the LAN or tailnet portal) the same button opens the gateway's own page
   already signed in (the portal handoff below) and the ceremony starts on load;
@@ -223,7 +223,7 @@ has an origin of its own and no incident holds it); the approval view of a held
 request carries `passkeyApproval` too. Pages offer a passkey button only when
 these say it can work.
 
-The portal's login page offers "Continue with Face ID" (only when the account has
+The portal's login page offers "Continue with passkey" (only when the account has
 a passkey; on the gateway's own origin it signs in here, elsewhere through the
 account page) and "Continue with Google", which always waits for approval. The
 token and pairing-code form sits behind "Have a pairing code? Enter it". A
@@ -358,8 +358,12 @@ cannot add a device. The gateway checks this in `gateway/src/http/step-up.ts`.
   (`POST /admin/devices`), creating a token (`POST /admin/tokens`) and moving a
   device to another access level (`PUT /admin/access/devices/:id/level`).
 - **Never for** what makes the gateway stricter: declining a request, `ask`,
-  removing a sign-in, revoking a device. Anything else sent to a guarded route
-  needs the step-up.
+  removing a sign-in, revoking a device. Nor for a phone minting its own
+  notification credential: `POST /admin/tokens` for the requesting device itself
+  with scopes exactly `["push:claim"]`, sent with that device's bearer token when
+  it already carries `push:claim`. That scope only claims and confirms the
+  device's own queued notifications, so the new token can do nothing its caller
+  can't. Anything else sent to a guarded route needs the step-up.
 - Nothing changes without `OMNESIS_CLOUD_RELAY_ENABLED`, before the owner confirms
   a passkey, or for a gateway with no account.
 
@@ -385,9 +389,18 @@ The exchange:
 
 While no step-up can start (a certificate incident hold, or a gateway with no
 origin of its own), a guarded action that needs one and the options route answer
-`403 STEP_UP_UNAVAILABLE`; the owner acts on the gateway itself. The portal runs
+`403 STEP_UP_UNAVAILABLE`, with `detail: { reason: "security-lock" }` during an
+incident hold; the owner acts on the gateway itself. The portal runs
 the exchange inside its request helper: a guarded action prompts for the passkey
-and is sent again once. The native admin apps don't run it yet: through the relay,
+and is sent again once.
+
+So that the prompt never comes unannounced, `GET /admin/cloud-relay` and
+`GET /admin/cloud-pairing/requests` carry `stepUpRequired`: whether this session's
+loosening actions will ask, by the same rule as above. The portal then labels the
+button ("Yes, approve with passkey", "Turns on with your passkey"). A `428` that arrives
+anyway first shows a short note ("Confirm it's you") before the browser's prompt.
+These are labels only: every guarded request is still checked on its own, and a
+label never stands in for a step-up. The native admin apps don't run it yet: through the relay,
 those actions answer `428 STEP_UP_REQUIRED` (or `403 STEP_UP_UNAVAILABLE`).
 
 ## Comparison code
@@ -496,6 +509,25 @@ Approving devices show `verificationCode` as listed by
 `GET /admin/cloud-pairing/requests`: the portal's pairing requests, the iOS and
 Android approval sheets, and `omnesis cloud requests`. `omnesis cloud approve
 <id> --code` takes the code typed from the new device.
+
+Each listed request also carries what the approval card shows about it:
+`createdAt`; `signInEmail`, the address Google verified in the token the gateway
+checked itself (never a label from the relay or the device); and, for the choice
+to remember the sign-in, `rememberByDefault` (offered as remembered only when
+nothing is confirmed on this gateway yet, the sign-in is the one the gateway
+verified when it was linked, the device was never removed, and a Google sign-in
+shows its address) and `otherGoogleAccount` (a Google account other than the one
+the gateway was linked with, compared by the same account digest; it can't be
+remembered from the card). These only decide how the card reads: approving and
+confirming still go through `canTrustSignIn` and the gateway's own checks.
+
+The administrator phones' notification for a held request reads "Is this you?"
+and names the device; tapping it opens that request, whose id the notification
+route carries (`route.requestId` on `device-pairing`). The notification for a
+device that joined on its own ("New device connected") carries
+`route.deviceId`. Neither carries a code or an approve action. After a deny, the
+portal offers "Make new devices always ask me", which writes `ask` and so needs
+no step-up.
 
 ## Device rows
 
@@ -639,7 +671,12 @@ approval. A future-dated proof never verifies.
 Gateways sync hourly, and when a verified sign-in they do not trust arrives,
 Google or passkey, so a device that signs in with a sign-in the account confirmed
 joins at once. A sign-in starts at most one fetch every two seconds, and callers
-share a fetch that is already running.
+share a fetch that is already running. The portal's account page also asks for a
+sync when it opens or regains focus (`POST /admin/cloud-relay/account/refresh`,
+admin only), so a passkey the owner just added on the relay's account page shows
+within seconds. That is the same sync, at most one every 15 seconds, with a call
+inside that window queuing one more at its end; it applies the rules above and
+can trust nothing they would not.
 
 #### Removal is durable
 

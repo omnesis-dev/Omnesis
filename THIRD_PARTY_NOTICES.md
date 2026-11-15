@@ -573,6 +573,37 @@ transitive dependencies are resolved through npm; their upstream license files
 remain in the installed packages. Authenticator private keys remain with the
 user's credential provider. Omnesis stores public credential records only.
 
+## 12. Tailscale helper (`omnesis-tailnet`)
+
+The gateway image and source builds include `omnesis-tailnet`, a Go program the
+gateway runs only with `OMNESIS_TAILSCALE_EMBED_ENABLED=1`. It is a statically
+linked binary built from `packages/tailnet-helper/` (AGPL-3.0-or-later) and the
+Go modules below, resolved through `packages/tailnet-helper/go.sum`, together
+with the Go standard library (BSD-3-Clause, The Go Authors). None of them is
+vendored or relicensed under Omnesis's AGPL header; each module's license file
+travels with its source in the Go module cache.
+
+| Module                                                                                         | License      |
+| ---------------------------------------------------------------------------------------------- | ------------ |
+| `tailscale.com` (tsnet and its client libraries)                                               | BSD-3-Clause |
+| `github.com/tailscale/wireguard-go`                                                            | MIT          |
+| `github.com/tailscale/hujson`, `github.com/tailscale/peercred`                                 | BSD-3-Clause |
+| `github.com/tailscale/web-client-prebuilt`                                                     | BSD-3-Clause |
+| `gvisor.dev/gvisor`                                                                            | Apache-2.0   |
+| `golang.org/x/crypto`, `net`, `oauth2`, `sync`, `sys`, `term`, `text`, `time`, `exp`           | BSD-3-Clause |
+| `filippo.io/edwards25519`, `github.com/hdevalence/ed25519consensus`                            | BSD-3-Clause |
+| `github.com/go-json-experiment/json`, `github.com/klauspost/compress`, `go4.org/netipx`        | BSD-3-Clause |
+| `github.com/creachadair/msync`, `github.com/godbus/dbus/v5`, `github.com/huin/goupnp`          | BSD-2-Clause |
+| `github.com/fxamacker/cbor/v2`, `github.com/gaissmai/bart`, `github.com/x448/float16`          | MIT          |
+| `github.com/jsimonetti/rtnetlink`, `github.com/mdlayher/netlink`, `github.com/mdlayher/socket` | MIT          |
+| `github.com/mitchellh/go-ps`                                                                   | MIT          |
+| `github.com/coder/websocket`                                                                   | ISC          |
+| `github.com/golang/groupcache`, `github.com/google/btree`, `go4.org/mem`                       | Apache-2.0   |
+| `github.com/pires/go-proxyproto`, `github.com/safchain/ethtool`                                | Apache-2.0   |
+
+`go version -m omnesis-tailnet` lists the exact module versions in a given
+binary.
+
 ---
 
 _This document is a compliance aid, not legal advice. Redistributors should

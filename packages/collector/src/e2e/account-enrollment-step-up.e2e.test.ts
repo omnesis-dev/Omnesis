@@ -401,13 +401,16 @@ describe.skipIf(!browserReady)(
       );
       await page.locator("nav.sidebar-nav").waitFor({ timeout: 30_000 });
       await page.goto(`${gateway.publicOrigin}/portal/settings/devices`);
-      const card = page.getByRole("article", { name: `Pair ${name}` });
+      const card = page.getByRole("article", { name: `${name} wants to connect` });
       await card.waitFor({ timeout: 30_000 });
-      await card.getByRole("button", { name: "Approve", exact: true }).click();
+      // Through the relay with a passkey confirmed, the button says the passkey comes next, so no
+      // note is shown before the prompt.
+      await card.getByRole("button", { name: "Yes, approve with passkey", exact: true }).click();
       await waitFor(
         async () => (await requestStatus(requestId)) === "approved",
         "the request to be approved",
       );
+      expect(await page.locator(".relay-step-up-sheet").count()).toBe(0);
       expect(owner.errors).toEqual([]);
     }, 240_000);
   },

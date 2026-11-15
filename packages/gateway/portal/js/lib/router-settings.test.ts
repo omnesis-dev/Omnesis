@@ -223,6 +223,12 @@ describe("Settings page tabs", () => {
     ).toContain("account");
     expect(shown(false)).not.toContain("account");
     expect(SETTINGS_TAB_KEYS).toContain("account");
+    expect(shown(true)).not.toContain("tailscale");
+    expect(
+      (settingsTabs({ experimental: false, tailscaleEmbed: true }) as Array<{ key: string }>).map((tab) => tab.key),
+    ).toContain("tailscale");
+    expect(SETTINGS_TAB_KEYS).toContain("tailscale");
+    expect(route("/portal/settings/tailscale")).toMatchObject({ view: "settings", tab: "tailscale" });
     expect(shown(true)).toContain("sweeps");
     expect(shown(false)).not.toContain("sweeps");
     expect(SETTINGS_TAB_KEYS).toContain("sweeps");

@@ -1070,13 +1070,18 @@ test("verified enrollment delivers a private reminder only to an updated adminis
   });
   expect(claim.status).toBe(200);
   const content = await claim.json();
+  // The banner asks about the device by the name it chose, and a tap opens that request. It
+  // carries no code, secret or token, and no way to approve from the notification.
   expect(content).toMatchObject({
     kind: "device-pairing",
     targetId: "pairing",
-    route: { kind: "device-pairing" },
+    title: "Is this you?",
+    body: `${value.name} wants to connect to your gateway. Tap to review.`,
+    route: { kind: "device-pairing", requestId: value.requestId },
   });
   expect(JSON.stringify(content)).not.toContain(value.secret);
-  expect(JSON.stringify(content)).not.toContain(value.name);
+  expect(JSON.stringify(content)).not.toContain(value.identityToken);
+  expect(JSON.stringify(content)).not.toMatch(/approve/i);
   expect(
     (await post(server, "/notifications/confirm", { id: content.id }, administrator)).status,
   ).toBe(200);
@@ -1132,6 +1137,8 @@ function enrollmentServer(options: {
     verifyApproval: vi.fn(async () => true),
     passkeyApproval: () => Boolean(options.gatewayPasskey),
     accountPasskey: () => Boolean(options.gatewayPasskey),
+    // A passkey is confirmed here, so loosening actions through the relay ask for it first.
+    stepUpRequired: () => true,
   };
   const unused = () => Promise.reject(new Error("Unused management operation"));
   const server = createServer(db, path, {
@@ -1399,6 +1406,15 @@ test("an untrusted sign-in is held, listed as trustable, and approving with trus
   expect(listed.items).toEqual([
     expect.objectContaining({ requestId: body.requestId, signIn: "google", canTrustSignIn: true }),
   ]);
+  // From the gateway's own network approving asks nothing more; through the relay it would, and
+  // the list says so for the button to name it.
+  expect(listed.stepUpRequired).toBe(false);
+  const relayed = await (
+    await server.request("/admin/cloud-pairing/requests", {
+      headers: { authorization: `Bearer ${admin}`, "x-omnesis-cloud-relay": "1" },
+    })
+  ).json();
+  expect(relayed.stepUpRequired).toBe(true);
   expect(
     (
       await post(

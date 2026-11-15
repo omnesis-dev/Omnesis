@@ -28,6 +28,8 @@ internal sealed interface NotificationTarget {
      * list opens with that request first; the list itself still comes from the gateway.
      */
     data class PairingRequests(val requestId: String? = null) : NotificationTarget
+    /** The devices on the owner's Tailscale network that wait to join the gateway. */
+    data object TailscaleJoinRequests : NotificationTarget
     data object App : NotificationTarget
 }
 
@@ -49,11 +51,17 @@ internal enum class NotificationRenderOutcome(val shouldConfirm: Boolean) {
 
 private val cloudNotificationKinds = setOf("device-pairing", "device-joined")
 
-/** A build without cloud connectivity defers the cloud kinds like any kind it has never heard of. */
+/**
+ * A build without cloud connectivity defers the cloud kinds like any kind it has never heard of.
+ * Every build routes the Tailscale kinds: only a gateway with its own Tailscale device sends them,
+ * and only to an app that said it can route them.
+ */
 internal fun knownNotificationKind(kind: String, cloudEnabled: Boolean = BuildConfig.CLOUD_RELAY_ENABLED): Boolean = kind in setOf(
     "diagnostic", "agent-answer", "conversation", "watch", "needs-auth", "privacy-approval",
     "source-permission",
     "access-authorization",
+    "tailscale-join",
+    "tailscale-joined",
 ) || (cloudEnabled && kind in cloudNotificationKinds)
 
 /** Strict local routing for shared notification kinds. Unknown/malformed content is ignored. */
@@ -74,10 +82,14 @@ internal fun notificationAction(
                 NotificationTarget.PairingRequests(route?.string("requestId")?.takeIf(::validNotificationId)),
             )
         } else null
-        "device-joined" -> ClaimedPushAction(
+        "device-joined", "tailscale-joined" -> ClaimedPushAction(
             notification.kind,
             NotificationTarget.Devices(route?.string("deviceId")?.takeIf(::validOpaqueTarget)),
         )
+        // Content-free: the waiting requests are read from the gateway by an administrator.
+        "tailscale-join" -> if (notification.route == null || route != null) {
+            ClaimedPushAction(notification.kind, NotificationTarget.TailscaleJoinRequests)
+        } else null
         "agent-answer", "conversation" ->
             (route?.string("conversationId") ?: notification.targetId)
                 .takeIf(::validNotificationId)?.let {

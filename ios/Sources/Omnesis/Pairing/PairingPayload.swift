@@ -39,6 +39,11 @@ import Foundation
 /// { "v": 1, "url": "...", "token": "...", "accountId": "...", "name": "..." }
 /// ```
 ///
+/// V2, V3 and V4 may also carry `"tailnet": true`: the gateway URL is the
+/// gateway's own address on the owner's Tailscale network, so a phone that is
+/// not connected to that network cannot reach it. A reader that predates the
+/// key ignores it, as it ignores every key it does not know.
+///
 /// Must stay lock-step with the generator side — bump version numbers
 /// on incompatible changes and reject unknown versions loudly.
 public enum PairingPayload: Equatable, Sendable {
@@ -55,12 +60,15 @@ public enum PairingPayload: Equatable, Sendable {
         public let gatewayUrl: String
         public let pairingCode: String
         public let tls: TLS
+        /// The gateway URL is an address on the owner's Tailscale network.
+        public let tailnet: Bool?
 
-        public init(gatewayUrl: String, pairingCode: String, tls: TLS) {
+        public init(gatewayUrl: String, pairingCode: String, tls: TLS, tailnet: Bool? = nil) {
             self.v = 4
             self.gatewayUrl = gatewayUrl
             self.pairingCode = pairingCode
             self.tls = tls
+            self.tailnet = tailnet
         }
     }
 
@@ -72,12 +80,15 @@ public enum PairingPayload: Equatable, Sendable {
         public let gatewayUrl: String
         public let pairingCode: String
         public let fingerprint: String
+        /// The gateway URL is an address on the owner's Tailscale network.
+        public let tailnet: Bool?
 
-        public init(gatewayUrl: String, pairingCode: String, fingerprint: String) {
+        public init(gatewayUrl: String, pairingCode: String, fingerprint: String, tailnet: Bool? = nil) {
             self.v = 3
             self.gatewayUrl = gatewayUrl
             self.pairingCode = pairingCode
             self.fingerprint = fingerprint
+            self.tailnet = tailnet
         }
     }
 
@@ -86,11 +97,14 @@ public enum PairingPayload: Equatable, Sendable {
         public let v: Int
         public let gatewayUrl: String
         public let pairingCode: String
+        /// The gateway URL is an address on the owner's Tailscale network.
+        public let tailnet: Bool?
 
-        public init(gatewayUrl: String, pairingCode: String) {
+        public init(gatewayUrl: String, pairingCode: String, tailnet: Bool? = nil) {
             self.v = 2
             self.gatewayUrl = gatewayUrl
             self.pairingCode = pairingCode
+            self.tailnet = tailnet
         }
     }
 
@@ -114,6 +128,16 @@ public enum PairingPayload: Equatable, Sendable {
     /// The version of the highest-supported payload we emit. Readers
     /// should accept this OR any lower supported version.
     public static let currentVersion = 4
+
+    /// Whether the gateway URL is an address on the owner's Tailscale network.
+    public var isTailnetAddress: Bool {
+        switch self {
+        case .v4(let v4): v4.tailnet == true
+        case .v3(let v3): v3.tailnet == true
+        case .v2(let v2): v2.tailnet == true
+        case .v1: false
+        }
+    }
 }
 
 /// Error kinds surfaced during pairing-QR parsing.

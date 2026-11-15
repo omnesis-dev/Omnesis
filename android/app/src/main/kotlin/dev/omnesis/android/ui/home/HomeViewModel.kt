@@ -18,6 +18,8 @@ import dev.omnesis.android.access.AccessPendingRequestsState
 import dev.omnesis.android.access.PairingPendingRequests
 import dev.omnesis.android.access.PairingPendingRequestsState
 import dev.omnesis.android.transport.dto.GatewayPairingApprovalRequest
+import dev.omnesis.android.transport.dto.TailscaleJoinRequest
+import dev.omnesis.android.ui.devices.tailscaleJoinClient
 import dev.omnesis.android.transport.dto.GatewayPairingApproving
 import dev.omnesis.android.access.accessAuthorizationIdentity
 import dev.omnesis.android.access.accessAuthorizationPairingMatches
@@ -214,13 +216,13 @@ class HomeViewModel @Inject constructor(
     fun dismissAccessPending() = accessPendingRequests.dismiss()
 
     /**
-     * The devices that signed in and wait for approval, for the banner at the top of the main
-     * screen. Read while the app is in front; a failed read shows nothing rather than a
-     * request that may be gone.
+     * The devices that wait for approval, by signing in or through Tailscale, for the banner at
+     * the top of the main screen. Read while the app is in front; a failed read shows nothing
+     * rather than a request that may be gone.
      */
     val pairingPending: StateFlow<PairingPendingRequestsState> = pairingPendingRequests.state
 
-    /** Bumped when a pairing notification arrives, to read again at once. */
+    /** Bumped when a pairing or Tailscale join notification arrives, to read again at once. */
     val pairingPendingNudge: StateFlow<Int> = PairingPendingRequests.refreshRequests
 
     private var pairingPendingGeneration = 0L
@@ -231,6 +233,12 @@ class HomeViewModel @Inject constructor(
 
     /** Reads can overlap, and only the latest one started lands. Any other phone never asks. */
     fun refreshPairingPending() {
+        refreshSignInPending()
+        val tailscale = tailscaleJoinClient(session)
+        viewModelScope.launch { pairingPendingRequests.refreshTailscale(tailscale) }
+    }
+
+    private fun refreshSignInPending() {
         val generation = ++pairingPendingGeneration
         val client = pairingApprovalClient()
         if (client == null) {
@@ -244,16 +252,32 @@ class HomeViewModel @Inject constructor(
         }
     }
 
+    /** The gateway advertises Tailscale joins: the banner polls for them, and a review sheet lists them. */
+    val tailscaleEmbed: StateFlow<Boolean> = session.tailscaleEmbed
+
+    /** A `tailscale-join` notification was opened: the gateway has the feature even if its status is not read yet. */
+    fun noteTailscaleJoinNotification() = session.noteTailscaleJoinNotification()
+
     /** What the Pairing requests sheet last listed is what the banner counts. */
     fun pairingPendingListed(requests: List<GatewayPairingApprovalRequest>) {
         pairingPendingGeneration++
         pairingPendingRequests.replace(requests)
     }
 
+    /** What the approvals sheet last listed of the Tailscale joins is what the banner counts. */
+    fun tailscalePendingListed(requests: List<TailscaleJoinRequest>) = pairingPendingRequests.tailscaleListed(requests)
+
     fun dismissPairingPending() = pairingPendingRequests.dismiss()
 
     val pairingRequestsRequest: StateFlow<NotificationLaunchBus.PairingRequests?> = notificationLaunchBus.pairingRequests
     fun consumePairingRequestsRequest() = notificationLaunchBus.consumePairingRequests()
+
+    val tailscaleJoinRequestsRequest: StateFlow<NotificationLaunchBus.TailscaleJoinRequests?> =
+        notificationLaunchBus.tailscaleJoinRequests
+    fun consumeTailscaleJoinRequestsRequest() = notificationLaunchBus.consumeTailscaleJoinRequests()
+
+    /** Only an administrator's phone, on a gateway that advertises them, reads and decides Tailscale joins. */
+    fun canReviewTailscaleJoins(): Boolean = tailscaleJoinClient(session) != null
 
     /** The pairing a banner tap opens the wizard for, so a re-pair in between is refused. */
     fun accessAuthorizationPairing(): AccessAuthorizationPairingIdentity? =

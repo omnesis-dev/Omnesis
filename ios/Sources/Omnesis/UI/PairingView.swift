@@ -39,6 +39,10 @@ struct PairingView: View {
     /// before persisting any token — protects against a malicious QR
     /// silently steering the app at a hostile gateway.
     @State private var pendingPayload: PairingPayload?
+    /// A Tailscale-address payload whose gateway this phone could not reach,
+    /// kept so "Try again" pairs with exactly the same code.
+    @State private var tailnetRetry: TailnetPairingRetry?
+    @Environment(\.openURL) private var openURL
     private let googleConfiguration: GoogleCloudPairingConfiguration?
     private let accountConfiguration: AccountCloudPairingConfiguration?
 
@@ -166,6 +170,16 @@ struct PairingView: View {
                         }
                     )
                 }
+            }
+            .sheet(item: $tailnetRetry) { retry in
+                TailnetPairingUnreachableView(
+                    host: retry.host,
+                    isPairing: isPairing,
+                    retryError: retry.retryError,
+                    onOpenTailscale: { openURL(TailnetPairingPresentation.appStoreURL) },
+                    onTryAgain: { Task { await pair(payload: retry.payload) } },
+                    onCancel: { tailnetRetry = nil }
+                )
             }
             .alert("Scan error", isPresented: Binding(
                 get: { scanError != nil },
@@ -299,9 +313,25 @@ struct PairingView: View {
         }
         await store.pairAsync(raw: raw)
         if store.pairing != nil {
+            tailnetRetry = nil
             dismiss()
+        } else if store.pairingFailure == .tailnetUnreachable {
+            if tailnetRetry == nil {
+                // A Tailscale name fails to resolve at once, while the confirmation
+                // sheet may still be leaving; a sheet asked for mid-transition is dropped.
+                try? await Task.sleep(for: .milliseconds(450))
+                tailnetRetry = TailnetPairingRetry(payload: payload)
+            } else {
+                tailnetRetry?.retryError = nil
+            }
         } else if let err = store.lastError {
-            scanError = err
+            // A retry from the Tailscale state reports what else went wrong in
+            // that state, instead of an alert racing the sheet's dismissal.
+            if tailnetRetry != nil {
+                tailnetRetry?.retryError = err
+            } else {
+                scanError = err
+            }
         }
     }
 

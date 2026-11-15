@@ -19245,6 +19245,9 @@ summary.decision-card-head {
   flex-shrink: 0;
 }
 .config-tab .warning-triangle { margin-left: 5px; }
+/* Devices waiting for the owner's approval, beside Settings and its Devices tab. */
+.waiting-devices-icon { color: var(--accent); display: inline-flex; vertical-align: middle; flex-shrink: 0; }
+.config-tab .waiting-devices-icon { margin-left: 5px; }
 .model-health-warnings { display: grid; gap: 12px; margin-bottom: 20px; }
 .model-health-warning {
   display: flex;
@@ -19458,6 +19461,7 @@ summary.decision-card-head {
 
 /* Account sign-in and device approval. */
 .cloud-pairing-requests { margin: 24px 0; }
+.cloud-pairing-requests:empty { display: none; }
 .cloud-pairing-request { margin-top: 12px; padding: 18px; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--bg-secondary); }
 .cloud-pairing-request h3 { margin: 0 0 4px; font-size: 14px; }
 .cloud-pairing-request p { margin: 0 0 8px; font-size: 13px; line-height: 1.55; }
@@ -19472,6 +19476,24 @@ summary.decision-card-head {
 .cloud-pairing-trust small { display: block; color: var(--text-secondary); font-size: 12px; }
 .cloud-pairing-revoked { margin: 12px 0 0; padding: 10px 14px; border-radius: 8px; font-size: 13px; color: var(--text-primary); border: 1px solid color-mix(in srgb, var(--warning) 45%, var(--border)); background: color-mix(in srgb, var(--warning) 8%, transparent); }
 .cloud-pairing-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 16px; }
+.cloud-pairing-request p.cloud-pairing-question { margin: 16px 0 0; font-size: 14px; font-weight: 600; color: var(--text-primary); }
+/* A six-digit code reads as two groups of three. */
+.cloud-pairing-code > span + span { margin-left: 0.35em; }
+.cloud-pairing-email { display: block; margin: 2px 0; font-size: 15px; font-weight: 600; color: var(--text-primary); overflow-wrap: anywhere; }
+/* The request a notification opened. */
+.cloud-pairing-request.cloud-pairing-focused { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.cloud-pairing-denied { margin-top: 12px; padding: 14px 18px; border-radius: var(--radius-lg); font-size: 13px; line-height: 1.55; color: var(--text-primary); border: 1px solid color-mix(in srgb, var(--warning) 45%, var(--border)); background: color-mix(in srgb, var(--warning) 8%, transparent); }
+.cloud-pairing-denied p { margin: 0; }
+.cloud-pairing-denied .cloud-pairing-actions { margin-top: 12px; }
+/* The note before a passkey prompt the button didn't announce. It sits above the page, at the
+   bottom on a phone, until the person continues or cancels. */
+.relay-option-step-up { display: block; margin-top: 4px; font-size: 12px; font-weight: 600; color: var(--accent); }
+.relay-step-up-sheet { position: fixed; inset: 0; z-index: 1000; display: flex; align-items: flex-end; justify-content: center; padding: 16px; background: color-mix(in srgb, var(--bg-primary, #000) 40%, transparent); }
+.relay-step-up-card { width: 100%; max-width: 420px; padding: 18px 20px; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--bg-secondary); box-shadow: 0 8px 28px rgba(0, 0, 0, 0.25); }
+.relay-step-up-title { margin: 0 0 6px; font-size: 15px; font-weight: 600; color: var(--text-primary); }
+.relay-step-up-text { margin: 0; font-size: 13px; line-height: 1.55; color: var(--text-secondary); }
+.relay-step-up-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 16px; }
+@media (min-width: 601px) { .relay-step-up-sheet { align-items: center; } }
 /* The waiting strip above every page. It is part of the page flow, so it never covers content. */
 .cloud-pairing-notice { flex: none; }
 .cloud-pairing-notice .access-pending-client { color: var(--text-primary); font-size: 13px; }
@@ -19488,3 +19510,135 @@ summary.decision-card-head {
 :is(.login-button, .btn-secondary).google-sign-in-button:hover:not(:disabled) { background: #f2f2f2; color: #1f1f1f; }
 
 /* cloud-relay:end */
+
+/* tailscale-embed:start
+   Settings → Tailscale, the gateway's own Tailscale device
+   (OMNESIS_TAILSCALE_EMBED_ENABLED=1). Every selector is namespaced
+   .tailscale-*, so with the flag off nothing here can match.
+   js/stylesheet-tailscale-embed.test.ts enforces it. */
+
+.tailscale-view { max-width: 820px; min-width: 0; padding: 12px 0 32px; color: var(--text-primary); }
+.tailscale-view p { margin: 0; }
+.tailscale-view a { color: var(--text-link); text-decoration: none; }
+.tailscale-view a:hover { text-decoration: underline; }
+.tailscale-view :is(button, a, summary, input):focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: var(--radius-sm); }
+.tailscale-view .btn-primary, .tailscale-view .btn-secondary { min-height: 36px; padding: 8px 16px; font-size: 13px; white-space: nowrap; }
+
+.tailscale-header { max-width: 660px; margin-bottom: 20px; }
+.tailscale-title-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; }
+.tailscale-header h2 { margin: 8px 0; font-size: 24px; font-weight: 500; letter-spacing: -.025em; }
+.tailscale-header > p { color: var(--text-secondary); line-height: 1.6; font-size: 14px; }
+
+.tailscale-pill { display: inline-flex; align-items: center; gap: 7px; padding: 3px 10px; border: 1px solid color-mix(in srgb, currentColor 45%, var(--border)); border-radius: 999px; font-size: 12px; font-weight: 500; line-height: 1.4; white-space: nowrap; }
+.tailscale-pill-dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+.tailscale-pill-muted { color: var(--text-secondary); }
+.tailscale-pill-progress { color: var(--accent); }
+.tailscale-pill-progress .tailscale-pill-dot { animation: tailscale-pulse 1.4s ease-in-out infinite; }
+.tailscale-pill-warning { color: var(--warning); }
+.tailscale-pill-ok { color: var(--success); }
+.tailscale-pill-danger { color: var(--danger); }
+@keyframes tailscale-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+@media (prefers-reduced-motion: reduce) { .tailscale-pill-progress .tailscale-pill-dot { animation: none; } }
+
+.tailscale-panel { padding: 20px 22px; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--bg-secondary); }
+.tailscale-lede { max-width: 62ch; font-size: 14px; line-height: 1.6; color: var(--text-primary); }
+.tailscale-value { font-size: 14px; line-height: 1.5; color: var(--text-primary); overflow-wrap: anywhere; }
+.tailscale-muted { margin-left: 6px; color: var(--text-muted); font-size: 13px; }
+.tailscale-hint { font-size: 12px; line-height: 1.55; color: var(--text-muted); }
+.tailscale-waiting { display: flex; align-items: center; gap: 8px; }
+.tailscale-spinner { width: 12px; height: 12px; margin-right: 0; flex: none; border-width: 2px; }
+@media (prefers-reduced-motion: reduce) { .tailscale-spinner { animation-duration: 2.4s; } }
+.tailscale-notice { max-width: 66ch; padding: 2px 0 2px 12px; border-left: 2px solid var(--warning); font-size: 13px; line-height: 1.55; color: var(--text-primary); overflow-wrap: anywhere; }
+.tailscale-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 16px; }
+.tailscale-panel .tailscale-actions, .tailscale-section .tailscale-actions { margin-top: 16px; }
+.tailscale-actions + .tailscale-hint, .tailscale-panel > .tailscale-hint { margin-top: 10px; }
+.tailscale-view a.tailscale-button-link { display: inline-flex; align-items: center; text-decoration: none; }
+.tailscale-view a.btn-primary.tailscale-button-link { color: #fff; }
+.tailscale-view a.btn-secondary.tailscale-button-link { color: var(--text-primary); }
+.tailscale-quiet { min-height: 36px; padding: 6px 4px; background: none; border: 0; color: var(--text-secondary); font: inherit; font-size: 13px; cursor: pointer; white-space: nowrap; }
+.tailscale-quiet:hover:not(:disabled) { color: var(--text-primary); text-decoration: underline; text-underline-offset: 3px; }
+.tailscale-quiet:disabled { opacity: 0.5; cursor: default; }
+.tailscale-view .btn-secondary.tailscale-danger { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 45%, var(--border)); }
+
+/* Sign-in: the link beside a QR code for signing in on a phone. */
+.tailscale-sign-in { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 20px 32px; }
+.tailscale-sign-in-main { flex: 1 1 260px; min-width: 0; }
+.tailscale-qr { display: flex; flex-direction: column; align-items: center; gap: 8px; margin: -4px 0 0; }
+.tailscale-qr-canvas { display: block; width: 148px; height: 148px; border-radius: var(--radius-md); }
+.tailscale-qr figcaption { max-width: 160px; font-size: 12px; line-height: 1.45; color: var(--text-muted); text-align: center; }
+
+/* Label/value rows in the panel and sections. */
+.tailscale-rows { display: grid; gap: 14px; }
+.tailscale-section > .tailscale-rows { margin-top: 14px; }
+.tailscale-row { display: grid; grid-template-columns: 150px minmax(0, 1fr); gap: 4px 20px; align-items: start; }
+.tailscale-row-label { padding-top: 9px; font-size: 13px; color: var(--text-secondary); }
+.tailscale-row-body { min-width: 0; }
+.tailscale-row-body > .tailscale-value:first-child { padding-top: 8px; }
+.tailscale-row-body > .tailscale-hint { margin-top: 6px; }
+.tailscale-row-action { margin-top: 6px !important; font-size: 13px; }
+
+.tailscale-copy { display: flex; gap: 8px; max-width: 560px; }
+.tailscale-copy-input, .tailscale-input { flex: 1 1 auto; min-width: 0; min-height: 36px; padding: 7px 10px; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--bg-primary); color: var(--text-primary); font-family: var(--font-mono); font-size: 13px; }
+.tailscale-copy-input:focus, .tailscale-input:focus { outline: none; border-color: var(--accent); }
+.tailscale-view .btn-secondary.tailscale-copy-button { min-width: 76px; }
+
+.tailscale-details { margin-top: 10px; font-size: 12px; color: var(--text-secondary); }
+.tailscale-details summary { cursor: pointer; width: fit-content; }
+.tailscale-details pre { margin: 8px 0 0; padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--bg-primary); color: var(--text-primary); font-family: var(--font-mono); font-size: 12px; white-space: pre-wrap; overflow-wrap: anywhere; }
+
+/* Public address, joining devices. */
+.tailscale-section { margin-top: 28px; padding-top: 24px; border-top: 1px solid var(--border); }
+.tailscale-panel + .tailscale-section { border-top: 0; padding-top: 4px; }
+.tailscale-section-head { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 16px; align-items: start; }
+.tailscale-section-title { margin: 0; font-size: 15px; font-weight: 600; letter-spacing: -.005em; }
+.tailscale-section-text { margin-top: 4px !important; max-width: 64ch; font-size: 13px; line-height: 1.6; color: var(--text-secondary); }
+.tailscale-section > .tailscale-value, .tailscale-section > .tailscale-hint, .tailscale-section > .tailscale-notice { margin-top: 14px; }
+.tailscale-section > .tailscale-row-action { margin-top: 6px !important; }
+
+.tailscale-switch { position: relative; flex: none; width: 44px; height: 26px; margin-top: 2px; padding: 3px; background: var(--border); border: 1px solid var(--border-light); border-radius: 20px; cursor: pointer; transition: background .2s; }
+.tailscale-switch span { display: block; width: 18px; height: 18px; border-radius: 50%; background: var(--text-secondary); transition: transform .2s; }
+.tailscale-switch[aria-checked="true"] { background: var(--accent); border-color: var(--accent); }
+.tailscale-switch[aria-checked="true"] span { transform: translateX(18px); background: #fff; }
+.tailscale-switch:disabled { opacity: .5; cursor: wait; }
+@media (prefers-reduced-motion: reduce) { .tailscale-switch, .tailscale-switch span { transition: none; } }
+
+.tailscale-options { margin-top: 10px; }
+.tailscale-option { display: grid; grid-template-columns: 18px minmax(0, 1fr); gap: 12px; padding: 7px 0; cursor: pointer; }
+.tailscale-option input { margin: 3px 0 0; accent-color: var(--accent); width: 15px; height: 15px; }
+.tailscale-option-title { display: block; font-size: 14px; font-weight: 500; color: var(--text-primary); }
+.tailscale-option-text { display: block; margin-top: 2px; max-width: 64ch; font-size: 13px; line-height: 1.55; color: var(--text-secondary); }
+.tailscale-option:has(input:disabled) { cursor: default; }
+
+
+/* The line saying what became of a join request answered on Settings → Devices. */
+.tailscale-join-notice { margin: 12px 0 0; font-size: 13px; color: var(--text-secondary); }
+
+/* The device's own settings, at the foot of the main card. */
+.tailscale-device { margin-top: 20px; padding-top: 18px; border-top: 1px solid var(--border); }
+.tailscale-device .tailscale-device-name { margin: 0; max-width: none; }
+.tailscale-device .tailscale-name-row { max-width: 560px; }
+.tailscale-field { margin-top: 16px; max-width: 560px; }
+.tailscale-field-label { display: block; margin-bottom: 6px; font-size: 13px; font-weight: 500; color: var(--text-primary); }
+.tailscale-name-row { display: flex; gap: 8px; }
+.tailscale-input[aria-invalid="true"] { border-color: var(--danger); }
+.tailscale-field-error { margin-top: 6px !important; font-size: 12px; color: var(--danger); }
+.tailscale-field > .tailscale-hint { margin-top: 6px; }
+.tailscale-device .tailscale-device-actions { margin-top: 16px; margin-left: 170px; }
+
+.tailscale-error { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px 16px; padding: 10px 12px; margin-bottom: 20px; color: var(--danger); border: 1px solid var(--danger); border-radius: var(--radius-lg); font-size: 13px; line-height: 1.5; }
+
+@media (max-width: 760px) {
+  .tailscale-panel { padding: 16px; }
+  .tailscale-row { grid-template-columns: minmax(0, 1fr); }
+  .tailscale-device .tailscale-device-actions { margin-left: 0; }
+  .tailscale-row-label { padding-top: 0; font-size: 12px; }
+  .tailscale-row-body > .tailscale-value:first-child { padding-top: 0; }
+  .tailscale-qr { align-items: flex-start; }
+  .tailscale-qr figcaption { text-align: left; }
+  .tailscale-view .btn-primary, .tailscale-view .btn-secondary, .tailscale-quiet { min-height: 44px; }
+  .tailscale-copy-input, .tailscale-input { min-height: 44px; }
+  .tailscale-copy { flex-wrap: wrap; }
+  .tailscale-copy-input { flex-basis: 100%; }
+}
+
+/* tailscale-embed:end */

@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { createCipheriv, createDecipheriv, createHash, randomBytes, randomUUID } from "node:crypto";
-import { cloudRelayEnabled, createLogger } from "@omnesis/core";
+import { cloudRelayEnabled, createLogger, isTailscaleNodeIdentity } from "@omnesis/core";
 import {
   DeviceId,
   SourceType,
@@ -325,6 +325,7 @@ interface DeviceRow {
   update_state: string | null;
   update_detail: string | null;
   update_state_at: number | null;
+  enrollment_public_key: string | null;
   enrollment_method: string | null;
   enrollment_sign_in: string | null;
   enrollment_sign_in_id: string | null;
@@ -339,7 +340,7 @@ const DEVICE_SELECT_COLS =
   "notification_delivery_health, notification_delivery_health_updated_at, " +
   "version, version_seen_at, protocol_version, " +
   "desired_version, update_state, update_detail, update_state_at, " +
-  "enrollment_method, enrollment_sign_in, enrollment_sign_in_id, enrolled_at";
+  "enrollment_public_key, enrollment_method, enrollment_sign_in, enrollment_sign_in_id, enrolled_at";
 
 export function getDevice(db: Db, id: DeviceId): DeviceRecord | null {
   const row = db
@@ -745,6 +746,10 @@ export function touchDevice(db: Db, id: DeviceId): void {
 
 function rowEnrollment(row: DeviceRow): DeviceEnrollment | null {
   if (row.enrollment_method === null || row.enrolled_at === null) return null;
+  // A collector that joined through the gateway's Tailscale device proved its
+  // machine, not a sign-in: it is no sign-in enrollment.
+  if (row.enrollment_public_key !== null && isTailscaleNodeIdentity(row.enrollment_public_key))
+    return null;
   return {
     method: row.enrollment_method as DeviceEnrollmentMethod,
     signIn: row.enrollment_sign_in as DeviceEnrollmentSignIn | null,
@@ -1423,6 +1428,25 @@ function freeDeviceName(db: Db, suggested: string): string {
   let name = suggested;
   while (findDeviceByName(db, name)) name = `${suggested}-${randomBytes(2).toString("hex")}`;
   return name;
+}
+
+/**
+ * When the owner last revoked or forgot a device proving this key, or null when
+ * nothing holds it back. Such a key joins again only through a person's approval.
+ */
+export function deviceKeyRevokedAt(
+  db: Db,
+  kind: DeviceKind,
+  devicePublicKey: string,
+): number | null {
+  const holder = findDeviceByEnrollmentPublicKey(db, kind, devicePublicKey);
+  const held = db
+    .prepare<[string], { revoked_at: number }>(
+      "SELECT revoked_at FROM revoked_device_keys WHERE public_key = ?",
+    )
+    .get(devicePublicKey)?.revoked_at;
+  const times = [holder?.revokedAt ?? null, held ?? null].filter((t): t is number => t !== null);
+  return times.length > 0 ? Math.max(...times) : null;
 }
 
 /** The one row of a kind that stored this device key, if any. */

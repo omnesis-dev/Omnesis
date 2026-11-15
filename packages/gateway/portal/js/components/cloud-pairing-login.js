@@ -25,6 +25,7 @@ import {
   gatewayPasskeyProof,
   onGatewayOrigin,
   PASSKEY_CHECK_FAILED,
+  PASSKEY_HINT,
   PASSKEY_OTHER_ACCOUNT,
   passkeysSupported,
 } from "../lib/gateway-passkey.js";
@@ -49,9 +50,10 @@ const gatewayPasskeyHere = (config) =>
 /** Every sentence the sign-in options and the waiting screen say, in one place. */
 export const LOGIN_COPY = {
   title: "Sign in to your gateway",
-  passkey: "Continue with Face ID",
+  passkey: "Continue with passkey",
+  passkeyHint: PASSKEY_HINT,
   google: "Continue with Google",
-  waitingForPasskey: "Waiting for Face ID…",
+  waitingForPasskey: "Waiting for your passkey…",
   opening: "Opening sign-in…",
   openingGoogle: "Opening Google…",
   // Said under Google: a browser's Google sign-in always waits for a person.
@@ -63,7 +65,7 @@ export const LOGIN_COPY = {
   approved: "Approved. Opening your gateway…",
   approvedCompare: "Approved by your gateway.",
   denied: "Your gateway denied this request.",
-  approveHere: "Approve with Face ID here",
+  approveHere: "Approve with passkey here",
   pair: "Codes match, pair this device",
   pairing: "Pairing…",
   cancel: "Cancel",
@@ -320,7 +322,8 @@ export function CloudPairingLogin({ onReady } = {}) {
     }
   }
 
-  async function start() {
+  /** `method` is the button pressed, so the account page offers only that sign-in. */
+  async function start(method) {
     if (busy) return;
     invalidate();
     const current = attempt.current;
@@ -357,10 +360,9 @@ export function CloudPairingLogin({ onReady } = {}) {
       if (!response.ok) throw new Error("Couldn't start sign-in. Please try again.");
       const value = await response.json();
       if (current !== attempt.current) return;
-      const destination = (config.accountSignIn ? accountAuthorizationUrl : googleAuthorizationUrl)(
-        value.authorizationUrl,
-        config.authorizationRelayOrigin,
-      );
+      const destination = config.accountSignIn
+        ? accountAuthorizationUrl(value.authorizationUrl, config.authorizationRelayOrigin, method)
+        : googleAuthorizationUrl(value.authorizationUrl, config.authorizationRelayOrigin);
       sessionStorage.setItem(GOOGLE_PAIRING_STORAGE_KEY, JSON.stringify(pending));
       window.location.assign(destination);
     } catch (failure) {
@@ -535,16 +537,17 @@ export function CloudPairingLogin({ onReady } = {}) {
                 type="button"
                 class="login-button"
                 disabled=${busy}
-                onClick=${passkeyHere ? passkeySignIn : start}
+                onClick=${passkeyHere ? passkeySignIn : () => start("passkey")}
               >
                 ${busy ? (passkeyHere ? LOGIN_COPY.waitingForPasskey : LOGIN_COPY.opening) : LOGIN_COPY.passkey}
-              </button>`
+              </button>
+              <p class="login-hint">${LOGIN_COPY.passkeyHint}</p>`
             }
             <button
               type="button"
               class="login-button google-sign-in-button"
               disabled=${busy}
-              onClick=${start}
+              onClick=${() => start("google")}
             >
               <img
                 src="/portal/img/google-sign-in-mark.png"

@@ -3,6 +3,24 @@
 
 import Foundation
 
+/// What a failed pairing shows the person pairing.
+public enum PairingFailure: Equatable, Sendable {
+    /// A plain sentence.
+    case message(String)
+    /// The QR code names the gateway's address on the owner's Tailscale
+    /// network, and this phone could not reach it there: the pairing screen
+    /// offers to open Tailscale and to try again instead of a sentence.
+    case tailnetUnreachable
+
+    /// The sentence for this failure, for surfaces that show only one.
+    public var message: String {
+        switch self {
+        case .message(let text): text
+        case .tailnetUnreachable: PairingErrorMessage.tailnetUnreachable
+        }
+    }
+}
+
 /// A plain sentence for a pairing that failed, in place of an error type's
 /// description.
 public enum PairingErrorMessage {
@@ -18,10 +36,27 @@ public enum PairingErrorMessage {
     public static let notHTTPS = "That code points to a gateway without HTTPS. Omnesis only pairs with a gateway over HTTPS."
     public static let unfinished = "Pairing didn't finish. Try again."
     public static let generic = "Couldn't pair with your gateway. Try again."
+    public static let tailnetUnreachable =
+        "This gateway's address is on your Tailscale network, and this phone isn't connected to it."
 
     public static func unreachable(host: String?) -> String {
         "Couldn't reach your gateway at \(host ?? "that address"). "
             + "Check that the gateway is running and this phone can reach it. Away from home, connect Tailscale on both devices and use the gateway's Tailscale hostname when creating the QR code."
+    }
+
+    /// What to show for `error` from pairing with the scanned `payload`.
+    public static func failure(for error: Error, payload: String) -> PairingFailure {
+        if let urlError = error as? URLError, unreachableCodes.contains(urlError.code),
+           marksTailnetAddress(inPayload: payload) {
+            return .tailnetUnreachable
+        }
+        return .message(message(for: error, payload: payload))
+    }
+
+    /// Whether a scanned pairing payload says its gateway URL is an address on
+    /// the owner's Tailscale network.
+    public static func marksTailnetAddress(inPayload raw: String) -> Bool {
+        (try? PairingPayload.decode(from: raw))?.isTailnetAddress == true
     }
 
     /// The sentence for `error` from pairing with the scanned `payload`.
@@ -90,13 +125,18 @@ public enum PairingErrorMessage {
         // A pinned certificate that doesn't match cancels the connection.
         case .cancelled:
             pinsCertificate ? pinnedCertificate : unfinished
-        case .cannotConnectToHost, .cannotFindHost, .timedOut, .networkConnectionLost, .notConnectedToInternet,
-             .dnsLookupFailed, .internationalRoamingOff, .dataNotAllowed:
+        case _ where unreachableCodes.contains(error.code):
             unreachable(host: host)
         default:
             generic
         }
     }
+
+    /// The failures that mean this phone could not reach the gateway's address.
+    private static let unreachableCodes: Set<URLError.Code> = [
+        .cannotConnectToHost, .cannotFindHost, .timedOut, .networkConnectionLost, .notConnectedToInternet,
+        .dnsLookupFailed, .internationalRoamingOff, .dataNotAllowed,
+    ]
 
     private static func jsonObject(_ raw: String) -> [String: Any]? {
         try? JSONSerialization.jsonObject(with: Data(raw.utf8)) as? [String: Any]
