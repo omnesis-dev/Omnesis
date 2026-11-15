@@ -25,6 +25,25 @@ class DeviceCapabilitiesTest {
     }
 
     @Test
+    fun everyBuildAnnouncesThatItRoutesTailscaleJoinNotifications() {
+        for (cloud in listOf(false, true)) {
+            val capabilities = DeviceCapabilities.android(emptyList(), pairingNotifications = cloud)
+            assertTrue(capabilities.tailscaleJoinNotifications)
+            val wire = OmnesisJson.encodeToJsonElement(DeviceCapabilities.serializer(), capabilities).jsonObject
+            assertEquals("true", wire["tailscaleJoinNotifications"]!!.jsonPrimitive.content)
+        }
+        // An older payload without the key reads as a device that cannot route them.
+        val wire = OmnesisJson.encodeToJsonElement(DeviceCapabilities.serializer(), DeviceCapabilities.android(emptyList())).jsonObject
+        val legacy = kotlinx.serialization.json.JsonObject(wire.filterKeys { it != "tailscaleJoinNotifications" })
+        assertFalse(OmnesisJson.decodeFromJsonElement(DeviceCapabilities.serializer(), legacy).tailscaleJoinNotifications)
+        // The capability survives the per-pairing identity and TLS mode the composition root adds.
+        val paired = DeviceCapabilities.android(emptyList())
+            .withPairingIdentity("Android", "Android-abc123", "install-1", null)
+            .withTlsMode("system")
+        assertTrue(paired.tailscaleJoinNotifications)
+    }
+
+    @Test
     fun sourceContractsProduceClosedWireValuesAndLeaseCapability() {
         val capabilities = DeviceCapabilities.android(
             listOf(

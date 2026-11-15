@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { cloudRelayEnabled } from "@omnesis/core";
+import { cloudRelayEnabled, isTailscaleNodeIdentity } from "@omnesis/core";
 import {
   deviceSignatureSchema,
   EnrollmentChallenges,
@@ -64,7 +64,8 @@ export function mountDeviceEnrollmentRoutes(app: RouteApp, deps: DeviceEnrollmen
       const deviceId = auth.deviceId!;
       const { challenge, signature } = c.req.valid("json");
       const devicePublicKey = getDeviceEnrollmentPublicKey(db, deviceId);
-      if (!devicePublicKey) {
+      // A collector that joined through Tailscale holds a node identity, not a key.
+      if (!devicePublicKey || isTailscaleNodeIdentity(devicePublicKey)) {
         throw new HttpError(
           409,
           "DEVICE_KEY_REQUIRED",

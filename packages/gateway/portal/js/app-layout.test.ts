@@ -33,6 +33,11 @@ vi.mock("./api.js", () => ({
   startHostFleetUpdate: vi.fn(),
 }));
 vi.mock("./lib/format.js", () => ({ loadSourceMeta: vi.fn(async () => {}) }));
+const joins = vi.hoisted(() => ({ tailscaleJoinRequests: vi.fn(async () => ({ requests: [] as unknown[] })) }));
+vi.mock("./lib/tailscale-api.js", async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  ...joins,
+}));
 vi.mock("./lib/router.js", () => ({
   navigate: vi.fn(),
   onRouteChange: vi.fn(() => () => {}),
@@ -206,6 +211,40 @@ describe("decisions waiting, badged on the nav item where each is decided", () =
     await act(async () => { document.dispatchEvent(new window.Event("visibilitychange")); });
     await vi.waitFor(() => expect(itemNamed("Settings")?.querySelector(".warning-triangle")).toBeNull());
     expect(itemNamed("Settings")?.getAttribute("href")).toBe("/portal/settings");
+  });
+
+  test("flags Settings and its route with devices waiting for approval, and clears when none wait", async () => {
+    const waiting = {
+      id: "j1",
+      name: "studio-mac",
+      kind: "collector",
+      machine: "studio-mac",
+      login: "maya@example.com",
+      requestedAt: new Date().toISOString(),
+      expiresAt: new Date(Date.now() + 600_000).toISOString(),
+    };
+    joins.tailscaleJoinRequests.mockResolvedValue({ requests: [waiting] });
+    getStatus.mockResolvedValue({ experimental: false, developer: false, tailscaleEmbed: true } as never);
+    await mount();
+    await vi.waitFor(() => expect(itemNamed("Settings")?.querySelector(".waiting-devices-icon")).not.toBeNull());
+    const settings = itemNamed("Settings");
+    expect(
+      settings?.querySelector('[aria-label="A device is waiting for your approval to pair to this gateway."]'),
+    ).not.toBeNull();
+    expect(settings?.getAttribute("href")).toBe("/portal/settings/devices");
+    // The next read finds nothing waiting: the mark and the shortcut go.
+    joins.tailscaleJoinRequests.mockResolvedValue({ requests: [] });
+    await act(async () => { document.dispatchEvent(new window.Event("visibilitychange")); });
+    await vi.waitFor(() => expect(itemNamed("Settings")?.querySelector(".waiting-devices-icon")).toBeNull());
+    expect(itemNamed("Settings")?.getAttribute("href")).toBe("/portal/settings");
+  });
+
+  test("without either way for devices to ask, nothing is read for them", async () => {
+    joins.tailscaleJoinRequests.mockClear();
+    getStatus.mockResolvedValue({ experimental: false, developer: false } as never);
+    await mount();
+    expect(joins.tailscaleJoinRequests).not.toHaveBeenCalled();
+    expect(itemNamed("Settings")?.querySelector(".waiting-devices-icon")).toBeNull();
   });
 
   test("refreshes authoritative status after Models reads instead of accepting an old overview", async () => {

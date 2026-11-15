@@ -12,7 +12,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import dev.omnesis.android.designsystem.theme.OmTheme
 import dev.omnesis.android.ui.pairing.PairingConfirmationSheet
-import dev.omnesis.android.ui.devices.GatewayPairingApprovalContent
+import dev.omnesis.android.ui.devices.DeviceApprovalsContent
 import dev.omnesis.android.ui.common.GatewayConnectionPill
 import dev.omnesis.android.pairing.GatewayPairingApprovalController
 import dev.omnesis.android.pairing.PairingTlsMode
@@ -112,7 +112,7 @@ class GoogleCloudPairingScreenshotTest {
                 CompositionLocalProvider(LocalInspectionMode provides true, LocalDensity provides Density(density, fontScale = if (large) 2f else 1f)) {
                     SnapshotTheme(darkTheme = dark) {
                         Surface {
-                            GatewayPairingApprovalContent(GatewayPairingApprovalController.State(requests = listOf(row),
+                            DeviceApprovalsContent(GatewayPairingApprovalController.State(requests = listOf(row),
                                 compared = if (compared) mapOf(row.requestId to row.verificationCode) else emptyMap()), 1_000_000, {}, { _, _ -> }, {})
                         }
                     }
@@ -137,7 +137,7 @@ class GoogleCloudPairingScreenshotTest {
                 captureRoboImage(filePath = "src/test/roborazzi/chapter-two-approval-${if (cached) "cached-error" else "unavailable"}-${if (dark) "dark" else "light"}.png") {
                     SnapshotTheme(darkTheme = dark) {
                         Surface {
-                            GatewayPairingApprovalContent(GatewayPairingApprovalController.State(requests = if (cached) listOf(row) else emptyList(),
+                            DeviceApprovalsContent(GatewayPairingApprovalController.State(requests = if (cached) listOf(row) else emptyList(),
                                 error = GatewayException.Network(ConnectException("Unavailable"))),
                                 1_000_000, {}, { _, _ -> }, {})
                         }

@@ -32,3 +32,18 @@ test("Lab availability, Brain opt-in, and cloud account availability remain inde
     }
   }
 });
+
+test("the Tailscale tab exists only when the gateway runs its own Tailscale device", () => {
+  expect(settingsTabs().some((tab: { key: string }) => tab.key === "tailscale")).toBe(false);
+  for (const experimental of [false, true]) {
+    for (const cloudRelay of [false, true]) {
+      for (const tailscaleEmbed of [false, true]) {
+        const tabs = settingsTabs({ experimental, cloudRelay, tailscaleEmbed }) as Array<{ key: string; label: string }>;
+        const keys = tabs.map((tab) => tab.key);
+        expect(keys.includes("tailscale")).toBe(tailscaleEmbed);
+        expect(keys.includes("account")).toBe(cloudRelay);
+        if (tailscaleEmbed) expect(tabs.at(-1)).toEqual({ key: "tailscale", label: "Tailscale" });
+      }
+    }
+  }
+});

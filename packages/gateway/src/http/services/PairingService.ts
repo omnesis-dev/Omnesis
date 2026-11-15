@@ -3,6 +3,7 @@
 
 import { createLogger } from "@omnesis/core";
 import {
+  defaultScopesForDeviceKind,
   SCOPE_SUBSCRIPTIONS_RECEIVE,
   type DeviceCapability,
   type DeviceEnrollmentSignIn,
@@ -13,6 +14,7 @@ import {
   type TokenId,
 } from "@omnesis/types";
 import {
+  deviceKeyRevokedAt,
   findDeviceByName,
   type AgentPairingConflictCode,
   getDevice,
@@ -43,6 +45,9 @@ interface PairedCredential {
   token: string;
   scopes: Scope[];
 }
+
+/** How long the one-use code behind a proven admission lives: just long enough to redeem it. */
+const PROVEN_ADMISSION_TTL_MS = 60_000;
 
 export type PairingServiceResult =
   | {
@@ -181,6 +186,51 @@ export class PairingService {
     );
   }
 
+  /**
+   * Admit a collector whose identity another channel already proved (its
+   * Tailscale node, say) with no code typed by a person. It lands the way a
+   * sign-in join does: on the row that proved the same identity before, else
+   * on a new row, never on a row it merely names or claims the install of.
+   * `approved` records that a person said yes; without it, an identity the
+   * owner revoked is refused. The caller announces the join itself.
+   */
+  async admitProvenCollector(input: {
+    identity: string;
+    approved: boolean;
+    capabilities: DeviceCapability;
+  }): Promise<PairingServiceResult> {
+    const { writeGate: w } = this.deps;
+    const pending = await w.createPairing({
+      kind: "collector",
+      scopes: defaultScopesForDeviceKind("collector"),
+      ttlMs: PROVEN_ADMISSION_TTL_MS,
+      enrollment: {
+        method: input.approved ? "approved" : "automatic",
+        devicePublicKey: input.identity,
+        signIn: null,
+      },
+    });
+    try {
+      return await this.afterDeviceRedemption(
+        await w.redeemDevicePairing({
+          pairingCode: pending.pairingCode,
+          expectedKind: "collector",
+          capabilities: input.capabilities,
+          onlineDeviceIds: this.onlineDeviceIds(),
+        }),
+        { announce: false },
+      );
+    } finally {
+      // Spent on success; on any failure, never left behind to be redeemed.
+      await w.revokePairing(pending.pairingCode).catch(() => false);
+    }
+  }
+
+  /** When the owner last revoked a collector proving this identity, or null. */
+  provenCollectorRevokedAt(identity: string): number | null {
+    return deviceKeyRevokedAt(this.deps.db, "collector", identity);
+  }
+
   private onlineDeviceIds(): DeviceId[] {
     return this.deps.wsServer
       ? listDevices(this.deps.db)
@@ -191,6 +241,7 @@ export class PairingService {
 
   private async afterDeviceRedemption(
     result: DevicePairingRedemption,
+    options: { announce: boolean } = { announce: true },
   ): Promise<PairingServiceResult> {
     if (result.outcome === "invalid") {
       return { outcome: "invalid", error: "invalid or expired pairing code" };
@@ -216,7 +267,7 @@ export class PairingService {
 
     this.deps.statusCache.bump();
     log.info(`Device paired: ${device.name} (${device.kind}) id=${device.id}`);
-    this.announceJoin(device);
+    if (options.announce) this.announceJoin(device);
     return { outcome: "paired-device", device, tokenId, token, scopes: result.scopes };
   }
 

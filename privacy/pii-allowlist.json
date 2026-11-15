@@ -1762,6 +1762,11 @@
       "value": "zeta@gmail.com",
       "paths": ["packages/gateway/portal/js/views/reauth-grouping.test.ts"],
       "reason": "reviewed existing fixture"
+    },
+    {
+      "value": "pass@omnesis.example-net.ts.net",
+      "paths": ["packages/cli/src/commands/tailscale.test.ts"],
+      "reason": "invented URL userinfo in a --gateway refusal test"
     }
   ],
   "phones": [
@@ -2421,6 +2426,7 @@
     {
       "value": "100.64.0.0",
       "paths": [
+        "packages/collector/src/e2e/tailnet-harness.ts",
         "packages/core/src/models/inference-url-policy.ts",
         "packages/core/src/network-discovery.ts",
         "packages/gateway/src/access/public-json-fetch.ts"
@@ -2466,6 +2472,49 @@
         "packages/gateway/src/http/services/DirectCandidates.test.ts"
       ],
       "reason": "Invented routing hints and invalid-address counterexamples for isolated LAN classification tests."
+    },
+    {
+      "value": "100.64.0.1",
+      "paths": [
+        "packages/cli/src/commands/tailscale.test.ts",
+        "packages/tailnet-helper/internal/protocol/testdata/wire.json"
+      ],
+      "reason": "invented tailnet-address fixture in the RFC 6598 range for the gateway's own Tailscale device"
+    },
+    {
+      "value": "100.64.0.2",
+      "paths": [
+        "packages/gateway/src/tailscale-embed/caller.test.ts",
+        "packages/gateway/src/tailscale-embed/service.integration.test.ts",
+        "packages/gateway/src/tailscale-embed/socket-server.test.ts",
+        "packages/tailnet-helper/internal/identity/identity_test.go"
+      ],
+      "reason": "invented tailnet-address fixture in the RFC 6598 range for the gateway's own Tailscale device"
+    },
+    {
+      "value": "fd7a:115c:a1e0::2",
+      "paths": ["packages/gateway/src/tailscale-embed/caller.test.ts"],
+      "reason": "Invented Tailscale ULA IPv6 fixture"
+    },
+    {
+      "value": "100.64.0.3",
+      "paths": ["packages/gateway/src/tailscale-embed/service.integration.test.ts"],
+      "reason": "invented tailnet-address fixture in the RFC 6598 range for the gateway's own Tailscale device"
+    },
+    {
+      "value": "100.64.0.7",
+      "paths": ["packages/gateway/src/tailscale-embed/testing/fake-helper.mjs"],
+      "reason": "invented tailnet-address fixture in the RFC 6598 range for the gateway's own Tailscale device"
+    },
+    {
+      "value": "fd7a:115c:a1e0::1",
+      "paths": ["packages/tailnet-helper/internal/protocol/testdata/wire.json"],
+      "reason": "Invented Tailscale ULA IPv6 fixture"
+    },
+    {
+      "value": "100.64.0.9",
+      "paths": ["packages/tailnet-helper/internal/proxy/proxy_test.go"],
+      "reason": "invented tailnet-address fixture in the RFC 6598 range for the gateway's own Tailscale device"
     }
   ],
   "names": [
@@ -12970,6 +13019,25 @@
         "scripts/release/seeded-state-entrypoint.test.mjs"
       ],
       "reason": "Public platform/tool terminology in portability tests and comments; not a person or corpus identifier."
+    },
+    {
+      "value": "Maya Reeves",
+      "paths": [
+        "packages/cli/src/commands/tailscale.test.ts",
+        "packages/gateway/src/tailscale-embed/caller.test.ts",
+        "packages/gateway/src/tailscale-embed/service.integration.test.ts"
+      ],
+      "reason": "fictional name or ordinary phrase in the embedded Tailscale tests"
+    },
+    {
+      "value": "Switching Protocols",
+      "paths": ["packages/gateway/src/tailscale-embed/socket-server.test.ts"],
+      "reason": "HTTP status text, not a name"
+    },
+    {
+      "value": "The Go",
+      "paths": ["packages/tailnet-helper/go.test.mjs"],
+      "reason": "prose (\"The Go toolchain\"), not a name"
     }
   ],
   "secretFixtures": [

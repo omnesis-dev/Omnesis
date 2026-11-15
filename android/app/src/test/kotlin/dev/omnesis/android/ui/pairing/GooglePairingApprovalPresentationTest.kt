@@ -16,10 +16,10 @@ import dev.omnesis.android.transport.dto.GatewayPasskeyCeremony
 import dev.omnesis.android.transport.dto.GatewayPasskeyLocation
 import dev.omnesis.android.transport.dto.GatewayPairingApproving
 import dev.omnesis.android.transport.dto.GatewayPairingApprovalRequest
-import dev.omnesis.android.ui.devices.GatewayPairingApprovalContent
+import dev.omnesis.android.ui.devices.DeviceApprovalsContent
 import dev.omnesis.android.ui.devices.PAIRING_APPROVAL_EMPTY
 import dev.omnesis.android.ui.devices.pairingApprovalQuestion
-import dev.omnesis.android.ui.devices.GatewayPairingApprovalSheet
+import dev.omnesis.android.ui.devices.DeviceApprovalsSheet
 import org.junit.Assert.*
 import org.junit.Rule
 import org.junit.Test
@@ -44,7 +44,7 @@ class GooglePairingApprovalPresentationTest {
             val density = LocalDensity.current
             CompositionLocalProvider(LocalDensity provides Density(density.density, fontScale = 2f)) {
                 OmnesisTheme {
-                    GatewayPairingApprovalContent(state.value, 1_000_000,
+                    DeviceApprovalsContent(state.value, 1_000_000,
 
                         onRefresh = { refreshes++ }, onDecide = { _, approve -> decisions += approve }, onDismiss = { dismisses++ })
                 }
@@ -99,7 +99,7 @@ class GooglePairingApprovalPresentationTest {
             }
         }
         val visible = mutableStateOf(true)
-        compose.setContent { OmnesisTheme { if (visible.value) GatewayPairingApprovalSheet(client) { visible.value = false } } }
+        compose.setContent { OmnesisTheme { if (visible.value) DeviceApprovalsSheet(client) { visible.value = false } } }
         compose.onNodeWithTag("pairingApproval.compare").assertDoesNotExist()
         compose.onNodeWithTag("pairingApproval.approve").performScrollTo().assertIsEnabled()
             .performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.OnClick) { it() }
@@ -126,7 +126,7 @@ class GooglePairingApprovalPresentationTest {
         val visible = mutableStateOf(true)
         var settings = 0
         compose.setContent { OmnesisTheme {
-            if (visible.value) GatewayPairingApprovalSheet(client,
+            if (visible.value) DeviceApprovalsSheet(client,
                 onOpenSettings = { assertFalse(visible.value); settings++ }, onDismiss = { visible.value = false })
         } }
         compose.onNodeWithTag("pairingApproval.list").performScrollToNode(hasText("Open Settings"))
@@ -159,7 +159,7 @@ class GooglePairingApprovalPresentationTest {
                 """{"type":"webauthn.get","challenge":"$challenge","origin":"$app"}""".toByteArray())
             """{"id":"cred","rawId":"cred","type":"public-key","clientExtensionResults":{},"response":{"clientDataJSON":"$clientData","authenticatorData":"e30","signature":"e30","userHandle":"dXNlcg"}}"""
         }
-        compose.setContent { OmnesisTheme { GatewayPairingApprovalSheet(client, passkey = signer) {} } }
+        compose.setContent { OmnesisTheme { DeviceApprovalsSheet(client, passkey = signer) {} } }
         compose.onNodeWithTag("pairingApproval.approveWithPasskey").performScrollTo().assertIsEnabled()
             .performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.OnClick) { it() }
         compose.waitUntil(timeoutMillis = 5000) { client.approvals.size == 1 }

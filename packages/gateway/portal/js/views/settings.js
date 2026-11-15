@@ -15,6 +15,7 @@ import { html } from "htm/preact";
 import { replaceRoute } from "../lib/router.js";
 import { lazy } from "../lib/lazy.js";
 import { WarningTriangle } from "../components/model-health.js";
+import { WaitingDevicesIcon } from "../components/waiting-devices-icon.js";
 import { TabBar } from "../components/tab-bar.js";
 import {
   settingsTabs,
@@ -31,6 +32,7 @@ const AccessView = lazy(() => import("./access.js").then((m) => m.AccessView));
 const PoliciesView = lazy(() => import("./policies.js").then((m) => m.PoliciesView));
 const DevicesView = lazy(() => import("./devices.js").then((m) => m.DevicesView));
 const RelayView = lazy(() => import("./relay.js").then((m) => m.RelayView));
+const TailscaleView = lazy(() => import("./tailscale.js").then((m) => m.TailscaleView));
 const SweepsView = lazy(() => import("./sweeps.js").then((m) => m.SweepsView));
 
 const SUN_ICON = html`<svg aria-hidden="true" viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="3.25"/><path d="M8 1v1.5M8 13.5V15M1 8h1.5M13.5 8H15M3.05 3.05l1.05 1.05M11.9 11.9l1.05 1.05M3.05 12.95l1.05-1.05M11.9 4.1l1.05-1.05"/></svg>`;
@@ -54,6 +56,9 @@ export function SettingsView({
   lab = { brain: experimental },
   labAvailable = false,
   cloudRelay = false,
+  tailscaleEmbed = false,
+  // How many devices wait for the owner's OK, marked on the Devices tab.
+  waitingDevices = 0,
   theme = "dark",
   onThemeToggle,
   onLogout,
@@ -65,7 +70,7 @@ export function SettingsView({
   const requested = SETTINGS_TAB_KEYS.includes(tab) ? tab : DEFAULT_SETTINGS_TAB;
   // A link into a disabled feature lands on the default tab.
   const activeTab =
-    (!experimental && EXPERIMENTAL_SETTINGS_TABS.includes(requested)) || (requested === "sweeps" && !lab.brain) || (requested === "lab" && !labAvailable) || (requested === "account" && !cloudRelay)
+    (!experimental && EXPERIMENTAL_SETTINGS_TABS.includes(requested)) || (requested === "sweeps" && !lab.brain) || (requested === "lab" && !labAvailable) || (requested === "account" && !cloudRelay) || (requested === "tailscale" && !tailscaleEmbed)
       ? DEFAULT_SETTINGS_TAB
       : requested;
 
@@ -126,14 +131,18 @@ export function SettingsView({
         style="margin-bottom:16px;"
         active=${activeTab}
         onSelect=${switchTab}
-        tabs=${settingsTabs({ experimental, brain: lab.brain, labAvailable, cloudRelay }).map((item) => item.key === "models" && modelHealth?.warnings?.length
-          ? { ...item, label: html`Models <${WarningTriangle} label="Models need attention" />` } : item)}
+        tabs=${settingsTabs({ experimental, brain: lab.brain, labAvailable, cloudRelay, tailscaleEmbed }).map((item) => item.key === "models" && modelHealth?.warnings?.length
+          ? { ...item, label: html`Models <${WarningTriangle} label="Models need attention" />` }
+          : item.key === "devices" && waitingDevices > 0
+            ? { ...item, label: html`Devices <${WaitingDevicesIcon} count=${waitingDevices} />` }
+            : item)}
       />
       ${activeTab === "lab" && html`<${LabView} onChange=${onLabChange} />`}
       ${activeTab === "config" && html`<${ConfigView} />`}
       ${activeTab === "omnesis-md" && html`<${OmnesisMdView} />`}
       ${activeTab === "models" && html`<${ModelsView} section=${modelsSection ?? null} onModelsRefresh=${onModelsRefresh} />`}
       ${activeTab === "account" && html`<${RelayView} />`}
+      ${activeTab === "tailscale" && html`<${TailscaleView} />`}
       ${activeTab === "sweeps" && html`<${SweepsView} />`}
       ${activeTab === "access" && html`<${AccessView}
         authorizationId=${accessAuthorizationId ?? null}
@@ -142,9 +151,10 @@ export function SettingsView({
         connectOpen=${accessConnect ?? false}
         completeInPortal=${completeAccessInPortal ?? false}
         cloudRelay=${cloudRelay}
+        tailscaleEmbed=${tailscaleEmbed}
       />`}
       ${activeTab === "policies" && html`<${PoliciesView} policyId=${policyId ?? null} />`}
-      ${activeTab === "devices" && html`<${DevicesView} pairKindRequest=${pair ?? null} focusDeviceId=${device ?? null} cloudRelay=${cloudRelay} />`}
+      ${activeTab === "devices" && html`<${DevicesView} pairKindRequest=${pair ?? null} focusDeviceId=${device ?? null} cloudRelay=${cloudRelay} tailscaleEmbed=${tailscaleEmbed} />`}
     </div>
   `;
 }

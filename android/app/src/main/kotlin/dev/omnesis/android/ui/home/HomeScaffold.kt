@@ -66,7 +66,8 @@ import dev.omnesis.android.ui.devannotate.DevAnnotationDialog
 import dev.omnesis.android.ui.devannotate.ShakeToAnnotate
 import dev.omnesis.android.ui.devannotate.devTargetForRoute
 import dev.omnesis.android.ui.devices.DevicesScreen
-import dev.omnesis.android.ui.devices.GatewayPairingApprovalSheet
+import dev.omnesis.android.ui.devices.DeviceApprovalsSheet
+import dev.omnesis.android.ui.devices.TailscaleJoinRequestsViewModel
 import dev.omnesis.android.ui.document.DocumentDetailScreen
 import dev.omnesis.android.ui.models.BackendDetailScreen
 import dev.omnesis.android.ui.models.BackendsScreen
@@ -111,6 +112,7 @@ import java.time.Instant
 fun HomeScaffold(
     vm: HomeViewModel = hiltViewModel(),
     nav: NavHostController = rememberNavController(),
+    tailscaleJoins: TailscaleJoinRequestsViewModel = hiltViewModel(),
 ) {
     val connection by vm.connection.collectAsStateWithLifecycle()
     val agentState by vm.agentState.collectAsStateWithLifecycle()
@@ -135,8 +137,9 @@ fun HomeScaffold(
     val pairingRequestsRequest by vm.pairingRequestsRequest.collectAsStateWithLifecycle()
     val pairingPending by vm.pairingPending.collectAsStateWithLifecycle()
     val pairingPendingNudge by vm.pairingPendingNudge.collectAsStateWithLifecycle()
-    var showPairingRequests by rememberSaveable { mutableStateOf(false) }
-    // The request a notification named, listed first when the sheet opens.
+    var showDeviceApprovals by rememberSaveable { mutableStateOf(false) }
+    val tailscaleJoinRequest by vm.tailscaleJoinRequestsRequest.collectAsStateWithLifecycle()
+    // The sign-in request a notification named, listed first when the sheet opens.
     var pairingFocus by rememberSaveable { mutableStateOf<String?>(null) }
     val pendingNotes by vm.pendingNotes.collectAsStateWithLifecycle()
     val permissionHealth by vm.permissionHealthState.collectAsStateWithLifecycle()
@@ -306,7 +309,7 @@ fun HomeScaffold(
             accessAuthorizationRequest != null ||
             agentConversationRequest != null || watchFiringRequest != null ||
             sourcePermissionRequest != null || remoteSourcePermissionRequest != null || devicesRequest != null ||
-            pairingRequestsRequest != null,
+            pairingRequestsRequest != null || tailscaleJoinRequest != null,
     )
     val latestAgentRouteActive by rememberUpdatedState(currentRoute == "agent")
     val latestRestoreForeground by rememberUpdatedState(
@@ -446,10 +449,12 @@ fun HomeScaffold(
     }
 
     // The devices waiting for approval are read while the app is in front, every half minute,
-    // and at once when a pairing notification arrives. A build without cloud connectivity
-    // never starts the loop.
-    if (PairingPendingRequests.polls()) {
-        LaunchedEffect(lifecycleOwner, pairingPendingNudge) {
+    // and at once when a pairing or Tailscale join notification arrives: sign-in requests in a
+    // build with cloud connectivity, Tailscale joins while the gateway advertises them. With
+    // neither, the loop never starts; a phone that is not an administrator never asks.
+    val tailscaleEmbed by vm.tailscaleEmbed.collectAsStateWithLifecycle()
+    if (PairingPendingRequests.polls(tailscaleEmbed = tailscaleEmbed)) {
+        LaunchedEffect(lifecycleOwner, pairingPendingNudge, tailscaleEmbed) {
             lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
                 while (true) {
                     vm.refreshPairingPending()
@@ -458,15 +463,18 @@ fun HomeScaffold(
             }
         }
     }
+    // A gateway that stops advertising Tailscale joins takes them off the banner.
+    LaunchedEffect(tailscaleEmbed) { if (!tailscaleEmbed) vm.tailscalePendingListed(emptyList()) }
 
-    // Pairing requests open over the devices they add to: Settings → Devices, with the list on top.
+    // Devices waiting for approval open over the devices they add to: Settings → Devices, with
+    // the approvals sheet on top.
     fun openPairingRequests() {
         closeDrawer()
         focusedSourcePermissionId = null
         focusedDeviceId = null
         openSettingsChild(DEVICES_ROUTE)
-        // A phone that may not list the requests still lands on Devices.
-        showPairingRequests = vm.pairingApprovalClient() != null
+        // A phone that may not review either kind still lands on Devices.
+        showDeviceApprovals = vm.pairingApprovalClient() != null || vm.canReviewTailscaleJoins()
     }
 
     // A tap on a pairing-request notification.
@@ -476,6 +484,17 @@ fun HomeScaffold(
         pairingFocus = pairingRequestsRequest?.requestId
         openPairingRequests()
         vm.consumePairingRequestsRequest()
+    }
+
+    // A tap on a Tailscale join notification opens the same sheet; it names no request. Only a
+    // gateway with its own Tailscale device sends one, so it counts as the feature being on.
+    LaunchedEffect(tailscaleJoinRequest, setupPresenting) {
+        if (vm.setupPresenting.value || tailscaleJoinRequest == null) return@LaunchedEffect
+        vm.recordExplicitLaunch()
+        vm.noteTailscaleJoinNotification()
+        pairingFocus = null
+        openPairingRequests()
+        vm.consumeTailscaleJoinRequestsRequest()
     }
 
     LaunchedEffect(devicesRequest, setupPresenting) {
@@ -1090,7 +1109,7 @@ fun HomeScaffold(
             }
             // One banner however many devices wait; it sits with the access banner, not over it.
             val pairingOffer = pairingPending.banner
-            if (pairingOffer != null && !showPairingRequests) {
+            if (pairingOffer != null && !showDeviceApprovals) {
                 PairingRequestBanner(
                     offer = pairingOffer,
                     onReview = ::openPairingRequests,
@@ -1107,18 +1126,21 @@ fun HomeScaffold(
             }
         }
 
-        if (showPairingRequests) {
+        if (showDeviceApprovals) {
             val approvals = vm.pairingApprovalClient()
-            if (approvals == null) {
-                showPairingRequests = false
+            val joins = tailscaleJoins.takeIf { vm.canReviewTailscaleJoins() }
+            if (approvals == null && joins == null) {
+                showDeviceApprovals = false
             } else {
-                GatewayPairingApprovalSheet(
+                DeviceApprovalsSheet(
                     client = approvals,
                     onOpenSettings = openSettings,
                     onRequests = vm::pairingPendingListed,
                     focus = pairingFocus,
+                    tailscale = joins,
+                    onTailscaleRequests = vm::tailscalePendingListed,
                     onDismiss = {
-                        showPairingRequests = false
+                        showDeviceApprovals = false
                         pairingFocus = null
                         vm.refreshPairingPending()
                     },

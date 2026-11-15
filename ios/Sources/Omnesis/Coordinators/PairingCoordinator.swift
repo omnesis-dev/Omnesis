@@ -41,6 +41,11 @@ final class PairingCoordinator {
     /// QR scanner.
     private(set) var isRepairing: Bool = false
 
+    /// What the last pairing attempt failed with, beside the sentence it sent
+    /// through `onError`. The pairing screen reads it to show a state richer
+    /// than a sentence; nil once a pairing succeeds or another starts.
+    private(set) var lastFailure: PairingFailure?
+
     @ObservationIgnored
     private var operation = UUID()
 
@@ -127,6 +132,7 @@ final class PairingCoordinator {
     @discardableResult
     func pair(raw: String) -> Pairing? {
         operation = UUID()
+        lastFailure = nil
         do {
             let p = try service.pair(raw: raw)
             pairing = p
@@ -135,7 +141,7 @@ final class PairingCoordinator {
             onError(nil)
             return p
         } catch {
-            onError(PairingErrorMessage.message(for: error, payload: raw))
+            fail(PairingErrorMessage.failure(for: error, payload: raw))
             return nil
         }
     }
@@ -146,6 +152,7 @@ final class PairingCoordinator {
     func pairAsync(raw: String) async -> Pairing? {
         let generation = UUID()
         operation = generation
+        lastFailure = nil
         do {
             let p = try await service.pairAsync(raw: raw)
             guard isCurrent(generation) else { return nil }
@@ -156,9 +163,14 @@ final class PairingCoordinator {
             return p
         } catch {
             guard isCurrent(generation) else { return nil }
-            onError(PairingErrorMessage.message(for: error, payload: raw))
+            fail(PairingErrorMessage.failure(for: error, payload: raw))
             return nil
         }
+    }
+
+    private func fail(_ failure: PairingFailure) {
+        lastFailure = failure
+        onError(failure.message)
     }
 
     /// Off the cloud build flag a finished pairing is always published.
@@ -271,6 +283,16 @@ final class PairingCoordinator {
         return root.appendingPathComponent("Omnesis/buffer", isDirectory: true)
     }
 }
+
+#if canImport(SwiftUI) && canImport(UIKit)
+@available(iOS 17.0, *)
+extension AppStore {
+    /// What the last pairing attempt failed with; `lastError` carries its sentence.
+    var pairingFailure: PairingFailure? {
+        pairingCoord.lastFailure
+    }
+}
+#endif
 
 #if DEBUG
 @available(iOS 17.0, *)

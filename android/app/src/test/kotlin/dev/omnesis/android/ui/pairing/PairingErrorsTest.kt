@@ -98,4 +98,38 @@ class PairingErrorsTest {
             pairingErrorMessage(reset, "gateway.example.org"),
         )
     }
+
+    @Test
+    fun `an unreachable Tailscale address from a marked code is the Tailscale state`() {
+        listOf(
+            GatewayException.Network(UnknownHostException("maya-gateway.tail1234.ts.net")),
+            GatewayException.Network(ConnectException("Failed to connect")),
+            GatewayException.Network(SocketTimeoutException("timeout")),
+            GatewayException.Network(SSLException("Connection reset by peer")),
+        ).forEach { error ->
+            assertEquals(PairingFailure.TailnetUnreachable, pairingFailure(error, host, tailnet = true))
+        }
+    }
+
+    @Test
+    fun `without the marker an unreachable gateway keeps its sentence`() {
+        val error = GatewayException.Network(ConnectException("Failed to connect"))
+        assertEquals(
+            PairingFailure.Message(pairingErrorMessage(error, host)),
+            pairingFailure(error, host, tailnet = false),
+        )
+    }
+
+    @Test
+    fun `a marked code that fails another way keeps that way's sentence`() {
+        val certificate = GatewayException.Network(SSLPeerUnverifiedException("Hostname not verified"))
+        assertEquals(PairingFailure.Message(PAIRING_CERTIFICATE_MESSAGE), pairingFailure(certificate, host, tailnet = true))
+        val spent = GatewayException.ServerError(400, "invalid or expired pairing code", "BAD_REQUEST")
+        assertEquals(PairingFailure.Message(PAIRING_CODE_USED_MESSAGE), pairingFailure(spent, host, tailnet = true))
+        val other = GatewayException.ServerError(500, "the gateway is shutting down")
+        assertEquals(
+            PairingFailure.Message("Pairing didn't finish: the gateway is shutting down."),
+            pairingFailure(other, host, tailnet = true),
+        )
+    }
 }

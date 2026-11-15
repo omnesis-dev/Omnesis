@@ -1462,3 +1462,19 @@ export {
   createWindowsPrivateFile,
   readWindowsRegularFilePrefix,
 } from "./windows-private-file.js";
+export { tailscaleEmbedEnabled } from "./tailscale-embed-enabled.js";
+export {
+  DEFAULT_TAILSCALE_DEVICE_NAME,
+  isTailscaleNodeIdentity,
+  TAILSCALE_JOIN_POLICIES,
+  tailscaleAdminStateSchema,
+  tailscaleJoinAnswerSchema,
+  tailscaleJoinCredentialsSchema,
+  tailscaleJoinPolicySchema,
+  tailscaleJoinRequestSchema,
+  tailscaleNodeIdentity,
+  type TailscaleAdminState,
+  type TailscaleJoinAnswer,
+  type TailscaleJoinPolicy,
+  type TailscaleJoinRequest,
+} from "./tailscale-embed-wire.js";

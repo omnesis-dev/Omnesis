@@ -238,6 +238,14 @@ jobs:
       - name: Install dependencies
         run: scripts/ci/npm-ci.sh
 
+      - name: Set up Go
+        # The Tailscale helper program (packages/tailnet-helper) is Go; its
+        # unit tests run inside the unit lane.
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: packages/tailnet-helper/go.mod
+          cache-dependency-path: packages/tailnet-helper/go.sum
+
       - name: lane [linux-unit]
         if: ${{ inputs.scope == 'full' || inputs.projects == 'all' }}
         run: exec node scripts/run-check.mjs unit-all
@@ -323,6 +331,22 @@ jobs:
         # `playwright`), so the browser revision always matches the library that
         # asks for it; `--with-deps` adds Chromium's system libraries.
         run: npm exec --workspace packages/collector -- playwright install --with-deps chromium
+
+      - name: Set up Go
+        # tailscale-embed.e2e.test.ts runs a private tailnet: headscale, and
+        # Tailscale's own daemon, CLI and relay server built at the version the
+        # helper pins, plus the helper itself. Go is a required dependency of
+        # that suite: it fails, not skips, without it in CI.
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: packages/tailnet-helper/go.mod
+          cache-dependency-path: packages/tailnet-helper/go.sum
+
+      - name: Restore the test tailnet tools
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/omnesis-tailnet-tools
+          key: tailnet-tools-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('packages/tailnet-helper/go.mod', 'scripts/tailnet-test/tools.mjs') }}
 
       - name: lane [linux-e2e]
         # Spawned-gateway suites under packages/*/src/**/*.e2e.test.ts.
@@ -456,6 +480,13 @@ jobs:
             scripts/docker/supervisor.test.mjs
         env:
           TZ: UTC
+
+      - name: Set up Go
+        # The Tailscale helper's Go unit tests run inside the unit lane.
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: packages/tailnet-helper/go.mod
+          cache-dependency-path: packages/tailnet-helper/go.sum
 
       - name: lane [macos-unit]
         # `test:unit` minus `test:unit:smoke` and `test:openclaw`, the two that
