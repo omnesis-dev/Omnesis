@@ -80,7 +80,7 @@ jobs:
           packages/collector/src/doctor-local-stores-cleanup.test.ts
       - name: Validate source and test TypeScript
         if: ${{ runner.os == 'Linux' }}
-        run: node scripts/run-check.mjs types && node scripts/run-check.mjs types-tests
+        run: node scripts/run-check.mjs typecheck && node scripts/run-check.mjs types-tests
       - name: Lint the auth ownership slice
         if: ${{ runner.os == 'Linux' }}
         env:
@@ -189,10 +189,12 @@ jobs:
   arm64-runtime:
     if: ${{ inputs.scope == 'arm64-runtime' }}
     runs-on: windows-11-vs2026-arm
-    timeout-minutes: 75
+    timeout-minutes: 120
     env:
       OMNESIS_UNIT_WORKERS: "1"
       OMNESIS_E2E_WORKERS: "1"
+      NPM_CI_ATTEMPTS: "1"
+      CMAKE_BUILD_PARALLEL_LEVEL: "2"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -212,8 +214,12 @@ jobs:
             if (-not (Test-Path (Join-Path $opensslDir 'openssl.exe'))) { throw 'OpenSSL is required' }
             $opensslDir | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
           }
-      - name: Install locked dependencies
-        run: node scripts/ci/npm-ci.mjs --no-audit --no-fund
+      - name: Materialize locked dependencies before their native lifecycle scripts
+        run: node scripts/ci/npm-ci.mjs --ignore-scripts --no-audit --no-fund
+      - name: Apply pinned dependency fixes before native ARM compilation
+        run: node node_modules/patch-package/index.js
+      - name: Run every dependency and root lifecycle with isolated headers and owned compilers
+        run: node scripts/ci/arm64-lifecycle-diagnostic.mjs
       - name: Build and prove the native arm64 SQLite and vector libraries
         run: node scripts/ci/build-windows-sqlite.mjs && node scripts/ci/build-windows-usearch.mjs
       - name: Validate native filesystem, process, crypto and real Gateway runtime boundaries
