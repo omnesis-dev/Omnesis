@@ -413,7 +413,7 @@ describe("deletion and resync", () => {
     settleFilterValues(db);
     expect(
       db
-        .prepare<[string], { n: number }>(
+        .prepare<[string, string], { n: number }>(
           `SELECT (SELECT count(*) FROM document_filter_value_sources WHERE source_id = ?)
                 + (SELECT count(*) FROM document_filter_slots WHERE source_id = ?) AS n`,
         )
