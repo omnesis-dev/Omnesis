@@ -35,6 +35,7 @@ on:
             retained-fixture,
             arm64-runtime,
             source-ownership,
+            tailnet-baseline,
           ]
         default: regressions
       codex_diagnostic:
@@ -47,6 +48,47 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
   TZ: UTC
 jobs:
+  tailnet-baseline:
+    if: ${{ inputs.scope == 'tailnet-baseline' }}
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    env:
+      OMNESIS_UNIT_WORKERS: "1"
+      GOMAXPROCS: "2"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: "24"
+          cache: npm
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+        with:
+          go-version-file: packages/tailnet-helper/go.mod
+          cache-dependency-path: packages/tailnet-helper/go.sum
+      - name: Install locked dependencies
+        run: node scripts/ci/npm-ci.mjs --no-audit --no-fund
+      - name: Baseline embedded Tailscale TypeScript runtime
+        id: typescript
+        continue-on-error: true
+        run: node scripts/run-check.mjs unit packages/gateway/src/tailscale-embed
+      - name: Baseline native Tailscale helper tests
+        id: native
+        continue-on-error: true
+        working-directory: packages/tailnet-helper
+        run: go test -p 2 ./...
+      - name: Preserve both baseline verdicts
+        env:
+          TS_OUTCOME: ${{ steps.typescript.outcome }}
+          GO_OUTCOME: ${{ steps.native.outcome }}
+        run: node -e "if (process.env.TS_OUTCOME !== 'success' || process.env.GO_OUTCOME !== 'success') process.exit(1)"
   source-ownership:
     if: ${{ inputs.scope == 'source-ownership' }}
     strategy:
