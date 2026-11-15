@@ -41,6 +41,7 @@ on:
             macos-tailnet,
             duckdb-arm-crypto,
             certificate-baseline,
+            certificate-v2,
             stream-timeout,
             provider-ownership,
           ]
@@ -176,6 +177,7 @@ jobs:
       - name: Validate POSIX helper, Unix socket, source ownership and Gateway shutdown contracts
         run: >-
           node scripts/run-check.mjs unit packages/gateway/src/tailscale-embed
+          packages/gateway/src/tls-lifecycle/service.test.ts
           packages/collector/src/auth-process.test.ts
           packages/collector/src/source-ws-handlers.physical-ownership.test.ts
           packages/gateway/src/optional-service-cleanup.test.ts
@@ -292,7 +294,7 @@ jobs:
           packages/providers/whatsapp/src/import/importer.ts
           packages/providers/whatsapp/src/import/importer-ownership.test.ts
   tailnet-baseline:
-    if: ${{ inputs.scope == 'tailnet-baseline' }}
+    if: ${{ inputs.scope == 'tailnet-baseline' || inputs.scope == 'certificate-v2' }}
     strategy:
       fail-fast: false
       max-parallel: 1
@@ -353,6 +355,14 @@ jobs:
           packages/cloud-relay/src/management-ownership-boundaries.test.ts
           packages/core/src/owned-child-process.ts
           packages/collector/src/auth-process.ts
+          packages/gateway/src/index.ts
+          packages/gateway/src/tls-lifecycle/service.ts
+          packages/gateway/src/tls-lifecycle/service.test.ts
+          packages/gateway/src/tailscale-embed/protocol.ts
+          packages/gateway/src/tailscale-embed/protocol.test.ts
+          packages/gateway/src/tailscale-embed/service.gateway-certificate.test.ts
+          packages/gateway/src/tailscale-embed/testing/certificate-helper.mjs
+          packages/gateway/src/tailscale-embed/testing/fake-helper.mjs
           packages/gateway/src/tailscale-embed/supervisor.ts
           packages/gateway/src/tailscale-embed/supervisor.test.ts
           packages/gateway/src/tailscale-embed/service.ts

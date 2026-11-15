@@ -167,6 +167,11 @@ export class TlsLifecycleService {
     return result;
   }
 
+  /** Internal snapshot of the pair actually served; disk may hold an unactivated replacement. */
+  servedMaterial(): Readonly<TlsPem> {
+    return { cert: this.served.cert, key: this.served.key };
+  }
+
   /** The fingerprint of the certificate the server presents right now. */
   fingerprintSha256(): string {
     return this.served.fingerprintSha256;

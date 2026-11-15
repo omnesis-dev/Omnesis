@@ -7,6 +7,7 @@ import "testing"
 
 func TestParseCommandAccepts(t *testing.T) {
 	ok := []string{
+		`{"type":"gateway-certificate","certificate":{"cert":"invented-cert","key":"invented-key"}}`,
 		`{"type":"login"}`,
 		`{"type":"logout"}`,
 		`{"type":"configure","public":{"enabled":false,"paths":[]}}`,
@@ -30,6 +31,14 @@ func TestParseCommandRejects(t *testing.T) {
 		`{"type":"configure","public":{"enabled":true,"paths":["/mcp?x=1"]}}`,
 		`{"type":"configure","public":{"enabled":true,"paths":["/mcp#frag"]}}`,
 		`{"type":"login","extra":1}`,
+		`{"type":"gateway-certificate"}`,
+		`{"type":"gateway-certificate","certificate":{"cert":"x","key":""}}`,
+		`{"type":"gateway-certificate","certificate":{"cert":"x","key":"y","other":true}}`,
+		`{"type":"gateway-certificate","certificate":{"cert":"x","key":"y"},"public":{"enabled":false,"paths":[]}}`,
+		`{"type":"login","certificate":{"cert":"x","key":"y"}}`,
+		`{"type":"configure","certificate":{"cert":"x","key":"y"},"public":{"enabled":false,"paths":[]}}`,
+		`{"type":"login"} {"type":"logout"}`,
+
 	}
 	for _, line := range bad {
 		if _, err := ParseCommand([]byte(line)); err == nil {

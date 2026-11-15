@@ -12,6 +12,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -42,6 +43,7 @@ func main() {
 	socketPin := flag.String("socket-certificate-sha256", "", "pinned certificate for the authenticated local transport")
 	certFile := flag.String("fallback-cert", "", "the gateway's certificate, served when Tailscale's cannot be")
 	keyFile := flag.String("fallback-key", "", "the key for -fallback-cert")
+	certificateBootstrap := flag.Bool("certificate-bootstrap", false, "require the active gateway certificate on standard input before starting")
 	showVersion := flag.Bool("version", false, "print the version and exit")
 	flag.Parse()
 	if *showVersion {
@@ -62,7 +64,23 @@ func main() {
 	}
 	isolateFromEnvironment()
 
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	// Cancellation must also release a bootstrap blocked on its parent.
+	stopInputClose := context.AfterFunc(ctx, func() { _ = os.Stdin.Close() })
+	defer stopInputClose()
+	sc := commandScanner(os.Stdin)
+	fallback := certs.NewFallback(*certFile, *keyFile)
 	out := newEmitter(os.Stdout)
+	if *certificateBootstrap {
+		if err := readGatewayCertificateBootstrap(sc, fallback); err != nil {
+			out.send(protocol.Fatal{Type: "fatal", Message: err.Error()})
+			logger.Printf("omnesis-tailnet: %v", err)
+			os.Exit(1)
+		}
+	}
 	n := node.New(node.Config{
 		StateDir:                *stateDir,
 		Hostname:                *hostname,
@@ -70,15 +88,10 @@ func main() {
 		SocketPath:              *socket,
 		SocketCertificateSHA256: *socketPin,
 		SocketToken:             token,
-		Fallback:                certs.NewFallback(*certFile, *keyFile),
+		Fallback:                fallback,
 		Logf:                    logger.Printf,
 		Emit:                    func(st protocol.Status) { out.send(st) },
 	})
-
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
-	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
 
 	if err := n.Start(); err != nil {
 		out.send(protocol.Fatal{Type: "fatal", Message: err.Error()})
@@ -89,7 +102,7 @@ func main() {
 	// for any reason, so does the helper.
 	go func() {
 		defer cancel()
-		readCommands(ctx, os.Stdin, n, logger)
+		readCommandScanner(ctx, sc, n, logger)
 	}()
 
 	if err := n.Run(ctx); err != nil {
@@ -118,6 +131,7 @@ func isolateFromEnvironment() {
 
 // commander is what the gateway's commands act on: the node, or a test double.
 type commander interface {
+	SetGatewayCertificate(protocol.GatewayCertificate) error
 	Configure(protocol.PublicConfig)
 	Login(context.Context) error
 	Logout(context.Context) error
@@ -125,9 +139,30 @@ type commander interface {
 
 // readCommands applies the gateway's commands, one JSON line each, until r
 // ends. A line it cannot parse is logged and skipped.
-func readCommands(ctx context.Context, r io.Reader, n commander, logger *log.Logger) {
+func commandScanner(r io.Reader) *bufio.Scanner {
 	sc := bufio.NewScanner(r)
 	sc.Buffer(make([]byte, 64*1024), 1024*1024)
+	return sc
+}
+
+// readGatewayCertificateBootstrap fails closed before any network listener starts.
+// Its scanner is reused for commands so buffered frames cannot be lost.
+func readGatewayCertificateBootstrap(sc *bufio.Scanner, fallback *certs.Fallback) error {
+	if !sc.Scan() {
+		return errors.New("gateway certificate bootstrap ended before a certificate arrived")
+	}
+	cmd, err := protocol.ParseCommand(sc.Bytes())
+	if err != nil || cmd.Type != protocol.CommandGatewayCertificate {
+		return errors.New("gateway certificate bootstrap requires a certificate command")
+	}
+	return fallback.SetPEM(cmd.Certificate.Cert, cmd.Certificate.Key)
+}
+
+func readCommands(ctx context.Context, r io.Reader, n commander, logger *log.Logger) {
+	readCommandScanner(ctx, commandScanner(r), n, logger)
+}
+
+func readCommandScanner(ctx context.Context, sc *bufio.Scanner, n commander, logger *log.Logger) {
 	for sc.Scan() {
 		line := sc.Bytes()
 		if len(strings.TrimSpace(string(line))) == 0 {
@@ -139,6 +174,10 @@ func readCommands(ctx context.Context, r io.Reader, n commander, logger *log.Log
 			continue
 		}
 		switch cmd.Type {
+		case protocol.CommandGatewayCertificate:
+			if err := n.SetGatewayCertificate(*cmd.Certificate); err != nil {
+				logger.Println("omnesis-tailnet: gateway certificate refresh rejected")
+			}
 		case protocol.CommandConfigure:
 			n.Configure(*cmd.Public)
 		case protocol.CommandLogin:

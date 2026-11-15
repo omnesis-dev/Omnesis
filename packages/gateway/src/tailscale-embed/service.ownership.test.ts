@@ -11,17 +11,18 @@ import { HelperSupervisor } from "./supervisor.js";
 import { OptionalServiceCleanup } from "../optional-service-cleanup.js";
 import { OwnedProcessShutdownFence } from "../owned-process-shutdown-fence.js";
 
-const socket = vi.hoisted(() => ({ open: vi.fn() }));
+const socket = vi.hoisted(() => ({ open: vi.fn(), readKey: vi.fn(async () => "invented-key") }));
 vi.mock("./socket-server.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./socket-server.js")>()),
   startTailnetSocketServer: socket.open,
 }));
 vi.mock("../tls-lifecycle/persistence.js", () => ({
-  readTlsPrivateKey: async () => "invented-key",
+  readTlsPrivateKey: socket.readKey,
 }));
 const dirs: string[] = [];
 afterEach(() => {
   socket.open.mockReset();
+  socket.readKey.mockReset().mockResolvedValue("invented-key");
   for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
 });
 
@@ -146,4 +147,26 @@ test("an unmarked listener rejection without closure proof still retains ownersh
     failure: error,
     pending: false,
   });
+});
+
+test("shutdown retains a pending certificate read and refuses to send its result after admission closes", async () => {
+  const { service, supervisor, stop, close } = await boot();
+  const read = Promise.withResolvers<string>();
+  socket.readKey.mockReturnValueOnce(read.promise);
+  const send = vi.spyOn(supervisor, "send");
+  const refreshing = service.refreshGatewayCertificate();
+  const observed = refreshing.catch((error: unknown) => error);
+  await vi.waitFor(() => expect(socket.readKey).toHaveBeenCalledTimes(2));
+  const closing = service.shutdown();
+  await Promise.resolve();
+  expect(stop).not.toHaveBeenCalled();
+  expect(close).not.toHaveBeenCalled();
+  expect(ownedProcessCleanupReceipt(service.cleanupFailure())?.pending).toBe(true);
+  read.resolve("invented-next-key");
+  expect(await observed).toBeInstanceOf(Error);
+  await closing;
+  expect(send).not.toHaveBeenCalled();
+  expect(stop).toHaveBeenCalledOnce();
+  expect(close).toHaveBeenCalledOnce();
+  expect(service.cleanupFailure()).toBeUndefined();
 });

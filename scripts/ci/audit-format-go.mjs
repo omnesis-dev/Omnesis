@@ -4,6 +4,10 @@ import { readFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { runCheckCommand } from "../lib/check-process.mjs";
 const files = [
+  "internal/certs/fallback.go",
+  "internal/certs/fallback_test.go",
+  "internal/protocol/protocol.go",
+  "internal/protocol/protocol_test.go",
   "main.go",
   "main_test.go",
   "internal/node/node.go",

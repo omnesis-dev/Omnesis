@@ -11,6 +11,7 @@
 import { join } from "node:path";
 import { readFile } from "node:fs/promises";
 import { readTlsPrivateKey } from "../tls-lifecycle/persistence.js";
+import type { TlsPem } from "../tls-lifecycle/service.js";
 import {
   createLogger,
   ownedProcessCleanupReceipt,
@@ -41,6 +42,8 @@ export interface TailscaleServiceOptions {
   configDir: string;
   /** The gateway's own certificate files, served when Tailscale's cannot be. */
   tlsMaterial: () => { cert: string; key: string };
+  /** The active pair from TLS lifecycle, independent of on-disk replacement files. */
+  servedMaterial?: () => Readonly<TlsPem>;
   /** Notifications for join requests; admission is bound later with `useAdmission`. */
   joins: Pick<JoinRequestDeps, "notifyWaiting" | "notifyJoined" | "onWaitingChanged">;
   env?: NodeJS.ProcessEnv;
@@ -151,6 +154,17 @@ export class TailscaleEmbedService {
     this.assertAdmitting();
     this.supervisor.send({ type: "logout" });
     return this.state();
+  }
+
+  /** Retain accepted certificate refreshes through shutdown and future helper restarts. */
+  refreshGatewayCertificate(): Promise<void> {
+    if (this.closed) return Promise.resolve();
+    return this.serial(async () => {
+      this.assertAdmitting();
+      const certificate = await this.gatewayCertificate();
+      this.assertAdmitting();
+      this.supervisor.send({ type: "gateway-certificate", certificate });
+    });
   }
 
   /** The gateway's HTTPS origin on the tailnet, while its device is connected. */
@@ -352,11 +366,14 @@ export class TailscaleEmbedService {
     this.unavailable = undefined;
     if (!this.app) return;
     let socket: TailnetSocketServer;
+    let certificate: Readonly<TlsPem>;
     try {
-      socket = await this.ensureSocket();
+      certificate = await this.gatewayCertificate();
+      this.assertAdmitting();
+      socket = await this.ensureSocket(certificate);
     } catch (err) {
       if (ownedProcessCleanupReceipt(err)) throw err;
-      this.unavailable = `The gateway could not open its private socket for Tailscale: ${err instanceof Error ? err.message : String(err)}`;
+      this.unavailable = `The gateway could not prepare its private connection for Tailscale: ${err instanceof Error ? err.message : String(err)}`;
       log.warn(this.unavailable);
       this.options.onChange?.();
       return;
@@ -365,6 +382,7 @@ export class TailscaleEmbedService {
     const settings = this.settings.get();
     if (!settings.enabled) return;
     const tls = this.options.tlsMaterial();
+    this.supervisor.send({ type: "gateway-certificate", certificate });
     this.configure(settings);
     await this.supervisor.start({
       binary: binary.path,
@@ -397,17 +415,19 @@ export class TailscaleEmbedService {
     this.options.onChange?.();
   }
 
-  private async ensureSocket(): Promise<TailnetSocketServer> {
+  private async gatewayCertificate(): Promise<Readonly<TlsPem>> {
+    if (this.options.servedMaterial) return this.options.servedMaterial();
+    const paths = this.options.tlsMaterial();
+    return {
+      cert: await readFile(paths.cert, "utf8"),
+      key: await readTlsPrivateKey(paths.key, this.options.configDir),
+    };
+  }
+
+  private async ensureSocket(certificate: Readonly<TlsPem>): Promise<TailnetSocketServer> {
     if (this.socket) return this.socket;
     const app = this.app!;
-    const paths = this.options.tlsMaterial();
-    const tls =
-      process.platform === "win32"
-        ? {
-            cert: await readFile(paths.cert, "utf8"),
-            key: await readTlsPrivateKey(paths.key, this.options.configDir),
-          }
-        : undefined;
+    const tls = process.platform === "win32" ? certificate : undefined;
     this.socket = await startTailnetSocketServer({
       ...(tls ? { tls } : {}),
       path: tailnetSocketPath(this.featureDir, this.env),

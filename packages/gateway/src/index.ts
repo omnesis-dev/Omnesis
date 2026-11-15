@@ -845,6 +845,7 @@ const tailscaleJoinNotifier = new TailscaleJoinNotifier(
 const tailscaleEmbed = tailscaleEmbedEnabled()
   ? new TailscaleEmbedService({
       configDir,
+      servedMaterial: () => tlsLifecycle.servedMaterial(),
       tlsMaterial: () => {
         // The same files the gateway serves, including after a rotation.
         const paths = currentTlsMaterialPaths(configDir, process.env, dotEnvKeysAtBoot);
@@ -1975,7 +1976,14 @@ const tlsLifecycle = new TlsLifecycleService({
   }),
   // Those tiers renew on the host.
   inContainer,
-  onRotation: (fingerprintSha256) => advertiser?.setFingerprint(fingerprintSha256),
+  onRotation: (fingerprintSha256) => {
+    advertiser?.setFingerprint(fingerprintSha256);
+    void tailscaleEmbed?.refreshGatewayCertificate().catch((error: unknown) => {
+      log.warn(
+        `Embedded Tailscale certificate refresh failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    });
+  },
 });
 
 let cloudRelayManagement: GatewayCloudRelayManagement | undefined;
