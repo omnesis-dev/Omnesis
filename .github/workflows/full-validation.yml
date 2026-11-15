@@ -39,6 +39,10 @@ on:
             provider-ownership,
           ]
         default: regressions
+      provider_baseline:
+        type: boolean
+        default: false
+        description: Restore the unmodified importer for the worker lifetime baseline
       codex_diagnostic:
         type: boolean
         default: false
@@ -71,6 +75,9 @@ jobs:
           cache: npm
       - name: Install locked dependencies
         run: node scripts/ci/npm-ci.mjs --no-audit --no-fund
+      - name: Restore the unmodified importer for the regression baseline
+        if: ${{ inputs.provider_baseline }}
+        run: node -e "require('node:fs').copyFileSync('scripts/ci/audit-importer-original.fixture.txt', 'packages/providers/whatsapp/src/import/importer.ts')"
       - name: Validate worker scratch ownership and real encrypted backup imports
         run: >-
           node scripts/run-check.mjs unit

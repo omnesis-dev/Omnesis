@@ -13,12 +13,21 @@ const boundary = vi.hoisted(() => ({
   spawn: undefined as (() => unknown) | undefined,
   scratches: [] as string[],
 }));
-vi.mock("node:worker_threads", () => ({
-  Worker: vi.fn(function () {
-    if (!boundary.spawn) throw new Error("Worker fixture is not configured");
-    return boundary.spawn();
-  }),
-}));
+vi.mock("node:worker_threads", async (original) => {
+  const actual = await original<typeof import("node:worker_threads")>();
+  class Worker extends actual.Worker {
+    constructor(...args: ConstructorParameters<typeof actual.Worker>) {
+      const data: unknown = args[1]?.workerData;
+      // Core's native permission/identity workers remain real on Windows.
+      if (data && typeof data === "object" && "backupKind" in data && "scratchPath" in data) {
+        if (!boundary.spawn) throw new Error("Worker fixture is not configured");
+        return boundary.spawn() as Worker;
+      }
+      super(...args);
+    }
+  }
+  return { ...actual, Worker };
+});
 vi.mock("@omnesis/core", async (original) => {
   const actual = await original<typeof import("@omnesis/core")>();
   return {
