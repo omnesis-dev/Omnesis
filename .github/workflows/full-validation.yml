@@ -68,9 +68,38 @@ jobs:
       - name: Validate accepted source work and independent Collector cleanup
         run: >-
           node scripts/run-check.mjs unit
+          packages/collector/src/auth-process.test.ts
+          packages/collector/src/source-ws-handlers.test.ts
           packages/collector/src/source-ws-handlers.ownership.test.ts
           packages/collector/src/source-ws-handlers.auth-begin.test.ts
           packages/collector/src/owned-process-shutdown.test.ts
+          packages/collector/src/doctor.test.ts
+          packages/collector/src/doctor-cleanup.test.ts
+          packages/collector/src/doctor-deadlines.test.ts
+          packages/collector/src/doctor-read-access-cleanup.test.ts
+          packages/collector/src/doctor-local-stores-cleanup.test.ts
+      - name: Validate source and test TypeScript
+        if: ${{ runner.os == 'Linux' }}
+        run: node scripts/run-check.mjs types && node scripts/run-check.mjs types-tests
+      - name: Lint the auth ownership slice
+        if: ${{ runner.os == 'Linux' }}
+        env:
+          NODE_OPTIONS: --max-old-space-size=3072
+        run: >-
+          node node_modules/eslint/bin/eslint.js
+          packages/collector/src/auth-process.ts
+          packages/collector/src/auth-process.test.ts
+          packages/collector/src/source-ws-handlers.ts
+          packages/collector/src/source-ws-handlers.test.ts
+          packages/collector/src/source-ws-handlers.auth-begin.test.ts
+      - name: Build native libraries for the bounded Codex Gateway diagnostic
+        if: ${{ runner.os == 'Windows' }}
+        run: node scripts/ci/build-windows-sqlite.mjs && node scripts/ci/build-windows-usearch.mjs
+      - name: Investigate the Codex native-output timeout without extending its deadline
+        if: ${{ runner.os == 'Windows' }}
+        env:
+          OMNESIS_E2E_WORKERS: "1"
+        run: node scripts/run-check.mjs e2e packages/collector/src/e2e/codex-agent.e2e.test.ts
   sqlite-mmap-baseline:
     if: ${{ inputs.scope == 'sqlite-mmap-baseline' }}
     runs-on: windows-latest

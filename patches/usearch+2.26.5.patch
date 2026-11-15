@@ -459,3 +459,18 @@ diff --git a/node_modules/usearch/javascript/dist/cjs/usearch.d.ts b/node_module
 +    atomicReplaceFile: typeof atomicReplaceFile;
  };
  export default usearch;
+diff --git a/node_modules/usearch/numkong/include/numkong/capabilities.h b/node_modules/usearch/numkong/include/numkong/capabilities.h
+--- a/node_modules/usearch/numkong/include/numkong/capabilities.h
++++ b/node_modules/usearch/numkong/include/numkong/capabilities.h
+@@ -158,9 +158,10 @@
+ #endif
+ 
+ // On Windows ARM, we use IsProcessorFeaturePresent API for capability detection
+ #if defined(NK_DEFINED_WINDOWS_) && NK_TARGET_ARM64_
+-#include <processthreadsapi.h> // `IsProcessorFeaturePresent`
++// Modified for Omnesis: include the SDK umbrella header for Windows ARM64.
++#include <windows.h> // `IsProcessorFeaturePresent` and SDK architecture definitions
+ #endif
+ 
+ // On WASM with Emscripten, we use EM_JS for runtime capability detection
+ #if NK_TARGET_WASM_ && defined(__EMSCRIPTEN__)

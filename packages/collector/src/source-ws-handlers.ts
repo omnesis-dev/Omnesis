@@ -14,7 +14,8 @@
  * gateway forwards them to subscribers (SSE on the admin client side).
  */
 
-import { spawn, type ChildProcess } from "node:child_process";
+import type { ChildProcess } from "node:child_process";
+import { spawnAuthProcess, type AuthProcess } from "./auth-process.js";
 import { authSubprocessEnvironment } from "./auth-subprocess-env.js";
 import {
   collectorHostname,
@@ -133,7 +134,7 @@ export function createSourceWsHandlers(deps: SourceWsHandlerDeps): SourceWsHandl
     cleanupPending: true as const,
   });
   /** Active auth subprocesses, keyed by flowId, so we can cancel them. */
-  const activeFlows = new Map<string, ChildProcess>();
+  const activeFlows = new Map<string, AuthProcess>();
   /**
    * Closes a flow's single-terminal-event latch from outside its reader.
    *
@@ -180,6 +181,7 @@ export function createSourceWsHandlers(deps: SourceWsHandlerDeps): SourceWsHandl
     cleanupFailure: () =>
       collectorCleanupReceipt(
         work.cleanupFailure(),
+        activeFlows.size ? pendingClose : undefined,
         closing && !closeSettled ? pendingClose : undefined,
       ),
   };
@@ -197,7 +199,7 @@ export function createSourceWsHandlers(deps: SourceWsHandlerDeps): SourceWsHandl
       log.info(
         `Shutdown: terminating ${flowIds.length} in-flight auth subprocess${flowIds.length === 1 ? "" : "es"}`,
       );
-    closing = Promise.allSettled([acceptedWork, ...flowIds.map(terminateFlow)])
+    closing = Promise.allSettled([acceptedWork, ...flowIds.map((flowId) => terminateFlow(flowId))])
       .then((results) => {
         const errors: unknown[] = [];
         for (const result of results)
@@ -218,12 +220,19 @@ export function createSourceWsHandlers(deps: SourceWsHandlerDeps): SourceWsHandl
     return closing;
   }
 
-  function terminateFlow(flowId: string): Promise<void> {
-    const proc = activeFlows.get(flowId);
+  function retireFlow(flowId: string, owner: AuthProcess): void {
+    if (!owner.joinedConfirmed || activeFlows.get(flowId) !== owner) return;
     activeFlows.delete(flowId);
     endFlow.delete(flowId);
-    if (!proc) return Promise.resolve();
-    return terminateChild(proc);
+    deps.onOwnershipChanged?.();
+  }
+
+  function terminateFlow(
+    flowId: string,
+    owner: AuthProcess | undefined = activeFlows.get(flowId),
+  ): Promise<void> {
+    if (!owner) return Promise.resolve();
+    return owner.stop().finally(() => retireFlow(flowId, owner));
   }
 
   function handleDescriptors(): WsResponsePayload<"source.descriptors"> {
@@ -329,6 +338,8 @@ export function createSourceWsHandlers(deps: SourceWsHandlerDeps): SourceWsHandl
    * wire up subscribers — the actual flow runs asynchronously.
    */
   function handleAuthBegin(body: WsRequestPayload<"auth.begin">): WsResponsePayload<"auth.begin"> {
+    if (activeFlows.has(body.flowId))
+      throw new Error(`Auth flow is already active: ${body.flowId}`);
     const descriptor = sourceManager.getDescriptors().find((d) => String(d.id) === body.sourceType);
     if (!descriptor) throw new Error(`Unknown source: ${body.sourceType}`);
     if (!descriptor.authFlow && !descriptor.authenticate) {
@@ -382,12 +393,15 @@ export function createSourceWsHandlers(deps: SourceWsHandlerDeps): SourceWsHandl
     // Known bug: #97 — masks every credential field, not only the ones the spec marks secret.
     const secretValues = Object.values(cleanedCredentials ?? {}).filter((v) => v.length > 0);
 
-    const proc = spawn(entry.command, args, {
-      stdio: ["pipe", "pipe", "pipe"],
+    const owner = spawnAuthProcess(entry.command, args, {
       cwd: import.meta.dirname,
       env,
     });
-    activeFlows.set(flowId, proc);
+    const proc = owner.child;
+    activeFlows.set(flowId, owner);
+    void owner.joined.catch((error: unknown) => {
+      work.observe(error);
+    });
     log.info(`auth.begin spawned subprocess for flow=${flowId} source=${body.sourceType}`);
 
     // stdin is the inbound NDJSON channel to the subprocess (init + code
@@ -459,10 +473,22 @@ export function createSourceWsHandlers(deps: SourceWsHandlerDeps): SourceWsHandl
       log.error(`auth subprocess (${flowId}) failed to start: ${toErrorMessage(err)}`);
     });
 
-    void runFlowSubprocess(flowId, body.sourceType, proc, stderrTail, secretValues).finally(() => {
-      activeFlows.delete(flowId);
-      endFlow.delete(flowId);
-    });
+    void work
+      .run(owner, async () => {
+        try {
+          await runFlowSubprocess(flowId, body.sourceType, owner, stderrTail, secretValues);
+        } catch (error) {
+          if (work.observe(error)) throw error;
+          await owner.stop();
+          throw error;
+        }
+      })
+      .finally(() => retireFlow(flowId, owner))
+      .catch((error: unknown) => {
+        if (work.observe(error))
+          log.error(`Auth cleanup is unconfirmed (${flowId}): ${toErrorMessage(error)}`);
+        else log.warn(`Auth process stopped (${flowId}): ${toErrorMessage(error)}`);
+      });
 
     return { started: true };
   }
@@ -470,14 +496,13 @@ export function createSourceWsHandlers(deps: SourceWsHandlerDeps): SourceWsHandl
   async function runFlowSubprocess(
     flowId: string,
     sourceType: string,
-    proc: ChildProcess,
+    owner: AuthProcess,
     stderrTail: string[] = [],
     /** Pasted values to strip from any diagnostic this flow emits. */
     secretValues: readonly string[] = [],
   ): Promise<void> {
+    const proc = owner.child;
     const stdout = proc.stdout;
-    if (!stdout) throw new Error("auth subprocess has no stdout");
-    stdout.setEncoding("utf8");
     let buffer = "";
     let resolvedAccountIds: string[] | undefined;
     let resolvedAccountStates: Record<string, ConnectionState> | undefined;
@@ -487,8 +512,12 @@ export function createSourceWsHandlers(deps: SourceWsHandlerDeps): SourceWsHandl
     // we still drain stdout to EOF (so the child sees its writes
     // accepted and exits cleanly) but ignore further events.
     let terminalEmitted = false;
+    let terminalPublished = false;
+    let streamFailed = false;
     endFlow.set(flowId, () => {
       terminalEmitted = true;
+      terminalPublished = true;
+      resolvedAccountIds = undefined;
     });
     // Inactivity watchdog: if the subprocess goes silent for this long
     // mid-flow, kill it and surface a `code: "timeout"` error. 30 minutes
@@ -501,22 +530,24 @@ export function createSourceWsHandlers(deps: SourceWsHandlerDeps): SourceWsHandl
     const armWatchdog = (): void => {
       if (inactivityTimer) clearTimeout(inactivityTimer);
       inactivityTimer = setTimeout(() => {
-        if (terminalEmitted) return;
-        terminalEmitted = true;
         log.warn(
-          `auth subprocess inactive for ${INACTIVITY_TIMEOUT_MS / 60000}m, killing flow=${flowId}`,
+          `auth subprocess inactive for ${INACTIVITY_TIMEOUT_MS / 60000}m, stopping flow=${flowId}`,
         );
-        try {
-          proc.kill("SIGTERM");
-        } catch {
-          /* ignore */
-        }
-        emitEvent("auth.complete", {
-          flowId,
-          ok: false,
-          error: "auth subprocess inactive — flow timed out",
-          code: "timeout" satisfies AuthErrorCode,
+        void terminateFlow(flowId, owner).catch((error: unknown) => {
+          work.observe(error);
+          log.error(`Auth cancellation failed (${flowId}): ${toErrorMessage(error)}`);
         });
+        resolvedAccountIds = undefined;
+        terminalEmitted = true;
+        if (!terminalPublished) {
+          terminalPublished = true;
+          emitEvent("auth.complete", {
+            flowId,
+            ok: false,
+            error: "auth subprocess inactive — flow timed out",
+            code: "timeout" satisfies AuthErrorCode,
+          });
+        }
       }, INACTIVITY_TIMEOUT_MS);
     };
 
@@ -561,15 +592,14 @@ export function createSourceWsHandlers(deps: SourceWsHandlerDeps): SourceWsHandl
         resolvedAccountIds = event.accountIds;
         resolvedAccountStates = event.accountStates;
         resolvedNotices = event.notices;
-        // Don't emit completion until cursor reset (below) is done.
-        // The terminal flag flips at emit time after the await loop, so
-        // a malformed second `complete` mid-stream is still ignored
-        // because `terminalEmitted` flips here.
+        // Retain success until the process and its descendants have joined.
+        // Later protocol events cannot replace this pending terminal result.
         terminalEmitted = true;
         return;
       }
       if (event.type === "error") {
         terminalEmitted = true;
+        terminalPublished = true;
         emitEvent("auth.complete", {
           flowId,
           ok: false,
@@ -591,6 +621,9 @@ export function createSourceWsHandlers(deps: SourceWsHandlerDeps): SourceWsHandl
 
     armWatchdog();
     try {
+      if (!stdout) throw new Error("auth subprocess has no stdout");
+      stdout.setEncoding("utf8");
+      await owner.ready;
       // Drain stdout to EOF. Even after a terminal event the loop keeps
       // reading so the child's pipe writes don't block — letting the
       // child exit cleanly instead of stalling on a full pipe buffer.
@@ -603,13 +636,22 @@ export function createSourceWsHandlers(deps: SourceWsHandlerDeps): SourceWsHandl
         }
       }
       if (buffer.trim()) handleLine(buffer.trim());
+      await owner.joined;
     } catch (err) {
+      if (work.observe(err)) throw err;
+      streamFailed = true;
       log.warn(`auth subprocess stream failed for ${flowId}: ${toErrorMessage(err)}`);
+      try {
+        await owner.stop();
+      } catch (stopError) {
+        if (work.observe(stopError)) throw stopError;
+        log.warn(`auth subprocess stop failed for ${flowId}: ${toErrorMessage(stopError)}`);
+      }
     } finally {
       if (inactivityTimer) clearTimeout(inactivityTimer);
     }
 
-    if (resolvedAccountIds) {
+    if (resolvedAccountIds && !terminalPublished && !streamFailed && proc.exitCode === 0) {
       // Don't reset the cursor on auth-completion. The previous behaviour
       // wiped sync_state every time `cli add <source>` finished its OAuth
       // dance — including the common "credential refresh" case where the
@@ -632,7 +674,7 @@ export function createSourceWsHandlers(deps: SourceWsHandlerDeps): SourceWsHandl
         accountStates: resolvedAccountStates,
         notices: resolvedNotices,
       });
-    } else if (!terminalEmitted) {
+    } else if (!terminalPublished) {
       // Subprocess closed stdout without ever sending a terminal event —
       // crash, kill, or a producer bug. Surface as `unknown` so the UI
       // can render a generic "auth flow ended unexpectedly" without
@@ -662,7 +704,7 @@ export function createSourceWsHandlers(deps: SourceWsHandlerDeps): SourceWsHandl
 
   // Code-delivery channel only: forwards a gateway-routed authorization code to the live auth subprocess over stdin; NOT the buildAuthUrl/exchangeCode split (that remains future work for iOS).
   function handleAuthCode(body: WsRequestPayload<"auth.code">): WsResponsePayload<"auth.code"> {
-    const proc = activeFlows.get(body.flowId);
+    const proc = activeFlows.get(body.flowId)?.child;
     if (!proc) {
       throw new Error(`auth.code for unknown or already-finished flow: ${body.flowId}`);
     }
@@ -691,7 +733,7 @@ export function createSourceWsHandlers(deps: SourceWsHandlerDeps): SourceWsHandl
   function handleAuthWidgetResult(
     body: WsRequestPayload<"auth.widget-result">,
   ): WsResponsePayload<"auth.widget-result"> {
-    const proc = activeFlows.get(body.flowId);
+    const proc = activeFlows.get(body.flowId)?.child;
     if (!proc) {
       throw new Error(`auth.widget-result for unknown or already-finished flow: ${body.flowId}`);
     }
@@ -709,7 +751,7 @@ export function createSourceWsHandlers(deps: SourceWsHandlerDeps): SourceWsHandl
   function handleAuthAnswer(
     body: WsRequestPayload<"auth.answer">,
   ): WsResponsePayload<"auth.answer"> {
-    const proc = activeFlows.get(body.flowId);
+    const proc = activeFlows.get(body.flowId)?.child;
     if (!proc) {
       throw new Error(`auth.answer for unknown or already-finished flow: ${body.flowId}`);
     }
@@ -731,8 +773,9 @@ export function createSourceWsHandlers(deps: SourceWsHandlerDeps): SourceWsHandl
   function handleAuthCancel(
     body: WsRequestPayload<"auth.cancel">,
   ): WsResponsePayload<"auth.cancel"> {
-    const proc = activeFlows.get(body.flowId);
-    if (proc) {
+    const owner = activeFlows.get(body.flowId);
+    const proc = owner?.child;
+    if (proc && owner) {
       // Tell it before killing it. A provider waiting on an answer sees a typed
       // failure and its own catch runs — which is the only chance a provider
       // that has just created something at a third party gets to undo it. The
@@ -743,7 +786,12 @@ export function createSourceWsHandlers(deps: SourceWsHandlerDeps): SourceWsHandl
         reason: body.reason ?? "cancelled",
         detail: body.detail,
       });
-      setTimeout(() => void terminateFlow(body.flowId), ABORT_GRACE_MS).unref();
+      setTimeout(() => {
+        void terminateFlow(body.flowId, owner).catch((error: unknown) => {
+          work.observe(error);
+          log.error(`Auth cancellation failed (${body.flowId}): ${toErrorMessage(error)}`);
+        });
+      }, ABORT_GRACE_MS).unref();
       // Close the reader's latch first: what follows is this flow's one
       // terminal event, and the subprocess has a few seconds left in which it
       // could otherwise report a second.
@@ -937,44 +985,4 @@ export function createSourceWsHandlers(deps: SourceWsHandlerDeps): SourceWsHandl
     log.info(`Credentials cleared for ${body.fileKey}`);
     return { ok: true, fileKey: body.fileKey };
   }
-}
-
-/**
- * Standalone SIGTERM-then-SIGKILL helper. Exposed at module scope so
- * tests can verify the dual-signal escalation against a real spawned
- * child without having to drive the whole `auth.begin` flow.
- *
- * Returns a promise that resolves on `exit` (or `error`). On a child
- * that's already exited, resolves synchronously. Failures inside
- * `kill()` are best-effort and swallowed — the caller's only signal
- * is "settled" vs "still pending past the 5s SIGKILL fallback".
- */
-export function terminateChild(proc: ChildProcess): Promise<void> {
-  if (proc.exitCode !== null || proc.signalCode !== null) return Promise.resolve();
-  return new Promise<void>((resolve) => {
-    let settled = false;
-    const finish = (): void => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(killTimer);
-      resolve();
-    };
-    proc.once("exit", finish);
-    proc.once("error", finish);
-    try {
-      proc.kill("SIGTERM");
-    } catch {
-      /* best-effort */
-    }
-    const killTimer = setTimeout(() => {
-      try {
-        if (proc.exitCode === null && proc.signalCode === null) {
-          proc.kill("SIGKILL");
-        }
-      } catch {
-        /* best-effort */
-      }
-    }, 5_000);
-    killTimer.unref();
-  });
 }

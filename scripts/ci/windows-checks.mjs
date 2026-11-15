@@ -48,6 +48,7 @@ export const FOCUSED_UNIT_FILES = [
   "packages/core/src/config-private-cleanup.test.ts",
   "packages/core/src/secret-file-cache.test.ts",
   "packages/collector/src/auth-subprocess-env.test.ts",
+  "packages/collector/src/auth-process.test.ts",
   "packages/collector/src/auth-subprocess-ownership.test.ts",
   "packages/platform/src/windows-private-owner-rights.windows.test.ts",
   "packages/agent-integration/src/hermes-windows-bridge.test.ts",

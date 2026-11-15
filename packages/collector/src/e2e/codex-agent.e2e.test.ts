@@ -133,6 +133,10 @@ describe("Codex agent backend — spawned gateway E2E", () => {
   }, 240_000);
 
   test("fails the turn if Codex emits native command output", async () => {
+    const began = Date.now();
+    const phase = (name: string) =>
+      console.info(`[native-output-stage] ${name} ${Date.now() - began}ms`);
+    phase("begin");
     const dir = mkdtempSync(join(tmpdir(), "omnesis-codex-e2e-native-"));
     tempDirs.push(dir);
     const logPath = join(dir, "fake-codex.jsonl");
@@ -147,9 +151,12 @@ describe("Codex agent backend — spawned gateway E2E", () => {
     });
 
     try {
+      phase("gateway-start");
       await harness.start();
+      phase("gateway-ready");
 
       const { events } = await runAgentTurn(harness, "Try a native command.");
+      phase("turn-finished");
       const error = events.find((event) => event.type === "agent.error");
       expect(error?.payload.code).toBe("codex_native_tool_unavailable");
       expect(error?.payload.message).toContain("native item");
@@ -157,7 +164,9 @@ describe("Codex agent backend — spawned gateway E2E", () => {
       expect(end?.payload.stopReason).toBe("error");
     } finally {
       restoreEnv();
+      phase("destroy-start");
       await harness.destroy();
+      phase("destroy-finished");
     }
   }, 60_000);
 });

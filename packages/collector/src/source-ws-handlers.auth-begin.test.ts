@@ -15,7 +15,7 @@
  *     emitting a terminal event (the exact failure the emit-drain fix
  *     guards against).
  *
- * `node:child_process.spawn` is mocked so a hand-driven fake child (its
+ * The auth-process producer is mocked so a hand-driven fake child (its
  * stdout a real PassThrough we push NDJSON into) replaces the real
  * `auth-subprocess.ts` process — fully deterministic, no tsx
  * cold-start, no wall-clock sleeps.
@@ -23,7 +23,7 @@
 
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
-import { describe, test, expect, vi, beforeEach } from "vitest";
+import { describe, test, expect, vi, beforeEach, afterEach } from "vitest";
 
 /** A spawn() stand-in: stdin/stdout/stderr PassThroughs + kill/exit plumbing. */
 class FakeChild extends EventEmitter {
@@ -67,9 +67,17 @@ class FakeChild extends EventEmitter {
   }
 
   /** Close stdout → drives the consumer's `for await` loop to completion. */
-  endStdout(): void {
+  endStdout({ close = true } = {}): void {
     this.stdout.end();
     this.stderr.end();
+    if (close) this.closeProcess();
+  }
+
+  closeProcess(code = 0): void {
+    if (this.exitCode !== null) return;
+    this.exitCode = code;
+    this.emit("exit", code, null);
+    this.emit("close", code, null);
   }
 }
 
@@ -88,21 +96,38 @@ const childHolder = vi.hoisted(() => ({
   }>,
 }));
 
-// Override only spawn(); preserve the rest of node:child_process so that
-// other consumers (e.g. @omnesis/core's network-discovery, which wraps
-// execFile in promisify at import time) keep working.
-vi.mock("node:child_process", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("node:child_process")>();
-  return {
-    ...actual,
-    spawn: vi.fn((command: string, args: string[], options: { env?: Record<string, string> }) => {
+// Protocol tests control stream and physical-join events at the producer seam.
+// Native admission and whole-Job ownership are tested by auth-process.test.ts.
+vi.mock("./auth-process.js", () => ({
+  spawnAuthProcess: vi.fn(
+    (command: string, args: string[], options: { env?: Record<string, string> }) => {
       const child = childHolder.make!();
       childHolder.children.push(child);
       childHolder.spawnCalls.push({ command, args, options });
-      return child;
-    }),
-  };
-});
+      let closed = false;
+      const joined = new Promise<void>((resolve) => {
+        child.once("close", () => {
+          closed = true;
+          resolve();
+        });
+      });
+      let stopping: Promise<void> | undefined;
+      return {
+        child,
+        ready: Promise.resolve(),
+        joined,
+        get joinedConfirmed() {
+          return closed;
+        },
+        stop() {
+          if (stopping) return stopping;
+          if (!closed) child.kill();
+          return (stopping = joined);
+        },
+      };
+    },
+  ),
+}));
 
 import { KEYRING_ENV_KEYS, makeCommand } from "@omnesis/core";
 import { type GatewayClient, type SourceDescriptor } from "@omnesis/source-sdk";
@@ -111,6 +136,7 @@ import { createSourceWsHandlers } from "./source-ws-handlers.js";
 
 childHolder.make = () => new FakeChild();
 const spawnedChildren = childHolder.children;
+const activeHandlers: ReturnType<typeof createSourceWsHandlers>[] = [];
 
 function authDescriptor(over: Partial<SourceDescriptor> = {}): SourceDescriptor {
   return {
@@ -161,6 +187,7 @@ function setup(descriptors: SourceDescriptor[]): {
       emitted.push({ type, payload: payload as Record<string, unknown> });
     },
   });
+  activeHandlers.push(handlers);
   return { handlers, emitted };
 }
 
@@ -169,7 +196,27 @@ beforeEach(() => {
   childHolder.spawnCalls.length = 0;
 });
 
+afterEach(async () => {
+  for (const child of spawnedChildren) child.endStdout();
+  await Promise.all(activeHandlers.splice(0).map((handlers) => handlers.shutdown()));
+});
+
 describe("auth.begin → runFlowSubprocess", () => {
+  test("a successful protocol message cannot override a failed process exit", async () => {
+    const { handlers, emitted } = setup([authDescriptor()]);
+    await handlers.handle(
+      makeCommand("auth.begin", { flowId: "failed-root", sourceType: "test-auth-source" }),
+    );
+    const child = spawnedChildren[0];
+    child.emitLine({ type: "complete", accountIds: ["one@example.com"] });
+    child.endStdout({ close: false });
+    child.closeProcess(1);
+    await waitFor(() => emitted.some((event) => event.type === "auth.complete"));
+    const completions = emitted.filter((event) => event.type === "auth.complete");
+    expect(completions).toHaveLength(1);
+    expect(completions[0].payload).toMatchObject({ ok: false, code: "unknown" });
+  });
+
   test("cancellation after a parsed success cannot publish a second terminal event", async () => {
     const { handlers, emitted } = setup([authDescriptor()]);
     await handlers.handle(
@@ -179,16 +226,14 @@ describe("auth.begin → runFlowSubprocess", () => {
     child.emitLine({ type: "complete", accountIds: ["one@example.com"] });
     for (let turn = 0; turn < 6; turn++) await new Promise((done) => setImmediate(done));
     await handlers.handle(makeCommand("auth.cancel", { flowId: "cancel-join-proof" }));
-    child.endStdout();
+    child.endStdout({ close: false });
     try {
       for (let turn = 0; turn < 6; turn++) await new Promise((done) => setImmediate(done));
       const completions = emitted.filter((event) => event.type === "auth.complete");
       expect(completions).toHaveLength(1);
       expect(completions[0].payload).toMatchObject({ ok: false, code: "user-cancelled" });
     } finally {
-      child.exitCode = 0;
-      child.emit("exit", 0, null);
-      child.emit("close", 0, null);
+      child.closeProcess();
       await handlers.shutdown();
     }
   });
@@ -200,14 +245,12 @@ describe("auth.begin → runFlowSubprocess", () => {
     );
     const child = spawnedChildren[0];
     child.emitLine({ type: "complete", accountIds: ["one@example.com"] });
-    child.endStdout();
+    child.endStdout({ close: false });
     try {
       for (let turn = 0; turn < 6; turn++) await new Promise((done) => setImmediate(done));
       expect(emitted.filter((event) => event.type === "auth.complete")).toEqual([]);
     } finally {
-      child.exitCode = 0;
-      child.emit("exit", 0, null);
-      child.emit("close", 0, null);
+      child.closeProcess();
       await handlers.shutdown();
     }
   });
