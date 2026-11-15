@@ -5538,6 +5538,7 @@ class RegistrationTests(unittest.TestCase):
         self._register_with_capabilities({"subscriptions": False})
         Path(os.environ["HERMES_HOME"], "state.db").touch()
         instance = adapter_module.OmnesisAdapter.for_tools()
+        self.addCleanup(lambda: instance._state.close() if instance._state is not None else None)
         instance._request_json = Mock()
 
         management = json.loads(

@@ -508,7 +508,6 @@ export class GatewayCloudRelayManagement implements CloudRelayManagement {
             throw new Error();
           acmeDirectoryUrl = directory.href;
         } catch (error) {
-          if (this.cleanup.observe(error)) throw error;
           if (error instanceof CloudRelayManagementFailure) throw error;
           throw new CloudRelayManagementFailure(400, "configuration-invalid");
         }

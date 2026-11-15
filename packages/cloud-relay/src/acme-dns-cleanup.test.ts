@@ -212,3 +212,38 @@ test("normal close keeps one pending proof, refuses fresh work and clears only a
     }
   }
 });
+
+test("close refuses an already queued creation before it reaches the DNS provider", async () => {
+  const { directory, file, provider, service } = await fixture();
+  vi.spyOn(privateCredentials, "savePrivateJson").mockImplementation(async (path, input) => {
+    await writeFile(path, JSON.stringify(input), { mode: 0o600 });
+  });
+  let entered!: () => void;
+  const started = new Promise<void>((resolve) => (entered = resolve));
+  let release!: () => void;
+  const blocked = new Promise<void>((resolve) => (release = resolve));
+  provider.create.mockImplementationOnce(async () => {
+    entered();
+    await blocked;
+  });
+  const creation = service.create(owner, hostname, value);
+  let queued: Promise<unknown> | undefined;
+  let closing: Promise<void> | undefined;
+  try {
+    await started;
+    queued = service.create("c".repeat(64), hostname, value).catch((error: unknown) => error);
+    closing = service.close();
+    release();
+    await creation;
+    expect(await queued).toMatchObject({ status: 503 });
+    await closing;
+    expect(provider.create).toHaveBeenCalledOnce();
+    expect(provider.remove).toHaveBeenCalledOnce();
+    expect(JSON.parse(await readFile(file, "utf8"))).toEqual([]);
+    expect(service.cleanupFailure()).toBeUndefined();
+  } finally {
+    release();
+    await Promise.allSettled([creation, queued, closing ?? service.close()]);
+    await rm(directory, { recursive: true, force: true });
+  }
+});

@@ -623,3 +623,50 @@ test("a relay behind a proxy moves the tunnel and its channels to the address it
   expect(sockets()[12].options.headers["x-omnesis-tunnel-direct"]).toBe("1");
   tunnel.stop();
 });
+
+test("a late data-channel open callback cannot create streams after its tunnel closes", async () => {
+  const tunnel = new GatewayTunnel(options());
+  tunnel.start();
+  await flush();
+  const control = sockets()[0];
+  control.open();
+  control.emit(
+    "message",
+    Buffer.from(JSON.stringify({ type: "open", version: 1, ticket: "e".repeat(64) })),
+  );
+  const channel = sockets()[1];
+  const [deliveredOpen] = channel.listeners("open");
+  expect(deliveredOpen).toBeTypeOf("function");
+  tunnel.stop();
+  // The transport may already have handed an event callback to its caller.
+  deliveredOpen!();
+  expect(channel.readyState).toBe(3);
+  expect(mocks.stream).not.toHaveBeenCalled();
+  expect(mocks.connect).not.toHaveBeenCalled();
+  await tunnel.close();
+});
+
+test("a destination that closes before its asynchronous handoff already supplies its join proof", async () => {
+  const tunnel = new GatewayTunnel(options());
+  const destination = new PassThrough();
+  mocks.connect.mockImplementationOnce(async () => {
+    const closed = new Promise<void>((resolve) => destination.once("close", resolve));
+    destination.destroy();
+    await closed;
+    return destination;
+  });
+  tunnel.start();
+  await flush();
+  const control = sockets()[0];
+  control.open();
+  control.emit(
+    "message",
+    Buffer.from(JSON.stringify({ type: "open", version: 1, ticket: "f".repeat(64) })),
+  );
+  sockets()[1].open();
+  await flush();
+  expect(destination.closed).toBe(true);
+  expect(mocks.connect).toHaveBeenCalledOnce();
+  await tunnel.close();
+  expect(tunnel.cleanupFailure()).toBeUndefined();
+});

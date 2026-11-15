@@ -4,8 +4,7 @@ on:
     inputs:
       scope:
         type: choice
-        options:
-          [regressions, collector-baseline, provider-baseline, deadline-baseline, bridge-baseline]
+        options: [regressions, types, relay, focused, hermes, performance, e2e]
         default: regressions
 permissions:
   contents: read
@@ -14,7 +13,7 @@ env:
   TZ: UTC
 jobs:
   ownership-and-fixtures:
-    if: ${{ inputs.scope == 'regressions' }}
+    if: ${{ inputs.scope == 'regressions' || inputs.scope == 'focused' }}
     strategy:
       fail-fast: false
       matrix:
@@ -115,7 +114,7 @@ jobs:
           node scripts/run-check.mjs unit
           packages/platform/src/windows-private-owner-rights.windows.test.ts
   relay-coverage:
-    if: ${{ inputs.scope == 'regressions' }}
+    if: ${{ inputs.scope == 'regressions' || inputs.scope == 'relay' }}
     runs-on: ubuntu-latest
     timeout-minutes: 35
     steps:
@@ -140,7 +139,7 @@ jobs:
           if-no-files-found: warn
           retention-days: 3
   source-and-test-types:
-    if: ${{ inputs.scope == 'regressions' }}
+    if: ${{ inputs.scope == 'regressions' || inputs.scope == 'types' }}
     runs-on: ubuntu-latest
     timeout-minutes: 35
     steps:
@@ -159,9 +158,12 @@ jobs:
       - name: Full test typecheck
         if: ${{ !cancelled() }}
         run: npm run typecheck:tests
+      - name: Full ESLint
+        if: ${{ !cancelled() }}
+        run: npm run lint
 
   hermes-adapter:
-    if: ${{ inputs.scope == 'regressions' }}
+    if: ${{ inputs.scope == 'regressions' || inputs.scope == 'hermes' }}
     strategy:
       fail-fast: false
       matrix:
@@ -182,10 +184,12 @@ jobs:
       - name: Full adapter filesystem and protocol regressions
         run: npm run test:hermes
 
-  collector-baseline:
-    if: ${{ inputs.scope == 'collector-baseline' }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
+  windows-e2e:
+    if: ${{ inputs.scope == 'performance' || inputs.scope == 'e2e' }}
+    runs-on: windows-latest
+    timeout-minutes: 45
+    env:
+      OMNESIS_E2E_WORKERS: "1"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -195,82 +199,38 @@ jobs:
         with:
           node-version: "24"
           cache: npm
+      - name: Make OpenSSL available
+        shell: pwsh
+        run: |
+          if (-not (Get-Command openssl -ErrorAction SilentlyContinue)) {
+            $opensslDir = Join-Path $env:ProgramFiles 'Git\usr\bin'
+            if (-not (Test-Path (Join-Path $opensslDir 'openssl.exe'))) { throw 'OpenSSL is required' }
+            $opensslDir | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+          }
       - name: Install locked dependencies
         run: node scripts/ci/npm-ci.mjs --no-audit --no-fund
-      - name: Reproduce ownership loss in unchanged Collector Doctor producers
+      - name: Build supported Windows vector dependency
+        run: node scripts/ci/build-windows-usearch.mjs
+      - name: Install browser for functional fixtures
+        if: ${{ inputs.scope == 'e2e' }}
+        run: npm exec --workspace packages/collector -- playwright install chromium
+      - name: Validate original SQLite latency and durability assertions
+        if: ${{ inputs.scope == 'performance' }}
+        env:
+          OMNESIS_TEST_SQLITE_TMP: ${{ runner.temp }}
         run: >-
-          node scripts/run-check.mjs unit
-          packages/collector/src/doctor-cleanup.test.ts
-          packages/collector/src/doctor-read-access-cleanup.test.ts
-          packages/collector/src/doctor-local-stores-cleanup.test.ts
-
-  provider-baseline:
-    if: ${{ inputs.scope == 'provider-baseline' }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        with:
-          ref: ${{ github.sha }}
-          persist-credentials: false
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
-        with:
-          node-version: "24"
-          cache: npm
-      - name: Install locked dependencies
-        run: node scripts/ci/npm-ci.mjs --no-audit --no-fund
-      - name: Reproduce swallowed private-key ownership markers
+          node scripts/run-check.mjs e2e
+          packages/gateway/src/scheduler/writer-wal-checkpoint.e2e.test.ts
+          packages/gateway/src/scheduler/writer-maintenance.preempt.e2e.test.ts
+          packages/gateway/src/scheduler/near-dup-apply-backlog.preempt.e2e.test.ts
+      - name: Validate affected real Gateway and Collector fixtures
+        if: ${{ inputs.scope == 'e2e' }}
         run: >-
-          node scripts/run-check.mjs unit
-          packages/providers/whatsapp/src/doctor-key-cleanup.test.ts
-          packages/providers/telegram/src/doctor-key-cleanup.test.ts
-          packages/providers/apple/src/doctor-key-cleanup.test.ts
-          packages/gateway/src/agent/conversation-store-cleanup.test.ts
-          packages/gateway/src/agent/service-publication-cleanup.test.ts
-
-  deadline-baseline:
-    if: ${{ inputs.scope == 'deadline-baseline' }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        with:
-          ref: ${{ github.sha }}
-          persist-credentials: false
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
-        with:
-          node-version: "24"
-          cache: npm
-      - name: Install locked dependencies
-        run: node scripts/ci/npm-ci.mjs --no-audit --no-fund
-      - name: Reproduce expired observations before timer dispatch
-        run: node scripts/run-check.mjs unit packages/collector/src/doctor-deadlines.test.ts
-      - name: Reproduce discarded prior-agent ownership on model changes
-        if: ${{ !cancelled() }}
-        run: node scripts/run-check.mjs unit packages/gateway/src/agent/agent-lifecycle.test.ts
-      - name: Reproduce unbounded archive headers and masked live-store key receipts
-        if: ${{ !cancelled() }}
-        run: >-
-          node scripts/run-check.mjs unit
-          packages/providers/whatsapp/src/message-store-header.test.ts
-          packages/providers/telegram/src/protected-store-key-cleanup.test.ts
-
-  bridge-baseline:
-    if: ${{ inputs.scope == 'bridge-baseline' }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        with:
-          ref: ${{ github.sha }}
-          persist-credentials: false
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
-        with:
-          node-version: "24"
-          cache: npm
-      - name: Install locked dependencies
-        run: node scripts/ci/npm-ci.mjs --no-audit --no-fund
-      - name: Reproduce swallowed cross-language cleanup receipts
-        run: >-
-          node scripts/run-check.mjs unit packages/agent-integration/src/hermes-windows-bridge.test.ts
-          -t 'cleanup uncertainty|unconfirmed bridge cleanup|ordinary joined bridge refusals'
+          node scripts/run-check.mjs e2e
+          packages/collector/src/e2e/gateway-lifecycle.e2e.test.ts
+          packages/collector/src/e2e/watch-runtime.e2e.test.ts
+          packages/collector/src/e2e/things-multi-device.e2e.test.ts
+          packages/collector/src/e2e/advanced.e2e.test.ts
+          packages/collector/src/e2e/portal-fleet-host-update.e2e.test.ts
+          packages/collector/src/e2e/device-doctor.e2e.test.ts
+          packages/gateway/src/agent/deep-research.e2e.test.ts

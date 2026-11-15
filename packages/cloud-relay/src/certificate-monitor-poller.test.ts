@@ -118,3 +118,28 @@ test("unexpected adapter rejection is surfaced as unavailable without forwarding
   expect(poller.status().state).toBe("observing");
   await poller.stop();
 });
+
+test("an automatic check retains publication uncertainty and permanently stops rescheduling", async () => {
+  const f = fixture();
+  const marker = Object.assign(new Error("invented scheduled publication uncertainty"), {
+    cleanupFailure: undefined,
+  });
+  const poller = startCertificateMonitorPoller({ monitor: f.monitor, intervalMs: 60000 })!;
+  try {
+    await poller.check();
+    f.monitor.check.mockRejectedValueOnce(marker);
+    await vi.advanceTimersByTimeAsync(60000);
+    expect(f.monitor.check).toHaveBeenCalledTimes(2);
+    expect(poller.cleanupFailure()).toBe(marker);
+    expect(vi.getTimerCount()).toBe(0);
+    await vi.advanceTimersByTimeAsync(60000);
+    await expect(poller.check()).rejects.toBe(marker);
+    expect(f.monitor.check).toHaveBeenCalledTimes(2);
+    const stopping = poller.stop();
+    expect(poller.stop()).toBe(stopping);
+    await expect(stopping).rejects.toBe(marker);
+  } finally {
+    // The producer is mocked; no Native child exists, and the lifecycle timer is closed.
+    await poller.stop().catch(() => {});
+  }
+});

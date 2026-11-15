@@ -2,13 +2,14 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { spawn } from "node:child_process";
-import { fileURLToPath } from "node:url";
 import { spawnWindowsJob } from "@omnesis/platform/windows-job";
 import { expect, test } from "vitest";
 
-const watchdog = fileURLToPath(new URL("./event-loop-watchdog.ts", import.meta.url));
+const watchdog = new URL("./event-loop-watchdog.ts", import.meta.url).href;
 
-async function stallWithOwnedWork(held: boolean): Promise<{ code: number | null; output: string }> {
+async function stallWithOwnedWork(
+  held: boolean,
+): Promise<{ code: number | null; output: string; diagnostics: string }> {
   // This fixture owns no external process or private file operation. The shared
   // bit represents ownership that a real producer must publish before launch.
   const script = `
@@ -39,8 +40,10 @@ async function stallWithOwnedWork(held: boolean): Promise<{ code: number | null;
   const job =
     process.platform === "win32" ? spawnWindowsJob(process.execPath, args, options) : null;
   const child = job ?? spawn(process.execPath, args, { ...options, stdio: "pipe" });
-  let output = "";
+  let output = "",
+    diagnostics = "";
   child.stdout?.on("data", (bytes: Buffer) => (output += bytes.toString()));
+  child.stderr?.on("data", (bytes: Buffer) => (diagnostics += bytes.toString()));
   const rawClose = new Promise<number | null>((resolve, reject) => {
     child.once("error", reject);
     child.once("close", resolve);
@@ -57,7 +60,11 @@ async function stallWithOwnedWork(held: boolean): Promise<{ code: number | null;
         ),
         { cleanupFailure: undefined },
       );
-    return { code: (proofs[0] as PromiseFulfilledResult<number | null>).value, output };
+    return {
+      code: (proofs[0] as PromiseFulfilledResult<number | null>).value,
+      output,
+      diagnostics,
+    };
   } finally {
     clearTimeout(guard);
   }
@@ -65,12 +72,15 @@ async function stallWithOwnedWork(held: boolean): Promise<{ code: number | null;
 
 test("watchdog retains a stalled process while owned work prevents exit", async () => {
   const result = await stallWithOwnedWork(true);
+  expect(result.diagnostics).toContain("Event-loop watchdog armed");
   expect(result.output).toBe("owned-work-finished");
   expect(result.code).toBe(23);
 }, 40_000);
 
 test("watchdog still restarts a stalled process without owned work", async () => {
   const result = await stallWithOwnedWork(false);
+  expect(result.diagnostics).toContain("Event-loop watchdog armed");
+  expect(result.diagnostics).toContain("restarting the collector");
   expect(result.output).toBe("");
   expect(result.code).not.toBe(23);
 }, 40_000);

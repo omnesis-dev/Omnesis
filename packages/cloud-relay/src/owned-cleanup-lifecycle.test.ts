@@ -2,7 +2,8 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { expect, test, vi } from "vitest";
-import { OwnedCleanupLifecycle } from "./owned-cleanup-lifecycle.js";
+import { ownedProcessCleanupReceipt } from "@omnesis/core";
+import { combinedCleanupErrors, OwnedCleanupLifecycle } from "./owned-cleanup-lifecycle.js";
 
 function deferred() {
   let resolve!: () => void;
@@ -82,4 +83,39 @@ test("a rejected pending marker is terminal without an exposed late join proof",
   expect(lifecycle.receipt()).toMatchObject({ cleanupFailure: undefined, cause: marker });
   expect(Object.hasOwn(lifecycle.receipt()!, "cleanupPending")).toBe(false);
   await expect(lifecycle.close()).rejects.toBe(lifecycle.receipt());
+});
+
+test("one failed cleanup preserves its original diagnostic and explicit receipt", () => {
+  const error = Object.assign(new Error("invented private cleanup failure"), {
+    code: "ENOENT",
+    cleanupFailure: undefined,
+  });
+  const failure = combinedCleanupErrors([error], "independent cleanup failed");
+  expect(failure).toBe(error);
+  expect(failure).toHaveProperty("code", "ENOENT");
+  expect(ownedProcessCleanupReceipt(failure)).toEqual({ failure: undefined, pending: false });
+});
+
+test("multiple ordinary cleanup failures join all peers without creating an uncertainty hold", async () => {
+  const lifecycle = new OwnedCleanupLifecycle();
+  const first = new Error("invented first cleanup failure");
+  const second = new Error("invented second cleanup failure");
+  const completed = vi.fn(async () => {});
+  const closing = lifecycle.close(
+    async () => {
+      throw first;
+    },
+    async () => {
+      throw second;
+    },
+    completed,
+  );
+  const failure = await closing.catch((error: unknown) => error);
+  expect(failure).toBeInstanceOf(AggregateError);
+  expect((failure as AggregateError).errors).toEqual([first, second]);
+  expect(ownedProcessCleanupReceipt(failure)).toBeUndefined();
+  expect(completed).toHaveBeenCalledOnce();
+  expect(lifecycle.close()).toBe(closing);
+  expect(lifecycle.receipt()).toBeUndefined();
+  await expect(lifecycle.run(async () => {})).rejects.toThrow("closed");
 });

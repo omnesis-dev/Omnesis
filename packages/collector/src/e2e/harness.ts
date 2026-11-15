@@ -25,7 +25,12 @@ import { SyncEngine } from "../sync-engine.js";
 import { SourceManager } from "../source-manager.js";
 import { e2eGatewayEnv, e2eTsxCommand, gatewayBootBudgetMs } from "./gateway-env.js";
 import { handleHarnessCommand } from "./harness-commands.js";
-import { gatewayFetch, gatewayJson, type GatewayEndpoint } from "./gateway-request.js";
+import {
+  gatewayFetch,
+  gatewayJson,
+  gatewayLogTail,
+  type GatewayEndpoint,
+} from "./gateway-request.js";
 import { killSubprocessGroup, registerSubprocessGroup } from "./subprocess-reaper.js";
 import { spawnE2ESubprocess, e2eApplicationStatus } from "./e2e-owned-process.js";
 import {
@@ -582,7 +587,9 @@ export class E2EHarness {
       }
       await new Promise((r) => setTimeout(r, 100));
     }
-    throw new Error(`Gateway did not start (or auth) within ${timeout}ms`);
+    throw new Error(
+      `Gateway did not start (or auth) within ${timeout}ms${gatewayLogTail(join(this.tempDir, "gateway.log"))}`,
+    );
   }
 
   private async killGatewaySubprocess(): Promise<void> {

@@ -246,7 +246,6 @@ export class GatewayTunnel {
     generation: number,
     client: string | undefined,
   ): void {
-    if (this.stopped || generation !== this.generation) return;
     const ws = new WebSocket(websocketUrl(endpoint, "/_relay/v1/data"), {
       headers: { [SESSION_HEADER]: session, "x-omnesis-relay-ticket": ticket },
       ca: this.options.relayCa,
@@ -284,8 +283,6 @@ export class GatewayTunnel {
       const connection = Promise.resolve()
         .then(() => {
           dial.signal.throwIfAborted();
-          if (this.stopped || generation !== this.generation)
-            throw new Error("Cloud relay tunnel stopped before connection");
           return connectOrigin(this.gateway, undefined, dial.signal, true);
         })
         .then((destination) => {

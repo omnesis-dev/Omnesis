@@ -165,7 +165,7 @@ export async function createGatewayAcmeController(
       await closing;
     } catch (error) {
       // A joined provider outage leaves durable recovery intent, not a live owner.
-      if (ownedProcessCleanupReceipt(error) === undefined && ownedDns === dns) ownedDns = undefined;
+      if (ownedProcessCleanupReceipt(error) === undefined) ownedDns = undefined;
       throw error;
     }
     if (ownedDns === dns) ownedDns = undefined;
@@ -194,8 +194,6 @@ export async function createGatewayAcmeController(
         const signal = AbortSignal.any([abort.signal, initialSignal]);
         let localDns: AcmeDnsChallenges | undefined;
         try {
-          assertContinuing(signal);
-          if (ownedDns) await closeDns();
           assertContinuing(signal);
           await ensureAcmeBootstrap({
             publicOrigin: publicOrigin,

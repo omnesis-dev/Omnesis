@@ -310,8 +310,10 @@ roughly 2.3–2.5 seconds to 147–208 milliseconds across the ordinary SQLite d
 the encryption-capable driver without encryption, and the encrypted driver.
 The original writer checkpoint, maintenance and near-duplicate backlog suites
 then passed all 10 tests at `29c0ab57a` using that storage. Their latency limits
-and durability settings were unchanged. The Windows workflow uses the same
-isolated test storage; product data-directory defaults are unchanged.
+and durability settings were unchanged. The workflow selects that storage only
+for these raw SQLite latency fixtures through `OMNESIS_TEST_SQLITE_TMP`; private
+file fixtures keep their normal temporary-directory policy. That narrower
+selection still requires a fresh run of the same 10 tests.
 
 At that checkpoint the retained-exit and watchdog suites also passed all 15
 tests on Linux, including real stalled-process controls. The new test first
@@ -330,7 +332,7 @@ with 38 conditional skips. All 13 smoke E2E tests passed. The remaining focused
 failures include ACL fixture restoration, an output-link expectation, a fixture's
 inherited permission removal and a multi-stage OAuth timeout. The full Windows
 portal run passed all 71 browser tests in 237 seconds. The two full
-spawned-gateway shards still require completed verdicts.
+spawned-gateway shards completed with the failures recorded above.
 
 The broad unit job completed in about 102 minutes. Its general unit phase passed
 38,886 tests and failed 41; its script smoke phase passed 138 and failed 23.

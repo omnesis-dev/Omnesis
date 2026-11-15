@@ -57,6 +57,41 @@ test("unset enables the monitor, since automatic enrollment relies on it", async
   expect(monitor.status()).toMatchObject({ enabled: true, state: "observing" });
   await monitor.close();
 });
+
+test("a pending monitor recheck retains a marked journal failure instead of admitting another check", async () => {
+  const watcher = port();
+  watcher.status.mockReturnValue({ ...watcher.status(), state: "pending" });
+  const marker = Object.assign(new Error("invented journal publication uncertainty"), {
+    cleanupFailure: undefined,
+  });
+  const monitor = new GatewayCertificateMonitor({
+    env: {},
+    configDir: directory,
+    identity: () => known,
+    create: async () => watcher,
+  });
+  try {
+    monitor.start();
+    await vi.waitFor(() => expect(watcher.check).toHaveBeenCalledOnce());
+    await vi.waitFor(() => expect(monitor.cleanupFailure()).toBeUndefined());
+    watcher.check.mockRejectedValueOnce(marker);
+    monitor.start();
+    await vi.waitFor(() => expect(monitor.cleanupFailure()).toBe(marker));
+    expect(monitor.status()).toMatchObject({
+      state: "unavailable",
+      lastError: "ct-provider-unavailable",
+    });
+    monitor.start();
+    expect(watcher.check).toHaveBeenCalledTimes(2);
+    const closing = monitor.close();
+    expect(monitor.close()).toBe(closing);
+    await expect(closing).rejects.toMatchObject({ cleanupFailure: undefined, cause: marker });
+    expect(monitor.cleanupFailure()).toBe(marker);
+  } finally {
+    // A synthetic marker models the producer boundary; there is no Native helper to abandon.
+    await monitor.close().catch(() => {});
+  }
+});
 test("unconfigured and unknown-key gateways remain pending, then known identity starts one lazy monitor", async () => {
   let identity: typeof known | undefined;
   const watcher = port(),

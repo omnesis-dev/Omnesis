@@ -655,9 +655,9 @@ export class MultiCollectorHarness {
         : status?.signalCode
           ? `the gateway process was killed by ${status.signalCode}`
           : "the gateway process was still running — this is the harness giving up on a slow boot, not a gateway that failed";
-    const output = this.gatewayOutput.trim();
+    const diagnosticOutput = this.gatewayOutput.trim();
     throw new Error(
-      `The harness stopped waiting for the gateway after ${timeout}ms (the shared boot budget in scripts/lib/gateway-boot-budget.json): ${fate}.${output ? `\nGateway output:\n${output}` : ""}`,
+      `The harness stopped waiting for the gateway after ${timeout}ms (the shared boot budget in scripts/lib/gateway-boot-budget.json): ${fate}.${diagnosticOutput ? `\nGateway output:\n${diagnosticOutput}` : ""}`,
     );
   }
 
