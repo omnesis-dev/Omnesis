@@ -1421,6 +1421,7 @@ export { killWindowsProcessTree, terminateChildProcess } from "./child-terminati
 export { installParentShutdownHandler, requestChildShutdown } from "./parent-shutdown.js";
 export {
   WindowsProcessTree,
+  windowsEnvironmentValue,
   type WindowsProcessIdentity,
   type WindowsProcessTreeOptions,
 } from "./windows-process-tree.js";

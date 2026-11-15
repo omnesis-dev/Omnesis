@@ -369,12 +369,14 @@ public static partial class OmnesisProcessJob {
   }
 }`;
 
+/** Trusted utility commands work without inheriting a module discovery path. */
 export const WINDOWS_JOB_POWERSHELL_SCRIPT = `
 $ErrorActionPreference = 'Stop'
 $WarningPreference = 'SilentlyContinue'
 $ProgressPreference = 'SilentlyContinue'
 $code = 1
 try {
+Import-Module -Name ([IO.Path]::Combine($PSHOME,'Modules','Microsoft.PowerShell.Utility','Microsoft.PowerShell.Utility.psd1')) -ErrorAction Stop
 $compressed=[Convert]::FromBase64String('${gzipSync(Buffer.from(WINDOWS_JOB_NATIVE_SOURCE, "utf8")).toString("base64")}')
 $compressedStream=[IO.MemoryStream]::new($compressed)
 $sourceStream=[IO.Compression.GZipStream]::new($compressedStream,[IO.Compression.CompressionMode]::Decompress)

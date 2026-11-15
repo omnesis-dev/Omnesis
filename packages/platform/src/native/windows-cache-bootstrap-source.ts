@@ -275,12 +275,14 @@ public static partial class OmnesisPrivateFile {
 }
 `;
 
+/** Load the system utility module explicitly, including in curated child environments. */
 export const WINDOWS_CACHE_BOOTSTRAP_SCRIPT = `
 $ErrorActionPreference='Stop'
 $WarningPreference='SilentlyContinue'
 $ProgressPreference='SilentlyContinue'
 [Console]::OutputEncoding=[Text.UTF8Encoding]::new($false)
 try {
+Import-Module -Name ([IO.Path]::Combine($PSHOME,'Modules','Microsoft.PowerShell.Utility','Microsoft.PowerShell.Utility.psd1')) -ErrorAction Stop
 Add-Type -ReferencedAssemblies @('System.dll','System.Core.dll','System.Web.Extensions.dll','Microsoft.CSharp.dll') -TypeDefinition @'
 namespace OmnesisBootstrap {
 ${WINDOWS_PRIVATE_FILE_NATIVE_SOURCE}

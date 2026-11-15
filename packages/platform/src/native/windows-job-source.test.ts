@@ -34,6 +34,7 @@ describe.runIf(process.platform === "win32")("raw PowerShell managed dispatch", 
     nonce?: string,
     command = process.execPath,
     input = Buffer.from([0, 255, 42]),
+    env?: NodeJS.ProcessEnv,
   ) {
     const body = Buffer.from(
       JSON.stringify({
@@ -57,10 +58,39 @@ describe.runIf(process.platform === "win32")("raw PowerShell managed dispatch", 
         ],
       },
       Buffer.concat([length, body]),
-      { input, timeoutMs: 30_000 },
+      { input, timeoutMs: 30_000, ...(env ? { env } : {}) },
       nonce ? { nonce } : undefined,
     );
   }
+
+  it("joins a target under a restricted host environment without a module discovery path", () => {
+    const env: NodeJS.ProcessEnv = {};
+    for (const key of [
+      "PATH",
+      "HOME",
+      "SystemRoot",
+      "WINDIR",
+      "USERPROFILE",
+      "LOCALAPPDATA",
+      "TEMP",
+      "TMP",
+    ])
+      if (process.env[key] !== undefined) env[key] = process.env[key];
+    const result = run(
+      ["-e", 'process.stdout.write("trusted bootstrap")'],
+      randomBytes(32).toString("hex"),
+      process.execPath,
+      Buffer.alloc(0),
+      env,
+    );
+    expect(result).toEqual({
+      exitCode: 0,
+      signal: null,
+      stdout: Buffer.from("trusted bootstrap"),
+      stderr: "",
+    });
+    expect(Object.hasOwn(result, "cleanupFailure")).toBe(false);
+  }, 35_000);
 
   it.each([0, 7, 126, 127])(
     "preserves literal binary streams and joined target status %s without managed-null coercion",

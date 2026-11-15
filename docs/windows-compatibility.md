@@ -68,6 +68,14 @@ statement, branch, function and line coverage. Process ownership and encrypted
 bootstrap-reader regressions also passed on Linux and Windows, run sequentially.
 These focused results do not replace the pending complete-suite validation.
 
+Authentication subprocesses also exercise an existing encrypted credential in
+a restricted Windows environment. Native process identity uses exact framework
+creation-time ticks, and compiler bootstraps load the system utility module by
+its absolute path; neither requires an inherited module discovery path. The
+targeted regression run passed all 128 tests on Windows, including native cache
+and bootstrap security cases. Linux passed 103 tests with 25 Windows-specific
+skips. Full source/test typechecks and lint passed for the same source snapshot.
+
 Manual acceptance of source revision `686a43ef0` passed on hosted Windows with
 both source and compiled entrypoints. Each mode initialized encrypted storage,
 booted the real Gateway and Collector, paired the Collector, synchronized three

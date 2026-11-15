@@ -38,7 +38,8 @@ export function windowsProcessStart(pid: number, timeoutMs = 10_000): string | n
         "-NoProfile",
         "-NonInteractive",
         "-Command",
-        `$ErrorActionPreference = 'Stop'; [Console]::Out.Write((Get-Process -Id ${pid}).StartTime.ToUniversalTime().Ticks.ToString([System.Globalization.CultureInfo]::InvariantCulture))`,
+        // Process identity must not depend on cmdlet/module discovery paths.
+        `$ErrorActionPreference = 'Stop'; [Console]::Out.Write(([System.Diagnostics.Process]::GetProcessById(${pid})).StartTime.ToUniversalTime().Ticks.ToString([System.Globalization.CultureInfo]::InvariantCulture))`,
       ],
       {
         encoding: "utf8",
