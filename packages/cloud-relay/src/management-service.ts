@@ -1166,19 +1166,17 @@ export class GatewayCloudRelayManagement implements CloudRelayManagement {
    * soon after opening the page is still noticed. An unlinked gateway has nothing to read.
    */
   async refreshAccount(): Promise<CloudRelayManagementStatus> {
-    if (this.accountRead) await this.accountRead;
-    else if (this.accountReadable()) {
+    if (!this.accountRead && this.accountReadable()) {
       const wait =
         this.accountReadAt + (this.options.accountRefreshMs ?? ACCOUNT_REFRESH_MS) - Date.now();
-      if (wait <= 0) await this.readAccount();
-      else if (!this.accountReadTimer) {
-        this.accountReadTimer = setTimeout(() => {
+      if (wait <= 0) this.readAccount();
+      else
+        (this.accountReadTimer ??= setTimeout(() => {
           this.accountReadTimer = undefined;
-          void this.readAccount();
-        }, wait);
-        this.accountReadTimer.unref();
-      }
+          void this.refreshAccount();
+        }, wait)).unref();
     }
+    await this.accountRead;
     return this.status();
   }
   private accountReadable(): boolean {
@@ -1186,12 +1184,11 @@ export class GatewayCloudRelayManagement implements CloudRelayManagement {
       !this.closed &&
       this.settings?.enabled &&
       this.enrollment.state === "enrolled" &&
-      this.account?.status().linked,
+      this.account!.status().linked,
     );
   }
-  private readAccount(): Promise<void> {
-    // A launch under way reads the account itself.
-    if (this.accountRead || this.pending || !this.accountReadable()) return Promise.resolve();
+  /** A launch may read the account at the same moment; the account link shares that fetch. */
+  private readAccount(): void {
     this.accountReadAt = Date.now();
     const signal = AbortSignal.any([
       this.abort.signal,
@@ -1202,7 +1199,6 @@ export class GatewayCloudRelayManagement implements CloudRelayManagement {
         this.revision++;
       })
       .finally(() => (this.accountRead = undefined));
-    return this.accountRead;
   }
   async passkeyConfirmation() {
     return this.account!.passkeyConfirmationOptions();

@@ -345,7 +345,9 @@ test("asks the gateway to read the account on opening and on coming back into vi
   expect(request).toHaveBeenCalledExactlyOnceWith("account/refresh", {}, expect.any(AbortSignal));
   expect(refreshed).toHaveBeenCalledOnce();
   // Leaving the tab for the account page asks nothing.
-  await act(async () => vi.advanceTimersByTimeAsync(3000));
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(3000);
+  });
   await shown("hidden");
   expect(request).toHaveBeenCalledOnce();
   // Coming back fires both events; one refresh follows, then the status is read again.
@@ -355,17 +357,23 @@ test("asks the gateway to read the account on opening and on coming back into vi
   expect(refreshed).toHaveBeenCalledTimes(2);
   // A refusal (say, a gateway without the account feature) is quiet and reads nothing more.
   request.mockRejectedValueOnce(new Error("private detail"));
-  await act(async () => vi.advanceTimersByTimeAsync(3000));
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(3000);
+  });
   await shown("visible", "focus");
   expect(request).toHaveBeenCalledTimes(3);
   expect(refreshed).toHaveBeenCalledTimes(2);
   // A slow gateway is given up on, and the page never waits on it.
   const slow = pending();
   request.mockReturnValueOnce(slow.promise);
-  await act(async () => vi.advanceTimersByTimeAsync(3000));
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(3000);
+  });
   await shown("visible", "focus");
   const signal = request.mock.calls[3][2] as AbortSignal;
-  await act(async () => vi.advanceTimersByTimeAsync(15_000));
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(15_000);
+  });
   expect(signal.aborted).toBe(true);
   // Leaving the page stops listening and a late answer calls nothing.
   const late = pending();
@@ -373,7 +381,9 @@ test("asks the gateway to read the account on opening and on coming back into vi
   await shown("visible", "focus");
   await act(async () => render(null, host));
   await act(async () => late.resolve({ revision: 2 }));
-  await act(async () => vi.advanceTimersByTimeAsync(3000));
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(3000);
+  });
   await shown("visible", "focus");
   await shown("visible");
   expect(request).toHaveBeenCalledTimes(5);

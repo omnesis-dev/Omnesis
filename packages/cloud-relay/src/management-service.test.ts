@@ -2337,3 +2337,16 @@ test("an account refresh on a gateway with no linked account asks the relay noth
     expect.anything(),
   );
 });
+test("by default the portal's account refresh reads at most once every fifteen seconds", async () => {
+  await connectedGateway();
+  const refresh = vi.spyOn(GatewayAccountLink.prototype, "refresh").mockResolvedValue();
+  const now = Date.now();
+  const clock = vi.spyOn(Date, "now").mockReturnValue(now);
+  await manager!.refreshAccount();
+  clock.mockReturnValue(now + 14_000);
+  await manager!.refreshAccount();
+  expect(refresh).toHaveBeenCalledOnce();
+  clock.mockReturnValue(now + 15_000);
+  await manager!.refreshAccount();
+  expect(refresh).toHaveBeenCalledTimes(2);
+});
