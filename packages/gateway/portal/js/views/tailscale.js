@@ -7,19 +7,19 @@
 // `tailscaleEmbed: true`.
 //
 // The page is written for an owner who is not a networking expert. A pill
-// says what state the device is in and one panel says what to do about it;
-// below it, the public address for cloud agents, what happens when one of the
-// owner's own devices asks to join, and the rarely needed controls folded
-// under Advanced.
+// says what state the device is in and one panel says what to do about it,
+// with the device's name, signing out and turning off at its foot. Below it
+// come the public address for cloud agents and what happens when one of the
+// owner's own devices asks to join; a request that waits for the owner is
+// decided on Settings → Devices, with every other device waiting for an OK.
 
 import { html } from "htm/preact";
 import { useEffect, useRef, useState } from "preact/hooks";
 import { ConfirmModal } from "../components/confirm-modal.js";
 import { QrCanvas } from "../components/qr-canvas.js";
-import { timeAgo } from "../lib/format.js";
+import { navigate } from "../lib/router.js";
 import {
   TAILSCALE_ADMIN,
-  decideTailscaleJoin,
   setTailscaleEnabled,
   tailscaleHttpsUrl,
   tailscaleSignIn,
@@ -248,18 +248,8 @@ function StatusPanel({ state, phase, busy, run }) {
         </div>`;
     case "unavailable":
       return html`<p class="tailscale-notice" role="status">
-          ${state.helper.reason ?? "Tailscale can't start on this gateway."}
-        </p>
-        <div class="tailscale-actions">
-          <button
-            type="button"
-            class="btn-secondary"
-            disabled=${disabled}
-            onClick=${() => run("disable", (signal) => setTailscaleEnabled(false, signal))}
-          >
-            ${busy === "disable" ? "Turning off…" : "Turn off"}
-          </button>
-        </div>`;
+        ${state.helper.reason ?? "Tailscale can't start on this gateway."}
+      </p>`;
     case "restarting":
       return html`<p class="tailscale-lede">
           Tailscale stopped unexpectedly on this gateway. It's starting again by itself.
@@ -390,7 +380,7 @@ const JOIN_CHOICES = [
   {
     value: "ask",
     title: "Ask me first (recommended)",
-    text: "A collector on one of your own Tailscale devices asks to join; you approve it here or on your phone.",
+    text: "A collector on one of your own Tailscale devices asks to join; you approve it in Devices or on your phone.",
   },
   {
     value: "automatic",
@@ -401,55 +391,8 @@ const JOIN_CHOICES = [
 ];
 
 /** "in 9 min" until a request expires, from the gateway's own timestamp. */
-export function expiresIn(iso, now = Date.now()) {
-  const ms = new Date(iso).getTime() - now;
-  if (!Number.isFinite(ms)) return "";
-  if (ms <= 0) return "expired";
-  if (ms < 60_000) return "expires in under a minute";
-  return `expires in ${Math.ceil(ms / 60_000)} min`;
-}
-
-function JoinRequest({ request, busy, decide }) {
-  const disabled = Boolean(busy) && busy !== "refresh";
-  const asked = timeAgo(request.requestedAt);
-  const expiry = expiresIn(request.expiresAt);
-  return html`<li class="tailscale-request">
-    <div class="tailscale-request-text">
-      <p class="tailscale-value tailscale-strong">${request.name}</p>
-      <p class="tailscale-hint">
-        Collector on ${request.machine}${request.os ? ` (${request.os})` : ""} · Tailscale account
-        ${" "}${request.login}
-      </p>
-      <p class="tailscale-hint">
-        ${asked && `Asked ${asked}`}${asked && expiry ? " · " : ""}${expiry}
-      </p>
-    </div>
-    <div class="tailscale-actions tailscale-request-actions">
-      <button
-        type="button"
-        class="btn-primary"
-        disabled=${disabled}
-        aria-label=${`Approve ${request.name}`}
-        onClick=${() => decide(request, true)}
-      >
-        ${busy === `decide:${request.id}:true` ? "Approving…" : "Approve"}
-      </button>
-      <button
-        type="button"
-        class="btn-secondary"
-        disabled=${disabled}
-        aria-label=${`Deny ${request.name}`}
-        onClick=${() => decide(request, false)}
-      >
-        ${busy === `decide:${request.id}:false` ? "Denying…" : "Deny"}
-      </button>
-    </div>
-  </li>`;
-}
-
-function JoinSection({ state, busy, run, refresh }) {
+function JoinSection({ state, busy, run }) {
   const [pending, setPending] = useState(null);
-  const [notice, setNotice] = useState("");
   const policy = pending ?? state.joinPolicy;
   const disabled = Boolean(busy) && busy !== "refresh";
   const choose = async (value) => {
@@ -458,43 +401,21 @@ function JoinSection({ state, busy, run, refresh }) {
     await run("join-policy", (signal) => updateTailscaleSettings({ joinPolicy: value }, signal));
     setPending(null);
   };
-  const decide = async (request, approve) => {
-    setNotice("");
-    let gone = false;
-    const result = await run(
-      `decide:${request.id}:${approve}`,
-      (signal) => decideTailscaleJoin(request.id, approve, signal),
-      {
-        onError: (error) => {
-          if (error?.status !== 404) return false;
-          gone = true;
-          return true;
-        },
-      },
-    );
-    if (gone) setNotice("This request expired or was already decided.");
-    else if (result)
-      setNotice(result.status === "approved" ? `Approved ${request.name}.` : `Denied ${request.name}.`);
-    if (gone || result) await refresh();
-  };
-  const requests = state.joinRequests ?? [];
+  const waiting = (state.joinRequests ?? []).length;
   return html`<section class="tailscale-section" aria-labelledby="tailscale-join-title">
     <h3 class="tailscale-section-title" id="tailscale-join-title">
       Your devices joining through Tailscale
     </h3>
-    ${notice && html`<p class="tailscale-notice" role="status">${notice}</p>`}
-    ${requests.length > 0 &&
-    html`<div class="tailscale-requests">
-      <h4 class="tailscale-subtitle">Waiting for approval</h4>
-      <ul class="tailscale-request-list">
-        ${requests.map(
-          (request) =>
-            html`<${JoinRequest} key=${request.id} request=${request} busy=${busy} decide=${decide} />`,
-        )}
-      </ul>
-    </div>`}
+    ${waiting > 0 &&
+    html`<p class="tailscale-notice tailscale-waiting-devices" role="status">
+      ${waiting === 1 ? "A collector is waiting for your OK." : `${waiting} collectors are waiting for your OK.`}
+      ${" "}<a href=${DEVICES_ROUTE} onClick=${openDevices}>Review it in Devices</a>
+    </p>`}
     <p class="tailscale-section-text">
       What happens when a collector on one of your Tailscale devices asks to join this gateway.
+      A request that waits for you appears in
+      ${" "}<a href=${DEVICES_ROUTE} onClick=${openDevices}>Settings, Devices</a>, with every other
+      device waiting for your OK.
     </p>
     <div class="tailscale-options" role="radiogroup" aria-labelledby="tailscale-join-title">
       ${JOIN_CHOICES.map(
@@ -520,6 +441,14 @@ function JoinSection({ state, busy, run, refresh }) {
   </section>`;
 }
 
+const DEVICES_ROUTE = "/portal/settings/devices";
+
+/** Settings → Devices, opened without reloading the page. */
+function openDevices(event) {
+  event.preventDefault();
+  navigate(DEVICES_ROUTE);
+}
+
 /** Client-side checks that only save a round trip; the gateway's rule is the authority. */
 function nameProblem(name) {
   if (!name) return "Enter a name.";
@@ -527,7 +456,11 @@ function nameProblem(name) {
   return "";
 }
 
-function Advanced({ state, phase, busy, run }) {
+/**
+ * The device's own settings at the foot of the main card: its name on the
+ * tailnet, and signing it out or turning it off, each confirmed first.
+ */
+function DeviceSettings({ state, phase, busy, run }) {
   const [draft, setDraft] = useState(state.deviceName);
   const [nameError, setNameError] = useState("");
   const [confirming, setConfirming] = useState("");
@@ -554,10 +487,10 @@ function Advanced({ state, phase, busy, run }) {
     if (which === "sign-out") await run("sign-out", tailscaleSignOut);
     if (which === "disable") await run("disable", (signal) => setTailscaleEnabled(false, signal));
   };
-  return html`<details class="tailscale-advanced">
-    <summary>Advanced</summary>
-    <form class="tailscale-field" onSubmit=${save}>
-      <label class="tailscale-field-label" for="tailscale-device-name">Device name on Tailscale</label>
+  return html`<div class="tailscale-device">
+    <form class="tailscale-row tailscale-device-name" onSubmit=${save}>
+      <label class="tailscale-row-label" for="tailscale-device-name">Device name</label>
+      <div class="tailscale-row-body">
       <div class="tailscale-name-row">
         <input
           id="tailscale-device-name"
@@ -584,12 +517,13 @@ function Advanced({ state, phase, busy, run }) {
       </div>
       ${nameError && html`<p class="tailscale-field-error" role="alert">${nameError}</p>`}
       <p class="tailscale-hint" id="tailscale-device-name-hint">
-        Your devices see the gateway under this name, and it is part of its address. Changing it
-        changes the address.
+        Your devices see the gateway under this name on Tailscale, and it is part of its address.
+        Changing it changes the address.
       </p>
+      </div>
     </form>
     ${(signedIn || state.enabled) &&
-    html`<div class="tailscale-actions tailscale-advanced-actions">
+    html`<div class="tailscale-actions tailscale-device-actions">
       ${signedIn &&
       html`<button
         type="button"
@@ -627,7 +561,7 @@ function Advanced({ state, phase, busy, run }) {
       onConfirm=${confirm}
       onCancel=${() => setConfirming("")}
     />
-  </details>`;
+  </div>`;
 }
 
 function ErrorLine({ error }) {
@@ -639,7 +573,7 @@ function ErrorLine({ error }) {
 }
 
 export function TailscaleView() {
-  const { state, error, busy, run, refresh } = useTailscaleAdmin();
+  const { state, error, busy, run } = useTailscaleAdmin();
   const phase = tailscalePhase(state);
   // The public address and joining devices only mean something once the device is on the network.
   const connected = phase === "connected";
@@ -657,11 +591,13 @@ export function TailscaleView() {
     <${ErrorLine} error=${error} />
     ${!state && !error && html`<${Waiting} hint>Loading…<//>`}
     ${state &&
-    html`<div class="tailscale-panel" aria-live="polite">
-        <${StatusPanel} state=${state} phase=${phase} busy=${busy} run=${run} />
+    html`<div class="tailscale-panel">
+        <div aria-live="polite">
+          <${StatusPanel} state=${state} phase=${phase} busy=${busy} run=${run} />
+        </div>
+        <${DeviceSettings} state=${state} phase=${phase} busy=${busy} run=${run} />
       </div>
       ${connected && html`<${PublicSection} state=${state} busy=${busy} run=${run} />`}
-      ${connected && html`<${JoinSection} state=${state} busy=${busy} run=${run} refresh=${refresh} />`}
-      <${Advanced} state=${state} phase=${phase} busy=${busy} run=${run} />`}
+      ${connected && html`<${JoinSection} state=${state} busy=${busy} run=${run} />`}`}
   </section>`;
 }

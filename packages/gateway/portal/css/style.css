@@ -19570,6 +19570,7 @@ summary.decision-card-head {
 
 /* Account sign-in and device approval. */
 .cloud-pairing-requests { margin: 24px 0; }
+.cloud-pairing-requests:empty { display: none; }
 .cloud-pairing-request { margin-top: 12px; padding: 18px; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--bg-secondary); }
 .cloud-pairing-request h3 { margin: 0 0 4px; font-size: 14px; }
 .cloud-pairing-request p { margin: 0 0 8px; font-size: 13px; line-height: 1.55; }
@@ -19651,7 +19652,6 @@ summary.decision-card-head {
 .tailscale-panel { padding: 20px 22px; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--bg-secondary); }
 .tailscale-lede { max-width: 62ch; font-size: 14px; line-height: 1.6; color: var(--text-primary); }
 .tailscale-value { font-size: 14px; line-height: 1.5; color: var(--text-primary); overflow-wrap: anywhere; }
-.tailscale-strong { font-weight: 500; }
 .tailscale-muted { margin-left: 6px; color: var(--text-muted); font-size: 13px; }
 .tailscale-hint { font-size: 12px; line-height: 1.55; color: var(--text-muted); }
 .tailscale-waiting { display: flex; align-items: center; gap: 8px; }
@@ -19703,7 +19703,6 @@ summary.decision-card-head {
 .tailscale-section-text { margin-top: 4px !important; max-width: 64ch; font-size: 13px; line-height: 1.6; color: var(--text-secondary); }
 .tailscale-section > .tailscale-value, .tailscale-section > .tailscale-hint, .tailscale-section > .tailscale-notice { margin-top: 14px; }
 .tailscale-section > .tailscale-row-action { margin-top: 6px !important; }
-.tailscale-subtitle { margin: 0; font-size: 13px; font-weight: 600; color: var(--text-primary); }
 
 .tailscale-switch { position: relative; flex: none; width: 44px; height: 26px; margin-top: 2px; padding: 3px; background: var(--border); border: 1px solid var(--border-light); border-radius: 20px; cursor: pointer; transition: background .2s; }
 .tailscale-switch span { display: block; width: 18px; height: 18px; border-radius: 50%; background: var(--text-secondary); transition: transform .2s; }
@@ -19719,30 +19718,28 @@ summary.decision-card-head {
 .tailscale-option-text { display: block; margin-top: 2px; max-width: 64ch; font-size: 13px; line-height: 1.55; color: var(--text-secondary); }
 .tailscale-option:has(input:disabled) { cursor: default; }
 
-.tailscale-requests { margin-top: 14px; margin-bottom: 22px; }
-.tailscale-request-list { list-style: none; margin: 8px 0 0; padding: 0; }
-.tailscale-request { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px 20px; padding: 14px 16px; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--bg-secondary); }
-.tailscale-request + .tailscale-request { margin-top: 10px; }
-.tailscale-request-text { min-width: 0; flex: 1 1 280px; }
-.tailscale-request-text .tailscale-hint { margin-top: 3px; overflow-wrap: anywhere; }
-.tailscale-section .tailscale-request-actions { margin-top: 0; gap: 10px; }
 
-/* Advanced. */
-.tailscale-advanced { margin-top: 28px; padding-top: 18px; border-top: 1px solid var(--border); }
-.tailscale-advanced > summary { width: fit-content; cursor: pointer; font-size: 14px; font-weight: 600; color: var(--text-primary); }
+/* A join request decided on Settings → Devices, and the line after it. */
+.tailscale-join-notice { margin: 12px 0 0; font-size: 13px; color: var(--text-secondary); }
+
+/* The device's own settings, at the foot of the main card. */
+.tailscale-device { margin-top: 20px; padding-top: 18px; border-top: 1px solid var(--border); }
+.tailscale-device .tailscale-device-name { margin: 0; max-width: none; }
+.tailscale-device .tailscale-name-row { max-width: 560px; }
 .tailscale-field { margin-top: 16px; max-width: 560px; }
 .tailscale-field-label { display: block; margin-bottom: 6px; font-size: 13px; font-weight: 500; color: var(--text-primary); }
 .tailscale-name-row { display: flex; gap: 8px; }
 .tailscale-input[aria-invalid="true"] { border-color: var(--danger); }
 .tailscale-field-error { margin-top: 6px !important; font-size: 12px; color: var(--danger); }
 .tailscale-field > .tailscale-hint { margin-top: 6px; }
-.tailscale-advanced .tailscale-advanced-actions { margin-top: 20px; }
+.tailscale-device .tailscale-device-actions { margin-top: 16px; margin-left: 170px; }
 
 .tailscale-error { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px 16px; padding: 10px 12px; margin-bottom: 20px; color: var(--danger); border: 1px solid var(--danger); border-radius: var(--radius-lg); font-size: 13px; line-height: 1.5; }
 
 @media (max-width: 760px) {
   .tailscale-panel { padding: 16px; }
   .tailscale-row { grid-template-columns: minmax(0, 1fr); }
+  .tailscale-device .tailscale-device-actions { margin-left: 0; }
   .tailscale-row-label { padding-top: 0; font-size: 12px; }
   .tailscale-row-body > .tailscale-value:first-child { padding-top: 0; }
   .tailscale-qr { align-items: flex-start; }

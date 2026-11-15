@@ -36,7 +36,7 @@ import { answerPrivacySummary, reachSummary } from "./access/terms.js";
 import { CHROME_WEB_STORE_URL } from "../lib/extension-links.js";
 import { KindIcon, PairKindIcon } from "../lib/device-kind-icon.js";
 import { useVisiblePoll } from "../lib/use-visible-poll.js";
-import { CloudPairingRequests } from "../components/cloud-pairing-requests.js";
+import { WaitingDevices } from "../components/waiting-devices.js";
 import {
   deviceJoinedLabel,
   deviceSignIn,
@@ -1359,7 +1359,7 @@ export function resolvePairKindRequest(pairKindRequest) {
   return DEVICE_KINDS.includes(pairKindRequest) ? pairKindRequest : null;
 }
 
-export function DevicesView({ pairKindRequest = null, focusDeviceId = null, cloudRelay = false } = {}) {
+export function DevicesView({ pairKindRequest = null, focusDeviceId = null, cloudRelay = false, tailscaleEmbed = false } = {}) {
   const requestedPairKind = resolvePairKindRequest(pairKindRequest);
   const [devices, setDevices] = useState([]);
   const [tokens, setTokens] = useState([]);
@@ -1920,7 +1920,7 @@ export function DevicesView({ pairKindRequest = null, focusDeviceId = null, clou
             </div>
           </div>
 
-          ${cloudRelay && html`<${CloudPairingRequests} />`}
+          <${WaitingDevices} cloudRelay=${cloudRelay} tailscaleEmbed=${tailscaleEmbed} />
           ${error && html`<div class="devices-banner error">${error}</div>`}
           ${doctorError && html`<div class="devices-banner error">${doctorError}</div>`}
           ${showHealthProgress && !doctorError && html`

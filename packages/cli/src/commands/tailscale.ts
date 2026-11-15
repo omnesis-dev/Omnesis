@@ -479,7 +479,7 @@ const joinCommand = defineCommand({
       },
       onWaiting: () =>
         console.log(
-          "Waiting for approval. Approve this collector on your phone, or in the portal under Settings → Tailscale.",
+          "Waiting for approval. Approve this collector on your phone, or in the portal under Settings → Devices.",
         ),
     });
     if (answer.status !== "joined") throw new CliError(answer.error, EXIT_FAILURE);

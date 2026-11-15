@@ -16,13 +16,15 @@ const api = vi.hoisted(() => ({
   updateTailscaleSettings: vi.fn(),
   decideTailscaleJoin: vi.fn(),
 }));
+const router = vi.hoisted(() => ({ navigate: vi.fn() }));
+vi.mock("../lib/router.js", () => router);
 vi.mock("../lib/tailscale-api.js", async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   ...api,
 }));
 
 // @ts-expect-error — portal modules are plain JS.
-import { TailscaleView, tailscalePhase, expiresIn } from "./tailscale.js";
+import { TailscaleView, tailscalePhase } from "./tailscale.js";
 
 type State = Record<string, any>;
 
@@ -119,15 +121,6 @@ describe("tailscalePhase", () => {
   });
 });
 
-describe("expiresIn", () => {
-  test("counts down in minutes and says when it has passed", () => {
-    const now = Date.UTC(2030, 0, 1);
-    expect(expiresIn(new Date(now + 8.2 * 60_000).toISOString(), now)).toBe("expires in 9 min");
-    expect(expiresIn(new Date(now + 20_000).toISOString(), now)).toBe("expires in under a minute");
-    expect(expiresIn(new Date(now - 1).toISOString(), now)).toBe("expired");
-  });
-});
-
 describe("TailscaleView", () => {
   test("off: explains and turns on", async () => {
     await show(off());
@@ -142,7 +135,7 @@ describe("TailscaleView", () => {
     expect(text()).toContain("Connecting this gateway to Tailscale");
   });
 
-  test("helper unavailable: shows the reason calmly and keeps Turn off", async () => {
+  test("helper unavailable: shows the reason calmly and keeps Turn off, confirmed first", async () => {
     const reason = "the helper program is not installed with this gateway.";
     await show(off({ enabled: true, helper: { state: "unavailable", reason }, connection: "starting" }));
     expect(pill()).toBe("Problem");
@@ -150,6 +143,9 @@ describe("TailscaleView", () => {
     expect(host.querySelector('[role="alert"]')).toBeNull();
     api.setTailscaleEnabled.mockResolvedValue(off());
     await click("Turn off");
+    expect(api.setTailscaleEnabled).not.toHaveBeenCalled();
+    await act(async () => (host.querySelector(".confirm-modal .btn-primary") as HTMLButtonElement).click());
+    await act(async () => {});
     expect(api.setTailscaleEnabled).toHaveBeenCalledWith(false, expect.anything());
     expect(pill()).toBe("Off");
   });
@@ -279,7 +275,8 @@ describe("TailscaleView", () => {
     await show(off({ enabled: true, helper: { state: "running" }, connection: "needs-sign-in", public: { wanted: true, state: "off" } }));
     expect(host.querySelector(".tailscale-switch")).toBeNull();
     expect(host.querySelector('input[name="tailscale-join-policy"]')).toBeNull();
-    expect(host.querySelector("details.tailscale-advanced")).not.toBeNull();
+    expect(host.querySelector(".tailscale-panel .tailscale-device #tailscale-device-name")).not.toBeNull();
+    expect(host.querySelector("details")).toBeNull();
   });
 
   test("join policy radios save the choice", async () => {
@@ -296,43 +293,26 @@ describe("TailscaleView", () => {
     expect(host.querySelector(".tailscale-option-selected")?.textContent).toContain("Join automatically");
   });
 
-  test("approving and denying join requests, and a request that expired meanwhile", async () => {
-    await show(connected({ joinRequests: [request] }));
-    expect(text()).toContain("Waiting for approval");
-    expect(text()).toContain("studio-laptop");
-    expect(text()).toContain("Collector on studio-laptop (macOS)");
-    expect(text()).toContain("Tailscale account maya@example.com");
-    expect(text()).toContain("Asked 2m ago");
-    expect(text()).toMatch(/expires in (8|9) min/);
-
-    api.decideTailscaleJoin.mockResolvedValueOnce({ status: "approved" });
-    api.getTailscale.mockResolvedValue(connected());
-    await click("Approve");
-    expect(api.decideTailscaleJoin).toHaveBeenCalledWith("req-1", true, expect.anything());
-    expect(api.getTailscale).toHaveBeenCalledTimes(2);
-    expect(text()).toContain("Approved studio-laptop.");
-    expect(text()).not.toContain("Collector on studio-laptop");
-
+  test("waiting join requests are decided on Devices, which the join section links to", async () => {
+    await show(connected());
+    expect(host.querySelector(".tailscale-waiting-devices")).toBeNull();
+    expect(link("Settings, Devices")?.getAttribute("href")).toBe("/portal/settings/devices");
     render(null, host);
-    await show(connected({ joinRequests: [request] }));
-    api.decideTailscaleJoin.mockResolvedValueOnce({ status: "denied" });
-    await click("Deny");
-    expect(api.decideTailscaleJoin).toHaveBeenCalledWith("req-1", false, expect.anything());
-
-    render(null, host);
-    await show(connected({ joinRequests: [request] }));
-    api.getTailscale.mockClear();
-    api.decideTailscaleJoin.mockRejectedValueOnce(Object.assign(new Error("gone"), { status: 404, code: "join-request-gone" }));
-    api.getTailscale.mockResolvedValue(connected());
-    await click("Approve");
-    expect(text()).toContain("This request expired or was already decided.");
-    expect(host.querySelector('[role="alert"]')).toBeNull();
-    expect(api.getTailscale).toHaveBeenCalledOnce();
+    await show(connected({ joinRequests: [request, { ...request, id: "req-2" }] }));
+    expect(host.querySelector(".tailscale-waiting-devices")?.textContent).toContain(
+      "2 collectors are waiting for your OK.",
+    );
+    expect(link("Review it in Devices")?.getAttribute("href")).toBe("/portal/settings/devices");
+    await act(async () => link("Review it in Devices").click());
+    expect(router.navigate).toHaveBeenCalledExactlyOnceWith("/portal/settings/devices");
+    expect(button("Approve")).toBeUndefined();
+    expect(api.decideTailscaleJoin).not.toHaveBeenCalled();
   });
 
-  test("advanced: renames the device and shows the gateway's validation message", async () => {
+  test("the main card renames the device and shows the gateway's validation message", async () => {
     await show(connected());
-    expect(host.querySelector("details.tailscale-advanced")).not.toBeNull();
+    expect(host.querySelector("details")).toBeNull();
+    expect(host.querySelector(".tailscale-panel .tailscale-device")).not.toBeNull();
     const input = host.querySelector("#tailscale-device-name") as HTMLInputElement;
     const form = input.closest("form") as HTMLFormElement;
     const type = async (value: string) => {
@@ -374,7 +354,7 @@ describe("TailscaleView", () => {
     expect(host.querySelector(".tailscale-field-error")).toBeNull();
   });
 
-  test("advanced: sign out and turn off each ask first", async () => {
+  test("the main card's sign out and turn off each ask in a dialog first", async () => {
     await show(connected());
     await click("Sign out of Tailscale");
     expect(doc.querySelector(".confirm-modal-title")?.textContent).toBe("Sign out of Tailscale?");

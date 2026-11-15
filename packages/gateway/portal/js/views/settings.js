@@ -145,9 +145,10 @@ export function SettingsView({
         connectOpen=${accessConnect ?? false}
         completeInPortal=${completeAccessInPortal ?? false}
         cloudRelay=${cloudRelay}
+        tailscaleEmbed=${tailscaleEmbed}
       />`}
       ${activeTab === "policies" && html`<${PoliciesView} policyId=${policyId ?? null} />`}
-      ${activeTab === "devices" && html`<${DevicesView} pairKindRequest=${pair ?? null} focusDeviceId=${device ?? null} cloudRelay=${cloudRelay} />`}
+      ${activeTab === "devices" && html`<${DevicesView} pairKindRequest=${pair ?? null} focusDeviceId=${device ?? null} cloudRelay=${cloudRelay} tailscaleEmbed=${tailscaleEmbed} />`}
     </div>
   `;
 }

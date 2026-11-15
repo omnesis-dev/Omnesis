@@ -45,7 +45,7 @@ import { TestInstanceCard } from "./components/test-instance-card.js";
 import { countLabel, localDay, supportsTaskConversations } from "./lib/tasks-model.js";
 import { onTaskCounts } from "./lib/task-counts.js";
 import { CloudPairingLogin } from "./components/cloud-pairing-login.js";
-import { CloudPairingBanner } from "./components/cloud-pairing-banner.js";
+import { WaitingDevicesBanner } from "./components/waiting-devices-banner.js";
 
 const DocumentView = lazy(() => import("./views/document.js").then((m) => m.DocumentView));
 const PeopleView = lazy(() => import("./views/people.js").then((m) => m.PeopleView));
@@ -808,7 +808,9 @@ function App() {
       </aside>
 
       <main class="app-main">
-        ${cloudRelay && html`<${CloudPairingBanner}
+        ${(cloudRelay || tailscaleEmbed) && html`<${WaitingDevicesBanner}
+          cloudRelay=${cloudRelay}
+          tailscaleEmbed=${tailscaleEmbed}
           paused=${route.view === "settings" && route.tab === "devices"}
         />`}
         ${route.view === "document"

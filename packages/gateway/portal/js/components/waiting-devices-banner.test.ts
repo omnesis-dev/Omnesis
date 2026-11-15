@@ -11,10 +11,12 @@ const api = vi.hoisted(() => ({
   decideCloudPairing: vi.fn(),
 }));
 const router = vi.hoisted(() => ({ navigate: vi.fn() }));
+const tailscale = vi.hoisted(() => ({ tailscaleJoinRequests: vi.fn() }));
 vi.mock("../lib/cloud-pairing-api.js", () => api);
+vi.mock("../lib/tailscale-api.js", () => tailscale);
 vi.mock("../lib/router.js", () => router);
 // @ts-expect-error — portal modules are plain JS.
-import { CloudPairingBanner, cloudPairingBannerText } from "./cloud-pairing-banner.js";
+import { WaitingDevicesBanner, waitingDevicesBannerText } from "./waiting-devices-banner.js";
 // @ts-expect-error — portal modules are plain JS.
 import { waitingCloudPairingRequests } from "../lib/cloud-pairing-waiting.js";
 // @ts-expect-error — portal modules are plain JS.
@@ -40,25 +42,31 @@ beforeEach(() => {
   api.cloudPairingRequests.mockReset();
   api.cloudPairingRequests.mockResolvedValue({ items: [] });
   router.navigate.mockReset();
+  tailscale.tailscaleJoinRequests.mockReset();
+  tailscale.tailscaleJoinRequests.mockResolvedValue({ requests: [] });
 });
 afterEach(() => {
   render(null, host);
   vi.unstubAllGlobals();
 });
+/** Lets the configuration read, then the first request reads, settle. */
+async function settle() {
+  for (let i = 0; i < 4; i += 1) {
+    await act(async () => {
+      await Promise.resolve();
+    });
+  }
+}
 async function show(props: Record<string, unknown> = {}) {
-  await act(async () => render(h(CloudPairingBanner, props), host));
-  await act(async () => {
-    await Promise.resolve();
-  });
+  await act(async () => render(h(WaitingDevicesBanner, { cloudRelay: true, ...props }), host));
+  await settle();
 }
 /** What a tab coming back into view does: the poll reads again at once. */
 async function readAgain() {
   await act(async () => {
     document.dispatchEvent(new window.Event("visibilitychange"));
   });
-  await act(async () => {
-    await Promise.resolve();
-  });
+  await settle();
 }
 const strip = () => host.querySelector(".access-pending.cloud-pairing-notice");
 
@@ -142,7 +150,7 @@ test("several waiting devices share one strip with a count, and answered ones ar
   expect(host.querySelector(".access-pending-client")?.textContent).toBe(
     "2 devices are waiting for your approval to pair to this gateway.",
   );
-  expect(cloudPairingBannerText(3)).toBe(
+  expect(waitingDevicesBannerText(3)).toBe(
     "3 devices are waiting for your approval to pair to this gateway.",
   );
   // Several open the list, where each one is answered.
@@ -177,7 +185,7 @@ test("it is the same strip an access request from an MCP client uses, and both c
   await act(async () =>
     render(
       h("div", {}, [
-        h(CloudPairingBanner, {}),
+        h(WaitingDevicesBanner, { cloudRelay: true }),
         h(PendingRequests, {
           requests: [{ id: "approval-a", clientName: "Fictional client", expiresAt: Date.now() + 60_000 }],
         }),
@@ -193,4 +201,49 @@ test("it is the same strip an access request from an MCP client uses, and both c
   }
   expect(strips[1].querySelector("h3")?.textContent).toBe("1 access request waiting");
   expect(strips[1].querySelector("button")?.textContent?.trim()).toBe("Configure & Approve");
+});
+
+const join = (id: string, expiresIn = 600_000) => ({
+  id,
+  name: "studio-laptop",
+  kind: "collector",
+  machine: "studio-laptop",
+  login: "maya@example.com",
+  requestedAt: new Date().toISOString(),
+  expiresAt: new Date(Date.now() + expiresIn).toISOString(),
+});
+
+test("without the Tailscale feature the gateway is never asked for join requests", async () => {
+  tailscale.tailscaleJoinRequests.mockResolvedValue({ requests: [join("t1")] });
+  await show();
+  expect(host.textContent).toBe("");
+  expect(tailscale.tailscaleJoinRequests).not.toHaveBeenCalled();
+});
+
+test("a collector waiting to join through Tailscale shows the same strip and opens the list", async () => {
+  tailscale.tailscaleJoinRequests.mockResolvedValue({ requests: [join("t1"), join("t2", -1)] });
+  await show({ cloudRelay: false, tailscaleEmbed: true });
+  expect(api.cloudPairingConfig).not.toHaveBeenCalled();
+  expect(host.querySelector(".access-pending-client")?.textContent).toBe(
+    "A device is waiting for your approval to pair to this gateway.",
+  );
+  await act(async () => (host.querySelector("button") as HTMLButtonElement).click());
+  expect(router.navigate).toHaveBeenCalledExactlyOnceWith("/portal/settings/devices");
+});
+
+test("both kinds count together in one strip, and the devices page pauses both", async () => {
+  api.cloudPairingRequests.mockResolvedValue({ items: [request("a")] });
+  tailscale.tailscaleJoinRequests.mockResolvedValue({ requests: [join("t1")] });
+  await show({ tailscaleEmbed: true });
+  expect(host.querySelectorAll(".access-pending-item")).toHaveLength(1);
+  expect(host.querySelector(".access-pending-client")?.textContent).toBe(
+    "2 devices are waiting for your approval to pair to this gateway.",
+  );
+  render(null, host);
+  api.cloudPairingRequests.mockClear();
+  tailscale.tailscaleJoinRequests.mockClear();
+  await show({ tailscaleEmbed: true, paused: true });
+  expect(host.textContent).toBe("");
+  expect(api.cloudPairingRequests).not.toHaveBeenCalled();
+  expect(tailscale.tailscaleJoinRequests).not.toHaveBeenCalled();
 });

@@ -46,6 +46,7 @@ export const tailscaleSignIn = (signal) => tailscaleRequest("POST", "/sign-in", 
 export const tailscaleSignOut = (signal) => tailscaleRequest("POST", "/sign-out", { signal });
 export const updateTailscaleSettings = (patch, signal) =>
   tailscaleRequest("PATCH", "/settings", { body: patch, signal });
+export const tailscaleJoinRequests = (signal) => tailscaleRequest("GET", "/join-requests", { signal });
 export const decideTailscaleJoin = (id, approve, signal) =>
   tailscaleRequest("POST", `/join-requests/${encodeURIComponent(id)}/decision`, {
     body: { approve },
