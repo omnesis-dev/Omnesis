@@ -13,9 +13,12 @@
  * the writer for tens of seconds and every other write on the gateway queued
  * behind it. This suite seeds a backlog the size of a large mailbox and drive
  * library, of invented sources, and holds the writer op to what a slice may
- * cost: a short hold, an unrelated write that is served promptly behind it,
- * a preempt seam that stops a slice after the step it is on, and a time slice
- * that stops a large step budget before it outlasts the hold.
+ * do: drain its step budget, let an unrelated write through behind it, stop
+ * after the step it is on when preempted, and leave a large budget's rest
+ * pending. It asserts behaviour only, never wall-clock time, which a shared
+ * runner cannot promise: the time slice itself is `sliceDeadline`'s, tested
+ * against a fake clock, and the cheap pick each step makes is held by the
+ * query plans in `cascade-order.test.ts`.
  *
  * Like the link-apply preemption suite, it runs a Scheduler with preemption
  * and a real `WriterTaskRunner` against a temp DB, with no gateway process,
@@ -39,8 +42,6 @@ const LOADER_URL = new URL("../workers/register-tsx.mjs", import.meta.url).href;
 
 /** Pending invalidation jobs, one per invented source revision. */
 const BACKLOG = 200_000;
-/** The longest a single cascade slice may hold the writer. */
-const SLICE_HOLD_BUDGET_MS = 250;
 const SLICE = 100;
 const NOW = 1_800_000_000_000;
 const CURSOR: SyncCursor = {
@@ -124,7 +125,7 @@ describe("knowledge cascade on the writer against an ingest backlog", () => {
     );
   }
 
-  test("each slice drains its full step budget inside the hold budget", async () => {
+  test("each slice drains its full step budget against the backlog", async () => {
     const before = pendingJobs();
     for (let i = 0; i < 10; i++) expect((await slice()).pending).toBe(true);
     expect(before - pendingJobs()).toBe(10 * SLICE);
@@ -132,16 +133,12 @@ describe("knowledge cascade on the writer against an ingest backlog", () => {
       .snapshot(300)
       .perTask.find((task) => task.name === "knowledge.advanceCascade");
     expect(stats?.count).toBeGreaterThanOrEqual(10);
-    expect(stats!.max).toBeLessThan(SLICE_HOLD_BUDGET_MS);
   });
 
-  test("an unrelated write queued behind a slice is served promptly", async () => {
+  test("an unrelated write queued behind a slice is served", async () => {
     const cascade = slice();
-    const started = performance.now();
     expect(await unrelatedWrite()).toBe(true);
-    const waited = performance.now() - started;
-    await cascade;
-    expect(waited).toBeLessThan(SLICE_HOLD_BUDGET_MS);
+    expect((await cascade).pending).toBe(true);
   });
 
   test("a preempted slice stops after the step it is on and leaves the rest pending", async () => {
@@ -154,15 +151,11 @@ describe("knowledge cascade on the writer against an ingest backlog", () => {
     expect(before - pendingJobs()).toBe(1);
   });
 
-  test("an unpreempted large budget stops at its time slice and leaves the rest pending", async () => {
+  test("an unpreempted large budget drains past one step and leaves the rest pending", async () => {
     const before = pendingJobs();
     expect((await slice(1000)).pending).toBe(true);
     const drained = before - pendingJobs();
     expect(drained).toBeGreaterThan(1);
     expect(drained).toBeLessThanOrEqual(1000);
-    const stats = scheduler
-      .snapshot(300)
-      .perTask.find((task) => task.name === "knowledge.advanceCascade");
-    expect(stats!.max).toBeLessThan(SLICE_HOLD_BUDGET_MS);
   });
 });

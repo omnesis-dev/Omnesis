@@ -77,11 +77,6 @@ const PEOPLE_BACKFILL_SLICE_MS = 50;
 // limit. The slice leaves room for one more unit inside the same bound.
 const PLANNER_STATISTICS_SLICE_MS = 50;
 
-function sliceDeadline(token: PreemptToken, sliceMs: number): () => boolean {
-  const deadline = performance.now() + sliceMs;
-  return () => token.requested() || performance.now() >= deadline;
-}
-
 // A compute batch carries up to a hundred docs. Same rule as the DF apply: give
 // the writer back between chunks once the slice is spent, so a background
 // write queued at the same priority does not wait for the whole batch.
@@ -635,6 +630,7 @@ import {
 } from "../data/pairing-generation-fence.js";
 import { applyTranscriptionVocabularyBatch } from "../transcribe/vocabulary/storage.js";
 import { advanceTranscriptionVocabularyRebuild } from "../transcribe/vocabulary/rebuild.js";
+import { sliceDeadline } from "./slice-deadline.js";
 import type { WorthAnswer } from "../worth/answers.js";
 import type { SelfIdentitySource } from "../self-identity-sources.js";
 import type {
