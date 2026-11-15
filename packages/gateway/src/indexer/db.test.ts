@@ -8,6 +8,7 @@ import { tmpdir } from "node:os";
 import { describe, test, expect, beforeEach, afterEach } from "vitest";
 import Database from "better-sqlite3";
 import { bm25Search } from "../search/bm25.js";
+import { targetLexicalVersion } from "../search/lexical-versions.js";
 import {
   CHUNK_STATS_INDEX,
   EMBEDDING_DIM,
@@ -1458,7 +1459,7 @@ describe("chunks_fts tokenizer migration", () => {
     while ((step = lexicalRebuildStep(migrated, { batchSize: 1 })) !== "backfill-complete") {
       expect(step).not.toBe("idle");
     }
-    expect(switchLexicalIndex(migrated, 0)).toBe(true);
+    expect(switchLexicalIndex(migrated, targetLexicalVersion().version)).toBe(true);
     expect(lexicalRebuildStep(migrated, { batchSize: 1 })).toBe("retired-dropped");
     expect(lexicalRebuildStep(migrated, { batchSize: 1 })).toBe("idle");
 
@@ -1475,7 +1476,7 @@ describe("chunks_fts tokenizer migration", () => {
 
     // Reopening finds the current version recorded and starts nothing.
     const reopened = createIndexDatabase(path);
-    expect(readLexicalIndexState(reopened).active?.version).toBe(0);
+    expect(readLexicalIndexState(reopened).active?.version).toBe(targetLexicalVersion().version);
     expect(lexicalRebuildStep(reopened, { batchSize: 1 })).toBe("idle");
     reopened.close();
   });

@@ -5,6 +5,7 @@ import { randomUUID } from "node:crypto";
 import { rmSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { bm25Search } from "../search/bm25.js";
+import { targetLexicalVersion } from "../search/lexical-versions.js";
 import { LexicalIndex } from "../search/lexical-index.js";
 import { createIndexDatabase, upsertChunks, type ChunkUpsertInput } from "./db.js";
 import {
@@ -83,6 +84,15 @@ function runUntil(db: Db, wanted: LexicalStep, batchSize = 2): LexicalStep[] {
   throw new Error(`never reached ${wanted}: ${steps.join(", ")}`);
 }
 
+/** The version this build targets without a test override: what a real gateway rebuilds to. */
+function current(): number {
+  const saved = process.env.OMNESIS_LEXICAL_TEST_VERSION;
+  delete process.env.OMNESIS_LEXICAL_TEST_VERSION;
+  const version = targetLexicalVersion().version;
+  if (saved !== undefined) process.env.OMNESIS_LEXICAL_TEST_VERSION = saved;
+  return version;
+}
+
 function target(version: number | null): void {
   if (version === null) delete process.env.OMNESIS_LEXICAL_TEST_VERSION;
   else process.env.OMNESIS_LEXICAL_TEST_VERSION = String(version);
@@ -104,9 +114,9 @@ afterEach(() => {
 });
 
 describe("a new index database", () => {
-  test("starts at the target version with nothing to rebuild", () => {
+  test("starts at the version this build targets, with nothing to rebuild", () => {
     const db = openDb();
-    expect(readLexicalIndexState(db).active?.version).toBe(0);
+    expect(readLexicalIndexState(db).active?.version).toBe(current());
     expect(lexicalRebuildStep(db, { batchSize: 10 })).toBe("idle");
     seed(db);
     expect(documentsMatching(db, "budget")).toEqual(["d1", "d4"]);
@@ -138,11 +148,11 @@ describe("rebuilding to a new version", () => {
     expect(lexicalRebuildStep(db, { batchSize: 2 })).toBe("backfilled-batch");
     const midway = lexicalIndexStatus(db);
     expect(midway).toMatchObject({
-      activeVersion: 0,
+      activeVersion: current(),
       targetVersion: 9001,
       building: { version: 9001, chunksDone: 2, chunksTotal: 6, percent: 33, phase: "copying" },
     });
-    // Mid-build, queries are cut for version 0 and matched against version 0.
+    // Mid-build, queries are cut by the active version and matched against its index.
     expect(documentsMatching(db, "budget")).toEqual(["d1", "d4"]);
 
     runUntil(db, "backfill-complete");
@@ -268,7 +278,7 @@ describe("rebuilding to a new version", () => {
     expect(state.active).toMatchObject({ version: 9001 });
     expect(state.active?.rewrite).toBeUndefined();
     runUntil(db, "backfill-complete");
-    expect(switchLexicalIndex(db, 0)).toBe(true);
+    expect(switchLexicalIndex(db, current())).toBe(true);
     expect(documentsMatching(db, "budget")).toEqual(["d1", "d4"]);
   });
 
@@ -278,7 +288,7 @@ describe("rebuilding to a new version", () => {
     target(9001);
     runUntil(db, "backfilled-batch");
     expect(switchLexicalIndex(db, 9001)).toBe(false);
-    expect(readLexicalIndexState(db).active?.version).toBe(0);
+    expect(readLexicalIndexState(db).active?.version).toBe(current());
   });
 });
 
@@ -301,7 +311,10 @@ describe("a restored database", () => {
     target(null);
 
     const restored = openDb(path);
-    expect(readLexicalIndexState(restored)).toMatchObject({ active: { version: 0 }, build: null });
+    expect(readLexicalIndexState(restored)).toMatchObject({
+      active: { version: current() },
+      build: null,
+    });
     expect(documentsMatching(restored, "budget")).toEqual(["d1", "d4"]);
     // Chunk writes succeed: no trigger points at a missing index.
     upsertChunks(restored, [chunk("d9", "budget notes")]);
@@ -315,7 +328,8 @@ describe("in-memory indexes across a switch", () => {
     const db = openDb();
     seed(db);
     const oldRanker = LexicalIndex.build(db);
-    expect(oldRanker.rules.version).toBe(0);
+    const old = current();
+    expect(oldRanker.rules.version).toBe(old);
     target(9001);
     runUntil(db, "backfill-complete");
     const newRanker = LexicalIndex.build(db, { source: "building" });
@@ -331,14 +345,14 @@ describe("in-memory indexes across a switch", () => {
     };
     // Before the switch: the new index answers by its rules already.
     expect(search(newRanker)).toEqual({ ranker: "memory", version: 9001, docs: ["d1", "d4"] });
-    expect(search()).toEqual({ ranker: "fts5", version: 0, docs: ["d1", "d4"] });
+    expect(search()).toEqual({ ranker: "fts5", version: old, docs: ["d1", "d4"] });
 
     expect(switchLexicalIndex(db, 9001)).toBe(true);
     upsertChunks(db, [chunk("d9", "budget for the winter retreat")]);
 
     // After it: the old in-memory index still cuts queries and new chunks by
-    // version 0, the new one by 9001, and FTS5 by the active version.
-    expect(search(oldRanker)).toEqual({ ranker: "memory", version: 0, docs: ["d1", "d4", "d9"] });
+    // its version, the new one by 9001, and FTS5 by the active version.
+    expect(search(oldRanker)).toEqual({ ranker: "memory", version: old, docs: ["d1", "d4", "d9"] });
     expect(search(newRanker)).toEqual({
       ranker: "memory",
       version: 9001,
