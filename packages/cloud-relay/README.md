@@ -300,6 +300,33 @@ trusted front layer reports (see [TCP front layers](#tcp-front-layers)), an IPv6
 client counted by its /64. Polling or cancelling an operation already started holds a concurrency
 slot but is not a new attempt.
 
+Gateways proving their keys for a routing session (`/_relay/v2/key/*`, about once
+an hour each and all at once after a relay restart) and asking for DNS challenges
+have a budget of their own, so a flood of sign-ins never stops gateways renewing
+their tunnels: `OMNESIS_CLOUD_RELAY_MAX_CONCURRENT_GATEWAY_LOGINS` (default 32),
+`OMNESIS_CLOUD_RELAY_MAX_GATEWAY_LOGINS_PER_MINUTE` (default 600), and per client
+address `OMNESIS_CLOUD_RELAY_MAX_CONCURRENT_GATEWAY_LOGINS_PER_CLIENT` (default 4)
+and `OMNESIS_CLOUD_RELAY_MAX_GATEWAY_LOGINS_PER_MINUTE_PER_CLIENT` (default 30). A
+refused request is not counted, so a gateway retrying after a 429 uses up nothing.
+
+The data listener bounds what one client address (again an IPv6 /64) can hold:
+
+| Setting                                                  | Default | Bounds                                                                    |
+| -------------------------------------------------------- | ------- | ------------------------------------------------------------------------- |
+| `OMNESIS_CLOUD_RELAY_MAX_STREAMS`                        | 256     | data connections and gateway streams, relay-wide                          |
+| `OMNESIS_CLOUD_RELAY_MAX_STREAMS_PER_GATEWAY`            | 16      | streams to one gateway (the gateway's tunnel takes 16)                    |
+| `OMNESIS_CLOUD_RELAY_MAX_STREAMS_PER_CLIENT`             | 32      | data connections from one client, routed or still sending its ClientHello |
+| `OMNESIS_CLOUD_RELAY_MAX_STREAMS_PER_CLIENT_PER_GATEWAY` | 8       | streams from one client to one gateway                                    |
+| `OMNESIS_CLOUD_RELAY_STREAM_IDLE_TIMEOUT_MS`             | 600000  | a routed connection with no bytes either way for this long is closed      |
+
+A connection over a limit is closed before it reaches a gateway. So one client
+cannot fill a gateway's streams or the relay's, though a few can, and a front layer
+should keep its own per-address connection limits as well. The idle timeout is far
+longer than anything a gateway leaves quiet: it pings device WebSockets and sends
+server-sent event keep-alives every 15 to 30 seconds. The relay's own tunnel and
+data channel WebSockets have their own heartbeat (`OMNESIS_CLOUD_RELAY_HEARTBEAT_MS`)
+and are not affected.
+
 For hosted names, set `OMNESIS_CLOUD_RELAY_DOMAIN`; a gateway gets
 `g-XXXXXXXX.RELAY_DOMAIN`, where the eight characters are the start of the
 lowercase base32 SHA-256 of its UUID. Such a short name can collide, so the

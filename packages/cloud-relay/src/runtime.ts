@@ -84,11 +84,23 @@ const envSchema = z.object({
   /** Per client address; unset means half the concurrent and a third of the per-minute limit. */
   OMNESIS_CLOUD_RELAY_MAX_CONCURRENT_LOGINS_PER_CLIENT: positive.optional(),
   OMNESIS_CLOUD_RELAY_MAX_LOGINS_PER_MINUTE_PER_CLIENT: positive.optional(),
+  /** Gateway key sign-ins and DNS challenges: a budget of their own, see DEFAULT_GATEWAY_LOGIN_LIMITS. */
+  OMNESIS_CLOUD_RELAY_MAX_CONCURRENT_GATEWAY_LOGINS: positive.optional(),
+  OMNESIS_CLOUD_RELAY_MAX_GATEWAY_LOGINS_PER_MINUTE: positive.optional(),
+  OMNESIS_CLOUD_RELAY_MAX_CONCURRENT_GATEWAY_LOGINS_PER_CLIENT: positive.optional(),
+  OMNESIS_CLOUD_RELAY_MAX_GATEWAY_LOGINS_PER_MINUTE_PER_CLIENT: positive.optional(),
   OMNESIS_CLOUD_RELAY_MAX_GATEWAYS: positive.default(DEFAULT_TUNNEL_LIMITS.maxGateways),
   OMNESIS_CLOUD_RELAY_MAX_STREAMS: positive.default(DEFAULT_TUNNEL_LIMITS.maxStreams),
   OMNESIS_CLOUD_RELAY_MAX_STREAMS_PER_GATEWAY: positive.default(
     DEFAULT_TUNNEL_LIMITS.maxStreamsPerGateway,
   ),
+  OMNESIS_CLOUD_RELAY_MAX_STREAMS_PER_CLIENT: positive.default(
+    DEFAULT_TUNNEL_LIMITS.maxStreamsPerClient,
+  ),
+  OMNESIS_CLOUD_RELAY_MAX_STREAMS_PER_CLIENT_PER_GATEWAY: positive.default(
+    DEFAULT_TUNNEL_LIMITS.maxStreamsPerClientPerGateway,
+  ),
+  OMNESIS_CLOUD_RELAY_STREAM_IDLE_TIMEOUT_MS: positive.default(DEFAULT_TUNNEL_LIMITS.idleTimeoutMs),
   OMNESIS_CLOUD_RELAY_CONNECT_TIMEOUT_MS: positive.default(DEFAULT_TUNNEL_LIMITS.connectTimeoutMs),
   OMNESIS_CLOUD_RELAY_HEARTBEAT_MS: positive.default(DEFAULT_TUNNEL_LIMITS.heartbeatMs),
   /**
@@ -306,10 +318,20 @@ export async function startRelayDaemon(
         maxConcurrentPerClient: config.OMNESIS_CLOUD_RELAY_MAX_CONCURRENT_LOGINS_PER_CLIENT,
         maxPerMinutePerClient: config.OMNESIS_CLOUD_RELAY_MAX_LOGINS_PER_MINUTE_PER_CLIENT,
       },
+      gatewayLoginLimits: {
+        maxConcurrent: config.OMNESIS_CLOUD_RELAY_MAX_CONCURRENT_GATEWAY_LOGINS,
+        maxPerMinute: config.OMNESIS_CLOUD_RELAY_MAX_GATEWAY_LOGINS_PER_MINUTE,
+        maxConcurrentPerClient: config.OMNESIS_CLOUD_RELAY_MAX_CONCURRENT_GATEWAY_LOGINS_PER_CLIENT,
+        maxPerMinutePerClient: config.OMNESIS_CLOUD_RELAY_MAX_GATEWAY_LOGINS_PER_MINUTE_PER_CLIENT,
+      },
       limits: {
         maxGateways: config.OMNESIS_CLOUD_RELAY_MAX_GATEWAYS,
         maxStreams: config.OMNESIS_CLOUD_RELAY_MAX_STREAMS,
         maxStreamsPerGateway: config.OMNESIS_CLOUD_RELAY_MAX_STREAMS_PER_GATEWAY,
+        maxStreamsPerClient: config.OMNESIS_CLOUD_RELAY_MAX_STREAMS_PER_CLIENT,
+        maxStreamsPerClientPerGateway:
+          config.OMNESIS_CLOUD_RELAY_MAX_STREAMS_PER_CLIENT_PER_GATEWAY,
+        idleTimeoutMs: config.OMNESIS_CLOUD_RELAY_STREAM_IDLE_TIMEOUT_MS,
         connectTimeoutMs: config.OMNESIS_CLOUD_RELAY_CONNECT_TIMEOUT_MS,
         heartbeatMs: config.OMNESIS_CLOUD_RELAY_HEARTBEAT_MS,
       },
