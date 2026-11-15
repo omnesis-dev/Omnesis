@@ -474,3 +474,104 @@ diff --git a/node_modules/usearch/numkong/include/numkong/capabilities.h b/node_
  
  // On WASM with Emscripten, we use EM_JS for runtime capability detection
  #if NK_TARGET_WASM_ && defined(__EMSCRIPTEN__)
+diff --git a/node_modules/usearch/numkong/include/numkong/types.h b/node_modules/usearch/numkong/include/numkong/types.h
+--- a/node_modules/usearch/numkong/include/numkong/types.h
++++ b/node_modules/usearch/numkong/include/numkong/types.h
+@@ -499,6 +499,7 @@
+ #endif // defined(__ARM_FEATURE_SME_FA64)
+ #endif // !defined(NK_TARGET_SMEFA64) || ...
+ 
++// Modified for Omnesis: MSVC also targets ARM; compiler version alone does not enable x86 ISA.
+ // Compiling for x86: NK_TARGET_HASWELL
+ //
+ // Starting with Ivy Bridge, Intel supports the `F16C` extensions for fast half-precision
+@@ -516,7 +517,7 @@
+ //   - _MSC_VER >= 1920 (VS 2019+): AVX-512 base (Skylake, Icelake), AVX-VNNI (Alder)
+ //   - _MSC_VER >= 1944 (VS 2022 17.14+): BF16, FP16, VP2INTERSECT, VNNI-INT8 (Sierra), AMX
+ #if !defined(NK_TARGET_HASWELL) || (NK_TARGET_HASWELL && !NK_TARGET_X8664_)
+-#if (defined(__AVX2__) && defined(__FMA__) && defined(__F16C__)) || (defined(_MSC_VER) && _MSC_VER >= 1900)
++#if (defined(__AVX2__) && defined(__FMA__) && defined(__F16C__)) || (defined(_MSC_VER) && NK_TARGET_X8664_ && _MSC_VER >= 1900)
+ #define NK_TARGET_HASWELL 1
+ #else
+ #undef NK_TARGET_HASWELL
+@@ -534,7 +535,7 @@
+ #if !defined(NK_TARGET_SKYLAKE) || (NK_TARGET_SKYLAKE && !NK_TARGET_X8664_)
+ #if (defined(__AVX512F__) && defined(__AVX512CD__) && defined(__AVX512VL__) && defined(__AVX512DQ__) && \
+      defined(__AVX512BW__)) ||                                                                          \
+-    (defined(_MSC_VER) && _MSC_VER >= 1920)
++    (defined(_MSC_VER) && NK_TARGET_X8664_ && _MSC_VER >= 1920)
+ #define NK_TARGET_SKYLAKE 1
+ #else
+ #undef NK_TARGET_SKYLAKE
+@@ -545,7 +546,7 @@
+ #if !defined(NK_TARGET_ICELAKE) || (NK_TARGET_ICELAKE && !NK_TARGET_X8664_)
+ #if (defined(__AVX512VNNI__) && defined(__AVX512IFMA__) && defined(__AVX512BITALG__) && defined(__AVX512VBMI__) && \
+      defined(__AVX512VBMI2__) && defined(__AVX512VPOPCNTDQ__)) ||                                                  \
+-    (defined(_MSC_VER) && _MSC_VER >= 1920)
++    (defined(_MSC_VER) && NK_TARGET_X8664_ && _MSC_VER >= 1920)
+ #define NK_TARGET_ICELAKE 1
+ #else
+ #undef NK_TARGET_ICELAKE
+@@ -554,7 +555,7 @@
+ #endif // !defined(NK_TARGET_ICELAKE) || ...
+ 
+ #if !defined(NK_TARGET_GENOA) || (NK_TARGET_GENOA && !NK_TARGET_X8664_)
+-#if defined(__AVX512BF16__) || (defined(_MSC_VER) && _MSC_VER >= 1944)
++#if defined(__AVX512BF16__) || (defined(_MSC_VER) && NK_TARGET_X8664_ && _MSC_VER >= 1944)
+ #define NK_TARGET_GENOA 1
+ #else
+ #undef NK_TARGET_GENOA
+@@ -576,7 +577,7 @@
+ #endif // !defined(NK_TARGET_DIAMOND) || ...
+ 
+ #if !defined(NK_TARGET_SAPPHIRE) || (NK_TARGET_SAPPHIRE && !NK_TARGET_X8664_)
+-#if defined(__AVX512FP16__) || (defined(_MSC_VER) && _MSC_VER >= 1944)
++#if defined(__AVX512FP16__) || (defined(_MSC_VER) && NK_TARGET_X8664_ && _MSC_VER >= 1944)
+ #define NK_TARGET_SAPPHIRE 1
+ #else
+ #undef NK_TARGET_SAPPHIRE
+@@ -585,7 +586,7 @@
+ #endif // !defined(NK_TARGET_SAPPHIRE) || ...
+ 
+ #if !defined(NK_TARGET_SAPPHIREAMX) || (NK_TARGET_SAPPHIREAMX && !NK_TARGET_X8664_)
+-#if (defined(__AMX_TILE__) && defined(__AMX_BF16__) && defined(__AMX_INT8__)) || (defined(_MSC_VER) && _MSC_VER >= 1944)
++#if (defined(__AMX_TILE__) && defined(__AMX_BF16__) && defined(__AMX_INT8__)) || (defined(_MSC_VER) && NK_TARGET_X8664_ && _MSC_VER >= 1944)
+ #define NK_TARGET_SAPPHIREAMX 1
+ #else
+ #undef NK_TARGET_SAPPHIREAMX
+@@ -594,7 +595,7 @@
+ #endif // !defined(NK_TARGET_SAPPHIREAMX) || ...
+ 
+ #if !defined(NK_TARGET_GRANITEAMX) || (NK_TARGET_GRANITEAMX && !NK_TARGET_X8664_)
+-#if (defined(__AMX_TILE__) && defined(__AMX_FP16__)) || (defined(_MSC_VER) && _MSC_VER >= 1944)
++#if (defined(__AMX_TILE__) && defined(__AMX_FP16__)) || (defined(_MSC_VER) && NK_TARGET_X8664_ && _MSC_VER >= 1944)
+ #define NK_TARGET_GRANITEAMX 1
+ #else
+ #undef NK_TARGET_GRANITEAMX
+@@ -603,7 +604,7 @@
+ #endif // !defined(NK_TARGET_GRANITEAMX) || ...
+ 
+ #if !defined(NK_TARGET_TURIN) || (NK_TARGET_TURIN && !NK_TARGET_X8664_)
+-#if defined(__AVX512VP2INTERSECT__) || (defined(_MSC_VER) && _MSC_VER >= 1944)
++#if defined(__AVX512VP2INTERSECT__) || (defined(_MSC_VER) && NK_TARGET_X8664_ && _MSC_VER >= 1944)
+ #define NK_TARGET_TURIN 1
+ #else
+ #undef NK_TARGET_TURIN
+@@ -612,7 +613,7 @@
+ #endif // !defined(NK_TARGET_TURIN) || ...
+ 
+ #if !defined(NK_TARGET_ALDER) || (NK_TARGET_ALDER && !NK_TARGET_X8664_)
+-#if defined(__AVXVNNI__) || (defined(_MSC_VER) && _MSC_VER >= 1920)
++#if defined(__AVXVNNI__) || (defined(_MSC_VER) && NK_TARGET_X8664_ && _MSC_VER >= 1920)
+ #define NK_TARGET_ALDER 1
+ #else
+ #undef NK_TARGET_ALDER
+@@ -621,7 +622,7 @@
+ #endif // !defined(NK_TARGET_ALDER) || ...
+ 
+ #if !defined(NK_TARGET_SIERRA) || (NK_TARGET_SIERRA && !NK_TARGET_X8664_)
+-#if defined(__AVXVNNIINT8__) || (defined(_MSC_VER) && _MSC_VER >= 1944)
++#if defined(__AVXVNNIINT8__) || (defined(_MSC_VER) && NK_TARGET_X8664_ && _MSC_VER >= 1944)
+ #define NK_TARGET_SIERRA 1
+ #else
+ #undef NK_TARGET_SIERRA

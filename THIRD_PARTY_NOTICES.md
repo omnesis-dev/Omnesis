@@ -492,7 +492,8 @@ installation to compile and prove the modified binding; other platforms keep
 their existing native binaries. Modified files retain their upstream notices
 and identify these changes.
 The patch also modifies the bundled NumKong ARM64 capability header to include
-`windows.h` before architecture-dependent SDK headers. NumKong is Apache-2.0;
+`windows.h` before architecture-dependent SDK headers, and scopes MSVC x86
+capability detection to x86 targets. NumKong is Apache-2.0;
 its original copyright and license notices remain in the distribution.
 
 ### Copyleft and weak-copyleft dependencies (individual callout)
