@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import { taggedAssert } from "./preflight-state.mjs";
+
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { readFileSync, realpathSync, statSync, existsSync, readdirSync } from "node:fs";
@@ -9,14 +11,22 @@ import { join, dirname, relative, isAbsolute, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 const digest = (bytes) => createHash("sha256").update(bytes).digest("hex");
 function pinned(path, sha) {
-  assert.match(sha, /^[a-f0-9]{64}$/);
+  taggedAssert("provenance-assert-001", assert.match, sha, /^[a-f0-9]{64}$/);
   const bytes = readFileSync(path);
-  assert.equal(digest(bytes), sha, "Provenance manifest hash mismatch");
+  taggedAssert(
+    "provenance-assert-002",
+    assert.equal,
+    digest(bytes),
+    sha,
+    "Provenance manifest hash mismatch",
+  );
   return JSON.parse(bytes);
 }
 function inside(base, path) {
   const rel = relative(base, path);
-  assert.ok(
+  taggedAssert(
+    "provenance-assert-003",
+    assert.ok,
     rel !== "" && !isAbsolute(rel) && rel !== ".." && !rel.startsWith(".." + sep),
     "Path escaped expected package",
   );
@@ -34,24 +44,37 @@ function packageForEntry(entry, name) {
     if (existsSync(file) && JSON.parse(readFileSync(file, "utf8")).name === name)
       return realpathSync(dir);
     const parent = dirname(dir);
-    assert.notEqual(parent, dir, "No matching package root for module");
+    taggedAssert(
+      "provenance-assert-004",
+      assert.notEqual,
+      parent,
+      dir,
+      "No matching package root for module",
+    );
     dir = parent;
   }
 }
 function filesByPath(manifest) {
   const files = new Map();
   for (const item of manifest.files) {
-    assert.match(item.sha256, /^[a-f0-9]{64}$/);
-    assert.ok(!files.has(item.path), "Duplicate manifest file");
+    taggedAssert("provenance-assert-005", assert.match, item.sha256, /^[a-f0-9]{64}$/);
+    taggedAssert(
+      "provenance-assert-006",
+      assert.ok,
+      !files.has(item.path),
+      "Duplicate manifest file",
+    );
     files.set(item.path, item.sha256);
   }
   return files;
 }
 export function verifyRuntimeProvenance(config) {
-  assert.match(config.sourceCommit, /^[a-f0-9]{40}$/);
-  assert.ok(["source", "compiled"].includes(config.mode));
+  taggedAssert("provenance-assert-007", assert.match, config.sourceCommit, /^[a-f0-9]{40}$/);
+  taggedAssert("provenance-assert-008", assert.ok, ["source", "compiled"].includes(config.mode));
   const source = pinned(config.sourceManifest, config.sourceManifestSha256);
-  assert.equal(
+  taggedAssert(
+    "provenance-assert-009",
+    assert.equal,
     source.sourceCommit,
     config.sourceCommit,
     "Source commit differs from pinned capture",
@@ -61,24 +84,52 @@ export function verifyRuntimeProvenance(config) {
   for (const [path, sha] of sourceFiles) {
     const file = join(sourceRoot, path);
     inside(sourceRoot, file);
-    assert.equal(digest(readFileSync(file)), sha, "Captured source file changed: " + path);
+    taggedAssert(
+      "provenance-assert-010",
+      assert.equal,
+      digest(readFileSync(file)),
+      sha,
+      "Captured source file changed: " + path,
+    );
   }
   const bootRel = inside(sourceRoot, realpathSync(config.sourceBootBudgetFile));
-  assert.ok(sourceFiles.has(bootRel), "Boot budget missing from source capture");
+  taggedAssert(
+    "provenance-assert-011",
+    assert.ok,
+    sourceFiles.has(bootRel),
+    "Boot budget missing from source capture",
+  );
   const runtimeRoot = realpathSync(config.runtimeRoot);
   let base = sourceRoot,
     files = sourceFiles;
   if (config.mode === "source")
-    assert.ok(sameObject(runtimeRoot, sourceRoot), "Source runtime root is another checkout");
+    taggedAssert(
+      "provenance-assert-012",
+      assert.ok,
+      sameObject(runtimeRoot, sourceRoot),
+      "Source runtime root is another checkout",
+    );
   else {
     const build = pinned(config.buildManifest, config.buildManifestSha256);
-    assert.equal(build.sourceCommit, config.sourceCommit, "Build belongs to another source commit");
+    taggedAssert(
+      "provenance-assert-013",
+      assert.equal,
+      build.sourceCommit,
+      config.sourceCommit,
+      "Build belongs to another source commit",
+    );
     base = realpathSync(join(runtimeRoot, "staging"));
     files = filesByPath(build);
     for (const [path, sha] of files) {
       const file = join(base, path);
       inside(base, file);
-      assert.equal(digest(readFileSync(file)), sha, "Staged file changed: " + path);
+      taggedAssert(
+        "provenance-assert-014",
+        assert.equal,
+        digest(readFileSync(file)),
+        sha,
+        "Staged file changed: " + path,
+      );
     }
   }
   const expected = new Map();
@@ -88,9 +139,14 @@ export function verifyRuntimeProvenance(config) {
     inside(base, root);
     const json = join(root, "package.json"),
       key = inside(base, json);
-    assert.ok(files.has(key), "Package metadata absent from pinned file inventory");
+    taggedAssert(
+      "provenance-assert-015",
+      assert.ok,
+      files.has(key),
+      "Package metadata absent from pinned file inventory",
+    );
     const metadata = JSON.parse(readFileSync(json, "utf8"));
-    assert.equal(metadata.name, binding.name);
+    taggedAssert("provenance-assert-016", assert.equal, metadata.name, binding.name);
     expected.set(binding.name, root);
     versions[binding.name] = metadata.version;
     if (config.mode === "compiled") {
@@ -99,8 +155,18 @@ export function verifyRuntimeProvenance(config) {
           const file = join(dir, entry.name);
           if (entry.isDirectory()) walk(file);
           else {
-            assert.ok(entry.isFile(), "Unexpected link/nonregular dist artifact");
-            assert.ok(files.has(inside(base, file)), "Stale/orphan dist output: " + file);
+            taggedAssert(
+              "provenance-assert-017",
+              assert.ok,
+              entry.isFile(),
+              "Unexpected link/nonregular dist artifact",
+            );
+            taggedAssert(
+              "provenance-assert-018",
+              assert.ok,
+              files.has(inside(base, file)),
+              "Stale/orphan dist output: " + file,
+            );
           }
         }
       };
@@ -115,17 +181,31 @@ export function verifyRuntimeProvenance(config) {
     "@omnesis/collector",
     "@omnesis/provider-obsidian",
   ])
-    assert.ok(expected.has(required), "Missing runtime package context: " + required);
+    taggedAssert(
+      "provenance-assert-019",
+      assert.ok,
+      expected.has(required),
+      "Missing runtime package context: " + required,
+    );
   const check = (entry, name) => {
     const real = realpathSync(entry),
       root = packageForEntry(real, name);
-    assert.ok(
+    taggedAssert(
+      "provenance-assert-020",
+      assert.ok,
       sameObject(root, expected.get(name)),
       "Module resolved into another checkout/stage: " + name,
     );
     const key = inside(base, real);
-    assert.ok(files.has(key), "Resolved entry absent from pinned inventory: " + key);
-    assert.equal(
+    taggedAssert(
+      "provenance-assert-021",
+      assert.ok,
+      files.has(key),
+      "Resolved entry absent from pinned inventory: " + key,
+    );
+    taggedAssert(
+      "provenance-assert-022",
+      assert.equal,
       digest(readFileSync(real)),
       files.get(key),
       "Resolved module hash differs from pinned source/build",
@@ -142,7 +222,12 @@ export function verifyRuntimeProvenance(config) {
       ...metadata.optionalDependencies,
       ...metadata.peerDependencies,
     }).filter((name) => name.startsWith("@omnesis/"))) {
-      assert.ok(expected.has(dependency), "Missing captured workspace dependency: " + dependency);
+      taggedAssert(
+        "provenance-assert-023",
+        assert.ok,
+        expected.has(dependency),
+        "Missing captured workspace dependency: " + dependency,
+      );
       resolved.push({
         from: name,
         ...check(require.resolve(dependency), dependency),

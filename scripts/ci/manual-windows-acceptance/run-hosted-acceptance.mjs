@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import { validatePreflightDiagnostic } from "./preflight-state.mjs";
+
 import { acceptedManualMode } from "./result-acceptance.mjs";
 import assert from "node:assert/strict";
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
@@ -63,7 +65,14 @@ async function main() {
     }
     const result = await runWindowsJob(
       process.execPath,
-      [...config.nodeArgs, join(dir, "manual-smoke.mjs"), configPath],
+      [
+        ...config.nodeArgs,
+        join(dir, "manual-entry.mjs"),
+        configPath,
+        config.publicSummaryFile,
+        mode,
+        config.sourceCommit,
+      ],
       { cwd: checkout, env, timeoutMs: 15 * 60 * 1000 },
     );
     // Child diagnostics can contain synthetic credentials. Keep all bytes in the
@@ -95,6 +104,8 @@ async function main() {
         sqliteWithoutKeyRefused: boolean(r.sqliteWithoutKeyRefused),
         sqlitePlainControlRead: boolean(r.sqlitePlainControlRead),
         duckdbWithoutKeyRefused: boolean(r.duckdbWithoutKeyRefused),
+        preflightFailure:
+          r.preflightFailure === undefined ? null : validatePreflightDiagnostic(r.preflightFailure),
         realCollectorCli: boolean(r.realCollectorCli),
         modelInference: boolean(r.modelInference),
         documents: count(r.documents),

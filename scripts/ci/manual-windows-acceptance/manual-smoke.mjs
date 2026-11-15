@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import { setPreflightPhase, taggedAssert } from "./preflight-state.mjs";
+
 import assert from "node:assert/strict";
 import { recordReadiness, manualAcceptance } from "./readiness-acceptance.mjs";
 import { verifyRuntimeProvenance } from "./verify-runtime-provenance.mjs";
@@ -19,8 +21,10 @@ import { pathToFileURL, fileURLToPath } from "node:url";
 import { createServer } from "node:net";
 import https from "node:https";
 import { setTimeout as delay } from "node:timers/promises";
+setPreflightPhase("configuration");
 const manifestPath = resolve(process.argv[2]);
 const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+setPreflightPhase("provenance");
 const provenance = verifyRuntimeProvenance(manifest);
 process.stdout.write(
   JSON.stringify({
@@ -32,9 +36,11 @@ process.stdout.write(
     resolvedContexts: provenance.resolved.length,
   }) + "\n",
 );
-assert.ok(["source", "compiled"].includes(manifest.mode));
-assert.equal(process.platform, "win32");
-assert.equal(process.arch, "x64");
+setPreflightPhase("platform");
+taggedAssert("manual-assert-001", assert.ok, ["source", "compiled"].includes(manifest.mode));
+taggedAssert("manual-assert-002", assert.equal, process.platform, "win32");
+taggedAssert("manual-assert-003", assert.equal, process.arch, "x64");
+setPreflightPhase("fixture-root");
 const source = manifest.runtimeRoot;
 const nodePath = manifest.nodePath;
 const nodeArgs = manifest.nodeArgs ?? [];
@@ -56,6 +62,7 @@ const port = await new Promise((resolve, reject) => {
 const url = "https://localhost:" + port;
 for (const name of Object.keys(process.env))
   if (name.toUpperCase().startsWith("OMNESIS_")) delete process.env[name];
+setPreflightPhase("environment");
 const env = {
   ...process.env,
   OMNESIS_BIND: "127.0.0.1",
@@ -92,14 +99,24 @@ for (const k of [
   delete process.env[k];
 }
 Object.assign(process.env, env);
+setPreflightPhase("core-import");
 const core = await import(pathToFileURL(req.resolve("@omnesis/core")).href);
+setPreflightPhase("core-api");
+taggedAssert("manual-assert-004", assert.equal, typeof core.ensurePrivateDirs, "function");
+taggedAssert("manual-assert-005", assert.equal, typeof core.atomicWriteFile, "function");
+taggedAssert("manual-assert-006", assert.equal, typeof core.createWindowsPrivateFile, "function");
+taggedAssert("manual-assert-007", assert.ok, Number.isFinite(core.GATEWAY_EXIT_TIMEOUT_SECONDS));
 const legacyGracefulAcceptanceMs = 35000;
 const productExitEnvelopeMs = core.GATEWAY_EXIT_TIMEOUT_SECONDS * 1000;
-assert.ok(
+taggedAssert(
+  "manual-assert-008",
+  assert.ok,
   [legacyGracefulAcceptanceMs, productExitEnvelopeMs].includes(manifest.gracefulObservationMs),
   "Explicit graceful observation must select legacy35s or the existing product exit envelope",
 );
+setPreflightPhase("private-directories");
 await core.ensurePrivateDirs([root, cfg, vault]);
+setPreflightPhase("vault-fixtures");
 mkdirSync(join(vault, ".obsidian"));
 const fixtures = [
   [
@@ -125,6 +142,7 @@ const roles = [
   "decision",
   "speech-to-speech",
 ];
+setPreflightPhase("initial-config");
 await core.atomicWriteFile(
   join(cfg, "omnesis.json"),
   JSON.stringify({
@@ -132,8 +150,11 @@ await core.atomicWriteFile(
   }),
   { mode: 0o600 },
 );
+setPreflightPhase("fresh-token");
 const entry = manifest.cliEntry;
-assert.ok(
+taggedAssert(
+  "manual-assert-009",
+  assert.ok,
   !existsSync(join(cfg, "token")),
   "Fresh fixture unexpectedly has an existing owner token",
 );
@@ -443,6 +464,7 @@ async function stop(r) {
   });
 }
 
+setPreflightPhase("lifecycle");
 try {
   emit({
     phase: "manual-runtime-begin",
