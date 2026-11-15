@@ -24,17 +24,29 @@ describe("resolveHelperBinary", () => {
     });
   });
 
-  test("refuses a relative or unusable configured program, never falling back", () => {
+  test("refuses relative, missing and non-file configured paths, never falling back", () => {
     expect(resolveHelperBinary({ OMNESIS_TAILSCALE_HELPER: "omnesis-tailnet" }, program)).toEqual({
       path: null,
       reason: "OMNESIS_TAILSCALE_HELPER must be an absolute path.",
     });
-    chmodSync(program, 0o644);
-    expect(resolveHelperBinary({ OMNESIS_TAILSCALE_HELPER: program }, program)).toMatchObject({
-      path: null,
-      reason: expect.stringContaining("missing or not executable"),
-    });
+    for (const invalid of [join(dir, "absent"), dir]) {
+      expect(resolveHelperBinary({ OMNESIS_TAILSCALE_HELPER: invalid }, program)).toMatchObject({
+        path: null,
+        reason: expect.stringContaining("missing or not executable"),
+      });
+    }
   });
+
+  test.skipIf(process.platform === "win32")(
+    "refuses a program without POSIX execute permission",
+    () => {
+      chmodSync(program, 0o644);
+      expect(resolveHelperBinary({ OMNESIS_TAILSCALE_HELPER: program }, program)).toMatchObject({
+        path: null,
+        reason: expect.stringContaining("missing or not executable"),
+      });
+    },
+  );
 
   test("otherwise uses the copy built in the source tree, or says how to get one", () => {
     expect(resolveHelperBinary({}, program)).toEqual({ path: program });
@@ -42,5 +54,6 @@ describe("resolveHelperBinary", () => {
       path: null,
       reason: expect.stringContaining("npm run tailnet-helper:build"),
     });
+    expect(resolveHelperBinary({}, dir)).toMatchObject({ path: null });
   });
 });

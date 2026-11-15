@@ -227,7 +227,12 @@ export class TailscaleEmbedService {
       case "running":
         return { state: "running" };
       case "crashed":
-        return { state: "restarting", ...(snapshot.reason ? { reason: snapshot.reason } : {}) };
+        return snapshot.retrying === false
+          ? {
+              state: "unavailable",
+              reason: snapshot.reason ?? "The helper stopped without a restart",
+            }
+          : { state: "restarting", ...(snapshot.reason ? { reason: snapshot.reason } : {}) };
       default:
         return { state: "starting" };
     }

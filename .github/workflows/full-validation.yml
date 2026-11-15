@@ -163,6 +163,9 @@ jobs:
       - name: Validate accepted source work and independent Collector cleanup
         run: >-
           node scripts/run-check.mjs unit
+          packages/gateway/src/tailscale-embed/supervisor.test.ts
+          packages/gateway/src/tailscale-embed/helper-binary.test.ts
+          packages/gateway/src/tailscale-embed/settings.test.ts
           packages/collector/src/auth-process.test.ts
           packages/collector/src/source-ws-handlers.test.ts
           packages/collector/src/source-ws-handlers.ownership.test.ts
@@ -183,6 +186,13 @@ jobs:
           NODE_OPTIONS: --max-old-space-size=6144
         run: >-
           node node_modules/eslint/bin/eslint.js
+          packages/core/src/owned-child-process.ts
+          packages/gateway/src/tailscale-embed/supervisor.ts
+          packages/gateway/src/tailscale-embed/supervisor.test.ts
+          packages/gateway/src/tailscale-embed/helper-binary.ts
+          packages/gateway/src/tailscale-embed/helper-binary.test.ts
+          packages/gateway/src/tailscale-embed/settings.test.ts
+          packages/gateway/src/tailscale-embed/service.ts
           packages/collector/src/auth-process.ts
           packages/collector/src/auth-process.test.ts
           packages/collector/src/source-ws-handlers.ts
