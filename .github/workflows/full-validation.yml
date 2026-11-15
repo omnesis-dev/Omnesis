@@ -1,10 +1,16 @@
 name: Windows manual runtime diagnosis
 on:
   workflow_dispatch:
+    inputs:
+      diagnostics_only:
+        description: Run storage and bridge diagnostics without repeating manual acceptance
+        type: boolean
+        default: false
 permissions:
   contents: read
 jobs:
   real-runtime:
+    if: ${{ !inputs.diagnostics_only }}
     runs-on: windows-latest
     timeout-minutes: 60
     defaults:
@@ -87,6 +93,9 @@ jobs:
         env:
           TARGET_SHA: ${{ github.sha }}
         run: node --import tsx scripts/ci/hermes-temp-diagnostic/run-temp-diagnostic.mjs "$env:GITHUB_WORKSPACE" "$env:RUNNER_TEMP\hermes-temp-diagnostic" "$env:TARGET_SHA"
+      - name: Measure identical WAL control on default profile temporary storage
+        if: ${{ !cancelled() && steps.dependencies.outcome == 'success' }}
+        run: node scripts/ci/windows-wal-diagnostic.mjs .
       - name: Measure identical WAL control on runner temporary storage
         if: ${{ !cancelled() && steps.dependencies.outcome == 'success' }}
         env:
