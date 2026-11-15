@@ -80,6 +80,7 @@ afterEach(async () => {
 
 test("a hosted-name claim retains its private owner-key cleanup receipt", async () => {
   const f = fixture();
+  f.options.discover = vi.fn(f.options.discover);
   const failure = markedFileError("ENOENT", "cause");
   vi.spyOn(gatewayKeys, "readOrCreateGatewayOwnerKey").mockRejectedValue(failure);
   f.options.env = {
