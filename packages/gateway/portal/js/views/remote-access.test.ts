@@ -241,14 +241,22 @@ async function type(selector: string, value: string) {
   });
 }
 async function submit(selector: string) {
-  await act(async () => (host.querySelector(selector) as HTMLFormElement).dispatchEvent(new (window as any).Event("submit", { cancelable: true })));
+  await act(async () => {
+    (host.querySelector(selector) as HTMLFormElement).dispatchEvent(new (window as any).Event("submit", { cancelable: true }));
+  });
   await settle();
 }
 
 describe("which readers run", () => {
   test("relay only reads nothing of Tailscale; Tailscale only reads nothing of the relay", async () => {
-    const relayApi = await import("../lib/cloud-relay-api.js");
-    const tailscaleApi = await import("../lib/tailscale-api.js");
+    const relayApi = await import(
+      // @ts-expect-error — portal modules are plain JS.
+      "../lib/cloud-relay-api.js"
+    );
+    const tailscaleApi = await import(
+      // @ts-expect-error — portal modules are plain JS.
+      "../lib/tailscale-api.js"
+    );
     await mount(FLAGS.relay);
     expect(tailscaleApi.getTailscale).not.toHaveBeenCalled();
     expect(relayApi.relayManagement).toHaveBeenCalled();
@@ -408,7 +416,10 @@ describe("Tailscale only", () => {
   });
 
   test("a device that won't turn on says why under its option", async () => {
-    const tailscaleApi = await import("../lib/tailscale-api.js");
+    const tailscaleApi = await import(
+      // @ts-expect-error — portal modules are plain JS.
+      "../lib/tailscale-api.js"
+    );
     vi.mocked(tailscaleApi.setTailscaleEnabled).mockRejectedValueOnce(
       Object.assign(new Error("refused"), { serverMessage: "Tailscale can't start on this gateway." }),
     );
@@ -515,7 +526,10 @@ describe("both", () => {
   });
 
   test("my own setup waits when the relay won't turn off", async () => {
-    const relayApi = await import("../lib/cloud-relay-api.js");
+    const relayApi = await import(
+      // @ts-expect-error — portal modules are plain JS.
+      "../lib/cloud-relay-api.js"
+    );
     gateway.relay = relayLinked();
     storage.set("omnesis.remote-access.setup", JSON.stringify({ mode: "setup", step: "connection", self: false, own: "host", url: "" }));
     await mount(FLAGS.relay);
