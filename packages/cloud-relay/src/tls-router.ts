@@ -48,14 +48,15 @@ export function createTlsRouter(options: TlsRouterOptions): {
       return;
     }
     const address = connectionClientAddress(socket);
-    const client = address === undefined ? undefined : clientBucket(address);
-    const held = client === undefined ? 0 : (clients.get(client) ?? 0);
+    // An accepted socket always has a peer; one already gone shares the "undefined" bucket.
+    const client = clientBucket(String(address));
+    const held = clients.get(client) ?? 0;
     if (held >= maxConnectionsPerClient) {
       metrics.data("client_capacity");
       socket.destroy();
       return;
     }
-    if (client !== undefined) clients.set(client, held + 1);
+    clients.set(client, held + 1);
     sockets.add(socket);
     metrics.data("accepted");
     const controller = new AbortController();
@@ -71,11 +72,9 @@ export function createTlsRouter(options: TlsRouterOptions): {
       closedIngressBytes += socket.bytesRead;
       closedEgressBytes += socket.bytesWritten;
       sockets.delete(socket);
-      if (client !== undefined) {
-        const left = (clients.get(client) ?? 1) - 1;
-        if (left > 0) clients.set(client, left);
-        else clients.delete(client);
-      }
+      const left = clients.get(client)! - 1;
+      if (left > 0) clients.set(client, left);
+      else clients.delete(client);
       metrics.data("closed");
       clearTimeout(timer);
       controller.abort();

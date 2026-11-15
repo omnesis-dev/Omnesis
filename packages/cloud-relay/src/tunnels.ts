@@ -297,7 +297,7 @@ export class TunnelBroker {
 /** Returns a client's reservation on a gateway. */
 function release(tunnel: Tunnel, bucket: string | undefined): void {
   if (bucket === undefined) return;
-  const held = (tunnel.clients.get(bucket) ?? 0) - 1;
+  const held = tunnel.clients.get(bucket)! - 1;
   if (held > 0) tunnel.clients.set(bucket, held);
   else tunnel.clients.delete(bucket);
 }

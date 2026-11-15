@@ -234,11 +234,13 @@ onLinux(
       const timeout = new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 3000));
       expect(await Promise.race([closed, timeout])).toBe(true);
 
-      socket = new WebSocket(`wss://127.0.0.1:${f.dataPort}/socket`, {
+      // ws passes TLS options such as servername through to tls.connect.
+      const tlsOptions = {
         servername: GATEWAY,
         rejectUnauthorized: false,
         headers: { authorization: "Bearer fixture-token" },
-      });
+      };
+      socket = new WebSocket(`wss://127.0.0.1:${f.dataPort}/socket`, tlsOptions);
       await once(socket, "open");
       let echoes = 0;
       socket.on("message", () => echoes++);
