@@ -44,8 +44,9 @@ const peer = (overrides: Partial<NonNullable<TailnetCaller["peer"]>> = {}) => ({
   ...overrides,
 });
 
-async function boot(scenario = "connected"): Promise<void> {
+async function boot(scenario = "connected", { cloudRelay = false } = {}): Promise<void> {
   vi.stubEnv("OMNESIS_TAILSCALE_EMBED_ENABLED", "1");
+  if (cloudRelay) vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "1");
   dir = mkdtempSync(join(tmpdir(), "ts-int-"));
   mkdirSync(join(dir, "tailscale", "node"), { recursive: true });
   writeFileSync(join(dir, "tailscale", "node", "fake-scenario"), scenario);
@@ -506,5 +507,95 @@ describe("the pairing QR", () => {
     const payload = JSON.parse(qr.json.qrPayload);
     expect(payload.tailnet).toBe(true);
     expect(payload.tls?.mode).not.toBe("system");
+  });
+});
+
+/**
+ * Both opt-ins at once: the cloud relay and the gateway's own Tailscale device
+ * are independent ways in, and an owner may run both. Neither may widen or
+ * hide the other.
+ */
+describe("with the cloud relay on as well", () => {
+  beforeEach(async () => {
+    await service.shutdown();
+    db.close();
+    rmSync(dir, { recursive: true, force: true });
+    await boot("connected", { cloudRelay: true });
+    await adminCall("POST", "/admin/tailscale/enable", { enabled: true });
+    await until((s) => s.connection === "connected");
+  });
+
+  test("the gateway advertises both, on the tailnet as everywhere", async () => {
+    const status = await adminCall("GET", "/status");
+    expect(status.json).toMatchObject({ cloudRelay: true, tailscaleEmbed: true });
+    const health = await viaHelper("GET", "/health", tailnet());
+    expect(health.json).toMatchObject({ cloudRelay: true, tailscaleEmbed: true });
+  });
+
+  test("the Tailscale public address still opens only agent paths, relay routes included", async () => {
+    const pub = { via: "public" as const, client: "198.51.100.4:1" };
+    for (const path of [
+      "/health",
+      "/status",
+      "/portal/",
+      "/portal/api/session",
+      "/admin/devices",
+      "/admin/tailscale",
+      "/device/ws",
+    ]) {
+      expect((await viaHelper("GET", path, pub)).status, path).toBe(404);
+    }
+    expect((await viaHelper("GET", "/.well-known/oauth-protected-resource", pub)).status).not.toBe(
+      404,
+    );
+  });
+
+  test("a sign-in device and a collector joined through Tailscale sit side by side, each as it joined", async () => {
+    const phone = createDevice(db, { name: "Maya's phone", kind: "ios" });
+    db.prepare(
+      `UPDATE devices SET enrollment_public_key = ?, enrollment_method = 'automatic',
+         enrollment_sign_in = 'passkey', enrolled_at = ? WHERE id = ?`,
+    ).run("fictional-device-key", Date.now(), phone.id);
+    await adminCall("PATCH", "/admin/tailscale/settings", { joinPolicy: "automatic" });
+    const joined = await viaHelper("POST", "/tailscale/join", tailnet(), { name: "maya-laptop" });
+    expect(joined.status).toBe(200);
+    expect(getDevice(db, phone.id)?.enrollment).toMatchObject({
+      method: "automatic",
+      signIn: "passkey",
+    });
+    expect(getDevice(db, joined.json.device.id)?.enrollment).toBeUndefined();
+    // Removing the collector leaves the sign-in device and its enrollment alone.
+    expect((await adminCall("DELETE", `/admin/devices/${joined.json.device.id}`)).status).toBe(200);
+    expect(getDevice(db, phone.id)?.revokedAt).toBeFalsy();
+    expect(getDevice(db, phone.id)?.enrollment).toMatchObject({ method: "automatic" });
+  });
+
+  test("a relay mark on a tailnet request grants nothing: an ask-first join still waits", async () => {
+    await adminCall("PATCH", "/admin/tailscale/settings", { joinPolicy: "ask" });
+    const marked = await new Promise<number>((resolve, reject) => {
+      const socketPath = (service as unknown as { socket: { path: string } }).socket.path;
+      const req = httpRequest(
+        {
+          socketPath,
+          method: "POST",
+          path: "/tailscale/join",
+          headers: {
+            host: "omnesis.example-net.ts.net",
+            "x-omnesis-tailnet": encode(tailnet()),
+            "x-omnesis-cloud-relay": "1",
+            "content-type": "application/json",
+          },
+        },
+        (res) => {
+          res.resume();
+          res.on("end", () => resolve(res.statusCode ?? 0));
+        },
+      );
+      req.on("error", reject);
+      req.end(JSON.stringify({ name: "maya-laptop" }));
+    });
+    // The mark can only withhold: the join still waits for the owner.
+    expect(marked).toBe(202);
+    expect(listDevices(db).some((d) => d.name === "maya-laptop")).toBe(false);
   });
 });
