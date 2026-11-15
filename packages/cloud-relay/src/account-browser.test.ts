@@ -2521,6 +2521,7 @@ test("the connect page explains refusals and lets the user try again", async () 
   for (const [response, text] of [
     [() => new Response("", { status: 404 }), "didn't work"],
     [() => new Response("", { status: 429 }), "Too many tries"],
+    [() => new Response("", { status: 409 }), "already used in another browser"],
     [() => Response.json({ location: "https://foreign.example.test/" }), "went wrong"],
     [
       () => {

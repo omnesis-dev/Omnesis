@@ -57,7 +57,10 @@ export class ConnectHttp {
         const input = claimSchema.safeParse(await readJsonBody(req, 1024));
         if (!input.success) throw new RelayError(400, "Invalid connect request");
         const launch = this.options.codes.claim(input.data.code, req.headers.cookie ?? "");
-        res.writeHead(200, { "content-type": "application/json", "set-cookie": launch.cookie });
+        res.writeHead(200, {
+          "content-type": "application/json",
+          ...(launch.cookie ? { "set-cookie": launch.cookie } : {}),
+        });
         res.end(JSON.stringify({ location: launch.location }));
         return true;
       }, req)

@@ -9,7 +9,9 @@ import {
   CertificateMonitorFailure,
   type CertificateIssuanceProvider,
   type CertificateMonitorError,
+  type CertificateObservation,
 } from "./certificate-monitor-certspotter.js";
+import type { CertificateSnapshotProvider } from "./certificate-monitor-crtsh.js";
 
 const digest = z.string().regex(/^[a-f0-9]{64}$/);
 const timestamp = z.number().int().nonnegative().max(8_640_000_000_000_000);
@@ -40,6 +42,8 @@ const journalSchema = z
 type Journal = z.infer<typeof journalSchema>;
 export interface CertificateMonitorStatus {
   provider: "certspotter";
+  /** Which source finished the last complete scan, once the fallback has had to answer. */
+  lastScanProvider?: "certspotter" | "crtsh";
   hostname: string;
   state: "pending" | "observing" | "incident" | "stale" | "unavailable";
   lastAttemptAt?: string;
@@ -53,6 +57,11 @@ export interface CertificateMonitorOptions {
   expectedSpkiFingerprint(): string | undefined;
   journalFile: string;
   provider: CertificateIssuanceProvider;
+  /**
+   * Asked for the whole history when `provider` can't answer, so one CT service being down doesn't
+   * stop the check. Its answer is judged exactly as the provider's is.
+   */
+  fallback?: CertificateSnapshotProvider;
   /**
    * Told about each certificate the journal is about to record for the first time, before the
    * journal records it. If it throws, nothing is recorded and the next check reports it again.
@@ -72,6 +81,9 @@ export class CertificateIssuanceMonitor {
   private journalInvalid = false;
   private attempt: number | undefined;
   private nextAllowed = 0;
+  /** When the provider asked to be left alone; the fallback answers until then. */
+  private providerAfter = 0;
+  private lastScanProvider: CertificateMonitorStatus["lastScanProvider"];
   private pending: Promise<CertificateMonitorStatus> | undefined;
   private readonly now: () => number;
   private constructor(private readonly options: CertificateMonitorOptions) {
@@ -125,6 +137,7 @@ export class CertificateIssuanceMonitor {
             : "observing";
     return {
       provider: "certspotter",
+      ...(this.lastScanProvider ? { lastScanProvider: this.lastScanProvider } : {}),
       hostname: this.options.hostname,
       state,
       lastError: this.error,
@@ -173,74 +186,34 @@ export class CertificateIssuanceMonitor {
     if (this.journalInvalid || this.now() < this.nextAllowed) return this.status();
     const baseline = this.options.expectedSpkiFingerprint();
     if (baseline === undefined) return this.status();
-    const signal = AbortSignal.any([...(caller ? [caller] : []), AbortSignal.timeout(15_000)]);
     this.attempt = this.now();
     try {
       digest.parse(baseline);
-      signal.throwIfAborted();
-      let cursor = this.journal.cursor;
-      const seen = new Set(cursor ? [cursor] : []);
-      for (let pageNumber = 0; pageNumber < 5; pageNumber++) {
-        const page = await this.options.provider.page(this.options.hostname, cursor, signal);
-        signal.throwIfAborted();
-        let invalid = page.invalidEntries;
-        for (const observation of page.entries) {
-          try {
-            const cert = new X509Certificate(observation.certificateDer);
-            if (
-              !cert.raw.equals(observation.certificateDer) ||
-              !cert.checkHost(this.options.hostname, { subject: "never" })
-            )
-              throw new Error();
-            const spkiFingerprint = createHash("sha256")
-              .update(cert.publicKey.export({ type: "spki", format: "der" }))
-              .digest("hex");
-            const incident = incidentSchema.parse({
-              hostname: this.options.hostname,
-              certificateFingerprint: createHash("sha256").update(cert.raw).digest("hex"),
-              spkiFingerprint,
-              issuer: cert.issuer.replace(/[^\x20-\x7e]/g, "?").slice(0, 256),
-              serial: cert.serialNumber,
-              validFrom: new Date(cert.validFrom).toISOString(),
-              validTo: new Date(cert.validTo).toISOString(),
-              providerEntryId: observation.entryId,
-              observedAt: new Date(this.now()).toISOString(),
-            });
-            if (
-              spkiFingerprint !== baseline &&
-              !this.incidents.some(
-                (prior) => prior.certificateFingerprint === incident.certificateFingerprint,
-              )
-            )
-              this.incidents = [...this.incidents, incident].slice(-32);
-          } catch {
-            invalid++;
-          }
+      const { fallback } = this.options;
+      if (!fallback || this.now() >= this.providerAfter)
+        try {
+          return await this.scanProvider(
+            baseline,
+            AbortSignal.any([...(caller ? [caller] : []), AbortSignal.timeout(15_000)]),
+          );
+        } catch (error) {
+          // Only a provider that couldn't answer is replaced. One that answered with something
+          // malformed or partial stays an error: a second source must not paper over it.
+          if (
+            !fallback ||
+            !(error instanceof CertificateMonitorFailure) ||
+            (error.code !== "ct-provider-unavailable" && error.code !== "ct-provider-refused")
+          )
+            throw error;
+          if (error.retryAfterMs !== undefined)
+            this.providerAfter = this.now() + error.retryAfterMs;
         }
-        if (invalid) {
-          await this.persist(cursor, this.journal.lastCompletedAt);
-          throw new CertificateMonitorFailure("ct-provider-invalid");
-        }
-        if (page.complete) {
-          if (page.entries.length) throw new CertificateMonitorFailure("ct-provider-invalid");
-          signal.throwIfAborted();
-          await this.persist(cursor, this.now());
-          this.error = undefined;
-          this.nextAllowed = page.retryAfterMs === undefined ? 0 : this.now() + page.retryAfterMs;
-          return this.status();
-        }
-        if (
-          page.lastId === undefined ||
-          !identifier.safeParse(page.lastId).success ||
-          seen.has(page.lastId)
-        )
-          throw new CertificateMonitorFailure("ct-provider-invalid");
-        seen.add(page.lastId);
-        cursor = page.lastId;
-        signal.throwIfAborted();
-        await this.persist(cursor, this.journal.lastCompletedAt);
-      }
-      throw new CertificateMonitorFailure("ct-scan-incomplete");
+      // crt.sh is slow: it gets its own minute.
+      return await this.scanFallback(
+        fallback,
+        baseline,
+        AbortSignal.any([...(caller ? [caller] : []), AbortSignal.timeout(60_000)]),
+      );
     } catch (error) {
       this.error =
         error instanceof CertificateMonitorFailure ? error.code : "ct-provider-unavailable";
@@ -248,5 +221,103 @@ export class CertificateIssuanceMonitor {
         this.nextAllowed = this.now() + error.retryAfterMs;
       return this.status();
     }
+  }
+  private async scanProvider(baseline: string, signal: AbortSignal) {
+    signal.throwIfAborted();
+    let cursor = this.journal.cursor;
+    const seen = new Set(cursor ? [cursor] : []);
+    for (let pageNumber = 0; pageNumber < 5; pageNumber++) {
+      const page = await this.options.provider.page(this.options.hostname, cursor, signal);
+      signal.throwIfAborted();
+      const invalid = page.invalidEntries + this.observe(page.entries, baseline);
+      if (invalid) {
+        await this.persist(cursor, this.journal.lastCompletedAt);
+        throw new CertificateMonitorFailure("ct-provider-invalid");
+      }
+      if (page.complete) {
+        if (page.entries.length) throw new CertificateMonitorFailure("ct-provider-invalid");
+        signal.throwIfAborted();
+        await this.persist(cursor, this.now());
+        this.error = undefined;
+        this.lastScanProvider = "certspotter";
+        this.nextAllowed = page.retryAfterMs === undefined ? 0 : this.now() + page.retryAfterMs;
+        return this.status();
+      }
+      if (
+        page.lastId === undefined ||
+        !identifier.safeParse(page.lastId).success ||
+        seen.has(page.lastId)
+      )
+        throw new CertificateMonitorFailure("ct-provider-invalid");
+      seen.add(page.lastId);
+      cursor = page.lastId;
+      signal.throwIfAborted();
+      await this.persist(cursor, this.journal.lastCompletedAt);
+    }
+    throw new CertificateMonitorFailure("ct-scan-incomplete");
+  }
+  /** The whole history at once: the provider's cursor stays where it was for when it is back. */
+  private async scanFallback(
+    fallback: CertificateSnapshotProvider,
+    baseline: string,
+    signal: AbortSignal,
+  ) {
+    signal.throwIfAborted();
+    const entries = await fallback.snapshot(this.options.hostname, signal);
+    signal.throwIfAborted();
+    if (this.observe(entries, baseline)) {
+      await this.persist(this.journal.cursor, this.journal.lastCompletedAt);
+      throw new CertificateMonitorFailure("ct-provider-invalid");
+    }
+    await this.persist(this.journal.cursor, this.now());
+    this.error = undefined;
+    this.lastScanProvider = "crtsh";
+    this.nextAllowed = 0;
+    return this.status();
+  }
+  /**
+   * The same judgement whichever source logged a certificate: one for this name whose key isn't
+   * the gateway's is an incident, recorded once. A precertificate and its certificate, or one
+   * source's copy and another's, share an issuer and serial, so they are one incident.
+   * Returns how many entries could not be read.
+   */
+  private observe(entries: CertificateObservation[], baseline: string): number {
+    let invalid = 0;
+    for (const observation of entries) {
+      try {
+        const cert = new X509Certificate(observation.certificateDer);
+        if (
+          !cert.raw.equals(observation.certificateDer) ||
+          !cert.checkHost(this.options.hostname, { subject: "never" })
+        )
+          throw new Error();
+        const spkiFingerprint = createHash("sha256")
+          .update(cert.publicKey.export({ type: "spki", format: "der" }))
+          .digest("hex");
+        const incident = incidentSchema.parse({
+          hostname: this.options.hostname,
+          certificateFingerprint: createHash("sha256").update(cert.raw).digest("hex"),
+          spkiFingerprint,
+          issuer: cert.issuer.replace(/[^\x20-\x7e]/g, "?").slice(0, 256),
+          serial: cert.serialNumber,
+          validFrom: new Date(cert.validFrom).toISOString(),
+          validTo: new Date(cert.validTo).toISOString(),
+          providerEntryId: observation.entryId,
+          observedAt: new Date(this.now()).toISOString(),
+        });
+        if (
+          spkiFingerprint !== baseline &&
+          !this.incidents.some(
+            (prior) =>
+              prior.certificateFingerprint === incident.certificateFingerprint ||
+              (prior.issuer === incident.issuer && prior.serial === incident.serial),
+          )
+        )
+          this.incidents = [...this.incidents, incident].slice(-32);
+      } catch {
+        invalid++;
+      }
+    }
+    return invalid;
   }
 }

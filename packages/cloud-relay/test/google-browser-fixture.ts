@@ -154,7 +154,8 @@ export async function googleBrowserFixture(
     const pending = request(purpose),
       started = target.start(owner, pending.input),
       url = new URL(started.authorizeUrl);
-    const launched = target.launch(pending.input.operationId, url.searchParams.get("ticket")!);
+    const launch = target.launch(pending.input.operationId, url.searchParams.get("ticket")!);
+    const launched = { ...launch, cookie: launch.cookie! };
     return { ...pending, started, launched, callback: providerCallback(launched.authorizeUrl) };
   }
   return {

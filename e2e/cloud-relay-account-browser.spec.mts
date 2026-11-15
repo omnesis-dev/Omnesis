@@ -187,6 +187,7 @@ test("an owner-signed gateway request creates an account only on the person's ex
         gatewayCookies = request.headers().cookie ?? "";
     });
     await page.goto(pending.authorizeUrl);
+    await page.getByRole("button", { name: "Continue", exact: true }).click();
     await expect(page).toHaveURL(`${origin}/_relay/account?operation=${unsigned.operationId}`);
     // Linking signs in to an account: the page opens on the sign-in view and creates nothing there.
     await expect(

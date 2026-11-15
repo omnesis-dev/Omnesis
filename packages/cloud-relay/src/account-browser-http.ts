@@ -9,6 +9,7 @@ import {
   type AccountBrowserOwner,
 } from "./account-browser-contract.js";
 import { RelayError } from "./tunnels.js";
+import { serveLaunch } from "./browser-launch.js";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { AccountBrowserBroker } from "./account-browser-broker.js";
 import type { LoginAdmission } from "./admission.js";
@@ -20,6 +21,7 @@ const launch = z
     method: z.enum(ACCOUNT_BROWSER_METHODS).optional(),
   })
   .strict();
+const restart = "To use this browser instead, go back to your gateway and start again.";
 const cancel = z.object({ operationId: z.string().uuid() }).strict();
 const empty = z.object({}).strict();
 
@@ -47,24 +49,19 @@ export class AccountBrowserHttp {
     );
     if (req.url!.length > 4096) throw new RelayError(414, "Account browser URL is too large");
     if (url.pathname === ACCOUNT_BROWSER_PATH + "/begin") {
-      if (req.method !== "GET") throw new RelayError(405, "Method not allowed");
-      if (
-        url.searchParams.size !== (url.searchParams.has("method") ? 3 : 2) ||
-        ["operationId", "ticket"].some((key) => url.searchParams.getAll(key).length !== 1)
-      )
-        throw new RelayError(400, "Invalid account browser launch");
-      const input = launch.safeParse(Object.fromEntries(url.searchParams));
-      if (!input.success) throw new RelayError(400, "Invalid account browser launch");
-      return this.options.admission.run(async () => {
-        const result = this.options.broker.launch(
-          input.data.operationId,
-          input.data.ticket,
-          input.data.method,
-        );
-        res.writeHead(303, { location: result.location, "set-cookie": result.cookie });
-        res.end();
-        return true;
-      }, req);
+      const { broker, admission } = this.options;
+      // Opening the link changes nothing; the Continue press binds the operation (F43).
+      return serveLaunch(req, res, url, {
+        admission,
+        origin: broker.origin,
+        path: ACCOUNT_BROWSER_PATH + "/begin",
+        names: { required: ["operationId", "ticket"], optional: ["method"] },
+        parse: (fields) => launch.safeParse(fields).data,
+        peek: (input, cookie) => broker.peekLaunch(input.operationId, input.ticket, cookie),
+        launch: (input, cookie) =>
+          broker.launch(input.operationId, input.ticket, cookie, input.method),
+        restart,
+      });
     }
     if (url.pathname === ACCOUNT_BROWSER_PATH + "/credentials") {
       if (req.method !== "GET") throw new RelayError(405, "Method not allowed");

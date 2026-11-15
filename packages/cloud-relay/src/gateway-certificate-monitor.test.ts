@@ -358,6 +358,46 @@ test("an operator-chosen provider address is used as a base path and must be pla
   }
 });
 
+test("F44: a stand-in for the main CT service gets a crt.sh fallback only when one is named too", async () => {
+  const transport = vi
+    .fn<typeof fetch>()
+    .mockImplementation(async (input) =>
+      new URL(String(input)).hostname === "ct-mirror.example.test"
+        ? new Response("", { status: 503 })
+        : Response.json([]),
+    );
+  vi.stubGlobal("fetch", transport);
+  for (const [env, fallback] of [
+    [{ OMNESIS_CLOUD_RELAY_CERTSPOTTER_URL: "https://ct-mirror.example.test" }, undefined],
+    [
+      {
+        OMNESIS_CLOUD_RELAY_CERTSPOTTER_URL: "https://ct-mirror.example.test",
+        OMNESIS_CLOUD_RELAY_CRTSH_URL: "https://crt-mirror.example.test/search",
+      },
+      "https://crt-mirror.example.test/search/",
+    ],
+  ] as const) {
+    transport.mockClear();
+    const monitor = new GatewayCertificateMonitor({
+      env,
+      configDir: directory,
+      identity: () => known,
+    });
+    monitor.start();
+    await vi.waitFor(() => expect(monitor.status().lastAttemptAt).toBeDefined());
+    const asked = transport.mock.calls.map(([url]) => String(url).split("?")[0]);
+    if (fallback) {
+      await vi.waitFor(() => expect(monitor.status().state).not.toBe("pending"));
+      expect(transport.mock.calls.map(([url]) => String(url).split("?")[0])).toContain(fallback);
+      expect(monitor.status()).toMatchObject({ lastScanProvider: "crtsh" });
+    } else {
+      await vi.waitFor(() => expect(monitor.status().state).toBe("unavailable"));
+      expect(asked.every((url) => url.startsWith("https://ct-mirror.example.test/"))).toBe(true);
+    }
+    await monitor.close();
+  }
+});
+
 const ACCOUNT = "https://acme-v02.api.letsencrypt.org/acme/acct/42";
 function caaMonitor(issue: () => string[] | undefined, overrides: Record<string, unknown> = {}) {
   const drift = vi.fn(async (_digest: string) => {});

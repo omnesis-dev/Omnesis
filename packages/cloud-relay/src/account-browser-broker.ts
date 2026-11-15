@@ -10,6 +10,7 @@ import {
   type ProofEvidence,
 } from "./operation-proof.js";
 import { RelayError } from "./tunnels.js";
+import { LaunchTaken, launchCookie, type LaunchView } from "./browser-launch.js";
 import { signInProofNonce } from "./device-enrollment.js";
 import {
   ACCOUNT_BROWSER_PATH,
@@ -50,7 +51,7 @@ const secret = () => randomBytes(32).toString("base64url");
 /** Gateway owner signatures and explicit account consent bind a one-time identity handoff. */
 export class AccountBrowserBroker implements AccountOperationBroker {
   private readonly operations = new Map<string, Operation>();
-  private readonly origin: string;
+  readonly origin: string;
   private closed = false;
   constructor(
     private readonly options: {
@@ -146,24 +147,54 @@ export class AccountBrowserBroker implements AccountOperationBroker {
     };
   }
 
-  launch(id: string, ticket: string, method?: AccountBrowserMethod) {
-    const operation = this.current(id);
-    // The link may be opened again until somebody signs in; each launch drops the previous browser.
+  /** What opening the link shows. Read only: a link scanner's fetch must change nothing (F43). */
+  peekLaunch(id: string, ticket: string, cookieHeader: string): LaunchView {
+    const operation = this.ticketed(id, ticket);
+    if (this.holds(operation, cookieHeader)) return { state: "here", location: this.location(id) };
+    // Once a browser holds it, every other one is told so, whatever stage it reached.
+    return operation.phase === "created" ? { state: "open" } : { state: "taken" };
+  }
+
+  /**
+   * The Continue press on the link's page. The first browser keeps the operation and may open the
+   * link again; another browser is refused rather than taking it over (F43).
+   */
+  launch(id: string, ticket: string, cookieHeader: string, method?: AccountBrowserMethod) {
+    const operation = this.ticketed(id, ticket);
+    if (this.holds(operation, cookieHeader)) return { location: this.location(id) };
+    if (operation.phase !== "created") throw new LaunchTaken();
     if (
-      !(
-        operation.phase === "created" ||
-        (operation.phase === "launched" && operation.proof.needed())
-      ) ||
-      !opaque.safeParse(ticket).success ||
-      !timingSafeEqual(operation.ticketHash, digest(ticket))
+      cookieHeader
+        .split(";")
+        .filter((part) => part.trim().startsWith("__Host-omnesis-account-operation-")).length >= 8
     )
-      throw new RelayError(403, "Account browser launch refused");
+      throw new RelayError(429, "Too many account browser requests");
     const browser = secret();
     operation.browserHash = digest(browser);
     operation.phase = "launched";
-    // Each launch says it again, so a plain link opened later offers every sign-in.
     operation.method = method;
-    return { location: `/_relay/account?operation=${id}`, cookie: this.cookie(operation, browser) };
+    return { location: this.location(id), cookie: this.cookie(operation, browser) };
+  }
+  private ticketed(id: string, ticket: string): Operation {
+    const operation = this.current(id);
+    if (!opaque.safeParse(ticket).success || !timingSafeEqual(operation.ticketHash, digest(ticket)))
+      throw new RelayError(403, "Account browser launch refused");
+    return operation;
+  }
+  private holds(operation: Operation, cookieHeader: string): boolean {
+    const value = launchCookie(
+      cookieHeader,
+      `__Host-omnesis-account-operation-${operation.request.operationId}`,
+    );
+    return (
+      value !== undefined &&
+      opaque.safeParse(value).success &&
+      operation.browserHash !== undefined &&
+      timingSafeEqual(operation.browserHash, digest(value))
+    );
+  }
+  private location(id: string): string {
+    return `/_relay/account?operation=${id}`;
   }
 
   describe(id: string, cookieHeader: string) {

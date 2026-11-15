@@ -118,7 +118,17 @@ or relay connection path. QR/manual pairing and independently configured direct
 access remain available.
 
 Desktop account sign-in uses the system browser, a launch capability that stops
-working once somebody has signed in, and a private PKCE verifier. Only a short-lived, nonce-bound discovery credential
+working once somebody has signed in, and a private PKCE verifier.
+
+Every relay sign-in link carries its one-use secret in the query (`…/begin?operationId=…&ticket=…`
+for gateway sign-up, gateway sign-in, Google sign-in and desktop sign-in). Link scanners
+(antivirus, VPN "threat protection", mail filters) fetch such links too, without cookies or
+scripts. So opening a link changes nothing: it shows a page with one Continue button, and only
+that press, a same-origin form POST to the same path, ties the sign-in to the browser. The first
+browser to press it keeps the sign-in; the same browser may open the link or type the connect
+code again and goes straight back, while any other browser is told "This sign-in was opened in
+another browser" and changes nothing. Starting again from the gateway or the terminal makes a new
+link. Only a short-lived, nonce-bound discovery credential
 returns to the desktop; account management cookies stay in the browser. Native
 Android Google sign-in uses Credential Manager with a server-issued nonce.
 
@@ -747,17 +757,27 @@ this implementation does not apply them to a live zone.
 
 Gateway-owned monitoring observes the gateway's public hostname through
 [SSLMate's Cert Spotter API](https://sslmate.com/help/reference/ct_search_api_v1).
+When Cert Spotter can't answer (an outage, rate limit or refusal), the same check
+asks [crt.sh](https://crt.sh/) for the whole history of the name and of the
+wildcard one label up, reads each certificate it hasn't read yet, and judges them
+the same way. A precertificate and its certificate, or the same certificate from
+both services, are one incident. A malformed answer from either is an error, never
+replaced by the other's, and a crt.sh answer too long to read whole is reported as
+an incomplete scan. While a CT service is down, checks are retried at least hourly.
 It is on by default for a gateway with a relay address, because automatic
 device enrollment relies on it. Set
 `OMNESIS_CLOUD_RELAY_CERTIFICATE_MONITOR_ENABLED=0` to turn it off. Optional
 settings are `OMNESIS_CLOUD_RELAY_CERTIFICATE_MONITOR_INTERVAL_MS`,
 `OMNESIS_CLOUD_RELAY_CERTSPOTTER_API_KEY_FILE` and
 `OMNESIS_CLOUD_RELAY_CERTSPOTTER_URL` (an HTTPS service with the same API, used
-in place of `https://api.certspotter.com/`). The private API-key file contains
+in place of `https://api.certspotter.com/`) and `OMNESIS_CLOUD_RELAY_CRTSH_URL`
+(the same for `https://crt.sh/`; with a Cert Spotter stand-in and no crt.sh one,
+there is no fallback). A Cert Spotter API key also lifts its free tier's limits,
+which that service suspends under load. The private API-key file contains
 an `apiKey` field and is sent only to that provider origin. Provider access,
 quotas and credentials are operator configuration.
 
-The observer sends the public hostname to that provider and compares certificate
+The observer sends the public hostname to those providers and compares certificate
 public keys with the key of the certificate the gateway serves for that name. It
 parses certificate DER itself and verifies hostname coverage. Same-key renewals
 are expected; another key produces a local incident containing public

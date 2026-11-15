@@ -7,6 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, test } from "vitest";
 import { googleBrowserFixture } from "../test/google-browser-fixture.js";
+import { openLaunch } from "../test/browser-launch.js";
 import { listen } from "../test/support.js";
 import { RelayAccounts } from "./accounts.js";
 import { RelaySessions, accountId } from "./identity.js";
@@ -108,7 +109,7 @@ test.each(["owner-link", "device-enrollment"] as GoogleBrowserPurpose[])(
     expect(JSON.stringify(signed.body)).not.toContain(pending.redemptionSecret);
     expect(JSON.stringify(signed.body)).not.toContain(fields.secret);
     expect(signed.body).toHaveProperty("ownerSignature");
-    const launched = await fetch(pending.authorizeUrl, { redirect: "manual" });
+    const launched = await openLaunch(pending.authorizeUrl, origin);
     expect(launched.status).toBe(303);
     const centralCookie = launched.headers.get("set-cookie")!;
     expect(centralCookie).toContain("Path=/; HttpOnly; Secure; SameSite=Lax");

@@ -1207,6 +1207,7 @@ export async function enterConnectCode(page: Page, connectUrl: string, code: str
 export async function clickFirst(page: Page, names: readonly string[], timeoutMs = 20_000) {
   const deadline = Date.now() + timeoutMs;
   for (;;) {
+    if (!names.includes("Continue") && (await passLaunchPage(page))) continue;
     for (const name of names) {
       const button = page.getByRole("button", { name, exact: true });
       if (await button.isVisible().catch(() => false)) {
@@ -1224,9 +1225,40 @@ export async function clickFirst(page: Page, names: readonly string[], timeoutMs
   }
 }
 
+/**
+ * A relay sign-in link opens a page with one Continue button, and only that press ties the
+ * sign-in to the browser (F43). A person presses it; so do these helpers, when a page shows it.
+ */
+async function passLaunchPage(page: Page): Promise<boolean> {
+  const url = new URL(page.url());
+  if (!url.pathname.startsWith("/_relay/") || !url.pathname.endsWith("/begin")) return false;
+  const button = page.getByRole("button", { name: "Continue", exact: true });
+  if (!(await button.isVisible().catch(() => false))) return false;
+  await button.click();
+  await page.waitForURL((next) => next.href !== url.href, { timeout: 20_000 }).catch(() => {});
+  return true;
+}
+
+/** Presses Continue on the relay sign-in link's page the browser is on, or is about to be on. */
+export async function pressContinue(page: Page, timeoutMs = 20_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!(await passLaunchPage(page))) {
+    if (Date.now() >= deadline)
+      throw new Error(`No sign-in Continue button on ${page.url()}:\n${await pageSummary(page)}`);
+    await page.waitForTimeout(100);
+  }
+}
+
 export async function expectText(page: Page, text: string | RegExp, timeoutMs = 20_000) {
   try {
-    await page.getByText(text).first().waitFor({ state: "visible", timeout: timeoutMs });
+    const deadline = Date.now() + timeoutMs;
+    const target = page.getByText(text).first();
+    while (
+      !(await target.isVisible().catch(() => false)) &&
+      (await passLaunchPage(page)) &&
+      Date.now() < deadline
+    );
+    await target.waitFor({ state: "visible", timeout: Math.max(1, deadline - Date.now()) });
   } catch (error) {
     throw new Error(
       `"${String(text)}" did not appear on ${page.url()}:\n${await pageSummary(page)}`,
