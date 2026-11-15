@@ -39,6 +39,8 @@ final class AccountCloudPairingClientTests: XCTestCase {
         reusing: SessionFixture? = nil,
         publicCertificate: Bool = true,
         checksPublicCertificate: Bool = true,
+        trustsGateway: Bool = false,
+        trustedKeys: Set<String> = [],
         issuedAt: String? = nil,
         mutateControl: Mutation? = nil,
         mutateGateway: Mutation? = nil
@@ -78,6 +80,8 @@ final class AccountCloudPairingClientTests: XCTestCase {
         }
         let pinned = makePinned(value: value, challenge: challenge, publicCertificate: publicCertificate, mutateGateway: mutateGateway)
         let factory = AccountTestLeafFactory(transport: pinned, fingerprint: value.fingerprint)
+        // A key this install already trusts, as from an earlier pairing; a new device has none.
+        let trusted = try trustedKeys.union(trustsGateway ? [value.gateway.candidateSPKIFingerprint(now: value.clock)] : [])
         let client = try AccountCloudPairingClient(
             relayOrigin: XCTUnwrap(URL(string: origin)),
             clientId: clientId,
@@ -85,6 +89,7 @@ final class AccountCloudPairingClientTests: XCTestCase {
             gatewayFactory: factory,
             deviceKey: { key },
             checksPublicCertificate: checksPublicCertificate,
+            trustedGatewayKeys: { trusted },
             now: { fixtureClock.value }
         )
         return try SessionFixture(
@@ -619,7 +624,7 @@ extension AccountCloudPairingClientTests {
     }
 
     func testTheRequestProvesTheKeyAndCarriesThePasskeyProof() async throws {
-        let setup = try fixture()
+        let setup = try fixture(trustsGateway: true)
         let choices = try await passkeyChoices(setup)
         let pending = try await setup.client.select(gatewayId: choices[0].gatewayId)
         XCTAssertEqual(setup.pinned.paths, ["/devices/account/challenge", "/devices/account/request"])
@@ -664,9 +669,9 @@ extension AccountCloudPairingClientTests {
         await setup.client.close()
     }
 
-    func testAnImmediateApprovalJoinsWithoutComparison() async throws {
+    func testAnImmediateApprovalFromAGatewayThisDeviceTrustsJoinsWithoutComparison() async throws {
         let probe = try fixture()
-        let setup = try fixture(reusing: probe, mutateGateway: approved(probe))
+        let setup = try fixture(reusing: probe, trustsGateway: true, mutateGateway: approved(probe))
         let choices = try await passkeyChoices(setup)
         let joined = try await setup.client.select(gatewayId: choices[0].gatewayId)
         XCTAssertTrue(joined.joinedAutomatically)
@@ -676,7 +681,7 @@ extension AccountCloudPairingClientTests {
 
     func testAFailedPublicCertificateCheckAsksForApprovalAndKeepsTheComparison() async throws {
         let probe = try fixture()
-        let setup = try fixture(reusing: probe, publicCertificate: false, mutateGateway: approved(probe))
+        let setup = try fixture(reusing: probe, publicCertificate: false, trustsGateway: true, mutateGateway: approved(probe))
         let choices = try await passkeyChoices(setup)
         var pending = try await setup.client.select(gatewayId: choices[0].gatewayId)
         XCTAssertEqual(setup.pinned.lastBody(path: "/devices/account/request")?["requireApproval"] as? Bool, true)
@@ -689,7 +694,7 @@ extension AccountCloudPairingClientTests {
     }
 
     func testATestGatewayBuildCanSkipThePublicCertificateCheck() async throws {
-        let setup = try fixture(publicCertificate: false, checksPublicCertificate: false)
+        let setup = try fixture(publicCertificate: false, checksPublicCertificate: false, trustsGateway: true)
         let choices = try await passkeyChoices(setup)
         _ = try await setup.client.select(gatewayId: choices[0].gatewayId)
         XCTAssertEqual(setup.pinned.lastBody(path: "/devices/account/request")?["requireApproval"] as? Bool, false)
@@ -793,7 +798,7 @@ extension AccountCloudPairingClientTests {
     /// Held, the request is approved on the gateway's own page, which the gateway names over the
     /// pinned connection; the poll then finds it approved and the device pairs after the comparison.
     func testAHeldPasskeySignInOpensTheGatewaysOwnApprovalPageAndPollsUntilApproved() async throws {
-        let setup = try fixture()
+        let setup = try fixture(trustsGateway: true)
         let choices = try await passkeyChoices(setup)
         var pending = try await setup.client.select(gatewayId: choices[0].gatewayId)
         XCTAssertFalse(pending.approved)
@@ -830,7 +835,10 @@ extension AccountCloudPairingClientTests {
             ("a domain the relay does not serve", ["rpId": "g-00000000000040008000000000000001.relay.example.test", "origin": own]),
         ]
         for (name, advertised) in refused {
-            let setup = try fixture(mutateGateway: mutation(path: "/devices/account/config", fields: ["gatewayPasskey": advertised]))
+            let setup = try fixture(
+                trustsGateway: true,
+                mutateGateway: mutation(path: "/devices/account/config", fields: ["gatewayPasskey": advertised])
+            )
             let choices = try await passkeyChoices(setup)
             _ = try await setup.client.select(gatewayId: choices[0].gatewayId)
             let page = try await setup.client.approvalPage()
@@ -854,7 +862,7 @@ extension AccountCloudPairingClientTests {
             requestId: "not-a-request"
         ))
         // The gateway's own page, named as it is, is the one opened.
-        let setup = try fixture()
+        let setup = try fixture(trustsGateway: true)
         let choices = try await passkeyChoices(setup)
         _ = try await setup.client.select(gatewayId: choices[0].gatewayId)
         let page = try await setup.client.approvalPage()
@@ -864,7 +872,7 @@ extension AccountCloudPairingClientTests {
     }
 
     func testAGatewayWithoutAnApprovalPageOrWithAnOversizedConfigOpensNothing() async throws {
-        let silent = try fixture(mutateGateway: { url, data in
+        let silent = try fixture(trustsGateway: true, mutateGateway: { url, data in
             url.path == "/devices/account/config" ? Data(#"{"accountSignIn":true}"#.utf8) : data
         })
         let choices = try await passkeyChoices(silent)
@@ -873,7 +881,7 @@ extension AccountCloudPairingClientTests {
         XCTAssertNil(none)
         await silent.client.close()
 
-        let oversized = try fixture(mutateGateway: { url, data in
+        let oversized = try fixture(trustsGateway: true, mutateGateway: { url, data in
             url.path == "/devices/account/config" ? Data(repeating: 65, count: 65537) : data
         })
         let oversizedChoices = try await passkeyChoices(oversized)
@@ -895,7 +903,7 @@ extension AccountCloudPairingClientTests {
             ("an older gateway", ["passkeyApproval": NSNull()]),
             ("a non-boolean", ["passkeyApproval": "true"]),
         ] {
-            let setup = try fixture(mutateGateway: { url, data in
+            let setup = try fixture(trustsGateway: true, mutateGateway: { url, data in
                 guard url.path == "/devices/account/config" else { return data }
                 var object = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
                 for (key, value) in fields {
@@ -913,7 +921,7 @@ extension AccountCloudPairingClientTests {
             }
             await setup.client.close()
         }
-        let setup = try fixture()
+        let setup = try fixture(trustsGateway: true)
         let choices = try await passkeyChoices(setup)
         _ = try await setup.client.select(gatewayId: choices[0].gatewayId)
         let page = try await setup.client.approvalPage()
@@ -937,13 +945,74 @@ extension AccountCloudPairingClientTests {
         } catch { XCTAssertEqual(error as? AccountPairingError, .cancelled) }
 
         let probe = try fixture()
-        let joined = try fixture(reusing: probe, mutateGateway: approved(probe))
+        let joined = try fixture(reusing: probe, trustsGateway: true, mutateGateway: approved(probe))
         let choices = try await passkeyChoices(joined)
         _ = try await joined.client.select(gatewayId: choices[0].gatewayId)
         let none = try await joined.client.approvalPage()
         XCTAssertNil(none)
         XCTAssertFalse(joined.pinned.paths.contains("/devices/account/config"))
         await joined.client.close()
+    }
+}
+
+// MARK: - F6: a gateway only the relay named
+
+extension AccountCloudPairingClientTests {
+    /// F6: a hacked relay lists a gateway of its own as "your gateway". Its certificate is publicly
+    /// valid and logged for the name listed, its key is not one this device knows, and it approves at
+    /// once. A new device must not join it by itself: it asks to be held and a person compares codes.
+    func testF6AListedGatewayWithAValidPublicCertificateCannotMakeANewDeviceJoinByItself() async throws {
+        for google in [false, true] {
+            let probe = try fixture()
+            let setup = try fixture(reusing: probe, publicCertificate: true, mutateGateway: approved(probe))
+            let choices: [AccountGatewayChoice]
+            if google {
+                _ = try await setup.client.begin(challenge: setup.challenge)
+                let idToken = try token(setup.signer, clock: setup.fixture.clock, nonce: setup.googleNonce)
+                choices = try await setup.client.google(idToken: idToken)
+            } else {
+                choices = try await passkeyChoices(setup)
+            }
+            var pending = try await setup.client.select(gatewayId: choices[0].gatewayId)
+            // Held at the owner's real gateway, whose approval card then shows this same code.
+            XCTAssertEqual(setup.pinned.lastBody(path: "/devices/account/request")?["requireApproval"] as? Bool, true)
+            XCTAssertTrue(pending.approved)
+            XCTAssertFalse(pending.joinedAutomatically, "A gateway the relay chose joined this device by itself")
+            XCTAssertFalse(pending.gatewayVerified)
+            XCTAssertThrowsError(try pending.pairingPayload(now: setup.fixture.clock))
+            // Only a person who saw this code on a device they already use connects it.
+            pending.confirmComparison()
+            XCTAssertNoThrow(try pending.pairingPayload(now: setup.fixture.clock))
+            await setup.client.close()
+        }
+    }
+
+    /// F6: the gateway's approval page would be served by the gateway the relay listed. Approving there
+    /// and comparing its code proves nothing, so a device that could not check the gateway opens none.
+    func testF6AGatewayThisDeviceCouldNotCheckOffersNoApprovalPageOfItsOwn() async throws {
+        let setup = try fixture(publicCertificate: true)
+        let choices = try await passkeyChoices(setup)
+        let pending = try await setup.client.select(gatewayId: choices[0].gatewayId)
+        XCTAssertFalse(pending.gatewayVerified)
+        let page = try await setup.client.approvalPage()
+        XCTAssertNil(page)
+        XCTAssertFalse(setup.pinned.paths.contains("/devices/account/config"))
+        await setup.client.close()
+    }
+
+    func testF6ATrustedKeyOfAnotherGatewayDoesNotVouchForTheOneTheRelayListed() async throws {
+        let probe = try fixture()
+        let setup = try fixture(
+            reusing: probe,
+            trustedKeys: [String(repeating: "0", count: 64)],
+            mutateGateway: approved(probe)
+        )
+        let choices = try await passkeyChoices(setup)
+        let pending = try await setup.client.select(gatewayId: choices[0].gatewayId)
+        XCTAssertEqual(setup.pinned.lastBody(path: "/devices/account/request")?["requireApproval"] as? Bool, true)
+        XCTAssertFalse(pending.joinedAutomatically)
+        XCTAssertFalse(pending.gatewayVerified)
+        await setup.client.close()
     }
 }
 

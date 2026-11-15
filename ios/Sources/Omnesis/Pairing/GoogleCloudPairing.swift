@@ -110,8 +110,9 @@ public struct CloudPairingProgress: Codable, Sendable, Equatable {
 }
 
 /// Approval and local code comparison are independent gates. A forged remote approval cannot skip either.
-/// The one exception is `acceptAutomaticJoin`: a gateway this device pinned, and whose certificate passed
-/// the public checks, answered a signed sign-in request by joining the device.
+/// The one exception is `acceptAutomaticJoin`: a gateway whose key this device already trusted without
+/// the relay, and whose certificate passed the public checks, answered a signed sign-in request by
+/// joining the device.
 public struct CloudPairingConfirmation: Sendable {
     public let challenge: CloudPairingChallenge
     public let origin: URL
@@ -123,9 +124,10 @@ public struct CloudPairingConfirmation: Sendable {
     public private(set) var approved = false
     public private(set) var compared = false
     public private(set) var joinedAutomatically = false
-    /// The signed request went to a gateway whose certificate passed the public checks, the same
-    /// footing an automatic join stands on. An approval that gateway reports later is then as
-    /// bound as a join, so the app continues on its own; otherwise a person confirms the codes.
+    /// The signed request went to a gateway whose key this device already trusted without the relay,
+    /// the same footing an automatic join stands on. An approval that gateway reports later is then
+    /// as bound as a join, so the app continues on its own; otherwise a person confirms the codes,
+    /// because a gateway the relay listed may not be the owner's (F6).
     public private(set) var gatewayVerified = false
     private var pairingCode: String?
     private var expiresAt: TimeInterval
@@ -176,8 +178,8 @@ public struct CloudPairingConfirmation: Sendable {
         compared = true
     }
 
-    /// Call only for the immediate answer to a signed enrollment request whose certificate
-    /// passed the public checks. A later approval goes through `confirmComparison`.
+    /// Call only for the immediate answer to a signed enrollment request to a gateway this device
+    /// verified without the relay. A later approval goes through `confirmComparison`.
     mutating func acceptAutomaticJoin() {
         joinedAutomatically = approved
         gatewayVerified = true

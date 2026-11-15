@@ -11,7 +11,9 @@ import javax.net.ssl.X509TrustManager
 /**
  * First contact with a gateway: is the certificate the relay proposed publicly trusted for this
  * hostname and logged? Pairing never fails on the answer. A "no" asks the gateway to hold the
- * request for a person, because a fake gateway could not get a logged certificate unnoticed.
+ * request for a person. A "yes" alone proves nothing about whose gateway it is: a hacked relay can
+ * list a gateway of its own with a valid certificate (F6), so it counts only for a gateway key this
+ * install already trusts.
  */
 class PublicCertificateCheck(
     private val trust: X509TrustManager = LeafCertPinner.platformDefaultTrustManager(),
