@@ -378,8 +378,7 @@ export function keywordMigrationReadout(lexical) {
   return {
     kind: from ? "migration" : "build",
     label: switching ? "Finishing" : "Rebuilding",
-    verb: from ? `Keyword index: ${from} →` : "Keyword index:",
-    model: to,
+    detail: from ? `Keyword index: ${from} → ${to}` : `Keyword index: ${to}`,
     percent,
     docsBuilt,
     docsTotal,
@@ -422,7 +421,7 @@ function ProgressReadout(r) {
           <span class="index-migration-label">${r.label.toUpperCase()}</span>
         </span>
         <span class="index-migration-detail">
-          ${r.verb} <code class="index-migration-model">${r.model}</code>
+          ${r.detail ?? html`${r.verb} <code class="index-migration-model">${r.model}</code>`}
         </span>
         <span class="index-migration-figures">
           <span class="index-migration-pct">${r.percent}%</span>

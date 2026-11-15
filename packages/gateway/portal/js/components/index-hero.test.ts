@@ -140,8 +140,7 @@ describe("keywordMigrationReadout", () => {
     expect(r).toMatchObject({
       kind: "migration",
       label: "Rebuilding",
-      verb: "Keyword index: version 0 →",
-      model: "version 1",
+      detail: "Keyword index: version 0 → version 1",
       percent: 37,
       docsBuilt: 450_000,
       docsTotal: 1_200_000,
