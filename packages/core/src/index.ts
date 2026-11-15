@@ -1457,3 +1457,8 @@ export {
   createWindowsPrivateFile,
   readWindowsRegularFilePrefix,
 } from "./windows-private-file.js";
+
+export {
+  OwnedProcessShutdownFence,
+  type OwnedProcessCleanup,
+} from "./owned-process-shutdown-fence.js";

@@ -39,6 +39,11 @@ public static partial class OmnesisPrivateFile {
   [DllImport("kernel32.dll")] static extern IntPtr LocalFree(IntPtr pointer);
   static string User() { return WindowsIdentity.GetCurrent().User.Value; }
   static bool Trusted(string sid) { return sid==User() || sid=="S-1-5-18" || sid=="S-1-5-32-544"; }
+  static bool TrustedGrant(string sid,SecurityIdentifier owner) {
+    // OWNER_RIGHTS is relative to this descriptor's actual owner, not a
+    // generally trusted principal. Python's private temp directories use it.
+    return Trusted(sid) || (sid=="S-1-3-4" && owner!=null && Trusted(owner.Value));
+  }
   static void Check(bool value) { if(!value) throw new Win32Exception(Marshal.GetLastWin32Error()); }
   static void CheckCode(uint value) { if(value!=0) throw new Win32Exception((int)value); }
   static Info Information(SafeFileHandle handle,bool directory) {
@@ -70,7 +75,7 @@ public static partial class OmnesisPrivateFile {
     foreach(GenericAce ace in descriptor.DiscretionaryAcl) {
       QualifiedAce rule=ace as QualifiedAce;
       if(rule==null || (rule.AceQualifier!=AceQualifier.AccessAllowed && rule.AceQualifier!=AceQualifier.AccessDenied)) return false;
-      if(rule.AceQualifier==AceQualifier.AccessAllowed && !Trusted(rule.SecurityIdentifier.Value)) {
+      if(rule.AceQualifier==AceQualifier.AccessAllowed && !TrustedGrant(rule.SecurityIdentifier.Value,descriptor.Owner)) {
         if(!parent || ((rule.AceFlags&AceFlags.InheritOnly)==0 && ((uint)rule.AccessMask&0x500D0156U)!=0)) return false;
       }
     }

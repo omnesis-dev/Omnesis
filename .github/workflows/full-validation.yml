@@ -89,9 +89,19 @@ jobs:
       - name: Install locked Windows dependencies
         id: dependencies
         run: node scripts/ci/npm-ci.mjs --no-audit --no-fund
-      - name: Baseline owner-relative descriptor compatibility
+      - name: Validate owner-relative descriptor compatibility
         if: ${{ !cancelled() && steps.dependencies.outcome == 'success' }}
         run: node scripts/run-check.mjs unit packages/platform/src/windows-private-owner-rights.windows.test.ts
+      - name: Exercise generated Python adapter suite on actual private temp directories
+        if: ${{ !cancelled() && steps.dependencies.outcome == 'success' }}
+        run: node --import tsx scripts/test-hermes.mjs
+      - name: Validate native private filesystem refusal and preservation controls
+        if: ${{ !cancelled() && steps.dependencies.outcome == 'success' }}
+        run: >-
+          node scripts/run-check.mjs unit
+          packages/platform/src/windows-private-copy.windows.test.ts
+          packages/platform/src/windows-private-traversal.windows.test.ts
+          packages/platform/src/windows-private-repair-streams.windows.test.ts
       - name: Compare real Hermes operations under sibling temp origins
         if: ${{ !cancelled() && steps.dependencies.outcome == 'success' }}
         env:
@@ -129,5 +139,38 @@ jobs:
           cache: npm
       - name: Install locked dependencies
         run: node scripts/ci/npm-ci.mjs --no-audit --no-fund
-      - name: Baseline watchdog owned-operation exit hold
-        run: node scripts/run-check.mjs unit packages/collector/src/event-loop-watchdog-owned-work.test.ts
+      - name: Validate watchdog ownership admission and retained exit
+        run: >-
+          node scripts/run-check.mjs unit
+          packages/collector/src/event-loop-watchdog-owned-work.test.ts
+          packages/collector/src/event-loop-watchdog.test.ts
+          packages/collector/src/owned-process-shutdown.test.ts
+
+  windows-storage-performance:
+    if: ${{ inputs.diagnostics_only }}
+    runs-on: windows-latest
+    timeout-minutes: 45
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+      TZ: UTC
+      TEMP: ${{ runner.temp }}
+      TMP: ${{ runner.temp }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: "24"
+          cache: npm
+      - name: Install locked dependencies
+        run: node scripts/ci/npm-ci.mjs --no-audit --no-fund
+      - name: Build and prove actual patched MSVC vector dependency
+        run: node scripts/ci/build-windows-usearch.mjs
+      - name: Validate unchanged storage latency and fairness budgets
+        run: >-
+          node scripts/run-check.mjs e2e
+          packages/gateway/src/scheduler/writer-wal-checkpoint.e2e.test.ts
+          packages/gateway/src/scheduler/writer-maintenance.preempt.e2e.test.ts
+          packages/gateway/src/scheduler/near-dup-apply-backlog.preempt.e2e.test.ts

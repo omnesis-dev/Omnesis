@@ -15,7 +15,8 @@ public static partial class OmnesisPrivateFile {
       "O:BAG:BAD:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;FA;;;OW)",
       "O:SYG:SYD:P(A;;FA;;;OW)",
       "O:S-1-5-21-100-200-300-1001G:BAD:P(A;;FA;;;OW)",
-      "O:BAG:BAD:P(A;;FA;;;OW)(A;;FR;;;WD)"
+      "O:BAG:BAD:P(A;;FA;;;OW)(A;;FR;;;WD)",
+      "O:BAG:BAD:P(A;;FA;;;OW)(A;;FW;;;WD)"
     };
     List<string> rows=new List<string>();
     foreach(string sddl in descriptors) {
@@ -52,6 +53,7 @@ test.runIf(process.platform === "win32")(
         { file: true, parent: true, unchanged: true },
         { file: true, parent: true, unchanged: true },
         { file: false, parent: false, unchanged: true },
+        { file: false, parent: true, unchanged: true },
         { file: false, parent: false, unchanged: true },
       ],
     });
