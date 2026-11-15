@@ -124,6 +124,7 @@ function viaHelper(
   path: string,
   caller: TailnetCaller,
   body?: unknown,
+  extraHeaders: Record<string, string> = {},
 ): Promise<{ status: number; json: any }> {
   const socket = (service as unknown as { socket: TailnetSocketServer }).socket;
   const socketPath = socket.path;
@@ -136,6 +137,7 @@ function viaHelper(
         method,
         path,
         headers: {
+          ...extraHeaders,
           host: "omnesis.example-net.ts.net",
           ...(socket.transport ? { [TAILNET_TRANSPORT_HEADER]: socket.transport.token } : {}),
           "x-omnesis-tailnet": encode(caller),
@@ -591,31 +593,15 @@ describe("with the cloud relay on as well", () => {
 
   test("a relay mark on a tailnet request grants nothing: an ask-first join still waits", async () => {
     await adminCall("PATCH", "/admin/tailscale/settings", { joinPolicy: "ask" });
-    const marked = await new Promise<number>((resolve, reject) => {
-      const socket = (service as unknown as { socket: TailnetSocketServer }).socket;
-      const socketPath = socket.path;
-      const req = httpRequest(
-        {
-          socketPath,
-          method: "POST",
-          path: "/tailscale/join",
-          headers: {
-            host: "omnesis.example-net.ts.net",
-            "x-omnesis-tailnet": encode(tailnet()),
-            "x-omnesis-cloud-relay": "1",
-            "content-type": "application/json",
-          },
-        },
-        (res) => {
-          res.resume();
-          res.on("end", () => resolve(res.statusCode ?? 0));
-        },
-      );
-      req.on("error", reject);
-      req.end(JSON.stringify({ name: "maya-laptop" }));
-    });
+    const marked = await viaHelper(
+      "POST",
+      "/tailscale/join",
+      tailnet(),
+      { name: "maya-laptop" },
+      { "x-omnesis-cloud-relay": "1" },
+    );
     // The mark can only withhold: the join still waits for the owner.
-    expect(marked).toBe(202);
+    expect(marked.status).toBe(202);
     expect(listDevices(db).some((d) => d.name === "maya-laptop")).toBe(false);
   });
 });
