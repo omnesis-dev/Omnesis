@@ -6,7 +6,7 @@ import { apiFetch } from "../api.js";
 /**
  * One relay management call. No operation reads status; an operation is a POST
  * unless a method is named (the enrollment policy is a PUT). `stepUpAnnounced`: the control
- * already said Face ID comes next, so no note is shown before it.
+ * already said the passkey comes next, so no note is shown before it.
  */
 export async function relayManagement(operation, input, signal, method = "POST", options = {}) {
   const response = await apiFetch(`/admin/cloud-relay${operation ? `/${operation}` : ""}`, {

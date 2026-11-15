@@ -28,7 +28,7 @@ test("uses authenticated same-origin status and mutation calls with cancellation
     method: "POST",
     body: '{"invitation":"fictional-invitation"}',
   });
-  // A choice that already said Face ID comes next tells the request so.
+  // A choice that already said the passkey comes next tells the request so.
   await relayManagement("enrollment", { policy: "automatic" }, signal, "PUT", { stepUpAnnounced: true });
   expect(request).toHaveBeenLastCalledWith("/admin/cloud-relay/enrollment", {
     cache: "no-store",

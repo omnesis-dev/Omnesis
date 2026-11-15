@@ -63,10 +63,17 @@ async function management(
 ) {
   let status: Record<string, any> = { ...initial(), google, ...overrides };
   const calls: Array<{ operation: string; body: unknown }> = [];
+  // The page asks the gateway to read the account when it opens and regains focus. That changes
+  // nothing the page set, so it is counted apart from the actions.
+  let refreshes = 0;
   await relayOn(page);
   await page.route("**/admin/cloud-relay**", async (route) => {
     const operation = new URL(route.request().url()).pathname.split("/").slice(3).join("/");
-    if (operation) {
+    if (operation === "account/refresh") {
+      refreshes++;
+      expect(route.request().method()).toBe("POST");
+      expect(route.request().headers()["x-omnesis-csrf"]).toBeTruthy();
+    } else if (operation) {
       const body = route.request().postDataJSON();
       calls.push({ operation, body });
       expect(route.request().headers()["x-omnesis-csrf"]).toBeTruthy();
@@ -124,6 +131,7 @@ async function management(
   await expect(page.locator(".relay-view .relay-headline")).toBeVisible();
   return {
     calls,
+    refreshes: () => refreshes,
     setGoogle: (google: Record<string, unknown>) => {
       status = { ...status, google };
     },
@@ -166,6 +174,8 @@ test("portal offers no manual setup form; connected it is three plain sections, 
   await expect(page.locator(".relay-view")).not.toContainText("in preview");
   await expect(page.locator("body")).not.toContainText("relay.omnesis.app");
   expect(first.calls).toEqual([]);
+  // Opening the page asked the gateway to read the account once.
+  await expect.poll(() => first.refreshes()).toBe(1);
   await page.unroute("**/admin/cloud-relay**");
   await page.setViewportSize({ width: 1280, height: 900 });
   const relay = await management(

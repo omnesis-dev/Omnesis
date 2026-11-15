@@ -693,3 +693,51 @@ test("confirming a passkey on the gateway's page and listing sign-ins are admin-
     items: [],
   });
 });
+
+test("an account refresh is an admin action that reads the account and answers with the status", async () => {
+  service.refreshAccount = vi.fn().mockResolvedValue(status);
+  expect((await app(null).request("/admin/cloud-relay/account/refresh", post())).status).toBe(401);
+  expect(
+    (
+      await app({ ...bearer, scopes: [SCOPE_READ] }).request(
+        "/admin/cloud-relay/account/refresh",
+        post(),
+      )
+    ).status,
+  ).toBe(403);
+  expect(
+    (await app().request("/admin/cloud-relay/account/refresh", post({ signIn: "untrusted" })))
+      .status,
+  ).toBe(400);
+  // A portal session must carry its CSRF token like every other action.
+  const csrf = "a".repeat(64);
+  const portal = app({
+    authMethod: "portal-session",
+    deviceId: null,
+    tokenId: null,
+    credentialDeviceId: null,
+    scopes: [SCOPE_ADMIN],
+    csrfToken: csrf,
+  });
+  expect((await portal.request("/admin/cloud-relay/account/refresh", post())).status).toBe(403);
+  expect(service.refreshAccount).not.toHaveBeenCalled();
+  const response = await portal.request(
+    "/admin/cloud-relay/account/refresh",
+    post({}, { "X-Omnesis-CSRF": csrf }),
+  );
+  expect(response.status).toBe(200);
+  expect(response.headers.get("cache-control")).toBe("no-store");
+  expect(await response.json()).toEqual({ ...status, stepUpRequired: false });
+  expect(service.refreshAccount).toHaveBeenCalledOnce();
+  // A service without an account to read says so instead of failing vaguely.
+  service.refreshAccount = undefined;
+  const missing = await app().request("/admin/cloud-relay/account/refresh", post());
+  expect(missing.status).toBe(503);
+  expect(await missing.json()).toMatchObject({ code: "account-unavailable" });
+});
+test("with the cloud relay flag off an account refresh is not a route", async () => {
+  service.refreshAccount = vi.fn().mockResolvedValue(status);
+  vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "0");
+  expect((await app().request("/admin/cloud-relay/account/refresh", post())).status).toBe(404);
+  expect(service.refreshAccount).not.toHaveBeenCalled();
+});

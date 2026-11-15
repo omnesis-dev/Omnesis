@@ -873,7 +873,7 @@ describe.skipIf(!browserReady)("devices join a gateway by signing in", () => {
     const page = session.page;
     await page.goto(`${gateway.publicOrigin}/portal/`);
     // "Continue with Google" opens the relay's account page for Google alone (this relay has no
-    // Google, so the page offers what it has), and "Continue with Face ID" signs in on the
+    // Google, so the page offers what it has), and "Continue with passkey" signs in on the
     // gateway's own page. A passkey on the relay's page, the case under test, is the same
     // one-use launch opened without the gateway's choice.
     const launched = page.waitForRequest((request) =>
@@ -907,7 +907,7 @@ describe.skipIf(!browserReady)("devices join a gateway by signing in", () => {
     );
     expect(held).toMatchObject({ signIn: "passkey", canTrustSignIn: false });
     // Same browser, same device key: the owner's passkey on the gateway's page approves it.
-    await clickFirst(page, ["Approve with Face ID here"]);
+    await clickFirst(page, ["Approve with passkey here"]);
     await page.locator("nav.sidebar-nav").waitFor({ timeout: 30_000 });
     const added = (await gateway.devices()).filter((device) => !before.has(device.id));
     expect(added).toHaveLength(1);

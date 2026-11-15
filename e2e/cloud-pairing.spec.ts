@@ -545,7 +545,12 @@ test("with account sign-in the login page offers the Omnesis account, with a pas
   await expect(
     signIn.getByRole("heading", { name: "Sign in to your gateway", exact: true }),
   ).toBeVisible();
-  await expect(signIn.getByRole("button", { name: "Continue with Face ID" })).toBeVisible();
+  await expect(signIn.getByRole("button", { name: "Continue with passkey" })).toBeVisible();
+  await expect(
+    signIn.getByText("Your device will ask for your face, fingerprint or screen lock.", {
+      exact: true,
+    }),
+  ).toBeVisible();
   await expect(signIn.getByRole("button", { name: "Continue with Google" })).toBeVisible();
   await expect(
     signIn.getByText("You'll approve this browser on your phone.", { exact: true }),

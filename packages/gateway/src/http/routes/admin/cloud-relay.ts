@@ -73,6 +73,21 @@ export function mountCloudRelayManagementRoutes(
         return { authorizeUrl: result.authorizeUrl };
       }),
   );
+  // The portal's account page asks for this when it opens or regains focus, so a sign-in added
+  // on the relay's account page shows within seconds. The service throttles it, and it is the
+  // periodic check-in's own read of the account: it can't make anything trusted.
+  app.post(
+    "/admin/cloud-relay/account/refresh",
+    scope.admin(),
+    bounded,
+    validateJson(cloudRelayActionBody),
+    async (c) =>
+      respond(c, async () => {
+        if (!service.refreshAccount)
+          throw new CloudRelayManagementFailure(503, "account-unavailable");
+        return { ...(await service.refreshAccount()), stepUpRequired: stepUpRequired(c) };
+      }),
+  );
   app.post(
     "/admin/cloud-relay/account/unlink",
     scope.admin(),

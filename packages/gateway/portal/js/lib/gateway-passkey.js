@@ -112,6 +112,11 @@ export const PASSKEY_NOT_ACCEPTED =
   "That passkey is for a different Omnesis account. It may be from an account you deleted. Choose another passkey.";
 /** A passkey the account has, whose check failed: worth another try. */
 export const PASSKEY_CHECK_FAILED = "Your gateway couldn't check that passkey. Try again.";
+/**
+ * Said beside a passkey button. The page can't know which device will unlock the passkey (this
+ * one, a phone across the room, a security key), so it names none.
+ */
+export const PASSKEY_HINT = "Your device will ask for your face, fingerprint or screen lock.";
 
 /** The header a request carries its step-up id in (packages/gateway/src/http/step-up.ts). */
 export const STEP_UP_HEADER = "X-Omnesis-Step-Up";
