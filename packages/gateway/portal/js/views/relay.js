@@ -92,7 +92,7 @@ function TipButton({ id, tip, children, ...button }) {
 }
 
 /** Accounts need approval: where to ask, with the link's host in plain sight. */
-function RequestAccess({ access }) {
+export function RequestAccess({ access }) {
   return html`<p class="relay-invite">
     Omnesis accounts are invite-only for now.${" "}
     <a href=${access.url} target="_blank" rel="noopener noreferrer">Request access</a>
@@ -211,7 +211,8 @@ function Hero({ status, phase, busy, run }) {
   </section>`;
 }
 
-function Waiting({ connect, busy, run }) {
+/** Waiting for sign-in: open the relay's sign-in page, or enter the code on another device. */
+export function Waiting({ connect, busy, run }) {
   const authorizeUrl = relayHttpsUrl(connect.authorizeUrl);
   const connectUrl = relayHttpsUrl(connect.connectUrl);
   // The relay's short address is only shown; the link itself stays on the relay's own page.
@@ -291,7 +292,7 @@ function ManageAccountLink({ serviceUrl }) {
  * gateway does: it drops the account link and its trusted sign-ins, and leaves
  * remote access and paired devices alone.
  */
-function Unlink({ operation, disabled, busy, run }) {
+export function Unlink({ operation, disabled, busy, run }) {
   const [asking, setAsking] = useState(false);
   if (!asking)
     return html`<button
@@ -673,6 +674,8 @@ function Skeleton() {
 
 /** Where "Not now" on the setup checklist is remembered, per gateway, in this browser only. */
 const SETUP_LATER_KEY = "omnesis.relay.setup-later";
+/** The phases in which this gateway is enrolled with the relay, whether or not it is on. */
+const ESTABLISHED = ["connected", "reconnecting", "disconnected", "off"];
 function setupLater(gatewayId) {
   try {
     return globalThis.localStorage?.getItem(SETUP_LATER_KEY) === String(gatewayId);
@@ -691,21 +694,40 @@ function rememberSetupLater(gatewayId, later) {
 
 const CONNECTING = ["waiting", "registering", "linking"];
 
-export function RelayView({ open = openOnGateway, location = globalThis.location } = {}) {
-  const { status, error, busy, run, version } = useRelayManagement();
-  // A sign-in added on the account page shows here within seconds, not at the hourly check-in.
-  useAccountRefresh(() => void run());
-  const [laterChoice, setLater] = useState(null);
-  const later = laterChoice ?? setupLater(status?.gatewayId);
-  const phase = status ? relayPhase(status) : "loading";
+/** Whether the relay has enrolled this gateway, in the phase `relayPhase` gave. */
+export function relayEstablished(phase) {
+  return ESTABLISHED.includes(phase);
+}
+
+/**
+ * What the account still needs once it is connected: `enrollment` is the gateway's device
+ * enrollment while it is linked to an account, `setup` the last step "Finish setting up" asks for
+ * (see `accountConfirmation`), and `ready` whether the secure address has its certificate.
+ */
+export function relayAccountSetup(status, phase) {
   const enrollment =
-    status?.account?.linked && ["connected", "reconnecting", "disconnected", "off"].includes(phase)
-      ? status.deviceEnrollment
-      : undefined;
+    status?.account?.linked && relayEstablished(phase) ? status.deviceEnrollment : undefined;
   const setup = enrollment && !status.incidentHold ? accountConfirmation(enrollment) : null;
-  const ready = status?.certificate?.state === "valid";
-  // Connecting from here ends on the gateway's own address once its certificate is ready, so a
-  // passkey account's last step runs there straight away.
+  return { enrollment, setup, ready: status?.certificate?.state === "valid" };
+}
+
+/** "Not now" on the setup checklist, remembered per gateway in this browser: `[later, chooseLater]`. */
+export function useSetupLater(gatewayId) {
+  const [choice, setChoice] = useState(null);
+  const later = choice ?? setupLater(gatewayId);
+  const chooseLater = (value) => {
+    rememberSetupLater(gatewayId, value);
+    setChoice(value);
+  };
+  return [later, chooseLater];
+}
+
+/**
+ * Connecting from a page ends on the gateway's own address once its certificate is ready, so a
+ * passkey account's last step runs there straight away: once a connect this page followed
+ * reaches `connected`, the gateway's own page opens with the passkey prompt.
+ */
+export function usePasskeyHandoff({ phase, enrollment, setup, ready, later, open, location }) {
   const connecting = useRef(false);
   useEffect(() => {
     if (CONNECTING.includes(phase)) connecting.current = true;
@@ -716,10 +738,16 @@ export function RelayView({ open = openOnGateway, location = globalThis.location
         open(enrollment.confirmOrigin, { next: CONFIRM_ON_LOAD, location }).catch(() => {});
     }
   }, [phase, setup, ready, later]);
-  const chooseLater = (value) => {
-    rememberSetupLater(status?.gatewayId, value);
-    setLater(value);
-  };
+}
+
+export function RelayView({ open = openOnGateway, location = globalThis.location } = {}) {
+  const { status, error, busy, run, version } = useRelayManagement();
+  // A sign-in added on the account page shows here within seconds, not at the hourly check-in.
+  useAccountRefresh(() => void run());
+  const [later, chooseLater] = useSetupLater(status?.gatewayId);
+  const phase = status ? relayPhase(status) : "loading";
+  const { enrollment, setup, ready } = relayAccountSetup(status, phase);
+  usePasskeyHandoff({ phase, enrollment, setup, ready, later, open, location });
   if (!status) {
     if (busy) return html`<div class="relay-view"><${Skeleton} /></div>`;
     return html`<div class="relay-view">
@@ -735,7 +763,7 @@ export function RelayView({ open = openOnGateway, location = globalThis.location
       </section>
     </div>`;
   }
-  const established = ["connected", "reconnecting", "disconnected", "off"].includes(phase);
+  const established = relayEstablished(phase);
   // The checklist stands in for the headline while it's the one thing left to do.
   const checklist = setup && !later && phase === "connected";
   const problems = relayProblems(status, phase);

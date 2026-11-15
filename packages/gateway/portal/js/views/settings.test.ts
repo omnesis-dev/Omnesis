@@ -93,29 +93,52 @@ describe("Settings header actions", () => {
     expect(host.querySelector(".warning-triangle")).toBeNull();
   });
 
-  test("the cloud relay adds its tab and scoping class only when the gateway enables it", async () => {
-    await act(async () => { render(h(SettingsView, { tab: "account" }), host); });
-    expect(host.querySelector(".settings-view")?.getAttribute("class")).toBe("settings-view");
-    expect([...host.querySelectorAll(".config-tab")].map((tab) => tab.textContent)).not.toContain("Omnesis account");
-    await act(async () => { render(h(SettingsView, { tab: "account", cloudRelay: true }), host); });
-    expect(host.querySelector(".settings-view")?.getAttribute("class")).toBe("settings-view relay-on");
-    expect([...host.querySelectorAll(".config-tab")].map((tab) => tab.textContent)).toContain("Omnesis account");
+  test("Remote access, its scoping class and its detail pages exist only with a remote-access feature", async () => {
+    const labels = () => [...host.querySelectorAll(".config-tab")].map((tab) => tab.textContent?.trim());
+    for (const tab of ["remote-access", "account", "tailscale"]) {
+      await act(async () => { render(h(SettingsView, { tab }), host); });
+      // With neither feature nothing changes: no tab, no class, no page, no way back.
+      expect(host.querySelector(".settings-view")?.getAttribute("class")).toBe("settings-view");
+      expect(labels()).not.toContain("Remote access");
+      expect(host.querySelector(".config-tab.active")?.textContent).toBe("Config");
+      expect(host.querySelector(".remote-access-back")).toBeNull();
+    }
+    for (const flags of [{ cloudRelay: true }, { tailscaleEmbed: true }, { cloudRelay: true, tailscaleEmbed: true }]) {
+      await act(async () => { render(h(SettingsView, { tab: "remote-access", ...flags }), host); });
+      expect(host.querySelector(".settings-view")?.getAttribute("class")).toBe("settings-view remote-access-on");
+      expect(labels().at(-1)).toBe("Remote access");
+      expect(labels()).not.toContain("Omnesis account");
+      expect(labels()).not.toContain("Tailscale");
+      expect(host.querySelector(".config-tab.active")?.textContent).toBe("Remote access");
+      expect(host.querySelector(".remote-access-back")).toBeNull();
+    }
   });
 
-  test("the Tailscale tab appears only when the gateway runs its own Tailscale device", async () => {
-    const labels = () => [...host.querySelectorAll(".config-tab")].map((tab) => tab.textContent?.trim());
-    await act(async () => { render(h(SettingsView, { tab: "tailscale" }), host); });
-    expect(labels()).not.toContain("Tailscale");
-    // A link into the tab with the feature off lands on the default tab, with no Tailscale page.
+  test("the account and Tailscale pages show Remote access as current, with the way back to it", async () => {
+    for (const [tab, flags] of [["account", { cloudRelay: true }], ["tailscale", { tailscaleEmbed: true }]] as const) {
+      router.replaceRoute.mockClear();
+      await act(async () => { render(h(SettingsView, { tab, ...flags }), host); });
+      expect(host.querySelector(".config-tab.active")?.textContent).toBe("Remote access");
+      const back = host.querySelector(".remote-access-back") as HTMLButtonElement;
+      expect(back.textContent).toBe("← Remote access");
+      await act(async () => { back.click(); });
+      expect(router.replaceRoute).toHaveBeenCalledWith("/portal/settings/remote-access");
+      // The tab itself walks back up from its detail page too.
+      router.replaceRoute.mockClear();
+      const current = host.querySelector(".config-tab.active") as HTMLButtonElement;
+      await act(async () => { current.click(); });
+      expect(router.replaceRoute).toHaveBeenCalledWith("/portal/settings/remote-access");
+    }
+    // Each detail page needs its own feature: the Tailscale page with only the relay lands on Config.
+    await act(async () => { render(h(SettingsView, { tab: "tailscale", cloudRelay: true }), host); });
     expect(host.querySelector(".config-tab.active")?.textContent).toBe("Config");
-    expect(host.querySelector(".settings-view")?.getAttribute("class")).toBe("settings-view");
-    await act(async () => { render(h(SettingsView, { tab: "tailscale", tailscaleEmbed: true }), host); });
-    expect(labels().at(-1)).toBe("Tailscale");
-    expect(host.querySelector(".config-tab.active")?.textContent).toBe("Tailscale");
-    expect(host.querySelector(".settings-view")?.getAttribute("class")).toBe("settings-view");
-    const tab = [...host.querySelectorAll(".config-tab")].find((t) => t.textContent?.trim() === "Devices") as HTMLButtonElement;
-    await act(async () => { tab.click(); });
-    expect(router.replaceRoute).toHaveBeenCalledWith("/portal/settings/devices");
+    await act(async () => { render(h(SettingsView, { tab: "account", tailscaleEmbed: true }), host); });
+    expect(host.querySelector(".config-tab.active")?.textContent).toBe("Config");
+    // On the remote access tab itself, re-selecting the tab stays put.
+    router.replaceRoute.mockClear();
+    await act(async () => { render(h(SettingsView, { tab: "remote-access", cloudRelay: true }), host); });
+    await act(async () => { (host.querySelector(".config-tab.active") as HTMLButtonElement).click(); });
+    expect(router.replaceRoute).not.toHaveBeenCalled();
   });
 
   test("renders logout in the settings header and invokes the app handler", async () => {
@@ -217,8 +240,8 @@ describe("Settings header actions", () => {
     const labels = [...host.querySelectorAll(".config-tab")].map((tab) => tab.textContent?.trim());
     expect(labels.slice(0, 2)).toEqual(["Config", "Omnesis Lab"]);
     expect(labels).not.toContain("Sweeps");
-    expect(host.querySelector(".config-tab.active")?.textContent).toBe("Omnesis account");
-    for (const tab of ["sweeps", "lab", "account"]) {
+    expect(host.querySelector(".config-tab.active")?.textContent).toBe("Remote access");
+    for (const tab of ["sweeps", "lab", "account", "remote-access"]) {
       await act(async () => {
         render(h(SettingsView, { ...flags, tab, labAvailable: false, cloudRelay: false }), host);
       });
