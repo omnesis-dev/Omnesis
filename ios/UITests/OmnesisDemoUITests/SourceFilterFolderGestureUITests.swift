@@ -61,7 +61,7 @@ final class SourceFilterFolderGestureUITests: XCTestCase {
         tap(app.buttons["Review filter"])
         XCTAssertTrue(app.staticTexts["Journey folder 064"].waitForExistence(timeout: 20))
         attach("folder-selection-reviewed")
-        tap(app.buttons["Back"])
+        tap(front("Back"))
         XCTAssertTrue(last.waitForExistence(timeout: 20))
         let restored = XCTNSPredicateExpectation(predicate: NSPredicate(format: "hittable == true"), object: last)
         XCTAssertEqual(
@@ -81,7 +81,7 @@ final class SourceFilterFolderGestureUITests: XCTestCase {
         tap(app.buttons["View selected"])
         XCTAssertTrue(app.staticTexts["Journey folder 064"].waitForExistence(timeout: 20))
         attach("folder-selection-retained")
-        tap(app.buttons["Cancel"])
+        tap(front("Cancel"))
         let discard = app.alerts["Discard filter changes?"]
         XCTAssertTrue(discard.waitForExistence(timeout: 20))
         XCTAssertEqual(discard.buttons.count, 2, "The draft decision has only Keep and Discard actions")
@@ -89,7 +89,7 @@ final class SourceFilterFolderGestureUITests: XCTestCase {
         tap(discard.buttons["Keep editing"])
         XCTAssertTrue(app.staticTexts["Journey folder 064"].waitForExistence(timeout: 20))
         attach("folder-keep-editing-retained")
-        tap(app.buttons["Done"])
+        tap(front("Done"))
         tap(search)
         let first = app.buttons["Select Journey folder 042"]
         XCTAssertFalse(first.isHittable, "The distinct query result must not already be visible before typing")
@@ -111,7 +111,7 @@ final class SourceFilterFolderGestureUITests: XCTestCase {
         attach("folder-new-query-first-result")
         tap(app.buttons["Review filter"])
         tap(app.buttons["Apply filter"])
-        tap(app.buttons["Done"])
+        tap(front("Done"))
         tap(app.buttons["Review changes"])
         tap(app.buttons["Save changes"])
         XCTAssertTrue(app.buttons.matching(NSPredicate(format: "label CONTAINS %@", level.name)).firstMatch
@@ -124,6 +124,18 @@ final class SourceFilterFolderGestureUITests: XCTestCase {
 
     private func button(startingWith prefix: String) -> XCUIElement {
         app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", prefix)).firstMatch
+    }
+
+    /// The button with this label on the frontmost screen. A sheet leaves the bar buttons of the screen under it
+    /// in the hierarchy, so a bare label can name more than one element.
+    private func front(_ label: String) -> XCUIElement {
+        let matches = app.buttons.matching(identifier: label)
+        let deadline = Date().addingTimeInterval(30)
+        while Date() < deadline {
+            if let hittable = matches.allElementsBoundByIndex.last(where: { $0.exists && $0.isHittable }) { return hittable }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+        }
+        return matches.firstMatch
     }
 
     private func tap(_ element: XCUIElement) {

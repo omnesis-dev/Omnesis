@@ -9298,10 +9298,10 @@ final class PreviewSnapshotTests: XCTestCase {
         // Consume an explicit bookmark over two accumulated provider pages.
         // Recording that bookmark from a real swipe is covered by the UI journey.
         let options = try appendScopeOptions(secondPage, to: firstPage)
-        let last = try XCTUnwrap(options.items.last)
-        // A bookmark names the row leading the viewport, so it is a page-two row with the final rows under it.
-        let leadingIndex = 57
-        let leading = ScopePickerAnchor.item(.init(options.items[leadingIndex].ref))
+        // A bookmark names the row leading the viewport, so a full viewport of rows follows it.
+        let leadingIndex = 45
+        let bookmarked = options.items[leadingIndex]
+        let leading = ScopePickerAnchor.item(.init(bookmarked.ref))
         for scheme in [ColorScheme.light, .dark] {
             let name = scheme == .dark ? "dark" : "light"
             var saved = ScopePickerSession(field: PreviewMocks.accessFolderField, sourceId: source.id)
@@ -9325,11 +9325,11 @@ final class PreviewSnapshotTests: XCTestCase {
             )
             let scroll = try XCTUnwrap(scopePickerScroll(in: restored.1.view))
             XCTAssertGreaterThan(scroll.contentSize.height, scroll.bounds.height * 2, "The fixture must require scrolling")
-            XCTAssertGreaterThan(scroll.contentOffset.y, 0, "A page-two bookmark must not render at the top")
+            XCTAssertGreaterThan(scroll.contentOffset.y, 0, "A bookmark past the first viewport must not render at the top")
             try await captureScopePicker(
                 restored.0,
                 name: "scope-picker-provided-bookmark-\(name)",
-                visibleLabel: last.label
+                visibleLabel: bookmarked.label
             )
             restored.1.rootView = AnyView(EmptyView())
             restored.0.isHidden = true
