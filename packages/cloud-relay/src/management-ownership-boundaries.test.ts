@@ -429,18 +429,26 @@ test("start observes a previously returned actor's terminal receipt before launc
 test("a scheduled public recheck retains an unjoined probe instead of scheduling another retry", async () => {
   const f = fixture();
   const error = markedFileError("EPRIVATE", "cause");
+  const scheduled = Promise.withResolvers<boolean>();
   const probe = vi
     .fn<NonNullable<CloudRelayManagerOptions["probe"]>>()
     .mockResolvedValueOnce(false)
-    .mockRejectedValue(error);
+    .mockImplementation(() => scheduled.promise);
   f.options.probe = probe;
   f.options.probeRetryMs = 1;
   manager = await GatewayCloudRelayManagement.open(f.options);
   await manager.configure({ termsAccepted: true });
-  await manager.enable();
-  await assertHeld(error);
-  expect(probe).toHaveBeenCalledTimes(2);
-  expect(f.register).toHaveBeenCalledOnce();
+  try {
+    await manager.enable();
+    // Let initial admission finish before the independent scheduled probe fails.
+    await vi.waitFor(() => expect(probe).toHaveBeenCalledTimes(2));
+    scheduled.reject(error);
+    await assertHeld(error);
+    expect(probe).toHaveBeenCalledTimes(2);
+    expect(f.register).toHaveBeenCalledOnce();
+  } finally {
+    scheduled.resolve(false);
+  }
 });
 
 test("a failed release retry retains its own unjoined helper receipt", async () => {

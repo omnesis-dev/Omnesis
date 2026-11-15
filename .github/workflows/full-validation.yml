@@ -36,6 +36,7 @@ on:
             arm64-runtime,
             source-ownership,
             tailnet-baseline,
+            relay-ownership,
             provider-ownership,
           ]
         default: regressions
@@ -53,6 +54,43 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
   TZ: UTC
 jobs:
+  relay-ownership:
+    if: ${{ inputs.scope == 'relay-ownership' }}
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        include:
+          - os: ubuntu-latest
+            arch: x64
+          - os: windows-latest
+            arch: x64
+          - os: windows-11-vs2026-arm
+            arch: arm64
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 35
+    env:
+      OMNESIS_UNIT_WORKERS: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: "24"
+          architecture: ${{ matrix.arch }}
+          cache: npm
+      - name: Materialize locked dependencies for the isolated actor fixture
+        run: node scripts/ci/npm-ci.mjs --ignore-scripts --no-audit --no-fund
+      - name: Validate scheduled cleanup ownership without racing initial admission
+        run: node scripts/run-check.mjs unit packages/cloud-relay/src/management-ownership-boundaries.test.ts
+      - name: Validate TypeScript and lint the fixture
+        if: ${{ runner.os == 'Linux' }}
+        env:
+          NODE_OPTIONS: --max-old-space-size=6144
+        run: >-
+          node node_modules/eslint/bin/eslint.js packages/cloud-relay/src/management-ownership-boundaries.test.ts
   provider-ownership:
     if: ${{ inputs.scope == 'provider-ownership' }}
     strategy:
