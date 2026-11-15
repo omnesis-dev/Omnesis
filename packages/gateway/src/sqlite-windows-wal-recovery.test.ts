@@ -34,22 +34,26 @@ function startJob(
     rejected: false,
     error: undefined as unknown,
   };
-  const work = runWindowsJob(command, args, {
-    env,
-    signal: controller.signal,
-    timeoutMs: Math.max(1, deadline - Date.now()),
-  }).then(
-    (result) => {
-      state.settled = true;
-      return result;
-    },
-    (error: unknown) => {
-      state.settled = true;
-      state.rejected = true;
-      state.error = error;
-      throw error;
-    },
-  );
+  const work = Promise.resolve()
+    .then(() =>
+      runWindowsJob(command, args, {
+        env,
+        signal: controller.signal,
+        timeoutMs: Math.max(1, deadline - Date.now()),
+      }),
+    )
+    .then(
+      (result) => {
+        state.settled = true;
+        return result;
+      },
+      (error: unknown) => {
+        state.settled = true;
+        state.rejected = true;
+        state.error = error;
+        throw error;
+      },
+    );
   void work.catch(() => {});
   return Object.assign(state, { work });
 }
@@ -137,12 +141,17 @@ test.runIf(process.platform === "win32").each([
     const key = encrypted ? randomBytes(32).toString("hex") : undefined;
     const open = () => {
       const db = new Constructor(path, { fileMustExist: true });
-      if (key) {
-        db.pragma("cipher='sqlcipher'");
-        db.pragma("legacy=4");
-        db.pragma(`key='${key}'`);
+      try {
+        if (key) {
+          db.pragma("cipher='sqlcipher'");
+          db.pragma("legacy=4");
+          db.pragma(`key='${key}'`);
+        }
+        return db;
+      } catch (error) {
+        db.close();
+        throw error;
       }
-      return db;
     };
     const deadline = Date.now() + 20_000;
     let primaryFailure: unknown;

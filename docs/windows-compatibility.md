@@ -78,6 +78,27 @@ statement, branch, function and line coverage. Process ownership and encrypted
 bootstrap-reader regressions also passed on Linux and Windows, run sequentially.
 These focused results do not replace the pending complete-suite validation.
 
+Windows source preparation explicitly builds the patched SQLite and vector
+dependencies before starting the product or its compiled entrypoints:
+
+```sh
+node scripts/ci/build-windows-sqlite.mjs
+node scripts/ci/build-windows-usearch.mjs
+```
+
+Run these from an isolated checkout after installing its locked dependencies.
+The native builds require MSVC and Python and verify the running Node version's
+headers before compilation.
+The SQLite backport preserves the existing engine and encryption format. It
+applies the upstream Windows shared-memory recovery fix: under the exclusive
+dead-man-switch lock, a still-mapped shared-memory file is reset by writing its
+header when Windows refuses truncation. This follows SQLite's
+[upstream fix](https://sqlite.org/forum/info/ba7afbd0e81501118563617430fe06d0aca052e55ece2b0d457f8e16fcf85bba?t=c).
+The source preparation verifies the default installed bindings and a complete
+encrypted Gateway schema; tests hold a stale mapping through recovery. Linux
+and macOS retain their existing prebuilt libraries. This preparation remains
+separate from Windows installation support, which is outside the audit.
+
 Authentication subprocesses also exercise an existing encrypted credential in
 a restricted Windows environment. Native process identity uses exact framework
 creation-time ticks, and compiler bootstraps load the system utility module by

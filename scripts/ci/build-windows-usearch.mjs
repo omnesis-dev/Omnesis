@@ -2,33 +2,19 @@
 // Copyright (c) 2026 Adrien Conrath
 
 // Explicit source/CI preparation; this does not run from the install lifecycle.
-import { copyFile, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { installParentShutdownHandler } from "../../packages/core/src/parent-shutdown.ts";
-import { bootstrapWindowsPlatform } from "../lib/bootstrap-platform.mjs";
+import {
+  runWindowsBuildNode as runNode,
+  prepareWindowsNodeBuild,
+} from "./windows-native-build.mjs";
+export { runNode };
 import { resolveUsearch } from "../native-vector-compat.mjs";
 import { completeNodeHeaders, hasCleanupFailure, npmJavaScriptEntry } from "./npm-ci.mjs";
-
-export async function runNode(args, options) {
-  const { runWindowsJob } = await bootstrapWindowsPlatform();
-  const result = await runWindowsJob(process.execPath, args, {
-    ...options,
-    completion: "root",
-    stdout: "inherit",
-    onStderr: (bytes) => process.stderr.write(bytes),
-  });
-  if (result.failure || Object.hasOwn(result, "cleanupFailure")) {
-    const error = new Error(
-      `Windows vector build subprocess ${result.failure ?? "cleanup unconfirmed"}`,
-    );
-    if (Object.hasOwn(result, "cleanupFailure")) error.cleanupFailure = result.cleanupFailure;
-    throw error;
-  }
-  return result.exitCode ?? 1;
-}
 
 /** Compile against this Node's complete headers, then prove the resulting installed binary. */
 export async function buildWindowsUsearch({
@@ -47,41 +33,22 @@ export async function buildWindowsUsearch({
 } = {}) {
   if (platform !== "win32") throw new Error("Windows vector preparation requires Windows");
   const { root, entry } = locate(join(cwd, "packages/gateway"));
-  const npmCli = await npmEntry(env, nodePath, cwd);
-  const nodeGyp = gypEntry(npmCli);
   const scratch = await mkdtemp(join(tmpdir(), "omnesis-windows-vector-"));
-  const childEnv = { ...env };
-  for (const key of Object.keys(childEnv)) {
-    if (
-      /^npm_(?:package_config_node_gyp|config)_(?:arch|target|target_arch|nodedir|devdir)$/iu.test(
-        key,
-      )
-    )
-      delete childEnv[key];
-  }
   let cleanupConfirmed = true;
   try {
-    signal?.throwIfAborted();
-    const devdir = join(scratch, "headers");
-    const headers = join(devdir, version);
-    const options = { cwd, env: childEnv, signal, timeoutMs: 180_000, completion: "root" };
-    if (
-      (await run(
-        [nodeGyp, "install", version, `--devdir=${devdir}`, `--arch=${arch}`, "--ensure"],
-        options,
-      )) !== 0 ||
-      !(await headersComplete(headers, version, platform, arch))
-    )
-      throw new Error(
-        "Could not prepare complete headers for the running Node version and architecture",
-      );
-    for (const configuration of ["Release", "Debug"]) {
-      await mkdir(join(headers, configuration), { recursive: true });
-      await copyFile(join(headers, arch, "node.lib"), join(headers, configuration, "node.lib"));
-    }
-    childEnv.npm_package_config_node_gyp_arch = arch;
-    childEnv.npm_package_config_node_gyp_target = version;
-    childEnv.npm_package_config_node_gyp_nodedir = headers;
+    const { nodeGyp, headers, options } = await prepareWindowsNodeBuild({
+      scratch,
+      cwd,
+      env,
+      arch,
+      version,
+      nodePath,
+      signal,
+      run,
+      npmEntry,
+      headersComplete,
+      gypEntry,
+    });
     const built = await run(
       [nodeGyp, "rebuild", `--nodedir=${headers}`, `--arch=${arch}`, "--jobs=2"],
       {

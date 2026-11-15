@@ -1,0 +1,50 @@
+diff --git a/node_modules/better-sqlite3-multiple-ciphers/package.json b/node_modules/better-sqlite3-multiple-ciphers/package.json
+index e11c5a1..00c41a6 100644
+--- a/node_modules/better-sqlite3-multiple-ciphers/package.json
++++ b/node_modules/better-sqlite3-multiple-ciphers/package.json
+@@ -12,7 +12,10 @@
+   },
+   "main": "lib/index.js",
+   "exports": {
+-    ".": "./lib/index.js",
++    ".": {
++      "types": "./index.d.ts",
++      "default": "./lib/index.js"
++    },
+     "./linux-x64": "./lib/linux-x64.js",
+     "./linux-arm64": "./lib/linux-arm64.js",
+     "./linuxmusl-x64": "./lib/linuxmusl-x64.js",
+diff --git a/node_modules/better-sqlite3-multiple-ciphers/deps/sqlite3/sqlite3.c b/node_modules/better-sqlite3-multiple-ciphers/deps/sqlite3/sqlite3.c
+--- a/node_modules/better-sqlite3-multiple-ciphers/deps/sqlite3/sqlite3.c
++++ b/node_modules/better-sqlite3-multiple-ciphers/deps/sqlite3/sqlite3.c
+@@ -53013,0 +53014,22 @@
++** Handle h is open on the *-shm file. This function zeroes the first
++** 8 bytes of the file. If SQLITE_ENABLE_SETLK_TIMEOUT is defined, h may
++** have been opened with FILE_FLAG_OVERLAPPED.
++*/
++static int winZeroSharedMemory(HANDLE h){
++  u8 aZero[8] = {0,0,0,0,0,0,0,0};
++  DWORD nWrite = 0;
++  OVERLAPPED ovlp;
++  memset(&ovlp, 0, sizeof(OVERLAPPED));
++  if( !osWriteFile(h, aZero, sizeof(aZero), &nWrite, &ovlp) ){
++    /* If the file was opened with FILE_FLAG_OVERLAPPED, the write may still
++    ** be pending. Wait for it with GetOverlappedResult().  */
++    if( osGetLastError()!=ERROR_IO_PENDING
++     || !GetOverlappedResult(h, &ovlp, &nWrite, TRUE)
++    ){
++      nWrite = 0;
++    }
++  }
++  return (nWrite==sizeof(aZero) ? SQLITE_OK : SQLITE_IOERR_WRITE);
++}
++
++/*
+@@ -53031 +53053,6 @@
+-      rc = winHandleTruncate(h, 0);
++      if( SQLITE_OK!=winHandleTruncate(h, 0) ){
++        /* Sometimes the truncate operation may fail because some other
++        ** process is still holding an open mapping. So try to write
++        ** zeroes into the start of the file instead. */
++        rc = winZeroSharedMemory(h);
++      }

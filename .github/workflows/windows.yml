@@ -110,6 +110,10 @@ jobs:
           if ($env:SHARD) { $checkArgs += "--shard=$env:SHARD" }
           node @checkArgs
 
+      - name: Build and prove Windows SQLite recovery bindings
+        id: native_sqlite
+        run: node scripts/ci/build-windows-sqlite.mjs
+
       - name: Build and prove Windows vector publication
         id: native_vector
         run: node scripts/ci/build-windows-usearch.mjs
@@ -140,7 +144,7 @@ jobs:
 
       - name: Full Windows unit and adapter tests
         # Preserve a failing typecheck verdict while collecting runtime failures.
-        if: ${{ !cancelled() && matrix.lane == 'unit' && steps.dependencies.outcome == 'success' && steps.native_vector.outcome == 'success' }}
+        if: ${{ !cancelled() && matrix.lane == 'unit' && steps.dependencies.outcome == 'success' && steps.native_sqlite.outcome == 'success' && steps.native_vector.outcome == 'success' }}
         run: node scripts/ci/windows-checks.mjs unit
 
       - name: Full Windows E2E shard with the real reference embedder
