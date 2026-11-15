@@ -65,6 +65,22 @@ test.each([undefined, new Error("invented native closure failure")])(
   },
 );
 
+test("explicit cancellation uncertainty stays terminal even when another join fulfills", async () => {
+  const { child, closure, owner } = fakeWindowsOwner();
+  await owner.ready;
+  const marker = Object.assign(new Error("invented uncertain cancellation"), {
+    cleanupFailure: undefined,
+  });
+  child.kill.mockImplementation(() => {
+    throw marker;
+  });
+  const stopping = owner.stop();
+  closure.resolve();
+  const error: unknown = await stopping.catch((reason: unknown) => reason);
+  expect(ownedProcessCleanupReceipt(error)).toEqual({ failure: undefined, pending: false });
+  expect(owner.joinedConfirmed).toBe(false);
+});
+
 test("a real auth process stays owned until actual termination joins", async () => {
   const owner = spawnAuthProcess(
     process.execPath,
@@ -72,9 +88,12 @@ test("a real auth process stays owned until actual termination joins", async () 
     { cwd: process.cwd(), env: process.env },
   );
   let joined = false;
-  void owner.joined.then(() => {
-    joined = true;
-  });
+  void owner.joined.then(
+    () => {
+      joined = true;
+    },
+    () => {},
+  );
   try {
     await owner.ready;
     await new Promise<void>((resolve, reject) => {

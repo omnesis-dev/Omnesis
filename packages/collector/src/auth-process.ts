@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { spawn, type ChildProcess } from "node:child_process";
-import { spawnWindowsJob, type WindowsJobProcess } from "@omnesis/core";
+import { spawnWindowsJob, ownedProcessCleanupReceipt, type WindowsJobProcess } from "@omnesis/core";
 
 export interface AuthProcess {
   child: ChildProcess;
@@ -38,8 +38,20 @@ export function spawnAuthProcess(
   // An error event reports an operation failure; physical close remains independent.
   const stopErrors: unknown[] = [];
   let stopRequested = false;
+  let uncertain = false;
+  function stopFailure(): AggregateError {
+    const marked = stopErrors.find((error) => ownedProcessCleanupReceipt(error) !== undefined);
+    const receipt = ownedProcessCleanupReceipt(marked);
+    const error = new AggregateError(stopErrors, "Auth process stop failed", { cause: marked });
+    return receipt ? Object.assign(error, { cleanupFailure: receipt.failure }) : error;
+  }
+  function recordStopError(error: unknown): void {
+    uncertain ||= ownedProcessCleanupReceipt(error) !== undefined;
+    stopErrors.push(error);
+  }
   child.on("error", (error) => {
-    if (stopRequested && !stopErrors.length) stopErrors.push(error);
+    if ((stopRequested && !stopErrors.length) || ownedProcessCleanupReceipt(error))
+      recordStopError(error);
   });
   const rawJoin = windows
     ? (child as WindowsJobProcess).jobClosed
@@ -47,6 +59,7 @@ export function spawnAuthProcess(
   const joined = rawJoin.then(
     () => {
       closed = true;
+      if (uncertain) throw stopFailure();
     },
     (error: unknown) => {
       throw Object.assign(new Error("Auth process cleanup is unconfirmed", { cause: error }), {
@@ -66,7 +79,7 @@ export function spawnAuthProcess(
           try {
             child.kill("SIGTERM");
           } catch (error) {
-            stopErrors.push(error);
+            recordStopError(error);
           }
           // The native Windows owner already bounds cancellation and verifies
           // its entire cohort. POSIX retains the existing signal escalation.
@@ -76,14 +89,14 @@ export function spawnAuthProcess(
               try {
                 child.kill("SIGKILL");
               } catch (error) {
-                stopErrors.push(error);
+                recordStopError(error);
               }
             }, STOP_GRACE_MS);
             timer.unref();
           }
         }
         await joined;
-        if (stopErrors.length) throw new AggregateError(stopErrors, "Auth process stop failed");
+        if (stopErrors.length) throw stopFailure();
       } finally {
         clearTimeout(timer);
       }
@@ -108,7 +121,7 @@ export function spawnAuthProcess(
     ready,
     joined,
     get joinedConfirmed() {
-      return closed;
+      return closed && !uncertain;
     },
     stop,
   };
