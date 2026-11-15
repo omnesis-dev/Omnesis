@@ -236,6 +236,10 @@ describe("Keyword-index rebuild between lexical versions", () => {
       300_000,
     );
     expect(finished.targetVersion).toBe(9002);
+    // Search workers take up the new in-memory index once it has caught up with
+    // the writes since it was built; keep probing until one answers by it.
+    const adopted = Date.now() + 60_000;
+    while (probe.samples.at(-1)?.version !== 9002 && Date.now() < adopted) await sleep(250);
     await probe.stop();
 
     const versions = probe.samples.map((s) => s.version);
