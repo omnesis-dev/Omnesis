@@ -5,7 +5,6 @@ package dev.omnesis.android.ui.devices
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -30,7 +29,7 @@ import dev.omnesis.android.ui.common.TimeFormat
 /**
  * One device on the owner's Tailscale network that asked to join, as the Devices approvals sheet
  * lists it beside the devices that signed in: what it is and how it asked, the machine it runs
- * on, when it asked and until when, and Deny / Approve. An expired request keeps its card without
+ * on, when it asked and until when, and Yes, approve / No, deny. An expired request keeps its card without
  * the actions until the next read drops it.
  */
 @Composable
@@ -57,22 +56,21 @@ internal fun TailscaleJoinRequestCard(
             Text(tailscaleJoinTimingLine(request, now), style = MaterialTheme.typography.bodySmall, color = c.textMuted)
             if (!expired) {
                 Spacer(Modifier.height(OmSpacing.sm))
-                Row(horizontalArrangement = Arrangement.spacedBy(OmSpacing.sm)) {
-                    OutlinedButton(
-                        onClick = { onDecide(request, false) },
-                        enabled = enabled,
-                        modifier = Modifier.weight(1f).testTag("tailscaleJoin.deny"),
-                    ) { Text("Deny", color = if (enabled) c.danger else c.textMuted) }
-                    Button(
-                        onClick = { onDecide(request, true) },
-                        enabled = enabled,
-                        colors = ButtonDefaults.buttonColors(containerColor = c.accent, contentColor = Color.White),
-                        modifier = Modifier.weight(1f).testTag("tailscaleJoin.approve"),
-                    ) {
-                        if (deciding == request.id) OmSpinner(modifier = Modifier.size(16.dp), strokeWidth = 2.dp, color = Color.White)
-                        else Text("Approve")
-                    }
+                // The same answers, in the same order, as a signed-in device's card above it.
+                Button(
+                    onClick = { onDecide(request, true) },
+                    enabled = enabled,
+                    colors = ButtonDefaults.buttonColors(containerColor = c.accent, contentColor = Color.White),
+                    modifier = Modifier.fillMaxWidth().testTag("tailscaleJoin.approve"),
+                ) {
+                    if (deciding == request.id) OmSpinner(modifier = Modifier.size(16.dp), strokeWidth = 2.dp, color = Color.White)
+                    else Text("Yes, approve")
                 }
+                OutlinedButton(
+                    onClick = { onDecide(request, false) },
+                    enabled = enabled,
+                    modifier = Modifier.fillMaxWidth().testTag("tailscaleJoin.deny"),
+                ) { Text("No, deny", color = if (enabled) c.danger else c.textMuted) }
             }
         }
     }
