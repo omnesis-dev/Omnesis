@@ -279,7 +279,9 @@ class FcmPushManager @Inject constructor(
             }
         }
         // A request that arrives while the app is open also refreshes the main screen's banner.
-        if (route.target is NotificationTarget.PairingRequests) PairingPendingRequests.requestRefresh()
+        if (route.target is NotificationTarget.PairingRequests || route.target == NotificationTarget.TailscaleJoinRequests) {
+            PairingPendingRequests.requestRefresh()
+        }
         val pendingIntent = PendingIntent.getActivity(
             context,
             0,

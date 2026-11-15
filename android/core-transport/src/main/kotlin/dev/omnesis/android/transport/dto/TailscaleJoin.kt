@@ -3,6 +3,7 @@
 
 package dev.omnesis.android.transport.dto
 
+import java.time.Instant
 import kotlinx.serialization.Serializable
 
 /**
@@ -24,7 +25,18 @@ data class TailscaleJoinRequest(
     /** ISO-8601 instants. */
     val requestedAt: String,
     val expiresAt: String,
-)
+) {
+    /** [requestedAt] in epoch milliseconds, or null when it can't be read. */
+    val requestedAtMillis: Long? get() = epochMillis(requestedAt)
+
+    /** [expiresAt] in epoch milliseconds, or null when it can't be read. */
+    val expiresAtMillis: Long? get() = epochMillis(expiresAt)
+
+    /** Whether it ran out by [nowMillis]; a time that can't be read never counts as run out. */
+    fun expired(nowMillis: Long): Boolean = expiresAtMillis?.let { it <= nowMillis } == true
+
+    private fun epochMillis(instant: String): Long? = runCatching { Instant.parse(instant).toEpochMilli() }.getOrNull()
+}
 
 @Serializable
 internal data class TailscaleJoinRequests(val requests: List<TailscaleJoinRequest> = emptyList())

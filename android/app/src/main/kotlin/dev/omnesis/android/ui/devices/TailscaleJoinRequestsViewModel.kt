@@ -21,17 +21,30 @@ import javax.inject.Inject
 internal const val TAILSCALE_JOIN_GONE_MESSAGE = "That request expired or was already decided."
 
 /**
+ * The admin client that reviews Tailscale join requests: only an administrator's phone, and only
+ * while the gateway says it runs its own Tailscale device ([SessionManager.tailscaleEmbed]), so a
+ * gateway without the feature is never asked.
+ */
+fun tailscaleJoinClient(session: SessionManager): TailscaleJoinApproving? =
+    session.session?.takeIf { session.tailscaleEmbed.value && "admin" in it.pairing.scopes }?.admin
+
+/**
  * The devices on the owner's Tailscale network that wait to join the gateway, as an
- * administrator's phone reads and decides them. A `tailscale-join` notification opens it.
+ * administrator's phone reads and decides them in the Devices approvals sheet.
+ *
+ * A phone that may not review them, or a gateway that does not advertise them, asks nothing and
+ * reads as unavailable. A 404 on the list (a gateway that stopped serving the route) reads the
+ * same way rather than as a failure.
  */
 @HiltViewModel
 class TailscaleJoinRequestsViewModel internal constructor(
-    /** The paired admin client, read on every call so a re-pair is never decided on the old gateway. */
+    /**
+     * The paired admin client while the gateway advertises Tailscale joins, read on every call so
+     * a re-pair is never decided on the old gateway; null when this phone must not ask.
+     */
     private val client: () -> TailscaleJoinApproving?,
 ) : ViewModel() {
-    @Inject constructor(session: SessionManager) : this(
-        { session.session?.takeIf { "admin" in it.pairing.scopes }?.admin },
-    )
+    @Inject constructor(session: SessionManager) : this({ tailscaleJoinClient(session) })
 
     data class State(
         val requests: List<TailscaleJoinRequest> = emptyList(),
@@ -44,6 +57,12 @@ class TailscaleJoinRequestsViewModel internal constructor(
         val error: Throwable? = null,
         /** A short line about the last decision, such as [TAILSCALE_JOIN_GONE_MESSAGE]. */
         val notice: String? = null,
+        /**
+         * Whether this phone reviews Tailscale joins on this gateway: null until the first read,
+         * false when this phone may not ask or the gateway does not serve the route. A read that
+         * fails any other way keeps what the last answer showed.
+         */
+        val available: Boolean? = null,
     ) {
         val busy: Boolean get() = loading || deciding != null
     }
@@ -64,7 +83,7 @@ class TailscaleJoinRequestsViewModel internal constructor(
         val read = ++generation
         val approving = client()
         if (approving == null) {
-            mutable.update { it.copy(requests = emptyList(), loading = false, loaded = true, error = GatewayException.Forbidden()) }
+            mutable.update { it.copy(requests = emptyList(), loading = false, loaded = true, error = null, available = false) }
             return
         }
         mutable.update { it.copy(loading = true) }
@@ -79,8 +98,14 @@ class TailscaleJoinRequestsViewModel internal constructor(
             if (read != generation) return@launch
             mutable.update { current ->
                 result.fold(
-                    onSuccess = { current.copy(requests = it, loading = false, loaded = true, error = null) },
-                    onFailure = { current.copy(loading = false, loaded = true, error = it) },
+                    onSuccess = { current.copy(requests = it, loading = false, loaded = true, error = null, available = true) },
+                    onFailure = { error ->
+                        if (error is GatewayException.NotFound) {
+                            current.copy(requests = emptyList(), loading = false, loaded = true, error = null, available = false)
+                        } else {
+                            current.copy(loading = false, loaded = true, error = error)
+                        }
+                    },
                 )
             }
         }

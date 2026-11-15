@@ -79,6 +79,60 @@ class TailscaleJoinRequestsViewModelTest {
         assertTrue(vm.state.value.loaded)
         assertFalse(vm.state.value.busy)
         assertNull(vm.state.value.error)
+        assertEquals(true, vm.state.value.available)
+    }
+
+    @Test fun `availability is unknown until a read answers`() = runTest(dispatcher) {
+        val vm = TailscaleJoinRequestsViewModel { Gateway(listOf(laptop)) }
+        assertNull(vm.state.value.available)
+        vm.refresh()
+        assertNull(vm.state.value.available)
+        runCurrent()
+        assertEquals(true, vm.state.value.available)
+    }
+
+    @Test fun `a gateway without Tailscale joins answers 404, which is the feature off and not an error`() = runTest(dispatcher) {
+        val gateway = Gateway(emptyList()).apply { listFailure = GatewayException.NotFound("Not Found") }
+        val vm = TailscaleJoinRequestsViewModel { gateway }
+        vm.open(); runCurrent()
+        assertEquals(false, vm.state.value.available)
+        assertNull(vm.state.value.error)
+        assertTrue(vm.state.value.requests.isEmpty())
+        assertTrue(vm.state.value.loaded)
+        assertFalse(deviceApprovalsOffered(null, vm.state.value.available))
+    }
+
+    @Test fun `a gateway that stops serving the route drops what it listed`() = runTest(dispatcher) {
+        val gateway = Gateway(listOf(laptop))
+        val vm = TailscaleJoinRequestsViewModel { gateway }
+        vm.refresh(); runCurrent()
+        gateway.listFailure = GatewayException.NotFound("Not Found")
+        vm.refresh(); runCurrent()
+        assertEquals(false, vm.state.value.available)
+        assertTrue(vm.state.value.requests.isEmpty())
+    }
+
+    @Test fun `a read that fails another way keeps what the last answer showed`() = runTest(dispatcher) {
+        val gateway = Gateway(listOf(laptop))
+        val vm = TailscaleJoinRequestsViewModel { gateway }
+        vm.refresh(); runCurrent()
+        gateway.listFailure = GatewayException.Network(ConnectException("unreachable"))
+        vm.refresh(); runCurrent()
+        assertEquals(true, vm.state.value.available)
+        assertEquals(listOf(laptop), vm.state.value.requests)
+        assertTrue(vm.state.value.error is GatewayException.Network)
+    }
+
+    @Test fun `a step-up refusal on approving keeps the row and the refusal`() = runTest(dispatcher) {
+        val gateway = Gateway(listOf(laptop))
+        val vm = TailscaleJoinRequestsViewModel { gateway }
+        vm.open(); runCurrent()
+        val refusal = GatewayException.ServerError(428, "{}", "STEP_UP_REQUIRED")
+        gateway.decisionFailure = refusal
+        vm.decide(laptop, approve = true); runCurrent()
+        assertEquals(listOf(laptop), vm.state.value.requests)
+        assertEquals(refusal, vm.state.value.error)
+        assertEquals(dev.omnesis.android.ui.common.StepUpRefusal.REQUIRED, dev.omnesis.android.ui.common.stepUpRefusal(vm.state.value.error))
     }
 
     @Test fun `nothing waiting is loaded and empty`() = runTest(dispatcher) {
@@ -175,10 +229,11 @@ class TailscaleJoinRequestsViewModelTest {
         assertEquals(listOf(buildBox), vm.state.value.requests)
     }
 
-    @Test fun `a phone without an admin client reads nothing`() = runTest(dispatcher) {
+    @Test fun `a phone without an admin client reads nothing and offers nothing`() = runTest(dispatcher) {
         val vm = TailscaleJoinRequestsViewModel { null }
         vm.open(); runCurrent()
-        assertTrue(vm.state.value.error is GatewayException.Forbidden)
+        assertEquals(false, vm.state.value.available)
+        assertNull(vm.state.value.error)
         vm.decide(laptop, approve = true); runCurrent()
         assertNull(vm.state.value.deciding)
     }
