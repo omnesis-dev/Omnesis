@@ -246,6 +246,8 @@ async def main():
     )
     state_path = Path(os.environ["OMNESIS_HERMES_STATE_PATH"])
     instance._state = module.DurableState(state_path)
+    if os.environ.get("OMNESIS_HERMES_PROBE_READY") == "1":
+        print(json.dumps({"phase": "hermes-gateway-probe-ready"}, separators=(",", ":")), flush=True)
     try:
         await instance._delivery_connection()
         # Hermes executes native tool handlers on an agent-worker thread. The

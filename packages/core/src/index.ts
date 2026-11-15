@@ -1442,6 +1442,10 @@ export { cloudRelayEnabled } from "./cloud-relay-enabled.js";
 
 export { execWindowsJob } from "./windows-job-exec.js";
 export { ownedProcessCleanupReceipt } from "./owned-process-cleanup.js";
+export {
+  OwnedProcessShutdownFence,
+  type OwnedProcessCleanup,
+} from "./owned-process-shutdown-fence.js";
 
 export {
   inspectWindowsPrivatePathSync,

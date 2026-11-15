@@ -14,6 +14,7 @@ import {
 import {
   createLogger,
   parseDuration,
+  ownedProcessCleanupReceipt,
   type HostNetwork,
   type WsRequestPayload,
 } from "@omnesis/core";
@@ -364,6 +365,8 @@ export function createServer(
     wsServer?: DeviceWsServer;
     /** Shared fleet-doctor coordinator. Production passes the WS lifecycle singleton. */
     deviceDoctorService?: DeviceDoctorService;
+    /** Transfers doctor cleanup ownership to the enclosing process shutdown fence. */
+    onDoctorCleanupOwner?: (owner: Pick<DoctorService, "cleanupFailure" | "close">) => void;
     /**
      * Each connected collector's source descriptors. Production passes the
      * instance the WS lifecycle prefetches into; without one, the routes fill
@@ -1598,6 +1601,7 @@ export function createServer(
         }
       : {}),
   });
+  opts?.onDoctorCleanupOwner?.(doctorService);
   const deviceDoctorService =
     opts?.deviceDoctorService ??
     new DeviceDoctorService({
@@ -2105,11 +2109,22 @@ export function createServer(
         const results = await Promise.allSettled([
           Promise.resolve().then(() => brainAdmin.close()),
           Promise.resolve().then(() => analyticsRoutes.close()),
+          ...(opts?.onDoctorCleanupOwner
+            ? []
+            : [Promise.resolve().then(() => doctorService.close())]),
         ]);
         const failures = results.flatMap((result) =>
           result.status === "rejected" ? [result.reason] : [],
         );
-        if (failures.length) throw new AggregateError(failures, "Gateway route cleanup failed");
+        if (failures.length) {
+          const marked = failures.find((error) => ownedProcessCleanupReceipt(error) !== undefined);
+          const error = new AggregateError(failures, "Gateway route cleanup failed", {
+            cause: marked ?? failures[0],
+          });
+          const receipt = ownedProcessCleanupReceipt(marked);
+          if (receipt) Object.assign(error, { cleanupFailure: receipt.failure });
+          throw error;
+        }
       })()),
   });
 }

@@ -10519,34 +10519,38 @@ describe("admin config endpoints", () => {
         body: JSON.stringify(body),
       });
 
-    const refused = await vetReq({
-      inference: { assignments: { transcriber: "ollama/qwen3-asr" } },
-    });
-    expect(refused.status).toBe(400);
-    const refusal = (await refused.json()) as { error: string; code: string; detail: unknown };
-    expect(refusal.code).toBe("VALIDATION_ERROR");
-    expect(refusal.error).toBe(
-      'Backend "ollama" cannot transcribe with qwen3-asr: no transcription endpoint',
-    );
-    expect(refusal.detail).toEqual([
-      { path: "/inference/assignments/transcriber", message: refusal.error },
-    ]);
-    const unchanged = (await (await cfgReq("/admin/config")).json()) as { config: unknown };
-    expect(unchanged.config).toEqual({});
+    try {
+      const refused = await vetReq({
+        inference: { assignments: { transcriber: "ollama/qwen3-asr" } },
+      });
+      expect(refused.status).toBe(400);
+      const refusal = (await refused.json()) as { error: string; code: string; detail: unknown };
+      expect(refusal.code).toBe("VALIDATION_ERROR");
+      expect(refusal.error).toBe(
+        'Backend "ollama" cannot transcribe with qwen3-asr: no transcription endpoint',
+      );
+      expect(refusal.detail).toEqual([
+        { path: "/inference/assignments/transcriber", message: refusal.error },
+      ]);
+      const unchanged = (await (await cfgReq("/admin/config")).json()) as { config: unknown };
+      expect(unchanged.config).toEqual({});
 
-    // Every assignment the body sets is vetted; one the hook accepts is written.
-    const accepted = await vetReq({
-      inference: { assignments: { transcriber: "local/whisper-base", agent: null } },
-    });
-    expect(accepted.status).toBe(200);
-    expect(vetted).toEqual([
-      ["transcriber", "ollama/qwen3-asr"],
-      ["transcriber", "local/whisper-base"],
-      ["agent", null],
-    ]);
-    // A body that sets no assignment is not vetted at all.
-    expect((await vetReq({ indexer: { cycleInterval: "5m" } })).status).toBe(200);
-    expect(vetted).toHaveLength(3);
+      // Every assignment the body sets is vetted; one the hook accepts is written.
+      const accepted = await vetReq({
+        inference: { assignments: { transcriber: "local/whisper-base", agent: null } },
+      });
+      expect(accepted.status).toBe(200);
+      expect(vetted).toEqual([
+        ["transcriber", "ollama/qwen3-asr"],
+        ["transcriber", "local/whisper-base"],
+        ["agent", null],
+      ]);
+      // A body that sets no assignment is not vetted at all.
+      expect((await vetReq({ indexer: { cycleInterval: "5m" } })).status).toBe(200);
+      expect(vetted).toHaveLength(3);
+    } finally {
+      await vetApp.close();
+    }
   });
 
   test("PATCH /admin/config stores inference backend apiKey as a config secret reference", async () => {

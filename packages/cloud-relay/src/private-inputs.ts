@@ -4,6 +4,7 @@
 import { createReadStream } from "node:fs";
 import { lstat, readFile } from "node:fs/promises";
 import { readWindowsPrivateFile, readWindowsRegularFilePrefix } from "@omnesis/core";
+import { isJoinedPrivateFileError } from "./private-file-errors.js";
 
 /** Preserve the existing POSIX read while holding and bounding Windows private inputs. */
 export function readPrivateInput(path: string): Promise<Buffer> {
@@ -39,8 +40,7 @@ export async function identityArtifactPresent(path: string): Promise<boolean> {
     else await lstat(path);
     return true;
   } catch (error) {
-    if (error && typeof error === "object" && "code" in error && error.code === "ENOENT")
-      return false;
+    if (isJoinedPrivateFileError(error, "ENOENT")) return false;
     throw error;
   }
 }

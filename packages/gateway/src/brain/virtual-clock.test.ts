@@ -7,7 +7,7 @@
  * fallback path).
  */
 
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import { asMutableClock, createMutableClock, resolveBriefsVirtualClock } from "./virtual-clock.js";
 import { systemClock } from "./storage/types.js";
 
@@ -39,6 +39,51 @@ describe("asMutableClock", () => {
 });
 
 describe("resolveBriefsVirtualClock", () => {
+  test.each(["0", "-1234", "123456789", "-8640000000000000", "8640000000000000"])(
+    "starts an opted-in clock at its explicit instant %s before any setter runs",
+    (initial) => {
+      const env = {
+        OMNESIS_BRIEFS_VIRTUAL_CLOCK: "1",
+        OMNESIS_BRIEFS_VIRTUAL_CLOCK_INITIAL_MS: initial,
+      };
+      const clock = resolveBriefsVirtualClock(env)!;
+      expect(clock()).toBe(Number(initial));
+      expect(clock.virtual).toBe(true);
+      expect(env.OMNESIS_BRIEFS_VIRTUAL_CLOCK_INITIAL_MS).toBe(initial);
+    },
+  );
+
+  test.each(["", " ", "NaN", "Infinity", "bad", "8640000000000001", "-8640000000000001"])(
+    "refuses invalid opted-in initial time %j",
+    (initial) => {
+      expect(() =>
+        resolveBriefsVirtualClock({
+          OMNESIS_BRIEFS_VIRTUAL_CLOCK: "1",
+          OMNESIS_BRIEFS_VIRTUAL_CLOCK_INITIAL_MS: initial,
+        }),
+      ).toThrow(/INITIAL_MS.*valid unix-ms instant/u);
+    },
+  );
+
+  test.each([undefined, "0", "true"])(
+    "ignores initial-time metadata without virtual opt-in %s and preserves wall time",
+    (optIn) => {
+      const now = vi.spyOn(Date, "now").mockReturnValue(123_456);
+      try {
+        expect(
+          resolveBriefsVirtualClock({
+            OMNESIS_BRIEFS_VIRTUAL_CLOCK: optIn,
+            OMNESIS_BRIEFS_VIRTUAL_CLOCK_INITIAL_MS: "not an instant",
+          }),
+        ).toBeNull();
+        expect(systemClock()).toBe(123_456);
+        expect(resolveBriefsVirtualClock({ OMNESIS_BRIEFS_VIRTUAL_CLOCK: "1" })!()).toBe(123_456);
+      } finally {
+        now.mockRestore();
+      }
+    },
+  );
+
   test("only OMNESIS_BRIEFS_VIRTUAL_CLOCK=1 opts in", () => {
     expect(resolveBriefsVirtualClock({})).toBeNull();
     expect(resolveBriefsVirtualClock({ OMNESIS_BRIEFS_VIRTUAL_CLOCK: "0" })).toBeNull();

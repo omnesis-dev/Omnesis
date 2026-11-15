@@ -1,61 +1,18 @@
-name: Windows ownership and filesystem diagnosis
+name: Frozen Windows audit regression checks
 on:
   workflow_dispatch:
-    inputs:
-      lanes:
-        type: choice
-        options: [all, linux]
-        default: linux
 permissions:
   contents: read
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
   TZ: UTC
 jobs:
-  ownership-green:
-    runs-on: ubuntu-latest
-    timeout-minutes: 25
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        with:
-          ref: ${{ github.sha }}
-          persist-credentials: false
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
-        with:
-          node-version: "24"
-          cache: npm
-      - name: Install locked dependencies
-        run: scripts/ci/npm-ci.sh
-      - name: Record exact revision and changed production inputs
-        run: |
-          git rev-parse HEAD
-          sha256sum packages/core/src/secret-store-files.ts packages/core/src/secret-store-entry.ts packages/core/src/sqlite-snapshot.ts packages/core/src/backup-layout.ts packages/platform/src/windows-process.ts packages/cloud-relay/src/device-key-file.ts packages/cloud-relay/src/gateway-key-client.ts
-      - name: Verify the two doctor guards against the six reproduced failures
-        run: >-
-          node scripts/run-check.mjs unit
-          packages/core/src/doctor/security-cleanup.test.ts
-          packages/core/src/doctor/windows-permissions-cleanup.test.ts
-      - name: Diagnose sibling security-key operation join and marker precedence
-        if: ${{ !cancelled() }}
-        run: node scripts/run-check.mjs unit packages/core/src/doctor/security-key-batch-cleanup.test.ts
-      - name: Diagnose broader private-operation producer boundaries
-        if: ${{ !cancelled() }}
-        run: node scripts/ci/relay-producer-baseline.mjs
-      - name: Diagnose ACME DNS initial and recovery journal ownership
-        if: ${{ !cancelled() }}
-        run: node scripts/run-check.mjs unit packages/cloud-relay/src/acme-dns-cleanup.test.ts
-      - name: Diagnose DNS owner adoption and controller admission
-        if: ${{ !cancelled() }}
-        run: node scripts/run-check.mjs unit packages/cloud-relay/src/acme-controller-dns-cleanup.test.ts
-      - name: Diagnose doctor worker and service retained cleanup ownership
-        if: ${{ !cancelled() }}
-        run: >-
-          node scripts/run-check.mjs unit
-          packages/core/src/doctor/security-worker-lifecycle.test.ts
-          packages/gateway/src/http/services/DoctorService-cleanup.test.ts
-  windows-filesystem:
-    if: ${{ inputs.lanes != 'linux' }}
-    runs-on: windows-latest
+  ownership-and-fixtures:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 35
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -67,12 +24,77 @@ jobs:
           node-version: "24"
           cache: npm
       - name: Install locked dependencies
-        id: dependencies
-        run: node scripts/ci/npm-ci.mjs
-      - name: Verify the immutable synthetic WAL probe
-        run: node -e 'const fs=require("node:fs"),crypto=require("node:crypto"),assert=require("node:assert/strict");assert.equal(crypto.createHash("sha256").update(fs.readFileSync("scripts/ci/windows-wal-diagnostic.mjs")).digest("hex"),"7b603d71772fe977d7cf50d2c06048979ebc462d2d7e9bda893a4b35b5d51891")'
-      - name: Measure identical plain and encrypted WAL workloads
-        run: node scripts/ci/windows-wal-diagnostic.mjs .
-      - name: Observe the actual generated Hermes private-file and Python bridge artifact
-        if: ${{ !cancelled() && steps.dependencies.outcome == 'success' }}
-        run: node scripts/run-check.mjs unit packages/cli/src/commands/integration-runtime.test.ts
+        run: node scripts/ci/npm-ci.mjs --no-audit --no-fund
+      - name: Validate security audit worker and Gateway owner cleanup
+        run: >-
+          node scripts/run-check.mjs unit
+          packages/core/src/doctor/security-worker.test.ts
+          packages/core/src/doctor/security-worker-lifecycle.test.ts
+          packages/core/src/doctor/security-worker-protocol.test.ts
+          packages/gateway/src/http/services/DoctorService.test.ts
+          packages/gateway/src/http/services/DoctorService-cleanup.test.ts
+          packages/gateway/src/server-doctor-cleanup.test.ts
+      - name: Validate owned private operation and shutdown boundaries
+        if: ${{ !cancelled() }}
+        run: >-
+          node scripts/run-check.mjs unit
+          packages/core/src/secret-store-files.test.ts
+          packages/core/src/sqlite-snapshot-windows-retry.test.ts
+          packages/core/src/sqlite-snapshot-cleanup-retention.test.ts
+          packages/core/src/backup-layout-cleanup.test.ts
+          packages/core/src/owned-process-cleanup.test.ts
+          packages/core/src/private-scratch.test.ts
+          packages/platform/src/windows-process.test.ts
+          packages/core/src/doctor/security-cleanup.test.ts
+          packages/core/src/doctor/security-key-batch-cleanup.test.ts
+          packages/core/src/doctor/windows-permissions-cleanup.test.ts
+          packages/core/src/doctor/security.test.ts
+          packages/core/test/security-fixture-acl.test.ts
+          packages/gateway/src/optional-service-cleanup.test.ts
+          packages/gateway/src/owned-process-shutdown-fence.test.ts
+      - name: Validate probe and smoke fixture boundaries
+        if: ${{ !cancelled() }}
+        run: >-
+          node scripts/run-check.mjs unit
+          scripts/ci/test-shell.test.mjs
+          scripts/ci/owned-probe-host.test.mjs
+          scripts/ci/hermes-probe-runner.test.mjs
+          scripts/ci/build-windows-usearch.test.mjs
+          scripts/ci/npm-ci-node.test.mjs
+          packages/cli/src/commands/integration-runtime.test.ts
+          packages/agent/src/replay-backend.test.ts
+  relay-coverage:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: "24"
+          cache: npm
+      - name: Install locked dependencies
+        run: node scripts/ci/npm-ci.mjs --no-audit --no-fund
+      - name: Full strict relay coverage
+        run: npm run test:cloud-relay
+  source-and-test-types:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: "24"
+          cache: npm
+      - name: Install locked dependencies
+        run: node scripts/ci/npm-ci.mjs --no-audit --no-fund
+      - name: Full source typecheck
+        run: npm run typecheck
+      - name: Full test typecheck
+        if: ${{ !cancelled() }}
+        run: npm run typecheck:tests

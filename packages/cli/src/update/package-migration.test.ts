@@ -282,7 +282,11 @@ describe("source-to-package migration", () => {
     await migrateSourceToPackage({ dryRun: false, keepCheckout: true, healthTimeoutMs: 10 }, deps);
 
     const gateway = readFileSync(fx.unit("gateway"), "utf8");
-    expect(gateway).toBe(fx.unitText("gateway").replace(fx.launcher, packageExecutable));
+    expect(gateway).toBe(
+      fx
+        .unitText("gateway")
+        .replace(systemdEscapeArg(fx.launcher), systemdEscapeArg(packageExecutable)),
+    );
     expect(events.indexOf("reload:gateway")).toBeLessThan(events.indexOf("health"));
     expect(events.indexOf("health")).toBeLessThan(events.indexOf("reload:collector"));
   });

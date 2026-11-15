@@ -3,6 +3,7 @@
 
 import { execFileSync, spawnSync } from "node:child_process";
 import {
+  lstatSync,
   mkdtempSync,
   mkdirSync,
   readFileSync,
@@ -198,6 +199,123 @@ function fakeDeps(
 function subcommands(state: FakeState): string[] {
   return state.calls.map((call) => call.args.slice(3).join(" "));
 }
+
+describe("source adoption directory spellings", () => {
+  const alias = resolve(tmpdir(), "omnesis-source-expanded-alias");
+  function aliasedFs(
+    kind: "directory" | "symlink" | "missing" | "different" = "directory",
+  ): SourceAdoptionFs {
+    const fs = fakeFs();
+    return {
+      ...fs,
+      identity(path) {
+        if (path === alias || path === join(alias, ".git")) {
+          if (kind === "missing") return null;
+          const original = fs.identity(path === alias ? ROOT : GIT_DIR)!;
+          return {
+            ...original,
+            kind: kind === "symlink" ? "symlink" : "directory",
+            inode: kind === "different" ? "9007199254740993" : original.inode,
+          };
+        }
+        return fs.identity(path);
+      },
+    };
+  }
+  function aliasOutput(args: string[]): SourceAdoptionRunOutcome | undefined {
+    if (args.join(" ") === "rev-parse --show-toplevel") return { code: 0, stdout: alias + "\n" };
+    if (["rev-parse --absolute-git-dir", "rev-parse --git-common-dir"].includes(args.join(" ")))
+      return { code: 0, stdout: join(alias, ".git") + "\n" };
+  }
+  test("accepts verified Windows spellings for the same root and standalone metadata", async () => {
+    const { deps, state } = fakeDeps({ fs: aliasedFs(), override: aliasOutput });
+    deps.platform = "win32";
+    await adoptSourceCheckout(ROOT, deps);
+    expect(state.marker).toEqual(["managed"]);
+  });
+  test.each(["different", "symlink", "missing"] as const)(
+    "refuses a Windows alias with %s identity before claiming the checkout",
+    async (kind) => {
+      const { deps, state } = fakeDeps({ fs: aliasedFs(kind), override: aliasOutput });
+      deps.platform = "win32";
+      await expect(adoptSourceCheckout(ROOT, deps)).rejects.toThrow("exact top-level");
+      expect(state.marker).toEqual([]);
+    },
+  );
+  test("does not accept a matching root with different standalone metadata", async () => {
+    const fs = aliasedFs();
+    const { deps, state } = fakeDeps({
+      fs: {
+        ...fs,
+        identity(path) {
+          const identity = fs.identity(path);
+          return path === join(alias, ".git") && identity
+            ? { ...identity, inode: "999" }
+            : identity;
+        },
+      },
+      override: aliasOutput,
+    });
+    deps.platform = "win32";
+    await expect(adoptSourceCheckout(ROOT, deps)).rejects.toThrow("metadata is not contained");
+    expect(state.marker).toEqual([]);
+  });
+  test("refuses a separate common metadata directory under an otherwise matching root", async () => {
+    const fs = aliasedFs(),
+      shared = join(alias, "shared");
+    const { deps, state } = fakeDeps({
+      fs: {
+        ...fs,
+        identity(path) {
+          return path === shared
+            ? { kind: "directory", device: "7", inode: "999" }
+            : fs.identity(path);
+        },
+      },
+      override(args) {
+        return args.join(" ") === "rev-parse --git-common-dir"
+          ? { code: 0, stdout: shared + "\n" }
+          : aliasOutput(args);
+      },
+    });
+    deps.platform = "win32";
+    await expect(adoptSourceCheckout(ROOT, deps)).rejects.toThrow("linked worktrees");
+    expect(state.marker).toEqual([]);
+  });
+  test("preserves exact root spelling on POSIX", async () => {
+    const { deps, state } = fakeDeps({ fs: aliasedFs(), override: aliasOutput });
+    deps.platform = "linux";
+    await expect(adoptSourceCheckout(ROOT, deps)).rejects.toThrow("exact top-level");
+    expect(state.marker).toEqual([]);
+  });
+  test("refuses distinct exact file IDs that round to the same JavaScript number", async () => {
+    const fs = aliasedFs("different");
+    const { deps, state } = fakeDeps({
+      fs: {
+        ...fs,
+        identity(path) {
+          const identity = fs.identity(path);
+          return path === ROOT && identity ? { ...identity, inode: "9007199254740992" } : identity;
+        },
+      },
+      override: aliasOutput,
+    });
+    deps.platform = "win32";
+    expect(Number("9007199254740992")).toBe(Number("9007199254740993"));
+    await expect(adoptSourceCheckout(ROOT, deps)).rejects.toThrow("exact top-level");
+    expect(state.marker).toEqual([]);
+  });
+  test("native no-follow directory identities retain exact bigint values", () => {
+    const root = realpathSync(mkdtempSync(join(tmpdir(), "omnesis-source-identity-")));
+    temporaryRoots.push(root);
+    const stat = lstatSync(root, { bigint: true });
+    expect(nodeSourceAdoptionFs.identity(root)).toEqual({
+      kind: "directory",
+      device: String(stat.dev),
+      inode: String(stat.ino),
+    });
+  });
+});
 
 describe("source adoption remote parsing", () => {
   test("peels annotated tags and accepts lightweight stable tags", () => {

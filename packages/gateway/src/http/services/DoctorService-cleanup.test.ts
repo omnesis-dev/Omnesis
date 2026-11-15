@@ -100,7 +100,7 @@ test("a prompt failed observation cannot replace the retained late join on close
   await closing;
   expect(owner.cleanupFailure?.()).toBeUndefined();
   const scans = fixture.collect.mock.calls.length;
-  await owner.report(identity);
+  await expect(owner.report(identity)).rejects.toThrow("closed");
   expect(fixture.collect).toHaveBeenCalledTimes(scans);
 });
 

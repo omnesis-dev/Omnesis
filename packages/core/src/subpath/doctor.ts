@@ -26,9 +26,13 @@ export { collectSecurityData } from "../doctor/security.js";
 export type { CollectSecurityOptions, SecurityCommandRunner } from "../doctor/security.js";
 export {
   collectSecurityDataInWorker,
+  DoctorSecurityScanner,
   SECURITY_SCAN_TIMEOUT_MS,
 } from "../doctor/security-worker.js";
-export type { CollectSecurityDataInWorkerOptions } from "../doctor/security-worker.js";
+export type {
+  CollectSecurityDataInWorkerOptions,
+  DoctorSecurityScannerOptions,
+} from "../doctor/security-worker.js";
 export {
   doctorReportSchema,
   MAX_DOCTOR_CHECKS,

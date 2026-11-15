@@ -6,7 +6,11 @@ import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import * as scans from "./security-worker.js";
 import type { SecurityData } from "./types.js";
 
-const fixtures = vi.hoisted(() => ({ workers: [] as EventEmitter[], events: [] as string[] }));
+const fixtures = vi.hoisted(() => ({
+  workers: [] as EventEmitter[],
+  events: [] as string[],
+  onCreate: undefined as (() => void) | undefined,
+}));
 vi.mock("node:worker_threads", async () => {
   const { EventEmitter } = await import("node:events");
   return {
@@ -15,6 +19,7 @@ vi.mock("node:worker_threads", async () => {
         super();
         fixtures.events.push("worker-created");
         fixtures.workers.push(this);
+        fixtures.onCreate?.();
       }
       unref() {
         return this;
@@ -54,10 +59,12 @@ const current = () => fixtures.workers.at(-1)!;
 beforeEach(() => {
   fixtures.workers.length = 0;
   fixtures.events.length = 0;
+  fixtures.onCreate = undefined;
   vi.useFakeTimers();
 });
 afterEach(() => {
   for (const worker of fixtures.workers) worker.emit("exit", 0);
+  vi.restoreAllMocks();
   vi.useRealTimers();
 });
 
@@ -188,4 +195,76 @@ test("standalone convenience retains its owner until late join and preserves fai
   current().emit("message", { type: "done", security });
   current().emit("exit", 0);
   await expect(collecting).rejects.toThrow("timed out after 10ms");
+});
+
+test("a failed synchronous ownership notification cannot launch a worker", async () => {
+  const owner = scanner(() => {
+    throw undefined;
+  });
+  await expect(owner.collect()).rejects.toBeUndefined();
+  expect(fixtures.workers).toHaveLength(0);
+  expect(owner.cleanupFailure()).toBeUndefined();
+  await owner.close();
+});
+
+test("a close triggered by the ownership notification refuses a later worker launch", async () => {
+  let owner!: Scanner;
+  owner = scanner(() => {
+    void owner.close();
+  });
+  await expect(owner.collect()).rejects.toThrow("closed");
+  expect(fixtures.workers).toHaveLength(0);
+  await owner.close();
+});
+
+test("synchronous setup cannot start a worker after the observation budget is exhausted", async () => {
+  let now = 0;
+  vi.spyOn(performance, "now").mockImplementation(() => now);
+  let owner!: Scanner;
+  owner = scanner(() => {
+    if (owner.cleanupFailure()) now = 30_000;
+  });
+  await expect(owner.collect()).rejects.toThrow("timed out after 30000ms");
+  expect(fixtures.workers).toHaveLength(0);
+  expect(owner.cleanupFailure()).toBeUndefined();
+  await owner.close();
+});
+
+test("worker constructor time consumes the same cumulative observation budget", async () => {
+  let now = 0;
+  vi.spyOn(performance, "now").mockImplementation(() => now);
+  fixtures.onCreate = () => {
+    now = 10_000;
+  };
+  const owner = scanner(),
+    collecting = owner.collect();
+  let failed = false;
+  void collecting.catch(() => {
+    failed = true;
+  });
+  now = 29_999;
+  await vi.advanceTimersByTimeAsync(19_999);
+  expect(failed).toBe(false);
+  now = 30_000;
+  await vi.advanceTimersByTimeAsync(1);
+  expect(failed).toBe(true);
+  current().emit("message", { type: "done", security });
+  current().emit("exit", 0);
+  await expect(collecting).rejects.toThrow("timed out after 30000ms");
+  await owner.close();
+});
+
+test("a late exit cannot beat an overdue observation timer and become successful", async () => {
+  let now = 0;
+  vi.spyOn(performance, "now").mockImplementation(() => now);
+  const owner = scanner(),
+    collecting = owner.collect();
+  void collecting.catch(() => {});
+  current().emit("message", { type: "done", security });
+  // The timer is deliberately not dispatched: event-loop delay cannot extend the budget.
+  now = 30_001;
+  current().emit("exit", 0);
+  await expect(collecting).rejects.toThrow("timed out after 30000ms");
+  expect(owner.cleanupFailure()).toBeUndefined();
+  await owner.close();
 });

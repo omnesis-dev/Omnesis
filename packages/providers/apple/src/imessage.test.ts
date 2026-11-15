@@ -260,6 +260,7 @@ describe("AppleIMessageSource", () => {
 
   afterEach(async () => {
     vi.useRealTimers();
+    source.dispose();
     testDb.close();
     await provider.disconnect();
     rmSync(tmpDir, { recursive: true, force: true });

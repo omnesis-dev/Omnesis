@@ -5,7 +5,12 @@ import { X509Certificate } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { rootCertificates } from "node:tls";
-import { createLogger, cloudRelayEnabled, resolveTlsMaterial } from "@omnesis/core";
+import {
+  createLogger,
+  cloudRelayEnabled,
+  resolveTlsMaterial,
+  ownedProcessCleanupReceipt,
+} from "@omnesis/core";
 import { z } from "zod";
 import { ensureAcmeBootstrap } from "./acme-bootstrap.js";
 import { AcmeDnsChallenges } from "./acme-dns.js";
@@ -140,13 +145,36 @@ export async function createGatewayAcmeController(
   const cleanup = new OwnedCleanupLifecycle(() => abort.abort());
   let fingerprint: string | undefined;
   let spkiFingerprint: string | undefined;
-  let state:
-    | { renewal: import("./acme-gateway.js").GatewayAcmeRenewal; dns?: AcmeDnsChallenges }
-    | undefined;
+  let state: { renewal: import("./acme-gateway.js").GatewayAcmeRenewal } | undefined;
+  let ownedDns: AcmeDnsChallenges | undefined;
+  const dnsCloses = new WeakMap<AcmeDnsChallenges, Promise<void>>();
+  const observeDns = (): void => {
+    const failure = ownedDns?.cleanupFailure();
+    const receipt = ownedProcessCleanupReceipt(failure);
+    // Actual accepted DNS work may be pending without a terminal ownership failure.
+    if (receipt && !receipt.pending) cleanup.observe(failure);
+  };
+  const closeDns = async (dns = ownedDns): Promise<void> => {
+    if (!dns) return;
+    let closing = dnsCloses.get(dns);
+    if (!closing) {
+      closing = Promise.resolve().then(() => dns.close());
+      dnsCloses.set(dns, closing);
+    }
+    try {
+      await closing;
+    } catch (error) {
+      // A joined provider outage leaves durable recovery intent, not a live owner.
+      if (ownedProcessCleanupReceipt(error) === undefined && ownedDns === dns) ownedDns = undefined;
+      throw error;
+    }
+    if (ownedDns === dns) ownedDns = undefined;
+  };
   let initializing: Promise<void> | undefined;
   const assertContinuing = (signal: AbortSignal): void => {
-    signal.throwIfAborted();
+    observeDns();
     cleanup.assertAdmitting();
+    signal.throwIfAborted();
   };
   const activate = async (signal: AbortSignal) => {
     assertContinuing(signal);
@@ -166,6 +194,8 @@ export async function createGatewayAcmeController(
         const signal = AbortSignal.any([abort.signal, initialSignal]);
         let localDns: AcmeDnsChallenges | undefined;
         try {
+          assertContinuing(signal);
+          if (ownedDns) await closeDns();
           assertContinuing(signal);
           await ensureAcmeBootstrap({
             publicOrigin: publicOrigin,
@@ -204,6 +234,7 @@ export async function createGatewayAcmeController(
               }),
             });
             // Keep the returned DNS owner before refusing a closed continuation.
+            ownedDns = localDns;
             assertContinuing(signal);
             presenter = {
               create: (value: string, signal: AbortSignal) =>
@@ -229,7 +260,6 @@ export async function createGatewayAcmeController(
           await activate(signal);
           assertContinuing(signal);
           state = {
-            dns: localDns,
             renewal: new GatewayAcmeRenewal({
               directoryUrl: config.OMNESIS_ACME_DIRECTORY_URL,
               publicOrigin: publicOrigin,
@@ -248,7 +278,7 @@ export async function createGatewayAcmeController(
         } catch (error) {
           cleanup.observe(error);
           try {
-            await localDns?.close();
+            await closeDns(localDns);
           } catch (closeError) {
             throw combinedCleanupErrors([error, closeError], "ACME initialization cleanup failed");
           }
@@ -269,10 +299,15 @@ export async function createGatewayAcmeController(
   return {
     fingerprintSha256: () => fingerprint,
     spkiFingerprintSha256: () => spkiFingerprint,
-    cleanupFailure: () => cleanupReceipt(cleanup.receipt(), state?.renewal.cleanupFailure()),
+    cleanupFailure: () =>
+      cleanupReceipt(
+        cleanup.receipt(),
+        state?.renewal.cleanupFailure(),
+        ownedDns?.cleanupFailure(),
+      ),
     renew(signal) {
       try {
-        cleanup.assertAdmitting();
+        assertContinuing(signal);
       } catch (error) {
         return Promise.reject(error);
       }
@@ -309,12 +344,13 @@ export async function createGatewayAcmeController(
     },
     close() {
       abort.abort();
+      observeDns();
       return cleanup.close(
         async () => {
           await state?.renewal.close();
         },
         async () => {
-          await state?.dns?.close();
+          await closeDns();
         },
       );
     },

@@ -7,6 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ensurePrivateDirs, execWindowsJob, inspectWindowsPrivatePathSync } from "@omnesis/core";
 import Database from "better-sqlite3";
+import * as core from "@omnesis/core";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { tlsFiles } from "../test/support.js";
 import { brokerCall, brokerOwner, memoryStore, ownerFrom } from "../test/dns-broker-owner.js";
@@ -208,3 +209,28 @@ test("an explicit public registry export keeps its ordinary file permissions", a
   }
   expect(await readRegistryExport(file)).toEqual([]);
 });
+
+test.each([
+  { bytes: Buffer.from('{"entries":[]}'), size: 14n, expected: undefined },
+  { bytes: Buffer.alloc(0), size: 64n * 1024n * 1024n + 1n, expected: "too large" },
+  { bytes: Buffer.from('{"entries":[]}'), size: 15n, expected: "read completely" },
+])(
+  "Windows registry import validates the held ordinary-file receipt before parsing: $expected",
+  async ({ bytes, size, expected }) => {
+    const path = join(directory, "external-registry.json");
+    const read = vi
+      .spyOn(core, "readWindowsRegularFilePrefix")
+      .mockResolvedValueOnce({ bytes, size });
+    const privateRead = vi.spyOn(core, "readWindowsPrivateFile");
+    const descriptor = Object.getOwnPropertyDescriptor(process, "platform")!;
+    Object.defineProperty(process, "platform", { ...descriptor, value: "win32" });
+    try {
+      if (expected) await expect(readRegistryExport(path)).rejects.toThrow(expected);
+      else expect(await readRegistryExport(path)).toEqual([]);
+      expect(read).toHaveBeenCalledExactlyOnceWith(path, 64 * 1024 * 1024);
+      expect(privateRead).not.toHaveBeenCalled();
+    } finally {
+      Object.defineProperty(process, "platform", descriptor);
+    }
+  },
+);

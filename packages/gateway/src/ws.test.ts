@@ -3,7 +3,7 @@
 
 import { randomUUID } from "node:crypto";
 import { once } from "node:events";
-import { spawn } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 import { unlinkSync, existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -12,6 +12,7 @@ import { describe, test, expect, afterAll, afterEach, beforeAll, beforeEach, vi 
 import { serve } from "@hono/node-server";
 import { createNodeWebSocket } from "@hono/node-ws";
 import {
+  spawnWindowsJob,
   makeCommand,
   makeEvent,
   makeResponseOk,
@@ -297,11 +298,11 @@ describe("DeviceWsServer", () => {
     const localPort = await listeningPort(localServer);
 
     const sourceDirectory = dirname(fileURLToPath(import.meta.url));
-    const probe = resolve(sourceDirectory, "../../agent-integration/test/hermes_gateway_probe.py");
+    const probe = resolve(sourceDirectory, "../../../scripts/test-hermes.mjs");
     const adapter = resolve(sourceDirectory, "../../agent-integration/hermes/adapter.py");
     const stateDirectory = mkdtempSync(join(tmpdir(), "omnesis-hermes-probe-"));
     const statePath = join(stateDirectory, "integration.sqlite");
-    const probeProcess = spawn("python3", ["-B", probe], {
+    const probeOptions = {
       env: {
         ...process.env,
         OMNESIS_HERMES_ADAPTER_PATH: adapter,
@@ -310,25 +311,130 @@ describe("DeviceWsServer", () => {
         OMNESIS_HERMES_STATE_PATH: statePath,
         OMNESIS_HERMES_EXPECT_RESPONSES: "7",
       },
-      stdio: ["ignore", "pipe", "pipe"],
-    });
+    };
+    const hasCleanupReceipt = (value: unknown): value is { cleanupFailure: unknown } =>
+      value !== null &&
+      (typeof value === "object" || typeof value === "function") &&
+      Object.hasOwn(value, "cleanupFailure");
+    const fixtureFailure = (errors: unknown[], message: string): AggregateError => {
+      const marked = errors.find(hasCleanupReceipt);
+      const aggregate = new AggregateError(errors, message, { cause: marked ?? errors[0] });
+      if (marked) Object.assign(aggregate, { cleanupFailure: marked.cleanupFailure });
+      return aggregate;
+    };
+    const closeProbeResources = async (removeFiles: boolean): Promise<void> => {
+      const errors: unknown[] = [];
+      try {
+        wss.stop();
+      } catch (error) {
+        errors.push(error);
+      }
+      try {
+        await new Promise<void>((resolve, reject) => {
+          localServer.closeAllConnections?.();
+          localServer.close((error) => (error ? reject(error) : resolve()));
+        });
+      } catch (error) {
+        errors.push(error);
+      }
+      try {
+        localDb.close();
+      } catch (error) {
+        errors.push(error);
+      }
+      if (removeFiles && errors.length === 0) {
+        try {
+          rmSync(stateDirectory, { recursive: true, force: true });
+          cleanupDb(localDbPath);
+        } catch (error) {
+          errors.push(error);
+        }
+      }
+      if (errors.length) throw fixtureFailure(errors, "Hermes probe resources did not close");
+    };
+    let ownedProbe: ReturnType<typeof spawnWindowsJob> | null = null;
+    let probeProcess: ChildProcess;
+    try {
+      ownedProbe =
+        process.platform === "win32"
+          ? spawnWindowsJob(process.execPath, [probe, "--gateway-probe"], probeOptions)
+          : null;
+      probeProcess =
+        ownedProbe ??
+        spawn(process.execPath, [probe, "--gateway-probe"], {
+          ...probeOptions,
+          stdio: ["ignore", "pipe", "pipe"],
+        });
+    } catch (error) {
+      try {
+        await closeProbeResources(false);
+      } catch (cleanupError) {
+        throw fixtureFailure(
+          [error, cleanupError],
+          "Hermes bootstrap and independent cleanup failed",
+        );
+      }
+      throw error;
+    }
     let probeStdout = "";
     let probeStderr = "";
-    probeProcess.stdout.setEncoding("utf8");
-    probeProcess.stderr.setEncoding("utf8");
-    probeProcess.stdout.on("data", (chunk: string) => {
+    probeProcess.stdout!.setEncoding("utf8");
+    probeProcess.stderr!.setEncoding("utf8");
+    probeProcess.stdout!.on("data", (chunk: string) => {
       probeStdout += chunk;
     });
-    probeProcess.stderr.on("data", (chunk: string) => {
+    probeProcess.stderr!.on("data", (chunk: string) => {
       probeStderr += chunk;
     });
-    const probeExit = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>(
-      (resolveExit, rejectExit) => {
-        probeProcess.once("error", rejectExit);
-        probeProcess.once("exit", (code, signal) => resolveExit({ code, signal }));
+    const rawErrors: unknown[] = [];
+    const rawProbeExit = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>(
+      (resolveExit) => {
+        probeProcess.on("error", (error) => {
+          rawErrors.push(error);
+        });
+        probeProcess.once("close", (code, signal) => resolveExit({ code, signal }));
       },
     );
+    const probeClosed = (async () => {
+      const results = await Promise.allSettled([
+        rawProbeExit,
+        ...(ownedProbe ? [ownedProbe.jobClosed] : []),
+      ]);
+      const rejected = results.filter((result) => result.status === "rejected");
+      if (rejected.length) {
+        const reasons = rejected.map((result) => result.reason as unknown);
+        const error = fixtureFailure(reasons, "Hermes probe cleanup was not confirmed");
+        if (!hasCleanupReceipt(error)) Object.assign(error, { cleanupFailure: reasons[0] });
+        throw error;
+      }
+      const status = results[0]!;
+      if (status.status !== "fulfilled") throw new Error("Missing raw-close proof for bridge");
+      return status.value as { code: number | null; signal: NodeJS.Signals | null };
+    })();
+    const probeExit = probeClosed.then((status) => {
+      if (rawErrors.length) throw fixtureFailure(rawErrors, "Hermes probe process failed");
+      return status;
+    });
+    void probeExit.catch(() => {});
+    let primaryFailed = false,
+      primaryFailure: unknown;
+    ownedProbe?.stdin?.on("error", () => {});
+    ownedProbe?.stdin?.end();
     try {
+      if (ownedProbe) await ownedProbe.jobReady;
+      // Preparing a fresh canonical artifact precedes the existing protocol
+      // readiness budget; compiler time is not a WebSocket handshake.
+      await waitForCondition(() => {
+        const ready = probeStdout.includes('{"phase":"hermes-gateway-probe-ready"}');
+        if (!ready && rawErrors.length)
+          throw fixtureFailure(rawErrors, "Hermes probe process failed during preparation");
+        if (!ready && (probeProcess.exitCode !== null || probeProcess.signalCode !== null)) {
+          throw new Error(
+            `Hermes probe exited during preparation\nstderr:\n${probeStderr}\nstdout:\n${probeStdout}`,
+          );
+        }
+        return ready;
+      }, 30_000);
       // The probe's own output on the way in: without it a hello the gateway
       // refused looks identical to a probe that never started, and the failure
       // says only that a condition timed out.
@@ -443,7 +549,14 @@ describe("DeviceWsServer", () => {
         }),
       ]);
       expect(exited, probeStderr).toEqual({ code: 0, signal: null });
-      expect(JSON.parse(probeStdout.trim())).toEqual({
+      expect(
+        JSON.parse(
+          probeStdout
+            .split(/\r?\n/u)
+            .filter((line) => line.trim() && line !== '{"phase":"hermes-gateway-probe-ready"}')
+            .join("\n"),
+        ),
+      ).toEqual({
         status: "PROTOCOL_OK",
         starts: 1,
         states: {
@@ -472,19 +585,37 @@ describe("DeviceWsServer", () => {
           maxConcurrentRuns: 1,
         },
       });
+    } catch (error) {
+      primaryFailed = true;
+      primaryFailure = error;
+      throw error;
     } finally {
-      if (probeProcess.exitCode === null && probeProcess.signalCode === null) {
-        probeProcess.kill("SIGTERM");
-        await probeExit.catch(() => undefined);
+      const errors: unknown[] = [];
+      let joined = false;
+      try {
+        if (probeProcess.exitCode === null && probeProcess.signalCode === null)
+          probeProcess.kill("SIGTERM");
+      } catch (error) {
+        errors.push(error);
       }
-      rmSync(stateDirectory, { recursive: true, force: true });
-      wss.stop();
-      await new Promise<void>((resolve) => {
-        localServer.closeAllConnections?.();
-        localServer.close(() => resolve());
-      });
-      localDb.close();
-      cleanupDb(localDbPath);
+      try {
+        await probeClosed;
+        joined = true;
+      } catch (error) {
+        errors.push(error);
+      }
+      errors.push(...rawErrors);
+      const allErrors = [...(primaryFailed ? [primaryFailure] : []), ...errors];
+      try {
+        await closeProbeResources(joined && !allErrors.some(hasCleanupReceipt));
+      } catch (error) {
+        errors.push(error);
+      }
+      if (errors.length)
+        throw fixtureFailure(
+          [...(primaryFailed ? [primaryFailure] : []), ...errors],
+          "Hermes probe operation and cleanup failed",
+        );
     }
   });
 

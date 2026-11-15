@@ -659,8 +659,10 @@ installing it takes one command as root:
           further TLS mutations are blocked. Any issuer scratch is retained. During shutdown the
           gateway keeps its process and lock for operator review; review the issuer process state
           before restarting the gateway. The same shutdown hold applies to unconfirmed cleanup of
-          managed model runtimes. Cleanup still in progress is awaited; if it later succeeds, a stop
-          that already exceeded its deadline retains the timeout result.
+          managed model runtimes, host security audits, public ACME renewal and relay management.
+          ACME and relay services stop automatic retries while their cleanup is unconfirmed. Cleanup
+          still in progress is awaited; if it later succeeds, a stop that already exceeded its
+          deadline retains the timeout result.
         </p>
 
         <h3 id="tls-renewal">Renewal and activation</h3>

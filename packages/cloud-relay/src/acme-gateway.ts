@@ -14,8 +14,9 @@ import { promisify } from "node:util";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { rootCertificates } from "node:tls";
-import { acquireGatewayLock, atomicWriteFile } from "@omnesis/core";
+import { acquireGatewayLock, atomicWriteFile, ownedProcessCleanupReceipt } from "@omnesis/core";
 import { z } from "zod";
+import { isJoinedPrivateFileError } from "./private-file-errors.js";
 import { issueAcmeCertificate, type AcmeDnsPresenter } from "./acme-client.js";
 import { bindingOrigin, validateCertificateDates } from "./gateway-binding.js";
 import { publicKeyFingerprint } from "./gateway-key-auth.js";
@@ -147,19 +148,14 @@ async function accountKey(path: string): Promise<string> {
   try {
     return await readPrivateText(path);
   } catch (error) {
-    if (!(
-      typeof error === "object" &&
-      error !== null &&
-      "code" in error &&
-      error.code === "ENOENT"
-    ))
-      throw error;
+    if (!isJoinedPrivateFileError(error, "ENOENT")) throw error;
     await mkdir(dirname(path), { recursive: true, mode: 0o700 });
     const temporary = `${path}.${randomUUID()}.tmp`;
     const key = generateKeyPairSync("ec", { namedCurve: "prime256v1" }).privateKey.export({
       type: "pkcs8",
       format: "pem",
     });
+    let publicationFailure: unknown;
     try {
       await atomicWriteFile(temporary, key, { mode: 0o600 });
       try {
@@ -173,8 +169,12 @@ async function accountKey(path: string): Promise<string> {
         ))
           throw error;
       }
+    } catch (error) {
+      publicationFailure = error;
+      throw error;
     } finally {
-      await rm(temporary, { force: true });
+      if (ownedProcessCleanupReceipt(publicationFailure) === undefined)
+        await rm(temporary, { force: true });
     }
     return readPrivateText(path);
   }

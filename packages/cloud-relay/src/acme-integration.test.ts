@@ -203,6 +203,7 @@ test("failed initial SNI activation contains cleanup errors and rejects reusing 
   const env = await environment(),
     { AcmeDnsChallenges } = await import("./acme-dns.js");
   const service = {
+    cleanupFailure: () => undefined,
     close: vi.fn(async () => {
       throw new Error("cleanup-provider-secret");
     }),

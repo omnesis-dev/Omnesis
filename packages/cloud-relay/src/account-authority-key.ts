@@ -5,7 +5,13 @@ import { constants } from "node:fs";
 import { mkdir, open, link, rm } from "node:fs/promises";
 import { dirname } from "node:path";
 import { createPrivateKey, generateKeyPairSync, randomUUID } from "node:crypto";
-import { atomicWriteFile, readWindowsPrivateFile, createWindowsPrivateFile } from "@omnesis/core";
+import {
+  atomicWriteFile,
+  readWindowsPrivateFile,
+  createWindowsPrivateFile,
+  ownedProcessCleanupReceipt,
+} from "@omnesis/core";
+import { isJoinedPrivateFileError } from "./private-file-errors.js";
 import { AccountEnrollmentAuthority } from "./account-enrollment-proof.js";
 
 /** The account attestation key is independent of gateway keys and of the relay session root. */
@@ -17,10 +23,11 @@ export async function loadAccountEnrollmentAuthority(
   try {
     material = await readKey(path);
   } catch (error) {
-    if (!hasCode(error, "ENOENT")) throw error;
+    if (!isJoinedPrivateFileError(error, "ENOENT")) throw error;
     await mkdir(dirname(path), { recursive: true, mode: 0o700 });
     const temporary = `${path}.${randomUUID()}.tmp`;
     const key = generateKeyPairSync("ed25519").privateKey.export({ type: "pkcs8", format: "pem" });
+    let publicationFailure: unknown;
     try {
       if (process.platform === "win32") await createWindowsPrivateFile(temporary, Buffer.from(key));
       else await atomicWriteFile(temporary, key, { mode: 0o600 });
@@ -29,8 +36,12 @@ export async function loadAccountEnrollmentAuthority(
       } catch (error) {
         if (!hasCode(error, "EEXIST")) throw error;
       }
+    } catch (error) {
+      publicationFailure = error;
+      throw error;
     } finally {
-      await rm(temporary, { force: true });
+      if (ownedProcessCleanupReceipt(publicationFailure) === undefined)
+        await rm(temporary, { force: true });
     }
     material = await readKey(path);
   }

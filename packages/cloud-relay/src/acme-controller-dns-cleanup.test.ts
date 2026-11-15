@@ -162,6 +162,24 @@ test("a DNS publication receipt after activation blocks the next native renewal 
   expect(dns.close).toHaveBeenCalledOnce();
 });
 
+test("actual pending DNS work is not latched as terminal uncertainty", async () => {
+  const f = fixture(),
+    dns = dnsOwner();
+  const controller = (await createGatewayAcmeController(f.env, f.options))!;
+  const pending = Object.assign(new Error("Invented accepted DNS work"), {
+    cleanupFailure: undefined,
+    cleanupPending: true,
+  });
+  dns.hold(pending);
+  expect(controller.cleanupFailure()).toBe(pending);
+  const ordinary = new Error("Invented joined bootstrap outage");
+  vi.mocked(ensureAcmeBootstrap).mockRejectedValueOnce(ordinary);
+  await expect(controller.renew(new AbortController().signal)).rejects.toBe(ordinary);
+  dns.hold(undefined);
+  expect(controller.cleanupFailure()).toBeUndefined();
+  await controller.close();
+});
+
 test("closing construction adopts and joins a late DNS owner without activating it", async () => {
   const f = fixture(),
     dns = dnsOwner();

@@ -10,9 +10,9 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { installParentShutdownHandler } from "../../packages/core/src/parent-shutdown.ts";
 import { bootstrapWindowsPlatform } from "../lib/bootstrap-platform.mjs";
 import { resolveUsearch } from "../native-vector-compat.mjs";
-import { completeNodeHeaders, npmJavaScriptEntry } from "./npm-ci.mjs";
+import { completeNodeHeaders, hasCleanupFailure, npmJavaScriptEntry } from "./npm-ci.mjs";
 
-async function runNode(args, options) {
+export async function runNode(args, options) {
   const { runWindowsJob } = await bootstrapWindowsPlatform();
   const result = await runWindowsJob(process.execPath, args, {
     ...options,
@@ -20,7 +20,13 @@ async function runNode(args, options) {
     stdout: "inherit",
     onStderr: (bytes) => process.stderr.write(bytes),
   });
-  if (result.failure) throw new Error(`Windows vector build subprocess ${result.failure}`);
+  if (result.failure || Object.hasOwn(result, "cleanupFailure")) {
+    const error = new Error(
+      `Windows vector build subprocess ${result.failure ?? "cleanup unconfirmed"}`,
+    );
+    if (Object.hasOwn(result, "cleanupFailure")) error.cleanupFailure = result.cleanupFailure;
+    throw error;
+  }
   return result.exitCode ?? 1;
 }
 
@@ -53,6 +59,7 @@ export async function buildWindowsUsearch({
     )
       delete childEnv[key];
   }
+  let cleanupConfirmed = true;
   try {
     signal?.throwIfAborted();
     const devdir = join(scratch, "headers");
@@ -144,8 +151,11 @@ export async function buildWindowsUsearch({
     )
       throw new Error("Rebuilt Windows USearch binding failed its native publication proof");
     return { root, entry };
+  } catch (error) {
+    if (hasCleanupFailure(error)) cleanupConfirmed = false;
+    throw error;
   } finally {
-    await rm(scratch, { recursive: true, force: true });
+    if (cleanupConfirmed) await rm(scratch, { recursive: true, force: true });
   }
 }
 

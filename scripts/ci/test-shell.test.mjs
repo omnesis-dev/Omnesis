@@ -9,6 +9,8 @@ import { expect, test } from "vitest";
 import {
   bashExecutable,
   bashEnvironment,
+  bashFixturePath,
+  bashScriptArguments,
   prependPath,
   localSshFixturePath,
 } from "../lib/test-shell.mjs";
@@ -77,7 +79,7 @@ test("bridge guard fixtures execute locally and refuse transfer", () => {
   }
 });
 
-test("Bash environment keeps Windows tool overrides first and normalizes only duplicate PATH keys", () => {
+test("Bash environment keeps Windows tool overrides first with one native PATH key", () => {
   const env = {
     PATH: String.raw`C:\fixture;C:\Windows`,
     Path: "ignored duplicate",
@@ -90,6 +92,7 @@ test("Bash environment keeps Windows tool overrides first and normalizes only du
   });
   expect(prepared).toEqual({
     PATH: String.raw`C:\fixture;C:\Windows;C:\Git\usr\bin`,
+    MSYS: "winsymlinks:nativestrict",
     NODE_OPTIONS: "--no-warnings",
     INVENTED: "retained",
   });
@@ -101,4 +104,40 @@ test("Bash environment keeps Windows tool overrides first and normalizes only du
     }),
   ).toEqual(prepared);
   expect(bashEnvironment(env, { platform: "linux" })).toEqual(env);
+});
+
+test("Bash fixtures normalize drive-path data without rewriting command text or caller environment", () => {
+  const path = String.raw`C:\fixture space's\configuration`;
+  const command = String.raw`C:\tools\node.exe --literal \n`;
+  const env = {
+    PATH: String.raw`C:\fixture`,
+    OMNESIS_CONFIG_DIR: path,
+    FIXTURE_COMMAND: command,
+    msys: "other-fixture-option winsymlinks:lnk",
+  };
+  const prepared = bashEnvironment(env, {
+    platform: "win32",
+    executable: String.raw`C:\Git\usr\bin\bash.exe`,
+    pathKeys: ["OMNESIS_CONFIG_DIR"],
+  });
+  expect(prepared.OMNESIS_CONFIG_DIR).toBe("C:/fixture space's/configuration");
+  expect(prepared.FIXTURE_COMMAND).toBe(command);
+  expect(prepared.MSYS).toBe("other-fixture-option winsymlinks:nativestrict");
+  expect(prepared).not.toHaveProperty("msys");
+  expect(env.msys).toBe("other-fixture-option winsymlinks:lnk");
+  expect(bashScriptArguments(["-c", command, "--", path], "win32")).toEqual([
+    "-c",
+    command,
+    "--",
+    path,
+  ]);
+  expect(bashScriptArguments([path, command], "win32")).toEqual([
+    "C:/fixture space's/configuration",
+    command,
+  ]);
+  expect(env.OMNESIS_CONFIG_DIR).toBe(path);
+  expect(bashFixturePath(path, "win32")).toBe("C:/fixture space's/configuration");
+  expect(bashFixturePath(path, "linux")).toBe(path);
+  expect(bashFixturePath("/tmp/fixture", "win32")).toBe("/tmp/fixture");
+  expect(bashFixturePath("\\rooted-without-a-drive", "win32")).toBe("\\rooted-without-a-drive");
 });

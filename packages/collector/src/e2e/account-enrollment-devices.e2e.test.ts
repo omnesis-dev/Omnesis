@@ -366,6 +366,11 @@ describe.skipIf(!browserReady)("devices join a gateway by signing in", () => {
     );
     // The account still lists the passkey with its confirmation; a refresh must not bring the pin back.
     await gateway.json("/admin/cloud-relay/reconnect", { method: "POST", body: "{}" });
+    await waitFor(
+      async () => (await gateway.status()).tunnel.state === "online",
+      "the reconnected gateway tunnel to come online",
+      gatewayBootBudgetMs(),
+    );
     expect((await gateway.status()).deviceEnrollment.policy).toBe("automatic");
     const name = "Fictional porch CLI";
     const pairing = await pairBySignIn(second, {
@@ -524,7 +529,12 @@ describe.skipIf(!browserReady)("devices join a gateway by signing in", () => {
       name,
       keyFile: join(directory, "collector", "device.key"),
     });
-    expect((await stat(join(directory, "collector", "device.key"))).mode & 0o077).toBe(0);
+    const deviceKeyPath = join(directory, "collector", "device.key");
+    if (process.platform === "win32") {
+      expect(inspectWindowsPrivatePathSync(deviceKeyPath, "file").private).toBe(true);
+    } else {
+      expect((await stat(deviceKeyPath)).mode & 0o077).toBe(0);
+    }
     expect(bundle.gatewayUrl).toBe(gateway.publicOrigin);
     const row = await deviceRow(bundle.deviceId);
     expect(row).toMatchObject({ kind: "collector", name });

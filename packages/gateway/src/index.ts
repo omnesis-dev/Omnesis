@@ -119,6 +119,7 @@ import { isLoopbackIp, reverseProxyTrusted } from "./http/client-ip.js";
 import { createHostMinter } from "./tls-lifecycle/minters.js";
 import { TlsLifecycleService } from "./tls-lifecycle/service.js";
 import { OwnedProcessShutdownFence } from "./owned-process-shutdown-fence.js";
+import { closeOptionalServices, OptionalServiceCleanup } from "./optional-service-cleanup.js";
 import { createAcmeRenewalTask } from "./tls-lifecycle/acme-task.js";
 import { createTlsLifecycleTask } from "./tls-lifecycle/task.js";
 import { DEFAULT_MDNS_ENABLED, DEFAULT_MDNS_HOSTNAME, MdnsAdvertiser } from "./mdns-advertiser.js";
@@ -1913,8 +1914,10 @@ const addressedHosts = () =>
     proxyTrusted: reverseProxyTrusted(),
   });
 let acmeController: Awaited<ReturnType<typeof createGatewayAcmeController>>;
+const acmeCleanup = new OptionalServiceCleanup("Public ACME", () => acmeController);
 const publicSni = new GatewayPublicSni();
 let cloudTunnel: ReturnType<typeof startGatewayCloudTunnel>;
+const tunnelCleanup = new OptionalServiceCleanup("Cloud relay tunnel", () => cloudTunnel);
 let cloudListenPort = 0;
 const tlsLifecycle = new TlsLifecycleService({
   configDir,
@@ -1942,6 +1945,7 @@ const tlsLifecycle = new TlsLifecycleService({
 });
 
 let cloudRelayManagement: GatewayCloudRelayManagement | undefined;
+const relayCleanup = new OptionalServiceCleanup("Cloud relay", () => cloudRelayManagement);
 /** The key a device sees when it reaches this gateway through the relay. */
 const cloudPublicSpkiFingerprint = (): string | undefined =>
   cloudRelayManagement?.managesPublicCertificate()
@@ -1984,9 +1988,8 @@ try {
           publicSni.activate(material);
         },
         stopLegacy: async () => {
-          cloudTunnel?.stop();
+          await closeOptionalServices([tunnelCleanup, acmeCleanup]);
           cloudTunnel = undefined;
-          await acmeController?.close();
           acmeController = undefined;
         },
         directIdentity: () => {
@@ -2017,11 +2020,14 @@ try {
         },
       })
     : undefined;
-} catch {
+} catch (error) {
   cloudRelayInitializationFailed = true;
-  log.warn(
-    "Optional cloud relay management configuration is invalid; direct gateway access remains available",
-  );
+  if (relayCleanup.captureFailure(error))
+    log.error("Cloud relay startup cleanup is unconfirmed; public relay startup is disabled");
+  else
+    log.warn(
+      "Optional cloud relay management configuration is invalid; direct gateway access remains available",
+    );
 }
 
 // Speech-to-text service. Lazily loads the assigned transcriber (a local
@@ -2636,7 +2642,12 @@ const taskEffects: TaskEffects = {
   interestEnabled: () => interestEngine.enabled(),
 };
 const taskService = new TaskService(db, writeGate, briefsVirtualClock ?? Date.now, taskEffects);
+let doctorCleanupOwner: { cleanupFailure(): unknown; close(): Promise<void> } | undefined;
+const doctorCleanup = new OptionalServiceCleanup("Host security audit", () => doctorCleanupOwner);
 const app = createServer(db, DB_PATH, {
+  onDoctorCleanupOwner: (owner) => {
+    doctorCleanupOwner = owner;
+  },
   interest: interestEngine,
   taskEffects,
   getDiskUsage: () => diskUsage.snapshot(),
@@ -3433,21 +3444,29 @@ if (!cloudRelayInitializationFailed && !cloudRelayManagement?.hasSavedConfigurat
         publicSni.activate(material);
       },
     });
-  } catch {
-    log.warn("Public ACME configuration is invalid; direct gateway TLS remains available");
+  } catch (error) {
+    if (acmeCleanup.captureFailure(error))
+      log.error("Public ACME startup cleanup is unconfirmed; relay startup is disabled");
+    else log.warn("Public ACME configuration is invalid; direct gateway TLS remains available");
   }
-  try {
-    cloudTunnel = startGatewayCloudTunnel(`https://localhost:${listenPort}`, {
-      ...process.env,
-      OMNESIS_CONFIG_DIR: configDir,
-    });
-  } catch {
-    log.warn(
-      "Cloud relay environment configuration is incomplete; direct gateway access remains available",
-    );
+  if (!acmeCleanup.hasTerminalFailure()) {
+    try {
+      cloudTunnel = startGatewayCloudTunnel(`https://localhost:${listenPort}`, {
+        ...process.env,
+        OMNESIS_CONFIG_DIR: configDir,
+      });
+    } catch (error) {
+      if (tunnelCleanup.captureFailure(error))
+        log.error("Cloud relay startup cleanup is unconfirmed; public relay startup is disabled");
+      else
+        log.warn(
+          "Cloud relay environment configuration is incomplete; direct gateway access remains available",
+        );
+    }
+    if (acmeController && !tunnelCleanup.hasTerminalFailure())
+      scheduler.schedule(createAcmeRenewalTask(acmeController));
   }
-  if (acmeController) scheduler.schedule(createAcmeRenewalTask(acmeController));
-} else cloudRelayManagement?.start();
+} else if (!relayCleanup.hasTerminalFailure()) cloudRelayManagement?.start();
 scheduleSearchCachePrewarm();
 // Warm-ups wait for the listening server: before it, they compete for the
 // cores the rest of boot needs, and nothing can search yet.
@@ -3949,20 +3968,21 @@ const ownedProcessShutdown = new OwnedProcessShutdownFence(() => {
   log.error(
     "Owned process cleanup is unconfirmed; the gateway PID and lock are retained for review",
   );
-}, [tlsCleanup, codexCleanup]);
+}, [tlsCleanup, codexCleanup, acmeCleanup, relayCleanup, tunnelCleanup, doctorCleanup]);
 
 const doShutdown = async (): Promise<void> => {
-  try {
-    await cloudRelayManagement?.close();
-  } catch {
-    log.warn("Optional relay cleanup deferred; direct gateway shutdown continues");
-  }
-  try {
-    await acmeController?.close();
-  } catch {
-    log.warn("ACME DNS cleanup deferred to the persisted challenge journal");
-  }
-  cloudTunnel?.stop();
+  const optionalCleanup = [
+    {
+      owner: relayCleanup,
+      warning: "Optional relay cleanup deferred; direct gateway shutdown continues",
+    },
+    { owner: acmeCleanup, warning: "ACME DNS cleanup deferred to the persisted challenge journal" },
+    { owner: tunnelCleanup, warning: "Cloud relay tunnel cleanup failed" },
+    { owner: doctorCleanup, warning: "Host security audit cleanup is unconfirmed" },
+  ];
+  const optionalDrain = Promise.allSettled(
+    optionalCleanup.map(({ owner }) => ownedProcessShutdown.join(owner)),
+  );
   // Stop admitting HTTP requests and WebSocket frames while their services
   // still exist. This drain is bounded so a streaming client cannot consume
   // the entire shutdown budget before the indexer has persisted its graph.
@@ -4095,6 +4115,12 @@ const doShutdown = async (): Promise<void> => {
       );
     }
   }
+
+  // Optional-service callbacks can still need the writer. Join them after
+  // client and agent admission closes, before tearing down shared stores.
+  const optionalResults = await optionalDrain;
+  for (const [index, result] of optionalResults.entries())
+    if (result.status === "rejected") log.warn(optionalCleanup[index]!.warning);
 
   // Near-dup inbox: detach the subscriber so no further docs buffer and stop
   // the periodic flush so it can't drain concurrently, then drain what's

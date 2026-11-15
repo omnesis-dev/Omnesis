@@ -27,6 +27,17 @@ coverage uses the pinned CPU model; its pins are checked against the existing
 Docker embedding lane. Scheduled execution begins only after the workflow
 reaches the default branch.
 
+The schedule separates Windows from the existing 01:17 and 13:17 UTC full
+sweeps and avoids the top of the hour, when GitHub documents higher scheduling
+load. This is a spacing decision, not a guarantee of immediate runner admission.
+The broad sweep uses at most four standard runners concurrently; pull requests
+use one focused runner and supersede older runs for the same pull request.
+Standard hosted runners are free for public repositories under GitHub's
+[current billing policy](https://docs.github.com/en/actions/concepts/billing-and-usage).
+Runner occupancy and feedback time still matter; completed broad-run timings
+must establish the daily workload before the audit is complete. GitHub also
+documents that [scheduled runs can be delayed](https://docs.github.com/en/actions/how-tos/troubleshoot-workflows).
+
 `node scripts/ci/windows-checks.mjs unit --list` prints the broad unit plan.
 The same entrypoint accepts `focused`, `e2e` and `portal`. Installer exclusions
 have explicit reasons. Manual dispatch defaults to the complete sweep and can
@@ -36,10 +47,17 @@ repository E2E paths. This creates one unsharded diagnostic job; it does not
 change pull-request or daily coverage. Paths are validated and passed as literal
 Node arguments, never interpolated into shell source.
 
+Platform-specific cases remain explicit in their suites. The Unix topology and
+process-group shell helpers exercise `lsof`/`ss`, `pgrep` and Unix signals on
+Linux/macOS. Windows still runs the portable HTTP liveness checks and the other
+Bash fixtures through Git for Windows. The Screen Time physical Full Disk Access
+fixture remains specific to its macOS permission contract; portable denial
+mapping tests still validate the same remediation logic on Windows.
+
 The first complete Windows unit baseline took about 163 minutes. Its failures
 and helper initialization costs must be resolved before treating that as a
-representative daily runtime. No product or test deadlines were raised to hide
-those failures.
+representative daily runtime. Product operation deadlines remain enforced;
+changes to multi-stage fixture budgets are recorded with their evidence below.
 
 ## Native Windows evidence
 
@@ -286,3 +304,25 @@ smoke phase passed 162, and its relay phase passed 1,999. The job nevertheless
 failed the strict per-file relay coverage gate in seven changed files. Passing
 assertions alone do not establish a passing lane; complete coverage and final
 Linux/macOS validation remain required.
+
+At `391fc2566`, hosted Windows focused coverage passed 3,654 tests and failed 14,
+with 38 conditional skips. All 13 smoke E2E tests passed. The remaining focused
+failures include ACL fixture restoration, an output-link expectation, a fixture's
+inherited permission removal and a multi-stage OAuth timeout. The full Windows
+portal run passed all 71 browser tests in 237 seconds. The two full
+spawned-gateway shards still require completed verdicts.
+
+The broad unit job completed in about 102 minutes. Its general unit phase passed
+38,886 tests and failed 41; its script smoke phase passed 138 and failed 23.
+These include additional fixture assumptions and runtime failures requiring
+correction. The three-attempt OAuth recovery scenario completed in 19.834 seconds
+in this run but exceeded its 30-second outer test limit in the focused run.
+That scenario has a 60-second test budget for all three complete connection
+attempts, retaining the individual helper deadlines and every recovery assertion.
+
+The targeted restart run at that revision passed Maildir's nine tests and the
+independent updater test. One candidate-decision case still failed: work admitted
+during replacement startup received a due time beyond the restored frozen clock.
+The follow-up initializes the explicitly enabled virtual test clock before
+startup work is admitted, using the harness's last saved instant. Production's
+normal clock is unchanged. Fresh Windows verification remains required.
