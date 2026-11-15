@@ -59,7 +59,7 @@ final class CloudPairingSOCKSPeer {
     import base64, hashlib, json, os, select, signal, socket, ssl, struct, subprocess, sys, tempfile, threading
     signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
     def watch_parent():
-        while sys.stdin.buffer.read(1): pass
+        while os.read(0, 1): pass
         os.kill(os.getpid(), signal.SIGTERM)
     threading.Thread(target=watch_parent,daemon=True).start()
     def exact(conn, size):
