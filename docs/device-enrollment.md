@@ -358,8 +358,12 @@ cannot add a device. The gateway checks this in `gateway/src/http/step-up.ts`.
   (`POST /admin/devices`), creating a token (`POST /admin/tokens`) and moving a
   device to another access level (`PUT /admin/access/devices/:id/level`).
 - **Never for** what makes the gateway stricter: declining a request, `ask`,
-  removing a sign-in, revoking a device. Anything else sent to a guarded route
-  needs the step-up.
+  removing a sign-in, revoking a device. Nor for a phone minting its own
+  notification credential: `POST /admin/tokens` for the requesting device itself
+  with scopes exactly `["push:claim"]`, sent with that device's bearer token when
+  it already carries `push:claim`. That scope only claims and confirms the
+  device's own queued notifications, so the new token can do nothing its caller
+  can't. Anything else sent to a guarded route needs the step-up.
 - Nothing changes without `OMNESIS_CLOUD_RELAY_ENABLED`, before the owner confirms
   a passkey, or for a gateway with no account.
 
