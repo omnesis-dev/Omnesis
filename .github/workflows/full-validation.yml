@@ -177,6 +177,16 @@ jobs:
           scripts/lib/check-process.d.mts
           scripts/run-e2e-status.test.mjs
           scripts/ci/windows-checks.mjs
+          packages/gateway/src/sqlite-windows-wal-recovery.test.ts
+          packages/gateway/src/db.test.ts
+          packages/gateway/src/db.close-draining-wal.test.ts
+          scripts/ci/build-windows-usearch.mjs
+          scripts/ci/build-windows-sqlite.mjs
+          scripts/ci/build-windows-sqlite.test.mjs
+          scripts/ci/probe-windows-sqlite.mjs
+          scripts/ci/windows-native-build.mjs
+          scripts/instance-token.test.mjs
+          scripts/dev-scripts-smoke.test.mjs
       - name: Inspect stopped SQLite driver interoperability
         if: ${{ !cancelled() && inputs.scope == 'auth-owned-green' && runner.os == 'Windows' }}
         run: node --import tsx scripts/ci/windows-sqlite-restart-diagnostic.mjs
