@@ -69,6 +69,7 @@ jobs:
             ${{ runner.temp }}/omnesis-manual-runtime/public/provenance-summary.json
 
   storage-and-hermes:
+    if: ${{ inputs.diagnostics_only }}
     runs-on: windows-latest
     timeout-minutes: 30
     defaults:
@@ -126,6 +127,7 @@ jobs:
           path: ${{ runner.temp }}/hermes-temp-diagnostic/public-diagnostic.json
 
   watchdog-baseline:
+    if: ${{ inputs.diagnostics_only }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
