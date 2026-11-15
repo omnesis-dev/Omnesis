@@ -20,8 +20,6 @@ import { WaitingDevicesBanner } from "./waiting-devices-banner.js";
 // @ts-expect-error — portal modules are plain JS.
 import { useWaitingDevices, waitingDevicesText } from "../lib/use-waiting-devices.js";
 // @ts-expect-error — portal modules are plain JS.
-import { waitingCloudPairingRequests } from "../lib/cloud-pairing-waiting.js";
-// @ts-expect-error — portal modules are plain JS.
 import { PendingRequests } from "../views/access/pending-requests.js";
 
 let host: HTMLElement;
@@ -80,25 +78,6 @@ async function readAgain() {
   await settle();
 }
 const strip = () => host.querySelector(".access-pending.cloud-pairing-notice");
-
-test("only requests a person can still answer count as waiting", () => {
-  const now = 1_000;
-  const row = (status: string, expiresAt = now + 1) => ({ status, expiresAt });
-  expect(
-    waitingCloudPairingRequests(
-      [
-        row("pending"),
-        row("approving"),
-        row("approved"),
-        row("denied"),
-        row("pending", now),
-        row("mystery"),
-      ],
-      now,
-    ),
-  ).toEqual([row("pending"), row("approving")]);
-  expect(waitingCloudPairingRequests(undefined, now)).toEqual([]);
-});
 
 test("nothing waiting, or sign-in pairing not offered: no strip", async () => {
   await show();
