@@ -93,6 +93,7 @@ describe("SubscriptionService watch privacy policy", () => {
       review?: ReturnType<typeof vi.fn>;
       writeGate?: WriteGate;
       policyStore?: PrivacyPolicyStore;
+      onApprovalsChanged?: () => void;
     } = {},
   ): SubscriptionService {
     writeFileSync(
@@ -107,6 +108,7 @@ describe("SubscriptionService watch privacy policy", () => {
       policyStore: opts.policyStore ?? new PrivacyPolicyStore(configDir),
       now: () => 1_000,
       id: () => `fictional-${++sequence}`,
+      ...(opts.onApprovalsChanged ? { onApprovalsChanged: opts.onApprovalsChanged } : {}),
       reviewWatchExistence: async (input) => {
         const result = await review(input);
         result.review.review.policyRevision = input.policyRevision;
@@ -279,6 +281,29 @@ describe("SubscriptionService watch privacy policy", () => {
         payload: { approvalId: created.approval!.id, resolvedBy: "policy" },
       },
     ]);
+  });
+
+  it("reports the watch requests changed when one is asked for, decided and revoked", async () => {
+    const changed = vi.fn();
+    const service = serviceFor("ask", { onApprovalsChanged: changed });
+    const caller = { deviceId, tokenId: null };
+    const created = await service.create(
+      caller,
+      { condition: CONDITION, reaction: REACTION, idempotencyKey: "fictional-signal" },
+      compiled(),
+    );
+    expect(changed).toHaveBeenCalledTimes(1);
+    // Asking again with the same key changes nothing.
+    await service.create(
+      caller,
+      { condition: CONDITION, reaction: REACTION, idempotencyKey: "fictional-signal" },
+      compiled(),
+    );
+    expect(changed).toHaveBeenCalledTimes(1);
+    await service.resolveApproval(caller, created.approval!.id, "approve");
+    expect(changed).toHaveBeenCalledTimes(2);
+    await service.revoke(caller, created.id);
+    expect(changed).toHaveBeenCalledTimes(3);
   });
 
   it("still records a device tap as the device's own decision", async () => {

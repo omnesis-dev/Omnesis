@@ -126,6 +126,11 @@ export interface SubscriptionServiceDeps {
     runIfRevision?<T>(expectedRevision: string, operation: () => Promise<T>): Promise<T | null>;
   };
   reviewWatchExistence?: WatchExistenceReviewer;
+  /**
+   * The watch requests waiting for the owner may have changed: one was asked
+   * for, decided or revoked. Called after the write committed.
+   */
+  onApprovalsChanged?: () => void;
   now?: () => number;
   id?: () => string;
 }
@@ -459,6 +464,7 @@ export class SubscriptionService {
     });
     if (result.outcome === "replayed") return result.subscription;
     if (result.outcome === "created") {
+      this.deps.onApprovalsChanged?.();
       return this.applyWatchPrivacyPolicy(caller, result.subscription, policy);
     }
     return mapWriteOutcome(result.outcome);
@@ -995,6 +1001,7 @@ export class SubscriptionService {
       revokedAt: this.now(),
     });
     if (result.outcome === "revoked") {
+      this.deps.onApprovalsChanged?.();
       return result.subscription;
     }
     return mapWriteOutcome(result.outcome);
@@ -1132,6 +1139,7 @@ export class SubscriptionService {
         : await runIfRevision(policyRevision, write);
     if (result === null) return mapWriteOutcome("policy_changed");
     if (result.outcome === "resolved") {
+      this.deps.onApprovalsChanged?.();
       return result.approval;
     }
     void approval;
@@ -1183,6 +1191,7 @@ export class SubscriptionService {
       ...(reason === undefined ? {} : { reason }),
     });
     if (result.outcome === "revoked") {
+      this.deps.onApprovalsChanged?.();
       return this.getTrusted(subscriptionId);
     }
     return mapWriteOutcome(result.outcome);
