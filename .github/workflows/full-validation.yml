@@ -463,6 +463,9 @@ jobs:
           }
       - name: Install locked dependencies
         run: node scripts/ci/npm-ci.mjs --no-audit --no-fund
+      - name: Build and prove the patched Windows SQLite drivers
+        if: ${{ inputs.scope == 'windows-restart' }}
+        run: node scripts/ci/build-windows-sqlite.mjs
       - name: Build supported Windows vector dependency
         run: node scripts/ci/build-windows-usearch.mjs
       - name: Measure bounded focused Windows checks

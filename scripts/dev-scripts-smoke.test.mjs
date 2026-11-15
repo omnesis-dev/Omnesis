@@ -3580,13 +3580,14 @@ describe("scripts/setup-worktree.sh workspace links", () => {
       });
       expect(result.status, result.stderr).toBe(0);
 
-      const resolved = (name) => realpathSync(join(worktree, "node_modules", "@omnesis", name));
-      const real = realpathSync(worktree);
+      const resolved = (name) =>
+        realpathSync.native(join(worktree, "node_modules", "@omnesis", name));
+      const real = realpathSync.native(worktree);
       expect(resolved("core")).toBe(join(real, "packages/core"));
       expect(resolved("provider-old")).toBe(join(real, "packages/providers/old"));
       expect(resolved("provider-new")).toBe(join(real, "packages/providers/new"));
-      expect(realpathSync(join(worktree, "node_modules", "left-pad"))).toBe(
-        realpathSync(join(primary, "node_modules", "left-pad")),
+      expect(realpathSync.native(join(worktree, "node_modules", "left-pad"))).toBe(
+        realpathSync.native(join(primary, "node_modules", "left-pad")),
       );
       expect(readFileSync(join(worktree, build), "utf8")).toBe("an invented extension build");
     } finally {

@@ -57,6 +57,8 @@ import {
 } from "./data/repositories/SourceRepository.js";
 import { unlinkSync, existsSync } from "node:fs";
 import { randomUUID } from "node:crypto";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 /**
  * The shipped snapshot-absence policy, for the pages that carry a snapshot.
@@ -69,7 +71,7 @@ const ABSENCE_POLICY = {
 };
 
 function testDbPath() {
-  return `/tmp/omnesis-test-${randomUUID()}.db`;
+  return join(tmpdir(), `omnesis-test-${randomUUID()}.db`);
 }
 
 function cleanupDb(path: string) {

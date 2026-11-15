@@ -21,7 +21,7 @@ afterEach(() => {
 });
 
 function fixture({ failAt = 0, uncertainAt = 0, arch = "x64", patched = true } = {}) {
-  const cwd = realpathSync(mkdtempSync(join(tmpdir(), "omnesis-sqlite-build-test-")));
+  const cwd = realpathSync.native(mkdtempSync(join(tmpdir(), "omnesis-sqlite-build-test-")));
   cleanups.push(cwd);
   const names = ["better-sqlite3", "better-sqlite3-multiple-ciphers"];
   const roots = names.map((name) => join(cwd, "node_modules", name));
