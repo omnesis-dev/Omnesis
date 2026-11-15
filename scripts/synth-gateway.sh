@@ -101,7 +101,7 @@ agent_demos_dir() {
   [[ -f "$manifest" ]] || return 0
   MANIFEST="$manifest" UNIVERSE_DIR="$ROOT/evals/universes/$UNIVERSE" python3 -c "
 import json, os, sys
-sys.stdout.reconfigure(newline='\n')
+sys.stdout.reconfigure(encoding='utf-8', newline='\n')
 with open(os.environ['MANIFEST']) as f:
     rel = json.load(f).get('agentDemos')
 sys.stdout.write(os.path.join(os.environ['UNIVERSE_DIR'], rel).replace(chr(92), '/') if rel else '')
@@ -344,7 +344,7 @@ seed_sources() {
   local specs
   specs=$(MANIFEST="$manifest" python3 -c "
 import json, os, sys
-sys.stdout.reconfigure(newline='\n')
+sys.stdout.reconfigure(encoding='utf-8', newline='\n')
 with open(os.environ['MANIFEST']) as f:
     m = json.load(f)
 for s in m['sources']:

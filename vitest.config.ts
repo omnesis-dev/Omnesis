@@ -61,6 +61,7 @@ export default defineConfig({
       "scripts/lib/brain-cassette.test.mjs",
       "scripts/lib/patched-files.test.mjs",
       "scripts/lib/check-process.test.mjs",
+      "scripts/lib/retained-fixture-command.test.mjs",
       "scripts/lib/decision-cassette.test.mjs",
       "scripts/lib/decision-agreement.test.mjs",
       "scripts/website-docs.test.mjs",

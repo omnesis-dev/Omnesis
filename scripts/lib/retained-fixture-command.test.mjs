@@ -69,7 +69,7 @@ test.runIf(process.platform === "win32")(
     const daemon = `const net=require('node:net');const s=net.createServer();s.listen(0,'127.0.0.1',()=>require('node:fs').writeFileSync(${JSON.stringify(portFile)},String(s.address().port)));`;
     const command = `require('node:child_process').spawn(process.execPath,['-e',${JSON.stringify(daemon)}],{stdio:'ignore',windowsHide:true}).unref();process.stdout.write('finite root complete');`;
     const owner = startRetainedWindowsFixture(process.execPath, ["-e", command], {
-      timeout: 10_000,
+      timeout: 30_000,
     });
     let port;
     try {

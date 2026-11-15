@@ -11,9 +11,10 @@ import { ownedProcessCleanupReceipt, spawnWindowsJob } from "@omnesis/core";
 /** The result ends one command; closed proves its deliberately retained subtree joined. */
 export function startRetainedWindowsFixture(command, args, options = {}) {
   if (process.platform !== "win32") throw new Error("These fixtures require Windows");
+  const timeout = options.timeout ?? 30_000;
+  const deadline = Date.now() + timeout;
   const directory = mkdtempSync(join(tmpdir(), "omnesis-retained-fixture-"));
   const path = join(directory, "result.json");
-  const timeout = options.timeout ?? 30_000;
   const driver = fileURLToPath(
     new URL("../test-fixtures/retained-command-driver.mjs", import.meta.url),
   );
@@ -32,7 +33,11 @@ export function startRetainedWindowsFixture(command, args, options = {}) {
           result: path,
         }),
       ],
-      { cwd: options.cwd, env: options.env },
+      {
+        cwd: options.cwd,
+        env: options.env,
+        startupTimeoutMs: Math.max(1, Math.min(30_000, deadline - Date.now())),
+      },
     );
   } catch (error) {
     // Bootstrap uncertainty can still own native work; preserve its inputs.
@@ -54,7 +59,6 @@ export function startRetainedWindowsFixture(command, args, options = {}) {
     failed = true;
     failure = error;
   });
-  const deadline = Date.now() + timeout + 30_000;
   const result = (async () => {
     await child.jobReady;
     while (!existsSync(path)) {
