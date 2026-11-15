@@ -116,9 +116,15 @@ final class SourceFilterFolderGestureUITests: XCTestCase {
         tap(app.buttons["Save changes"])
         XCTAssertTrue(app.buttons.matching(NSPredicate(format: "label CONTAINS %@", level.name)).firstMatch
             .waitForExistence(timeout: 30))
-        XCTAssertTrue(try gateway.hasSelectedFolder(
-            levelId: level.id, sourceId: level.sourceId, folderId: "journey-folder-064"
-        ), "The real saved policy must contain exactly the selected native reference")
+        // The level's name is on screen before the save reaches the gateway, so give the write time to land.
+        let deadline = Date().addingTimeInterval(30)
+        var saved = false
+        while !saved, Date() < deadline {
+            saved = try gateway.hasSelectedFolder(levelId: level.id, sourceId: level.sourceId, folderId: "journey-folder-064")
+            if !saved { Thread.sleep(forTimeInterval: 0.5) }
+        }
+        let held = try gateway.levelRules(level.id)
+        XCTAssertTrue(saved, "The real saved policy must contain exactly the selected native reference: \(held)")
         attach("folder-saved-level")
     }
 
@@ -161,6 +167,11 @@ final class SourceFilterFolderGestureUITests: XCTestCase {
         for _ in 0 ..< 20 {
             if element.exists, element.isHittable { return }
             container.swipeUp()
+        }
+        // A row that arrives once the gateway has answered can land above where the swipes have reached.
+        for _ in 0 ..< 20 {
+            if element.exists, element.isHittable { return }
+            container.swipeDown()
         }
         XCTFail("Actual swipes did not reveal \(element)")
     }

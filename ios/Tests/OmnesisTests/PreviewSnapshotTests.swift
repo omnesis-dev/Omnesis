@@ -9559,7 +9559,8 @@ final class PreviewSnapshotTests: XCTestCase {
             let image = UIGraphicsImageRenderer(size: window.bounds.size).image { _ in
                 window.drawHierarchy(in: window.bounds, afterScreenUpdates: true)
             }
-            // Recognize the actual captured pixels so a viewport showing other rows cannot pass.
+            // Recognize the actual captured pixels so a viewport showing other rows cannot pass. A row's
+            // checkbox can be read as a leading character, so the label is matched at the end of its line.
             let request = VNRecognizeTextRequest()
             request.recognitionLevel = .accurate
             request.recognitionLanguages = ["en-US"]
@@ -9568,7 +9569,7 @@ final class PreviewSnapshotTests: XCTestCase {
             let observations = request.results ?? []
             let visible = observations.contains { observation in
                 CGRect(x: 0, y: 0, width: 1, height: 1).contains(observation.boundingBox)
-                    && observation.topCandidates(1).first.map { normalized($0.string) == normalized(visibleLabel) } == true
+                    && observation.topCandidates(1).first.map { normalized($0.string).hasSuffix(normalized(visibleLabel)) } == true
             }
             recognized = observations.compactMap { $0.topCandidates(1).first?.string }.joined(separator: " | ")
             if visible || Date() >= deadline {

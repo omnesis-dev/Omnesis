@@ -188,6 +188,13 @@ struct JourneyGateway {
             && refs[0]["field"] as? String == Self.folderField && refs[0]["id"] as? String == folderId
     }
 
+    /// The rules the gateway holds for a level, as JSON, for a failure message.
+    func levelRules(_ levelId: String) throws -> String {
+        let levels = try request("GET", "/admin/access", body: nil)["levels"] as? [[String: Any]] ?? []
+        let rules = levels.first { $0["id"] as? String == levelId }?["rules"] ?? []
+        return try String(decoding: JSONSerialization.data(withJSONObject: rules, options: [.sortedKeys]), as: UTF8.self)
+    }
+
     private func folderOptions(sourceId: String, cursor: String? = nil) throws -> [String: Any] {
         var components = URLComponents()
         components.path = "/admin/access/source-filters/\(sourceId)/options"
