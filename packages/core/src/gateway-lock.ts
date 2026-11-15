@@ -58,8 +58,8 @@ export interface GatewayLockHolder {
   processStart: string | null;
   hostname: string;
   startedAt: string;
-  /** Linux uses a kernel lease; Windows records the process identity. */
-  locking?: "flock-v1" | "windows-process-v1";
+  /** Linux uses a kernel lease; Windows and macOS record the process identity. */
+  locking?: "flock-v1" | "windows-process-v1" | "darwin-process-v1";
   leaseId?: string;
 }
 
@@ -399,7 +399,7 @@ function isHolderAlive(holder: GatewayLockHolder, births?: GuardBirths): boolean
     return true;
   }
   if (holder.pid === process.pid) {
-    if (holder.locking === "windows-process-v1")
+    if (holder.locking === "windows-process-v1" || holder.locking === "darwin-process-v1")
       return sameProcess(holder.pid, holder.processStart, births);
     // A same-host legacy record naming this process is from an earlier life
     // of this PID. Foreign-host records must stay conservative even when
@@ -430,6 +430,9 @@ function tryClaim(
     ...(advisory ? { locking: "flock-v1" as const, leaseId: randomUUID() } : {}),
     ...(process.platform === "win32" && !advisory
       ? { locking: "windows-process-v1" as const, leaseId: randomUUID() }
+      : {}),
+    ...(process.platform === "darwin" && !advisory
+      ? { locking: "darwin-process-v1" as const, leaseId: randomUUID() }
       : {}),
   };
   const record = `${JSON.stringify(owner)}\n`;
@@ -495,6 +498,7 @@ function readHolder(path: string): GatewayLockHolder | null {
       ...(parsed.locking === "windows-process-v1"
         ? { locking: "windows-process-v1" as const }
         : {}),
+      ...(parsed.locking === "darwin-process-v1" ? { locking: "darwin-process-v1" as const } : {}),
       ...(typeof parsed.leaseId === "string" ? { leaseId: parsed.leaseId } : {}),
     };
     holderPaths.set(holder, path);

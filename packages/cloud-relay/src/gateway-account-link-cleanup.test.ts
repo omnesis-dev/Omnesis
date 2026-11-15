@@ -10,7 +10,7 @@ import { gatewayKeyAccount } from "./gateway-key-auth.js";
 import { hostedGatewayHostname } from "./hosted-name.js";
 import { markedFileError } from "../test/private-operation-fixture.js";
 import { passkeyAuthenticator } from "../test/passkey-authenticator.js";
-import { gatewayPasskeyChallenge } from "./device-enrollment.js";
+import { gatewayPasskeyChallenge, gatewayPasskeySignInProofSchema } from "./device-enrollment.js";
 
 // The real browser client reaches its private registration seam; no filesystem,
 // native worker or transport is started by the injected operation receipts.
@@ -178,7 +178,7 @@ function enrollmentProof(
     authenticator,
     challenge,
     nonce,
-    proof: {
+    proof: gatewayPasskeySignInProofSchema.parse({
       type: "gateway-passkey" as const,
       challenge,
       credential: authenticator.authentication(
@@ -187,7 +187,7 @@ function enrollmentProof(
         1,
         origin,
       ),
-    },
+    }),
   };
 }
 

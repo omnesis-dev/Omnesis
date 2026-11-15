@@ -4,7 +4,20 @@ on:
     inputs:
       scope:
         type: choice
-        options: [regressions, types, relay, focused, hermes, performance, e2e, upstream-baseline]
+        options:
+          [
+            regressions,
+            types,
+            relay,
+            focused,
+            hermes,
+            performance,
+            e2e,
+            upstream-baseline,
+            mac-lock,
+            multi-cli-baseline,
+            connect-baseline,
+          ]
         default: regressions
 permissions:
   contents: read
@@ -12,6 +25,52 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
   TZ: UTC
 jobs:
+  mac-lock:
+    if: ${{ inputs.scope == 'mac-lock' }}
+    runs-on: macos-latest
+    timeout-minutes: 20
+    env:
+      OMNESIS_UNIT_WORKERS: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: "24"
+          cache: npm
+      - name: Install locked dependencies
+        run: node scripts/ci/npm-ci.mjs --no-audit --no-fund
+      - name: Validate native lock retention and renewal cleanup
+        run: >-
+          node scripts/run-check.mjs unit
+          packages/core/src/gateway-lock.test.ts
+          packages/cloud-relay/src/acme-renewal-cleanup.test.ts
+          packages/cloud-relay/src/acme-integration.test.ts
+  process-baseline:
+    if: ${{ inputs.scope == 'multi-cli-baseline' || inputs.scope == 'connect-baseline' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      OMNESIS_UNIT_WORKERS: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: "24"
+          cache: npm
+      - name: Install locked dependencies
+        run: node scripts/ci/npm-ci.mjs --no-audit --no-fund
+      - name: Reproduce independent CLI ownership failures
+        if: ${{ inputs.scope == 'multi-cli-baseline' }}
+        run: node scripts/run-check.mjs unit packages/collector/src/e2e/multi-collector-harness-cleanup.test.ts
+      - name: Reproduce connect registration and exit failures
+        if: ${{ inputs.scope == 'connect-baseline' }}
+        run: node scripts/run-check.mjs unit packages/collector/src/e2e/connect-process.test.ts
   upstream-baseline:
     if: ${{ inputs.scope == 'upstream-baseline' }}
     runs-on: ubuntu-latest

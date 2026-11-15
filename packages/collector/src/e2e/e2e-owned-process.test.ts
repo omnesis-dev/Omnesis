@@ -510,7 +510,6 @@ test.runIf(process.platform === "win32")(
           Promise.resolve().then(() => outer.kill("SIGKILL")),
           outer.jobClosed,
         ]);
-        joined = cleanup[1]!.status === "fulfilled";
         const errors = cleanup
           .filter((result) => result.status === "rejected")
           .map((result) => result.reason as unknown);
