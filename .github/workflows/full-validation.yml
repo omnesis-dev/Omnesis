@@ -60,6 +60,9 @@ jobs:
           packages/collector/src/auth-subprocess-env.test.ts
           packages/collector/src/source-ws-handlers.auth-begin.test.ts
           packages/collector/src/auth-subprocess.keyring.test.ts
+          scripts/ci/windows-checks.test.mjs
+          packages/platform/src/windows-powershell.test.ts
+          packages/core/src/windows-process-tree.test.ts
       - name: Validate scoped keys with existing secret, config, TLS and CI contracts
         if: ${{ inputs.scope == 'cache-green' }}
         run: >-
