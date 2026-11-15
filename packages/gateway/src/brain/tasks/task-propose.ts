@@ -26,30 +26,21 @@ import { askScore } from "../decision-call.js";
 import { taskSubjectText } from "../storage/interest.js";
 import type { DecisionPayloadCapture } from "../decision-payload.js";
 import type { DecisionCapability, DecisionQuestion, Logger } from "@omnesis/core";
-import type { TaskProposeGateMode } from "../config.js";
+import type { TaskProposeGateMode, BrainThresholds } from "../config.js";
 import type { InterestLookup } from "../interest/engine.js";
 import type { OwnerInterest } from "../interest/lookup.js";
 import type { CognitionDecisionRecord, DecisionVerdict } from "../storage/decisions.js";
 
 export const TASK_PROPOSE_SPEND_MECHANISM = "task-propose";
-export const TASK_PROPOSE_RUBRIC_VERSION = "task-propose-v1";
+export const TASK_PROPOSE_RUBRIC_VERSION = "task-propose-v2";
 
 const TIER_QUESTION_ID = "tier";
-/** The ledger threshold: a score at or above it is offered or adopted, below it withheld. */
-const TIER_THRESHOLD = 1;
-/**
- * Scores (0..2) the model's tier is read from; the midpoints leave `suggest`
- * in between. The portal's decision card reads an adoption from the ledger
- * row's score with the same boundary (`decision-card.js`).
- */
-const ADOPT_SCORE = 1.5;
-const WITHHOLD_SCORE = 0.5;
 
 /** How long the gate may hold the agent's tool call. */
 const TIMEOUT_MS = 15_000;
 const MAX_TEXT = 2_000;
 
-const TIER_QUESTIONS: Readonly<Record<string, DecisionQuestion>> = {
+export const TIER_QUESTIONS: Readonly<Record<string, DecisionQuestion>> = {
   [TIER_QUESTION_ID]: {
     type: "score",
     instructions:
@@ -87,6 +78,11 @@ interface TaskProposeGateDeps {
   /** The live decision backend, or null when the capability is absent. */
   getDecision: () => DecisionCapability | null;
   getMode: () => TaskProposeGateMode;
+  /**
+   * The scores (levels 0–2) the model's tier is read from
+   * (`brain.thresholds.taskAdopt` and `taskWithhold`), read per suggestion.
+   */
+  getThresholds: () => Pick<BrainThresholds, "taskAdopt" | "taskWithhold">;
   /** The owner's past reactions that resemble the suggestion. */
   interest: InterestLookup;
   recordDecision: (record: CognitionDecisionRecord) => Promise<void>;
@@ -142,7 +138,8 @@ export class TaskProposeGate {
     );
     if (signal?.aborted) throw signal.reason;
 
-    const modelTier = tierForScore(judgement.score);
+    const thresholds = this.deps.getThresholds();
+    const modelTier = tierForScore(judgement.score, thresholds);
     const tier = modelTier === null ? "suggest" : boundTier(modelTier, interest);
     // The row carries the model's answer; `enforced` says whether it was acted on.
     const verdict: DecisionVerdict =
@@ -173,7 +170,10 @@ export class TaskProposeGate {
             }
           : {}),
         score: judgement.score,
-        threshold: TIER_THRESHOLD,
+        // A withheld suggestion records the withhold cut it fell below. Any
+        // other records the adoption cut: a pass at or above it was adopted,
+        // one below it suggested.
+        threshold: verdict === "skip" ? thresholds.taskWithhold : thresholds.taskAdopt,
         verdict,
         error: judgement.error,
         reusedFrom: null,
@@ -216,9 +216,16 @@ export class TaskProposeGate {
   }
 }
 
-function tierForScore(score: number | null): ProposalTier | null {
+function tierForScore(
+  score: number | null,
+  thresholds: Pick<BrainThresholds, "taskAdopt" | "taskWithhold">,
+): ProposalTier | null {
   if (score === null) return null;
-  return score >= ADOPT_SCORE ? "adopt" : score < WITHHOLD_SCORE ? "withhold" : "suggest";
+  return score >= thresholds.taskAdopt
+    ? "adopt"
+    : score < thresholds.taskWithhold
+      ? "withhold"
+      : "suggest";
 }
 
 /**

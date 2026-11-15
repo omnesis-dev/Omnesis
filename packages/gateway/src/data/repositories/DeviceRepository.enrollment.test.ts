@@ -9,11 +9,15 @@ import { createDatabase } from "../../db.js";
 import {
   createDevice,
   createPairing,
+  deleteDevice,
+  devicesJoinedWithSignIn,
   getDevice,
   getDeviceEnrollmentPublicKey,
+  isRevokedDeviceKey,
   listDevices,
   redeemDevicePairing,
   replaceDeviceForRepair,
+  revokeDevice,
   rotateDeviceToken,
   type PairingEnrollment,
 } from "./DeviceRepository.js";
@@ -181,6 +185,123 @@ describe("redeeming a sign-in pairing", () => {
     const approved = paired(redeem(enrolled(ATTACKER_KEY, "approved"), {}));
     expect(approved.device.enrollment).toMatchObject({ method: "approved" });
     expect(Object.keys(device.enrollment!).sort()).toEqual(["joinedAt", "method", "signIn"]);
+  });
+});
+
+describe("revocation sticks", () => {
+  test("a revoked device's key cannot rejoin automatically, and its row stays revoked", () => {
+    const joined = paired(redeem(enrolled(VICTIM_KEY), { suggestedName: "Lost phone" }));
+    expect(isRevokedDeviceKey(db, VICTIM_KEY)).toBe(false);
+    revokeDevice(db, joined.device.id);
+    const revokedAt = getDevice(db, joined.device.id)!.revokedAt;
+    expect(revokedAt).not.toBeNull();
+    expect(isRevokedDeviceKey(db, VICTIM_KEY)).toBe(true);
+
+    const pending = createPairing(db, {
+      kind: "ios",
+      scopes: defaultScopesForDeviceKind("ios"),
+      enrollment: enrolled(VICTIM_KEY),
+    });
+    const refused = redeemDevicePairing(db, {
+      pairingCode: pending.pairingCode,
+      expectedKind: "ios",
+      capabilities: {},
+    });
+    expect(refused).toMatchObject({ outcome: "conflict", error: expect.stringMatching(/revoked/) });
+    expect(getDevice(db, joined.device.id)!.revokedAt).toBe(revokedAt);
+    // Rolled back, so nothing else changed either.
+    expect(listDevices(db)).toHaveLength(1);
+  });
+
+  test("the key is held on every kind, not only the revoked row's", () => {
+    const joined = paired(redeem(enrolled(VICTIM_KEY), { suggestedName: "Lost phone" }));
+    revokeDevice(db, joined.device.id);
+    expect(redeem(enrolled(VICTIM_KEY), {}, { kind: "cli" }).outcome).toBe("conflict");
+  });
+
+  test("one approval restores the same row, and releases the key", () => {
+    const joined = paired(redeem(enrolled(VICTIM_KEY), { suggestedName: "Found phone" }));
+    revokeDevice(db, joined.device.id);
+    const approved = paired(redeem(enrolled(VICTIM_KEY, "approved"), {}));
+    expect(approved.device.id).toBe(joined.device.id);
+    expect(approved.device.revokedAt).toBeNull();
+    expect(approved.device.enrollment?.method).toBe("approved");
+    expect(isRevokedDeviceKey(db, VICTIM_KEY)).toBe(false);
+    // Trusted again, the next sign-in joins as before.
+    expect(paired(redeem(enrolled(VICTIM_KEY), {})).device.id).toBe(joined.device.id);
+  });
+
+  test("forgetting a device holds its key too, and approval then makes a new row", () => {
+    const joined = paired(redeem(enrolled(VICTIM_KEY), { suggestedName: "Forgotten" }));
+    expect(deleteDevice(db, joined.device.id)).toBe(true);
+    expect(isRevokedDeviceKey(db, VICTIM_KEY)).toBe(true);
+    expect(redeem(enrolled(VICTIM_KEY), {}).outcome).toBe("conflict");
+    const approved = paired(redeem(enrolled(VICTIM_KEY, "approved"), {}));
+    expect(approved.device.id).not.toBe(joined.device.id);
+    expect(isRevokedDeviceKey(db, VICTIM_KEY)).toBe(false);
+  });
+
+  test("revoking a device paired with a code holds nothing, and other keys are unaffected", () => {
+    const legacy = paired(redeem(undefined, { suggestedName: "Code-paired" }));
+    revokeDevice(db, legacy.device.id);
+    expect(db.prepare("SELECT COUNT(*) AS n FROM revoked_device_keys").get()).toEqual({ n: 0 });
+    const victim = paired(redeem(enrolled(VICTIM_KEY), { suggestedName: "Victim" }));
+    revokeDevice(db, victim.device.id);
+    expect(paired(redeem(enrolled(ATTACKER_KEY), {})).device.enrollment?.method).toBe("automatic");
+  });
+});
+
+describe("the sign-in a device joined with", () => {
+  const passkey = (
+    key: string,
+    signInId: string,
+    method: PairingEnrollment["method"] = "automatic",
+  ) => ({
+    method,
+    signIn: "passkey" as const,
+    signInId,
+    devicePublicKey: key,
+  });
+
+  test("is recorded on the device and listed by sign-in, live devices only", () => {
+    const first = paired(redeem(passkey(VICTIM_KEY, "passkey-one"), { suggestedName: "One" }));
+    const second = paired(
+      redeem(passkey(ATTACKER_KEY, "passkey-one", "approved"), { suggestedName: "Two" }),
+    );
+    const other = paired(redeem(passkey("third-key", "passkey-two"), { suggestedName: "Three" }));
+    expect(first.device.enrollment).toMatchObject({
+      method: "automatic",
+      signIn: "passkey",
+      signInId: "passkey-one",
+    });
+    expect(other.device.enrollment?.signInId).toBe("passkey-two");
+    expect(devicesJoinedWithSignIn(db, "passkey-one")).toEqual(
+      [first.device.id, second.device.id].sort(),
+    );
+    revokeDevice(db, second.device.id);
+    expect(devicesJoinedWithSignIn(db, "passkey-one")).toEqual([first.device.id]);
+    expect(devicesJoinedWithSignIn(db, "unknown")).toEqual([]);
+  });
+
+  test("a repair with a code clears it with the rest of the record", () => {
+    const joined = paired(redeem(passkey(VICTIM_KEY, "passkey-one"), { suggestedName: "One" }));
+    replaceDeviceForRepair(db, joined.device.id, { name: "One", kind: "ios" });
+    expect(devicesJoinedWithSignIn(db, "passkey-one")).toEqual([]);
+  });
+
+  test("is read back from a pending code", () => {
+    const pending = createPairing(db, {
+      kind: "ios",
+      scopes: defaultScopesForDeviceKind("ios"),
+      enrollment: passkey(VICTIM_KEY, "passkey-one"),
+    });
+    expect(pending.enrollment).toMatchObject({ signInId: "passkey-one" });
+    const unnamed = createPairing(db, {
+      kind: "ios",
+      scopes: defaultScopesForDeviceKind("ios"),
+      enrollment: enrolled(ATTACKER_KEY),
+    });
+    expect(unnamed.enrollment).toMatchObject({ signInId: null });
   });
 });
 

@@ -525,7 +525,7 @@ test("independent mode requires an operator broker URL and refuses a local DNS-p
         },
         { configDir: directory, activate: async () => {} },
       ),
-    ).rejects.toThrow("requires the independent DNS provider");
+    ).rejects.toThrow("requires the independent or broker DNS provider");
   } finally {
     vi.unstubAllEnvs();
   }

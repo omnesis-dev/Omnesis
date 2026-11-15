@@ -3,6 +3,7 @@
 
 import { describe, expect, it, vi } from "vitest";
 import { HttpChatDecision } from "./http-chat-decision.js";
+import { ConcurrencyLimiter } from "./limiter.js";
 import type { DecisionRequest } from "@omnesis/core";
 
 const request: DecisionRequest = {
@@ -235,5 +236,24 @@ describe("HttpChatDecision", () => {
       client(fetchFn, { baseUrl: "https://203.0.113.10" }).decide(request),
     ).rejects.toThrow(/allowRemoteInference/);
     expect(fetchFn).not.toHaveBeenCalled();
+  });
+});
+
+describe("HttpChatDecision — concurrency", () => {
+  it("keeps at most the limiter's share of questions in flight across decisions", async () => {
+    const answer = scriptedFetch();
+    let inFlight = 0;
+    let peak = 0;
+    const fetchFn = vi.fn(async (url: string, init: RequestInit) => {
+      inFlight += 1;
+      peak = Math.max(peak, inFlight);
+      await new Promise((r) => setTimeout(r, 3));
+      inFlight -= 1;
+      return answer(url, init);
+    });
+    const decider = client(fetchFn, { limiter: new ConcurrencyLimiter(2) });
+    await Promise.all([decider.decide(request), decider.decide(request), decider.decide(request)]);
+    expect(fetchFn).toHaveBeenCalledTimes(9);
+    expect(peak).toBe(2);
   });
 });

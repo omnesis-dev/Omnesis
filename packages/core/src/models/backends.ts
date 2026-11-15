@@ -24,6 +24,7 @@
 import type { GgufCatalogEntry, AnthropicCatalogEntry } from "./types.js";
 import type { CapabilityRole } from "./capabilities.js";
 import type { ModelSettingsByRole, ModelControls, ModelBehaviorValues } from "./model-behavior.js";
+import type { DecisionAuth, DecisionProtocol, DecisionScoreField } from "./decision-api.js";
 
 // ── Backend types ─────────────────────────────────────────────────────
 
@@ -55,12 +56,24 @@ export interface ModelTokenLimits {
   maxOutputTokens?: number;
 }
 
+/**
+ * A provider account: an OpenAI-compatible API (`url`), a decision API
+ * (`decision`), or both, reached with one API key.
+ */
 export interface HttpBackendConfig {
   type: "http";
-  url: string;
+  /**
+   * The preset the backend was made from (its brand and suggestions). Never
+   * changes how requests are sent.
+   */
+  preset?: string;
+  /** OpenAI-compatible base URL. Absent on a backend that serves only decision models. */
+  url?: string;
   apiKey?: string;
-  /** Reference to a gateway-local config secret containing the bearer token. */
+  /** Reference to a gateway-local config secret containing the API key. */
   apiKeySecret?: string;
+  /** The provider's decision API, which serves the Decision model. */
+  decision?: HttpBackendDecisionConfig;
   /**
    * Path segment between the base URL and the OpenAI-compatible endpoints
    * (`/chat/completions`, `/embeddings`, `/models`). Defaults to `"/v1"`.
@@ -88,6 +101,25 @@ export interface HttpBackendConfig {
   agentTimeoutMs?: number;
   /** How the transcriber role talks to this backend, when the probe's own finding is not wanted. */
   transcription?: TranscriptionBackendOptions;
+}
+
+/**
+ * A backend's decision API (`inference.backends.<key>.decision`), reached with
+ * the backend's own API key.
+ */
+export interface HttpBackendDecisionConfig {
+  /** The full endpoint, e.g. `http://127.0.0.1:11435/v1/systemone`. */
+  url: string;
+  /** Defaults to `systemone`. */
+  protocol?: DecisionProtocol;
+  /** The header that carries the key. Defaults to `bearer`. */
+  auth?: DecisionAuth;
+  /** Defaults to `score`. */
+  scoreField?: DecisionScoreField;
+  /** Whether the provider refuses requests without a key, so a missing key shows as unavailable. */
+  keyRequired?: boolean;
+  maxConcurrency?: number;
+  timeoutMs?: number;
 }
 
 /**
@@ -336,6 +368,28 @@ export interface ResolvedTypeSafe extends ResolvedBase {
   reason?: string;
 }
 
+/**
+ * A backend's decision API (`inference.backends.<key>.decision`) serving the
+ * Decision model: a local decision-model server or a hosted decision API.
+ */
+export interface ResolvedDecisionBackend extends ResolvedBase {
+  kind: "decision";
+  /** The backend's key, the part of the assignment before the slash. */
+  backendKey: string;
+  /** The preset the backend was made from, when it names one. */
+  preset?: string;
+  model: string;
+  url: string;
+  protocol: DecisionProtocol;
+  /** Whether the endpoint is on this host, the one case that needs no `inference.allowRemoteInference`. */
+  onHost: boolean;
+  allowRemoteInference: boolean;
+  /** Whether an API key is configured (the value is never exposed). */
+  hasApiKey: boolean;
+  available: boolean;
+  reason?: string;
+}
+
 export type ResolvedAssignment =
   | ResolvedLocal
   | ResolvedHttp
@@ -345,12 +399,14 @@ export type ResolvedAssignment =
   | ResolvedReplay
   | ResolvedCodex
   | ResolvedClaudeCode
-  | ResolvedTypeSafe;
+  | ResolvedTypeSafe
+  | ResolvedDecisionBackend;
 
 // ── Backend status (for portal/CLI) ──────────────────────────────────
 
 export interface BackendStatus {
   type: BackendType;
+  /** OpenAI-compatible base URL; absent on a backend that serves only decision models. */
   url?: string;
   /** Wire protocol used by an HTTP backend. */
   protocol?: "chat-completions" | "responses";
@@ -364,6 +420,9 @@ export interface BackendStatus {
    *   still `unreachable` — the credentials must be fixed before it's usable.
    * - `unreachable` — the host couldn't be reached, or rejected the credentials.
    * - `probing` — a probe is in flight.
+   *
+   * A backend that serves only decision models has no OpenAI-compatible API to
+   * probe: it is `ok`, or `unreachable` when its API key cannot be read.
    */
   status: "ok" | "reachable" | "unreachable" | "probing";
   /** Raw served-model ids reported by the backend's `/v1/models` probe. */
@@ -391,6 +450,10 @@ export interface BackendStatus {
   hasApiKey?: boolean;
   /** Where the effective API key came from, when the backend can report it. */
   credentialSource?: "environment" | "file";
+  /** The provider preset the backend was made from, or whose URL it uses. */
+  preset?: string;
+  /** The backend's decision API, when it has one. */
+  decision?: BackendDecisionStatus;
   /**
    * Configured API path prefix (see {@link HttpBackendConfig}). Surfaced so the
    * portal's edit form can round-trip it — a backend config is replaced
@@ -642,6 +705,17 @@ export interface ModelHealthWarning {
 
 export interface ModelHealth {
   warnings: ModelHealthWarning[];
+}
+
+/** A backend's decision API as `/admin/models` reports it. */
+export interface BackendDecisionStatus {
+  url: string;
+  protocol: DecisionProtocol;
+  auth: DecisionAuth;
+  onHost: boolean;
+  hasApiKey: boolean;
+  /** Why the stored API key could not be read, when it could not. */
+  apiKeySecretError?: string;
 }
 
 export interface InferenceOverview {

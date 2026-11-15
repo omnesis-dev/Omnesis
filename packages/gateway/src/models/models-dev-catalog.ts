@@ -104,7 +104,10 @@ function readBundled(): { catalog: ProviderMap; fetchedAt: number } {
   return { catalog, fetchedAt: Number.isFinite(fetchedAt) ? fetchedAt : 0 };
 }
 
-function readBounded(body: ReadableStream<Uint8Array> | null, limit: number): Promise<Buffer> {
+export function readBounded(
+  body: ReadableStream<Uint8Array> | null,
+  limit: number,
+): Promise<Buffer> {
   if (!body) throw new Error("empty response body");
   return (async () => {
     const reader = body.getReader();
@@ -269,6 +272,7 @@ function assignmentId(resolved: ResolvedAssignment): string | null {
     case "disabled":
     case "unresolved":
     case "replay":
+    case "decision":
     case "typesafe":
       return null;
     default:

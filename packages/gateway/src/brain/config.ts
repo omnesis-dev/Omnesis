@@ -18,6 +18,7 @@
 
 import { parseDuration } from "@omnesis/core";
 import { ONE_HOP_DEFAULT_FANOUT } from "../domain/DocumentGraphService.js";
+import { EMAIL_WORTH_THRESHOLD } from "../worth/rubric.js";
 import type { BrainSettings } from "@omnesis/config";
 
 /** What the record check does with its verdicts, as the config spells it. */
@@ -144,6 +145,28 @@ export const BRAIN_DEFAULTS = {
   // while every suggestion is still offered; `enforce` is the operator's
   // call once the ledger shows the verdicts are right.
   tasks: { autoApply: true, proposeGate: "shadow" },
+  // The decision model's cut-off at each decision point, tuned on TypeSafe
+  // Jev; `brain.thresholds` moves any of them for a model that scores
+  // differently. Each is on its question's own scale.
+  thresholds: {
+    worthGate: EMAIL_WORTH_THRESHOLD,
+    discovery: 0.25,
+    impact: 0.25,
+    reviewNow: 0.75,
+    reviewDormant: 0.25,
+    recordBelongs: 0.81,
+    documentRecordValue: 1.5,
+    personRecordValue: 1.5,
+    personWithdrawal: 1.5,
+    profileDistillation: 1.5,
+    wikiRepair: 1.5,
+    outcomeIntegrity: 1.5,
+    outcomeDeadline: 1.5,
+    sameTask: 2,
+    taskNoteNew: 1,
+    taskAdopt: 1.5,
+    taskWithhold: 0.5,
+  },
   // The interest ledger: what the owner did on purpose, shown to the decision
   // gates as examples. On by default because it only ever records explicit
   // reactions; nothing is inferred from silence.
@@ -386,6 +409,8 @@ export interface ResolvedBrainSettings {
     /** What the interest gate's verdict on a new suggestion does (read per run). */
     proposeGate: TaskProposeGateMode;
   };
+  /** The decision model's cut-off at each decision point (read per judgement). */
+  thresholds: BrainThresholds;
   /** What the Brain learns from the owner's reactions. */
   interest: {
     /** Record reactions and show similar past ones to the decision gates (read per call). */
@@ -455,6 +480,18 @@ export interface ResolvedBrainSettings {
 }
 
 /** Apply defaults to an operator's (possibly absent) `brain` config block. */
+/** Every Brain decision threshold, by name. */
+export type BrainThresholds = Required<NonNullable<BrainSettings["thresholds"]>>;
+
+function resolveThresholds(settings: BrainSettings["thresholds"]): BrainThresholds {
+  const thresholds: BrainThresholds = { ...BRAIN_DEFAULTS.thresholds };
+  for (const key of Object.keys(thresholds) as Array<keyof BrainThresholds>) {
+    const value = settings?.[key];
+    if (value !== undefined) thresholds[key] = value;
+  }
+  return thresholds;
+}
+
 export function resolveBrainSettings(settings?: BrainSettings): ResolvedBrainSettings {
   const conversationDebounceMs = parseDuration(
     settings?.conversationDebounce ?? BRAIN_DEFAULTS.conversationDebounce,
@@ -635,6 +672,7 @@ export function resolveBrainSettings(settings?: BrainSettings): ResolvedBrainSet
       autoApply: settings?.tasks?.autoApply ?? BRAIN_DEFAULTS.tasks.autoApply,
       proposeGate: settings?.tasks?.proposeGate ?? BRAIN_DEFAULTS.tasks.proposeGate,
     },
+    thresholds: resolveThresholds(settings?.thresholds),
     interest: {
       enabled: settings?.interest?.enabled ?? BRAIN_DEFAULTS.interest.enabled,
       lookup: {

@@ -409,9 +409,9 @@ export const CAPABILITY_METADATA: Readonly<Record<CapabilityRole, CapabilityMeta
     role: "decision",
     title: "Decision model",
     description:
-      "Makes small routing and scoring decisions. For Apple Watch complication captures, chooses Ask for a response or Tell to save a note; explicit Ask and Tell bypass this choice. Also filters low-value email dates from time queries when the mention worth gate is on. Uses TypeSafe Jev: the transcript or email excerpt is sent to TypeSafe. The Agent answers Ask requests and processes saved Tell Omnesis notes.",
+      "Makes small routing and scoring decisions: whether an Apple Watch capture asks for a response or is a note to save, and, when the mention worth gate is on, which email dates time queries leave out. Runs on a decision model — Ollaya or Ollama on this machine, TypeSafe Jev, or a hosted decision API — which receives the transcript or email excerpt.",
     experimentalDescription:
-      "In experimental mode, also routes browser Find between index search and agent research, and helps the Brain prioritize evidence and reviews, check memory and task changes, learn from your reactions, and select observations for briefs. These decisions send the relevant query, source, memory or task context to the decision model. A local GGUF chat model or an OpenAI-compatible HTTP server that returns token log-probabilities can also serve the role: a local model keeps the content on this machine, and an HTTP backend sends it to that server. Their scores are read against thresholds tuned on TypeSafe Jev, so they keep less of what Jev would keep.",
+      "In experimental mode, also routes browser Find and helps the Brain prioritize, check memory and task changes, and select observations for briefs, sending that context to the decision model. A local or HTTP chat model that returns token log-probabilities can serve it too, though it may need the decision thresholds moved to match its scores.",
     icon: "scale",
     section: "cognition",
     backendFamily: "typed-decision",

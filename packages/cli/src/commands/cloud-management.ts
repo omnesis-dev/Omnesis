@@ -15,7 +15,7 @@ import {
   type CloudStatus,
 } from "./cloud-status.js";
 
-function requireCloudRelay(): void {
+export function requireCloudRelay(): void {
   if (!cloudRelayEnabled())
     throw new CliError(
       "Omnesis account commands require OMNESIS_CLOUD_RELAY_ENABLED=1",
@@ -34,8 +34,17 @@ const DONE = {
   "account/unlink":
     "This gateway is unlinked from your Omnesis account. It can no longer be reached from outside your home network, and devices can no longer join by signing in. Devices already paired keep working on your home network.",
   enrollment: "",
-  "trusted-sign-ins": "Trusted sign-in removed. Devices already paired keep working.",
+  "trusted-sign-ins":
+    "Trusted sign-in removed. Devices already paired keep working; `--revoke-devices` also revokes the ones that joined with it.",
+  "incidents/ack":
+    "Certificate incident acknowledged. New devices follow your new-device setting again. An incident for another certificate puts the hold back.",
 } as const;
+
+/** What removing a sign-in with `--revoke-devices` did to the devices that joined with it. */
+function revokedDevicesLine(count: number): string {
+  if (count === 0) return "Trusted sign-in removed. No paired device had joined with it.";
+  return `Trusted sign-in removed. ${count === 1 ? "1 device that joined with it was" : `${count} devices that joined with it were`} revoked.`;
+}
 
 /**
  * All actions use the same authenticated gateway control plane as the portal.
@@ -45,13 +54,19 @@ const DONE = {
 export async function manageCloud(
   action: keyof typeof DONE,
   body?: unknown,
-  options: { json?: boolean; method?: "POST" | "PUT" | "DELETE"; id?: string } = {},
+  options: {
+    json?: boolean;
+    method?: "POST" | "PUT" | "DELETE";
+    id?: string;
+    query?: Record<string, string>;
+  } = {},
 ): Promise<void> {
   requireCloudRelay();
   const { gatewayJson } = await import("../utils.js");
   const method = options.method ?? "POST";
-  const result = await gatewayJson<CloudStatus>(
-    `/admin/cloud-relay${action === "status" ? "" : `/${action}`}${options.id === undefined ? "" : `/${encodeURIComponent(options.id)}`}`,
+  const query = options.query ? `?${new URLSearchParams(options.query).toString()}` : "";
+  const result = await gatewayJson<CloudStatus & { revokedDevices?: unknown }>(
+    `/admin/cloud-relay${action === "status" ? "" : `/${action}`}${options.id === undefined ? "" : `/${encodeURIComponent(options.id)}`}${query}`,
     action === "status"
       ? {}
       : { method, ...(method === "DELETE" ? {} : { body: JSON.stringify(body ?? {}) }) },
@@ -69,7 +84,9 @@ export async function manageCloud(
       ? result.deviceEnrollment?.policy === "ask"
         ? "New devices will wait for your approval."
         : "New devices join when you sign in to your Omnesis account with a sign-in this gateway trusts."
-      : DONE[action];
+      : Array.isArray(result.revokedDevices)
+        ? revokedDevicesLine(result.revokedDevices.length)
+        : DONE[action];
   process.stdout.write((done ? `${done}\n\n` : "") + formatCloudStatus(result, version));
 }
 
@@ -249,9 +266,20 @@ export const cloudManagementCommands = {
       description:
         "Stop trusting a sign-in, by its id from `omnesis cloud trusted-sign-ins` here or on another gateway; one this gateway doesn't trust is refused in advance",
     },
-    args: { id: { type: "positional", required: true } },
+    args: {
+      id: { type: "positional", required: true },
+      "revoke-devices": {
+        type: "boolean",
+        default: false,
+        description: "Also revoke every paired device that joined with this sign-in",
+      },
+    },
     run: ({ args }) =>
-      manageCloud("trusted-sign-ins", undefined, { method: "DELETE", id: args.id }),
+      manageCloud("trusted-sign-ins", undefined, {
+        method: "DELETE",
+        id: args.id,
+        ...(args["revoke-devices"] ? { query: { revokeDevices: "true" } } : {}),
+      }),
   }),
   configure: defineCommand({
     meta: {

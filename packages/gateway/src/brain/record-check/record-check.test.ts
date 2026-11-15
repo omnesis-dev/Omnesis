@@ -28,6 +28,7 @@ import { cognitionSpendDay, getCognitionSpendDayTotal } from "../storage/spend.j
 import { createBrainSourceFence } from "../source-exclusion.js";
 import { createOpenLoopMirror } from "../runtime/mirror.js";
 import { buildCognitionOwnTools } from "../runtime/tools.js";
+import { BRAIN_DEFAULTS } from "../config.js";
 import { PERSON_PROFILE_UTILITY_GUIDANCE } from "./person-profile-utility.js";
 import { PERSON_WITHDRAWAL_QUESTIONS, PERSON_WITHDRAWAL_VERSION } from "./person-withdrawal.js";
 import { PROFILE_DISTILLATION_QUESTIONS } from "./profile-distillation.js";
@@ -36,7 +37,6 @@ import {
   WIKI_VALUE_RUBRIC_VERSION,
   WIKI_REPAIR_QUESTIONS,
   WIKI_REPAIR_RUBRIC_VERSION,
-  WIKI_REPAIR_THRESHOLD,
 } from "./wiki-rubric.js";
 import { RecordCheck, type CheckRecord } from "./check.js";
 import { prepareOutcomeRecordContext } from "./outcome-context.js";
@@ -44,17 +44,16 @@ import { documentRecordContext } from "./document-context.js";
 import { personRecordContext as buildPersonRecordContext } from "./person-context.js";
 import {
   DOCUMENT_RECORD_VALUE_QUESTIONS,
-  DOCUMENT_RECORD_VALUE_THRESHOLD,
-  PERSON_RECORD_VALUE_THRESHOLD,
   recordCheckThreshold,
   outcomeRecordPolicyKey,
   PERSON_RECORD_VALUE_QUESTIONS,
   OUTCOME_RECORD_VALUE_QUESTIONS,
-  OUTCOME_INTEGRITY_THRESHOLD,
   RECORD_BELONGS_QUESTIONS,
-  RECORD_BELONGS_THRESHOLD,
   RECORD_CHECK_RUBRIC_VERSION,
   RECORD_CHECK_SPEND_MECHANISM,
+  isEnforcedRecordCheckPolicy,
+  recordCheckPolicyKey,
+  type RecordCheckThresholds,
 } from "./rubric.js";
 import type { RecordCheckMode } from "../config.js";
 import type { DecisionCapability, DecisionRequest, ToolResult } from "@omnesis/core";
@@ -173,13 +172,14 @@ describe("record check", () => {
   function check(
     decision: DecisionCapability | null,
     mode: RecordCheckMode,
-    opts: { failLedger?: boolean } = {},
+    opts: { failLedger?: boolean; thresholds?: () => RecordCheckThresholds } = {},
   ): { check: RecordCheck; setMode: (m: RecordCheckMode) => void } {
     const writeGate = directWriteGate(db);
     let current = mode;
     const recordCheck = new RecordCheck({
       getDecision: () => decision,
       getMode: () => current,
+      getThresholds: opts.thresholds ?? (() => BRAIN_DEFAULTS.thresholds),
       recordDecision: (record) =>
         opts.failLedger
           ? Promise.reject(new Error("ledger write failed"))
@@ -209,7 +209,26 @@ describe("record check", () => {
     expect(instructions).toContain(
       "being common or contractual does not by itself make it worthless",
     );
-    expect(PERSON_RECORD_VALUE_THRESHOLD).toBe(1.5);
+    expect(BRAIN_DEFAULTS.thresholds.personRecordValue).toBe(1.5);
+  });
+
+  test("recognizes an enforced policy for its model whatever thresholds it was reached under", () => {
+    const moved = { ...BRAIN_DEFAULTS.thresholds, recordBelongs: 2, wikiRepair: 2.5 };
+    for (const thresholds of [BRAIN_DEFAULTS.thresholds, moved])
+      expect(
+        isEnforcedRecordCheckPolicy(recordCheckPolicyKey("enforce", "kev", thresholds), "kev"),
+      ).toBe(true);
+    const defaults = BRAIN_DEFAULTS.thresholds;
+    expect(
+      isEnforcedRecordCheckPolicy(recordCheckPolicyKey("shadow", "kev", defaults), "kev"),
+    ).toBe(false);
+    expect(
+      isEnforcedRecordCheckPolicy(recordCheckPolicyKey("enforce", "kev", defaults), "laya"),
+    ).toBe(false);
+    expect(
+      isEnforcedRecordCheckPolicy(outcomeRecordPolicyKey("enforce", "kev", defaults), "kev"),
+    ).toBe(false);
+    expect(isEnforcedRecordCheckPolicy("not json", "kev")).toBe(false);
   });
 
   test("outcome receipts keep their semantic policy when only person utility changes", () => {
@@ -396,7 +415,7 @@ describe("record check", () => {
         },
       });
       expect(result.save).toBe(mode !== "enforce");
-      if (!result.save) expect(result.threshold).toBe(RECORD_BELONGS_THRESHOLD);
+      if (!result.save) expect(result.threshold).toBe(BRAIN_DEFAULTS.thresholds.recordBelongs);
       await c.idle();
       expect(decision.calls).toHaveLength(mode === "off" ? 0 : 1);
       if (mode !== "off") {
@@ -436,11 +455,11 @@ describe("record check", () => {
       });
       expect(decision.calls).toHaveLength(1);
       expect(decision.calls[0]!.questions).toEqual(WIKI_REPAIR_QUESTIONS);
-      expect(result.save).toBe(score >= WIKI_REPAIR_THRESHOLD);
+      expect(result.save).toBe(score >= BRAIN_DEFAULTS.thresholds.wikiRepair);
       if (result.save) expect(result.assessment?.rubricVersion).toBe(WIKI_REPAIR_RUBRIC_VERSION);
       expect(listDecisionsForRun(db, "run_1")[0]).toMatchObject({
         rubricVersion: WIKI_REPAIR_RUBRIC_VERSION,
-        threshold: WIKI_REPAIR_THRESHOLD,
+        threshold: BRAIN_DEFAULTS.thresholds.wikiRepair,
         enforced: true,
       });
     },
@@ -732,7 +751,7 @@ describe("record check", () => {
         { docId: other, quote: event },
       ]);
       const decision = new ScriptedDecision({
-        [role]: PERSON_RECORD_VALUE_THRESHOLD,
+        [role]: BRAIN_DEFAULTS.thresholds.personRecordValue,
         [event]: 0.2,
       });
       const bound = check(decision, "enforce").check.forRun(
@@ -817,11 +836,159 @@ describe("record check", () => {
       ]);
     });
 
+    test("enforce cuts at the configured threshold, ledgers it, and keys the policy by it", async () => {
+      const doc = insertDoc("configured-cut", BOOKING);
+      let thresholds: RecordCheckThresholds = { ...BRAIN_DEFAULTS.thresholds, recordBelongs: 2.5 };
+      const decision = new ScriptedDecision({ [BOOKING]: 2 });
+      const bound = check(decision, "enforce", { thresholds: () => thresholds }).check.forRun(
+        run("bootstrap", { docId: doc, datumAt: NOW }),
+      )!;
+      const input = {
+        recordId: "configured-cut",
+        documentId: doc,
+        record: { type: "timeline" as const, kind: null, text: BOOKING },
+      };
+      // Scored 2: above the 0.81 default, below the configured 2.5.
+      await expect(bound(input)).resolves.toMatchObject({ save: false, score: 2, threshold: 2.5 });
+      const before = bound.policyKey!();
+      const outcomeBefore = bound.outcomePolicyKey!();
+
+      thresholds = { ...thresholds, recordBelongs: 1.5 };
+      await expect(bound(input)).resolves.toEqual({ save: true });
+      expect(listDecisionsForRun(db, "run_1").map((d) => [d.threshold, d.verdict])).toEqual([
+        [2.5, "skip"],
+        [1.5, "pass"],
+      ]);
+      // Verdicts reached under other thresholds are not this policy's.
+      expect(bound.policyKey!()).not.toBe(before);
+      expect(bound.outcomePolicyKey!()).not.toBe(outcomeBefore);
+      // A threshold no outcome uses leaves the outcome policy as it was.
+      const outcomeNow = bound.outcomePolicyKey!();
+      thresholds = { ...thresholds, personRecordValue: 2.9 };
+      expect(bound.outcomePolicyKey!()).toBe(outcomeNow);
+      // Back at the defaults, the keys are those stored before thresholds were settings.
+      thresholds = BRAIN_DEFAULTS.thresholds;
+      expect(bound.policyKey!()).toBe(
+        JSON.stringify([RECORD_CHECK_RUBRIC_VERSION, "enforce", "jev-test"]),
+      );
+    });
+
+    test.each([
+      ["documentRecordValue", "belongs"],
+      ["personRecordValue", "belongs"],
+      ["personWithdrawal", "withdrawal_preservation"],
+      ["profileDistillation", "profile_distillation"],
+      ["wikiRepair", "belongs"],
+      ["outcomeIntegrity", "transition_integrity"],
+      ["outcomeDeadline", "deadline_support"],
+    ] as const)(
+      "enforce refuses a record scored below a raised %s cut and no other",
+      async (key, question) => {
+        const text = "Maya Reeves keeps the planetarium projector calibration log.";
+        const doc = insertDoc(`raised-${key}`, text);
+        const maintenance = run("synthesis", { focus: "knowledge-maintenance", batchId: "batch" });
+        const person = (operation: "create" | "withdraw") =>
+          personRecordContext("fictional-person", [{ docId: doc, quote: text }], {
+            operation,
+            reason: null,
+            predecessors: [],
+            retained_profile: [],
+            truncated: false,
+          });
+        const outcome = (deadline: { type: "by"; date: string } | null) => {
+          const base = {
+            title: "Calibrate the planetarium projector",
+            description: "Record the calibration in the log.",
+            state: "open" as const,
+            deadline: null,
+            actors: [],
+          };
+          const prepared = prepareOutcomeRecordContext(db, {
+            documentIds: [doc],
+            // A deadline on a new outcome asks the deadline facet alone; a
+            // revision without one asks the integrity facet alone.
+            previous: deadline ? null : base,
+            proposed: { ...base, description: "Log the calibration.", deadline },
+            now: NOW,
+          })!;
+          return {
+            record: {
+              type: "outcome" as const,
+              kind: deadline ? "creation" : "revision",
+              text: JSON.stringify(prepared.context.proposed),
+            },
+            outcomeContext: prepared.context,
+            payloadCapture: prepared.payloadCapture,
+          };
+        };
+        const fixture = {
+          documentRecordValue: {
+            record: { type: "doc-fact" as const, kind: "context", text },
+            documentContext: documentRecordContext(doc, text, [{ docId: doc, quote: text }]),
+          },
+          personRecordValue: {
+            record: { type: "person-fact" as const, kind: "role", text },
+            personContext: person("create"),
+          },
+          profileDistillation: {
+            record: { type: "person-fact" as const, kind: "role", text },
+            personContext: person("create"),
+          },
+          personWithdrawal: {
+            personWithdrawal: true,
+            record: { type: "person-fact" as const, kind: "withdrawal", text },
+            personContext: {
+              ...person("withdraw"),
+              withdrawal_sources: [{ id: doc, title: "Calibration log", content: text }],
+            },
+          },
+          wikiRepair: {
+            record: { type: "wiki" as const, kind: "factual_repair", text },
+            wikiContext: {
+              title: "Planetarium projector",
+              references: [],
+              referencesOmitted: 0,
+              factualRepair: {
+                claimIds: ["log-keeper"],
+                beforeMarkup: "Studio Northstar",
+                afterMarkup: "Maya Reeves",
+                beforeStates: [],
+                afterStates: [],
+              },
+            },
+          },
+          outcomeIntegrity: outcome(null),
+          outcomeDeadline: outcome({ type: "by", date: "2028-05-12" }),
+        }[key];
+        // Every question the check asks is scored 2: above each default cut.
+        const decision = new ScriptedDecision({}, undefined, 2);
+        let thresholds: RecordCheckThresholds = BRAIN_DEFAULTS.thresholds;
+        const bound = check(decision, "enforce", { thresholds: () => thresholds }).check.forRun(
+          maintenance,
+        )!;
+        const input = { recordId: `raised-${key}`, documentId: doc, ...fixture };
+
+        expect((await bound(input)).save).toBe(true);
+        // Only this cut moves; every other stays at its default.
+        thresholds = { ...BRAIN_DEFAULTS.thresholds, [key]: 2.5 };
+        const refused = await bound(input);
+        expect(refused).toMatchObject({ save: false, score: 2, threshold: 2.5 });
+        if (!refused.save && refused.questionId) expect(refused.questionId).toBe(question);
+        expect(Object.keys(decision.calls[1]!.questions)).toContain(question);
+        expect(
+          listDecisionsForRun(db, "run_1").map((d) => [d.score, d.threshold, d.verdict]),
+        ).toEqual([
+          [2, BRAIN_DEFAULTS.thresholds[key], "pass"],
+          [2, 2.5, "skip"],
+        ]);
+      },
+    );
+
     test.each(["timeline", "doc-fact", "person-fact"] as const)(
       "enforce applies the current rubric and keeps its exact boundary for %s",
       async (type) => {
         const doc = insertDoc(`boundary-${type}`, BOOKING);
-        const threshold = recordCheckThreshold(type);
+        const threshold = recordCheckThreshold(type, BRAIN_DEFAULTS.thresholds);
         const decision = new ScriptedDecision({ [BOOKING]: threshold });
         const bound = check(decision, "enforce").check.forRun(
           run("bootstrap", { docId: doc, datumAt: NOW }),
@@ -941,13 +1108,13 @@ describe("record check", () => {
         expect(result).toMatchObject(
           saved
             ? { save: true }
-            : { save: false, score, threshold: DOCUMENT_RECORD_VALUE_THRESHOLD },
+            : { save: false, score, threshold: BRAIN_DEFAULTS.thresholds.documentRecordValue },
         );
         expect(listDecisionsForRun(db, "run_1")).toMatchObject([
           {
             recordId: "marginal-note",
             score,
-            threshold: DOCUMENT_RECORD_VALUE_THRESHOLD,
+            threshold: BRAIN_DEFAULTS.thresholds.documentRecordValue,
             verdict: saved ? "pass" : "skip",
             enforced: true,
             rubricVersion: RECORD_CHECK_RUBRIC_VERSION,
@@ -962,10 +1129,10 @@ describe("record check", () => {
     );
 
     test("profile and document thresholds require meaningful value without changing timeline or outcomes", () => {
-      expect(recordCheckThreshold("doc-fact")).toBe(1.5);
-      expect(recordCheckThreshold("person-fact")).toBe(1.5);
+      expect(recordCheckThreshold("doc-fact", BRAIN_DEFAULTS.thresholds)).toBe(1.5);
+      expect(recordCheckThreshold("person-fact", BRAIN_DEFAULTS.thresholds)).toBe(1.5);
       for (const type of ["timeline", "outcome"] as const)
-        expect(recordCheckThreshold(type)).toBe(0.81);
+        expect(recordCheckThreshold(type, BRAIN_DEFAULTS.thresholds)).toBe(0.81);
     });
 
     test.each([1.2, 1.499, 1.5, 2])(
@@ -991,13 +1158,13 @@ describe("record check", () => {
                 decisionId: expect.any(String),
                 questionId: "belongs",
                 score,
-                threshold: PERSON_RECORD_VALUE_THRESHOLD,
+                threshold: BRAIN_DEFAULTS.thresholds.personRecordValue,
               },
         );
         expect(listDecisionsForRun(db, "run_1")).toMatchObject([
           {
             score,
-            threshold: PERSON_RECORD_VALUE_THRESHOLD,
+            threshold: BRAIN_DEFAULTS.thresholds.personRecordValue,
             enforced: true,
             verdict: score >= 1.5 ? "pass" : "skip",
             rubricVersion: RECORD_CHECK_RUBRIC_VERSION,
@@ -1029,7 +1196,7 @@ describe("record check", () => {
         await gate.idle();
         expect(listDecisionsForRun(db, "run_1")).toMatchObject([
           {
-            threshold: PERSON_RECORD_VALUE_THRESHOLD,
+            threshold: BRAIN_DEFAULTS.thresholds.personRecordValue,
             enforced: mode === "outage",
             score: mode === "outage" ? null : 1.2,
             verdict: mode === "outage" ? "unavailable" : "skip",
@@ -1056,7 +1223,7 @@ describe("record check", () => {
         {
           verdict: "skip",
           score: 1.2,
-          threshold: DOCUMENT_RECORD_VALUE_THRESHOLD,
+          threshold: BRAIN_DEFAULTS.thresholds.documentRecordValue,
           enforced: false,
         },
       ]);
@@ -1082,7 +1249,7 @@ describe("record check", () => {
         {
           verdict: "unavailable",
           score: null,
-          threshold: DOCUMENT_RECORD_VALUE_THRESHOLD,
+          threshold: BRAIN_DEFAULTS.thresholds.documentRecordValue,
           enforced: true,
         },
       ]);
@@ -1104,7 +1271,7 @@ describe("record check", () => {
         rubricVersion: RECORD_CHECK_RUBRIC_VERSION,
         verdict: "skip",
         score: 0.1,
-        threshold: RECORD_BELONGS_THRESHOLD,
+        threshold: BRAIN_DEFAULTS.thresholds.recordBelongs,
         recordId: "ta_1",
         enforced: false,
         modelId: "jev-1.13.0",
@@ -1142,7 +1309,7 @@ describe("record check", () => {
       expect(dropped).toMatchObject({
         save: false,
         score: 0.1,
-        threshold: RECORD_BELONGS_THRESHOLD,
+        threshold: BRAIN_DEFAULTS.thresholds.recordBelongs,
       });
       await expect(bound(record(doc, BOOKING))).resolves.toEqual({ save: true });
       expect(listDecisionsForRun(db, "run_1").map((d) => [d.verdict, d.enforced, d.lane])).toEqual([
@@ -1332,7 +1499,7 @@ describe("record check", () => {
             save: false,
             decisionId: "declined",
             score: 0.1,
-            threshold: DOCUMENT_RECORD_VALUE_THRESHOLD,
+            threshold: BRAIN_DEFAULTS.thresholds.documentRecordValue,
           };
         },
       });
@@ -1389,7 +1556,7 @@ describe("record check", () => {
             save: false,
             decisionId: "declined",
             score: 0.1,
-            threshold: DOCUMENT_RECORD_VALUE_THRESHOLD,
+            threshold: BRAIN_DEFAULTS.thresholds.documentRecordValue,
           };
         },
       });
@@ -1424,7 +1591,7 @@ describe("record check", () => {
             save: false,
             decisionId: "declined",
             score: 0.1,
-            threshold: DOCUMENT_RECORD_VALUE_THRESHOLD,
+            threshold: BRAIN_DEFAULTS.thresholds.documentRecordValue,
           };
         },
       });
@@ -1761,7 +1928,11 @@ describe("record check", () => {
         if (!result.save) expect(result.questionId).toBe(limiting);
         else
           expect(result.assessment).toEqual({
-            policy: outcomeRecordPolicyKey("enforce", "scripted-dimensions"),
+            policy: outcomeRecordPolicyKey(
+              "enforce",
+              "scripted-dimensions",
+              BRAIN_DEFAULTS.thresholds,
+            ),
             decisionId: expect.any(String),
           });
         expect(calls).toBe(1);
@@ -1772,7 +1943,10 @@ describe("record check", () => {
             limiting_question: limiting,
             dimensions: {
               belongs: { score: belongs, threshold: 0.81 },
-              transition_integrity: { score: integrity, threshold: OUTCOME_INTEGRITY_THRESHOLD },
+              transition_integrity: {
+                score: integrity,
+                threshold: BRAIN_DEFAULTS.thresholds.outcomeIntegrity,
+              },
             },
           },
         });

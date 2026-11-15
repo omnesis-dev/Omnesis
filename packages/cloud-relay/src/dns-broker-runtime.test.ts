@@ -10,6 +10,8 @@ import { tmpdir } from "node:os";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { recoveryFixture } from "../test/recovery-fixture.js";
 import { tlsFiles } from "../test/support.js";
+import { brokerCall, brokerOwner } from "../test/dns-broker-owner.js";
+import { fakeCloudflare, serveFakeCloudflare } from "../test/fake-cloudflare.js";
 import { assertRelayDnsIsolation, startIndependentDnsDaemon } from "./dns-broker-runtime.js";
 import { runRelayCommand, startRelayDaemon } from "./runtime.js";
 import { signRecoveryPolicy } from "./recovery-authority.js";
@@ -65,6 +67,7 @@ async function environment() {
     OMNESIS_CLOUD_RELAY_ACME_ZONE_NAME: "example.test",
     OMNESIS_CLOUD_RELAY_ACME_TOKEN_FILE: tokenFile,
     OMNESIS_CLOUD_RELAY_ACME_JOURNAL: join(directory, "dns-journal.json"),
+    OMNESIS_CLOUD_RELAY_DNS_BROKER_REGISTRY: join(directory, "dns-registry.json"),
   };
 }
 
@@ -74,8 +77,13 @@ test("independent DNS daemon needs no relay database or HMAC and closes its owne
   if (!daemon) throw new Error("Expected an independent DNS listener");
   try {
     const response = await fetch(daemon.url);
-    expect(response.status).toBe(405);
+    expect(response.status).toBe(404);
     expect(await response.text()).not.toContain("fixture-dns-edit-token");
+    // Version 1 (receipts) and version 2 (registry) side by side.
+    expect((await fetch(`${daemon.url}/healthz`)).status).toBe(200);
+    expect(await (await fetch(`${daemon.url}/_dns/v2/health`)).json()).toMatchObject({
+      protocol: "omnesis-dns-broker-v2",
+    });
   } finally {
     await daemon.close();
   }
@@ -117,11 +125,79 @@ test("public listeners require TLS and independent current trust before reading 
   await expect(
     startIndependentDnsDaemon({ ...env, OMNESIS_CLOUD_RELAY_DNS_BROKER_BIND: "0.0.0.0" }),
   ).rejects.toThrow("require TLS");
-  const noTrust: NodeJS.ProcessEnv = { ...env };
-  for (const name of Object.keys(noTrust)) if (name.includes("RECOVERY_")) delete noTrust[name];
-  await expect(startIndependentDnsDaemon(noTrust)).rejects.toThrow(
-    "independent current recovery authority",
-  );
+  await expect(
+    startIndependentDnsDaemon({ ...env, OMNESIS_CLOUD_RELAY_ACME_JOURNAL: undefined }),
+  ).rejects.toThrow("challenge journal");
+});
+
+test("without a recovery policy the daemon serves the name registry only", async () => {
+  const env = await environment();
+  const registryOnly: NodeJS.ProcessEnv = { ...env, OMNESIS_CLOUD_RELAY_ACME_JOURNAL: undefined };
+  for (const name of Object.keys(registryOnly))
+    if (name.includes("RECOVERY_")) delete registryOnly[name];
+  const daemon = await startIndependentDnsDaemon(registryOnly);
+  try {
+    expect((await fetch(`${daemon.url}/healthz`)).status).toBe(404);
+    expect((await fetch(`${daemon.url}/_dns/v1/challenge`, { method: "POST" })).status).toBe(404);
+    expect((await fetch(`${daemon.url}/_dns/v2/health`)).status).toBe(200);
+  } finally {
+    await daemon.close();
+  }
+});
+
+test("a gateway claims and leases through the daemon against a loopback DNS API", async () => {
+  const cloudflare = fakeCloudflare();
+  const api = await serveFakeCloudflare(cloudflare);
+  const env = await environment();
+  const importToken = join(directory, "import-token.json");
+  await writeFile(importToken, JSON.stringify({ token: "i".repeat(40) }));
+  const daemon = await startIndependentDnsDaemon({
+    ...env,
+    OMNESIS_ACME_DNS_BROKER_URL: "http://127.0.0.1:8789",
+    OMNESIS_CLOUD_RELAY_DNS_BROKER_FIXTURE_DNS_API_URL: api.url,
+    OMNESIS_CLOUD_RELAY_DNS_BROKER_IMPORT_TOKEN_FILE: importToken,
+    OMNESIS_CLOUD_RELAY_DNS_BROKER_CAA_ACCOUNT_URI_PREFIX: "https://ca.example.test/acct/",
+  });
+  try {
+    const owner = brokerOwner(env.OMNESIS_CLOUD_RELAY_DOMAIN);
+    const handle = (request: Request) =>
+      fetch(new URL(new URL(request.url).pathname, daemon.url), {
+        method: request.method,
+        headers: request.headers,
+        body: request.body,
+        duplex: "half",
+      } as RequestInit);
+    expect(await brokerCall(handle, owner, { type: "claim" }, "http://127.0.0.1:8789")).toEqual({
+      status: 200,
+      body: { claimed: true },
+    });
+    expect(
+      (
+        await brokerCall(
+          handle,
+          owner,
+          { type: "txt-create", value: "a".repeat(43) },
+          "http://127.0.0.1:8789",
+        )
+      ).status,
+    ).toBe(200);
+    expect(cloudflare.records).toMatchObject([
+      { type: "TXT", name: `_acme-challenge.${owner.hostname}` },
+    ]);
+    expect(await (await fetch(`${daemon.url}/_dns/v2/health`)).json()).toMatchObject({
+      caa: { accountUriPrefix: "https://ca.example.test/acct/" },
+    });
+  } finally {
+    await daemon.close();
+  }
+  // A restart keeps a lease that hasn't expired yet.
+  const again = await startIndependentDnsDaemon({
+    ...env,
+    OMNESIS_CLOUD_RELAY_DNS_BROKER_FIXTURE_DNS_API_URL: api.url,
+  });
+  await again.close();
+  expect(cloudflare.records).toMatchObject([{ type: "TXT" }]);
+  await api.close();
 });
 
 test.each([false, true])(
@@ -141,7 +217,7 @@ test.each([false, true])(
         OMNESIS_ACME_DNS_BROKER_URL: "https://dns.example.test/path",
       }),
     ).rejects.toThrow("origin");
-    expect(closed).toHaveBeenCalledTimes(1);
+    expect(closed).toHaveBeenCalledTimes(0);
     const occupied = createServer();
     occupied.listen(0, "127.0.0.1");
     await once(occupied, "listening");
@@ -152,7 +228,7 @@ test.each([false, true])(
           OMNESIS_CLOUD_RELAY_DNS_BROKER_PORT: String((occupied.address() as AddressInfo).port),
         }),
       ).rejects.toMatchObject({ code: "EADDRINUSE" });
-      expect(closed).toHaveBeenCalledTimes(2);
+      expect(closed).toHaveBeenCalledTimes(1);
     } finally {
       await new Promise<void>((resolve) => occupied.close(() => resolve()));
     }
@@ -186,7 +262,7 @@ test("IPv6 loopback and a TLS listener use only their own isolated network endpo
       call.once("error", reject);
       call.end();
     });
-    expect(status).toBe(405);
+    expect(status).toBe(404);
   } finally {
     await secure.close();
   }

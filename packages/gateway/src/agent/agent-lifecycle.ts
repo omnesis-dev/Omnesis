@@ -1222,6 +1222,11 @@ export class AgentLifecycle {
         log.warn(`agent disabled: ${agentDisabledReason}`);
         break;
 
+      case "decision":
+        agentDisabledReason = "A decision model serves only the Decision model capability.";
+        log.warn(`agent disabled: ${agentDisabledReason}`);
+        break;
+
       default: {
         const _exhaustive: never = agentResolved;
         agentDisabledReason = `Unexpected agent assignment kind: ${(agentResolved as { kind: string }).kind}`;
@@ -1465,6 +1470,9 @@ export class AgentLifecycle {
         break;
       case "typesafe":
         newReason = "TypeSafe serves only the Decision model capability.";
+        break;
+      case "decision":
+        newReason = "A decision model serves only the Decision model capability.";
         break;
       default: {
         const _exhaustive: never = resolved;

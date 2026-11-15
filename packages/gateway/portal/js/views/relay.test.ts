@@ -434,15 +434,11 @@ test("connected: three plain sections, a copyable address and nothing technical"
   expect(host.querySelector("details, dl")).toBeNull();
   for (const gone of [
     "Connection details",
-    "Trusted sign-ins",
     "Sign-in methods",
     "ertificate",
     "Gateway ID",
     "Recovery receipt",
     "Reconnect",
-    "Google account",
-    "Passkey",
-    "google:fictional-subject",
   ])
     expect(text()).not.toContain(gone);
   expect(
@@ -685,7 +681,7 @@ describe("problems", () => {
       "Certificate monitor: incident, last checked 2028-01-02T00:00:00.000Z",
       `Unexpected certificate: name ${HOST}, public key ${FINGERPRINT}, certificate ${"e".repeat(64)}, issuer Fictional test issuer, serial ABCD, valid 2028-01-01T00:00:00.000Z to 2028-02-01T00:00:00.000Z, seen 2028-01-02T00:00:00.000Z, log entry fixture-entry-1`,
       "Account: linked",
-      "New devices: automatic, 2 trusted sign-ins",
+      "New devices: automatic, 0 confirmed sign-ins, 2 on record",
       "Recovery receipt: present, expires 2030-03-17T17:46:40.000Z",
       "Relay: https://relay.example.test",
       "Certificate provider: none",
@@ -887,13 +883,60 @@ describe("account", () => {
   });
 });
 
+describe("certificate incident hold", () => {
+  const HELD = {
+    since: "2028-01-02T00:00:00.000Z",
+    certificates: ["e".repeat(64), "9".repeat(64)],
+  };
+  test("says new devices wait whatever was chosen, names the one command that lifts it, and locks the choice", async () => {
+    const writeText = vi.fn(async (_text: string) => {});
+    vi.stubGlobal("navigator", { clipboard: { writeText } });
+    state.status = connected({
+      incidentHold: HELD,
+      deviceEnrollment: { policy: "ask", trustedSignIns: [] },
+      certificateMonitor: { state: "incident", incidents: [] },
+    });
+    await show();
+    const said = [...host.querySelectorAll('.relay-problems [role="alert"]')].map(
+      (alert) => alert.textContent,
+    );
+    expect(said).toEqual([
+      "A certificate for this gateway's address was issued with a key this gateway does not hold, so someone else may be able to pose as this gateway. Until you deal with it, every new device waits for your approval, whatever you chose for new devices. Don't sign in or approve anything from a link you didn't expect. Copy the details and ask for help. Once it is resolved, run omnesis cloud incidents ack on the gateway host.",
+    ]);
+    // The fingerprints stay in the details, out of the page.
+    expect(text()).not.toContain("e".repeat(64));
+    expect(text()).toContain(
+      "Every new device waits for your approval until the certificate problem above is dealt with.",
+    );
+    const radios = [...host.querySelectorAll('input[name="relay-policy"]')] as HTMLInputElement[];
+    expect(radios.every((radio) => radio.disabled)).toBe(true);
+    await click("Copy details");
+    const copied = writeText.mock.calls[0]![0];
+    expect(copied).toContain("Error codes: incident-hold (new devices)");
+    expect(copied).toContain("Incident hold: since 2028-01-02T00:00:00.000Z, 2 certificates");
+    // A hold without its list still prints.
+    state.status = connected({ incidentHold: { since: HELD.since } });
+    render(null, host);
+    await show();
+    await click("Copy details");
+    expect(writeText.mock.calls[1]![0]).toContain("Incident hold: since 2028-01-02T00:00:00.000Z, 0 certificates");
+  });
+  test("without a hold, the choice is free and the details say nothing about one", async () => {
+    state.status = connected();
+    await show();
+    expect(text()).not.toContain("certificate problem above");
+    const radios = [...host.querySelectorAll('input[name="relay-policy"]')] as HTMLInputElement[];
+    expect(radios.some((radio) => radio.disabled)).toBe(false);
+  });
+});
+
 describe("new devices", () => {
-  test("the policy choice saves immediately, and trusted sign-ins are not listed", async () => {
+  test("the policy choice saves immediately, and trusted sign-ins are listed with nothing to remove", async () => {
     state.status = connected();
     await show();
     expect(text()).toContain("What happens when a new device signs in");
     expect(text()).toContain(
-      "A device joins once you sign in to your Omnesis account with a sign-in this gateway trusts. You're notified and can remove it any time.",
+      "A device joins once you sign in with a passkey or Google account you confirmed on this gateway, on its own page or in an Omnesis app. Other sign-ins wait for your approval. You're notified and can remove a device any time.",
     );
     expect(text()).toContain(
       "A device waits until you approve it on a device you already use, and the codes match. Someone with your Google password still can't get in.",
@@ -908,7 +951,7 @@ describe("new devices", () => {
       radios[1]!.dispatchEvent(new window.Event("change", { bubbles: true }));
     });
     expect(state.run).toHaveBeenLastCalledWith("enrollment", { policy: "ask" }, "PUT");
-    expect(host.querySelector("ul, li")).toBeNull();
+    expect(host.querySelectorAll(".relay-sign-in")).toHaveLength(2);
     expect(button("Remove")).toBeUndefined();
     expect(host.querySelector('button[aria-label^="Remove"]')).toBeNull();
   });
@@ -939,5 +982,88 @@ describe("new devices", () => {
     const saving = [...host.querySelectorAll('input[name="relay-policy"]')] as HTMLInputElement[];
     expect(saving.map(checked)).toEqual([false, true]);
     expect(saving.every((radio) => radio.disabled)).toBe(true);
+  });
+});
+
+describe("trusted sign-ins and confirming a passkey", () => {
+  const ORIGIN = "https://g-abcdefgh.relay.example.test";
+  test("each trusted sign-in says where it came from and whether it is confirmed here", async () => {
+    state.status = connected({
+      deviceEnrollment: {
+        policy: "automatic",
+        trustedSignIns: [
+          { type: "passkey", id: "passkeyfictional1", addedAt: 1, source: "link-page", confirmed: true },
+          { type: "google", id: "googlefictional2", addedAt: 2, source: "countersigned" },
+          { type: "passkey", id: "passkeyfictional3", addedAt: 3, source: "unheard-of" },
+        ],
+        confirmedSignIns: [
+          { type: "passkey", id: "passkeyfictional1", at: 4, via: "gateway-origin" },
+          { type: "passkey", id: "passkeyfictional4", at: 5, via: "android-app" },
+          { type: "passkey", id: "passkeyfictional5", at: 6, via: "later-way" },
+        ],
+      },
+    });
+    await show();
+    // Each row is two lines: what the sign-in is, then where it came from.
+    const rows = [...host.querySelectorAll(".relay-sign-in")].map((x) =>
+      [...x.children].map((line) => (line.textContent ?? "").replace(/\s+/g, " ").trim()).join(" "),
+    );
+    expect(rows).toEqual([
+      "Passkey passkeyficti Used to connect this gateway · Confirmed on this gateway",
+      "Google account googlefictio Already on your account, vouched for by a passkey added later · Not confirmed on this gateway: devices using it wait for your approval",
+      "Passkey passkeyficti Source not recorded · Not confirmed on this gateway: devices using it wait for your approval",
+      "Passkey passkeyficti Confirmed in the Android app",
+      "Passkey passkeyficti Confirmed",
+    ]);
+    // A passkey is confirmed already, so there is nothing to confirm.
+    expect(text()).not.toContain("Confirm your passkey on this gateway");
+    state.status = connected({ deviceEnrollment: { policy: "ask", trustedSignIns: [] } });
+    await show();
+    expect(host.querySelector(".relay-sign-ins")).toBeNull();
+    // An older gateway may report neither list.
+    state.status = connected({ deviceEnrollment: { policy: "ask" } });
+    await show();
+    expect(host.querySelector(".relay-sign-ins")).toBeNull();
+  });
+
+  test("right after linking, the card asks for the passkey on the gateway's own page", async () => {
+    state.status = connected({
+      deviceEnrollment: {
+        policy: "automatic",
+        trustedSignIns: [{ type: "passkey", id: "p", addedAt: 1, source: "link-page" }],
+        confirmedSignIns: [],
+        confirmOrigin: ORIGIN,
+      },
+    });
+    await show();
+    expect(text()).toContain("Confirm your passkey on this gateway");
+    // This page isn't on the gateway's own origin, so it links there instead of prompting.
+    expect(button("Confirm with passkey")).toBeUndefined();
+    expect(link("g-abcdefgh.relay.example.test")?.getAttribute("href")).toBe(
+      `${ORIGIN}/portal/settings/account`,
+    );
+    // A gateway with no origin of its own (a custom domain) shows no card, only that every device
+    // waits until a Google account is confirmed from an app.
+    state.status = connected({
+      deviceEnrollment: {
+        policy: "automatic",
+        confirmationNeeded: true,
+        trustedSignIns: [],
+        confirmedSignIns: [],
+      },
+    });
+    await show();
+    expect(text()).not.toContain("Confirm your passkey on this gateway");
+    expect(text()).toContain("Every new device waits for your approval");
+    state.status = connected({
+      deviceEnrollment: {
+        policy: "automatic",
+        confirmationNeeded: false,
+        trustedSignIns: [],
+        confirmedSignIns: [{ type: "google", id: "g", at: 1, via: "native-google-approval" }],
+      },
+    });
+    await show();
+    expect(text()).not.toContain("Every new device waits for your approval");
   });
 });

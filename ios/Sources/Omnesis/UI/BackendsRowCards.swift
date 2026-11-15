@@ -31,7 +31,7 @@ struct BackendRowCard: View {
                                 .truncationMode(.middle)
                             statusBadge
                         }
-                        if let url = row.status.url, !url.isEmpty {
+                        if let url = row.status.url?.isEmpty == false ? row.status.url : row.status.decision?.url {
                             Text(url)
                                 .font(.system(size: 12))
                                 .foregroundStyle(Theme.textSecondary)
@@ -57,20 +57,11 @@ struct BackendRowCard: View {
             .disabled(disabled)
 
             HStack(spacing: Theme.Spacing.sm) {
-                Button(action: onTest) {
-                    Text(probe == .probing ? "Testing…" : "Test")
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(Theme.accent)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 6)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: Theme.Radius.medium)
-                                .stroke(Theme.accent.opacity(0.4), lineWidth: 1)
-                        )
+                // A decision-only backend has no OpenAI-compatible API to test;
+                // its decision API is verified from the Decision model card.
+                if row.status.servesOpenAI {
+                    testButton
                 }
-                .buttonStyle(.plain)
-                .disabled(disabled || probe == .probing)
-
                 Button(action: onRemove) {
                     Text("Remove")
                         .font(.system(size: 13, weight: .semibold))
@@ -96,23 +87,45 @@ struct BackendRowCard: View {
         .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.large))
     }
 
-    private var metaLine: some View {
-        HStack(spacing: 6) {
-            let count = row.status.models?.count ?? 0
-            Text("\(count) model\(count == 1 ? "" : "s")")
-                .font(.system(size: 11))
-                .foregroundStyle(Theme.textMuted)
-            if row.status.hasApiKey == true {
-                Text("· API key set")
-                    .font(.system(size: 11))
-                    .foregroundStyle(Theme.textMuted)
-            }
+    private var testButton: some View {
+        Button(action: onTest) {
+            Text(probe == .probing ? "Testing…" : "Test")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(Theme.accent)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 6)
+                .overlay(
+                    RoundedRectangle(cornerRadius: Theme.Radius.medium)
+                        .stroke(Theme.accent.opacity(0.4), lineWidth: 1)
+                )
         }
+        .buttonStyle(.plain)
+        .disabled(disabled || probe == .probing)
+    }
+
+    /// What the backend serves, its probed model count when it has an
+    /// OpenAI-compatible API, and whether a key is set.
+    private var metaLine: some View {
+        let count = row.status.models?.count ?? 0
+        let parts = [
+            ModelManagement.servesLabel(row.status),
+            row.status.servesOpenAI ? "\(count) model\(count == 1 ? "" : "s")" : nil,
+            row.status.hasApiKey == true ? "API key set" : nil,
+        ]
+        return Text(parts.compactMap(\.self).joined(separator: " · "))
+            .font(.system(size: 11))
+            .foregroundStyle(Theme.textMuted)
     }
 
     @ViewBuilder
     private var statusBadge: some View {
         switch row.status.status {
+        // A decision-only backend is never probed: `ok` says only that its key
+        // can be read, and `unreachable` that it cannot.
+        case "ok" where !row.status.servesOpenAI:
+            EmptyView()
+        case "unreachable" where !row.status.servesOpenAI:
+            badge(text: "key unreadable", color: Theme.danger)
         case "ok":
             badge(text: "reachable", color: Theme.success)
         case "reachable":
@@ -326,7 +339,7 @@ struct BackendDetailView: View {
                             .truncationMode(.middle)
                         statusBadge
                     }
-                    if let url = row.status.url, !url.isEmpty {
+                    if let url = row.status.url?.isEmpty == false ? row.status.url : row.status.decision?.url {
                         Text(url)
                             .font(.system(size: 12))
                             .foregroundStyle(Theme.textSecondary)
@@ -384,8 +397,10 @@ struct BackendDetailView: View {
                 .font(.system(size: 13))
                 .foregroundStyle(Theme.textSecondary)
             Text(
-                "Once this backend is reachable and its probe classifies a model into a verifiable role "
+                row.status.servesOpenAI
+                    ? "Once this backend is reachable and its probe classifies a model into a verifiable role "
                     + "(embedder or agent), a Verify affordance shows up here."
+                    : "This backend serves only decision models. Verify them from the Decision model card in Models."
             )
             .font(.system(size: 11))
             .foregroundStyle(Theme.textMuted)
@@ -396,23 +411,29 @@ struct BackendDetailView: View {
         .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.large))
     }
 
+    /// What the backend serves, its probed model count when it has an
+    /// OpenAI-compatible API, and whether a key is set.
     private var metaLine: some View {
-        HStack(spacing: 6) {
-            let count = row.status.models?.count ?? 0
-            Text("\(count) model\(count == 1 ? "" : "s")")
-                .font(.system(size: 11))
-                .foregroundStyle(Theme.textMuted)
-            if row.status.hasApiKey == true {
-                Text("· API key set")
-                    .font(.system(size: 11))
-                    .foregroundStyle(Theme.textMuted)
-            }
-        }
+        let count = row.status.models?.count ?? 0
+        let parts = [
+            ModelManagement.servesLabel(row.status),
+            row.status.servesOpenAI ? "\(count) model\(count == 1 ? "" : "s")" : nil,
+            row.status.hasApiKey == true ? "API key set" : nil,
+        ]
+        return Text(parts.compactMap(\.self).joined(separator: " · "))
+            .font(.system(size: 11))
+            .foregroundStyle(Theme.textMuted)
     }
 
     @ViewBuilder
     private var statusBadge: some View {
         switch row.status.status {
+        // A decision-only backend is never probed: `ok` says only that its key
+        // can be read, and `unreachable` that it cannot.
+        case "ok" where !row.status.servesOpenAI:
+            EmptyView()
+        case "unreachable" where !row.status.servesOpenAI:
+            badge(text: "key unreadable", color: Theme.danger)
         case "ok":
             badge(text: "reachable", color: Theme.success)
         case "reachable":

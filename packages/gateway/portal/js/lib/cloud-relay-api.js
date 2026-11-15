@@ -27,6 +27,11 @@ export async function relayManagement(operation, input, signal, method = "POST")
   return response.json();
 }
 
+/** Stop trusting one sign-in, by the id a device's enrollment records. */
+export function stopTrustingSignIn(id) {
+  return relayManagement(`trusted-sign-ins/${encodeURIComponent(id)}`, undefined, undefined, "DELETE");
+}
+
 /** The gateway's version, or "" when it cannot be read. Never throws. */
 export async function gatewayVersion() {
   try {
@@ -82,6 +87,10 @@ const ERRORS = {
     "The certificate for this gateway's address could not be prepared. The gateway tries again by itself.",
   "certificate-renewal-failed":
     "The certificate for this gateway's address could not be renewed. The gateway tries again by itself.",
+  "passkey-origin-unavailable":
+    "This gateway has no address of its own on Omnesis Relay, so a passkey can't be confirmed here.",
+  "passkey-not-confirmed":
+    "This gateway couldn't confirm that passkey. Use the passkey of the Omnesis account this gateway is linked to.",
   "public-endpoint-unreachable":
     "This gateway's address does not answer from outside your home network. Check that this gateway is online. It checks again by itself.",
 };

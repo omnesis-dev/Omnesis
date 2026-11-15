@@ -327,8 +327,8 @@ describe("an install that never saved a source filter", () => {
     // The previous schema: none of the filter tables or their triggers.
     const raw = db as unknown as Database.Database;
     const rewind = () => {
-      raw.exec("DELETE FROM schema_migrations WHERE version = 220");
-      raw.pragma("user_version = 219");
+      raw.exec("DELETE FROM schema_migrations WHERE version > 221");
+      raw.pragma("user_version = 221");
     };
     for (const row of raw
       .prepare<[], { name: string }>(

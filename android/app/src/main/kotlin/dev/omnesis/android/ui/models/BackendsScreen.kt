@@ -8,14 +8,18 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
@@ -49,7 +53,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -63,6 +69,8 @@ import dev.omnesis.android.designsystem.components.ProviderIcon
 import dev.omnesis.android.designsystem.components.ProviderLogos
 import dev.omnesis.android.designsystem.theme.OmSpacing
 import dev.omnesis.android.designsystem.theme.OmTheme
+import dev.omnesis.android.transport.dto.BackendConfig
+import dev.omnesis.android.transport.dto.BackendDecisionStatus
 import dev.omnesis.android.transport.dto.BackendStatus
 import dev.omnesis.android.transport.dto.CodexBackendStatus
 import dev.omnesis.android.transport.dto.CodexLoginFlow
@@ -152,7 +160,7 @@ fun BackendsContent(
     onRetry: () -> Unit,
     onOpenSettings: () -> Unit = {},
     onOpenDetail: (String) -> Unit = {},
-    onAdd: (String, String, String?, String?) -> Unit = { _, _, _, _ -> },
+    onAdd: (String, BackendConfig) -> Unit = { _, _ -> },
     onRemove: (String) -> Unit = {},
     onTest: (String) -> Unit = {},
     onCodexRefresh: () -> Unit = {},
@@ -173,7 +181,7 @@ fun BackendsContent(
     var clearCredentialConfirm by remember { mutableStateOf<ModelCredentialEntry?>(null) }
 
     val overview = (state as? Loadable.Content)?.value
-    val presets = overview?.presets ?: emptyList()
+    val presets = overview?.providers ?: emptyList()
     val codex = overview?.inference?.codex
 
     Scaffold(
@@ -225,9 +233,9 @@ fun BackendsContent(
         AddBackendSheet(
             presets = presets,
             codex = codex,
-            onAdd = { name, url, apiKey, prefix ->
+            onAdd = { name, config ->
                 showAddSheet = false
-                onAdd(name, url, apiKey, prefix)
+                onAdd(name, config)
             },
             onConfigureCodex = {
                 showAddSheet = false
@@ -390,7 +398,7 @@ private fun BackendsList(
             }
         }
 
-        FlatSection(title = "HTTP backends") {
+        FlatSection(title = "Backends") {
             if (backends.isEmpty()) {
                 BackendsEmpty()
             } else {
@@ -496,11 +504,13 @@ private fun CredentialRowCard(
 }
 
 /**
- * One collapsed backend summary card: icon, key, URL, status badge, meta
- * ("N models · API key set"), plus Test + Remove. The whole header row is
- * tappable ([onOpen]) to push the backend detail, where the per-(model, role)
- * "Verify capabilities" section lives — Test / Remove stay on this card and so
- * aren't repeated there.
+ * One collapsed backend summary card: icon, key, status badge, URL, what the
+ * backend serves, meta ("N models · API key set"), plus Test + Remove. The
+ * whole header row is tappable ([onOpen]) to push the backend detail, where the
+ * per-(model, role) "Verify capabilities" section lives — Test / Remove stay on
+ * this card and so aren't repeated there. A backend with only a decision API
+ * has no model list to test; its decision models are verified on the Decision
+ * model card.
  */
 @Composable
 private fun BackendRowCard(
@@ -528,27 +538,7 @@ private fun BackendRowCard(
         ) {
             BackendBrandIcon(key = row.key, size = 20.dp)
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                ) {
-                    MiddleEllipsisText(
-                        text = row.key,
-                        style = MaterialTheme.typography.titleSmall,
-                        color = c.textPrimary,
-                        modifier = Modifier.weight(1f, fill = false),
-                    )
-                    StatusBadge(row.status.status)
-                }
-                if (!row.status.url.isNullOrBlank()) {
-                    MiddleEllipsisText(
-                        text = row.status.url!!,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = c.textSecondary,
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                }
-                Text(backendMetaLine(row.status), style = MaterialTheme.typography.labelSmall, color = c.textMuted)
+                BackendSummary(row, MaterialTheme.typography.titleSmall)
                 ProbeResultLine(probe)
             }
             Icon(
@@ -559,12 +549,14 @@ private fun BackendRowCard(
             )
         }
         Row(horizontalArrangement = Arrangement.spacedBy(OmSpacing.sm)) {
-            OutlinedButton(
-                onClick = onTest,
-                enabled = !busy && !probing,
-                modifier = Modifier.weight(1f),
-                colors = ButtonDefaults.outlinedButtonColors(contentColor = c.accent),
-            ) { Text(if (probing) "Testing…" else "Test", fontWeight = FontWeight.SemiBold) }
+            if (!row.decisionOnly) {
+                OutlinedButton(
+                    onClick = onTest,
+                    enabled = !busy && !probing,
+                    modifier = Modifier.weight(1f),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = c.accent),
+                ) { Text(if (probing) "Testing…" else "Test", fontWeight = FontWeight.SemiBold) }
+            }
             OutlinedButton(
                 onClick = onRemove,
                 enabled = !busy,
@@ -683,11 +675,50 @@ private fun CodexStatusBadge(status: CodexBackendStatus) {
     )
 }
 
-private fun backendMetaLine(status: BackendStatus): String {
+/**
+ * The key, status badge, URL, what the backend serves and its meta line,
+ * shared by the list card and the detail header. A backend with only a
+ * decision API shows its decision endpoint, and a badge only when its key
+ * cannot be read.
+ */
+@Composable
+private fun BackendSummary(row: ModelManagement.BackendRow, titleStyle: TextStyle) {
+    val c = OmTheme.colors
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        MiddleEllipsisText(
+            text = row.key,
+            style = titleStyle,
+            color = c.textPrimary,
+            modifier = Modifier.weight(1f, fill = false),
+        )
+        if (!row.decisionOnly || row.status.status == "unreachable") StatusBadge(row.status.status)
+    }
+    row.displayUrl?.let {
+        MiddleEllipsisText(
+            text = it,
+            style = MaterialTheme.typography.bodySmall,
+            color = c.textSecondary,
+            modifier = Modifier.fillMaxWidth(),
+        )
+    }
+    Text(ModelManagement.servesLabel(row.status), style = MaterialTheme.typography.labelSmall, color = c.textSecondary)
+    Text(backendMetaLine(row), style = MaterialTheme.typography.labelSmall, color = c.textMuted)
+    row.status.reason?.takeIf { row.decisionOnly && it.isNotBlank() }?.let {
+        Text(it, style = MaterialTheme.typography.labelSmall, color = c.warning, maxLines = 2)
+    }
+}
+
+private fun backendMetaLine(row: ModelManagement.BackendRow): String {
+    val status = row.status
+    val key = if (status.hasApiKey == true) "API key set" else "No API key"
+    if (row.decisionOnly) return key
     val count = status.models?.size ?: 0
     return buildString {
         append("$count model").append(if (count == 1) "" else "s")
-        if (status.hasApiKey == true) append(" · API key set")
+        if (status.hasApiKey == true) append(" · $key")
     }
 }
 
@@ -866,7 +897,7 @@ fun BackendDetailContent(
                 ) {
                     BackendDetailHeader(row)
                     if (targets.isEmpty()) {
-                        BackendDetailEmptyVerify()
+                        BackendDetailEmptyVerify(decisionOnly = row.decisionOnly)
                     } else {
                         FlatSection(title = "Verify capabilities") {
                             Column(verticalArrangement = Arrangement.spacedBy(OmSpacing.sm)) {
@@ -909,34 +940,14 @@ private fun BackendDetailHeader(row: ModelManagement.BackendRow) {
         Row(horizontalArrangement = Arrangement.spacedBy(OmSpacing.sm)) {
             BackendBrandIcon(key = row.key, size = 20.dp)
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                ) {
-                    MiddleEllipsisText(
-                        text = row.key,
-                        style = MaterialTheme.typography.titleMedium,
-                        color = c.textPrimary,
-                        modifier = Modifier.weight(1f, fill = false),
-                    )
-                    StatusBadge(row.status.status)
-                }
-                if (!row.status.url.isNullOrBlank()) {
-                    MiddleEllipsisText(
-                        text = row.status.url!!,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = c.textSecondary,
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                }
-                Text(backendMetaLine(row.status), style = MaterialTheme.typography.labelSmall, color = c.textMuted)
+                BackendSummary(row, MaterialTheme.typography.titleMedium)
             }
         }
     }
 }
 
 @Composable
-private fun BackendDetailEmptyVerify() {
+private fun BackendDetailEmptyVerify(decisionOnly: Boolean) {
     val c = OmTheme.colors
     Column(
         Modifier
@@ -945,6 +956,14 @@ private fun BackendDetailEmptyVerify() {
             .padding(OmSpacing.md),
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
+        if (decisionOnly) {
+            Text(
+                "This backend serves decision models. Verify them on the Decision model, under Models.",
+                style = MaterialTheme.typography.bodySmall,
+                color = c.textSecondary,
+            )
+            return@Column
+        }
         Text("Nothing to verify yet.", style = MaterialTheme.typography.bodySmall, color = c.textSecondary)
         Text(
             "Once this backend is reachable and its probe classifies a model into a verifiable role (embedder, agent, or privacy reviewer), a Verify affordance shows up here.",
@@ -1121,7 +1140,8 @@ fun CodexSetupForm(
             ) {
                 Text(if (status?.loggedIn == true) "Log in again" else "Log in to OpenAI", fontWeight = FontWeight.SemiBold)
             }
-            Row(horizontalArrangement = Arrangement.spacedBy(OmSpacing.sm), modifier = Modifier.fillMaxWidth()) {
+            // Cards in a row share the taller one's height, so a two-line subtitle keeps them even.
+            Row(horizontalArrangement = Arrangement.spacedBy(OmSpacing.sm), modifier = Modifier.fillMaxWidth().height(IntrinsicSize.Min)) {
                 OutlinedButton(
                     onClick = onRefresh,
                     enabled = !busy,
@@ -1240,7 +1260,7 @@ private fun codexSetupStatusLine(status: CodexBackendStatus?): String {
 internal fun AddBackendSheet(
     presets: List<ProviderPreset>,
     codex: CodexBackendStatus? = null,
-    onAdd: (String, String, String?, String?) -> Unit,
+    onAdd: (String, BackendConfig) -> Unit,
     onConfigureCodex: () -> Unit = {},
     onDismiss: () -> Unit,
 ) {
@@ -1257,34 +1277,44 @@ internal fun AddBackendSheet(
 /**
  * Pure add-backend body — exercised directly by the screenshot test. A two-step
  * flow: first a 2-col grid of provider-preset cards (+ a "Custom" card); picking
- * a preset prefills the form (disabled name = preset id, url = default URL,
- * apiPathPrefix), shows the API-key field with a per-provider note, and offers a
- * Back affordance to the grid. "Custom" → a blank form. Ports the iOS
- * `AddBackendSheet`. Keeps the existing name validation + add callback.
+ * a preset prefills the form (disabled name = preset id) and asks the key once.
+ * A preset's OpenAI-compatible API (base URL, api-path prefix) and its decision
+ * API (its URL's `{param}` values, or the address of a local server) are both
+ * configured, whichever it has, on one backend. "Custom" → a blank
+ * OpenAI-compatible form. TypeSafe is built in and never offered here. Ports
+ * the iOS `AddBackendSheet`. `previewPreset` opens the form on a preset for
+ * screenshots.
  */
 @Composable
 fun AddBackendForm(
     presets: List<ProviderPreset> = emptyList(),
     codex: CodexBackendStatus? = null,
-    onAdd: (String, String, String?, String?) -> Unit = { _, _, _, _ -> },
+    onAdd: (String, BackendConfig) -> Unit = { _, _ -> },
     onConfigureCodex: () -> Unit = {},
+    previewPreset: ProviderPreset? = null,
 ) {
     val c = OmTheme.colors
     // null = grid; non-null = the form for the active preset (a Custom preset is
     // represented by the sentinel below).
-    var activePreset by remember { mutableStateOf<ProviderPreset?>(null) }
-    var showForm by remember { mutableStateOf(false) }
-    var name by remember { mutableStateOf("") }
-    var url by remember { mutableStateOf("") }
+    var activePreset by remember { mutableStateOf(previewPreset) }
+    var showForm by remember { mutableStateOf(previewPreset != null) }
+    var name by remember { mutableStateOf(previewPreset?.id.orEmpty()) }
+    var url by remember { mutableStateOf(previewPreset?.defaultUrl.orEmpty()) }
     var apiKey by remember { mutableStateOf("") }
-    var apiPathPrefix by remember { mutableStateOf("") }
+    var apiPathPrefix by remember { mutableStateOf(previewPreset?.apiPathPrefix.orEmpty()) }
+    var decisionUrl by remember {
+        mutableStateOf(previewPreset?.decision?.takeIf { it.urlParams.isEmpty() }?.url.orEmpty())
+    }
+    var urlParams by remember { mutableStateOf(emptyMap<String, String>()) }
 
     fun selectPreset(preset: ProviderPreset) {
         activePreset = preset
         name = preset.id
-        url = preset.defaultUrl
+        url = preset.defaultUrl.orEmpty()
         apiKey = ""
         apiPathPrefix = preset.apiPathPrefix ?: ""
+        decisionUrl = preset.decision?.takeIf { it.urlParams.isEmpty() }?.url.orEmpty()
+        urlParams = emptyMap()
         showForm = true
     }
 
@@ -1294,6 +1324,8 @@ fun AddBackendForm(
         url = ""
         apiKey = ""
         apiPathPrefix = ""
+        decisionUrl = ""
+        urlParams = emptyMap()
         showForm = true
     }
 
@@ -1304,7 +1336,7 @@ fun AddBackendForm(
 
     if (!showForm) {
         AddBackendPresetGrid(
-            presets = presets,
+            presets = presets.filter { it.builtIn == null },
             codex = codex,
             onSelectPreset = ::selectPreset,
             onSelectCodex = onConfigureCodex,
@@ -1314,8 +1346,18 @@ fun AddBackendForm(
     }
 
     val preset = activePreset
+    val wire = preset?.decision
+    val askOpenAi = preset == null || preset.hasOpenAiApi
+    val paramsWire = wire?.takeIf { it.urlParams.isNotEmpty() }
+    val askDecisionUrl = wire != null && paramsWire == null && preset?.isLocal == true
+    val filledDecision = when {
+        wire == null -> null
+        paramsWire != null -> (DecisionSetup.fillUrl(paramsWire, urlParams) as? DecisionSetup.FilledUrl.Ok)?.url
+        else -> decisionUrl.trim().ifEmpty { null }
+    }
     val nameError = if (name.isEmpty()) null else ModelManagement.validateBackendName(name)
-    val canAdd = name.trim().isNotEmpty() && url.trim().isNotEmpty() && nameError == null
+    val canAdd = name.trim().isNotEmpty() && nameError == null &&
+        (!askOpenAi || url.trim().isNotEmpty()) && (wire == null || filledDecision != null)
 
     Column(
         Modifier
@@ -1340,7 +1382,12 @@ fun AddBackendForm(
             ) {
                 ProviderIcon(providerId = preset.id, size = 16.dp)
                 Text(
-                    "Configuring ${preset.name} — add your API key; the URL is pre-filled.",
+                    when {
+                        wire != null && preset.hasOpenAiApi ->
+                            "Configuring ${preset.name} — one key for its OpenAI-compatible models and its decision models."
+                        wire != null -> "Configuring ${preset.name} — it serves decision models. Assign one under Models → Decision model."
+                        else -> "Configuring ${preset.name} — add your API key; the URL is pre-filled."
+                    },
                     style = MaterialTheme.typography.bodySmall,
                     color = c.textSecondary,
                 )
@@ -1354,23 +1401,34 @@ fun AddBackendForm(
         }
 
         Field("Name", "my-vllm", name, { name = it }, error = nameError, enabled = preset == null)
-        Field("Base URL", "https://api.deepseek.com/v1", url, { url = it })
+        if (askOpenAi) Field("Base URL", "https://api.deepseek.com/v1", url, { url = it })
+        paramsWire?.urlParams?.forEach { param ->
+            Field(param.label, param.placeholder, urlParams[param.key].orEmpty(), { urlParams = urlParams + (param.key to it) })
+        }
+        if (askDecisionUrl) {
+            Field("Decision URL", wire?.url.orEmpty(), decisionUrl, { decisionUrl = it }, hint = "The server's decision endpoint.")
+        }
+        val keyOptional = preset == null || preset.isLocal
         Field(
-            if (preset != null) "API key" else "API key (optional)",
+            if (keyOptional) "API key (optional)" else "API key",
             "Leave blank for a keyless local server",
             apiKey,
             { apiKey = it },
             password = true,
         )
-        Field("API path prefix (optional)", "/v1", apiPathPrefix, { apiPathPrefix = it })
+        if (askOpenAi) Field("API path prefix (optional)", "/v1", apiPathPrefix, { apiPathPrefix = it })
 
         Button(
             onClick = {
                 onAdd(
                     name.trim(),
-                    url.trim(),
-                    apiKey.ifBlank { null },
-                    apiPathPrefix.ifBlank { null },
+                    ModelManagement.newBackendConfig(
+                        preset = preset,
+                        url = url.takeIf { askOpenAi },
+                        apiPathPrefix = apiPathPrefix.takeIf { askOpenAi },
+                        decisionUrl = filledDecision,
+                        apiKey = apiKey,
+                    ),
                 )
             },
             enabled = canAdd,
@@ -1400,14 +1458,14 @@ private fun AddBackendPresetGrid(
     ) {
         Text("Add backend", style = MaterialTheme.typography.titleMedium, color = c.textPrimary)
         Text(
-            "Pick a provider to pre-fill its URL, or point Omnesis at any OpenAI-compatible server. Backends are shared across every capability.",
+            "Pick a provider to pre-fill its URLs, or point Omnesis at any OpenAI-compatible server. Backends are shared across every capability.",
             style = MaterialTheme.typography.bodySmall,
             color = c.textSecondary,
         )
         // 2-col grid built from rows so it nests inside the sheet's column
         // without a nested-scroll conflict (a LazyVerticalGrid would).
         val cards = presets.map { preset ->
-            PresetCardSpec(preset.id, preset.name, "Set up this provider") { onSelectPreset(preset) }
+            PresetCardSpec(preset.id, preset.name, ModelManagement.servesLabel(preset)) { onSelectPreset(preset) }
         } +
             listOfNotNull(
                 codex?.let {
@@ -1421,7 +1479,8 @@ private fun AddBackendPresetGrid(
             ) +
             PresetCardSpec("http", "Custom", "Any OpenAI-compatible server", onSelectCustom)
         cards.chunked(2).forEach { rowCards ->
-            Row(horizontalArrangement = Arrangement.spacedBy(OmSpacing.sm), modifier = Modifier.fillMaxWidth()) {
+            // Cards in a row share the taller one's height, so a two-line subtitle keeps them even.
+            Row(horizontalArrangement = Arrangement.spacedBy(OmSpacing.sm), modifier = Modifier.fillMaxWidth().height(IntrinsicSize.Min)) {
                 rowCards.forEach { spec ->
                     PresetCard(spec, Modifier.weight(1f))
                 }
@@ -1445,7 +1504,8 @@ private fun PresetCard(spec: PresetCardSpec, modifier: Modifier = Modifier) {
     val c = OmTheme.colors
     Column(
         modifier
-            .height(96.dp)
+            .heightIn(min = 96.dp)
+            .fillMaxHeight()
             .background(c.bgSecondary, RoundedCornerShape(12.dp))
             .clickable(onClick = spec.onClick)
             .padding(OmSpacing.md),
@@ -1538,7 +1598,7 @@ fun SetCredentialForm(
 }
 
 @Composable
-private fun Field(
+internal fun Field(
     label: String,
     placeholder: String,
     value: String,
@@ -1559,6 +1619,11 @@ private fun Field(
             enabled = enabled,
             isError = error != null,
             visualTransformation = if (password) PasswordVisualTransformation() else androidx.compose.ui.text.input.VisualTransformation.None,
+            keyboardOptions = if (password) {
+                KeyboardOptions(keyboardType = KeyboardType.Password, autoCorrectEnabled = false)
+            } else {
+                KeyboardOptions.Default
+            },
             modifier = Modifier.fillMaxWidth(),
         )
         if (error != null) {
@@ -1574,7 +1639,7 @@ private fun Field(
  * directly on the page background. Ports the iOS FlatSection.
  */
 @Composable
-private fun FlatSection(
+internal fun FlatSection(
     title: String,
     modifier: Modifier = Modifier,
     content: @Composable () -> Unit,
@@ -1631,6 +1696,23 @@ internal fun sampleBackendsOverview() = ModelsOverview(
                 models = emptyList(),
                 hasApiKey = false,
             ),
+            "fireworks" to BackendStatus(
+                type = "http",
+                status = "ok",
+                url = "https://api.fireworks.ai/inference",
+                models = listOf("accounts/fireworks/models/example-chat"),
+                modelRoles = mapOf("accounts/fireworks/models/example-chat" to listOf("agent")),
+                hasApiKey = true,
+                preset = "fireworks",
+                decision = BackendDecisionStatus(url = "https://api.fireworks.ai/inference/v1/systemone", hasApiKey = true),
+            ),
+            "ollaya" to BackendStatus(
+                type = "http",
+                status = "ok",
+                hasApiKey = false,
+                preset = "ollaya",
+                decision = BackendDecisionStatus(url = "http://127.0.0.1:11435/v1/systemone", onHost = true),
+            ),
         ),
         codex = CodexBackendStatus(
             configured = true,
@@ -1649,7 +1731,8 @@ internal fun sampleBackendsOverview() = ModelsOverview(
             refreshedAt = "2026-07-03T12:00:00Z",
         ),
     ),
-    presets = samplePresets(),
+    presets = samplePresets() + sampleDecisionPresets().filter { it.id == "fireworks" },
+    decisionProviders = sampleDecisionPresets().filter { it.id == "ollaya" },
 )
 
 /**

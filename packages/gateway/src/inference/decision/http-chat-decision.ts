@@ -46,6 +46,7 @@ import {
   type TokenProbability,
 } from "./chat-decision.js";
 import type { ModelBehaviorValues, ModelControls } from "@omnesis/core/models";
+import type { ConcurrencyLimiter } from "./limiter.js";
 
 const log = createLogger("gateway:decision:http");
 
@@ -76,6 +77,12 @@ export interface HttpChatDecisionOptions {
   modelBehavior?: ModelBehaviorValues;
   /** Per-request timeout. */
   timeoutMs?: number;
+  /**
+   * Caps the questions in flight across every decision on this backend: each
+   * question is its own chat request, and a single-slot server would time out
+   * the ones queued behind the first.
+   */
+  limiter?: ConcurrencyLimiter;
   /** Test seams. */
   fetchFn?: typeof fetch;
   sleep?: (ms: number, signal?: AbortSignal) => Promise<void>;
@@ -115,7 +122,10 @@ export class HttpChatDecision implements DecisionCapability {
   ): Promise<DecisionResult> {
     const entries = Object.entries(request.questions);
     const results = await Promise.all(
-      entries.map(([, question]) => this.ask(request.state, question, callOpts?.signal)),
+      entries.map(([, question]) => {
+        const ask = () => this.ask(request.state, question, callOpts?.signal);
+        return this.opts.limiter ? this.opts.limiter.run(ask, callOpts?.signal) : ask();
+      }),
     );
     const answers: Record<string, DecisionAnswer> = {};
     let inputTokens: number | undefined;

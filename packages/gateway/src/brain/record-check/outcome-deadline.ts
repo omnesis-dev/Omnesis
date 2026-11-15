@@ -4,7 +4,6 @@
 import type { DecisionQuestion } from "@omnesis/core";
 
 export const OUTCOME_DEADLINE_QUESTION_ID = "deadline_support";
-export const OUTCOME_DEADLINE_THRESHOLD = 1.5;
 export const OUTCOME_DEADLINE_QUESTIONS: Readonly<Record<string, DecisionQuestion>> = {
   [OUTCOME_DEADLINE_QUESTION_ID]: {
     type: "score",

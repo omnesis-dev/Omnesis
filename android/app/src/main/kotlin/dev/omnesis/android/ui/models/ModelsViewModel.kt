@@ -8,6 +8,7 @@ import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dev.omnesis.android.session.SessionManager
 import dev.omnesis.android.transport.GatewayException
+import dev.omnesis.android.transport.dto.BackendConfig
 import dev.omnesis.android.transport.dto.ModelsOverview
 import dev.omnesis.android.transport.dto.ModelBehaviorValues
 import dev.omnesis.android.transport.dto.RecentModelEntry
@@ -180,6 +181,24 @@ class ModelsViewModel @Inject constructor(
                 runCatching { session.requireSession().admin.systemInfo() }
                     .onSuccess { info -> _system.update { info } }
             }
+        }
+    }
+
+    /**
+     * Reload the overview in place, without the loading state, so an open
+     * sheet (the Decision model's setup) keeps its step while its config
+     * change appears. A failed reload keeps the overview on screen.
+     */
+    fun refresh() {
+        overviewGeneration++
+        viewModelScope.launch {
+            runCatching { overviewReader.read() }.onSuccess { fresh ->
+                if (!behaviorSaves.hasWork) behaviorBaseline.replace(fresh.modelSettings)
+                _state.update { Loadable.Content(fresh) }
+                scheduleDownloadPoll(fresh)
+                loadLogos(fresh)
+            }
+            session.refreshStatus()
         }
     }
 
@@ -417,15 +436,15 @@ class ModelsViewModel @Inject constructor(
      * backend appears in the picker grid. Mirrors `BackendsViewModel.add` (the
      * picker stays open so the new backend tile shows immediately).
      */
-    fun addBackend(name: String, url: String, apiKey: String?, apiPathPrefix: String?) {
+    fun addBackend(name: String, config: BackendConfig) {
         _busy.update { true }
         _notice.update { null }
         viewModelScope.launch {
             runCatching {
                 val admin = session.requireSession().admin
-                admin.addHttpBackend(name, url, apiKey, apiPathPrefix)
+                admin.saveBackend(name, config)
                 // Probe immediately so reachability + the model list show.
-                runCatching { admin.probeBackend(name) }
+                if (config.url != null) runCatching { admin.probeBackend(name) }
             }.fold(
                 onSuccess = {
                     overviewGeneration++
@@ -456,14 +475,15 @@ class ModelsViewModel @Inject constructor(
             _busy.update { false }
         }
     }
+}
 
-    private fun gatewayMessage(e: Throwable): String = when (e) {
-        is GatewayException.Unauthorized -> "not authorized"
-        is GatewayException.Forbidden -> "this device lacks admin scope"
-        is GatewayException.NotFound -> "no longer exists"
-        is GatewayException.ServerError -> e.body?.ifBlank { null } ?: "server error"
-        is GatewayException.Network -> "network error"
-        is GatewayException.Decoding -> "could not read the response"
-        else -> e.message ?: "unknown error"
-    }
+/** A short, human-readable reason for a failed model-management request. */
+internal fun gatewayMessage(e: Throwable): String = when (e) {
+    is GatewayException.Unauthorized -> "not authorized"
+    is GatewayException.Forbidden -> "this device lacks admin scope"
+    is GatewayException.NotFound -> "no longer exists"
+    is GatewayException.ServerError -> e.body?.ifBlank { null } ?: "server error"
+    is GatewayException.Network -> "network error"
+    is GatewayException.Decoding -> "could not read the response"
+    else -> e.message ?: "unknown error"
 }

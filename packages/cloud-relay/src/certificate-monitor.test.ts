@@ -444,3 +444,43 @@ test("escaped issuer evidence has a serialized byte budget that survives restart
   expect(monitor.status().incidents.some((item) => item.providerEntryId === "fresh")).toBe(true);
   expect((await f.open()).status().state).toBe("incident");
 });
+test("each new incident is reported before the journal records it, and only once it is recorded", async () => {
+  const reported: string[][] = [];
+  let fail = true;
+  const f = fixture();
+  const monitor = await CertificateIssuanceMonitor.open({
+    ...f.options,
+    onIncident: async (incidents) => {
+      // The journal does not name them yet when the hold is asked for.
+      expect(await readFile(f.options.journalFile, "utf8").catch(() => "")).not.toContain(
+        incidents[0]!.certificateFingerprint,
+      );
+      reported.push(incidents.map((incident) => incident.providerEntryId));
+      if (fail) throw new Error("hold not saved");
+    },
+  });
+  f.provider.page.mockResolvedValueOnce(page(other, "2"));
+  await monitor.check();
+  // Not recorded and the cursor not moved: the next check reports the same certificate again.
+  expect(monitor.status()).toMatchObject({
+    state: "unavailable",
+    lastError: "ct-journal-write-failed",
+  });
+  expect(reported).toEqual([["2"]]);
+  fail = false;
+  f.provider.page.mockResolvedValueOnce(page(other, "2")).mockResolvedValueOnce(empty());
+  await monitor.check();
+  expect(f.provider.page.mock.calls[1]![1]).toBeUndefined();
+  expect(reported).toEqual([["2"], ["2"]]);
+  expect(monitor.status()).toMatchObject({ state: "incident" });
+  // Recorded now: seeing it again, or a matching key, reports nothing.
+  f.provider.page
+    .mockResolvedValueOnce(page(other, "3"))
+    .mockResolvedValueOnce(page(good, "4"))
+    .mockResolvedValueOnce(empty());
+  await monitor.check();
+  expect(reported).toHaveLength(2);
+  // Reported copies can't change what the monitor keeps.
+  const restored = await CertificateIssuanceMonitor.open({ ...f.options, onIncident: vi.fn() });
+  expect(restored.status().incidents).toHaveLength(1);
+});

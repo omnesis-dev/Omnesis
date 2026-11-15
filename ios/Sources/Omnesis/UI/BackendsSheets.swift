@@ -8,12 +8,13 @@ import SwiftUI
 
 @available(iOS 17.0, *)
 struct AddBackendSheet: View {
-    /// Provider presets offered as a first-step grid (from `GET /admin/models`).
+    /// Provider presets (from `GET /admin/models`); the first-step grid
+    /// offers those with an OpenAI-compatible API.
     var presets: [ProviderPreset] = []
     /// Experimental Codex status. Nil when the gateway is not advertising the
     /// Codex backend; non-nil means the card is addable from this sheet.
     var codex: CodexBackendStatus?
-    var onAdd: (String, String, String?, String?) -> Void = { _, _, _, _ in }
+    var onAdd: (NewHttpBackend) -> Void = { _ in }
     var onConfigureCodex: () -> Void = {}
 
     @Environment(\.dismiss) private var dismiss
@@ -69,12 +70,9 @@ struct AddBackendSheet: View {
                 ToolbarItem(placement: .topBarTrailing) {
                     if case .form = step {
                         Button("Add") {
-                            onAdd(
-                                name.trimmingCharacters(in: .whitespaces),
-                                url.trimmingCharacters(in: .whitespaces),
-                                apiKey.isEmpty ? nil : apiKey,
-                                apiPathPrefix.isEmpty ? nil : apiPathPrefix
-                            )
+                            onAdd(ModelManagement.newHttpBackend(
+                                name: name, url: url, apiKey: apiKey, apiPathPrefix: apiPathPrefix, preset: activePreset
+                            ))
                         }
                         .fontWeight(.semibold)
                         .disabled(!canAdd)
@@ -100,11 +98,13 @@ struct AddBackendSheet: View {
                     columns: [GridItem(.flexible(), spacing: Theme.Spacing.sm), GridItem(.flexible(), spacing: Theme.Spacing.sm)],
                     spacing: Theme.Spacing.sm
                 ) {
-                    ForEach(presets) { preset in
+                    // A provider that serves only decision models is added from
+                    // the Decision model card, which also picks the model.
+                    ForEach(ModelManagement.addBackendPresets(presets)) { preset in
                         presetCard(
                             providerId: preset.id,
                             title: preset.name,
-                            subtitle: "Set up this provider",
+                            subtitle: preset.decision == nil ? "Set up this provider" : "OpenAI-compatible and decision models",
                             action: { selectPreset(preset) }
                         )
                     }
@@ -169,7 +169,7 @@ struct AddBackendSheet: View {
     private func selectPreset(_ preset: ProviderPreset) {
         activePreset = preset
         name = preset.id
-        url = preset.defaultUrl
+        url = preset.defaultUrl ?? ""
         apiKey = ""
         apiPathPrefix = preset.apiPathPrefix ?? ""
         step = .form(preset: preset)
@@ -198,7 +198,7 @@ struct AddBackendSheet: View {
                     HStack(spacing: 6) {
                         ProviderIcon(providerId: preset.id, size: 16)
                             .foregroundStyle(Theme.textPrimary)
-                        Text("Configuring \(preset.name) — add your API key; the URL is pre-filled.")
+                        Text(ModelManagement.addBackendNote(preset))
                             .font(.system(size: 13))
                             .foregroundStyle(Theme.textSecondary)
                     }

@@ -363,6 +363,62 @@ describe("worth gate: persisted legacy datum recovery alongside current source d
 // No decision model
 // ═══════════════════════════════════════════════════════════════════════════
 
+describe("worth gate: a configured threshold", () => {
+  let bench: BrainBench;
+  const ids = new Map<string, string>();
+  // Booking scores 2.41 and the friend's email 2.88: both pass at Jev's 1.08,
+  // and only the friend's at the 2.5 this gateway is configured with.
+  const MAIL: readonly WorthMail[] = [WORTH_MAIL.booking, WORTH_MAIL.friend];
+  const THRESHOLD = 2.5;
+
+  beforeAll(async () => {
+    bench = await BrainBench.start({
+      experimental: true,
+      behaviors: {
+        dynamic: sourceInterpretations({
+          sources: [{ plan: { calls: [] } }],
+          maintainNode: preserveCurrentOwner,
+        }),
+      },
+      brain: { ...LANES_OFF, thresholds: { worthGate: THRESHOLD } },
+      decision: { policy: scoreBySubject, inputTokens: 480 },
+    });
+    await bench.drainUntilQuiet();
+    await bench.pushAll(MAIL.map((mail) => worthMailDoc(mail)));
+    await bench.drainUntilQuiet();
+    for (const mail of MAIL) ids.set(mail.key, await bench.docId(mail.externalId));
+    for (const id of ids.values())
+      bench.seedRun({
+        id: `legacy-worth-${id}`,
+        kind: "data",
+        payload: legacyDatumPayload(id),
+        dedupeKey: `data:doc:${id}`,
+        enqueuedAt: Date.now(),
+      });
+    await bench.drainUntilQuiet();
+  }, 600_000);
+
+  afterAll(async () => {
+    await bench?.destroy();
+  }, 60_000);
+
+  test("gates an email Jev's threshold would pass, and records the threshold it used", async () => {
+    for (const mail of MAIL) expect(passesWorthGate(mail), mail.key).toBe(true);
+    const booking = await bench.obs.runForDoc(ids.get("booking")!);
+    expect(booking.gateVerdict).toBe("skip");
+    expect(agentTurnsFor(bench, booking.id)).toBe(0);
+    const friend = await bench.obs.runForDoc(ids.get("friend")!);
+    expect(friend.gateVerdict).toBe("pass");
+    expect(agentTurnsFor(bench, friend.id)).toBeGreaterThan(0);
+    for (const run of [booking, friend]) {
+      const { decisions } = await bench.obs.run(run.id);
+      expect(decisions).toEqual([
+        expect.objectContaining({ purpose: "worth-gate", threshold: THRESHOLD }),
+      ]);
+    }
+  });
+});
+
 describe("worth gate: absent while the decision role is unassigned", () => {
   let bench: BrainBench;
 

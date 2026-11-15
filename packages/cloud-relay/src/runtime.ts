@@ -35,6 +35,7 @@ import { runGatewayGoogleLink } from "./gateway-google-link.js";
 import { registerGatewayKey, prepareGatewayOwner } from "./gateway-key-client.js";
 import { loadRelayRecoveryPolicy, runRelayRecoveryCommand } from "./relay-recovery-runtime.js";
 import { assertRelayDnsIsolation, startIndependentDnsDaemon } from "./dns-broker-runtime.js";
+import { exportGatewayKeys, importRegistry, readRegistryExport } from "./dns-broker-registry.js";
 import { googleBrowserConfiguration } from "./google-browser-runtime.js";
 import { googleFixture } from "./google-fixture.js";
 import { CloudRelayMetrics } from "./metrics.js";
@@ -393,6 +394,39 @@ export async function runRelayCommand(
   if (await runRelayRecoveryCommand(command, env)) return undefined;
   if (command === "serve-dns-broker") return startIndependentDnsDaemon(env);
   if (command === "serve") return startRelayDaemon(env);
+  if (command === "export-gateway-keys") {
+    const config = z
+      .object({
+        OMNESIS_CLOUD_RELAY_DB: z.string().min(1),
+        OMNESIS_CLOUD_RELAY_DOMAIN: z.string().min(1),
+        OMNESIS_CLOUD_RELAY_DNS_BROKER_EXPORT_FILE: z.string().min(1),
+      })
+      .parse(env);
+    await savePrivateJson(config.OMNESIS_CLOUD_RELAY_DNS_BROKER_EXPORT_FILE, {
+      entries: exportGatewayKeys(config.OMNESIS_CLOUD_RELAY_DB, config.OMNESIS_CLOUD_RELAY_DOMAIN),
+    });
+    return undefined;
+  }
+  if (command === "dns-broker-import-registry") {
+    const config = z
+      .object({
+        OMNESIS_ACME_DNS_BROKER_URL: z.string().min(1),
+        OMNESIS_CLOUD_RELAY_DNS_BROKER_EXPORT_FILE: z.string().min(1),
+        OMNESIS_CLOUD_RELAY_DNS_BROKER_IMPORT_TOKEN_FILE: z.string().min(1),
+      })
+      .parse(env);
+    const result = await importRegistry({
+      brokerUrl: config.OMNESIS_ACME_DNS_BROKER_URL,
+      token: z
+        .object({ token: z.string().min(1).max(8192) })
+        .strict()
+        .parse(await readPrivateJson(config.OMNESIS_CLOUD_RELAY_DNS_BROKER_IMPORT_TOKEN_FILE))
+        .token,
+      entries: await readRegistryExport(config.OMNESIS_CLOUD_RELAY_DNS_BROKER_EXPORT_FILE),
+    });
+    process.stdout.write(JSON.stringify(result) + "\n");
+    return undefined;
+  }
   if (command === "link-google" || command === "unlink-google") {
     await runGatewayGoogleLink(command, env);
     return;
@@ -516,7 +550,7 @@ export async function runRelayCommand(
   }
   if (command !== "client")
     throw new Error(
-      "Usage: cloud-relay <serve|serve-dns-broker|login|prepare-owner|issue-invite|register-key|link-google|unlink-google|google-login|register-gateway|pair-device|client|recovery-*>",
+      "Usage: cloud-relay <serve|serve-dns-broker|export-gateway-keys|dns-broker-import-registry|login|prepare-owner|issue-invite|register-key|link-google|unlink-google|google-login|register-gateway|pair-device|client|recovery-*>",
     );
   const port = z.coerce
     .number()

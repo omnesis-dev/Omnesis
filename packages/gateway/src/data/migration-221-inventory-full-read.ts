@@ -4,7 +4,7 @@
 import type { Db } from "./types.js";
 
 /**
- * Migration 219 — an enumeration records when its source had read everything.
+ * Migration 221 — an enumeration records when its source had read everything.
  *
  * `source_inventories.completed_at` is set by the last page of the cycle that
  * started from an empty cursor. For a source that imports its history in

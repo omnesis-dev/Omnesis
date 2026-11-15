@@ -1,0 +1,29 @@
+// The DNS broker as a Cloudflare Worker with one Durable Object holding the name registry,
+// the pending challenges and the TXT lease journal. Copy to wrangler.jsonc next to this file,
+// fill in the placeholders, then:
+//
+//   wrangler secret put CLOUDFLARE_API_TOKEN    # DNS edit on this zone only
+//   wrangler secret put REGISTRY_IMPORT_TOKEN   # only for the one-time import; delete afterwards
+//   wrangler deploy
+//
+// No account, zone or token belongs in this file once it is in a repository.
+{
+  "name": "omnesis-dns-broker",
+  "main": "../../src/dns-broker-worker.ts",
+  "compatibility_date": "2026-11-01",
+  // Signatures name BROKER_ORIGIN, so the broker answers on that one origin only.
+  "workers_dev": false,
+  "preview_urls": false,
+  "routes": [{ "pattern": "<broker hostname>", "custom_domain": true }],
+  "durable_objects": {
+    "bindings": [{ "name": "DNS_BROKER", "class_name": "DnsBrokerRegistry" }],
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["DnsBrokerRegistry"] }],
+  "vars": {
+    "BROKER_ORIGIN": "https://<broker hostname>",
+    "RELAY_DOMAIN": "relay.omnesis.app",
+    "ZONE_NAME": "omnesis.app",
+    "ZONE_ID": "<zone id>",
+  },
+  "observability": { "enabled": true },
+}

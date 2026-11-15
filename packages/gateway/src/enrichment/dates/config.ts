@@ -10,6 +10,7 @@
  */
 
 import { hostTimeZone } from "@omnesis/core";
+import { EMAIL_WORTH_THRESHOLD } from "../../worth/rubric.js";
 import { DEFAULT_MAX_CHARS, DEFAULT_SCAN_BUDGET_MS } from "./extractor.js";
 import type { NumericDateOrder } from "./language-route.js";
 import type { EnrichmentSettings } from "@omnesis/config";
@@ -35,6 +36,8 @@ export interface ResolvedDateEnrichmentSettings {
   numericDateOrder: NumericDateOrderSetting;
   /** Hide mentions from email the decision model judges not worth recording. */
   worthGate: boolean;
+  /** The worth score (levels 0–3) an email must reach for its mentions to be kept. */
+  worthThreshold: number;
 }
 
 export const DATE_ENRICHMENT_DEFAULTS: ResolvedDateEnrichmentSettings = {
@@ -47,6 +50,7 @@ export const DATE_ENRICHMENT_DEFAULTS: ResolvedDateEnrichmentSettings = {
   pendingContentWaitMs: 3_600_000,
   numericDateOrder: "auto",
   worthGate: false,
+  worthThreshold: EMAIL_WORTH_THRESHOLD,
 };
 
 export function resolveDateEnrichmentSettings(
@@ -63,6 +67,7 @@ export function resolveDateEnrichmentSettings(
     pendingContentWaitMs: d?.pendingContentWaitMs ?? DATE_ENRICHMENT_DEFAULTS.pendingContentWaitMs,
     numericDateOrder: d?.numericDateOrder ?? DATE_ENRICHMENT_DEFAULTS.numericDateOrder,
     worthGate: d?.worthGate ?? DATE_ENRICHMENT_DEFAULTS.worthGate,
+    worthThreshold: d?.worthThreshold ?? DATE_ENRICHMENT_DEFAULTS.worthThreshold,
   };
 }
 

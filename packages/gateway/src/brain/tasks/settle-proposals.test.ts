@@ -9,6 +9,7 @@ import { createDatabase } from "../../db.js";
 import { directWriteGate } from "../../write-gate.js";
 import { createOpenLoop, getOpenLoop, listOpenLoopLedger } from "../storage/open-loops.js";
 import { applyTaskCommand, proposeTaskChange } from "../storage/tasks.js";
+import { BRAIN_DEFAULTS } from "../config.js";
 import { settleTaskProposals } from "./settle-proposals.js";
 import { TaskChecks } from "./task-checks.js";
 import type { ProposedTaskChange } from "../storage/types.js";
@@ -25,6 +26,7 @@ describe("settleTaskProposals", () => {
   let failRecord: boolean;
 
   const checks = new TaskChecks({
+    getThresholds: () => BRAIN_DEFAULTS.thresholds,
     getDecision: (): DecisionCapability => ({
       modelId: "scripted-decision",
       decide: () =>

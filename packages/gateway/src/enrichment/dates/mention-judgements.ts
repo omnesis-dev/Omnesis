@@ -78,6 +78,13 @@ export function createMentionJudgementsTable(db: Db): void {
     `CREATE INDEX IF NOT EXISTS idx_date_mention_judgements_rubric
        ON date_mention_judgements(rubric_version) WHERE verdict IN ('keep', 'drop')`,
   );
+  // Scored rows by verdict and score: the re-sort after a threshold change
+  // reads only the rows on the wrong side of the new threshold. Its query
+  // repeats the index's condition so SQLite can use it.
+  db.exec(
+    `CREATE INDEX IF NOT EXISTS idx_date_mention_judgements_score
+       ON date_mention_judgements(verdict, score) WHERE verdict IN ('keep', 'drop')`,
+  );
 }
 
 /**
@@ -305,6 +312,48 @@ export function requeueStaleMentionJudgements(
            LIMIT ?)`,
     )
     .run(rubricVersion, limit).changes;
+}
+
+/**
+ * Move up to `limit` judgements scored by `modelId` to the side of
+ * `threshold` their stored score is on: `keep` at or above it, `drop` below.
+ * No model is asked; the score is the one the email was given. A judgement
+ * another model scored keeps its verdict: that model's scores are on its own
+ * scale, which a threshold chosen for `modelId` says nothing about. The gate
+ * calls it until it returns fewer than `limit`, so a threshold change never
+ * rewrites the whole table in one writer transaction.
+ */
+export function resettleMentionJudgements(
+  db: Db,
+  threshold: number,
+  modelId: string,
+  limit: number,
+): number {
+  // A judgement's score is the worth answer of its email, content and rubric;
+  // the answer's row names the model that was asked.
+  const scoredByModel = `EXISTS (
+    SELECT 1 FROM worth_answers a
+     WHERE a.subject_document_id = j.subject_document_id
+       AND a.content_hash = j.content_hash
+       AND a.rubric_version = j.rubric_version
+       AND a.requested_model_id = @modelId
+       AND a.score = j.score)`;
+  return db
+    .prepare(
+      `UPDATE date_mention_judgements
+          SET verdict = CASE WHEN score >= @threshold THEN 'keep' ELSE 'drop' END
+        WHERE document_id IN (
+          SELECT document_id FROM (
+            SELECT j.document_id FROM date_mention_judgements j
+             WHERE j.verdict IN ('keep', 'drop') AND j.verdict = 'keep' AND j.score < @threshold
+               AND ${scoredByModel}
+            UNION ALL
+            SELECT j.document_id FROM date_mention_judgements j
+             WHERE j.verdict IN ('keep', 'drop') AND j.verdict = 'drop' AND j.score >= @threshold
+               AND ${scoredByModel})
+          LIMIT @limit)`,
+    )
+    .run({ threshold, modelId, limit }).changes;
 }
 
 /** Documents with a mention still waiting for a judgement. */

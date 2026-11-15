@@ -42,7 +42,7 @@ import {
   upsertWithCursor,
   upsertWithCursorYieldable,
 } from "../packages/gateway/src/db.js";
-import { addSourceVersion } from "../packages/gateway/src/data/migration-218-source-version.js";
+import { addSourceVersion } from "../packages/gateway/src/data/migration-220-source-version.js";
 import { ProviderId, SourceId, type DocumentInput } from "../packages/types/src/index.js";
 
 const [documentsArg, contentArg, runsArg] = process.argv.slice(2);

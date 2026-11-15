@@ -7,8 +7,9 @@ import SwiftUI
 /// HTTP-backend management + model-provider credentials — mirrors the portal's
 /// Backends page (`packages/gateway/portal/js/views/models.js` +
 /// `model-config.js`), which manages both. Lists the gateway's configured HTTP
-/// inference backends (any OpenAI-compatible server), each with a Test
-/// (re-probe) and Remove affordance plus an "Add backend" form, and below them
+/// inference backends — each serving an OpenAI-compatible API, a decision API,
+/// or both with one key, as its row says — with a Test (re-probe of the
+/// OpenAI-compatible API) and Remove affordance plus an "Add backend" form, and below them
 /// the model-provider credential rows (e.g. the Anthropic API key) with a
 /// Set / Clear affordance. Once a backend is reachable (or a provider key is
 /// set), its role-matching models show up in the per-capability assign picker
@@ -85,9 +86,7 @@ struct BackendsView: View {
                 credentials: credentials,
                 presets: overview.presets,
                 onProbe: { key in try await probe(key: key) },
-                onAdd: { name, url, apiKey, prefix in
-                    try await add(name: name, url: url, apiKey: apiKey, apiPathPrefix: prefix)
-                },
+                onAdd: { backend in try await add(backend) },
                 onRemove: { key in try await remove(key: key) },
                 onCodexRefresh: { try await refreshCodex() },
                 onCodexStartLogin: { try await startCodexLogin() },
@@ -112,11 +111,11 @@ struct BackendsView: View {
         return result
     }
 
-    private func add(name: String, url: String, apiKey: String?, apiPathPrefix: String?) async throws {
+    private func add(_ backend: NewHttpBackend) async throws {
         guard let client = store.admin else { throw URLError(.cannotConnectToHost) }
-        try await client.addHttpBackend(key: name, url: url, apiKey: apiKey, apiPathPrefix: apiPathPrefix)
+        try await client.addHttpBackend(backend)
         // Probe immediately so the new backend's reachability + model list show.
-        _ = try? await client.probeBackend(key: name)
+        _ = try? await client.probeBackend(key: backend.key)
         await load()
     }
 
@@ -228,7 +227,7 @@ struct BackendsContent: View {
     /// Re-probe one backend; returns its fresh probe result or throws.
     var onProbe: (String) async throws -> ProbeResult = { _ in ProbeResult(ok: true, status: "ok") }
     /// Add a backend; throws on failure.
-    var onAdd: (String, String, String?, String?) async throws -> Void = { _, _, _, _ in }
+    var onAdd: (NewHttpBackend) async throws -> Void = { _ in }
     /// Remove a backend; throws on failure.
     var onRemove: (String) async throws -> Void = { _ in }
     var onCodexRefresh: () async throws -> CodexBackendStatus = {
@@ -369,11 +368,12 @@ struct BackendsContent: View {
             )
         }
         .sheet(isPresented: $showAddSheet) {
-            AddBackendSheet(presets: presets, codex: codex, onAdd: { name, url, apiKey, prefix in
-                runAdd(name: name, url: url, apiKey: apiKey, apiPathPrefix: prefix)
-            }, onConfigureCodex: {
-                showCodexSheet = true
-            })
+            AddBackendSheet(
+                presets: presets,
+                codex: codex,
+                onAdd: { backend in runAdd(backend) },
+                onConfigureCodex: { showCodexSheet = true }
+            )
             .omnesisColorScheme()
         }
         .sheet(isPresented: $showCodexSheet) {
@@ -498,15 +498,16 @@ struct BackendsContent: View {
         }
     }
 
-    private func runAdd(name: String, url: String, apiKey: String?, apiPathPrefix: String?) {
+    private func runAdd(_ backend: NewHttpBackend) {
         showAddSheet = false
         busy = true
         notice = nil
         Task {
             defer { busy = false }
             do {
-                try await onAdd(name, url, apiKey, apiPathPrefix)
-                notice = Notice(ok: true, text: "Added backend \"\(name)\".")
+                try await onAdd(backend)
+                let decisions = backend.decision == nil ? "" : " with its decision models"
+                notice = Notice(ok: true, text: "Added backend \"\(backend.key)\"\(decisions).")
             } catch {
                 notice = Notice(ok: false, text: "Add failed: \(deviceGatewayMessage(error))")
             }
@@ -556,9 +557,7 @@ struct BackendsContent: View {
     }
 
     private func runCodexAutoCheckLogin() {
-        guard Self.shouldAutoPollCodexLogin(showSheet: showCodexSheet, flow: codexLoginFlow, status: codex) else {
-            return
-        }
+        guard Self.shouldAutoPollCodexLogin(showSheet: showCodexSheet, flow: codexLoginFlow, status: codex) else { return }
         Task {
             await pollCodexLogin(userInitiated: false)
         }

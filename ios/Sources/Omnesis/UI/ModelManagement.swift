@@ -223,9 +223,10 @@ enum ModelManagement {
                 isHttp: false
             ))
         }
-        // Each configured HTTP backend, even with zero role-matching models.
-        for backend in httpBackends(overview)
-            where !(capabilityRole == "watch-judge" && backend.status.protocol == "responses") {
+        // Each HTTP backend with an OpenAI-compatible API, even with zero
+        // role-matching models; a decision-only backend serves no ordinary role.
+        for backend in httpBackends(overview) where backend.status.servesOpenAI
+            && !(capabilityRole == "watch-judge" && backend.status.protocol == "responses") {
             out.append(PickerBackend(
                 providerId: backend.key,
                 title: backend.key,
@@ -584,5 +585,70 @@ extension String {
 
     fileprivate var foldedTokens: [String] {
         lowercased(with: Self.foldLocale).split(whereSeparator: \.isWhitespace).map(String.init)
+    }
+}
+
+// MARK: - Adding a backend
+
+extension ModelManagement {
+    /// The presets the Add backend form offers: providers with an
+    /// OpenAI-compatible API. A provider that serves only decision models is
+    /// added from the Decision model card, which also picks its model;
+    /// TypeSafe is built in.
+    static func addBackendPresets(_ presets: [ProviderPreset]) -> [ProviderPreset] {
+        presets.filter { $0.defaultUrl?.isEmpty == false && $0.builtIn == nil }
+    }
+
+    /// The backend the Add backend form saves. The preset is recorded while
+    /// the URL is still the preset's own, and a preset that also serves
+    /// decision models then gets that API too, reached with the same key. A
+    /// decision URL that needs the operator's values (`{account}`) is left to
+    /// the Decision model card, which asks for them.
+    static func newHttpBackend(
+        name: String,
+        url: String,
+        apiKey: String?,
+        apiPathPrefix: String?,
+        preset: ProviderPreset?
+    )
+        -> NewHttpBackend {
+        let url = url.trimmingCharacters(in: .whitespaces)
+        var backend = NewHttpBackend(
+            key: name.trimmingCharacters(in: .whitespaces),
+            url: url,
+            apiKey: apiKey?.isEmpty == false ? apiKey : nil,
+            apiPathPrefix: apiPathPrefix?.isEmpty == false ? apiPathPrefix : nil
+        )
+        guard let preset, let defaultUrl = preset.defaultUrl, trimSlashes(defaultUrl) == trimSlashes(url) else {
+            return backend
+        }
+        backend.preset = preset.id
+        if let decision = preset.decision, decision.urlParams.isEmpty {
+            backend.decision = DecisionConfigPatch.DecisionAPI(preset: decision, url: decision.url)
+        }
+        return backend
+    }
+
+    /// The Add backend form's line under a preset's name.
+    static func addBackendNote(_ preset: ProviderPreset) -> String {
+        let note = "Configuring \(preset.name) — add your API key; the URL is pre-filled."
+        return preset.decision == nil ? note : note + " Its decision models are set up too, with the same key."
+    }
+
+    /// What a backend serves, as its row in the Backends list says it.
+    static func servesLabel(_ status: BackendStatus) -> String {
+        switch (status.servesOpenAI, status.decision != nil) {
+        case (true, true): "OpenAI-compatible and decision models"
+        case (false, true): "Decision models"
+        default: "OpenAI-compatible models"
+        }
+    }
+
+    private static func trimSlashes(_ url: String) -> String {
+        var trimmed = Substring(url)
+        while trimmed.hasSuffix("/") {
+            trimmed = trimmed.dropLast()
+        }
+        return String(trimmed)
     }
 }

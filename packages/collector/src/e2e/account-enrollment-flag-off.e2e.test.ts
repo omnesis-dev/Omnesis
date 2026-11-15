@@ -77,6 +77,10 @@ describe("sign-in enrollment with the cloud relay flag off", () => {
       ["POST", "/devices/account/request", {}],
       ["POST", "/devices/account/poll", {}],
       ["GET", "/devices/account/config"],
+      ["POST", "/devices/account/passkey/options", {}],
+      ["GET", "/devices/account/approval/00000000-0000-4000-8000-000000000001"],
+      ["POST", "/devices/account/approval/options", {}],
+      ["POST", "/devices/account/approval", {}],
       ["POST", "/devices/token/challenge", {}],
       ["POST", "/devices/token/rotate", {}],
       ["GET", "/admin/cloud-relay"],
@@ -84,8 +88,15 @@ describe("sign-in enrollment with the cloud relay flag off", () => {
       ["POST", "/admin/cloud-relay/connect/cancel", {}],
       ["PUT", "/admin/cloud-relay/enrollment", { policy: "automatic" }],
       ["DELETE", "/admin/cloud-relay/trusted-sign-ins/fictional"],
+      ["POST", "/admin/cloud-relay/incidents/ack", {}],
+      ["DELETE", "/admin/cloud-relay/trusted-sign-ins/fictional?revokeDevices=true"],
+      ["GET", "/admin/cloud-relay/trusted-sign-ins"],
+      ["POST", "/admin/cloud-relay/passkeys/confirm/options", {}],
+      ["POST", "/admin/cloud-relay/passkeys/confirm", { proof: {} }],
       ["GET", "/admin/cloud-pairing/requests"],
       ["POST", "/admin/cloud-pairing/decision", {}],
+      ["POST", "/admin/step-up/options", {}],
+      ["POST", "/admin/step-up", {}],
     ];
     const statuses = await Promise.all(
       routes.map(async ([method, path, body]) => {
@@ -210,6 +221,25 @@ describe("sign-in enrollment with the cloud relay flag off", () => {
     expect(app).toContain("cloudRelay=${session.cloudRelay === true}");
   });
 
+  test("no administrative action asks for a passkey step-up, even marked as relayed, and a step-up header changes nothing", async () => {
+    const relayed = { "x-omnesis-cloud-relay": "1" };
+    const pairing = await harness.gatewayFetch("/admin/devices/pair", {
+      method: "POST",
+      headers: relayed,
+      body: JSON.stringify({ kind: "cli", name: "Fictional relayed-mark CLI" }),
+    });
+    expect(pairing.status).toBe(200);
+    expect(await pairing.json()).toMatchObject({ pairingCode: expect.any(String) });
+    const devices = await harness.gatewayJson<{ items: Array<{ id: string }> }>("/admin/devices");
+    const token = await harness.gatewayFetch("/admin/tokens", {
+      method: "POST",
+      headers: { ...relayed, "x-omnesis-step-up": "fictional" },
+      body: JSON.stringify({ deviceId: devices.items[0]!.id, scopes: ["read"] }),
+    });
+    expect(token.status).toBe(200);
+    expect(JSON.stringify(await token.json())).not.toMatch(/step.?up/i);
+  });
+
   test("the pairing QR refuses the strict trust modes as values it does not know", async () => {
     const pairing = await harness.gatewayJson<{ pairingCode: string }>("/admin/devices/pair", {
       method: "POST",
@@ -318,6 +348,9 @@ describe("sign-in enrollment with the cloud relay flag off", () => {
       ["cloud", "status"],
       ["cloud", "unlink"],
       ["cloud", "trusted-sign-ins"],
+      ["cloud", "incidents", "list"],
+      ["cloud", "incidents", "ack"],
+      ["cloud", "remove-sign-in", "fictional"],
     ]) {
       const run = await cliRun(args, false);
       expect(run.code, args.join(" ")).not.toBe(0);

@@ -263,7 +263,7 @@ export class GatewayTunnel {
             return;
           }
           // Before any byte reaches the gateway, so its first request already sees it.
-          if (client !== undefined) recordRelayedClient(destination as Socket, client);
+          recordRelayedClient(destination as Socket, client);
           this.destinations.add(destination);
           destination.once("close", () => {
             this.destinations.delete(destination);

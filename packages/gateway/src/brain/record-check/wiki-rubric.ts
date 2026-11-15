@@ -19,7 +19,6 @@ export const WIKI_VALUE_QUESTIONS: Readonly<Record<string, DecisionQuestion>> = 
 };
 
 export const WIKI_REPAIR_RUBRIC_VERSION = "wiki-repair-integrity-v1";
-export const WIKI_REPAIR_THRESHOLD = 1.5;
 export const WIKI_REPAIR_QUESTIONS: Readonly<Record<string, DecisionQuestion>> = {
   belongs: {
     type: "score",

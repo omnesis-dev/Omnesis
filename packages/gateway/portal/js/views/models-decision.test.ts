@@ -4,8 +4,8 @@
 // @ts-nocheck — exercises the plain-JS portal renderer from vitest.
 //
 // Settings → Models for the decision capability: its picker offers TypeSafe
-// first, then the chat-completions HTTP backends, and never a cloud chat
-// runtime. TypeSafe asks for the API key through the credentials wizard when
+// and "Add a provider", then in experimental mode the chat-completions HTTP
+// backends, and never a cloud chat runtime. TypeSafe asks for the API key through the credentials wizard when
 // none is configured — unless the endpoint is the operator's own — and assigns
 // `typesafe/<model>`, the default Jev model unless the operator edits it.
 
@@ -110,18 +110,18 @@ describe("Models — the Decision model picker", () => {
   it("explains the decision uses beside the model picker", async () => {
     await openPicker();
     expect(host.querySelector(".cap-detail-desc")?.textContent).toBe(DECISION.description);
-    expect(host.textContent).toContain("complication captures");
+    expect(host.textContent).toContain("Watch capture asks for a response");
     expect(host.textContent).toContain("email dates");
     expect(host.textContent).toContain("TypeSafe");
   });
 
-  it("outside experimental mode offers only TypeSafe and no Add backend", async () => {
+  it("outside experimental mode offers no chat model and no Add backend", async () => {
     api.getModelsOverview.mockResolvedValue(overviewWith({ kind: "disabled", role: "decision" }, { decisionChatModels: false }));
     await act(async () => { render(h(ModelsView, { section: "decision" }), host); });
     await flush();
     expect(button("Add backend")).toBeFalsy();
     await openPicker();
-    expect(cardTitles()).toEqual(["TypeSafe"]);
+    expect(cardTitles()).toEqual(["TypeSafe", "Add a provider"]);
   });
 
   it("in experimental mode lets a chat backend be added for the Decision model", async () => {

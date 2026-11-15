@@ -21,6 +21,16 @@ final class DocumentOpenURLsTests: XCTestCase {
         )
     }
 
+    func testMalformedWebLinksDoNotOfferAnExternalAction() {
+        XCTAssertTrue(docOpenURLs(appUrl: nil, sourceUrl: "https:").isEmpty)
+        XCTAssertTrue(docOpenURLs(appUrl: "notes:", sourceUrl: "notes://").isEmpty)
+        XCTAssertTrue(docOpenURLs(appUrl: "https:///", sourceUrl: "relative/document").isEmpty)
+        XCTAssertEqual(
+            docOpenURLs(appUrl: "https:", sourceUrl: "https://example.org/document").map(\.absoluteString),
+            ["https://example.org/document"]
+        )
+    }
+
     func testBlockedSchemesAndDuplicatesAreDropped() {
         XCTAssertEqual(
             docOpenURLs(appUrl: "https://example.com/a", sourceUrl: "https://example.com/a").map(\.absoluteString),

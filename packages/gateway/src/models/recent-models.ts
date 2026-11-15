@@ -138,6 +138,7 @@ function toApply(
     case "codex":
     case "claude-code":
     case "replay":
+    case "decision":
     case "typesafe":
       return { type: "assign", value };
     case "disabled":

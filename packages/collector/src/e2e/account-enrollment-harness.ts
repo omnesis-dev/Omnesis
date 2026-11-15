@@ -26,6 +26,7 @@ import {
   generateKeyPairSync,
   randomBytes,
   randomUUID,
+  type KeyObject,
 } from "node:crypto";
 import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { once } from "node:events";
@@ -236,6 +237,14 @@ dns.promises.Resolver.prototype.resolveTxt = async function (name) {
   const response = await fetch(fixtureDns + "/txt?name=" + encodeURIComponent(name));
   return response.json();
 };
+// So do CAA records: none unless a broker published one.
+const resolveCaa = dns.promises.Resolver.prototype.resolveCaa;
+dns.promises.Resolver.prototype.resolveCaa = async function (name) {
+  const fixtureDns = process.env.OMNESIS_E2E_FIXTURE_DNS_URL;
+  if (!fixtureDns || !fixture(name)) return resolveCaa.call(this, name);
+  const response = await fetch(fixtureDns + "/caa?name=" + encodeURIComponent(name));
+  return response.json();
+};
 `;
 
 /** Answers the fixture names with 127.0.0.1 in this test process. */
@@ -293,6 +302,10 @@ export class EnrollmentWorld {
   /** DNS-01 values the relay published, by record id: what a local ACME authority checks. */
   readonly dnsRecords = new Map<string, string>();
   private dnsFixture?: { url: string; close(): Promise<void> };
+  /** The fixture's stand-in for the Cloudflare API, as a DNS broker is configured with it. */
+  dnsApiUrl(): string {
+    return `${this.dnsFixture!.url}/client/v4`;
+  }
   private relayOutput = "";
   private constructor(
     readonly directory: string,
@@ -650,7 +663,22 @@ async function startDnsFixture(values: Map<string, string>) {
       };
       if (url.pathname === "/txt") {
         const name = url.searchParams.get("name");
-        return send([...records.values()].filter((r) => r.name === name).map((r) => [r.content]));
+        return send(
+          [...records.values()]
+            .filter((r) => r.name === name && r.type !== "CAA")
+            .map((r) => [r.content]),
+        );
+      }
+      if (url.pathname === "/caa") {
+        const name = url.searchParams.get("name");
+        return send(
+          [...records.values()]
+            .filter((r) => r.name === name && r.type === "CAA")
+            .map((r) => {
+              const data = r.data as { flags: number; tag: string; value: string };
+              return { critical: data.flags, [data.tag]: data.value };
+            }),
+        );
       }
       const match = /^\/client\/v4\/zones\/[a-f0-9]{32}\/dns_records(?:\/([a-f0-9]{32}))?$/.exec(
         url.pathname,
@@ -706,8 +734,29 @@ export interface CloudRelayStatus {
   };
   deviceEnrollment: {
     policy: "automatic" | "ask";
-    trustedSignIns: Array<{ type: string; id: string; addedAt: number; source?: string }>;
+    trustedSignIns: Array<{
+      type: string;
+      id: string;
+      addedAt: number;
+      source?: string;
+      confirmed?: boolean;
+    }>;
+    confirmedSignIns?: Array<{ type: string; id: string; at: number; via: string }>;
+    confirmOrigin?: string;
   };
+  certificateMonitor?: { state: string; incidents: Array<{ certificateFingerprint: string }> };
+  incidentHold?: { since: string; certificates: string[] };
+}
+
+/** What the gateway hands a page for a passkey ceremony on its own origin. */
+export interface GatewayPasskeyCeremony {
+  purpose: string;
+  rpId: string;
+  origin: string;
+  challenge: string;
+  binding: string;
+  webauthnChallenge: string;
+  expiresAt: number;
 }
 
 export interface DeviceRow {
@@ -837,6 +886,56 @@ export class EnrollmentGateway {
     return this.harness.gatewayJson<T>(path, init);
   }
 
+  /** Stops the gateway and starts it again with all its state, then waits for its tunnel. */
+  async restart(): Promise<void> {
+    await this.harness.restartGateway();
+    await waitFor(
+      async () => (await this.status()).tunnel.state === "online",
+      "the gateway tunnel to come back online",
+      gatewayBootBudgetMs(),
+    );
+  }
+
+  /**
+   * A request to the gateway's public name through the relay, as any client on the
+   * internet would send it: TLS to the relay's data port, passed through to this
+   * gateway's tunnel.
+   */
+  async throughRelay(
+    path: string,
+    init: { method?: string; body?: string; token?: string; headers?: Record<string, string> } = {},
+  ): Promise<{ status: number; body: string }> {
+    const { request } = await import("node:https");
+    return new Promise((resolve, reject) => {
+      const outgoing = request(
+        {
+          host: "127.0.0.1",
+          port: this.world.dataPort,
+          servername: this.hostname,
+          ca: this.world.pki.caCert,
+          method: init.method ?? "GET",
+          path,
+          headers: {
+            host: `${this.hostname}:${this.world.dataPort}`,
+            "content-type": "application/json",
+            ...(init.token ? { authorization: `Bearer ${init.token}` } : {}),
+            ...init.headers,
+          },
+          timeout: 30_000,
+        },
+        (response) => {
+          let body = "";
+          response.setEncoding("utf8");
+          response.on("data", (chunk: string) => (body += chunk));
+          response.on("end", () => resolve({ status: response.statusCode ?? 0, body }));
+        },
+      );
+      outgoing.on("timeout", () => outgoing.destroy(new Error("Relayed request timed out")));
+      outgoing.on("error", reject);
+      outgoing.end(init.body);
+    });
+  }
+
   private pairingTokens = 10;
   private pairingRefilledAt = Date.now();
   /**
@@ -908,6 +1007,23 @@ export class EnrollmentGateway {
       `/admin/cloud-relay/trusted-sign-ins/${encodeURIComponent(id)}`,
       { method: "DELETE" },
     );
+  }
+
+  /** Starts confirming a passkey on the gateway's page, as the portal's card does. */
+  async passkeyConfirmation(): Promise<GatewayPasskeyCeremony> {
+    return this.json<GatewayPasskeyCeremony>("/admin/cloud-relay/passkeys/confirm/options", {
+      method: "POST",
+      body: "{}",
+    });
+  }
+
+  /** Sends a `gateway-passkey` assertion to confirm; the raw answer, refusals included. */
+  async confirmPasskey(proof: unknown): Promise<Response> {
+    return this.fetch("/admin/cloud-relay/passkeys/confirm", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ proof }),
+    });
   }
 
   async setPolicy(policy: "automatic" | "ask"): Promise<CloudRelayStatus> {
@@ -1073,6 +1189,71 @@ export class PasskeyBrowser {
 
   async close(): Promise<void> {
     await this.browser.close();
+  }
+}
+
+/**
+ * Runs a passkey prompt in `session` on a page at `origin` for the WebAuthn `challenge`, and
+ * returns the assertion as a gateway-passkey proof's `credential`. The page is an empty one the
+ * test serves at that origin: what a relay (or any other site the relay domain covers) could
+ * serve to steer an owner's passkey, since every account passkey belongs to the relay's host.
+ */
+export async function assertionOn(
+  session: PasskeySession,
+  origin: string,
+  challenge: string,
+  rpId = RELAY_HOST,
+): Promise<Record<string, unknown>> {
+  // The profile's virtual authenticator is attached to its own page, so the prompt runs there.
+  const page = session.page;
+  const url = `${origin}/__fixture-passkey-page`;
+  await page.route(url, (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "text/html",
+      body: "<!doctype html><title>.</title>",
+    }),
+  );
+  try {
+    await page.goto(url);
+    return await page.evaluate(
+      async ({ challenge, rpId }) => {
+        const decode = (text: string) =>
+          Uint8Array.from(
+            atob(text.replace(/-/g, "+").replace(/_/g, "/") + "===".slice((text.length + 3) % 4)),
+            (char) => char.charCodeAt(0),
+          );
+        const encode = (buffer: ArrayBuffer) =>
+          btoa(String.fromCharCode(...new Uint8Array(buffer)))
+            .replace(/\+/g, "-")
+            .replace(/\//g, "_")
+            .replace(/=+$/, "");
+        const credential = (await navigator.credentials.get({
+          publicKey: {
+            challenge: decode(challenge),
+            rpId,
+            allowCredentials: [],
+            userVerification: "required",
+          },
+        })) as PublicKeyCredential;
+        const response = credential.response as AuthenticatorAssertionResponse;
+        return {
+          id: credential.id,
+          rawId: encode(credential.rawId),
+          type: "public-key",
+          clientExtensionResults: {},
+          response: {
+            clientDataJSON: encode(response.clientDataJSON),
+            authenticatorData: encode(response.authenticatorData),
+            signature: encode(response.signature),
+            userHandle: encode(response.userHandle!),
+          },
+        };
+      },
+      { challenge, rpId },
+    );
+  } finally {
+    await page.unroute(url);
   }
 }
 
@@ -1670,4 +1851,144 @@ export async function certificateSwapProxy(world: EnrollmentWorld, leaf: Leaf, h
       await new Promise<void>((resolve) => server.close(() => resolve()));
     },
   };
+}
+
+/**
+ * The owner confirms the passkey `session` holds on the gateway's own page, as the portal's
+ * account card does: the gateway's challenge, an assertion on its origin, and the confirmation.
+ * Returns the status after it.
+ */
+export async function confirmPasskeyHere(
+  gateway: EnrollmentGateway,
+  session: PasskeySession,
+): Promise<CloudRelayStatus> {
+  const ceremony = await gateway.passkeyConfirmation();
+  const response = await gateway.confirmPasskey({
+    type: "gateway-passkey",
+    challenge: ceremony.challenge,
+    credential: await assertionOn(session, gateway.publicOrigin, ceremony.webauthnChallenge),
+  });
+  if (!response.ok)
+    throw new Error(`Confirming the passkey failed: ${response.status} ${await response.text()}`);
+  return (await response.json()) as CloudRelayStatus;
+}
+
+/** The owner approves the pending request from `name` on the gateway, once it is held. */
+export async function approveHeld(
+  gateway: EnrollmentGateway,
+  name: string,
+  trustSignIn?: boolean,
+): Promise<{ requestId: string; verificationCode: string; canTrustSignIn: boolean }> {
+  const held = await waitFor(
+    async () =>
+      (await gateway.pendingRequests()).find(
+        (request) => request.name === name && request.status === "pending",
+      ),
+    `a held request from ${name}`,
+  );
+  await gateway.decide(held.requestId, true, trustSignIn);
+  return held;
+}
+
+/**
+ * A CLI or collector that signs in with a passkey on the gateway's own page, as a device of the
+ * owner's would through the relay: it asks the gateway for the ceremony, the owner's browser
+ * (`session`) makes the assertion on the gateway's origin, and the device signs for the same
+ * challenge and sends its request. When the gateway joins it at once, the device redeems its
+ * pairing code; otherwise it returns the gateway's answer for a held request.
+ */
+export async function gatewayPasskeyJoin(
+  gateway: EnrollmentGateway,
+  session: PasskeySession,
+  device: {
+    kind: "cli" | "collector";
+    name: string;
+    key?: { privateKey: KeyObject; publicKey: KeyObject };
+  },
+): Promise<{
+  reply: { status: string; verificationCode: string; pairingCode?: string };
+  requestId: string;
+  secret: string;
+  joined?: { deviceId: string; token: string };
+}> {
+  const target = { publicOrigin: gateway.publicOrigin, certificate: gateway.leaf.cert };
+  const { tlsSpkiFingerprint, enrollmentSignatureTranscript, signDeviceTranscript } =
+    await import("@omnesis/cloud-relay");
+  const key = device.key ?? generateKeyPairSync("ec", { namedCurve: "prime256v1" });
+  const devicePublicKey = key.publicKey
+    .export({ type: "spki", format: "der" })
+    .toString("base64url");
+  const fields = {
+    requestId: randomUUID(),
+    kind: device.kind,
+    name: device.name,
+    secret: randomBytes(32).toString("hex"),
+  };
+  await gateway.pace(3);
+  const ceremony = (await devicePinnedJson(target, "/devices/account/passkey/options", {
+    ...fields,
+    devicePublicKey,
+  })) as { challenge: string; webauthnChallenge: string };
+  const reply = (await devicePinnedJson(target, "/devices/account/request", {
+    ...fields,
+    deviceKey: {
+      publicKey: devicePublicKey,
+      challenge: ceremony.challenge,
+      signature: signDeviceTranscript(
+        key.privateKey,
+        enrollmentSignatureTranscript({
+          ...fields,
+          gatewaySpkiFingerprint: tlsSpkiFingerprint(gateway.leaf.cert),
+          challenge: ceremony.challenge,
+          devicePublicKey,
+        }),
+      ),
+    },
+    proof: {
+      type: "gateway-passkey",
+      challenge: ceremony.challenge,
+      credential: await assertionOn(session, gateway.publicOrigin, ceremony.webauthnChallenge),
+    },
+  })) as { status: string; verificationCode: string; pairingCode?: string };
+  if (reply.status !== "approved" || !reply.pairingCode)
+    return { reply, requestId: fields.requestId, secret: fields.secret };
+  return {
+    reply,
+    requestId: fields.requestId,
+    secret: fields.secret,
+    joined: await redeemPairing(gateway, device, reply.pairingCode),
+  };
+}
+
+/** Redeems a pairing code the way the device does, over its pinned connection. */
+async function redeemPairing(
+  gateway: EnrollmentGateway,
+  device: { kind: "cli" | "collector"; name: string },
+  pairingCode: string,
+): Promise<{ deviceId: string; token: string }> {
+  const target = { publicOrigin: gateway.publicOrigin, certificate: gateway.leaf.cert };
+  const paired = (await devicePinnedJson(target, "/devices/pair", {
+    pairingCode,
+    capabilities: { platform: device.kind, suggestedName: device.name },
+  })) as { token: string; device: { id: string } };
+  return { deviceId: paired.device.id, token: paired.token };
+}
+
+/** Once the owner approved a held request, the device polls for its code and redeems it. */
+export async function joinAfterApproval(
+  gateway: EnrollmentGateway,
+  device: { kind: "cli" | "collector"; name: string },
+  request: { requestId: string; secret: string },
+): Promise<{ deviceId: string; token: string }> {
+  const target = { publicOrigin: gateway.publicOrigin, certificate: gateway.leaf.cert };
+  const polled = (await devicePinnedJson(target, "/devices/account/poll", {
+    requestId: request.requestId,
+    secret: request.secret,
+  })) as {
+    status: string;
+    pairingCode?: string;
+  };
+  if (polled.status !== "approved" || !polled.pairingCode)
+    throw new Error(`The request was not approved: ${JSON.stringify(polled)}`);
+  return redeemPairing(gateway, device, polled.pairingCode);
 }

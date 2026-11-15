@@ -135,6 +135,17 @@ class CloudPairingConfirmation(val challenge: CloudPairingChallenge, candidate: 
 
     /** The gateway joined this device on its own checks, so there is no human comparison to wait for. */
     var joined = false; private set
+
+    /**
+     * The signed request went to a gateway whose certificate passed the public checks, the same
+     * footing an automatic join stands on. An approval that gateway reports later is then as bound
+     * as a join, so the app continues on its own; otherwise a person confirms the codes.
+     */
+    var gatewayVerified = false; private set
+    internal fun markGatewayVerified() { gatewayVerified = true }
+
+    /** When the gateway stops waiting for this request, as the earlier of its word and this device's own limit. */
+    val expiresAtMillis: Long get() = expiresAt
     internal fun acceptJoin() {
         if (!approved) throw CloudPairingException()
         joined = true; compared = true

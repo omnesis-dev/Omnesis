@@ -83,6 +83,7 @@ export const SUB_COMMANDS: SubCommandsDef = {
   models: () => import("./commands/model.js").then((m) => m.modelCommand),
   model: () => import("./commands/model.js").then((m) => m.modelCommand),
   backend: () => import("./commands/backend.js").then((m) => m.backendCommand),
+  decision: () => import("./commands/decision.js").then((m) => m.decisionCommand),
   codex: () => import("./commands/codex.js").then((m) => m.codexCommand),
   "claude-code": () => import("./commands/claude-code.js").then((m) => m.claudeCodeCommand),
   index: () => import("./commands/index-group.js").then((m) => m.indexCommand),

@@ -34,25 +34,18 @@ import {
 import {
   PERSON_WITHDRAWAL_VERSION,
   PERSON_WITHDRAWAL_QUESTION,
-  PERSON_WITHDRAWAL_THRESHOLD,
   PERSON_WITHDRAWAL_QUESTIONS,
 } from "./person-withdrawal.js";
 import {
   PROFILE_DISTILLATION_QUESTIONS,
   PROFILE_DISTILLATION_QUESTION_ID,
-  PROFILE_DISTILLATION_THRESHOLD,
 } from "./profile-distillation.js";
-import {
-  OUTCOME_DEADLINE_QUESTIONS,
-  OUTCOME_DEADLINE_QUESTION_ID,
-  OUTCOME_DEADLINE_THRESHOLD,
-} from "./outcome-deadline.js";
+import { OUTCOME_DEADLINE_QUESTIONS, OUTCOME_DEADLINE_QUESTION_ID } from "./outcome-deadline.js";
 import {
   WIKI_VALUE_QUESTIONS,
   WIKI_VALUE_RUBRIC_VERSION,
   WIKI_REPAIR_QUESTIONS,
   WIKI_REPAIR_RUBRIC_VERSION,
-  WIKI_REPAIR_THRESHOLD,
 } from "./wiki-rubric.js";
 import {
   DOCUMENT_RECORD_VALUE_QUESTIONS,
@@ -60,7 +53,6 @@ import {
   OUTCOME_RECORD_VALUE_QUESTIONS,
   OUTCOME_INTEGRITY_QUESTIONS,
   OUTCOME_INTEGRITY_QUESTION_ID,
-  OUTCOME_INTEGRITY_THRESHOLD,
   RECORD_BELONGS_QUESTIONS,
   RECORD_BELONGS_QUESTION_ID,
   recordCheckThreshold,
@@ -68,6 +60,7 @@ import {
   outcomeRecordPolicyKey,
   RECORD_CHECK_RUBRIC_VERSION,
   recordBelongsState,
+  type RecordCheckThresholds,
   type RecordType,
 } from "./rubric.js";
 import type { WikiRecordContext } from "./wiki-context.js";
@@ -133,6 +126,8 @@ interface RecordCheckDeps {
   /** The live decision backend, or null when the capability is absent. */
   getDecision: () => DecisionCapability | null;
   getMode: () => RecordCheckMode;
+  /** The cut-offs scores are compared with (`brain.thresholds`), read per judgement. */
+  getThresholds: () => RecordCheckThresholds;
   recordDecision: (record: CognitionDecisionRecord) => Promise<void>;
   recordSpend: (modelId: string, inputTokens: number) => Promise<void>;
   clock: () => number;
@@ -165,9 +160,17 @@ export class RecordCheck {
         : this.check(run.id, lane ?? run.kind, input, signal);
     check.enforcesOutcomePolicy = () => lane !== null && this.deps.getMode() === "enforce";
     check.policyKey = () =>
-      recordCheckPolicyKey(this.deps.getMode(), this.deps.getDecision()?.modelId ?? null);
+      recordCheckPolicyKey(
+        this.deps.getMode(),
+        this.deps.getDecision()?.modelId ?? null,
+        this.deps.getThresholds(),
+      );
     check.outcomePolicyKey = () =>
-      outcomeRecordPolicyKey(this.deps.getMode(), this.deps.getDecision()?.modelId ?? null);
+      outcomeRecordPolicyKey(
+        this.deps.getMode(),
+        this.deps.getDecision()?.modelId ?? null,
+        this.deps.getThresholds(),
+      );
     check.needsDocumentContext = () =>
       lane !== null && this.deps.getMode() !== "off" && this.deps.getDecision() !== null;
     return check;
@@ -234,7 +237,7 @@ export class RecordCheck {
       requestJson: null,
       responseJson: null,
       score: null,
-      threshold: PERSON_WITHDRAWAL_THRESHOLD,
+      threshold: this.deps.getThresholds().personWithdrawal,
       verdict: "unavailable",
       error,
       reusedFrom: null,
@@ -248,7 +251,7 @@ export class RecordCheck {
       save: false,
       decisionId: id,
       score: 0,
-      threshold: PERSON_WITHDRAWAL_THRESHOLD,
+      threshold: this.deps.getThresholds().personWithdrawal,
       questionId: PERSON_WITHDRAWAL_QUESTION,
       unavailable: true,
     };
@@ -272,6 +275,7 @@ export class RecordCheck {
       input.outcomeContext,
       input.wikiContext,
     );
+    const thresholds = this.deps.getThresholds();
     const contextual = input.record.type !== "timeline";
     const contextLabel =
       input.record.type === "wiki"
@@ -295,13 +299,13 @@ export class RecordCheck {
       input.record.type === "outcome" && input.outcomeContext?.proposed.deadline != null;
     const extraDimensions = [
       ...(input.record.type === "person-fact" && !input.personWithdrawal
-        ? [{ id: PROFILE_DISTILLATION_QUESTION_ID, threshold: PROFILE_DISTILLATION_THRESHOLD }]
+        ? [{ id: PROFILE_DISTILLATION_QUESTION_ID, threshold: thresholds.profileDistillation }]
         : []),
       ...(revision
-        ? [{ id: OUTCOME_INTEGRITY_QUESTION_ID, threshold: OUTCOME_INTEGRITY_THRESHOLD }]
+        ? [{ id: OUTCOME_INTEGRITY_QUESTION_ID, threshold: thresholds.outcomeIntegrity }]
         : []),
       ...(hasDeadline
-        ? [{ id: OUTCOME_DEADLINE_QUESTION_ID, threshold: OUTCOME_DEADLINE_THRESHOLD }]
+        ? [{ id: OUTCOME_DEADLINE_QUESTION_ID, threshold: thresholds.outcomeDeadline }]
         : []),
     ];
     const questions = input.personWithdrawal
@@ -348,10 +352,10 @@ export class RecordCheck {
           ...(signal ? { signal } : {}),
         });
     const belongsThreshold = input.personWithdrawal
-      ? PERSON_WITHDRAWAL_THRESHOLD
+      ? thresholds.personWithdrawal
       : input.wikiContext?.factualRepair
-        ? WIKI_REPAIR_THRESHOLD
-        : recordCheckThreshold(input.record.type);
+        ? thresholds.wikiRepair
+        : recordCheckThreshold(input.record.type, thresholds);
     const dimensions: Record<string, { score: number | null; threshold: number }> = {
       [primaryQuestion]: { score: judgement.score, threshold: belongsThreshold },
       ...Object.fromEntries(
@@ -520,8 +524,8 @@ export class RecordCheck {
         assessment: {
           policy:
             input.record.type === "outcome"
-              ? outcomeRecordPolicyKey("enforce", decision.modelId)
-              : recordCheckPolicyKey("enforce", decision.modelId),
+              ? outcomeRecordPolicyKey("enforce", decision.modelId, thresholds)
+              : recordCheckPolicyKey("enforce", decision.modelId, thresholds),
           decisionId: id,
           ...(input.wikiContext?.factualRepair
             ? { rubricVersion: WIKI_REPAIR_RUBRIC_VERSION }

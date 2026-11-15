@@ -179,6 +179,7 @@ function loadCompletionProvider(
       });
     }
 
+    case "decision":
     case "typesafe":
       // Typed decisions, not text completions: never a completion provider.
       return null;

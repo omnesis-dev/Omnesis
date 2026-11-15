@@ -2,7 +2,8 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { describe, expect, it, vi } from "vitest";
-import { TypeSafeDecision, parseResponse } from "./typesafe-client.js";
+import { parseSystemOneResponse } from "./system-one-client.js";
+import { TypeSafeDecision } from "./typesafe-client.js";
 import type { DecisionRequest } from "@omnesis/core";
 
 const request: DecisionRequest = {
@@ -164,7 +165,10 @@ describe("TypeSafeDecision", () => {
   });
 });
 
-describe("parseResponse", () => {
+const parseResponse = (raw: unknown, req: DecisionRequest) =>
+  parseSystemOneResponse(raw, req, { label: "TypeSafe", model: "jev-1.13.0", scoreField: "score" });
+
+describe("parsing a TypeSafe reply", () => {
   it("rejects a reply that lacks an answer for an asked question", () => {
     expect(() => parseResponse({ model: "jev", answers: {} }, request)).toThrow(
       /lacks a score answer for "worth_score"/,
@@ -180,8 +184,10 @@ describe("parseResponse", () => {
     ).toThrow(/lacks a score answer/);
   });
 
-  it("rejects a reply without a model id", () => {
-    expect(() => parseResponse({ answers: {} }, request)).toThrow(/no model id/);
+  it("reports the model asked when the reply names none", () => {
+    expect(
+      parseResponse({ answers: { worth_score: { type: "score", score: 1 } } }, request).model,
+    ).toBe("jev-1.13.0");
   });
 
   it("parses noul and choice answers", () => {

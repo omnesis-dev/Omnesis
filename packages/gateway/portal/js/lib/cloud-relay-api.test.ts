@@ -11,6 +11,7 @@ import {
   googleAuthorizationUrl,
   accountAuthorizationUrl,
   relaySignupAccess,
+  stopTrustingSignIn,
   // @ts-expect-error portal JS
 } from "./cloud-relay-api.js";
 afterEach(() => vi.clearAllMocks());
@@ -236,4 +237,16 @@ test("dates and clock times accept ISO strings, milliseconds and Unix seconds, a
   expect(relayClock(ms)).toBe(time);
   expect(relayClock(ms / 1000)).toBe(time);
   for (const value of [undefined, "12:00", Number.NaN]) expect(relayClock(value)).toBe("");
+});
+
+test("stopping trust in a sign-in deletes it by its encoded id and nothing else", async () => {
+  const status = { revision: 2 };
+  request.mockResolvedValue({ ok: true, json: async () => status });
+  expect(await stopTrustingSignIn("passkey/id?x")).toEqual(status);
+  expect(request).toHaveBeenLastCalledWith("/admin/cloud-relay/trusted-sign-ins/passkey%2Fid%3Fx", {
+    cache: "no-store",
+    signal: undefined,
+    method: "DELETE",
+    body: undefined,
+  });
 });

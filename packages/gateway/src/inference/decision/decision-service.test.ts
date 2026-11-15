@@ -244,3 +244,126 @@ describe("DecisionService", () => {
     ).toBeNull();
   });
 });
+
+describe("DecisionService — decision backends", () => {
+  const backend = (
+    over: Partial<Extract<ResolvedAssignment, { kind: "decision" }>> = {},
+  ): ResolvedAssignment => ({
+    role: "decision",
+    kind: "decision",
+    backendKey: "ollaya",
+    preset: "ollaya",
+    model: "kev",
+    url: "http://127.0.0.1:9/v1/systemone",
+    protocol: "systemone",
+    onHost: true,
+    allowRemoteInference: false,
+    hasApiKey: false,
+    available: true,
+    ...over,
+  });
+  function serve(score: number) {
+    return vi.fn(async (_url: string | URL, init?: RequestInit) =>
+      Response.json({
+        model: (JSON.parse(String(init?.body)) as { model: string }).model,
+        answers: { worth_score: { type: "score", score } },
+      }),
+    ) as unknown as typeof fetch;
+  }
+
+  it("answers through the backend's wire format, passing its scores through unchanged", async () => {
+    const service = new DecisionService({
+      resolveAssignment: () => backend(),
+      readTypeSafeApiKey: () => null,
+      getDecisionEndpoint: () => ({ url: "http://127.0.0.1:9/v1/systemone" }) as never,
+      fetchFn: serve(1.5),
+    });
+    const model = service.get()!;
+    expect(model.modelId).toBe("kev");
+    expect((await model.decide(request)).answers.worth_score).toEqual({
+      type: "score",
+      score: 1.5,
+    });
+  });
+
+  it("keeps one client while nothing changes, and rebuilds it when the key does", () => {
+    let cfg: Record<string, unknown> = { url: "http://127.0.0.1:9/v1/systemone" };
+    const service = new DecisionService({
+      resolveAssignment: () => backend(),
+      readTypeSafeApiKey: () => null,
+      getDecisionEndpoint: () => cfg as never,
+    });
+    const first = service.get();
+    expect(service.get()).toBe(first);
+    cfg = { ...cfg, apiKey: "sk-new" };
+    expect(service.get()).not.toBe(first);
+  });
+
+  it("returns null for an unavailable backend", () => {
+    const service = new DecisionService({
+      resolveAssignment: () => backend({ available: false, reason: "Ollaya needs an API key." }),
+      readTypeSafeApiKey: () => null,
+      getDecisionEndpoint: () => ({ url: "http://127.0.0.1:9/v1/systemone" }),
+    });
+    expect(service.get()).toBeNull();
+  });
+
+  it("speaks OpenAI Decisions for a backend that uses it", async () => {
+    const fetchFn = vi.fn(async () =>
+      Response.json({
+        model: "gpt-6-luna",
+        answers: [{ type: "score", name: "worth_score", score: 2 }],
+      }),
+    ) as unknown as typeof fetch;
+    const service = new DecisionService({
+      resolveAssignment: () =>
+        backend({
+          backendKey: "openai",
+          preset: "openai",
+          model: "gpt-6-luna",
+          url: "http://127.0.0.1:9/v1/decisions",
+          protocol: "openai-decisions",
+        }),
+      readTypeSafeApiKey: () => null,
+      getDecisionEndpoint: () => ({
+        url: "http://127.0.0.1:9/v1/decisions",
+        protocol: "openai-decisions",
+        apiKey: "sk",
+      }),
+      fetchFn,
+    });
+    expect((await service.get()!.decide(request)).answers.worth_score).toEqual({
+      type: "score",
+      score: 2,
+    });
+    const body = JSON.parse(String(vi.mocked(fetchFn).mock.calls[0]![1]!.body)) as {
+      questions: unknown[];
+    };
+    expect(body.questions).toHaveLength(1);
+  });
+});
+
+describe("DecisionService — a client that cannot be built", () => {
+  it("returns null and keeps answering null, without disposing anything twice", () => {
+    const resolved: ResolvedAssignment = {
+      role: "decision",
+      kind: "decision",
+      backendKey: "cf",
+      model: "@cf/cloudflare/clef",
+      url: "http://127.0.0.1:9/ai/run",
+      protocol: "workers-ai",
+      onHost: true,
+      allowRemoteInference: false,
+      hasApiKey: false,
+      available: true,
+    };
+    const service = new DecisionService({
+      resolveAssignment: () => resolved,
+      readTypeSafeApiKey: () => null,
+      // The backend vanished between resolution and building its client.
+      getDecisionEndpoint: () => undefined,
+    });
+    expect(service.get()).toBeNull();
+    expect(service.get()).toBeNull();
+  });
+});

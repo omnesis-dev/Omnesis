@@ -9,7 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const api = vi.hoisted(() => ({
   getModelsOverview: vi.fn(), getSystemInfo: vi.fn(), getCodexRuntimeUpdate: vi.fn(),
-  patchAdminConfig: vi.fn(), getRecentModels: vi.fn(), probeBackend: vi.fn(), addHttpBackend: vi.fn(),
+  patchAdminConfig: vi.fn(), getRecentModels: vi.fn(), probeBackend: vi.fn(),
 }));
 vi.mock("../api.js", async (importOriginal) => ({ ...(await importOriginal()), ...api }));
 import { ModelsView } from "./models.js";
@@ -44,7 +44,6 @@ describe("Models cloud inference consent", () => {
     api.getRecentModels.mockReset().mockResolvedValue({ entries: [] });
     api.patchAdminConfig.mockReset().mockResolvedValue({ ok: true });
     api.probeBackend.mockReset().mockResolvedValue({ ok: true });
-    api.addHttpBackend.mockReset().mockResolvedValue({ ok: true });
   });
   afterEach(() => {
     render(null, host);
@@ -107,22 +106,24 @@ describe("Models cloud inference consent", () => {
     await act(async () => { render(h(ModelsView, { section: "agent" }), host); });
     await act(async () => { await Promise.resolve(); });
     await click("Add backend");
-    const custom = [...host.querySelectorAll("button")].find((entry) => entry.querySelector(".backend-opt-title")?.textContent === "Custom HTTP backend");
+    const custom = [...host.querySelectorAll("button")].find((entry) => entry.querySelector(".backend-opt-title")?.textContent === "Other server");
     await act(async () => { custom.dispatchEvent(new window.Event("click", { bubbles: false })); });
-    const inputs = host.querySelectorAll(".backend-form input");
+    const input = (label) => host.querySelector(`.backend-form input[aria-label='${label}']`);
     await act(async () => {
-      inputs[0].value = "example"; inputs[0].dispatchEvent(new window.Event("input"));
-      inputs[1].value = "https://api.example.com"; inputs[1].dispatchEvent(new window.Event("input"));
+      input("Backend name").value = "example"; input("Backend name").dispatchEvent(new window.Event("input"));
+      input("Base URL").value = "https://api.example.com"; input("Base URL").dispatchEvent(new window.Event("input"));
     });
     const submitForm = async () => { await act(async () => { host.querySelector(".backend-form").dispatchEvent(new window.Event("submit", { bubbles: false, cancelable: true })); }); };
     await submitForm();
-    expect(api.addHttpBackend).not.toHaveBeenCalled();
+    expect(api.patchAdminConfig).not.toHaveBeenCalled();
     await click("Cancel");
     expect(host.querySelector(".backend-form")).toBeTruthy();
-    expect(api.addHttpBackend).not.toHaveBeenCalled();
+    expect(api.patchAdminConfig).not.toHaveBeenCalled();
     await submitForm();
     await click("Enable cloud inference");
-    expect(api.addHttpBackend).toHaveBeenCalledExactlyOnceWith("example", "https://api.example.com", undefined, undefined, true);
+    expect(api.patchAdminConfig).toHaveBeenCalledExactlyOnceWith({
+      inference: { allowRemoteInference: true, backends: { example: { type: "http", url: "https://api.example.com" } } },
+    });
   });
 
   it("shows a write failure without reporting success", async () => {

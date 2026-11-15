@@ -29,8 +29,15 @@ import { readPrivateJson, savePrivateJson } from "./google-credentials.js";
 import {
   GatewayUnregistered,
   prepareGatewayOwner,
+  readOrCreateGatewayOwnerKey,
   registerGatewayKey,
 } from "./gateway-key-client.js";
+import {
+  DnsBrokerNameTaken,
+  dnsBrokerClient,
+  dnsBrokerSelection,
+  type DnsBrokerSelection,
+} from "./dns-broker-client.js";
 import { createGatewayAcmeController } from "./acme-integration.js";
 import {
   GATEWAY_RELEASE_DAYS,
@@ -48,6 +55,7 @@ import {
   type CloudRelayNetworkIdentity,
   type CloudRelayManagementError,
 } from "./management.js";
+import type { CertificateIncident } from "./certificate-monitor.js";
 import type { GatewaySignupAccess } from "./gateway-signup-contract.js";
 
 const log = createLogger("cloud-relay:management");
@@ -105,6 +113,13 @@ export interface CloudRelayManagerOptions {
   probeRetryMs?: number;
   /** How long to wait before asking the relay again to drop a gateway its owner disconnected. */
   releaseRetryMs?: number;
+  /**
+   * The certificate monitor put the gateway on an incident hold for a certificate it hadn't held
+   * for before. The gateway tells its administrators; never with the hostname or the certificate.
+   */
+  onIncidentHold?(): void;
+  /** Test seam: production reads CAA records from DNS. */
+  caaLookup?: import("./acme-caa.js").CaaLookup;
 }
 
 /** Persistent gateway-local control plane. Constructing an unconfigured manager creates no files or jobs. */
@@ -149,8 +164,17 @@ export class GatewayCloudRelayManagement implements CloudRelayManagement {
         configDir: options.configDir,
         identity: () => ({
           publicOrigin: this.publicOrigin(),
-          spkiFingerprint: this.spkiFingerprintSha256(),
+          // The key devices are shown for the public name, also when this gateway doesn't manage it.
+          spkiFingerprint: options.publicSpkiFingerprint?.() ?? this.spkiFingerprintSha256(),
         }),
+        onIncident: (incidents) => this.holdForIncidents(incidents),
+        caa: () => this.expectedCaa(),
+        onCaaDrift: (digest) =>
+          this.hold(
+            [digest],
+            "The CAA record of this gateway's public name no longer binds its own ACME account",
+          ),
+        ...(options.caaLookup ? { caaLookup: options.caaLookup } : {}),
       });
     this.directory = join(options.configDir, "cloud-relay");
     this.file = join(this.directory, "management.json");
@@ -358,6 +382,7 @@ export class GatewayCloudRelayManagement implements CloudRelayManagement {
         );
       const relayUrl = installationRelayUrl(this.options.env, this.settings?.relayUrl)!;
       let custom: string | undefined, acmeDirectoryUrl: string;
+      let broker: DnsBrokerSelection | undefined;
       try {
         if (input.relayUrl !== undefined && relayOrigin(input.relayUrl).origin !== relayUrl)
           throw new CloudRelayManagementFailure(400, "relay-service-mismatch");
@@ -367,6 +392,11 @@ export class GatewayCloudRelayManagement implements CloudRelayManagement {
         if (directory.username || directory.password || directory.hash || directory.search)
           throw new Error();
         acmeDirectoryUrl = directory.href;
+        // A custom domain and an environment-configured gateway have no name at the broker.
+        broker =
+          custom || this.settings?.legacyEnvironment
+            ? undefined
+            : dnsBrokerSelection(this.options.env, relayUrl);
       } catch (error) {
         if (error instanceof CloudRelayManagementFailure) throw error;
         throw new CloudRelayManagementFailure(400, "configuration-invalid");
@@ -374,6 +404,14 @@ export class GatewayCloudRelayManagement implements CloudRelayManagement {
       let gatewayId = this.settings?.gatewayId ?? randomUUID();
       let metadata;
       for (let attempt = 1; metadata === undefined; attempt++) {
+        // The name is claimed at the broker before the relay hears of this id, so the relay
+        // can never claim it first.
+        if (broker && (await this.claimHostedName(broker, relayUrl, gatewayId)) === "taken") {
+          if (this.settings || attempt === 5)
+            throw new CloudRelayManagementFailure(503, "relay-unreachable");
+          gatewayId = randomUUID();
+          continue;
+        }
         try {
           metadata = await (this.options.discover ?? relayPublicConfiguration)(
             relayUrl,
@@ -430,6 +468,36 @@ export class GatewayCloudRelayManagement implements CloudRelayManagement {
       this.busy = false;
     }
     return this.status();
+  }
+  /**
+   * Binds the gateway's hosted name to its owner key at the DNS broker. Skipped while the broker
+   * can't be reached, unless the operator requires it: until the broker serves the official
+   * relay, gateways connect as before.
+   */
+  private async claimHostedName(
+    selection: DnsBrokerSelection,
+    relayUrl: string,
+    gatewayId: string,
+  ): Promise<"claimed" | "taken" | "skipped"> {
+    const client = dnsBrokerClient({
+      brokerUrl: selection.url,
+      relayUrl,
+      gatewayId,
+      owner: () => readOrCreateGatewayOwnerKey(join(this.directory, "owner.key"), !this.settings),
+      fetch: this.options.fetch,
+    });
+    const signal = AbortSignal.timeout(15_000);
+    try {
+      if (!(await client.health(signal))) {
+        if (!selection.required) return "skipped";
+        throw new Error("The DNS broker is unavailable");
+      }
+      await client.claim(signal);
+      return "claimed";
+    } catch (error) {
+      if (error instanceof DnsBrokerNameTaken) return "taken";
+      throw new CloudRelayManagementFailure(503, "relay-unreachable");
+    }
   }
   async enable(input: { invitation?: string } = {}): Promise<CloudRelayManagementStatus> {
     return this.control(async () => {
@@ -900,6 +968,7 @@ export class GatewayCloudRelayManagement implements CloudRelayManagement {
       },
       ...(this.connection.state === "idle" ? {} : { connect: { ...this.connection } }),
       deviceEnrollment: this.account!.enrollmentStatus(),
+      ...(this.account!.incidentHold() ? { incidentHold: this.account!.incidentHold() } : {}),
       ...(this.notice ? { notice: this.notice } : {}),
       ...(signup ? { signup: { ...signup } } : {}),
       can: {
@@ -1044,8 +1113,45 @@ export class GatewayCloudRelayManagement implements CloudRelayManagement {
     this.revision++;
     return this.status();
   }
+  /** Saved before the monitor's journal records the incidents, so a crash can't lose the hold. */
+  private holdForIncidents(incidents: CertificateIncident[]): Promise<void> {
+    return this.hold(
+      incidents.map((incident) => incident.certificateFingerprint),
+      "A certificate for this gateway's public name has a key it doesn't hold",
+    );
+  }
+  private async hold(evidence: string[], reason: string): Promise<void> {
+    const added = await this.account!.holdForCertificateIncident(evidence);
+    if (!added) return;
+    this.revision++;
+    log.warn(`${reason}: new devices now wait for approval`);
+    this.options.onIncidentHold?.();
+  }
+  /** The name and account the hosted name's CAA record must keep binding, once published. */
+  private async expectedCaa(): Promise<{ hostname: string; accountUri: string } | undefined> {
+    const accountUri = await this.controller?.expectedCaa?.();
+    const origin = this.publicOrigin();
+    return accountUri && origin ? { hostname: new URL(origin).hostname, accountUri } : undefined;
+  }
+  /**
+   * The owner looked into a certificate incident. Only callers that know the request didn't come
+   * through the relay may call this: the gateway admin route and the local CLI.
+   */
+  async acknowledgeIncidentHold(): Promise<CloudRelayManagementStatus> {
+    await this.account!.acknowledgeIncidentHold();
+    this.revision++;
+    return this.status();
+  }
   async removeTrustedSignIn(id: string): Promise<CloudRelayManagementStatus> {
     await this.account!.removeTrustedSignIn(id);
+    this.revision++;
+    return this.status();
+  }
+  async passkeyConfirmation() {
+    return this.account!.passkeyConfirmation();
+  }
+  async confirmPasskey(proof: unknown): Promise<CloudRelayManagementStatus> {
+    await this.account!.confirmPasskey(proof);
     this.revision++;
     return this.status();
   }

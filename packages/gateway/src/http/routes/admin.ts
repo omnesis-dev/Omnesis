@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { mountObservabilityRoutes } from "./admin/observability.js";
-import { mountDeviceRoutes } from "./admin/devices.js";
+import { mountDeviceRoutes, revokeDevicesJoinedWithSignIn } from "./admin/devices.js";
 import { mountTokenRoutes } from "./admin/tokens.js";
 import { mountSourceRoutes } from "./admin/sources.js";
 import { mountAuthRoutes } from "./admin/auth.js";
@@ -60,7 +60,9 @@ export function mountAdminRoutes(app: RouteApp, deps: AdminRoutesDeps): void {
   mountWidgetRenderersRoutes(app);
   mountDoctorRoutes(app, deps);
   mountTlsRoutes(app, deps);
-  mountCloudRelayManagementRoutes(app, deps.cloudRelayManagement);
+  mountCloudRelayManagementRoutes(app, deps.cloudRelayManagement, {
+    revokeJoinedWith: (signInId) => revokeDevicesJoinedWithSignIn(deps, signInId),
+  });
   mountWatermarkRoutes(app, deps);
   mountHostFleetUpdateRoutes(app, deps);
 }

@@ -203,7 +203,6 @@ test("portal offers no manual setup form; connected it is three plain sections, 
   // The page is not a debugging record: that is `omnesis cloud status`.
   for (const gone of [
     "Connection details",
-    "Trusted sign-ins",
     "Sign-in methods",
     "certificate",
     "Gateway ID",
@@ -290,7 +289,7 @@ test("portal offers no manual setup form; connected it is three plain sections, 
     "Public certificate: valid, expires 2029-01-01T00:00:00.000Z, last renewed not recorded",
     "Home certificate: self-signed, valid, expires 2029-01-01T00:00:00.000Z",
     "Account: linked",
-    "New devices: automatic, 1 trusted sign-ins",
+    "New devices: automatic, 0 confirmed sign-ins, 1 on record",
   ])
     expect(copied.split("\n")).toContain(line);
   expect(copied).toMatch(/\nGateway version: \d+\.\d+\.\d+/);
@@ -663,8 +662,13 @@ test("a freshly linked gateway shows its settings at once with automatic joining
   const ask = page.getByRole("radio", { name: /^Ask me first/ });
   await expect(automatic).toBeChecked();
   await expect(ask).not.toBeChecked();
-  // Trusted sign-ins are managed on the account page; the gateway drops one by itself once it is gone there.
-  await expect(page.getByText("Trusted sign-ins")).toHaveCount(0);
+  // The sign-ins on record are listed with where each came from and whether the owner confirmed
+  // it here; they are managed on the account page, so there is nothing to remove here.
+  await expect(page.getByText("Sign-ins", { exact: true })).toBeVisible();
+  await expect(page.locator(".relay-sign-in")).toHaveCount(2);
+  await expect(page.locator(".relay-sign-in").first()).toContainText(
+    "Used to connect this gateway · Not confirmed on this gateway: devices using it wait for your approval",
+  );
   await expect(page.getByRole("button", { name: /^Remove/ })).toHaveCount(0);
   expect(relay.calls).toEqual([]);
   await page.screenshot({

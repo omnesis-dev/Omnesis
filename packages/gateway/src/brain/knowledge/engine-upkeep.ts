@@ -201,6 +201,7 @@ export class KnowledgeUpkeep {
             outcomePolicy: outcomeRecordPolicyKey(
               "enforce",
               this.deps.decisions.getDecision?.()?.modelId ?? null,
+              this.deps.getSettings().thresholds,
             ),
           }
         : {}),
@@ -233,7 +234,7 @@ export class KnowledgeUpkeep {
                 ? "verifier_policy_revalidation"
                 : "outcome_policy_revalidation",
           }
-        : decideKnowledgeReview(signals, score, cfg);
+        : decideKnowledgeReview(signals, score, cfg, this.deps.getSettings().thresholds);
       await this.deps.writeGate["knowledge.scheduleReview"](
         {
           id: node.id,

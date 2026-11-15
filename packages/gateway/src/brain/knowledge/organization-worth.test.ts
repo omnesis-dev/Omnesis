@@ -46,6 +46,7 @@ let db: Database.Database;
 let decide: ReturnType<typeof vi.fn>;
 let deps: KnowledgeEngineDeps;
 let decisionAvailable = true;
+let thresholds: { discovery?: number; impact?: number } | undefined;
 beforeEach(() => {
   db = new Database(":memory:");
   db.exec(
@@ -54,6 +55,7 @@ beforeEach(() => {
   createBriefsStorageTables(db);
   createKnowledgeDecisionTable(db);
   decisionAvailable = true;
+  thresholds = undefined;
   // The scripted model scores only the lease as worth organizing.
   decide = vi.fn(async (request: { state: { source: { title: string } } }) => ({
     model: "scripted",
@@ -66,7 +68,7 @@ beforeEach(() => {
     db,
     log,
     clock: () => 1000,
-    getSettings: () => resolveBrainSettings(),
+    getSettings: () => resolveBrainSettings(thresholds ? { thresholds } : undefined),
     decisions: {
       getDecision: () => (decisionAvailable ? decision : null),
       log,
@@ -147,4 +149,30 @@ it("keeps a member whose source changed or is unreadable", async () => {
 it("keeps a member when the judgement is unavailable", async () => {
   decide.mockRejectedValue(new Error("decision outage"));
   expect(await lowWorthOrganizationSources(deps, { parcel: versions.parcel! }, lookup)).toEqual({});
+});
+
+it("gates organization coverage at the configured discovery cut", async () => {
+  // A recorded current verdict of 0.4 clears the 0.25 default.
+  record("parcel", 0.4, knowledgeRubricVersion("discovery"));
+  const member = { parcel: versions.parcel! };
+  expect(await lowWorthOrganizationSources(deps, member, lookup)).toEqual({});
+  // The impact cut is not the one organization reads.
+  thresholds = { impact: 0.5 };
+  expect(await lowWorthOrganizationSources(deps, member, lookup)).toEqual({});
+  thresholds = { discovery: 0.5, impact: 0.1 };
+  expect(await lowWorthOrganizationSources(deps, member, lookup)).toEqual(member);
+  // A score equal to the cut is not below it.
+  thresholds = { discovery: 0.4 };
+  expect(await lowWorthOrganizationSources(deps, member, lookup)).toEqual({});
+  expect(decide).not.toHaveBeenCalled();
+  // A member judged now is ledgered with the configured cut.
+  thresholds = { discovery: 0.5, impact: 0.1 };
+  decide.mockResolvedValue({
+    model: "scripted",
+    answers: { discovery: { type: "score", score: 1 } },
+  });
+  await lowWorthOrganizationSources(deps, { card: versions.card! }, lookup);
+  expect(
+    db.prepare("SELECT score,threshold FROM knowledge_decisions WHERE node_id='source:card'").get(),
+  ).toEqual({ score: expect.any(Number), threshold: 0.5 });
 });

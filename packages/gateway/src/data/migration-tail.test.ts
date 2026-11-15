@@ -83,19 +83,23 @@ const WOUND_BACK = [
   214,
   // 215 persists the Lab choices; windBack drops them before replay.
   215,
-  // 216 adds a profile's source version, dropped by windBack, and a family's
-  // resync cost, on a table windBack drops whole.
+  // 216 indexes documents by id and type; windBack drops the index.
   216,
-  // 217 creates the published filter lists; windBack drops them before replay.
+  // 217 adds the sign-in id columns and the revoked key table, which undoStickyRevocation drops.
   217,
-  // 218 adds the source version columns, their counts and the queue, which undoSourceVersion drops.
+  // 218 adds a profile's source version, dropped by windBack, and a family's
+  // resync cost, on a table windBack drops whole.
   218,
-  // 219 adds an enumeration's full-read time, which undoSourceVersion drops.
+  // 219 creates the published filter lists; windBack drops them before replay.
   219,
-  // 220 source authority and Answer proofs are removed by undoSourceFilters.
+  // 220 adds the source version columns, their counts and the queue, which undoSourceVersion drops.
   220,
-  // 221 creates the records' filter rows and their triggers, which undoFilterValues drops.
+  // 221 adds an enumeration's full-read time, which undoSourceVersion drops.
   221,
+  // 222 source authority and Answer proofs are removed by undoSourceFilters.
+  222,
+  // 223 creates the records' filter rows and their triggers, which undoFilterValues drops.
+  223,
 ];
 
 let dir: string;
@@ -131,7 +135,7 @@ function sourceFilterObjects(db: Db): ScopeTailObject[] {
     .all();
 }
 
-/** Undo migration 220: its tables, and the triggers it put on the access tables. */
+/** Undo migration 222: its tables, and the triggers it put on the access tables. */
 function undoSourceFilters(db: Db): void {
   const objects = sourceFilterObjects(db);
   const foreignKeys = db.pragma("foreign_keys", { simple: true });
@@ -333,7 +337,14 @@ function undoDeviceEnrollment(db: Db): void {
   }
 }
 
-/** Undo migrations 218 and 219: the source version columns, their running counts, the queue and the full-read time. */
+/** Undo migration 217: the sign-in id columns and the revoked key table. */
+function undoStickyRevocation(db: Db): void {
+  db.exec("DROP TABLE revoked_device_keys");
+  db.exec("ALTER TABLE devices DROP COLUMN enrollment_sign_in_id");
+  db.exec("ALTER TABLE device_pairings DROP COLUMN enrollment_sign_in_id");
+}
+
+/** Undo migrations 220 and 221: the source version columns, their running counts, the queue and the full-read time. */
 function undoSourceVersion(db: Db): void {
   db.exec("DROP TABLE IF EXISTS document_filter_index_queue");
   for (const trigger of ["insert", "delete", "move"])
@@ -353,7 +364,7 @@ function undoSourceVersion(db: Db): void {
   }
 }
 
-/** Undo migration 221: the filter rows of every record, their counts, queue and triggers. */
+/** Undo migration 223: the filter rows of every record, their counts, queue and triggers. */
 function undoFilterValues(db: Db): void {
   for (const { name } of db
     .prepare<[], { name: string }>(
@@ -374,6 +385,8 @@ function windBack(db: Db): void {
   db.exec("DROP TABLE source_filter_items");
   db.exec("DROP TABLE source_filter_lists");
   db.exec("ALTER TABLE source_document_profiles DROP COLUMN output_revision");
+  undoStickyRevocation(db);
+  db.exec("DROP INDEX idx_documents_id_document_type");
   db.exec("DROP TABLE lab_features");
   undoDeviceEnrollment(db);
   db.exec("ALTER TABLE agent_messages DROP COLUMN author_json");

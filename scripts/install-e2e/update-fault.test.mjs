@@ -86,6 +86,57 @@ function identityFixture() {
   return config;
 }
 
+// Starts `git daemon` on a free loopback port and resolves once it has bound its
+// socket, which it announces with "Ready to rumble". The port is found by binding
+// and releasing it, so another process can take it before the daemon binds; the
+// daemon then exits, and a fresh port is tried.
+async function startGitDaemon(directory) {
+  let log = "";
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const probe = createServer();
+    probe.listen(0, "127.0.0.1");
+    await once(probe, "listening");
+    const port = probe.address().port;
+    await new Promise((r) => probe.close(r));
+    const daemon = spawn(
+      "git",
+      [
+        "daemon",
+        "--verbose",
+        "--export-all",
+        `--base-path=${directory}`,
+        "--listen=127.0.0.1",
+        `--port=${port}`,
+      ],
+      { stdio: ["ignore", "ignore", "pipe"] },
+    );
+    children.push(daemon);
+    log = "";
+    const ready = await new Promise((resolve) => {
+      const onData = (chunk) => {
+        log += chunk;
+        if (log.includes("Ready to rumble")) {
+          daemon.stderr.off("data", onData);
+          daemon.off("exit", onExit);
+          resolve(true);
+        }
+      };
+      const onExit = () => {
+        daemon.stderr.off("data", onData);
+        resolve(false);
+      };
+      daemon.stderr.setEncoding("utf8");
+      daemon.stderr.on("data", onData);
+      daemon.once("exit", onExit);
+    });
+    if (ready) {
+      daemon.stderr.resume();
+      return { daemon, port };
+    }
+  }
+  throw new Error(`git daemon never started listening:\n${log}`);
+}
+
 describe("updater fault observations", () => {
   it("refuses an ordinary CI host before creating files or touching installed services", () => {
     const work = join(scratch(), "must-not-exist");
@@ -492,35 +543,8 @@ process.on('SIGTERM',()=>{setTimeout(()=>{child.kill('SIGTERM');child.once('exit
       const directory = scratch();
       const repo = join(directory, "remote.git");
       execFileSync("git", ["init", "--bare", "--quiet", repo]);
-      const server = createServer();
-      server.listen(0, "127.0.0.1");
-      await once(server, "listening");
-      const port = server.address().port;
-      await new Promise((r) => server.close(r));
-      const daemon = spawn(
-        "git",
-        [
-          "daemon",
-          "--export-all",
-          `--base-path=${directory}`,
-          "--listen=127.0.0.1",
-          `--port=${port}`,
-        ],
-        { stdio: "ignore" },
-      );
-      children.push(daemon);
+      const { daemon, port } = await startGitDaemon(directory);
       const url = `git://127.0.0.1:${port}/remote.git`;
-      let ready = false;
-      for (let i = 0; i < 50; i++) {
-        try {
-          execFileSync("git", ["ls-remote", url], { stdio: "ignore" });
-          ready = true;
-          break;
-        } catch {
-          await new Promise((r) => setTimeout(r, 20));
-        }
-      }
-      expect(ready).toBe(true);
       const local = join(directory, "local");
       execFileSync("git", ["init", "--quiet", local]);
       symlinkSync(join(root, "update-fault-command.sh"), join(directory, "git"));

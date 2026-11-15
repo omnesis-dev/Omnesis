@@ -237,6 +237,17 @@ test("fresh current material is skipped only if hostname/key/dates/trust match; 
     ),
   ).rejects.toThrow("match");
   expect(issuer).toHaveBeenCalledTimes(2);
+  // The account-bound CAA step reaches the issuer when there is one.
+  const beforeOrder = vi.fn(async () => {});
+  await expect(
+    new GatewayAcmeRenewal({
+      ...options,
+      beforeOrder,
+      publicOrigin: "https://other.example.test",
+    }).renew(new AbortController().signal),
+  ).rejects.toThrow("match");
+  expect(issuer).toHaveBeenLastCalledWith(expect.objectContaining({ beforeOrder }));
+  expect((issuer.mock.calls[0] as unknown[])[0]).not.toHaveProperty("beforeOrder");
 });
 test("relay DNS presenter authenticates control requests, bounds replies and never follows redirects", async () => {
   const id = "00000000-0000-4000-8000-000000000001",

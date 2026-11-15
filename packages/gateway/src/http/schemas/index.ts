@@ -20,6 +20,7 @@ export * from "./people.js";
 export * from "./search.js";
 export * from "./analytics.js";
 export * from "./model-credentials.js";
+export * from "./decision.js";
 export * from "./notes.js";
 export * from "./agent-messages.js";
 export * from "./agent-briefs.js";

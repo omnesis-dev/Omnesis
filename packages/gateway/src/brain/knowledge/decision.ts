@@ -62,8 +62,6 @@ const questions: Record<KnowledgeDecisionPurpose, Extract<DecisionQuestion, { ty
 export function knowledgeRubricVersion(purpose: KnowledgeDecisionPurpose): string {
   return RUBRIC_VERSIONS[purpose];
 }
-/** Verdicts below this normalized score settle a source without interpreting or organizing it. */
-export const DISCOVERY_WORTH_THRESHOLD = 0.25;
 /** The discovery question's complete state for one source. */
 export function discoveryDecisionState(source: {
   title: string;

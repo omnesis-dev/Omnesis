@@ -94,6 +94,7 @@ function setup(
     onVerify?: () => void;
     /** The relay's passkey list for the account; undefined means it can't be read. */
     relayPasskeys?: Array<{ id: string; publicKey: string }>;
+    revokedDeviceKey?: (devicePublicKey: string) => boolean | Promise<boolean>;
   } = {},
 ) {
   const pins: TrustedSignIn[] = options.pins ?? [
@@ -126,8 +127,8 @@ function setup(
             listed.publicKey === signIn.pin.publicKey,
         ) ??
           false)),
-    trustSignIn: async (signIn, source) => {
-      pins.push({ ...signIn.pin, source });
+    trustSignIn: async (signIn) => {
+      pins.push({ ...signIn.pin, source: "approval" });
     },
   };
   const createPairing = vi.fn(async (request: { expiresAt: number }) => ({
@@ -147,6 +148,7 @@ function setup(
     enrollment,
     createPairing,
     onPending,
+    ...(options.revokedDeviceKey ? { revokedDeviceKey: options.revokedDeviceKey } : {}),
   });
   return { requests, createPairing, onPending, policy, challenges, pins, verify };
 }
@@ -201,7 +203,12 @@ describe("joining without a person", () => {
     expect(result.pairingCode).toBe("fictional-pairing-code");
     expect(onPending).not.toHaveBeenCalled();
     expect(createPairing.mock.calls[0]![0]).toMatchObject({
-      enrollment: { method: "automatic", signIn: "google", devicePublicKey: device.publicKey },
+      enrollment: {
+        method: "automatic",
+        signIn: "google",
+        signInId: SIGN_IN_DIGEST,
+        devicePublicKey: device.publicKey,
+      },
     });
   });
 
@@ -256,6 +263,73 @@ describe("joining without a person", () => {
       proof: await googleProof(request.nonce),
     });
     expect(createPairing).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("a revoked device", () => {
+  const attest = () =>
+    vi.fn(async () => ({
+      issuer: `${RELAY}/_relay/account`,
+      subject: "c".repeat(64),
+      expiresAt: 1,
+    }));
+
+  test("is held even with a trusted sign-in, and one approval brings it back", async () => {
+    const device = makeDevice(),
+      request = makeRequest(device.publicKey);
+    const revokedDeviceKey = vi.fn(async (key: string) => key === device.publicKey);
+    const { requests, createPairing, onPending } = setup({ attest: attest(), revokedDeviceKey });
+    const result = await requests.start({
+      ...body(request),
+      identityToken: "attestation",
+      deviceKey: evidence(device, request, requests.issueChallenge().challenge),
+      proof: await googleProof(request.nonce),
+    });
+    expect(result.status).toBe("pending");
+    expect(result.pairingCode).toBeUndefined();
+    expect(revokedDeviceKey).toHaveBeenCalledWith(device.publicKey);
+    expect(createPairing).not.toHaveBeenCalled();
+    expect(onPending).toHaveBeenCalledTimes(1);
+    expect(requests.list()).toEqual([
+      expect.objectContaining({ signIn: "google", revokedDevice: true }),
+    ]);
+    await requests.decide(request.value.requestId, true);
+    expect(createPairing.mock.calls[0]![0]).toMatchObject({
+      enrollment: { method: "approved", signIn: "google", signInId: SIGN_IN_DIGEST },
+    });
+  });
+
+  test("a key check that fails holds the request", async () => {
+    const { requests, createPairing } = setup({
+      attest: attest(),
+      revokedDeviceKey: () => {
+        throw new Error("database unavailable");
+      },
+    });
+    const device = makeDevice(),
+      request = makeRequest(device.publicKey);
+    const result = await requests.start({
+      ...body(request),
+      identityToken: "attestation",
+      deviceKey: evidence(device, request, requests.issueChallenge().challenge),
+      proof: await googleProof(request.nonce),
+    });
+    expect(result.status).toBe("pending");
+    expect(createPairing).not.toHaveBeenCalled();
+  });
+
+  test("any other key joins as before, and its request says nothing about revocation", async () => {
+    const { requests, createPairing } = setup({ revokedDeviceKey: () => false });
+    const device = makeDevice(),
+      request = makeRequest(device.publicKey);
+    const result = await requests.start({
+      ...body(request),
+      deviceKey: evidence(device, request, requests.issueChallenge().challenge),
+      proof: await googleProof(request.nonce),
+    });
+    expect(result.status).toBe("approved");
+    expect(createPairing).toHaveBeenCalledTimes(1);
+    expect(requests.list()[0]).not.toHaveProperty("revokedDevice");
   });
 });
 
@@ -443,8 +517,8 @@ describe("falling back to a person", () => {
     expect(result.status).toBe("pending");
     expect(requests.list()[0]).toMatchObject({ signIn: "google", canTrustSignIn: true });
     await requests.decide(request.value.requestId, true, { trustSignIn: true });
-    // An iPhone's sign-in happened in the app, which computed its own nonce.
-    expect(pins).toMatchObject([{ type: "google", id: SIGN_IN_DIGEST, source: "native-app" }]);
+    // The gateway decides what to confirm from the proof it checked, not from the request's kind.
+    expect(pins).toMatchObject([{ type: "google", id: SIGN_IN_DIGEST }]);
     expect(createPairing.mock.calls[0]![0]).toMatchObject({ enrollment: { method: "approved" } });
     expect(requests.poll(request.value.requestId, request.value.secret).status).toBe("approved");
   });
@@ -791,7 +865,6 @@ describe("passkey proofs", () => {
       const listed = await held(key, [{ id, publicKey: key.publicKey }]);
       expect(listed.requests.list()[0]).toMatchObject({ canTrustSignIn: true });
       await listed.requests.decide(listed.request.value.requestId, true, { trustSignIn: true });
-      // A collector's sign-in happened on a relay page.
       expect(listed.pins).toEqual([
         {
           type: "passkey",

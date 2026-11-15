@@ -46,8 +46,12 @@ the relay still needs independent certificate issuance controls to resist that
 attack, such as a supporting CA's account-bound DNS-01 policy, CAA `accounturi`
 and `validationmethods`, and protected DNS administration. A DNS ownership TXT
 record alone does not provide that protection. See [RFC 8657](https://www.rfc-editor.org/rfc/rfc8657.html)
-and [Let's Encrypt's CAA guidance](https://letsencrypt.org/docs/caa/). This package
-does not configure CAA records, DNS delegation, or a CA's account-bound issuance policy.
+and [Let's Encrypt's CAA guidance](https://letsencrypt.org/docs/caa/). For a
+hosted name served by the DNS broker, the gateway's CAA record binds issuance to
+its own ACME account and DNS-01 (see
+[Certificate issuance monitoring](#certificate-issuance-monitoring)). For a
+user-owned domain this package does not configure CAA records, DNS delegation,
+or a CA's account-bound issuance policy.
 Keep the effective issuance policy under the user's control for every authorized
 CA. A user-owned A/AAAA record avoids delegating CAA lookup to a relay-owned
 CNAME target; using DNS-01 at the gateway alone does not prevent another party
@@ -105,8 +109,10 @@ unlinking. Native clients and `omnesis cloud pair --kind cli` or `--kind collect
 let the user sign in, explicitly choose a gateway, and request enrollment. By
 default a trusted gateway device must approve the request, and the requesting
 device must confirm the comparison code. A gateway whose owner chose
-automatic enrollment lets a device-bound sign-in it has pinned join without that
-step ([docs/device-enrollment.md](../../docs/device-enrollment.md)). The resulting
+automatic enrollment lets a device join without that step only with a sign-in the
+owner confirmed on the gateway itself, made where no relay page could make it: a
+passkey on the gateway's own page or in the Android app, or Google in an Omnesis
+app ([docs/device-enrollment.md](../../docs/device-enrollment.md)). The resulting
 pinned device credential is independent of Google, passkeys, and the chosen LAN
 or relay connection path. QR/manual pairing and independently configured direct
 access remain available.
@@ -118,8 +124,9 @@ Android Google sign-in uses Credential Manager with a server-issued nonce.
 
 The desktop also listens once on `127.0.0.1` (RFC 8252 loopback redirect). After
 the browser confirms, the relay sends it there with a one-use completion secret,
-and only a desktop presenting that secret receives the sign-in proof that can
-join automatically. A link phished to someone else ends on their own machine. A
+and only a desktop presenting that secret receives the sign-in proof. That proof
+was made on a relay page, so the request waits for approval on the gateway. A link
+phished to someone else ends on their own machine. A
 connect code typed on another device never yields a proof, so the CLI says that
 signing in elsewhere needs approval on the owner's phone or another paired
 device; over SSH it prints the comparison code and waits for that approval.
@@ -138,6 +145,7 @@ it, in one transaction, and closes those gateways' tunnels. What each table keep
 | `omnesis_account_sessions`                                 | Every session of the account is deleted                         |
 | `omnesis_federated_credentials`, `omnesis_google_aliases`  | Its Google sign-in and that sign-in's aliases are deleted       |
 | `omnesis_passkeys`, `omnesis_passkey_endorsements`         | Its passkeys and the sign-ins that vouched for them are deleted |
+| `omnesis_deleted_passkeys`                                 | Keeps a SHA-256 digest of each of its passkeys' credential ids  |
 | `omnesis_passkey_countersignatures`                        | Each passkey's countersignature of the account is deleted       |
 | `omnesis_gateway_links`, `omnesis_account_admissions`      | Rows of the account and of each of its gateways are deleted     |
 | `relay_accounts`, `relay_gateway_bindings`                 | Each gateway's owner row and binding are deleted                |
@@ -155,6 +163,12 @@ to create an account again, and remove them from the sign-up Google Group if
 the relay uses one. Request logs and metrics hold no account
 identifiers.
 
+The digests let the account page tell a browser that offers one of those passkeys
+again that its account was deleted, and ask the browser's password manager to
+drop it (`PublicKeyCredential.signalUnknownCredential`). A passkey the relay never
+stored is only reported as unknown and is never dropped: it may still belong to a
+live account.
+
 Disconnecting one gateway from its settings removes that gateway's rows from the
 same routing tables and its link, closes its tunnel, and leaves the account and
 its other gateways alone. `omnesis_account_admissions` keeps which account that
@@ -170,26 +184,25 @@ the same address ([docs/device-enrollment.md](../../docs/device-enrollment.md)).
 
 ### What the relay is trusted with
 
-Sign-ins on pages the relay hosts (portal enrollment, desktop sign-in, the owner
+Sign-ins on pages the relay hosts (portal handoff, desktop sign-in, the owner
 link, signup and the account page) are only as trustworthy as the relay: their
-script computes the WebAuthn challenge and Google nonce, so a compromised relay
-could bind the owner's sign-in to a device key of its own, and at link time could
-have the gateway pin its own Google account or passkey and keep listing it.
-Sign-ins in the iOS and Android apps compute the nonce on the device from its own
-key and are not exposed to that. Each sign-in is bound to its purpose: one made
-to link a gateway (signup or the owner link) commits to the gateway's nonce under
-a link label, so the gateway never accepts it as a device's enrollment sign-in,
-nor an enrollment sign-in as a link. The gateway records each trusted sign-in's
-origin and its portal shows "Signed in on the Omnesis account page" or "Signed in in the
-app". A passkey's public key arrives with the request, so the gateway trusts a
-passkey on approval only when the relay's credential list for the linked account
-holds that id with that key, and drops a pin whose listed key changes. A passkey
-added to an account later is stored only once a sign-in the account already has
-vouches for it, and the new passkey itself countersigns the sign-ins the account
-already had; gateways verify both themselves, so a gateway that trusts either
-side comes to trust the other without an approval
-(`docs/device-enrollment.md`, Passkeys added later). Gateways
-that do not trust the relay with joining devices keep the default `ask` policy.
+script computes the WebAuthn challenge and Google nonce. So no such sign-in ever
+joins a device by itself: the gateway holds it for a person with a comparison
+code, and approving it confirms nothing. Only sign-ins the owner confirmed on the
+gateway join automatically, and only when made where the relay cannot steer them:
+a passkey assertion on the gateway's own origin (`g-….relay.omnesis.app`, the RP
+ID still being the relay's host) over a one-use challenge the gateway issued, a
+passkey in the Android app (its compiled `android:apk-key-hash:` origins), or a
+Google token an official app client presented. The gateway derives its own origin
+from its id and refuses that trust when the public origin the relay returned is
+anything else. What the relay's listing and stored evidence (endorsements and
+countersignatures, the link page's sign-in) pin is shown to the owner as a
+suggestion and never trusted. Each sign-in is also bound to its purpose: one made
+to link a gateway commits to the gateway's nonce under a link label, so it is never
+accepted as a device's enrollment sign-in, nor the reverse. This relies on the relay
+being unable to obtain a certificate for a gateway's hosted name; that isolation is
+separate from this package's enrollment checks. Gateways that want every device
+approved by a person choose the `ask` policy.
 
 Account services require `OMNESIS_CLOUD_RELAY_PUBLIC_ORIGIN` to name the public
 HTTPS control origin. A routing-only relay may omit it and does not initialize
@@ -467,6 +480,12 @@ device grants; manage those through the gateway's device controls.
 The relay account page is `/_relay/account`; `/_relay/web` redirects to it. Google
 sign-in there needs the web OAuth configuration and
 `OMNESIS_CLOUD_RELAY_PUBLIC_ORIGIN`.
+Its Google button goes to `/_relay/web/start`, which redirects to Google only when
+the browser labels the request `Sec-Fetch-Site: same-origin` (login CSRF
+protection). Safari sometimes labels that press `none` or `cross-site`, for
+example in a tab another site opened; such a request, or a link from another
+site, is sent back to the account page with the same operation and
+`failed=again`, where the next press continues.
 
 On a CLI or collector machine, enable cloud relay and pair the
 selected component:
@@ -605,17 +624,52 @@ Automated backups and provider deployment are outside this implementation.
 
 ## Independent DNS broker
 
-The optional independent broker keeps Cloudflare mutation credentials outside
-the exposed relay. Run `cloud-relay serve-dns-broker` on an independent host or
-credential boundary that a compromised relay VPS cannot read. A second port on
-the same compromised host does not provide that isolation. The broker needs
-the current independent recovery policy and public trust anchors described
-above, but no relay session-signing key, account database or Google credential.
+The DNS broker is the only holder of the DNS token that can prove control of
+gateway names, so a compromised relay holds nothing that can get a certificate
+for a gateway's name through DNS-01. It runs as a Cloudflare Worker with one
+Durable Object (`src/dns-broker-worker.ts`, configured from
+`deploy/dns-broker/wrangler.jsonc.example`), or on Node with
+`cloud-relay serve-dns-broker` on a host the relay can't reach. Both run the same
+core (`src/dns-broker-core.ts`), which uses only zod and Web Crypto.
 
-Its operator configuration is:
+**Names are bound on first use.** Every operation is a one-use broker challenge
+signed by the gateway's Ed25519 owner key over the broker's origin and the exact
+request. The broker serves only a gateway's own derived name
+(`g-<label>.<relay domain>` for its gateway id), and binds that name to the
+first owner key that claims it:
+
+| Operation    | Effect                                                                                                                                      |
+| ------------ | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| `claim`      | Binds the name to this owner key. A second claim by the same key is a no-op; any other key gets 409.                                        |
+| `txt-create` | Leases `_acme-challenge.<name>` for ten minutes. One lease per name; a crash-safe journal removes it on expiry, failure or restart.         |
+| `txt-remove` | Ends the lease.                                                                                                                             |
+| `caa`        | Publishes `0 issue "letsencrypt.org; validationmethods=dns-01; accounturi=<account>"` at the name, with the relay wildcard's A/AAAA records |
+| `release`    | Removes the name's records. The name stays bound to its owner key.                                                                          |
+
+A new gateway claims its name before it first asks the relay for its
+configuration, so the relay never learns the id early enough to claim the name
+first. Names the relay granted before the broker existed are seeded from an
+export of the relay database taken at a trusted moment: `cloud-relay
+export-gateway-keys` reads `OMNESIS_CLOUD_RELAY_DB` and writes
+`OMNESIS_CLOUD_RELAY_DNS_BROKER_EXPORT_FILE`, and `cloud-relay
+dns-broker-import-registry` sends it to `OMNESIS_ACME_DNS_BROKER_URL` with the
+token in `OMNESIS_CLOUD_RELAY_DNS_BROKER_IMPORT_TOKEN_FILE`. An import never
+replaces a name the broker already binds. The import route exists only while
+the import token is configured.
+
+The CAA record names only accounts under the configured prefix (Let's Encrypt
+production by default), and the account URL can't carry another parameter. A
+CAA record at the name stops the relay's wildcard from answering for it, so the
+broker copies the wildcard's addresses to the name, unproxied.
+
+The Node broker's configuration is:
 
 ```text
 OMNESIS_ACME_DNS_BROKER_URL
+OMNESIS_CLOUD_RELAY_DOMAIN
+OMNESIS_CLOUD_RELAY_DNS_BROKER_REGISTRY
+OMNESIS_CLOUD_RELAY_DNS_BROKER_IMPORT_TOKEN_FILE
+OMNESIS_CLOUD_RELAY_DNS_BROKER_CAA_ACCOUNT_URI_PREFIX
 OMNESIS_CLOUD_RELAY_DNS_BROKER_BIND
 OMNESIS_CLOUD_RELAY_DNS_BROKER_PORT
 OMNESIS_CLOUD_RELAY_DNS_BROKER_TLS_CERT_FILE
@@ -623,35 +677,31 @@ OMNESIS_CLOUD_RELAY_DNS_BROKER_TLS_KEY_FILE
 OMNESIS_CLOUD_RELAY_ACME_ZONE_ID
 OMNESIS_CLOUD_RELAY_ACME_ZONE_NAME
 OMNESIS_CLOUD_RELAY_ACME_TOKEN_FILE
-OMNESIS_CLOUD_RELAY_ACME_JOURNAL
 ```
 
-Non-loopback listeners require TLS. The private token file contains a JSON
-`token` field. Limit its Cloudflare permissions to DNS editing in the intended
-zone. The provider only publishes leased TXT records for the exact authorized
-hostname, and abandoned leases are cleaned up from the durable journal.
+Non-loopback listeners require TLS. The private token files contain a JSON
+`token` field. Limit the Cloudflare token to DNS editing in the intended zone.
+The registry file holds the name bindings and the lease journal; keep it across
+restarts. The Worker takes the same settings as `BROKER_ORIGIN`,
+`RELAY_DOMAIN`, `ZONE_ID`, `ZONE_NAME` and `CAA_ACCOUNT_URI_PREFIX` variables and
+the `CLOUDFLARE_API_TOKEN` and `REGISTRY_IMPORT_TOKEN` secrets.
 
-The gateway selects this path with:
+With a recovery policy configured (see above) and `OMNESIS_CLOUD_RELAY_ACME_JOURNAL`,
+the Node broker also serves the receipt-authorized version 1 routes, which a
+gateway selects with:
 
 ```sh
 OMNESIS_ACME_DNS_PROVIDER=independent
 OMNESIS_ACME_DNS_BROKER_URL=https://dns.example.test
 ```
 
-It requires its existing signed recovery receipt. Each create/remove operation
-obtains a fresh, bounded, one-use broker challenge and signs the exact operation
-with both local private keys. The signature binds the broker recipient, gateway
-identity, receipt and TXT value or lease ID. The broker verifies the independent
-authority and current revocations before performing an operation. A stolen
-relay HMAC, modified routing database or forwarded request cannot authorize a
-different operation. The gateway receives no Cloudflare token.
+Version 1 requires the gateway's signed recovery receipt and signs each
+operation with both its owner and TLS keys.
 
 Remove Cloudflare credentials and the DNS journal settings from the exposed
-relay process in independent mode. Its startup rejects those credentials when
-an independent broker is selected. Shared frontends may forward signed broker
-requests, but must preserve the configured recipient and the independent
-credential boundary. Existing inline DNS brokering remains available for
-isolated testing and deployments choosing that trust model.
+relay process once the broker serves its gateways. With
+`OMNESIS_ACME_DNS_PROVIDER=independent` or `OMNESIS_ACME_DNS_BROKER_URL` set,
+the relay refuses to start while it still holds them.
 
 Selecting DNS-01 in the legitimate client does not stop an attacker from asking
 a CA to use HTTP-01. Production issuance restrictions must therefore cover all
@@ -661,30 +711,58 @@ and DNS-01. Do not rely on CAA that the compromised component can rewrite.
 The DNS records and provider credentials are operator deployment configuration;
 this implementation does not apply them to a live zone.
 
-## Optional certificate issuance monitoring
+## Certificate issuance monitoring
 
-Gateway-owned monitoring can observe the gateway's public hostname through
+Gateway-owned monitoring observes the gateway's public hostname through
 [SSLMate's Cert Spotter API](https://sslmate.com/help/reference/ct_search_api_v1).
-It is disabled by default. To enable it, set
-`OMNESIS_CLOUD_RELAY_CERTIFICATE_MONITOR_ENABLED=1`; optional settings are
-`OMNESIS_CLOUD_RELAY_CERTIFICATE_MONITOR_INTERVAL_MS` and
-`OMNESIS_CLOUD_RELAY_CERTSPOTTER_API_KEY_FILE`. The private API-key file contains
-an `apiKey` field and is sent only to the fixed provider HTTPS origin. Provider
-access, quotas and credentials are operator configuration.
+It is on by default for a gateway with a relay address, because automatic
+device enrollment relies on it. Set
+`OMNESIS_CLOUD_RELAY_CERTIFICATE_MONITOR_ENABLED=0` to turn it off. Optional
+settings are `OMNESIS_CLOUD_RELAY_CERTIFICATE_MONITOR_INTERVAL_MS`,
+`OMNESIS_CLOUD_RELAY_CERTSPOTTER_API_KEY_FILE` and
+`OMNESIS_CLOUD_RELAY_CERTSPOTTER_URL` (an HTTPS service with the same API, used
+in place of `https://api.certspotter.com/`). The private API-key file contains
+an `apiKey` field and is sent only to that provider origin. Provider access,
+quotas and credentials are operator configuration.
 
 The observer sends the public hostname to that provider and compares certificate
-public keys with the gateway's own stable TLS key. It parses certificate DER
-itself and verifies hostname coverage. Same-key renewals are expected; another
-key produces a local incident containing public certificate metadata. It never
-changes pins, routing credentials or device grants. A bounded durable journal
-retains incidents and pagination progress; failed or incomplete checks are
-reported as unavailable or stale, rather than as successful observation.
+public keys with the key of the certificate the gateway serves for that name. It
+parses certificate DER itself and verifies hostname coverage. Same-key renewals
+are expected; another key produces a local incident containing public
+certificate metadata. A bounded durable journal retains incidents and
+pagination progress; failed or incomplete checks are reported as unavailable or
+stale, rather than as successful observation.
 
-The portal and CLI expose monitoring status, last completed observation and
-incidents. An observing status describes the provider results checked so far;
-it is not proof that every issuance has been observed. Monitoring detects
-evidence and does not prevent fraudulent issuance. Requests contain no gateway
-application bearer, Google token, DNS credential or private key.
+An incident puts the gateway on an incident hold, saved with the owner's other
+local choices in `cloud-relay/account-link.json` before the journal records the
+incident. While the hold lasts, every new device waits for approval whatever
+the owner's new-device policy says, and administrator phones get a generic
+notification. The hold survives restarts, unlinking and relinking, and the
+account being deleted; nothing the relay sends can lift it. Only the owner can,
+with `omnesis cloud incidents ack` on the gateway host, or through
+`POST /admin/cloud-relay/incidents/ack` in a request that did not come through
+the relay. The monitor never changes pins, routing credentials or existing
+device grants.
+
+A gateway on the DNS broker also binds its hosted name's CAA record to its own
+ACME account before each order: `issue "letsencrypt.org;
+validationmethods=dns-01; accounturi=<its account>"`, published through the
+broker and only for the broker's CA, so a staging account publishes nothing.
+Every gateway refuses to order a certificate for a name whose CAA record binds
+issuance to another ACME account. At the monitor's interval, the gateway checks
+that the published record still binds its own account; a record removed or
+rewritten puts the gateway on the same incident hold, identified by a digest of
+what DNS showed. A lookup DNS can't answer changes nothing. CAA protects against
+anyone without write access to the zone, including a relay without the DNS
+token; whoever can write the zone, including the DNS provider, can still
+rewrite it, which the monitor then reports.
+
+The portal and CLI expose monitoring status, last completed observation,
+incidents and the hold. An observing status describes the provider results
+checked so far; it is not proof that every issuance has been observed.
+Monitoring detects evidence and does not prevent fraudulent issuance. Requests
+contain no gateway application bearer, Google token, DNS credential or private
+key.
 
 When investigating an unexpected certificate, retain the public incident
 metadata, compare the observed key with the local gateway key, and request
@@ -806,6 +884,19 @@ The default hosted flow separates certificate issuance from DNS cooperation:
 
 The broker receives no CSR, ACME account JWS or private keys. The gateway does not
 receive the relay's Cloudflare token and needs no inbound Internet listener.
+
+`OMNESIS_ACME_DNS_PROVIDER` selects who publishes the DNS-01 digest for a hosted
+name. The default, `auto`, sends a gateway of the official relay to the
+[independent DNS broker](#independent-dns-broker) compiled into the gateway
+(`https://dns.omnesis.app`) as soon as that broker answers for the relay's
+domain, and keeps using the relay's DNS cooperation until then; gateways of
+any other relay keep the relay. The broker's address is never taken from the
+relay. A new gateway claims its hosted name at the broker before it first asks
+the relay for its configuration, and draws a new id when the broker binds the
+name to another key. Once a gateway has used the broker it never returns to
+the relay: an unreachable broker then fails the renewal, which retries. `relay`
+keeps the relay's cooperation, and `broker` with `OMNESIS_ACME_DNS_BROKER_URL`
+uses that broker only, with no fallback. Custom domains never use the broker.
 
 The gateway keeps its existing direct TLS certificate and private key. Public
 TLS uses its own stable private key, independent of direct certificate renewal. Configure
@@ -1017,7 +1108,7 @@ omnesis cloud renew
 omnesis cloud disable
 omnesis cloud policy ask
 omnesis cloud trusted-sign-ins
-omnesis cloud remove-sign-in <id>
+omnesis cloud remove-sign-in <id> [--revoke-devices]
 omnesis cloud disconnect
 ```
 

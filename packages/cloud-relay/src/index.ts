@@ -7,12 +7,14 @@ export type { Identity, IdentityProvider } from "./identity.js";
 export { RelayAccounts } from "./accounts.js";
 export { hostedGatewayLabel, hostedGatewayHostname, hostedGatewayOrigin } from "./hosted-name.js";
 export { GatewayTunnel } from "./tunnel-client.js";
-export { relayedClientAddress } from "./relay-client-address.js";
+export { isRelayTunnelPeer, relayedClientAddress } from "./relay-client-address.js";
 export { createRelayClientProxy } from "./client-proxy.js";
 export { startGatewayCloudTunnel, readRelaySession } from "./gateway-integration.js";
 export {
   GooglePairingRequests,
   googlePairingRequestSchema,
+  gatewayPasskeyOptionsSchema,
+  passkeyApprovalSchema,
   googlePairingNonce,
 } from "./google-pairing.js";
 export {

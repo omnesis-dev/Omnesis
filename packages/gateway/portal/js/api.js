@@ -63,7 +63,38 @@ export async function apiFetch(input, init = {}) {
   };
   const res = await fetch(input, merged);
   if (res.status === 401) fireSessionExpired();
+  if ((res.status === 428 || res.status === 403) && unsafe && isSameOriginInput(input))
+    return stepUpAndRetry(input, init, res, headers);
   return res;
+}
+
+/**
+ * Some administrative actions need the owner's passkey on this gateway's page first (a
+ * "step-up", see packages/gateway/src/http/step-up.ts). The gateway says so with 428
+ * `STEP_UP_REQUIRED`; this runs the passkey prompt for that one request and sends it again,
+ * once. While no step-up can start it answers 403 `STEP_UP_UNAVAILABLE`, which becomes an error
+ * a person can act on. Any other answer goes back to the caller unchanged.
+ */
+async function stepUpAndRetry(input, init, res, headers) {
+  if (Object.keys(headers).some((name) => name.toLowerCase() === "x-omnesis-step-up")) return res;
+  let refusal;
+  try {
+    refusal = await res.clone().json();
+  } catch {
+    return res;
+  }
+  if (refusal?.code === "STEP_UP_UNAVAILABLE") {
+    const { GatewayPasskeyError, STEP_UP_UNAVAILABLE } = await import("./lib/gateway-passkey.js");
+    throw new GatewayPasskeyError(STEP_UP_UNAVAILABLE);
+  }
+  if (res.status !== 428 || refusal?.code !== "STEP_UP_REQUIRED") return res;
+  const { stepUp, STEP_UP_HEADER } = await import("./lib/gateway-passkey.js");
+  const stepUpId = await stepUp(refusal.detail, {
+    post: (path, body, signal) =>
+      apiFetch(path, { method: "POST", body: JSON.stringify(body), ...(signal ? { signal } : {}) }),
+    ...(init.signal ? { signal: init.signal } : {}),
+  });
+  return apiFetch(input, { ...init, headers: { ...(init.headers || {}), [STEP_UP_HEADER]: stepUpId } });
 }
 
 function isSameOriginInput(input) {
@@ -1694,15 +1725,6 @@ export const rebuildIndex = (mode = "graceful") =>
 export const assignCapability = (role, assignment) =>
   patchAdminConfig({ inference: { assignments: { [role]: assignment } } });
 
-export const addHttpBackend = (key, url, apiKey, apiPathPrefix, allowRemoteInference = false) => {
-  const cfg = { type: "http", url };
-  if (apiKey) cfg.apiKey = apiKey;
-  if (apiPathPrefix) cfg.apiPathPrefix = apiPathPrefix;
-  const inference = { backends: { [key]: cfg } };
-  if (allowRemoteInference) inference.allowRemoteInference = true;
-  return patchAdminConfig({ inference });
-};
-
 export const removeHttpBackend = (key) =>
   patchAdminConfig({ inference: { backends: { [key]: null } } });
 
@@ -1716,6 +1738,41 @@ export const verifyBackendModel = (key, model, role, force = false) =>
   request("POST", `/admin/inference/backends/${encodeURIComponent(key)}/verify`, {
     body: { model, role, force },
   });
+
+// --- Decision model setup ---
+// A backend's decision API is saved and assigned with one PATCH /admin/config
+// (see lib/backend-setup.js); these routes check it.
+
+/** Models a saved backend's local decision server lists: `{ok, models, listed, reason?}`. */
+export const probeBackendDecisionModels = (key) =>
+  request("POST", `/admin/inference/backends/${encodeURIComponent(key)}/decision/probe`);
+
+/**
+ * Models a decision server not saved yet lists, for the setup forms:
+ * `{url, auth?, apiKey?, protocol?, preset?, backendKey?}` → the same shape as
+ * above. `backendKey` sends that saved backend's key when no key is typed. The
+ * gateway applies its cloud-inference policy, so an off-host URL is refused
+ * unless cloud inference is allowed.
+ */
+export const probeDecisionEndpoint = ({ url, auth, apiKey, protocol, preset, backendKey }) =>
+  request("POST", "/admin/inference/decision/probe", {
+    body: {
+      url,
+      ...(auth ? { auth } : {}),
+      ...(apiKey ? { apiKey } : {}),
+      ...(protocol ? { protocol } : {}),
+      ...(preset ? { preset } : {}),
+      ...(backendKey ? { backendKey } : {}),
+    },
+  });
+
+/** One test decision: `{ok, answeredBy?, latencyMs?, status?, reason?}`. */
+export const verifyBackendDecision = (key, model) =>
+  request("POST", `/admin/inference/backends/${encodeURIComponent(key)}/decision/verify`, { body: { model } });
+
+/** The same test decision, on TypeSafe. */
+export const verifyTypeSafeDecision = (model) =>
+  request("POST", "/admin/inference/typesafe/verify", { body: { model } });
 
 export const refreshCodexBackend = () =>
   request("POST", "/admin/inference/codex/refresh");

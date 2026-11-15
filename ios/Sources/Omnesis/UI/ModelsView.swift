@@ -10,28 +10,18 @@ private struct ModelsPollingLifetime: Hashable {
 }
 
 /// Model-management page — mirrors the portal's Settings → Models tab
-/// (`packages/gateway/portal/js/views/models.js`). One card per capability
-/// (Embedder, Agent, Privacy reviewer, Transcriber, OCR),
+/// (`packages/gateway/portal/js/views/models.js`). One card per capability,
 /// each showing the current assignment + a three-way state (enabled / needs
-/// attention / not configured) and a tap-through to assign or clear the model
-/// for that role.
-///
-/// The assign picker offers the models the gateway already knows about — its
-/// installed local GGUFs, Anthropic API entries, and any HTTP backend's
-/// role-matching models — and a local-model list that can install (start a
-/// gateway-side GGUF download), cancel an in-flight download, or uninstall a
-/// downloaded model. Adding new HTTP backends and entering provider credentials
-/// live on the Backends screen; this screen sets/clears assignments and manages
-/// the local-GGUF lifecycle over the catalog the gateway exposes.
+/// attention / not configured) and a tap-through to configure that role: the
+/// assign picker for ordinary roles (local GGUFs, Anthropic API entries, HTTP
+/// backends' models, the local-model install list), `DecisionModelSheet` for
+/// the Decision model. HTTP backends and provider credentials are added on the
+/// Backends screen.
 ///
 /// Source of truth is `GET /admin/models` (+ `GET /admin/system-info` for the
-/// fit badge); mutations ride `POST /admin/models/activate` (assignment),
-/// `PATCH /admin/config` (backend models + clear), and the local-model
-/// lifecycle routes (`/admin/models/install`, `/admin/models/cancel-download`,
-/// `DELETE /admin/models/:id`), exactly like the portal. While a download is in
-/// flight the overview is polled so the progress bar advances. Mutations follow
-/// the established refresh-after-mutation + last-action-wins notice-banner
-/// pattern, with a confirm affordance on uninstall.
+/// fit badge); mutations ride `POST /admin/models/activate`, `PATCH
+/// /admin/config` and the local-model lifecycle routes, like the portal, each
+/// followed by a refresh and the last-action-wins notice banner.
 @available(iOS 17.0, *)
 struct ModelsView: View {
     @Environment(AppStore.self) private var store
@@ -124,10 +114,11 @@ struct ModelsView: View {
                 onInstall: { id in try await install(id: id) },
                 onCancelDownload: { id in try await cancelDownload(id: id) },
                 onUninstall: { id in try await uninstall(id: id) },
-                onAddBackend: { name, url, apiKey, prefix in
-                    try await addBackend(name: name, url: url, apiKey: apiKey, apiPathPrefix: prefix)
+                onAddBackend: { backend in
+                    try await addBackend(backend)
                 },
                 onLoadRecent: { role in await loadRecent(role: role) },
+                onReload: { await load() },
                 initialPickerRole: initialPickerRole
             )
         }
@@ -235,10 +226,10 @@ struct ModelsView: View {
     /// Add (or replace) an HTTP backend from the model picker's add affordance,
     /// probe it so its model list populates, then reload the overview so the new
     /// backend appears in the picker grid. Mirrors `BackendsView.add`.
-    private func addBackend(name: String, url: String, apiKey: String?, apiPathPrefix: String?) async throws {
+    private func addBackend(_ backend: NewHttpBackend) async throws {
         guard let client = store.admin else { throw URLError(.cannotConnectToHost) }
-        try await client.addHttpBackend(key: name, url: url, apiKey: apiKey, apiPathPrefix: apiPathPrefix)
-        _ = try? await client.probeBackend(key: name)
+        try await client.addHttpBackend(backend)
+        _ = try? await client.probeBackend(key: backend.key)
         await load()
     }
 
@@ -309,10 +300,12 @@ struct ModelsContent: View {
     /// Uninstall a downloaded local model; returns banner text.
     var onUninstall: (String) async throws -> String = { _ in "" }
     /// Add an HTTP backend from the picker's add affordance; throws on failure.
-    var onAddBackend: (String, String, String?, String?) async throws -> Void = { _, _, _, _ in }
+    var onAddBackend: (NewHttpBackend) async throws -> Void = { _ in }
     /// "Recently used" entries for a capability. Never throws — a failure
     /// yields [], hiding the picker's section.
     var onLoadRecent: (String) async -> [RecentModelEntry] = { _ in [] }
+    /// Reload the overview after the Decision model sheet changed the config.
+    var onReload: () async -> Void = {}
     /// Optional deep link that opens one capability's picker on arrival.
     /// Unknown/withheld capabilities safely leave the list up.
     var initialPickerRole: String?
@@ -353,30 +346,36 @@ struct ModelsContent: View {
             .padding(.bottom, Theme.Spacing.lg)
         }
         .sheet(item: $pickerRole) { cap in
-            ModelPickerSheet(
-                cap: cap,
-                overview: overview,
-                system: system,
-                currentlyConfigured: ModelManagement.isConfigured(overview.inference.assignments[cap.role]),
-                busy: busy,
-                onPick: { option in runAssign(role: cap.role, option: option) },
-                onClear: { runClear(role: cap.role) },
-                onSaveBehavior: { assignment, values, expectedValues in
-                    try await onSaveBehavior(cap.role, assignment, values, expectedValues)
-                },
-                onInstall: { id in runLifecycle { try await onInstall(id) } },
-                onCancelDownload: { id in runLifecycle { try await onCancelDownload(id) } },
-                onUninstall: { id in runLifecycle { try await onUninstall(id) } },
-                onAddBackend: onAddBackend,
-                onLoadRecent: onLoadRecent
-            )
+            Group {
+                if cap.backendFamily == DecisionModelSetup.backendFamily {
+                    DecisionModelSheet(overview: overview, onChanged: onReload)
+                } else {
+                    ModelPickerSheet(
+                        cap: cap,
+                        overview: overview,
+                        system: system,
+                        currentlyConfigured: ModelManagement.isConfigured(overview.inference.assignments[cap.role]),
+                        busy: busy,
+                        onPick: { option in runAssign(role: cap.role, option: option) },
+                        onClear: { runClear(role: cap.role) },
+                        onSaveBehavior: { assignment, values, expectedValues in
+                            try await onSaveBehavior(cap.role, assignment, values, expectedValues)
+                        },
+                        onInstall: { id in runLifecycle { try await onInstall(id) } },
+                        onCancelDownload: { id in runLifecycle { try await onCancelDownload(id) } },
+                        onUninstall: { id in runLifecycle { try await onUninstall(id) } },
+                        onAddBackend: onAddBackend,
+                        onLoadRecent: onLoadRecent
+                    )
+                }
+            }
             .omnesisColorScheme()
         }
         .task {
             guard !appliedInitialPickerRole else { return }
             appliedInitialPickerRole = true
             guard let initialPickerRole else { return }
-            pickerRole = overview.capabilities.first { $0.role == initialPickerRole && $0.configurableOnDevice }
+            pickerRole = overview.capabilities.first { $0.role == initialPickerRole && DecisionModelSetup.isConfigurable($0, in: overview) }
         }
     }
 
@@ -432,7 +431,7 @@ struct ModelsContent: View {
                 ? .warn : ModelManagement.state(overview.inference.assignments[cap.role]),
             reason: overview.inference.assignments[cap.role]?.reason,
             behaviorSummary: ModelManagement.behaviorSummary(role: cap.role, overview: overview),
-            onTap: cap.configurableOnDevice ? { pickerRole = cap } : nil,
+            onTap: DecisionModelSetup.isConfigurable(cap, in: overview) ? { pickerRole = cap } : nil,
             disabled: busy
         )
     }
@@ -641,7 +640,7 @@ struct ModelPickerSheet: View {
     var onCancelDownload: (String) -> Void = { _ in }
     var onUninstall: (String) -> Void = { _ in }
     /// Add an HTTP backend from the picker's add affordance; throws on failure.
-    var onAddBackend: (String, String, String?, String?) async throws -> Void = { _, _, _, _ in }
+    var onAddBackend: (NewHttpBackend) async throws -> Void = { _ in }
     /// "Recently used" entries for this capability. Never throws — a failure
     /// (including an older gateway without the route) yields [], hiding the
     /// section while the backend grid below still works.
@@ -672,7 +671,7 @@ struct ModelPickerSheet: View {
         onInstall: @escaping (String) -> Void = { _ in },
         onCancelDownload: @escaping (String) -> Void = { _ in },
         onUninstall: @escaping (String) -> Void = { _ in },
-        onAddBackend: @escaping (String, String, String?, String?) async throws -> Void = { _, _, _, _ in },
+        onAddBackend: @escaping (NewHttpBackend) async throws -> Void = { _ in },
         onLoadRecent: @escaping (String) async -> [RecentModelEntry] = { _ in [] }
     ) {
         self.cap = cap
@@ -756,9 +755,9 @@ struct ModelPickerSheet: View {
                 Text("The model file is deleted from the gateway host. You can re-install it any time.")
             }
             .sheet(isPresented: $showAddSheet) {
-                AddBackendSheet(presets: overview.presets, onAdd: { name, url, apiKey, prefix in
+                AddBackendSheet(presets: overview.presets, onAdd: { backend in
                     showAddSheet = false
-                    Task { try? await onAddBackend(name, url, apiKey, prefix) }
+                    Task { try? await onAddBackend(backend) }
                 })
                 .omnesisColorScheme()
             }

@@ -567,6 +567,10 @@ test("an existing gateway with another owner is refused, and its own owner may c
 });
 
 test("requests are checked against their signature, lifetime, capacity and replay", () => {
+  // The lifetime checks sit one second either side of the limits, so the clock the
+  // requests are built from must be the clock `start` reads: a second boundary
+  // passing in between would move a request issued 31 seconds ahead back to 30.
+  vi.useFakeTimers({ toFake: ["Date"] });
   const f = fixture({ policy: "open" }, { maxPerOwner: 1 }),
     now = Math.floor(Date.now() / 1000);
   expect(() => f.signup.start({})).toThrow("Invalid");

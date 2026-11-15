@@ -144,11 +144,15 @@ describe("worth gate", () => {
     ]);
   }
 
-  function gate(decision: DecisionCapability | null): WorthGate {
+  function gate(
+    decision: DecisionCapability | null,
+    getThreshold: () => number = () => EMAIL_WORTH_THRESHOLD,
+  ): WorthGate {
     const writeGate = directWriteGate(db);
     return new WorthGate({
       db,
       getDecision: () => decision,
+      getThreshold,
       recordDecision: (record) => writeGate.recordCognitionDecision(record),
       recordSpend: async () => {},
       clock: () => now,
@@ -278,6 +282,25 @@ describe("worth gate", () => {
     expect(listDecisionsForRun(db, "run_att")[0]).toMatchObject({
       documentId: attachment,
       subjectDocumentId: parent,
+    });
+  });
+
+  test("cuts at the configured threshold, records it, and applies a change to a reused answer", async () => {
+    const docId = seed({ externalId: "flight-th", title: "Your flight is confirmed" });
+    const decision = scripted();
+    let threshold = 2.5;
+    const g = gate(decision, () => threshold);
+    const first = await g.evaluate(bootstrapRun(docId, "run_th1"));
+    expect(first).toMatchObject({ verdict: "pass", score: 2.7, threshold: 2.5 });
+    threshold = 2.8;
+    const second = await g.evaluate(bootstrapRun(docId, "run_th2"));
+    // The stored answer is reused, with no second call, and judged at the new cut.
+    expect(decision.calls).toHaveLength(1);
+    expect(second).toMatchObject({ verdict: "skip", score: 2.7, threshold: 2.8 });
+    expect(listDecisionsForRun(db, "run_th2")[0]).toMatchObject({
+      reusedFrom: first!.decisionId,
+      threshold: 2.8,
+      verdict: "skip",
     });
   });
 
@@ -532,6 +555,7 @@ describe("worth gate", () => {
           worthGate: new WorthGate({
             db,
             getDecision: () => decision,
+            getThreshold: () => EMAIL_WORTH_THRESHOLD,
             recordDecision: (record) => writeGate.recordCognitionDecision(record),
             recordSpend: async () => {},
             clock: () => now,

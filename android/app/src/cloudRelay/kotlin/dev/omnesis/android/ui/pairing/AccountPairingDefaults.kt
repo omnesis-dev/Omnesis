@@ -27,6 +27,9 @@ internal object AccountPairingDefaults {
                 )
             },
             applyPairing = { session.pairFromEnrollment(it) },
+            gatewayPasskey = { context ->
+                PasskeyCredentialToken.gatewaySigner(context, URI(BuildConfig.CLOUD_RELAY_URL).host) { GoogleCredentialToken.createManager(context) }
+            },
         )
     }
 }

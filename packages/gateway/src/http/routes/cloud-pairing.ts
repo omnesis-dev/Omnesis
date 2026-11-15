@@ -3,7 +3,11 @@
 
 import { cloudRelayEnabled } from "@omnesis/core";
 import { defaultScopesForDeviceKind } from "@omnesis/types";
-import { googlePairingRequestSchema } from "@omnesis/cloud-relay";
+import {
+  gatewayPasskeyOptionsSchema,
+  googlePairingRequestSchema,
+  passkeyApprovalSchema,
+} from "@omnesis/cloud-relay";
 import { z } from "zod";
 import { bodyLimit } from "hono/body-limit";
 import { CloudPairingRuntime } from "../services/CloudPairingRuntime.js";
@@ -16,6 +20,7 @@ import {
   cloudPairingIdentity,
   webGooglePairingConfiguration,
 } from "../services/CloudPairingConfiguration.js";
+import { declines, requireStepUp } from "../step-up.js";
 import { clientIp } from "./admin/internals.js";
 import type { RouteApp } from "./types.js";
 import type { WriteGate } from "../../write-gate.js";
@@ -37,6 +42,7 @@ export function mountCloudPairingRoutes(
   account?: ConstructorParameters<typeof CloudPairingRuntime>[0]["account"],
   onPending?: ConstructorParameters<typeof CloudPairingRuntime>[0]["onPending"],
   spkiFingerprint?: () => string | undefined,
+  revokedDeviceKey?: ConstructorParameters<typeof CloudPairingRuntime>[0]["revokedDeviceKey"],
 ): void {
   if (!cloudRelayEnabled()) return;
   const clientId = process.env.OMNESIS_CLOUD_RELAY_GOOGLE_CLIENT_ID;
@@ -48,6 +54,7 @@ export function mountCloudPairingRoutes(
     broker,
     account,
     onPending,
+    revokedDeviceKey,
     publicOrigin: publicOriginSource ?? (() => publicBaseUrl),
     webConfiguration: (origin) =>
       webGooglePairingConfiguration(
@@ -95,6 +102,10 @@ export function mountCloudPairingRoutes(
         ...(active.account && spkiFingerprint?.()
           ? { automaticEnrollment: true, gatewaySpkiFingerprint: spkiFingerprint() }
           : {}),
+        // Where a page on this gateway's own origin can sign in with a passkey, when it has one.
+        ...(active.account && active.pairing.gatewayPasskey()
+          ? { gatewayPasskey: active.pairing.gatewayPasskey() }
+          : {}),
         ...(active.managedClient
           ? {
               authorizationRelayOrigin: active.account
@@ -110,6 +121,12 @@ export function mountCloudPairingRoutes(
     surface: "/devices/google/poll",
     burst: { capacity: 120, windowMs: 60_000 },
     hourly: { capacity: 3600, windowMs: 3_600_000 },
+  });
+  // Approving with a passkey is public: the passkey is the credential. Ten tries a minute.
+  const approvalLimiter = new IpRateLimiter({
+    surface: "/devices/account/approval",
+    burst: { capacity: 10, windowMs: 60_000 },
+    hourly: { capacity: 120, windowMs: 3_600_000 },
   });
   const poll = z
     .object({ requestId: z.string().uuid(), secret: z.string().regex(/^[a-f0-9]{64}$/) })
@@ -239,6 +256,60 @@ export function mountCloudPairingRoutes(
       c.header("Cache-Control", "no-store");
       return c.json(await operate(({ pairing }) => pairing.issueChallenge()));
     });
+    if (base === "/devices/account") {
+      const requestId = z.object({ requestId: z.string().uuid() }).strict();
+      app.get(`${base}/approval/:requestId`, scope.public(), async (c) => {
+        if (approvalLimiter.consume(clientIp(c)))
+          return c.json({ error: "Too many approval attempts" }, 429);
+        c.header("Cache-Control", "no-store");
+        const id = requestId.safeParse({ requestId: c.req.param("requestId") });
+        if (!id.success)
+          throw new HttpError(404, "CLOUD_PAIRING_REFUSED", "Cloud pairing request refused");
+        return c.json(await operate(({ pairing }) => pairing.approvalView(id.data.requestId)));
+      });
+      app.post(
+        `${base}/approval/options`,
+        scope.public(),
+        boundedBody,
+        validateJson(requestId),
+        async (c) => {
+          if (approvalLimiter.consume(clientIp(c)))
+            return c.json({ error: "Too many approval attempts" }, 429);
+          c.header("Cache-Control", "no-store");
+          return c.json(
+            await operate(({ pairing }) => pairing.approvalCeremony(c.req.valid("json").requestId)),
+          );
+        },
+      );
+      app.post(
+        `${base}/approval`,
+        scope.public(),
+        boundedBody,
+        validateJson(passkeyApprovalSchema),
+        async (c) => {
+          if (approvalLimiter.consume(clientIp(c)))
+            return c.json({ error: "Too many approval attempts" }, 429);
+          c.header("Cache-Control", "no-store");
+          await operate(({ pairing }) => pairing.approveWithPasskey(c.req.valid("json")));
+          return c.json({ ok: true });
+        },
+      );
+    }
+    if (base === "/devices/account")
+      app.post(
+        `${base}/passkey/options`,
+        scope.public(),
+        boundedBody,
+        validateJson(gatewayPasskeyOptionsSchema),
+        async (c) => {
+          if (limiter.consume(clientIp(c)))
+            return c.json({ error: "Too many pairing requests" }, 429);
+          c.header("Cache-Control", "no-store");
+          return c.json(
+            await operate(({ pairing }) => pairing.passkeyCeremony(c.req.valid("json"))),
+          );
+        },
+      );
     app.post(`${base}/poll`, scope.public(), boundedBody, validateJson(poll), async (c) => {
       if (pollLimiter.consume(clientIp(c)))
         return c.json({ error: "Too many pairing requests" }, 429);
@@ -255,6 +326,8 @@ export function mountCloudPairingRoutes(
     "/admin/cloud-pairing/decision",
     scope.admin(),
     boundedBody,
+    // Approving a device (and trusting its sign-in) needs a step-up; declining never does.
+    requireStepUp(declines),
     validateJson(
       z
         .object({

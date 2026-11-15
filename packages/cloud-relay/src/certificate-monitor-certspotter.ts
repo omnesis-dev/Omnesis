@@ -49,7 +49,14 @@ function retryAfter(response: Response): number | undefined {
 
 /** Real SSLMate API v1: https://sslmate.com/help/reference/ct_search_api_v1 . No relay or user tokens. */
 export class CertSpotterProvider implements CertificateIssuanceProvider {
-  constructor(private readonly options: { apiKeyFile?: string; fetch?: typeof fetch } = {}) {}
+  constructor(
+    private readonly options: {
+      apiKeyFile?: string;
+      fetch?: typeof fetch;
+      /** Another service with the same API, such as a local mirror. Never set by the relay. */
+      baseUrl?: string;
+    } = {},
+  ) {}
   async page(
     hostname: string,
     after: string | undefined,
@@ -74,7 +81,7 @@ export class CertSpotterProvider implements CertificateIssuanceProvider {
           .parse(await readPrivateJson(this.options.apiKeyFile));
         headers.authorization = `Bearer ${credentials.apiKey}`;
       }
-      const url = new URL("https://api.certspotter.com/v1/issuances");
+      const url = new URL("v1/issuances", this.options.baseUrl ?? "https://api.certspotter.com/");
       url.searchParams.set("domain", hostname);
       url.searchParams.set("match_wildcards", "true");
       url.searchParams.set("expand", "cert_der");

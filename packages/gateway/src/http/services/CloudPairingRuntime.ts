@@ -42,6 +42,7 @@ export class CloudPairingRuntime {
       fingerprint(): string;
       createPairing: PairingCreator;
       onPending?: ConstructorParameters<typeof GooglePairingRequests>[0]["onPending"];
+      revokedDeviceKey?: ConstructorParameters<typeof GooglePairingRequests>[0]["revokedDeviceKey"];
     },
   ) {}
 
@@ -91,6 +92,7 @@ export class CloudPairingRuntime {
       gatewayFingerprint: this.options.fingerprint,
       createPairing: this.options.createPairing,
       onPending: this.options.onPending,
+      revokedDeviceKey: this.options.revokedDeviceKey,
     });
     const webConfiguration = account?.activated ? undefined : this.options.webConfiguration(origin);
     this.current = {

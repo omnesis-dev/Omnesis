@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import { gatewayPasskeySignInProofSchema } from "@omnesis/cloud-relay";
 import { z } from "zod";
 
 export const cloudRelayConfigureBody = z
@@ -16,6 +17,14 @@ export const cloudRelayEnableBody = z
   .strict();
 export const cloudRelayActionBody = z.object({}).strict();
 export const cloudRelayEnrollmentBody = z.object({ policy: z.enum(["automatic", "ask"]) }).strict();
+/** `revokeDevices=true` also revokes every device that joined with the sign-in. */
+export const cloudRelayRemoveSignInQuery = z
+  .object({ revokeDevices: z.enum(["true", "false"]).optional() })
+  .strict();
 export const cloudRelayConnectBody = z
   .object({ termsAccepted: z.literal(true), intent: z.enum(["create", "existing"]).optional() })
+  .strict();
+/** A passkey assertion made on this gateway's page to confirm the passkey as the owner's. */
+export const cloudRelayConfirmPasskeyBody = z
+  .object({ proof: gatewayPasskeySignInProofSchema })
   .strict();

@@ -234,6 +234,7 @@ export function createCloudRelay(options: CloudRelayOptions): {
               complete: (token, nonce, context, request) =>
                 accountServices.completeGoogle(token, nonce, context, request),
               failed: (context) => accountServices.googleFailure(context),
+              retry: (req) => accountServices.googleRetry(req),
             },
           },
           loginAdmission,

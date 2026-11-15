@@ -26,7 +26,7 @@
 
 import type { InferenceOverview } from "./backends.js";
 import type { CapabilityMetadata, CapabilityRole } from "./capabilities.js";
-import type { ProviderPreset } from "./provider-presets.js";
+import type { ProviderDecisionPreset, ProviderPreset } from "./provider-presets.js";
 import type { ModelDisplay } from "./provider-brands.js";
 import type { ModelControls, ModelSettingsByRole } from "./model-behavior.js";
 
@@ -149,6 +149,27 @@ export interface Manifest {
   models: ManifestEntry[];
 }
 
+/** A decision model a provider offers, as the setup forms list it. */
+export interface DecisionModelOption {
+  id: string;
+  /** Context window in tokens, when models.dev knows it. */
+  contextTokens?: number;
+  /** USD per million input tokens, when models.dev knows it (output is free). */
+  inputCostPerMillion?: number;
+  source: "preset" | "models.dev";
+}
+
+/**
+ * A provider preset as `/admin/models` serves it: its decision API, when it
+ * has one, carries the decision models to offer.
+ */
+export interface ProviderPresetView extends Omit<ProviderPreset, "decision"> {
+  decision?: ProviderDecisionPreset & {
+    /** The preset's own models merged with the models.dev decision catalog's. */
+    models: DecisionModelOption[];
+  };
+}
+
 /**
  * Snapshot the gateway publishes via `GET /admin/models`. Combines the
  * full catalog, the local manifest, and the inference overview so the
@@ -160,11 +181,19 @@ export interface ModelsOverview {
   inference: InferenceOverview;
   modelsDir: string;
   /**
-   * Well-known provider presets (id, name, default URL, known models).
-   * Served so the portal renders the add-backend form and model
-   * suggestions from one source of truth rather than a hardcoded copy.
+   * Well-known providers with an OpenAI-compatible API (id, name, default
+   * URL, and their decision API with its models when they have one). Served
+   * so every client renders the add-backend form and model suggestions from
+   * one source of truth rather than a hardcoded copy. Every entry has
+   * `defaultUrl`: released apps require it.
    */
-  presets: ProviderPreset[];
+  presets: ProviderPresetView[];
+  /**
+   * Providers that serve only decision models (no `defaultUrl`), TypeSafe
+   * among them. A client offering one list of providers merges these with
+   * `presets`. Absent on gateways that predate decision backends.
+   */
+  decisionProviders?: ProviderPresetView[];
   /**
    * Per-role display projection of the resolved assignments — provider
    * brand id + label + friendly model name for each capability role.
