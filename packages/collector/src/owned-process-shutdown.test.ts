@@ -109,3 +109,46 @@ test("an idle owner is still closed before normal process exit", async () => {
   expect(close).toHaveBeenCalledOnce();
   expect(f.exit).toHaveBeenCalledWith(0);
 });
+
+test("independent owners both close before either join finishes", async () => {
+  const f = fixture();
+  let firstDone!: () => void;
+  let secondDone!: () => void;
+  const first = new Promise<void>((done) => (firstDone = done));
+  const second = new Promise<void>((done) => (secondDone = done));
+  const closeFirst = vi.fn(() => first);
+  const closeSecond = vi.fn(() => second);
+  f.shutdown.attach({ cleanupFailure: () => undefined, close: closeFirst });
+  f.shutdown.attach({ cleanupFailure: () => undefined, close: closeSecond });
+  const result = f.shutdown.finish(0);
+  const verdict = expect(result).rejects.toBe(f.exited);
+  for (let turn = 0; turn < 6; turn++) await Promise.resolve();
+  expect(closeFirst).toHaveBeenCalledOnce();
+  expect(closeSecond).toHaveBeenCalledOnce();
+  expect(f.exit).not.toHaveBeenCalled();
+  firstDone();
+  for (let turn = 0; turn < 6; turn++) await Promise.resolve();
+  expect(f.exit).not.toHaveBeenCalled();
+  secondDone();
+  await verdict;
+});
+
+test("one owner's terminal uncertainty does not prevent an independent owner's cleanup", async () => {
+  const f = fixture();
+  const marker = Object.assign(new Error("invented unconfirmed first owner"), {
+    cleanupFailure: undefined,
+  });
+  const closeSecond = vi.fn(async () => {});
+  f.shutdown.attach({
+    cleanupFailure: () => marker,
+    close: async () => {
+      throw marker;
+    },
+  });
+  f.shutdown.attach({ cleanupFailure: () => undefined, close: closeSecond });
+  void f.shutdown.finish(1);
+  for (let turn = 0; turn < 12; turn++) await Promise.resolve();
+  expect(closeSecond).toHaveBeenCalledOnce();
+  expect(f.exit).not.toHaveBeenCalled();
+  expect(f.review).toHaveBeenCalledOnce();
+});
