@@ -444,7 +444,9 @@ export function withReadSnapshot<T>(db: Db, body: () => T): T {
   try {
     return body();
   } finally {
-    db.exec("COMMIT");
+    // An error can make SQLite roll back on its own; committing then would
+    // replace the original error.
+    if (db.inTransaction) db.exec("COMMIT");
   }
 }
 

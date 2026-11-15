@@ -117,6 +117,14 @@ function tokenizeOf(db: Db, table: string): string | null {
   return match ? match[1].replace(/''/g, "'") : null;
 }
 
+/** The `content=` table or view a full-text table indexes. */
+function contentOf(db: Db, table: string): string | null {
+  const ddl = db
+    .prepare<[string], { sql: string }>("SELECT sql FROM sqlite_master WHERE name = ?")
+    .get(table)?.sql;
+  return ddl?.match(/content\s*=\s*'([^']*)'/i)?.[1] ?? null;
+}
+
 function readRow(db: Db): StateRow | undefined {
   return db.prepare<[], StateRow>("SELECT * FROM lexical_index_state WHERE id = 1").get();
 }
@@ -207,25 +215,70 @@ function createFtsTable(db: Db, table: string, rules: LexicalVersion): void {
 const CHANGED =
   "old.content IS NOT new.content OR old.title IS NOT new.title OR old.rowid != new.rowid";
 
-/** Triggers keeping the active index in step with `chunks`. */
-function createActiveTriggers(db: Db, rules: LexicalVersion): void {
+const ACTIVE_TRIGGERS = ["chunks_ai", "chunks_ad", "chunks_au"] as const;
+
+/** The triggers keeping the active index in step with `chunks`, by name. */
+function activeTriggerSql(rules: LexicalVersion): Record<(typeof ACTIVE_TRIGGERS)[number], string> {
   const v = (row: string, col: string) => analyzed(rules, `${row}.${col}`);
-  db.exec(`
-    CREATE TRIGGER chunks_ai AFTER INSERT ON chunks BEGIN
+  return {
+    chunks_ai: `CREATE TRIGGER chunks_ai AFTER INSERT ON chunks BEGIN
       INSERT INTO ${ACTIVE_FTS}(rowid, content, title)
       VALUES (new.rowid, ${v("new", "content")}, ${v("new", "title")});
-    END;
-    CREATE TRIGGER chunks_ad AFTER DELETE ON chunks BEGIN
+    END`,
+    chunks_ad: `CREATE TRIGGER chunks_ad AFTER DELETE ON chunks BEGIN
       INSERT INTO ${ACTIVE_FTS}(${ACTIVE_FTS}, rowid, content, title)
       VALUES ('delete', old.rowid, ${v("old", "content")}, ${v("old", "title")});
-    END;
-    CREATE TRIGGER chunks_au AFTER UPDATE ON chunks WHEN ${CHANGED} BEGIN
+    END`,
+    chunks_au: `CREATE TRIGGER chunks_au AFTER UPDATE ON chunks WHEN ${CHANGED} BEGIN
       INSERT INTO ${ACTIVE_FTS}(${ACTIVE_FTS}, rowid, content, title)
       VALUES ('delete', old.rowid, ${v("old", "content")}, ${v("old", "title")});
       INSERT INTO ${ACTIVE_FTS}(rowid, content, title)
       VALUES (new.rowid, ${v("new", "content")}, ${v("new", "title")});
-    END;
-  `);
+    END`,
+  };
+}
+
+function createActiveTriggers(db: Db, rules: LexicalVersion): void {
+  for (const sql of Object.values(activeTriggerSql(rules))) db.exec(sql);
+}
+
+/**
+ * The rules this build can keep the active index current with, or null when
+ * it cannot: the index records a version this build does not know (a newer
+ * release built it) and indexes rewritten text, so neither new chunks nor
+ * deletions could be analyzed the way the index was. An unknown version that
+ * indexes `chunks` directly needs no rewrite, so its tokenizer is enough.
+ */
+function maintainableActiveRules(db: Db, version: number): LexicalVersion | null {
+  const known = lexicalVersion(version);
+  if (known) return known;
+  return contentOf(db, ACTIVE_FTS) === "chunks" ? rulesFor(db, version, ACTIVE_FTS) : null;
+}
+
+/**
+ * Make the active index's triggers the ones this build would create: the
+ * current shape for rules it can maintain, none for an index it cannot. An
+ * index without triggers stays as it was, intact but missing later changes,
+ * until the rebuild to the target version replaces it. Changes nothing when
+ * the triggers already match.
+ */
+function syncActiveTriggers(db: Db, rules: LexicalVersion | null): void {
+  const existing = new Map(
+    db
+      .prepare<[], { name: string; sql: string }>(
+        `SELECT name, sql FROM sqlite_master WHERE type = 'trigger'
+         AND name IN (${ACTIVE_TRIGGERS.map((n) => `'${n}'`).join(", ")})`,
+      )
+      .all()
+      .map((r) => [r.name, r.sql]),
+  );
+  const wanted = rules ? activeTriggerSql(rules) : null;
+  const matches = ACTIVE_TRIGGERS.every((name) =>
+    wanted ? existing.get(name) === wanted[name] : !existing.has(name),
+  );
+  if (matches) return;
+  dropActiveTriggers(db);
+  if (rules) createActiveTriggers(db, rules);
 }
 
 function dropActiveTriggers(db: Db): void {
@@ -317,10 +370,12 @@ export function ensureLexicalIndex(db: Db, hadChunksFts: boolean): void {
     dropBuildIfOrphaned(db);
     if (hadChunksFts) {
       // An index from before versions: its tokenizer says which rules built it.
-      if (row.active_version == null) {
-        const rules = unversionedLexicalRules(tokenizeOf(db, ACTIVE_FTS) ?? "unicode61");
-        setActiveVersion(db, rules.version);
+      let version = row.active_version;
+      if (version == null) {
+        version = unversionedLexicalRules(tokenizeOf(db, ACTIVE_FTS) ?? "unicode61").version;
+        setActiveVersion(db, version);
       }
+      syncActiveTriggers(db, maintainableActiveRules(db, version));
     } else {
       // A new database, or a restored or seeded one whose chunks arrived
       // without their full-text index (it is derived data and never copied).
@@ -328,7 +383,11 @@ export function ensureLexicalIndex(db: Db, hadChunksFts: boolean): void {
       // chunks are indexed now, as one pass over a copy that is small or
       // already waiting on its first start.
       const target = targetLexicalVersion();
+      // Triggers first: renaming the build's table re-reads every trigger,
+      // and these name the missing index.
       dropActiveTriggers(db);
+      discardNextIndex(db);
+      clearBuild(db);
       createFtsTable(db, ACTIVE_FTS, target);
       createActiveTriggers(db, target);
       db.exec(`INSERT INTO ${ACTIVE_FTS}(${ACTIVE_FTS}) VALUES('rebuild')`);
@@ -345,6 +404,7 @@ export function ensureLexicalIndex(db: Db, hadChunksFts: boolean): void {
 
 export type LexicalStep =
   | "idle"
+  | "retired-batch"
   | "retired-dropped"
   | "stale-build-dropped"
   | "build-started"
@@ -360,9 +420,7 @@ export type LexicalStep =
  */
 export function lexicalRebuildStep(db: Db, opts: { batchSize: number }): LexicalStep {
   if (tableExists(db, RETIRED_FTS)) {
-    // One statement: SQLite frees an index's pages without reading its
-    // postings, so dropping a large one holds the write lock for a fraction of
-    // a second.
+    if (!emptyRetiredBatch(db, opts.batchSize)) return "retired-batch";
     db.exec(`DROP TABLE ${RETIRED_FTS}`);
     dropUnusedContentViews(db);
     return "retired-dropped";
@@ -370,17 +428,15 @@ export function lexicalRebuildStep(db: Db, opts: { batchSize: number }): Lexical
   const { active, build, target } = readLexicalIndexState(db);
   if (build && (build.version !== target.version || active?.version === target.version)) {
     db.transaction(() => {
-      dropNextTriggers(db);
-      db.exec(`DROP TABLE IF EXISTS ${NEXT_FTS}`);
+      discardNextIndex(db);
       clearBuild(db);
     })();
-    dropUnusedContentViews(db);
     return "stale-build-dropped";
   }
   if (!build) {
     if (active?.version === target.version) return "idle";
     db.transaction(() => {
-      db.exec(`DROP TABLE IF EXISTS ${NEXT_FTS}`);
+      discardNextIndex(db);
       const { hwm, n } = db
         .prepare<[], { hwm: number | null; n: number }>(
           "SELECT max(rowid) AS hwm, count(*) AS n FROM chunks",
@@ -461,6 +517,54 @@ function dropBuildIfOrphaned(db: Db): void {
   clearBuild(db);
 }
 
+/**
+ * Stop maintaining the index being built and set it aside as the retired
+ * index, which {@link lexicalRebuildStep} empties and drops. Only when no
+ * retired index is waiting already, which the step order guarantees; otherwise
+ * it is dropped at once.
+ */
+function discardNextIndex(db: Db): void {
+  dropNextTriggers(db);
+  if (!tableExists(db, NEXT_FTS)) return;
+  if (tableExists(db, RETIRED_FTS)) db.exec(`DROP TABLE ${NEXT_FTS}`);
+  else db.exec(`ALTER TABLE ${NEXT_FTS} RENAME TO ${RETIRED_FTS}`);
+}
+
+/** The retired index's storage tables and each one's key. */
+const RETIRED_STORAGE: ReadonlyArray<readonly [table: string, key: string]> = [
+  [`${RETIRED_FTS}_data`, "rowid"],
+  [`${RETIRED_FTS}_idx`, "segid, term"],
+  [`${RETIRED_FTS}_docsize`, "id"],
+];
+
+/**
+ * Delete up to `batchSize` rows of the retired index's storage, in one short
+ * transaction, and say whether it is now empty. Dropping a full index in one
+ * statement reads and frees every page under the write lock (seconds for a
+ * large encrypted index); emptying it in batches keeps each hold as short as
+ * a backfill batch, and the final drop then has nothing left to free. Nothing
+ * reads or writes the retired index, so deleting its storage directly is
+ * safe; SQLite refuses it outside unsafe mode, which is on only for these
+ * deletes.
+ */
+function emptyRetiredBatch(db: Db, batchSize: number): boolean {
+  db.unsafeMode(true);
+  try {
+    return db.transaction((): boolean => {
+      for (const [table, key] of RETIRED_STORAGE) {
+        if (!tableExists(db, table)) continue;
+        const deleted = db
+          .prepare(`DELETE FROM ${table} WHERE (${key}) IN (SELECT ${key} FROM ${table} LIMIT ?)`)
+          .run(batchSize).changes;
+        if (deleted > 0) return false;
+      }
+      return true;
+    })();
+  } finally {
+    db.unsafeMode(false);
+  }
+}
+
 /** Drop content views no remaining index reads. */
 function dropUnusedContentViews(db: Db): void {
   const row = readRow(db);
@@ -483,7 +587,7 @@ function dropUnusedContentViews(db: Db): void {
 export interface LexicalIndexStatus {
   activeVersion: number | null;
   targetVersion: number;
-  /** True while the index a switch replaced still awaits deletion. */
+  /** True while a replaced or superseded index is still being deleted. */
   retiring: boolean;
   building: {
     version: number;

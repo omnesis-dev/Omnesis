@@ -46,6 +46,8 @@ export interface LexicalIndexServiceOptions {
    * false when that rebuild was superseded meanwhile.
    */
   switchVersion: (version: number) => Promise<boolean>;
+  /** The active keyword index's version, or null when there is none. */
+  activeVersion: () => number | null;
   /** Change-log entries written after `changeSeq`. */
   countChanges: (changeSeq: number) => number;
   /** Receives every freshly built index. */
@@ -63,8 +65,8 @@ export class LexicalIndexService {
   private building: LexicalIndexBuild | null = null;
   /** The version a switch is being prepared for, while one is. */
   private switching: number | null = null;
-  /** Consecutive failed builds of the in-memory index a switch waits for. */
-  private switchBuildFailures = 0;
+  /** Consecutive failed builds of the in-memory index a switch to `version` waits for. */
+  private switchBuildFailures = { version: -1, count: 0 };
   private timer: ReturnType<typeof setInterval> | null = null;
   private stopped = false;
   private failures = 0;
@@ -102,24 +104,30 @@ export class LexicalIndexService {
    */
   async prepareSwitch(version: number): Promise<void> {
     if (this.stopped || this.building || this.switching !== null) return;
+    // A report sent before the switch it asked for: nothing is waiting.
+    if (this.readActiveVersion() === version) return;
+    if (this.switchBuildFailures.version !== version) {
+      this.switchBuildFailures = { version, count: 0 };
+    }
+    const failures = this.switchBuildFailures;
     this.switching = version;
     let rebuildAfter = false;
     try {
       let built: { data: LexicalIndexData; ms: number } | null = null;
-      if (this.switchBuildFailures < SWITCH_BUILD_ATTEMPTS) {
+      if (failures.count < SWITCH_BUILD_ATTEMPTS) {
         log.info(`keyword index version ${version} is complete; building its in-memory index`);
         try {
           this.building = this.opts.build("building");
           built = await this.building.done;
-          this.switchBuildFailures = 0;
+          failures.count = 0;
         } catch (err) {
-          this.switchBuildFailures++;
+          failures.count++;
           log.warn(
             `in-memory index for keyword index version ${version} failed ` +
-              `(${this.switchBuildFailures}/${SWITCH_BUILD_ATTEMPTS}): ` +
+              `(${failures.count}/${SWITCH_BUILD_ATTEMPTS}): ` +
               `${err instanceof Error ? err.message : String(err)}`,
           );
-          if (this.switchBuildFailures < SWITCH_BUILD_ATTEMPTS) return;
+          if (failures.count < SWITCH_BUILD_ATTEMPTS) return;
           // Switch without it: the current in-memory index keeps answering by
           // its own version until a regular build of the new active index lands.
         } finally {
@@ -131,7 +139,7 @@ export class LexicalIndexService {
         log.info(`keyword index version ${version} was superseded before its switch`);
         return;
       }
-      this.switchBuildFailures = 0;
+      failures.count = 0;
       if (!built) {
         log.info(`keyword index switched to version ${version} without an in-memory index`);
         rebuildAfter = true;
@@ -163,6 +171,13 @@ export class LexicalIndexService {
       return;
     }
     const { data, builtAt } = this.current;
+    // A switch this service did not see through, such as one that finished
+    // after its request timed out: build the index search now uses.
+    const active = this.readActiveVersion();
+    if (active !== null && active !== data.version) {
+      void this.rebuild(`in-memory index is version ${data.version}; keyword index is ${active}`);
+      return;
+    }
     const age = Date.now() - builtAt;
     if (age >= this.maxAgeMs) {
       void this.rebuild(`index is ${Math.round(age / 60_000)} min old`);
@@ -179,6 +194,17 @@ export class LexicalIndexService {
     }
     if (changes >= Math.max(1, data.docCount * this.changeFraction)) {
       void this.rebuild(`${changes} chunk changes since the last build`);
+    }
+  }
+
+  private readActiveVersion(): number | null {
+    try {
+      return this.opts.activeVersion();
+    } catch (err) {
+      log.warn(
+        `could not read the keyword index version: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      return null;
     }
   }
 

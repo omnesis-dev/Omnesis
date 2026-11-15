@@ -181,6 +181,7 @@ import { encryptSidecar, tryUnlink as tryUnlinkSidecar } from "./indexer/usearch
 import { prepareEncryptedGraphForBoot } from "./indexer/usearch-sidecar-boot.js";
 import { IndexerStatusReporter } from "./indexer/indexer-status.js";
 import { IndexerLifecycle } from "./indexer/indexer-lifecycle.js";
+import { activeLexicalRules } from "./indexer/lexical-index-store.js";
 import {
   Scheduler,
   WriterTaskRunner,
@@ -1225,6 +1226,7 @@ const lexicalIndexService =
           searchWorkerPool?.setLexicalIndex(data);
         },
         switchVersion: (version) => indexerLifecycle.switchLexicalIndex(version),
+        activeVersion: () => activeLexicalRules(searchIndexDb)?.version ?? null,
       })
     : undefined;
 if (!lexicalIndexService) log.info("in-memory BM25 index disabled by config");

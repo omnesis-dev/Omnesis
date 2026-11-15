@@ -1375,7 +1375,9 @@ async function runLexicalRebuildTick(): Promise<number> {
       const db = state!.indexDb;
       for (;;) {
         const step = lexicalRebuildStep(db, { batchSize });
-        if (step === "backfilled-batch") return Promise.resolve("working");
+        if (step === "backfilled-batch" || step === "retired-batch") {
+          return Promise.resolve("working");
+        }
         log("info", "indexer-worker", `keyword-index rebuild: ${step}`);
         if (step === "idle" || step === "backfill-complete") {
           const { build } = readLexicalIndexState(db);

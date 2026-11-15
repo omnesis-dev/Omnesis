@@ -1460,7 +1460,8 @@ describe("chunks_fts tokenizer migration", () => {
       expect(step).not.toBe("idle");
     }
     expect(switchLexicalIndex(migrated, targetLexicalVersion().version)).toBe(true);
-    expect(lexicalRebuildStep(migrated, { batchSize: 1 })).toBe("retired-dropped");
+    while ((step = lexicalRebuildStep(migrated, { batchSize: 1 })) === "retired-batch");
+    expect(step).toBe("retired-dropped");
     expect(lexicalRebuildStep(migrated, { batchSize: 1 })).toBe("idle");
 
     const ddl = migrated

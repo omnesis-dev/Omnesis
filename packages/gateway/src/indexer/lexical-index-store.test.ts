@@ -164,9 +164,14 @@ describe("rebuilding to a new version", () => {
     expect(readLexicalIndexState(db).build).toBeNull();
     expect(documentsMatching(db, "budget")).toEqual(["d1", "d4"]);
 
-    // The old index waits as `chunks_fts_retired` for its own step.
-    expect(lexicalRebuildStep(db, { batchSize: 2 })).toBe("retired-dropped");
+    // The old index waits as `chunks_fts_retired`, emptied a batch at a time,
+    // then dropped.
+    expect(lexicalRebuildStep(db, { batchSize: 2 })).toBe("retired-batch");
+    const emptying = runUntil(db, "retired-dropped");
+    expect(emptying.slice(0, -1).every((step) => step === "retired-batch")).toBe(true);
     expect(lexicalRebuildStep(db, { batchSize: 2 })).toBe("idle");
+    // SQLite again refuses direct writes to an index's storage.
+    expect(() => db.exec("DELETE FROM chunks_fts_data")).toThrow(/may not be modified/);
     const leftovers = db
       .prepare<[], { name: string }>(
         "SELECT name FROM sqlite_master WHERE name LIKE 'chunks_fts_retired%' OR name LIKE 'chunks_fts_next%'",
@@ -241,6 +246,9 @@ describe("rebuilding to a new version", () => {
     runUntil(db, "backfilled-batch");
     target(9002);
     expect(lexicalRebuildStep(db, { batchSize: 2 })).toBe("stale-build-dropped");
+    // The discarded build is emptied and dropped before the new one starts.
+    expect(lexicalIndexStatus(db).retiring).toBe(true);
+    runUntil(db, "retired-dropped");
     expect(lexicalRebuildStep(db, { batchSize: 2 })).toBe("build-started");
     expect(readLexicalIndexState(db).build).toMatchObject({ version: 9002, done: 0 });
     // The superseded build's switch is refused.
@@ -260,6 +268,7 @@ describe("rebuilding to a new version", () => {
     runUntil(db, "backfilled-batch");
     target(null);
     expect(lexicalRebuildStep(db, { batchSize: 2 })).toBe("stale-build-dropped");
+    runUntil(db, "retired-dropped");
     expect(lexicalRebuildStep(db, { batchSize: 2 })).toBe("idle");
     expect(readLexicalIndexState(db).build).toBeNull();
     // Chunk writes no longer touch the dropped build.
@@ -280,6 +289,66 @@ describe("rebuilding to a new version", () => {
     runUntil(db, "backfill-complete");
     expect(switchLexicalIndex(db, current())).toBe(true);
     expect(documentsMatching(db, "budget")).toEqual(["d1", "d4"]);
+  });
+
+  test("after a downgrade, an index this build cannot maintain stays as it was until it is replaced", () => {
+    const path = `/tmp/omnesis-lexical-store-${randomUUID()}.db`;
+    target(9001);
+    const newer = openDb(path);
+    seed(newer);
+    newer.close();
+    dbs.splice(dbs.indexOf(newer), 1);
+    // A release without version 9001, which rewrites text, opens the database.
+    delete process.env.OMNESIS_SYNTHETIC;
+    target(null);
+
+    const db = openDb(path);
+    expect(readLexicalIndexState(db).active?.version).toBe(9001);
+    const triggers = db
+      .prepare(
+        "SELECT name FROM sqlite_master WHERE name IN ('chunks_ai', 'chunks_ad', 'chunks_au')",
+      )
+      .all();
+    expect(triggers).toEqual([]);
+    // Chunk writes leave the index untouched rather than misindexing them.
+    const before = vocabulary(db);
+    upsertChunks(db, [chunk("d9", "budget notes for the spring")]);
+    db.prepare("DELETE FROM chunks WHERE document_id = ?").run("d1");
+    expect(vocabulary(db)).toEqual(before);
+
+    runUntil(db, "backfill-complete");
+    expect(switchLexicalIndex(db, current())).toBe(true);
+    runUntil(db, "retired-dropped");
+    db.exec("INSERT INTO chunks_fts(chunks_fts) VALUES('integrity-check')");
+    expect(documentsMatching(db, "budget")).toEqual(["d4", "d9"]);
+  });
+
+  test("an existing index gets the current trigger shape when it opens", () => {
+    const path = `/tmp/omnesis-lexical-store-${randomUUID()}.db`;
+    const first = openDb(path);
+    seed(first);
+    // The update trigger as older releases created it: it fires on any update.
+    first.exec(`
+      DROP TRIGGER chunks_au;
+      CREATE TRIGGER chunks_au AFTER UPDATE ON chunks BEGIN
+        INSERT INTO chunks_fts(chunks_fts, rowid, content, title)
+        VALUES ('delete', old.rowid, old.content, old.title);
+        INSERT INTO chunks_fts(rowid, content, title) VALUES (new.rowid, new.content, new.title);
+      END;
+    `);
+    first.close();
+    dbs.splice(dbs.indexOf(first), 1);
+
+    const reopened = openDb(path);
+    const sql = (
+      reopened.prepare("SELECT sql FROM sqlite_master WHERE name = 'chunks_au'").get() as {
+        sql: string;
+      }
+    ).sql;
+    expect(sql).toMatch(/AFTER UPDATE ON chunks WHEN /);
+    upsertChunks(reopened, [chunk("d1", "budget review moved to monday")]);
+    reopened.exec("INSERT INTO chunks_fts(chunks_fts) VALUES('integrity-check')");
+    expect(documentsMatching(reopened, "monday")).toEqual(["d1"]);
   });
 
   test("the switch refuses a build that has not finished copying", () => {
@@ -320,6 +389,32 @@ describe("a restored database", () => {
     upsertChunks(restored, [chunk("d9", "budget notes")]);
     expect(documentsMatching(restored, "budget")).toEqual(["d1", "d4", "d9"]);
     restored.exec("INSERT INTO chunks_fts(chunks_fts) VALUES('integrity-check')");
+  });
+});
+
+describe("a restored database with an unfinished build", () => {
+  test("sets the build aside and can start a new one", () => {
+    const path = `/tmp/omnesis-lexical-store-${randomUUID()}.db`;
+    const original = openDb(path);
+    seed(original);
+    target(9001);
+    runUntil(original, "backfilled-batch");
+    // Only the active index is missing; the build's table, triggers and state remain.
+    original.exec("DROP TABLE chunks_fts_vocab; DROP TABLE chunks_fts;");
+    original.close();
+    dbs.splice(dbs.indexOf(original), 1);
+    target(null);
+
+    const restored = openDb(path);
+    expect(readLexicalIndexState(restored).build).toBeNull();
+    upsertChunks(restored, [chunk("d9", "budget notes")]);
+    expect(documentsMatching(restored, "budget")).toEqual(["d1", "d4", "d9"]);
+    runUntil(restored, "retired-dropped");
+    target(9001);
+    expect(lexicalRebuildStep(restored, { batchSize: 2 })).toBe("build-started");
+    runUntil(restored, "backfill-complete");
+    expect(switchLexicalIndex(restored, 9001)).toBe(true);
+    expect(documentsMatching(restored, "budget")).toEqual(["d1", "d4", "d9"]);
   });
 });
 
