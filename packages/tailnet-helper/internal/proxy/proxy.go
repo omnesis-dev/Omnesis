@@ -45,7 +45,7 @@ func WithClient(ctx context.Context, client string) context.Context {
 
 // New returns a proxy that dials the gateway at socketPath.
 func New(socketPath string, resolver Resolver, logf func(string, ...any)) *Proxy {
-    return NewEndpoint(Endpoint{Path: socketPath}, resolver, logf)
+	return NewEndpoint(Endpoint{Path: socketPath}, resolver, logf)
 }
 
 // NewEndpoint forwards over the protected local transport described by endpoint.
@@ -61,19 +61,23 @@ func NewEndpoint(endpoint Endpoint, resolver Resolver, logf func(string, ...any)
 		// standard forwarding headers are dropped by Rewrite and not re-added.
 		Rewrite: func(pr *httputil.ProxyRequest) {
 			scheme := "http"
-            if endpoint.CertificateSHA256 != "" { scheme = "https" }
-            pr.SetURL(&url.URL{Scheme: scheme, Host: "gateway"})
-            pr.Out.Header.Del(TransportHeader)
-            if endpoint.Token != "" { pr.Out.Header.Set(TransportHeader, endpoint.Token) }
+			if endpoint.CertificateSHA256 != "" {
+				scheme = "https"
+			}
+			pr.SetURL(&url.URL{Scheme: scheme, Host: "gateway"})
+			pr.Out.Header.Del(TransportHeader)
+			if endpoint.Token != "" {
+				pr.Out.Header.Set(TransportHeader, endpoint.Token)
+			}
 			pr.Out.Host = pr.In.Host
 		},
 		Transport: &http.Transport{
 			DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
 				return endpoint.dial(ctx, false)
 			},
-            DialTLSContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
-                return endpoint.dial(ctx, true)
-            },
+			DialTLSContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+				return endpoint.dial(ctx, true)
+			},
 			MaxIdleConns:          64,
 			IdleConnTimeout:       90 * time.Second,
 			ResponseHeaderTimeout: 0, // streaming answers may take long to start

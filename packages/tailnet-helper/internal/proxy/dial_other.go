@@ -6,10 +6,10 @@
 package proxy
 
 import (
-    "context"
-    "net"
+	"context"
+	"net"
 )
 
 func dialLocal(ctx context.Context, path string) (net.Conn, error) {
-    return (&net.Dialer{}).DialContext(ctx, "unix", path)
+	return (&net.Dialer{}).DialContext(ctx, "unix", path)
 }

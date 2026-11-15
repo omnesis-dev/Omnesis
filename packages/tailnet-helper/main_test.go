@@ -77,10 +77,14 @@ func TestEmitterWritesOneJSONValuePerLine(t *testing.T) {
 }
 
 func TestEnvironmentIsolationIncludesCaseInsensitiveWindowsNames(t *testing.T) {
-    t.Setenv("TS_AUTHKEY", "invented-ambient-key")
-    t.Setenv("ts_client_secret", "invented-ambient-secret")
-    t.Setenv("OMNESIS_INVENTED_TEST_VARIABLE", "keep")
-    isolateFromEnvironment()
-    if os.Getenv("TS_AUTHKEY") != "" || os.Getenv("ts_client_secret") != "" { t.Fatal("ambient sign-in credentials survived isolation") }
-    if os.Getenv("OMNESIS_INVENTED_TEST_VARIABLE") != "keep" { t.Fatal("unrelated environment changed") }
+	t.Setenv("TS_AUTHKEY", "invented-ambient-key")
+	t.Setenv("ts_client_secret", "invented-ambient-secret")
+	t.Setenv("OMNESIS_INVENTED_TEST_VARIABLE", "keep")
+	isolateFromEnvironment()
+	if os.Getenv("TS_AUTHKEY") != "" || os.Getenv("ts_client_secret") != "" {
+		t.Fatal("ambient sign-in credentials survived isolation")
+	}
+	if os.Getenv("OMNESIS_INVENTED_TEST_VARIABLE") != "keep" {
+		t.Fatal("unrelated environment changed")
+	}
 }

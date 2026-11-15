@@ -4,14 +4,16 @@
 package proxy
 
 import (
-    "context"
-    "net"
-    "strings"
+	"context"
+	"net"
+	"strings"
 
-    "github.com/tailscale/go-winio"
+	"github.com/tailscale/go-winio"
 )
 
 func dialLocal(ctx context.Context, path string) (net.Conn, error) {
-    if strings.HasPrefix(path, `\\.\pipe\`) { return winio.DialPipeContext(ctx, path) }
-    return (&net.Dialer{}).DialContext(ctx, "unix", path)
+	if strings.HasPrefix(path, `\\.\pipe\`) {
+		return winio.DialPipeContext(ctx, path)
+	}
+	return (&net.Dialer{}).DialContext(ctx, "unix", path)
 }

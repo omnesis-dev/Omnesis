@@ -303,6 +303,25 @@ function controlledOwner() {
 }
 
 describe("helper ownership", () => {
+  test("a stream cleanup marker remains terminal after independent closure", async () => {
+    const current = controlledOwner();
+    const spawner = vi.fn(() => current.owner);
+    const sup = new HelperSupervisor(spawner, {}, [1]);
+    await sup.start(launch);
+    const marker = Object.assign(new Error("invented stream ownership uncertainty"), {
+      cleanupFailure: undefined,
+    });
+    current.child.stdout.emit("error", marker);
+    expect(ownedProcessCleanupReceipt(sup.cleanupFailure())).toEqual({
+      failure: undefined,
+      pending: false,
+    });
+    current.closure.resolve();
+    await expect(sup.stop()).rejects.toBe(marker);
+    await expect(sup.start(launch)).rejects.toBe(marker);
+    expect(spawner).toHaveBeenCalledOnce();
+  });
+
   test("launch credentials override ambient spoofing without entering argv", async () => {
     const current = controlledOwner();
     const spawner = vi.fn(() => current.owner);

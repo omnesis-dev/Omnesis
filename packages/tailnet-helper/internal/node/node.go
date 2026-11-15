@@ -30,14 +30,14 @@ import (
 
 // Config is everything the node needs from the command line.
 type Config struct {
-	StateDir   string
-	Hostname   string
-	ControlURL string
-	SocketPath string
-    SocketCertificateSHA256 string
-    SocketToken string
-	Fallback   *certs.Fallback
-	Logf       func(string, ...any)
+	StateDir                string
+	Hostname                string
+	ControlURL              string
+	SocketPath              string
+	SocketCertificateSHA256 string
+	SocketToken             string
+	Fallback                *certs.Fallback
+	Logf                    func(string, ...any)
 	// Emit receives every distinct status.
 	Emit func(protocol.Status)
 }

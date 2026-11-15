@@ -94,7 +94,7 @@ function send(
   });
 }
 
-function upgrade(path: string, caller: unknown): Promise<string> {
+function upgrade(path: string, caller: unknown, opened?: () => void): Promise<string> {
   return new Promise((resolve, reject) => {
     const write = () => {
       sock.write(
@@ -106,7 +106,10 @@ function upgrade(path: string, caller: unknown): Promise<string> {
       : connect(server.path, write);
     sock.on("error", reject);
     let data = "";
-    sock.on("data", (d) => (data += d));
+    sock.on("data", (d) => {
+      data += d;
+      if (data.includes("\r\n")) opened?.();
+    });
     sock.on("close", () => resolve(data.split("\r\n")[0] ?? ""));
   });
 }
@@ -296,8 +299,10 @@ test("shutdown cuts an upgraded connection and waits for its actual close", asyn
       accepted.resolve();
     },
   });
-  const response = upgrade("/device/ws", ownerCaller);
+  const delivered = Promise.withResolvers<void>();
+  const response = upgrade("/device/ws", ownerCaller, () => delivered.resolve());
   await accepted.promise;
+  await delivered.promise;
   const closing = server.close(10);
   expect(server.close()).toBe(closing);
   await closing;

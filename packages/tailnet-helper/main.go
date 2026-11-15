@@ -28,7 +28,7 @@ import (
 	"github.com/omnesis-dev/omnesis/packages/tailnet-helper/internal/certs"
 	"github.com/omnesis-dev/omnesis/packages/tailnet-helper/internal/node"
 	"github.com/omnesis-dev/omnesis/packages/tailnet-helper/internal/protocol"
- "github.com/omnesis-dev/omnesis/packages/tailnet-helper/internal/proxy"
+	"github.com/omnesis-dev/omnesis/packages/tailnet-helper/internal/proxy"
 )
 
 // version is set at build time.
@@ -53,26 +53,26 @@ func main() {
 		logger.Println("omnesis-tailnet: -state-dir and -socket are required")
 		os.Exit(2)
 	}
-    token := os.Getenv("OMNESIS_TAILNET_IPC_TOKEN")
-    os.Unsetenv("OMNESIS_TAILNET_IPC_TOKEN")
-    endpoint := proxy.Endpoint{Path: *socket, CertificateSHA256: *socketPin, Token: token}
-    if err := endpoint.Validate(); err != nil {
-        logger.Printf("omnesis-tailnet: %v", err)
-        os.Exit(2)
-    }
+	token := os.Getenv("OMNESIS_TAILNET_IPC_TOKEN")
+	os.Unsetenv("OMNESIS_TAILNET_IPC_TOKEN")
+	endpoint := proxy.Endpoint{Path: *socket, CertificateSHA256: *socketPin, Token: token}
+	if err := endpoint.Validate(); err != nil {
+		logger.Printf("omnesis-tailnet: %v", err)
+		os.Exit(2)
+	}
 	isolateFromEnvironment()
 
 	out := newEmitter(os.Stdout)
 	n := node.New(node.Config{
-		StateDir:   *stateDir,
-		Hostname:   *hostname,
-		ControlURL: *controlURL,
-		SocketPath: *socket,
-        SocketCertificateSHA256: *socketPin,
-        SocketToken: token,
-		Fallback:   certs.NewFallback(*certFile, *keyFile),
-		Logf:       logger.Printf,
-		Emit:       func(st protocol.Status) { out.send(st) },
+		StateDir:                *stateDir,
+		Hostname:                *hostname,
+		ControlURL:              *controlURL,
+		SocketPath:              *socket,
+		SocketCertificateSHA256: *socketPin,
+		SocketToken:             token,
+		Fallback:                certs.NewFallback(*certFile, *keyFile),
+		Logf:                    logger.Printf,
+		Emit:                    func(st protocol.Status) { out.send(st) },
 	})
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)

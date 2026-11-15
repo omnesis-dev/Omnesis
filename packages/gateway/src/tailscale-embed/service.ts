@@ -294,6 +294,11 @@ export class TailscaleEmbedService {
   ): TailscaleAdminState["helper"] {
     if (!settings.enabled) return { state: "off" };
     if (this.unavailable) return { state: "unavailable", reason: this.unavailable };
+    if (this.terminalFailure)
+      return {
+        state: "unavailable",
+        reason: "Tailscale cleanup is unconfirmed; review is required",
+      };
     switch (snapshot.process) {
       case "running":
         return { state: "running" };

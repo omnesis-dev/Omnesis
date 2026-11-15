@@ -196,7 +196,6 @@ export async function startTailnetSocketServer(input: {
     (closing ??= new Promise<void>((resolve, reject) => {
       let serverClosed = false;
       let settled = false;
-      let timer: NodeJS.Timeout | undefined;
       checkClosed = () => {
         if (settled || !serverClosed || sockets.size) return;
         settled = true;
@@ -227,7 +226,7 @@ export async function startTailnetSocketServer(input: {
         checkClosed?.();
       });
       server.closeIdleConnections();
-      timer = setTimeout(() => {
+      const timer = setTimeout(() => {
         for (const socket of sockets) {
           try {
             socket.destroy();

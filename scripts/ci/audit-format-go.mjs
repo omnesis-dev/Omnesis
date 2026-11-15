@@ -12,6 +12,7 @@ const files = [
   "internal/proxy/endpoint_test.go",
   "internal/proxy/dial_other.go",
   "internal/proxy/dial_windows.go",
+  "test/proxy-fixture/main.go",
 ];
 const base = "packages/tailnet-helper/";
 const original = new Map(

@@ -252,8 +252,14 @@ export class HelperSupervisor {
     if (this.held) throw this.heldError;
     if (command.type === "configure") this.lastConfigure = command;
     const owner = this.owner;
-    if (owner && this.stoppingOwner !== owner && owner.child.stdin?.writable)
-      owner.child.stdin.write(encodeHelperCommand(command));
+    if (owner && this.stoppingOwner !== owner && owner.child.stdin?.writable) {
+      try {
+        owner.child.stdin.write(encodeHelperCommand(command));
+      } catch (error) {
+        this.observe(error);
+        throw error;
+      }
+    }
   }
 
   private observe(error: unknown): boolean {
@@ -304,6 +310,12 @@ export class HelperSupervisor {
     const readers: Array<ReturnType<typeof helperLines>> = [];
     const failed = (error: unknown) => {
       for (const reader of readers) reader.discard();
+      if (this.observe(error)) {
+        void this.stopChild().catch((failure: unknown) => {
+          this.observe(failure);
+        });
+        return;
+      }
       this.protocolFailure(owner, error instanceof Error ? error.message : "Invalid helper output");
     };
     if (child.stdout && child.stderr) {

@@ -85,6 +85,13 @@ jobs:
           node-version: "24"
           cache: npm
 
+      - name: Set up Go for the private transport boundary
+        if: ${{ matrix.lane == 'focused' || matrix.lane == 'unit' }}
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: packages/tailnet-helper/go.mod
+          cache-dependency-path: packages/tailnet-helper/go.sum
+
       - name: Privacy scan
         run: node scripts/pii-scan.mjs --all
 
@@ -141,6 +148,12 @@ jobs:
       - name: Focused Windows runtime tests
         if: ${{ matrix.lane == 'focused' }}
         run: node scripts/ci/windows-checks.mjs focused
+
+      - name: Verify real Go-to-Node private transport
+        if: ${{ !cancelled() && (matrix.lane == 'focused' || matrix.lane == 'unit') && steps.dependencies.outcome == 'success' }}
+        env:
+          GOMAXPROCS: "2"
+        run: node --import tsx scripts/ci/tailnet-transport.mjs
 
       - name: Full Windows unit and adapter tests
         # Preserve a failing typecheck verdict while collecting runtime failures.

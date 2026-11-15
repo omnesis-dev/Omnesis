@@ -135,11 +135,16 @@ jobs:
           packages/collector/src/source-ws-handlers.physical-ownership.test.ts
           packages/gateway/src/optional-service-cleanup.test.ts
           packages/core/src/owned-process-shutdown-fence.test.ts
+          scripts/ci/windows-checks.test.mjs
       - name: Baseline native Tailscale helper tests
         id: native
         continue-on-error: true
         working-directory: packages/tailnet-helper
         run: go test -p 2 ./...
+      - name: Validate actual Go-to-Node HTTP, streaming and WebSocket transport
+        id: bridge
+        continue-on-error: true
+        run: node --import tsx scripts/ci/tailnet-transport.mjs
       - name: Validate source and test TypeScript
         if: ${{ runner.os == 'Linux' }}
         run: node scripts/run-check.mjs typecheck && node scripts/run-check.mjs types-tests
@@ -149,6 +154,7 @@ jobs:
           NODE_OPTIONS: --max-old-space-size=6144
         run: >-
           node node_modules/eslint/bin/eslint.js
+          scripts/ci/tailnet-transport.mjs
           packages/core/src/owned-child-process.ts
           packages/collector/src/auth-process.ts
           packages/gateway/src/tailscale-embed/supervisor.ts
@@ -162,7 +168,8 @@ jobs:
         env:
           TS_OUTCOME: ${{ steps.typescript.outcome }}
           GO_OUTCOME: ${{ steps.native.outcome }}
-        run: node -e "if (process.env.TS_OUTCOME !== 'success' || process.env.GO_OUTCOME !== 'success') process.exit(1)"
+          BRIDGE_OUTCOME: ${{ steps.bridge.outcome }}
+        run: node -e "if (process.env.TS_OUTCOME !== 'success' || process.env.GO_OUTCOME !== 'success' || process.env.BRIDGE_OUTCOME !== 'success') process.exit(1)"
   source-ownership:
     if: ${{ inputs.scope == 'source-ownership' }}
     strategy:
