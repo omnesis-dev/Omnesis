@@ -83,11 +83,18 @@ test("service outages back off with a bound and recovery resets the normal inter
 test("manual checks coalesce; stop aborts pending work and a late completion cannot reschedule", async () => {
   const f = fixture();
   let release!: (value: CertificateMonitorStatus) => void;
-  f.monitor.check.mockReturnValueOnce(new Promise((resolve) => (release = resolve)));
+  let entered!: () => void;
+  const started = new Promise<void>((resolve) => (entered = resolve));
+  const gate = new Promise<CertificateMonitorStatus>((resolve) => (release = resolve));
+  f.monitor.check.mockImplementationOnce(() => {
+    entered();
+    return gate;
+  });
   const poller = startCertificateMonitorPoller({ monitor: f.monitor, intervalMs: 60000 })!,
     first = poller.check(),
     second = poller.check();
   expect(first).toBe(second);
+  await started;
   const stop = poller.stop();
   expect(f.monitor.check.mock.calls[0][0]!.aborted).toBe(true);
   release(f.monitor.status());

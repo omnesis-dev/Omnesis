@@ -1121,9 +1121,18 @@ test("optional certificate observer starts after configuration readiness and shu
   const stopped = f.stop.mock.calls.length,
     closed = f.close.mock.calls.length;
   observer.close.mockRejectedValueOnce(new CloudRelayManagementFailure(503, "relay-unreachable"));
-  await expect(manager.close()).rejects.toMatchObject({ code: "relay-unreachable" });
-  expect(f.stop).toHaveBeenCalledTimes(stopped + 1);
-  expect(f.close).toHaveBeenCalledTimes(closed + 1);
+  const closing = manager.close();
+  try {
+    expect(manager.close()).toBe(closing);
+    await expect(closing).rejects.toMatchObject({ code: "relay-unreachable" });
+    expect(f.stop).toHaveBeenCalledTimes(stopped + 1);
+    expect(f.close).toHaveBeenCalledTimes(closed + 1);
+  } finally {
+    // Only the joined ordinary refusal releases the fixture. Any unconfirmed native
+    // work must still prevent the suite teardown from deleting its files.
+    if (core.ownedProcessCleanupReceipt(manager.cleanupFailure()) === undefined)
+      manager = undefined;
+  }
 });
 
 test("opted-in default observer sends nothing before setup or local public-key readiness, then initializes independently without portal polling", async () => {

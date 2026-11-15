@@ -142,10 +142,15 @@ test("closing a suspended lazy factory cannot create a late orphan poller", asyn
   monitor.start();
   await vi.waitFor(() => expect(create).toHaveBeenCalledOnce());
   monitor.status();
-  await monitor.close();
+  let closed = false;
+  const closing = monitor.close();
+  void closing.then(() => {
+    closed = true;
+  });
+  await Promise.resolve();
+  expect(closed).toBe(false);
   release(watcher);
-  await Promise.resolve();
-  await Promise.resolve();
+  await closing;
   expect(watcher.check).not.toHaveBeenCalled();
   expect(monitor.status().state).toBe("disabled");
 });

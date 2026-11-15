@@ -76,7 +76,10 @@ export async function snapshotWindowsFixtureAcl(path: string) {
   const output = await run(
     path,
     String.raw`
-$acl=Get-Acl -LiteralPath $env:OMNESIS_DOCTOR_FIXTURE_PATH
+$path=$env:OMNESIS_DOCTOR_FIXTURE_PATH
+$sections=[Security.AccessControl.AccessControlSections]'Owner,Access'
+$directory=([IO.File]::GetAttributes($path) -band [IO.FileAttributes]::Directory) -ne 0
+$acl=if($directory){[IO.Directory]::GetAccessControl($path,$sections)}else{[IO.File]::GetAccessControl($path,$sections)}
 $sddl=$acl.GetSecurityDescriptorSddlForm([Security.AccessControl.AccessControlSections]'Owner,Access')
 $descriptor=[Security.AccessControl.RawSecurityDescriptor]::new($sddl)
 $protected=$acl.AreAccessRulesProtected

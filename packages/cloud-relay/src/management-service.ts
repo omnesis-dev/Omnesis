@@ -301,13 +301,15 @@ export class GatewayCloudRelayManagement implements CloudRelayManagement {
       this.tunnel?.cleanupFailure(),
     );
   }
-  private assertAdmitting(): void {
+  private assertAdmitting(cause?: unknown): void {
     const receipt = cleanupReceipt(
       this.controller?.cleanupFailure(),
       this.monitor.cleanupFailure(),
       this.tunnel?.cleanupFailure(),
     );
     if (receipt && !ownedProcessCleanupReceipt(receipt)?.pending) this.cleanup.observe(receipt);
+    if (this.closed && !this.cleanup.uncertain)
+      throw Object.assign(new CloudRelayManagementFailure(409, "configuration-invalid"), { cause });
     this.cleanup.assertAdmitting();
   }
   private run<T>(work: () => Promise<T>): Promise<T> {
@@ -316,7 +318,11 @@ export class GatewayCloudRelayManagement implements CloudRelayManagement {
     } catch (error) {
       return Promise.reject(error);
     }
-    return this.cleanup.run(work);
+    return this.cleanup.run(work).catch((error: unknown) => {
+      if (this.cleanup.observe(error)) throw error;
+      this.assertAdmitting(error);
+      throw error;
+    });
   }
   private closeMonitor(): Promise<void> {
     if (!this.monitorClose) {
@@ -520,6 +526,7 @@ export class GatewayCloudRelayManagement implements CloudRelayManagement {
             );
           } catch (error) {
             if (this.cleanup.observe(error)) throw error;
+            this.assertAdmitting(error);
             // A new gateway's id is only a random draw, so a taken hosted name costs a redraw.
             if (!(error instanceof HostedNameTaken) || this.settings || attempt === 5)
               throw new CloudRelayManagementFailure(503, "relay-unreachable");
@@ -1228,7 +1235,10 @@ export class GatewayCloudRelayManagement implements CloudRelayManagement {
         this.signup = undefined;
         this.revision++;
       };
-      let approved;
+      let approved: Extract<
+        Awaited<ReturnType<GatewaySignupClient["poll"]>>,
+        { status: "approved" }
+      >;
       try {
         for (;;) {
           signal.throwIfAborted();

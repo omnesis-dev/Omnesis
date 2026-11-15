@@ -48,6 +48,7 @@ vi.mock("./private-inputs.js", async (actual) => ({
 let directory: string;
 let manager: GatewayCloudRelayManagement | undefined;
 beforeEach(async () => {
+  vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "1");
   directory = await mkdtemp(join(tmpdir(), "relay-cleanup-lifecycle-"));
   storage.clear();
   sockets.created = 0;
@@ -56,6 +57,7 @@ afterEach(async () => {
   await manager?.close().catch(() => {});
   manager = undefined;
   vi.restoreAllMocks();
+  vi.unstubAllEnvs();
   await rm(directory, { recursive: true, force: true });
 });
 function fixture() {
@@ -187,7 +189,7 @@ test("closing during discovery joins the lookup without preparing keys or publis
   manager = await GatewayCloudRelayManagement.open(f.options);
   const before = [...storage.entries()];
   const configure = manager.configure({ termsAccepted: true });
-  const refused = expect(configure).rejects.toThrow("closed");
+  const refused = expect(configure).rejects.toMatchObject({ code: "configuration-invalid" });
   await started;
   const close = manager.close();
   expect(manager.cleanupFailure()).toMatchObject({ cleanupPending: true });
@@ -198,6 +200,63 @@ test("closing during discovery joins the lookup without preparing keys or publis
   expect([...storage.entries()]).toEqual(before);
   expect(f.register).not.toHaveBeenCalled();
 });
+
+test("closing before an accepted configure starts preserves the public domain failure", async () => {
+  const f = fixture();
+  const discover = vi.fn(f.options.discover!);
+  f.options.discover = discover;
+  manager = await GatewayCloudRelayManagement.open(f.options);
+  const configuring = manager.configure({ termsAccepted: true });
+  const refused = expect(configuring).rejects.toMatchObject({
+    code: "configuration-invalid",
+    status: 409,
+    cause: expect.any(Error),
+  });
+  const closing = manager.close();
+  await refused;
+  await closing;
+  expect(discover).not.toHaveBeenCalled();
+  expect(f.register).not.toHaveBeenCalled();
+  expect(storage.size).toBe(0);
+});
+
+test.each([false, true])(
+  "a late explicit preparation failure dominates closed admission (%s)",
+  async (nested) => {
+    const f = fixture();
+    let entered!: () => void, reject!: (error: unknown) => void;
+    const started = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const gate = new Promise<Awaited<ReturnType<NonNullable<CloudRelayManagerOptions["prepare"]>>>>(
+      (_resolve, failure) => {
+        reject = failure;
+      },
+    );
+    f.options.prepare = async () => {
+      entered();
+      return gate;
+    };
+    const marker = Object.assign(new Error("invented preparation was not joined"), {
+      cleanupFailure: undefined,
+    });
+    const failure = nested ? new Error("invented preparation wrapper", { cause: marker }) : marker;
+    manager = await GatewayCloudRelayManagement.open(f.options);
+    const before = [...storage.entries()];
+    const configuring = manager.configure({ termsAccepted: true });
+    const refused = expect(configuring).rejects.toBe(failure);
+    await started;
+    const closing = manager.close();
+    void closing.catch(() => {});
+    reject(failure);
+    await refused;
+    await expect(closing).rejects.toBe(failure);
+    await expect(manager.configure({ termsAccepted: true })).rejects.toBe(failure);
+    expect(manager.cleanupFailure()).toBe(failure);
+    expect([...storage.entries()]).toEqual(before);
+    expect(f.register).not.toHaveBeenCalled();
+  },
+);
 
 test("closing during controller initialization adopts and joins the late returned owner", async () => {
   const f = fixture();

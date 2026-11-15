@@ -412,6 +412,7 @@ test.each(["ENOTDIR", "EACCES", "EIO"])(
 test.each(["own", "cause"] as const)(
   "marked saved-session absence cannot fall through to another routing identity (%s)",
   async (placement) => {
+    vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "1");
     const failure = markedFileError("ENOENT", placement);
     vi.spyOn(GatewayTunnel.prototype, "start").mockImplementation(() => {});
     const google = vi.fn(() => Promise.resolve("invented-google-routing-session"));
