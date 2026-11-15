@@ -17,6 +17,7 @@ import {
   saveSetup,
   setupSteps,
   startFlow,
+  tailscaleKeptOff,
   // @ts-expect-error — portal modules are plain JS.
 } from "./model.js";
 
@@ -133,6 +134,20 @@ describe("one answer for new devices", () => {
     expect(policyChanges("code", both)).toEqual([{ target: "tailscale", policy: "off" }]);
     expect(policyChanges("ask", { relayLinked: true, tailscaleOn: false })).toEqual([{ target: "relay", policy: "ask" }]);
     expect(policyChanges("automatic", { relayLinked: false, tailscaleOn: false })).toEqual([]);
+    // Without an account, a device at pairing codes takes the answer like any other.
+    expect(policyChanges("ask", { relayLinked: false, tailscaleOn: true, tailscalePolicy: "off" })).toEqual([
+      { target: "tailscale", policy: "ask" },
+    ]);
+  });
+
+  test("with an account linked, a device at pairing codes is never opened by the shared answer", () => {
+    const linked = { relayLinked: true, tailscaleOn: true, tailscalePolicy: "off" };
+    expect(tailscaleKeptOff(linked)).toBe(true);
+    expect(tailscaleKeptOff({ relayLinked: false, tailscalePolicy: "off" })).toBe(false);
+    expect(tailscaleKeptOff({ relayLinked: true, tailscalePolicy: "ask" })).toBe(false);
+    expect(tailscaleKeptOff({ relayLinked: true })).toBe(false);
+    expect(policyChanges("ask", linked)).toEqual([{ target: "relay", policy: "ask" }]);
+    expect(policyChanges("automatic", linked)).toEqual([{ target: "relay", policy: "automatic" }]);
   });
 
   test("the question and a difference are said in words", () => {

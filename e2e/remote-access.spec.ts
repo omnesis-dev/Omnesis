@@ -122,6 +122,7 @@ async function remoteGateway(page: Page, flags: { cloudRelay: boolean; tailscale
       setupCompletedAt: null,
       first: "tailscale",
       features: flags,
+      trustProxy: false,
       publicBaseUrl: { serving: null, configured: null, restartNeeded: false },
     },
     relay: relayNone(),
@@ -356,6 +357,14 @@ test("my own setup: Tailscale on this computer refused with its command, and my 
   await expect(page.locator(".copy-block-code")).toHaveText(
     "tailscale serve --bg https+insecure://localhost:7600",
   );
+  // A public address waits until the gateway trusts the proxy, and says how.
+  await page.getByText("Also a public address for ChatGPT and Claude").click();
+  await expect(page.locator(".remote-access-todo .copy-block-code")).toHaveText([
+    "OMNESIS_TRUST_PROXY=true",
+    "omnesis service restart gateway",
+  ]);
+  await expect(button(page, "Set it up for me")).toBeDisabled();
+  await page.getByText("Also a public address for ChatGPT and Claude").click();
 
   await page.getByRole("radio", { name: /^My own domain or reverse proxy/ }).check();
   await page.locator("#remote-access-own-url").fill("https://omnesis.example.org");

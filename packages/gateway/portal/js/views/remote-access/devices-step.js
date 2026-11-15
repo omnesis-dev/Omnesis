@@ -11,6 +11,7 @@
 
 import { html } from "htm/preact";
 import { useState } from "preact/hooks";
+import { navigate } from "../../lib/router.js";
 import { updateTailscaleSettings } from "../../lib/tailscale-api.js";
 import { relayAccountSetup, relayPhase } from "../relay.js";
 import {
@@ -20,8 +21,12 @@ import {
   policyChanges,
   policyChoices,
   policyDifference,
+  tailscaleKeptOff,
 } from "./model.js";
 import { BackButton, StepFrame, nextLabel } from "./step-frame.js";
+
+/** The Tailscale device's own page, where its pairing-code-only policy is changed. */
+const TAILSCALE_PAGE = "/portal/settings/tailscale";
 
 /** Where the relay's and the Tailscale device's own policies stand: what this step offers and shows. */
 export function devicePolicies(relay, tailscale) {
@@ -30,14 +35,17 @@ export function devicePolicies(relay, tailscale) {
   const tailscaleOn = tailscale?.state?.enabled === true;
   const relayPolicy = enrollment?.policy;
   const tailscalePolicy = tailscaleOn ? tailscale.state.joinPolicy : undefined;
+  // A device kept at pairing codes has no part in the shared answer.
+  const keptOff = tailscaleKeptOff({ relayLinked, tailscalePolicy });
   return {
     relayLinked,
     tailscaleOn,
+    tailscaleKeptOff: keptOff,
     relayPolicy,
     tailscalePolicy,
     held: Boolean(relay?.status?.incidentHold),
     stepUpRequired: relay?.status?.stepUpRequired === true,
-    ...currentPolicy({ relayPolicy, tailscalePolicy }),
+    ...currentPolicy({ relayPolicy, tailscalePolicy: keptOff ? undefined : tailscalePolicy }),
   };
 }
 
@@ -70,7 +78,7 @@ export function DevicesStep({ flow, steps, headingRef, error, onStep, onNext, on
     flow=${flow}
     steps=${steps}
     heading="When a new device asks to join, what should happen?"
-    blurb=${joinWays(policies)}
+    blurb=${joinWays({ relayLinked: policies.relayLinked, tailscaleOn: policies.tailscaleOn && !policies.tailscaleKeptOff })}
     headingRef=${headingRef}
     error=${error}
     onStep=${onStep}
@@ -107,6 +115,14 @@ export function DevicesStep({ flow, steps, headingRef, error, onStep, onNext, on
           </span>
         </label>`,
       )}
+      ${policies.tailscaleKeptOff &&
+      html`<p class="remote-access-muted">
+        The gateway's Tailscale device still takes only pairing codes.${" "}
+        <a href=${TAILSCALE_PAGE} onClick=${(event) => {
+          event.preventDefault();
+          navigate(TAILSCALE_PAGE);
+        }}>Change that on its page</a>.
+      </p>`}
       ${relay?.error && html`<p class="remote-access-problem" role="alert">${relay.error}</p>`}
       ${tailscale?.error && html`<p class="remote-access-problem" role="alert">${tailscale.error.message}</p>`}
     </fieldset>`}

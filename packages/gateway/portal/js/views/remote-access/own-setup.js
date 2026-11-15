@@ -54,18 +54,61 @@ function RestartNotice({ remote }) {
   </div>`;
 }
 
+/** The line the gateway's `.env` needs before it is published to the Internet. */
+export const TRUST_PROXY_LINE = "OMNESIS_TRUST_PROXY=true";
+
+/**
+ * Turning on `OMNESIS_TRUST_PROXY`: the line for the gateway's `.env` and the
+ * restart that reads it, each to copy. `children` says why it is needed here.
+ */
+function TrustProxySteps({ children }) {
+  return html`<div class="remote-access-todo">
+    <p>${children}</p>
+    <ol>
+      <li>
+        Add this line to the gateway's <code>.env</code> file (<code>~/.config/omnesis/.env</code> on a
+        standard install):
+        <${CopyBlock} text=${TRUST_PROXY_LINE} title="Copy line" />
+      </li>
+      <li>
+        Restart the gateway:
+        <${CopyBlock} text=${RESTART_COMMAND} title="Copy command" />
+      </li>
+    </ol>
+  </div>`;
+}
+
+/**
+ * Said for as long as Tailscale publishes the gateway to the Internet while
+ * `OMNESIS_TRUST_PROXY` is off: every Internet request then reaches the
+ * gateway from this computer, so the limits it keeps per client, such as on
+ * pairing-code sign-in, do not tell the clients apart.
+ */
+export function PublicWithoutTrustProxy() {
+  return html`<div class="remote-access-warning-box" role="alert">
+    <${TrustProxySteps}>
+      <strong>This gateway is public through Tailscale Funnel, but OMNESIS_TRUST_PROXY is off.</strong>${" "}
+      Every request from the Internet looks as if it came from this computer, so the gateway can't
+      limit sign-in attempts per client. Turn it on:
+    <//>
+  </div>`;
+}
+
 function HostTailscale({ remote, setRemote }) {
   const [host, setHost] = useState(null);
   const [error, setError] = useState("");
   const [working, setWorking] = useState("");
   const [wantPublic, setWantPublic] = useState(false);
-  // The last publish: `{ ok: false, reason, command }`, or `{ ok: true, url, public }`.
+  // The last publish: `{ ok: true, url }`, or `{ ok: false, reason, command }`.
   const [outcome, setOutcome] = useState(null);
+  // A check after the owner changed something reads the gateway's settings again too:
+  // a restart may have turned on OMNESIS_TRUST_PROXY.
   const read = async (why = "read") => {
     setWorking(why);
     setError("");
     try {
       setHost(await getHostTailscale());
+      if (why === "check") setRemote(await getRemoteAccess());
     } catch (cause) {
       setError(problem(cause, "Couldn't look for Tailscale on this computer. Try again."));
     } finally {
@@ -79,7 +122,7 @@ function HostTailscale({ remote, setRemote }) {
     setOutcome(null);
     try {
       const result = await publishHostTailscale(wantPublic);
-      setOutcome({ ...result, public: wantPublic });
+      setOutcome(result);
       if (result.ok && wantPublic) {
         const failed = await savePublicAddress(result.url, setRemote);
         if (failed) setError(failed);
@@ -118,7 +161,9 @@ function HostTailscale({ remote, setRemote }) {
       </div>`;
   const busy = Boolean(working);
   const configured = remote.publicBaseUrl?.configured ?? null;
-  const showTodo = host.publicGateway && (outcome?.public === true || remote.publicBaseUrl?.restartNeeded);
+  const trustProxy = remote.trustProxy === true;
+  // A public address waits for OMNESIS_TRUST_PROXY; the gateway refuses it until then.
+  const publicBlocked = wantPublic && !host.publicGateway && !trustProxy;
   return html`<p class="remote-access-muted">
       Found: this computer is on your Tailscale network as <code>${host.dnsName}</code>.
     </p>
@@ -136,9 +181,14 @@ function HostTailscale({ remote, setRemote }) {
       <input type="checkbox" checked=${wantPublic} disabled=${busy} onChange=${(event) => setWantPublic(event.currentTarget.checked)} />
       <span>Also a public address for ChatGPT and Claude (Tailscale Funnel)</span>
     </label>`}
+    ${publicBlocked &&
+    html`<${TrustProxySteps}>
+      A public address first needs the gateway to see each Internet client's own address. On this
+      computer:
+    <//>`}
     ${(!host.servesGateway || (wantPublic && !host.publicGateway)) &&
     html`<div class="remote-access-buttons">
-      <button type="button" class="btn-primary" disabled=${busy} onClick=${publish}>
+      <button type="button" class="btn-primary" disabled=${busy || publicBlocked} onClick=${publish}>
         ${working === "publish" ? "Setting it up…" : "Set it up for me"}
       </button>
       <button type="button" class="btn-secondary" disabled=${busy} onClick=${() => read("check")}>
@@ -157,21 +207,9 @@ function HostTailscale({ remote, setRemote }) {
         ${working === "save" ? "Saving…" : html`Use ${host.url} as this gateway's public address`}
       </button>
     </div>`}
-    ${showTodo &&
-    html`<div class="remote-access-todo">
-      <p>Two things are left to do on this computer:</p>
-      <ol>
-        <li>
-          Add <code>OMNESIS_TRUST_PROXY=true</code> to the gateway's <code>.env</code> file
-          (<code>~/.config/omnesis/.env</code> on a standard install), so its rate limits apply to each
-          Internet client rather than to Tailscale.
-        </li>
-        <li>Restart the gateway:</li>
-      </ol>
-      <${CopyBlock} text=${RESTART_COMMAND} title="Copy command" />
-    </div>`}
+    ${host.publicGateway && !trustProxy && html`<${PublicWithoutTrustProxy} />`}
     ${error && html`<p class="remote-access-problem" role="alert">${error}</p>`}
-    ${!showTodo && html`<${RestartNotice} remote=${remote} />`}`;
+    <${RestartNotice} remote=${remote} />`;
 }
 
 const STEP_NAMES = { resolves: "Name", certificate: "Certificate", answers: "This gateway" };

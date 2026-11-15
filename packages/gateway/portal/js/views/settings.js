@@ -88,13 +88,12 @@ export function SettingsView({
   //
   // Re-selecting the tab already on screen is a no-op UNLESS that tab has a
   // page open below it, in which case clicking it walks back up to the tab's
-  // own list rather than sitting inert. Remote access opens its detail pages
-  // (the Omnesis account, the Tailscale device), and three tabs open pages:
-  // Models labels
-  // both the capability grid and every capability's detail, Policies both the
-  // list and one policy's editor, and Access both the inventory and each of an
-  // access level's editor, a new level, an authorization review, and the
-  // connect dialog.
+  // own list rather than sitting inert. Four tabs open pages: Remote access
+  // labels its summary and its detail pages (the Omnesis account, the
+  // Tailscale device), Models both the capability grid and every capability's
+  // detail, Policies both the list and one policy's editor, and Access both the
+  // inventory and each of an access level's editor, a new level, an
+  // authorization review, and the connect dialog.
   const switchTab = (next) => {
     const pageOpen = Boolean(
       parent

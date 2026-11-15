@@ -92,8 +92,8 @@ export function startFlow(mode, steps, remote) {
 /**
  * What step 1 shows, from the relay's status: `loading`, `unavailable`, `none`
  * (no account yet), the connect phases `waiting`, `registering`, `linking` and
- * `failed`, `linked` (to an Omnesis account or, on older gateways, Google), or
- * `enrolled` (registered with the relay but linked to no account).
+ * `failed`, `linked` (the status reports an Omnesis account link or a Google
+ * link), or `enrolled` (registered with the relay but linked to no account).
  */
 export function accountState(status) {
   const phase = relayPhase(status);
@@ -127,6 +127,16 @@ export function policyChoices({ relayLinked }) {
 }
 
 /**
+ * Whether the Tailscale device keeps taking only pairing codes whatever the
+ * answer: it does while an account is linked and the device's policy is `off`,
+ * since the answers then offer no pairing-code choice, and opening joins from
+ * the Tailscale network is left to the device's own page.
+ */
+export function tailscaleKeptOff({ relayLinked, tailscalePolicy }) {
+  return Boolean(relayLinked) && tailscalePolicy === "off";
+}
+
+/**
  * The one answer the two policies amount to. `relayPolicy` is the account's
  * (`ask` | `automatic`, undefined while no account is linked) and
  * `tailscalePolicy` the device's (`ask` | `automatic` | `off`, undefined while
@@ -140,11 +150,15 @@ export function currentPolicy({ relayPolicy, tailscalePolicy }) {
   return { value: differ ? null : values[0], differ };
 }
 
-/** The changes one answer makes: the account's policy and the device's, where each applies. */
-export function policyChanges(choice, { relayLinked, tailscaleOn }) {
+/**
+ * The changes one answer makes: the account's policy and the device's, where
+ * each applies. A device kept at pairing codes (`tailscaleKeptOff`) is left as it is.
+ */
+export function policyChanges(choice, { relayLinked, tailscaleOn, tailscalePolicy }) {
   const changes = [];
   if (relayLinked && choice !== "code") changes.push({ target: "relay", policy: choice });
-  if (tailscaleOn) changes.push({ target: "tailscale", policy: choice === "code" ? "off" : choice });
+  if (tailscaleOn && !tailscaleKeptOff({ relayLinked, tailscalePolicy }))
+    changes.push({ target: "tailscale", policy: choice === "code" ? "off" : choice });
   return changes;
 }
 

@@ -19463,7 +19463,11 @@ summary.decision-card-head {
 .remote-access-command { display: grid; gap: 8px; min-width: 0; font-size: 13px; line-height: 1.55; }
 .remote-access-restart p,
 .remote-access-todo p { margin: 0; }
-.remote-access-todo ol { display: grid; gap: 4px; margin: 0; padding-left: 20px; }
+.remote-access-todo ol { display: grid; gap: 8px; margin: 0; padding-left: 20px; }
+.remote-access-todo :is(ol, li) { min-width: 0; }
+.remote-access-todo li > .copy-block { margin-top: 6px; max-width: 100%; }
+.remote-access-warning-box { min-width: 0; margin-top: 8px; padding: 12px 14px; border: 1px solid color-mix(in srgb, var(--warning) 55%, var(--border)); border-left-width: 3px; border-radius: 8px; background: color-mix(in srgb, var(--warning) 8%, transparent); color: var(--text-primary); }
+.remote-access-card .remote-access-warning-box p { color: var(--text-primary); }
 
 /* The summary once setup is done. */
 .remote-access-summary { display: grid; gap: 12px; }

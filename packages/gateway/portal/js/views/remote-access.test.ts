@@ -168,7 +168,7 @@ beforeEach(() => {
     relay: relayNone(),
     tailscale: tailscaleOff(),
     remote: {
-      setupCompletedAt: null, first: "tailscale", features: FLAGS.both,
+      setupCompletedAt: null, first: "tailscale", features: FLAGS.both, trustProxy: false,
       publicBaseUrl: { serving: null, configured: null, restartNeeded: false },
     },
     host: { state: "available", dnsName: "studio.example-net.ts.net", url: "https://studio.example-net.ts.net", servesGateway: false, publicGateway: false },
@@ -445,6 +445,28 @@ describe("both", () => {
     ]);
   });
 
+  test("devices: with an account linked, a Tailscale device kept at pairing codes stays there", async () => {
+    gateway.relay = relayLinked({ policy: "ask" });
+    gateway.tailscale = { ...tailscaleConnected(), joinPolicy: "off" };
+    storage.set("omnesis.remote-access.setup", JSON.stringify({ mode: "setup", step: "devices", self: false, own: "host", url: "" }));
+    await mount(FLAGS.both);
+    // The account's answer is the one shown; the device's stays out of it, and says where to change it.
+    expect(isChecked(host.querySelector('input[name="remote-access-policy"][value="ask"]'))).toBe(true);
+    expect(text()).not.toContain("Right now");
+    expect(text()).toContain("A new device can ask to join by signing in with your Omnesis account.");
+    expect(text()).toContain("The gateway's Tailscale device still takes only pairing codes.");
+    await act(async () => link("Change that on its page")!.click());
+    expect(router.navigate).toHaveBeenCalledWith("/portal/settings/tailscale");
+    for (const choice of ["automatic", "ask"]) {
+      await toggle(`input[name="remote-access-policy"][value="${choice}"]`, true);
+      expect(calls("relay").at(-1)).toEqual(["relay", "enrollment", { policy: choice }, "PUT"]);
+    }
+    expect(calls("tailscale")).toEqual([]);
+    expect(gateway.tailscale!.joinPolicy).toBe("off");
+    await click("Finish");
+    expect(text()).toContain(["Ask me first.", "The", "Tailscale device takes only pairing codes."].join(" "));
+  });
+
   test("devices: when the two differ nothing is preselected and the difference is said", async () => {
     gateway.relay = relayLinked({ policy: "automatic" });
     gateway.tailscale = tailscaleConnected("ask");
@@ -483,7 +505,7 @@ describe("both", () => {
     expect(isChecked(way("relay"))).toBe(true);
   });
 
-  test("Tailscale on this computer: refused with the command, then served publicly with what is left to do", async () => {
+  test("Tailscale on this computer: refused with the command, then public only once the gateway trusts the proxy", async () => {
     gateway.publish = { ok: false, reason: "This gateway is not allowed to change Tailscale on this computer.", command: "tailscale serve --bg https+insecure://localhost:7600" };
     storage.set("omnesis.remote-access.setup", JSON.stringify({ mode: "setup", step: "connection", self: true, own: "host", url: "" }));
     await mount(FLAGS.both);
@@ -492,14 +514,51 @@ describe("both", () => {
     expect(host.querySelector('[role="alert"]')?.textContent).toContain("not allowed to change Tailscale");
     expect(host.querySelector(".copy-block-code")?.textContent).toBe("tailscale serve --bg https+insecure://localhost:7600");
     gateway.publish = { ok: true, url: "https://studio.example-net.ts.net" };
+    // A public address first needs OMNESIS_TRUST_PROXY: the line and the restart come first, and
+    // the public publish waits for them.
     await toggle(".remote-access-check input", true);
+    expect([...host.querySelectorAll(".remote-access-todo .copy-block-code")].map((code) => code.textContent)).toEqual([
+      "OMNESIS_TRUST_PROXY=true",
+      "omnesis service restart gateway",
+    ]);
+    expect(button("Set it up for me")?.hasAttribute("disabled")).toBe(true);
+    // After the restart, a check reads the gateway's settings again and the publish is offered.
+    gateway.remote!.trustProxy = true;
+    await click("I have already done it, check it");
+    expect(host.querySelector(".remote-access-todo")).toBeNull();
     await click("Set it up for me");
     expect(calls("publish").at(-1)).toEqual(["publish", true]);
-    // Public: the address becomes the gateway's public address, and the computer still needs two things.
+    // Public: the address becomes the gateway's public address, which a restart starts using.
     expect(calls("config")).toEqual([["config", { gateway: { publicBaseUrl: "https://studio.example-net.ts.net" } }]]);
     expect(text()).toContain("Serving this gateway at https://studio.example-net.ts.net, on your Tailscale network and to the Internet.");
-    expect(text()).toContain("OMNESIS_TRUST_PROXY=true");
-    expect(host.querySelector(".remote-access-todo .copy-block-code")?.textContent).toBe("omnesis service restart gateway");
+    expect(text()).toContain("Saved https://studio.example-net.ts.net. Restart the gateway to start using it:");
+    expect(host.querySelector(".remote-access-warning-box")).toBeNull();
+  });
+
+  test("a public Funnel while the gateway doesn't trust the proxy is warned about on the step and the summary", async () => {
+    gateway.host = { state: "available", dnsName: "studio.example-net.ts.net", url: "https://studio.example-net.ts.net", servesGateway: true, publicGateway: true };
+    storage.set("omnesis.remote-access.setup", JSON.stringify({ mode: "setup", step: "connection", self: true, own: "host", url: "" }));
+    await mount(FLAGS.tailscale);
+    const warning = () => host.querySelector(".remote-access-warning-box");
+    expect(warning()?.getAttribute("role")).toBe("alert");
+    expect(warning()?.textContent).toContain(["This gateway is public through", "Tailscale", "Funnel, but OMNESIS_TRUST_PROXY is off."].join(" "));
+    expect([...warning()!.querySelectorAll(".copy-block-code")].map((code) => code.textContent)).toEqual([
+      "OMNESIS_TRUST_PROXY=true",
+      "omnesis service restart gateway",
+    ]);
+    // Adopting the existing Funnel as the public address keeps the warning: a restart alone isn't enough.
+    await click("Use https://studio.example-net.ts.net as this gateway's public address");
+    expect(warning()).not.toBeNull();
+    await click("Continue");
+    await click("Finish");
+    expect(heading()).toBe("Remote access is set up");
+    expect(host.querySelector(".remote-access-card .remote-access-warning-box")).not.toBeNull();
+    expect(text()).toContain("Tailscale on this computer (https://studio.example-net.ts.net)");
+    // Once the gateway trusts the proxy, the warning goes.
+    gateway.remote!.trustProxy = true;
+    await remount(FLAGS.tailscale);
+    expect(heading()).toBe("Remote access is set up");
+    expect(warning()).toBeNull();
   });
 
   test("Tailscale on this computer: a check re-reads, and an unavailable daemon gives the reason", async () => {

@@ -11,6 +11,7 @@ import { getHostTailscale } from "../../lib/remote-access-api.js";
 import { relayPhase, relayEstablished } from "../relay.js";
 import { tailscalePhase } from "../tailscale.js";
 import { devicePolicies } from "./devices-step.js";
+import { PublicWithoutTrustProxy } from "./own-setup.js";
 import { POLICY_SUMMARY, RESTART_COMMAND, accountState, listSentence, orderSentence } from "./model.js";
 
 /** The detail pages the summary links to. */
@@ -110,7 +111,7 @@ export function Summary({ remote, relay, tailscale, headingRef, onReview, onMana
     ? "Only with a pairing code from Settings, Devices."
     : policies.differ
       ? "Your account and Tailscale answer differently. Review settings to choose one answer."
-      : `${POLICY_SUMMARY[policies.value]}.`;
+      : `${POLICY_SUMMARY[policies.value]}.${policies.tailscaleKeptOff ? " The Tailscale device takes only pairing codes." : ""}`;
   return html`<div class="remote-access-summary">
     <div class="access-wizard-copy">
       <h3 ref=${headingRef} tabIndex="-1">Remote access is set up</h3>
@@ -130,6 +131,7 @@ export function Summary({ remote, relay, tailscale, headingRef, onReview, onMana
       <p>
         ${ways.length ? `${capitalized(listSentence(ways))}. ` : "Home network only. "}${orderSentence({ tailscaleOn, relayOn, first: remote.first })}
       </p>
+      ${host?.publicGateway && remote.trustProxy !== true && html`<${PublicWithoutTrustProxy} />`}
       ${remote.publicBaseUrl?.restartNeeded &&
       html`<p class="remote-access-warning">Restart the gateway to use its new address: <code>${RESTART_COMMAND}</code></p>`}
     <//>
