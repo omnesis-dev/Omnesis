@@ -305,6 +305,7 @@ test("a person deletes their Omnesis account from the account page, after a fres
 
     // ── An account with a passkey, Google and one gateway ───────────────────
     await page.goto(pending.authorizeUrl);
+    await page.getByRole("button", { name: "Continue", exact: true }).click();
     await page.getByRole("button", { name: "Create an account instead", exact: true }).click();
     await expectBrand(page);
     await page.getByRole("button", { name: "Create with a passkey", exact: true }).click();

@@ -82,7 +82,7 @@ internal interface AccountPairingAttempt : AutoCloseable {
     val host: String
     val approved: Boolean
     val joined: Boolean
-    /** The request went to a gateway whose certificate passed the public checks. */
+    /** The request went to a gateway this phone recognised without the relay: a key it already pins. */
     val verified: Boolean get() = false
     val expiresAtMillis: Long? get() = null
     val retryUntilMillis: Long

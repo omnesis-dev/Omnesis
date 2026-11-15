@@ -1435,6 +1435,43 @@ test("a trusted sign-in with a signed device key joins at once; the challenge is
   expect(await held.response.json()).toMatchObject({ status: "pending" });
 });
 
+// F6: a phone can't tell the owner's gateway from one a hacked relay listed, so it asks to be held.
+// The owner's real gateway must then hold even a sign-in that would join by itself, show the owner
+// the code the phone shows, and hand the phone its pairing code only once a person approved.
+test("F6: a phone that can't check the gateway asks to be held, and a trusted sign-in then waits for the owner with the same code", async () => {
+  const { server, spki } = enrollmentServer({ trusted: true });
+  const { body, response } = await signedRequest(server, spki, { requireApproval: true });
+  const held = (await response.json()) as { status: string; verificationCode: string };
+  expect(held).toMatchObject({ status: "pending" });
+  expect(held).not.toHaveProperty("pairingCode");
+  const listed = (await (
+    await server.request("/admin/cloud-pairing/requests", {
+      headers: { authorization: `Bearer ${admin}` },
+    })
+  ).json()) as { items: { requestId: string; verificationCode: string }[] };
+  expect(listed.items.find((item) => item.requestId === body.requestId)?.verificationCode).toBe(
+    held.verificationCode,
+  );
+  const poll = () =>
+    post(server, "/devices/account/poll", { requestId: body.requestId, secret: body.secret });
+  expect(await (await poll()).json()).toMatchObject({ status: "pending" });
+  expect(
+    (
+      await post(
+        server,
+        "/admin/cloud-pairing/decision",
+        { requestId: body.requestId, approve: true },
+        admin,
+      )
+    ).status,
+  ).toBe(200);
+  expect(await (await poll()).json()).toMatchObject({
+    status: "approved",
+    verificationCode: held.verificationCode,
+    pairingCode: expect.any(String),
+  });
+});
+
 test("an untrusted sign-in is held, listed as trustable, and approving with trustSignIn pins it", async () => {
   const { server, enrollment, spki } = enrollmentServer({ trusted: false });
   const { body, response } = await signedRequest(server, spki);

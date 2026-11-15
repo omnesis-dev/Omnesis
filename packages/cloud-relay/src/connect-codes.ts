@@ -9,7 +9,8 @@ export const CONNECT_PAGE_PATH = "/_relay/connect";
 const ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
 export interface ConnectLaunch {
   location: string;
-  cookie: string;
+  /** Absent when this browser already holds the operation. */
+  cookie?: string;
 }
 interface Entry {
   expiresAt: number;
@@ -21,7 +22,7 @@ const digest = (code: string) => createHash("sha256").update(code).digest("hex")
  * Short codes for machines that cannot open a browser. A code is 40 bits and lives five minutes,
  * so the attempt cap below leaves a guesser nowhere near a live code. A code stays usable until it
  * expires, which is when its operation does: the operation decides on every use whether it can still
- * be launched, and refuses once somebody has signed in or the operation is gone.
+ * be launched. The first browser to use it keeps the operation; any other is refused.
  */
 export class ConnectCodes {
   private readonly entries = new Map<string, Entry>();

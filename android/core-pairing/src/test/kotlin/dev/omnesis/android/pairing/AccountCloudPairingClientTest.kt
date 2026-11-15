@@ -44,6 +44,8 @@ class AccountCloudPairingClientTest {
         forge: ((url: String, honestCode: String) -> Pair<String, String>)? = null,
         /** The gateway's `/devices/account/config`; null for a gateway without the route. */
         val gatewayConfig: String? = json { putJsonObject("gatewayPasskey") { put("rpId", "relay.example.test"); put("origin", candidate.publicOrigin) } },
+        /** Gateway keys this install already trusts, as from an earlier pairing; none for a new phone. */
+        trustedKeys: Set<String> = emptySet(),
     ) {
         val challenge = CloudPairingChallenge.create("Fictional phone")
         val nonce = DeviceEnrollmentContract.enrollmentNonce(challenge.requestId, "android", "Fictional phone", challenge.secret, key.publicKey)
@@ -112,7 +114,7 @@ class AccountCloudPairingClientTest {
             beforeGateway?.invoke(url)
             originalPinned.request(url, raw, bearer)
         }
-        val client = AccountCloudPairingClient(origin, clientId, direct = control, createGateway = { assertEquals(root["fingerprint"]!!.jsonPrimitive.content, it); onGatewayCreated?.invoke(); pinned }, now = time, deviceKeys = { key }, publicCertificateCheck = publicCheck)
+        val client = AccountCloudPairingClient(origin, clientId, direct = control, createGateway = { assertEquals(root["fingerprint"]!!.jsonPrimitive.content, it); onGatewayCreated?.invoke(); pinned }, now = time, deviceKeys = { key }, publicCertificateCheck = publicCheck, trustedGatewayKeys = { trustedKeys })
         operator fun component1() = client
         operator fun component2() = challenge
         operator fun component3() = calls
@@ -334,7 +336,7 @@ class AccountCloudPairingClientTest {
     private fun gatewayFails(status: Int, onPath: String): suspend (String) -> Unit = { url -> if (url.endsWith(onPath)) throw CloudPairingException(status) }
 
     @Test fun `Google enrollment signs the proposed key and sends the retained proof only to the gateway`(): Unit = runBlocking {
-        val fixture = Fixture()
+        val fixture = Fixture(trustedKeys = setOf(gatewayKey))
         val nonce = fixture.client.begin(fixture.challenge)
         assertEquals(DeviceEnrollmentContract.googleProofNonce(salt, fixture.nonce), nonce)
         val token = EphemeralGoogleSigner.token(nonce, clientId, clock)
@@ -352,7 +354,7 @@ class AccountCloudPairingClientTest {
         verifier.update(DeviceEnrollmentContract.enrollmentSignatureTranscript(fixture.challenge.requestId, "android", "Fictional phone", pending.spkiFingerprint, gatewayChallenge, key.publicKey))
         assertTrue(verifier.verify(java.util.Base64.getUrlDecoder().decode(deviceKey["signature"]!!.jsonPrimitive.content)))
         assertFalse("A held request keeps the comparison", pending.joined)
-        // Its certificate passed the public checks, so an approval later continues on its own.
+        // This phone already trusted the gateway's key, so an approval later continues on its own.
         assertTrue(pending.gatewayVerified)
         assertTrue(pending.expiresAtMillis > clock * 1000)
         assertFalse(fixture.calls.filter { it.startsWith(origin) }.any { it.endsWith("/devices/account/request") })
@@ -390,8 +392,8 @@ class AccountCloudPairingClientTest {
         }
     }
 
-    @Test fun `a gateway that joins the device skips the comparison and produces a pinned payload`(): Unit = runBlocking {
-        val fixture = Fixture(gatewayStatus = "approved")
+    @Test fun `a gateway whose key this phone already trusts joins the device, skipping the comparison`(): Unit = runBlocking {
+        val fixture = Fixture(gatewayStatus = "approved", trustedKeys = setOf(gatewayKey.uppercase()))
         val nonce = fixture.client.begin(fixture.challenge)
         val pending = fixture.client.select(fixture.client.google(EphemeralGoogleSigner.token(nonce, clientId, clock)).single().gatewayId)
         assertTrue(pending.joined); assertTrue(pending.approved)
@@ -401,7 +403,7 @@ class AccountCloudPairingClientTest {
 
     @Test fun `a failed public check asks for approval and still never trusts an instant approval`(): Unit = runBlocking {
         var checked: Pair<List<java.security.cert.X509Certificate>, String>? = null
-        val fixture = Fixture(gatewayStatus = "approved", publicCheck = { chain, host -> checked = chain to host; false })
+        val fixture = Fixture(gatewayStatus = "approved", publicCheck = { chain, host -> checked = chain to host; false }, trustedKeys = setOf(gatewayKey))
         val nonce = fixture.client.begin(fixture.challenge)
         val pending = fixture.client.select(fixture.client.google(EphemeralGoogleSigner.token(nonce, clientId, clock)).single().gatewayId)
         assertEquals(java.net.URI(candidate.publicOrigin).host, checked?.second)
@@ -413,10 +415,55 @@ class AccountCloudPairingClientTest {
     }
 
     @Test fun `the build switch skips the public check for a test gateway`(): Unit = runBlocking {
-        val fixture = Fixture(publicCheck = null)
+        val fixture = Fixture(publicCheck = null, trustedKeys = setOf(gatewayKey))
         val nonce = fixture.client.begin(fixture.challenge)
         fixture.client.select(fixture.client.google(EphemeralGoogleSigner.token(nonce, clientId, clock)).single().gatewayId)
         assertEquals(false, fixture.sent.last().body["requireApproval"]!!.jsonPrimitive.boolean)
+        fixture.client.close()
+    }
+
+    /** The SPKI fingerprint of the gateway the relay lists in these vectors. */
+    private val gatewayKey get() = candidate.candidateSpkiFingerprint(clock)
+
+    /**
+     * F6: a hacked relay lists a gateway of its own as "your gateway". Its certificate is publicly
+     * valid and logged for the name listed, its key is not one this phone knows, and it approves at
+     * once. A new phone must not join it by itself: it asks to be held and a person compares codes.
+     */
+    @Test fun `F6 a listed gateway with a valid public certificate cannot make a new phone join by itself`(): Unit = runBlocking {
+        for (passkey in listOf(false, true)) {
+            val fixture = Fixture(gatewayStatus = "approved", publicCheck = { _, _ -> true })
+            val nonce = fixture.client.begin(fixture.challenge)
+            val choices = if (passkey) fixture.client.passkey(fixture.client.passkeyOptions(), assertion)
+            else fixture.client.google(EphemeralGoogleSigner.token(nonce, clientId, clock))
+            val pending = fixture.client.select(choices.single().gatewayId)
+            // Held at the owner's real gateway, whose approval card then shows this same code.
+            assertEquals(true, fixture.sent.last().body["requireApproval"]!!.jsonPrimitive.boolean)
+            assertTrue(pending.approved)
+            assertFalse("A gateway the relay chose cannot join this phone by itself", pending.joined)
+            assertFalse(pending.gatewayVerified)
+            assertThrows(CloudPairingException::class.java) { pending.pairingPayload(clock * 1000) }
+            // Only a person who saw this code on a device they already use connects it.
+            pending.confirmComparison()
+            assertTrue(pending.pairingPayload(clock * 1000).contains("pinned-key-strict"))
+            fixture.client.close()
+        }
+    }
+
+    @Test fun `F6 an approval that a gateway this phone could not check reports later still waits for the person`(): Unit = runBlocking {
+        val fixture = Fixture(publicCheck = { _, _ -> true })
+        val pending = selecting(fixture)
+        assertFalse("Nothing but the relay named this gateway", pending.gatewayVerified)
+        fixture.client.poll(pending); assertTrue(pending.approved)
+        assertThrows(CloudPairingException::class.java) { pending.pairingPayload(clock * 1000) }
+        fixture.client.close()
+    }
+
+    @Test fun `F6 a trusted key of another gateway does not vouch for the one the relay listed`(): Unit = runBlocking {
+        val fixture = Fixture(gatewayStatus = "approved", trustedKeys = setOf("0".repeat(64)))
+        val pending = selecting(fixture)
+        assertEquals(true, fixture.sent.last().body["requireApproval"]!!.jsonPrimitive.boolean)
+        assertFalse(pending.joined); assertFalse(pending.gatewayVerified)
         fixture.client.close()
     }
 

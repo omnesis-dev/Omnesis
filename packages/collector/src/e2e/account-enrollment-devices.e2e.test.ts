@@ -53,6 +53,7 @@ import {
   browserSuiteAvailable,
   chooseAccountMenu,
   clickFirst,
+  pressContinue,
   copyPasskey,
   expectPasskeySignInRefused,
   expectText,
@@ -931,6 +932,7 @@ describe.skipIf(!browserReady)("devices join a gateway by signing in", () => {
     await clickFirst(page, ["Continue with Google"]);
     const launch = new URL((await launched).url());
     expect(launch.searchParams.get("method")).toBe("google");
+    await pressContinue(page);
     await page.waitForURL((url) => url.pathname === "/_relay/account");
     launch.searchParams.delete("method");
     await page.goto(launch.href);
