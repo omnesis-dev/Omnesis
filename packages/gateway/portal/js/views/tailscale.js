@@ -132,6 +132,13 @@ const CERTIFICATE_HTTPS_OFF =
 const CERTIFICATE_NAMES_OFF =
   "Device names (MagicDNS) are turned off in your Tailscale network, so it can't give the gateway a trusted certificate. The gateway uses its own certificate for now. Turn on MagicDNS and HTTPS certificates.";
 
+/** Something the gateway is waiting on outside this page, with a spinner so it reads as moving. */
+function Waiting({ hint = false, children }) {
+  return html`<p class=${`tailscale-waiting ${hint ? "tailscale-hint" : "tailscale-value"}`} role="status">
+    <span class="spinner tailscale-spinner" aria-hidden="true"></span>${children}
+  </p>`;
+}
+
 function Certificate({ certificate }) {
   if (!certificate) return null;
   if (certificate.source === "tailscale")
@@ -140,7 +147,7 @@ function Certificate({ certificate }) {
     </p>`;
   switch (certificate.reason) {
     case "pending":
-      return html`<p class="tailscale-value">Getting a trusted certificate…</p>`;
+      return html`<${Waiting}>Getting a trusted certificate…<//>`;
     case "https-disabled":
     case "magicdns-disabled":
       return html`<p class="tailscale-value">
@@ -167,6 +174,15 @@ function Connected({ state }) {
     html`<${Row} label="Address">
       <${CopyField} id="tailscale-address" value=${state.url} label="Gateway address on Tailscale" />
       <p class="tailscale-hint">Open it on any device signed in to your Tailscale network.</p>
+      <p class="tailscale-row-action">
+        <a href=${`${state.url.replace(/\/+$/u, "")}/portal/`} target="_blank" rel="noopener noreferrer"
+          >Open the portal at this address</a
+        >
+      </p>
+      <p class="tailscale-hint">
+        You sign in there as you do here: being on your Tailscale network lets a device reach the
+        gateway, not use it.
+      </p>
     <//>`}
     ${owner &&
     html`<${Row} label="Tailscale account">
@@ -207,7 +223,7 @@ function SignIn({ state, busy, run }) {
             <figcaption>Or scan with your phone</figcaption>
           </figure>
         </div>`
-      : html`<p class="tailscale-hint" role="status">Getting a sign-in link…</p>
+      : html`<${Waiting} hint>Getting a sign-in link…<//>
           <div class="tailscale-actions">${newLink}</div>`}`;
 }
 
@@ -328,7 +344,7 @@ function PublicState({ state }) {
         </p>
         <${Details} text=${pub.reason} />`;
     default:
-      return html`<p class="tailscale-hint" role="status">Opening…</p>`;
+      return html`<${Waiting} hint>Opening…<//>`;
   }
 }
 
@@ -639,7 +655,7 @@ export function TailscaleView() {
       </p>
     </header>
     <${ErrorLine} error=${error} />
-    ${!state && !error && html`<p class="tailscale-hint" role="status">Loading…</p>`}
+    ${!state && !error && html`<${Waiting} hint>Loading…<//>`}
     ${state &&
     html`<div class="tailscale-panel" aria-live="polite">
         <${StatusPanel} state=${state} phase=${phase} busy=${busy} run=${run} />

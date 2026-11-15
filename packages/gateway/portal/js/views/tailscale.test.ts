@@ -200,6 +200,14 @@ describe("TailscaleView", () => {
     expect(button("Copied")).toBeTruthy();
   });
 
+  test("connected: links to the portal at the tailnet address and says sign-in still applies", async () => {
+    await show(connected({ url: "https://omnesis.example-net.ts.net/" }));
+    const portal = link("Open the portal at this address");
+    expect(portal.getAttribute("href")).toBe("https://omnesis.example-net.ts.net/portal/");
+    expect(portal.getAttribute("target")).toBe("_blank");
+    expect(text()).toContain("You sign in there as you do here");
+  });
+
   test("a refused clipboard selects the address for a manual copy", async () => {
     vi.stubGlobal("navigator", { clipboard: { writeText: vi.fn().mockRejectedValue(new Error("denied")) } });
     await show(connected());
@@ -222,6 +230,10 @@ describe("TailscaleView", () => {
     render(null, host);
     await show(connected({ certificate: { source: "gateway", reason: "pending" } }));
     expect(text()).toContain("Getting a trusted certificate…");
+    // A wait on Tailscale shows a spinner, announced as a status.
+    const waiting = host.querySelector(".tailscale-waiting");
+    expect(waiting?.getAttribute("role")).toBe("status");
+    expect(waiting?.querySelector(".spinner")).toBeTruthy();
     render(null, host);
     await show(connected({ certificate: { source: "gateway", reason: "failed", error: "acme: rate limited" } }));
     expect(text()).toContain("Couldn't get a trusted certificate");

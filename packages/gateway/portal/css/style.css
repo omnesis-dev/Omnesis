@@ -19654,6 +19654,9 @@ summary.decision-card-head {
 .tailscale-strong { font-weight: 500; }
 .tailscale-muted { margin-left: 6px; color: var(--text-muted); font-size: 13px; }
 .tailscale-hint { font-size: 12px; line-height: 1.55; color: var(--text-muted); }
+.tailscale-waiting { display: flex; align-items: center; gap: 8px; }
+.tailscale-spinner { width: 12px; height: 12px; margin-right: 0; flex: none; border-width: 2px; }
+@media (prefers-reduced-motion: reduce) { .tailscale-spinner { animation-duration: 2.4s; } }
 .tailscale-notice { max-width: 66ch; padding: 2px 0 2px 12px; border-left: 2px solid var(--warning); font-size: 13px; line-height: 1.55; color: var(--text-primary); overflow-wrap: anywhere; }
 .tailscale-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 12px 16px; }
 .tailscale-panel .tailscale-actions, .tailscale-section .tailscale-actions { margin-top: 16px; }
