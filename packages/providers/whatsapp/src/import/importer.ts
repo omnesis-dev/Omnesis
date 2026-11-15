@@ -2,7 +2,12 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { Worker } from "node:worker_threads";
-import { createLogger, resolveWorkerEntry, createPrivateScratch } from "@omnesis/core";
+import {
+  createLogger,
+  resolveWorkerEntry,
+  createPrivateScratch,
+  ownedProcessCleanupReceipt,
+} from "@omnesis/core";
 import { type ImportCallbacks, type ImportSummary } from "@omnesis/source-sdk";
 import type { MessageStore } from "../message-store.js";
 import type { BackupKind, ImportWorkerData, WorkerMessage } from "./import-worker.js";
@@ -49,6 +54,8 @@ export async function importWhatsAppHistory(opts: ImportOptions): Promise<Import
   if (signal?.aborted) throw new Error("Import cancelled");
 
   const scratch = createPrivateScratch("wa-chatstorage");
+  let workerJoined = true;
+  let cleanupUncertain = false;
   try {
     const workerData: ImportWorkerData = {
       backupKind,
@@ -61,7 +68,10 @@ export async function importWhatsAppHistory(opts: ImportOptions): Promise<Import
     };
     const entry = resolveWorkerEntry("./import-worker.ts", import.meta.url, "./register-tsx.mjs");
     const worker = new Worker(entry.url, { execArgv: entry.execArgv, workerData });
-    const exited = new Promise<void>((resolve) => worker.once("exit", () => resolve()));
+    workerJoined = false;
+    const exited = new Promise<number>((resolve) => worker.once("exit", resolve));
+    let exitCode: number | undefined;
+    let workerError: Error | undefined;
 
     let imported = 0;
     let merged = 0;
@@ -71,13 +81,21 @@ export async function importWhatsAppHistory(opts: ImportOptions): Promise<Import
 
     try {
       await new Promise<void>((resolve, reject) => {
+        let accepting = true;
+        const fail = (error: unknown): void => {
+          if (!accepting) return;
+          accepting = false;
+          reject(error);
+        };
         onAbort = () => {
           Atomics.store(workerData.cancel, 0, 1);
-          reject(new Error("Import cancelled"));
+          fail(new Error("Import cancelled"));
         };
         if (signal) signal.addEventListener("abort", onAbort, { once: true });
+        if (signal?.aborted) onAbort();
 
         worker.on("message", (msg: WorkerMessage) => {
+          if (!accepting) return;
           try {
             if (msg.type === "progress") {
               if (msg.phase === "parse" && msg.total != null) total = msg.total;
@@ -88,34 +106,57 @@ export async function importWhatsAppHistory(opts: ImportOptions): Promise<Import
               merged += res.merged;
               onProgress?.({ phase: "merge", processed: imported + merged, total });
             } else if (msg.type === "done") {
+              accepting = false;
               skipped = msg.skipped;
               resolve();
             } else if (msg.type === "error") {
-              reject(new Error(msg.message));
+              fail(new Error(msg.message));
             } else if (msg.type === "cancelled") {
-              reject(new Error("Import cancelled"));
+              fail(new Error("Import cancelled"));
             }
           } catch (err) {
-            reject(err instanceof Error ? err : new Error(String(err)));
+            fail(err);
           }
         });
-        worker.on("error", reject);
+        worker.on("error", (error: Error) => {
+          workerError = error;
+          fail(error);
+        });
         worker.on("exit", (code) => {
-          if (code !== 0) reject(new Error(`import worker exited with code ${code}`));
+          fail(
+            new Error(
+              code === 0
+                ? "import worker exited without a completion result"
+                : `import worker exited with code ${code}`,
+            ),
+          );
         });
       });
     } finally {
       if (signal && onAbort) signal.removeEventListener("abort", onAbort);
-      await stopWorker(worker, workerData.cancel, exited);
+      try {
+        exitCode = await stopWorker(worker, workerData.cancel, exited);
+        workerJoined = true;
+      } catch (error) {
+        const receipt = ownedProcessCleanupReceipt(error);
+        throw Object.assign(new Error("Import worker cleanup is unconfirmed", { cause: error }), {
+          cleanupFailure: receipt ? receipt.failure : error,
+        });
+      }
     }
 
+    if (workerError) throw workerError;
+    if (exitCode !== 0) throw new Error(`import worker exited with code ${exitCode}`);
     log.info(
       `Backup import complete: ${imported} new, ${merged} already present, ${skipped} skipped`,
     );
     return { imported, merged, skipped };
+  } catch (error) {
+    cleanupUncertain = ownedProcessCleanupReceipt(error) !== undefined;
+    throw error;
   } finally {
     // Worker termination must complete before deleting its plaintext files.
-    scratch.cleanup();
+    if (workerJoined && !cleanupUncertain) scratch.cleanup();
   }
 }
 
@@ -131,16 +172,18 @@ const WORKER_STOP_MS = 10_000;
 async function stopWorker(
   worker: Worker,
   cancel: Int32Array,
-  exited: Promise<void>,
-): Promise<void> {
+  exited: Promise<number>,
+): Promise<number> {
   Atomics.store(cancel, 0, 1);
   let timer: NodeJS.Timeout | undefined;
   const stopped = await Promise.race([
-    exited.then(() => true),
-    new Promise<boolean>((resolve) => {
-      timer = setTimeout(() => resolve(false), WORKER_STOP_MS);
+    exited.then((code) => ({ code })),
+    new Promise<undefined>((resolve) => {
+      timer = setTimeout(() => resolve(undefined), WORKER_STOP_MS);
     }),
   ]);
   clearTimeout(timer);
-  if (!stopped) await worker.terminate();
+  if (stopped) return stopped.code;
+  await worker.terminate();
+  return exited;
 }

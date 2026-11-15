@@ -127,3 +127,27 @@ test("a terminal result retains scratch until the worker actually joins", async 
   expect(result.outcome).toEqual({ ok: true, summary: { imported: 0, merged: 0, skipped: 2 } });
   expect(existsSync(scratch)).toBe(false);
 });
+
+test("a terminal result cannot conceal an unsuccessful worker exit", async () => {
+  const { result, worker, scratch } = begin();
+  worker.emit("message", { type: "done", skipped: 0 });
+  worker.emit("exit", 3);
+  await result.done;
+  expect(result.outcome).toMatchObject({ ok: false, error: expect.any(Error) });
+  expect(existsSync(scratch)).toBe(false);
+});
+
+test.each([false, true])(
+  "a worker error after its terminal frame remains a failure (cleanup uncertain: %s)",
+  async (uncertain) => {
+    const { result, worker, scratch } = begin();
+    const failure = new Error("Invented late worker failure");
+    if (uncertain) Object.assign(failure, { cleanupFailure: undefined });
+    worker.emit("message", { type: "done", skipped: 0 });
+    worker.emit("error", failure);
+    worker.emit("exit", 0);
+    await result.done;
+    expect(result.outcome).toEqual({ ok: false, error: failure });
+    expect(existsSync(scratch)).toBe(uncertain);
+  },
+);

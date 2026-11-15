@@ -76,6 +76,20 @@ jobs:
           node scripts/run-check.mjs unit
           packages/providers/whatsapp/src/import/importer-ownership.test.ts
           packages/providers/whatsapp/src/import/importer.test.ts
+          packages/collector/src/source-ws-handlers.ownership.test.ts
+          packages/collector/src/owned-process-shutdown.test.ts
+          scripts/ci/windows-checks.test.mjs
+      - name: Validate source and test TypeScript
+        if: ${{ runner.os == 'Linux' }}
+        run: node scripts/run-check.mjs typecheck && node scripts/run-check.mjs types-tests
+      - name: Lint worker ownership
+        if: ${{ runner.os == 'Linux' }}
+        env:
+          NODE_OPTIONS: --max-old-space-size=6144
+        run: >-
+          node node_modules/eslint/bin/eslint.js
+          packages/providers/whatsapp/src/import/importer.ts
+          packages/providers/whatsapp/src/import/importer-ownership.test.ts
   tailnet-baseline:
     if: ${{ inputs.scope == 'tailnet-baseline' }}
     strategy:
