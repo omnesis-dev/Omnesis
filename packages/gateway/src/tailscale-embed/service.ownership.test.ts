@@ -33,7 +33,11 @@ async function boot() {
   const start = vi.spyOn(supervisor, "start").mockResolvedValue();
   const stop = vi.spyOn(supervisor, "stop").mockResolvedValue();
   const close = vi.fn(async () => {});
-  socket.open.mockResolvedValue({ path: "invented-private-endpoint", close });
+  const endpoint = { path: "invented-private-endpoint", close, closedConfirmed: false };
+  close.mockImplementation(async () => {
+    endpoint.closedConfirmed = true;
+  });
+  socket.open.mockResolvedValue(endpoint);
   const service = new TailscaleEmbedService({
     configDir: dir,
     supervisor,
@@ -44,7 +48,7 @@ async function boot() {
   });
   await service.attach({ listener: (_req, res) => res.end() });
   await service.setEnabled(true);
-  return { service, supervisor, start, stop, close };
+  return { service, supervisor, start, stop, close, endpoint };
 }
 
 test("gateway shutdown closes admission and waits for the independent helper join", async () => {
@@ -118,4 +122,28 @@ test("disabling closes the private listener despite failed helper cleanup", asyn
   await expect(service.setEnabled(false)).rejects.toBe(error);
   expect(close).toHaveBeenCalledOnce();
   expect(ownedProcessCleanupReceipt(service.cleanupFailure())?.pending).toBe(false);
+  expect(service.state().helper.state).toBe("unavailable");
+});
+
+test("a confirmed listener can be replaced after ordinary path cleanup fails", async () => {
+  const { service, endpoint, close } = await boot();
+  endpoint.closedConfirmed = true;
+  const error = new Error("invented joined path cleanup failure");
+  close.mockRejectedValue(error);
+  await expect(service.setEnabled(false)).rejects.toBe(error);
+  expect(service.cleanupFailure()).toBeUndefined();
+  await service.setEnabled(true);
+  expect(socket.open).toHaveBeenCalledTimes(2);
+});
+
+test("an unmarked listener rejection without closure proof still retains ownership", async () => {
+  const { service, stop, close } = await boot();
+  const error = new Error("invented listener failure before closure");
+  close.mockRejectedValue(error);
+  await expect(service.shutdown()).rejects.toHaveProperty("cleanupFailure", error);
+  expect(stop).toHaveBeenCalledOnce();
+  expect(ownedProcessCleanupReceipt(service.cleanupFailure())).toEqual({
+    failure: error,
+    pending: false,
+  });
 });

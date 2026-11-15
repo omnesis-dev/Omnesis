@@ -308,4 +308,5 @@ test("shutdown cuts an upgraded connection and waits for its actual close", asyn
   await closing;
   expect(await response).toContain("101");
   expect(server.server.listening).toBe(false);
+  expect(server.closedConfirmed).toBe(true);
 });

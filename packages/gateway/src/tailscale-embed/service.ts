@@ -292,13 +292,14 @@ export class TailscaleEmbedService {
     settings: TailscaleSettings,
     snapshot: SupervisorSnapshot,
   ): TailscaleAdminState["helper"] {
-    if (!settings.enabled) return { state: "off" };
-    if (this.unavailable) return { state: "unavailable", reason: this.unavailable };
-    if (this.terminalFailure)
+    const receipt = ownedProcessCleanupReceipt(this.cleanupFailure());
+    if (receipt && !receipt.pending)
       return {
         state: "unavailable",
         reason: "Tailscale cleanup is unconfirmed; review is required",
       };
+    if (!settings.enabled) return { state: "off" };
+    if (this.unavailable) return { state: "unavailable", reason: this.unavailable };
     switch (snapshot.process) {
       case "running":
         return { state: "running" };
@@ -419,7 +420,19 @@ export class TailscaleEmbedService {
 
   private async closeSocket(drainMs = 0): Promise<void> {
     const socket = this.socket;
-    await socket?.close(drainMs);
+    try {
+      await socket?.close(drainMs);
+    } catch (error) {
+      if (socket?.closedConfirmed) {
+        if (this.socket === socket) this.socket = null;
+        throw error;
+      }
+      if (ownedProcessCleanupReceipt(error)) throw error;
+      throw Object.assign(
+        new Error("Tailscale listener cleanup is unconfirmed", { cause: error }),
+        { cleanupFailure: error },
+      );
+    }
     if (this.socket === socket) this.socket = null;
   }
 

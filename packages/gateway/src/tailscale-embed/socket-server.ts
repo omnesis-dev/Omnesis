@@ -110,6 +110,8 @@ function admit(
 export interface TailnetSocketServer {
   server: Server;
   path: string;
+  /** Physical listener and connection closure, independent of path cleanup. */
+  readonly closedConfirmed: boolean;
   /** Internal launch credentials; never expose them through status or logs. */
   transport?: { certificateSha256: string; token: string };
   /** Stop accepting, give requests in flight up to `graceMs`, then cut the rest. */
@@ -192,6 +194,7 @@ export async function startTailnetSocketServer(input: {
   server.keepAliveTimeout = KEEP_ALIVE_MS;
   server.headersTimeout = KEEP_ALIVE_MS + 5_000;
   let closing: Promise<void> | undefined;
+  let closedConfirmed = false;
   const close = (graceMs = 0): Promise<void> =>
     (closing ??= new Promise<void>((resolve, reject) => {
       let serverClosed = false;
@@ -199,6 +202,7 @@ export async function startTailnetSocketServer(input: {
       checkClosed = () => {
         if (settled || !serverClosed || sockets.size) return;
         settled = true;
+        closedConfirmed = true;
         clearTimeout(timer);
         try {
           if (!windows && acquired) rmSync(input.path, { force: true });
@@ -269,5 +273,13 @@ export async function startTailnetSocketServer(input: {
     }
     throw error;
   }
-  return { server, path: input.path, ...(transport ? { transport } : {}), close };
+  return {
+    server,
+    path: input.path,
+    get closedConfirmed() {
+      return closedConfirmed;
+    },
+    ...(transport ? { transport } : {}),
+    close,
+  };
 }
