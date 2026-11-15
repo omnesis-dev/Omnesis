@@ -48,7 +48,7 @@ function resetSessionExpired() {
  * helper.
  */
 export async function apiFetch(input, options = {}) {
-  // `stepUpAnnounced`: the button already said it asks for Face ID, so no extra sheet before it.
+  // `stepUpAnnounced`: the button already said it asks for the passkey, so no extra sheet before it.
   const { stepUpAnnounced = false, ...init } = options;
   const method = String(init.method || "GET").toUpperCase();
   const unsafe = !["GET", "HEAD", "OPTIONS"].includes(method);
@@ -74,7 +74,7 @@ const STEP_UP_REFUSED =
 const SECURITY_LOCK =
   "Security lock is on. This change can only be made on the computer running Omnesis right now.";
 const STEP_UP_UNAVAILABLE_HERE =
-  "Face ID can't be used on this gateway right now. Make this change on the computer running Omnesis.";
+  "Passkeys can't be used on this gateway right now. Make this change on the computer running Omnesis.";
 const STEP_UP_CANCELLED = "Nothing changed.";
 
 /** A step-up error a page shows as it is (`stepUp`), whatever error codes it otherwise maps. */
@@ -89,7 +89,7 @@ function stepUpError(GatewayPasskeyError, message) {
  * once. While no step-up can start it answers 403 `STEP_UP_UNAVAILABLE`, which becomes an error
  * a person can act on. Any other answer goes back to the caller unchanged.
  *
- * Unless the button already said so (`announced`), a small sheet says why Face ID is coming
+ * Unless the button already said so (`announced`), a small sheet says why the passkey prompt is coming
  * before the browser asks. The sheet only explains: the step-up itself stays bound to this one
  * request, as the gateway issues it.
  */

@@ -2276,3 +2276,64 @@ test("CAA drift raises the incident hold, which the owner acknowledges on the ga
   expect((await manager.status()).incidentHold).toBeDefined();
   expect(held).toHaveBeenCalledTimes(2);
 });
+
+test("the portal's account refresh reads the account at once, one read at a time, and at most once per interval", async () => {
+  await connectedGateway({ accountRefreshMs: 60_000 });
+  let finish!: () => void;
+  const refresh = vi
+    .spyOn(GatewayAccountLink.prototype, "refresh")
+    .mockImplementation(() => new Promise<void>((resolve) => (finish = resolve)));
+  const before = (await manager!.status()).revision;
+  // Two tabs opening the page together share one read, and both wait for it.
+  const first = manager!.refreshAccount(),
+    second = manager!.refreshAccount();
+  await vi.waitFor(() => expect(refresh).toHaveBeenCalledOnce());
+  finish();
+  const [a, b] = await Promise.all([first, second]);
+  expect(a.revision).toBeGreaterThan(before);
+  expect(b.revision).toBe(a.revision);
+  expect(a.account?.linked).toBe(true);
+  // Inside the interval the page gets the status it has, and the relay is not asked again.
+  for (let i = 0; i < 5; i++) await manager!.refreshAccount();
+  expect(refresh).toHaveBeenCalledOnce();
+  // The read is the periodic check-in's own, bounded by a signal that ends when the gateway does.
+  const signal = refresh.mock.calls[0]![0]!;
+  expect(signal).toBeInstanceOf(AbortSignal);
+  expect(signal.aborted).toBe(false);
+});
+test("a refresh asked for inside the interval reads once more when it ends, and closing cancels that", async () => {
+  await connectedGateway({ accountRefreshMs: 500 });
+  const refresh = vi.spyOn(GatewayAccountLink.prototype, "refresh").mockResolvedValue();
+  await manager!.refreshAccount();
+  expect(refresh).toHaveBeenCalledOnce();
+  // Back from the relay's account page soon after opening this one: still noticed.
+  await manager!.refreshAccount();
+  await manager!.refreshAccount();
+  expect(refresh).toHaveBeenCalledOnce();
+  await vi.waitFor(() => expect(refresh).toHaveBeenCalledTimes(2), { timeout: 2000 });
+  // Only one read was queued, however many calls asked for it.
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  expect(refresh).toHaveBeenCalledTimes(2);
+  // A read queued when the gateway shuts down never runs.
+  await manager!.refreshAccount();
+  await manager!.close();
+  manager = undefined;
+  await new Promise((resolve) => setTimeout(resolve, 700));
+  expect(refresh).toHaveBeenCalledTimes(2);
+});
+test("an account refresh on a gateway with no linked account asks the relay nothing", async () => {
+  const refresh = vi.spyOn(GatewayAccountLink.prototype, "refresh");
+  const f = fixture();
+  manager = await GatewayCloudRelayManagement.open(f.options);
+  expect(await manager.refreshAccount()).toMatchObject({ enabled: false });
+  await manager.configure(input);
+  await manager.enable();
+  await idle();
+  refresh.mockClear();
+  expect((await manager.refreshAccount()).account?.linked).not.toBe(true);
+  expect(refresh).not.toHaveBeenCalled();
+  expect(f.options.fetch).not.toHaveBeenCalledWith(
+    expect.stringContaining("/_relay/v3/account-browser"),
+    expect.anything(),
+  );
+});

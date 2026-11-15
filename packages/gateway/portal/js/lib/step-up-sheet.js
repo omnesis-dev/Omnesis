@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-// The note shown before the browser's passkey prompt when a change needs Face ID and its button
+// The note shown before the browser's passkey prompt when a change needs the passkey and its button
 // didn't say so (a "step-up", see packages/gateway/src/http/step-up.ts). It only explains; the
 // gateway still binds the step-up to the one request, and only the passkey proves anything.
 // Shown only with the cloud relay on: no step-up is ever asked for without it.
@@ -9,7 +9,7 @@
 let open = null;
 
 /**
- * Asks the person to continue to Face ID. Resolves true on Continue, false on Cancel, Escape or
+ * Asks the person to continue to the passkey prompt. Resolves true on Continue, false on Cancel, Escape or
  * `signal` aborting. Without a page to show it on, it goes straight on to the browser prompt.
  * While one is open, a second ask shares its answer.
  */
@@ -32,7 +32,7 @@ export function confirmStepUp({ doc = globalThis.document, signal } = {}) {
   const text = doc.createElement("p");
   text.className = "relay-step-up-text";
   text.id = "relay-step-up-text";
-  text.textContent = "You're connected from outside your home, so this needs Face ID.";
+  text.textContent = "You're connected from outside your home, so this needs your passkey.";
   const actions = doc.createElement("div");
   actions.className = "relay-step-up-actions";
   const cancel = doc.createElement("button");

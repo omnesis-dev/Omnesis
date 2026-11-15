@@ -21,7 +21,7 @@ import {
   SetupReminder,
 } from "../components/gateway-passkey-confirm.js";
 import { onGatewayOrigin } from "../lib/gateway-passkey.js";
-import { useRelayManagement } from "../lib/use-relay-management.js";
+import { useAccountRefresh, useRelayManagement } from "../lib/use-relay-management.js";
 import {
   relayError,
   relayClock,
@@ -543,8 +543,8 @@ const POLICY_CHOICES = [
   },
 ];
 
-/** `faceId`: choosing automatic from this session asks for Face ID first, so it says so. */
-function PolicyChoices({ name, value, disabled, onChange, faceId = false }) {
+/** `stepUp`: choosing automatic from this session asks for the passkey first, so it says so. */
+function PolicyChoices({ name, value, disabled, onChange, stepUp = false }) {
   return html`<div class="relay-options" role="radiogroup" aria-label="When a new device signs in">
     ${POLICY_CHOICES.map(
       (choice) =>
@@ -563,10 +563,10 @@ function PolicyChoices({ name, value, disabled, onChange, faceId = false }) {
             <span class="relay-option-title">${choice.title}</span>
             <span class="relay-option-text">${choice.text}</span>
             ${
-              faceId &&
+              stepUp &&
               choice.value === "automatic" &&
               value !== "automatic" &&
-              html`<span class="relay-option-face-id">Turns on with Face ID.</span>`
+              html`<span class="relay-option-step-up">Turns on with your passkey.</span>`
             }
           </span>
         </label>`,
@@ -642,7 +642,7 @@ function NewDevices({ enrollment, reminder, onFinish, held, busy, run, stepUpReq
       name="relay-policy"
       value=${enrollment.policy}
       disabled=${disabled}
-      faceId=${stepUpRequired}
+      stepUp=${stepUpRequired}
       onChange=${(policy) =>
         policy !== enrollment.policy &&
         run(
@@ -693,6 +693,8 @@ const CONNECTING = ["waiting", "registering", "linking"];
 
 export function RelayView({ open = openOnGateway, location = globalThis.location } = {}) {
   const { status, error, busy, run, version } = useRelayManagement();
+  // A sign-in added on the account page shows here within seconds, not at the hourly check-in.
+  useAccountRefresh(() => void run());
   const [laterChoice, setLater] = useState(null);
   const later = laterChoice ?? setupLater(status?.gatewayId);
   const phase = status ? relayPhase(status) : "loading";

@@ -65,7 +65,7 @@ test("a decision can trust the sign-in, and a refusal never shows the gateway's 
     );
   }
 });
-test("an approval whose button already named Face ID says so, so no extra note comes before it", async () => {
+test("an approval whose button already named the passkey says so, so no extra note comes before it", async () => {
   apiFetch.mockResolvedValueOnce(new Response(JSON.stringify({ ok: true })));
   await decideCloudPairing("fictional-request", true, undefined, { stepUpAnnounced: true });
   expect(apiFetch).toHaveBeenLastCalledWith("/admin/cloud-pairing/decision", {

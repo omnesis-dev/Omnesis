@@ -230,8 +230,9 @@ describe.skipIf(!browserReady)(
       [passkey] = await passkeyIds(owner);
       expect(passkey).toBeDefined();
       expect(owner.errors).toEqual([]);
-      // The first gateway learns the passkey forwards, from the Google sign-in it pinned.
-      await home.json("/admin/cloud-relay/reconnect", { method: "POST", body: "{}" });
+      // The first gateway learns the passkey forwards, from the Google sign-in it pinned, as soon
+      // as the owner comes back to its account page: the portal asks it to read the account.
+      await home.json("/admin/cloud-relay/account/refresh", { method: "POST", body: "{}" });
       await waitFor(
         async () => (await pins(home)).some((pin) => pin.id === passkey),
         "the first gateway to pin the added passkey",

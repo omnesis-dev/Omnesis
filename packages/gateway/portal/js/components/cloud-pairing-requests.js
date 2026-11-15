@@ -47,7 +47,7 @@ function Code({ code }) {
  * One device waiting for the owner's yes, asked as a question about that device: the code it
  * shows, compared here. `passkey`: this page is on the gateway's own origin and the gateway says
  * a confirmed passkey can approve (`passkeyApproval`), so an app's request can also be approved
- * with it. `stepUpRequired`: approving from this session asks for Face ID first, so the button
+ * with it. `stepUpRequired`: approving from this session asks for the passkey first, so the button
  * says so. Neither changes what approving does.
  *
  * Remembering the sign-in is offered as the gateway allows (`canTrustSignIn`). It starts ticked
@@ -184,7 +184,7 @@ export function CloudPairingRequest({
         }
         <div class="cloud-pairing-actions">
           <button class="btn-primary" disabled=${locked} onClick=${() => decide(true)}>
-            ${locked ? "Updating…" : stepUpRequired ? "Yes, approve with Face ID" : "Yes, approve"}
+            ${locked ? "Updating…" : stepUpRequired ? "Yes, approve with passkey" : "Yes, approve"}
           </button>
           ${
             passkey &&
@@ -206,7 +206,7 @@ export function CloudPairingRequest({
 
 /**
  * After a deny, what it may mean and the one stricter step to take. "Always ask me" only makes
- * the gateway stricter, so it needs no Face ID.
+ * the gateway stricter, so it needs no passkey.
  */
 export function CloudPairingDenied({ denied, onClose, ask = askBeforeEveryNewDevice }) {
   const [state, setState] = useState("idle");

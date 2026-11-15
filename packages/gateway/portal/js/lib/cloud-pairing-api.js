@@ -19,7 +19,7 @@ export async function cloudPairingRequests() {
   return response.json();
 }
 
-/** `stepUpAnnounced`: the button already said Face ID comes next, so no note before it. */
+/** `stepUpAnnounced`: the button already said the passkey comes next, so no note before it. */
 export async function decideCloudPairing(requestId, approve, trustSignIn, { stepUpAnnounced } = {}) {
   const response = await apiFetch("/admin/cloud-pairing/decision", {
     method: "POST",
@@ -36,7 +36,7 @@ export async function decideCloudPairing(requestId, approve, trustSignIn, { step
   return response.json();
 }
 
-/** "Make new devices always ask me": only makes the gateway stricter, so it asks for no Face ID. */
+/** "Make new devices always ask me": only makes the gateway stricter, so it asks for no passkey. */
 export async function askBeforeEveryNewDevice() {
   const response = await apiFetch("/admin/cloud-relay/enrollment", {
     method: "PUT",

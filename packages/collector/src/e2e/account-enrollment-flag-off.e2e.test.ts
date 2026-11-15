@@ -86,6 +86,7 @@ describe("sign-in enrollment with the cloud relay flag off", () => {
       ["GET", "/admin/cloud-relay"],
       ["POST", "/admin/cloud-relay/connect", { termsAccepted: true }],
       ["POST", "/admin/cloud-relay/connect/cancel", {}],
+      ["POST", "/admin/cloud-relay/account/refresh", {}],
       ["PUT", "/admin/cloud-relay/enrollment", { policy: "automatic" }],
       ["DELETE", "/admin/cloud-relay/trusted-sign-ins/fictional"],
       ["POST", "/admin/cloud-relay/incidents/ack", {}],

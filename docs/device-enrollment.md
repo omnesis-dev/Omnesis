@@ -671,7 +671,12 @@ approval. A future-dated proof never verifies.
 Gateways sync hourly, and when a verified sign-in they do not trust arrives,
 Google or passkey, so a device that signs in with a sign-in the account confirmed
 joins at once. A sign-in starts at most one fetch every two seconds, and callers
-share a fetch that is already running.
+share a fetch that is already running. The portal's account page also asks for a
+sync when it opens or regains focus (`POST /admin/cloud-relay/account/refresh`,
+admin only), so a passkey the owner just added on the relay's account page shows
+within seconds. That is the same sync, at most one every 15 seconds, with a call
+inside that window queuing one more at its end; it applies the rules above and
+can trust nothing they would not.
 
 #### Removal is durable
 
