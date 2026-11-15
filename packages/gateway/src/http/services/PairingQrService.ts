@@ -145,6 +145,12 @@ export interface PairingQrServiceOptions {
    * the embedded Tailscale opt-in.
    */
   tailnetAddress?: () => TailnetPairingAddress | null;
+  /**
+   * The owner put the Omnesis relay ahead of Tailscale (Settings, Remote
+   * access): a phone is offered the relay's address before the gateway's
+   * tailnet address. Read on every request.
+   */
+  preferRelay?: () => boolean;
 }
 
 const IDENTITY_LABELS: Record<NetworkIdentity["kind"], string> = {
@@ -504,7 +510,10 @@ export class PairingQrService {
     }
     if (relay && offersRelay) {
       const option = relayPairingAddressOption(relay.origin);
-      judged.push({ option, rank: pairingReachRank(option), index: judged.length });
+      // Ahead of every other address, the gateway's own tailnet address included, when the
+      // owner chose the relay first.
+      const rank = this.options.preferRelay?.() ? -1 : pairingReachRank(option);
+      judged.push({ option, rank, index: judged.length });
     }
     judged.sort((a, b) => a.rank - b.rank || a.index - b.index);
     const addresses = judged.map((j) => j.option);

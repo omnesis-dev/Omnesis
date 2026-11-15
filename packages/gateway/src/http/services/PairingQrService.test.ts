@@ -42,6 +42,7 @@ function qr(
     strictPinSpkiFingerprint?: () => string | undefined;
     relayAddress?: () => Promise<RelayPairingAddress | null>;
     tailnetAddress?: () => TailnetPairingAddress | null;
+    preferRelay?: () => boolean;
   } = {},
 ): PairingQrService {
   return new PairingQrService({
@@ -51,6 +52,7 @@ function qr(
     strictPinSpkiFingerprint: extra.strictPinSpkiFingerprint,
     relayAddress: extra.relayAddress,
     tailnetAddress: extra.tailnetAddress,
+    preferRelay: extra.preferRelay,
     systemTrustOrigins,
     pairingKind: () => kind,
     discoverIdentities: async () => extra.identities ?? IDENTITIES,
@@ -1254,6 +1256,25 @@ describe("the gateway's own tailnet device", () => {
       });
       // Another address on the same gateway is not marked.
       expect(encoded(service, "https://192.168.1.20:7600")).not.toHaveProperty("tailnet");
+    });
+
+    it("puts the tailnet address ahead of the relay's unless the owner chose the relay first", async () => {
+      vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "1");
+      const relayOrigin = "https://g-fictional.relay.example.test";
+      let relayFirst = false;
+      const service = qr(fingerprint, [], "ios", {
+        identities: lanOnly,
+        listenPort: 7600,
+        tailnetAddress: () => ({ origin: tailnetOrigin, trusted: true }),
+        relayAddress: async () => ({ origin: relayOrigin, ready: true }),
+        preferRelay: () => relayFirst,
+      });
+      const order = async () =>
+        (await service.pairingAddresses(input)).addresses.map((a) => a.gatewayUrl);
+      expect((await order()).slice(0, 2)).toEqual([tailnetOrigin, relayOrigin]);
+      relayFirst = true;
+      expect((await order()).slice(0, 2)).toEqual([relayOrigin, tailnetOrigin]);
+      expect((await service.pairingAddresses(input)).recommendedUrl).toBe(relayOrigin);
     });
 
     it("pins the gateway's own certificate when the tailnet cannot certify its name, still marked", () => {

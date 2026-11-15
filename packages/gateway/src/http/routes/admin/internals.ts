@@ -133,6 +133,8 @@ export interface AdminRoutesDeps {
   /** The gateway's own tailnet address; absent without the embedded Tailscale opt-in. */
   tailnetPairingAddress?: () =>
     import("../../services/PairingQrService.js").TailnetPairingAddress | null;
+  /** The owner put the Omnesis relay ahead of Tailscale; read on every pairing request. */
+  pairingPrefersRelay?: () => boolean;
   /** The port the gateway listens on: where a phone reaches a discovered host address. */
   gatewayPort?: number;
   /** The `.local` name the gateway advertises with only real LAN addresses, or null. */
