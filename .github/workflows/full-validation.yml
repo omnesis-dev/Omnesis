@@ -18,6 +18,7 @@ on:
             multi-cli-baseline,
             connect-baseline,
             process-green,
+            config-baseline,
           ]
         default: regressions
 permissions:
@@ -78,7 +79,7 @@ jobs:
           packages/cloud-relay/src/acme-renewal-cleanup.test.ts
           packages/cloud-relay/src/acme-integration.test.ts
   process-baseline:
-    if: ${{ inputs.scope == 'multi-cli-baseline' || inputs.scope == 'connect-baseline' }}
+    if: ${{ inputs.scope == 'multi-cli-baseline' || inputs.scope == 'connect-baseline' || inputs.scope == 'config-baseline' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
@@ -100,6 +101,9 @@ jobs:
       - name: Reproduce connect registration and exit failures
         if: ${{ inputs.scope == 'connect-baseline' }}
         run: node scripts/run-check.mjs unit packages/collector/src/e2e/connect-process.test.ts
+      - name: Reproduce private token-reader receipt loss
+        if: ${{ inputs.scope == 'config-baseline' }}
+        run: node scripts/run-check.mjs unit packages/core/src/config-private-cleanup.test.ts
   upstream-baseline:
     if: ${{ inputs.scope == 'upstream-baseline' }}
     runs-on: ubuntu-latest
