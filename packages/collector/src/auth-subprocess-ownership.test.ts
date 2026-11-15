@@ -93,7 +93,7 @@ registerHooks({load(url,context,nextLoad){
       OMNESIS_SECRET_STORE: "file",
       OMNESIS_AUTH_PROCESS_NONCE: "a".repeat(64),
     }),
-    signalEmitter: signals as NodeJS.Process,
+    signalEmitter: signals,
   }).finally(() => {
     settled = true;
   });

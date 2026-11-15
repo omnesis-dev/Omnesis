@@ -99,6 +99,8 @@ jobs:
           packages/collector/src/auth-subprocess-result.test.ts
           packages/collector/src/source-ws-handlers.auth-begin.test.ts
           scripts/ci/windows-checks.test.mjs
+          scripts/run-e2e-status.test.mjs
+          scripts/lib/check-process.test.mjs
       - name: Full source and test typechecks
         if: ${{ inputs.scope == 'auth-owned-green' && runner.os == 'Linux' }}
         run: npm run typecheck && npm run typecheck:tests
