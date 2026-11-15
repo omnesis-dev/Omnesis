@@ -5,6 +5,7 @@ import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { expect, test, type Page, type Route } from "@playwright/test";
+import { controlPortalSignals, sendPortalSignal } from "./portal-signals-control.js";
 
 const fingerprint = "a".repeat(64);
 const codeNonce = "pJWNXrJQNFNxwwlR2tLh_1z0tfx97lCkE06ZmeKdzVk";
@@ -213,6 +214,7 @@ test("a request the gateway still lists as approved, denied or out of time is no
     expiresAt: Date.now() + 600_000,
     ...more,
   });
+  await controlPortalSignals(page);
   let items = [
     row("Fictional tablet"),
     row("Fictional laptop", { status: "approved" }),
@@ -232,7 +234,9 @@ test("a request the gateway still lists as approved, denied or out of time is no
     "Fictional tablet wants to connect",
   ]);
   await expect(section.getByText("000 111", { exact: true })).toBeVisible();
+  // Answered elsewhere: the gateway tells the open portal, which reads the list again.
   items = items.slice(1);
+  await sendPortalSignal(page, "devices");
   await expect(section).toHaveCount(0);
 });
 
@@ -248,6 +252,7 @@ test("a device waiting for approval is announced above every page, in the page f
     verificationCode: "000 111",
     expiresAt: Date.now() + 600_000,
   });
+  await controlPortalSignals(page);
   let items: Array<Record<string, unknown>> = [row("Fictional tablet"), row("Fictional laptop")];
   await page.route("**/admin/cloud-pairing/requests", (route) =>
     route.fulfill({ json: { items } }),
@@ -322,6 +327,7 @@ test("a device waiting for approval is announced above every page, in the page f
 
   // One request answered: the count goes, the strip stays.
   items = items.slice(1);
+  await sendPortalSignal(page, "devices");
   await expect(strip).toContainText(
     "A device is waiting for your approval to pair to this gateway.",
     { timeout: 15_000 },

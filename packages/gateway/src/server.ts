@@ -24,6 +24,8 @@ import {
   type DeviceRecord,
 } from "@omnesis/types";
 import { mountTailscaleRoutes } from "./http/routes/tailscale.js";
+import { mountPortalSignalRoutes } from "./http/routes/portal-signals.js";
+import { PortalSignals } from "./portal-signals/hub.js";
 import { markRelayRequestExposure } from "./http/client-ip.js";
 
 import { labFeatureEnabled } from "./lab/store.js";
@@ -34,7 +36,7 @@ import { strictRoute } from "./http/scope.js";
 import { httpActivityName, withActivity } from "./observability/main-activity.js";
 type Db = Database.Database;
 import { join } from "node:path";
-import { lookupToken, lookupSession } from "./data/repositories/TokenRepository.js";
+import { isTokenActive, lookupToken, lookupSession } from "./data/repositories/TokenRepository.js";
 import { getDevice, isRevokedDeviceKey } from "./data/repositories/DeviceRepository.js";
 import {
   CLIENT_VERSION_PARAM,
@@ -582,6 +584,12 @@ export function createServer(
     /** Asks the expired-access sweep to re-read when it should next wake. */
     accessCleanupWake?: () => void;
     /**
+     * Tells open portals at once when something waiting for the owner changes.
+     * The gateway entry point shares it with producers it wires itself; a
+     * server made without one keeps its own.
+     */
+    portalSignals?: PortalSignals;
+    /**
      * Optional in-process event bus override. Defaults to the singleton
      * exported from events.ts; tests can pass a fresh bus to avoid
      * cross-test leakage.
@@ -715,6 +723,7 @@ export function createServer(
   },
 ) {
   const app = strictRoute(new Hono<AppEnv>());
+  const portalSignals = opts?.portalSignals ?? new PortalSignals();
   app.use("*", async (c, next) => {
     let release: (() => void) | undefined;
     if (opts?.cloudRelayExposure?.()) {
@@ -1551,7 +1560,11 @@ export function createServer(
     mcpResourceUrls: opts?.mcpResourceUrls,
     additionalOAuthIssuerUrls: opts?.additionalOAuthIssuerUrls,
     authorizationNotifier: opts?.accessAuthorizationNotifier,
-    onAuthorizationPending: opts?.accessCleanupWake,
+    // A request arrived or was decided: wake the expiry sweep and the portals.
+    onAuthorizationPending: () => {
+      opts?.accessCleanupWake?.();
+      portalSignals.publish("access");
+    },
     onDeviceLevelChanged: () => statusCache.bump(),
     tlsFingerprintSha256: opts?.tlsFingerprintSha256,
     listenPort: opts?.port,
@@ -1563,6 +1576,25 @@ export function createServer(
   });
 
   // Portal block (redirect, source-meta, login/logout/session, SPA static)
+  // Ahead of the portal's own routes, whose `/portal/*` fallback serves the page.
+  mountPortalSignalRoutes(app, portalSignals, {
+    // A stream lives only as long as what opened it: a portal session that is
+    // still current, or a token that is still active.
+    stillAuthorized: (c) => {
+      const auth = c.get("auth");
+      if (auth.authMethod === "portal-session") {
+        const sessionId = getSessionCookie(c.req.header("Cookie"), cookieName);
+        return (
+          sessionId !== null &&
+          sessionId !== undefined &&
+          lookupSession(db, sessionId).info !== null
+        );
+      }
+      if (auth.authMethod === "bearer" && auth.tokenId && auth.deviceId)
+        return isTokenActive(db, auth.tokenId, auth.deviceId);
+      return false;
+    },
+  });
   mountPortalRoutes(app, {
     db,
     portalRoot: join(import.meta.dirname, "..", "portal"),
@@ -1750,6 +1782,14 @@ export function createServer(
         (fingerprint): fingerprint is string => !!fingerprint,
       ),
   });
+  // A sign-in request decided by its owner, on the Devices page or with a passkey:
+  // open portals re-read what waits. Registered ahead of the routes it follows.
+  for (const decided of ["/admin/cloud-pairing/decision", "/devices/:flow/approval"]) {
+    app.use(decided, async (c, next) => {
+      await next();
+      if (c.req.method === "POST" && c.res.ok) portalSignals.publish("devices");
+    });
+  }
   mountCloudPairingRoutes(
     app,
     w,
@@ -1769,7 +1809,10 @@ export function createServer(
           broker: opts.cloudRelayManagement!.managedAccountBrowser?.(),
         })
       : undefined,
-    opts?.onCloudPairingRequest,
+    (request) => {
+      opts?.onCloudPairingRequest?.(request);
+      portalSignals.publish("devices");
+    },
     opts?.cloudTlsSpkiFingerprintSha256,
     // A device the owner revoked waits for a person when its key signs in again.
     (devicePublicKey) => isRevokedDeviceKey(db, devicePublicKey),
@@ -1882,7 +1925,7 @@ export function createServer(
     },
   });
   opts?.onMcpHttpRuntime?.(mcpHttpRuntime);
-  mountPrivacyRoutes(app, agentDeps);
+  mountPrivacyRoutes(app, agentDeps, () => portalSignals.publish("answers"));
   // OMNESIS.md. Defaulted from `configDir` the same way the privacy policy
   // store is below, so a server built with a config directory serves it
   // without the composition root having to pass the store twice.
@@ -1901,6 +1944,7 @@ export function createServer(
           reviewWatchExistence: createWatchExistenceReviewer(
             agentDeps.privacyReviewer ?? new PrivacyReviewer({ resolveBackend: () => null }),
           ),
+          onApprovalsChanged: () => portalSignals.publish("watches"),
         })
       : undefined);
   if (subscriptionService) opts?.onSubscriptionService?.(subscriptionService);

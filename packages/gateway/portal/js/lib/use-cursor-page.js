@@ -220,6 +220,55 @@ export function useCursorPage({
   }, [enabled, resetKey, requestPage]);
 
   const reload = useCallback(() => requestPage(true), [requestPage]);
+  const refreshGenerationRef = useRef(0);
+  /**
+   * Re-reads the first page in the background, for a list the gateway says changed: no loading
+   * state, and the rows on screen stay until the answer replaces them. The fresh page replaces the
+   * list outright — with its own cursor — when it is the whole collection, when no more than one
+   * page was loaded, or when rows have no `itemKey` to match them by. Otherwise it leads the list,
+   * followed by the rows loaded after the last of its rows that was already on screen, with the
+   * cursor that continues them: a row that left the first page is gone, and a row pushed past it
+   * by a newer one stays. A failed read changes nothing. Before the first load it does nothing;
+   * that load answers.
+   */
+  const refresh = useCallback(async () => {
+    if (!stateRef.current.loaded) return;
+    const generation = generationRef.current;
+    const owner = ownerRef.current;
+    const sequence = ++refreshGenerationRef.current;
+    const options = optionsRef.current;
+    let payload;
+    try {
+      payload = await options.loadPage({ limit: pageSize });
+    } catch {
+      return;
+    }
+    if (
+      generation !== generationRef.current ||
+      owner !== ownerRef.current ||
+      sequence !== refreshGenerationRef.current
+    ) {
+      return;
+    }
+    const page = cursorPageResult(payload, options.selectItems, options.selectCursor);
+    const keyed = typeof options.itemKey === "function";
+    const keyOf = (item) => (keyed ? options.itemKey(item) : item);
+    const fresh = page.items.filter((item) => !removedKeysRef.current.has(keyOf(item)));
+    const freshKeys = new Set(fresh.map(keyOf));
+    setState((previous) => {
+      if (!previous.loaded) return previous;
+      const base = { ...previous, meta: options.selectMeta(payload), error: null };
+      if (!keyed || page.nextCursor === null || previous.items.length <= pageSize) {
+        return { ...base, items: fresh, nextCursor: page.nextCursor, cursorStalled: false };
+      }
+      let lastSeen = -1;
+      previous.items.forEach((item, index) => {
+        if (freshKeys.has(keyOf(item))) lastSeen = index;
+      });
+      const after = previous.items.slice(lastSeen + 1).filter((item) => !freshKeys.has(keyOf(item)));
+      return { ...base, items: [...fresh, ...after] };
+    });
+  }, [pageSize]);
   const loadMore = useCallback(() => requestPage(false), [requestPage]);
   const setItems = useCallback((updater) => {
     setState((previous) => ({
@@ -275,6 +324,7 @@ export function useCursorPage({
     hasMore: state.nextCursor !== null,
     isPartial: state.nextCursor !== null || state.cursorStalled,
     reload,
+    refresh,
     loadMore,
     setItems,
     removeItem,

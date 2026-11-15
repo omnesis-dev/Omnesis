@@ -70,6 +70,11 @@ export interface JoinRequestDeps {
   notifyWaiting(request: JoinRequestView): void;
   /** Tell the owner's phones a collector joined with nobody approving it. */
   notifyJoined(device: { id: DeviceId; name: string }): void;
+  /**
+   * The requests waiting for the owner changed: one arrived or was decided.
+   * Lapsing is not reported; each request carries its own expiry.
+   */
+  onWaitingChanged?(): void;
   now?: () => number;
 }
 
@@ -211,6 +216,7 @@ export class TailscaleJoinRequests {
     };
     this.requests.set(request.id, request);
     this.deps.notifyWaiting(this.view(request));
+    this.deps.onWaitingChanged?.();
     return {
       status: "pending",
       requestId: request.id,
@@ -226,6 +232,7 @@ export class TailscaleJoinRequests {
     if (!request || request.state !== "waiting") return false;
     request.state = approve ? "approved" : "denied";
     if (approve) request.approvedAt = this.now();
+    this.deps.onWaitingChanged?.();
     return true;
   }
 

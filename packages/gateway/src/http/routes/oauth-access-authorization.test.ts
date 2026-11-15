@@ -147,7 +147,7 @@ describe("pending requests on the overview", () => {
     const first = await startRequest({ state: "state-first" });
     const second = await startRequest({ state: "state-second" });
 
-    for (const path of ["/admin/access", "/portal/api/access"]) {
+    for (const path of ["/admin/access", "/portal/api/access", "/portal/api/access/pending"]) {
       const { body } = await getJson<{
         pendingRequests: Array<{ id: string; clientName: string; userCode: string }>;
       }>(path);
@@ -177,6 +177,9 @@ describe("pending requests on the overview", () => {
 
     const overview = await getJson<{ pendingRequests: unknown[] }>("/admin/access");
     expect(overview.body.pendingRequests).toEqual([]);
+    const pending = await getJson<Record<string, unknown>>("/portal/api/access/pending");
+    // Only the waiting requests: none of the overview's levels, connections or addresses.
+    expect(pending.body).toEqual({ pendingRequests: [] });
     expect((await getJson(`/admin/access/authorizations/${approvalId}`)).response.status).toBe(404);
     expect((await getJson(`/portal/api/access/authorizations/${approvalId}`)).response.status).toBe(
       200,

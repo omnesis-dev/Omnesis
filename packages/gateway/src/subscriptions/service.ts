@@ -126,6 +126,11 @@ export interface SubscriptionServiceDeps {
     runIfRevision?<T>(expectedRevision: string, operation: () => Promise<T>): Promise<T | null>;
   };
   reviewWatchExistence?: WatchExistenceReviewer;
+  /**
+   * The watch requests waiting for the owner may have changed: one was asked
+   * for, decided or revoked. Called after the write committed.
+   */
+  onApprovalsChanged?: () => void;
   now?: () => number;
   id?: () => string;
 }
@@ -459,7 +464,10 @@ export class SubscriptionService {
     });
     if (result.outcome === "replayed") return result.subscription;
     if (result.outcome === "created") {
-      return this.applyWatchPrivacyPolicy(caller, result.subscription, policy);
+      // Reported once the policy had its say: it may already have decided the request.
+      const applied = await this.applyWatchPrivacyPolicy(caller, result.subscription, policy);
+      this.deps.onApprovalsChanged?.();
+      return applied;
     }
     return mapWriteOutcome(result.outcome);
   }
@@ -622,7 +630,10 @@ export class SubscriptionService {
       if (decided.status !== "pending_approval") resolved += 1;
     }
     this.watchPolicyRevision = waitingForCompatiblePlugin ? null : policy.revision;
-    if (resolved > 0) log.info(`privacy policy resolved ${resolved} pending watch(es)`);
+    if (resolved > 0) {
+      log.info(`privacy policy resolved ${resolved} pending watch(es)`);
+      this.deps.onApprovalsChanged?.();
+    }
     return resolved;
   }
 
@@ -834,6 +845,7 @@ export class SubscriptionService {
     }
     if (activated > 0) {
       log.info(`activated ${activated} operator watch(es)`);
+      this.deps.onApprovalsChanged?.();
     }
     this.reportStrandedOperatorWatches(now);
     return activated;
@@ -995,6 +1007,7 @@ export class SubscriptionService {
       revokedAt: this.now(),
     });
     if (result.outcome === "revoked") {
+      this.deps.onApprovalsChanged?.();
       return result.subscription;
     }
     return mapWriteOutcome(result.outcome);
@@ -1132,6 +1145,7 @@ export class SubscriptionService {
         : await runIfRevision(policyRevision, write);
     if (result === null) return mapWriteOutcome("policy_changed");
     if (result.outcome === "resolved") {
+      this.deps.onApprovalsChanged?.();
       return result.approval;
     }
     void approval;
@@ -1183,6 +1197,7 @@ export class SubscriptionService {
       ...(reason === undefined ? {} : { reason }),
     });
     if (result.outcome === "revoked") {
+      this.deps.onApprovalsChanged?.();
       return this.getTrusted(subscriptionId);
     }
     return mapWriteOutcome(result.outcome);
