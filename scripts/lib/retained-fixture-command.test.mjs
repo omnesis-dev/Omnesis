@@ -67,7 +67,9 @@ test.runIf(process.platform === "win32")(
     const root = mkdtempSync(join(tmpdir(), "retained-daemon-test-"));
     const portFile = join(root, "port");
     const daemon = `const net=require('node:net');const s=net.createServer();s.listen(0,'127.0.0.1',()=>require('node:fs').writeFileSync(${JSON.stringify(portFile)},String(s.address().port)));`;
-    const command = `require('node:child_process').spawn(process.execPath,['-e',${JSON.stringify(daemon)}],{stdio:'ignore',windowsHide:true}).unref();process.stdout.write('finite root complete');`;
+    // A detached Windows child can outlive its finite parent; it must still
+    // remain inside the fixture's outer job object until that owner closes.
+    const command = `require('node:child_process').spawn(process.execPath,['-e',${JSON.stringify(daemon)}],{stdio:'ignore',windowsHide:true,detached:true}).unref();process.stdout.write('finite root complete');`;
     const owner = startRetainedWindowsFixture(process.execPath, ["-e", command], {
       timeout: 30_000,
     });
