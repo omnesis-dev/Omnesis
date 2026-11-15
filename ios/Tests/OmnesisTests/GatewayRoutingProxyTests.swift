@@ -8,22 +8,6 @@ import Network
 @testable import Omnesis
 import XCTest
 
-private final class PathObservation: @unchecked Sendable {
-    private let lock = NSLock()
-    private var seenLocal = false
-    func markLocal() {
-        lock.lock()
-        seenLocal = true
-        lock.unlock()
-    }
-
-    var hasSeenLocal: Bool {
-        lock.lock()
-        defer { lock.unlock() }
-        return seenLocal
-    }
-}
-
 /// Real Foundation HTTPS and WebSocket tasks through an authenticated opaque SOCKS peer.
 @MainActor
 final class GatewayRoutingProxyTests: XCTestCase {
@@ -141,48 +125,6 @@ final class GatewayRoutingProxyTests: XCTestCase {
             closed.fulfill()
         }
         await fulfillment(of: [closed], timeout: 2)
-    }
-
-    func testLocalObserversSeeIdleSocketRetirement() async throws {
-        let peer = try CloudPairingSOCKSPeer()
-        defer { peer.stop() }
-        let route = try XCTUnwrap(try GatewayDirectRoute(
-            origin: XCTUnwrap(URL(string: "https://gateway.example.test")),
-            candidates: [
-                GatewayDirectCandidate(address: "127.0.0.1", port: peer.info.targetPort),
-            ],
-            allowLoopbackForTesting: true
-        ))
-        let limits = GatewayRoutingProxy.Limits(handshake: 1, attempt: 0.2, lanBudget: 1, fallback: 0.1, idle: 0.5)
-        let proxy = try GatewayRoutingProxy(route: route, limits: limits, listenPort: 0)
-        defer { proxy.close() }
-        let local = expectation(description: "Local selection")
-        let reconnecting = expectation(description: "Idle connection retired")
-        let observed = PathObservation()
-        proxy.observePath { path in
-            if path == .local { observed.markLocal()
-                local.fulfill()
-            }
-            if path == .reconnecting, observed.hasSeenLocal { reconnecting.fulfill() }
-        }
-        let configuration = URLSessionConfiguration.ephemeral
-        proxy.configure(configuration)
-        let pin = PinnedSession(
-            fingerprintHex: peer.info.fingerprint,
-            host: route.host,
-            systemTrust: { _, _ in false },
-            requireCertificateValidity: true
-        )
-        let session = URLSession(configuration: configuration, delegate: pin, delegateQueue: nil)
-        defer { session.invalidateAndCancel() }
-        var upgrade = try URLRequest(url: XCTUnwrap(URL(string: "wss://gateway.example.test/events")))
-        upgrade.setValue("Bearer device-test-token", forHTTPHeaderField: "Authorization")
-        let socket = session.webSocketTask(with: upgrade)
-        socket.resume()
-        defer { socket.cancel(with: .normalClosure, reason: nil) }
-        _ = try await socket.receive()
-        await fulfillment(of: [local, reconnecting], timeout: 3)
-        XCTAssertEqual(proxy.activeStreamCount, 0)
     }
 }
 

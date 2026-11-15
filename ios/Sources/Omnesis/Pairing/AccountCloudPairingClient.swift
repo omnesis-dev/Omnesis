@@ -111,6 +111,7 @@ public actor AccountCloudPairingClient {
     private let gatewayFactory: any CloudPairingLeafTransportFactory
     private let loadDeviceKey: @Sendable () throws -> any DeviceEnrollmentSigning
     private let checksPublicCertificate: Bool
+    private let trustedGatewayKeys: @Sendable () -> Set<String>
     private let now: @Sendable () -> TimeInterval
     private let verifier: String
     private var stage = Stage.new
@@ -138,6 +139,7 @@ public actor AccountCloudPairingClient {
         gatewayFactory: any CloudPairingLeafTransportFactory = CloudPairingHTTPFactory(),
         deviceKey: @escaping @Sendable () throws -> any DeviceEnrollmentSigning = { try DeviceEnrollmentKey.loadOrCreate() },
         checksPublicCertificate: Bool = true,
+        trustedGatewayKeys: @escaping @Sendable () -> Set<String> = { [] },
         now: @escaping @Sendable () -> TimeInterval = { Date().timeIntervalSince1970 }
     ) throws {
         origin = try Self.exactOrigin(relayOrigin.absoluteString)
@@ -146,6 +148,7 @@ public actor AccountCloudPairingClient {
         self.gatewayFactory = gatewayFactory
         loadDeviceKey = deviceKey
         self.checksPublicCertificate = checksPublicCertificate
+        self.trustedGatewayKeys = trustedGatewayKeys
         self.now = now
         let bytes = try cloudSecureRandomBytes()
         let base64 = bytes.base64EncodedString()
@@ -519,7 +522,7 @@ extension AccountCloudPairingClient {
             challenge: issued,
             devicePublicKey: deviceKey.publicKey
         )
-        let requireApproval = needsApproval(pinned, origin: value.origin)
+        let requireApproval = needsApproval(pinned, value)
         struct DeviceKey: Encodable { let publicKey: String
             let challenge: String
             let signature: String
@@ -565,10 +568,20 @@ extension AccountCloudPairingClient {
         }
     }
 
-    /// Unverifiable first contact falls back to the human comparison; it never stops pairing.
-    private func needsApproval(_ pinned: any CloudPairingTransport, origin: URL) -> Bool {
+    /// Whether this device cannot tell, without the relay, that it reached the owner's own gateway
+    /// (F6). Unverifiable first contact falls back to the human comparison; it never stops pairing.
+    ///
+    /// The relay chooses which gateway a sign-in is sent to. A hacked relay can list a gateway of its
+    /// own, under any name with a valid public certificate, including a name of its own under the
+    /// relay's domain, and that gateway would approve this device. Nothing in the sign-in names the
+    /// owner's gateway, so a valid certificate proves only that the address is the one listed. Only a
+    /// key this install already trusts does: then the gateway decides as usual. Otherwise the device
+    /// asks to be held, and a person compares the code on a device they already use.
+    private func needsApproval(_ pinned: any CloudPairingTransport, _ value: CloudPairingConfirmation) -> Bool {
+        let trusted = Set(trustedGatewayKeys().map { $0.lowercased() })
+        guard trusted.contains(value.spkiFingerprint.lowercased()) else { return true }
         guard checksPublicCertificate else { return false }
-        guard let host = origin.host, let reporter = pinned as? any CloudPairingPublicCertificateReporting else { return true }
+        guard let host = value.origin.host, let reporter = pinned as? any CloudPairingPublicCertificateReporting else { return true }
         return !reporter.publicCertificateVerified(host: host)
     }
 
@@ -604,10 +617,14 @@ extension AccountCloudPairingClient {
     /// says nothing, so both leave approval to a device the owner already uses. The page is used
     /// only when it is that same gateway's origin, under the relay's passkey domain and never the
     /// relay's own host. The poll still decides when the device is approved.
+    ///
+    /// Only a gateway this device verified without the relay offers its page (F6). A gateway the relay
+    /// merely listed could be a stand-in serving its own page, where approving and comparing the code
+    /// prove nothing, so the owner approves on a device they already use instead.
     public func approvalPage() async throws -> URL? {
         try checkOpen()
         guard stage == .pairing, let value = pending, !value.approved, !value.joinedAutomatically,
-              let gateway else { return nil }
+              value.gatewayVerified, let gateway else { return nil }
         struct Passkey: Decodable { let rpId: String
             let origin: String
         }

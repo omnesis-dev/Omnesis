@@ -164,6 +164,16 @@ final class ScriptedGatewayDeadline: GatewayDeadline, @unchecked Sendable {
         queue.sync(execute: callback)
     }
 
+    /// Fires the action when the deadline is scheduled, not cancelled and due at `now`; otherwise does nothing.
+    func expireIfDue(at now: DispatchTime) {
+        let callback: (() -> Void)? = queue.sync {
+            guard !cancelled, !queued, deadline <= now else { return nil }
+            queued = true
+            return action
+        }
+        if let callback { deliver(callback) }
+    }
+
     func expire(at now: DispatchTime) {
         let callback = queuedExpiry(at: now)
         deliver(callback)
@@ -171,20 +181,34 @@ final class ScriptedGatewayDeadline: GatewayDeadline, @unchecked Sendable {
 }
 
 final class ScriptedGatewayClock: @unchecked Sendable {
+    // The proxy reads the time and makes deadlines on its own queue while a test moves the clock.
+    private let lock = NSLock()
     private var nanoseconds: UInt64 = 1_000_000_000
-    private(set) var deadlines: [ScriptedGatewayDeadline] = []
+    private var made: [ScriptedGatewayDeadline] = []
+    var deadlines: [ScriptedGatewayDeadline] {
+        lock.withLock { made }
+    }
+
     var now: DispatchTime {
-        DispatchTime(uptimeNanoseconds: nanoseconds)
+        lock.withLock { DispatchTime(uptimeNanoseconds: nanoseconds) }
     }
 
     func advance(_ seconds: TimeInterval) {
-        nanoseconds += UInt64(seconds * 1_000_000_000)
+        lock.withLock { nanoseconds += UInt64(seconds * 1_000_000_000) }
+    }
+
+    /// Fires every deadline that is scheduled, not cancelled and due at the current time.
+    func expireDue() {
+        let now = self.now
+        for deadline in deadlines {
+            deadline.expireIfDue(at: now)
+        }
     }
 
     var clock: GatewayDeadlineClock {
         GatewayDeadlineClock(now: { self.now }, make: { queue, action in
             let deadline = ScriptedGatewayDeadline(queue: queue, action: action)
-            self.deadlines.append(deadline)
+            self.lock.withLock { self.made.append(deadline) }
             return deadline
         })
     }

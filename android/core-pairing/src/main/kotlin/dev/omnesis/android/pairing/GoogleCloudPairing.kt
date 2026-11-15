@@ -137,9 +137,10 @@ class CloudPairingConfirmation(val challenge: CloudPairingChallenge, candidate: 
     var joined = false; private set
 
     /**
-     * The signed request went to a gateway whose certificate passed the public checks, the same
-     * footing an automatic join stands on. An approval that gateway reports later is then as bound
-     * as a join, so the app continues on its own; otherwise a person confirms the codes.
+     * The signed request went to a gateway whose key this install already trusted, learned without
+     * the relay, the same footing an automatic join stands on. An approval that gateway reports
+     * later is then as bound as a join, so the app continues on its own; otherwise a person
+     * confirms the codes, because a gateway the relay listed may not be the owner's (F6).
      */
     var gatewayVerified = false; private set
     internal fun markGatewayVerified() { gatewayVerified = true }
