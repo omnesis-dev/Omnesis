@@ -42,6 +42,12 @@ import {
   readQueries,
   type Language,
 } from "./dataset.js";
+import {
+  gatewayConfig,
+  parseVariants,
+  RESULT_DEPTH,
+  type SearchParamOverrides,
+} from "./gateway-config.js";
 import { mean, percentile, scoreQuery } from "./metrics.js";
 import {
   runExists,
@@ -75,51 +81,6 @@ const PASSAGE_DATE = "2020-01-01T00:00:00.000Z";
 const PUSH_BATCH = 500;
 const QUERY_CONCURRENCY = 4;
 const REQUEST_ATTEMPTS = 6;
-/** Recall is measured over the first hundred results; the default pool is 50. */
-const RESULT_DEPTH = 100;
-/**
- * The settings a run changes from the gateway's defaults. The temporal lane is
- * off because it reads a question's dates against today's date and the
- * passages' one shared date, which would make a score depend on the day of the
- * run.
- */
-const GATEWAY_CONFIG = {
-  search: { params: { candidateLimit: RESULT_DEPTH }, temporal: { enabled: false } },
-  // A hybrid run embeds every passage; the default of one batch in flight
-  // leaves a local embedding server mostly idle.
-  indexer: { embedConcurrency: 8 },
-};
-
-type SearchParamOverrides = Record<string, number>;
-
-/** {@link GATEWAY_CONFIG} with some `search.params` overridden. */
-function gatewayConfig(overrides: SearchParamOverrides): typeof GATEWAY_CONFIG {
-  return {
-    ...GATEWAY_CONFIG,
-    search: {
-      ...GATEWAY_CONFIG.search,
-      params: { ...GATEWAY_CONFIG.search.params, ...overrides },
-    },
-  };
-}
-
-/** The `--variants` file: label → numeric `search.params` overrides. */
-function readVariants(path: string | undefined): Array<[string, SearchParamOverrides]> {
-  if (path === undefined) return [];
-  const parsed = JSON.parse(readFileSync(path, "utf8")) as unknown;
-  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-    throw new Error("--variants takes a JSON object of label → search.params overrides");
-  }
-  return Object.entries(parsed).map(([label, params]) => {
-    const valid =
-      /^[a-z0-9][a-z0-9-]*$/.test(label) &&
-      typeof params === "object" &&
-      params !== null &&
-      Object.values(params).every((v) => typeof v === "number" && Number.isFinite(v));
-    if (!valid) throw new Error(`Variant "${label}" must map a lowercase label to numbers`);
-    return [label, params as SearchParamOverrides];
-  });
-}
 /**
  * A document only the eval's readiness probe matches. The in-memory keyword
  * ranker is rebuilt in the background after a bulk load, and until it covers
@@ -228,7 +189,8 @@ async function main(): Promise<void> {
       `The embedder must run on this machine; ${embedderUrl} is not a loopback address`,
     );
   }
-  const variants = readVariants(flags.get("--variants"));
+  const variantsFile = flags.get("--variants");
+  const variants = variantsFile ? parseVariants(readFileSync(variantsFile, "utf8")) : [];
   for (const runName of [name, ...variants.map(([label]) => `${name}.${label}`)]) {
     if (runExists(runName) && !on.has("--force")) {
       throw new Error(`A run named "${runName}" is already recorded. Pass --force to replace it.`);
