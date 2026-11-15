@@ -82,6 +82,7 @@ test(
     delete env.OMNESIS_INSECURE_TLS;
     let output = "";
     let timer: NodeJS.Timeout | undefined;
+    const readyDeadline = performance.now() + gatewayBootBudgetMs();
     try {
       collector = spawnE2ESubprocess(command.command, [...command.args, "collector", "run"], {
         cwd: ROOT,
@@ -108,7 +109,7 @@ test(
           }>("/admin/devices");
           return devices.items.some((device) => device.name === COLLECTOR_NAME && device.online);
         },
-        gatewayBootBudgetMs(),
+        Math.max(0, readyDeadline - performance.now()),
         "the real Collector device to connect",
       );
 

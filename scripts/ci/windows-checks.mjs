@@ -31,6 +31,13 @@ export const INSTALLER_TEST_EXCLUSIONS = [
 ];
 
 export const FOCUSED_UNIT_FILES = [
+  "scripts/lib/check-process.test.mjs",
+  "packages/cli/src/commands/status-json.test.ts",
+  "packages/collector/src/owned-process-shutdown.test.ts",
+  "packages/collector/src/doctor-deadlines.test.ts",
+  "packages/collector/src/e2e/e2e-owned-process.test.ts",
+  "packages/platform/src/windows-private-owner-rights.windows.test.ts",
+  "packages/agent-integration/src/hermes-windows-bridge.test.ts",
   "packages/platform/src/windows-private-repair-streams.windows.test.ts",
   "packages/cloud-relay/src/private-inputs.test.ts",
   "packages/cloud-relay/src/dns-broker-node.test.ts",
@@ -242,6 +249,7 @@ export const FOCUSED_UNIT_FILES = [
 ];
 
 export const FOCUSED_E2E_FILES = [
+  "packages/collector/src/e2e/collector-parent-shutdown.e2e.test.ts",
   "packages/collector/src/e2e/gateway-lifecycle.e2e.test.ts",
   "packages/collector/src/e2e/synth-pipeline.e2e.test.ts",
   "packages/collector/src/e2e/source-descriptors.e2e.test.ts",
