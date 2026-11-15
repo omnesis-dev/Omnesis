@@ -66,7 +66,9 @@ import {
   hostedClientsHint,
   leadsWithLocalAddress,
   relayPublicAddress,
+  tailscalePublicAddress,
   useRelayStatus,
+  useTailscaleState,
 } from "./access/public-address.js";
 import {
   accessLevels,
@@ -108,6 +110,9 @@ export function AccessView({
   // Whether the gateway advertises the optional cloud relay. Only then does the
   // page read the relay's status, for the public address it gives the gateway.
   cloudRelay = false,
+  // Whether the gateway advertises its own Tailscale device. Only then does
+  // the page read the device's state, for the address it gives the gateway.
+  tailscaleEmbed = false,
   completeAuthorization = async (approvalId) => {
     const result = await completeAccessAuthorization(approvalId);
     globalThis.location.assign(result.redirectTo);
@@ -120,6 +125,8 @@ export function AccessView({
   const [connectLocal, setConnectLocal] = useState(false);
   const relayStatus = useRelayStatus(cloudRelay, connectOpen || connectLocal);
   const relay = relayPublicAddress(cloudRelay, relayStatus, overview.oauth);
+  const tailscaleState = useTailscaleState(tailscaleEmbed, connectOpen || connectLocal);
+  const tailscale = tailscalePublicAddress(tailscaleEmbed, tailscaleState, overview.oauth);
   // The pending request under review, with the gateway's `connection`
   // proposal for it. The gateway sends a proposal with every pending request;
   // a lookup without one cannot be reviewed and the page says so.
@@ -607,7 +614,7 @@ export function AccessView({
   };
   const openConnect = () => setConnectLocal(true);
   const configHref = "/portal/settings/config";
-  const hostedHint = hostedClientsHint(relay);
+  const hostedHint = hostedClientsHint(relay, tailscale);
 
   return html`
     <div class="access-view">
@@ -685,7 +692,7 @@ export function AccessView({
             }}
           />`}
 
-      ${connectVisible && html`<${ConnectAgentDialog} oauth=${overview.oauth} relay=${relay} onClose=${closeConnect} />`}
+      ${connectVisible && html`<${ConnectAgentDialog} oauth=${overview.oauth} relay=${relay} tailscale=${tailscale} onClose=${closeConnect} />`}
 
       ${movingEntry && html`<${MoveConnectionDialog}
         key=${movingEntry.grant.id}

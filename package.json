@@ -49,6 +49,7 @@
     "typecheck:watch": "tsc --build --watch",
     "typecheck:tests": "node scripts/run-check.mjs types-tests",
     "build": "node scripts/build-projects.mjs",
+    "tailnet-helper:build": "node scripts/tailnet-helper/build.mjs",
     "release": "node scripts/release/conductor.mjs",
     "release:stage": "node scripts/release/stage-packages.mjs",
     "runtime:stage": "node scripts/runtime/stage-runtime.mjs",
@@ -233,6 +234,10 @@
       },
       "nx-bundle-security-notifications": {
         "command": "node scripts/nx/run-bundle.mjs security-notifications",
+        "cache": false
+      },
+      "nx-bundle-tailscale-embed": {
+        "command": "node scripts/nx/run-bundle.mjs tailscale-embed",
         "cache": false
       },
       "nx-bundle-gateway-core": {

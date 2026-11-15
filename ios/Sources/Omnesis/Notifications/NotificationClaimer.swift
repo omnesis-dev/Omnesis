@@ -476,8 +476,13 @@ public struct NotificationClaimer: Sendable {
         urlRequest.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         urlRequest.setValue("application/json", forHTTPHeaderField: "Accept")
         urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        if claimsPairingNotifications, path == "/notifications/claim" {
-            urlRequest.setValue("1", forHTTPHeaderField: "X-Omnesis-Pairing-Notifications")
+        if path == "/notifications/claim" {
+            if claimsPairingNotifications {
+                urlRequest.setValue("1", forHTTPHeaderField: "X-Omnesis-Pairing-Notifications")
+            }
+            // Every build routes devices waiting to join through Tailscale. A
+            // gateway that never sends them ignores the header.
+            urlRequest.setValue("1", forHTTPHeaderField: "X-Omnesis-Tailscale-Join-Notifications")
         }
         urlRequest.httpBody = try JSONEncoder().encode(body)
         let (data, response) = try await request(urlRequest)

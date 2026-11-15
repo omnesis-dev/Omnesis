@@ -17,6 +17,7 @@ import dev.omnesis.android.transport.dto.DeviceRecord
 import dev.omnesis.android.transport.dto.NetworkIdentity
 import dev.omnesis.android.transport.dto.PairingAddressPlan
 import dev.omnesis.android.transport.dto.PendingPairing
+import dev.omnesis.android.transport.dto.TailscaleJoinRequest
 import dev.omnesis.android.transport.dto.TokenRecord
 import dev.omnesis.android.ui.common.Loadable
 import dev.omnesis.android.ui.common.reloading
@@ -152,8 +153,13 @@ class DevicesViewModel internal constructor(
         current.admin.takeIf { "admin" in current.pairing.scopes }
     }.getOrNull()
 
-    /** What the Pairing requests sheet last listed is what the main screen's banner counts. */
+    /** What the approvals sheet last listed is what the main screen's banner counts. */
     fun pairingRequestsListed(requests: List<GatewayPairingApprovalRequest>) = pairingPendingRequests.replace(requests)
+
+    fun tailscaleRequestsListed(requests: List<TailscaleJoinRequest>) = pairingPendingRequests.tailscaleListed(requests)
+
+    /** The gateway advertises Tailscale joins; the screen reads them only then. */
+    val tailscaleEmbed = session.tailscaleEmbed
 
     fun dismissNotice() = _notice.update { null }
 

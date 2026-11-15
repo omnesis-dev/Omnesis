@@ -321,6 +321,118 @@ final class PreviewSnapshotTests: XCTestCase {
         )
     }
 
+    /// The pairing state for a Tailscale gateway address this phone cannot reach: on its own,
+    /// retrying, after a retry failed differently, at a large text size, and as the sheet it is.
+    func testTailnetPairingUnreachable() {
+        func state(isPairing: Bool = false, retryError: String? = nil) -> TailnetPairingUnreachableView {
+            TailnetPairingUnreachableView(
+                host: PreviewMocks.tailnetGatewayHost,
+                isPairing: isPairing,
+                retryError: retryError,
+                onOpenTailscale: {},
+                onTryAgain: {},
+                onCancel: {}
+            )
+        }
+        snapshot(state(), name: "tailnet-pairing-unreachable")
+        snapshot(state(isPairing: true), name: "tailnet-pairing-retrying")
+        snapshot(state(retryError: PairingErrorMessage.usedOrExpiredCode), name: "tailnet-pairing-retry-failed")
+        snapshot(state().dynamicTypeSize(.accessibility2), name: "tailnet-pairing-unreachable-large")
+        snapshotPresented(
+            Theme.bgPrimary.ignoresSafeArea().sheet(isPresented: .constant(true)) { state() },
+            name: "tailnet-pairing-in-sheet"
+        )
+    }
+
+    /// Waiting for your OK with devices that asked through Tailscale: beside one that signed in,
+    /// on their own, none of either kind, a Tailscale request gone by its decision, an
+    /// unreachable gateway, a request that ran out, a large text size, and as the sheet
+    /// Devices opens.
+    func testWaitingForYourOKWithTailscaleRequests() async {
+        func joins(_ client: PreviewMocks.PreviewTailscaleJoinRequests) async -> TailscaleJoinRequestsModel {
+            let model = TailscaleJoinRequestsModel()
+            await model.refresh(client: client)
+            return model
+        }
+        func signedIn(_ client: PreviewMocks.PreviewPairingRequests) async -> GatewayPairingApprovalModel {
+            let model = GatewayPairingApprovalModel()
+            await model.refresh(client: client)
+            return model
+        }
+        func sheet(_ tailscale: TailscaleJoinRequestsModel, cloud: GatewayPairingApprovalModel? = nil) -> GatewayPairingApprovalView {
+            GatewayPairingApprovalView(client: nil, model: cloud, tailscaleModel: tailscale)
+        }
+        let two = PreviewMocks.tailscaleJoinRequestsTwo
+        await snapshot(sheet(joins(two), cloud: signedIn(PreviewMocks.pairingRequestsWithTrust)), name: "waiting-for-ok-both-kinds")
+        await snapshot(
+            sheet(joins(two), cloud: signedIn(PreviewMocks.pairingRequestsWithTrust)),
+            name: "waiting-for-ok-both-kinds-full",
+            size: CGSize(width: 393, height: 1500)
+        )
+        await snapshot(sheet(joins(two)), name: "waiting-for-ok-tailscale-only")
+        let noJoins = PreviewMocks.PreviewTailscaleJoinRequests(rows: [])
+        await snapshot(
+            sheet(joins(noJoins), cloud: signedIn(PreviewMocks.PreviewPairingRequests(rows: []))),
+            name: "waiting-for-ok-both-kinds-none"
+        )
+
+        let rows = PreviewMocks.tailscaleJoinRows
+        let gone = await joins(PreviewMocks.PreviewTailscaleJoinRequests(rows: rows))
+        await gone.decide(rows[0], approve: true, client: PreviewMocks.PreviewTailscaleJoinRequests(rows: [rows[1]], decisionGone: true))
+        snapshot(sheet(gone), name: "waiting-for-ok-tailscale-request-gone")
+
+        let unavailable = PreviewMocks.PreviewTailscaleJoinRequests(rows: [], unavailable: true)
+        await snapshot(sheet(joins(unavailable)), name: "waiting-for-ok-tailscale-unavailable")
+        await snapshot(
+            sheet(joins(PreviewMocks.PreviewTailscaleJoinRequests(rows: [PreviewMocks.tailscaleJoinExpired]))),
+            name: "waiting-for-ok-tailscale-expired"
+        )
+        await snapshot(
+            sheet(joins(two)).dynamicTypeSize(.accessibility2),
+            name: "waiting-for-ok-tailscale-large",
+            size: CGSize(width: 393, height: 1700)
+        )
+        let presented = await joins(two)
+        let presentedCloud = await signedIn(PreviewMocks.pairingRequestsWithTrust)
+        snapshotPresented(
+            Theme.bgPrimary.ignoresSafeArea().sheet(isPresented: .constant(true)) { sheet(presented, cloud: presentedCloud) },
+            name: "waiting-for-ok-both-kinds-in-sheet"
+        )
+    }
+
+    /// The Devices entry to Waiting for your OK is there for whichever kind this phone reviews,
+    /// and with neither the screen's toolbar is exactly as it is without the entry at all.
+    func testWaitingForYourOKEntryFollowsTheKinds() throws {
+        func toolbar(_ kinds: DeviceApprovalKinds?) -> some View {
+            NavigationStack {
+                Theme.bgPrimary.ignoresSafeArea()
+                    .navigationTitle("Devices")
+                    .navigationBarTitleDisplayMode(.inline)
+                    .toolbar {
+                        ToolbarItem(placement: .topBarTrailing) {
+                            if let kinds {
+                                GatewayPairingRequestsButton(kinds: kinds, client: nil, tailscale: nil)
+                            }
+                        }
+                    }
+            }
+        }
+        let bar = CGSize(width: 393, height: 140)
+        snapshot(toolbar(nil), name: "waiting-for-ok-entry-absent", size: bar)
+        snapshot(toolbar(DeviceApprovalKinds.neither), name: "waiting-for-ok-entry-flags-off", size: bar)
+        snapshot(
+            toolbar(DeviceApprovalKinds(cloudRelayEnabled: true, tailscaleEmbed: true, scopes: ["read"])),
+            name: "waiting-for-ok-entry-not-admin",
+            size: bar
+        )
+        snapshot(toolbar(DeviceApprovalKinds(cloud: false, tailscale: true)), name: "waiting-for-ok-entry-tailscale", size: bar)
+        snapshot(toolbar(DeviceApprovalKinds(cloud: true, tailscale: false)), name: "waiting-for-ok-entry-cloud", size: bar)
+        try assertSameImage("waiting-for-ok-entry-absent", "waiting-for-ok-entry-flags-off")
+        try assertSameImage("waiting-for-ok-entry-absent", "waiting-for-ok-entry-not-admin")
+        try assertDifferentImage("waiting-for-ok-entry-absent", "waiting-for-ok-entry-tailscale")
+        try assertSameImage("waiting-for-ok-entry-tailscale", "waiting-for-ok-entry-cloud")
+    }
+
     /// The two sign-in buttons are the same rounded rectangle at the same height, stretched
     /// or not, and the pairing code reads large at any length.
     func testSignInButtonsShareOneShape() {

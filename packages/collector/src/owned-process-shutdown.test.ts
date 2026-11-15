@@ -152,3 +152,24 @@ test("one owner's terminal uncertainty does not prevent an independent owner's c
   expect(f.exit).not.toHaveBeenCalled();
   expect(f.review).toHaveBeenCalledOnce();
 });
+
+test("an idle owner's notification cannot release another owner's watchdog hold", () => {
+  const f = fixture();
+  const pending = Object.assign(new Error("invented active source command"), {
+    cleanupFailure: undefined,
+    cleanupPending: true,
+  });
+  f.shutdown.attach({ cleanupFailure: () => pending, close: async () => {} });
+  f.shutdown.attach({ cleanupFailure: () => undefined, close: async () => {} });
+  f.shutdown.ownershipChanged();
+  expect(claimWatchdogExit(f.shutdown.exitHold)).toBe(false);
+});
+
+test("closing Collector admission prevents attaching a new cleanup owner", async () => {
+  const f = fixture();
+  const result = f.shutdown.close();
+  expect(() =>
+    f.shutdown.attach({ cleanupFailure: () => undefined, close: async () => {} }),
+  ).toThrow(/closed/);
+  await result;
+});

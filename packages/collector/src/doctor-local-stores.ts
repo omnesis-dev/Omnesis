@@ -18,19 +18,19 @@ import type { LocalStoreProbeResult } from "@omnesis/source-sdk";
 import type { DoctorLocalStore } from "@omnesis/core/doctor";
 import type { DoctorReadAccessSource } from "./doctor-read-access.js";
 import { ownedProcessCleanupReceipt } from "@omnesis/core";
-import { DoctorOwnedWork } from "./doctor-owned-work.js";
+import { CollectorOwnedWork } from "./owned-work.js";
 
 const PROBE_TIMEOUT_MS = 10_000;
 const PROBE_CONCURRENCY = 4;
 
 export class DoctorLocalStores {
-  private readonly work: DoctorOwnedWork;
+  private readonly work: CollectorOwnedWork;
   private readonly stopping = new AbortController();
   constructor(
     private readonly probeMs = PROBE_TIMEOUT_MS,
     changed?: () => void,
   ) {
-    this.work = new DoctorOwnedWork(changed);
+    this.work = new CollectorOwnedWork(changed);
   }
   cleanupFailure(): unknown | undefined {
     return this.work.cleanupFailure();

@@ -38,8 +38,15 @@ import {
   type AuthSubprocessEvent,
   type AuthSubprocessInbound,
 } from "./auth-subprocess-protocol.js";
-import { createCommandDispatch } from "./ws-command-dispatch.js";
-import type { AuthErrorCode, WsCommand, WsRequestPayload, WsResponsePayload } from "@omnesis/core";
+import { createCommandDispatch, type TypedCommandHandler } from "./ws-command-dispatch.js";
+import { CollectorOwnedWork, collectorCleanupReceipt } from "./owned-work.js";
+import type {
+  AuthErrorCode,
+  WsCommand,
+  WsCommandType,
+  WsRequestPayload,
+  WsResponsePayload,
+} from "@omnesis/core";
 import type { ConnectionState, GatewayClient } from "@omnesis/source-sdk";
 import type { SourceManager } from "./source-manager.js";
 
@@ -96,6 +103,8 @@ export interface SourceWsHandlerDeps {
    * dedup or resolve.
    */
   onSourcesChanged?: () => void;
+  /** Synchronous admission notification for the Collector's watchdog fence. */
+  onOwnershipChanged?: () => void;
 }
 
 export interface SourceWsHandlers {
@@ -106,19 +115,23 @@ export interface SourceWsHandlers {
    */
   handle: (command: WsCommand) => unknown | Promise<unknown> | undefined;
   /**
-   * Tear down every still-active auth subprocess so the collector can
-   * exit cleanly. Walks `activeFlows`, sends SIGTERM, awaits each
-   * child's `exit` event with a 5s cap, then sends SIGKILL to anything
-   * that didn't unwind in time. Wired from `main.ts:shutdown` before
-   * `process.exit(0)` so a SIGINT during an in-flight OAuth dance
-   * doesn't leak orphan `tsx` children that survive the parent.
-   * Idempotent — safe to call from both the SIGINT and SIGTERM paths.
+   * Close command admission, abort imports and stop auth subprocesses,
+   * then join accepted work. Repeated calls share the retained close proof.
    */
   shutdown: () => Promise<void>;
+  close: () => Promise<void>;
+  cleanupFailure: () => unknown;
 }
 
 export function createSourceWsHandlers(deps: SourceWsHandlerDeps): SourceWsHandlers {
   const { sourceManager, gateway, emitEvent } = deps;
+  const work = new CollectorOwnedWork(deps.onOwnershipChanged);
+  let closing: Promise<void> | undefined;
+  let closeSettled = false;
+  const pendingClose = Object.assign(new Error("Collector source cleanup remains pending"), {
+    cleanupFailure: undefined,
+    cleanupPending: true as const,
+  });
   /** Active auth subprocesses, keyed by flowId, so we can cancel them. */
   const activeFlows = new Map<string, ChildProcess>();
   /**
@@ -131,14 +144,16 @@ export function createSourceWsHandlers(deps: SourceWsHandlerDeps): SourceWsHandl
    * the cancel closes the latch the reader owns rather than racing it.
    */
   const endFlow = new Map<string, () => void>();
-  /** Active history imports, keyed by flowId; abort() terminates the worker. */
+  /** Abort is a request; the owned producer promise proves the import has joined. */
   const activeImports = new Map<string, AbortController>();
 
   // Typed dispatch table: a handler whose payload or answer disagrees with the
   // command's schema is a compile error, and the raw payload is parsed before
   // the handler sees it.
   const dispatch = createCommandDispatch();
-  const register = dispatch.register.bind(dispatch);
+  function register<K extends WsCommandType>(type: K, handler: TypedCommandHandler<K>): void {
+    dispatch.register(type, (payload) => work.run(Symbol(type), async () => handler(payload)));
+  }
 
   register("source.descriptors", () => handleDescriptors());
   register("source.validate-param", (p) => handleValidateParam(p));
@@ -161,27 +176,46 @@ export function createSourceWsHandlers(deps: SourceWsHandlerDeps): SourceWsHandl
   return {
     handle: (command) => dispatch.handle(command),
     shutdown: shutdownAllFlows,
+    close: shutdownAllFlows,
+    cleanupFailure: () =>
+      collectorCleanupReceipt(
+        work.cleanupFailure(),
+        closing && !closeSettled ? pendingClose : undefined,
+      ),
   };
 
   /**
-   * SIGTERM-then-SIGKILL teardown for all in-flight auth subprocesses.
-   * Walks `activeFlows`, signals each via {@link terminateChild}, awaits
-   * settle in parallel. The 5s SIGKILL fallback inside `terminateChild`
-   * mirrors `gateway/src/triggers/exec-runner.ts:297-313` — same budget,
-   * same behaviour.
+   * Stop independent producers before awaiting any join. Clearing an abort
+   * controller does not establish that its worker has stopped touching storage.
    */
-  async function shutdownAllFlows(): Promise<void> {
-    // Abort any in-flight imports (terminates their workers) before exit.
+  function shutdownAllFlows(): Promise<void> {
+    if (closing) return closing;
+    const acceptedWork = work.close();
     for (const ac of activeImports.values()) ac.abort();
-    activeImports.clear();
-    if (activeFlows.size === 0) return;
     const flowIds = [...activeFlows.keys()];
-    log.info(
-      `Shutdown: terminating ${flowIds.length} in-flight auth subprocess${flowIds.length === 1 ? "" : "es"}`,
-    );
-    const procs = flowIds.map((id) => activeFlows.get(id)).filter((p): p is ChildProcess => !!p);
-    activeFlows.clear();
-    await Promise.all(procs.map((p) => terminateChild(p)));
+    if (flowIds.length)
+      log.info(
+        `Shutdown: terminating ${flowIds.length} in-flight auth subprocess${flowIds.length === 1 ? "" : "es"}`,
+      );
+    closing = Promise.allSettled([acceptedWork, ...flowIds.map(terminateFlow)])
+      .then((results) => {
+        const errors: unknown[] = [];
+        for (const result of results)
+          if (result.status === "rejected") {
+            work.observe(result.reason);
+            errors.push(result.reason);
+          }
+        const uncertainty = work.cleanupFailure();
+        if (uncertainty) throw uncertainty;
+        if (errors.length === 1) throw errors[0];
+        if (errors.length > 1) throw new AggregateError(errors, "Collector source cleanup failed");
+      })
+      .finally(() => {
+        closeSettled = true;
+        deps.onOwnershipChanged?.();
+      });
+    deps.onOwnershipChanged?.();
+    return closing;
   }
 
   function terminateFlow(flowId: string): Promise<void> {
@@ -732,42 +766,54 @@ export function createSourceWsHandlers(deps: SourceWsHandlerDeps): SourceWsHandl
     body: WsRequestPayload<"import.begin">,
   ): WsResponsePayload<"import.begin"> {
     const { flowId, sourceId, values } = body;
+    if (activeImports.has(flowId)) throw new Error(`Import flow is already active: ${flowId}`);
     const ac = new AbortController();
     activeImports.set(flowId, ac);
-    void (async () => {
-      try {
-        const summary = await sourceManager.importHistory(sourceId, values, {
-          signal: ac.signal,
-          onProgress: (p) => {
-            if (ac.signal.aborted) return;
-            emitEvent("import.progress", {
+    void work
+      .run(Symbol(flowId), async () => {
+        try {
+          const summary = await sourceManager.importHistory(sourceId, values, {
+            signal: ac.signal,
+            onProgress: (p) => {
+              if (ac.signal.aborted) return;
+              emitEvent("import.progress", {
+                flowId,
+                phase: p.phase,
+                processed: p.processed,
+                total: p.total,
+                detail: p.detail,
+              });
+            },
+          });
+          if (!ac.signal.aborted) {
+            emitEvent("import.complete", {
               flowId,
-              phase: p.phase,
-              processed: p.processed,
-              total: p.total,
-              detail: p.detail,
+              ok: true,
+              imported: summary.imported,
+              merged: summary.merged,
+              skipped: summary.skipped,
             });
-          },
-        });
-        if (!ac.signal.aborted) {
+          }
+        } catch (err) {
+          if (work.observe(err)) throw err;
           emitEvent("import.complete", {
             flowId,
-            ok: true,
-            imported: summary.imported,
-            merged: summary.merged,
-            skipped: summary.skipped,
+            ok: false,
+            error: ac.signal.aborted
+              ? "cancelled"
+              : err instanceof Error
+                ? err.message
+                : String(err),
           });
         }
-      } catch (err) {
-        emitEvent("import.complete", {
-          flowId,
-          ok: false,
-          error: ac.signal.aborted ? "cancelled" : err instanceof Error ? err.message : String(err),
-        });
-      } finally {
-        activeImports.delete(flowId);
-      }
-    })();
+      })
+      .finally(() => {
+        if (activeImports.get(flowId) === ac) activeImports.delete(flowId);
+      })
+      .catch((err: unknown) => {
+        if (work.observe(err)) log.error(`Import cleanup is unconfirmed: ${toErrorMessage(err)}`);
+        else log.debug(`Import stopped: ${toErrorMessage(err)}`);
+      });
     log.info(`import.begin running for flow=${flowId} source=${sourceId}`);
     return { started: true };
   }

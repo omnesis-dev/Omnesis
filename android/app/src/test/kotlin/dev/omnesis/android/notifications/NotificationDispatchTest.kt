@@ -34,6 +34,42 @@ class NotificationDispatchTest {
     }
 
     @Test
+    fun tailscale_join_opens_the_waiting_requests_with_and_without_cloud_connectivity() {
+        for (cloud in listOf(false, true)) {
+            assertTrue(knownNotificationKind("tailscale-join", cloudEnabled = cloud))
+            val expected = ClaimedPushAction("tailscale-join", NotificationTarget.TailscaleJoinRequests)
+            assertEquals(expected, notificationAction(notification("tailscale-join", "tailscale-join", """{"kind":"tailscale-join"}"""), cloudEnabled = cloud))
+            assertEquals(expected, notificationAction(notification("tailscale-join", "tailscale-join"), cloudEnabled = cloud))
+            // A route that names another kind is not this notification's.
+            assertNull(notificationAction(notification("tailscale-join", "tailscale-join", """{"kind":"device-joined"}"""), cloudEnabled = cloud))
+        }
+    }
+
+    @Test
+    fun a_device_that_joined_through_tailscale_opens_devices_with_and_without_cloud_connectivity() {
+        for (cloud in listOf(false, true)) {
+            assertTrue(knownNotificationKind("tailscale-joined", cloudEnabled = cloud))
+            assertEquals(
+                ClaimedPushAction("tailscale-joined", NotificationTarget.Devices(null)),
+                notificationAction(notification("tailscale-joined", "devices", """{"kind":"tailscale-joined"}"""), cloudEnabled = cloud),
+            )
+        }
+    }
+
+    @Test
+    fun device_joined_stays_a_cloud_relay_kind() {
+        assertFalse(knownNotificationKind("device-joined", cloudEnabled = false))
+        assertNull(notificationAction(notification("device-joined", "devices", """{"kind":"device-joined"}"""), cloudEnabled = false))
+    }
+
+    @Test
+    fun a_pairing_request_stays_a_cloud_relay_kind() {
+        assertFalse(knownNotificationKind("device-pairing", cloudEnabled = false))
+        assertNull(notificationAction(notification("device-pairing", "pairing", """{"kind":"device-pairing"}"""), cloudEnabled = false))
+        assertTrue(knownNotificationKind("device-pairing", cloudEnabled = true))
+    }
+
+    @Test
     fun content_free_wake_is_exact_and_contains_no_routing_data() {
         assertTrue(isContentFreeWake(mapOf("wake" to "1")))
         assertFalse(isContentFreeWake(mapOf("wake" to "1", "kind" to "conversation")))

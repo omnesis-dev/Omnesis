@@ -250,8 +250,13 @@ function requestedId() {
   return new URLSearchParams(globalThis.location?.search ?? "").get("request");
 }
 
-/** The public configuration endpoint exists only when optional Google pairing is enabled. */
-export function CloudPairingRequests({ focusRequestId = requestedId() } = {}) {
+/**
+ * The waiting sign-in requests, as cards for the Devices page's "Waiting for your OK" section,
+ * which also lists other kinds of waiting devices and owns the title; `onCount` hears how many
+ * of these wait. The public configuration endpoint exists only when optional Google pairing is
+ * enabled.
+ */
+export function CloudPairingRequests({ focusRequestId = requestedId(), onCount } = {}) {
   const [enabled, setEnabled] = useState(false);
   const [passkey, setPasskey] = useState(false);
   const [stepUpRequired, setStepUpRequired] = useState(false);
@@ -293,10 +298,11 @@ export function CloudPairingRequests({ focusRequestId = requestedId() } = {}) {
   const waiting = waitingCloudPairingRequests(requests).sort(
     (a, b) => Number(b.requestId === focusRequestId) - Number(a.requestId === focusRequestId),
   );
+  const count = enabled ? waiting.length : 0;
+  useEffect(() => onCount?.(count), [count]);
   // Nothing waiting is the normal case, so the section stays out of the way.
   if (!enabled || (waiting.length === 0 && !error && !denied)) return null;
-  return html`<section class="cloud-pairing-requests" aria-label="Devices waiting for your OK">
-    ${waiting.length > 0 && html`<h2 class="devices-group-title">Waiting for your OK</h2>`}
+  return html`
     ${error && html`<p class="devices-banner error" role="alert">${error}</p>`}
     ${denied && html`<${CloudPairingDenied} denied=${denied} onClose=${() => setDenied(null)} />`}
     ${waiting.map(
@@ -311,5 +317,5 @@ export function CloudPairingRequests({ focusRequestId = requestedId() } = {}) {
           onDecision=${refresh}
         />`,
     )}
-  </section>`;
+  `;
 }

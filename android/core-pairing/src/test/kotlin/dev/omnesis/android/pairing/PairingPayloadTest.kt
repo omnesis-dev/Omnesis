@@ -4,6 +4,7 @@
 package dev.omnesis.android.pairing
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -114,6 +115,54 @@ class PairingPayloadTest {
         )
         assertTrue(p is PairingPayload.V1)
         assertEquals("Gateway", (p as PairingPayload.V1).name)
+    }
+
+    /**
+     * The gateway marks an address on the owner's Tailscale network with a top-level
+     * `"tailnet": true`. An app that predates the marker must still pair from such a code,
+     * which holds because every version ignores keys it does not define.
+     */
+    @Test
+    fun tailnet_marker_is_read_on_every_gateway_url_version() {
+        val fp = "a".repeat(64)
+        val v4 = PairingPayload.decode(
+            """{"v":4,"gatewayUrl":"https://maya-gateway.tail1234.ts.net:7600","pairingCode":"AB-CD","tls":{"mode":"pinned-leaf","fingerprint":"$fp"},"tailnet":true}""",
+        ) as PairingPayload.V4
+        assertTrue(v4.tailnet)
+        assertEquals(PairingPayload.V4Tls.PinnedLeaf(fp), v4.tls)
+        val system = PairingPayload.decode(
+            """{"v":4,"gatewayUrl":"https://maya-gateway.tail1234.ts.net","pairingCode":"AB-CD","tls":{"mode":"system"},"tailnet":true}""",
+        )
+        assertTrue(system.tailnet)
+        val v3 = PairingPayload.decode(
+            """{"v":3,"gatewayUrl":"https://maya-gateway.tail1234.ts.net:7600","pairingCode":"AB-CD","fingerprint":"$fp","tailnet":true}""",
+        )
+        assertEquals(PairingPayload.V3("https://maya-gateway.tail1234.ts.net:7600", "AB-CD", fp, tailnet = true), v3)
+        val v2 = PairingPayload.decode("""{"tailnet":true,"v":2,"gatewayUrl":"https://maya-gateway.tail1234.ts.net:7600","pairingCode":"Z9"}""")
+        assertEquals(PairingPayload.V2("https://maya-gateway.tail1234.ts.net:7600", "Z9", tailnet = true), v2)
+    }
+
+    @Test
+    fun payloads_without_a_true_tailnet_marker_are_ordinary_pairings() {
+        val fp = "a".repeat(64)
+        listOf(
+            """{"v":4,"gatewayUrl":"https://gateway.example.com","pairingCode":"AB-CD","tls":{"mode":"system"}}""",
+            """{"v":3,"gatewayUrl":"https://gateway.example.com","pairingCode":"AB-CD","fingerprint":"$fp"}""",
+            """{"v":2,"gatewayUrl":"https://gateway.example.com","pairingCode":"Z9"}""",
+            """{"v":1,"url":"https://gateway.example.com","token":"tok","accountId":"acc","name":"Gateway","tailnet":true}""",
+            """{"v":2,"gatewayUrl":"https://gateway.example.com","pairingCode":"Z9","tailnet":false}""",
+            """{"v":2,"gatewayUrl":"https://gateway.example.com","pairingCode":"Z9","tailnet":"true"}""",
+            """{"v":2,"gatewayUrl":"https://gateway.example.com","pairingCode":"Z9","tailnet":null}""",
+            """{"v":2,"gatewayUrl":"https://gateway.example.com","pairingCode":"Z9","tailnet":{"on":true}}""",
+        ).forEach { raw -> assertFalse(raw, PairingPayload.decode(raw).tailnet) }
+    }
+
+    @Test
+    fun unknown_keys_never_break_decoding() {
+        val p = PairingPayload.decode(
+            """{"v":2,"gatewayUrl":"https://gateway.example.com","pairingCode":"Z9","futureKey":{"nested":[1,2]},"another":"value"}""",
+        )
+        assertEquals(PairingPayload.V2("https://gateway.example.com", "Z9"), p)
     }
 
     @Test

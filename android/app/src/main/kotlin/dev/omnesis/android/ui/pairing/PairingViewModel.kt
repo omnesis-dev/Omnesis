@@ -55,6 +55,18 @@ class PairingViewModel internal constructor(
         val fingerprint: String?,
         /** Closure that performs the actual pair when the user confirms. */
         val confirm: suspend SessionManager.() -> Unit,
+        /** The code marked the gateway URL as an address on the owner's Tailscale network. */
+        val tailnet: Boolean = false,
+    )
+
+    /**
+     * A pairing whose code marked a Tailscale address this phone could not reach. The screen
+     * offers to open Tailscale and to try [retry] again, in place of the generic error.
+     */
+    data class TailnetUnreachable(
+        val retry: Pending,
+        /** What the last retry failed with when it was not the Tailscale address again. */
+        val retryError: String? = null,
     )
 
     data class State(
@@ -74,6 +86,7 @@ class PairingViewModel internal constructor(
         val googleApproved: Boolean = false,
         val account: AccountPairingState? = null,
         val passkeyAvailable: Boolean = false,
+        val tailnetUnreachable: TailnetUnreachable? = null,
     ) {
         val canSubmit: Boolean get() = gatewayUrl.isNotBlank() && pairingCode.isNotBlank() && !isPairing
     }
@@ -91,8 +104,8 @@ class PairingViewModel internal constructor(
 
     private val account = accountPorts?.let { ports -> AccountPairingController(viewModelScope, ports) { value -> _state.update { it.copy(account = value) } } }
 
-    fun showScanner() { account?.cancel(); google.cancel(); _state.update { it.copy(mode = Mode.Scan, error = null) } }
-    fun showManualEntry() { account?.cancel(); google.cancel(); _state.update { it.copy(mode = Mode.Manual, error = null) } }
+    fun showScanner() { account?.cancel(); google.cancel(); _state.update { it.copy(mode = Mode.Scan, error = null, tailnetUnreachable = null) } }
+    fun showManualEntry() { account?.cancel(); google.cancel(); _state.update { it.copy(mode = Mode.Manual, error = null, tailnetUnreachable = null) } }
     fun showGoogle() { if (_state.value.googleAvailable || account != null) _state.update { it.copy(mode = Mode.Google, error = null) } }
     fun startGoogle(context: Context) {
         if (!_state.value.googleAvailable) return
@@ -165,6 +178,7 @@ class PairingViewModel internal constructor(
                     trustKind = payloadTrustKind(payload),
                     fingerprint = payloadFingerprint(payload),
                     confirm = { pairFromQr(raw) },
+                    tailnet = payload.tailnet,
                 ),
             )
         }
@@ -182,17 +196,48 @@ class PairingViewModel internal constructor(
         val pending = _state.value.pending ?: return
         if (_state.value.isPairing) return
         _state.update { it.copy(isPairing = true, error = null) }
+        exchange(pending)
+    }
+
+    /** "Try again" on the Tailscale state: the same confirmed payload, exchanged again. */
+    fun retryTailnetPairing() {
+        val retry = _state.value.tailnetUnreachable?.retry ?: return
+        if (_state.value.isPairing) return
+        _state.update { it.copy(isPairing = true, error = null) }
+        exchange(retry)
+    }
+
+    /** Leave the Tailscale state for the scanner, dropping the payload it would retry. Not while a retry runs. */
+    fun dismissTailnetUnreachable() {
+        if (_state.value.isPairing) return
+        _state.update { it.copy(tailnetUnreachable = null) }
+    }
+
+    private fun exchange(pending: Pending) {
         viewModelScope.launch {
+            // On success SessionManager flips to Paired and RootScreen swaps this screen out.
             runCatching {
                 pending.confirm(session())
             }.onFailure { e ->
+                val retrying = _state.value.tailnetUnreachable != null
                 _state.update {
-                    it.copy(
-                        mode = Mode.Manual,
-                        isPairing = false,
-                        pending = null,
-                        error = pairingErrorMessage(e, gatewayHost = pending.hostAndPort),
-                    )
+                    when (val failure = pairingFailure(e, gatewayHost = pending.hostAndPort, tailnet = pending.tailnet)) {
+                        PairingFailure.TailnetUnreachable -> it.copy(
+                            isPairing = false,
+                            pending = null,
+                            tailnetUnreachable = TailnetUnreachable(pending),
+                        )
+                        // A retry that fails another way stays on the Tailscale state and says so.
+                        is PairingFailure.Message -> if (retrying) it.copy(
+                            isPairing = false,
+                            tailnetUnreachable = TailnetUnreachable(pending, retryError = failure.text),
+                        ) else it.copy(
+                            mode = Mode.Manual,
+                            isPairing = false,
+                            pending = null,
+                            error = failure.text,
+                        )
+                    }
                 }
             }
         }

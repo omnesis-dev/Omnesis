@@ -154,11 +154,12 @@ function harnessCommands(harness, oauth, address, pairingCode) {
  *   as an agent device before signing in.
  *
  * @param {{ resource: string, resources?: Array<{ resource: string, servedByGateway: boolean, direct: boolean, publiclyTrusted?: boolean }>, tlsFingerprintSha256?: string | null, certificate?: { kind: string, trustFile: string | null } | null }} oauth
- * @param {{ harnessAddress?: { gatewayUrl: string, servedByGateway: boolean, direct: boolean }, pairingCode?: string, relay?: { state: string, url?: string } }} [options]
- *   `oauth.resource` is the address selected in the dialog, and `relay` the
- *   gateway's relay-hosted address, from `relayPublicAddress`.
+ * @param {{ harnessAddress?: { gatewayUrl: string, servedByGateway: boolean, direct: boolean }, pairingCode?: string, relay?: { state: string, url?: string }, tailscale?: { state: string, url?: string } }} [options]
+ *   `oauth.resource` is the address selected in the dialog, `relay` the
+ *   gateway's relay-hosted address, from `relayPublicAddress`, and `tailscale`
+ *   its Tailscale device's address, from `tailscalePublicAddress`.
  */
-export function agentSetups(oauth, { harnessAddress, pairingCode, relay } = {}) {
+export function agentSetups(oauth, { harnessAddress, pairingCode, relay, tailscale } = {}) {
   const url = shellQuote(oauth.resource);
   const address = harnessAddress ?? harnessAddresses(oauth)[0];
   const untrustedCertificate = servesUntrustedCertificate(oauth);
@@ -298,7 +299,7 @@ export function agentSetups(oauth, { harnessAddress, pairingCode, relay } = {}) 
       docs: `${DOCS}/connect#harness-install`,
     },
   ];
-  const choices = addressChoices(oauth, relay);
+  const choices = addressChoices(oauth, relay, tailscale);
   return agents.map((listed) => {
     const addressNotice = listed.needsPublicAddress
       ? hostedClientAddress(listed, oauth.resource, relay, choices)

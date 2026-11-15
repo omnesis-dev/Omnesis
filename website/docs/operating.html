@@ -235,6 +235,11 @@ collector    omnesis-collector.service                running        41283</pre>
           back.
         </p>
         <p>
+          Collector shutdown refuses new source-management commands, cancels history imports, and
+          waits for accepted commands and imports to finish. Unconfirmed cleanup is logged and keeps
+          the process running for investigation.
+        </p>
+        <p>
           A collector whose event loop stops turning for five minutes (alive, but stuck and syncing
           nothing) ends itself so its service restarts it. It first writes
           <code>Event loop stalled</code> and the stack it was stuck in to its error log, which is

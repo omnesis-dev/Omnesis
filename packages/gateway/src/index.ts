@@ -8,6 +8,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { hostname as osHostname } from "node:os";
 import { createServer as createHttpsServer, type Server as HttpsServer } from "node:https";
+import { EventEmitter } from "node:events";
 import {
   startGatewayCloudTunnel,
   createGatewayAcmeController,
@@ -16,7 +17,7 @@ import {
   GatewayCloudRelayManagement,
 } from "@omnesis/cloud-relay";
 import { CONFIG_DEFAULTS, DEFAULT_PUSH_WAKE_RETRY_SETTINGS, scaffoldDotEnv } from "@omnesis/config";
-import { serve } from "@hono/node-server";
+import { getRequestListener, serve } from "@hono/node-server";
 import { createNodeWebSocket } from "@hono/node-ws";
 import {
   acquireGatewayLock,
@@ -30,6 +31,7 @@ import {
   ensurePrivateDirSync,
   experimentalEnabled,
   cloudRelayEnabled,
+  tailscaleEmbedEnabled,
   loadManifest,
   installParentShutdownHandler,
   primeSecretFileKeyCache,
@@ -130,6 +132,8 @@ import { RealtimeService } from "./realtime/service.js";
 import { mountRealtimeRoutes } from "./realtime/route.js";
 import { lookupToken, listDeviceIdsWithActiveScope } from "./data/repositories/TokenRepository.js";
 import { PairingNotifier } from "./push/pairing-notifier.js";
+import { TailscaleJoinNotifier } from "./tailscale-embed/notifier.js";
+import { TailscaleEmbedService } from "./tailscale-embed/service.js";
 import { CertificateIncidentNotifier } from "./push/certificate-incident-notifier.js";
 import { WsEventHandler } from "./http/services/WsEventHandler.js";
 import { FleetUpdateService } from "./http/services/FleetUpdateService.js";
@@ -828,6 +832,30 @@ const pairingNotifier = new PairingNotifier(
   () => listDevices(db),
   () => listDeviceIdsWithActiveScope(db, SCOPE_ADMIN),
 );
+// The gateway's own tailnet device, only with OMNESIS_TAILSCALE_EMBED_ENABLED=1.
+// It starts once the HTTP server is listening (`attach` below).
+const tailscaleJoinNotifier = new TailscaleJoinNotifier(
+  pushBroadcaster,
+  () => listDevices(db),
+  () => listDeviceIdsWithActiveScope(db, SCOPE_ADMIN),
+);
+const tailscaleEmbed = tailscaleEmbedEnabled()
+  ? new TailscaleEmbedService({
+      configDir,
+      tlsMaterial: () => {
+        // The same files the gateway serves, including after a rotation.
+        const paths = currentTlsMaterialPaths(configDir, process.env, dotEnvKeysAtBoot);
+        return {
+          cert: paths.certPath ?? join(configDir, "tls", "cert.pem"),
+          key: paths.keyPath ?? join(configDir, "tls", "key.pem"),
+        };
+      },
+      joins: {
+        notifyWaiting: (request) => void tailscaleJoinNotifier.waiting(request),
+        notifyJoined: (device) => void tailscaleJoinNotifier.joined(device),
+      },
+    })
+  : undefined;
 const certificateIncidentNotifier = new CertificateIncidentNotifier(
   pushBroadcaster,
   () => listDevices(db),
@@ -2759,18 +2787,23 @@ const app = createServer(db, DB_PATH, {
   // in auth.begin so OAuth/aggregator sources build their redirect URI as
   // `${publicBaseUrl}/oauth/callback`. See runtime-settings.ts.
   publicBaseUrl: runtime.publicBaseUrl,
-  ...(cloudRelayEnabled()
+  ...(cloudRelayEnabled() || tailscaleEmbed
     ? {
         additionalOAuthIssuerUrls: () => {
-          const origin =
-            cloudRelayManagement?.publicOrigin() ??
-            (process.env.OMNESIS_CLOUD_RELAY_GATEWAY_ORIGIN
-              ? publicGatewayOrigin(process.env)
-              : undefined);
-          return origin ? [origin] : [];
+          const relayOrigin = cloudRelayEnabled()
+            ? (cloudRelayManagement?.publicOrigin() ??
+              (process.env.OMNESIS_CLOUD_RELAY_GATEWAY_ORIGIN
+                ? publicGatewayOrigin(process.env)
+                : undefined))
+            : undefined;
+          // Agents reach the gateway by its tailnet name, on the tailnet or
+          // through its public address; both are the same origin.
+          const tailnetOrigin = tailscaleEmbed?.tailnetOrigin() ?? undefined;
+          return [relayOrigin, tailnetOrigin].filter((origin): origin is string => !!origin);
         },
       }
     : {}),
+  tailscaleEmbed,
   cloudRelayManagement,
   cloudRelayExposure: () => cloudRelayManagement?.isExposing() ?? false,
   cloudIdentitySource: cloudPairingIdentitySource(
@@ -3427,6 +3460,17 @@ function startServer() {
 
 const server = startServer();
 scheduler.schedule(createTlsLifecycleTask(tlsLifecycle));
+if (tailscaleEmbed) {
+  // The helper forwards to a private socket served by the same app, with the
+  // same WebSocket routes and drain tracking as the main listener.
+  const tailnetUpgrades = new EventEmitter();
+  injectWebSocket(tailnetUpgrades as unknown as Parameters<typeof injectWebSocket>[0]);
+  await tailscaleEmbed.attach({
+    listener: getRequestListener(app.fetch),
+    upgrade: (req, socket, head) => tailnetUpgrades.emit("upgrade", req, socket, head),
+    onServer: (tailnetServer) => httpShutdown.attach(tailnetServer),
+  });
+}
 
 wsServer.start();
 
@@ -4023,7 +4067,13 @@ const doShutdown = async (): Promise<void> => {
   wsServer.stop();
   collectorDescriptors.close();
   const httpDrain = httpShutdown.close(server, 5_000);
-  const [httpDrained] = await Promise.all([httpDrain, realtimeService.dispose()]);
+  // Tailnet requests drain alongside the main listener's; then closing the
+  // helper's input closes the public address before the gateway goes.
+  const [httpDrained] = await Promise.all([
+    httpDrain,
+    realtimeService.dispose(),
+    tailscaleEmbed?.shutdown(5_000),
+  ]);
   if (!httpDrained) log.warn("HTTP shutdown drain timed out; remaining connections closed");
   try {
     await app.close();

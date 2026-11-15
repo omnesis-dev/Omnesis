@@ -55,8 +55,15 @@ struct CloudPairingDemoSurface: View {
                     .environment(AppStore.preview())
             case .devicesAdmin, .devicesReadOnly:
                 NavigationStack {
-                    GatewayPairingRequestsButton(scopes: scenario == .devicesAdmin ? ["read", "admin"] : ["read"], client: approvals)
-                        .navigationTitle("Device access")
+                    GatewayPairingRequestsButton(
+                        kinds: DeviceApprovalKinds(
+                            cloudRelayEnabled: true,
+                            tailscaleEmbed: false,
+                            scopes: scenario == .devicesAdmin ? ["read", "admin"] : ["read"]
+                        ),
+                        client: approvals
+                    )
+                    .navigationTitle("Device access")
                 }.environment(AppStore.preview())
             case .status:
                 ScrollView {
