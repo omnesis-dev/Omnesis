@@ -166,6 +166,14 @@ jobs:
           cache: npm
       - name: Install locked dependencies
         run: node scripts/ci/npm-ci.mjs --no-audit --no-fund
+      - name: Provide the existing Git OpenSSL executable
+        shell: pwsh
+        run: |
+          if (-not (Get-Command openssl -ErrorAction SilentlyContinue)) {
+            $opensslDir = Join-Path $env:ProgramFiles 'Git\usr\bin'
+            if (-not (Test-Path (Join-Path $opensslDir 'openssl.exe'))) { throw 'Missing OpenSSL' }
+            $opensslDir | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+          }
       - name: Build and prove actual patched MSVC vector dependency
         run: node scripts/ci/build-windows-usearch.mjs
       - name: Validate unchanged storage latency and fairness budgets
