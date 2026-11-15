@@ -778,6 +778,33 @@ at the gateway through a trusted device; replacing the relay alone does not
 revoke gateway-issued grants. Re-pair pinned clients only after independently
 verifying an intentional gateway key change.
 
+## Container image
+
+`deploy/Dockerfile` builds the relay image (linux/amd64, UID 10001, base image
+pinned by digest) from the repository root. Only
+`.github/workflows/cloud-relay-image.yml` publishes it, as
+`ghcr.io/omnesis-dev/omnesis-cloud-relay`, and only for a commit of `main` whose
+manually dispatched `full-validation` run with every lane passed: it starts by
+itself when such a run finishes, or by hand with that run's id. It pushes the
+image by digest, signs it keylessly with cosign through GitHub's OIDC identity,
+and attaches a build provenance attestation.
+
+The signature names the workflow file and `refs/heads/main` in its certificate,
+and the source commit in the `dev.omnesis.source-sha` annotation. A relay host
+should refuse any image that does not pass this check for the commit it means
+to run, and should refer to images by digest only:
+
+```sh
+cosign verify \
+  --certificate-identity https://github.com/omnesis-dev/Omnesis/.github/workflows/cloud-relay-image.yml@refs/heads/main \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  -a dev.omnesis.source-sha=<40-character commit> \
+  ghcr.io/omnesis-dev/omnesis-cloud-relay@sha256:<digest>
+gh attestation verify oci://ghcr.io/omnesis-dev/omnesis-cloud-relay@sha256:<digest> \
+  --repo omnesis-dev/Omnesis \
+  --signer-workflow omnesis-dev/Omnesis/.github/workflows/cloud-relay-image.yml
+```
+
 ## Validation
 
 `npm run test:cloud-relay` enforces 100% statements, branches, functions and lines
