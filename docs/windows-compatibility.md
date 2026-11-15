@@ -105,6 +105,13 @@ fail those three recovery cases. The rebuilt cipher also passed a full Gateway
 schema check and reads and writes files interchangeably with the original
 cipher binding. These results do not replace the complete runtime sweep.
 
+Developer-script smoke validation passed all 162 tests on Linux and 152 on
+Windows, with ten operating-system-specific skips. Python protocol output uses
+UTF-8 and LF, and certificate paths are compared through their native physical
+paths. The Windows fixture owner keeps its job alive after a finite startup
+command returns, then joins the whole subtree before removing inputs. A real
+detached-daemon test separately verifies that lifetime and closure.
+
 Authentication subprocesses also exercise an existing encrypted credential in
 a restricted Windows environment. Native process identity uses exact framework
 creation-time ticks, and compiler bootstraps load the system utility module by

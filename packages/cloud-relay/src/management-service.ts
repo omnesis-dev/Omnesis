@@ -1467,7 +1467,6 @@ export class GatewayCloudRelayManagement implements CloudRelayManagement {
   }
   private accountReadable(): boolean {
     return Boolean(
-      !this.closed &&
       this.settings?.enabled &&
       this.enrollment.state === "enrolled" &&
       this.account!.status().linked,

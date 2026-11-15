@@ -180,7 +180,8 @@
     "website/**",
     ".claude/**",
     "integrations/**",
-    "extension/scripts/test-manifest.d.mts"
+    "extension/scripts/test-manifest.d.mts",
+    "scripts/lib/check-process.d.mts"
   ],
   "rules": {
     "files": "error",
