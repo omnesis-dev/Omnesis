@@ -91,14 +91,15 @@ export function toFts5Query(query: string, prefixLastToken = false): string {
  * reaches FTS5 as invalid MATCH syntax and throws `fts5: syntax error`, 500ing
  * the search. Spaces rather than deletion keep the tokenizer splitting
  * "example.com" into example/com instead of concatenating to "examplecom".
- * `\p{L}\p{N}_` keeps letters (incl. non-Latin scripts), digits, and
- * underscores; the `u` flag makes the Unicode property escapes work. Bare
+ * `\p{L}\p{N}\p{M}_` keeps letters (incl. non-Latin scripts), digits,
+ * underscores and the combining marks that Indic and Thai words are written
+ * with; the `u` flag makes the Unicode property escapes work. Bare
  * operator words (`AND`, `OR`, `NOT`, `NEAR`) are dropped, except a type-ahead
  * prefix: "or" is the start of "order", and the caller quotes it.
  */
 export function queryWords(query: string, prefixLastToken = false): string[] {
   const words = query
-    .replace(/[^\p{L}\p{N}_\s]/gu, " ")
+    .replace(/[^\p{L}\p{N}\p{M}_\s]/gu, " ")
     .split(/\s+/)
     .filter(Boolean);
   return words

@@ -21,6 +21,7 @@
  */
 
 import { syntheticEnabled } from "@omnesis/core";
+import { LEXICAL_TOKENIZE, lexicalText } from "./lexical-analysis.js";
 
 export interface LexicalTextOptions {
   /**
@@ -49,10 +50,22 @@ const PORTER_UNICODE61 = "porter unicode61 remove_diacritics 2";
 /** The analysis every install had before versions existed. */
 const VERSION_0: LexicalVersion = { version: 0, tokenize: PORTER_UNICODE61 };
 
-/** The version new indexes are built with and older ones are rebuilt to. */
-const CURRENT_VERSION = 0;
+/**
+ * Multilingual analysis (see lexical-analysis.ts): words found in Chinese,
+ * Japanese, Thai and other scripts written without spaces, Korean particles,
+ * Russian and Arabic stems, Indic endings, optional marks and wide forms
+ * folded. Latin-script text is left exactly as version 0 indexes it.
+ */
+const VERSION_1: LexicalVersion = {
+  version: 1,
+  tokenize: LEXICAL_TOKENIZE,
+  rewrite: (text) => lexicalText(text),
+};
 
-const PRODUCTION_VERSIONS: readonly LexicalVersion[] = [VERSION_0];
+/** The version new indexes are built with and older ones are rebuilt to. */
+const CURRENT_VERSION = 1;
+
+const PRODUCTION_VERSIONS: readonly LexicalVersion[] = [VERSION_0, VERSION_1];
 
 /**
  * Versions that exist only so the rebuild can be tested end to end. Each
