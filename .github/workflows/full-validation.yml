@@ -1,55 +1,18 @@
-name: Windows ownership and filesystem diagnosis
+name: Windows manual runtime diagnosis
 on:
   workflow_dispatch:
 permissions:
   contents: read
-env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
-  TZ: UTC
 jobs:
-  ownership-green:
-    runs-on: ubuntu-latest
-    timeout-minutes: 25
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        with:
-          ref: ${{ github.sha }}
-          persist-credentials: false
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
-        with:
-          node-version: "24"
-          cache: npm
-      - name: Install locked dependencies
-        run: scripts/ci/npm-ci.sh
-      - name: Record exact revision and changed production inputs
-        run: |
-          git rev-parse HEAD
-          sha256sum packages/core/src/secret-store-files.ts packages/core/src/secret-store-entry.ts packages/core/src/sqlite-snapshot.ts packages/core/src/backup-layout.ts packages/platform/src/windows-process.ts packages/cloud-relay/src/device-key-file.ts packages/cloud-relay/src/gateway-key-client.ts
-      - name: Rerun the six original ownership regression suites
-        run: >-
-          node scripts/run-check.mjs unit
-          packages/core/src/secret-store-files.test.ts
-          packages/core/src/sqlite-snapshot-windows-retry.test.ts
-          packages/core/src/backup-layout-cleanup.test.ts
-          packages/platform/src/windows-process.test.ts
-          packages/cloud-relay/src/device-key-file.test.ts
-          packages/cloud-relay/src/gateway-key-client.test.ts
-      - name: Verify cause markers and durable snapshot retention
-        if: ${{ !cancelled() }}
-        run: >-
-          node scripts/run-check.mjs unit
-          packages/core/src/owned-process-cleanup.test.ts
-          packages/core/src/private-scratch.test.ts
-          packages/core/src/sqlite-snapshot-cleanup-retention.test.ts
-      - name: Diagnose unconfirmed doctor reads before repair against unchanged doctor production
-        if: ${{ !cancelled() }}
-        run: >-
-          node scripts/run-check.mjs unit
-          packages/core/src/doctor/security-cleanup.test.ts
-          packages/core/src/doctor/windows-permissions-cleanup.test.ts
-  windows-filesystem:
+  real-runtime:
     runs-on: windows-latest
-    timeout-minutes: 35
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+      TZ: UTC
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -59,13 +22,82 @@ jobs:
         with:
           node-version: "24"
           cache: npm
-      - name: Install locked dependencies
+      - name: Reject incomplete operation success at the portable result boundary
+        run: node --test scripts/ci/manual-windows-acceptance/result-acceptance.node-test.mjs
+      - name: Check immutable target and native prerequisites
+        env:
+          TARGET_SHA: ${{ github.sha }}
+        run: |
+          if ($env:TARGET_SHA -notmatch '^[0-9a-f]{40}$') { throw 'Invalid target revision' }
+          if ((git rev-parse HEAD) -ne $env:TARGET_SHA) { throw 'Unexpected source revision' }
+          node -e "if(process.platform!=='win32'||process.arch!=='x64')process.exit(1)"
+          if ($LASTEXITCODE) { throw 'Unexpected Node architecture' }
+          if (-not (Get-Command openssl -ErrorAction SilentlyContinue)) {
+            $opensslDir = Join-Path $env:ProgramFiles 'Git\usr\bin'
+            if (-not (Test-Path (Join-Path $opensslDir 'openssl.exe'))) { throw 'Missing OpenSSL' }
+            $opensslDir | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+          }
+      - name: Install exact Windows dependencies
+        run: node scripts/ci/npm-ci.mjs --no-audit --no-fund
+      - name: Prove keyless SQLite refusal and plaintext negative control
+        run: node --test scripts/ci/manual-windows-acceptance/sqlite-probe.node-test.mjs
+      - name: Build and prove actual patched MSVC vector dependency
+        run: node scripts/ci/build-windows-usearch.mjs
+      - name: Build supported runtime
+        run: node scripts/build-projects.mjs
+      - name: Stage fresh runtime and pin source and package provenance
+        env:
+          TARGET_SHA: ${{ github.sha }}
+        run: node scripts/ci/manual-windows-acceptance/prepare-hosted-runtime.mjs "$env:GITHUB_WORKSPACE" "$env:RUNNER_TEMP\omnesis-manual-runtime" "$env:TARGET_SHA"
+      - name: Exercise real source and compiled Gateway and Collector
+        run: node scripts/ci/manual-windows-acceptance/run-hosted-acceptance.mjs "$env:GITHUB_WORKSPACE" "$env:RUNNER_TEMP\omnesis-manual-runtime"
+      - name: Upload sanitized results only
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: windows-manual-runtime-sanitized
+          if-no-files-found: warn
+          retention-days: 7
+          path: |
+            ${{ runner.temp }}/omnesis-manual-runtime/public/acceptance-summary.json
+            ${{ runner.temp }}/omnesis-manual-runtime/public/provenance-summary.json
+
+  storage-and-hermes:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+      TZ: UTC
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: "24"
+          cache: npm
+      - name: Install locked Windows dependencies
         id: dependencies
-        run: node scripts/ci/npm-ci.mjs
-      - name: Verify the immutable synthetic WAL probe
-        run: node -e 'const fs=require("node:fs"),crypto=require("node:crypto"),assert=require("node:assert/strict");assert.equal(crypto.createHash("sha256").update(fs.readFileSync("scripts/ci/windows-wal-diagnostic.mjs")).digest("hex"),"7b603d71772fe977d7cf50d2c06048979ebc462d2d7e9bda893a4b35b5d51891")'
-      - name: Measure identical plain and encrypted WAL workloads
-        run: node scripts/ci/windows-wal-diagnostic.mjs .
-      - name: Observe the actual generated Hermes private-file and Python bridge artifact
+        run: node scripts/ci/npm-ci.mjs --no-audit --no-fund
+      - name: Compare real Hermes operations under sibling temp origins
+        env:
+          TARGET_SHA: ${{ github.sha }}
+        run: node --import tsx scripts/ci/hermes-temp-diagnostic/run-temp-diagnostic.mjs "$env:GITHUB_WORKSPACE" "$env:RUNNER_TEMP\hermes-temp-diagnostic" "$env:TARGET_SHA"
+      - name: Measure identical WAL control on runner temporary storage
         if: ${{ !cancelled() && steps.dependencies.outcome == 'success' }}
-        run: node scripts/run-check.mjs unit packages/cli/src/commands/integration-runtime.test.ts
+        env:
+          TEMP: ${{ runner.temp }}
+          TMP: ${{ runner.temp }}
+        run: node scripts/ci/windows-wal-diagnostic.mjs .
+      - name: Upload fixed Hermes diagnostic only
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: hermes-temp-sanitized
+          if-no-files-found: warn
+          retention-days: 7
+          path: ${{ runner.temp }}/hermes-temp-diagnostic/public-diagnostic.json
