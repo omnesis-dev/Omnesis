@@ -780,6 +780,7 @@ another one does.
 - Browser and desktop operations need a fresh sign-in on that operation, even with a session cookie. Browser redemption returns `signInProof`; desktop redemption only as below.
 - `POST /_relay/account/api/passkeys/countersign/options?endorse=<id>` and `…/countersign/complete?endorse=<id>` run the new passkey's countersignature (Passkeys added later, step 2), bound to the browser that created it. They sign nobody in.
 - `POST /_relay/account/api/portal/start` and `POST /_relay/account/api/portal/handoff` let the plain account page's sign-in serve a gateway's portal; see the handoff section below.
+- A sign-in link (`GET …/begin?operationId=…&ticket=…` for gateway sign-up, the account browser, Google sign-in and desktop sign-in) changes nothing: it shows a page with one Continue button that posts the same fields back to the same path, same-origin. That press binds the operation to the browser. The first browser keeps it; the same browser reopening the link or typing the connect code goes straight back, and any other browser gets 409 ("opened in another browser"). Link scanners fetch these links without cookies or scripts, so they can neither take a sign-in over nor break the person's.
 
 ## Desktop sign-in proves the same machine
 

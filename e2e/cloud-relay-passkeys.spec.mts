@@ -235,6 +235,7 @@ test("real browser WebAuthn creates an account, signs in, adds a second passkey 
     );
     expect(refused).toBe(403);
     await page.goto(pending.authorizeUrl);
+    await page.getByRole("button", { name: "Continue", exact: true }).click();
     // The gateway is linked only by pressing to connect it, which this test never does, so this
     // account stays without a gateway for the rest of the test.
     await page.getByRole("button", { name: "Create an account instead", exact: true }).click();
@@ -493,6 +494,7 @@ test("real browser WebAuthn creates an account, signs in, adds a second passkey 
         },
         openBrowser: async (launch) => {
           await page.goto(launch);
+          await page.getByRole("button", { name: "Continue", exact: true }).click();
           await expect(
             page.getByRole("heading", { name: "Connect this device", exact: true }),
           ).toBeVisible();

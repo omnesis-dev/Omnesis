@@ -47,11 +47,13 @@ export function startCertificateMonitorPoller(options?: {
         result.state === "unavailable" || result.state === "stale" ? Math.min(failures + 1, 10) : 0;
       if (!stopped) {
         const retry = Math.max(0, (Date.parse(result.nextCheckAt ?? "") || 0) - Date.now());
+        // A CT service that is down usually comes back within the hour; anything else may be slow.
+        const ceiling = result.lastError === "ct-provider-unavailable" ? 3_600_000 : 21_600_000;
         timer = setTimeout(
           () => {
             void check();
           },
-          Math.max(Math.min(interval * 2 ** failures, Math.max(interval, 21_600_000)), retry),
+          Math.max(Math.min(interval * 2 ** failures, Math.max(interval, ceiling)), retry),
         );
         timer.unref();
       }

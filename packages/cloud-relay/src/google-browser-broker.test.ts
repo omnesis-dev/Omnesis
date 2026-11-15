@@ -191,12 +191,17 @@ test("browser launch/callback checks cannot be bypassed with a result handle, an
   expect(() => f.broker.launch(pending.input.operationId, "bad")).toThrow("launch");
   const launched = f.broker.launch(pending.input.operationId, ticket),
     callback = f.providerCallback(launched.authorizeUrl);
-  expect(() => f.broker.launch(pending.input.operationId, ticket)).toThrow("launch");
+  // Another browser can't take the operation over, and looking at the link changes nothing (F43).
+  expect(() => f.broker.launch(pending.input.operationId, ticket)).toThrow("another browser");
+  expect(f.broker.peekLaunch(pending.input.operationId, ticket, "")).toEqual({ state: "taken" });
+  expect(
+    f.broker.peekLaunch(pending.input.operationId, ticket, launched.cookie!.split(";")[0]!),
+  ).toEqual({ state: "here", location: launched.authorizeUrl });
   for (const cookies of [
     "",
     "unrelated=x",
-    launched.cookie.replace(/=[^;]+;/, "=wrong;"),
-    launched.cookie + ";" + launched.cookie,
+    launched.cookie!.replace(/=[^;]+;/, "=wrong;"),
+    launched.cookie! + ";" + launched.cookie!,
   ])
     await expect(f.broker.callback(callback, cookies)).rejects.toThrow("browser state");
   const duplicate = new URL(callback);

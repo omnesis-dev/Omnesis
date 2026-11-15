@@ -9,6 +9,7 @@ import {
   type GoogleBrowserOwnerAuthorization,
 } from "./google-browser-broker.js";
 import { RelayError } from "./tunnels.js";
+import { LaunchTaken, readLaunchForm, sendLaunchPage, sendTakenPage } from "./browser-launch.js";
 import { relayOrigin } from "./network.js";
 import type { LoginAdmission } from "./admission.js";
 import type { IncomingMessage, ServerResponse } from "node:http";
@@ -38,6 +39,16 @@ async function jsonBody(req: IncomingMessage): Promise<unknown> {
   } finally {
     clearTimeout(timeout);
   }
+}
+
+const restart = "To use this browser instead, go back to your gateway and start again.";
+function launchInput(value: unknown): { operationId: string; ticket: string } {
+  const parsed = z
+    .object({ operationId: z.string().uuid(), ticket: z.string().regex(/^[A-Za-z0-9_-]{43}$/) })
+    .strict()
+    .safeParse(value);
+  if (!parsed.success) throw new RelayError(400, "Invalid Google browser launch");
+  return parsed.data;
 }
 
 /** HTTP carries only broker coordination; application/device credentials never enter redirects. */
@@ -72,32 +83,56 @@ export class GoogleBrowserRoutes {
       return true;
     }
     if (path === GOOGLE_BROWSER_PATH + "/begin") {
-      if (req.method !== "GET") throw new RelayError(405, "Method not allowed");
-      return this.admission.run(async () => {
-        const operations = url.searchParams.getAll("operationId"),
-          tickets = url.searchParams.getAll("ticket");
-        if (
-          operations.length !== 1 ||
-          tickets.length !== 1 ||
-          [...url.searchParams.keys()].length !== 2
-        )
-          throw new RelayError(400, "Invalid Google browser launch");
-        let input: { operationId: string; ticket: string };
-        try {
-          input = z
-            .object({
-              operationId: z.string().uuid(),
-              ticket: z.string().regex(/^[A-Za-z0-9_-]{43}$/),
-            })
-            .parse({ operationId: operations[0], ticket: tickets[0] });
-        } catch {
-          throw new RelayError(400, "Invalid Google browser launch");
-        }
-        const result = this.broker.launch(input.operationId, input.ticket);
-        res.writeHead(303, { location: result.authorizeUrl, "set-cookie": result.cookie });
-        res.end();
-        return true;
-      }, req);
+      // Opening the link changes nothing; the Continue press sends this browser to Google (F43).
+      if (req.method === "GET")
+        return this.admission.poll(async () => {
+          const operations = url.searchParams.getAll("operationId"),
+            tickets = url.searchParams.getAll("ticket");
+          if (
+            operations.length !== 1 ||
+            tickets.length !== 1 ||
+            [...url.searchParams.keys()].length !== 2
+          )
+            throw new RelayError(400, "Invalid Google browser launch");
+          const input = launchInput({ operationId: operations[0], ticket: tickets[0] });
+          const view = this.broker.peekLaunch(
+            input.operationId,
+            input.ticket,
+            req.headers.cookie ?? "",
+          );
+          if (view.state === "here") {
+            res.writeHead(303, { location: view.location });
+            res.end();
+          } else if (view.state === "taken") sendTakenPage(res, restart);
+          else sendLaunchPage(res, GOOGLE_BROWSER_PATH + "/begin", input);
+          return true;
+        }, req);
+      if (req.method !== "POST") throw new RelayError(405, "Method not allowed");
+      if (url.search) throw new RelayError(400, "Invalid Google browser launch");
+      return this.admission
+        .run(async () => {
+          const input = launchInput(
+            await readLaunchForm(req, origin, { required: ["operationId", "ticket"] }),
+          );
+          let result: { authorizeUrl: string; cookie?: string };
+          try {
+            result = this.broker.launch(input.operationId, input.ticket, req.headers.cookie ?? "");
+          } catch (error) {
+            if (!(error instanceof LaunchTaken)) throw error;
+            sendTakenPage(res, restart);
+            return true;
+          }
+          res.writeHead(303, {
+            location: result.authorizeUrl,
+            ...(result.cookie ? { "set-cookie": result.cookie } : {}),
+          });
+          res.end();
+          return true;
+        }, req)
+        .catch((error: unknown) => {
+          req.resume();
+          throw error;
+        });
     }
     if (path === GOOGLE_BROWSER_PATH + "/callback") {
       if (req.method !== "GET") throw new RelayError(405, "Method not allowed");

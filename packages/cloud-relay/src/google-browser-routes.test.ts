@@ -10,6 +10,7 @@ import { createServer } from "node:http";
 import { once } from "node:events";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { googleBrowserFixture } from "../test/google-browser-fixture.js";
+import { openLaunch } from "../test/browser-launch.js";
 import { listen, until } from "../test/support.js";
 import { RelayAccounts } from "./accounts.js";
 import { RelaySessions, accountId } from "./identity.js";
@@ -31,6 +32,7 @@ afterEach(async () => {
   for (const stop of cleanup.splice(0).reverse()) await stop();
   await rm(directory, { recursive: true, force: true });
 });
+const relayOrigin = "https://relay.example.test";
 async function fixture(options: { maxLogins?: number; sessionTtl?: number } = {}) {
   const f = await googleBrowserFixture(directory);
   const accounts = new RelayAccounts(join(directory, "accounts.sqlite")),
@@ -73,7 +75,7 @@ test("public capabilities contain only installation-wide client IDs while method
   expect(text).not.toContain(f.ownerKeys.privateKey);
   for (const [path, method] of [
     ["/config", "POST"],
-    ["/begin", "POST"],
+    ["/begin", "PUT"],
     ["/callback", "POST"],
     ["/start", "GET"],
     ["/redeem", "GET"],
@@ -152,9 +154,24 @@ test("browser begin accepts exactly one signed-operation ticket and never a retu
     "?operationId=" + pending.input.operationId,
   ])
     expect((await f.http("/begin" + search, { redirect: "manual" })).status).toBe(400);
-  const allowed = await f.http("/begin" + launch.search, { redirect: "manual" });
+  const page = await f.http("/begin" + launch.search, { redirect: "manual" });
+  expect(page.status).toBe(200);
+  expect(page.headers.get("content-security-policy")).toContain("frame-ancestors 'none'");
+  expect(page.headers.getSetCookie()).toEqual([]);
+  const press = (origin: string, body = launch.searchParams.toString()) =>
+    f.http("/begin", {
+      method: "POST",
+      redirect: "manual",
+      headers: { origin, "content-type": "application/x-www-form-urlencoded" },
+      body,
+    });
+  expect((await press("https://other.example.test")).status).toBe(403);
+  expect((await press(relayOrigin, launch.searchParams.toString() + "&returnTo=x")).status).toBe(
+    400,
+  );
+  const allowed = await press(relayOrigin);
   expect(allowed.status).toBe(303);
-  expect(allowed.headers.get("content-security-policy")).toContain("frame-ancestors 'none'");
+  expect(new URL(allowed.headers.get("location")!).origin).toBe("https://accounts.google.com");
   expect((await f.http("/callback?state=unknown", { redirect: "manual" })).status).toBe(400);
   expect(
     (
@@ -169,8 +186,11 @@ test("browser begin accepts exactly one signed-operation ticket and never a retu
 
 test("admission bounds unauthenticated attempts and oversized URLs without interpreting callback data", async () => {
   const f = await fixture({ maxLogins: 1 });
+  // Opening a link is not an attempt; pressing Continue is.
   expect((await f.http("/begin", { redirect: "manual" })).status).toBe(400);
-  expect((await f.http("/begin", { redirect: "manual" })).status).toBe(429);
+  expect((await f.http("/begin", { redirect: "manual" })).status).toBe(400);
+  expect((await f.http("/begin", { method: "POST", redirect: "manual" })).status).toBe(403);
+  expect((await f.http("/begin", { method: "POST", redirect: "manual" })).status).toBe(429);
   // The default HTTP parser can reject the request before the broker sees it.
   const path = "/callback?state=" + "x".repeat(16384);
   const response = await f.http(path, { redirect: "manual" });
@@ -214,7 +234,10 @@ test("a disconnected callback aborts the provider exchange and does not write a 
     authorizeUrl: string;
   };
   const start = new URL(started.authorizeUrl);
-  const launched = await f.http("/begin" + start.search, { redirect: "manual" });
+  const launched = await openLaunch(
+    f.origin + GOOGLE_BROWSER_PATH + "/begin" + start.search,
+    relayOrigin,
+  );
   const callback = f.providerCallback(launched.headers.get("location")!);
   let entered!: (signal: AbortSignal) => void;
   const waiting = new Promise<AbortSignal>((resolve) => {
@@ -261,4 +284,27 @@ test("slow authenticated JSON peers are closed at the bounded body deadline", as
   await vi.advanceTimersByTimeAsync(5001);
   await closed;
   vi.useRealTimers();
+});
+
+test("F43: a link scanner fetching the Google sign-in link first doesn't use it up, and after the person gets nothing", async () => {
+  const f = await fixture();
+  const pending = f.request();
+  const started = (await (await f.post("/start", pending.input)).json()) as {
+    authorizeUrl: string;
+  };
+  const link = f.origin + GOOGLE_BROWSER_PATH + "/begin" + new URL(started.authorizeUrl).search;
+  const early = await fetch(link, { redirect: "manual" });
+  expect(early.status).toBe(200);
+  expect(early.headers.getSetCookie()).toEqual([]);
+  const launched = await openLaunch(link, relayOrigin);
+  expect(launched.status).toBe(303);
+  expect(new URL(launched.headers.get("location")!).origin).toBe("https://accounts.google.com");
+  const late = await fetch(link, { redirect: "manual" });
+  expect(late.status).toBe(409);
+  expect(late.headers.getSetCookie()).toEqual([]);
+  // The person's browser can still come back to Google with the same state.
+  const cookie = launched.headers.getSetCookie()[0]!.split(";")[0]!;
+  const again = await fetch(link, { redirect: "manual", headers: { cookie } });
+  expect(again.status).toBe(303);
+  expect(again.headers.get("location")).toBe(launched.headers.get("location"));
 });

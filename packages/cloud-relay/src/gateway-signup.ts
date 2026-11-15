@@ -13,6 +13,7 @@ import {
   type ProofEvidence,
 } from "./operation-proof.js";
 import { RelayError } from "./tunnels.js";
+import { LaunchTaken, launchCookie, type LaunchView } from "./browser-launch.js";
 import { signInProofNonce } from "./device-enrollment.js";
 import { CONNECT_PAGE_PATH, type ConnectCodes } from "./connect-codes.js";
 import {
@@ -113,7 +114,7 @@ interface Operation {
  */
 export class GatewaySignup implements AccountOperationBroker {
   private readonly operations = new Map<string, Operation>();
-  private readonly origin: string;
+  readonly origin: string;
   private readonly maxOperations: number;
   private readonly maxPerOwner: number;
   private closed = false;
@@ -231,15 +232,19 @@ export class GatewaySignup implements AccountOperationBroker {
     };
   }
 
+  /** What opening the link shows. Read only: a link scanner's fetch must change nothing (F43). */
+  peekLaunch(id: string, ticket: string, cookieHeader: string): LaunchView {
+    const operation = this.ticketed(id, ticket);
+    if (this.holds(id, operation, cookieHeader))
+      return { state: "here", location: this.location(id) };
+    if (operation.phase === "created") return { state: "open" };
+    if (operation.phase === "launched") return { state: "taken" };
+    throw new RelayError(403, "Gateway signup launch refused");
+  }
+
+  /** The Continue press on the link's page. */
   launch(id: string, ticket: string, cookieHeader: string) {
-    const operation = this.current(id);
-    if (
-      !this.launchable(operation) ||
-      !opaque.safeParse(ticket).success ||
-      !timingSafeEqual(operation.ticketHash, digest(ticket))
-    )
-      throw new RelayError(403, "Gateway signup launch refused");
-    return this.bind(id, operation, cookieHeader);
+    return this.bind(id, this.ticketed(id, ticket), cookieHeader);
   }
 
   describe(id: string, cookieHeader: string) {
@@ -504,38 +509,50 @@ export class GatewaySignup implements AccountOperationBroker {
   /** A restarted request has a new code, so the old one must not open its replacement. */
   private claim(id: string, code: string, cookieHeader: string) {
     const operation = this.current(id);
-    if (operation.code !== code || !this.launchable(operation))
-      throw new RelayError(403, "Gateway signup launch refused");
+    if (operation.code !== code) throw new RelayError(403, "Gateway signup launch refused");
     return this.bind(id, operation, cookieHeader);
   }
-  /**
-   * The link or the code may be opened again until somebody signs in: a closed tab or a second
-   * device must not strand the request. Each launch binds a new browser and drops the previous one.
-   * Once a sign-in or a refusal is on the operation, only the browser that made it may continue.
-   */
-  private launchable(operation: Operation): boolean {
-    return (
-      operation.phase === "created" ||
-      (operation.phase === "launched" &&
-        operation.proof.needed() &&
-        operation.googleSubject === undefined &&
-        !operation.denied)
-    );
+  private ticketed(id: string, ticket: string): Operation {
+    const operation = this.current(id);
+    if (!opaque.safeParse(ticket).success || !timingSafeEqual(operation.ticketHash, digest(ticket)))
+      throw new RelayError(403, "Gateway signup launch refused");
+    return operation;
   }
+  /**
+   * The first browser to open the link or enter the code keeps the sign-up, and only it may open
+   * either again. Another browser is refused rather than taking it over: the link is a bearer
+   * secret, and link scanners and anyone it was forwarded to would otherwise own the sign-up (F43).
+   * Opening it somewhere else means starting over from the gateway.
+   */
   private bind(id: string, operation: Operation, cookieHeader: string) {
+    if (this.holds(id, operation, cookieHeader)) return { location: this.location(id) };
+    if (operation.phase === "launched") throw new LaunchTaken();
+    if (operation.phase !== "created") throw new RelayError(403, "Gateway signup launch refused");
     if (cookieHeader.split(";").filter((part) => part.trim().startsWith(COOKIE_PREFIX)).length >= 8)
       throw new RelayError(429, "Too many gateway signup requests");
     const browser = randomBytes(32).toString("base64url");
     operation.browserHash = digest(browser);
     operation.phase = "launched";
     return {
-      location: `/_relay/account?signup=${id}`,
+      location: this.location(id),
       cookie: this.cookie(
         id,
         browser,
         Math.max(1, operation.request.expiresAt - Math.floor(Date.now() / 1000)),
       ),
     };
+  }
+  private holds(id: string, operation: Operation, cookieHeader: string): boolean {
+    const value = launchCookie(cookieHeader, COOKIE_PREFIX + id);
+    return (
+      value !== undefined &&
+      opaque.safeParse(value).success &&
+      operation.browserHash !== undefined &&
+      timingSafeEqual(operation.browserHash, digest(value))
+    );
+  }
+  private location(id: string): string {
+    return `/_relay/account?signup=${id}`;
   }
   private redemption(input: unknown): Operation {
     const parsed = gatewaySignupRedemption.safeParse(input);

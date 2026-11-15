@@ -6,6 +6,7 @@ import { GATEWAY_SIGNUP_ACCESS_PATH, GATEWAY_SIGNUP_PATH } from "./gateway-signu
 import { readJsonBody } from "./relay-json-body.js";
 import { RelayError } from "./tunnels.js";
 import { brand } from "./relay-page.js";
+import { LaunchTaken, readLaunchForm, sendLaunchPage, sendTakenPage } from "./browser-launch.js";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { AccountBrowserOwner } from "./account-browser-contract.js";
 import type { LoginAdmission } from "./admission.js";
@@ -19,6 +20,9 @@ const refusal = JSON.stringify({
   reason: "invitation-required",
   message: "This relay connects new gateways by invitation only. Ask its operator for one.",
 });
+
+const restart =
+  "To use this browser instead, go back to your gateway, press Cancel and connect again.";
 
 /** The gateway has no relay session yet, so its owner signature and redemption secret stand in. */
 export class GatewaySignupHttp {
@@ -64,22 +68,7 @@ export class GatewaySignupHttp {
       res.end(complete);
       return true;
     }
-    if (action === "begin") {
-      if (req.method !== "GET") throw new RelayError(405, "Method not allowed");
-      const parsed = launch.safeParse(Object.fromEntries(url.searchParams));
-      if (url.searchParams.size !== 2 || !parsed.success)
-        throw new RelayError(400, "Invalid gateway signup launch");
-      return this.options.admission.run(async () => {
-        const result = this.options.signup.launch(
-          parsed.data.operationId,
-          parsed.data.ticket,
-          req.headers.cookie ?? "",
-        );
-        res.writeHead(303, { location: result.location, "set-cookie": result.cookie });
-        res.end();
-        return true;
-      }, req);
-    }
+    if (action === "begin") return this.begin(req, res, url);
     if (!["start", "poll", "link", "cancel"].includes(action))
       throw new RelayError(404, "Gateway signup operation not found");
     if (req.method !== "POST") throw new RelayError(405, "Method not allowed");
@@ -113,5 +102,59 @@ export class GatewaySignupHttp {
       req.resume();
       throw error;
     });
+  }
+
+  /**
+   * Opening the link changes nothing; the Continue press binds the sign-up to this browser (F43).
+   */
+  private async begin(req: IncomingMessage, res: ServerResponse, url: URL): Promise<boolean> {
+    const signup = this.options.signup;
+    if (req.method === "GET") {
+      const parsed = launch.safeParse(Object.fromEntries(url.searchParams));
+      if (url.searchParams.size !== 2 || !parsed.success)
+        throw new RelayError(400, "Invalid gateway signup launch");
+      // Reading changes nothing, so it is bounded but not counted as a sign-in attempt.
+      return this.options.admission.poll(async () => {
+        const { operationId, ticket } = parsed.data;
+        const view = signup.peekLaunch(operationId, ticket, req.headers.cookie ?? "");
+        if (view.state === "here") {
+          res.writeHead(303, { location: view.location });
+          res.end();
+        } else if (view.state === "taken") sendTakenPage(res, restart);
+        else sendLaunchPage(res, GATEWAY_SIGNUP_PATH + "/begin", { operationId, ticket });
+        return true;
+      }, req);
+    }
+    if (req.method !== "POST") throw new RelayError(405, "Method not allowed");
+    if (url.search) throw new RelayError(400, "Invalid gateway signup launch");
+    return this.options.admission
+      .run(async () => {
+        const parsed = launch.safeParse(
+          await readLaunchForm(req, signup.origin, { required: ["operationId", "ticket"] }),
+        );
+        if (!parsed.success) throw new RelayError(400, "Invalid gateway signup launch");
+        let result: { location: string; cookie?: string };
+        try {
+          result = signup.launch(
+            parsed.data.operationId,
+            parsed.data.ticket,
+            req.headers.cookie ?? "",
+          );
+        } catch (error) {
+          if (!(error instanceof LaunchTaken)) throw error;
+          sendTakenPage(res, restart);
+          return true;
+        }
+        res.writeHead(303, {
+          location: result.location,
+          ...(result.cookie ? { "set-cookie": result.cookie } : {}),
+        });
+        res.end();
+        return true;
+      }, req)
+      .catch((error: unknown) => {
+        req.resume();
+        throw error;
+      });
   }
 }

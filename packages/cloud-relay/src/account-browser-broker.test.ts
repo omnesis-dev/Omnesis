@@ -115,8 +115,9 @@ function fixture(limits: { maxOperations?: number; maxPerOwner?: number } = {}) 
     const launch = broker.launch(
       start.operationId,
       new URL(start.authorizeUrl).searchParams.get("ticket")!,
+      "",
     );
-    return { ...value, request, start, launch, cookie: launch.cookie.split(";")[0]! };
+    return { ...value, request, start, launch, cookie: launch.cookie!.split(";")[0]! };
   };
   const begin = (purpose: AccountBrowserPurpose = "owner-link") => {
     const value = launched(purpose);
@@ -254,16 +255,26 @@ test("unbound browsers, replayed launch tickets and mismatched owner signatures 
   const started = f.broker.start(f.authorizedOwner(), request),
     ticket = new URL(started.authorizeUrl).searchParams.get("ticket")!;
   expect(() => f.broker.start(f.authorizedOwner(), request)).toThrow("already exists");
-  expect(() => f.broker.launch(started.operationId, "bad")).toThrow("refused");
-  expect(() => f.broker.launch(started.operationId, opaque())).toThrow("refused");
+  expect(() => f.broker.launch(started.operationId, "bad", "")).toThrow("refused");
+  expect(() => f.broker.launch(started.operationId, opaque(), "")).toThrow("refused");
+  expect(() => f.broker.peekLaunch(started.operationId, opaque(), "")).toThrow("refused");
   expect(() => f.broker.describe(started.operationId, "")).toThrow("binding");
-  // Opening the link again binds the new browser and drops the one before it.
-  const stale = f.broker.launch(started.operationId, ticket).cookie.split(";")[0]!;
-  const launch = f.broker.launch(started.operationId, ticket),
-    cookie = launch.cookie.split(";")[0]!;
+  // Looking at the link binds nothing; the first press keeps the operation (F43).
+  expect(f.broker.peekLaunch(started.operationId, ticket, "")).toEqual({ state: "open" });
+  const launch = f.broker.launch(started.operationId, ticket, ""),
+    cookie = launch.cookie!.split(";")[0]!;
+  expect(() => f.broker.launch(started.operationId, ticket, "")).toThrow(
+    "opened in another browser",
+  );
+  expect(f.broker.peekLaunch(started.operationId, ticket, "")).toEqual({ state: "taken" });
+  expect(f.broker.launch(started.operationId, ticket, cookie)).toEqual({
+    location: `/_relay/account?operation=${started.operationId}`,
+  });
+  expect(f.broker.peekLaunch(started.operationId, ticket, cookie)).toMatchObject({
+    state: "here",
+  });
   expect(f.broker.describe(started.operationId, cookie)).toMatchObject({ needsProof: true });
   for (const header of [
-    stale,
     "",
     cookie + ";" + cookie,
     cookie.slice(0, cookie.indexOf("=") + 1) + "bad",
@@ -424,8 +435,11 @@ test("unlink cancels only that gateway's pending browser requests while preservi
   expect(() => first.broker.describe(own.start.operationId, own.cookie)).toThrow();
   first.current(second.owner);
   expect(
-    first.broker.launch(other.operationId, new URL(other.authorizeUrl).searchParams.get("ticket")!)
-      .location,
+    first.broker.launch(
+      other.operationId,
+      new URL(other.authorizeUrl).searchParams.get("ticket")!,
+      "",
+    ).location,
   ).toContain(other.operationId);
   first.broker.close();
   second.broker.close();
@@ -487,8 +501,8 @@ test("a session cookie cannot stand in for a sign-in on this operation, and the 
   expect(f.broker.describe(id, value.cookie)).toMatchObject({ needsProof: false });
   // With a sign-in on the operation, the link no longer hands it to another browser.
   expect(() =>
-    f.broker.launch(id, new URL(value.start.authorizeUrl).searchParams.get("ticket")!),
-  ).toThrow("refused");
+    f.broker.launch(id, new URL(value.start.authorizeUrl).searchParams.get("ticket")!, ""),
+  ).toThrow("opened in another browser");
   await expect(f.broker.confirm(id, value.cookie, f.actor)).rejects.toMatchObject({ status: 409 });
   expect(f.linked.size).toBe(0);
   f.signIn(id, value.cookie);

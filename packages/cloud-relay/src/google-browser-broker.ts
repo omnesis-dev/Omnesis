@@ -9,6 +9,7 @@ import {
 } from "./google-oauth.js";
 import { gatewayBindingNonce } from "./gateway-binding.js";
 import { RelayError } from "./tunnels.js";
+import { LaunchTaken, launchCookie, type LaunchView } from "./browser-launch.js";
 import { relayOrigin } from "./network.js";
 import {
   GOOGLE_BROWSER_PATH,
@@ -226,14 +227,30 @@ export class GoogleBrowserBroker {
     };
   }
 
-  launch(operationId: string, ticket: string): { authorizeUrl: string; cookie: string } {
-    this.prune();
-    const operation = this.operations.get(operationId);
-    if (!operation || operation.phase !== "created" || !equal(ticket, operation.browserTicket))
-      throw new RelayError(403, "Invalid Google browser launch");
-    this.assertCurrent(operation);
+  /** What opening the link shows. Read only: a link scanner's fetch must change nothing (F43). */
+  peekLaunch(operationId: string, ticket: string, cookieHeader: string): LaunchView {
+    const operation = this.ticketed(operationId, ticket);
+    if (operation.phase === "created") return { state: "open" };
+    if (operation.phase !== "launched") throw new RelayError(403, "Invalid Google browser launch");
+    // The browser that pressed Continue may open the link again and go back to Google.
+    return this.holds(operation, cookieHeader)
+      ? { state: "here", location: operation.authorization.url }
+      : { state: "taken" };
+  }
+
+  /** The Continue press on the link's page: one browser, once. */
+  launch(
+    operationId: string,
+    ticket: string,
+    cookieHeader = "",
+  ): { authorizeUrl: string; cookie?: string } {
+    const operation = this.ticketed(operationId, ticket);
+    if (operation.phase === "launched") {
+      if (this.holds(operation, cookieHeader)) return { authorizeUrl: operation.authorization.url };
+      throw new LaunchTaken();
+    }
+    if (operation.phase !== "created") throw new RelayError(403, "Invalid Google browser launch");
     operation.phase = "launched";
-    operation.browserTicket = "";
     return {
       authorizeUrl: operation.authorization.url,
       cookie: this.cookie(
@@ -242,6 +259,21 @@ export class GoogleBrowserBroker {
         Math.max(1, operation.request.expiresAt - Math.floor(Date.now() / 1000)),
       ),
     };
+  }
+  private ticketed(operationId: string, ticket: string): Operation {
+    this.prune();
+    const operation = this.operations.get(operationId);
+    if (!operation || !equal(ticket, operation.browserTicket))
+      throw new RelayError(403, "Invalid Google browser launch");
+    this.assertCurrent(operation);
+    return operation;
+  }
+  private holds(operation: Operation, cookieHeader: string): boolean {
+    const value = launchCookie(
+      cookieHeader,
+      `__Host-omnesis-google-browser-${operation.request.operationId}`,
+    );
+    return value !== undefined && equal(value, operation.authorization.state);
   }
   private cookie(operation: Operation, value: string, age: number): string {
     return `__Host-omnesis-google-browser-${operation.request.operationId}=${value}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${age}`;

@@ -4,6 +4,7 @@
 import { z } from "zod";
 import { RelayError } from "./tunnels.js";
 import { brand } from "./relay-page.js";
+import { LaunchTaken, readLaunchForm, sendLaunchPage, sendTakenPage } from "./browser-launch.js";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { LoginAdmission } from "./admission.js";
 import type { DesktopAccountBrowser } from "./desktop-account-browser.js";
@@ -11,6 +12,9 @@ import type { DesktopAccountBrowser } from "./desktop-account-browser.js";
 const launch = z
   .object({ operationId: z.string().uuid(), ticket: z.string().regex(/^[A-Za-z0-9_-]{43}$/) })
   .strict();
+
+const restart =
+  "To use this browser instead, go back to where you started and run the sign-in again.";
 
 /** Native requests use explicit capabilities; browser requests receive only host-bound launch state. */
 export class DesktopAccountHttp {
@@ -38,22 +42,7 @@ export class DesktopAccountHttp {
       );
       return true;
     }
-    if (url.pathname === "/_relay/v3/desktop/begin") {
-      if (req.method !== "GET") throw new RelayError(405, "Method not allowed");
-      const parsed = launch.safeParse(Object.fromEntries(url.searchParams));
-      if (url.searchParams.size !== 2 || !parsed.success)
-        throw new RelayError(400, "Invalid desktop browser launch");
-      return this.admission.run(async () => {
-        const result = this.broker.launch(
-          parsed.data.operationId,
-          parsed.data.ticket,
-          req.headers.cookie ?? "",
-        );
-        res.writeHead(303, { location: result.location, "set-cookie": result.cookie });
-        res.end();
-        return true;
-      }, req);
-    }
+    if (url.pathname === "/_relay/v3/desktop/begin") return this.begin(req, res, url);
     if (
       ![
         "/_relay/v3/desktop/start",
@@ -91,7 +80,58 @@ export class DesktopAccountHttp {
       throw error;
     });
   }
+  /** Opening the link changes nothing; the Continue press binds the sign-in to this browser (F43). */
+  private async begin(req: IncomingMessage, res: ServerResponse, url: URL): Promise<boolean> {
+    if (req.method === "GET") {
+      const parsed = launch.safeParse(Object.fromEntries(url.searchParams));
+      if (url.searchParams.size !== 2 || !parsed.success)
+        throw new RelayError(400, "Invalid desktop browser launch");
+      // Reading changes nothing, so it is bounded but not counted as a sign-in attempt.
+      return this.admission.poll(async () => {
+        const { operationId, ticket } = parsed.data;
+        const view = this.broker.peekLaunch(operationId, ticket, req.headers.cookie ?? "");
+        if (view.state === "here") {
+          res.writeHead(303, { location: view.location });
+          res.end();
+        } else if (view.state === "taken") sendTakenPage(res, restart);
+        else sendLaunchPage(res, "/_relay/v3/desktop/begin", { operationId, ticket });
+        return true;
+      }, req);
+    }
+    if (req.method !== "POST") throw new RelayError(405, "Method not allowed");
+    if (url.search) throw new RelayError(400, "Invalid desktop browser launch");
+    return this.admission
+      .run(async () => {
+        const parsed = launch.safeParse(
+          await readLaunchForm(req, this.broker.origin, { required: ["operationId", "ticket"] }),
+        );
+        if (!parsed.success) throw new RelayError(400, "Invalid desktop browser launch");
+        let result: { location: string; cookie?: string };
+        try {
+          result = this.broker.launch(
+            parsed.data.operationId,
+            parsed.data.ticket,
+            req.headers.cookie ?? "",
+          );
+        } catch (error) {
+          if (!(error instanceof LaunchTaken)) throw error;
+          sendTakenPage(res, restart);
+          return true;
+        }
+        res.writeHead(303, {
+          location: result.location,
+          ...(result.cookie ? { "set-cookie": result.cookie } : {}),
+        });
+        res.end();
+        return true;
+      }, req)
+      .catch((error: unknown) => {
+        req.resume();
+        throw error;
+      });
+  }
 }
+
 async function readBody(req: IncomingMessage): Promise<unknown> {
   const deadline = setTimeout(() => req.destroy(new Error("Desktop sign-in body deadline")), 5000);
   deadline.unref();

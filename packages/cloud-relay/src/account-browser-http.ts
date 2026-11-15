@@ -9,6 +9,7 @@ import {
   type AccountBrowserOwner,
 } from "./account-browser-contract.js";
 import { RelayError } from "./tunnels.js";
+import { LaunchTaken, readLaunchForm, sendLaunchPage, sendTakenPage } from "./browser-launch.js";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { AccountBrowserBroker } from "./account-browser-broker.js";
 import type { LoginAdmission } from "./admission.js";
@@ -20,6 +21,7 @@ const launch = z
     method: z.enum(ACCOUNT_BROWSER_METHODS).optional(),
   })
   .strict();
+const restart = "To use this browser instead, go back to your gateway and start again.";
 const cancel = z.object({ operationId: z.string().uuid() }).strict();
 const empty = z.object({}).strict();
 
@@ -46,26 +48,7 @@ export class AccountBrowserHttp {
       "default-src 'none'; frame-ancestors 'none'; base-uri 'none'",
     );
     if (req.url!.length > 4096) throw new RelayError(414, "Account browser URL is too large");
-    if (url.pathname === ACCOUNT_BROWSER_PATH + "/begin") {
-      if (req.method !== "GET") throw new RelayError(405, "Method not allowed");
-      if (
-        url.searchParams.size !== (url.searchParams.has("method") ? 3 : 2) ||
-        ["operationId", "ticket"].some((key) => url.searchParams.getAll(key).length !== 1)
-      )
-        throw new RelayError(400, "Invalid account browser launch");
-      const input = launch.safeParse(Object.fromEntries(url.searchParams));
-      if (!input.success) throw new RelayError(400, "Invalid account browser launch");
-      return this.options.admission.run(async () => {
-        const result = this.options.broker.launch(
-          input.data.operationId,
-          input.data.ticket,
-          input.data.method,
-        );
-        res.writeHead(303, { location: result.location, "set-cookie": result.cookie });
-        res.end();
-        return true;
-      }, req);
-    }
+    if (url.pathname === ACCOUNT_BROWSER_PATH + "/begin") return this.begin(req, res, url);
     if (url.pathname === ACCOUNT_BROWSER_PATH + "/credentials") {
       if (req.method !== "GET") throw new RelayError(405, "Method not allowed");
       if (url.search) throw new RelayError(400, "Account credentials take no query parameters");
@@ -114,6 +97,71 @@ export class AccountBrowserHttp {
         }
         res.writeHead(200, { "content-type": "application/json" });
         res.end(JSON.stringify(result));
+        return true;
+      }, req)
+      .catch((error: unknown) => {
+        req.resume();
+        throw error;
+      });
+  }
+
+  /** Opening the link changes nothing; the Continue press binds the operation to this browser (F43). */
+  private async begin(req: IncomingMessage, res: ServerResponse, url: URL): Promise<boolean> {
+    const broker = this.options.broker;
+    if (req.method === "GET") {
+      if (
+        url.searchParams.size !== (url.searchParams.has("method") ? 3 : 2) ||
+        ["operationId", "ticket"].some((key) => url.searchParams.getAll(key).length !== 1)
+      )
+        throw new RelayError(400, "Invalid account browser launch");
+      const input = launch.safeParse(Object.fromEntries(url.searchParams));
+      if (!input.success) throw new RelayError(400, "Invalid account browser launch");
+      // Reading changes nothing, so it is bounded but not counted as a sign-in attempt.
+      return this.options.admission.poll(async () => {
+        const { operationId, ticket, method } = input.data;
+        const view = broker.peekLaunch(operationId, ticket, req.headers.cookie ?? "");
+        if (view.state === "here") {
+          res.writeHead(303, { location: view.location });
+          res.end();
+        } else if (view.state === "taken") sendTakenPage(res, restart);
+        else
+          sendLaunchPage(res, ACCOUNT_BROWSER_PATH + "/begin", {
+            operationId,
+            ticket,
+            ...(method ? { method } : {}),
+          });
+        return true;
+      }, req);
+    }
+    if (req.method !== "POST") throw new RelayError(405, "Method not allowed");
+    if (url.search) throw new RelayError(400, "Invalid account browser launch");
+    return this.options.admission
+      .run(async () => {
+        const input = launch.safeParse(
+          await readLaunchForm(req, broker.origin, {
+            required: ["operationId", "ticket"],
+            optional: ["method"],
+          }),
+        );
+        if (!input.success) throw new RelayError(400, "Invalid account browser launch");
+        let result: { location: string; cookie?: string };
+        try {
+          result = broker.launch(
+            input.data.operationId,
+            input.data.ticket,
+            req.headers.cookie ?? "",
+            input.data.method,
+          );
+        } catch (error) {
+          if (!(error instanceof LaunchTaken)) throw error;
+          sendTakenPage(res, restart);
+          return true;
+        }
+        res.writeHead(303, {
+          location: result.location,
+          ...(result.cookie ? { "set-cookie": result.cookie } : {}),
+        });
+        res.end();
         return true;
       }, req)
       .catch((error: unknown) => {
