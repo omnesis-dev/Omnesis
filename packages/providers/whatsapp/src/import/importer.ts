@@ -134,15 +134,8 @@ export async function importWhatsAppHistory(opts: ImportOptions): Promise<Import
       });
     } finally {
       if (signal && onAbort) signal.removeEventListener("abort", onAbort);
-      try {
-        exitCode = await stopWorker(worker, workerData.cancel, exited);
-        workerJoined = true;
-      } catch (error) {
-        const receipt = ownedProcessCleanupReceipt(error);
-        throw Object.assign(new Error("Import worker cleanup is unconfirmed", { cause: error }), {
-          cleanupFailure: receipt ? receipt.failure : error,
-        });
-      }
+      exitCode = await stopWorker(worker, workerData.cancel, exited);
+      workerJoined = true;
     }
 
     if (workerError) throw workerError;
@@ -174,16 +167,24 @@ async function stopWorker(
   cancel: Int32Array,
   exited: Promise<number>,
 ): Promise<number> {
-  Atomics.store(cancel, 0, 1);
   let timer: NodeJS.Timeout | undefined;
-  const stopped = await Promise.race([
-    exited.then((code) => ({ code })),
-    new Promise<undefined>((resolve) => {
-      timer = setTimeout(() => resolve(undefined), WORKER_STOP_MS);
-    }),
-  ]);
-  clearTimeout(timer);
-  if (stopped) return stopped.code;
-  await worker.terminate();
-  return exited;
+  try {
+    Atomics.store(cancel, 0, 1);
+    const stopped = await Promise.race([
+      exited.then((code) => ({ code })),
+      new Promise<undefined>((resolve) => {
+        timer = setTimeout(() => resolve(undefined), WORKER_STOP_MS);
+      }),
+    ]);
+    if (stopped) return stopped.code;
+    await worker.terminate();
+    return await exited;
+  } catch (error) {
+    const receipt = ownedProcessCleanupReceipt(error);
+    throw Object.assign(new Error("Import worker cleanup is unconfirmed", { cause: error }), {
+      cleanupFailure: receipt ? receipt.failure : error,
+    });
+  } finally {
+    clearTimeout(timer);
+  }
 }
