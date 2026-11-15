@@ -25,6 +25,7 @@ on:
             auth-env-green,
             auth-env-diagnostic,
             focus-cost,
+            auth-owned-baseline,
           ]
         default: regressions
 permissions:
@@ -125,7 +126,7 @@ jobs:
           packages/cloud-relay/src/acme-renewal-cleanup.test.ts
           packages/cloud-relay/src/acme-integration.test.ts
   process-baseline:
-    if: ${{ inputs.scope == 'multi-cli-baseline' || inputs.scope == 'connect-baseline' || inputs.scope == 'config-baseline' || inputs.scope == 'cache-baseline' }}
+    if: ${{ inputs.scope == 'multi-cli-baseline' || inputs.scope == 'connect-baseline' || inputs.scope == 'config-baseline' || inputs.scope == 'cache-baseline' || inputs.scope == 'auth-owned-baseline' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
@@ -153,6 +154,9 @@ jobs:
       - name: Reproduce cross-installation cached root-key reuse
         if: ${{ inputs.scope == 'cache-baseline' }}
         run: node scripts/run-check.mjs unit packages/core/src/secret-file-cache.test.ts
+      - name: Reproduce auth entry cleanup receipts lost before exit
+        if: ${{ inputs.scope == 'auth-owned-baseline' }}
+        run: node scripts/run-check.mjs unit packages/collector/src/auth-subprocess-ownership.test.ts
   upstream-baseline:
     if: ${{ inputs.scope == 'upstream-baseline' }}
     runs-on: ubuntu-latest
