@@ -17,11 +17,16 @@
  * `--mode hybrid` assigns one embedder, which must be on this machine: the
  * eval never sends text to a remote model.
  *
+ * `--variants <file.json>` re-scores the same index under other search
+ * settings: the file maps a label to `search.params` overrides, e.g.
+ * `{"k20": {"rrfK": 20}}`. After the main run, the gateway restarts in place
+ * with each label's settings and its scores are recorded as `<name>.<label>`.
+ *
  * Manual invocation only — never part of `npm run test`, CI or any hook.
  */
 
 import { execFileSync } from "node:child_process";
-import { copyFileSync, existsSync, mkdirSync, rmSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 
 import {
@@ -50,7 +55,7 @@ import {
 const USAGE =
   "usage: search-eval:run -- --name <run-name> [--mode lexical|hybrid] [--data-dir <dir>] " +
   "[--languages ar,ko,…] [--max-passages N] [--max-queries N] [--embedder-url <loopback url>] " +
-  "[--embedder-model <id>] [--allow-dirty] [--force]";
+  "[--embedder-model <id>] [--variants <file.json>] [--allow-dirty] [--force]";
 const VALUE_FLAGS = new Set([
   "--name",
   "--mode",
@@ -60,6 +65,7 @@ const VALUE_FLAGS = new Set([
   "--max-queries",
   "--embedder-url",
   "--embedder-model",
+  "--variants",
 ]);
 const SWITCHES = new Set(["--allow-dirty", "--force"]);
 
@@ -83,6 +89,37 @@ const GATEWAY_CONFIG = {
   // leaves a local embedding server mostly idle.
   indexer: { embedConcurrency: 8 },
 };
+
+type SearchParamOverrides = Record<string, number>;
+
+/** {@link GATEWAY_CONFIG} with some `search.params` overridden. */
+function gatewayConfig(overrides: SearchParamOverrides): typeof GATEWAY_CONFIG {
+  return {
+    ...GATEWAY_CONFIG,
+    search: {
+      ...GATEWAY_CONFIG.search,
+      params: { ...GATEWAY_CONFIG.search.params, ...overrides },
+    },
+  };
+}
+
+/** The `--variants` file: label → numeric `search.params` overrides. */
+function readVariants(path: string | undefined): Array<[string, SearchParamOverrides]> {
+  if (path === undefined) return [];
+  const parsed = JSON.parse(readFileSync(path, "utf8")) as unknown;
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    throw new Error("--variants takes a JSON object of label → search.params overrides");
+  }
+  return Object.entries(parsed).map(([label, params]) => {
+    const valid =
+      /^[a-z0-9][a-z0-9-]*$/.test(label) &&
+      typeof params === "object" &&
+      params !== null &&
+      Object.values(params).every((v) => typeof v === "number" && Number.isFinite(v));
+    if (!valid) throw new Error(`Variant "${label}" must map a lowercase label to numbers`);
+    return [label, params as SearchParamOverrides];
+  });
+}
 /**
  * A document only the eval's readiness probe matches. The in-memory keyword
  * ranker is rebuilt in the background after a bulk load, and until it covers
@@ -191,8 +228,11 @@ async function main(): Promise<void> {
       `The embedder must run on this machine; ${embedderUrl} is not a loopback address`,
     );
   }
-  if (runExists(name) && !on.has("--force")) {
-    throw new Error(`A run named "${name}" is already recorded. Pass --force to replace it.`);
+  const variants = readVariants(flags.get("--variants"));
+  for (const runName of [name, ...variants.map(([label]) => `${name}.${label}`)]) {
+    if (runExists(runName) && !on.has("--force")) {
+      throw new Error(`A run named "${runName}" is already recorded. Pass --force to replace it.`);
+    }
   }
 
   // Recorded runs and the page generated from them are the eval's output, not
@@ -242,10 +282,12 @@ async function main(): Promise<void> {
   // gateway on an isolated config directory.
   const { SyntheticE2EHarness } =
     await import("../../../packages/collector/src/e2e/synth-harness.js");
+  let activeOverrides: SearchParamOverrides = {};
   const harness = new SyntheticE2EHarness({
     gatewayMode: "stable",
     universe: "e2e-minimal",
-    extraGatewayConfig: GATEWAY_CONFIG,
+    // Read again at every gateway start, so a restart applies a variant.
+    extraGatewayConfig: () => gatewayConfig(activeOverrides),
     ...(runMode === "hybrid"
       ? {
           extraInference: {
@@ -367,142 +409,173 @@ async function main(): Promise<void> {
     await harness.refreshSearchSnapshot();
     say(`Indexed ${pushed - 1} passages into ${stats.totalChunks ?? 0} chunks`);
 
-    // Every search worker attaches the rebuilt ranker on its own, so one
-    // answer from it does not mean the next will be.
-    const rankerStart = Date.now();
-    for (let answers = 0; answers < PROBE_ANSWERS;) {
-      const res = await retrying("Probing the keyword ranker", () => search(PROBE_WORD, 1));
-      if (res.results?.[0]?.sourceUrl !== "miracl://probe") {
-        throw new Error("The probe document is not searchable; the index is not complete");
+    const waitForRanker = async (): Promise<void> => {
+      // Every search worker attaches the rebuilt ranker on its own, so one
+      // answer from it does not mean the next will be.
+      const rankerStart = Date.now();
+      for (let answers = 0; answers < PROBE_ANSWERS;) {
+        const res = await retrying("Probing the keyword ranker", () => search(PROBE_WORD, 1));
+        if (res.results?.[0]?.sourceUrl !== "miracl://probe") {
+          throw new Error("The probe document is not searchable; the index is not complete");
+        }
+        if (res.stages?.bm25?.engine === "memory") {
+          answers += 1;
+          continue;
+        }
+        answers = 0;
+        if (Date.now() - rankerStart > RANKER_WAIT_MS) {
+          throw new Error("The in-memory keyword ranker did not come up after the bulk load");
+        }
+        if (Date.now() - lastReport > 60_000) {
+          say("Waiting for the in-memory keyword ranker to cover the corpus");
+          lastReport = Date.now();
+        }
+        await sleep(5000);
       }
-      if (res.stages?.bm25?.engine === "memory") {
-        answers += 1;
-        continue;
-      }
-      answers = 0;
-      if (Date.now() - rankerStart > RANKER_WAIT_MS) {
-        throw new Error("The in-memory keyword ranker did not come up after the bulk load");
-      }
-      if (Date.now() - lastReport > 60_000) {
-        say("Waiting for the in-memory keyword ranker to cover the corpus");
-        lastReport = Date.now();
-      }
-      await sleep(5000);
-    }
+    };
+    await waitForRanker();
     const indexSeconds = (Date.now() - indexStart) / 1000;
 
-    // ── query ─────────────────────────────────────────────────────────────
-    const queryStart = Date.now();
-    const rows: QueryRow[] = [];
-    const languageResults: LanguageResult[] = [];
-    const latencies: number[] = [];
-    for (const language of languages) {
-      const qrels = readQrels(dataDir, language);
-      const all = readQueries(dataDir, language);
-      const queries = maxQueries === null ? all : all.slice(0, maxQueries);
-      const scored: QueryRow[] = [];
-      const lexicalEngines: Record<string, number> = {};
-      let emptyResults = 0;
-      let next = 0;
-      const worker = async (): Promise<void> => {
-        while (next < queries.length) {
-          const query = queries[next]!;
-          next += 1;
-          const judged = qrels.get(query.id);
-          const relevant = new Set(
-            [...(judged ?? [])].filter(([, grade]) => grade > 0).map(([docid]) => docid),
-          );
-          if (relevant.size === 0) continue;
-          let ms = 0;
-          const res = await retrying("A search", async () => {
-            const sent = Date.now();
-            const answer = await search(query.text, RESULT_DEPTH);
-            ms = Date.now() - sent;
-            return answer;
-          });
-          latencies.push(ms);
-          const engine = res.stages?.bm25?.engine ?? "none";
-          lexicalEngines[engine] = (lexicalEngines[engine] ?? 0) + 1;
-          const results = res.results ?? [];
-          if (results.length === 0) emptyResults += 1;
-          const ranked = rankedPassageIds(results, language);
-          let bm25Rank: number | null = null;
-          let vectorRank: number | null = null;
-          results.forEach((result, i) => {
-            if (!relevant.has(ranked[i]!)) return;
-            const lanes = result.scoreBreakdown;
-            if (lanes?.bm25Rank) bm25Rank = Math.min(bm25Rank ?? Infinity, lanes.bm25Rank);
-            if (lanes?.vectorRank) vectorRank = Math.min(vectorRank ?? Infinity, lanes.vectorRank);
-          });
-          scored.push({
-            language,
-            queryId: query.id,
-            ...scoreQuery(ranked, relevant),
-            bm25Rank,
-            vectorRank,
-          });
-        }
-      };
-      await Promise.all(Array.from({ length: QUERY_CONCURRENCY }, worker));
-      if (scored.length === 0) throw new Error(`No ${language} question has a relevant passage`);
-      scored.sort((a, b) => (a.queryId < b.queryId ? -1 : 1));
-      rows.push(...scored);
-      const result: LanguageResult = {
-        language,
-        queries: scored.length,
-        passages: passageCounts.get(language) ?? 0,
-        emptyResults,
-        lexicalEngines,
-        pool: poolFingerprint(manifest.languages.find((l) => l.language === language)!),
-        hit10: mean(scored.map((s) => s.hit10)),
-        ndcg10: mean(scored.map((s) => s.ndcg10)),
-        recall100: mean(scored.map((s) => s.recall100)),
-        mrr10: mean(scored.map((s) => s.mrr10)),
-      };
-      languageResults.push(result);
-      say(
-        `${LANGUAGE_NAMES[language].padEnd(11)} Hit@10 ${result.hit10.toFixed(3)}  ` +
-          `nDCG@10 ${result.ndcg10.toFixed(3)}  ` +
-          `Recall@100 ${result.recall100.toFixed(3)}  (${result.queries} queries, ` +
-          `${emptyResults} empty, ${lexicalEngines.memory ?? 0} by the in-memory ranker)`,
-      );
-    }
+    const scoreAndRecord = async (
+      runName: string,
+      overrides: SearchParamOverrides,
+    ): Promise<void> => {
+      // ── query ─────────────────────────────────────────────────────────────
+      const queryStart = Date.now();
+      const rows: QueryRow[] = [];
+      const languageResults: LanguageResult[] = [];
+      const latencies: number[] = [];
+      for (const language of languages) {
+        const qrels = readQrels(dataDir, language);
+        const all = readQueries(dataDir, language);
+        const queries = maxQueries === null ? all : all.slice(0, maxQueries);
+        const scored: QueryRow[] = [];
+        const lexicalEngines: Record<string, number> = {};
+        let emptyResults = 0;
+        let next = 0;
+        const worker = async (): Promise<void> => {
+          while (next < queries.length) {
+            const query = queries[next]!;
+            next += 1;
+            const judged = qrels.get(query.id);
+            const relevant = new Set(
+              [...(judged ?? [])].filter(([, grade]) => grade > 0).map(([docid]) => docid),
+            );
+            if (relevant.size === 0) continue;
+            let ms = 0;
+            const res = await retrying("A search", async () => {
+              const sent = Date.now();
+              const answer = await search(query.text, RESULT_DEPTH);
+              ms = Date.now() - sent;
+              return answer;
+            });
+            latencies.push(ms);
+            const engine = res.stages?.bm25?.engine ?? "none";
+            lexicalEngines[engine] = (lexicalEngines[engine] ?? 0) + 1;
+            const results = res.results ?? [];
+            if (results.length === 0) emptyResults += 1;
+            const ranked = rankedPassageIds(results, language);
+            let bm25Rank: number | null = null;
+            let vectorRank: number | null = null;
+            results.forEach((result, i) => {
+              if (!relevant.has(ranked[i]!)) return;
+              const lanes = result.scoreBreakdown;
+              if (lanes?.bm25Rank) bm25Rank = Math.min(bm25Rank ?? Infinity, lanes.bm25Rank);
+              if (lanes?.vectorRank)
+                vectorRank = Math.min(vectorRank ?? Infinity, lanes.vectorRank);
+            });
+            scored.push({
+              language,
+              queryId: query.id,
+              ...scoreQuery(ranked, relevant),
+              bm25Rank,
+              vectorRank,
+            });
+          }
+        };
+        await Promise.all(Array.from({ length: QUERY_CONCURRENCY }, worker));
+        if (scored.length === 0) throw new Error(`No ${language} question has a relevant passage`);
+        scored.sort((a, b) => (a.queryId < b.queryId ? -1 : 1));
+        rows.push(...scored);
+        const result: LanguageResult = {
+          language,
+          queries: scored.length,
+          passages: passageCounts.get(language) ?? 0,
+          emptyResults,
+          lexicalEngines,
+          pool: poolFingerprint(manifest.languages.find((l) => l.language === language)!),
+          hit10: mean(scored.map((s) => s.hit10)),
+          ndcg10: mean(scored.map((s) => s.ndcg10)),
+          recall100: mean(scored.map((s) => s.recall100)),
+          mrr10: mean(scored.map((s) => s.mrr10)),
+        };
+        languageResults.push(result);
+        say(
+          `${LANGUAGE_NAMES[language].padEnd(11)} Hit@10 ${result.hit10.toFixed(3)}  ` +
+            `nDCG@10 ${result.ndcg10.toFixed(3)}  ` +
+            `Recall@100 ${result.recall100.toFixed(3)}  (${result.queries} queries, ` +
+            `${emptyResults} empty, ${lexicalEngines.memory ?? 0} by the in-memory ranker)`,
+        );
+      }
 
-    const summary: RunSummary = {
-      name,
-      mode: runMode,
-      startedAt,
-      source,
-      dataset: {
-        name: manifest.dataset,
-        poolSize: manifest.poolSize,
-        revisions: manifest.revisions,
-      },
-      limits: { maxPassages, maxQueries },
-      embedder: runMode === "hybrid" ? embedderModel : null,
-      gatewayConfig: GATEWAY_CONFIG,
-      macro: {
-        hit10: mean(languageResults.map((l) => l.hit10)),
-        ndcg10: mean(languageResults.map((l) => l.ndcg10)),
-        recall100: mean(languageResults.map((l) => l.recall100)),
-        mrr10: mean(languageResults.map((l) => l.mrr10)),
-      },
-      languages: languageResults,
-      totals: { passages: pushed - 1, chunks: stats.totalChunks ?? 0, queries: rows.length },
-      timing: {
-        ingestSeconds: Math.round(ingestSeconds),
-        indexSeconds: Math.round(indexSeconds),
-        querySeconds: Math.round((Date.now() - queryStart) / 1000),
-        queryMsP50: percentile(latencies, 0.5),
-        queryMsP95: percentile(latencies, 0.95),
-      },
+      const summary: RunSummary = {
+        name: runName,
+        mode: runMode,
+        startedAt,
+        source,
+        dataset: {
+          name: manifest.dataset,
+          poolSize: manifest.poolSize,
+          revisions: manifest.revisions,
+        },
+        limits: { maxPassages, maxQueries },
+        embedder: runMode === "hybrid" ? embedderModel : null,
+        gatewayConfig: gatewayConfig(overrides),
+        macro: {
+          hit10: mean(languageResults.map((l) => l.hit10)),
+          ndcg10: mean(languageResults.map((l) => l.ndcg10)),
+          recall100: mean(languageResults.map((l) => l.recall100)),
+          mrr10: mean(languageResults.map((l) => l.mrr10)),
+        },
+        languages: languageResults,
+        totals: { passages: pushed - 1, chunks: stats.totalChunks ?? 0, queries: rows.length },
+        timing: {
+          ingestSeconds: Math.round(ingestSeconds),
+          indexSeconds: Math.round(indexSeconds),
+          querySeconds: Math.round((Date.now() - queryStart) / 1000),
+          queryMsP50: percentile(latencies, 0.5),
+          queryMsP95: percentile(latencies, 0.95),
+        },
+      };
+      writeRun(summary, rows);
+      say(
+        `Macro Hit@10 ${summary.macro.hit10.toFixed(4)}  nDCG@10 ${summary.macro.ndcg10.toFixed(4)}  Recall@100 ` +
+          `${summary.macro.recall100.toFixed(4)}  MRR@10 ${summary.macro.mrr10.toFixed(4)}`,
+      );
+      say(`Wrote evals/search/results/${runName}.json`);
     };
-    writeRun(summary, rows);
-    say(
-      `Macro Hit@10 ${summary.macro.hit10.toFixed(4)}  nDCG@10 ${summary.macro.ndcg10.toFixed(4)}  Recall@100 ` +
-        `${summary.macro.recall100.toFixed(4)}  MRR@10 ${summary.macro.mrr10.toFixed(4)}`,
-    );
-    say(`Wrote evals/search/results/${name}.json`);
+    await scoreAndRecord(name, {});
+
+    for (const [label, overrides] of variants) {
+      say(`Variant ${label}: restarting the gateway with ${JSON.stringify(overrides)}`);
+      activeOverrides = overrides;
+      await harness.restartGateway();
+      if (runMode === "hybrid") {
+        const deadline = Date.now() + RANKER_WAIT_MS;
+        for (;;) {
+          const ready = await retrying("Reading index progress", () =>
+            harness.gatewayJson<IndexStats>("/index/stats"),
+          );
+          if (ready.semanticSearch?.state === "ready") break;
+          if (Date.now() > deadline)
+            throw new Error("Semantic search did not come back after a restart");
+          await sleep(3000);
+        }
+      }
+      await harness.refreshSearchSnapshot();
+      await waitForRanker();
+      await scoreAndRecord(`${name}.${label}`, overrides);
+    }
   } catch (err) {
     // The gateway's log goes with its temp directory; keep it for the post-mortem.
     const log = harness.getGatewayLogPath();
