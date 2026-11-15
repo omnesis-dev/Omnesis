@@ -112,6 +112,7 @@ describe("Windows CI coverage", () => {
       "packages/collector/src/source-ws-handlers.test.ts",
       "packages/collector/src/source-ws-handlers.auth-begin.test.ts",
       "packages/collector/src/source-ws-handlers.ownership.test.ts",
+      "packages/collector/src/source-ws-handlers.physical-ownership.test.ts",
     ]) {
       expect(FOCUSED_UNIT_FILES).toContain(file);
     }

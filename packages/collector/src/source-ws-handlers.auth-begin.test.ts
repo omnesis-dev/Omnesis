@@ -202,6 +202,43 @@ afterEach(async () => {
 });
 
 describe("auth.begin → runFlowSubprocess", () => {
+  test.each([false, true])(
+    "oversized auth output stops the producer and waits for physical closure (newline=%s)",
+    async (newline) => {
+      const { handlers, emitted } = setup([authDescriptor()]);
+      await handlers.handle(
+        makeCommand("auth.begin", { flowId: "bounded-output", sourceType: "test-auth-source" }),
+      );
+      const child = spawnedChildren[0];
+      child.stdout.write("x".repeat(2 * 1024 * 1024) + (newline ? "\n" : ""));
+      await waitFor(() => child.killed);
+      expect(emitted.filter((event) => event.type === "auth.complete")).toEqual([]);
+      child.closeProcess(1);
+      await waitFor(() => emitted.some((event) => event.type === "auth.complete"));
+      expect(emitted.find((event) => event.type === "auth.complete")?.payload).toMatchObject({
+        ok: false,
+        code: "unknown",
+      });
+    },
+  );
+
+  test("post-terminal output is discarded while a successful process is joining", async () => {
+    const { handlers, emitted } = setup([authDescriptor()]);
+    await handlers.handle(
+      makeCommand("auth.begin", { flowId: "terminal-output", sourceType: "test-auth-source" }),
+    );
+    const child = spawnedChildren[0];
+    child.emitLine({ type: "complete", accountIds: ["one@example.com"] });
+    child.stdout.write("x".repeat(2 * 1024 * 1024));
+    child.endStdout();
+    await waitFor(() => emitted.some((event) => event.type === "auth.complete"));
+    expect(child.killed).toBe(false);
+    expect(emitted.find((event) => event.type === "auth.complete")?.payload).toMatchObject({
+      ok: true,
+      accountIds: ["one@example.com"],
+    });
+  });
+
   test("a delayed cancellation cannot stop a replacement using the same flow id", async () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     const { handlers } = setup([authDescriptor()]);

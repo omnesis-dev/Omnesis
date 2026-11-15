@@ -40,6 +40,7 @@ export const FOCUSED_UNIT_FILES = [
   "packages/collector/src/source-ws-handlers.test.ts",
   "packages/collector/src/source-ws-handlers.auth-begin.test.ts",
   "packages/collector/src/source-ws-handlers.ownership.test.ts",
+  "packages/collector/src/source-ws-handlers.physical-ownership.test.ts",
   "packages/collector/src/doctor-deadlines.test.ts",
   "packages/collector/src/e2e/e2e-owned-process.test.ts",
   "packages/collector/src/e2e/connect-process.test.ts",

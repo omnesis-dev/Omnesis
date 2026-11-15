@@ -57,6 +57,8 @@ import type { SourceManager } from "./source-manager.js";
  * child that never emits one.
  */
 const MAX_UNTERMINATED_STDERR_BYTES = 1_000_000;
+/** Bound progress/account metadata before parsing an auth protocol frame. */
+const MAX_AUTH_FRAME_CHARS = 1_000_000;
 
 /**
  * How long a cancelled flow gets to end itself before it is signalled.
@@ -507,17 +509,16 @@ export function createSourceWsHandlers(deps: SourceWsHandlerDeps): SourceWsHandl
     let resolvedAccountIds: string[] | undefined;
     let resolvedAccountStates: Record<string, ConnectionState> | undefined;
     let resolvedNotices: Array<{ title: string; detail?: string }> | undefined;
-    // `terminalEmitted` is the single-terminal-event invariant: at most
-    // one `auth.complete` (success or error) per process. After it flips
-    // we still drain stdout to EOF (so the child sees its writes
-    // accepted and exits cleanly) but ignore further events.
-    let terminalEmitted = false;
+    // The first terminal protocol frame wins. Success publication additionally
+    // waits for physical process closure; cancellation can retire pending success.
+    let terminalAccepted = false;
     let terminalPublished = false;
     let streamFailed = false;
     endFlow.set(flowId, () => {
-      terminalEmitted = true;
+      terminalAccepted = true;
       terminalPublished = true;
       resolvedAccountIds = undefined;
+      buffer = "";
     });
     // Inactivity watchdog: if the subprocess goes silent for this long
     // mid-flow, kill it and surface a `code: "timeout"` error. 30 minutes
@@ -538,7 +539,8 @@ export function createSourceWsHandlers(deps: SourceWsHandlerDeps): SourceWsHandl
           log.error(`Auth cancellation failed (${flowId}): ${toErrorMessage(error)}`);
         });
         resolvedAccountIds = undefined;
-        terminalEmitted = true;
+        buffer = "";
+        terminalAccepted = true;
         if (!terminalPublished) {
           terminalPublished = true;
           emitEvent("auth.complete", {
@@ -584,7 +586,7 @@ export function createSourceWsHandlers(deps: SourceWsHandlerDeps): SourceWsHandl
       // exactly-once `complete` or `error`; a buggy subprocess emitting
       // a follow-up `url` (or a second `error`) would otherwise leak to
       // the gateway after the consumer already declared the flow done.
-      if (terminalEmitted) {
+      if (terminalAccepted) {
         log.debug(`Dropping post-terminal auth-subprocess event for ${flowId}: ${event.type}`);
         return;
       }
@@ -594,11 +596,11 @@ export function createSourceWsHandlers(deps: SourceWsHandlerDeps): SourceWsHandl
         resolvedNotices = event.notices;
         // Retain success until the process and its descendants have joined.
         // Later protocol events cannot replace this pending terminal result.
-        terminalEmitted = true;
+        terminalAccepted = true;
         return;
       }
       if (event.type === "error") {
-        terminalEmitted = true;
+        terminalAccepted = true;
         terminalPublished = true;
         emitEvent("auth.complete", {
           flowId,
@@ -628,12 +630,21 @@ export function createSourceWsHandlers(deps: SourceWsHandlerDeps): SourceWsHandl
       // reading so the child's pipe writes don't block — letting the
       // child exit cleanly instead of stalling on a full pipe buffer.
       for await (const chunk of stdout) {
+        if (terminalAccepted) continue;
         buffer += chunk;
         let idx;
         while ((idx = buffer.indexOf("\n")) !== -1) {
+          if (idx > MAX_AUTH_FRAME_CHARS)
+            throw new Error("Authentication output frame exceeds its bound");
           handleLine(buffer.slice(0, idx).trim());
           buffer = buffer.slice(idx + 1);
+          if (terminalAccepted) {
+            buffer = "";
+            break;
+          }
         }
+        if (buffer.length > MAX_AUTH_FRAME_CHARS)
+          throw new Error("Authentication output frame exceeds its bound");
       }
       if (buffer.trim()) handleLine(buffer.trim());
       await owner.joined;
@@ -680,7 +691,7 @@ export function createSourceWsHandlers(deps: SourceWsHandlerDeps): SourceWsHandl
       // can render a generic "auth flow ended unexpectedly" without
       // pretending we know why.
       log.warn(
-        `auth subprocess (${flowId}) ended without terminal event: ` +
+        `auth subprocess (${flowId}) ended before successful completion: code=${proc.exitCode} ` +
           `lines=${lineCount} events=[${eventTypesSeen.join(",")}] ` +
           `bufferAtEof=${JSON.stringify(redactSecrets(buffer.slice(0, 160), secretValues))} ` +
           `stderrTail=${JSON.stringify(stderrTail.slice(-10))}`,
@@ -688,7 +699,9 @@ export function createSourceWsHandlers(deps: SourceWsHandlerDeps): SourceWsHandl
       emitEvent("auth.complete", {
         flowId,
         ok: false,
-        error: "auth subprocess exited without a complete event",
+        error: resolvedAccountIds
+          ? "auth subprocess exited unsuccessfully after reporting completion"
+          : "auth subprocess exited without a complete event",
         code: "unknown" satisfies AuthErrorCode,
       });
     }

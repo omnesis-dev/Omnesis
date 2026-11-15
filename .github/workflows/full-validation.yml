@@ -75,6 +75,7 @@ jobs:
           packages/collector/src/auth-process.test.ts
           packages/collector/src/source-ws-handlers.test.ts
           packages/collector/src/source-ws-handlers.ownership.test.ts
+          packages/collector/src/source-ws-handlers.physical-ownership.test.ts
           packages/collector/src/source-ws-handlers.auth-begin.test.ts
           packages/collector/src/owned-process-shutdown.test.ts
           packages/collector/src/doctor.test.ts
@@ -88,7 +89,7 @@ jobs:
       - name: Lint the auth ownership slice
         if: ${{ runner.os == 'Linux' }}
         env:
-          NODE_OPTIONS: --max-old-space-size=3072
+          NODE_OPTIONS: --max-old-space-size=6144
         run: >-
           node node_modules/eslint/bin/eslint.js
           packages/collector/src/auth-process.ts
@@ -96,6 +97,8 @@ jobs:
           packages/collector/src/source-ws-handlers.ts
           packages/collector/src/source-ws-handlers.test.ts
           packages/collector/src/source-ws-handlers.auth-begin.test.ts
+          packages/collector/src/source-ws-handlers.physical-ownership.test.ts
+          packages/collector/test/auth-process-fixture.mjs
       - name: Build native libraries for the bounded Codex Gateway diagnostic
         if: ${{ runner.os == 'Windows' && inputs.codex_diagnostic }}
         run: node scripts/ci/build-windows-sqlite.mjs && node scripts/ci/build-windows-usearch.mjs
