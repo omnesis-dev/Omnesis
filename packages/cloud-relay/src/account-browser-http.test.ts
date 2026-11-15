@@ -113,7 +113,8 @@ async function fixture(
       body: JSON.stringify(body),
       redirect: "manual",
     });
-  const begin = async (purpose: "owner-link" | "device-enrollment" = "owner-link") => {
+  /** A gateway's signed request, not yet opened in a browser. */
+  const start = async (purpose: "owner-link" | "device-enrollment" = "owner-link") => {
     const now = Math.floor(Date.now() / 1000),
       redemptionSecret = randomBytes(32).toString("base64url");
     const unsigned = {
@@ -139,7 +140,10 @@ async function fixture(
       ).toString("base64url"),
     });
     expect(started.status).toBe(200);
-    const intent = await started.json(),
+    return { unsigned, redemptionSecret, intent: await started.json() };
+  };
+  const begin = async (purpose: "owner-link" | "device-enrollment" = "owner-link") => {
+    const { unsigned, redemptionSecret, intent } = await start(purpose),
       launchUrl = new URL(intent.authorizeUrl);
     const launch = await fetch(url + launchUrl.pathname + launchUrl.search, { redirect: "manual" });
     expect(launch.status).toBe(303);
@@ -162,7 +166,7 @@ async function fixture(
       cookie: `${operationCookie}; ${browser}; __Host-omnesis-account=${account.token}`,
     };
   };
-  return { accounts, account, owner, ownerHeaders, relay, url, post, begin, sessions };
+  return { accounts, account, owner, ownerHeaders, relay, url, post, start, begin, sessions };
 }
 
 test("a gateway owner starts a browser-bound intent and the signed-in user explicitly confirms its account association", async () => {
@@ -210,6 +214,44 @@ test("a gateway owner starts a browser-bound intent and the signed-in user expli
       })
     ).status,
   ).toBe(410);
+});
+
+test("the sign-in the gateway's page chose reaches the account page, from a fixed set only", async () => {
+  const f = await fixture(true),
+    { unsigned, intent } = await f.start("device-enrollment"),
+    launchUrl = new URL(intent.authorizeUrl);
+  const open = (extra: string) =>
+    fetch(f.url + launchUrl.pathname + launchUrl.search + extra, { redirect: "manual" });
+  const described = async (launch: Response) => {
+    expect(launch.status).toBe(303);
+    // The page's address names only the operation: the choice is kept with it.
+    expect(launch.headers.get("location")).toBe(
+      `/_relay/account?operation=${unsigned.operationId}`,
+    );
+    const cookie = launch.headers.getSetCookie()[0]!.split(";")[0]!;
+    return (
+      await (
+        await fetch(f.url + `/_relay/account/api/session?operation=${unsigned.operationId}`, {
+          headers: { cookie },
+        })
+      ).json()
+    ).pending;
+  };
+  for (const extra of [
+    "&method=password",
+    "&method=Google",
+    "&method=",
+    "&method=google&method=google",
+    "&method=google&extra=1",
+  ])
+    expect((await open(extra)).status, extra).toBe(400);
+  expect(await described(await open("&method=google"))).toMatchObject({
+    purpose: "device-enrollment",
+    method: "google",
+  });
+  expect(await described(await open("&method=passkey"))).toMatchObject({ method: "passkey" });
+  // Opened again without one, the page offers every sign-in.
+  expect(await described(await open(""))).not.toHaveProperty("method");
 });
 
 test("owner-control and browser confirmation boundaries refuse ambient sessions, invalid launches and oversized input", async () => {

@@ -486,6 +486,11 @@ protection). Safari sometimes labels that press `none` or `cross-site`, for
 example in a tab another site opened; such a request, or a link from another
 site, is sent back to the account page with the same operation and
 `failed=again`, where the next press continues.
+A gateway's sign-in page that already chose a sign-in, such as its "Continue
+with Google" button, adds `method=google` (or `method=passkey`) to its one-use
+launch link. The account page then offers only that sign-in as its one step,
+and falls back to every sign-in it has if it can't offer that one. The hint
+changes no proof, confirmation or approval.
 
 On a CLI or collector machine, enable cloud relay and pair the
 selected component:

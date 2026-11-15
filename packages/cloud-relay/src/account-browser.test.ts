@@ -1201,6 +1201,66 @@ test("back from a Google start the browser didn't vouch for, the page asks for o
   expect(endorsing.endorsed("register/confirm")).toEqual([]);
 });
 
+test("a sign-in the gateway's page already chose is the page's one step", async () => {
+  const operation = "b1fba1ce-2398-4c2c-a66b-9044433d1a02",
+    pairing = { purpose: "device-enrollment", hostname: "gateway.example.test", needsProof: true };
+  const shown = (f: Page) =>
+    [...f.document.querySelectorAll("button")].map((button) => button.textContent);
+  const open = async (pending: object, session: object = signedOut) => {
+    const f = setup();
+    f.location.search = `?operation=${operation}`;
+    f.session({ ...session, pending });
+    installAccountUI();
+    await f.wait("gateway.example.test");
+    await vi.waitFor(() => expect(f.document.querySelector("h1")).not.toBeNull());
+    return f;
+  };
+
+  // "Continue with Google" on the gateway: Google alone, then the same round trip as before.
+  const google = await open({ ...pairing, method: "google" });
+  expect(google.document.querySelector("h1")?.textContent).toBe("Continue with Google");
+  expect(google.document.getElementById("account-root")!.textContent).toContain(
+    "Sign in to this gateway with the Google account you use for Omnesis.",
+  );
+  expect(shown(google)).toEqual(["Continue with Google"]);
+  expect(google.button("Continue with Google").className).not.toBe("secondary");
+  await press(google, "Continue with Google");
+  expect(google.location.assign).toHaveBeenCalledWith(
+    `https://relay.example.test/_relay/web/start?operation=${operation}`,
+  );
+
+  // A passkey hop offers the passkey alone.
+  const passkey = await open({ ...pairing, method: "passkey" });
+  expect(passkey.document.querySelector("h1")?.textContent).toBe("Continue with your passkey");
+  expect(shown(passkey)).toEqual(["Continue with passkey"]);
+  await press(passkey, "Continue with passkey");
+  await vi.waitFor(() => expect(passkey.credentials.get).toHaveBeenCalledOnce());
+
+  // Google that this service can't offer is no dead end: the page offers what it has.
+  const unavailable = await open(
+    { ...pairing, method: "google" },
+    { ...signedOut, googleAvailable: false },
+  );
+  expect(unavailable.document.querySelector("h1")?.textContent).toBe("Pair this browser");
+  expect(shown(unavailable)).toEqual(["Sign in with Passkey"]);
+
+  // Signed in, the page goes on exactly as before.
+  const done = await open({ ...pairing, method: "google", needsProof: false }, authenticated);
+  expect(done.document.querySelector("h1")?.textContent).toBe("Pair this browser");
+
+  // Creating an account offers only the chosen sign-in too.
+  const link = { purpose: "owner-link", hostname: "gateway.example.test", needsProof: true };
+  const creating = await open({ ...link, intent: "create", method: "passkey" });
+  expect(creating.document.querySelector("h1")?.textContent).toBe("Create your Omnesis account");
+  expect(shown(creating)).toEqual(["Create with a passkey", "I already have an account"]);
+  expect(creating.document.querySelector(".note")).toBeNull();
+  const creatingGoogle = await open({ ...link, intent: "create", method: "google" });
+  expect(shown(creatingGoogle)).toEqual(["Create with Google", "I already have an account"]);
+  // A refusal says why, whatever was chosen.
+  const denied = await open({ ...link, method: "google", denied: { reason: "capacity" } });
+  expect(denied.document.querySelector("h1")?.textContent).toBe("Sign in to your Omnesis account");
+});
+
 test("the plain sign-in page never offers to create an account, whatever the relay would allow", async () => {
   for (const canCreateAccount of [false, true]) {
     const f = setup();

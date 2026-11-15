@@ -584,8 +584,12 @@ test("neutral account sign-in offers Google and passkey choices and uses only th
   expect(host.querySelector("h2")?.textContent).toBe("Sign in to your gateway");
   expect(host.querySelector("section")?.getAttribute("aria-label")).toBe("Omnesis account sign-in");
   expect(button("Continue with Google").querySelector("img")).not.toBeNull();
+  // Away from the gateway's own page, Face ID signs in on the account page, which then offers only
+  // the passkey; Google likewise offers only Google there.
   await act(async () => button("Continue with Face ID").click());
-  await vi.waitFor(() => expect(location.assign).toHaveBeenCalledWith(destination));
+  await vi.waitFor(() =>
+    expect(location.assign).toHaveBeenCalledWith(`${destination}&method=passkey`),
+  );
   expect(transport.mock.calls[0]![0]).toBe("/devices/account/authorize");
   expect(storage.has(GOOGLE_PAIRING_STORAGE_KEY)).toBe(true);
 });
@@ -667,7 +671,10 @@ test("with automatic enrollment, sign-in starts with this browser's device key a
     "You'll approve this browser on your phone.",
   );
   await act(async () => button("Continue with Google").click());
-  await vi.waitFor(() => expect(location.assign).toHaveBeenCalledWith(destination));
+  // The account page then offers only Google: the choice was made here.
+  await vi.waitFor(() =>
+    expect(location.assign).toHaveBeenCalledWith(`${destination}&method=google`),
+  );
   const body = JSON.parse(transport.mock.calls[0]![1]!.body as string);
   expect(body.devicePublicKey).toBe(key.publicKey);
   expect(JSON.parse(storage.get(GOOGLE_PAIRING_STORAGE_KEY)!)).toMatchObject({
