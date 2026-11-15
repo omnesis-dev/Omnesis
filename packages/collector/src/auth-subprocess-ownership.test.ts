@@ -107,10 +107,10 @@ registerHooks({load(url,context,nextLoad){
     );
     if (scenario.failure === "marked") {
       expect(existsSync(held), "cleanup uncertainty must reach the process exit fence").toBe(true);
-      expect(settled, "the uncertain process must retain its original PID").toBe(false);
       // Let a provider that continues after a background rejection try to report success.
       if (scenario.stage === "background" || scenario.stage === "discovery")
         await new Promise((resolve) => setTimeout(resolve, 250));
+      expect(settled, "the uncertain process must retain its original PID").toBe(false);
       expect(
         existsSync(terminal),
         "uncertainty must not become an ordinary terminal auth event",
