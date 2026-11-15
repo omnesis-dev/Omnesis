@@ -23,8 +23,10 @@ it("recovers hot usage database journals on the copy, not the original", () => {
     const db=new Database(process.argv[1]);
     db.exec("PRAGMA journal_mode=DELETE; PRAGMA synchronous=FULL; PRAGMA cache_size=5; PRAGMA cache_spill=ON; CREATE TABLE ZOBJECT(Z_PK INTEGER PRIMARY KEY,ZSTREAMNAME TEXT,ZVALUESTRING TEXT,ZSTARTDATE REAL,ZENDDATE REAL,ZCREATIONDATE REAL,ZSECONDSFROMGMT INTEGER); CREATE TABLE padding(id INTEGER PRIMARY KEY,value BLOB)");
     db.exec("INSERT INTO ZOBJECT VALUES(1,'/app/usage','com.example.fixture',100,160,170,0)");
+    // Ten multi-page rows exceed the five-page cache and force hot-journal
+    // spill without turning a recovery test into a disk-flush benchmark.
     const insert=db.prepare("INSERT INTO padding VALUES(?,zeroblob(8192))");
-    db.transaction(()=>{for(let i=0;i<50;i++)insert.run(i)})();
+    db.transaction(()=>{for(let i=0;i<10;i++)insert.run(i)})();
     db.exec("BEGIN IMMEDIATE; DELETE FROM ZOBJECT; UPDATE padding SET value=randomblob(8192)");
     process.kill(process.pid,'SIGKILL');
   `,

@@ -75,12 +75,19 @@ jobs:
           cache: npm
       - name: Install locked dependencies
         run: node scripts/ci/npm-ci.mjs --no-audit --no-fund
+      - name: Build native dependencies used by isolated developer instances
+        run: node scripts/ci/build-windows-sqlite.mjs && node scripts/ci/build-windows-usearch.mjs
+      - name: Install smoke browser
+        run: node node_modules/@playwright/test/cli.js install chromium
       - name: Measure durable voice and hot-journal fixture completion
         run: >-
           node scripts/run-check.mjs unit
           scripts/instance-token.test.mjs
           packages/gateway/src/agent/service-live-voice.test.ts
           packages/providers/screen-time/src/db-reader-recovery.test.ts
+      - name: Restore public workflow input for topology fixture assertions
+        if: ${{ !cancelled() }}
+        run: Copy-Item scripts/ci/audit-public-full-validation.fixture.yml .github/workflows/full-validation.yml
       - name: Validate portable developer shell fixtures
         if: ${{ !cancelled() }}
         run: node scripts/run-check.mjs smoke
