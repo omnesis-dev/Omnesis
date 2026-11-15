@@ -9,7 +9,7 @@ import dev.omnesis.android.transport.dto.CloudRelayStatus
 import dev.omnesis.android.transport.dto.DeviceEnrollmentPolicyBody
 import dev.omnesis.android.transport.dto.GatewayPairingApproving
 import dev.omnesis.android.transport.dto.GatewayPairingApprovalRequest
-import dev.omnesis.android.transport.dto.GatewayPairingApprovalRequests
+import dev.omnesis.android.transport.dto.GatewayPairingApprovals
 import dev.omnesis.android.transport.dto.GatewayPairingApprovalDecision
 import dev.omnesis.android.transport.dto.GatewayAccountPairingConfig
 import dev.omnesis.android.transport.dto.GatewayPairingApprovalCeremonyRequest
@@ -141,8 +141,9 @@ import okhttp3.HttpUrl
  * actions. Mirrors the iOS `AdminClient` routes/shapes exactly.
  */
 class AdminClient(private val http: GatewayHttp) : GatewayPairingApproving, CloudRelayManaging {
-    override suspend fun pairingApprovalRequests(): List<GatewayPairingApprovalRequest> =
-        http.getJson<GatewayPairingApprovalRequests>("admin/cloud-pairing/requests").items
+    override suspend fun pairingApprovalRequests(): List<GatewayPairingApprovalRequest> = pairingApprovals().items
+
+    override suspend fun pairingApprovals(): GatewayPairingApprovals = http.getJson("admin/cloud-pairing/requests")
 
     override suspend fun decidePairingApproval(requestId: String, approve: Boolean, trustSignIn: Boolean) {
         http.postJson<GatewayPairingApprovalDecision, OkResponse>(
@@ -151,13 +152,22 @@ class AdminClient(private val http: GatewayHttp) : GatewayPairingApproving, Clou
         )
     }
 
-    /** A gateway without the feature or without an origin of its own offers no ceremony; neither is an error. */
+    /**
+     * A gateway without the feature or without an origin of its own offers no ceremony; neither is
+     * an error. Nor is one with no confirmed passkey (a Google-only owner) or a security lock on:
+     * its page would only refuse, so the plain approval stays the way (defect 6.1).
+     */
     override suspend fun pairingPasskeyLocation(): GatewayPasskeyLocation? =
         try {
-            http.getJson<GatewayAccountPairingConfig>("devices/account/config").gatewayPasskey
+            http.getJson<GatewayAccountPairingConfig>("devices/account/config").takeIf { it.passkeyApproval }?.gatewayPasskey
         } catch (_: GatewayException.NotFound) {
             null
         }
+
+    override fun approvalPage(requestId: String): String? {
+        if (!UUID_PATTERN.matches(requestId) || http.baseUrl.scheme != "https") return null
+        return http.baseUrl.newBuilder().encodedPath("/portal/approve").query(null).fragment(requestId).build().toString()
+    }
 
     override suspend fun pairingApprovalCeremony(requestId: String): GatewayPasskeyCeremony =
         http.postJson("devices/account/approval/options", GatewayPairingApprovalCeremonyRequest(requestId))
@@ -992,6 +1002,7 @@ class AdminClient(private val http: GatewayHttp) : GatewayPairingApproving, Clou
     private companion object {
         val ROLE_SLUG = Regex("[a-z][a-z0-9-]*")
         val PROVIDER_SLUG = Regex("[a-z0-9][a-z0-9-]*")
+        val UUID_PATTERN = Regex("^[0-9a-fA-F]{8}(-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12}$")
         /** Pretty-printer for the free-form debug payload (display only, never re-sent). */
         val DEBUG_PRETTY = Json(OmnesisJson) { prettyPrint = true }
 

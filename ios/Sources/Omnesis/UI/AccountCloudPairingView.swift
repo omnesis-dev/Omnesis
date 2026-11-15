@@ -48,10 +48,14 @@ struct AccountCloudPairingView: View {
             onScan: onScan,
             onManual: onManual,
             approvalPageAvailable: model.approvalPage != nil,
-            onApprovalPage: { model.openApprovalPage() }
+            onApprovalPage: { model.openApprovalPage() },
+            expiresAt: model.expiresAt,
+            continuesOnApproval: model.continuesOnApproval,
+            onCancel: { model.cancel() }
         )
         .onChange(of: model.phase) { _, phase in
-            // The gateway already joined this device; there is nothing to compare.
+            // The gateway joined this device, or the owner approved it on a device they already
+            // use and this iPhone checked the gateway's code: there is nothing left to compare.
             if phase == .joining { pair() }
         }
         .navigationTitle("Pair with your gateway")
@@ -97,15 +101,17 @@ struct AccountCloudPairingPanel: View {
     let onPair: () -> Void
     let onScan: () -> Void
     let onManual: () -> Void
-    /// Whether the gateway offers its own page to approve this request with a passkey.
+    /// Whether the gateway offers its own page to approve this request with a confirmed passkey.
     var approvalPageAvailable = false
     var onApprovalPage: () -> Void = {}
+    /// When the gateway stops waiting for this request.
+    var expiresAt: Date?
+    /// An approval continues by itself; otherwise the person confirms the codes once approved.
+    var continuesOnApproval = false
+    var onCancel: () -> Void = {}
 
-    static let approveWithPasskey = "Approve this device with your passkey on your gateway's own page. "
-        + "Approve only if the page shows this same code."
-
-    private var offersApprovalPage: Bool {
-        approvalPageAvailable && !approved && phase == .comparing
+    private var waiting: Bool {
+        phase == .comparing || phase == .pairing
     }
 
     var body: some View {
@@ -125,23 +131,27 @@ struct AccountCloudPairingPanel: View {
         }
     }
 
+    private var header: some View {
+        VStack(alignment: .leading, spacing: Theme.Spacing.xs) {
+            Text(phase == .choosing ? "Choose a gateway" : "Pair using your Omnesis Account")
+                .font(.title3.bold())
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityAddTraits(.isHeader)
+            Text(
+                phase == .choosing
+                    ? "Your Omnesis account has more than one. Pick the one this device joins."
+                    : PairingAccountEntryView.accountDetail
+            )
+            .font(.subheadline)
+            .foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
     private var progress: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
-                VStack(alignment: .leading, spacing: Theme.Spacing.xs) {
-                    Text(phase == .choosing ? "Choose a gateway" : "Pair using your Omnesis Account")
-                        .font(.title3.bold())
-                        .fixedSize(horizontal: false, vertical: true)
-                        .accessibilityAddTraits(.isHeader)
-                    Text(
-                        phase == .choosing
-                            ? "Your Omnesis account has more than one. Pick the one this device joins."
-                            : PairingAccountEntryView.accountDetail
-                    )
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                }
+                if !waiting { header }
                 switch phase {
                 case .idle, .failed:
                     EmptyView()
@@ -186,34 +196,23 @@ struct AccountCloudPairingPanel: View {
                 case .joining:
                     VStack(alignment: .leading, spacing: 12) {
                         ProgressView()
-                        Text("Connecting this device…").foregroundStyle(Theme.textSecondary).fixedSize(horizontal: false, vertical: true)
+                        // A code on screen means the owner approved a held request; none, that the gateway joined it.
+                        Text(verificationCode == nil ? "Connecting this device…" : PairingWaitingPresentation.approved)
+                            .foregroundStyle(Theme.textSecondary)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
                 case .comparing, .pairing:
-                    if let gatewayHost { Text(gatewayHost).font(.footnote.monospaced()).textSelection(.enabled) }
-                    Text(offersApprovalPage ? Self.approveWithPasskey : PairingApprovalPresentation.waitingDevice)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                    if let verificationCode { PairingCodeText(code: verificationCode) }
-                    if offersApprovalPage {
-                        Button(action: onApprovalPage) {
-                            Label("Approve with your passkey", systemImage: "person.badge.key").frame(maxWidth: .infinity)
-                        }
-                        .buttonStyle(.bordered)
-                        .accessibilityIdentifier("pairing.account.approvalPage")
-                    }
-                    Text(
-                        approved
-                            ? "Approved by your gateway."
-                            : offersApprovalPage ? "Waiting for your approval…" : "Waiting for approval on a trusted device…"
+                    AccountPairingWaitingView(
+                        code: verificationCode,
+                        approved: approved,
+                        pairing: phase == .pairing,
+                        expiresAt: expiresAt,
+                        continuesOnApproval: continuesOnApproval,
+                        approvalPageAvailable: approvalPageAvailable,
+                        onApprovalPage: onApprovalPage,
+                        onPair: onPair,
+                        onCancel: onCancel
                     )
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                    Button(action: onPair) {
-                        Text(phase == .pairing ? "Pairing…" : "Codes match, pair this device").frame(maxWidth: .infinity)
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(!approved || phase == .pairing)
-                    .accessibilityIdentifier("pairing.account.confirm")
                 }
             }.frame(maxWidth: .infinity, alignment: .leading).padding()
         }
@@ -309,17 +308,21 @@ struct AccountGatewayRow: View {
     )
 }
 
-#Preview("Waiting for approval") { PreviewMocks.accountPairingPanel(.comparing) }
-#Preview("Approve with your passkey") { PreviewMocks.accountPairingPanel(.comparing, approvalPage: true) }
-#Preview("Approve with your passkey, large text") {
+#Preview("Waiting for your OK") { PreviewMocks.accountPairingPanel(.comparing) }
+#Preview("Waiting for your OK, Face ID on the gateway") { PreviewMocks.accountPairingPanel(.comparing, approvalPage: true) }
+#Preview("Waiting for your OK, Face ID, large text") {
     PreviewMocks.accountPairingPanel(.comparing, approvalPage: true).dynamicTypeSize(.accessibility2)
 }
 
-#Preview("Approve with your passkey, dark") {
+#Preview("Waiting for your OK, Face ID, dark") {
     PreviewMocks.accountPairingPanel(.comparing, approvalPage: true).preferredColorScheme(.dark)
 }
 
-#Preview("Approved with large text") { PreviewMocks.accountPairingPanel(.comparing, approved: true).dynamicTypeSize(.accessibility2) }
+#Preview("Approved, codes to confirm, large text") {
+    PreviewMocks.accountPairingPanel(.comparing, approved: true, continues: false).dynamicTypeSize(.accessibility2)
+}
+
+#Preview("Approved, connecting") { PreviewMocks.accountPairingPanel(.joining, approvedHeld: true) }
 #Preview("Signing in") { PreviewMocks.accountPairingPanel(.signingIn) }
 #Preview("No linked gateways") { PreviewMocks.accountPairingPanel(.failed).preferredColorScheme(.dark) }
 #Preview("Waiting for the gateway") { PreviewMocks.accountPairingPanel(.waitingForGateway) }

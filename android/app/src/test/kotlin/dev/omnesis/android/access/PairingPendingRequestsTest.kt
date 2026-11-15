@@ -20,10 +20,10 @@ class PairingPendingRequestsTest {
         val requests = PairingPendingRequests { now }
         assertNull(requests.state.value.banner)
         requests.replace(listOf(request("a")))
-        assertEquals("A device is waiting for your approval to pair to this gateway.", requests.state.value.banner?.text)
+        assertEquals("A new device is waiting for your OK.", requests.state.value.banner?.text)
         requests.replace(listOf(request("a"), request("b"), request("c")))
         assertEquals(PairingRequestBannerOffer(3), requests.state.value.banner)
-        assertEquals("3 devices are waiting for your approval to pair to this gateway.", requests.state.value.banner?.text)
+        assertEquals("3 new devices are waiting for your OK.", requests.state.value.banner?.text)
         assertEquals("Review", PairingRequestBannerOffer.ACTION)
     }
 

@@ -735,7 +735,7 @@ public final class AdminClient: Sendable {
         case 401:
             throw GatewayClient.Error.unauthorized
         case 403:
-            throw GatewayClient.Error.forbidden
+            throw StepUpRefusal.forbidden(data)
         case 404:
             throw GatewayClient.Error.notFound
         default:

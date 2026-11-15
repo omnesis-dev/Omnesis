@@ -21,6 +21,8 @@ internal class AccountPairingSession(private val client: AccountCloudPairingClie
     override val host get() = URI(pending.origin).host
     override val approved get() = pending.approved
     override val joined get() = pending.joined
+    override val verified get() = pending.gatewayVerified
+    override val expiresAtMillis get() = pending.expiresAtMillis
     override val retryUntilMillis get() = client.retryUntilMillis
     override suspend fun poll() = client.poll(pending)
     override fun compare() = pending.confirmComparison()

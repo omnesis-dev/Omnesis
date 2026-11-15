@@ -253,15 +253,33 @@ says to approve only a request one made oneself. The portal's held screen offers
 
 The iOS app sends its own held request there. A passkey sign-in in the app
 presents the relay's origin, so it is always held. While it waits, the app reads
-`gatewayPasskey` from `/devices/account/config` over the connection pinned to
-the gateway's key and opens `${origin}/portal/approve#<requestId>` in the system
-sign-in browser, next to the comparison code, then polls `/devices/account/poll`
-as before. It uses that origin only when it is the pinned gateway's own origin,
-under the RP ID host and never that host itself; otherwise, and on a gateway that
-names none, the request waits for a trusted device. After a Google sign-in the
-app offers the page without opening it, since the account may have no passkey.
-The app also refuses relay passkey options whose `issuedAt` is more than 60
-seconds from the device's clock.
+`gatewayPasskey` and `passkeyApproval` from `/devices/account/config` over the
+connection pinned to the gateway's key and, only when `passkeyApproval` is true
+(a passkey is confirmed here and no security lock is on; absent counts as false),
+opens `${origin}/portal/approve#<requestId>` in the system sign-in browser, next to
+the comparison code, then polls `/devices/account/poll` as before. It uses that
+origin only when it is the pinned gateway's own origin, under the RP ID host and
+never that host itself; otherwise, and on a gateway that names none, the request
+waits for the owner's OK on a device they already use (the portal on their
+computer or the app on another phone), which shows the same code. After a Google
+sign-in the app offers the page without opening it. The Android app's "Approve
+with fingerprint" on a held request follows the same `passkeyApproval` rule. The
+app also refuses relay passkey options whose `issuedAt` is more than 60 seconds
+from the device's clock.
+
+Once a held request is approved, an app whose signed request went to a gateway
+whose certificate passed the public checks continues on its own: the code the
+gateway reports is checked against the app's own computation, and the owner
+compared it on the approving screen. That is the same footing an automatic join
+stands on. An app that could not verify the certificate (`requireApproval`) still
+asks the person to confirm that the codes matched before it pairs.
+
+On a `428 STEP_UP_REQUIRED` the apps say "Confirm it's you" and, for an approval,
+open the gateway's own approval page for that request (the Android app first
+offers its own `approve-request` ceremony when `passkeyApproval` allows it); on
+`403 STEP_UP_UNAVAILABLE` they say the change can only be made on the computer
+running Omnesis. A pairing notification whose route names a `requestId` opens
+the list with that request first.
 
 A Google token counts as made in an official app (`native-google`) only when an
 official native client presented it: the Android release or test client as

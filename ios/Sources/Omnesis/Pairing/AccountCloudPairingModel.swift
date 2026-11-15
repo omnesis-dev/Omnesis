@@ -56,9 +56,14 @@ protocol AccountPairingSession: Sendable {
 extension AccountCloudPairingClient: AccountPairingSession {}
 
 /// Sign-in commits to this device's key and finds its gateways. With one gateway there is nothing to choose.
-/// The gateway then either joins the device, or holds it for approval and comparison. A held request
-/// is approved with the owner's passkey on the gateway's own page when the gateway offers one, or on
-/// a trusted device.
+/// The gateway then either joins the device, or holds it until the owner says yes. A held request
+/// is approved with the owner's passkey on the gateway's own page when the gateway says that can
+/// work, or on a device the owner already uses, which shows the same code.
+///
+/// Once approved, a request sent to a gateway whose certificate passed the public checks continues
+/// on its own: the code the gateway reports is checked here against this device's own computation,
+/// and the owner compared it on the approving screen. A request to a gateway this device could not
+/// verify still waits for the person to confirm the codes match.
 @MainActor @Observable final class AccountCloudPairingCoordinator {
     enum Phase: Equatable { case idle, connecting, signingIn, finding, choosing, waitingForGateway, joining, comparing, pairing, failed }
     enum Method { case google, passkey }
@@ -68,6 +73,10 @@ extension AccountCloudPairingClient: AccountPairingSession {}
     private(set) var gatewayHost: String?
     private(set) var error: Error?
     private(set) var gatewayApproved = false
+    /// When the gateway stops waiting for the held request.
+    private(set) var expiresAt: Date?
+    /// Whether an approval continues by itself, with no "codes match" step on this device.
+    private(set) var continuesOnApproval = false
     /// The gateway's own page that approves the held request with a passkey, when it offers one.
     private(set) var approvalPage: URL?
     @ObservationIgnored private let googleBrowser: any GooglePairingBrowser
@@ -186,6 +195,8 @@ extension AccountCloudPairingClient: AccountPairingSession {}
             confirmation = value
             gatewayHost = value.origin.host
             gatewayApproved = value.approved
+            expiresAt = Date(timeIntervalSince1970: value.expiry)
+            continuesOnApproval = value.gatewayVerified
             if value.joinedAutomatically {
                 phase = .joining
                 return
@@ -200,15 +211,18 @@ extension AccountCloudPairingClient: AccountPairingSession {}
                 try value.receive(progress, now: now())
                 confirmation = value
                 gatewayApproved = value.approved
+                expiresAt = Date(timeIntervalSince1970: value.expiry)
             }
             closeApprovalPage()
+            // Approved by the owner on a device they already use: nothing is left to do here.
+            if value.gatewayVerified { phase = .joining }
         } catch { fail(error, operation: operation) }
     }
 
     /// A passkey sign-in in this app is held for approval: the person has just used their passkey,
     /// so the gateway's page opens at once with the same code. After a Google sign-in the page is
-    /// only offered, since the account may have no passkey. A gateway that offers no page, or names
-    /// a page that is not its own, leaves approval to a trusted device.
+    /// only offered. A gateway that offers no page, has no confirmed passkey to approve with, or
+    /// names a page that is not its own, leaves approval to a device the owner already uses.
     private func offerApprovalPage(client: any AccountPairingSession, operation: UUID) async {
         guard approvalBrowser != nil, let page = try? await client.approvalPage(), generation == operation, !Task.isCancelled
         else { return }
@@ -290,6 +304,8 @@ extension AccountCloudPairingClient: AccountPairingSession {}
         verificationCode = nil
         gatewayHost = nil
         gatewayApproved = false
+        expiresAt = nil
+        continuesOnApproval = false
         gateways = []
         error = nil
         phase = .idle
@@ -310,6 +326,7 @@ extension AccountCloudPairingClient: AccountPairingSession {}
         confirmation = nil
         // A reply that failed its checks leaves no code on screen.
         verificationCode = nil
+        expiresAt = nil
         closeApprovalPage()
         let previous = client
         client = nil

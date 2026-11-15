@@ -181,9 +181,12 @@ struct GatewayErrorView: View {
         case server(status: Int, body: String)
         case unknown(String)
         case voice(RealtimeCallFailure)
+        /// The gateway wants the owner's passkey on its own page, or a security lock is on.
+        case stepUp(StepUpRefusal)
 
         var symbol: String {
             switch self {
+            case .stepUp(let refusal): refusal == .required ? "faceid" : "lock.shield"
             case .offline: "wifi.slash"
             case .gatewayUnreachable: "wifi.exclamationmark"
             case .certificate: "lock.trianglebadge.exclamationmark"
@@ -198,7 +201,7 @@ struct GatewayErrorView: View {
             case .offline, .gatewayUnreachable: Theme.textMuted
             case .certificate: Theme.warning
             case .agentNotConfigured: Theme.accent
-            case .unauthorized, .forbidden, .server, .unknown, .voice: Theme.warning
+            case .unauthorized, .forbidden, .server, .unknown, .voice, .stepUp: Theme.warning
             }
         }
 
@@ -213,6 +216,7 @@ struct GatewayErrorView: View {
             case .server: "Gateway error"
             case .unknown: "Something went wrong"
             case .voice(let failure): failure.title
+            case .stepUp(let refusal): refusal.title
             }
         }
 
@@ -239,6 +243,8 @@ struct GatewayErrorView: View {
                     : message
             case .voice(let failure):
                 failure.errorDescription ?? "The voice conversation could not continue."
+            case .stepUp(let refusal):
+                refusal.message
             }
         }
 
@@ -326,6 +332,7 @@ struct GatewayErrorView: View {
         if let pairingError = classifyPairing(error) { return pairingError }
         if let failure = error as? RealtimeCallFailure { return .voice(failure) }
         if let urlError = error as? URLError { return classify(urlError) }
+        if let refusal = StepUpRefusal(error) { return .stepUp(refusal) }
         if let gw = error as? GatewayClient.Error {
             switch gw {
             case .unauthorized: return .unauthorized

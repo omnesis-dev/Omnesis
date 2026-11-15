@@ -33,26 +33,37 @@ final class PendingPairingRequestsTests: XCTestCase {
     }
 
     func testTheWordsMatchTheOtherApps() {
-        XCTAssertEqual(
-            PairingRequestBannerOffer(count: 1).text,
-            "A device is waiting for your approval to pair to this gateway."
-        )
-        XCTAssertEqual(
-            PairingRequestBannerOffer(count: 3).text,
-            "3 devices are waiting for your approval to pair to this gateway."
-        )
+        XCTAssertEqual(PairingRequestBannerOffer(count: 1).text, "A new device is waiting for your OK.")
+        XCTAssertEqual(PairingRequestBannerOffer(count: 3).text, "3 new devices are waiting for your OK.")
         XCTAssertEqual(PairingRequestBannerOffer.actionTitle, "Review")
-        XCTAssertEqual(
-            PairingApprovalPresentation.explanation,
-            "A device signed in to your Omnesis account and is waiting for your approval to pair to this gateway. "
-                + "Approve if the code below matches the code shown on the device."
-        )
-        XCTAssertEqual(PairingApprovalPresentation.approve, "Approve")
-        XCTAssertEqual(PairingApprovalPresentation.deny, "Deny")
-        XCTAssertEqual(PairingApprovalPresentation.title, "Pairing requests")
-        for text in [PairingRequestBannerOffer(count: 2).text, PairingApprovalPresentation.explanation] {
+        XCTAssertEqual(PairingApprovalPresentation.headline("Maya's MacBook"), "Maya's MacBook wants to connect")
+        XCTAssertEqual(PairingApprovalPresentation.question(name: "Maya's MacBook"), "Does Maya's MacBook show this code?")
+        XCTAssertEqual(PairingApprovalPresentation.remember(signIn: "google"), "Remember this Google account")
+        XCTAssertEqual(PairingApprovalPresentation.remember(signIn: "passkey"), "Remember this passkey")
+        XCTAssertEqual(PairingApprovalPresentation.approve, "Yes, approve")
+        XCTAssertEqual(PairingApprovalPresentation.deny, "No, deny")
+        XCTAssertEqual(PairingApprovalPresentation.title, "Waiting for your OK")
+        let screens = [
+            PairingRequestBannerOffer(count: 2).text, PairingApprovalPresentation.waitingDevice, PairingApprovalPresentation.title,
+            PairingApprovalPresentation.empty, PairingApprovalPresentation.revoked, PairingApprovalPresentation.rememberDetail,
+            PairingWaitingPresentation.fromAnotherDevice, PairingWaitingPresentation.withFaceID, PairingWaitingPresentation.compare,
+        ] + PairingWaitingPresentation.places
+        for text in screens {
             XCTAssertFalse(text.contains("—"), text)
+            // The review's vocabulary: no mechanism words on these screens.
+            for word in ["trusted device", "held", "relay", "pairing request", "other device"] {
+                XCTAssertFalse(text.lowercased().contains(word), "\(word) in \(text)")
+            }
         }
+    }
+
+    /// The waiting screen counts down in minutes and seconds, and says so when time is up.
+    func testTheWaitingScreenCountsDown() {
+        XCTAssertEqual(PairingWaitingPresentation.expiry(remaining: 272.9), "Expires in 4:32")
+        XCTAssertEqual(PairingWaitingPresentation.expiry(remaining: 61), "Expires in 1:01")
+        XCTAssertEqual(PairingWaitingPresentation.expiry(remaining: 9), "Expires in 0:09")
+        XCTAssertEqual(PairingWaitingPresentation.expiry(remaining: 0.4), "Expired. Cancel and sign in again.")
+        XCTAssertEqual(PairingWaitingPresentation.expiry(remaining: -30), "Expired. Cancel and sign in again.")
     }
 
     /// Leaving the account is "unlink" on the button, the confirmation and while it runs.
@@ -134,8 +145,8 @@ final class PendingPairingRequestsTests: XCTestCase {
     /// A pairing request notification, tapped, asks for the Pairing requests list.
     func testThePairingNotificationRoutesToPairingRequests() {
         let payload: [AnyHashable: Any] = ["omnesis": ["kind": "device-pairing", "targetId": "pairing"]]
-        XCTAssertEqual(PushTarget.fromUserInfo(payload, cloudRelayEnabled: true), .pairingRequests)
-        XCTAssertTrue(PushTarget.pairingRequests.opensDevices)
+        XCTAssertEqual(PushTarget.fromUserInfo(payload, cloudRelayEnabled: true), .pairingRequests(requestId: nil))
+        XCTAssertTrue(PushTarget.pairingRequests().opensDevices)
         XCTAssertNil(PushTarget.fromUserInfo(payload, cloudRelayEnabled: false))
     }
 }

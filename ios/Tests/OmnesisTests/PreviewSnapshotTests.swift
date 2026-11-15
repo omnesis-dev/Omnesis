@@ -76,7 +76,20 @@ final class PreviewSnapshotTests: XCTestCase {
         ] {
             snapshot(NavigationStack { PreviewMocks.accountPairingPanel(phase) }, name: "account-pairing-\(name)")
         }
-        snapshot(NavigationStack { PreviewMocks.accountPairingPanel(.comparing, approved: true) }, name: "account-pairing-approved")
+        snapshot(
+            NavigationStack { PreviewMocks.accountPairingPanel(.comparing, approved: true, continues: false) },
+            name: "account-pairing-approved"
+        )
+        snapshot(
+            NavigationStack { PreviewMocks.accountPairingPanel(.joining, approvedHeld: true) },
+            name: "account-pairing-approved-joining"
+        )
+        for (approvalPage, name) in [(false, "account-pairing-waiting-for-ok"), (true, "account-pairing-waiting-face-id")] {
+            snapshot(
+                ScrollView { PreviewMocks.accountPairingWaiting(approvalPage: approvalPage).padding() }.background(Theme.bgPrimary),
+                name: name
+            )
+        }
         snapshot(
             NavigationStack { PreviewMocks.accountPairingPanel(.comparing, approvalPage: true) },
             name: "account-pairing-approval-page"
@@ -86,7 +99,9 @@ final class PreviewSnapshotTests: XCTestCase {
             name: "account-pairing-approval-page-large"
         )
         snapshot(
-            NavigationStack { PreviewMocks.accountPairingPanel(.comparing, approved: true) }.dynamicTypeSize(.accessibility2),
+            NavigationStack {
+                PreviewMocks.accountPairingPanel(.comparing, approved: true, continues: false)
+            }.dynamicTypeSize(.accessibility2),
             name: "account-pairing-approved-large"
         )
     }
@@ -275,6 +290,21 @@ final class PreviewSnapshotTests: XCTestCase {
             name: "pairing-requests-several-large",
             size: CGSize(width: 393, height: 1700)
         )
+        let revoked = await loaded(PreviewMocks.pairingRequestRevoked)
+        snapshot(GatewayPairingApprovalView(client: nil, model: revoked), name: "pairing-requests-removed-before")
+        let stepUp = await loaded(PreviewMocks.pairingRequestsNeedingStepUp)
+        if let request = stepUp.requests.first {
+            await stepUp.confirmAndApprove(request, client: PreviewMocks.pairingRequestsNeedingStepUp)
+        }
+        snapshot(
+            GatewayPairingApprovalView(client: PreviewMocks.pairingRequestsNeedingStepUp, model: stepUp),
+            name: "pairing-requests-confirm-its-you"
+        )
+        let denied = await loaded(PreviewMocks.pairingRequestsWithTrust)
+        if let request = denied.requests.first {
+            await denied.decide(request, approve: false, client: PreviewMocks.pairingRequestsWithTrust)
+        }
+        snapshot(GatewayPairingApprovalView(client: PreviewMocks.PreviewPairingPolicy(), model: denied), name: "pairing-requests-denied")
         let presented = await loaded(PreviewMocks.pairingRequestsWithTrust)
         snapshotPresented(
             Theme.bgPrimary.ignoresSafeArea().sheet(isPresented: .constant(true)) {

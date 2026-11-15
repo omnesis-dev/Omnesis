@@ -208,6 +208,7 @@ class AccountCloudPairingClient(
         checkOpen(); pending.receive(progress, now() * 1000)
         // A gateway that was asked to hold the request and still approves it gets compared by a person.
         if (progress.status == "approved" && !requireApproval) pending.acceptJoin()
+        if (!requireApproval) pending.markGatewayVerified()
         synchronized(lifecycle) { checkOpen(); active = pending; stage.set("pairing") }
         return pending
     }
