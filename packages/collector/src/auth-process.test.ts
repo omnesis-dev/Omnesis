@@ -109,4 +109,18 @@ test("a real auth process stays owned until actual termination joins", async () 
     await owner.stop();
   }
   expect(joined).toBe(true);
+  if (process.platform !== "win32") expect(owner.child.signalCode).toBe("SIGTERM");
+}, 30_000);
+
+test("stopping a real process after it has joined preserves its natural exit status", async () => {
+  const owner = spawnAuthProcess(process.execPath, ["-e", "process.exit(7)"], {
+    cwd: process.cwd(),
+    env: process.env,
+  });
+  await owner.ready;
+  await owner.joined;
+  expect(owner.child.exitCode).toBe(7);
+  await owner.stop();
+  expect(owner.child.exitCode).toBe(7);
+  expect(owner.joinedConfirmed).toBe(true);
 }, 30_000);

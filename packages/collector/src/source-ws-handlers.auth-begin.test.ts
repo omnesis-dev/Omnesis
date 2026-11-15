@@ -202,6 +202,32 @@ afterEach(async () => {
 });
 
 describe("auth.begin → runFlowSubprocess", () => {
+  test("a delayed cancellation cannot stop a replacement using the same flow id", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const { handlers } = setup([authDescriptor()]);
+    const begin = () =>
+      handlers.handle(
+        makeCommand("auth.begin", { flowId: "reused-flow", sourceType: "test-auth-source" }),
+      );
+    try {
+      await begin();
+      const first = spawnedChildren[0];
+      await expect(begin()).rejects.toThrow(/already active/);
+      expect(spawnedChildren).toHaveLength(1);
+      await handlers.handle(makeCommand("auth.cancel", { flowId: "reused-flow" }));
+      first.endStdout();
+      for (let turn = 0; turn < 6; turn++) await new Promise((done) => setImmediate(done));
+      await begin();
+      const replacement = spawnedChildren[1];
+      await vi.advanceTimersByTimeAsync(3_001);
+      expect(replacement.killed).toBe(false);
+    } finally {
+      for (const child of spawnedChildren) child.endStdout();
+      await handlers.shutdown();
+      vi.useRealTimers();
+    }
+  });
+
   test("a successful protocol message cannot override a failed process exit", async () => {
     const { handlers, emitted } = setup([authDescriptor()]);
     await handlers.handle(
