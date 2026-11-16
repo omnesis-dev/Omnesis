@@ -110,7 +110,9 @@ func runInteractiveAuth(t *testing.T, magicDNSOnly bool) {
  prefs := ipn.NewPrefs()
  prefs.Hostname = "fixture-auth-gateway"
  prefs.ControlURL = control.HTTPTestServer.URL
- prefs.WantRunning = true
+ // Keep data-plane reconfiguration stopped until the SDK has committed the
+ // new login keys. LoginFinished is emitted before that write on Windows.
+ prefs.WantRunning = false
  if err := client.Start(ctx, ipn.Options{UpdatePrefs:prefs}); err != nil { t.Fatal(err) }
  t.Log("local-client Start returned; requesting interactive login")
  if err := client.StartLoginInteractive(ctx); err != nil { t.Fatal(err) }
@@ -118,6 +120,17 @@ func runInteractiveAuth(t *testing.T, magicDNSOnly bool) {
  nextURL := loginURL(second)
  if nextURL == firstURL { t.Fatal("sign-out reused an already approved sign-in link") }
  if !control.CompleteAuth(nextURL) { t.Fatal("could not approve sign-in after logout") }
+ // Use persisted-key readiness, not a sleep or an assumed LoginFinished
+ // ordering, before permitting the SDK to reconfigure the data plane.
+ readyTick := time.NewTicker(20*time.Millisecond)
+ defer readyTick.Stop()
+ for {
+  current, err := client.GetPrefs(ctx)
+  if err != nil { t.Fatal(err) }
+  if current.Persist != nil && !current.Persist.PrivateNodeKey.IsZero() { break }
+  select { case <-ctx.Done(): t.Fatal("new sign-in keys were not committed"); case <-readyTick.C: }
+ }
+ t.Log("new login keys committed before resuming the network")
  rejoined, err := second.Up(ctx)
  if err != nil || rejoined.Self == nil { t.Fatalf("did not rejoin: %v",err) }
 }

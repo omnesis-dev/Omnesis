@@ -405,7 +405,7 @@ jobs:
         run: gofmt -w control_test.go auth_test.go
       - name: Prove a portable local control plane and real encrypted userspace traffic
         working-directory: scripts/ci/audit-portable-tailnet-control
-        run: go test -mod=mod -p 2 -count=1 -timeout 3m -v ./...
+        run: go test -mod=mod -p 2 -count=5 -timeout 6m -v ./...
       - name: Retain exact diagnostic source and resolved test-only dependency manifests
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
