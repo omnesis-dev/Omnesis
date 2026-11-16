@@ -37,6 +37,7 @@ import {
   type ScopeSearchAuthorization,
 } from "./scope-authorization.js";
 import { bm25Search } from "./bm25.js";
+import { targetLexicalVersion } from "./lexical-versions.js";
 import { browseByRecency } from "./browse.js";
 import { boundedExactVectorCandidates } from "./vector-bounded-exact.js";
 import { hnswSearchCandidates } from "./vector-hnsw.js";
@@ -177,7 +178,9 @@ test("every candidate lane applies the filters before ranking and skips the unfi
     const rank = vi.fn(() => {
       throw new Error("Memory ranker must not consume a filtered pool");
     });
-    const lexical = bm25Search(index, "telescope", {}, 1, { ranker: { rank } });
+    const lexical = bm25Search(index, "telescope", {}, 1, {
+      ranker: { rank, rules: targetLexicalVersion() },
+    });
     expect(lexical.candidates.map((item) => item.documentId)).toEqual(["allowed"]);
     expect(rank).not.toHaveBeenCalled();
     expect(browseByRecency(index, {}, undefined, 1).map((item) => item.documentId)).toEqual([
