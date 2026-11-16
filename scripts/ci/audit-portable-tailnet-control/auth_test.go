@@ -53,7 +53,7 @@ func runInteractiveAuth(t *testing.T, magicDNSOnly bool) {
   // discard the persisted key while a prior netmap is still active.
   response, err := control.MapResponse(request)
   if err != nil || response == nil { t.Errorf("map response: %v", err); return }
-  response.CertDomains = nil
+  if response.DNSConfig != nil { response.DNSConfig.CertDomains = nil }
   if err := writer.SendMapMessage(response); err != nil { return }
   <-ctx.Done()
  }
