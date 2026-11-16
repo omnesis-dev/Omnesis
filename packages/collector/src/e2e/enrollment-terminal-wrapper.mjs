@@ -25,6 +25,8 @@ terminal.onData((bytes) => {
   if (!process.stdout.write(bytes)) terminal.pause();
 });
 process.stdout.on("drain", () => terminal.resume());
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", (bytes) => terminal.write(bytes));
 terminal.onExit((event) => {
   // ConPTY's native agent can keep this host's loop alive after the target
   // exits. Drain published output, then let the outer Job join every member.

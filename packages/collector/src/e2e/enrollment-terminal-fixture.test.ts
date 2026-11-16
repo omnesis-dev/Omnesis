@@ -52,3 +52,25 @@ it("owns terminal shutdown until the target exits", async () => {
     await run.kill();
   }
 }, 30_000);
+
+it("delivers a real Ctrl+C and joins a target that handles it and exits zero", async () => {
+  const run = runEnrollmentTerminal(
+    process.execPath,
+    [
+      "-e",
+      "process.on('SIGINT',()=>{process.stdout.write('INTERRUPT_HANDLED\\n',()=>process.exit(0));});process.stdout.write('INTERRUPT_READY\\n');setInterval(()=>{},1000)",
+    ],
+    { cwd: process.cwd(), env: process.env },
+  );
+  onTestFinished(() => run.kill());
+  try {
+    await vi.waitFor(() => expect(run.stdout()).toContain("INTERRUPT_READY"), { timeout: 15_000 });
+    await run.interrupt();
+    await vi.waitFor(() => expect(run.proc.exitCode).toBe(0), { timeout: 15_000 });
+    expect(await run.exit).toBe(0);
+    expect(run.stdout()).toContain("INTERRUPT_HANDLED");
+    expect(run.closed()).toBe(true);
+  } finally {
+    await run.kill();
+  }
+}, 40_000);

@@ -17,6 +17,7 @@ export function runEnrollmentTerminal(
   stderr(): string;
   exit: Promise<number>;
   closed(): boolean;
+  interrupt(): Promise<void>;
   kill(): Promise<void>;
 } {
   if (process.platform === "win32") return runWindowsTerminal(command, args, options);
@@ -54,6 +55,11 @@ export function runEnrollmentTerminal(
     stderr: () => stripVTControlCharacters(output),
     exit,
     closed: () => closed,
+    // ETX is a terminal Ctrl+C, unlike ChildProcess.kill on Windows.
+    interrupt() {
+      if (!closed) terminal.write("\x03");
+      return Promise.resolve();
+    },
     async kill() {
       if (!closed) terminal.kill();
       await exit;
@@ -104,6 +110,13 @@ function runWindowsTerminal(
     stderr: () => stripVTControlCharacters(output),
     exit,
     closed: () => closed,
+    async interrupt() {
+      await owner.ready;
+      if (closed) return;
+      await new Promise<void>((resolve, reject) => {
+        owner.child.stdin!.write("\x03", (error) => (error ? reject(error) : resolve()));
+      });
+    },
     async kill() {
       await owner.stop();
       await exit;

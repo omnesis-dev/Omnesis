@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import { tmpdir } from "node:os";
+import { delimiter, dirname, join } from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
 
 import { isolatedHarnessEnvironment } from "./harness-runtime-conformance.js";
@@ -18,6 +20,35 @@ afterEach(() => {
 });
 
 describe("isolatedHarnessEnvironment", () => {
+  test.each(["openclaw", "hermes"] as const)(
+    "isolates the %s profile without corrupting the host search path",
+    (harness) => {
+      const root = join(tmpdir(), "invented-conformance-profile");
+      const pinned = join(root, "pinned", "hermes.exe");
+      process.env.OMNESIS_HERMES_BIN = pinned;
+      process.env.OPENAI_API_KEY = "must-not-cross-the-boundary";
+      const environment = isolatedHarnessEnvironment({
+        harness,
+        repositoryRoot: root,
+        home: join(root, "host"),
+        osHome: join(root, "os-home"),
+        tempDir: join(root, "temporary"),
+      });
+      const first = harness === "hermes" ? dirname(pinned) : join(root, "node_modules", ".bin");
+      expect(environment.PATH?.split(delimiter)[0]).toBe(first);
+      expect(environment.PATH?.slice(first.length + delimiter.length)).toBe(process.env.PATH);
+      expect(environment.OPENAI_API_KEY).toBeUndefined();
+      if (process.platform === "win32") {
+        expect(environment.USERPROFILE).toBe(join(root, "os-home"));
+        expect(environment.LOCALAPPDATA).toBe(join(root, "os-home", "AppData", "Local"));
+        expect(environment.APPDATA).toBe(join(root, "os-home", "AppData", "Roaming"));
+        expect(environment.TEMP).toBe(join(root, "temporary"));
+        expect(environment.TMP).toBe(environment.TEMP);
+        expect(environment.SystemRoot).toBeTruthy();
+      }
+    },
+  );
+
   test("keeps the pinned Hermes interpreter's linker path without ambient model keys", () => {
     process.env.OMNESIS_HERMES_BIN = "/tmp/pinned-hermes/bin/hermes";
     process.env.LD_LIBRARY_PATH = "/tmp/pinned-python/lib";

@@ -13,7 +13,11 @@
  */
 
 import { createLogger } from "@omnesis/core";
-import { processLauncher, assertProcessCleanupConfirmed } from "../process-launcher/index.js";
+import {
+  processLauncher,
+  assertProcessCleanupConfirmed,
+  hasUnconfirmedProcessCleanup,
+} from "../process-launcher/index.js";
 import type { OcrCapability, OcrResult } from "@omnesis/core";
 
 const log = createLogger("gateway:ocr:tesseract");
@@ -74,7 +78,8 @@ export async function tesseractAvailable(loader?: TesseractModuleLoader): Promis
   try {
     if (loader) return typeof (await loader())?.recognize === "function";
     return await tesseractBinaryPresent();
-  } catch {
+  } catch (error) {
+    if (hasUnconfirmedProcessCleanup(error)) throw error;
     return false;
   }
 }
