@@ -21,6 +21,15 @@ import (
 )
 
 func TestInteractiveAuthPersistentRestartAndSignOut(t *testing.T) {
+ runInteractiveAuth(t, false)
+}
+
+func TestMagicDNSOnlyInteractiveAuthPersistentRestartAndSignOut(t *testing.T) {
+ runInteractiveAuth(t, true)
+}
+
+func runInteractiveAuth(t *testing.T, magicDNSOnly bool) {
+ t.Helper()
  envknob.SetNoLogsNoSupport()
  logtail.Disable()
  netns.SetEnabled(false)
@@ -36,6 +45,7 @@ func TestInteractiveAuthPersistentRestartAndSignOut(t *testing.T) {
  }
  // Own the map stream so later full responses cannot silently re-enable
  // HTTPS certificates after the initial MagicDNS-only response.
+ if magicDNSOnly {
  control.AltMapStream = func(ctx context.Context, writer testcontrol.MapStreamWriter, request *tailcfg.MapRequest) {
   if !request.Stream { _ = writer.SendMapMessage(new(tailcfg.MapResponse)); return }
   self := control.Node(request.NodeKey)
@@ -51,6 +61,7 @@ func TestInteractiveAuthPersistentRestartAndSignOut(t *testing.T) {
   }
   if err := writer.SendMapMessage(response); err != nil { return }
   <-ctx.Done()
+ }
  }
  control.HTTPTestServer = httptest.NewServer(control)
  t.Cleanup(control.HTTPTestServer.Close)
@@ -88,7 +99,7 @@ func TestInteractiveAuthPersistentRestartAndSignOut(t *testing.T) {
  if !control.CompleteAuth(firstURL) { t.Fatal("could not approve local interactive sign-in") }
  initial, err := first.Up(ctx)
  if err != nil { t.Fatal(err) }
- if initial.Self == nil || len(initial.CertDomains) != 0 || initial.CurrentTailnet == nil || !initial.CurrentTailnet.MagicDNSEnabled { t.Fatalf("wrong capabilities: self=%t certificates=%d tailnet=%t magicDNS=%t", initial.Self != nil, len(initial.CertDomains), initial.CurrentTailnet != nil, initial.CurrentTailnet != nil && initial.CurrentTailnet.MagicDNSEnabled) }
+ if initial.Self == nil || (magicDNSOnly && len(initial.CertDomains) != 0) || (!magicDNSOnly && len(initial.CertDomains) == 0) || initial.CurrentTailnet == nil || !initial.CurrentTailnet.MagicDNSEnabled { t.Fatalf("wrong capabilities: self=%t certificates=%d tailnet=%t magicDNS=%t", initial.Self != nil, len(initial.CertDomains), initial.CurrentTailnet != nil, initial.CurrentTailnet != nil && initial.CurrentTailnet.MagicDNSEnabled) }
  t.Log("local sign-in and HTTPS-disabled capabilities accepted")
  closeNode(first)
  second := start()
@@ -98,13 +109,17 @@ func TestInteractiveAuthPersistentRestartAndSignOut(t *testing.T) {
  t.Log("persisted restart restored the same approved node key")
  client, err := second.LocalClient()
  if err != nil { t.Fatal(err) }
+ t.Log("begin sign-out")
  if err := client.Logout(ctx); err != nil { t.Fatal(err) }
+ t.Log("sign-out returned; restoring explicit local coordinator")
  prefs := ipn.NewPrefs()
  prefs.Hostname = "fixture-auth-gateway"
  prefs.ControlURL = control.HTTPTestServer.URL
  prefs.WantRunning = true
  if err := client.Start(ctx, ipn.Options{UpdatePrefs:prefs}); err != nil { t.Fatal(err) }
+ t.Log("local-client Start returned; requesting interactive login")
  if err := client.StartLoginInteractive(ctx); err != nil { t.Fatal(err) }
+ t.Log("interactive login requested; waiting for local approval URL")
  nextURL := loginURL(second)
  if nextURL == firstURL { t.Fatal("sign-out reused an already approved sign-in link") }
  if !control.CompleteAuth(nextURL) { t.Fatal("could not approve sign-in after logout") }
