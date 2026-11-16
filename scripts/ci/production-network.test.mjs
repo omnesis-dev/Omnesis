@@ -3,6 +3,7 @@
 
 import { spawnSync } from "node:child_process";
 import { once } from "node:events";
+import { createInterface } from "node:readline";
 import { ownedProcessCleanupReceipt, spawnOwnedChildProcess } from "@omnesis/core";
 import { Resolver } from "node:dns/promises";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
@@ -42,7 +43,11 @@ describe("the loopback DNS sink", () => {
       retainScratch = ownedProcessCleanupReceipt(error) !== undefined;
       throw error;
     }
-    const ready = once(owner.child.stdout, "data", { signal: AbortSignal.timeout(5_000) });
+    const output = createInterface({ input: owner.child.stdout });
+    const readiness = new AbortController();
+    const ready = once(output, "line", { signal: readiness.signal });
+    void ready.catch(() => {});
+    let readinessTimer;
     owner.child.stderr.resume();
     const stop = async () => {
       try {
@@ -54,14 +59,14 @@ describe("the loopback DNS sink", () => {
       }
     };
     try {
-      await Promise.all([
-        owner.ready,
-        Promise.race([
-          ready.then(([chunk]) => expect(String(chunk).trim()).toBe("ready")),
-          owner.joined.then(() => {
-            throw new Error("DNS sink closed before readiness");
-          }),
-        ]),
+      await owner.ready;
+      // Native admission has its own deadline; only the admitted Python process owes this line.
+      readinessTimer = setTimeout(() => readiness.abort(), 5_000);
+      await Promise.race([
+        ready.then(([line]) => expect(line).toBe("ready")),
+        owner.joined.then(() => {
+          throw new Error("DNS sink closed before readiness");
+        }),
       ]);
       const resolver = new Resolver({ timeout: 2_000, tries: 2 });
       resolver.setServers([`127.0.0.1:${port}`]);
@@ -76,6 +81,9 @@ describe("the loopback DNS sink", () => {
         /DNS query for relay\.omnesis\.app\n.*DNS query for g-0123\.relay\.omnesis\.app\n$/i,
       );
     } finally {
+      clearTimeout(readinessTimer);
+      readiness.abort();
+      output.close();
       await stop();
     }
   });
