@@ -14,6 +14,7 @@ on:
             embedder-exit,
             embedder-full-exit,
             windows-unit-timeouts,
+            windows-fixture-proof,
             hermes,
             performance,
             e2e,
@@ -2453,3 +2454,54 @@ jobs:
           let body=text.slice(start,end);body=body.replace('for (let i = 0; i < 125; i++) {',"const auditStarted = Date.now(); console.error('[AUDIT_PAGINATION_START]'); for (let i = 0; i < 125; i++) { if(i%25===0)console.error('[AUDIT_PAGINATION_SAVE]',i,Date.now()-auditStarted);");body=body.replace('const service = new AgentService({',"console.error('[AUDIT_PAGINATION_SEEDED]',Date.now()-auditStarted); const service = new AgentService({");body=body.replace('expect(seen.size).toBe(125);',"console.error('[AUDIT_PAGINATION_PAGED]',Date.now()-auditStarted); expect(seen.size).toBe(125);");writeFileSync(pagination,text.slice(0,start)+body+text.slice(end));
           PATCH
           exec node scripts/run-check.mjs unit packages/gateway/src/analytics/account-ownership.test.ts packages/gateway/src/agent/service.test.ts -t "operator settles the rows nothing attributes|keeps conversation pagination cursors bounded"
+
+  windows-fixture-proof:
+    name: Exact-source persisted fixture regression (${{ matrix.os }})
+    if: inputs.scope == 'windows-fixture-proof'
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 35
+    env:
+      TZ: UTC
+      OMNESIS_UNIT_WORKERS: "2"
+      OMNESIS_E2E_WORKERS: "1"
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ inputs.source_sha }}
+          persist-credentials: false
+      - name: Verify fixed source revision
+        env:
+          TARGET_SHA: ${{ inputs.source_sha }}
+        run: |
+          [[ "$TARGET_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "$TARGET_SHA"
+      - name: Set up Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: "24"
+          cache: npm
+      - name: Install dependencies
+        id: dependencies
+        run: node scripts/ci/npm-ci.mjs --no-audit --no-fund
+      - name: Build and prove Windows SQLite recovery bindings
+        id: native_sqlite
+        run: node scripts/ci/build-windows-sqlite.mjs
+        if: runner.os == 'Windows'
+      - name: Build and prove Windows vector publication
+        id: native_vector
+        run: node scripts/ci/build-windows-usearch.mjs
+        if: runner.os == 'Windows'
+      - name: Validate all source and test TypeScript projects
+        run: exec node scripts/run-check.mjs types-tests
+      - name: Run both complete real-store regression suites with original test deadlines
+        run: exec node scripts/run-check.mjs unit packages/gateway/src/analytics/account-ownership.test.ts packages/gateway/src/agent/service.test.ts
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        os:
+          - windows-latest
+          - ubuntu-latest
