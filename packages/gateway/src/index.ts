@@ -4049,6 +4049,7 @@ const conversationCleanup = new OptionalServiceCleanup(
   () => conversationCleanupOwner,
 );
 const tailnetCleanup = new OptionalServiceCleanup("Embedded Tailscale", () => tailscaleEmbed);
+const transcriberCleanup = new OptionalServiceCleanup("Transcriber", () => transcribeService);
 const ownedProcessShutdown = new OwnedProcessShutdownFence(() => {
   process.exitCode = 1;
   log.error(
@@ -4063,6 +4064,7 @@ const ownedProcessShutdown = new OwnedProcessShutdownFence(() => {
   doctorCleanup,
   conversationCleanup,
   tailnetCleanup,
+  transcriberCleanup,
 ]);
 
 const doShutdown = async (): Promise<void> => {
@@ -4075,6 +4077,7 @@ const doShutdown = async (): Promise<void> => {
     { owner: tunnelCleanup, warning: "Cloud relay tunnel cleanup failed" },
     { owner: doctorCleanup, warning: "Host security audit cleanup is unconfirmed" },
     { owner: tailnetCleanup, warning: "Embedded Tailscale cleanup is unconfirmed" },
+    { owner: transcriberCleanup, warning: "Transcriber process cleanup is unconfirmed" },
   ];
   const optionalDrain = Promise.allSettled(
     optionalCleanup.map(({ owner }) => ownedProcessShutdown.join(owner)),

@@ -34,6 +34,9 @@ import type { Db } from "../../data/types.js";
 
 /** Substitute only native inference; framing, selection, routes and note writes stay real. */
 class ScriptedWhisperWorker implements WhisperWorkerProcess {
+  private readonly closure = Promise.withResolvers<void>();
+  readonly joined = this.closure.promise;
+  joinedConfirmed = false;
   requests: WhisperRequestHeader[] = [];
   private message?: (value: WhisperWorkerMessage) => void;
   private readonly decoder = new FrameDecoder((value) => {
@@ -50,7 +53,11 @@ class ScriptedWhisperWorker implements WhisperWorkerProcess {
   write(frame: Buffer): void {
     this.decoder.push(frame);
   }
-  kill(): void {}
+  kill(): Promise<void> {
+    this.joinedConfirmed = true;
+    this.closure.resolve();
+    return this.joined;
+  }
   onExit(): void {}
   onMessage(handler: (value: WhisperWorkerMessage) => void): void {
     this.message = handler;

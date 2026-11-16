@@ -88,7 +88,8 @@ export async function whisperDepsAvailable(
   try {
     const mod = await loader();
     return typeof (mod as { Whisper?: unknown })?.Whisper === "function";
-  } catch {
+  } catch (error) {
+    if (ownedProcessCleanupReceipt(error)) throw error;
     return false;
   }
 }
@@ -250,6 +251,7 @@ export class WhisperTranscriber implements TranscribeCapability {
 
   /** Kill requests do not prove closure; retain every owner and its pending calls until joined. */
   private retire(proc: WhisperWorkerProcess, reason: unknown): Promise<void> {
+    this.retainFailure(reason);
     const existing = this.retiring.get(proc);
     if (existing) return existing;
     if (this.worker === proc) this.worker = null;
@@ -270,10 +272,17 @@ export class WhisperTranscriber implements TranscribeCapability {
             cause: errors.find((error) => ownedProcessCleanupReceipt(error)),
           })
         : undefined;
-      if (outcomes[1]!.status === "rejected" || !proc.joinedConfirmed) {
+      const joined = outcomes[1]!;
+      if (joined.status === "rejected" || !proc.joinedConfirmed) {
+        const receipt = ownedProcessCleanupReceipt(failure);
+        const cleanupFailure = receipt
+          ? receipt.failure
+          : joined.status === "rejected"
+            ? (joined.reason as unknown)
+            : failure;
         failure = Object.assign(
           new Error("Whisper worker closure is unconfirmed", { cause: failure }),
-          { cleanupFailure: failure },
+          { cleanupFailure },
         );
       }
       this.retainFailure(failure);

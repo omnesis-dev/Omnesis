@@ -429,6 +429,9 @@ jobs:
         continue-on-error: true
         run: >-
           node scripts/run-check.mjs unit packages/gateway/src/tailscale-embed
+          packages/gateway/src/tls-lifecycle/service.test.ts
+          packages/gateway/src/transcribe
+          packages/core/src/owned-child-process.test.ts
           packages/collector/src/auth-process.test.ts
           packages/collector/src/source-ws-handlers.physical-ownership.test.ts
           packages/gateway/src/optional-service-cleanup.test.ts

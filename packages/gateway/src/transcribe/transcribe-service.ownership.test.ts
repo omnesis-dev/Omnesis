@@ -2,7 +2,8 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { afterEach, expect, test, vi } from "vitest";
-import type { ResolvedAssignment } from "@omnesis/core";
+import { ownedProcessCleanupReceipt, type ResolvedAssignment } from "@omnesis/core";
+import { OptionalServiceCleanup } from "../optional-service-cleanup.js";
 import { TranscribeService } from "./transcribe-service.js";
 import type { WhisperWorkerProcess } from "./whisper-transcriber.js";
 import {
@@ -196,4 +197,57 @@ test("disposal closes service admission before any new capability is loaded", as
   );
   expect(loadModule).not.toHaveBeenCalled();
   expect(spawnWorker).not.toHaveBeenCalled();
+});
+
+test("the optional service owner retains an undefined cleanup marker through shutdown", async () => {
+  const worker = new FixtureWorker();
+  const service = remember(
+    new TranscribeService({
+      resolveAssignment: () => local(),
+      deps: {
+        loadModule: available,
+        spawnWorker: () => worker,
+        decodeAudio: async () => new Float32Array(160),
+      },
+    }),
+  );
+  await service.transcribeOutcome(audio, "audio/wav");
+  worker.stopFailure = Object.assign(new Error("invented unconfirmed cohort"), {
+    cleanupFailure: undefined,
+  });
+  const owner = new OptionalServiceCleanup("Transcription fixture", () => service);
+  const failure = await owner.settle().catch((error: unknown) => error);
+  expect(ownedProcessCleanupReceipt(failure)).toEqual({ failure: undefined, pending: false });
+  expect(ownedProcessCleanupReceipt(service.cleanupFailure())).toEqual({
+    failure: undefined,
+    pending: false,
+  });
+  expect(owner.hasTerminalFailure()).toBe(true);
+  await expect(service.transcribeOutcome(audio, "audio/wav")).rejects.toHaveProperty(
+    "cleanupFailure",
+    undefined,
+  );
+});
+
+test("an availability probe cannot hide an owned cleanup failure as a missing optional module", async () => {
+  const marker = Object.assign(new Error("invented runtime probe cleanup uncertainty"), {
+    cleanupFailure: undefined,
+  });
+  const loadModule = vi.fn(async () => {
+    throw marker;
+  });
+  const service = remember(
+    new TranscribeService({ resolveAssignment: () => local(), deps: { loadModule } }),
+  );
+  await expect(service.settledReadiness()).rejects.toBe(marker);
+  expect(ownedProcessCleanupReceipt(service.cleanupFailure())).toEqual({
+    failure: undefined,
+    pending: false,
+  });
+  await expect(service.close()).rejects.toHaveProperty("cleanupFailure", undefined);
+  await expect(service.transcribeOutcome(audio, "audio/wav")).rejects.toHaveProperty(
+    "cleanupFailure",
+    undefined,
+  );
+  expect(loadModule).toHaveBeenCalledOnce();
 });
