@@ -63,6 +63,7 @@ on:
             harness-native,
             harness-readiness,
             mac-installer-timeout,
+            ocr-native,
             stream-timeout,
             provider-ownership,
           ]
@@ -1810,3 +1811,41 @@ jobs:
           for attempt in 1 2 3; do
             node scripts/run-check.mjs unit scripts/release/install-sh-first-run.test.mjs
           done
+
+  ocr-native:
+    if: inputs.scope == 'ocr-native'
+    runs-on: windows-latest
+    timeout-minutes: 30
+    env:
+      OMNESIS_UNIT_WORKERS: "1"
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: "24"
+          cache: npm
+      - name: Install locked source dependencies
+        run: node scripts/ci/npm-ci.mjs --no-audit --no-fund
+      - name: Prepare the hash-pinned upstream native OCR engine in the disposable runner
+        run: |
+          $ocrInstaller = Join-Path $env:RUNNER_TEMP 'tesseract-5.5.0.exe'
+          curl.exe --fail --location --silent --show-error --max-time 120 --max-filesize 30000000 https://github.com/tesseract-ocr/tesseract/releases/download/5.5.0/tesseract-ocr-w64-setup-5.5.0.20241111.exe --output $ocrInstaller
+          if ($LASTEXITCODE) { throw 'Pinned OCR engine download failed' }
+          if ((Get-FileHash -Algorithm SHA256 $ocrInstaller).Hash -ne 'f3fc4236425b690c8be756f35793f77394ee004be0a6460a440c754d892f68bc') { throw 'OCR engine hash mismatch' }
+          $ocrRoot = Join-Path $env:RUNNER_TEMP 'native OCR tools'
+          $installer = Start-Process -FilePath $ocrInstaller -ArgumentList "/S /D=$ocrRoot" -Wait -PassThru
+          if ($installer.ExitCode -ne 0) { throw 'Pinned OCR engine setup failed' }
+          if (-not (Test-Path (Join-Path $ocrRoot 'tesseract.exe'))) { throw 'Native OCR binary is absent' }
+          if (-not (Test-Path (Join-Path $ocrRoot 'tessdata\eng.traineddata'))) { throw 'Native OCR English data is absent' }
+          $ocrRoot | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+          "TESSDATA_PREFIX=$(Join-Path $ocrRoot 'tessdata')" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+      - name: Recognize the exact invented image through the production owned-process backend
+        run: node --import tsx scripts/ci/audit-ocr-acceptance.mjs
+      - name: Verify native availability cleanup and the existing real engine integration case
+        run: node scripts/run-check.mjs unit packages/gateway/src/ocr/tesseract-ocr.test.ts packages/gateway/src/ocr/ocr-backends.integration.test.ts
