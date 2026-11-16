@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import { spawnOwnedChildProcess } from "@omnesis/core";
 import { spawn } from "@lydell/node-pty";
 
-/** A real terminal on every host, with literal argv and joined native cleanup. */
+/** Real terminals and literal argv; Windows joins its kernel-owned descendants. */
 export function runEnrollmentTerminal(
   command: string,
   args: readonly string[],
