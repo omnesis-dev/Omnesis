@@ -697,9 +697,11 @@
           </li>
           <li>
             On the gateway machine, publish port 443 and forward it to the gateway (on Linux, as
-            root or the machine's Tailscale operator). <code>https+insecure</code> is needed because
-            the gateway's certificate names the MagicDNS name, not <code>localhost</code>; that hop
-            never leaves the machine. <code>--bg</code> keeps Funnel running across restarts.
+            root or the machine's Tailscale operator). It replaces anything already served on port
+            443, so check <code>tailscale serve status</code> first. <code>https+insecure</code> is
+            needed because the gateway's certificate names the MagicDNS name, not
+            <code>localhost</code>; that hop never leaves the machine. <code>--bg</code> keeps
+            Funnel running across restarts.
           </li>
           <li>
             Add <code>OMNESIS_TRUST_PROXY=true</code> to <code>~/.config/omnesis/.env</code>. Every

@@ -130,6 +130,7 @@ async function remoteGateway(page: Page, flags: { cloudRelay: boolean; tailscale
     host: {
       state: "available",
       dnsName: "studio.example-net.ts.net",
+      port: 443,
       url: "https://studio.example-net.ts.net",
       servesGateway: false,
       publicGateway: false,

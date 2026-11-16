@@ -171,7 +171,7 @@ beforeEach(() => {
       setupCompletedAt: null, first: "tailscale", features: FLAGS.both, trustProxy: false,
       publicBaseUrl: { serving: null, configured: null, restartNeeded: false },
     },
-    host: { state: "available", dnsName: "studio.example-net.ts.net", url: "https://studio.example-net.ts.net", servesGateway: false, publicGateway: false },
+    host: { state: "available", dnsName: "studio.example-net.ts.net", port: 443, url: "https://studio.example-net.ts.net", servesGateway: false, publicGateway: false },
     publish: { ok: true, url: "https://studio.example-net.ts.net" },
     check: {
       url: "https://omnesis.example.org", ok: true,
@@ -572,7 +572,7 @@ describe("both", () => {
   });
 
   test("a public Funnel while the gateway doesn't trust the proxy is warned about on the step and the summary", async () => {
-    gateway.host = { state: "available", dnsName: "studio.example-net.ts.net", url: "https://studio.example-net.ts.net", servesGateway: true, publicGateway: true };
+    gateway.host = { state: "available", dnsName: "studio.example-net.ts.net", port: 443, url: "https://studio.example-net.ts.net", servesGateway: true, publicGateway: true };
     storage.set("omnesis.remote-access.setup", JSON.stringify({ mode: "setup", step: "connection", self: true, own: "host", url: "" }));
     await mount(FLAGS.tailscale);
     const warning = () => host.querySelector(".remote-access-warning-box");
@@ -602,11 +602,27 @@ describe("both", () => {
     storage.set("omnesis.remote-access.setup", JSON.stringify({ mode: "setup", step: "connection", self: true, own: "host", url: "" }));
     await mount(FLAGS.both);
     expect(text()).toContain("Tailscale is not running on this computer.");
-    gateway.host = { state: "available", dnsName: "studio.example-net.ts.net", url: "https://studio.example-net.ts.net", servesGateway: true, publicGateway: false };
+    gateway.host = { state: "available", dnsName: "studio.example-net.ts.net", port: 443, url: "https://studio.example-net.ts.net", servesGateway: true, publicGateway: false };
     await click("Check again");
     expect(text()).toContain("Serving this gateway at https://studio.example-net.ts.net, to your Tailscale devices only.");
     expect(calls("host")).toHaveLength(2);
     expect(button("Set it up for me")).toBeUndefined();
+  });
+
+  test("Tailscale on this computer: another app on 443 moves the gateway to its own port, and none free offers nothing to run", async () => {
+    gateway.host = { state: "available", dnsName: "studio.example-net.ts.net", port: 8443, url: "https://studio.example-net.ts.net:8443", servesGateway: false, publicGateway: false };
+    storage.set("omnesis.remote-access.setup", JSON.stringify({ mode: "setup", step: "connection", self: true, own: "host", url: "" }));
+    await mount(FLAGS.both);
+    expect(text()).toContain("Another app already uses https://studio.example-net.ts.net, so this gateway uses port 8443: https://studio.example-net.ts.net:8443.");
+    expect(button("Set it up for me")).toBeDefined();
+    const blocked = "Tailscale on this computer already serves other apps on 443, 8443 and 10000, the ports it can publish. Free one of them, then check again.";
+    gateway.host = { state: "available", dnsName: "studio.example-net.ts.net", port: null, url: "https://studio.example-net.ts.net", servesGateway: false, publicGateway: false, blocked };
+    await click("I have already done it, check it");
+    expect(text()).toContain(blocked);
+    expect(text()).not.toContain("Another app already uses");
+    expect(button("Set it up for me")).toBeUndefined();
+    expect(text()).not.toContain("Also a public address");
+    expect(button("Check again")).toBeDefined();
   });
 
   test("my own address: checked step by step, saved, and waiting for a restart", async () => {
