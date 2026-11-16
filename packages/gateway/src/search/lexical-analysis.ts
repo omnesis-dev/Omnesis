@@ -44,7 +44,7 @@
  */
 
 import { Converter } from "opencc-js/t2cn";
-import snowballStemmers from "snowball-stemmers";
+import { newStemmer } from "./snowball.js";
 
 /**
  * The tokenizer for analyzed text. `categories` adds combining marks to the
@@ -111,7 +111,7 @@ class ScriptStemmer {
 }
 
 function snowball(algorithm: string): (word: string) => string {
-  const stemmer = snowballStemmers.newStemmer(algorithm);
+  const stemmer = newStemmer(algorithm);
   return (word) => stemmer.stem(word);
 }
 
