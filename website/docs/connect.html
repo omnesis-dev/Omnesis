@@ -1378,8 +1378,10 @@
           config and <code>.env</code>, leaving every other setting as it was. Add
           <code>--dir</code> for a harness home outside its default. Restart the harness afterwards
           so it stops loading the plugin, and revoke the agent device on the gateway host, as the
-          command reminds you, to end its pairing and sign-in there too. The rest of
-          <a href="install#uninstall">uninstalling</a> covers the other components.
+          command reminds you, to end its pairing and sign-in there too. On Windows, name one or
+          both integrations explicitly and omit <code>--purge</code>; removing Omnesis services, the
+          CLI, and its data is not supported. <a href="install#uninstall">Uninstalling</a> covers
+          the other components.
         </p>
 
         <h3 id="harness-access">Pairing and corpus access</h3>

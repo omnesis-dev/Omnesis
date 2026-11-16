@@ -1755,7 +1755,7 @@ jobs:
       - name: Install locked source dependencies
         run: node scripts/ci/npm-ci.mjs --no-audit --no-fund
       - name: Verify literal browser commands, actual child producers and isolated native host environments
-        run: node scripts/run-check.mjs unit packages/cli/src/credentials-wizard.test.ts packages/cli/src/commands/connect-oauth.test.ts packages/collector/src/e2e/enrollment-browser-fixture.test.ts packages/collector/src/e2e/harness-runtime-conformance.test.ts packages/cloud-relay/src/relay-dos-limits.test.ts scripts/ci/windows-checks.test.mjs
+        run: node scripts/run-check.mjs unit packages/cli/src/commands/uninstall.test.ts packages/cli/src/credentials-wizard.test.ts packages/cli/src/commands/connect-oauth.test.ts packages/collector/src/e2e/enrollment-browser-fixture.test.ts packages/collector/src/e2e/harness-runtime-conformance.test.ts packages/cloud-relay/src/relay-dos-limits.test.ts scripts/ci/windows-checks.test.mjs
       - name: Verify all five actual SDK controls using the short private socket runtime directory
         env:
           OMNESIS_TAILNET_TOOLS_DIR: ${{ runner.temp }}/portable-tailnet-tools
@@ -1770,6 +1770,7 @@ jobs:
         run: >-
           node node_modules/eslint/bin/eslint.js
           packages/cli/src/browser-command.ts packages/cli/src/credentials-wizard.ts
+          packages/cli/src/uninstall/plan.ts packages/cli/src/uninstall/execute.ts packages/cli/src/commands/uninstall.test.ts
           packages/cli/src/commands/connect-oauth.ts packages/cli/src/commands/connect-oauth.test.ts
           packages/collector/src/e2e/enrollment-browser-fixture.ts packages/collector/src/e2e/enrollment-browser-fixture.test.ts
           packages/collector/src/e2e/harness-plugin-conformance.e2e.test.ts

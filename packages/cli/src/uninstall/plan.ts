@@ -288,7 +288,18 @@ export function planUninstall(inv: Inventory, request: UninstallRequest): Plan {
         `With an older launcher, run on the host:\n${dockerHostCommands(inv)}`,
     );
   }
-  if (inv.platform !== "linux" && inv.platform !== "darwin") {
+  const windowsHarnessRemoval =
+    inv.platform === "win32" &&
+    request.components.length > 0 &&
+    request.components.every((component) => component === "openclaw" || component === "hermes") &&
+    !request.purge;
+  if (inv.platform !== "linux" && inv.platform !== "darwin" && !windowsHarnessRemoval) {
+    if (inv.platform === "win32") {
+      refuse(
+        "On Windows, name openclaw or hermes to remove an integration without --purge. " +
+          "Uninstalling Omnesis services, the CLI, or its data is not supported yet.",
+      );
+    }
     refuse(`omnesis uninstall supports macOS and Linux, not ${inv.platform}.`);
   }
 

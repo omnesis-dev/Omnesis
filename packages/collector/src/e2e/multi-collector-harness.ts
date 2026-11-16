@@ -668,38 +668,22 @@ export class MultiCollectorHarness {
 
     // Same handshake pattern as E2EHarness — wait for /health AND /whoami
     // with our bootstrap token so we're definitely talking to this gateway.
-    const readyTrace: string[] = [];
-    const readyStep = (step: string): void => {
-      readyTrace.push(step);
-      if (readyTrace.length > 12) readyTrace.shift();
-    };
-    const readyFailure = (phase: string, error: unknown): void => {
-      const cause =
-        error && typeof error === "object" && "cause" in error ? error.cause : undefined;
-      const detail = error && typeof error === "object" && "code" in error ? error : cause;
-      const raw =
-        detail && typeof detail === "object" && "code" in detail ? String(detail.code) : "unknown";
-      readyStep(`${phase}-failed:${/^[A-Z0-9_-]{1,40}$/u.test(raw) ? raw : "unknown"}`);
-    };
     const tokenPath = join(this.configDir, "token");
     while (Date.now() - startTime < timeout) {
       if (this.gatewayProcess) {
         const status = e2eApplicationStatus(this.gatewayProcess);
         if (status.exitCode !== null || status.signalCode !== null) break;
       }
-      let readyPhase = "health";
       try {
         const health = await fetch(`${this.gatewayUrl}/health`, {
           signal: AbortSignal.timeout(Math.max(1, timeout - (Date.now() - startTime))),
         });
         if (Date.now() - startTime >= timeout) break;
-        readyStep(`health:${health.status}`);
         if (!health.ok) {
           await sleep(100);
           continue;
         }
         let token: string;
-        readyPhase = "token";
         try {
           token = (
             (await this.ownOperation(() =>
@@ -713,29 +697,24 @@ export class MultiCollectorHarness {
           if (Date.now() - startTime >= timeout) break;
         } catch (error) {
           if (ownedProcessCleanupReceipt(error) !== undefined || this.destroying) throw error;
-          readyFailure("token", error);
           await sleep(100);
           continue;
         }
         if (!token) {
-          readyStep("token:empty");
           await sleep(100);
           continue;
         }
-        readyPhase = "whoami";
         const whoami = await fetch(`${this.gatewayUrl}/whoami`, {
           headers: { Authorization: `Bearer ${token}` },
           signal: AbortSignal.timeout(Math.max(1, timeout - (Date.now() - startTime))),
         });
         if (Date.now() - startTime >= timeout) break;
-        readyStep(`whoami:${whoami.status}`);
         if (whoami.ok) {
           this.bootstrapToken = token;
           return;
         }
       } catch (error) {
         if (ownedProcessCleanupReceipt(error) !== undefined || this.destroying) throw error;
-        readyFailure(readyPhase, error);
         /* not reachable yet */
       }
       await sleep(100);
@@ -750,7 +729,7 @@ export class MultiCollectorHarness {
           : "the gateway process was still running — this is the harness giving up on a slow boot, not a gateway that failed";
     const diagnosticOutput = this.gatewayOutput.trim();
     throw new Error(
-      `The harness stopped waiting for the gateway after ${timeout}ms (the shared boot budget in scripts/lib/gateway-boot-budget.json): ${fate}. Readiness trace: ${JSON.stringify(readyTrace)}.${diagnosticOutput ? `\nGateway output:\n${diagnosticOutput}` : ""}`,
+      `The harness stopped waiting for the gateway after ${timeout}ms (the shared boot budget in scripts/lib/gateway-boot-budget.json): ${fate}.${diagnosticOutput ? `\nGateway output:\n${diagnosticOutput}` : ""}`,
     );
   }
 
