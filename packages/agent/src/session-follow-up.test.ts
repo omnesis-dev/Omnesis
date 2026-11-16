@@ -155,16 +155,25 @@ describe("AgentSession follow-up run", () => {
     });
     expect(s.citationsSnapshot().map((c) => c.documentId)).toEqual(["doc1"]);
 
-    // Only the citation joins the answer's message: no read, no thinking, no follow-up text.
+    // Only the citation joins the turn, recorded before the answer so the
+    // turn still ends on the answer's text: no read, no thinking, no
+    // follow-up text.
     const history = s.historySnapshot();
-    expect(history.map((m) => m.role)).toEqual(["user", "assistant", "user", "assistant", "user"]);
+    expect(history.map((m) => m.role)).toEqual([
+      "user",
+      "assistant",
+      "user",
+      "assistant",
+      "user",
+      "assistant",
+    ]);
     expect(history[3]!.parts).toEqual([
-      { kind: "text", text: ANSWER },
       expect.objectContaining({ kind: "tool_use", tool: "annotate_many" }),
     ]);
     expect(history[4]!.parts).toEqual([
       expect.objectContaining({ kind: "tool_result", toolCallId: "tc_cite" }),
     ]);
+    expect(history[5]).toEqual({ role: "assistant", parts: [{ kind: "text", text: ANSWER }] });
     expect(JSON.stringify(history)).not.toContain("tc_fetch");
     expect(JSON.stringify(history)).not.toContain(CITATION_FOLLOW_UP_MESSAGE);
     expect(JSON.stringify(events)).not.toContain(CITATION_FOLLOW_UP_MESSAGE);
@@ -347,10 +356,11 @@ describe("AgentSession follow-up run", () => {
 
     expect(ended.stopReason).toBe("end_turn");
     const history = s.historySnapshot();
-    expect(history[3]!.parts.map((p) => p.kind)).toEqual(["text", "tool_use"]);
+    expect(history[3]!.parts.map((p) => p.kind)).toEqual(["tool_use"]);
     expect(history[4]!.parts).toEqual([
       expect.objectContaining({ kind: "tool_result", toolCallId: "tc_cite" }),
     ]);
+    expect(history.at(-1)).toEqual({ role: "assistant", parts: [{ kind: "text", text: ANSWER }] });
   });
 
   it("cancels during the follow-up run like any other turn", async () => {
@@ -372,6 +382,12 @@ describe("AgentSession follow-up run", () => {
     gate.resolve();
     const ended = await sent.completion;
     expect(ended.stopReason).toBe("canceled");
+    // The turn still ends on the answer, with the stop line after it.
+    const last = s.historySnapshot().at(-1)!;
+    expect(last.role).toBe("assistant");
+    expect(last.parts).toEqual([
+      { kind: "text", text: expect.stringMatching(new RegExp(`^${ANSWER}\\n\\n`)) },
+    ]);
   });
 });
 

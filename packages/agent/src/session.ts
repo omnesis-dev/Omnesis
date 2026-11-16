@@ -184,9 +184,9 @@ export interface TurnToolCall {
  * model-only user prompt. Nothing about that run is shown: the message, its
  * text and thinking, and its tool calls are never broadcast, and only the
  * calls `records` accepts — with their tool results' own side effects, such as
- * citations — join the answer's message in history. While it runs, clients
- * see a turn still in flight after a finished answer. Undefined ends the turn
- * as usual. At most one follow-up run per turn, so a model that ignores the
+ * citations — join the turn's history, recorded before the answer so the turn
+ * still ends on the answer's text. While it runs, clients see a turn still in
+ * flight after a finished answer. Undefined ends the turn as usual. At most one follow-up run per turn, so a model that ignores the
  * message cannot loop, and a turn sent with its own transport-owned backend
  * is never followed up.
  */
@@ -420,6 +420,14 @@ export class AgentSession {
         parts: turn.pendingUserParts.map((part) => ({ ...part })),
       });
     }
+    // A held answer is the turn's last message: the calls a follow-up run
+    // keeps are recorded before it.
+    if (turn.heldAnswerParts) {
+      snapshot.push({
+        role: "assistant",
+        parts: turn.heldAnswerParts.map((part) => ({ ...part })),
+      });
+    }
     // `agent.message.start` carries no history part. If the snapshot is taken
     // before the first delta (or while the model is resuming after tool
     // results), preserve the open assistant structurally so post-cursor deltas
@@ -626,14 +634,15 @@ export class AgentSession {
         if (!firstInput) throw new Error("a follow-up run before the first run");
         // The follow-up run sees the turn so far, answer included, and the
         // follow-up message in place of a user message. The message is never
-        // recorded; the calls the follow-up keeps join the answer's message.
+        // recorded; the calls the follow-up keeps are recorded before the
+        // answer, so the turn still ends on the answer's text.
         input = {
           ...firstInput,
           history: [
             ...priorHistory,
             { role: "user", parts: [{ kind: "text", text: userMessage }] },
             ...turn.segments.map(cloneChatMessage),
-            { role: "assistant", parts: turn.pendingAssistantParts.map((part) => ({ ...part })) },
+            { role: "assistant", parts: (turn.heldAnswerParts ?? []).map((part) => ({ ...part })) },
           ],
           userMessage: run.message,
         };
@@ -823,6 +832,11 @@ export class AgentSession {
           const message = following ? undefined : this.followUpFor(turn, event);
           if (message !== undefined) {
             turn.heldAnswer = event;
+            // Set the answer aside: the calls the follow-up keeps commit as
+            // their own segments, and the answer goes back after them when
+            // the turn ends (see `agent.message.end` in handleEvent).
+            turn.heldAnswerParts = turn.pendingAssistantParts;
+            turn.pendingAssistantParts = [];
             // normalizeEvent already folded the earlier boundaries in.
             turn.intermediateUsage = event.payload.usage;
             return { message };
@@ -1280,6 +1294,7 @@ export class AgentSession {
         if (event.payload.stopReason !== "tool_use") {
           turn.endEmitted = true;
           turn.terminalEnd = event.payload;
+          restoreHeldAnswer(turn);
         }
         if (event.payload.stopReason === "canceled") {
           // The caller's cancellation is the turn's outcome, whatever a
@@ -1381,6 +1396,11 @@ interface TurnState {
    * turn's terminal if that run fails.
    */
   heldAnswer?: Extract<AgentEvent, { type: "agent.message.end" }>;
+  /**
+   * The held answer's message, set aside while the follow-up run is in
+   * flight and restored as the turn's last message when the turn ends.
+   */
+  heldAnswerParts?: AssistantPart[];
   /** Calls a follow-up run made that it does not record, by call id. */
   droppedFollowUpCalls: Set<string>;
   /** New cited-doc refs added during this turn — keyed by refKey. */
@@ -1425,6 +1445,17 @@ function commitUserSegment(turn: TurnState): void {
   if (turn.pendingUserParts.length === 0) return;
   turn.segments.push({ role: "user", parts: turn.pendingUserParts });
   turn.pendingUserParts = [];
+}
+
+/**
+ * Put a held answer back as the turn's last message, after the calls its
+ * follow-up run kept, so a finished turn still ends on the answer's text.
+ */
+function restoreHeldAnswer(turn: TurnState): void {
+  if (!turn.heldAnswerParts) return;
+  flushPending(turn);
+  turn.pendingAssistantParts = turn.heldAnswerParts;
+  delete turn.heldAnswerParts;
 }
 
 function flushPending(turn: TurnState): void {
