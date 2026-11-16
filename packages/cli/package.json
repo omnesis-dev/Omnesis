@@ -7,7 +7,7 @@
     "omnesis": "src/index.ts"
   },
   "dependencies": {
-    "@clack/prompts": "^1.8.1",
+    "@clack/prompts": "^1.9.0",
     "@omnesis/agent-integration": "*",
     "@omnesis/cli-shared": "*",
     "@omnesis/cloud-relay": "*",
