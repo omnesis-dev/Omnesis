@@ -1707,3 +1707,33 @@ jobs:
           "OMNESIS_HERMES_PYTHON=$(Join-Path $harnessBin 'python.exe')" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
       - name: Run the unchanged real enrollment, plugin host, tools and uninstall contract without model inference
         run: node scripts/run-check.mjs e2e packages/collector/src/e2e/harness-plugin-conformance.e2e.test.ts
+
+  portable-module-macos:
+    needs: harness-native
+    if: ${{ !cancelled() && inputs.scope == 'harness-native' }}
+    runs-on: macos-latest
+    timeout-minutes: 30
+    env:
+      OMNESIS_TEST_PORTABLE_TAILNET: "1"
+      GOMAXPROCS: "2"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: "24"
+          cache: npm
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+        with:
+          go-version-file: packages/tailnet-helper/go.mod
+          cache-dependency-path: |
+            packages/tailnet-helper/go.sum
+            scripts/tailnet-test/control/go.sum
+      - name: Install locked source dependencies
+        run: node scripts/ci/npm-ci.mjs --no-audit --no-fund
+      - name: Check the optional real SDK control fixture on macOS with its actual private Unix socket
+        env:
+          OMNESIS_TAILNET_TOOLS_DIR: ${{ runner.temp }}/portable-tailnet-tools
+        run: node scripts/ci/portable-transports-proof.mjs
