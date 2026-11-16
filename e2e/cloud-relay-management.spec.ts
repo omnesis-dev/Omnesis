@@ -671,8 +671,11 @@ test("a freshly linked gateway shows its settings at once with automatic joining
   ).toBeVisible();
   await expect(page.getByRole("button", { name: "Continue", exact: true })).toHaveCount(0);
   await expect(page.getByRole("radiogroup", { name: "When a new device signs in" })).toHaveCount(1);
-  // The tab and its sections are named for the account, not for the relay.
-  await expect(page.getByRole("button", { name: "Omnesis account", exact: true })).toBeVisible();
+  // The account page sits under Remote access, with the way back to it; its sections are named
+  // for the account, not for the relay.
+  await expect(page.locator(".config-tab.active")).toHaveText("Remote access");
+  await expect(page.getByRole("button", { name: "Omnesis account", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "← Remote access", exact: true })).toBeVisible();
   for (const name of ["Account", "Remote access", "New devices"])
     await expect(page.getByRole("heading", { name, exact: true })).toBeVisible();
   const automatic = page.getByRole("radio", { name: /^Join automatically/ });

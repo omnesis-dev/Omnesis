@@ -758,6 +758,19 @@ describe("CodexAppServerBackend", () => {
           return { kind: "structured", resultType: "mutation", data: "done" };
         },
       };
+      // A loaded runner can hold the event loop for longer than the idle
+      // timeout, and when it resumes Node runs due timers before it reads the
+      // app-server's pipe again. Hold it once, as the turn starts, so the
+      // idle watchdog is already due if the tool call has not been admitted.
+      let held = false;
+      setActivityMarker((_name, fn) => {
+        const result = fn();
+        if (!held && readLog(logPath).some((entry) => entry.event === "turn_start")) {
+          held = true;
+          setImmediate(() => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 150));
+        }
+        return result;
+      });
       const abort = new AbortController();
       let disposal: Promise<void> | undefined;
       const turn = collect(backend.runTurn(baseInput({ tools: [tool] }), abort.signal)).finally(
@@ -775,6 +788,7 @@ describe("CodexAppServerBackend", () => {
         finish();
         const events = await turn;
         await disposal;
+        expect(held).toBe(true);
         expect(mutationFinished).toBe(true);
         const end = events.find((event) => event.type === "agent.message.end");
         if (ending === "timeout") {
@@ -785,6 +799,7 @@ describe("CodexAppServerBackend", () => {
         } else expect(end?.payload.stopReason).toBe("canceled");
         expect(readLog(logPath).filter((event) => event.event === "turn_start")).toHaveLength(1);
       } finally {
+        setActivityMarker(null);
         finish();
         await turn;
         await disposal;

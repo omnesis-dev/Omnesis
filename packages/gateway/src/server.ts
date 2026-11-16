@@ -16,6 +16,7 @@ import {
   parseDuration,
   ownedProcessCleanupReceipt,
   type HostNetwork,
+  tailscaleEmbedEnabled,
   type WsRequestPayload,
 } from "@omnesis/core";
 import {
@@ -25,6 +26,10 @@ import {
   type DeviceRecord,
 } from "@omnesis/types";
 import { mountTailscaleRoutes } from "./http/routes/tailscale.js";
+import { mountRemoteAccessRoutes, remoteAccessEnabled } from "./http/routes/remote-access.js";
+import { AddressChecks } from "./remote-access/address-check.js";
+import { HostTailscaleService } from "./remote-access/host-tailscale.js";
+import { RemoteAccessSettingsStore } from "./remote-access/settings.js";
 import { mountPortalSignalRoutes } from "./http/routes/portal-signals.js";
 import { PortalSignals } from "./portal-signals/hub.js";
 import { markRelayRequestExposure } from "./http/client-ip.js";
@@ -727,6 +732,12 @@ export function createServer(
 ) {
   const app = strictRoute(new Hono<AppEnv>());
   const portalSignals = opts?.portalSignals ?? new PortalSignals();
+  // The remote-access choices that belong to no single way in; present only where the gateway
+  // offers a way in of its own.
+  const remoteAccessSettings =
+    opts?.configDir && remoteAccessEnabled()
+      ? new RemoteAccessSettingsStore(opts.configDir)
+      : undefined;
   app.use("*", async (c, next) => {
     let release: (() => void) | undefined;
     if (opts?.cloudRelayExposure?.()) {
@@ -1749,6 +1760,9 @@ export function createServer(
     systemTrustPairingOrigins:
       opts?.systemTrustPairingOrigins ?? (opts?.publicBaseUrl ? [opts.publicBaseUrl] : []),
     publiclyTrustedPairingHosts: opts?.publiclyTrustedPairingHosts,
+    ...(remoteAccessSettings
+      ? { pairingPrefersRelay: () => remoteAccessSettings.get().first === "relay" }
+      : {}),
     ...(opts?.tailscaleEmbed
       ? {
           tailnetPairingAddress: () => {
@@ -1774,6 +1788,18 @@ export function createServer(
   });
   mountDirectCandidateRoutes(app, { configDir: opts?.configDir, port: opts?.port });
   mountTailscaleRoutes(app, opts?.tailscaleEmbed);
+  if (remoteAccessSettings) {
+    const configStore = opts?.configStore;
+    mountRemoteAccessRoutes(app, {
+      settings: remoteAccessSettings,
+      checks: new AddressChecks(),
+      ...(opts?.port && tailscaleEmbedEnabled()
+        ? { hostTailscale: new HostTailscaleService(opts.port) }
+        : {}),
+      servingPublicBaseUrl: () => opts?.publicBaseUrl ?? null,
+      configuredPublicBaseUrl: () => configStore?.get().gateway?.publicBaseUrl ?? null,
+    });
+  }
   const localSpkiFingerprint = () =>
     typeof opts?.tlsSpkiFingerprintSha256 === "function"
       ? opts.tlsSpkiFingerprintSha256()
