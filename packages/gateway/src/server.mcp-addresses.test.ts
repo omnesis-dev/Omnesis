@@ -29,6 +29,7 @@ import { createServer } from "./server.js";
 import { recordTailnetCaller } from "./tailscale-embed/caller.js";
 import { TailscaleEmbedService } from "./tailscale-embed/service.js";
 import type { IncomingMessage } from "node:http";
+import type { CloudRelayManagement } from "@omnesis/cloud-relay";
 import type { McpHttpRuntime } from "./http/routes/mcp-streamable.js";
 import type { SearchPipeline } from "./search/pipeline.js";
 
@@ -92,7 +93,7 @@ afterEach(async () => {
   rmSync(dir, { recursive: true, force: true });
 });
 
-function gateway() {
+function gateway(extra: { cloudRelayManagement?: CloudRelayManagement } = {}) {
   const app = createServer(db, join(dir, "gateway.db"), {
     configDir: dir,
     analyticsDb,
@@ -110,6 +111,7 @@ function gateway() {
       resolveBinary: () => ({ path: null, reason: "not in this test" }),
     }),
     onMcpHttpRuntime: (runtime: McpHttpRuntime) => closeables.push(runtime),
+    ...extra,
   });
   /** A request as the tailnet helper's socket hands it over. */
   const fromTailnet = (): { incoming: IncomingMessage } => {
@@ -326,5 +328,32 @@ describe("an address the owner turned MCP off on", () => {
       expect((await send(url, { headers: relayed })).status, url).toBe(404);
     }
     expect((await send("https://localhost:7600/health", { headers: relayed })).status).toBe(200);
+  });
+});
+
+describe("the relay row", () => {
+  test("follows the relay management's live state, not the origin known at start", async () => {
+    const live = "https://g-fictional-2.relay.example.net";
+    let relay = { enabled: true, enrollment: "pending" };
+    const management = {
+      status: async () => ({
+        publicOrigin: live,
+        enabled: relay.enabled,
+        enrollment: { state: relay.enrollment },
+      }),
+    } as unknown as CloudRelayManagement;
+    const { adminRequest } = gateway({ cloudRelayManagement: management });
+    const row = async () =>
+      (
+        (await (await adminRequest("GET")).json()) as {
+          mcpAddresses: Array<{ id: string; url: string | null; available: boolean }>;
+        }
+      ).mcpAddresses.find((entry) => entry.id === "relay");
+    // The account is not linked yet: the relay is not a way in, whatever origin is known.
+    expect(await row()).toEqual({ id: "relay", url: live, enabled: true, available: false });
+    relay = { enabled: true, enrollment: "enrolled" };
+    expect(await row()).toEqual({ id: "relay", url: live, enabled: true, available: true });
+    relay = { enabled: false, enrollment: "enrolled" };
+    expect((await row())?.available).toBe(false);
   });
 });

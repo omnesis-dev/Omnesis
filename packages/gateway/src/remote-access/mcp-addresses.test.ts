@@ -9,6 +9,7 @@ import {
   addressHostname,
   isMcpClientPath,
   McpAddresses,
+  relayStateFrom,
   type McpAddressesOptions,
 } from "./mcp-addresses.js";
 import { RemoteAccessSettingsStore } from "./settings.js";
@@ -62,6 +63,7 @@ function addresses(overrides: Partial<McpAddressesOptions> = {}) {
     settings,
     publicBaseUrl: () => DOMAIN,
     relayOrigin: () => RELAY,
+    relayState: async () => ({ origin: RELAY, serving: true }),
     tailscale: tailscale as unknown as McpAddressesOptions["tailscale"],
     hostTailscale,
     now: () => clock,
@@ -168,6 +170,7 @@ describe("MCP per address", () => {
     const { policy, renameHost } = addresses({
       publicBaseUrl: () => undefined,
       relayOrigin: () => undefined,
+      relayState: async () => ({ origin: undefined, serving: false }),
       tailscale: {
         tailnetOrigin: () => null,
         settings: { get: () => ({ publicAccess: false }) },
@@ -182,6 +185,45 @@ describe("MCP per address", () => {
       { id: "host", url: null, enabled: true, available: false },
       { id: "domain", url: null, enabled: true, available: false },
     ]);
+  });
+
+  test("the relay row follows the relay's live state, not the origin known at start", async () => {
+    flags();
+    const LIVE = "https://g-fictional-2.relay.example.net";
+    let status = {
+      publicOrigin: LIVE as string | undefined,
+      enabled: true,
+      enrollment: { state: "pending" },
+    };
+    const { policy } = addresses({
+      relayState: relayStateFrom({ status: async () => status as never }),
+    });
+    const relayRow = async () => (await policy.list()).find((row) => row.id === "relay");
+    // Saved but not enrolled: the portal shows the relay as not connected.
+    expect(await relayRow()).toEqual({ id: "relay", url: LIVE, enabled: true, available: false });
+    status = { ...status, enrollment: { state: "enrolled" } };
+    expect(await relayRow()).toMatchObject({ url: LIVE, available: true });
+    // Turned off by the owner: enrolled, but no longer serving.
+    status = { ...status, enabled: false };
+    expect(await relayRow()).toMatchObject({ available: false });
+    // Never configured.
+    status = { publicOrigin: undefined, enabled: false, enrollment: { state: "unconfigured" } };
+    expect(await relayRow()).toEqual({ id: "relay", url: null, enabled: true, available: false });
+  });
+
+  test("a relay whose state cannot be read is listed as unavailable", async () => {
+    flags();
+    const { policy } = addresses({
+      relayState: async () => {
+        throw new Error("status unreadable");
+      },
+    });
+    expect((await policy.list())[0]).toEqual({
+      id: "relay",
+      url: RELAY,
+      enabled: true,
+      available: false,
+    });
   });
 
   test("offers the relay only with the relay opt-in and the gateway's own Tailscale only with its opt-in", async () => {

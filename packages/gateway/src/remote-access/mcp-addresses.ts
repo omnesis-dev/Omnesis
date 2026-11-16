@@ -36,6 +36,7 @@
  */
 
 import { assertNever, cloudRelayEnabled, createLogger, tailscaleEmbedEnabled } from "@omnesis/core";
+import type { CloudRelayManagement } from "@omnesis/cloud-relay";
 import type { RemoteAccessSettingsStore } from "./settings.js";
 import type { HostTailscaleService } from "./host-tailscale.js";
 import type { TailscaleEmbedService } from "../tailscale-embed/service.js";
@@ -80,8 +81,13 @@ export interface McpAddressesOptions {
   settings: RemoteAccessSettingsStore;
   /** The address in `gateway.publicBaseUrl` the running gateway serves. */
   publicBaseUrl: () => string | undefined;
-  /** The Omnesis relay origin the gateway is enrolled under, once it has one. */
+  /** The Omnesis relay origin requests for this gateway may name, once it has one. */
   relayOrigin?: () => string | undefined;
+  /**
+   * The relay as it stands now: its public origin, and whether it serves this
+   * gateway, which takes the relay turned on and the gateway enrolled with it.
+   */
+  relayState?: () => Promise<RelayState>;
   /** The gateway's own Tailscale device, when it is wired. */
   tailscale?: Pick<TailscaleEmbedService, "tailnetOrigin" | "settings" | "updateSettings">;
   /** Tailscale already on this computer, when the gateway listens on a port it can forward to. */
@@ -136,6 +142,29 @@ function originOf(value: string | null | undefined): string | null {
   }
 }
 
+/** What the relay management says about the relay right now. */
+export interface RelayState {
+  origin: string | undefined;
+  serving: boolean;
+}
+
+/**
+ * The relay's state from its management status: it serves this gateway while
+ * it is turned on and the gateway is enrolled, whether its tunnel is up,
+ * reconnecting or down at this moment.
+ */
+export function relayStateFrom(
+  management: Pick<CloudRelayManagement, "status">,
+): () => Promise<RelayState> {
+  return async () => {
+    const status = await management.status();
+    return {
+      origin: status.publicOrigin,
+      serving: status.enabled && status.enrollment.state === "enrolled",
+    };
+  };
+}
+
 /** What Tailscale on this computer last said about it. */
 interface HostLookup {
   dnsName: string | null;
@@ -178,14 +207,19 @@ export class McpAddresses {
   /** Every offered address with its switch, after asking Tailscale on this computer again. */
   async list(): Promise<McpAddressRow[]> {
     const host = this.options.hostTailscale ? await this.lookUpHost() : null;
-    const relay = originOf(this.options.relayOrigin?.());
+    const relay = await this.relayNow();
     const tailnet = originOf(this.options.tailscale?.tailnetOrigin());
     const hostUrl = host?.dnsName ? `https://${host.dnsName}` : null;
     const domain = this.options.publicBaseUrl()?.replace(/\/+$/u, "") || null;
     return this.offered().map((id): McpAddressRow => {
       switch (id) {
         case "relay":
-          return { id, url: relay, enabled: this.answers(id), available: !!relay };
+          return {
+            id,
+            url: relay.origin,
+            enabled: this.answers(id),
+            available: !!relay.origin && relay.serving,
+          };
         case "tailnet":
           return { id, url: tailnet, enabled: this.answers(id), available: !!tailnet };
         case "tailscalePublic":
@@ -268,6 +302,22 @@ export class McpAddresses {
     return this.addressesOf({ url, via: null, relayed: false }).every((id) =>
       id === "tailnet" ? this.answers("tailnet") || this.publicWanted() : this.answers(id),
     );
+  }
+
+  /** The relay's live origin and whether it serves this gateway; not serving when unknown. */
+  private async relayNow(): Promise<{ origin: string | null; serving: boolean }> {
+    if (!cloudRelayEnabled() || !this.options.relayState) {
+      return { origin: originOf(this.options.relayOrigin?.()), serving: false };
+    }
+    try {
+      const state = await this.options.relayState();
+      return { origin: originOf(state.origin), serving: state.serving };
+    } catch (error) {
+      log.warn(
+        `Could not read the relay's state: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      return { origin: originOf(this.options.relayOrigin?.()), serving: false };
+    }
   }
 
   private enabled(id: McpAddressId): boolean {

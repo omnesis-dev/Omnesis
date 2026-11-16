@@ -92,6 +92,10 @@ function app({ stepUp = false, configured = null as string | null, hostRunning =
       settings,
       publicBaseUrl: () => "https://omnesis.example.org",
       relayOrigin: () => "https://gw-fictional.relay.example.net",
+      relayState: async () => ({
+        origin: "https://gw-fictional.relay.example.net",
+        serving: true,
+      }),
       tailscale: tailscale as unknown as ConstructorParameters<typeof McpAddresses>[0]["tailscale"],
       hostTailscale: host,
     }),

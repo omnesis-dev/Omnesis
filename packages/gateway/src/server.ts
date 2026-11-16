@@ -29,7 +29,7 @@ import { mountRemoteAccessRoutes, remoteAccessEnabled } from "./http/routes/remo
 import { AddressChecks } from "./remote-access/address-check.js";
 import { HostTailscaleService } from "./remote-access/host-tailscale.js";
 import { RemoteAccessSettingsStore } from "./remote-access/settings.js";
-import { McpAddresses } from "./remote-access/mcp-addresses.js";
+import { McpAddresses, relayStateFrom } from "./remote-access/mcp-addresses.js";
 import { mcpAddressGate } from "./http/mcp-address-gate.js";
 import { mountPortalSignalRoutes } from "./http/routes/portal-signals.js";
 import { PortalSignals } from "./portal-signals/hub.js";
@@ -748,6 +748,9 @@ export function createServer(
         settings: remoteAccessSettings,
         publicBaseUrl: () => opts?.publicBaseUrl,
         ...(opts?.relayPublicOrigin ? { relayOrigin: opts.relayPublicOrigin } : {}),
+        ...(opts?.cloudRelayManagement
+          ? { relayState: relayStateFrom(opts.cloudRelayManagement) }
+          : {}),
         ...(opts?.tailscaleEmbed ? { tailscale: opts.tailscaleEmbed } : {}),
         ...(hostTailscale ? { hostTailscale } : {}),
       })
