@@ -1378,7 +1378,8 @@ async function runLexicalRebuildTick(): Promise<number> {
         if (step === "backfilled-batch" || step === "retired-batch") {
           return Promise.resolve("working");
         }
-        log("info", "indexer-worker", `keyword-index rebuild: ${step}`);
+        // "idle" is the answer of every periodic check while there is no rebuild.
+        if (step !== "idle") log("info", "indexer-worker", `keyword-index rebuild: ${step}`);
         if (step === "idle" || step === "backfill-complete") {
           const { build } = readLexicalIndexState(db);
           if (build?.backfilledAt) post({ type: "lexicalBackfilled", version: build.version });
