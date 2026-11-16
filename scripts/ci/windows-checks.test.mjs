@@ -154,6 +154,7 @@ describe("Windows CI coverage", () => {
       "packages/gateway/src/tailscale-embed/socket-server.test.ts",
       "packages/gateway/src/tailscale-embed/supervisor.test.ts",
       "packages/collector/src/e2e/connect-process.test.ts",
+      "packages/collector/src/e2e/enrollment-fixture-cleanup.test.ts",
       "packages/collector/src/e2e/e2e-buffered-command.test.ts",
       "packages/collector/src/e2e/enrollment-terminal-fixture.test.ts",
       "packages/collector/src/e2e/enrollment-terminal-cohort.windows.test.ts",
