@@ -43,21 +43,7 @@ func runInteractiveAuth(t *testing.T, magicDNSOnly bool) {
   Logf:discard,
 
  }
- // Own the map stream so later full responses cannot silently re-enable
- // HTTPS certificates after the initial MagicDNS-only response.
- if magicDNSOnly {
- control.AltMapStream = func(ctx context.Context, writer testcontrol.MapStreamWriter, request *tailcfg.MapRequest) {
-  if !request.Stream { _ = writer.SendMapMessage(new(tailcfg.MapResponse)); return }
-  // Preserve the SDK fixture's registration/profile identity. Hand-building
-  // UserProfiles with a different LoginName can switch Windows profiles and
-  // discard the persisted key while a prior netmap is still active.
-  response, err := control.MapResponse(request)
-  if err != nil || response == nil { t.Errorf("map response: %v", err); return }
-  if response.DNSConfig != nil { response.DNSConfig.CertDomains = nil }
-  if err := writer.SendMapMessage(response); err != nil { return }
-  <-ctx.Done()
- }
- }
+ if magicDNSOnly { mapsWithoutCertificates(t, control) }
  control.HTTPTestServer = httptest.NewServer(control)
  t.Cleanup(control.HTTPTestServer.Close)
  ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)

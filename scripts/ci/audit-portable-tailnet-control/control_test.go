@@ -38,6 +38,7 @@ func TestPortableControlAndWireGuard(t *testing.T) {
 		MagicDNSDomain: "fixture.example.test",
 		Logf: discard,
 	}
+	mapsWithoutCertificates(t, control)
 	control.HTTPTestServer = httptest.NewUnstartedServer(control)
 	control.HTTPTestServer.Start()
 	t.Cleanup(control.HTTPTestServer.Close)
@@ -49,6 +50,7 @@ func TestPortableControlAndWireGuard(t *testing.T) {
 		status, err := s.Up(ctx)
 		if err != nil { t.Fatalf("node startup: %v", err) }
 		if len(status.TailscaleIPs) == 0 { t.Fatal("node has no address") }
+		if len(status.CertDomains) != 0 { t.Fatal("fixture unexpectedly enabled HTTPS certificates") }
 		return s, status.TailscaleIPs[0].String(), status.Self.PublicKey
 	}
 	gateway, address, gatewayKey := start("fixture-gateway")
