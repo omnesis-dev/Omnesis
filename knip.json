@@ -7,7 +7,6 @@
         "scripts/release/*.mjs",
         "scripts/site/*.mjs",
         "scripts/install-e2e/cli-trace.cjs",
-        "scripts/ci/network-tripwire.cjs",
         "scripts/tailnet-helper/*.mjs",
         "scripts/tailnet-test/*.mjs",
         "scripts/blog/*.{mjs,ts}",

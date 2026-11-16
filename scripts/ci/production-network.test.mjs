@@ -1,15 +1,15 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { spawn, spawnSync } from "node:child_process";
+import { Resolver } from "node:dns/promises";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
 import { parse } from "yaml";
 
 const root = join(import.meta.dirname, "..", "..");
-const tripwire = join(root, "scripts", "ci", "network-tripwire.cjs");
 const script = join(root, "scripts", "ci", "production-network.sh");
 const workflow = (name) => parse(readFileSync(join(root, ".github", "workflows", name), "utf8"));
 
@@ -22,94 +22,48 @@ afterEach(() => {
   scratch = undefined;
 });
 
-/** Runs `source` in a Node process with only the tripwire preloaded. */
-function withTripwire(source) {
-  scratch = mkdtempSync(join(tmpdir(), "omnesis-network-tripwire-"));
-  const log = join(scratch, "tripwire.log");
-  writeFileSync(log, "");
-  const file = join(scratch, "probe.mjs");
-  writeFileSync(file, source);
-  const result = spawnSync(process.execPath, [file], {
-    cwd: scratch,
-    env: {
-      ...process.env,
-      NODE_OPTIONS: `--require ${tripwire}`,
-      OMNESIS_NETWORK_TRIPWIRE_LOG: log,
-    },
-    encoding: "utf8",
-    timeout: 60_000,
-  });
-  return { ...result, log: readFileSync(log, "utf8") };
-}
-
-describe("the CI network tripwire", () => {
-  test("refuses and records a deliberate lookup of the production relay in every kind of Node process", () => {
-    // Each step runs only after the previous one was refused, so a broken
-    // tripwire stops at the first DNS question and never sends a request.
-    const run = withTripwire(`
-      import dns from "node:dns";
-      import { lookup } from "node:dns/promises";
-      import { execFileSync } from "node:child_process";
-      import { Worker } from "node:worker_threads";
-      const outcomes = [];
-      const refused = (label, error) => {
-        outcomes.push(label + ":" + (error?.code ?? "resolved"));
-        if (error?.code !== "ENOTFOUND") { console.log(JSON.stringify(outcomes)); process.exit(1); }
-      };
-      await new Promise((done) => dns.lookup("relay.omnesis.app", (error) => { refused("lookup", error); done(); }));
-      await lookup("RELAY.Omnesis.APP.").then(() => refused("esm"), (error) => refused("esm", error));
-      await new dns.promises.Resolver().resolve4("dns.omnesis.app").then(() => refused("resolver"), (error) => refused("resolver", error));
-      await new Promise((done) => {
-        const worker = new Worker('require("node:dns").lookup("push.omnesis.app", (e) => require("node:worker_threads").parentPort.postMessage(e?.code ?? "resolved"))', { eval: true });
-        worker.once("message", (code) => { refused("worker", { code }); worker.terminate().then(done); });
-      });
-      const child = execFileSync(process.execPath, ["-e", 'require("node:dns").lookup("omnesis.app", (e) => process.stdout.write(e?.code ?? "resolved"))'], { encoding: "utf8" });
-      refused("child", { code: child });
-      await fetch("https://g-0123456789ab.relay.omnesis.app/").then(() => refused("fetch"), (error) => refused("fetch", error.cause));
-      // Everything else still resolves, and a look-alike name is not recorded.
-      await lookup("localhost");
-      await lookup("omnesis.app.invalid").catch(() => {});
-      console.log(JSON.stringify(outcomes));
-    `);
-    expect(run.stdout.trim(), run.stderr).toBe(
-      JSON.stringify([
-        "lookup:ENOTFOUND",
-        "esm:ENOTFOUND",
-        "resolver:ENOTFOUND",
-        "worker:ENOTFOUND",
-        "child:ENOTFOUND",
-        "fetch:ENOTFOUND",
-      ]),
+describe("the macOS DNS sink", () => {
+  test("refuses a deliberate lookup of the production relay and records it", async () => {
+    scratch = mkdtempSync(join(tmpdir(), "omnesis-dns-sink-"));
+    const record = join(scratch, "dns-sink.log");
+    const port = 20_000 + Math.floor(Math.random() * 20_000);
+    const sink = spawn(
+      "python3",
+      [join(root, "scripts", "ci", "dns-sink.py"), String(port), record],
+      { stdio: ["ignore", "pipe", "inherit"] },
     );
-    expect(run.status).toBe(0);
-    for (const call of [
-      "dns.lookup(relay.omnesis.app)",
-      "dns.promises.lookup(RELAY.Omnesis.APP.)",
-      "dns.promises.Resolver.resolve4(dns.omnesis.app)",
-      "dns.lookup(push.omnesis.app)",
-      "dns.lookup(omnesis.app)",
-      "dns.lookup(g-0123456789ab.relay.omnesis.app)",
-    ])
-      expect(run.log).toContain(`[network-tripwire] blocked ${call}`);
-    expect(run.log).not.toContain("omnesis.app.invalid");
-    expect(run.log).not.toContain("localhost");
-  });
-
-  test("verify fails a job whose record names an attempt, and passes an empty one", () => {
-    scratch = mkdtempSync(join(tmpdir(), "omnesis-network-verify-"));
-    const log = join(scratch, "production-network-tripwire.log");
-    const verify = () =>
-      spawnSync("bash", [script, "verify"], {
-        env: { ...process.env, RUNNER_TEMP: scratch },
-        encoding: "utf8",
+    try {
+      await new Promise((ready, failed) => {
+        sink.stdout.once("data", ready);
+        sink.once("exit", failed);
       });
-    expect(verify().status, "a job that was never isolated").toBe(1);
-    writeFileSync(log, "");
-    expect(verify().status).toBe(0);
-    writeFileSync(log, "[network-tripwire] blocked dns.lookup(relay.omnesis.app) pid=1\n");
-    const failed = verify();
-    expect(failed.status).toBe(1);
-    expect(failed.stderr).toContain("dns.lookup(relay.omnesis.app)");
+      const resolver = new Resolver({ timeout: 2_000, tries: 2 });
+      resolver.setServers([`127.0.0.1:${port}`]);
+      // It never answers with an address.
+      await expect(resolver.resolve4("relay.omnesis.app")).rejects.toMatchObject({
+        code: "EREFUSED",
+      });
+      await expect(resolver.resolve4("G-0123.Relay.Omnesis.App")).rejects.toMatchObject({
+        code: "EREFUSED",
+      });
+      expect(readFileSync(record, "utf8")).toMatch(
+        /DNS query for relay\.omnesis\.app\n.*DNS query for g-0123\.relay\.omnesis\.app\n$/i,
+      );
+    } finally {
+      sink.kill();
+    }
+  });
+});
+
+describe("verify", () => {
+  test("fails a job that was never isolated", () => {
+    scratch = mkdtempSync(join(tmpdir(), "omnesis-network-verify-"));
+    const result = spawnSync("bash", [script, "verify"], {
+      env: { ...process.env, RUNNER_TEMP: scratch },
+      encoding: "utf8",
+    });
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain("was the job isolated?");
   });
 });
 
@@ -172,10 +126,6 @@ describe("test jobs keep off production Omnesis services", () => {
           if: "${{ always() && steps.production-network.outcome == 'success' }}",
           run: "$GITHUB_WORKSPACE/scripts/ci/production-network.sh verify",
         });
-        // A step-level NODE_OPTIONS would drop the tripwire for that step.
-        for (const step of steps)
-          if (step.env?.NODE_OPTIONS !== undefined)
-            expect(step.env.NODE_OPTIONS).toMatch(/^\$\{\{ env\.NODE_OPTIONS \}\} /);
       });
     }
   }

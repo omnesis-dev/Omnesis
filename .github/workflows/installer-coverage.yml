@@ -76,8 +76,7 @@ jobs:
       - name: Exercise actual installer journey
         env:
           SCENARIO: ${{ matrix.scenario }}
-          # Keeps the production network tripwire that the job preloads.
-          NODE_OPTIONS: "${{ env.NODE_OPTIONS }} --max-old-space-size=3072"
+          NODE_OPTIONS: --max-old-space-size=3072
           CMAKE_BUILD_PARALLEL_LEVEL: "2"
           MAKEFLAGS: -j2
         run: E2E_WORK="$RUNNER_TEMP/installer-coverage" bash scripts/install-e2e/macos-variants.sh "$SCENARIO"

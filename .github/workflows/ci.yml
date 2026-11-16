@@ -182,8 +182,7 @@ jobs:
         # An 8 GB heap leaves headroom on the public Ubuntu runner's 16 GB RAM.
         # Drop this once we shard lint by package.
         env:
-          # Keeps the production network tripwire that the job preloads.
-          NODE_OPTIONS: "${{ env.NODE_OPTIONS }} --max-old-space-size=8192"
+          NODE_OPTIONS: "--max-old-space-size=8192"
         run: exec node scripts/run-check.mjs lint
 
       - name: lane [format]
@@ -499,8 +498,7 @@ jobs:
         # The macOS runner's smaller memory gives Node a ~2 GB default heap,
         # which the whole-repo `tsc --build` outgrows.
         env:
-          # Keeps the production network tripwire that the job preloads.
-          NODE_OPTIONS: "${{ env.NODE_OPTIONS }} --max-old-space-size=4096"
+          NODE_OPTIONS: "--max-old-space-size=4096"
         run: exec node scripts/run-check.mjs typecheck
 
       - name: lane [macos-collector-docker-compatibility]
