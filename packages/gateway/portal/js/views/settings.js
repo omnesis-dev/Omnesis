@@ -21,6 +21,8 @@ import { settingsTabAttention } from "../lib/attention.js";
 import { TabBar } from "../components/tab-bar.js";
 import {
   settingsTabs,
+  settingsTabAvailable,
+  settingsTabParent,
   DEFAULT_SETTINGS_TAB,
   SETTINGS_TAB_KEYS,
   EXPERIMENTAL_SETTINGS_TABS,
@@ -35,6 +37,7 @@ const PoliciesView = lazy(() => import("./policies.js").then((m) => m.PoliciesVi
 const DevicesView = lazy(() => import("./devices.js").then((m) => m.DevicesView));
 const RelayView = lazy(() => import("./relay.js").then((m) => m.RelayView));
 const TailscaleView = lazy(() => import("./tailscale.js").then((m) => m.TailscaleView));
+const RemoteAccessView = lazy(() => import("./remote-access.js").then((m) => m.RemoteAccessView));
 const SweepsView = lazy(() => import("./sweeps.js").then((m) => m.SweepsView));
 
 const SUN_ICON = html`<svg
@@ -99,10 +102,13 @@ export function SettingsView({
   // lands where it points.
   const requested = SETTINGS_TAB_KEYS.includes(tab) ? tab : DEFAULT_SETTINGS_TAB;
   // A link into a disabled feature lands on the default tab.
-  const activeTab =
-    (!experimental && EXPERIMENTAL_SETTINGS_TABS.includes(requested)) || (requested === "sweeps" && !lab.brain) || (requested === "lab" && !labAvailable) || (requested === "account" && !cloudRelay) || (requested === "tailscale" && !tailscaleEmbed)
+  const page =
+    (!experimental && EXPERIMENTAL_SETTINGS_TABS.includes(requested)) || (requested === "sweeps" && !lab.brain) || (requested === "lab" && !labAvailable) || !settingsTabAvailable(requested, { cloudRelay, tailscaleEmbed })
       ? DEFAULT_SETTINGS_TAB
       : requested;
+  // A detail page (the Omnesis account, the Tailscale device) shows its parent tab as current.
+  const parent = settingsTabParent(page);
+  const activeTab = parent ?? page;
 
   const accessTask = activeTab === "access" && Boolean(accessNewLevel || accessLevelId);
   useLayoutEffect(() => {
@@ -131,13 +137,15 @@ export function SettingsView({
   //
   // Re-selecting the tab already on screen is a no-op UNLESS that tab has a
   // page open below it, in which case clicking it walks back up to the tab's
-  // own list rather than sitting inert. Three tabs open pages: Models labels
-  // both the capability grid and every capability's detail, Policies both the
-  // list and one policy's editor, and Access both the inventory and each of an
-  // access level's editor, a new level, an authorization review, and the
-  // connect dialog.
+  // own list rather than sitting inert. Four tabs open pages: Remote access
+  // labels its summary and its detail pages (the Omnesis account, the
+  // Tailscale device), Models both the capability grid and every capability's
+  // detail, Policies both the list and one policy's editor, and Access both the
+  // inventory and each of an access level's editor, a new level, an
+  // authorization review, and the connect dialog.
   const switchTab = (next) => {
     const pageOpen = Boolean(
+      parent ||
       modelsSection ||
       policyId ||
       accessLevelId ||
@@ -152,7 +160,7 @@ export function SettingsView({
   return html`
     <div
       ref=${shell}
-      class=${`settings-view${cloudRelay ? " relay-on" : ""}${accessTask ? " settings-view--access-task" : ""}`}
+      class=${`settings-view${cloudRelay || tailscaleEmbed ? " remote-access-on" : ""}${accessTask ? " settings-view--access-task" : ""}`}
     >
       <div class="settings-header">
         <div>
@@ -195,8 +203,10 @@ export function SettingsView({
       ${activeTab === "config" && html`<${ConfigView} />`}
       ${activeTab === "omnesis-md" && html`<${OmnesisMdView} />`}
       ${activeTab === "models" && html`<${ModelsView} section=${modelsSection ?? null} onModelsRefresh=${onModelsRefresh} />`}
-      ${activeTab === "account" && html`<${RelayView} />`}
-      ${activeTab === "tailscale" && html`<${TailscaleView} />`}
+      ${parent && html`<button type="button" class="doc-back access-page-back remote-access-back" onClick=${() => switchTab(parent)}>← Remote access</button>`}
+      ${page === "account" && html`<${RelayView} />`}
+      ${page === "tailscale" && html`<${TailscaleView} />`}
+      ${page === "remote-access" && html`<${RemoteAccessView} cloudRelay=${cloudRelay} tailscaleEmbed=${tailscaleEmbed} />`}
       ${activeTab === "sweeps" && html`<${SweepsView} />`}
       ${activeTab === "access" && html`<${AccessView}
         authorizationId=${accessAuthorizationId ?? null}

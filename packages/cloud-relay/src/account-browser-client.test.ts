@@ -10,6 +10,7 @@ import { isoCBOR } from "@simplewebauthn/server/helpers";
 import { z } from "zod";
 import { tlsFiles, listen } from "../test/support.js";
 import { registeredPasskey, signInOnOperation } from "../test/operation-sign-in.js";
+import { openLaunch } from "../test/browser-launch.js";
 import { ManagedAccountBrowser } from "./account-browser-client.js";
 import { ACCOUNT_CREDENTIALS_EVIDENCE } from "./account-browser-contract.js";
 import { signInDigest, signInProofSchema } from "./device-enrollment.js";
@@ -127,7 +128,7 @@ async function fixture() {
   const passkey = await registeredPasskey(accounts.identities, account);
   const confirm = async (pending: Pick<AccountBrowserPending, "authorizeUrl" | "operationId">) => {
     const launch = new URL(pending.authorizeUrl),
-      response = await fetch(url + launch.pathname + launch.search, { redirect: "manual" });
+      response = await openLaunch(url + launch.pathname + launch.search, origin);
     expect(response.status).toBe(303);
     const operationCookie = response.headers.getSetCookie()[0]!.split(";")[0]!;
     await signInOnOperation(url, `?operation=${pending.operationId}`, operationCookie, passkey);

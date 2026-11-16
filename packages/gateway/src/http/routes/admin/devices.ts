@@ -187,6 +187,7 @@ export function mountDeviceRoutes(app: RouteApp, deps: AdminRoutesDeps): void {
     inContainer: deps.inContainer,
     hostNetwork: deps.hostNetwork,
     tailnetAddress: deps.tailnetPairingAddress,
+    preferRelay: deps.pairingPrefersRelay,
   });
   // Production shares the instance whose WS lifecycle records reconnects;
   // narrow route tests may omit it and receive the equivalent stateless view.

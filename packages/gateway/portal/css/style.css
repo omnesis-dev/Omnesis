@@ -19278,6 +19278,102 @@ summary.decision-card-head {
 .settings-view > .config-tabs { overflow-x: auto; min-width: 0; }
 .settings-view > .config-tabs .config-tab { flex-shrink: 0; white-space: nowrap; }
 
+/* Settings → Remote access, with the cloud relay, the gateway's own Tailscale
+   device, or both: a guided setup on the access wizard's frame
+   (.access-request--page, .access-wizard-*), then a summary of cards. Every
+   selector is namespaced .remote-access-* (or sits under .remote-access-on,
+   which Settings carries only then); nothing else renders one. The
+   relay's and the Tailscale device's own pieces it embeds are adjusted inside
+   their fenced blocks below. */
+.remote-access-view { max-width: 760px; min-width: 0; padding-bottom: 32px; color: var(--text-primary); }
+.remote-access-view code { font-family: var(--font-mono); font-size: 12px; overflow-wrap: anywhere; }
+.remote-access-view :is(button, a, input):focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.remote-access-view .access-wizard-copy h3:focus { outline: none; }
+.remote-access-back { margin: 0 0 14px; }
+/* Settings gains the Remote access tab only with a remote-access feature on,
+   and only then does its tab bar scroll sideways on a narrow screen. */
+.settings-view.remote-access-on { min-width: 0; }
+.settings-view.remote-access-on > .config-tabs { overflow-x: auto; min-width: 0; }
+.settings-view.remote-access-on > .config-tabs .config-tab { flex-shrink: 0; white-space: nowrap; }
+.remote-access-loading,
+.remote-access-muted { margin: 0; font-size: 13px; line-height: 1.55; color: var(--text-secondary); }
+.remote-access-load-error { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px 16px; padding: 10px 12px; border: 1px solid var(--danger); border-radius: var(--radius-lg); color: var(--danger); font-size: 13px; line-height: 1.5; }
+.remote-access-assure { margin: 0; padding: 10px 14px; border-left: 3px solid var(--success); border-radius: 0 8px 8px 0; background: color-mix(in srgb, var(--success) 7%, transparent); font-size: 13px; line-height: 1.55; color: var(--text-secondary); }
+.remote-access-assure strong { color: var(--text-primary); }
+.remote-access-problem { margin: 0; padding: 2px 0 2px 12px; border-left: 2px solid var(--warning); font-size: 13px; line-height: 1.55; color: var(--text-primary); overflow-wrap: anywhere; }
+.remote-access-ok { margin: 0; font-size: 13px; line-height: 1.55; color: var(--text-primary); overflow-wrap: anywhere; }
+.remote-access-ok > span:first-child { color: var(--success); font-weight: 600; }
+.remote-access-warning { margin: 6px 0 0 !important; color: var(--warning) !important; }
+.remote-access-link { padding: 0; border: 0; background: none; color: var(--text-link); font: inherit; text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
+.remote-access-buttons { display: flex; flex-wrap: wrap; gap: 8px; }
+.remote-access-actions .btn-primary,
+.remote-access-actions .btn-secondary { white-space: nowrap; }
+
+/* One way in, or one answer: a card with its control in a narrow first column. */
+.remote-access-options,
+.remote-access-own-list,
+.remote-access-choices { display: grid; gap: 10px; min-width: 0; margin: 0; padding: 0; border: 0; }
+.remote-access-option,
+.remote-access-own,
+.remote-access-choice { min-width: 0; border: 1px solid var(--border); border-radius: 10px; background: var(--bg-secondary); }
+.remote-access-own { background: var(--bg-primary); }
+:is(.remote-access-option, .remote-access-own, .remote-access-choice).is-on { border-color: var(--accent); box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 25%, transparent); }
+.remote-access-option-head,
+.remote-access-choice { display: grid; grid-template-columns: 16px minmax(0, 1fr); gap: 12px; align-items: start; padding: 12px 14px; cursor: pointer; }
+.remote-access-option-head input,
+.remote-access-choice input { width: 16px; height: 16px; margin: 2px 0 0; accent-color: var(--accent); }
+.remote-access-option.is-disabled .remote-access-option-head { cursor: default; }
+.remote-access-option.is-disabled .remote-access-option-text strong { color: var(--text-muted); }
+.remote-access-option-text { display: grid; gap: 3px; min-width: 0; }
+.remote-access-option-text strong { font-size: 13.5px; font-weight: 600; color: var(--text-primary); }
+.remote-access-option-text small { font-size: 12.5px; line-height: 1.5; color: var(--text-secondary); }
+.remote-access-option-text .remote-access-step-up { color: var(--accent); }
+.remote-access-option-body { display: grid; gap: 12px; min-width: 0; margin: 0 14px 14px 42px; }
+.remote-access-option > .remote-access-option-body { padding: 12px 14px; border: 1px dashed var(--border); border-radius: 8px; }
+.remote-access-first { display: grid; gap: 8px; min-width: 0; margin: 0; padding: 12px 14px 14px; border: 1px solid var(--border); border-radius: 10px; }
+.remote-access-first legend { padding: 0 4px; font-size: 13px; font-weight: 600; color: var(--text-primary); }
+.remote-access-check { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text-primary); cursor: pointer; }
+.remote-access-check input { accent-color: var(--accent); }
+
+/* The owner's own address and what the gateway found about it. */
+.remote-access-address label { display: block; margin-bottom: 6px; font-size: 13px; font-weight: 500; color: var(--text-primary); }
+.remote-access-address-row { display: flex; gap: 8px; }
+.remote-access-address-row input { flex: 1 1 auto; min-width: 0; min-height: 36px; padding: 7px 10px; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--bg-primary); color: var(--text-primary); font-family: var(--font-mono); font-size: 13px; }
+.remote-access-address-row input:focus { outline: none; border-color: var(--accent); }
+.remote-access-checks { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.remote-access-checks li { display: grid; grid-template-columns: 18px minmax(0, 1fr); gap: 10px; font-size: 12.5px; line-height: 1.5; color: var(--text-secondary); overflow-wrap: anywhere; }
+.remote-access-checks strong { margin-right: 4px; font-weight: 600; color: var(--text-primary); }
+.remote-access-check-mark { display: grid; width: 18px; height: 18px; place-items: center; border: 1px solid var(--border); border-radius: 50%; font-size: 10px; font-weight: 700; color: var(--text-muted); }
+.remote-access-checks .is-ok .remote-access-check-mark { border-color: var(--success); background: var(--success); color: #fff; }
+.remote-access-checks .is-failed .remote-access-check-mark { border-color: var(--danger); background: var(--danger); color: #fff; }
+.remote-access-restart,
+.remote-access-todo,
+.remote-access-command { display: grid; gap: 8px; min-width: 0; font-size: 13px; line-height: 1.55; }
+.remote-access-restart p,
+.remote-access-todo p { margin: 0; }
+.remote-access-todo ol { display: grid; gap: 8px; margin: 0; padding-left: 20px; }
+.remote-access-todo :is(ol, li) { min-width: 0; }
+.remote-access-todo li > .copy-block { margin-top: 6px; max-width: 100%; }
+.remote-access-warning-box { min-width: 0; margin-top: 8px; padding: 12px 14px; border: 1px solid color-mix(in srgb, var(--warning) 55%, var(--border)); border-left-width: 3px; border-radius: 8px; background: color-mix(in srgb, var(--warning) 8%, transparent); color: var(--text-primary); }
+.remote-access-card .remote-access-warning-box p { color: var(--text-primary); }
+
+/* The summary once setup is done. */
+.remote-access-summary { display: grid; gap: 12px; }
+.remote-access-summary > .access-wizard-copy { margin-bottom: 6px; }
+.remote-access-card { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; padding: 14px 16px; border: 1px solid var(--border); border-radius: 10px; background: var(--bg-secondary); }
+.remote-access-card-text { min-width: 0; }
+.remote-access-card h4 { margin: 0 0 4px; font-size: 14px; font-weight: 600; color: var(--text-primary); }
+.remote-access-card p { margin: 0; font-size: 13px; line-height: 1.55; color: var(--text-secondary); overflow-wrap: anywhere; }
+.remote-access-manage { flex: none; font-size: 13px; color: var(--text-link); white-space: nowrap; }
+.remote-access-summary > .remote-access-buttons { margin-top: 6px; }
+
+@media (max-width: 760px) {
+  .remote-access-option-body { margin-left: 14px; }
+  .remote-access-card { flex-direction: column; gap: 8px; }
+  .remote-access-address-row { flex-wrap: wrap; }
+  .remote-access-address-row input { flex-basis: 100%; min-height: 44px; }
+}
+
 /* cloud-relay:start
    Everything for the optional cloud relay (OMNESIS_CLOUD_RELAY_ENABLED=1)
    lives between these markers. Every selector is namespaced (.relay-*,
@@ -19285,11 +19381,6 @@ summary.decision-card-head {
    under .relay-on, a class the portal adds only when the flag is on, so with
    the flag off nothing here can match. js/stylesheet-cloud-relay.test.ts
    enforces it. */
-
-/* Pages that gain an Omnesis account tab or relay rows when the flag is on. */
-.settings-view.relay-on { min-width: 0; }
-.settings-view.relay-on > .config-tabs { overflow-x: auto; min-width: 0; }
-.settings-view.relay-on > .config-tabs .config-tab { flex-shrink: 0; white-space: nowrap; }
 
 /* Settings → Omnesis account: one headline, flat rows, one box for problems. */
 .relay-view { max-width: 880px; min-width: 0; padding-bottom: 32px; color: var(--text-primary); }
@@ -19492,6 +19583,13 @@ summary.decision-card-head {
 .google-sign-in-button img { flex: none; object-fit: contain; }
 :is(.login-button, .btn-secondary).google-sign-in-button:hover:not(:disabled) { background: #f2f2f2; color: #1f1f1f; }
 
+/* The relay's own pieces inside Settings → Remote access's setup. */
+.relay-view.remote-access-relay { display: grid; gap: 14px; max-width: none; padding-bottom: 0; }
+.relay-view.remote-access-relay:empty { display: none; }
+.relay-view.remote-access-relay .relay-hero-action { margin-top: 0; }
+.relay-view.remote-access-relay .relay-elsewhere { margin-top: 8px; }
+.relay-view.remote-access-relay .relay-setup { padding-bottom: 0; }
+
 /* cloud-relay:end */
 
 /* tailscale-embed:start
@@ -19623,5 +19721,8 @@ summary.decision-card-head {
   .tailscale-copy { flex-wrap: wrap; }
   .tailscale-copy-input { flex-basis: 100%; }
 }
+
+/* The device's sign-in and status inside Settings → Remote access's setup. */
+.tailscale-view.remote-access-tailscale { max-width: none; padding: 0; }
 
 /* tailscale-embed:end */

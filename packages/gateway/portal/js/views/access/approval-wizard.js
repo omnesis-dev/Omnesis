@@ -11,6 +11,8 @@
 // them and Data walks the rest, one question per screen.
 
 import { html } from "htm/preact";
+
+import { StepNav } from "../../components/step-nav.js";
 import { LevelDecision, useDecisionStep } from "./level-decisions.js";
 
 export const CONNECTION_STEP = "connection";
@@ -83,22 +85,16 @@ export function ApprovalWizard({
   };
 
   return html`<div class="access-request access-request--page">
-    <nav class="access-wizard-steps" aria-label="Progress">
-      ${phases.map(
-        (candidate, index) =>
-          html`<button
-            type="button"
-            key=${PHASE_LABELS[candidate]}
-            class=${candidate === phase ? "is-current" : candidate < phase ? "is-complete" : ""}
-            aria-current=${candidate === phase ? "step" : undefined}
-            disabled=${disabled || candidate > phase}
-            onClick=${() =>
-              candidate < phase && move(steps.find((key) => phaseOf(key) === candidate))}
-          >
-            <span>${candidate < phase ? "✓" : index + 1}</span>${PHASE_LABELS[candidate]}
-          </button>`,
-      )}
-    </nav>
+    <${StepNav}
+      items=${phases.map((candidate) => ({
+        key: PHASE_LABELS[candidate],
+        label: PHASE_LABELS[candidate],
+        current: candidate === phase,
+        complete: candidate < phase,
+      }))}
+      disabled=${disabled}
+      onSelect=${(label) => move(steps.find((key) => PHASE_LABELS[phaseOf(key)] === label))}
+    />
 
     <div class="access-wizard-panel">
       ${
