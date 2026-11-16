@@ -50,6 +50,7 @@ function addresses(overrides: Partial<McpAddressesOptions> = {}) {
         ? {
             state: "available" as const,
             dnsName: hostName,
+            port: 443,
             url: `https://${hostName}`,
             servesGateway: true,
             publicGateway: false,

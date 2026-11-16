@@ -51,6 +51,7 @@ vi.mock("./remote-access/host-tailscale.js", async (importOriginal) => {
       return {
         state: "available" as const,
         dnsName: "studio.example-net.ts.net",
+        port: 443,
         url: "https://studio.example-net.ts.net",
         servesGateway: true,
         publicGateway: false,
