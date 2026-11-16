@@ -266,6 +266,11 @@
 
         <h3 id="passphrase">Headless machines: the passphrase backend</h3>
         <p>
+          A manually launched Windows runtime uses this backend too: automatic OS-keyring selection
+          supports macOS and Linux. Supply the same passphrase to the gateway, collector and CLI,
+          and keep it available when restarting them.
+        </p>
+        <p>
           A server or container with no desktop keyring uses the <code>passphrase</code> backend:
           set <code>OMNESIS_SECRET_STORE=passphrase</code> and supply a passphrase at every start.
           Keyring entries are then sealed on disk under a key derived from it, and the passphrase

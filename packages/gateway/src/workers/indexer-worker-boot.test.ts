@@ -196,6 +196,7 @@ function makeWorkerOptions(
     indexerPageSize: 50,
     indexerBetweenPageSleepMs: 0,
     indexerCatchUp: { enabled: true, maxPageSize: 1000, minSleepMs: 0 },
+    lexicalRebuild: { batchSize: 1000, pauseMs: 50 },
     reindexMissingAtBoot: options.reindexMissingAtBoot ?? false,
     chunkerChunkSize: 512,
     chunkerOverlap: 64,

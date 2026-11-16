@@ -10,13 +10,26 @@
 import type Database from "better-sqlite3";
 type Db = Database.Database;
 import { COLUMN_WEIGHTS } from "./lexical-tokenizer.js";
+import {
+  ACTIVE_FTS,
+  NEXT_FTS,
+  activeLexicalRules,
+  buildingLexicalRules,
+} from "../indexer/lexical-index-store.js";
 
 /** FTS5's BM25 constants. */
 export const K1 = 1.2;
 export const B = 0.75;
 
-/** The index's arrays. Every field is a typed array or a number, so it can be shared across threads. */
+/**
+ * The index's arrays. Every field is a typed array, a number or a string, so it
+ * can be shared across threads.
+ */
 export interface LexicalIndexData {
+  /** The lexical version whose index the arrays were read from (see lexical-versions.ts). */
+  version: number;
+  /** That index's FTS5 `tokenize=` spec, so a version this build does not know still searches. */
+  tokenize: string;
   /** Number of chunks indexed (FTS5 `nRow` at build time). */
   docCount: number;
   /** Last `chunks_fts_changes.seq` the arrays reflect. */
@@ -52,29 +65,42 @@ export function lexicalIndexBytes(d: LexicalIndexData): number {
 }
 
 /**
+ * Which full-text index to read: the active one, or the one a rebuild is
+ * building, read just before it becomes active so it can serve the moment it does.
+ */
+export type LexicalIndexSource = "active" | "building";
+
+/**
  * Build the arrays from the index database, in one read transaction so the
- * postings, lengths and change-log position describe the same snapshot. Reads
+ * postings, lengths, version and change-log position describe the same snapshot. Reads
  * every FTS5 posting once; on a corpus of ~800k chunks this takes on the order
  * of a minute and belongs off the request path. With `shared`, the arrays live
  * on `SharedArrayBuffer`s; the two posting arrays grow in place inside a buffer
  * reserved up to the corpus token count, so the build never holds a second copy.
  */
-export function buildLexicalIndexData(db: Db, opts: { shared?: boolean } = {}): LexicalIndexData {
+export function buildLexicalIndexData(
+  db: Db,
+  opts: { shared?: boolean; source?: LexicalIndexSource } = {},
+): LexicalIndexData {
   const shared = opts.shared === true;
+  const building = opts.source === "building";
+  const table = building ? NEXT_FTS : ACTIVE_FTS;
   const ownTransaction = !db.inTransaction;
   if (ownTransaction) db.exec("BEGIN");
   try {
+    const rules = building ? buildingLexicalRules(db) : activeLexicalRules(db);
+    if (!rules) throw new Error(`no ${opts.source ?? "active"} full-text index to build from`);
     const changeSeq =
       db.prepare<[], { seq: number | null }>("SELECT max(seq) AS seq FROM chunks_fts_changes").get()
         ?.seq ?? 0;
     const docCount =
-      db.prepare<[], { n: number }>("SELECT count(*) AS n FROM chunks_fts_docsize").get()?.n ?? 0;
+      db.prepare<[], { n: number }>(`SELECT count(*) AS n FROM ${table}_docsize`).get()?.n ?? 0;
     const rowids = alloc(Uint32Array, docCount, shared);
     const lengths = new Float64Array(docCount);
     let totalLength = 0;
     let i = 0;
     for (const [rowid, sz] of db
-      .prepare<[], [number, Buffer]>("SELECT id, sz FROM chunks_fts_docsize ORDER BY id")
+      .prepare<[], [number, Buffer]>(`SELECT id, sz FROM ${table}_docsize ORDER BY id`)
       .raw()
       .iterate()) {
       if (i === docCount) break;
@@ -87,8 +113,10 @@ export function buildLexicalIndexData(db: Db, opts: { shared?: boolean } = {}): 
     for (let d = 0; d < docCount; d++) lengthNorm[d] = K1 * (1 - B + (B * lengths[d]) / avgLength);
     const denseOf = denseLookup(rowids);
 
+    // Recreated each build: the table it reads may have been renamed or replaced since.
+    db.exec(`DROP TABLE IF EXISTS temp.lexical_instances`);
     db.exec(
-      "CREATE VIRTUAL TABLE IF NOT EXISTS temp.lexical_instances USING fts5vocab(main, chunks_fts, 'instance')",
+      `CREATE VIRTUAL TABLE temp.lexical_instances USING fts5vocab(main, ${table}, 'instance')`,
     );
     // A chunk has at most as many postings as tokens, so the token count bounds
     // the posting arrays.
@@ -134,6 +162,8 @@ export function buildLexicalIndexData(db: Db, opts: { shared?: boolean } = {}): 
     postingStart.push(postingDoc.length);
 
     return {
+      version: rules.version,
+      tokenize: rules.tokenize,
       docCount,
       changeSeq,
       avgLength,

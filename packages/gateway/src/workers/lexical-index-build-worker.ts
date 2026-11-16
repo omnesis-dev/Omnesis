@@ -40,7 +40,7 @@ try {
     ...(init.indexDbKeyHex ? { encryptionKey: Buffer.from(init.indexDbKeyHex, "hex") } : {}),
   });
   db.exec("PRAGMA temp_store = MEMORY");
-  const data = buildLexicalIndexData(db, { shared: true });
+  const data = buildLexicalIndexData(db, { shared: true, source: init.source });
   post({ type: "done", data, ms: Date.now() - startMs });
 } catch (err) {
   post({ type: "error", error: err instanceof Error ? err.message : String(err) });
