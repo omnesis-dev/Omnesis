@@ -191,7 +191,7 @@ jobs:
         run: node scripts/ci/build-windows-sqlite.mjs
       - name: Verify real actor producers and retained fixture inputs
         run: node scripts/run-check.mjs unit packages/collector/src/e2e/portable-tailnet-actor.test.ts packages/collector/src/e2e/tailnet-machine-env.test.ts packages/collector/src/e2e/tailnet-fixture-cleanup.test.ts
-      - name: Repeat every on-disk token case without replaying migrations per case
+      - name: Repeat every on-disk token and canonical-name case with independent schema copies
         run: node scripts/ci/token-setup-repeats.mjs
       - name: Validate all source and test TypeScript projects
         if: runner.os == 'Linux'
@@ -203,6 +203,7 @@ jobs:
         run: >-
           node node_modules/eslint/bin/eslint.js
           packages/gateway/src/data/repositories/TokenRepository.test.ts
+          packages/gateway/src/bootstrap/upgrade-placeholder-canonical-names.test.ts
           packages/collector/src/e2e/portable-tailnet-actor.ts
           packages/collector/src/e2e/portable-tailnet-actor.test.ts
           packages/collector/src/e2e/portable-tailnet-harness.ts

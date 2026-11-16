@@ -7,6 +7,7 @@ for (let index = 0; index < 5; index++) {
     "scripts/run-check.mjs",
     "unit",
     "packages/gateway/src/data/repositories/TokenRepository.test.ts",
+    "packages/gateway/src/bootstrap/upgrade-placeholder-canonical-names.test.ts",
   ]);
   if (code !== 0) {
     process.exitCode = code;
