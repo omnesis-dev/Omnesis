@@ -9,6 +9,7 @@ import {
   secureWindowsPrivatePathSync,
   writeWindowsPrivateFileAtomicSync,
 } from "@omnesis/platform/windows-private-file";
+import { ownedProcessCleanupReceipt } from "@omnesis/platform/owned-process-cleanup";
 import { parseDotEnv } from "./dotenv-reader.js";
 
 function ensurePrivateConfigDir(configDir: string): void {
@@ -47,8 +48,13 @@ export function upsertDotEnv(
   let raw: string;
   try {
     raw = readFileSync(path, "utf8");
-  } catch {
-    raw = ""; // no file yet — we create it below
+  } catch (error) {
+    if (
+      ownedProcessCleanupReceipt(error) !== undefined ||
+      !(error && typeof error === "object" && "code" in error && error.code === "ENOENT")
+    )
+      throw error;
+    raw = "";
   }
 
   const remaining = new Map(Object.entries(updates));
@@ -179,7 +185,8 @@ export function scaffoldDotEnv(configDir: string): boolean {
       createWindowsPrivateFileSync(path, Buffer.from(DOTENV_TEMPLATE));
     else writeFileSync(path, DOTENV_TEMPLATE, { flag: "wx", mode: 0o600 });
     return true;
-  } catch {
+  } catch (error) {
+    if (ownedProcessCleanupReceipt(error) !== undefined) throw error;
     return false; // already exists (EEXIST) or unwritable → leave it be
   }
 }

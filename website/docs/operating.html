@@ -386,7 +386,9 @@ Gateway 1.4.0  <span class="t-dim">·</span>  <span class="t-dim">devices: 3 cur
           access is refused without reading or changing its contents: stop related processes, review
           permissions, and recreate the file privately before retrying. A successful early repair
           exits with status <code>2</code>. Review <code>.env</code>, then rerun the command.
-          Additional flags and remote or fleet selections are refused during this early repair.
+          Commands that update <code>.env</code> refuse an unreadable existing file; restore its
+          read access before changing configuration. Additional flags and remote or fleet selections
+          are refused during this early repair.
         </p>
 
         <h3 id="stalls">Event-loop stalls</h3>

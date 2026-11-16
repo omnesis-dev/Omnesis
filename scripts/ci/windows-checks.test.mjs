@@ -24,6 +24,16 @@ const workflow = () =>
   parse(readFileSync(new URL("../../.github/workflows/windows.yml", import.meta.url), "utf8"));
 
 describe("Windows CI coverage", () => {
+  test("keeps dotenv refusals and cleanup ownership in focused pull-request coverage", () => {
+    for (const file of [
+      "packages/config/src/dotenv-writer.test.ts",
+      "packages/config/src/load-dotenv.test.ts",
+      "packages/config/src/dotenv-bootstrap.test.ts",
+      "packages/core/src/owned-process-cleanup.test.ts",
+    ])
+      expect(FOCUSED_UNIT_FILES).toContain(file);
+  });
+
   test("every PR gets bounded runtime coverage and each daily/manual sweep gets the complete lanes", () => {
     const config = workflow();
     expect(config.on.pull_request.branches).toEqual(["main"]);

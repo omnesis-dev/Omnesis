@@ -1277,8 +1277,10 @@ wrappers even when its value is `undefined`; that presence means cleanup remains
 unconfirmed. Self-contained filesystem workers have no child tree and use their
 separate process-lifetime contract.
 
-Use `ownedProcessCleanupReceipt` from `@omnesis/core` to recognize an explicit
-cleanup marker through an error's cause chain. Check ownership uncertainty before
+Use `ownedProcessCleanupReceipt` from `@omnesis/platform/owned-process-cleanup`
+(re-exported by `@omnesis/core`) to recognize an explicit cleanup marker through
+an error's cause chain. The platform subpath keeps this check available during
+configuration bootstrap without a dependency on the Core barrel. Check ownership uncertainty before
 treating `ENOENT` as absence or `EEXIST` as a concurrent publisher's success:
 those filesystem results do not prove that the helper joined. Preserve the cause
 when reporting an unreadable private file, and stop before starting a fallback,
