@@ -17,6 +17,7 @@ on:
             windows-fixture-proof,
             windows-merge-proof,
             windows-remaining,
+            dotenv-refusal,
             hermes,
             performance,
             e2e,
@@ -2787,3 +2788,100 @@ jobs:
           OMNESIS_HARNESS_CONFORMANCE: hermes
         shell: bash
         run: exec node scripts/run-check.mjs e2e packages/collector/src/e2e/harness-plugin-conformance.e2e.test.ts
+
+  dotenv-refusal:
+    name: Exact dotenv refusal regression (${{ matrix.os }})
+    if: inputs.scope == 'dotenv-refusal'
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    env:
+      TZ: UTC
+      OMNESIS_UNIT_WORKERS: "1"
+      OMNESIS_E2E_WORKERS: "1"
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ inputs.source_sha }}
+          persist-credentials: false
+      - name: Verify fixed source revision
+        env:
+          TARGET_SHA: ${{ inputs.source_sha }}
+        run: |
+          [[ "$TARGET_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "$TARGET_SHA"
+      - name: Set up Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: "24"
+          cache: npm
+      - name: Install dependencies
+        id: dependencies
+        run: node scripts/ci/npm-ci.mjs --no-audit --no-fund
+      - name: Build and prove Windows SQLite recovery bindings
+        id: native_sqlite
+        run: node scripts/ci/build-windows-sqlite.mjs
+        if: runner.os == 'Windows'
+      - name: Build and prove Windows vector publication
+        id: native_vector
+        run: node scripts/ci/build-windows-usearch.mjs
+        if: runner.os == 'Windows'
+      - name: Make OpenSSL available for isolated TLS certificates
+        run: |
+          if (-not (Get-Command openssl -ErrorAction SilentlyContinue)) {
+            $opensslDir = Join-Path $env:ProgramFiles 'Git\usr\bin'
+            if (-not (Test-Path (Join-Path $opensslDir 'openssl.exe'))) { throw 'OpenSSL is required for gateway tests' }
+            $opensslDir | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+          }
+        if: runner.os == 'Windows'
+        shell: pwsh
+      - name: Fetch the immutable pre-fix writer for negative controls
+        run: git fetch --no-tags --depth=1 origin 9d2ba70d97b8a21651917ec75a3b232564666055
+      - name: Require all thirteen refusal regressions to fail before the writer fix
+        run: |-
+          node --input-type=module <<'NODE'
+          import assert from 'node:assert/strict';
+          import {readFileSync,writeFileSync,rmSync} from 'node:fs';
+          import {execFileSync} from 'node:child_process';
+          import {join} from 'node:path';
+          import {tmpdir} from 'node:os';
+          import {runCheckCommand} from './scripts/lib/check-process.mjs';
+          import {ownedProcessCleanupReceipt} from '@omnesis/platform/owned-process-cleanup';
+          const path='packages/config/src/dotenv-writer.ts';
+          const candidate=readFileSync(path);
+          const before=execFileSync('git',['show','9d2ba70d97b8a21651917ec75a3b232564666055:'+path]);
+          const report=join(process.env.RUNNER_TEMP??tmpdir(),'dotenv-refusal-negative.json');
+          let unconfirmed=false;
+          try {
+           writeFileSync(path,before);
+           const code=await runCheckCommand(process.execPath,['scripts/run-check.mjs','unit','packages/config/src/dotenv-writer.test.ts','--reporter=json','--outputFile='+report]);
+           assert.equal(code,1,'The original writer must fail its new refusal tests');
+           const result=JSON.parse(readFileSync(report,'utf8'));
+           assert.equal(result.numFailedTests,13);
+           assert.equal(result.numPassedTests,2);
+           process.stdout.write('Original writer: 13 required refusal failures, 2 unchanged controls passed.\n');
+          } catch(error) {
+           unconfirmed=ownedProcessCleanupReceipt(error)!==undefined;
+           throw error;
+          } finally {
+           if(!unconfirmed){writeFileSync(path,candidate);rmSync(report,{force:true});}
+          }
+          NODE
+           git diff --exit-code
+      - name: Validate all source and test TypeScript projects
+        run: exec node scripts/run-check.mjs types-tests
+      - name: Build the exact candidate runtime packages
+        run: node scripts/build-projects.mjs
+      - name: Validate configuration refusals, public Core receipts and packaged worker graphs
+        run: exec node scripts/run-check.mjs unit packages/config/src packages/core/src/owned-process-cleanup.test.ts packages/cli/src/load-env.test.ts packages/gateway/src/workers/worker-module-graph.test.ts scripts/release/stage-packages.test.mjs scripts/ci/windows-checks.test.mjs scripts/website-docs.test.mjs
+      - name: Exercise real Gateway and Collector boot through the updated configuration graph
+        run: exec node scripts/run-check.mjs e2e packages/collector/src/e2e/collector-parent-shutdown.e2e.test.ts packages/collector/src/e2e/gateway-lifecycle.e2e.test.ts packages/collector/src/e2e/synth-pipeline.e2e.test.ts packages/collector/src/e2e/source-descriptors.e2e.test.ts
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        os:
+          - windows-latest
+          - ubuntu-latest
