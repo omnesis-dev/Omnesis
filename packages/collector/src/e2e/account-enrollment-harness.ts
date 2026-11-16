@@ -55,7 +55,7 @@ import { writeNoBrowserPreload } from "./enrollment-browser-fixture.js";
 import { e2eGatewayEnv, e2eTsxCommand, gatewayBootBudgetMs } from "./gateway-env.js";
 import { killSubprocessGroup, registerSubprocessGroup } from "./subprocess-reaper.js";
 import { spawnCliProcess, type SpawnedCli } from "./connect-process.js";
-import { closeEnrollmentFixture } from "./enrollment-fixture-cleanup.js";
+import { closeEnrollmentFixture, closeEnrollmentServers } from "./enrollment-fixture-cleanup.js";
 import { execE2EBufferedCommand } from "./e2e-buffered-command.js";
 import { spawnE2ESubprocess, e2eProcessOutput, e2eProcessExit } from "./e2e-owned-process.js";
 
@@ -404,7 +404,12 @@ export class EnrollmentWorld {
   }
 
   async stopRelay(): Promise<void> {
-    if (this.relay) await killSubprocessGroup(this.relay);
+    // The relay CLI has signal handlers rather than the Gateway's parent IPC
+    // bridge. Its Windows fixture is cancelled explicitly and joins its Job.
+    if (this.relay)
+      await killSubprocessGroup(this.relay, {
+        initialSignal: process.platform === "win32" ? "SIGKILL" : "SIGTERM",
+      });
     this.relay = undefined;
   }
 
@@ -570,18 +575,28 @@ export class FakeGoogle {
         });
       },
     );
-    for (const server of [api, authorize]) {
-      server.listen(0, "127.0.0.1");
-      await once(server, "listening");
+    try {
+      for (const server of [api, authorize]) {
+        server.listen(0, "127.0.0.1");
+        await once(server, "listening");
+      }
+      return new FakeGoogle(
+        `http://127.0.0.1:${(api.address() as AddressInfo).port}`,
+        preload,
+        secretFile,
+        (authorize.address() as AddressInfo).port,
+        chosen,
+        [api, authorize],
+      );
+    } catch (error) {
+      await closeEnrollmentFixture(undefined, [
+        () => closeEnrollmentServers([api, authorize]),
+        () => {
+          throw error;
+        },
+      ]);
+      throw error;
     }
-    return new FakeGoogle(
-      `http://127.0.0.1:${(api.address() as AddressInfo).port}`,
-      preload,
-      secretFile,
-      (authorize.address() as AddressInfo).port,
-      chosen,
-      [api, authorize],
-    );
   }
 
   /** The digest a relay lists and a gateway pins for a Google account. */
@@ -600,8 +615,7 @@ export class FakeGoogle {
   }
 
   async close(): Promise<void> {
-    for (const server of this.servers)
-      await new Promise<void>((resolve) => server.close(() => resolve()));
+    await closeEnrollmentServers(this.servers);
   }
 }
 

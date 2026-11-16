@@ -2,6 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { rm } from "node:fs/promises";
+import type { Server } from "node:net";
 import { ownedProcessCleanupReceipt } from "@omnesis/core";
 
 /** Attempt every owner before removing shared inputs; any failure retains them. */
@@ -30,4 +31,21 @@ export async function closeEnrollmentFixture(
     throw receipt === undefined ? error : Object.assign(error, { cleanupFailure: receipt.failure });
   }
   if (directory) await rm(directory, { recursive: true, force: true });
+}
+
+/** An unstarted server owns no listener; every started listener must close. */
+export function closeEnrollmentServers(servers: readonly Server[]): Promise<void> {
+  return closeEnrollmentFixture(
+    undefined,
+    servers.map(
+      (server) => () =>
+        new Promise<void>((resolve, reject) => {
+          server.close((error) => {
+            if (error && !("code" in error && error.code === "ERR_SERVER_NOT_RUNNING"))
+              reject(error);
+            else resolve();
+          });
+        }),
+    ),
+  );
 }

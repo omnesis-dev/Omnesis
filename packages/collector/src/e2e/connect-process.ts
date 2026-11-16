@@ -2,14 +2,14 @@
 // Copyright (c) 2026 Adrien Conrath
 
 /**
- * Driving `omnesis connect` as a real child process.
+ * Driving managed-integration and account-enrollment CLIs as real child processes.
  *
  * Connect is a long interactive ceremony — it redeems a pairing code, then
  * blocks waiting for somebody to approve an OAuth request in the portal — so a
  * test has to start it, do the approving, and only then wait for it to finish.
- * That shape is shared by every suite that exercises the managed integration,
- * and so is the discipline around it: capture output so a failure can say what
- * the command printed, and never leave a child behind.
+ * Account enrollment has the same asynchronous ceremony. Both keep literal
+ * arguments, separate UTF-8 streams and actual exit status, and join every
+ * retained descendant before their shared fixture inputs may be removed.
  */
 
 import type { ChildProcess } from "node:child_process";

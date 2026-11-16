@@ -4,8 +4,9 @@
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { createServer } from "node:net";
 import { expect, onTestFinished, test } from "vitest";
-import { closeEnrollmentFixture } from "./enrollment-fixture-cleanup.js";
+import { closeEnrollmentFixture, closeEnrollmentServers } from "./enrollment-fixture-cleanup.js";
 
 function fixture(): { root: string; input: string } {
   const root = mkdtempSync(join(tmpdir(), "enrollment-cleanup-"));
@@ -55,6 +56,7 @@ test.each([undefined, new Error("Synthetic closure uncertainty")])(
         finalOwnerClosed = true;
       },
     ]).catch((error: unknown) => error);
+    expect(error).toHaveProperty("cleanupFailure");
     expect(error).toMatchObject({ cleanupFailure, errors: [failure] });
     expect(finalOwnerClosed).toBe(true);
     expect(readFileSync(input, "utf8")).toBe("fictional fixture input");
@@ -70,4 +72,18 @@ test("an ordinary close failure also retains inputs without inventing a cleanup 
   expect(error).toBeInstanceOf(AggregateError);
   expect(error).not.toHaveProperty("cleanupFailure");
   expect(existsSync(input)).toBe(true);
+});
+
+test("closes an actual listener alongside a server whose startup never completed", async () => {
+  const listening = createServer();
+  const unstarted = createServer();
+  onTestFinished(() => closeEnrollmentServers([listening, unstarted]));
+  await new Promise<void>((resolve, reject) => {
+    listening.once("error", reject);
+    listening.listen(0, "127.0.0.1", resolve);
+  });
+  expect(listening.listening).toBe(true);
+  await closeEnrollmentServers([listening, unstarted]);
+  expect(listening.listening).toBe(false);
+  expect(unstarted.listening).toBe(false);
 });
