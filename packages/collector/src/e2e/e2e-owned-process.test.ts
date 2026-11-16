@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
-import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { execFile, spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { promisify } from "node:util";
 import { once } from "node:events";
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
@@ -119,6 +120,56 @@ function fixture() {
   roots.push(root);
   return root;
 }
+const execFileAsync = promisify(execFile);
+function groupSnapshotHasLiveMembers(snapshot: string, groupId: number): boolean {
+  const rows = snapshot.trim();
+  if (!rows) throw new Error("Empty POSIX process-group snapshot");
+  let alive = false;
+  for (const row of rows.split(/\r?\n/u)) {
+    const match = /^(\d+)\s+(\S+)$/u.exec(row.trim());
+    if (!match || !Number.isSafeInteger(Number(match[1])))
+      throw new Error("Invalid POSIX process-group snapshot");
+    if (Number(match[1]) === groupId && !match[2]!.startsWith("Z")) alive = true;
+  }
+  return alive;
+}
+
+// Darwin excludes zombies from group signal delivery and can return EPERM
+// for a group containing only zombies. Permission errors alone never prove
+// closure: confirm that a complete process snapshot has no live member.
+async function fixtureGroupAlive(groupId: number): Promise<boolean> {
+  try {
+    process.kill(-groupId, 0);
+    return true;
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === "ESRCH") return false;
+    if (process.platform !== "darwin" || code !== "EPERM") throw error;
+    const { stdout } = await execFileAsync("/bin/ps", ["-A", "-o", "pgid=,stat="], {
+      env: { ...process.env, LC_ALL: "C" },
+      encoding: "utf8",
+      timeout: 5_000,
+      maxBuffer: 1024 * 1024,
+    });
+    return groupSnapshotHasLiveMembers(stdout, groupId);
+  }
+}
+
+test.each([
+  ["27182 Z\n42 S\n", false],
+  ["27182 Z+\n27182 S\n", true],
+  ["27182 R+\n42 Z\n", true],
+  ["42 S\n", false],
+] as const)("group membership uses live states: %s", (snapshot, expected) => {
+  expect(groupSnapshotHasLiveMembers(snapshot, 27182)).toBe(expected);
+});
+test.each(["", "not a process row", "27182", "9007199254740992 S"])(
+  "an incomplete group snapshot cannot prove closure: %s",
+  (snapshot) => {
+    expect(() => groupSnapshotHasLiveMembers(snapshot, 27182)).toThrow();
+  },
+);
+
 function launcher(hold: Promise<void> = Promise.resolve()) {
   if (process.platform === "win32")
     return ((command, args, options) => {
@@ -137,16 +188,8 @@ function launcher(hold: Promise<void> = Promise.resolve()) {
       detached: true,
     }) as WindowsJobProcess;
     let groupJoined = false;
-    const alive = (): boolean => {
-      if (child.pid === undefined) return false;
-      try {
-        process.kill(-child.pid, 0);
-        return true;
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code === "ESRCH") return false;
-        throw error;
-      }
-    };
+    const alive = async (): Promise<boolean> =>
+      child.pid !== undefined && (await fixtureGroupAlive(child.pid));
     child.kill = () => {
       if (!groupJoined && child.pid !== undefined)
         try {
@@ -161,7 +204,7 @@ function launcher(hold: Promise<void> = Promise.resolve()) {
       child.once("close", () => resolve()),
     ).then(async () => {
       const deadline = performance.now() + 12000;
-      while (alive()) {
+      while (await alive()) {
         if (performance.now() >= deadline)
           throw Object.assign(Error("Portable owned group did not close"), {
             cleanupFailure: undefined,
