@@ -90,6 +90,13 @@ jobs:
           echo "Using JDK 17 at $JAVA_HOME and Android SDK at $SDK"
           "$JAVA_HOME/bin/java" -version
 
+      - name: TEMPORARY start heap measurement
+        run: |
+          nproc
+          free -m || true
+          rm -f /tmp/omnesis-gc-*.log /tmp/omnesis-heap-runs.txt
+          nohup bash ../scripts/ci/tmp-heap/sample.sh >/tmp/omnesis-heap-mem.log 2>&1 &
+
       # Unit tests (JVM / Robolectric): the ported transport / pairing / reducer
       # / DTO-decode suites. Fast deterministic logic signal.
       # `testDebugUnitTest` reaches every Android module, the Wear OS app among
@@ -99,14 +106,14 @@ jobs:
       # heap now and then at the 2g it inherits from gradle.properties.
       - name: lane [android-jvm]
         run: |
-          ./gradlew \
+          bash ../scripts/ci/tmp-heap/run.sh jvm ./gradlew \
             :app:testPlayDebugUnitTest \
             :app:testFullDebugUnitTest \
             testDebugUnitTest \
             :wear:testDebugUnitTest \
             :core-wear-protocol:test \
             :wear-core:test \
-            -Pkotlin.daemon.jvmargs=-Xmx3g \
+            "-Pkotlin.daemon.jvmargs=-Xmx3g -Xlog:gc,gc+metaspace,gc+heap+exit:file=/tmp/omnesis-gc-kotlin-%p.log:time,tags" \
             --no-daemon --max-workers=2
 
       - name: Upload Android JVM failure reports
@@ -124,16 +131,40 @@ jobs:
       # The public-certificate check is switched off here on purpose: a release build must ignore
       # that switch, and the policy check fails if the generated release BuildConfig honoured it.
       - name: lane [android-policy]
-        run: ./gradlew :app:verifyPlayReleasePolicy -POMNESIS_CLOUD_RELAY_PUBLIC_CERT_CHECK=0 --no-daemon --max-workers=2
+        run: bash ../scripts/ci/tmp-heap/run.sh policy ./gradlew :app:verifyPlayReleasePolicy -POMNESIS_CLOUD_RELAY_PUBLIC_CERT_CHECK=0 --no-daemon --max-workers=2
 
       - name: lane [android-build]
         # Each flavor gets a fresh bounded Gradle process so release dexing
         # cannot overlap or retain the preceding flavor's build heap. The Wear
         # OS app follows: its installable debug APK and its release bundle.
         run: |
-          ./gradlew :app:bundlePlayRelease --no-daemon --max-workers=2
-          ./gradlew :app:bundleFullRelease --no-daemon --max-workers=2
-          ./gradlew :wear:assembleDebug :wear:bundleRelease --no-daemon --max-workers=2
+          bash ../scripts/ci/tmp-heap/run.sh bundlePlay ./gradlew :app:bundlePlayRelease --no-daemon --max-workers=2
+          bash ../scripts/ci/tmp-heap/run.sh bundleFull ./gradlew :app:bundleFullRelease --no-daemon --max-workers=2
+          bash ../scripts/ci/tmp-heap/run.sh wear ./gradlew :wear:assembleDebug :wear:bundleRelease --no-daemon --max-workers=2
+
+      # TEMPORARY: the Play release build again with every task rerun, three times,
+      # for the worst case and its spread.
+      - name: TEMPORARY rerun bundlePlayRelease
+        run: |
+          for i in 1 2 3; do
+            bash ../scripts/ci/tmp-heap/run.sh rerun-bundlePlay-$i ./gradlew :app:bundlePlayRelease --rerun-tasks --no-daemon --max-workers=2
+          done
+
+      - name: TEMPORARY heap measurement summary
+        if: always()
+        run: python3 ../scripts/ci/tmp-heap/summarize.py
+
+      - name: TEMPORARY upload heap logs
+        if: always()
+        continue-on-error: true
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: heap-logs-${{ github.job }}
+          path: |
+            /tmp/omnesis-gc-*.log
+            /tmp/omnesis-heap-*.txt
+            /tmp/omnesis-heap-*.log
+          retention-days: 14
 
   render:
     # An arm64 macOS runner: the Roborazzi goldens under src/test/roborazzi/
@@ -205,6 +236,13 @@ jobs:
           echo "Using JDK 17 at $JAVA_HOME and Android SDK at $SDK"
           "$JAVA_HOME/bin/java" -version
 
+      - name: TEMPORARY start heap measurement
+        run: |
+          nproc
+          sysctl hw.memsize || free -m || true
+          rm -f /tmp/omnesis-gc-*.log /tmp/omnesis-heap-runs.txt
+          nohup bash ../scripts/ci/tmp-heap/sample.sh >/tmp/omnesis-heap-mem.log 2>&1 &
+
       # Roborazzi VERIFY (not record): compares a fresh render against the
       # tracked goldens under each module's src/test/roborazzi/. A drift (or a
       # render that hangs / writes nothing) fails the job. We do NOT record in
@@ -216,7 +254,7 @@ jobs:
       # (and with the default task list in scripts/android-render.sh).
       - name: lane [android-render]
         run: |
-          ./gradlew \
+          bash ../scripts/ci/tmp-heap/run.sh render ./gradlew \
             :app:verifyRoborazziPlayDebug \
             :feature-health:verifyRoborazziDebug \
             :feature-call-log:verifyRoborazziDebug \
@@ -225,6 +263,22 @@ jobs:
             :feature-photos:verifyRoborazziDebug \
             :wear:verifyRoborazziDebug \
             --no-daemon --max-workers=2
+
+      - name: TEMPORARY heap measurement summary
+        if: always()
+        run: python3 ../scripts/ci/tmp-heap/summarize.py
+
+      - name: TEMPORARY upload heap logs
+        if: always()
+        continue-on-error: true
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: heap-logs-${{ github.job }}
+          path: |
+            /tmp/omnesis-gc-*.log
+            /tmp/omnesis-heap-*.txt
+            /tmp/omnesis-heap-*.log
+          retention-days: 14
 
       # On a verify failure, surface the diff/actual images so a reviewer/agent
       # can see WHAT drifted. A failed upload (e.g. storage quota) must not mask
