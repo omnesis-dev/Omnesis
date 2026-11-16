@@ -5,6 +5,7 @@ import { afterEach, expect, test, vi } from "vitest";
 import { ownedProcessCleanupReceipt, type ResolvedAssignment } from "@omnesis/core";
 import { OptionalServiceCleanup } from "../optional-service-cleanup.js";
 import { TranscribeService } from "./transcribe-service.js";
+import { SyntheticTranscriber } from "./synthetic-transcriber.js";
 import type { WhisperWorkerProcess } from "./whisper-transcriber.js";
 import {
   FrameDecoder,
@@ -250,4 +251,20 @@ test("an availability probe cannot hide an owned cleanup failure as a missing op
     undefined,
   );
   expect(loadModule).toHaveBeenCalledOnce();
+});
+
+test("an ordinary rejected disposal with an undefined reason is reported without inventing process uncertainty", async () => {
+  const service = remember(
+    new TranscribeService({ resolveAssignment: () => ({ role: "transcriber", kind: "replay" }) }),
+  );
+  await service.transcribeOutcome(audio, "audio/wav");
+  const dispose = vi
+    .spyOn(SyntheticTranscriber.prototype, "dispose")
+    .mockRejectedValueOnce(undefined);
+  try {
+    await expect(service.dispose()).rejects.toBeInstanceOf(AggregateError);
+    expect(service.cleanupFailure()).toBeUndefined();
+  } finally {
+    dispose.mockRestore();
+  }
 });

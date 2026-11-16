@@ -539,14 +539,17 @@ export class TranscribeService {
     const closing = (async () => {
       await Promise.resolve();
       let failure: unknown;
+      let failed = false;
       try {
         await capability.dispose();
       } catch (error) {
+        failed = true;
         failure = error;
         this.retainFailure(error);
       }
       const remaining = capability.cleanupFailure?.();
       if (ownedProcessCleanupReceipt(remaining)) {
+        failed = true;
         this.retainFailure(remaining);
         failure = this.terminalFailure;
       }
@@ -554,7 +557,7 @@ export class TranscribeService {
         this.capabilities.delete(capability);
         this.retiring.delete(capability);
       }
-      if (failure) throw failure;
+      if (failed) throw failure;
     })();
     this.retiring.set(capability, closing);
     void closing.catch(() => {});
