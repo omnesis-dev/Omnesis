@@ -61,7 +61,12 @@ import { shouldShowMobilePromos } from "../components/mobile-promo.js";
 import { AgentPromoCard, useAgentPromoVisible } from "../components/agent-promo.js";
 import { ExpiringBanner, ReauthBanner } from "./reauth-banner.js";
 import { RemediationBanner } from "./remediation-banner.js";
-import { OverviewBar, PctBar, MigrationBar } from "../components/index-hero.js";
+import {
+  OverviewBar,
+  PctBar,
+  MigrationBar,
+  KeywordMigrationBar,
+} from "../components/index-hero.js";
 import { ConfirmModal } from "../components/confirm-modal.js";
 import { ResyncModal } from "../components/resync-modal.js";
 import { RESYNC_WHOLE_SOURCE, resyncChoices, resyncOptions } from "../lib/resync-options.js";
@@ -971,6 +976,7 @@ export function SourcesView({ demo = false } = {}) {
       />`}
 
       ${indexStats && html`<${MigrationBar} versions=${indexStats.indexVersions} />`}
+      ${indexStats && html`<${KeywordMigrationBar} lexical=${indexStats.lexicalIndex} />`}
 
       ${!loading && demo === false
         && (shouldShowExtensionPromo({ sources }) || shouldShowMobilePromos({ sources }) || agentPromoVisible)

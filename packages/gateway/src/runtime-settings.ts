@@ -34,6 +34,7 @@
 import { availableParallelism } from "node:os";
 import { createLogger, parseDuration } from "@omnesis/core";
 import {
+  CONFIG_DEFAULTS,
   isSafeHttpsOrigin,
   isSafeMcpResourceUrl,
   isSafePublicBaseUrl,
@@ -70,6 +71,8 @@ export interface ResolvedRuntimeSettings {
   indexerBetweenPageSleepMs: number;
   /** Catch-up pacing for a backlogged scan (`indexer.catchUp`). */
   indexerCatchUp: { enabled: boolean; maxPageSize: number; minSleepMs: number };
+  /** Keyword-index rebuild pacing (`indexer.lexicalRebuild`). */
+  lexicalRebuild: { batchSize: number; pauseMs: number };
   /** Whether to run `reindexMissing` at gateway boot. */
   reindexMissingAtBoot: boolean;
   /** Chunker max chunk length, characters. */
@@ -282,6 +285,8 @@ const DEFAULTS = {
   catchUpEnabled: true,
   catchUpMaxPageSize: 1000,
   catchUpMinSleep: "10ms",
+  lexicalRebuildBatchSize: CONFIG_DEFAULTS.indexer.lexicalRebuild.batchSize,
+  lexicalRebuildPause: CONFIG_DEFAULTS.indexer.lexicalRebuild.pause,
   reindexMissingAtBoot: false,
   // Gateway-process timing budgets — moved out of inline magic
   // numbers (ws.ts, auth-flows.ts, DeviceRepository.ts pairing,
@@ -577,6 +582,10 @@ export function resolveRuntimeSettings(config: OmnesisConfig | undefined): Resol
       maxPageSize: indexer?.catchUp?.maxPageSize ?? DEFAULTS.catchUpMaxPageSize,
       minSleepMs: parseDuration(indexer?.catchUp?.minBetweenPageSleep ?? DEFAULTS.catchUpMinSleep),
     },
+    lexicalRebuild: {
+      batchSize: indexer?.lexicalRebuild?.batchSize ?? DEFAULTS.lexicalRebuildBatchSize,
+      pauseMs: parseDuration(indexer?.lexicalRebuild?.pause ?? DEFAULTS.lexicalRebuildPause),
+    },
     reindexMissingAtBoot: indexer?.reindexMissingAtBoot ?? DEFAULTS.reindexMissingAtBoot,
     chunkerChunkSize: indexer?.chunker?.chunkSize ?? DEFAULTS.chunkerChunkSize,
     chunkerOverlap: indexer?.chunker?.overlap ?? DEFAULTS.chunkerOverlap,
@@ -739,6 +748,7 @@ export function announceRuntimeSettings(s: ResolvedRuntimeSettings): void {
       `embedConcurrency=${s.embedConcurrency}, pageSize=${s.indexerPageSize}, ` +
       `betweenPageSleep=${s.indexerBetweenPageSleepMs}ms, ` +
       `catchUp=${s.indexerCatchUp.enabled ? `on(maxPage=${s.indexerCatchUp.maxPageSize},minSleep=${s.indexerCatchUp.minSleepMs}ms)` : "off"}, ` +
+      `lexicalRebuild={batch=${s.lexicalRebuild.batchSize},pause=${s.lexicalRebuild.pauseMs}ms}, ` +
       `chunker={size=${s.chunkerChunkSize},overlap=${s.chunkerOverlap}}, ` +
       `embedder={ctx=${s.embedderContextSize},timeout=${s.embedderTimeoutMs}ms,maxInput=${s.embedderMaxInputChars}}; ` +
       `timings: slowRequest=${s.slowRequestMs}ms, ` +

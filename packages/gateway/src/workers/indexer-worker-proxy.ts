@@ -86,6 +86,7 @@ export interface IndexerWorkerOptions {
   indexerPageSize: number;
   indexerBetweenPageSleepMs: number;
   indexerCatchUp: IndexerCatchUpSettings;
+  lexicalRebuild: { batchSize: number; pauseMs: number };
   /**
    * Whether a user request is in flight on the gateway. Polled on the main
    * thread; a change is posted to the worker, whose scan returns to its
@@ -192,6 +193,11 @@ const DELETE_SOURCE_INDEX_TIMEOUT_MS = 60_000;
 // which case the gateway proceeds and the next boot rebuilds (fail-safe). Kept
 // well under the gateway's 30s SHUTDOWN_TIMEOUT_MS so dispose + encrypt still fit.
 const FLUSH_SAVE_TIMEOUT_MS = 20_000;
+/**
+ * A keyword-index switch is one short transaction, but it waits for the
+ * worker's in-flight job, which may be a long indexing cycle.
+ */
+const LEXICAL_SWITCH_TIMEOUT_MS = 10 * 60_000;
 
 export class IndexerWorkerProxy implements Embedder {
   private worker: Worker;
@@ -220,6 +226,7 @@ export class IndexerWorkerProxy implements Embedder {
   >();
   private pendingPause = new Map<number, PendingRequest<void>>();
   private pendingFlushSave = new Map<number, PendingRequest<boolean>>();
+  private pendingLexicalSwitch = new Map<number, PendingRequest<boolean>>();
   private lastHeartbeat = 0;
   private heartbeatCheck: ReturnType<typeof setInterval> | null = null;
   private shutdownPromise: Promise<void> | null = null;
@@ -294,6 +301,7 @@ export class IndexerWorkerProxy implements Embedder {
       indexerPageSize: opts.indexerPageSize,
       indexerBetweenPageSleepMs: opts.indexerBetweenPageSleepMs,
       indexerCatchUp: opts.indexerCatchUp,
+      lexicalRebuild: opts.lexicalRebuild,
       reindexMissingAtBoot: opts.reindexMissingAtBoot,
       chunkerChunkSize: opts.chunkerChunkSize,
       chunkerOverlap: opts.chunkerOverlap,
@@ -375,6 +383,13 @@ export class IndexerWorkerProxy implements Embedder {
 
   /** Called on every graph state the worker reports. */
   onVectorIndexChange?: (graph: SemanticSearchStatus) => void;
+
+  /**
+   * Called when the worker reports a keyword-index build of `version` that has
+   * copied every chunk and waits for {@link switchLexicalIndex}. Repeats while
+   * it waits.
+   */
+  onLexicalBackfilled?: (version: number) => void;
 
   /** Boot-phase progress from the worker. null before first report. */
   get bootProgress(): {
@@ -565,6 +580,23 @@ export class IndexerWorkerProxy implements Embedder {
   }
 
   /**
+   * Make the backfilled keyword-index build of `version` the active index.
+   * Resolves false when the build was superseded meanwhile.
+   */
+  async switchLexicalIndex(version: number): Promise<boolean> {
+    const id = this.nextId++;
+    const req = new PendingRequest<boolean>(LEXICAL_SWITCH_TIMEOUT_MS, () => {
+      const p = this.pendingLexicalSwitch.get(id);
+      if (p && this.pendingLexicalSwitch.delete(id)) {
+        p.fail(new Error(`keyword-index switch timed out after ${LEXICAL_SWITCH_TIMEOUT_MS}ms`));
+      }
+    });
+    this.pendingLexicalSwitch.set(id, req);
+    this.post({ type: "lexicalSwitch", id, version });
+    return req.promise;
+  }
+
+  /**
    * Un-pause indexing after {@link pauseIndexing}. Fire-and-forget:
    * used when a newer swap abandons the in-flight build, so the still-active
    * generation's worker resumes ingesting rather than being left quiesced.
@@ -627,6 +659,10 @@ export class IndexerWorkerProxy implements Embedder {
         p.fail(new Error("indexer worker shut down"));
       }
       this.pendingFlushSave.clear();
+      for (const [, p] of this.pendingLexicalSwitch) {
+        p.fail(new Error("indexer worker shut down"));
+      }
+      this.pendingLexicalSwitch.clear();
     })();
     return this.shutdownPromise;
   }
@@ -782,6 +818,18 @@ export class IndexerWorkerProxy implements Embedder {
       case "bootProgress":
         this._bootProgress = { stage: msg.stage, progress: msg.progress };
         break;
+      case "lexicalBackfilled":
+        this.onLexicalBackfilled?.(msg.version);
+        break;
+      case "lexicalSwitchResult": {
+        const pending = this.pendingLexicalSwitch.get(msg.id);
+        if (pending) {
+          this.pendingLexicalSwitch.delete(msg.id);
+          if (msg.error) pending.fail(new Error(msg.error));
+          else pending.settle(msg.switched);
+        }
+        break;
+      }
       case "vectorIndex": {
         const { type: _type, ...graph } = msg;
         this._vectorIndex = graph;
