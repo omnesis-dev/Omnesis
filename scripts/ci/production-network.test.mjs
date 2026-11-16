@@ -77,7 +77,7 @@ describe("the loopback DNS sink", () => {
       await expect(resolver.resolve4("G-0123.Relay.Omnesis.App")).rejects.toMatchObject({
         code: "EREFUSED",
       });
-      expect(readFileSync(record, "utf8")).toMatch(
+      expect(readFileSync(record, "utf8").replaceAll("\r\n", "\n")).toMatch(
         /DNS query for relay\.omnesis\.app\n.*DNS query for g-0123\.relay\.omnesis\.app\n$/i,
       );
     } finally {
