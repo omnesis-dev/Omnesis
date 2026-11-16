@@ -44,6 +44,7 @@ on:
             certificate-v2,
             whisper-owner-baseline,
             whisper-owner-green,
+            transcribe-service-baseline,
             stream-timeout,
             provider-ownership,
           ]
@@ -95,6 +96,48 @@ jobs:
         run: >-
           node scripts/run-check.mjs typecheck && node scripts/run-check.mjs types-tests &&
           node node_modules/eslint/bin/eslint.js packages/platform/src/windows-job-stream.test.ts
+  transcribe-service-baseline:
+    if: ${{ inputs.scope == 'transcribe-service-baseline' }}
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    env:
+      OMNESIS_UNIT_WORKERS: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: "24"
+          cache: npm
+      - name: Install locked dependencies
+        run: node scripts/ci/npm-ci.mjs --ignore-scripts --no-audit --no-fund
+      - name: Apply dependency source and type-export patches without native builds
+        run: node node_modules/patch-package/index.js
+      - name: Prove audio worker closure and admission against the unchanged supervisor
+        id: runtime
+        continue-on-error: true
+        run: node scripts/run-check.mjs unit packages/gateway/src/transcribe/transcribe-service.ownership.test.ts
+      - name: Typecheck source and test projects
+        if: ${{ runner.os == 'Linux' }}
+        run: node scripts/run-check.mjs typecheck && node scripts/run-check.mjs types-tests
+      - name: Lint the audio ownership regression fixture
+        if: ${{ runner.os == 'Linux' }}
+        env:
+          NODE_OPTIONS: --max-old-space-size=6144
+        run: >-
+          node node_modules/eslint/bin/eslint.js
+          packages/gateway/src/transcribe/transcribe-service.ownership.test.ts
+      - name: Retain the runtime verdict
+        env:
+          RUNTIME_OUTCOME: ${{ steps.runtime.outcome }}
+        run: node -e "if (process.env.RUNTIME_OUTCOME !== 'success') process.exit(1)"
   whisper-owner-baseline:
     if: ${{ inputs.scope == 'whisper-owner-baseline' }}
     strategy:
