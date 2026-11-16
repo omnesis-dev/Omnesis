@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { connect, createServer } from "node:net";
+import { connect, createServer, type Socket } from "node:net";
 import { createHmac, randomBytes } from "node:crypto";
 import { once } from "node:events";
 import { mkdtempSync, readFileSync, writeFileSync, rmSync } from "node:fs";
@@ -153,7 +153,13 @@ setInterval(()=>{if(fs.existsSync(process.argv[2]))process.exit(0)},25);
 );
 
 test("a different listener cannot stand in for the owned descendant", async () => {
-  const server = createServer((socket) => socket.end("unrelated fixture listener\n"));
+  const sockets = new Set<Socket>();
+  const server = createServer((socket) => {
+    sockets.add(socket);
+    socket.once("close", () => sockets.delete(socket));
+    socket.resume();
+    socket.end("unrelated fixture listener\n");
+  });
   server.listen(0, "127.0.0.1");
   await once(server, "listening");
   try {
@@ -163,6 +169,7 @@ test("a different listener cannot stand in for the owned descendant", async () =
     expect(result.connected).toBe(true);
     expect(result.matched).toBe(false);
   } finally {
+    for (const socket of sockets) socket.destroy();
     await new Promise<void>((resolve) => server.close(() => resolve()));
   }
 });
