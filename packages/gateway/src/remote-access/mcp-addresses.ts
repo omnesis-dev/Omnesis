@@ -25,6 +25,9 @@
  *   the request's Host. Every gateway with a listening port has it.
  * - `domain`: the address in `gateway.publicBaseUrl`, recognised by Host,
  *   which whatever publishes it (a reverse proxy, a tunnel) must pass on.
+ *   When that address is one of the ways above — the owner saved the relay's
+ *   or a Tailscale name as the public address — it is that way's, under that
+ *   way's switch, and has no row of its own.
  *
  * Every address answers MCP until the owner turns it off: only an explicit
  * `false` in remote-access.json refuses, so a file written before these
@@ -180,7 +183,8 @@ export class McpAddresses {
   constructor(private readonly options: McpAddressesOptions) {
     this.now = options.now ?? Date.now;
     // A switch already off refuses by this computer's name from the first request on.
-    if (options.hostTailscale && !this.answers("host")) void this.lookUpHost();
+    if (options.hostTailscale && !(this.answers("host") && this.answers("domain")))
+      void this.lookUpHost();
   }
 
   /** The addresses this gateway offers a switch for, in the order the owner sees them. */
@@ -211,6 +215,7 @@ export class McpAddresses {
     const tailnet = originOf(this.options.tailscale?.tailnetOrigin());
     const hostUrl = host?.dnsName ? `https://${host.dnsName}` : null;
     const domain = this.options.publicBaseUrl()?.replace(/\/+$/u, "") || null;
+    const domainIsOwn = !!domain && this.wayNamed(addressHostname(domain)) === null;
     return this.offered().map((id): McpAddressRow => {
       switch (id) {
         case "relay":
@@ -232,11 +237,23 @@ export class McpAddresses {
             available: !!hostUrl && !!host?.servesGateway,
           };
         case "domain":
-          return { id, url: domain, enabled: this.answers(id), available: !!domain };
+          return { id, url: domain, enabled: this.answers(id), available: domainIsOwn };
         default:
           return assertNever(id);
       }
     });
+  }
+
+  /**
+   * The way in whose address a public address is — by default the one the
+   * gateway serves in `gateway.publicBaseUrl` — when it is not the owner's own
+   * domain: the relay's, either Tailscale name, or this computer's.
+   */
+  async publicAddressWay(
+    url: string | null | undefined = this.options.publicBaseUrl(),
+  ): Promise<Exclude<OwnMcpAddressId, "domain"> | null> {
+    if (this.options.hostTailscale) await this.lookUpHost();
+    return this.wayNamed(addressHostname(url));
   }
 
   /** Whether applying `patch` would turn MCP on where it is off now. Anything unreadable is not. */
@@ -288,7 +305,9 @@ export class McpAddresses {
    * again in the background.
    */
   async settle(): Promise<void> {
-    if (!this.options.hostTailscale || this.answers("host")) return;
+    // The domain's switch also needs it: a public address that is this computer's
+    // name is under the host's switch, not the domain's.
+    if (!this.options.hostTailscale || (this.answers("host") && this.answers("domain"))) return;
     if (!this.host) await this.lookUpHost();
     else if (this.now() - this.host.at >= HOST_NAME_TTL_MS) void this.lookUpHost();
   }
@@ -382,8 +401,26 @@ export class McpAddresses {
       )
         matched.add("tailnet");
       if (this.host?.dnsName && hostname === this.host.dnsName) matched.add("host");
-      if (hostname === addressHostname(this.options.publicBaseUrl())) matched.add("domain");
+      if (
+        hostname === addressHostname(this.options.publicBaseUrl()) &&
+        this.wayNamed(hostname) === null
+      )
+        matched.add("domain");
     }
     return [...matched];
+  }
+
+  /** The way in, other than the owner's domain, whose address names `hostname`. */
+  private wayNamed(hostname: string | null): Exclude<OwnMcpAddressId, "domain"> | null {
+    if (!hostname) return null;
+    if (cloudRelayEnabled() && hostname === addressHostname(this.options.relayOrigin?.()))
+      return "relay";
+    if (
+      tailscaleEmbedEnabled() &&
+      hostname === addressHostname(this.options.tailscale?.tailnetOrigin())
+    )
+      return "tailnet";
+    if (this.host?.dnsName && hostname === this.host.dnsName) return "host";
+    return null;
   }
 }

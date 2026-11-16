@@ -108,6 +108,10 @@ export function mountRemoteAccessRoutes(app: RouteApp, options: RemoteAccessRout
     // The stored MCP choices are only the owner's departures from the default; the list says
     // where MCP answers.
     const { mcp, ...choices } = options.settings.get();
+    const [mcpAddresses, way] = await Promise.all([
+      addresses.list(),
+      addresses.publicAddressWay(configured),
+    ]);
     return {
       ...choices,
       features: { cloudRelay: cloudRelayEnabled(), tailscaleEmbed: tailscaleEmbedEnabled() },
@@ -116,8 +120,11 @@ export function mountRemoteAccessRoutes(app: RouteApp, options: RemoteAccessRout
         configured,
         // A changed address takes effect when the gateway starts again.
         restartNeeded: (configured ?? null) !== (serving ?? null),
+        // The way in this address belongs to when it is not the owner's own domain:
+        // "relay", "tailnet" or "host"; null for the owner's own.
+        way,
       },
-      mcpAddresses: await addresses.list(),
+      mcpAddresses,
     };
   };
 

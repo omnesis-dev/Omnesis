@@ -377,10 +377,10 @@ describe("MCP per address", () => {
     expect(await policy.refusal(mcp(`${HOST}/mcp`))).toBeNull();
   });
 
-  test("while this computer's address answers, Tailscale is never asked on a request", async () => {
+  test("while this computer's address and the domain answer, Tailscale is never asked on a request", async () => {
     flags();
     const { policy, hostTailscale } = addresses();
-    await policy.update({ domain: false });
+    await policy.update({ tailnet: false });
     await policy.refusal(mcp(`${HOST}/mcp`));
     await policy.settle();
     expect(hostTailscale.status).not.toHaveBeenCalled();
@@ -406,13 +406,55 @@ describe("MCP per address", () => {
     expect(policy.answersAt(`${TAILNET}/mcp`)).toBe(true);
   });
 
-  test("an address that is two of them is refused while either is off", async () => {
+  test("a public address that is the relay's is the relay's, under the relay's switch alone", async () => {
     flags();
     const { policy } = addresses({ publicBaseUrl: () => RELAY });
+    expect(await policy.publicAddressWay()).toBe("relay");
+    expect((await policy.list()).find((row) => row.id === "domain")?.available).toBe(false);
+    await policy.update({ domain: false });
+    expect(await policy.refusal(mcp(`${RELAY}/mcp`))).toBeNull();
     await policy.update({ relay: false });
     expect(await policy.refusal(mcp(`${RELAY}/mcp`))).toBe("relay");
-    await policy.update({ relay: true, domain: false });
-    expect(await policy.refusal(mcp(`${RELAY}/mcp`))).toBe("domain");
+  });
+
+  test("a public address that is this computer's Tailscale name has one row and one switch, the host's", async () => {
+    flags();
+    const { policy } = addresses({ publicBaseUrl: () => HOST });
+    expect(await policy.publicAddressWay()).toBe("host");
+    const rows = (await policy.list()).filter((row) => row.available);
+    expect(rows.map((row) => row.id)).not.toContain("domain");
+    expect(rows.find((row) => row.id === "host")?.url).toBe(HOST);
+    // A domain switch turned off before the address was the host's no longer refuses it.
+    await policy.update({ domain: false });
+    expect(await policy.refusal(mcp(`${HOST}/mcp`))).toBeNull();
+    await policy.update({ host: false });
+    expect(await policy.refusal(mcp(`${HOST}/mcp`))).toBe("host");
+  });
+
+  test("a domain switch already off waits for this computer's name before refusing its own address", async () => {
+    flags();
+    const first = addresses({ publicBaseUrl: () => HOST });
+    await first.policy.update({ domain: false });
+    const { policy, hostTailscale } = addresses({ publicBaseUrl: () => HOST });
+    expect(await policy.refusal(mcp(`${HOST}/mcp`))).toBeNull();
+    expect(hostTailscale.status).toHaveBeenCalled();
+  });
+
+  test("a public address that is the gateway's own Tailscale device is the tailnet's", async () => {
+    flags();
+    const { policy } = addresses({ publicBaseUrl: () => TAILNET });
+    expect(await policy.publicAddressWay()).toBe("tailnet");
+    expect((await policy.list()).find((row) => row.id === "domain")?.available).toBe(false);
+  });
+
+  test("the owner's own domain is nobody else's, and keeps its row", async () => {
+    flags();
+    const { policy } = addresses();
+    expect(await policy.publicAddressWay()).toBeNull();
+    expect((await policy.list()).find((row) => row.id === "domain")).toMatchObject({
+      url: DOMAIN,
+      available: true,
+    });
   });
 
   test("a relay address is recognised only with the relay opt-in", async () => {

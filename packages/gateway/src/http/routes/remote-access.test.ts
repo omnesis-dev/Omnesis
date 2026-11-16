@@ -147,6 +147,7 @@ describe("remote access routes", () => {
         serving: null,
         configured: "https://omnesis.example.org",
         restartNeeded: true,
+        way: null,
       },
       mcpAddresses: [
         {
@@ -263,6 +264,15 @@ describe("remote access routes", () => {
       (await plain("POST", "/admin/remote-access/host-tailscale/publish", { public: "yes" }))
         .status,
     ).toBe(400);
+  });
+
+  test("a saved public address that is this computer's Tailscale name is said to be the host's", async () => {
+    vi.stubEnv("OMNESIS_TAILSCALE_EMBED_ENABLED", "1");
+    const { send } = app({ configured: "https://studio.example-net.ts.net", hostRunning: true });
+    const state = (await (await send("GET", "/admin/remote-access")).json()) as {
+      publicBaseUrl: { way: string | null };
+    };
+    expect(state.publicBaseUrl.way).toBe("host");
   });
 
   test("lists every address with its switch, on until the owner turns it off", async () => {
