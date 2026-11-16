@@ -3274,3 +3274,4 @@ jobs:
           $code = $LASTEXITCODE
           if ($code -ne 1 -or ($result -join "`n") -notmatch 'DNS_ISOLATION_VIOLATION') { throw 'Verifier failed to reject the intentional DNS bypass' }
           Write-Output 'Negative control: bypass blocked, logged, and rejected by verifier'
+          exit 0
