@@ -90,13 +90,6 @@ jobs:
           echo "Using JDK 17 at $JAVA_HOME and Android SDK at $SDK"
           "$JAVA_HOME/bin/java" -version
 
-      - name: TEMPORARY start heap measurement
-        run: |
-          getconf _NPROCESSORS_ONLN
-          free -m || true
-          rm -f /tmp/omnesis-gc-*.log /tmp/omnesis-heap-runs.txt
-          nohup bash ../scripts/ci/tmp-heap/sample.sh >/tmp/omnesis-heap-mem.log 2>&1 &
-
       # Unit tests (JVM / Robolectric): the ported transport / pairing / reducer
       # / DTO-decode suites. Fast deterministic logic signal.
       # `testDebugUnitTest` reaches every Android module, the Wear OS app among
@@ -106,14 +99,14 @@ jobs:
       # heap now and then at the 2g it inherits from gradle.properties.
       - name: lane [android-jvm]
         run: |
-          bash ../scripts/ci/tmp-heap/run.sh jvm ./gradlew \
+          ./gradlew \
             :app:testPlayDebugUnitTest \
             :app:testFullDebugUnitTest \
             testDebugUnitTest \
             :wear:testDebugUnitTest \
             :core-wear-protocol:test \
             :wear-core:test \
-            "-Pkotlin.daemon.jvmargs=-Xmx3g -Xlog:gc,gc+metaspace,gc+heap+exit:file=/tmp/omnesis-gc-kotlin-%p.log:time,tags" \
+            -Pkotlin.daemon.jvmargs=-Xmx3g \
             --no-daemon --max-workers=2
 
       - name: Upload Android JVM failure reports
@@ -131,43 +124,38 @@ jobs:
       # The public-certificate check is switched off here on purpose: a release build must ignore
       # that switch, and the policy check fails if the generated release BuildConfig honoured it.
       - name: lane [android-policy]
-        run: bash ../scripts/ci/tmp-heap/run.sh policy ./gradlew :app:verifyPlayReleasePolicy -POMNESIS_CLOUD_RELAY_PUBLIC_CERT_CHECK=0 --no-daemon --max-workers=2
+        run: ./gradlew :app:verifyPlayReleasePolicy -POMNESIS_CLOUD_RELAY_PUBLIC_CERT_CHECK=0 --no-daemon --max-workers=2
 
       - name: lane [android-build]
         # Each flavor gets a fresh bounded Gradle process so release dexing
         # cannot overlap or retain the preceding flavor's build heap. The Wear
         # OS app follows: its installable debug APK and its release bundle.
         run: |
-          bash ../scripts/ci/tmp-heap/run.sh bundlePlay ./gradlew :app:bundlePlayRelease --no-daemon --max-workers=2
-          bash ../scripts/ci/tmp-heap/run.sh bundleFull ./gradlew :app:bundleFullRelease --no-daemon --max-workers=2
-          bash ../scripts/ci/tmp-heap/run.sh wear ./gradlew :wear:assembleDebug :wear:bundleRelease --no-daemon --max-workers=2
+          ./gradlew :app:bundlePlayRelease --no-daemon --max-workers=2
+          ./gradlew :app:bundleFullRelease --no-daemon --max-workers=2
+          ./gradlew :wear:assembleDebug :wear:bundleRelease --no-daemon --max-workers=2
 
-      # TEMPORARY: the Play release build with every task rerun under several
-      # Gradle daemon heap ceilings: 6g shows the unconstrained demand.
-      - name: TEMPORARY rerun bundlePlayRelease
+      # TEMPORARY fail-fast proof (removed before merge): the Play release build
+      # with every task rerun under a Gradle heap too small for it, first with the
+      # committed jvmargs, then without ExitOnOutOfMemoryError, each bounded.
+      - name: TEMPORARY fail-fast proof
         run: |
-          for heap in 6144m 6144m 3072m 4096m; do
-            sed -i "s/^org.gradle.jvmargs=-Xmx[0-9]*m/org.gradle.jvmargs=-Xmx$heap/" gradle.properties
+          set +e
+          for mode in with-exit-on-oom without-exit-on-oom; do
+            git checkout gradle.properties
+            sed -i 's/^org.gradle.jvmargs=-Xmx4096m/org.gradle.jvmargs=-Xmx1536m/' gradle.properties
+            if [ "$mode" = without-exit-on-oom ]; then
+              sed -i 's/ -XX:+ExitOnOutOfMemoryError//' gradle.properties
+            fi
             grep '^org.gradle.jvmargs' gradle.properties
-            bash ../scripts/ci/tmp-heap/run.sh "rerun-$heap-$RANDOM" ./gradlew :app:bundlePlayRelease --rerun-tasks --no-daemon --max-workers=2
+            start=$(date +%s)
+            timeout 900 ./gradlew :app:bundlePlayRelease --rerun-tasks --no-daemon --max-workers=2
+            rc=$?
+            echo "::notice::fail-fast proof $mode: exit=$rc after $(( $(date +%s) - start ))s (124 = killed by the 900s bound)"
+            pkill -f GradleDaemon || true
           done
           git checkout gradle.properties
-
-      - name: TEMPORARY heap measurement summary
-        if: always()
-        run: python3 ../scripts/ci/tmp-heap/summarize.py
-
-      - name: TEMPORARY upload heap logs
-        if: always()
-        continue-on-error: true
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
-        with:
-          name: heap-logs-${{ github.job }}
-          path: |
-            /tmp/omnesis-gc-*.log
-            /tmp/omnesis-heap-*.txt
-            /tmp/omnesis-heap-*.log
-          retention-days: 14
+          exit 0
 
   render:
     # An arm64 macOS runner: the Roborazzi goldens under src/test/roborazzi/
@@ -239,12 +227,14 @@ jobs:
           echo "Using JDK 17 at $JAVA_HOME and Android SDK at $SDK"
           "$JAVA_HOME/bin/java" -version
 
-      - name: TEMPORARY start heap measurement
+      # TEMPORARY (removed before merge): GC log for the Gradle daemon at the
+      # committed 4g ceiling, and the summed resident size of every JVM.
+      - name: TEMPORARY start memory measurement
         run: |
-          getconf _NPROCESSORS_ONLN
-          sysctl hw.memsize || free -m || true
-          rm -f /tmp/omnesis-gc-*.log /tmp/omnesis-heap-runs.txt
-          nohup bash ../scripts/ci/tmp-heap/sample.sh >/tmp/omnesis-heap-mem.log 2>&1 &
+          sysctl hw.memsize || true
+          sed -i.bak 's|^org.gradle.jvmargs=.*|& -Xlog:gc:file=/tmp/omnesis-gc-gradle-%p.log|' gradle.properties
+          grep '^org.gradle.jvmargs' gradle.properties
+          nohup bash -c 'while true; do ps -axo rss=,args= | awk "/[j]ava/ {s+=\$1} END {print int(s/1024)}"; sleep 5; done' >/tmp/omnesis-jvm-rss.log 2>&1 &
 
       # Roborazzi VERIFY (not record): compares a fresh render against the
       # tracked goldens under each module's src/test/roborazzi/. A drift (or a
@@ -257,7 +247,7 @@ jobs:
       # (and with the default task list in scripts/android-render.sh).
       - name: lane [android-render]
         run: |
-          bash ../scripts/ci/tmp-heap/run.sh render ./gradlew \
+          ./gradlew \
             :app:verifyRoborazziPlayDebug \
             :feature-health:verifyRoborazziDebug \
             :feature-call-log:verifyRoborazziDebug \
@@ -267,21 +257,15 @@ jobs:
             :wear:verifyRoborazziDebug \
             --no-daemon --max-workers=2
 
-      - name: TEMPORARY heap measurement summary
+      - name: TEMPORARY memory measurement summary
         if: always()
-        run: python3 ../scripts/ci/tmp-heap/summarize.py
-
-      - name: TEMPORARY upload heap logs
-        if: always()
-        continue-on-error: true
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
-        with:
-          name: heap-logs-${{ github.job }}
-          path: |
-            /tmp/omnesis-gc-*.log
-            /tmp/omnesis-heap-*.txt
-            /tmp/omnesis-heap-*.log
-          retention-days: 14
+        run: |
+          mv gradle.properties.bak gradle.properties || true
+          sort -n /tmp/omnesis-jvm-rss.log | tail -1 | sed 's/^/peak summed JVM RSS MiB: /'
+          for f in /tmp/omnesis-gc-gradle-*.log; do
+            grep -Eo '[0-9]+M->[0-9]+M\([0-9]+M\)' "$f" | sed -E 's/([0-9]+)M->([0-9]+)M\(([0-9]+)M\)/\1 \2 \3/' \
+              | awk -v f="$f" '{if($1>b)b=$1; if($2>a)a=$2; if($3>c)c=$3} END {print f": maxBefore="b" maxAfter="a" maxCommitted="c" MiB"}'
+          done
 
       # On a verify failure, surface the diff/actual images so a reviewer/agent
       # can see WHAT drifted. A failed upload (e.g. storage quota) must not mask
