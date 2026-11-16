@@ -362,7 +362,9 @@ final class AccountCloudPairingClientTests: XCTestCase {
             guard url.path == "/_relay/v3/gateways" else { return data }
             let hasCursor = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first?.name == "after"
             let gatewayId = hasCursor ? "00000000-0000-4000-8000-000000000002" : "00000000-0000-4000-8000-000000000001"
-            var page: [String: Any] = ["gateways": [["gatewayId": gatewayId, "publicOrigin": "https://gateway.example.test", "online": false]]]
+            var page: [String: Any] = [
+                "gateways": [["gatewayId": gatewayId, "publicOrigin": "https://gateway.example.test", "online": false]],
+            ]
             if !hasCursor { page["nextCursor"] = gatewayId }
             return try JSONSerialization.data(withJSONObject: page)
         })
@@ -373,40 +375,6 @@ final class AccountCloudPairingClientTests: XCTestCase {
         XCTAssertNil(choices[0].displayName)
         XCTAssertFalse(setup.control.paths.contains("/_relay/v3/gateway"))
         await setup.client.close()
-    }
-
-    func testEachChoiceCarriesWhetherTheRelayHoldsItsGatewayOnlineAndAnEntryWithoutItIsRefused() async throws {
-        func directory(_ entries: [[String: Any]]) -> Mutation {
-            { url, data in
-                url.path == "/_relay/v3/gateways" ? try JSONSerialization.data(withJSONObject: ["gateways": entries]) : data
-            }
-        }
-        let home = "00000000-0000-4000-8000-000000000001", studio = "00000000-0000-4000-8000-000000000002"
-        let listed = try fixture(mutateControl: directory([
-            ["gatewayId": home, "publicOrigin": "https://home.example.test", "displayName": "Fictional home", "online": true],
-            ["gatewayId": studio, "publicOrigin": "https://studio.example.test", "online": false],
-        ]))
-        _ = try await listed.client.begin(challenge: listed.challenge)
-        let options = try await listed.client.passkeyOptions()
-        let choices = try await listed.client.passkey(options: options, assertion: Data("{}".utf8))
-        XCTAssertEqual(choices.map(\.id), [home, studio])
-        XCTAssertEqual(choices.map(\.online), [true, false])
-        await listed.client.close()
-
-        for entry: [String: Any] in [
-            ["gatewayId": home, "publicOrigin": "https://home.example.test", "displayName": "Fictional home"],
-            ["gatewayId": home, "publicOrigin": "https://home.example.test", "online": "yes"],
-        ] {
-            let setup = try fixture(mutateControl: directory([entry]))
-            _ = try await setup.client.begin(challenge: setup.challenge)
-            let options = try await setup.client.passkeyOptions()
-            do {
-                _ = try await setup.client.passkey(options: options, assertion: Data("{}".utf8))
-                XCTFail("A directory entry without a boolean online was accepted")
-            } catch { XCTAssertEqual(error as? AccountPairingError, .response) }
-            XCTAssertFalse(setup.control.paths.contains("/_relay/v3/gateway"))
-            await setup.client.close()
-        }
     }
 
     func testTheDefaultClockValidatesCurrentOperationsWithoutStartingAnyProviderOrGatewayConnection() async throws {
@@ -1117,5 +1085,42 @@ private final class AccountTestClock: @unchecked Sendable {
 
     func advance(_ seconds: TimeInterval) {
         lock.withLock { timestamp += seconds }
+    }
+}
+
+/// Whether each gateway is online, as the relay's directory says it.
+extension AccountCloudPairingClientTests {
+    func testEachChoiceCarriesWhetherTheRelayHoldsItsGatewayOnlineAndAnEntryWithoutItIsRefused() async throws {
+        func directory(_ entries: [[String: Any]]) -> Mutation {
+            { url, data in
+                url.path == "/_relay/v3/gateways" ? try JSONSerialization.data(withJSONObject: ["gateways": entries]) : data
+            }
+        }
+        let home = "00000000-0000-4000-8000-000000000001", studio = "00000000-0000-4000-8000-000000000002"
+        let listed = try fixture(mutateControl: directory([
+            ["gatewayId": home, "publicOrigin": "https://home.example.test", "displayName": "Fictional home", "online": true],
+            ["gatewayId": studio, "publicOrigin": "https://studio.example.test", "online": false],
+        ]))
+        _ = try await listed.client.begin(challenge: listed.challenge)
+        let options = try await listed.client.passkeyOptions()
+        let choices = try await listed.client.passkey(options: options, assertion: Data("{}".utf8))
+        XCTAssertEqual(choices.map(\.id), [home, studio])
+        XCTAssertEqual(choices.map(\.online), [true, false])
+        await listed.client.close()
+
+        for entry: [String: Any] in [
+            ["gatewayId": home, "publicOrigin": "https://home.example.test", "displayName": "Fictional home"],
+            ["gatewayId": home, "publicOrigin": "https://home.example.test", "online": "yes"],
+        ] {
+            let setup = try fixture(mutateControl: directory([entry]))
+            _ = try await setup.client.begin(challenge: setup.challenge)
+            let options = try await setup.client.passkeyOptions()
+            do {
+                _ = try await setup.client.passkey(options: options, assertion: Data("{}".utf8))
+                XCTFail("A directory entry without a boolean online was accepted")
+            } catch { XCTAssertEqual(error as? AccountPairingError, .response) }
+            XCTAssertFalse(setup.control.paths.contains("/_relay/v3/gateway"))
+            await setup.client.close()
+        }
     }
 }
