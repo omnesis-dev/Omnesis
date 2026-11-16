@@ -4,8 +4,9 @@
 /**
  * A private tailnet for end-to-end tests, on this machine only.
  *
- * headscale (an open-source Tailscale coordination server) and Tailscale's
- * own relay server run on loopback. Each test "machine" is a real tailscaled
+ * Headscale or the SDK's test coordinator and Tailscale's own relay run on
+ * loopback. Windows uses an owned userspace actor with real SDK peers and
+ * the official Tailscale CLI through private named pipes. Each test "machine" is a real tailscaled
  * in userspace mode, unprivileged, with its own state, its own Tailscale CLI
  * socket and an HTTP proxy that reaches the tailnet; a program sent through
  * that proxy is, to the tailnet, that machine. The gateway under test runs
@@ -13,16 +14,13 @@
  * this tailnet as its own device.
  *
  * Tailscale's servers are never contacted. Certificates and the public
- * (Funnel) address are Tailscale-hosted features headscale does not offer, so
+ * (Funnel) address are disabled on these local control planes, so
  * the gateway serves its own certificate on the tailnet here, as it does on
  * any tailnet with HTTPS certificates switched off.
  */
 
 import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { createHash, X509Certificate } from "node:crypto";
-import { request as httpRequest } from "node:http";
-import { request as httpsRequest } from "node:https";
-import { connect as tlsConnect } from "node:tls";
 import {
   chmodSync,
   existsSync,
@@ -39,13 +37,19 @@ import { promisify } from "node:util";
 import { createTestPki, type TestPki } from "./fixture-pki.js";
 import { e2eGatewayEnv, e2eTsxCommand, gatewayBootBudgetMs } from "./gateway-env.js";
 import { killSubprocessGroup, registerSubprocessGroup } from "./subprocess-reaper.js";
+import { tailnetMachineEnv, tailnetFixtureEnv } from "./tailnet-machine-env.js";
+import type { PortableTestTailnet } from "./portable-tailnet-harness.js";
+import { ownedProcessCleanupReceipt } from "@omnesis/core";
+import { spawnE2ESubprocess } from "./e2e-owned-process.js";
+import { stopTailnetCommands, tailnetCleanupError } from "./tailnet-command-processes.js";
+import { TAILNET_DOMAIN } from "./tailnet-fixture-addresses.js";
+export { TAILNET_DOMAIN, GATEWAY_TAILNET_ORIGIN } from "./tailnet-fixture-addresses.js";
+export { runCliOn } from "./tailnet-command-processes.js";
+import { httpsJson } from "./tailnet-request.js";
+export { httpsJson, fetchFrom, type JsonResponse } from "./tailnet-request.js";
 
 const execFileAsync = promisify(execFile);
 const REPO_ROOT = join(import.meta.dirname, "../../../..");
-
-/** The tailnet's MagicDNS domain; the gateway's device is `omnesis.<this>`. */
-export const TAILNET_DOMAIN = "tailnet.test";
-export const GATEWAY_TAILNET_ORIGIN = `https://omnesis.${TAILNET_DOMAIN}`;
 
 export interface TailnetTools {
   headscale: string;
@@ -53,6 +57,7 @@ export interface TailnetTools {
   tailscaled: string;
   derper: string;
   helper: string;
+  portable?: { actor: string; cliDirectory: string };
 }
 
 /**
@@ -130,38 +135,13 @@ function startProcess(
 }
 
 /** One machine on the test tailnet. */
-export class TailnetMachine {
-  constructor(
-    readonly name: string,
-    readonly dir: string,
-    /** The machine's tailscaled socket, for its Tailscale CLI. */
-    readonly socket: string,
-    /** An HTTP proxy whose connections leave from this machine. */
-    readonly proxyUrl: string,
-    /** A directory holding a `tailscale` that talks to this machine's daemon. */
-    readonly binDir: string,
-    private readonly proc: ChildProcess,
-  ) {}
-
-  /**
-   * The environment that makes a Node program act from this machine: its
-   * Tailscale CLI first on PATH, its proxy for every outbound request, and
-   * the test authority trusted.
-   */
-  env(caCertFile: string): NodeJS.ProcessEnv {
-    return {
-      PATH: `${this.binDir}:${process.env.PATH ?? ""}`,
-      HTTPS_PROXY: this.proxyUrl,
-      HTTP_PROXY: this.proxyUrl,
-      NO_PROXY: "",
-      NODE_USE_ENV_PROXY: "1",
-      NODE_EXTRA_CA_CERTS: caCertFile,
-    };
-  }
-
-  async stop(): Promise<void> {
-    await killSubprocessGroup(this.proc);
-  }
+export interface TailnetMachine {
+  readonly name: string;
+  readonly dir: string;
+  readonly socket: string;
+  readonly proxyUrl: string;
+  readonly binDir: string;
+  env(caCertFile: string): NodeJS.ProcessEnv;
 }
 
 export class TestTailnet {
@@ -169,6 +149,7 @@ export class TestTailnet {
   private readonly runtimeDir: string;
   private procs: ChildProcess[] = [];
   readonly machines: TailnetMachine[] = [];
+  readonly ownerLogin = "owner";
   controlUrl = "";
   private configFile = "";
   pki!: TestPki;
@@ -179,13 +160,21 @@ export class TestTailnet {
     this.runtimeDir = mkdtempSync(join(tmpdir(), "otn-"));
   }
 
-  static async start(tools: TailnetTools): Promise<TestTailnet> {
+  static async start(tools: TailnetTools): Promise<TestTailnet | PortableTestTailnet> {
+    if (tools.portable) {
+      const { PortableTestTailnet } = await import("./portable-tailnet-harness.js");
+      return PortableTestTailnet.start(tools);
+    }
     const tailnet = new TestTailnet(tools);
     try {
       await tailnet.boot();
-    } catch (err) {
-      await tailnet.stop();
-      throw err;
+    } catch (error) {
+      try {
+        await tailnet.stop({ retainInputs: ownedProcessCleanupReceipt(error) !== undefined });
+      } catch (cleanup) {
+        throw tailnetCleanupError([error, cleanup]);
+      }
+      throw error;
     }
     return tailnet;
   }
@@ -354,8 +343,7 @@ export class TestTailnet {
     mkdirSync(binDir, { recursive: true });
     const socket = join(this.runtimeDir, `${name}.sock`);
     const proxyPort = await freePort();
-    const env: NodeJS.ProcessEnv = { ...process.env, TS_NO_LOGS_NO_SUPPORT: "true" };
-    for (const key of Object.keys(env)) if (key.startsWith("TS_AUTH")) delete env[key];
+    const env = tailnetFixtureEnv(process.env);
     const proc = startProcess(
       this.tools.tailscaled,
       [
@@ -394,14 +382,14 @@ export class TestTailnet {
       ],
       { env },
     );
-    const machine = new TailnetMachine(
+    const machine: TailnetMachine = {
       name,
       dir,
       socket,
-      `http://127.0.0.1:${proxyPort}`,
+      proxyUrl: `http://127.0.0.1:${proxyPort}`,
       binDir,
-      proc,
-    );
+      env: (caCertFile) => tailnetMachineEnv(binDir, `http://127.0.0.1:${proxyPort}`, caCertFile),
+    };
     this.machines.push(machine);
     return machine;
   }
@@ -421,8 +409,16 @@ export class TestTailnet {
     ].join("\n");
   }
 
-  async stop(): Promise<void> {
-    await Promise.all(this.procs.map((proc) => killSubprocessGroup(proc)));
+  async stop(options: { retainInputs?: boolean } = {}): Promise<void> {
+    const results = await Promise.allSettled([
+      stopTailnetCommands(this.machines),
+      ...this.procs.map((proc) => killSubprocessGroup(proc)),
+    ]);
+    const failures = results.filter((result) => result.status === "rejected");
+    if (failures.length)
+      throw tailnetCleanupError(failures.map((failure) => failure.reason as unknown));
+    this.procs = [];
+    if (options.retainInputs) return;
     rmSync(this.dir, { recursive: true, force: true });
     rmSync(this.runtimeDir, { recursive: true, force: true });
   }
@@ -438,9 +434,10 @@ export class TailnetGateway {
   private proc: ChildProcess | null = null;
   private certFile = "";
   private keyFile = "";
+  private readonly startupCleanupErrors: unknown[] = [];
 
   constructor(
-    private readonly tailnet: TestTailnet,
+    private readonly tailnet: Pick<TestTailnet, "pki" | "tools" | "controlUrl">,
     private readonly extraEnv: NodeJS.ProcessEnv = {},
   ) {
     this.dir = mkdtempSync(join(tmpdir(), "omnesis-tailnet-gw-"));
@@ -450,56 +447,62 @@ export class TailnetGateway {
 
   /** Start, or start again with the same state. */
   async start(): Promise<void> {
-    if (!this.certFile) {
-      // The gateway's own certificate, from the test authority, names both its
-      // local address and its tailnet name, so test clients trust it either way.
-      const leaf = await this.tailnet.pki.leaf("gateway", [
-        "localhost",
-        "127.0.0.1",
-        `omnesis.${TAILNET_DOMAIN}`,
-      ]);
-      this.certFile = leaf.certFile;
-      this.keyFile = leaf.keyFile;
+    try {
+      if (!this.certFile) {
+        // The gateway's own certificate, from the test authority, names both its
+        // local address and its tailnet name, so test clients trust it either way.
+        const leaf = await this.tailnet.pki.leaf("gateway", [
+          "localhost",
+          "127.0.0.1",
+          `omnesis.${TAILNET_DOMAIN}`,
+        ]);
+        this.certFile = leaf.certFile;
+        this.keyFile = leaf.keyFile;
+      }
+      this.port ||= await freePort();
+      this.url = `https://localhost:${this.port}`;
+      const command = e2eTsxCommand("packages/gateway/src/index.ts");
+      const budget = gatewayBootBudgetMs();
+      const deadline = Date.now() + budget;
+      this.proc = spawnE2ESubprocess(command.command, command.args, {
+        cwd: REPO_ROOT,
+        env: tailnetFixtureEnv({
+          ...e2eGatewayEnv(),
+          ...this.extraEnv,
+          OMNESIS_TAILSCALE_EMBED_ENABLED: "1",
+          OMNESIS_TAILSCALE_HELPER: this.tailnet.tools.helper,
+          OMNESIS_TAILSCALE_EMBED_TEST_CONTROL_URL: this.tailnet.controlUrl,
+          OMNESIS_TLS_CERT: this.certFile,
+          OMNESIS_TLS_KEY: this.keyFile,
+          OMNESIS_DB_PATH: join(this.dir, "omnesis.db"),
+          OMNESIS_GATEWAY_PORT: String(this.port),
+          OMNESIS_CONFIG_DIR: this.configDir,
+          OMNESIS_LOG_LEVEL: "info",
+          OMNESIS_LOG_FILE: join(this.dir, "gateway.log"),
+          OMNESIS_PARENT_PID: String(process.pid),
+          OMNESIS_MDNS_DISABLE: "1",
+        }),
+        stdio: ["ignore", "ignore", "ignore"],
+        detached: true,
+      });
+      await registerSubprocessGroup(this.proc);
+      await waitFor(
+        async () => {
+          const token = readFileSync(join(this.configDir, "token"), "utf8").trim();
+          const res = await httpsJson(this.tailnet.pki.caCert, `${this.url}/whoami`, {
+            headers: { authorization: `Bearer ${token}` },
+          });
+          if (res.status !== 200) return false;
+          this.adminToken = token;
+          return true;
+        },
+        "the gateway to start",
+        Math.max(1, deadline - Date.now()),
+      );
+    } catch (error) {
+      if (ownedProcessCleanupReceipt(error) !== undefined) this.startupCleanupErrors.push(error);
+      throw error;
     }
-    this.port ||= await freePort();
-    this.url = `https://localhost:${this.port}`;
-    const command = e2eTsxCommand("packages/gateway/src/index.ts");
-    this.proc = spawn(command.command, command.args, {
-      cwd: REPO_ROOT,
-      env: {
-        ...e2eGatewayEnv(),
-        ...this.extraEnv,
-        OMNESIS_TAILSCALE_EMBED_ENABLED: "1",
-        OMNESIS_TAILSCALE_HELPER: this.tailnet.tools.helper,
-        OMNESIS_TAILSCALE_EMBED_TEST_CONTROL_URL: this.tailnet.controlUrl,
-        OMNESIS_TLS_CERT: this.certFile,
-        OMNESIS_TLS_KEY: this.keyFile,
-        OMNESIS_DB_PATH: join(this.dir, "omnesis.db"),
-        OMNESIS_GATEWAY_PORT: String(this.port),
-        OMNESIS_CONFIG_DIR: this.configDir,
-        OMNESIS_LOG_LEVEL: "info",
-        OMNESIS_LOG_FILE: join(this.dir, "gateway.log"),
-        OMNESIS_PARENT_PID: String(process.pid),
-        OMNESIS_MDNS_DISABLE: "1",
-      },
-      stdio: ["ignore", "ignore", "ignore"],
-      detached: true,
-    });
-    registerSubprocessGroup(this.proc);
-    const budget = gatewayBootBudgetMs();
-    await waitFor(
-      async () => {
-        const token = readFileSync(join(this.configDir, "token"), "utf8").trim();
-        const res = await httpsJson(this.tailnet.pki.caCert, `${this.url}/whoami`, {
-          headers: { authorization: `Bearer ${token}` },
-        });
-        if (res.status !== 200) return false;
-        this.adminToken = token;
-        return true;
-      },
-      "the gateway to start",
-      budget,
-    );
   }
 
   /** An admin call on the gateway's local address. */
@@ -524,155 +527,25 @@ export class TailnetGateway {
     }
   }
 
+  helperPanicked(): boolean {
+    return /panic:|fatal error:/u.test(readFileSync(join(this.dir, "gateway.log"), "utf8"));
+  }
+
   async stop(): Promise<void> {
-    if (this.proc) await killSubprocessGroup(this.proc);
-    this.proc = null;
+    const failures = [...this.startupCleanupErrors];
+    if (this.proc) {
+      try {
+        await killSubprocessGroup(this.proc);
+        this.proc = null;
+      } catch (error) {
+        failures.push(error);
+      }
+    }
+    if (failures.length) throw tailnetCleanupError(failures);
   }
 
   async remove(): Promise<void> {
     await this.stop();
     rmSync(this.dir, { recursive: true, force: true });
   }
-}
-
-/**
- * Run the Omnesis CLI as `machine` would: through its tailnet, with its own
- * config directory, never toward a gateway on this host.
- */
-export function runCliOn(
-  machine: TailnetMachine,
-  caCertFile: string,
-  args: readonly string[],
-  extraEnv: NodeJS.ProcessEnv = {},
-): Promise<{ code: number | null; stdout: string; stderr: string }> {
-  const configDir = join(machine.dir, "omnesis");
-  mkdirSync(configDir, { recursive: true });
-  const command = e2eTsxCommand("packages/cli/src/index.ts");
-  return new Promise((resolve) => {
-    const proc = spawn(command.command, [...command.args, ...args], {
-      cwd: REPO_ROOT,
-      env: {
-        ...e2eGatewayEnv(),
-        ...machine.env(caCertFile),
-        OMNESIS_CONFIG_DIR: configDir,
-        OMNESIS_TAILSCALE_EMBED_ENABLED: "1",
-        OMNESIS_LOG_LEVEL: "error",
-        OMNESIS_GATEWAY_URL: GATEWAY_TAILNET_ORIGIN,
-        OMNESIS_TOKEN: undefined,
-        NODE_TLS_REJECT_UNAUTHORIZED: undefined,
-        ...extraEnv,
-      },
-      detached: true,
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    registerSubprocessGroup(proc);
-    let stdout = "";
-    let stderr = "";
-    proc.stdout!.on("data", (d: Buffer) => (stdout += d.toString()));
-    proc.stderr!.on("data", (d: Buffer) => (stderr += d.toString()));
-    proc.on("close", (code) => resolve({ code, stdout, stderr }));
-  });
-}
-
-export interface JsonResponse {
-  status: number;
-  json: unknown;
-  text: string;
-}
-
-function parse(text: string): unknown {
-  try {
-    return JSON.parse(text);
-  } catch {
-    return text;
-  }
-}
-
-interface RequestOptions {
-  method?: string;
-  headers?: Record<string, string>;
-  body?: unknown;
-}
-
-/** An HTTPS request trusting only the test authority. */
-export function httpsJson(
-  caCert: string,
-  url: string,
-  init: RequestOptions = {},
-): Promise<JsonResponse> {
-  return new Promise((resolve, reject) => {
-    const body = init.body === undefined ? undefined : JSON.stringify(init.body);
-    const req = httpsRequest(
-      url,
-      {
-        method: init.method ?? "GET",
-        ca: caCert,
-        headers: { ...(body ? { "content-type": "application/json" } : {}), ...init.headers },
-      },
-      (res) => {
-        let text = "";
-        res.setEncoding("utf8");
-        res.on("data", (d: string) => (text += d));
-        res.on("end", () => resolve({ status: res.statusCode ?? 0, json: parse(text), text }));
-      },
-    );
-    req.on("error", reject);
-    req.end(body);
-  });
-}
-
-/**
- * An HTTPS request from `machine` through its tailnet: a CONNECT through the
- * machine's proxy, then TLS to the name asked for, trusting the test
- * authority.
- */
-export function fetchFrom(
-  machine: TailnetMachine,
-  caCert: string,
-  url: string,
-  init: RequestOptions = {},
-): Promise<JsonResponse> {
-  const target = new URL(url);
-  const proxy = new URL(machine.proxyUrl);
-  const port = target.port || "443";
-  return new Promise((resolve, reject) => {
-    const connect = httpRequest({
-      host: proxy.hostname,
-      port: proxy.port,
-      method: "CONNECT",
-      path: `${target.hostname}:${port}`,
-      headers: { host: `${target.hostname}:${port}` },
-    });
-    connect.on("error", reject);
-    connect.on("connect", (res, socket) => {
-      if (res.statusCode !== 200) {
-        socket.destroy();
-        reject(new Error(`proxy CONNECT ${target.host} answered ${res.statusCode}`));
-        return;
-      }
-      const body = init.body === undefined ? undefined : JSON.stringify(init.body);
-      const req = httpsRequest(
-        url,
-        {
-          method: init.method ?? "GET",
-          headers: { ...(body ? { "content-type": "application/json" } : {}), ...init.headers },
-          // No agent: Node then uses this connection instead of resolving
-          // the tailnet name itself, which only the machine's proxy can.
-          createConnection: () => tlsConnect({ socket, servername: target.hostname, ca: caCert }),
-        },
-        (response) => {
-          let text = "";
-          response.setEncoding("utf8");
-          response.on("data", (d: string) => (text += d));
-          response.on("end", () => {
-            socket.destroy();
-            resolve({ status: response.statusCode ?? 0, json: parse(text), text });
-          });
-        },
-      );
-      req.on("error", reject);
-      req.end(body);
-    });
-    connect.end();
-  });
 }

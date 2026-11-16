@@ -55,6 +55,8 @@ on:
             portable-actor,
             portable-transports,
             portable-actor-node,
+            portable-gateway,
+            legacy-tailnet,
             stream-timeout,
             provider-ownership,
           ]
@@ -73,6 +75,87 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
   TZ: UTC
 jobs:
+  portable-gateway:
+    if: ${{ inputs.scope == 'portable-gateway' || inputs.scope == 'legacy-tailnet' }}
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        os: ${{ fromJSON(inputs.scope == 'legacy-tailnet' && '["ubuntu-latest"]' || '["ubuntu-latest","windows-latest"]') }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 50
+    env:
+      GOMAXPROCS: "2"
+      OMNESIS_UNIT_WORKERS: "1"
+      OMNESIS_E2E_WORKERS: "1"
+      OMNESIS_TEST_PORTABLE_TAILNET: ${{ inputs.scope == 'portable-gateway' && '1' || '0' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: "24"
+          cache: npm
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+        with:
+          go-version-file: packages/tailnet-helper/go.mod
+          cache-dependency-path: |
+            packages/tailnet-helper/go.sum
+            scripts/ci/audit-portable-tailnet-control/go.sum
+      - name: Resolve the pinned official CLI tool dependency graph for this prototype
+        if: inputs.scope == 'portable-gateway'
+        working-directory: scripts/ci/audit-portable-tailnet-control
+        run: go get -tool tailscale.com/cmd/tailscale@v1.104.7
+      - name: Make OpenSSL available for isolated Windows fixture certificates
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $auditOpenSsl = Join-Path $env:ProgramFiles 'Git\usr\bin'
+          if (Test-Path (Join-Path $auditOpenSsl 'openssl.exe')) {
+            $auditOpenSsl | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+          }
+      - name: Install locked runtime dependencies
+        run: node scripts/ci/npm-ci.mjs --no-audit --no-fund
+      - name: Prepare actual Windows encrypted SQLite and vector bindings
+        if: runner.os == 'Windows'
+        run: node scripts/ci/build-windows-sqlite.mjs && node scripts/ci/build-windows-usearch.mjs
+      - name: Verify actor framing, actual child ownership and isolated authentication environment
+        run: node scripts/run-check.mjs unit packages/collector/src/e2e/portable-tailnet-actor.test.ts packages/collector/src/e2e/tailnet-machine-env.test.ts packages/collector/src/e2e/tailnet-fixture-cleanup.test.ts
+      - name: Run every original Gateway and Collector network scenario with actual helper and CLI
+        run: node scripts/run-check.mjs e2e packages/collector/src/e2e/tailscale-embed.e2e.test.ts
+      - name: Validate all source and test TypeScript projects
+        if: ${{ !cancelled() && runner.os == 'Linux' }}
+        run: node scripts/run-check.mjs typecheck && node scripts/run-check.mjs types-tests
+      - name: Review typed fixture and provisioning boundaries
+        if: ${{ !cancelled() && runner.os == 'Linux' }}
+        env:
+          NODE_OPTIONS: --max-old-space-size=6144
+        run: >-
+          node node_modules/eslint/bin/eslint.js
+          packages/collector/src/e2e/portable-tailnet-actor.ts
+          packages/collector/src/e2e/portable-tailnet-actor.test.ts
+          packages/collector/src/e2e/portable-tailnet-harness.ts
+          packages/collector/src/e2e/tailnet-command-processes.ts
+          packages/collector/src/e2e/tailnet-fixture-addresses.ts
+          packages/collector/src/e2e/tailnet-fixture-cleanup.test.ts
+          packages/collector/src/e2e/tailnet-machine-env.ts
+          packages/collector/src/e2e/tailnet-machine-env.test.ts
+          packages/collector/src/e2e/tailnet-request.ts
+          packages/collector/src/e2e/tailnet-harness.ts
+          packages/collector/src/e2e/tailscale-embed.e2e.test.ts
+          scripts/tailnet-test/tools.mjs scripts/tailnet-test/portable-tools.mjs
+      - name: Retain only public source and resolved fixture dependency manifests
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: portable-gateway-source-${{ runner.os }}
+          path: |
+            scripts/ci/audit-portable-tailnet-control/*.go
+            scripts/ci/audit-portable-tailnet-control/go.mod
+            scripts/ci/audit-portable-tailnet-control/go.sum
+          retention-days: 3
   owned-e2e-three-os:
     if: ${{ inputs.scope == 'owned-e2e-three-os' || inputs.scope == 'portable-actor-node' }}
     strategy:
@@ -552,7 +635,7 @@ jobs:
         working-directory: scripts/ci/audit-portable-tailnet-control
         env:
           PORTABLE_TAILSCALE_CLI_DIR: ${{ runner.temp }}/fixture-tailnet-cli
-        run: go test -mod=readonly -p 2 -failfast -count=3 -timeout 6m -run '^(TestActorProtocolCreatesRealPeersAndJoins|TestOfficialCLIThroughPrivateLocalAPI|TestPortableControlAndWireGuard)$' -v ./...
+        run: go test -mod=readonly -p 2 -failfast -count=3 -timeout 6m -run '^(TestActorProtocolCreatesRealPeersAndJoins|TestOfficialCLIThroughPrivateLocalAPI|TestPortableControlAndWireGuard|TestMapFingerprintPreservesTopologyChangesWithoutClockTraffic)$' -v ./...
       - name: Prove the official CLI reads the real private LocalAPI
         if: inputs.scope == 'portable-localapi'
         working-directory: scripts/ci/audit-portable-tailnet-control

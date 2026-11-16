@@ -124,6 +124,10 @@ export async function ensureTailnetTools() {
   const cacheDir =
     process.env.OMNESIS_TAILNET_TOOLS_DIR ?? join(homedir(), ".cache", "omnesis-tailnet-tools");
   mkdirSync(cacheDir, { recursive: true });
+  if (process.platform === "win32" || process.env.OMNESIS_TEST_PORTABLE_TAILNET === "1") {
+    const { ensurePortableTailnetTools } = await import("./portable-tools.mjs");
+    return ensurePortableTailnetTools(cacheDir);
+  }
   return {
     headscale: await headscale(cacheDir),
     ...tailscalePrograms(cacheDir),

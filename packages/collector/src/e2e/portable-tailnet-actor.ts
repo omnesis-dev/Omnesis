@@ -7,6 +7,7 @@ import {
   type OwnedChildProcess,
 } from "@omnesis/core";
 import { z } from "zod";
+import { tailnetFixtureEnv } from "./tailnet-machine-env.js";
 
 const PREFIX = "OMNESIS_TAILNET_FIXTURE ";
 const MAX_FRAME_BYTES = 64 * 1024;
@@ -106,7 +107,7 @@ export class PortableTailnetActor {
       {
         cwd,
         env: {
-          ...process.env,
+          ...tailnetFixtureEnv(process.env),
           OMNESIS_TEST_TAILNET_ROOT: directory,
           PORTABLE_TAILSCALE_CLI_DIR: cliDirectory,
         },

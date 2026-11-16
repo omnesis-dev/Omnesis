@@ -73,12 +73,12 @@ func mapsWithoutCertificates(t *testing.T, control *testcontrol.Server) {
 					if response.DNSConfig != nil {
 						response.DNSConfig.CertDomains = nil
 					}
-					encoded, err := json.Marshal(response)
+					fingerprint, err := mapFingerprint(response)
 					if err != nil {
 						t.Errorf("encode map: %v", err)
 						continue
 					}
-					current := stamp{generation: currentGeneration, hash: sha256.Sum256(encoded)}
+					current := stamp{generation: currentGeneration, hash: fingerprint}
 					if previous, ok := sent[node.Key]; ok && previous == current {
 						continue
 					}
@@ -90,4 +90,40 @@ func mapsWithoutCertificates(t *testing.T, control *testcontrol.Server) {
 		}
 	}()
 	t.Cleanup(func() { cancel(); <-done })
+}
+
+
+// Server snapshots carry the current wall clock even when no topology changed.
+// Ignore it only for deduplication; the delivered map keeps its real clock.
+func mapFingerprint(response *tailcfg.MapResponse) ([32]byte,error) {
+ copy:=*response
+ copy.ControlTime=nil
+ encoded,err:=json.Marshal(&copy)
+ if err!=nil { return [32]byte{},err }
+ return sha256.Sum256(encoded),nil
+}
+
+func TestMapFingerprintPreservesTopologyChangesWithoutClockTraffic(t *testing.T) {
+ now:=time.Now()
+ later:=now.Add(time.Second)
+ original:=&tailcfg.MapResponse{ControlTime:&now,Node:&tailcfg.Node{ID:1,User:10}}
+ same:=*original
+ same.ControlTime=&later
+ first,err:=mapFingerprint(original)
+ if err!=nil { t.Fatal(err) }
+ next,err:=mapFingerprint(&same)
+ if err!=nil { t.Fatal(err) }
+ if first!=next { t.Fatal("clock-only snapshots emitted duplicate topology") }
+ if original.ControlTime!=&now || same.ControlTime!=&later { t.Fatal("deduplication changed the delivered control clock") }
+ for _,node:=range []*tailcfg.Node{
+  {ID:1,User:11},
+  {ID:1,User:10,Tags:[]string{"tag:fixture"}},
+  {ID:1,User:10,KeyExpiry:later},
+ } {
+  changed:=same
+  changed.Node=node
+  result,err:=mapFingerprint(&changed)
+  if err!=nil { t.Fatal(err) }
+  if result==first { t.Fatal("identity, tag or key-expiry update was suppressed") }
+ }
 }
