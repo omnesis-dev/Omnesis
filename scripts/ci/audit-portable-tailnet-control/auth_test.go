@@ -48,17 +48,12 @@ func runInteractiveAuth(t *testing.T, magicDNSOnly bool) {
  if magicDNSOnly {
  control.AltMapStream = func(ctx context.Context, writer testcontrol.MapStreamWriter, request *tailcfg.MapRequest) {
   if !request.Stream { _ = writer.SendMapMessage(new(tailcfg.MapResponse)); return }
-  self := control.Node(request.NodeKey)
-  if self == nil { t.Error("missing registered map client"); return }
-  now := time.Now()
-  response := &tailcfg.MapResponse{
-   Node:self,
-   DERPMap:control.DERPMap,
-   Domain:"fixture.example.test",
-   DNSConfig:&tailcfg.DNSConfig{Proxied:true, Domains:[]string{"fixture.example.test"}},
-   UserProfiles:[]tailcfg.UserProfile{{ID:self.User, LoginName:"owner", DisplayName:"Fixture owner"}},
-   ControlTime:&now,
-  }
+  // Preserve the SDK fixture's registration/profile identity. Hand-building
+  // UserProfiles with a different LoginName can switch Windows profiles and
+  // discard the persisted key while a prior netmap is still active.
+  response, err := control.MapResponse(request)
+  if err != nil || response == nil { t.Errorf("map response: %v", err); return }
+  response.CertDomains = nil
   if err := writer.SendMapMessage(response); err != nil { return }
   <-ctx.Done()
  }
@@ -100,7 +95,7 @@ func runInteractiveAuth(t *testing.T, magicDNSOnly bool) {
  initial, err := first.Up(ctx)
  if err != nil { t.Fatal(err) }
  if initial.Self == nil || (magicDNSOnly && len(initial.CertDomains) != 0) || (!magicDNSOnly && len(initial.CertDomains) == 0) || initial.CurrentTailnet == nil || !initial.CurrentTailnet.MagicDNSEnabled { t.Fatalf("wrong capabilities: self=%t certificates=%d tailnet=%t magicDNS=%t", initial.Self != nil, len(initial.CertDomains), initial.CurrentTailnet != nil, initial.CurrentTailnet != nil && initial.CurrentTailnet.MagicDNSEnabled) }
- t.Log("local sign-in and HTTPS-disabled capabilities accepted")
+ t.Logf("local sign-in capabilities accepted (HTTPS disabled=%t)", magicDNSOnly)
  closeNode(first)
  second := start()
  restarted, err := second.Up(ctx)
