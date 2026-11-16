@@ -34,11 +34,18 @@ jobs:
         run: |
           [[ "$TARGET_SHA" =~ ^[0-9a-f]{40}$ ]]
           test "$(git rev-parse HEAD)" = "$TARGET_SHA"
+      - name: Keep this job off production Omnesis services
+        id: production-network
+        run: scripts/ci/production-network.sh isolate
       - name: lane [docker-security]
         run: scripts/docker-e2e/run.sh
       - name: Clean up dangling e2e images
         if: always()
         run: docker image prune -f --filter label=none >/dev/null 2>&1 || true
+
+      - name: Check nothing tried to reach production Omnesis services
+        if: ${{ always() && steps.production-network.outcome == 'success' }}
+        run: scripts/ci/production-network.sh verify
 
   hardened-systemd:
     runs-on: ubuntu-latest
@@ -56,6 +63,9 @@ jobs:
         run: |
           [[ "$TARGET_SHA" =~ ^[0-9a-f]{40}$ ]]
           test "$(git rev-parse HEAD)" = "$TARGET_SHA"
+      - name: Keep this job off production Omnesis services
+        id: production-network
+        run: scripts/ci/production-network.sh isolate
       - name: Prepare disk for the hardened Docker scenario
         run: scripts/ci/prepare-hardened-runner.sh
 
@@ -70,3 +80,7 @@ jobs:
       - name: Clean up dangling e2e images
         if: always()
         run: docker image prune -f --filter label=none >/dev/null 2>&1 || true
+
+      - name: Check nothing tried to reach production Omnesis services
+        if: ${{ always() && steps.production-network.outcome == 'success' }}
+        run: scripts/ci/production-network.sh verify

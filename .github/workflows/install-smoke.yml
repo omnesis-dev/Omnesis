@@ -35,6 +35,9 @@ jobs:
         run: |
           [[ "$TARGET_SHA" =~ ^[0-9a-f]{40}$ ]]
           test "$(git rev-parse HEAD)" = "$TARGET_SHA"
+      - name: Keep this job off production Omnesis services
+        id: production-network
+        run: scripts/ci/production-network.sh isolate
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
@@ -287,6 +290,10 @@ jobs:
           rm -f /tmp/verdaccio-ci-${{ github.run_id }}.yml
           rm -rf "$TEST_HOME" "$TEST_HOME-auto" "$TEST_HOME-boot"
 
+      - name: Check nothing tried to reach production Omnesis services
+        if: ${{ always() && steps.production-network.outcome == 'success' }}
+        run: scripts/ci/production-network.sh verify
+
   source:
     name: source install
     runs-on: ubuntu-latest
@@ -308,6 +315,9 @@ jobs:
         run: |
           [[ "$TARGET_SHA" =~ ^[0-9a-f]{40}$ ]]
           test "$(git rev-parse HEAD)" = "$TARGET_SHA"
+      - name: Keep this job off production Omnesis services
+        id: production-network
+        run: scripts/ci/production-network.sh isolate
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
@@ -355,3 +365,7 @@ jobs:
       - name: Cleanup
         if: always()
         run: rm -rf "$TEST_HOME" "$SOURCE_DIR" "$SOURCE_REMOTE"
+
+      - name: Check nothing tried to reach production Omnesis services
+        if: ${{ always() && steps.production-network.outcome == 'success' }}
+        run: scripts/ci/production-network.sh verify

@@ -57,6 +57,9 @@ jobs:
         with:
           ref: ${{ inputs.target_sha }}
           persist-credentials: false
+      - name: Keep this job off production Omnesis services
+        id: production-network
+        run: scripts/ci/production-network.sh isolate
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
@@ -73,7 +76,8 @@ jobs:
       - name: Exercise actual installer journey
         env:
           SCENARIO: ${{ matrix.scenario }}
-          NODE_OPTIONS: --max-old-space-size=3072
+          # Keeps the production network tripwire that the job preloads.
+          NODE_OPTIONS: "${{ env.NODE_OPTIONS }} --max-old-space-size=3072"
           CMAKE_BUILD_PARALLEL_LEVEL: "2"
           MAKEFLAGS: -j2
         run: E2E_WORK="$RUNNER_TEMP/installer-coverage" bash scripts/install-e2e/macos-variants.sh "$SCENARIO"
@@ -85,6 +89,10 @@ jobs:
           path: ${{ runner.temp }}/installer-coverage/result.json
           if-no-files-found: warn
           retention-days: 7
+
+      - name: Check nothing tried to reach production Omnesis services
+        if: ${{ always() && steps.production-network.outcome == 'success' }}
+        run: scripts/ci/production-network.sh verify
 
   update-interruption:
     if: ${{ inputs.extended }}

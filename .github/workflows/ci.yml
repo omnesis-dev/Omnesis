@@ -119,6 +119,9 @@ jobs:
         run: |
           [[ "$TARGET_SHA" =~ ^[0-9a-f]{40}$ ]]
           test "$(git rev-parse HEAD)" = "$TARGET_SHA"
+      - name: Keep this job off production Omnesis services
+        id: production-network
+        run: scripts/ci/production-network.sh isolate
       - name: Set up Node
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
@@ -179,7 +182,8 @@ jobs:
         # An 8 GB heap leaves headroom on the public Ubuntu runner's 16 GB RAM.
         # Drop this once we shard lint by package.
         env:
-          NODE_OPTIONS: "--max-old-space-size=8192"
+          # Keeps the production network tripwire that the job preloads.
+          NODE_OPTIONS: "${{ env.NODE_OPTIONS }} --max-old-space-size=8192"
         run: exec node scripts/run-check.mjs lint
 
       - name: lane [format]
@@ -203,6 +207,10 @@ jobs:
       - name: lane [extension-package]
         if: ${{ inputs.scope == 'full' || inputs.projects == 'all' || contains(format(',{0},', inputs.projects), ',@omnesis/extension,') }}
         run: npm --prefix extension run package:store
+
+      - name: Check nothing tried to reach production Omnesis services
+        if: ${{ always() && steps.production-network.outcome == 'success' }}
+        run: scripts/ci/production-network.sh verify
 
   # ------------------------------------------------------------------
   # unit — every `*.test.ts` except `*.e2e.test.ts`, plus the gateway-spawning
@@ -229,6 +237,9 @@ jobs:
         run: |
           [[ "$TARGET_SHA" =~ ^[0-9a-f]{40}$ ]]
           test "$(git rev-parse HEAD)" = "$TARGET_SHA"
+      - name: Keep this job off production Omnesis services
+        id: production-network
+        run: scripts/ci/production-network.sh isolate
       - name: Set up Node
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
@@ -280,6 +291,10 @@ jobs:
           esac
           exec node scripts/run-check.mjs smoke
 
+      - name: Check nothing tried to reach production Omnesis services
+        if: ${{ always() && steps.production-network.outcome == 'success' }}
+        run: scripts/ci/production-network.sh verify
+
   # ------------------------------------------------------------------
   # e2e — the spawned-gateway suites, sharded across runners.
   #
@@ -314,6 +329,9 @@ jobs:
         run: |
           [[ "$TARGET_SHA" =~ ^[0-9a-f]{40}$ ]]
           test "$(git rev-parse HEAD)" = "$TARGET_SHA"
+      - name: Keep this job off production Omnesis services
+        id: production-network
+        run: scripts/ci/production-network.sh isolate
       - name: Set up Node
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
@@ -367,6 +385,10 @@ jobs:
           TOTAL: ${{ matrix.total }}
           FILES: ${{ matrix.files }}
 
+      - name: Check nothing tried to reach production Omnesis services
+        if: ${{ always() && steps.production-network.outcome == 'success' }}
+        run: scripts/ci/production-network.sh verify
+
   # ------------------------------------------------------------------
   # e2e-embedder — the semantic search suites against a real embedding model.
   #
@@ -393,6 +415,9 @@ jobs:
         run: |
           [[ "$TARGET_SHA" =~ ^[0-9a-f]{40}$ ]]
           test "$(git rev-parse HEAD)" = "$TARGET_SHA"
+      - name: Keep this job off production Omnesis services
+        id: production-network
+        run: scripts/ci/production-network.sh isolate
       - name: Set up Node
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
@@ -425,6 +450,10 @@ jobs:
         if: failure()
         run: docker logs omnesis-test-embedder-8001 2>&1 | tail -80 || true
 
+      - name: Check nothing tried to reach production Omnesis services
+        if: ${{ always() && steps.production-network.outcome == 'success' }}
+        run: scripts/ci/production-network.sh verify
+
   # ------------------------------------------------------------------
   # node-macos — cross-platform validation on macOS (arm64). Installs
   # dependencies (so the native modules — better-sqlite3, duckdb — are
@@ -454,6 +483,9 @@ jobs:
         run: |
           [[ "$TARGET_SHA" =~ ^[0-9a-f]{40}$ ]]
           test "$(git rev-parse HEAD)" = "$TARGET_SHA"
+      - name: Keep this job off production Omnesis services
+        id: production-network
+        run: scripts/ci/production-network.sh isolate
       - name: Set up Node
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
@@ -467,7 +499,8 @@ jobs:
         # The macOS runner's smaller memory gives Node a ~2 GB default heap,
         # which the whole-repo `tsc --build` outgrows.
         env:
-          NODE_OPTIONS: "--max-old-space-size=4096"
+          # Keeps the production network tripwire that the job preloads.
+          NODE_OPTIONS: "${{ env.NODE_OPTIONS }} --max-old-space-size=4096"
         run: exec node scripts/run-check.mjs typecheck
 
       - name: lane [macos-collector-docker-compatibility]
@@ -498,6 +531,10 @@ jobs:
       - name: lane [hermes]
         run: python3 -B packages/agent-integration/hermes/test_adapter.py
 
+      - name: Check nothing tried to reach production Omnesis services
+        if: ${{ always() && steps.production-network.outcome == 'success' }}
+        run: scripts/ci/production-network.sh verify
+
   # ------------------------------------------------------------------
   # portal-e2e — Playwright DOM tests against a real gateway booted
   # under tsx over HTTPS (see playwright.config.ts).
@@ -524,6 +561,9 @@ jobs:
         run: |
           [[ "$TARGET_SHA" =~ ^[0-9a-f]{40}$ ]]
           test "$(git rev-parse HEAD)" = "$TARGET_SHA"
+      - name: Keep this job off production Omnesis services
+        id: production-network
+        run: scripts/ci/production-network.sh isolate
       - name: Set up Node
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
@@ -540,3 +580,7 @@ jobs:
         run: exec node scripts/run-check.mjs portal
         env:
           TZ: UTC
+
+      - name: Check nothing tried to reach production Omnesis services
+        if: ${{ always() && steps.production-network.outcome == 'success' }}
+        run: scripts/ci/production-network.sh verify

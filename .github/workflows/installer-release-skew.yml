@@ -55,6 +55,9 @@ jobs:
         run: |
           [[ "$TARGET_SHA" =~ ^[0-9a-f]{40}$ ]]
           test "$(git rev-parse HEAD)" = "$TARGET_SHA"
+      - name: Keep this job off production Omnesis services
+        id: production-network
+        run: scripts/ci/production-network.sh isolate
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
@@ -65,6 +68,10 @@ jobs:
         run: npm ci --ignore-scripts --no-audit --no-fund
       - name: Check install.sh against the newest release
         run: node scripts/install-e2e/release-skew.mjs contract --work "$RUNNER_TEMP/release-skew"
+
+      - name: Check nothing tried to reach production Omnesis services
+        if: ${{ always() && steps.production-network.outcome == 'success' }}
+        run: scripts/ci/production-network.sh verify
 
   native:
     name: install.sh against the newest release (no terminal and a terminal)
@@ -83,6 +90,9 @@ jobs:
         run: |
           [[ "$TARGET_SHA" =~ ^[0-9a-f]{40}$ ]]
           test "$(git rev-parse HEAD)" = "$TARGET_SHA"
+      - name: Keep this job off production Omnesis services
+        id: production-network
+        run: scripts/ci/production-network.sh isolate
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
@@ -91,6 +101,10 @@ jobs:
       - name: Diagnostics (redacted)
         if: failure() || cancelled()
         run: E2E_WORK="$RUNNER_TEMP/release-skew" scripts/install-e2e/diagnostics.sh
+
+      - name: Check nothing tried to reach production Omnesis services
+        if: ${{ always() && steps.production-network.outcome == 'success' }}
+        run: scripts/ci/production-network.sh verify
 
   docker:
     name: install.sh --docker against the newest images
@@ -108,8 +122,15 @@ jobs:
         run: |
           [[ "$TARGET_SHA" =~ ^[0-9a-f]{40}$ ]]
           test "$(git rev-parse HEAD)" = "$TARGET_SHA"
+      - name: Keep this job off production Omnesis services
+        id: production-network
+        run: scripts/ci/production-network.sh isolate
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
       - name: install.sh --docker, the launcher, and the re-run on a terminal
         run: E2E_WORK="$RUNNER_TEMP/release-skew" scripts/install-e2e/release-skew.sh docker
+
+      - name: Check nothing tried to reach production Omnesis services
+        if: ${{ always() && steps.production-network.outcome == 'success' }}
+        run: scripts/ci/production-network.sh verify
