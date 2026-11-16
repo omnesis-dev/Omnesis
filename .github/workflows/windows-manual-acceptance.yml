@@ -1,0 +1,73 @@
+name: Windows manual runtime diagnosis
+on:
+  workflow_dispatch:
+    inputs:
+      diagnostics_only:
+        description: Run storage and bridge diagnostics without repeating manual acceptance
+        type: boolean
+        default: false
+permissions:
+  contents: read
+jobs:
+  real-runtime:
+    if: ${{ !inputs.diagnostics_only }}
+    runs-on: windows-latest
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+      TZ: UTC
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: "24"
+          cache: npm
+      - name: Reject incomplete operation success at the portable result boundary
+        run: node --test scripts/ci/manual-windows-acceptance/result-acceptance.node-test.mjs scripts/ci/manual-windows-acceptance/preflight.node-test.mjs scripts/ci/manual-windows-acceptance/operation-diagnostic.node-test.mjs scripts/ci/manual-windows-acceptance/cli-failure-kinds.node-test.mjs
+      - name: Check immutable target and native prerequisites
+        env:
+          TARGET_SHA: ${{ github.sha }}
+        run: |
+          if ($env:TARGET_SHA -notmatch '^[0-9a-f]{40}$') { throw 'Invalid target revision' }
+          if ((git rev-parse HEAD) -ne $env:TARGET_SHA) { throw 'Unexpected source revision' }
+          node -e "if(process.platform!=='win32'||process.arch!=='x64')process.exit(1)"
+          if ($LASTEXITCODE) { throw 'Unexpected Node architecture' }
+          if (-not (Get-Command openssl -ErrorAction SilentlyContinue)) {
+            $opensslDir = Join-Path $env:ProgramFiles 'Git\usr\bin'
+            if (-not (Test-Path (Join-Path $opensslDir 'openssl.exe'))) { throw 'Missing OpenSSL' }
+            $opensslDir | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+          }
+      - name: Install exact Windows dependencies
+        run: node scripts/ci/npm-ci.mjs --no-audit --no-fund
+      - name: Prepare actual encrypted SQLite recovery bindings
+        run: node scripts/ci/build-windows-sqlite.mjs
+      - name: Prepare checksum-verified native ASR acceptance inputs
+        run: node scripts/ci/prepare-whisper-test-inputs.mjs
+      - name: Prove keyless SQLite refusal and plaintext negative control
+        run: node --test scripts/ci/manual-windows-acceptance/sqlite-probe.node-test.mjs
+      - name: Build and prove actual patched MSVC vector dependency
+        run: node scripts/ci/build-windows-usearch.mjs
+      - name: Build supported runtime
+        run: node scripts/build-projects.mjs
+      - name: Stage fresh runtime and pin source and package provenance
+        env:
+          TARGET_SHA: ${{ github.sha }}
+        run: node scripts/ci/manual-windows-acceptance/prepare-hosted-runtime.mjs "$env:GITHUB_WORKSPACE" "$env:RUNNER_TEMP\omnesis-manual-runtime" "$env:TARGET_SHA"
+      - name: Exercise real source and compiled Gateway and Collector
+        run: node scripts/ci/manual-windows-acceptance/run-hosted-acceptance.mjs "$env:GITHUB_WORKSPACE" "$env:RUNNER_TEMP\omnesis-manual-runtime"
+      - name: Upload sanitized results only
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: windows-manual-runtime-sanitized
+          if-no-files-found: warn
+          retention-days: 7
+          path: |
+            ${{ runner.temp }}/omnesis-manual-runtime/public/acceptance-summary.json
+            ${{ runner.temp }}/omnesis-manual-runtime/public/provenance-summary.json

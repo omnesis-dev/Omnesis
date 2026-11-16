@@ -1,0 +1,166 @@
+{
+  "provenance": [
+    {
+      "id": "provenance-assert-001",
+      "method": "match",
+      "sourceLine": 19
+    },
+    {
+      "id": "provenance-assert-002",
+      "method": "equal",
+      "sourceLine": 21
+    },
+    {
+      "id": "provenance-assert-003",
+      "method": "ok",
+      "sourceLine": 26
+    },
+    {
+      "id": "provenance-assert-004",
+      "method": "notEqual",
+      "sourceLine": 50
+    },
+    {
+      "id": "provenance-assert-005",
+      "method": "match",
+      "sourceLine": 57
+    },
+    {
+      "id": "provenance-assert-006",
+      "method": "ok",
+      "sourceLine": 58
+    },
+    {
+      "id": "provenance-assert-007",
+      "method": "match",
+      "sourceLine": 64
+    },
+    {
+      "id": "provenance-assert-008",
+      "method": "ok",
+      "sourceLine": 65
+    },
+    {
+      "id": "provenance-assert-009",
+      "method": "equal",
+      "sourceLine": 67
+    },
+    {
+      "id": "provenance-assert-010",
+      "method": "equal",
+      "sourceLine": 77
+    },
+    {
+      "id": "provenance-assert-011",
+      "method": "ok",
+      "sourceLine": 84
+    },
+    {
+      "id": "provenance-assert-012",
+      "method": "ok",
+      "sourceLine": 92
+    },
+    {
+      "id": "provenance-assert-013",
+      "method": "equal",
+      "sourceLine": 98
+    },
+    {
+      "id": "provenance-assert-014",
+      "method": "equal",
+      "sourceLine": 108
+    },
+    {
+      "id": "provenance-assert-015",
+      "method": "ok",
+      "sourceLine": 122
+    },
+    {
+      "id": "provenance-assert-016",
+      "method": "equal",
+      "sourceLine": 127
+    },
+    {
+      "id": "provenance-assert-017",
+      "method": "ok",
+      "sourceLine": 136
+    },
+    {
+      "id": "provenance-assert-018",
+      "method": "ok",
+      "sourceLine": 140
+    },
+    {
+      "id": "provenance-assert-019",
+      "method": "ok",
+      "sourceLine": 158
+    },
+    {
+      "id": "provenance-assert-020",
+      "method": "ok",
+      "sourceLine": 165
+    },
+    {
+      "id": "provenance-assert-021",
+      "method": "ok",
+      "sourceLine": 170
+    },
+    {
+      "id": "provenance-assert-022",
+      "method": "equal",
+      "sourceLine": 174
+    },
+    {
+      "id": "provenance-assert-023",
+      "method": "ok",
+      "sourceLine": 191
+    }
+  ],
+  "manualPreflight": [
+    {
+      "id": "manual-assert-001",
+      "method": "ok",
+      "sourceLine": 39
+    },
+    {
+      "id": "manual-assert-002",
+      "method": "equal",
+      "sourceLine": 40
+    },
+    {
+      "id": "manual-assert-003",
+      "method": "equal",
+      "sourceLine": 41
+    },
+    {
+      "id": "manual-assert-004",
+      "method": "equal",
+      "sourceLine": 106
+    },
+    {
+      "id": "manual-assert-005",
+      "method": "equal",
+      "sourceLine": 107
+    },
+    {
+      "id": "manual-assert-006",
+      "method": "equal",
+      "sourceLine": 108
+    },
+    {
+      "id": "manual-assert-007",
+      "method": "ok",
+      "sourceLine": 109
+    },
+    {
+      "id": "manual-assert-008",
+      "method": "ok",
+      "sourceLine": 112
+    },
+    {
+      "id": "manual-assert-009",
+      "method": "ok",
+      "sourceLine": 159
+    }
+  ]
+}
