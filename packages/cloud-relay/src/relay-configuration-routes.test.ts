@@ -33,12 +33,16 @@ test("public preparation discloses only bounded hosted routing metadata and reje
     const response = await fetch(`${url}/_relay/v2/config?gatewayId=${gatewayId.toUpperCase()}`),
       value = await response.json();
     expect(response.headers.get("cache-control")).toBe("no-store");
-    expect(value).toMatchObject({
+    // The whole response, so any added field (a key, token or account detail) fails here.
+    expect(value).toStrictEqual({
+      protocol: 2,
       gatewayId,
       publicOrigin: `https://${hostedGatewayHostname(gatewayId, "relay.example.test")}:${(relay.dataServer.address() as AddressInfo).port}`,
+      managedDomain: "relay.example.test",
+      invitationRequired: false,
+      signup: false,
       dnsChallenges: false,
     });
-    expect(JSON.stringify(value)).not.toMatch(/token|secret|key|account/i);
     for (const query of [
       "",
       "gatewayId=invalid",
