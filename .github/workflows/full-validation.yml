@@ -2214,10 +2214,10 @@ jobs:
           node --input-type=module <<'NODE'
           import {readFileSync,writeFileSync} from 'node:fs';
           function change(file,from,to){const text=readFileSync(file,'utf8');if(!text.includes(from))throw Error('Missing diagnostic seam');writeFileSync(file,text.replace(from,to));}
-          change('scripts/lib/check-process.mjs','return result.exitCode ?? 1;',`process.stderr.write('[AUDIT_BOUNDARY] '+JSON.stringify({pid:process.pid,entry:args[0]?.split(/[\\/]/).at(-1),exitCode:result.exitCode,signal:result.signal,failure:result.failure,cleanupMarked:Object.hasOwn(result,'cleanupFailure')})+'\n'); return result.exitCode ?? 1;`);
-          change('scripts/ci/windows-checks.mjs','if (code !== 0 && exitCode === 0) exitCode = code;',`process.stderr.write('[AUDIT_WINDOWS_TASK] '+JSON.stringify({pid:process.pid,code})+'\n'); if (code !== 0 && exitCode === 0) exitCode = code;`);
-          change('scripts/ci/with-test-embedder.mjs','return exitCode;',`process.stderr.write('[AUDIT_EMBEDDER_RETURN] '+JSON.stringify({pid:process.pid,exitCode,globalExitCode:process.exitCode})+'\n'); return exitCode;`);
-          for(const file of ['scripts/ci/with-test-embedder.mjs','scripts/ci/windows-checks.mjs','scripts/run-check.mjs']){const text=readFileSync(file,'utf8');writeFileSync(file,`process.once('exit',code=>process.stderr.write('[AUDIT_NODE_EXIT] '+JSON.stringify({entry:${JSON.stringify(file)},pid:process.pid,code})+'\n'));\n`+text);}
+          change('scripts/lib/check-process.mjs','return result.exitCode ?? 1;',`process.stderr.write('[AUDIT_BOUNDARY] '+JSON.stringify({pid:process.pid,entry:args[0]?.endsWith('windows-checks.mjs')?'windows-checks':args[0]?.endsWith('run-check.mjs')?'run-check':'other',exitCode:result.exitCode,signal:result.signal,failure:result.failure,cleanupMarked:Object.hasOwn(result,'cleanupFailure')})+String.fromCharCode(10)); return result.exitCode ?? 1;`);
+          change('scripts/ci/windows-checks.mjs','if (code !== 0 && exitCode === 0) exitCode = code;',`process.stderr.write('[AUDIT_WINDOWS_TASK] '+JSON.stringify({pid:process.pid,code})+String.fromCharCode(10)); if (code !== 0 && exitCode === 0) exitCode = code;`);
+          change('scripts/ci/with-test-embedder.mjs','return exitCode;',`process.stderr.write('[AUDIT_EMBEDDER_RETURN] '+JSON.stringify({pid:process.pid,exitCode,globalExitCode:process.exitCode})+String.fromCharCode(10)); return exitCode;`);
+          for(const file of ['scripts/ci/with-test-embedder.mjs','scripts/ci/windows-checks.mjs','scripts/run-check.mjs']){const text=readFileSync(file,'utf8');writeFileSync(file,`process.once('exit',code=>process.stderr.write('[AUDIT_NODE_EXIT] '+JSON.stringify({entry:${JSON.stringify(file)},pid:process.pid,code})+String.fromCharCode(10)));`+String.fromCharCode(10)+text);}
           NODE
       - name: Repeat unchanged real embedding and owned E2E commands with exit observations
         env:
