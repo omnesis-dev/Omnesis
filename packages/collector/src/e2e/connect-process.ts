@@ -47,10 +47,32 @@ export interface SpawnConnectOptions {
   inheritEnv?: boolean;
 }
 
+export interface SpawnCliOptions extends Omit<SpawnConnectOptions, "fakeBin" | "cliConfigDir"> {
+  /** Complete CLI arguments, including the command name. */
+  args: readonly string[];
+  fakeBin?: string;
+  cliConfigDir?: string;
+}
+
+export interface SpawnedCli extends SpawnedConnect {
+  stdout(): string;
+  stderr(): string;
+  closed(): boolean;
+  stop(): Promise<void>;
+}
+
 export function spawnConnect(
   options: SpawnConnectOptions,
   dependencies: { registration?: (ready: Promise<void>) => Promise<void> } = {},
 ): SpawnedConnect {
+  return spawnCliProcess({ ...options, args: ["connect", ...options.args] }, dependencies);
+}
+
+/** Finite CLI commands share the same actual exit and physical closure owner. */
+export function spawnCliProcess(
+  options: SpawnCliOptions,
+  dependencies: { registration?: (ready: Promise<void>) => Promise<void> } = {},
+): SpawnedCli {
   const command = e2eTsxCommand(join(options.repositoryRoot, "packages/cli/src/index.ts"));
   const inheritedPath = options.env?.PATH ?? process.env.PATH ?? "";
   const childOptions = {
@@ -59,17 +81,17 @@ export function spawnConnect(
       ...(options.inheritEnv === false ? {} : process.env),
       ...options.env,
       PATH: [
-        options.fakeBin,
+        ...(options.fakeBin ? [options.fakeBin] : []),
         join(options.repositoryRoot, "node_modules", ".bin"),
         inheritedPath,
       ].join(delimiter),
-      OMNESIS_CONFIG_DIR: options.cliConfigDir,
+      ...(options.cliConfigDir !== undefined ? { OMNESIS_CONFIG_DIR: options.cliConfigDir } : {}),
       NO_COLOR: "1",
     },
     detached: process.platform !== "win32",
   };
-  const args = [...command.args, "connect", ...options.args];
-  // Connect is a finite command: its actual Node root determines the status,
+  const args = [...command.args, ...options.args];
+  // A finite command's actual Node root determines the status,
   // and the kernel joins remaining descendants before output is published.
   const native =
     process.platform === "win32"
@@ -87,18 +109,23 @@ export function spawnConnect(
     });
   native?.stdin.end();
   const output: string[] = [];
-  const capture = (value: string): void => {
+  const captured = { stdout: "", stderr: "" };
+  const capture = (value: string, stream: "stdout" | "stderr"): void => {
     if (!value) return;
     output.push(value);
     if (output.length > 200) output.splice(0, output.length - 200);
+    captured[stream] = `${captured[stream]}${value}`.slice(-8 * 1024 * 1024);
   };
-  for (const stream of Object.values(e2eProcessOutput(child))) {
+  const streams = e2eProcessOutput(child);
+  for (const name of ["stdout", "stderr"] as const) {
+    const stream = streams[name];
     const decoder = new StringDecoder("utf8");
-    stream?.on("data", (chunk: Buffer) => capture(decoder.write(chunk)));
-    stream?.once("end", () => capture(decoder.end()));
+    stream?.on("data", (chunk: Buffer) => capture(decoder.write(chunk), name));
+    stream?.once("end", () => capture(decoder.end(), name));
   }
   const failures: unknown[] = [];
   let stopping: Promise<void> | undefined;
+  let physicallyClosed = false;
   let nativeStopped = false;
   const closed = new Promise<void>((resolve) => child.once("close", () => resolve()));
   const application = new Promise<
@@ -108,28 +135,32 @@ export function spawnConnect(
     child.once("error", () => resolve(undefined));
   });
   const stop = (): Promise<void> =>
-    (stopping ??= native
-      ? (async () => {
-          const errors: unknown[] = [];
-          if (child.exitCode === null && child.signalCode === null) {
-            nativeStopped = true;
-            try {
-              native.kill("SIGKILL");
-            } catch (error) {
-              errors.push(error);
+    (stopping ??= (
+      native
+        ? (async () => {
+            const errors: unknown[] = [];
+            if (child.exitCode === null && child.signalCode === null) {
+              nativeStopped = true;
+              try {
+                native.kill("SIGKILL");
+              } catch (error) {
+                errors.push(error);
+              }
             }
-          }
-          const results = await Promise.allSettled([closed, native.jobClosed]);
-          if (results[1]!.status === "rejected")
-            errors.push(
-              Object.assign(
-                new Error("Connect Job cleanup was not confirmed", { cause: results[1]!.reason }),
-                { cleanupFailure: results[1]!.reason },
-              ),
-            );
-          if (errors.length) throw connectFailure(errors);
-        })()
-      : killSubprocessGroup(child));
+            const results = await Promise.allSettled([closed, native.jobClosed]);
+            if (results[1]!.status === "rejected")
+              errors.push(
+                Object.assign(
+                  new Error("Connect Job cleanup was not confirmed", { cause: results[1]!.reason }),
+                  { cleanupFailure: results[1]!.reason },
+                ),
+              );
+            if (errors.length) throw connectFailure(errors);
+          })()
+        : killSubprocessGroup(child)
+    ).then(() => {
+      physicallyClosed = true;
+    }));
   let registration: Promise<void>;
   try {
     const ready = native?.jobReady ?? registerSubprocessGroup(child);
@@ -137,12 +168,16 @@ export function spawnConnect(
   } catch (error) {
     registration = Promise.reject(error);
   }
-  const spawned: SpawnedConnect = {
+  const spawned: SpawnedCli = {
     child,
     output,
     spawnError: null,
     exitResult: null,
     exit: Promise.resolve({ code: null, signal: null }),
+    stdout: () => captured.stdout,
+    stderr: () => captured.stderr,
+    closed: () => physicallyClosed,
+    stop: () => terminateConnect(spawned),
   };
   child.on("error", (error) => {
     spawned.spawnError ??= error;

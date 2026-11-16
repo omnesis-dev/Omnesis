@@ -22,6 +22,7 @@ import {
   tlsSpkiFingerprint,
 } from "@omnesis/cloud-relay";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
+import { closeEnrollmentFixture } from "./enrollment-fixture-cleanup.js";
 import {
   EnrollmentGateway,
   EnrollmentWorld,
@@ -189,33 +190,26 @@ describe.skipIf(!browserReady)(
     }, gatewayBootBudgetMs() + 120_000);
 
     afterAll(async () => {
-      const failures: unknown[] = [];
-      const close = async (operation: () => unknown) => {
-        try {
-          await operation();
-        } catch (error) {
-          failures.push(error);
-        }
-      };
       try {
-        for (const run of terminalRuns) {
-          await close(() => run.kill());
-          if (!run.closed()) failures.push(new Error("Enrollment terminal closure is unconfirmed"));
-        }
-        // Independent owners still close when a preceding actor fails. All
-        // shared inputs stay in place until every close has succeeded.
-        await close(() => browser?.close());
-        await close(() => gateway?.close());
-        await close(() => world?.close());
+        await closeEnrollmentFixture(world ? directory : undefined, [
+          ...terminalRuns.map((run) => async () => {
+            await run.kill();
+            if (!run.closed()) {
+              throw Object.assign(new Error("Enrollment terminal closure is unconfirmed"), {
+                cleanupFailure: undefined,
+              });
+            }
+          }),
+          () => browser?.close(),
+          () => gateway?.close(),
+          () => world?.close(),
+        ]);
       } finally {
         if (priorCaFile === undefined) delete process.env.OMNESIS_CLOUD_RELAY_GATEWAY_CA_FILE;
         else process.env.OMNESIS_CLOUD_RELAY_GATEWAY_CA_FILE = priorCaFile;
         if (priorEnabled === undefined) delete process.env.OMNESIS_CLOUD_RELAY_ENABLED;
         else process.env.OMNESIS_CLOUD_RELAY_ENABLED = priorEnabled;
       }
-      if (failures.length)
-        throw new AggregateError(failures, "Enrollment security cleanup failed; inputs retained");
-      if (directory) await rm(directory, { recursive: true, force: true });
     }, 60_000);
 
     test("TM-01: on the machine where the sign-in finished, the browser hands the CLI its completion over loopback, but a sign-in made on the relay's page is held, never joined on its own", async () => {
@@ -483,12 +477,10 @@ describe("one client cannot use up the rate limits of another", () => {
   }, gatewayBootBudgetMs() + 60_000);
 
   afterAll(async () => {
-    try {
-      await gateway?.close();
-      await world?.close();
-    } finally {
-      if (directory) await rm(directory, { recursive: true, force: true });
-    }
+    await closeEnrollmentFixture(world ? directory : undefined, [
+      () => gateway?.close(),
+      () => world?.close(),
+    ]);
   }, 60_000);
 
   test("the gateway counts each relayed client apart: one exhausting its pairing calls leaves another's alone", async () => {
