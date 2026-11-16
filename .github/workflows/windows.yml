@@ -86,11 +86,13 @@ jobs:
           cache: npm
 
       - name: Set up Go for the private transport boundary
-        if: ${{ matrix.lane == 'focused' || matrix.lane == 'unit' }}
+        if: ${{ matrix.lane != 'portal' }}
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: packages/tailnet-helper/go.mod
-          cache-dependency-path: packages/tailnet-helper/go.sum
+          cache-dependency-path: |
+            packages/tailnet-helper/go.sum
+            scripts/tailnet-test/control/go.sum
 
       - name: Privacy scan
         run: node scripts/pii-scan.mjs --all
@@ -166,12 +168,22 @@ jobs:
         if: ${{ !cancelled() && matrix.lane == 'unit' && steps.dependencies.outcome == 'success' && steps.native_sqlite.outcome == 'success' && steps.native_vector.outcome == 'success' }}
         run: node scripts/ci/windows-checks.mjs unit
 
+      - name: Prove real portable network fixture transports
+        # Run once per full sweep; both E2E shards use these native tools.
+        if: ${{ matrix.lane == 'e2e' && matrix.shard != '2/2' }}
+        env:
+          OMNESIS_TAILNET_TOOLS_DIR: ${{ runner.temp }}/omnesis-tailnet-tools
+          GOMAXPROCS: "2"
+        run: node scripts/ci/portable-transports-proof.mjs
+
       - name: Full Windows E2E shard with the real reference embedder
         if: ${{ matrix.lane == 'e2e' }}
         env:
           SHARD: ${{ matrix.shard }}
           OMNESIS_WINDOWS_E2E_FILES: ${{ github.event_name == 'workflow_dispatch' && inputs.lane == 'e2e' && inputs.e2e_files || '' }}
           OMNESIS_TEST_EMBEDDER_CACHE: ${{ runner.temp }}/omnesis-test-embedder
+          OMNESIS_TAILNET_TOOLS_DIR: ${{ runner.temp }}/omnesis-tailnet-tools
+          GOMAXPROCS: "2"
         run: |
           $checkArgs = @('scripts/ci/with-test-embedder.mjs', 'scripts/ci/windows-checks.mjs', 'e2e')
           if ($env:SHARD) { $checkArgs += "--shard=$env:SHARD" }

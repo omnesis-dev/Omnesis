@@ -91,6 +91,40 @@ describe("Windows CI coverage", () => {
     );
   });
 
+  test("full E2E supplies Go and proves actual peer transports once without expanding PR builds", () => {
+    const steps = workflow().jobs.windows.steps;
+    const go = steps.find(({ uses }) => uses?.startsWith("actions/setup-go@"));
+    const proofIndex = steps.findIndex(
+      ({ run }) => run === "node scripts/ci/portable-transports-proof.mjs",
+    );
+    expect(proofIndex).toBeGreaterThan(-1);
+    const enabled = (step, matrix) => runInNewContext(step.if.slice(3, -2), { matrix });
+    for (const matrix of [
+      { lane: "e2e", shard: "1/2" },
+      { lane: "e2e", shard: "2/2" },
+      { lane: "e2e" },
+    ]) {
+      expect(enabled(go, matrix)).toBe(true);
+      expect(enabled(steps[proofIndex], matrix)).toBe(matrix.shard !== "2/2");
+    }
+    for (const lane of ["focused", "unit", "portal"])
+      expect(enabled(steps[proofIndex], { lane })).toBe(false);
+    const e2eIndex = steps.findIndex(
+      ({ name }) => name === "Full Windows E2E shard with the real reference embedder",
+    );
+    expect(proofIndex).toBeLessThan(e2eIndex);
+    expect(steps[proofIndex].env.OMNESIS_TAILNET_TOOLS_DIR).toBe(
+      steps[e2eIndex].env.OMNESIS_TAILNET_TOOLS_DIR,
+    );
+    for (const file of [
+      "packages/collector/src/e2e/portable-tailnet-actor.test.ts",
+      "packages/collector/src/e2e/tailnet-machine-env.test.ts",
+      "packages/collector/src/e2e/tailnet-fixture-cleanup.test.ts",
+      "packages/cli/src/tailscale-join.test.ts",
+    ])
+      expect(FOCUSED_UNIT_FILES).toContain(file);
+  });
+
   test("runs exact public revisions on hosted Windows with pinned actions and read-only credentials", () => {
     const config = workflow();
     expect(config.permissions).toEqual({ contents: "read" });
