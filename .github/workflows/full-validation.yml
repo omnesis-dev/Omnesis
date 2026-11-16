@@ -51,6 +51,7 @@ on:
             terminal-enrollment,
             owned-e2e-three-os,
             product-tailnet-node,
+            portable-localapi,
             stream-timeout,
             provider-ownership,
           ]
@@ -506,7 +507,7 @@ jobs:
       - name: Validate real Go-to-Node streaming and WebSocket transport
         run: node --import tsx scripts/ci/tailnet-transport.mjs
   portable-tailnet-control:
-    if: ${{ inputs.scope == 'portable-tailnet-control' || inputs.scope == 'product-tailnet-node' }}
+    if: ${{ inputs.scope == 'portable-tailnet-control' || inputs.scope == 'product-tailnet-node' || inputs.scope == 'portable-localapi' }}
     strategy:
       fail-fast: false
       max-parallel: 1
@@ -527,8 +528,21 @@ jobs:
           cache-dependency-path: packages/tailnet-helper/go.sum
       - name: Format the diagnostic with its pinned Go toolchain
         working-directory: scripts/ci/audit-portable-tailnet-control
-        run: gofmt -w control_test.go auth_test.go map_stream_test.go product_node_test.go
+        run: gofmt -w control_test.go auth_test.go map_stream_test.go product_node_test.go localapi_bridge_test.go localapi_bridge_windows_test.go localapi_bridge_posix_test.go
+      - name: Build the official pinned Tailscale CLI
+        if: inputs.scope == 'portable-localapi' || inputs.scope == 'portable-tailnet-control'
+        env:
+          GOBIN: ${{ runner.temp }}/fixture-tailnet-cli
+        run: go install -p 2 tailscale.com/cmd/tailscale@v1.104.7
+      - name: Prove the official CLI reads the real private LocalAPI
+        if: inputs.scope == 'portable-localapi'
+        working-directory: scripts/ci/audit-portable-tailnet-control
+        env:
+          PORTABLE_TAILSCALE_CLI_DIR: ${{ runner.temp }}/fixture-tailnet-cli
+        run: go test -mod=mod -p 2 -failfast -count=3 -timeout 3m -run '^TestOfficialCLIThroughPrivateLocalAPI$' -v ./...
       - name: Prove a portable local control plane and real encrypted userspace traffic
+        env:
+          PORTABLE_TAILSCALE_CLI_DIR: ${{ runner.temp }}/fixture-tailnet-cli
         if: inputs.scope == 'portable-tailnet-control'
         working-directory: scripts/ci/audit-portable-tailnet-control
         run: go test -mod=mod -p 2 -failfast -count=5 -timeout 6m -v ./...
