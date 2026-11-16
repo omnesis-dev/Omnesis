@@ -122,7 +122,7 @@ async function remoteGateway(page: Page, flags: { cloudRelay: boolean; tailscale
       setupCompletedAt: null,
       first: "tailscale",
       features: flags,
-      publicBaseUrl: { serving: null, configured: null, restartNeeded: false },
+      publicBaseUrl: { configured: null, setByEnvironment: false },
     },
     relay: relayNone(),
     tailscale: tailscaleOff(),
@@ -177,9 +177,8 @@ async function remoteGateway(page: Page, flags: { cloudRelay: boolean; tailscale
     const body = route.request().postDataJSON();
     calls.push(["config", "PATCH", body]);
     state.remote.publicBaseUrl = {
-      serving: null,
       configured: body.gateway.publicBaseUrl,
-      restartNeeded: true,
+      setByEnvironment: false,
     };
     return route.fulfill({ json: { ok: true } });
   });
@@ -370,7 +369,9 @@ test("my own setup: Tailscale on this computer refused with its command, and my 
     "can't tell whether the address is reachable from outside",
   );
   await button(page, "Use this address").click();
-  await expect(page.getByText("Restart the gateway to start using it")).toBeVisible();
+  // Saved, the address is in use at once: no restart to ask for.
+  await expect(page.getByText("This gateway uses this address.")).toBeVisible();
+  await expect(page.getByText("Restart the gateway")).toHaveCount(0);
   expect(gateway.calls.filter(([kind]) => kind === "config")).toEqual([
     ["config", "PATCH", { gateway: { publicBaseUrl: "https://omnesis.example.org" } }],
   ]);

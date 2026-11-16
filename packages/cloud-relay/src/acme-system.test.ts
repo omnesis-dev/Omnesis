@@ -258,6 +258,7 @@ test("managed setup discovers hosted routing, enrolls without Google, obtains a 
   const { getRequestListener } = await import("@hono/node-server");
   const { createDatabase } = await import("../../gateway/src/db.js");
   const { createServer: createGatewayApp } = await import("../../gateway/src/server.js");
+  const { fixedPublicAddress } = await import("../../gateway/src/public-address.js");
   const databaseFile = join(directory, "managed-gateway.sqlite"),
     db = createDatabase(databaseFile);
   const { createNodeWebSocket } = await import("@hono/node-ws");
@@ -276,7 +277,7 @@ test("managed setup discovers hosted routing, enrolls without Google, obtains a 
   let manager: Awaited<ReturnType<typeof GatewayCloudRelayManagement.open>> | undefined = undefined;
   const app = createGatewayApp(db, databaseFile, {
     configDir: directory,
-    publicBaseUrl: "https://direct.example.test",
+    publicAddress: fixedPublicAddress("https://direct.example.test"),
     additionalOAuthIssuerUrls: () => (origin ? [origin] : []),
     cloudRelayExposure: () => manager?.isExposing() ?? false,
     wsServer,
