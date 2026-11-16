@@ -291,6 +291,22 @@ export class IndexerLifecycle {
     return this._indexerOwner?.vectorIndex ?? null;
   }
 
+  /**
+   * Called when the worker reports a keyword-index build that has copied every
+   * chunk and waits for {@link switchLexicalIndex}; repeats while it waits.
+   */
+  onLexicalBackfilled?: (version: number) => void;
+
+  /**
+   * Switch the backfilled keyword-index build of `version` in, through the
+   * worker that owns index.db writes. False when it was superseded meanwhile
+   * or no worker is running.
+   */
+  async switchLexicalIndex(version: number): Promise<boolean> {
+    const owner = this._indexerOwner;
+    return owner ? owner.switchLexicalIndex(version) : false;
+  }
+
   /** Live worker proxy, or null while not ready / mid-swap / shut down. */
   get indexerProxy(): IndexerWorkerProxy | null {
     return this._indexerProxy;
@@ -693,6 +709,7 @@ export class IndexerLifecycle {
       indexerPageSize: this.deps.runtime.indexerPageSize,
       indexerBetweenPageSleepMs: this.deps.runtime.indexerBetweenPageSleepMs,
       indexerCatchUp: this.deps.runtime.indexerCatchUp,
+      lexicalRebuild: this.deps.runtime.lexicalRebuild,
       ...(this.deps.isUserActive ? { isUserActive: this.deps.isUserActive } : {}),
       reindexMissingAtBoot: this.deps.runtime.reindexMissingAtBoot,
       chunkerChunkSize: this.deps.runtime.chunkerChunkSize,
@@ -727,6 +744,11 @@ export class IndexerLifecycle {
       this.deps.searchPipeline.setVectorSearchUnavailable(
         graph.state === "degraded" ? (graph.reason ?? "semantic search degraded") : null,
       );
+    };
+
+    proxy.onLexicalBackfilled = (version) => {
+      if (this._indexerOwner !== proxy) return;
+      this.onLexicalBackfilled?.(version);
     };
 
     // Ownership begins in the constructor: it has already spawned the worker

@@ -47,6 +47,8 @@ export const bundles = {
       "near-dup*.e2e.test.ts",
       "temporal-*.e2e.test.ts",
       "embed*.e2e.test.ts",
+      "lexical-*.e2e.test.ts",
+      "*-keyword-*.e2e.test.ts",
     ],
   },
   "agent-brain-watch": {

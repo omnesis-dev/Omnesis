@@ -169,6 +169,14 @@
           surfaces near the top.
         </p>
         <p>
+          Keyword matching handles more than spaced, Latin-alphabet text: it finds the words of
+          Chinese, Japanese, Thai and other languages written without spaces, matches a Korean word
+          with or without the particle attached to it, matches Russian and Arabic words across their
+          grammatical forms, and treats Traditional and Simplified Chinese, and full-width and
+          ordinary letters, as the same. Text in the Latin alphabet is matched as before, with
+          English word forms folded together and accents ignored.
+        </p>
+        <p>
           Small indexed scopes use bounded exact vector scoring, so unrelated source updates do not
           change their nearest-neighbor ranking. Larger scopes use approximate search; its recall
           can change as the index evolves. Visibility and source filters apply to both.
@@ -186,6 +194,16 @@
           about 0.7 GB for 200,000 emails, files and messages, and up to twice that while a rebuild
           runs. Set <code>search.bm25.memoryIndex</code> to <code>false</code> in
           <code>omnesis.json</code> and restart the gateway to rank from disk only.
+        </p>
+        <p>
+          Keyword matching only works when documents and queries are cut into words by the same
+          rules, so the full-text index records the version of the rules that built it. When an
+          update changes those rules, the gateway starts as usual and rebuilds the index in the
+          background, in small batches that give way to your requests, while search keeps using the
+          existing index and its rules. Once every chunk is in the new index, search switches to it
+          and the old index is deleted; until then the keyword index takes up to twice its usual
+          disk space. The Sources page shows the rebuild's progress, and a restart resumes it where
+          it stopped.
         </p>
         <figure class="diagram diagram-flat diagram-branches diagram-nested">
           <ol class="flow">

@@ -48,6 +48,19 @@ const REBUILT_TABLES = new Set([
   "chunks_fts_docsize",
   "chunks_fts_idx",
   "chunks_fts_vocab",
+  // A keyword-index rebuild in progress: its index, the one it replaced, and
+  // its bookkeeping, all derived from `chunks` like the active index.
+  "chunks_fts_next",
+  "chunks_fts_next_config",
+  "chunks_fts_next_data",
+  "chunks_fts_next_docsize",
+  "chunks_fts_next_idx",
+  "chunks_fts_retired",
+  "chunks_fts_retired_config",
+  "chunks_fts_retired_data",
+  "chunks_fts_retired_docsize",
+  "chunks_fts_retired_idx",
+  "lexical_index_state",
   "vector_changes",
 ]);
 

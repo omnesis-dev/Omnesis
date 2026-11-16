@@ -947,6 +947,27 @@ export interface IndexStats {
       percent: number;
     } | null;
   };
+  /**
+   * The keyword (full-text) index: the lexical version that built it and, when
+   * a release changed how text is cut into words, the rebuild to the new
+   * version running in the background. Search uses the active version until
+   * the rebuild switches in. Absent on older gateways.
+   */
+  lexicalIndex?: {
+    activeVersion: number | null;
+    targetVersion: number;
+    /** True while the index a switch replaced still awaits deletion. */
+    retiring: boolean;
+    building: {
+      version: number;
+      chunksDone: number;
+      chunksTotal: number;
+      percent: number;
+      startedAt: string;
+      /** "copying" while chunks are copied; "switching" once every chunk is in, until the switch. */
+      phase: "copying" | "switching";
+    } | null;
+  };
   /** Absent on older gateways and before the indexer reports its graph. */
   semanticSearch?: SemanticSearchStatus;
   bySource: Record<

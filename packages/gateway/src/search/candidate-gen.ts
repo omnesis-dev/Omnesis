@@ -209,7 +209,7 @@ function runScopedCandidateGen(
   } else {
     // BM25 lane — always runs.
     const start = Date.now();
-    const { candidates, droppedTokens, ranker } = bm25Search(
+    const { candidates, droppedTokens, ranker, lexicalVersion } = bm25Search(
       res.indexDb,
       req.bm25Text,
       req.filters,
@@ -230,6 +230,7 @@ function runScopedCandidateGen(
       durationMs,
       candidates: candidates.length,
       engine: ranker,
+      ...(lexicalVersion !== null ? { lexicalVersion } : {}),
       droppedTokens: droppedTokens.length > 0 ? droppedTokens : undefined,
     };
 

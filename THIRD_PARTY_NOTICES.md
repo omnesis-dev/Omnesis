@@ -446,6 +446,14 @@ The experimental Telegram provider adds the MTProto client `@mtcute/*`
 all MIT, plus `@types/events` (MIT) as a declared runtime dependency of
 `@mtcute/core`.
 
+Multilingual keyword search adds `snowball-stemmers` (ISC, Copyright Oleg
+Mazko), the JavaScript build of the Snowball stemming algorithms, used for
+Russian and Arabic, and `opencc-js` (MIT, Copyright The nk2028 Project), which
+converts Traditional Chinese characters to Simplified. The conversion
+dictionaries `opencc-js` ships are built from `opencc-data` and licensed under
+Apache-2.0; the package carries that notice in its `THIRD_PARTY_LICENSES.md`
+and the license text in `LICENSES/Apache-2.0.txt`.
+
 Notes on the non-normalized rows: the two `Apache 2.0` entries (`usearch`,
 `qrcode-terminal`) are Apache-2.0; the three bare `BSD` entries (`duck`,
 `parse-cache-control`, `url-template`) declare only "BSD" without a variant. The

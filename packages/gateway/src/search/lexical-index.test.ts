@@ -14,6 +14,9 @@ import {
   type ChunkUpsertInput,
 } from "../indexer/db.js";
 import { bm25Search, type LexicalRanker } from "./bm25.js";
+import { lexicalVersion } from "./lexical-versions.js";
+
+const VERSION_0 = lexicalVersion(0)!;
 import { LexicalIndex } from "./lexical-index.js";
 import { closeTempDb } from "./test-utils.js";
 
@@ -627,6 +630,7 @@ describe("bm25Search — rank-first", () => {
     seedCorpus(50);
     const calls: string[] = [];
     const declining: LexicalRanker = {
+      rules: VERSION_0,
       rank: (_db, q) => {
         calls.push(q);
         return null;
@@ -647,6 +651,7 @@ describe("bm25Search — rank-first", () => {
     const windows: number[] = [];
     // Ranks rowids that do not exist, so no window ever yields enough rows.
     const phantom: LexicalRanker = {
+      rules: VERSION_0,
       rank: (_db, _q, k) => {
         windows.push(k);
         return Array.from({ length: k }, (_, i) => ({ rowid: 1_000_000 + i, score: k - i }));
@@ -662,6 +667,7 @@ describe("bm25Search — rank-first", () => {
     seedCorpus(40);
     const windows: number[] = [];
     const recording: LexicalRanker = {
+      rules: VERSION_0,
       rank: (_db, _q, k) => {
         windows.push(k);
         return [];
@@ -674,6 +680,7 @@ describe("bm25Search — rank-first", () => {
   test("a ranker that throws hands the query to FTS5", () => {
     seedCorpus(40);
     const failing: LexicalRanker = {
+      rules: VERSION_0,
       rank: () => {
         throw new Error("simulated ranker failure");
       },

@@ -13,6 +13,7 @@ type Db = Database.Database;
 import { DERIVED_INDEX_FILE_PATTERN, createLogger } from "@omnesis/core";
 import { openEncryptedSqlite } from "../sqlite-encryption.js";
 import { useImmediateTransactions } from "../sqlite-transactions.js";
+import { ensureLexicalIndex, registerLexicalFunctions } from "./lexical-index-store.js";
 import { buildEmbeddingPreamble } from "./embedding-input.js";
 import {
   createFilterCopyTables,
@@ -81,6 +82,8 @@ export function openIndexDb(path: string, opts: OpenIndexDbOptions = {}): Db {
   }
   db.exec("PRAGMA foreign_keys = ON");
   db.exec("PRAGMA busy_timeout = 5000");
+  // The full-text triggers and content views call this, so every handle needs it.
+  registerLexicalFunctions(db);
   if (opts.readonly) {
     let mmapBytes = opts.mmapBytes;
     const envOverride = process.env.OMNESIS_INDEX_MMAP_BYTES;
@@ -208,58 +211,10 @@ export function createIndexDatabase(path: string, opts: OpenIndexDbOptions = {})
     )
   `);
 
-  // FTS5 for BM25 search (populated alongside chunks via triggers).
-  //
-  // Tokenizer: `porter unicode61 remove_diacritics 2` —
-  //   * Porter stemming so `recipe` matches `recipes`, `wedding` matches
-  //     `weddings`, `wrote` matches `write` (English morphological folding).
-  //   * `unicode61` is the SQLite default Unicode-aware tokenizer.
-  //   * `remove_diacritics 2` folds accented characters to ASCII so
-  //     `ceremonie` matches `cérémonie` regardless of which side carries
-  //     the accent.
-  //
-  // The `IF NOT EXISTS` clause means this only fires on fresh DBs.
-  // Existing installs keep their old `unicode61`-bare tokenizer until
-  // the rebuild migration below detects + re-creates the table.
-  db.exec(`
-    CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts USING fts5(
-      content,
-      title,
-      content='chunks',
-      content_rowid='rowid',
-      tokenize='porter unicode61 remove_diacritics 2'
-    )
-  `);
-
-  // FTS5 vocabulary table for document-frequency lookups. Used by the
-  // search pipeline to detect high-frequency tokens that would cause
-  // slow BM25 scans and skip them from the MATCH query.
-  db.exec(`
-    CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts_vocab
-      USING fts5vocab(chunks_fts, 'row')
-  `);
-
-  // FTS sync triggers
-  db.exec(`
-    CREATE TRIGGER IF NOT EXISTS chunks_ai AFTER INSERT ON chunks BEGIN
-      INSERT INTO chunks_fts(rowid, content, title)
-      VALUES (new.rowid, new.content, new.title);
-    END
-  `);
-  db.exec(`
-    CREATE TRIGGER IF NOT EXISTS chunks_ad AFTER DELETE ON chunks BEGIN
-      INSERT INTO chunks_fts(chunks_fts, rowid, content, title)
-      VALUES ('delete', old.rowid, old.content, old.title);
-    END
-  `);
-  db.exec(`
-    CREATE TRIGGER IF NOT EXISTS chunks_au AFTER UPDATE ON chunks BEGIN
-      INSERT INTO chunks_fts(chunks_fts, rowid, content, title)
-      VALUES ('delete', old.rowid, old.content, old.title);
-      INSERT INTO chunks_fts(rowid, content, title)
-      VALUES (new.rowid, new.content, new.title);
-    END
-  `);
+  // The full-text index for BM25 search, kept in step with `chunks` by
+  // triggers, and rebuilt in the background when the keyword-analysis rules
+  // change version. See lexical-index-store.ts.
+  ensureLexicalIndex(db, hadChunksFts);
 
   // Change log of chunk text for the in-memory lexical index (see
   // search/lexical-index.ts): every insert, delete and text update appends the
@@ -325,40 +280,6 @@ export function createIndexDatabase(path: string, opts: OpenIndexDbOptions = {})
         WHERE CAST(index_meta.value AS INTEGER) < CAST(excluded.value AS INTEGER);
     END;
   `);
-
-  // One-shot FTS5 tokenizer migration. Older installs were created with
-  // a bare `unicode61` tokenizer (no Porter stemming, no diacritic
-  // folding), so `recipe` didn't match `recipes` and `ceremonie` didn't
-  // match `cérémonie`. The CREATE above no-ops on existing DBs because
-  // of `IF NOT EXISTS`, so we explicitly check the stored DDL and
-  // rebuild the FTS index when the tokenizer string lacks `porter`.
-  // The `'rebuild'` magic on a contentless/external-content FTS5 table
-  // repopulates from the source `chunks` table, so the index is
-  // re-tokenized end-to-end. Idempotent: a second boot finds `porter`
-  // already in the stored SQL and no-ops.
-  const ftsDdl = db
-    .prepare<[], { sql: string }>("SELECT sql FROM sqlite_master WHERE name = 'chunks_fts'")
-    .get();
-  if (ftsDdl && !ftsDdl.sql.includes("porter")) {
-    log.info("Migrating chunks_fts to porter+diacritic-folding tokenizer — rebuilding FTS index");
-    db.exec("DROP TABLE chunks_fts");
-    db.exec(`
-      CREATE VIRTUAL TABLE chunks_fts USING fts5(
-        content,
-        title,
-        content='chunks',
-        content_rowid='rowid',
-        tokenize='porter unicode61 remove_diacritics 2'
-      )
-    `);
-    db.exec("INSERT INTO chunks_fts(chunks_fts) VALUES('rebuild')");
-    log.info("chunks_fts rebuild complete");
-  } else if (!hadChunksFts) {
-    // A sanitized or restored database can contain external-content rows while
-    // intentionally omitting FTS5's implementation-private shadow tables.
-    // Populate the newly created index once so its first boot is searchable.
-    db.exec("INSERT INTO chunks_fts(chunks_fts) VALUES('rebuild')");
-  }
 
   // Indexer state: which gateway documents have been indexed
   db.exec(`
