@@ -93,7 +93,7 @@ jobs:
       - name: Install locked native process dependencies
         run: node scripts/ci/npm-ci.mjs --no-audit --no-fund
       - name: Verify protocol, markers, actual writer stop and physical process-group closure
-        run: node scripts/run-check.mjs unit packages/collector/src/e2e/e2e-owned-process.test.ts
+        run: node scripts/run-check.mjs unit packages/collector/src/e2e/e2e-owned-process.test.ts packages/collector/src/e2e/connect-process.test.ts
       - name: Validate source and test types
         if: runner.os == 'Linux'
         run: node scripts/run-check.mjs typecheck && node scripts/run-check.mjs types-tests
@@ -101,7 +101,7 @@ jobs:
         if: runner.os == 'Linux'
         env:
           NODE_OPTIONS: --max-old-space-size=6144
-        run: node node_modules/eslint/bin/eslint.js packages/collector/src/e2e/e2e-owned-process.test.ts
+        run: node node_modules/eslint/bin/eslint.js packages/collector/src/e2e/e2e-owned-process.test.ts packages/collector/src/e2e/connect-process.test.ts
   terminal-enrollment:
     if: ${{ inputs.scope == 'terminal-enrollment' }}
     strategy:

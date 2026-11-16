@@ -38,13 +38,18 @@ async function joinPhysicalFixture(running: SpawnedConnect): Promise<void> {
   else await reaper.killSubprocessGroup(running.child);
 }
 
-async function waitForFile(path: string, timeoutMs: number): Promise<void> {
+/** File creation can precede its contents; only a complete TCP port is ready. */
+async function waitForFixturePort(path: string, timeoutMs: number): Promise<number> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    if (existsSync(path)) return;
+    if (existsSync(path)) {
+      const text = readFileSync(path, "utf8").trim();
+      const port = Number(text);
+      if (/^[1-9]\d*$/.test(text) && Number.isSafeInteger(port) && port <= 65535) return port;
+    }
     await new Promise<void>((resolve) => setTimeout(resolve, 25));
   }
-  throw new Error(`fixture did not write ${path}`);
+  throw new Error(`fixture did not write a TCP port to ${path}`);
 }
 
 describe("spawned connect process cleanup", () => {
@@ -64,6 +69,31 @@ describe("spawned connect process cleanup", () => {
     }
     for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
   });
+
+  test.each(["", "0", "not a port", "65536"])(
+    "waits for valid port contents after file creation (%s)",
+    async (initial) => {
+      const root = mkdtempSync(join(tmpdir(), "omnesis-connect-port-"));
+      roots.push(root);
+      const path = join(root, "descendant.port");
+      writeFileSync(path, initial);
+      vi.useFakeTimers();
+      try {
+        let settled = false;
+        const port = waitForFixturePort(path, 1000).then((value) => {
+          settled = true;
+          return value;
+        });
+        await vi.advanceTimersByTimeAsync(25);
+        expect(settled).toBe(false);
+        writeFileSync(path, "34567");
+        await vi.advanceTimersByTimeAsync(25);
+        await expect(port).resolves.toBe(34567);
+      } finally {
+        vi.useRealTimers();
+      }
+    },
+  );
 
   function fixture(
     program: string,
@@ -264,8 +294,7 @@ describe("spawned connect process cleanup", () => {
         inheritEnv: false,
       });
       runningProcesses.push(running);
-      await waitForFile(descendantPortPath, 10_000);
-      const port = Number(readFileSync(descendantPortPath, "utf8"));
+      const port = await waitForFixturePort(descendantPortPath, 10_000);
       if (!leaderExited) expect(await acceptsConnections(port)).toBe(true);
       if (leaderExited) {
         await expect(waitForExit(running, 10_000)).resolves.toEqual({
