@@ -203,7 +203,9 @@ export class HelperSupervisor {
     cleanupFailure: undefined,
     cleanupPending: true as const,
   });
-  private lastConfigure: HelperCommand | null = null;
+  private lastConfigure: string | null = null;
+  /** Separate from public settings so a toggle cannot erase the next boot's private seed. */
+  private lastGatewayCertificate: string | null = null;
   private readonly listeners = new Set<(snapshot: SupervisorSnapshot) => void>();
 
   constructor(
@@ -250,11 +252,13 @@ export class HelperSupervisor {
   /** Configure commands remain available for the next successfully admitted helper. */
   send(command: HelperCommand): void {
     if (this.held) throw this.heldError;
-    if (command.type === "configure") this.lastConfigure = command;
+    const frame = encodeHelperCommand(command);
+    if (command.type === "configure") this.lastConfigure = frame;
+    if (command.type === "gateway-certificate") this.lastGatewayCertificate = frame;
     const owner = this.owner;
     if (owner && this.stoppingOwner !== owner && owner.child.stdin?.writable) {
       try {
-        owner.child.stdin.write(encodeHelperCommand(command));
+        owner.child.stdin.write(frame);
       } catch (error) {
         this.observe(error);
         throw error;
@@ -287,6 +291,7 @@ export class HelperSupervisor {
       launch.fallbackCert,
       "-fallback-key",
       launch.fallbackKey,
+      ...(this.lastGatewayCertificate ? ["-certificate-bootstrap"] : []),
       ...(launch.controlUrl ? ["-control-url", launch.controlUrl] : []),
       ...(launch.transport
         ? ["-socket-certificate-sha256", launch.transport.certificateSha256]
@@ -368,8 +373,11 @@ export class HelperSupervisor {
         this.observe(uncertainHelper(error));
       },
     );
-    if (this.lastConfigure && child.stdin?.writable)
-      child.stdin.write(encodeHelperCommand(this.lastConfigure));
+    if (child.stdin?.writable) {
+      // The private seed precedes public configuration and every interactive command.
+      if (this.lastGatewayCertificate) child.stdin.write(this.lastGatewayCertificate);
+      if (this.lastConfigure) child.stdin.write(this.lastConfigure);
+    }
   }
 
   private onLine(owner: OwnedChildProcess, line: string): void {

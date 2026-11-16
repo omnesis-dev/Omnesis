@@ -60,8 +60,7 @@ async function boot(scenario = "connected", { cloudRelay = false } = {}): Promis
   dir = mkdtempSync(join(tmpdir(), "ts-int-"));
   mkdirSync(join(dir, "tailscale", "node"), { recursive: true });
   writeFileSync(join(dir, "tailscale", "node", "fake-scenario"), scenario);
-  if (process.platform === "win32")
-    await writeTlsMaterial(join(dir, "cert.pem"), join(dir, "key.pem"), material, dir);
+  await writeTlsMaterial(join(dir, "cert.pem"), join(dir, "key.pem"), material, dir);
   const path = join(dir, "gateway.sqlite");
   db = createDatabase(path);
   const device = createDevice(db, { name: "Fictional admin CLI", kind: "cli" });

@@ -303,6 +303,45 @@ function controlledOwner() {
 }
 
 describe("helper ownership", () => {
+  test("the private seed precedes public settings and snapshots accepted input before a future launch", async () => {
+    const current = controlledOwner();
+    const spawn = vi.fn(
+      (_binary: string, _args: string[], _env: NodeJS.ProcessEnv) => current.owner,
+    );
+    const sup = make(spawn, {}, [1]);
+    const certificate = { cert: "accepted-cert", key: "accepted-key" };
+    const settings = { enabled: true, paths: ["/mcp"] };
+    sup.send({ type: "gateway-certificate", certificate });
+    sup.send({ type: "configure", public: settings });
+    certificate.cert = "mutated-cert";
+    certificate.key = "mutated-key";
+    settings.paths.push("/unexpected");
+    expect(() =>
+      sup.send({ type: "gateway-certificate", certificate: { cert: "", key: "rejected" } }),
+    ).toThrow();
+    try {
+      await sup.start(launch);
+      expect(spawn.mock.calls[0]![1]).toContain("-certificate-bootstrap");
+      const input = current.child.stdin.read() as Buffer;
+      expect(
+        input
+          .toString("utf8")
+          .trim()
+          .split("\n")
+          .map((line) => JSON.parse(line)),
+      ).toEqual([
+        {
+          type: "gateway-certificate",
+          certificate: { cert: "accepted-cert", key: "accepted-key" },
+        },
+        { type: "configure", public: { enabled: true, paths: ["/mcp"] } },
+      ]);
+    } finally {
+      current.closure.resolve();
+      await sup.stop();
+    }
+  });
+
   test("a stream cleanup marker remains terminal after independent closure", async () => {
     const current = controlledOwner();
     const spawner = vi.fn(() => current.owner);

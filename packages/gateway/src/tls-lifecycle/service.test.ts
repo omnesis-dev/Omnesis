@@ -269,6 +269,7 @@ describe("refresh", () => {
     expect(snapshot.served.state).toBe("valid");
     expect(rig.activations).toEqual([fresh]);
     expect(rig.rotations).toEqual([fingerprintOf(fresh.cert)]);
+    expect(rig.service.servedMaterial()).toEqual({ cert: fresh.cert, key: fresh.key });
     expect(readFileSync(join(configDir, "tls", "cert.pem"), "utf8")).toBe(fresh.cert);
     expect(readFileSync(join(configDir, "tls", "key.pem"), "utf8")).toBe(fresh.key);
     expect(snapshot.renewal.lastRenewedAt).toBe(new Date(rig.clock.now).toISOString());
@@ -357,6 +358,7 @@ describe("refresh", () => {
     expect(readFileSync(join(configDir, "tls", "key.pem"), "utf8")).toBe(outgoing.key);
     expect(outcome.snapshot.served.fingerprintSha256).toBe(fingerprintOf(outgoing.cert));
     expect(outcome.snapshot.rotation).toBeNull();
+    expect(rig.service.servedMaterial()).toEqual({ cert: outgoing.cert, key: outgoing.key });
   });
 
   test("an operator's own pair is left byte for byte, however expired", async () => {

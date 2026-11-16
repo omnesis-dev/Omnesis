@@ -98,3 +98,51 @@ func TestFallbackWithoutPaths(t *testing.T) {
 		t.Fatal("want error from nil fallback")
 	}
 }
+
+func TestParentMaterialDoesNotReadEncryptedFilesAndRetainsLastGood(t *testing.T) {
+	dir := t.TempDir()
+	cp, kp := writePair(t, dir, "active", time.Now())
+	cert, _ := os.ReadFile(cp)
+	key, _ := os.ReadFile(kp)
+	f := NewFallback(cp, kp)
+	if err := f.SetPEM(string(cert), string(key)); err != nil {
+		t.Fatal(err)
+	}
+	// The on-disk key remains an opaque envelope, never rewritten as PEM.
+	envelope := []byte(`{"encrypted":"invented-envelope"}`)
+	if err := os.WriteFile(kp, envelope, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := leafCN(t, f); got != "active" {
+		t.Fatalf("got %q", got)
+	}
+	if err := f.SetPEM(string(cert), string(envelope)); err == nil {
+		t.Fatal("accepted an envelope as PEM")
+	}
+	if got := leafCN(t, f); got != "active" {
+		t.Fatalf("lost active pair: %q", got)
+	}
+	cp2, kp2 := writePair(t, t.TempDir(), "rotated", time.Now())
+	cert2, _ := os.ReadFile(cp2)
+	key2, _ := os.ReadFile(kp2)
+	if err := f.SetPEM(string(cert2), string(key)); err == nil {
+		t.Fatal("accepted mismatched key")
+	}
+	if got := leafCN(t, f); got != "active" {
+		t.Fatalf("lost active pair: %q", got)
+	}
+	if err := f.SetPEM(string(cert2), string(key2)); err != nil {
+		t.Fatal(err)
+	}
+	if got := leafCN(t, f); got != "rotated" {
+		t.Fatalf("rotation not applied: %q", got)
+	}
+	stored, _ := os.ReadFile(kp)
+	if string(stored) != string(envelope) {
+		t.Fatal("rewrote the encrypted key")
+	}
+	var absent *Fallback
+	if err := absent.SetPEM(string(cert), string(key)); err == nil {
+		t.Fatal("nil receiver accepted material")
+	}
+}
