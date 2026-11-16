@@ -65,26 +65,66 @@ export function addressedGatewayHosts(urls: ReadonlyArray<string | null | undefi
   return [...hosts];
 }
 
+/** The port a URL is reached at, its scheme's default when it names none; null when malformed. */
+function urlPort(value: string | null | undefined): number | null {
+  if (!value) return null;
+  try {
+    const url = new URL(value);
+    if (url.port) return Number(url.port);
+    return url.protocol === "https:" ? 443 : url.protocol === "http:" ? 80 : null;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Which of the names the gateway is addressed by its own certificate must
- * cover, and which a trusted reverse proxy covers instead. Without a proxy
- * every name is the gateway's. With one, the public base URL and the
- * system-trust pairing origins are what the proxy serves: clients verify
- * them against the proxy's certificate, and the gateway's own is seen only
- * on the hop from the proxy. A gateway URL naming anything else is still
- * the gateway's to cover. The flag is taken at its word: set without a proxy
- * in front, the public name stops being checked here and clients find the
- * gap by failing hostname verification.
+ * cover, and which a reverse proxy covers instead. Clients verify a proxied
+ * name against the proxy's certificate; the gateway's own is seen only on the
+ * hop from the proxy.
+ *
+ * With `OMNESIS_TRUST_PROXY` (a proxy on another machine), the public base
+ * URL and the system-trust pairing origins are the proxy's, and a gateway URL
+ * naming anything else is still the gateway's. The flag is taken at its word:
+ * set without a proxy in front, the public name stops being checked here and
+ * clients find the gap by failing hostname verification.
+ *
+ * Without it, an address at a port other than the one the gateway listens on
+ * reaches it only through something in front of it — a proxy on this machine
+ * such as Caddy, nginx or Tailscale Serve — so its name is the proxy's,
+ * unless the same name is also addressed at the gateway's own port. A router
+ * forwarding another port straight to the gateway is the one setup this reads
+ * wrongly: its public name goes unchecked, as with the flag.
  */
 export function partitionAddressedHosts(input: {
   gatewayUrl: string | null | undefined;
   publicBaseUrl: string | null | undefined;
   trustOrigins: ReadonlyArray<string | null | undefined>;
   proxyTrusted: boolean;
+  /** The port the gateway itself listens on. */
+  gatewayPort: number;
 }): { required: string[]; proxied: string[] } {
-  const all = addressedGatewayHosts([input.gatewayUrl, input.publicBaseUrl, ...input.trustOrigins]);
-  if (!input.proxyTrusted) return { required: all, proxied: [] };
-  const proxied = new Set(addressedGatewayHosts([input.publicBaseUrl, ...input.trustOrigins]));
+  const published = [input.publicBaseUrl, ...input.trustOrigins];
+  const all = addressedGatewayHosts([input.gatewayUrl, ...published]);
+  let proxied: Set<string>;
+  if (input.proxyTrusted) {
+    proxied = new Set(addressedGatewayHosts(published));
+  } else {
+    const own = new Set(
+      addressedGatewayHosts([
+        input.gatewayUrl,
+        ...published.filter((url) => urlPort(url) === input.gatewayPort),
+      ]),
+    );
+    proxied = new Set(
+      addressedGatewayHosts(
+        published.filter((url) => {
+          const port = urlPort(url);
+          return port !== null && port !== input.gatewayPort;
+        }),
+      ).filter((host) => !own.has(host)),
+    );
+  }
   return {
     required: all.filter((host) => !proxied.has(host)),
     proxied: [...proxied],
