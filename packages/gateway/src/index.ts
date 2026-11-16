@@ -1969,6 +1969,7 @@ const addressedHosts = () =>
       ...(configStore.get().gateway?.pairingSystemTrustOrigins ?? []),
     ],
     proxyTrusted: reverseProxyTrusted(),
+    gatewayPort: PORT,
   });
 let acmeController: Awaited<ReturnType<typeof createGatewayAcmeController>>;
 const acmeCleanup = new OptionalServiceCleanup("Public ACME", () => acmeController);

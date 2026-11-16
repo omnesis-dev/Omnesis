@@ -28,7 +28,6 @@ import {
   tailscaleCliEnv,
   tailscaleIsRunningStatus,
 } from "@omnesis/core";
-import { reverseProxyTrusted } from "../http/client-ip.js";
 
 const execFileAsync = promisify(execFile);
 const STATUS_TIMEOUT_MS = 5_000;
@@ -173,7 +172,6 @@ export class HostTailscaleService {
     private readonly port: number,
     private readonly candidates: TailscaleCliCandidate[] = tailscaleCliCandidates(),
     private readonly run: RunCli = liveRun,
-    private readonly trustProxy: () => boolean = reverseProxyTrusted,
   ) {}
 
   async status(): Promise<HostTailscale> {
@@ -204,17 +202,6 @@ export class HostTailscaleService {
     const verb = publicly ? "funnel" : "serve";
     const commandOn = (port: number) =>
       `tailscale ${verb} ${this.publishArgs(publicly, port).slice(1).join(" ")}`;
-    // Funnel hands every Internet request to the gateway from this computer's loopback
-    // address. Until the gateway trusts the proxy's forwarded address, those requests would
-    // pass as local ones and skip the per-address limits on sign-in.
-    if (publicly && !this.trustProxy()) {
-      return {
-        ok: false,
-        reason:
-          "Before a public address, tell the gateway it runs behind a proxy: add OMNESIS_TRUST_PROXY=true to its .env file and restart it.",
-        command: commandOn(443),
-      };
-    }
     const found = await this.findRunning();
     if (!found) {
       return {
