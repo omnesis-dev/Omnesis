@@ -70,8 +70,14 @@ async function respondsAsPeer(
 }
 
 const investigationModes = [
-  ...Array.from({ length: 20 }, () => "kill" as const),
-  ...Array.from({ length: 10 }, () => "natural" as const),
+  ...Array.from(
+    { length: process.env.OMNESIS_COHORT_LOAD === "1" ? 1 : 20 },
+    () => "kill" as const,
+  ),
+  ...Array.from(
+    { length: process.env.OMNESIS_COHORT_LOAD === "1" ? 1 : 10 },
+    () => "natural" as const,
+  ),
 ];
 
 test.skipIf(process.platform !== "win32").each(investigationModes)(
@@ -82,13 +88,20 @@ test.skipIf(process.platform !== "win32").each(investigationModes)(
     const record = join(directory, "ready.json");
     const release = join(directory, "release");
     const nonce = randomBytes(32).toString("hex");
-    writeFileSync(input, JSON.stringify({ record, nonce }));
+    writeFileSync(
+      input,
+      JSON.stringify({
+        record,
+        nonce,
+        original: process.env.OMNESIS_COHORT_ORIGINAL_SERVER === "1",
+      }),
+    );
     const descendant = `
 const fs=require('node:fs'),net=require('node:net');
 const input=process.argv[1], fd=fs.openSync(input,'r');
 const config=JSON.parse(fs.readFileSync(input,'utf8'));
 const crypto=require('node:crypto');
-const server=net.createServer(socket=>{let line='';socket.on('data',chunk=>{line+=chunk.toString('utf8');if(line.includes('\\n'))socket.end(crypto.createHmac('sha256',config.nonce).update(line.trim()).digest('hex')+'\\n');});});
+const server=net.createServer(socket=>{if(config.original){socket.end();return;}let line='';socket.on('data',chunk=>{line+=chunk.toString('utf8');if(line.includes('\\n'))socket.end(crypto.createHmac('sha256',config.nonce).update(line.trim()).digest('hex')+'\\n');});});
 server.listen(0,'127.0.0.1',()=>{const target=config.record+'.tmp';fs.writeFileSync(target,JSON.stringify({root:process.ppid,pid:process.pid,port:server.address().port}));fs.renameSync(target,config.record);});
 setTimeout(()=>process.exit(0),60000);
 `;
@@ -146,7 +159,8 @@ setInterval(()=>{if(fs.existsSync(process.argv[2]))process.exit(0)},25);
       const observedRoot = before.find((row) => row.pid === ready.root);
       expect(observedChild).toBeDefined();
       expect(observedRoot).toBeDefined();
-      expect((await respondsAsPeer(ready.port, nonce)).matched).toBe(true);
+      if (process.env.OMNESIS_COHORT_ORIGINAL_SERVER !== "1")
+        expect((await respondsAsPeer(ready.port, nonce)).matched).toBe(true);
       expect(recovery.alive).toBe(true);
       expect(await reachable(ready.port)).toBe(true);
       if (mode === "kill") await terminal.kill();

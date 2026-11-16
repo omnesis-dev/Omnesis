@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import { X509Certificate } from "node:crypto";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -103,35 +104,60 @@ test("TLS terminates only at the gateway; the relay sees no HTTP path, token or 
   }
 });
 
-test("even another trusted certificate for the same hostname cannot replace a pinned gateway", async () => {
-  const otherDir = await mkdtemp(join(tmpdir(), "omnesis-substitute-cert-"));
-  const files = tlsFiles(otherDir, host);
-  const otherCert = await readFile(files.certFile, "utf8");
-  let requests = 0;
-  const attacker = createServer(
-    { key: await readFile(files.keyFile), cert: otherCert },
-    (_, res) => {
-      requests++;
-      res.end();
-    },
-  );
-  attacker.on("tlsClientError", () => {});
-  await bind(attacker);
-  try {
-    // Trust both roots: CA trust alone would accept the substitution.
-    const origin = new URL(`https://localhost:${port(attacker)}`);
-    const accepted = await connectOrigin(origin, cert + otherCert);
-    accepted.destroy();
-    await expect(
-      connectOrigin(origin, cert + otherCert, undefined, false, certificateFingerprint(cert)),
-    ).rejects.toThrow("pin mismatch");
-    expect(requests).toBe(0);
-  } finally {
-    attacker.closeAllConnections();
-    await new Promise<void>((resolve) => attacker.close(() => resolve()));
-    await rm(otherDir, { recursive: true, force: true });
-  }
-});
+test.each(Array.from({ length: 20 }, (_, index) => index))(
+  "even another trusted certificate for the same hostname cannot replace a pinned gateway [%#]",
+  async () => {
+    const otherDir = await mkdtemp(join(tmpdir(), "omnesis-substitute-cert-"));
+    const files = tlsFiles(otherDir, host);
+    const otherCert = await readFile(files.certFile, "utf8");
+    let requests = 0;
+    const attacker = createServer(
+      { key: await readFile(files.keyFile), cert: otherCert },
+      (_, res) => {
+        requests++;
+        res.end();
+      },
+    );
+    attacker.on("tlsClientError", () => {});
+    await bind(attacker);
+    try {
+      // Trust both roots: CA trust alone would accept the substitution.
+      const origin = new URL(`https://localhost:${port(attacker)}`);
+      try {
+        const accepted = await connectOrigin(origin, cert + otherCert);
+        accepted.destroy();
+      } catch (error) {
+        const controls: Record<string, boolean> = {};
+        for (const [name, roots] of [
+          ["singleRoot", otherCert],
+          ["reversedRoots", otherCert + cert],
+        ] as const) {
+          try {
+            const accepted = await connectOrigin(origin, roots);
+            accepted.destroy();
+            controls[name] = true;
+          } catch {
+            controls[name] = false;
+          }
+        }
+        const first = new X509Certificate(cert),
+          second = new X509Certificate(otherCert);
+        process.stdout.write(
+          `[tls-bundle-observation] ${JSON.stringify({ code: error instanceof Error && "code" in error ? error.code : "unknown", ...controls, sameSubject: first.subject === second.subject, sameIssuer: first.issuer === second.issuer, sameSerial: first.serialNumber === second.serialNumber, firstCA: first.ca, secondCA: second.ca })}\n`,
+        );
+        throw error;
+      }
+      await expect(
+        connectOrigin(origin, cert + otherCert, undefined, false, certificateFingerprint(cert)),
+      ).rejects.toThrow("pin mismatch");
+      expect(requests).toBe(0);
+    } finally {
+      attacker.closeAllConnections();
+      await new Promise<void>((resolve) => attacker.close(() => resolve()));
+      await rm(otherDir, { recursive: true, force: true });
+    }
+  },
+);
 
 test.each([0, -1, NaN, 2_147_483_648])("rejects invalid limits %s", (limit) => {
   const options = { accountForHostname: () => undefined, open: async () => new PassThrough() };
