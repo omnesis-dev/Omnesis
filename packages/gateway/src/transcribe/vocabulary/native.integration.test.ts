@@ -111,8 +111,8 @@ test.skipIf(!model || !audioPath)(
         },
         ...(ffmpegPath
           ? {
-              decodeAudio: (bytes: Uint8Array, _mime: string, signal?: AbortSignal) =>
-                decodeToPcm16kMono(bytes, { ffmpegPath, signal }),
+              decodeAudio: (bytes: Uint8Array, _mime: string, opts?: { signal?: AbortSignal }) =>
+                decodeToPcm16kMono(bytes, { ffmpegPath, signal: opts?.signal }),
             }
           : {}),
       },

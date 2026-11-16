@@ -35,7 +35,8 @@ const RUN = !!MODEL && !!AUDIO;
       modelId: "whisper-test",
       gpu: false,
       decodeAudio: FFMPEG
-        ? (bytes, _mimeType, signal) => decodeToPcm16kMono(bytes, { ffmpegPath: FFMPEG, signal })
+        ? (bytes, _mimeType, opts) =>
+            decodeToPcm16kMono(bytes, { ffmpegPath: FFMPEG, signal: opts?.signal })
         : undefined,
     });
     try {
