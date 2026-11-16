@@ -1777,7 +1777,7 @@ jobs:
           packages/cli/src/uninstall/plan.ts packages/cli/src/uninstall/execute.ts packages/cli/src/commands/uninstall.test.ts
           packages/cli/src/commands/connect-oauth.ts packages/cli/src/commands/connect-oauth.test.ts
           packages/collector/src/e2e/enrollment-browser-fixture.ts packages/collector/src/e2e/enrollment-browser-fixture.test.ts
-          packages/collector/src/e2e/harness-plugin-conformance.e2e.test.ts
+          packages/collector/src/e2e/harness-plugin-conformance.e2e.test.ts packages/collector/src/e2e/managed-integration-enrollment.ts
           packages/collector/src/e2e/harness-runtime-conformance.ts packages/collector/src/e2e/harness-runtime-conformance.test.ts
           packages/cloud-relay/src/relay-dos-limits.test.ts scripts/ci/windows-checks.mjs scripts/ci/windows-checks.test.mjs
       - name: Retain only the formatted public socket regression source

@@ -44,6 +44,8 @@ export interface ManagedIntegrationEnrollmentOptions {
   trustFingerprint?: string;
   connectEnv?: SpawnConnectOptions["env"];
   inheritConnectEnv?: boolean;
+  /** Includes the real host's plugin installation and registry CLI launches. */
+  connectExitTimeoutMs?: number;
   /** What the approved connection's access level grants; Answer alone when omitted. */
   capabilities?: TestGrantCapability[];
 }
@@ -104,7 +106,7 @@ export async function enrollManagedIntegration(
           }
         : selection,
     });
-    const completed = await waitForExit(running, 90_000);
+    const completed = await waitForExit(running, options.connectExitTimeoutMs ?? 90_000);
     running = undefined;
     if (completed.code !== 0) {
       throw new Error(
