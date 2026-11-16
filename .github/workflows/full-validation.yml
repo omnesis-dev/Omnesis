@@ -56,6 +56,7 @@ on:
             portable-transports,
             portable-actor-node,
             portable-gateway,
+            terminal-proof-investigation,
             legacy-tailnet,
             stream-timeout,
             provider-ownership,
@@ -75,6 +76,25 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
   TZ: UTC
 jobs:
+  terminal-proof-investigation:
+    if: inputs.scope == 'terminal-proof-investigation'
+    runs-on: windows-latest
+    timeout-minutes: 25
+    env:
+      OMNESIS_UNIT_WORKERS: "2"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: "24"
+          cache: npm
+      - name: Install the actual native terminal and process dependencies
+        run: node scripts/ci/npm-ci.mjs --no-audit --no-fund
+      - name: Observe original TCP verdict, birth-bound process state and fresh peer challenge after Job closure
+        run: node scripts/run-check.mjs unit packages/collector/src/e2e/enrollment-terminal-cohort.windows.test.ts
   portable-gateway:
     if: ${{ inputs.scope == 'portable-gateway' || inputs.scope == 'legacy-tailnet' }}
     strategy:
