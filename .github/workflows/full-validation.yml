@@ -15,6 +15,7 @@ on:
             embedder-full-exit,
             windows-unit-timeouts,
             windows-fixture-proof,
+            windows-merge-proof,
             hermes,
             performance,
             e2e,
@@ -2499,6 +2500,57 @@ jobs:
         run: exec node scripts/run-check.mjs types-tests
       - name: Run both complete real-store regression suites with original test deadlines
         run: exec node scripts/run-check.mjs unit packages/gateway/src/analytics/account-ownership.test.ts packages/gateway/src/agent/service.test.ts
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        os:
+          - windows-latest
+          - ubuntu-latest
+
+  windows-merge-proof:
+    name: Exact-source Windows main integration (${{ matrix.os }})
+    if: inputs.scope == 'windows-merge-proof'
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    env:
+      TZ: UTC
+      OMNESIS_UNIT_WORKERS: "1"
+      OMNESIS_E2E_WORKERS: "1"
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ inputs.source_sha }}
+          persist-credentials: false
+      - name: Verify fixed source revision
+        env:
+          TARGET_SHA: ${{ inputs.source_sha }}
+        run: |
+          [[ "$TARGET_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "$TARGET_SHA"
+      - name: Set up Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: "24"
+          cache: npm
+      - name: Install dependencies
+        id: dependencies
+        run: node scripts/ci/npm-ci.mjs --no-audit --no-fund
+      - name: Build and prove Windows SQLite recovery bindings
+        id: native_sqlite
+        run: node scripts/ci/build-windows-sqlite.mjs
+        if: runner.os == 'Windows'
+      - name: Build and prove Windows vector publication
+        id: native_vector
+        run: node scripts/ci/build-windows-usearch.mjs
+        if: runner.os == 'Windows'
+      - name: Validate all source and test TypeScript projects
+        run: exec node scripts/run-check.mjs types-tests
+      - name: Run merged ownership, network isolation, access and persisted fixture regressions
+        run: exec node scripts/run-check.mjs unit packages/gateway/src/agent/service.test.ts packages/gateway/src/analytics/account-ownership.test.ts packages/cloud-relay/src/management-service.test.ts packages/cloud-relay/src/installation-relay.test.ts packages/collector/src/e2e/gateway-env.test.ts packages/gateway/src/tailscale-embed/service.integration.test.ts packages/gateway/src/access/certificate-pending.test.ts packages/gateway/src/access/served-by-gateway.test.ts packages/gateway/src/http/routes/oauth-access.test.ts packages/gateway/src/remote-access/host-tailscale.test.ts packages/gateway/portal/js/views/access.test.ts packages/gateway/portal/js/views/remote-access.test.ts
     strategy:
       fail-fast: false
       max-parallel: 1
