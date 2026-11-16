@@ -104,6 +104,8 @@ export function installAccountUI() {
     continued = false,
     // The "more options" menu of the account view on screen, if that is the view.
     more,
+    // Every menu on screen: the account's and each gateway's. At most one is open.
+    menus = [],
     notice = "",
     // The section the message belongs to: the gateways, or the sign-in methods.
     noticeAt = "methods",
@@ -803,6 +805,7 @@ export function installAccountUI() {
       const session = current;
       root.replaceChildren();
       more = undefined;
+      menus = [];
       if (
         openPortal &&
         session.authenticated &&
@@ -900,7 +903,20 @@ export function installAccountUI() {
           );
       } else
         ui.button("Unlink gateway", () => ui.unlinkGateway(), false, panel).classList.add("danger");
-      ui.button("Cancel", () => ui.ask(undefined), true, panel);
+      ui.button(
+        "Cancel",
+        () => {
+          const { gatewayId } = confirming;
+          ui.ask(undefined);
+          // Back on the menu the question came from.
+          [...root.querySelectorAll(".gateway-item")]
+            .find((row) => row.dataset.gatewayId === gatewayId)
+            ?.querySelector(".more-button")
+            .focus();
+        },
+        true,
+        panel,
+      );
       parent.append(panel);
     },
     /** Whether the relay holds a live connection to the gateway: a dot and the word, never colour alone. */
@@ -965,24 +981,27 @@ export function installAccountUI() {
       title.tabIndex = -1;
       title.focus();
     },
-    /** Opens or closes the "more options" menu; closing can hand the focus back to its button. */
-    toggleMenu(open, focus) {
-      more.list.hidden = !open;
-      more.trigger.setAttribute("aria-expanded", String(open));
-      if (open) more.list.firstChild.focus();
-      else if (focus) more.trigger.focus();
+    /** Opens or closes a menu, closing any other; closing can hand the focus back to its button. */
+    toggleMenu(menu, open, focus) {
+      if (open) for (const other of menus) if (other !== menu) ui.toggleMenu(other, false);
+      menu.list.hidden = !open;
+      menu.trigger.setAttribute("aria-expanded", String(open));
+      if (open) menu.list.firstChild.focus();
+      else if (focus) menu.trigger.focus();
     },
-    /** The two things done to the account as a whole, kept out of the way behind one button. */
-    menu(session) {
+    /**
+     * A "more" button and the menu it opens, drawn by the stylesheet as three dots. `items` are
+     * `[text, action, className]`; choosing one closes the menu first.
+     */
+    dropdown(label, items, className) {
       const wrapper = document.createElement("div"),
         trigger = document.createElement("button"),
         list = document.createElement("div");
-      wrapper.className = "more";
+      wrapper.className = className;
       trigger.type = "button";
       trigger.className = "more-button";
-      trigger.setAttribute("aria-label", "More options");
+      trigger.setAttribute("aria-label", label);
       trigger.setAttribute("aria-haspopup", "menu");
-      // Three dots, drawn by the stylesheet.
       trigger.append(
         document.createElement("span"),
         document.createElement("span"),
@@ -990,44 +1009,60 @@ export function installAccountUI() {
       );
       list.className = "more-list";
       list.setAttribute("role", "menu");
-      list.setAttribute("aria-label", "More options");
+      list.setAttribute("aria-label", label);
       wrapper.append(trigger, list);
-      more = { wrapper, trigger, list };
-      ui.toggleMenu(false);
+      const menu = { wrapper, trigger, list };
+      menus.push(menu);
+      ui.toggleMenu(menu, false);
       // Not an action: opening the menu leaves any message on the page alone.
-      trigger.addEventListener("click", () => ui.toggleMenu(list.hidden));
+      trigger.addEventListener("click", () => ui.toggleMenu(menu, list.hidden));
       wrapper.addEventListener("keydown", (event) => {
         if (list.hidden) return;
-        if (event.key === "Escape") ui.toggleMenu(false, true);
-        else if (event.key === "Tab") ui.toggleMenu(false);
+        if (event.key === "Escape") ui.toggleMenu(menu, false, true);
+        else if (event.key === "Tab") ui.toggleMenu(menu, false);
         else if (event.key === "ArrowDown" || event.key === "ArrowUp") {
           event.preventDefault();
-          const items = [...list.children],
-            step = event.key === "ArrowDown" ? 1 : items.length - 1;
-          items[(items.indexOf(event.target) + step) % items.length].focus();
+          const entries = [...list.children],
+            step = event.key === "ArrowDown" ? 1 : entries.length - 1;
+          entries[(entries.indexOf(event.target) + step) % entries.length].focus();
         }
       });
-      const item = (text, action) => {
+      for (const [text, action, itemClass] of items) {
         const element = ui.button(
           text,
           () => {
-            ui.toggleMenu(false);
+            ui.toggleMenu(menu, false);
             return action();
           },
           false,
           list,
         );
         element.setAttribute("role", "menuitem");
-        return element;
-      };
-      item("Sign out", async () => {
-        await ui.api("logout", {});
-        await ui.refresh();
-      });
-      item("Delete account", () =>
-        ui.ask({ kind: "delete", accountId: session.accountId }),
-      ).className = "danger";
-      root.append(wrapper);
+        if (itemClass) element.className = itemClass;
+      }
+      return menu;
+    },
+    /** The two things done to the account as a whole, kept out of the way behind one button. */
+    menu(session) {
+      more = ui.dropdown(
+        "More options",
+        [
+          [
+            "Sign out",
+            async () => {
+              await ui.api("logout", {});
+              await ui.refresh();
+            },
+          ],
+          [
+            "Delete account",
+            () => ui.ask({ kind: "delete", accountId: session.accountId }),
+            "danger",
+          ],
+        ],
+        "more",
+      );
+      root.append(more.wrapper);
     },
     /**
      * The rest of adding a passkey: the new passkey signs for the sign-ins the account already
@@ -1129,11 +1164,15 @@ export function installAccountUI() {
             event.preventDefault();
             ui.run(() => ui.open(gateway));
           });
-        item.append(link);
-        ui.button("Unlink", () => ui.askUnlink(gateway), true, item).setAttribute(
-          "aria-label",
-          `Unlink “${name}”`,
+        item.append(
+          link,
+          ui.dropdown(
+            `More actions for “${name}”`,
+            [["Unlink from account", () => ui.askUnlink(gateway)]],
+            "row-more",
+          ).wrapper,
         );
+        item.dataset.gatewayId = gateway.gatewayId;
         gateways.append(item);
         if (confirming?.kind === "unlink" && confirming.gatewayId === gateway.gatewayId)
           ui.unlinkPanel(session, gateways);
@@ -1216,8 +1255,9 @@ export function installAccountUI() {
   };
   document.addEventListener("click", (event) => {
     // A press anywhere else closes the menu, and a press on nothing gives its button the focus back.
-    if (more && !more.list.hidden && !more.wrapper.contains(event.target))
-      ui.toggleMenu(false, !event.target.closest("a,button"));
+    for (const menu of menus)
+      if (!menu.list.hidden && !menu.wrapper.contains(event.target))
+        ui.toggleMenu(menu, false, !event.target.closest("a,button"));
   });
   ui.run(async () => {
     ui.restore();

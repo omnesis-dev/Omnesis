@@ -79,7 +79,9 @@ async function expectPresence(page: Page, hostname: string, expected: string | u
  */
 async function unlinkOnAccountPage(page: Page, hostname: string): Promise<string> {
   const row = page.locator(".gateway-item", { hasText: hostname });
-  await row.getByRole("button", { name: /^Unlink / }).click();
+  // The row's own "…" menu, beside its link.
+  await row.getByRole("button", { name: /^More actions for / }).click();
+  await row.getByRole("menuitem", { name: "Unlink from account", exact: true }).click();
   await expectText(page, "Nothing on the gateway is deleted. Its data stays where it is.");
   await expectText(
     page,

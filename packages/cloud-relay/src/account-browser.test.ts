@@ -2416,7 +2416,8 @@ test("signing out and deleting sit behind one button that works from the keyboar
     ["Delete account", "menuitem", "danger"],
   ]);
   expect(buttons(f, "#account-root > section")).toEqual([
-    "Unlink",
+    "",
+    "Unlink from account",
     "Remove",
     "Remove",
     "Add a passkey",
@@ -2584,27 +2585,28 @@ const rows = (f: Page) =>
       (part) => part.textContent,
     ),
     online: row.querySelector(".presence")!.className === "presence online",
-    action: row.querySelector("button")!.getAttribute("aria-label"),
+    action: row.querySelector(".more-button")!.getAttribute("aria-label"),
   }));
-async function askToUnlink(session: object, name = "Unlink “Fictional home”") {
+/** The "…" menu on a gateway's row, by the gateway's name. */
+const rowMenu = (f: Page, name: string) => {
+  const trigger = [...f.document.querySelectorAll(".gateway-item .more-button")].find(
+    (button) => button.getAttribute("aria-label") === `More actions for “${name}”`,
+  ) as unknown as HTMLButtonElement;
+  const wrapper = trigger.parentElement!;
+  return {
+    trigger,
+    list: wrapper.querySelector('[role="menu"]') as unknown as HTMLElement,
+    item: wrapper.querySelector('[role="menuitem"]') as unknown as HTMLButtonElement,
+  };
+};
+async function askToUnlink(session: object, name = "Fictional home") {
   const f = setup();
   f.session(session);
   installAccountUI();
   await f.wait("Fictional cabin");
-  await vi.waitFor(() =>
-    expect(
-      (
-        [...f.document.querySelectorAll(".gateway-item button")].find(
-          (button) => button.getAttribute("aria-label") === name,
-        ) as HTMLButtonElement | undefined
-      )?.disabled,
-    ).toBe(false),
-  );
-  (
-    [...f.document.querySelectorAll(".gateway-item button")].find(
-      (button) => button.getAttribute("aria-label") === name,
-    ) as unknown as HTMLButtonElement
-  ).click();
+  await vi.waitFor(() => expect(rowMenu(f, name).trigger.disabled).toBe(false));
+  rowMenu(f, name).trigger.click();
+  rowMenu(f, name).item.click();
   await f.wait("from your account?");
   return f;
 }
@@ -2618,12 +2620,12 @@ test("each gateway says whether it is online, with a dot and the word, and the l
     {
       text: ["Fictional home", "g-home.example.test", "Online"],
       online: true,
-      action: "Unlink “Fictional home”",
+      action: "More actions for “Fictional home”",
     },
     {
       text: ["Fictional cabin", "g-cabin.example.test", "Offline"],
       online: false,
-      action: "Unlink “Fictional cabin”",
+      action: "More actions for “Fictional cabin”",
     },
   ]);
   // The portal link is unchanged: the row still opens the gateway.
@@ -2694,10 +2696,7 @@ test("unlinking a gateway asks in the page, says nothing on the gateway is delet
 });
 
 test("unlinking the last, offline gateway says it learns of it when it is back, and leaves an empty list", async () => {
-  const f = await askToUnlink(
-    { ...twoGateways, gateways: [cabin, home] },
-    "Unlink “Fictional cabin”",
-  );
+  const f = await askToUnlink({ ...twoGateways, gateways: [cabin, home] }, "Fictional cabin");
   await vi.waitFor(() => expect(f.button("Unlink gateway").disabled).toBe(false));
   f.request.mockResolvedValueOnce(Response.json({ ok: true }));
   f.session({ ...twoGateways, gateways: [] });
@@ -2870,7 +2869,7 @@ test("a refresh from returning to the tab that lands during an unlink draws noth
 
 test("an unnamed gateway is unlinked by its address's placeholder name, the message survives a refresh, and a refresh that fails changes nothing", async () => {
   const unnamed = { ...home, displayName: undefined };
-  const f = await askToUnlink({ ...twoGateways, gateways: [unnamed, cabin] }, "Unlink “Gateway”");
+  const f = await askToUnlink({ ...twoGateways, gateways: [unnamed, cabin] }, "Gateway");
   expect(f.document.querySelector(".unlink h3")!.textContent).toBe(
     "Unlink “Gateway” from your account?",
   );
@@ -2899,4 +2898,53 @@ test("an unnamed gateway is unlinked by its address's placeholder name, the mess
   await new Promise((resolve) => setTimeout(resolve, 20));
   expect(f.alert()).toBe("");
   expect(rows(f).map((row) => row.text[0])).toEqual(["Fictional cabin"]);
+});
+
+test("each gateway's actions sit behind its own \u201c…\u201d menu, apart from the link, and work from the keyboard", async () => {
+  const f = setup();
+  f.session(twoGateways);
+  installAccountUI();
+  await f.wait("Fictional cabin");
+  await vi.waitFor(() => expect(idle(f.document)).toBe(true));
+  const focused = focuses(f);
+  const homeMenu = rowMenu(f, "Fictional home"),
+    cabinMenu = rowMenu(f, "Fictional cabin"),
+    account = more(f);
+  // Beside the link, never inside it, so opening the menu never opens the gateway.
+  expect(homeMenu.trigger.closest("a")).toBeNull();
+  expect(homeMenu.trigger.closest(".gateway-item")!.querySelector("a.gateway")).not.toBeNull();
+  expect(homeMenu.trigger.getAttribute("aria-haspopup")).toBe("menu");
+  expect(homeMenu.trigger.textContent).toBe("");
+  expect(homeMenu.list.hidden).toBe(true);
+  expect(
+    [...homeMenu.list.querySelectorAll('[role="menuitem"]')].map((item) => item.textContent),
+  ).toEqual(["Unlink from account"]);
+  // One menu open at a time: opening a row's closes the account's, and the other way round.
+  account.trigger.click();
+  homeMenu.trigger.click();
+  expect(account.list.hidden).toBe(true);
+  expect(homeMenu.list.hidden).toBe(false);
+  expect(homeMenu.trigger.getAttribute("aria-expanded")).toBe("true");
+  expect(focused.at(-1)).toBe(homeMenu.item);
+  cabinMenu.trigger.click();
+  expect(homeMenu.list.hidden).toBe(true);
+  expect(cabinMenu.list.hidden).toBe(false);
+  // Escape closes it and hands the focus back to its button.
+  key(f, cabinMenu.item, "Escape");
+  expect(cabinMenu.list.hidden).toBe(true);
+  expect(focused.at(-1)).toBe(cabinMenu.trigger);
+  // A press elsewhere closes it.
+  homeMenu.trigger.click();
+  f.document.querySelector("h1")!.dispatchEvent(new f.window.Event("click", { bubbles: true }));
+  expect(homeMenu.list.hidden).toBe(true);
+  expect(unlinks(f)).toEqual([]);
+  // Choosing the one entry asks in the page; cancelling returns to the menu's button.
+  homeMenu.trigger.click();
+  homeMenu.item.click();
+  await f.wait("Unlink “Fictional home” from your account?");
+  await press(f, "Cancel");
+  await vi.waitFor(() => expect(f.document.querySelector(".unlink")).toBeNull());
+  expect(focused.at(-1)).toBe(rowMenu(f, "Fictional home").trigger);
+  expect(unlinks(f)).toEqual([]);
+  expect(f.location.assign).not.toHaveBeenCalled();
 });
