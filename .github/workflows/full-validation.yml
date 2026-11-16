@@ -11,6 +11,7 @@ on:
             relay,
             focused,
             daily-native,
+            embedder-exit,
             hermes,
             performance,
             e2e,
@@ -2171,3 +2172,60 @@ jobs:
           OMNESIS_HARNESS_CONFORMANCE: hermes
         shell: bash
         run: exec node scripts/run-check.mjs e2e packages/collector/src/e2e/harness-plugin-conformance.e2e.test.ts
+
+  embedder-exit:
+    name: Trace real Windows embedder command exit boundaries
+    if: inputs.scope == 'embedder-exit'
+    runs-on: windows-latest
+    timeout-minutes: 40
+    env:
+      OMNESIS_UNIT_WORKERS: "1"
+      OMNESIS_E2E_WORKERS: "1"
+      OMNESIS_TEST_EMBEDDER_CACHE: ${{ runner.temp }}/omnesis-test-embedder
+      TARGET_SOURCE_SHA: ${{ inputs.source_sha }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ inputs.source_sha }}
+          persist-credentials: false
+      - name: Verify immutable candidate source
+        run: |
+          [[ "$TARGET_SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "$TARGET_SOURCE_SHA"
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: "24"
+          cache: npm
+      - name: Install exact locked candidate dependencies
+        run: node scripts/ci/npm-ci.mjs --no-audit --no-fund
+      - name: Prepare exact candidate native bindings
+        run: |
+          node scripts/ci/build-windows-sqlite.mjs
+          node scripts/ci/build-windows-usearch.mjs
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: ${{ runner.temp }}/omnesis-test-embedder
+          key: windows-test-embedder-${{ hashFiles('scripts/ci/with-test-embedder.mjs', 'scripts/ci/reference-embedder.json') }}
+      - name: Add scalar-only diagnostic boundary observations
+        run: |
+          node --input-type=module <<'NODE'
+          import {readFileSync,writeFileSync} from 'node:fs';
+          function change(file,from,to){const text=readFileSync(file,'utf8');if(!text.includes(from))throw Error('Missing diagnostic seam');writeFileSync(file,text.replace(from,to));}
+          change('scripts/lib/check-process.mjs','return result.exitCode ?? 1;',`process.stderr.write('[AUDIT_BOUNDARY] '+JSON.stringify({pid:process.pid,entry:args[0]?.split(/[\\/]/).at(-1),exitCode:result.exitCode,signal:result.signal,failure:result.failure,cleanupMarked:Object.hasOwn(result,'cleanupFailure')})+'\n'); return result.exitCode ?? 1;`);
+          change('scripts/ci/windows-checks.mjs','if (code !== 0 && exitCode === 0) exitCode = code;',`process.stderr.write('[AUDIT_WINDOWS_TASK] '+JSON.stringify({pid:process.pid,code})+'\n'); if (code !== 0 && exitCode === 0) exitCode = code;`);
+          change('scripts/ci/with-test-embedder.mjs','return exitCode;',`process.stderr.write('[AUDIT_EMBEDDER_RETURN] '+JSON.stringify({pid:process.pid,exitCode,globalExitCode:process.exitCode})+'\n'); return exitCode;`);
+          for(const file of ['scripts/ci/with-test-embedder.mjs','scripts/ci/windows-checks.mjs','scripts/run-check.mjs']){const text=readFileSync(file,'utf8');writeFileSync(file,`process.once('exit',code=>process.stderr.write('[AUDIT_NODE_EXIT] '+JSON.stringify({entry:${JSON.stringify(file)},pid:process.pid,code})+'\n'));\n`+text);}
+          NODE
+      - name: Repeat unchanged real embedding and owned E2E commands with exit observations
+        env:
+          OMNESIS_WINDOWS_E2E_FILES: '["packages/collector/src/e2e/search-quality.e2e.test.ts","packages/collector/src/e2e/gateway-lifecycle.e2e.test.ts"]'
+        run: |
+          verdict=0
+          for repetition in 1 2 3; do
+            echo "AUDIT_REPETITION=$repetition"
+            node scripts/ci/with-test-embedder.mjs scripts/ci/windows-checks.mjs e2e || verdict=$?
+          done
+          exit "$verdict"
