@@ -486,7 +486,25 @@ extension GatewayLiveE2ETests {
         try await waitUntil("a second connection after the unanswered ping") {
             forwarder.acceptedConnections == 2
         }
-        try await waitUntil("the reconnection") { await self.isConnected(socket) }
+        // The second connection proves the replacement skipped the backoff. A
+        // loaded simulator can still hold that attempt past its timeout, and the
+        // 600 s backoff the failure earns would outlast this wait, so each failed
+        // attempt is answered the way a user would: by returning to the app,
+        // which skips a parked backoff.
+        var failedAttempts = 1 // the unanswered ping
+        try await waitUntil("the reconnection") {
+            switch await socket.state() {
+            case .connected:
+                return true
+            case .reconnecting(let status) where status.failedAttemptsOnNetwork > failedAttempts:
+                failedAttempts = status.failedAttemptsOnNetwork
+                NSLog("[live-e2e] replacement attempt failed (%@); foregrounding again", status.lastError ?? "-")
+                await socket.appDidBecomeActive()
+                return false
+            default:
+                return false
+            }
+        }
         await socket.stop()
     }
 
