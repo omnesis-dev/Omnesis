@@ -2,7 +2,11 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
-import { backfillOptsFromRuntime, resolveRuntimeSettings } from "./runtime-settings.js";
+import {
+  backfillOptsFromRuntime,
+  resolvePublicAddress,
+  resolveRuntimeSettings,
+} from "./runtime-settings.js";
 import type { OmnesisConfig } from "@omnesis/config";
 
 const TIMING_ENVS = [
@@ -445,7 +449,7 @@ describe("backfillOptsFromRuntime — field-mapping integrity", () => {
   });
 });
 
-describe("resolveRuntimeSettings — gateway.publicBaseUrl", () => {
+describe("resolvePublicAddress — gateway.publicBaseUrl", () => {
   let savedEnv: string | undefined;
   beforeEach(() => {
     savedEnv = process.env.OMNESIS_PUBLIC_BASE_URL;
@@ -457,12 +461,12 @@ describe("resolveRuntimeSettings — gateway.publicBaseUrl", () => {
   });
 
   test("undefined when neither config nor env supplies a value", () => {
-    expect(resolveRuntimeSettings(undefined).publicBaseUrl).toBeUndefined();
+    expect(resolvePublicAddress(undefined).publicBaseUrl).toBeUndefined();
   });
 
   test("rejects MCP resource aliases when no public OAuth issuer resolves", () => {
     expect(() =>
-      resolveRuntimeSettings({
+      resolvePublicAddress({
         gateway: { mcpResourceUrls: ["https://private.example.net:7600/mcp"] },
       }),
     ).toThrow(/requires gateway.publicBaseUrl or OMNESIS_PUBLIC_BASE_URL/);
@@ -471,21 +475,22 @@ describe("resolveRuntimeSettings — gateway.publicBaseUrl", () => {
   test("rejects MCP resource aliases when the environment issuer is invalid", () => {
     process.env.OMNESIS_PUBLIC_BASE_URL = "http://untrusted.example.org";
     expect(() =>
-      resolveRuntimeSettings({
+      resolvePublicAddress({
         gateway: { mcpResourceUrls: ["https://private.example.net:7600/mcp"] },
       }),
     ).toThrow(/requires gateway.publicBaseUrl or OMNESIS_PUBLIC_BASE_URL/);
   });
 
   test("reads gateway.publicBaseUrl from config", () => {
-    const r = resolveRuntimeSettings({
+    const r = resolvePublicAddress({
       gateway: { publicBaseUrl: "https://gw.example.com:7600" },
     });
     expect(r.publicBaseUrl).toBe("https://gw.example.com:7600");
+    expect(r.fromEnvironment).toBe(false);
   });
 
   test("combines the canonical MCP resource with explicitly configured URLs", () => {
-    const resolved = resolveRuntimeSettings({
+    const resolved = resolvePublicAddress({
       gateway: {
         publicBaseUrl: "https://gateway.example.org",
         mcpResourceUrls: [
@@ -503,16 +508,17 @@ describe("resolveRuntimeSettings — gateway.publicBaseUrl", () => {
 
   test("OMNESIS_PUBLIC_BASE_URL env wins over config", () => {
     process.env.OMNESIS_PUBLIC_BASE_URL = "https://env.example.org:7600";
-    const r = resolveRuntimeSettings({
+    const r = resolvePublicAddress({
       gateway: { publicBaseUrl: "https://config.example.com:7600" },
     });
     expect(r.publicBaseUrl).toBe("https://env.example.org:7600");
+    expect(r.fromEnvironment).toBe(true);
   });
 
   test("rejects an alias that collides with the effective environment-selected origin", () => {
     process.env.OMNESIS_PUBLIC_BASE_URL = "https://env.example.org";
     expect(() =>
-      resolveRuntimeSettings({
+      resolvePublicAddress({
         gateway: {
           mcpResourceUrls: [
             "https://env.example.org/alternate/mcp",
@@ -525,12 +531,12 @@ describe("resolveRuntimeSettings — gateway.publicBaseUrl", () => {
 
   test("env value with a trailing slash is normalised away", () => {
     process.env.OMNESIS_PUBLIC_BASE_URL = "https://env.example.org:7600/";
-    expect(resolveRuntimeSettings(undefined).publicBaseUrl).toBe("https://env.example.org:7600");
+    expect(resolvePublicAddress(undefined).publicBaseUrl).toBe("https://env.example.org:7600");
   });
 
   test("non-https env value is rejected and falls back to config", () => {
     process.env.OMNESIS_PUBLIC_BASE_URL = "http://insecure.example.com:7600";
-    const r = resolveRuntimeSettings({
+    const r = resolvePublicAddress({
       gateway: { publicBaseUrl: "https://config.example.com:7600" },
     });
     expect(r.publicBaseUrl).toBe("https://config.example.com:7600");
@@ -545,7 +551,7 @@ describe("resolveRuntimeSettings — gateway.publicBaseUrl", () => {
     "https://env.example.org:99999",
   ])("rejects unsafe env value %s without throwing", (publicBaseUrl) => {
     process.env.OMNESIS_PUBLIC_BASE_URL = publicBaseUrl;
-    const r = resolveRuntimeSettings({
+    const r = resolvePublicAddress({
       gateway: { publicBaseUrl: "https://config.example.com:7600" },
     });
     expect(r.publicBaseUrl).toBe("https://config.example.com:7600");
@@ -554,13 +560,13 @@ describe("resolveRuntimeSettings — gateway.publicBaseUrl", () => {
   test("does not echo credentials from a rejected env value into logs", () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     process.env.OMNESIS_PUBLIC_BASE_URL = "https://oauth-user:oauth-secret@env.example.org";
-    resolveRuntimeSettings(undefined);
+    resolvePublicAddress(undefined);
     expect(warn.mock.calls.flat().join(" ")).not.toContain("oauth-secret");
     warn.mockRestore();
   });
 
   test("defensively rejects an invalid unparsed config value", () => {
-    const r = resolveRuntimeSettings({
+    const r = resolvePublicAddress({
       gateway: { publicBaseUrl: "https://user:secret@config.example.com" },
     });
     expect(r.publicBaseUrl).toBeUndefined();
@@ -568,7 +574,7 @@ describe("resolveRuntimeSettings — gateway.publicBaseUrl", () => {
 
   test("preserves an existing HTTPS path prefix for provider callbacks", () => {
     process.env.OMNESIS_PUBLIC_BASE_URL = "https://env.example.org/omnesis";
-    expect(resolveRuntimeSettings(undefined).publicBaseUrl).toBe("https://env.example.org/omnesis");
+    expect(resolvePublicAddress(undefined).publicBaseUrl).toBe("https://env.example.org/omnesis");
   });
 });
 

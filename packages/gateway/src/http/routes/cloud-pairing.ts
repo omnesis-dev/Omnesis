@@ -36,7 +36,7 @@ export function mountCloudPairingRoutes(
     identity: import("@omnesis/cloud-relay").IdentityProvider;
     ownerAccountId: string;
   },
-  publicBaseUrl?: string,
+  publicBaseUrl?: () => string | undefined,
   identitySource?: () => CloudPairingIdentity | undefined,
   publicOriginSource?: () => string | undefined,
   broker?: () => import("@omnesis/cloud-relay").GoogleBrowserPort | undefined,
@@ -56,7 +56,7 @@ export function mountCloudPairingRoutes(
     account,
     onPending,
     revokedDeviceKey,
-    publicOrigin: publicOriginSource ?? (() => publicBaseUrl),
+    publicOrigin: publicOriginSource ?? (() => publicBaseUrl?.()),
     webConfiguration: (origin) =>
       webGooglePairingConfiguration(
         publicOriginSource

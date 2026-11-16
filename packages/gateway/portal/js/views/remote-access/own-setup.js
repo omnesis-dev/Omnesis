@@ -8,7 +8,7 @@
 // to. With either feature, the owner's own domain or reverse proxy: the
 // gateway checks that the name resolves, that its certificate is valid and
 // that it answers as this gateway, then saves it as `gateway.publicBaseUrl`,
-// which the gateway reads when it starts.
+// which the gateway uses as soon as it is saved.
 
 import { html } from "htm/preact";
 import { useEffect, useState } from "preact/hooks";
@@ -20,7 +20,6 @@ import {
   getRemoteAccess,
   publishHostTailscale,
 } from "../../lib/remote-access-api.js";
-import { RESTART_COMMAND } from "./model.js";
 
 /** A failure in the words a person can act on: a passkey step's own, the gateway's, or `fallback`. */
 function problem(cause, fallback) {
@@ -28,8 +27,8 @@ function problem(cause, fallback) {
 }
 
 /**
- * Saves `url` as the gateway's public address and reads the remote-access
- * settings again, so the page says whether a restart is needed. Resolves to an
+ * Saves `url` as the gateway's public address, which applies at once, and
+ * reads the remote-access settings again so the page shows it. Resolves to an
  * error message, or "" once saved.
  */
 async function savePublicAddress(url, setRemote) {
@@ -40,18 +39,15 @@ async function savePublicAddress(url, setRemote) {
   return "";
 }
 
-/** The gateway reads its public address at start, so a new one waits for a restart. */
-function RestartNotice({ remote }) {
-  const address = remote.publicBaseUrl;
-  if (!address?.restartNeeded) return null;
-  return html`<div class="remote-access-restart" role="status">
-    <p>
-      ${address.configured
-        ? html`Saved <code>${address.configured}</code>. Restart the gateway to start using it:`
-        : "Restart the gateway to stop using its old public address:"}
-    </p>
-    <${CopyBlock} text=${RESTART_COMMAND} title="Copy command" />
-  </div>`;
+/**
+ * Said where `OMNESIS_PUBLIC_BASE_URL` sets the public address: one saved
+ * here would change nothing, so nothing here offers to save one.
+ */
+function SetByEnvironment({ address }) {
+  return html`<p class="remote-access-muted">
+    This gateway's public address, <code>${address}</code>, is set by <code>OMNESIS_PUBLIC_BASE_URL</code> in its
+    environment, so it can't be changed here.
+  </p>`;
 }
 
 function HostTailscale({ remote, setRemote }) {
@@ -83,7 +79,7 @@ function HostTailscale({ remote, setRemote }) {
     try {
       const result = await publishHostTailscale(wantPublic);
       setOutcome(result);
-      if (result.ok && wantPublic) {
+      if (result.ok && wantPublic && !remote.publicBaseUrl?.setByEnvironment) {
         const failed = await savePublicAddress(result.url, setRemote);
         if (failed) setError(failed);
       }
@@ -164,13 +160,13 @@ function HostTailscale({ remote, setRemote }) {
     </div>`}
     ${host.publicGateway &&
     configured !== host.url &&
+    !remote.publicBaseUrl?.setByEnvironment &&
     html`<div class="remote-access-buttons">
       <button type="button" class="btn-secondary" disabled=${busy} onClick=${adoptPublic}>
         ${working === "save" ? "Saving…" : html`Use ${host.url} as this gateway's public address`}
       </button>
     </div>`}
-    ${error && html`<p class="remote-access-problem" role="alert">${error}</p>`}
-    <${RestartNotice} remote=${remote} />`;
+    ${error && html`<p class="remote-access-problem" role="alert">${error}</p>`}`;
 }
 
 const STEP_NAMES = { resolves: "Name", certificate: "Certificate", answers: "This gateway" };
@@ -207,6 +203,7 @@ function OwnAddress({ remote, setRemote, url, onUrl }) {
     }
   };
   const busy = Boolean(working);
+  if (remote.publicBaseUrl?.setByEnvironment) return html`<${SetByEnvironment} address=${configured} />`;
   return html`<form class="remote-access-address" onSubmit=${check}>
       <label for="remote-access-own-url">The address you publish this gateway at</label>
       <div class="remote-access-address-row">
@@ -252,8 +249,7 @@ function OwnAddress({ remote, setRemote, url, onUrl }) {
             ${working === "save" ? "Saving…" : "Use this address"}
           </button>
         </div>`)}
-    ${error && html`<p class="remote-access-problem" role="alert">${error}</p>`}
-    <${RestartNotice} remote=${remote} />`;
+    ${error && html`<p class="remote-access-problem" role="alert">${error}</p>`}`;
 }
 
 /**

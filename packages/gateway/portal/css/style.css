@@ -19415,7 +19415,6 @@ summary.decision-card-head {
 .remote-access-problem { margin: 0; padding: 2px 0 2px 12px; border-left: 2px solid var(--warning); font-size: 13px; line-height: 1.55; color: var(--text-primary); overflow-wrap: anywhere; }
 .remote-access-ok { margin: 0; font-size: 13px; line-height: 1.55; color: var(--text-primary); overflow-wrap: anywhere; }
 .remote-access-ok > span:first-child { color: var(--success); font-weight: 600; }
-.remote-access-warning { margin: 6px 0 0 !important; color: var(--warning) !important; }
 .remote-access-link { padding: 0; border: 0; background: none; color: var(--text-link); font: inherit; text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
 .remote-access-buttons { display: flex; flex-wrap: wrap; gap: 8px; }
 .remote-access-actions .btn-primary,
@@ -19458,9 +19457,7 @@ summary.decision-card-head {
 .remote-access-check-mark { display: grid; width: 18px; height: 18px; place-items: center; border: 1px solid var(--border); border-radius: 50%; font-size: 10px; font-weight: 700; color: var(--text-muted); }
 .remote-access-checks .is-ok .remote-access-check-mark { border-color: var(--success); background: var(--success); color: #fff; }
 .remote-access-checks .is-failed .remote-access-check-mark { border-color: var(--danger); background: var(--danger); color: #fff; }
-.remote-access-restart,
 .remote-access-command { display: grid; gap: 8px; min-width: 0; font-size: 13px; line-height: 1.55; }
-.remote-access-restart p { margin: 0; }
 
 /* The summary once setup is done. */
 .remote-access-summary { display: grid; gap: 12px; }

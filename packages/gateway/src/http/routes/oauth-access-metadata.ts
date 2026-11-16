@@ -31,17 +31,12 @@ export function mountOAuthMetadataRoutes(
   app: RouteApp,
   access: AccessService,
   options: {
-    publicBaseUrl?: string;
-    mcpResourceUrls?: readonly string[];
+    /** The gateway's public address, read on every request so a saved one applies at once. */
+    publicAddress?: import("../../public-address.js").PublicAddressSource;
     additionalOAuthIssuerUrls?: import("../../access/oauth-urls.js").OAuthIssuerSource;
   },
 ): void {
   const registrationLimiter = oauthRegistrationRateLimiter();
-  const metadataPaths = resolveOAuthMetadataPaths(
-    options.publicBaseUrl,
-    options.mcpResourceUrls,
-    options.additionalOAuthIssuerUrls,
-  );
   const rateLimitRegistration: MiddlewareHandler<AppEnv> = async (c, next) => {
     if (registrationLimiter.consume(clientIp(c))) return oauthRateLimitError(c);
     return next();
@@ -49,8 +44,8 @@ export function mountOAuthMetadataRoutes(
   const protectedResourceMetadata: Handler<AppEnv> = (c) => {
     const urls = resolveOAuthUrls(
       c.req.url,
-      options.publicBaseUrl,
-      options.mcpResourceUrls,
+      options.publicAddress?.baseUrl(),
+      options.publicAddress?.mcpResourceUrls(),
       options.additionalOAuthIssuerUrls,
     );
     if (!urls) return oauthConfigurationRequired(c);
@@ -70,8 +65,8 @@ export function mountOAuthMetadataRoutes(
   const authorizationServerMetadata: Handler<AppEnv> = (c) => {
     const urls = resolveOAuthUrls(
       c.req.url,
-      options.publicBaseUrl,
-      options.mcpResourceUrls,
+      options.publicAddress?.baseUrl(),
+      options.publicAddress?.mcpResourceUrls(),
       options.additionalOAuthIssuerUrls,
     );
     if (!urls) return oauthConfigurationRequired(c);
@@ -102,34 +97,55 @@ export function mountOAuthMetadataRoutes(
       authorization_response_iss_parameter_supported: true,
     });
   };
-  const protectedResourcePaths = new Set([
-    ...(metadataPaths?.protectedResources ?? ["/.well-known/oauth-protected-resource/mcp"]),
-    // Some hosts probe the origin-level RFC 9728 endpoint before making an
-    // MCP request, so they have no WWW-Authenticate challenge to follow yet.
-    "/.well-known/oauth-protected-resource",
-  ]);
-  for (const path of protectedResourcePaths) {
-    app.get(path, noStore, scope.public(), protectedResourceMetadata);
-  }
-  const issuerPaths = [
-    metadataPaths,
-    ...(typeof options.additionalOAuthIssuerUrls === "function"
-      ? options.additionalOAuthIssuerUrls()
-      : (options.additionalOAuthIssuerUrls ?? [])
-    ).map((issuer) => resolveOAuthMetadataPaths(issuer, options.mcpResourceUrls)),
-  ];
-  const authorizationPaths = new Set(
-    issuerPaths.map(
-      (paths) => paths?.authorizationServer ?? "/.well-known/oauth-authorization-server",
-    ),
-  );
-  const openIdPaths = new Set(
-    issuerPaths.map((paths) => paths?.openIdConfiguration ?? "/.well-known/openid-configuration"),
-  );
-  for (const path of authorizationPaths)
-    app.get(path, noStore, scope.public(), authorizationServerMetadata);
-  for (const path of openIdPaths)
-    app.get(path, noStore, scope.public(), authorizationServerMetadata);
+  // The metadata paths follow the issuers' and resources' own paths, which a
+  // new public address can change while the gateway runs: each request is
+  // matched against the paths as they are now, and any other passes on.
+  const metadataPaths = () => {
+    const primary = resolveOAuthMetadataPaths(
+      options.publicAddress?.baseUrl(),
+      options.publicAddress?.mcpResourceUrls(),
+      options.additionalOAuthIssuerUrls,
+    );
+    const issuers = [
+      primary,
+      ...(typeof options.additionalOAuthIssuerUrls === "function"
+        ? options.additionalOAuthIssuerUrls()
+        : (options.additionalOAuthIssuerUrls ?? [])
+      ).map((issuer) =>
+        resolveOAuthMetadataPaths(issuer, options.publicAddress?.mcpResourceUrls()),
+      ),
+    ];
+    return {
+      protectedResources: new Set([
+        ...(primary?.protectedResources ?? ["/.well-known/oauth-protected-resource/mcp"]),
+        // Some hosts probe the origin-level RFC 9728 endpoint before making an
+        // MCP request, so they have no WWW-Authenticate challenge to follow yet.
+        "/.well-known/oauth-protected-resource",
+      ]),
+      authorizationServer: new Set([
+        ...issuers.map(
+          (paths) => paths?.authorizationServer ?? "/.well-known/oauth-authorization-server",
+        ),
+        ...issuers.map(
+          (paths) => paths?.openIdConfiguration ?? "/.well-known/openid-configuration",
+        ),
+      ]),
+    };
+  };
+  const serveMetadata: Handler<AppEnv> = (c, next) => {
+    const paths = metadataPaths();
+    if (paths.protectedResources.has(c.req.path)) return protectedResourceMetadata(c, next);
+    if (paths.authorizationServer.has(c.req.path)) return authorizationServerMetadata(c, next);
+    return next();
+  };
+  for (const path of [
+    "/.well-known/oauth-protected-resource/*",
+    "/.well-known/oauth-authorization-server/*",
+    "/.well-known/openid-configuration",
+    // An issuer with a path serves OpenID discovery under that path.
+    "/:issuerPath{.+}/.well-known/openid-configuration",
+  ])
+    app.get(path, noStore, scope.public(), serveMetadata);
   app.post(
     "/oauth/register",
     noStore,

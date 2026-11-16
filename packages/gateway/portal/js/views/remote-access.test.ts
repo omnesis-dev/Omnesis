@@ -86,7 +86,7 @@ vi.mock("../api.js", async (importOriginal) => ({
   patchAdminConfig: vi.fn(async (patch: Json) => {
     gateway.calls.push(["config", patch]);
     const configured = patch.gateway.publicBaseUrl;
-    gateway.remote!.publicBaseUrl = { serving: null, configured, restartNeeded: true };
+    gateway.remote!.publicBaseUrl = { configured, setByEnvironment: false };
     return { status: 200, ok: true, body: {} };
   }),
 }));
@@ -169,7 +169,7 @@ beforeEach(() => {
     tailscale: tailscaleOff(),
     remote: {
       setupCompletedAt: null, first: "tailscale", features: FLAGS.both,
-      publicBaseUrl: { serving: null, configured: null, restartNeeded: false },
+      publicBaseUrl: { configured: null, setByEnvironment: false },
     },
     host: { state: "available", dnsName: "studio.example-net.ts.net", port: 443, url: "https://studio.example-net.ts.net", servesGateway: false, publicGateway: false },
     publish: { ok: true, url: "https://studio.example-net.ts.net" },
@@ -555,10 +555,10 @@ describe("both", () => {
     expect(button("Set it up for me")?.hasAttribute("disabled")).toBe(false);
     await click("Set it up for me");
     expect(calls("publish").at(-1)).toEqual(["publish", true]);
-    // Public: the address becomes the gateway's public address, which a restart starts using.
+    // Public: the address becomes the gateway's public address at once, with no restart to ask for.
     expect(calls("config")).toEqual([["config", { gateway: { publicBaseUrl: "https://studio.example-net.ts.net" } }]]);
     expect(text()).toContain("Serving this gateway at https://studio.example-net.ts.net, on your Tailscale network and to the Internet.");
-    expect(text()).toContain("Saved https://studio.example-net.ts.net. Restart the gateway to start using it:");
+    expect(text()).not.toContain("Restart the gateway");
     expect(text()).not.toContain("OMNESIS_TRUST_PROXY");
   });
 
@@ -590,7 +590,7 @@ describe("both", () => {
     expect(button("Check again")).toBeDefined();
   });
 
-  test("my own address: checked step by step, saved, and waiting for a restart", async () => {
+  test("my own address: checked step by step and saved, in use at once", async () => {
     storage.set("omnesis.remote-access.setup", JSON.stringify({ mode: "setup", step: "connection", self: true, own: "host", url: "" }));
     await mount(FLAGS.both);
     await toggle('input[name="remote-access-own"][value="url"]', true);
@@ -601,12 +601,25 @@ describe("both", () => {
     expect(text()).toContain("This check runs inside your network, so it can't tell whether the address is reachable from outside.");
     await click("Use this address");
     expect(calls("config")).toEqual([["config", { gateway: { publicBaseUrl: "https://omnesis.example.org" } }]]);
-    expect(text()).toContain("Saved https://omnesis.example.org. Restart the gateway to start using it:");
+    expect(text()).toContain("This gateway uses this address.");
+    expect(text()).not.toContain("Restart the gateway");
     // A failing step is shown as failed, and nothing can be saved.
     gateway.check = { url: "https://omnesis.example.org", ok: false, steps: [{ id: "resolves", ok: false, detail: "omnesis.example.org does not resolve from this gateway." }] };
     await submit(".remote-access-address");
     expect(host.querySelector(".remote-access-checks li")?.className).toBe("is-failed");
     expect(button("Use this address")).toBeUndefined();
+  });
+
+  test("an address set by the environment is shown, and nothing offers to save another", async () => {
+    gateway.remote!.publicBaseUrl = { configured: "https://env.example.org", setByEnvironment: true };
+    gateway.host = { state: "available", dnsName: "studio.example-net.ts.net", url: "https://studio.example-net.ts.net", servesGateway: true, publicGateway: true };
+    storage.set("omnesis.remote-access.setup", JSON.stringify({ mode: "setup", step: "connection", self: true, own: "url", url: "" }));
+    await mount(FLAGS.both);
+    expect(text()).toContain("This gateway's public address, https://env.example.org, is set by OMNESIS_PUBLIC_BASE_URL in its environment, so it can't be changed here.");
+    expect(host.querySelector("#remote-access-own-url")).toBeNull();
+    await toggle('input[name="remote-access-own"][value="host"]', true);
+    expect(button("Use https://studio.example-net.ts.net as this gateway's public address")).toBeUndefined();
+    expect(calls("config")).toEqual([]);
   });
 
   test("finish, summary, detail links and a review that keeps everything", async () => {
@@ -641,13 +654,12 @@ describe("both", () => {
 
   test("a summary visit opens directly, and a stale saved setup is not resumed", async () => {
     gateway.remote!.setupCompletedAt = "2026-11-15T10:00:00Z";
-    gateway.remote!.publicBaseUrl = { serving: null, configured: "https://omnesis.example.org", restartNeeded: true };
+    gateway.remote!.publicBaseUrl = { configured: "https://omnesis.example.org", setByEnvironment: false };
     storage.set("omnesis.remote-access.setup", JSON.stringify({ mode: "setup", step: "devices", self: false, own: "host", url: "" }));
     await mount(FLAGS.both);
     expect(heading()).toBe("Remote access is set up");
     expect(text()).toContain("Not used.");
     expect(text()).toContain("Your own address (https://omnesis.example.org). Your home network comes first.");
-    expect(text()).toContain("Restart the gateway to use its new address");
     expect(text()).toContain("Only with a pairing code from Settings, Devices.");
   });
 });
