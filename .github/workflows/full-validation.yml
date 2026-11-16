@@ -21,6 +21,7 @@ on:
             update-lock-publication,
             gateway-boot-trace,
             windows-network-pilot,
+            windows-network-proxy-pilot,
             hermes,
             performance,
             e2e,
@@ -3220,3 +3221,56 @@ jobs:
         if: ${{ always() && steps.production-network.outcome == 'success' }}
         shell: bash
         run: $GITHUB_WORKSPACE/scripts/ci/production-network.sh verify
+
+  windows-network-proxy-pilot:
+    name: Windows complete DNS isolation capability pilot
+    if: inputs.scope == 'windows-network-proxy-pilot'
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ inputs.source_sha }}
+          persist-credentials: false
+      - name: Verify fixed source revision
+        shell: pwsh
+        env:
+          TARGET_SHA: ${{ inputs.source_sha }}
+        run: |
+          if ($env:TARGET_SHA -notmatch '^[0-9a-f]{40}$') { throw 'Invalid target SHA' }
+          if ((git rev-parse HEAD) -ne $env:TARGET_SHA) { throw 'Unexpected checked-out revision' }
+      - name: Prepare immutable Windows proxy and DNS bypass firewall prototype
+        shell: pwsh
+        env:
+          CONTROLLER_SHA: ${{ github.workflow_sha }}
+        run: |
+          if ($env:CONTROLLER_SHA -notmatch '^[0-9a-f]{40}$') { throw 'Invalid controller SHA' }
+          git fetch --no-tags --depth=1 origin $env:CONTROLLER_SHA
+          if ($LASTEXITCODE) { throw 'Controller fetch failed' }
+          git show "$($env:CONTROLLER_SHA):scripts/ci/windows-network-pilot/isolate.ps1" | Set-Content -Encoding utf8 (Join-Path $env:RUNNER_TEMP 'windows-network-pilot.ps1')
+          if ($LASTEXITCODE) { throw 'Controller isolation script unavailable' }
+          git show "$($env:CONTROLLER_SHA):scripts/ci/windows-network-pilot/proxy.py" | Set-Content -Encoding utf8 (Join-Path $env:RUNNER_TEMP 'windows-network-proxy.py')
+          if ($LASTEXITCODE) { throw 'Controller proxy unavailable' }
+          $script = Join-Path $env:GITHUB_WORKSPACE 'scripts/ci/production-network.sh'
+          $text = Get-Content $script -Raw
+          $delegation = 'if [[ "${OS:-}" == "Windows_NT" ]]; then exec pwsh -NoLogo -NoProfile -NonInteractive -File "$RUNNER_TEMP/windows-network-pilot.ps1" "$1"; fi'
+          $text = $text.Replace('set -euo pipefail', ('set -euo pipefail'+"`n"+$delegation))
+          [IO.File]::WriteAllText($script,$text,[Text.UTF8Encoding]::new($false))
+      - name: Keep this job off production Omnesis services
+        id: production-network
+        shell: bash
+        run: $GITHUB_WORKSPACE/scripts/ci/production-network.sh isolate
+      - name: Check nothing tried to reach production Omnesis services
+        if: ${{ always() && steps.production-network.outcome == 'success' }}
+        shell: bash
+        run: $GITHUB_WORKSPACE/scripts/ci/production-network.sh verify
+      - name: Prove attempted explicit DNS bypass is refused and fails the verifier
+        shell: pwsh
+        run: |
+          $script = Join-Path $env:RUNNER_TEMP 'windows-network-pilot.ps1'
+          & pwsh -NoLogo -NoProfile -NonInteractive -File $script negative-control
+          if ($LASTEXITCODE) { throw 'Foreign DNS bypass refusal control failed' }
+          $result = & pwsh -NoLogo -NoProfile -NonInteractive -File $script verify 2>&1
+          $code = $LASTEXITCODE
+          if ($code -ne 1 -or ($result -join "`n") -notmatch 'DNS_ISOLATION_VIOLATION') { throw 'Verifier failed to reject the intentional DNS bypass' }
+          Write-Output 'Negative control: bypass blocked, logged, and rejected by verifier'
