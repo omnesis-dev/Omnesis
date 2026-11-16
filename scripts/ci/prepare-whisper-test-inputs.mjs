@@ -1,0 +1,94 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Copyright (c) 2026 Adrien Conrath
+
+/** Configure actual native ASR for the complete Windows unit lane. */
+import { createHash } from "node:crypto";
+import { createWriteStream, existsSync } from "node:fs";
+import { appendFile, mkdtemp, rm } from "node:fs/promises";
+import { createRequire } from "node:module";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
+import { Readable, Transform } from "node:stream";
+import { pipeline } from "node:stream/promises";
+import { fileURLToPath } from "node:url";
+import { getCatalogEntry } from "../../packages/core/src/models/catalog.ts";
+
+const tiny = getCatalogEntry("whisper-tiny");
+if (!tiny || tiny.kind !== "gguf" || !tiny.sha256)
+  throw new Error("Missing pinned Whisper Tiny model");
+export const WHISPER_TEST_ASSETS = Object.freeze([
+  Object.freeze({
+    variable: "OMNESIS_WHISPER_TEST_MODEL",
+    filename: "tiny model.bin",
+    url: tiny.downloadUrl,
+    sizeBytes: tiny.sizeBytes,
+    sha256: tiny.sha256,
+  }),
+  Object.freeze({
+    variable: "OMNESIS_WHISPER_TEST_AUDIO",
+    filename: "public sample.wav",
+    url: "https://raw.githubusercontent.com/ggml-org/whisper.cpp/v1.7.6/samples/jfk.wav",
+    sizeBytes: 352_078,
+    sha256: "59dfb9a4acb36fe2a2affc14bacbee2920ff435cb13cc314a08c13f66ba7860e",
+  }),
+]);
+
+/** Bound streamed downloads and publish no unverified input to the tests. */
+export async function downloadWhisperTestAsset(asset, path, { fetchImpl = fetch } = {}) {
+  const digest = createHash("sha256");
+  let bytes = 0;
+  let created = false;
+  try {
+    const response = await fetchImpl(asset.url, { signal: AbortSignal.timeout(180_000) });
+    if (!response.ok || !response.body) throw new Error(`ASR asset HTTP ${response.status}`);
+    const destination = createWriteStream(path, { flags: "wx" });
+    destination.once("open", () => {
+      created = true;
+    });
+    await pipeline(
+      Readable.fromWeb(response.body),
+      new Transform({
+        transform(chunk, _encoding, callback) {
+          bytes += chunk.length;
+          if (bytes > asset.sizeBytes) return callback(new Error("ASR asset exceeds pinned size"));
+          digest.update(chunk);
+          callback(null, chunk);
+        },
+      }),
+      destination,
+    );
+    if (bytes !== asset.sizeBytes || digest.digest("hex") !== asset.sha256)
+      throw new Error("ASR asset checksum or size mismatch");
+    return path;
+  } catch (error) {
+    if (created) await rm(path, { force: true });
+    throw error;
+  }
+}
+
+export async function prepareWhisperTestInputs() {
+  if (!process.env.GITHUB_ENV) throw new Error("Native ASR CI requires GITHUB_ENV");
+  // Resolve exactly what the real worker loads; optional install failure must
+  // fail this lane rather than turn native inference into skipped tests.
+  const requireGateway = createRequire(
+    new URL("../../packages/gateway/package.json", import.meta.url),
+  );
+  if (typeof requireGateway("smart-whisper").Whisper !== "function")
+    throw new Error("Missing actual Whisper constructor");
+  const ffmpeg = requireGateway("ffmpeg-static");
+  if (typeof ffmpeg !== "string" || !existsSync(ffmpeg))
+    throw new Error("Missing actual ffmpeg executable");
+  const directory = await mkdtemp(join(process.env.RUNNER_TEMP ?? tmpdir(), "native ASR inputs-"));
+  const variables = [];
+  for (const asset of WHISPER_TEST_ASSETS) {
+    const path = await downloadWhisperTestAsset(asset, join(directory, asset.filename));
+    variables.push(`${asset.variable}=${path}`);
+  }
+  variables.push(`OMNESIS_WHISPER_TEST_FFMPEG=${ffmpeg}`);
+  // Publish the complete set together: a failed asset never configures a
+  // partial acceptance run. Inputs stay for the hosted job's full lifetime.
+  await appendFile(process.env.GITHUB_ENV, variables.join("\n") + "\n");
+}
+
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url))
+  await prepareWhisperTestInputs();

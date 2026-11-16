@@ -78,6 +78,19 @@ describe("Windows CI coverage", () => {
     expect(config.jobs.windows.strategy["max-parallel"]).toBe(4);
   });
 
+  test("the complete unit lane configures real native ASR without expanding focused PR work", () => {
+    const steps = workflow().jobs.windows.steps;
+    const index = steps.findIndex(
+      ({ name }) => name === "Prepare real native Whisper acceptance inputs",
+    );
+    expect(index).toBeGreaterThan(-1);
+    expect(steps[index].if).toBe("${{ matrix.lane == 'unit' }}");
+    expect(steps[index].run).toBe("node scripts/ci/prepare-whisper-test-inputs.mjs");
+    expect(index).toBeLessThan(
+      steps.findIndex(({ name }) => name === "Full Windows unit and adapter tests"),
+    );
+  });
+
   test("runs exact public revisions on hosted Windows with pinned actions and read-only credentials", () => {
     const config = workflow();
     expect(config.permissions).toEqual({ contents: "read" });
