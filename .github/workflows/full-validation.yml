@@ -115,11 +115,11 @@ jobs:
         if: runner.os == 'Windows'
         run: node scripts/ci/build-windows-usearch.mjs
       - name: Require the actual binding and prepare checksum-verified public inputs
-        run: node scripts/ci/audit-native-asr-inputs.mjs
+        run: node scripts/ci/prepare-whisper-test-inputs.mjs
       - name: Exercise actual worker inference and voice-note vocabulary paths
         id: runtime
         continue-on-error: true
-        run: node scripts/run-check.mjs unit packages/gateway/src/transcribe/whisper-transcriber.integration.test.ts packages/gateway/src/transcribe/vocabulary/native.integration.test.ts
+        run: node scripts/run-check.mjs unit packages/gateway/src/transcribe/whisper-transcriber.integration.test.ts packages/gateway/src/transcribe/vocabulary/native.integration.test.ts scripts/ci/prepare-whisper-test-inputs.test.mjs scripts/ci/windows-checks.test.mjs
       - name: Validate source and test TypeScript
         if: runner.os == 'Linux'
         run: node scripts/run-check.mjs typecheck && node scripts/run-check.mjs types-tests
@@ -127,7 +127,7 @@ jobs:
         if: runner.os == 'Linux'
         env:
           NODE_OPTIONS: --max-old-space-size=6144
-        run: node node_modules/eslint/bin/eslint.js packages/gateway/src/transcribe/whisper-transcriber.integration.test.ts packages/gateway/src/transcribe/vocabulary/native.integration.test.ts
+        run: node node_modules/eslint/bin/eslint.js packages/gateway/src/transcribe/whisper-transcriber.integration.test.ts packages/gateway/src/transcribe/vocabulary/native.integration.test.ts scripts/ci/prepare-whisper-test-inputs.mjs scripts/ci/prepare-whisper-test-inputs.test.mjs scripts/ci/windows-checks.test.mjs
       - name: Retain actual inference outcome
         env:
           RUNTIME_OUTCOME: ${{ steps.runtime.outcome }}

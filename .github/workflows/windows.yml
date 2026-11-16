@@ -155,6 +155,12 @@ jobs:
           GOMAXPROCS: "2"
         run: node --import tsx scripts/ci/tailnet-transport.mjs
 
+      - name: Prepare real native Whisper acceptance inputs
+        # The full unit lane includes the actual model/voice-note integration
+        # tests; focused PR checks keep their bounded ownership coverage.
+        if: ${{ matrix.lane == 'unit' }}
+        run: node scripts/ci/prepare-whisper-test-inputs.mjs
+
       - name: Full Windows unit and adapter tests
         # Preserve a failing typecheck verdict while collecting runtime failures.
         if: ${{ !cancelled() && matrix.lane == 'unit' && steps.dependencies.outcome == 'success' && steps.native_sqlite.outcome == 'success' && steps.native_vector.outcome == 'success' }}
