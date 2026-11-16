@@ -14,6 +14,7 @@ import (
  "os"
  "path/filepath"
  "regexp"
+ "runtime"
  "strings"
  "testing"
  "time"
@@ -135,12 +136,24 @@ func TestTailnetFixtureActor(t *testing.T) {
     }
     state,err:=peer.Up(ctx)
     if err!=nil { return nil,err }
+    if state.Self==nil || len(state.TailscaleIPs)==0 { return nil,fmt.Errorf("registered peer has no identity or address") }
     entry:=&actorPeer{server:peer,key:state.Self.PublicKey,owner:request.User=="owner" || len(request.Tags)>0,tags:request.Tags}
     peers[request.Name]=entry
     if ownerID!=0 { if err:=assignOwner(ownerID);err!=nil { return nil,err } }
-    // Transport adapters are installed by the next harness layer; this actor
-    // already owns registration, approval, role assignment and process exit.
-    return map[string]string{"name":request.Name,"address":state.TailscaleIPs[0].String()},nil
+    socketDir,err:=os.MkdirTemp("","omtn-")
+    if err!=nil { return nil,err }
+    t.Cleanup(func(){if err:=os.RemoveAll(socketDir);err!=nil { t.Error(err) }})
+    socket,err:=serveFixtureLocalAPI(t,peer,socketDir)
+    if err!=nil { return nil,err }
+    cliDirectory:=os.Getenv("PORTABLE_TAILSCALE_CLI_DIR")
+    if !filepath.IsAbs(cliDirectory) { return nil,fmt.Errorf("missing pinned official CLI directory") }
+    suffix:=""
+    if runtime.GOOS=="windows" { suffix=".exe" }
+    machineDir:=filepath.Join(directory,"machines",request.Name)
+    binDir:=filepath.Join(machineDir,"bin")
+    if _,err:=makeFixtureCLI(binDir,socket,filepath.Join(cliDirectory,"tailscale"+suffix));err!=nil { return nil,err }
+    proxyURL:=serveFixturePeerProxy(t,peer)
+    return map[string]string{"name":request.Name,"address":state.TailscaleIPs[0].String(),"dir":machineDir,"socket":socket,"proxyUrl":proxyURL,"binDir":binDir},nil
    default: return nil,fmt.Errorf("unknown fixture operation")
    }
   }()

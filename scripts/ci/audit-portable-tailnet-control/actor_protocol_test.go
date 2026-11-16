@@ -11,6 +11,9 @@ import (
  "net/netip"
  "os"
  "os/exec"
+ "path/filepath"
+ "runtime"
+ "tailscale.com/ipn/ipnstate"
  "strings"
  "testing"
  "time"
@@ -66,6 +69,13 @@ func TestActorProtocolCreatesRealPeersAndJoins(t *testing.T) {
   address,err:=netip.ParseAddr(value["address"])
   if err!=nil || !tsaddr.CGNATRange().Contains(address) || addresses[address] || value["name"]!=request.Name { t.Fatal("actor did not create a distinct real registered peer") }
   addresses[address]=true
+  suffix:=""
+  if runtime.GOOS=="windows" { suffix=".exe" }
+  output,err:=exec.CommandContext(ctx,filepath.Join(value["binDir"],"tailscale"+suffix),"status","--json").Output()
+  if err!=nil { t.Fatalf("actor peer official CLI: %v",err) }
+  var actual ipnstate.Status
+  if err:=json.Unmarshal(output,&actual);err!=nil { t.Fatal(err) }
+  if actual.BackendState!="Running" || actual.Self==nil || actual.Self.DNSName!=request.Name+".tailnet.test." || len(actual.TailscaleIPs)==0 || actual.TailscaleIPs[0]!=address { t.Fatal("actor peer CLI differs from actual userspace identity") }
  }
  if err:=encoder.Encode(actorRequest{ID:4,Op:"stop"});err!=nil { t.Fatal(err) }
  read(4)

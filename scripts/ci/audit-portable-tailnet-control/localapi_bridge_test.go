@@ -9,8 +9,6 @@ import (
  "io"
  "net/http"
  "net/http/httptest"
- "net/http/httputil"
- "net/url"
  "os"
  "os/exec"
  "path/filepath"
@@ -50,7 +48,7 @@ func TestOfficialCLIThroughPrivateLocalAPI(t *testing.T) {
  t.Cleanup(func() { if err := node.Close(); err != nil { t.Error(err) } })
  status, err := node.Up(ctx)
  if err != nil { t.Fatal(err) }
- addr, _, password, err := node.Loopback()
+ addr, _, _, err := node.Loopback()
  if err != nil { t.Fatal(err) }
  // Knowing the loopback port is insufficient to access this privileged API.
  req, err := http.NewRequestWithContext(ctx,"GET","http://"+addr+"/localapi/v0/status",nil)
@@ -60,26 +58,8 @@ func TestOfficialCLIThroughPrivateLocalAPI(t *testing.T) {
  io.Copy(io.Discard,response.Body)
  response.Body.Close()
  if response.StatusCode!=http.StatusForbidden { t.Fatalf("uncredentialed API returned %d",response.StatusCode) }
- listener, socket, err := privateLocalAPIListener(t.TempDir())
- if err != nil { t.Fatal(err) }
- target, err := url.Parse("http://"+addr)
- if err != nil { listener.Close(); t.Fatal(err) }
- proxy := httputil.NewSingleHostReverseProxy(target)
- proxy.Transport = &http.Transport{}
- director := proxy.Director
- proxy.Director = func(r *http.Request) {
-  director(r)
-  r.SetBasicAuth("", password)
-  r.Header.Set("Sec-Tailscale","localapi")
- }
- server := &http.Server{Handler:proxy,ReadHeaderTimeout:5*time.Second}
- done := make(chan error,1)
- go func() { done<-server.Serve(listener) }()
- t.Cleanup(func() {
-  if err:=server.Close(); err!=nil { t.Error(err) }
-  if err:=<-done; err!=http.ErrServerClosed { t.Errorf("LocalAPI bridge: %v",err) }
-  if transport,ok:=proxy.Transport.(*http.Transport);ok { transport.CloseIdleConnections() }
- })
+ socket,err:=serveFixtureLocalAPI(t,node,t.TempDir())
+ if err!=nil { t.Fatal(err) }
  suffix:=""
  if runtime.GOOS=="windows" { suffix=".exe" }
  cli:=filepath.Join(os.Getenv("PORTABLE_TAILSCALE_CLI_DIR"),"tailscale"+suffix)

@@ -96,7 +96,9 @@ func TestPortableControlAndWireGuard(t *testing.T) {
 			if role == "owner" { target = "fixture-gateway.fixture.example.test" }
 			request, err := http.NewRequestWithContext(ctx, "GET", "http://"+net.JoinHostPort(target,"8080")+"/", nil)
 			if err != nil { t.Fatal(err) }
-			response, err := peer.HTTPClient().Do(request)
+            client:=peer.HTTPClient()
+            if role=="owner" { client=fixturePeerProxyClient(t,peer) }
+            response, err := client.Do(request)
 			if err != nil { t.Fatalf("userspace network request: %v", err) }
 			defer response.Body.Close()
 			var actual observed
