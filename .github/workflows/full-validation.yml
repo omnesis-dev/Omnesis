@@ -20,6 +20,7 @@ on:
             dotenv-refusal,
             update-lock-publication,
             gateway-boot-trace,
+            windows-network-pilot,
             hermes,
             performance,
             e2e,
@@ -3134,3 +3135,88 @@ jobs:
       matrix:
         os:
           - windows-latest
+
+  windows-network-pilot:
+    name: Windows production network isolation capability pilot
+    if: inputs.scope == 'windows-network-pilot'
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ inputs.source_sha }}
+          persist-credentials: false
+      - name: Verify fixed source revision
+        shell: pwsh
+        env:
+          TARGET_SHA: ${{ inputs.source_sha }}
+        run: |
+          if ($env:TARGET_SHA -notmatch '^[0-9a-f]{40}$') { throw 'Invalid target SHA' }
+          if ((git rev-parse HEAD) -ne $env:TARGET_SHA) { throw 'Unexpected checked-out revision' }
+      - name: Prepare isolated Windows resolver capability pilot
+        shell: pwsh
+        run: |
+          @'
+          param([ValidateSet('isolate','verify')][string]$Action)
+          $ErrorActionPreference = 'Stop'
+          if ($env:GITHUB_ACTIONS -ne 'true' -or $env:RUNNER_OS -ne 'Windows') { throw 'Disposable hosted Windows runners only' }
+          $state = Join-Path $env:RUNNER_TEMP 'production-network'
+          $record = Join-Path $state 'dns-sink.log'
+          $baseline = Join-Path $state 'baseline'
+          function Count-Refusals {
+            if (Test-Path $record) { return @(Get-Content $record).Count }
+            return 0
+          }
+          if ($Action -eq 'verify') {
+            if (-not (Test-Path $baseline)) { throw 'No isolated baseline exists' }
+            if ((Count-Refusals) -ne [int](Get-Content $baseline)) { throw 'Unexpected production-namespace DNS question' }
+            Write-Output 'No questions after the isolated baseline'
+            exit 0
+          }
+          if (Test-Path $state) { throw 'Refuse to erase an existing isolation record' }
+          New-Item -ItemType Directory -Path $state | Out-Null
+          $ready = Join-Path $state 'sink-ready.txt'
+          $errors = Join-Path $state 'sink-errors.txt'
+          $sinkScript = Join-Path $env:GITHUB_WORKSPACE 'scripts/ci/dns-sink.py'
+          $sink = Start-Process -FilePath (Get-Command python).Source -ArgumentList @('-u', ('"'+$sinkScript+'"'), '53', ('"'+$record+'"')) -PassThru -RedirectStandardOutput $ready -RedirectStandardError $errors
+          $limit = [DateTime]::UtcNow.AddSeconds(10)
+          while (-not ((Test-Path $ready) -and ((Get-Content $ready -Raw) -match 'ready'))) {
+            $sink.Refresh()
+            if ($sink.HasExited -or [DateTime]::UtcNow -ge $limit) { throw 'DNS sink did not become ready; no resolver or production lookup was attempted' }
+            Start-Sleep -Milliseconds 100
+          }
+          @{ pid=$sink.Id; start=$sink.StartTime.ToUniversalTime().Ticks } | ConvertTo-Json | Set-Content (Join-Path $state 'sink-owner.json')
+          Add-DnsClientNrptRule -Namespace @('windows-network-probe.example.test','.windows-network-probe.example.test','omnesis.app','.omnesis.app','omnesis.dev','.omnesis.dev') -NameServers '127.0.0.1' -Comment 'Disposable CI DNS isolation capability pilot' | Out-Null
+          Clear-DnsClientCache
+          $lookup = 'require("node:dns").lookup(process.argv[1],e=>process.exit(e?0:1));setTimeout(()=>process.exit(2),5000).unref();'
+          $resolve = 'require("node:dns").resolve4(process.argv[1],e=>process.exit(e?0:1));setTimeout(()=>process.exit(2),5000).unref();'
+          function Require-RecordedRefusal([string]$queryName,[string]$program) {
+            $count = Count-Refusals
+            & node -e $program $queryName
+            if ($LASTEXITCODE -ne 0) { throw 'DNS capability probe did not refuse promptly' }
+            if ((Count-Refusals) -le $count) { throw ('CAPABILITY_GAP: '+$queryName+' bypassed the controlled resolver; no production question has been sent') }
+            Write-Output ('Recorded refusal: '+$queryName)
+          }
+          # Reserved names prove BOTH resolver APIs before any production-name probe.
+          Require-RecordedRefusal 'native.windows-network-probe.example.test' $lookup
+          Require-RecordedRefusal 'cares.windows-network-probe.example.test' $resolve
+          Require-RecordedRefusal 'relay.omnesis.app' $lookup
+          Require-RecordedRefusal 'omnesis.dev' $lookup
+          & node -e 'require("node:dns").lookup("github.com",e=>process.exit(e?1:0));setTimeout(()=>process.exit(2),5000).unref();'
+          if ($LASTEXITCODE -ne 0) { throw 'Unrelated DNS stopped working' }
+          Count-Refusals | Set-Content $baseline
+          Write-Output 'Both native and direct default resolver APIs honored the pilot; baseline saved'
+          '@ | Set-Content -Encoding utf8 (Join-Path $env:RUNNER_TEMP 'windows-network-pilot.ps1')
+          $script = Join-Path $env:GITHUB_WORKSPACE 'scripts/ci/production-network.sh'
+          $text = Get-Content $script -Raw
+          $delegation = 'if [[ "${OS:-}" == "Windows_NT" ]]; then exec pwsh -NoLogo -NoProfile -NonInteractive -File "$RUNNER_TEMP/windows-network-pilot.ps1" "$1"; fi'
+          $text = $text.Replace('set -euo pipefail', ('set -euo pipefail'+"`n"+$delegation))
+          [IO.File]::WriteAllText($script,$text,[Text.UTF8Encoding]::new($false))
+      - name: Keep this job off production Omnesis services
+        id: production-network
+        shell: bash
+        run: $GITHUB_WORKSPACE/scripts/ci/production-network.sh isolate
+      - name: Check nothing tried to reach production Omnesis services
+        if: ${{ always() && steps.production-network.outcome == 'success' }}
+        shell: bash
+        run: $GITHUB_WORKSPACE/scripts/ci/production-network.sh verify
