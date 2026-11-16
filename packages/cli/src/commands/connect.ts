@@ -907,14 +907,26 @@ async function prepareHarnessPlugin(
               "Accepted the capabilities the Omnesis integration plugin declares to OpenClaw.",
             );
           }
+          process.stderr.write(
+            `AUDIT_INSTALL before-legacy-retire ${Date.now() - installStartedAt}ms\n`,
+          );
           retirePersistedLegacyOpenClawPlugin(migrationEnvironment);
+          process.stderr.write(
+            `AUDIT_INSTALL after-legacy-retire ${Date.now() - installStartedAt}ms\n`,
+          );
           // Rebuild without the bypass after removing the stale install
           // record, so subsequent normal OpenClaw processes see the new
           // integration and no cached missing-manifest diagnostic.
+          process.stderr.write(
+            `AUDIT_INSTALL before-registry-refresh ${Date.now() - installStartedAt}ms\n`,
+          );
           runInstaller(
             "openclaw",
             ["plugins", "registry", "--refresh", "--json"],
             normalEnvironment,
+          );
+          process.stderr.write(
+            `AUDIT_INSTALL after-registry-refresh ${Date.now() - installStartedAt}ms\n`,
           );
         },
         cleanup: artifact.cleanup,

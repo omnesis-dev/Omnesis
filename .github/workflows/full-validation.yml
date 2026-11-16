@@ -62,6 +62,7 @@ on:
             legacy-tailnet,
             harness-native,
             harness-readiness,
+            mac-installer-timeout,
             stream-timeout,
             provider-ownership,
           ]
@@ -1755,7 +1756,7 @@ jobs:
       - name: Install locked source dependencies
         run: node scripts/ci/npm-ci.mjs --no-audit --no-fund
       - name: Verify literal browser commands, actual child producers and isolated native host environments
-        run: node scripts/run-check.mjs unit packages/cli/src/commands/uninstall.test.ts packages/cli/src/credentials-wizard.test.ts packages/cli/src/commands/connect-oauth.test.ts packages/collector/src/e2e/enrollment-browser-fixture.test.ts packages/collector/src/e2e/harness-runtime-conformance.test.ts packages/cloud-relay/src/relay-dos-limits.test.ts scripts/ci/windows-checks.test.mjs
+        run: node scripts/run-check.mjs unit packages/collector/src/e2e/enrollment-terminal-fixture.test.ts packages/collector/src/e2e/enrollment-terminal-cohort.windows.test.ts packages/gateway/src/ocr/tesseract-ocr.test.ts packages/cli/src/commands/uninstall.test.ts packages/cli/src/credentials-wizard.test.ts packages/cli/src/commands/connect-oauth.test.ts packages/collector/src/e2e/enrollment-browser-fixture.test.ts packages/collector/src/e2e/harness-runtime-conformance.test.ts packages/cloud-relay/src/relay-dos-limits.test.ts scripts/ci/windows-checks.test.mjs
       - name: Verify all five actual SDK controls using the short private socket runtime directory
         env:
           OMNESIS_TAILNET_TOOLS_DIR: ${{ runner.temp }}/portable-tailnet-tools
@@ -1770,6 +1771,8 @@ jobs:
         run: >-
           node node_modules/eslint/bin/eslint.js
           packages/cli/src/browser-command.ts packages/cli/src/credentials-wizard.ts
+          packages/collector/src/e2e/enrollment-terminal-fixture.ts packages/collector/src/e2e/enrollment-terminal-fixture.test.ts packages/collector/src/e2e/enrollment-terminal-wrapper.mjs
+          packages/gateway/src/ocr/tesseract-ocr.ts packages/gateway/src/ocr/tesseract-ocr.test.ts
           packages/cli/src/uninstall/plan.ts packages/cli/src/uninstall/execute.ts packages/cli/src/commands/uninstall.test.ts
           packages/cli/src/commands/connect-oauth.ts packages/cli/src/commands/connect-oauth.test.ts
           packages/collector/src/e2e/enrollment-browser-fixture.ts packages/collector/src/e2e/enrollment-browser-fixture.test.ts
@@ -1783,3 +1786,27 @@ jobs:
           name: native-socket-control-source-${{ runner.os }}
           path: scripts/tailnet-test/control/localapi_bridge_test.go
           retention-days: 3
+
+  mac-installer-timeout:
+    if: inputs.scope == 'mac-installer-timeout'
+    runs-on: macos-latest
+    timeout-minutes: 30
+    env:
+      OMNESIS_UNIT_WORKERS: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: "24"
+          cache: npm
+      - name: Install locked source dependencies
+        run: node scripts/ci/npm-ci.mjs --no-audit --no-fund
+      - name: Diagnose the unchanged installer suite without expanding its deadlines
+        run: |
+          set -e
+          for attempt in 1 2 3; do
+            node scripts/run-check.mjs unit scripts/release/install-sh-first-run.test.mjs
+          done

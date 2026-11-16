@@ -148,6 +148,14 @@ describe("TesseractOcr", () => {
     });
   });
 
+  test.each([undefined, new Error("Synthetic unjoined availability probe")])(
+    "availability propagates unconfirmed process cleanup: %s",
+    async (cleanupFailure) => {
+      run.mockResolvedValue({ exitCode: 0, cleanupFailure });
+      await expect(tesseractAvailable()).rejects.toMatchObject({ cleanupFailure });
+    },
+  );
+
   test("recognizes text via the tesseract module", async () => {
     const mod = fakeModule("receipt total $42");
     const ocr = new TesseractOcr({ loadModule: async () => mod });

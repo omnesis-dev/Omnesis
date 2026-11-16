@@ -11,6 +11,7 @@ import { delimiter, dirname, isAbsolute, join } from "node:path";
 import { FORWARDED_TOOL_NAMES, resolveHarnessCommand } from "@omnesis/agent-integration";
 import { ownedProcessCleanupReceipt, windowsEnvironmentValue } from "@omnesis/core";
 import { execE2EBufferedCommand } from "./e2e-buffered-command.js";
+import { runEnrollmentTerminal } from "./enrollment-terminal-fixture.js";
 
 import { gatewayBootBudgetMs } from "./gateway-env.js";
 import { killSubprocessGroup, registerSubprocessGroup } from "./subprocess-reaper.js";
@@ -250,7 +251,7 @@ async function unusedPort(): Promise<number> {
   return address.port;
 }
 
-async function startHarnessAndWait(options: {
+interface HarnessStartupOptions {
   label: string;
   command: string;
   args: readonly string[];
@@ -260,7 +261,12 @@ async function startHarnessAndWait(options: {
   initialSignal?: NodeJS.Signals;
   requireCleanExit?: boolean;
   settleMs?: number;
-}): Promise<string> {
+}
+
+async function startHarnessAndWait(options: HarnessStartupOptions): Promise<string> {
+  if (process.platform === "win32" && options.initialSignal === "SIGINT") {
+    return startHarnessInWindowsTerminal(options);
+  }
   const chunks: string[] = [];
   const child = spawn(options.command, options.args, {
     cwd: options.cwd,
@@ -315,9 +321,71 @@ async function startHarnessAndWait(options: {
   return output;
 }
 
+/** A console Ctrl+C lets Python run its shutdown handlers on Windows. */
+async function startHarnessInWindowsTerminal(options: HarnessStartupOptions): Promise<string> {
+  const terminal = runEnrollmentTerminal(options.command, options.args, {
+    cwd: options.cwd,
+    env: options.env,
+  });
+  const status = {
+    get exitCode() {
+      return terminal.proc.exitCode;
+    },
+    signalCode: null,
+  };
+  let failed = false;
+  let primaryError: unknown;
+  try {
+    await waitForReady(options.label, status, terminal.stdout, options.ready);
+    await new Promise<void>((resolve) => setTimeout(resolve, options.settleMs ?? 250));
+    if (status.exitCode !== null || !options.ready(terminal.stdout())) {
+      throw new Error(`${options.label} did not remain ready after startup:\n${terminal.stdout()}`);
+    }
+    await terminal.interrupt();
+    let timer: NodeJS.Timeout | undefined;
+    try {
+      await Promise.race([
+        terminal.exit,
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(
+            () => reject(new Error(`${options.label} did not stop after Ctrl+C`)),
+            5_000,
+          );
+        }),
+      ]);
+    } finally {
+      clearTimeout(timer);
+    }
+    if (options.requireCleanExit && status.exitCode !== 0) {
+      throw new Error(
+        `${options.label} did not stop cleanly (exit ${status.exitCode}):\n${terminal.stdout()}`,
+      );
+    }
+  } catch (error) {
+    failed = true;
+    primaryError = error;
+  } finally {
+    try {
+      await terminal.kill();
+    } catch (cleanupError) {
+      const receipt = ownedProcessCleanupReceipt(cleanupError);
+      primaryError = Object.assign(
+        new AggregateError(
+          [...(failed ? [primaryError] : []), cleanupError],
+          "Harness terminal closure is unconfirmed",
+        ),
+        { cleanupFailure: receipt ? receipt.failure : cleanupError },
+      );
+      failed = true;
+    }
+  }
+  if (failed) throw primaryError;
+  return terminal.stdout();
+}
+
 async function waitForReady(
   label: string,
-  child: ChildProcess,
+  child: Pick<ChildProcess, "exitCode" | "signalCode">,
   output: () => string,
   ready: (output: string) => boolean,
 ): Promise<void> {
