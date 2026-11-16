@@ -64,6 +64,7 @@ on:
             harness-readiness,
             mac-installer-timeout,
             ocr-native,
+            indexer-benchmark,
             stream-timeout,
             provider-ownership,
           ]
@@ -1849,3 +1850,32 @@ jobs:
         run: node --import tsx scripts/ci/audit-ocr-acceptance.mjs
       - name: Verify native availability cleanup and the existing real engine integration case
         run: node scripts/run-check.mjs unit packages/gateway/src/ocr/tesseract-ocr.test.ts packages/gateway/src/ocr/ocr-backends.integration.test.ts
+
+  indexer-benchmark:
+    if: inputs.scope == 'indexer-benchmark'
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 75
+    env:
+      OMNESIS_UNIT_WORKERS: "1"
+      OMNESIS_INDEXER_BENCH: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: "24"
+          cache: npm
+      - name: Install locked source dependencies
+        run: node scripts/ci/npm-ci.mjs --no-audit --no-fund
+      - name: Prepare actual Windows storage and vector bindings
+        if: runner.os == 'Windows'
+        run: node scripts/ci/build-windows-sqlite.mjs && node scripts/ci/build-windows-usearch.mjs
+      - name: Verify the default portable backlog benchmark and ordinary functional cases
+        run: node scripts/run-check.mjs unit packages/gateway/src/indexer/indexer.throughput.test.ts
