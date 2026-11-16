@@ -32,10 +32,25 @@ func TestInteractiveAuthPersistentRestartAndSignOut(t *testing.T) {
   MagicDNSDomain:"fixture.example.test",
   RequireAuth:true,
   Logf:discard,
-  ModifyFirstMapResponse:func(response *tailcfg.MapResponse, _ *tailcfg.MapRequest) {
-   // A real tailnet can provide MagicDNS without issuing HTTPS certificates.
-   if response.DNSConfig != nil { response.DNSConfig.CertDomains = nil }
-  },
+
+ }
+ // Own the map stream so later full responses cannot silently re-enable
+ // HTTPS certificates after the initial MagicDNS-only response.
+ control.AltMapStream = func(ctx context.Context, writer testcontrol.MapStreamWriter, request *tailcfg.MapRequest) {
+  if !request.Stream { _ = writer.SendMapMessage(new(tailcfg.MapResponse)); return }
+  self := control.Node(request.NodeKey)
+  if self == nil { t.Error("missing registered map client"); return }
+  now := time.Now()
+  response := &tailcfg.MapResponse{
+   Node:self,
+   DERPMap:control.DERPMap,
+   Domain:"fixture.example.test",
+   DNSConfig:&tailcfg.DNSConfig{Proxied:true, Domains:[]string{"fixture.example.test"}},
+   UserProfiles:[]tailcfg.UserProfile{{ID:self.User, LoginName:"owner", DisplayName:"Fixture owner"}},
+   ControlTime:&now,
+  }
+  if err := writer.SendMapMessage(response); err != nil { return }
+  <-ctx.Done()
  }
  control.HTTPTestServer = httptest.NewServer(control)
  t.Cleanup(control.HTTPTestServer.Close)
@@ -73,7 +88,7 @@ func TestInteractiveAuthPersistentRestartAndSignOut(t *testing.T) {
  if !control.CompleteAuth(firstURL) { t.Fatal("could not approve local interactive sign-in") }
  initial, err := first.Up(ctx)
  if err != nil { t.Fatal(err) }
- if initial.Self == nil || len(initial.CertDomains) != 0 || initial.CurrentTailnet == nil || !initial.CurrentTailnet.MagicDNSEnabled { t.Fatal("wrong local tailnet certificate capability") }
+ if initial.Self == nil || len(initial.CertDomains) != 0 || initial.CurrentTailnet == nil || !initial.CurrentTailnet.MagicDNSEnabled { t.Fatalf("wrong capabilities: self=%t certificates=%d tailnet=%t magicDNS=%t", initial.Self != nil, len(initial.CertDomains), initial.CurrentTailnet != nil, initial.CurrentTailnet != nil && initial.CurrentTailnet.MagicDNSEnabled) }
  closeNode(first)
  second := start()
  restarted, err := second.Up(ctx)
