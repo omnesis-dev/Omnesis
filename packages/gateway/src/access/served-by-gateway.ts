@@ -94,8 +94,9 @@ function resourcePort(resource: string): number {
  * certificate is the gateway's own can a client pin the gateway's
  * fingerprint, and only on the gateway's own port is nothing between them.
  * A proxy in front usually presents its own certificate; one that presents
- * the gateway's shows by its port. Certificate answers are cached briefly and
- * never trusted across a change of the gateway's certificate. Without a
+ * the gateway's shows by its port. Certificate answers are cached briefly,
+ * never for an address that did not answer, and never trusted across a
+ * change of the gateway's certificate. Without a
  * listening port to compare, a resource that presents the gateway's
  * certificate counts as direct.
  */
@@ -119,7 +120,10 @@ export function createServedByGatewayCheck(options: {
       servedByGateway: presented?.fingerprint.toLowerCase() === own,
       publiclyTrusted: presented?.publiclyTrusted ?? false,
     };
-    cache.set(resource, { ...answer, fingerprint: own, at: now() });
+    // An address that did not answer is asked again next time: it may be one
+    // that is still coming up, such as a Tailscale name whose certificate is
+    // being issued, and a remembered miss would outlast it.
+    if (presented) cache.set(resource, { ...answer, fingerprint: own, at: now() });
     return answer;
   };
   return async (resources) => {

@@ -178,6 +178,7 @@ import { mountOAuthAccessRoutes } from "./http/routes/oauth-access.js";
 import { mountLegacyMcpCutoverRoute } from "./http/routes/legacy-mcp-cutover.js";
 import { AccessService } from "./access/service.js";
 import { resolveDeviceAnswerScope } from "./access/device-answer-scope.js";
+import { pendingCertificateOrigins } from "./access/certificate-pending.js";
 import { resolveMcpRequestResource, resolveOAuthUrls } from "./access/oauth-urls.js";
 import { mountSubscriptionRoutes } from "./http/routes/subscriptions.js";
 import { mountNotificationRoutes } from "./http/routes/notifications.js";
@@ -1583,6 +1584,15 @@ export function createServer(
     tlsFingerprintSha256: opts?.tlsFingerprintSha256,
     listenPort: opts?.port,
     agentCertificateTrust: opts?.agentCertificateTrust,
+    ...(opts?.tailscaleEmbed || opts?.cloudRelayManagement
+      ? {
+          pendingCertificateOrigins: () =>
+            pendingCertificateOrigins({
+              ...(opts.tailscaleEmbed ? { tailscale: opts.tailscaleEmbed } : {}),
+              ...(opts.cloudRelayManagement ? { relay: opts.cloudRelayManagement } : {}),
+            }),
+        }
+      : {}),
   });
   mountLegacyMcpCutoverRoute(app, {
     getDevice: (deviceId) => getDevice(db, deviceId),

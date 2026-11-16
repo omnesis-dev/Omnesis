@@ -8,6 +8,11 @@ decide whether it is flaky or a real regression. Record the evidence in one
 issue per problem. Fix the flakes, and open a pull request only for a fix you
 have verified. Real regressions go to the operator and are not fixed here.
 
+**The goal of every scan is zero open `flaky-test` issues.** That outranks any
+other work this loop does. Each open issue has an owner who is actively fixing it,
+or this loop fixes it now, or it is closed with the evidence for closing it. An
+issue that lingers with nobody on it is this loop's failure.
+
 ## Invocation and scheduling
 
 Invoking this skill runs one scan. Recurring monitoring requires the operator to
@@ -46,6 +51,11 @@ create it on the first scan:
 - `pending`: failures waiting for evidence.
 - `pullRequests`: this loop's open pull requests, with their issue and failure
   identity.
+- `owners`: for each open `flaky-test` issue, who is fixing it (this loop, another
+  session or a pull request), the branch or pull request, and when that was last
+  confirmed.
+- `closedNotReproduced`: issues closed without a fix (step 7), so a recurrence
+  reopens them.
 
 Write it only after a step has finished, so a scan that dies is replayed. The
 replay is safe because each issue's body and comments are checked against the run
@@ -65,6 +75,37 @@ For each pull request in `pullRequests`, read its current-head CI:
 - Conflicting: bring it up to date. Do not re-push a green branch only to rebase.
 - Merged: record the merge commit and delete the worktree. The fix has held only
   while the failure stays absent from commits that contain it (step 4).
+
+### 1b. Account for every open flaky-test issue
+
+Every open `flaky-test` issue belongs to this loop until someone else is shown to
+own it, whoever filed it. An issue is never left waiting for a later scan with
+nobody on it. List them all:
+
+```sh
+gh issue list --repo "$REPO" --state open --label flaky-test --limit 200 --json number,title,createdAt
+```
+
+For each, settle its owner and record it in `owners`:
+
+- **Owned elsewhere:** an open pull request that fixes it, or a branch with commits
+  in the last two days, or a live agent session that confirms it is fixing it. An
+  issue's author is not its owner, and a branch name or worktree that looks related
+  is a lead, not a confirmation.
+- **Ask, every time, without hesitating.** Before starting any fix, list the live
+  agent sessions the host can see (in Claude Code, `ListAgents`), and message each
+  one that could be on it, Claude or Codex alike. Name the issue and test, and ask
+  for a plain answer: fixing it (with the branch or pull request), or not. One
+  message costs seconds, and two agents fixing the same flake costs hours and a
+  conflicting pull request. Do not wait on a silent session: start the fix, and stop
+  if it answers that it owns the issue.
+- Confirm owners elsewhere again on the next scan. An owner with no pull request and
+  no progress after two days loses the issue: tell that session, and take it.
+- **This loop's:** everything else. It goes to step 7 in this scan, with the new
+  flakes, oldest issue first.
+
+An issue whose fix merged but stays open (the pull request did not say `Fixes #N`)
+is closed now, naming the merge commit.
 
 ### 2. Collect the failures
 
@@ -219,7 +260,8 @@ tests.
 
 - **An open issue covers it:** if this run id is in neither its body nor its
   comments, comment with the new evidence. Otherwise add nothing.
-- **Only a closed issue covers it:** if the failing commit does not contain the
+- **Only a closed issue covers it:** if it is in `closedNotReproduced`, reopen it
+  and comment with the new run. Otherwise, if the failing commit does not contain the
   closing fix, this is the same occurrence, so file nothing. If it does, file a new
   issue that links to the closed one and says the failure came back.
 - **Nothing covers it:** file one issue per problem, with `--body-file`:
@@ -258,17 +300,21 @@ per failure. A flake needs no notification of its own unless a label was missing
 
 ### 7. Fix the flakes
 
-Handle each flake with an issue and no owner, each in its own worktree created
-from `origin/main` per the local instructions. When delegation is available and
-permitted, give each one to its own sub-agent with a self-contained brief: the
-issue, the evidence, and this section. Stop at three open pull requests from this
-loop; the rest keep their issue and wait for a later scan. One stuck fix must not
-hold up the others.
+Fix every flake this loop owns: the new ones from this scan and every open issue
+step 1b assigned to it. Each gets its own worktree created from `origin/main` per
+the local instructions. When delegation is available and permitted, give each one
+to its own sub-agent with a self-contained brief: the issue, the evidence, and this
+section. Run at most three fixes at a time to spare the shared queues; as one opens
+its pull request or reaches its end state, start the next. Nothing waits for a
+later scan because of that limit, and one stuck fix must not hold up the others.
+
+Each issue ends this step in one of three states: a pull request that fixes it, a
+confirmed owner elsewhere, or closed (see "If you cannot verify the fix" below).
 
 **First check that nobody owns it.** Search open and recently closed pull requests
-by test file and test name, then look at remote branches, `git worktree list` and
-any other live agent sessions the host can list. If someone is on it, leave it and
-mention that in the summary.
+by test file and test name, then look at remote branches and `git worktree list`,
+then ask the live agent sessions directly, as step 1b describes. If someone is on
+it, record them in `owners`, leave it and mention that in the summary.
 
 **Find the mechanism.** State the cause in one sentence that names it, supported by
 the log and the code: which two things race, or which assumption about ordering or
@@ -282,8 +328,14 @@ when it is, fix the product, not the test.
   itself, or assert the structure instead of elapsed time. New CI assertions must
   not depend on wall-clock time.
 - An outside service that fails transiently: a bounded retry around that one call.
+  When the outside cause cannot be removed, the repository can usually still make
+  it harmless: wait for the outside condition itself, fail fast with a clear error
+  instead of hanging to a job limit, or print the diagnostics the next occurrence
+  needs. That is the fix.
 - A limit that was simply wrong: change it only with measurements showing what the
-  value should be and what the limit protects.
+  value should be and what the limit protects. Take the measurement yourself, on the
+  real lane: "needs a measurement" is the first step of the fix, not a reason to
+  wait.
 
 Skipping or quarantining the test, retrying the whole test, raising a timeout
 without a mechanism, and deleting an assertion without replacing its coverage are
@@ -309,11 +361,19 @@ not fixes.
    skill (`.agents/skills/omnesis-review/SKILL.md`) to the diff and fix what it finds.
 
 **If you cannot verify the fix, do not open a pull request.** Comment on the issue
-with the mechanism you suspect, what you ran and what it showed, and say so in the
-summary. A flake you never reproduced stays open until new evidence helps. The same
-goes for an outside failure with nothing to change in this repository, such as a
-download inside a third-party action: say that on the issue instead of forcing a
-pull request.
+with the mechanism you suspect, what you ran and what it showed. Then bring the
+issue to an end state instead of leaving it open:
+
+- **Not seen again:** close it as not reproduced, with `--reason "not planned"`,
+  once the failure has stayed absent for seven days and at least three runs that
+  exercised it passed, or at once when the code it exercised has changed so that it
+  cannot fail the same way. The comment states those runs or that change, and says a
+  recurrence reopens the issue. Record it in `closedNotReproduced`.
+- **Outside the repository with nothing to change,** such as a download inside a
+  third-party action: say so on the issue and close it the same way.
+- **Still recurring with no verifiable fix:** keep it open and name it in this
+  scan's notification as needing the operator's decision, with what you tried and
+  what would settle it. It is attempted again on every scan; it never sits silently.
 
 **Open the pull request** with `Fixes #N`, and arrange its description as follows:
 
@@ -335,16 +395,20 @@ operator should never have to chase a check.
 
 Save `lastCompletedAt` and the state.
 
-- **Nothing failed:** finish silently. No notification, no issue, no report.
-- **Something failed:** print a short summary with each failure identity, its
-  class and evidence, and what happened: issue link, pull request link, already
-  fixed by which commit, owned by whom, or left unverified. If a label was missing,
-  say so.
+- **Nothing failed and no `flaky-test` issue is open:** finish silently. No
+  notification, no issue, no report.
+- **Otherwise:** print a short summary with each new failure identity, its class
+  and evidence, and what happened: issue link, pull request link, already fixed by
+  which commit, owned by whom, or closed as not reproduced. Then list every
+  `flaky-test` issue still open with its owner and next step. If a label was
+  missing, say so.
 
 ## Never
 
 - Fix a real regression, or file it as a flake to make it go away.
 - File a second issue or pull request for a failure that already has one.
+- Leave a `flaky-test` issue open with no owner, or wait for a later scan to start
+  its fix.
 - Open a pull request whose fix you did not verify.
 - Rerun more than once, or rerun until green. A green rerun unblocks; it fixes nothing.
 - Merge with `--admin`, force-push, or use `--no-verify`.

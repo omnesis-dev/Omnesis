@@ -178,6 +178,17 @@ export class TailscaleEmbedService {
     return this.helperStatus()?.certificate.source === "tailscale";
   }
 
+  /**
+   * Whether the device is connected and still waiting for Tailscale to issue
+   * the trusted certificate for its tailnet name. Until it arrives the
+   * gateway's own certificate answers there, which agents that require a
+   * public one refuse; it usually comes within a minute.
+   */
+  tailnetCertificatePending(): boolean {
+    const status = this.helperStatus();
+    return status?.backend === "running" && status.certificate.reason === "pending";
+  }
+
   /** The public origin cloud agents use, while the public address is on. */
   publicOrigin(): string | null {
     const status = this.helperStatus();
