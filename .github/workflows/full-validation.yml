@@ -1943,6 +1943,7 @@ jobs:
           if (-not (Test-Path (Join-Path $auditOpenSsl 'openssl.exe'))) { throw 'OpenSSL is required' }
           $auditOpenSsl | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
       - name: Install locked source dependencies
+        id: enrollment_dependencies
         run: node scripts/ci/npm-ci.mjs --no-audit --no-fund
       - name: Prepare actual Windows storage and vector bindings
         if: runner.os == 'Windows'
@@ -1950,6 +1951,8 @@ jobs:
       - name: Prove real CLI exits, registration errors, UTF-8 streams and retained filesystem inputs
         run: node scripts/run-check.mjs unit packages/collector/src/e2e/connect-process.test.ts packages/collector/src/e2e/enrollment-fixture-cleanup.test.ts packages/collector/src/e2e/e2e-buffered-command.test.ts
       - name: Install Chromium for the real passkey and account enrollment flows
+        id: enrollment_browser
+        if: ${{ !cancelled() && steps.enrollment_dependencies.outcome == 'success' }}
         run: npm exec --workspace packages/collector -- playwright install chromium
       - name: Validate all source and test TypeScript projects
         if: ${{ !cancelled() && runner.os == 'Linux' }}
@@ -1967,7 +1970,7 @@ jobs:
           packages/collector/src/e2e/connect-process.ts packages/collector/src/e2e/connect-process.test.ts
           packages/collector/src/e2e/enrollment-fixture-cleanup.ts packages/collector/src/e2e/enrollment-fixture-cleanup.test.ts
       - name: Run every account/passkey and managed integration scenario with real isolated processes
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && steps.enrollment_browser.outcome == 'success' }}
         run: >-
           node scripts/run-check.mjs e2e
           packages/collector/src/e2e/account-enrollment-connect.e2e.test.ts
