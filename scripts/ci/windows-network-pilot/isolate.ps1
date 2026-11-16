@@ -63,7 +63,7 @@ Clear-DnsClientCache
 # Allow every ordinary port before tightening the default; only the proxy may ask external DNS.
 foreach ($protocol in @('TCP','UDP')) {
   New-NetFirewallRule -DisplayName "$group ordinary $protocol" -Group $group -Direction Outbound -Action Allow -Protocol $protocol -RemotePort @('1-52','54-65535') -Profile Any | Out-Null
-  New-NetFirewallRule -DisplayName "$group loopback $protocol" -Group $group -Direction Outbound -Action Allow -Protocol $protocol -RemotePort 53 -RemoteAddress @('127.0.0.1','::1') -Profile Any | Out-Null
+  New-NetFirewallRule -DisplayName "$group loopback $protocol" -Group $group -Direction Outbound -Action Allow -Protocol $protocol -RemotePort 53 -RemoteAddress '127.0.0.1' -Profile Any | Out-Null
   New-NetFirewallRule -DisplayName "$group proxy $protocol" -Group $group -Direction Outbound -Action Allow -Protocol $protocol -RemotePort 53 -Program $python -Profile Any | Out-Null
 }
 foreach ($protocol in @('ICMPv4','ICMPv6')) { New-NetFirewallRule -DisplayName "$group $protocol" -Group $group -Direction Outbound -Action Allow -Protocol $protocol -Profile Any | Out-Null }
