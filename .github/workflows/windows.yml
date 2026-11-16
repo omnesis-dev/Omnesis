@@ -72,6 +72,11 @@ jobs:
           ref: ${{ github.sha }}
           persist-credentials: false
 
+      - name: Keep this job off production Omnesis services
+        id: production-network
+        shell: bash
+        run: $GITHUB_WORKSPACE/scripts/ci/production-network.sh isolate
+
       - name: Verify fixed source revision
         env:
           TARGET_SHA: ${{ github.sha }}
@@ -216,6 +221,11 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
+      - name: Check nothing tried to reach production Omnesis services
+        if: ${{ always() && steps.production-network.outcome == 'success' }}
+        shell: bash
+        run: $GITHUB_WORKSPACE/scripts/ci/production-network.sh verify
+
   native-integrations:
     name: Windows native agent integrations
     needs: windows
@@ -233,6 +243,11 @@ jobs:
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
+      - name: Keep this job off production Omnesis services
+        id: production-network
+        shell: bash
+        run: $GITHUB_WORKSPACE/scripts/ci/production-network.sh isolate
+
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "24"
@@ -290,3 +305,8 @@ jobs:
           OMNESIS_HARNESS_CONFORMANCE: hermes
         shell: bash
         run: exec node scripts/run-check.mjs e2e packages/collector/src/e2e/harness-plugin-conformance.e2e.test.ts
+
+      - name: Check nothing tried to reach production Omnesis services
+        if: ${{ always() && steps.production-network.outcome == 'success' }}
+        shell: bash
+        run: $GITHUB_WORKSPACE/scripts/ci/production-network.sh verify

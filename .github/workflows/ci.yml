@@ -119,6 +119,9 @@ jobs:
         run: |
           [[ "$TARGET_SHA" =~ ^[0-9a-f]{40}$ ]]
           test "$(git rev-parse HEAD)" = "$TARGET_SHA"
+      - name: Keep this job off production Omnesis services
+        id: production-network
+        run: $GITHUB_WORKSPACE/scripts/ci/production-network.sh isolate
       - name: Set up Node
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
@@ -204,6 +207,10 @@ jobs:
         if: ${{ inputs.scope == 'full' || inputs.projects == 'all' || contains(format(',{0},', inputs.projects), ',@omnesis/extension,') }}
         run: npm --prefix extension run package:store
 
+      - name: Check nothing tried to reach production Omnesis services
+        if: ${{ always() && steps.production-network.outcome == 'success' }}
+        run: $GITHUB_WORKSPACE/scripts/ci/production-network.sh verify
+
   # ------------------------------------------------------------------
   # unit — every `*.test.ts` except `*.e2e.test.ts`, plus the gateway-spawning
   # script smoke tests and the OpenClaw and Hermes adapter suites (`unit-all`).
@@ -229,6 +236,9 @@ jobs:
         run: |
           [[ "$TARGET_SHA" =~ ^[0-9a-f]{40}$ ]]
           test "$(git rev-parse HEAD)" = "$TARGET_SHA"
+      - name: Keep this job off production Omnesis services
+        id: production-network
+        run: $GITHUB_WORKSPACE/scripts/ci/production-network.sh isolate
       - name: Set up Node
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
@@ -285,6 +295,10 @@ jobs:
           esac
           exec node scripts/run-check.mjs smoke
 
+      - name: Check nothing tried to reach production Omnesis services
+        if: ${{ always() && steps.production-network.outcome == 'success' }}
+        run: $GITHUB_WORKSPACE/scripts/ci/production-network.sh verify
+
   # ------------------------------------------------------------------
   # e2e — the spawned-gateway suites, sharded across runners.
   #
@@ -319,6 +333,9 @@ jobs:
         run: |
           [[ "$TARGET_SHA" =~ ^[0-9a-f]{40}$ ]]
           test "$(git rev-parse HEAD)" = "$TARGET_SHA"
+      - name: Keep this job off production Omnesis services
+        id: production-network
+        run: $GITHUB_WORKSPACE/scripts/ci/production-network.sh isolate
       - name: Set up Node
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
@@ -372,6 +389,10 @@ jobs:
           TOTAL: ${{ matrix.total }}
           FILES: ${{ matrix.files }}
 
+      - name: Check nothing tried to reach production Omnesis services
+        if: ${{ always() && steps.production-network.outcome == 'success' }}
+        run: $GITHUB_WORKSPACE/scripts/ci/production-network.sh verify
+
   # ------------------------------------------------------------------
   # e2e-embedder — the semantic search suites against a real embedding model.
   #
@@ -398,6 +419,9 @@ jobs:
         run: |
           [[ "$TARGET_SHA" =~ ^[0-9a-f]{40}$ ]]
           test "$(git rev-parse HEAD)" = "$TARGET_SHA"
+      - name: Keep this job off production Omnesis services
+        id: production-network
+        run: $GITHUB_WORKSPACE/scripts/ci/production-network.sh isolate
       - name: Set up Node
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
@@ -430,6 +454,10 @@ jobs:
         if: failure()
         run: docker logs omnesis-test-embedder-8001 2>&1 | tail -80 || true
 
+      - name: Check nothing tried to reach production Omnesis services
+        if: ${{ always() && steps.production-network.outcome == 'success' }}
+        run: $GITHUB_WORKSPACE/scripts/ci/production-network.sh verify
+
   # ------------------------------------------------------------------
   # node-macos — cross-platform validation on macOS (arm64). Installs
   # dependencies (so the native modules — better-sqlite3, duckdb — are
@@ -461,6 +489,9 @@ jobs:
         run: |
           [[ "$TARGET_SHA" =~ ^[0-9a-f]{40}$ ]]
           test "$(git rev-parse HEAD)" = "$TARGET_SHA"
+      - name: Keep this job off production Omnesis services
+        id: production-network
+        run: $GITHUB_WORKSPACE/scripts/ci/production-network.sh isolate
       - name: Set up Node
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
@@ -505,6 +536,10 @@ jobs:
       - name: lane [hermes]
         run: python3 -B packages/agent-integration/hermes/test_adapter.py
 
+      - name: Check nothing tried to reach production Omnesis services
+        if: ${{ always() && steps.production-network.outcome == 'success' }}
+        run: $GITHUB_WORKSPACE/scripts/ci/production-network.sh verify
+
   # ------------------------------------------------------------------
   # portal-e2e — Playwright DOM tests against a real gateway booted
   # under tsx over HTTPS (see playwright.config.ts).
@@ -531,6 +566,9 @@ jobs:
         run: |
           [[ "$TARGET_SHA" =~ ^[0-9a-f]{40}$ ]]
           test "$(git rev-parse HEAD)" = "$TARGET_SHA"
+      - name: Keep this job off production Omnesis services
+        id: production-network
+        run: $GITHUB_WORKSPACE/scripts/ci/production-network.sh isolate
       - name: Set up Node
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
@@ -547,3 +585,7 @@ jobs:
         run: exec node scripts/run-check.mjs portal
         env:
           TZ: UTC
+
+      - name: Check nothing tried to reach production Omnesis services
+        if: ${{ always() && steps.production-network.outcome == 'success' }}
+        run: $GITHUB_WORKSPACE/scripts/ci/production-network.sh verify

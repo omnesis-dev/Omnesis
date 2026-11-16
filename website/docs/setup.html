@@ -493,8 +493,10 @@ OMNESIS_GATEWAY_URL=https://omnesis.example.com:7600</pre>
           <strong>Put a reverse proxy in front.</strong> A proxy such as Caddy or nginx holds the
           public certificate (Caddy obtains and renews one itself) and forwards to the gateway on
           the same host. The gateway then listens on loopback only, so nothing reaches it except
-          through the proxy. It is also told to trust the proxy's report of each client's address,
-          so its rate limits apply to the real clients rather than to the proxy.
+          through the proxy. It believes the client address a proxy on its own machine reports, so
+          its rate limits apply to the real clients rather than to the proxy. A proxy on another
+          machine needs <code>OMNESIS_TRUST_PROXY=true</code> in the gateway's <code>.env</code> as
+          well, with the gateway reachable only through that proxy.
         </p>
         <p>
           On the loopback hop, the proxy verifies the gateway's own self-signed certificate by
@@ -519,7 +521,6 @@ OMNESIS_GATEWAY_URL=https://omnesis.example.com:7600</pre>
           <div class="term-body">
             <pre data-lang="ini">
 OMNESIS_BIND=127.0.0.1
-OMNESIS_TRUST_PROXY=true
 OMNESIS_GATEWAY_URL=https://localhost:7600</pre>
           </div>
         </div>

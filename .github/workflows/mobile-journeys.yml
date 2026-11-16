@@ -96,6 +96,10 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Keep this job off production Omnesis services
+        id: production-network
+        run: $GITHUB_WORKSPACE/scripts/ci/production-network.sh isolate
+
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "24"
@@ -172,6 +176,10 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
+      - name: Check nothing tried to reach production Omnesis services
+        if: ${{ always() && steps.production-network.outcome == 'success' }}
+        run: $GITHUB_WORKSPACE/scripts/ci/production-network.sh verify
+
   android:
     needs: changes
     if: ${{ !cancelled() && (github.event_name == 'push' || (github.event_name == 'pull_request' && needs.changes.outputs.android == 'true') || (github.event_name == 'workflow_dispatch' && inputs.platforms != 'ios')) }}
@@ -181,6 +189,10 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+
+      - name: Keep this job off production Omnesis services
+        id: production-network
+        run: $GITHUB_WORKSPACE/scripts/ci/production-network.sh isolate
 
       - name: Enable KVM
         # Hardware-accelerated emulation on the hosted Linux runner.
@@ -265,3 +277,7 @@ jobs:
             /tmp/android-runner/
           if-no-files-found: ignore
           retention-days: 14
+
+      - name: Check nothing tried to reach production Omnesis services
+        if: ${{ always() && steps.production-network.outcome == 'success' }}
+        run: $GITHUB_WORKSPACE/scripts/ci/production-network.sh verify

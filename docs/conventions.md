@@ -1277,8 +1277,10 @@ wrappers even when its value is `undefined`; that presence means cleanup remains
 unconfirmed. Self-contained filesystem workers have no child tree and use their
 separate process-lifetime contract.
 
-Use `ownedProcessCleanupReceipt` from `@omnesis/core` to recognize an explicit
-cleanup marker through an error's cause chain. Check ownership uncertainty before
+Use `ownedProcessCleanupReceipt` from `@omnesis/platform/owned-process-cleanup`
+(re-exported by `@omnesis/core`) to recognize an explicit cleanup marker through
+an error's cause chain. The platform subpath keeps this check available during
+configuration bootstrap without a dependency on the Core barrel. Check ownership uncertainty before
 treating `ENOENT` as absence or `EEXIST` as a concurrent publisher's success:
 those filesystem results do not prove that the helper joined. Preserve the cause
 when reporting an unreadable private file, and stop before starting a fallback,
@@ -1483,6 +1485,12 @@ When you set out to write code that matches one of the patterns above, open the 
 
 ---
 
+Update-lock owner publication holds a filesystem claim before the first owner write.
+An explicit native cleanup uncertainty retains that claim and the directory generation,
+propagates the original error, and stops heartbeat retries. Further claims in the same
+process refuse with the retained error; other processes still observe the physical claim.
+An ordinary joined write error releases its claim and preserves ordinary retry behavior.
+
 ## Layer 3 — Enforcement
 
 A pattern only survives if review or the toolchain catches its violations. Several of the conventions above are machine-checked (types, ESLint, knip, the parity and privacy guards, CI); the rest are review-enforced. The table below splits them.
@@ -1557,3 +1565,13 @@ and background producers must all respect the matching feature flag. Task automa
 requires both Brain and Tasks. Preserve cleanup and evidence invalidation when a feature
 is disabled. The canonical names, descriptions and original SVGs live in
 `packages/gateway/src/lab/catalog.ts` and are served to every client by `/admin/lab`.
+
+### Test jobs cannot resolve production service names
+
+Every CI test job invokes `scripts/ci/production-network.sh isolate` before tests
+and `verify` even after a test fails. Windows uses a loopback DNS proxy for native
+and direct resolvers, records protected questions, and blocks and audits attempts
+to bypass it with external DNS. The isolation step proves a blocked bypass before
+recording its baseline. The proxy remains available through runner post-job
+reporting and belongs to the disposable hosted VM, rather than to one test command.
+These scripts are CI infrastructure; they are not application setup commands.
