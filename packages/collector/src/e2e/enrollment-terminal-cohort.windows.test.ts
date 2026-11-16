@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test } from "vitest";
 import { WindowsProcessTree } from "@omnesis/core";
-import { runEnrollmentTerminal } from "../../packages/collector/src/e2e/enrollment-terminal-fixture.js";
+import { runEnrollmentTerminal } from "./enrollment-terminal-fixture.js";
 
 function reachable(port: number): Promise<boolean> {
   return new Promise((resolve, reject) => {
