@@ -1069,6 +1069,58 @@ describe("Docker", () => {
   });
 });
 
+describe("Windows integration removal", () => {
+  test.each(["openclaw", "hermes"] as const)(
+    "removes %s while preserving unrelated files and Omnesis data",
+    async (harness) => {
+      const m = new Machine("linux").config();
+      m[harness]();
+      const context = { ...m.context(), platform: "win32" as const };
+      const out = recorder();
+      const request = options({ configDir: m.configDir, components: [harness] });
+      expect(await runUninstall(request, context, out.io)).toBe(0);
+      expect(existsSync(m.path(`.${harness}`, "omnesis"))).toBe(false);
+      expect(readFileSync(join(m.configDir, "omnesis.db"), "utf8")).toBe("fictional corpus");
+      if (harness === "openclaw") {
+        const config = JSON.parse(readFileSync(m.path(".openclaw", "openclaw.json"), "utf8"));
+        expect(config.update).toEqual({ checkOnStart: false });
+        expect(existsSync(m.path(".openclaw", "skills", "weather", "SKILL.md"))).toBe(true);
+      } else {
+        const config = readFileSync(m.path(".hermes", "config.yaml"), "utf8");
+        expect(config).toContain("background_process_notifications: all");
+        expect(config).toContain("weather-tools");
+      }
+      expect(await runUninstall(request, context, out.io)).toBe(0);
+      expect(out.text()).toContain("Nothing of Omnesis to remove");
+    },
+  );
+
+  test.each([
+    { components: [] },
+    { components: ["gateway"] },
+    { components: ["collector"] },
+    { components: ["cli"] },
+    { components: ["openclaw", "cli"] },
+    { components: ["hermes"], purge: true },
+  ] satisfies Partial<UninstallOptions>[])(
+    "refuses unsupported Windows lifecycle request %j before removing files",
+    async (request) => {
+      const m = new Machine("linux").config();
+      m.hermes();
+      const before = m.tree();
+      await expect(
+        runUninstall(
+          options({ configDir: m.configDir, ...request }),
+          { ...m.context(), platform: "win32" },
+          recorder().io,
+        ),
+      ).rejects.toThrow(/name openclaw or hermes/);
+      expect(m.tree()).toEqual(before);
+      expect(m.interactiveCalls).toEqual([]);
+    },
+  );
+});
+
 describe("Hermes", () => {
   test("loses the plugin, its config entries, skill and settings; everything else stays", async () => {
     const m = new Machine("linux");

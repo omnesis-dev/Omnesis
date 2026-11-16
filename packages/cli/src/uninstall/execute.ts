@@ -18,6 +18,7 @@ import {
   statSync,
 } from "node:fs";
 import { join, resolve } from "node:path";
+import { resolveHarnessCommand } from "@omnesis/agent-integration";
 import {
   atomicWriteFileSync,
   clearMarkerKeyringState,
@@ -138,7 +139,10 @@ async function unregisterOpenClawPlugin(
   env: Record<string, string>,
 ): Promise<void> {
   for (const id of [INTEGRATION_PLUGIN_ID, LEGACY_PLUGIN_ID]) {
-    const res = await ctx.run(binary, ["plugins", "uninstall", id, "--force"], { env });
+    const command = resolveHarnessCommand(binary, ["plugins", "uninstall", id, "--force"], {
+      env: { ...ctx.env, ...env },
+    });
+    const res = await ctx.run(command.command, command.args, { env });
     if (res.code === 0 || OPENCLAW_PLUGIN_ABSENT.test(output(res))) continue;
     throw new StepFailure(
       `openclaw plugins uninstall ${id} failed (${res.code}): ${output(res) || "no output"}`,

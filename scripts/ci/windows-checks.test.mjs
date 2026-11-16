@@ -175,6 +175,7 @@ describe("Windows CI coverage", () => {
       "packages/collector/src/source-ws-handlers.physical-ownership.test.ts",
       "packages/providers/whatsapp/src/import/importer.test.ts",
       "packages/providers/whatsapp/src/import/importer-ownership.test.ts",
+      "packages/cloud-relay/src/relay-dos-limits.test.ts",
       "packages/cloud-relay/src/certificate-monitor.test.ts",
       "packages/cloud-relay/src/certificate-monitor-poller.test.ts",
       "packages/cloud-relay/src/gateway-certificate-monitor.test.ts",

@@ -140,6 +140,7 @@ export const FOCUSED_UNIT_FILES = [
   "packages/cloud-relay/src/gateway-key-client.test.ts",
   "packages/cloud-relay/src/key-routes.test.ts",
   "packages/cloud-relay/src/server-recovery.test.ts",
+  "packages/cloud-relay/src/relay-dos-limits.test.ts",
   "packages/watch/src/runtime/adversarial.test.ts",
   "packages/platform/src/windows-private-copy.test.ts",
   "packages/near-dupes/src/runner/runner.boundary.test.ts",
