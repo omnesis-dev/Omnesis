@@ -91,6 +91,63 @@ describe("Windows CI coverage", () => {
     );
   });
 
+  test("the complete unit lane requires verified native OCR and the default throughput benchmark", () => {
+    const steps = workflow().jobs.windows.steps;
+    const prepare = steps.findIndex(({ id }) => id === "native_ocr");
+    const verify = steps.findIndex(({ id }) => id === "verify_ocr");
+    const unit = steps.findIndex(({ name }) => name === "Full Windows unit and adapter tests");
+    expect(prepare).toBeGreaterThan(-1);
+    expect(verify).toBeGreaterThan(prepare);
+    expect(unit).toBeGreaterThan(verify);
+    expect(steps[prepare].run).toBe("./scripts/ci/prepare-tesseract-test-inputs.ps1");
+    expect(steps[verify].run).toBe("node --import tsx scripts/ci/verify-tesseract-test-inputs.mjs");
+    for (const index of [prepare, verify]) {
+      expect(steps[index].if).toBe("${{ matrix.lane == 'unit' }}");
+      expect(steps[index]).not.toHaveProperty("continue-on-error");
+    }
+    expect(steps[unit].if).toContain("steps.native_ocr.outcome == 'success'");
+    expect(steps[unit].if).toContain("steps.verify_ocr.outcome == 'success'");
+    expect(steps[unit].env.OMNESIS_INDEXER_BENCH).toBe("1");
+  });
+
+  test("daily native hosts share one runner after the broad matrix and never expand focused PR checks", () => {
+    const job = workflow().jobs["native-integrations"];
+    const enabled = (event, lane = "all", cancelled = false) =>
+      runInNewContext(job.if.slice(3, -2), {
+        github: { event_name: event },
+        inputs: { lane },
+        cancelled: () => cancelled,
+      });
+    expect(enabled("schedule")).toBe(true);
+    expect(enabled("workflow_dispatch")).toBe(true);
+    for (const lane of ["unit", "e2e", "portal"]) {
+      expect(enabled("workflow_dispatch", lane)).toBe(false);
+      expect(enabled("schedule", lane)).toBe(true);
+    }
+    expect(enabled("pull_request")).toBe(false);
+    expect(enabled("schedule", "all", true)).toBe(false);
+    expect(job.needs).toBe("windows");
+    expect(job["runs-on"]).toBe("windows-latest");
+    expect(job.strategy).toBeUndefined();
+    const hosts = job.steps.filter(({ env }) => env?.OMNESIS_HARNESS_CONFORMANCE);
+    expect(hosts.map(({ env }) => env.OMNESIS_HARNESS_CONFORMANCE)).toEqual(["openclaw", "hermes"]);
+    for (const host of hosts) {
+      expect(host.run).toBe(
+        "node scripts/run-check.mjs e2e packages/collector/src/e2e/harness-plugin-conformance.e2e.test.ts",
+      );
+      expect(host.if).toContain("!cancelled()");
+      expect(host.if).toContain("steps.native_bindings.outcome == 'success'");
+      expect(host).not.toHaveProperty("continue-on-error");
+    }
+    expect(hosts[1].if).toContain("steps.hermes.outcome == 'success'");
+    for (const step of job.steps.filter(({ uses }) => uses))
+      expect(step.uses).toMatch(/@[0-9a-f]{40}$/u);
+    expect(job.steps.find(({ uses }) => uses?.startsWith("actions/checkout@")).with).toEqual({
+      ref: "${{ github.sha }}",
+      "persist-credentials": false,
+    });
+  });
+
   test("full E2E supplies Go and proves actual peer transports once without expanding PR builds", () => {
     const steps = workflow().jobs.windows.steps;
     const go = steps.find(({ uses }) => uses?.startsWith("actions/setup-go@"));
