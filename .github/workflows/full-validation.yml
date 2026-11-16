@@ -52,6 +52,7 @@ on:
             owned-e2e-three-os,
             product-tailnet-node,
             portable-localapi,
+            portable-actor,
             stream-timeout,
             provider-ownership,
           ]
@@ -507,7 +508,7 @@ jobs:
       - name: Validate real Go-to-Node streaming and WebSocket transport
         run: node --import tsx scripts/ci/tailnet-transport.mjs
   portable-tailnet-control:
-    if: ${{ inputs.scope == 'portable-tailnet-control' || inputs.scope == 'product-tailnet-node' || inputs.scope == 'portable-localapi' }}
+    if: ${{ inputs.scope == 'portable-tailnet-control' || inputs.scope == 'product-tailnet-node' || inputs.scope == 'portable-localapi' || inputs.scope == 'portable-actor' }}
     strategy:
       fail-fast: false
       max-parallel: 1
@@ -528,7 +529,11 @@ jobs:
           cache-dependency-path: packages/tailnet-helper/go.sum
       - name: Format the diagnostic with its pinned Go toolchain
         working-directory: scripts/ci/audit-portable-tailnet-control
-        run: gofmt -w control_test.go auth_test.go map_stream_test.go product_node_test.go localapi_bridge_test.go localapi_bridge_windows_test.go localapi_bridge_posix_test.go
+        run: gofmt -w control_test.go auth_test.go map_stream_test.go product_node_test.go localapi_bridge_test.go localapi_bridge_windows_test.go localapi_bridge_posix_test.go actor_test.go actor_protocol_test.go
+      - name: Prove bounded external actor protocol and real peer registration
+        if: inputs.scope == 'portable-actor'
+        working-directory: scripts/ci/audit-portable-tailnet-control
+        run: go test -mod=mod -p 2 -failfast -count=3 -timeout 6m -run '^TestActorProtocolCreatesRealPeersAndJoins$' -v ./...
       - name: Build the official pinned Tailscale CLI
         if: inputs.scope == 'portable-localapi' || inputs.scope == 'portable-tailnet-control'
         env:
