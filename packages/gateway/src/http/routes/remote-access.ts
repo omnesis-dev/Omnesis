@@ -22,7 +22,6 @@ import {
   remoteAccessFirstSchema,
   type RemoteAccessSettingsStore,
 } from "../../remote-access/settings.js";
-import { reverseProxyTrusted } from "../client-ip.js";
 import { scope } from "../scope.js";
 import { requireStepUp } from "../step-up.js";
 import { validateJson } from "../validate.js";
@@ -74,9 +73,6 @@ export function mountRemoteAccessRoutes(app: RouteApp, options: RemoteAccessRout
         // A changed address takes effect when the gateway starts again.
         restartNeeded: (configured ?? null) !== (serving ?? null),
       },
-      // Whether the gateway reads the client's address from a proxy in front of it, which an
-      // address published through a proxy (a reverse proxy, Tailscale Funnel) needs.
-      trustProxy: reverseProxyTrusted(),
     };
   };
 

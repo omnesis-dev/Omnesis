@@ -1958,6 +1958,7 @@ const addressedHosts = () =>
       ...(configStore.get().gateway?.pairingSystemTrustOrigins ?? []),
     ],
     proxyTrusted: reverseProxyTrusted(),
+    gatewayPort: PORT,
   });
 let acmeController: Awaited<ReturnType<typeof createGatewayAcmeController>>;
 const publicSni = new GatewayPublicSni();
