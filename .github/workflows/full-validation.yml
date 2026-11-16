@@ -2097,6 +2097,7 @@ jobs:
         run: node scripts/run-check.mjs unit packages/gateway/src/ocr/tesseract-ocr.test.ts packages/gateway/src/ocr/ocr-backends.integration.test.ts
       - name: Install the pinned native Hermes source
         id: hermes
+        if: ${{ !cancelled() && steps.native_bindings.outcome == 'success' }}
         run: |
           $harnessRoot = Join-Path $env:RUNNER_TEMP 'pinned-hermes'
           git init --quiet $harnessRoot
