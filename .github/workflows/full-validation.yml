@@ -43,6 +43,7 @@ on:
             certificate-baseline,
             certificate-v2,
             whisper-owner-baseline,
+            whisper-owner-green,
             stream-timeout,
             provider-ownership,
           ]
@@ -221,6 +222,8 @@ jobs:
         run: >-
           node scripts/run-check.mjs unit packages/gateway/src/tailscale-embed
           packages/gateway/src/tls-lifecycle/service.test.ts
+          packages/gateway/src/transcribe
+          packages/core/src/owned-child-process.test.ts
           packages/collector/src/auth-process.test.ts
           packages/collector/src/source-ws-handlers.physical-ownership.test.ts
           packages/gateway/src/optional-service-cleanup.test.ts
@@ -350,7 +353,7 @@ jobs:
           packages/providers/whatsapp/src/import/importer.ts
           packages/providers/whatsapp/src/import/importer-ownership.test.ts
   tailnet-baseline:
-    if: ${{ inputs.scope == 'tailnet-baseline' || inputs.scope == 'certificate-v2' }}
+    if: ${{ inputs.scope == 'tailnet-baseline' || inputs.scope == 'certificate-v2' || inputs.scope == 'whisper-owner-green' }}
     strategy:
       fail-fast: false
       max-parallel: 1
@@ -410,6 +413,8 @@ jobs:
           scripts/ci/tailnet-transport.mjs
           packages/cloud-relay/src/management-ownership-boundaries.test.ts
           packages/core/src/owned-child-process.ts
+          packages/core/src/owned-child-process.test.ts
+          packages/gateway/src/transcribe
           packages/collector/src/auth-process.ts
           packages/gateway/src/index.ts
           packages/gateway/src/tls-lifecycle/service.ts

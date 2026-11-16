@@ -42,7 +42,11 @@ const FFMPEG_STATIC_SPECIFIER = "ffmpeg-static";
 export const PCM_SAMPLE_RATE = 16_000;
 
 /** Decode audio bytes to 16 kHz mono float PCM. Injectable so tests skip ffmpeg. */
-export type AudioDecoder = (bytes: Uint8Array, mimeType: string) => Promise<Float32Array>;
+export type AudioDecoder = (
+  bytes: Uint8Array,
+  mimeType: string,
+  opts?: { signal?: AbortSignal },
+) => Promise<Float32Array>;
 
 /** Resolve the bundled ffmpeg binary path, or null if ffmpeg-static is absent. */
 export async function resolveFfmpegPath(): Promise<string | null> {
@@ -116,15 +120,21 @@ export function needsSeekableInput(bytes: Uint8Array): boolean {
  */
 export async function decodeToPcm16kMono(
   bytes: Uint8Array,
-  opts: { ffmpegPath?: string; timeoutMs?: number; tempDir?: string } = {},
+  opts: { ffmpegPath?: string; timeoutMs?: number; tempDir?: string; signal?: AbortSignal } = {},
 ): Promise<Float32Array> {
+  opts.signal?.throwIfAborted();
   const ffmpegPath = opts.ffmpegPath ?? (await resolveFfmpegPath());
   if (!ffmpegPath) {
     throw new AudioDecodeError("ffmpeg-static is not installed");
   }
+  opts.signal?.throwIfAborted();
   const timeoutMs = opts.timeoutMs ?? 120_000;
   if (!needsSeekableInput(bytes)) {
-    return runFfmpeg(ffmpegPath, ["-i", "pipe:0"], { input: streamableCaf(bytes), timeoutMs });
+    return runFfmpeg(ffmpegPath, ["-i", "pipe:0"], {
+      input: streamableCaf(bytes),
+      timeoutMs,
+      signal: opts.signal,
+    });
   }
 
   let dir: string;
@@ -148,6 +158,7 @@ export async function decodeToPcm16kMono(
         );
       }
     }
+    opts.signal?.throwIfAborted();
     const path = join(dir, "input");
     try {
       await writeFile(path, bytes, { mode: 0o600, flag: "wx" });
@@ -158,7 +169,10 @@ export async function decodeToPcm16kMono(
     }
     // `file:` keeps ffmpeg from reading a protocol into the path; -nostdin
     // keeps it off the stdin it is not reading from.
-    return await runFfmpeg(ffmpegPath, ["-nostdin", "-i", `file:${path}`], { timeoutMs });
+    return await runFfmpeg(ffmpegPath, ["-nostdin", "-i", `file:${path}`], {
+      timeoutMs,
+      signal: opts.signal,
+    });
   } catch (error) {
     retain = hasUnconfirmedProcessCleanup(error);
     throw error;
@@ -176,7 +190,7 @@ export async function decodeToPcm16kMono(
 async function runFfmpeg(
   ffmpegPath: string,
   inputArgs: string[],
-  opts: { input?: Uint8Array; timeoutMs: number },
+  opts: { input?: Uint8Array; timeoutMs: number; signal?: AbortSignal },
 ): Promise<Float32Array> {
   const { timeoutMs } = opts;
   const run = await processLauncher().run(
@@ -194,7 +208,11 @@ async function runFfmpeg(
       String(PCM_SAMPLE_RATE),
       "pipe:1",
     ],
-    { ...(opts.input ? { input: opts.input } : {}), timeoutMs },
+    {
+      ...(opts.input ? { input: opts.input } : {}),
+      timeoutMs,
+      ...(opts.signal ? { signal: opts.signal } : {}),
+    },
   );
   assertProcessCleanupConfirmed(run);
   if (run.failure === "timeout")

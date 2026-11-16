@@ -37,6 +37,9 @@ const localUnavailable: ResolvedAssignment = {
 /** In-memory worker stand-in: decodes requests, lets a test drive responses. */
 class FakeWorker implements WhisperWorkerProcess {
   killed = false;
+  private readonly closure = Promise.withResolvers<void>();
+  readonly joined = this.closure.promise;
+  joinedConfirmed = false;
   private msg: ((m: WhisperWorkerMessage) => void) | null = null;
   private exit:
     ((i: { code: number | null; signal: string | null; error?: Error }) => void) | null = null;
@@ -46,9 +49,12 @@ class FakeWorker implements WhisperWorkerProcess {
   write(frame: Buffer): void {
     if (!this.killed) this.decoder.push(frame);
   }
-  kill(): void {
+  kill(): Promise<void> {
     this.killed = true;
+    this.joinedConfirmed = true;
+    this.closure.resolve();
     this.exit?.({ code: null, signal: "SIGKILL" });
+    return this.joined;
   }
   onMessage(h: (m: WhisperWorkerMessage) => void): void {
     this.msg = h;

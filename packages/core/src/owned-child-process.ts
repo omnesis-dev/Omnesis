@@ -20,18 +20,19 @@ const STOP_GRACE_MS = 5_000;
 export function spawnOwnedChildProcess(
   command: string,
   args: readonly string[],
-  options: { cwd?: string; env: NodeJS.ProcessEnv },
+  options: { cwd?: string; env: NodeJS.ProcessEnv; stopSignal?: "SIGTERM" | "SIGKILL" },
   deps: {
     platform?: NodeJS.Platform;
     spawnChild?: typeof spawn;
     spawnJob?: typeof spawnWindowsJob;
   } = {},
 ): OwnedChildProcess {
+  const { stopSignal = "SIGTERM", ...spawnOptions } = options;
   const windows = (deps.platform ?? process.platform) === "win32";
   const child = windows
-    ? (deps.spawnJob ?? spawnWindowsJob)(command, args, { ...options, completion: "root" })
+    ? (deps.spawnJob ?? spawnWindowsJob)(command, args, { ...spawnOptions, completion: "root" })
     : (deps.spawnChild ?? spawn)(command, [...args], {
-        ...options,
+        ...spawnOptions,
         stdio: ["pipe", "pipe", "pipe"],
       });
   let closed = false;
@@ -83,13 +84,13 @@ export function spawnOwnedChildProcess(
         if (!closed) {
           stopRequested = true;
           try {
-            child.kill("SIGTERM");
+            child.kill(stopSignal);
           } catch (error) {
             recordStopError(error);
           }
           // The native Windows owner already bounds cancellation and verifies
           // its entire cohort. POSIX retains the existing signal escalation.
-          if (!windows) {
+          if (!windows && stopSignal !== "SIGKILL") {
             timer = setTimeout(() => {
               if (closed) return;
               try {
