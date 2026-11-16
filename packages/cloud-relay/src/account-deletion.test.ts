@@ -568,8 +568,19 @@ test("unlinking a gateway on the account page needs a fresh sign-in of its accou
     expect(f.accounts.registered(stranger.owner)).toBe(true);
     // Once is enough: it is no longer in the account.
     expect((await f.unlink(body)).status).toBe(404);
-    // The gateway's session opens nothing, and proving its keys says it was unlinked, not
-    // that its account was deleted.
+    // The gateway's session opens nothing: 401 sends it back to prove its keys...
+    const reopened = await new Promise<number>((resolve, reject) => {
+      const socket = f.tunnel(f.gateway.token);
+      socket.on("error", () => {});
+      socket.once("unexpected-response", (_request, response) => {
+        resolve(response.statusCode!);
+        response.resume();
+        socket.terminate();
+      });
+      socket.once("open", () => reject(new Error("An unlinked gateway reopened its tunnel")));
+    });
+    expect(reopened).toBe(401);
+    // ...and proving them says it was unlinked, not that its account was deleted.
     await expect(registerGatewayKey(f.options)).rejects.toThrow(
       expect.objectContaining({ constructor: GatewayUnregistered, removed: true }),
     );

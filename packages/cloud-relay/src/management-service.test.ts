@@ -1800,6 +1800,22 @@ test("a running gateway's tunnel learning it was unlinked on its account page le
   expect(await forgotten("gateway-removed")).toMatchObject(disconnected);
   expect(f.stop).toHaveBeenCalledOnce();
 });
+test("an answer that says the gateway was unlinked wins over one that could not say why, while leaving", async () => {
+  const f = await connectedGateway();
+  relayForgot(f)(false);
+  relayForgot(f)(true);
+  expect(await forgotten("gateway-removed")).toMatchObject(disconnected);
+});
+test("an answer that says the gateway was unlinked wins over one that could not say why, after leaving", async () => {
+  const g = await connectedGateway();
+  relayForgot(g)(false);
+  await forgotten("account-deleted");
+  relayForgot(g)(true);
+  expect((await manager!.status()).notice).toBe("gateway-removed");
+  // And never the other way round.
+  relayForgot(g)(false);
+  expect((await manager!.status()).notice).toBe("gateway-removed");
+});
 test("the tunnel learning that the relay forgot the gateway ends a connection under way, once", async () => {
   const f = await connecting();
   manager = await GatewayCloudRelayManagement.open(f.options);

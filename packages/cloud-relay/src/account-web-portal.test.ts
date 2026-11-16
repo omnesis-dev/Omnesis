@@ -83,6 +83,7 @@ async function fixture(withPortal = true) {
     passkeys,
     choices: (account) => directory.choices(account),
     deleteAccount: () => {},
+    unlinkGateway: () => {},
     googleAvailable: true,
     portal,
     signupAdmission,

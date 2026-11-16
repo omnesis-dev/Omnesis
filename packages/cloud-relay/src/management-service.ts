@@ -153,6 +153,8 @@ export class GatewayCloudRelayManagement implements CloudRelayManagement {
   private connectAbort = new AbortController();
   private notice: CloudRelayManagementStatus["notice"];
   private forgetting: Promise<void> | undefined;
+  /** Whether any answer behind the leaving under way said the gateway was unlinked. */
+  private forgetRemoved = false;
   private releasing: Promise<void> | undefined;
   private releaseTimer: ReturnType<typeof setTimeout> | undefined;
   private closed = false;
@@ -690,20 +692,30 @@ export class GatewayCloudRelayManagement implements CloudRelayManagement {
    * relay says, and no failure to reach it, leads here.
    */
   private forgotten(removed: boolean): void {
-    this.forgetting ??= this.forget(removed)
+    // An unlink outranks a deletion: whichever answer arrived first, the more specific one shows.
+    if (removed && this.notice === "account-deleted") {
+      this.notice = "gateway-removed";
+      this.revision++;
+    }
+    this.forgetRemoved ||= removed;
+    this.forgetting ??= this.forget()
       .catch((error: unknown) => log.warn(`Leaving the account failed: ${String(error)}`))
-      .finally(() => (this.forgetting = undefined));
+      .finally(() => {
+        this.forgetting = undefined;
+        this.forgetRemoved = false;
+      });
   }
-  private async forget(removed: boolean): Promise<void> {
+  private async forget(): Promise<void> {
     // A late word from a tunnel that is already stopped changes nothing.
     if (!this.settings!.enabled) return;
+    const removed = this.forgetRemoved;
     log.warn(
       removed
         ? "The relay no longer has this gateway: it was unlinked on its Omnesis account page"
         : "The relay no longer has this gateway: its Omnesis account was deleted",
     );
     await this.leave(false);
-    this.notice = removed ? "gateway-removed" : "account-deleted";
+    this.notice = this.forgetRemoved ? "gateway-removed" : "account-deleted";
     this.revision++;
   }
   private get releaseFile(): string {

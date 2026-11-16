@@ -78,7 +78,7 @@ export class RelayAccounts {
     if (!bindingColumns.some((column) => column.name === "display_name"))
       this.db.exec("ALTER TABLE relay_gateway_bindings ADD COLUMN display_name TEXT");
     // A gateway its owner unlinked on the account page, by the same digest as a released hosted
-    // name, until it learns why it was refused or registers again.
+    // name. Kept until that gateway registers again, so every retry gets the same answer.
     this.db.exec(`CREATE TABLE IF NOT EXISTS relay_removed_gateways (
       gateway TEXT PRIMARY KEY
     )`);

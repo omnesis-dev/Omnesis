@@ -109,6 +109,8 @@ export function installAccountUI() {
     noticeAt = "methods",
     // The gateways section on screen, where a message about a gateway is shown.
     gatewaysSection,
+    // Counts actions, so a background refresh can tell one started while it was reading.
+    generation = 0,
     failure = signInFailed,
     // What this page's own sign-in hands to a gateway's portal, so the portal asks for no second one.
     handoff;
@@ -181,6 +183,8 @@ export function installAccountUI() {
     button(text, action, secondary = false, parent = root) {
       const element = ui.node("button", text);
       element.type = "button";
+      // Drawn during an action, it waits for the action like the rest of the page.
+      element.disabled = busy;
       if (secondary) element.className = "secondary";
       element.addEventListener("click", () => ui.run(action));
       parent.append(element);
@@ -199,6 +203,8 @@ export function installAccountUI() {
     async run(action) {
       if (busy) return;
       busy = true;
+      // A refresh started before this action must not draw over what the action shows.
+      generation++;
       alert.textContent = "";
       ui.say("");
       failure = signInFailed;
@@ -527,11 +533,15 @@ export function installAccountUI() {
       if (intent.kind === "unlink") {
         await ui.refresh();
         // Only the account the panel was opened on unlinks, and right away, as the panel said.
-        if (current.accountId === intent.accountId) return ui.unlinkGateway();
+        const other = current.accountId !== intent.accountId,
+          gone = !current.gateways.some((gateway) => gateway.gatewayId === intent.gatewayId);
+        if (!other && !gone) return ui.unlinkGateway(intent);
         confirming = undefined;
         ui.render();
         return ui.say(
-          "You confirmed with a different Omnesis account. Nothing was unlinked.",
+          other
+            ? "You confirmed with a different Omnesis account. Nothing was unlinked."
+            : "That gateway is no longer in your account.",
           "gateways",
         );
       }
@@ -578,9 +588,12 @@ export function installAccountUI() {
       });
       root.querySelector(".unlink h3")?.focus();
     },
-    async unlinkGateway() {
-      const intent = confirming;
+    async unlinkGateway(intent = confirming) {
       failure = "The gateway could not be unlinked. Please try again.";
+      // As the page last saw it, which a return to the tab may have changed since the question.
+      const online =
+        current.gateways.find((gateway) => gateway.gatewayId === intent.gatewayId)?.online ??
+        intent.online;
       try {
         await ui.api("gateways/unlink", {
           accountId: intent.accountId,
@@ -597,7 +610,7 @@ export function installAccountUI() {
       confirming = undefined;
       await ui.refresh();
       ui.say(
-        intent.online
+        online
           ? `“${intent.name}” was unlinked from your account.`
           : `“${intent.name}” was unlinked from your account. It shows as not connected the next time it comes online.`,
         "gateways",
@@ -883,7 +896,8 @@ export function installAccountUI() {
             hasPasskey,
             panel,
           );
-      } else ui.button("Unlink gateway", ui.unlinkGateway, false, panel).classList.add("danger");
+      } else
+        ui.button("Unlink gateway", () => ui.unlinkGateway(), false, panel).classList.add("danger");
       ui.button("Cancel", () => ui.ask(undefined), true, panel);
       parent.append(panel);
     },
@@ -1262,9 +1276,17 @@ export function installAccountUI() {
       current.pending
     )
       return;
-    ui.refresh().catch(() => {
-      // The next action reports a problem; a background refresh says nothing.
-    });
+    const seen = generation;
+    ui.api("session")
+      .then((session) => {
+        if (busy || generation !== seen) return;
+        current = session;
+        if (handoff && !(current.authenticated && current.handoff?.ready)) ui.forget();
+        ui.render();
+      })
+      .catch(() => {
+        // The next action reports a problem; a background refresh says nothing.
+      });
   });
 }
 

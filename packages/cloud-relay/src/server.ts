@@ -529,7 +529,7 @@ export function createCloudRelay(options: CloudRelayOptions): {
             closeMigratedAccount: (account) => broker.closeAccount(account),
             legacyTransfers: options.legacyRoutes === true,
           }).catch((error: unknown) => {
-            // The response carries no reason, so this line is the operator's only clue.
+            // The response carries at most a one-word reason, so this line is the operator's clue.
             log.warn(`Gateway registration refused: ${String(error)}`);
             throw error;
           });

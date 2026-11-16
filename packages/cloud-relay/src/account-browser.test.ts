@@ -2593,8 +2593,10 @@ async function askToUnlink(session: object, name = "Unlink “Fictional home”"
   await f.wait("Fictional cabin");
   await vi.waitFor(() =>
     expect(
-      [...f.document.querySelectorAll(".gateway-item button")].find(
-        (button) => button.getAttribute("aria-label") === name,
+      (
+        [...f.document.querySelectorAll(".gateway-item button")].find(
+          (button) => button.getAttribute("aria-label") === name,
+        ) as HTMLButtonElement | undefined
       )?.disabled,
     ).toBe(false),
   );
@@ -2830,4 +2832,38 @@ test("a confirmation that lapses asks again, a gateway already gone is said plai
   elsewhere.document.dispatchEvent(new elsewhere.window.Event("visibilitychange"));
   await vi.waitFor(() => expect(elsewhere.document.querySelector(".unlink")).toBeNull());
   expect(unlinks(elsewhere)).toEqual([]);
+});
+
+test("a passkey confirmation for a gateway unlinked meanwhile says so instead of failing", async () => {
+  const f = await askToUnlink({ ...twoGateways, credentialsRequireSignIn: true });
+  // Unlinked from another browser while the passkey prompt was open.
+  f.afterCeremony({ ...twoGateways, gateways: [cabin] });
+  await press(f, "Confirm with passkey");
+  await vi.waitFor(() => expect(f.status()).toBe("That gateway is no longer in your account."));
+  expect(unlinks(f)).toEqual([]);
+  expect(f.alert()).toBe("");
+  expect(f.document.querySelector(".unlink")).toBeNull();
+});
+
+test("a refresh from returning to the tab that lands during an unlink draws nothing over its result", async () => {
+  const f = await askToUnlink(twoGateways);
+  await vi.waitFor(() => expect(f.button("Unlink gateway").disabled).toBe(false));
+  // The person returns to the tab; the relay is slow to answer that read.
+  let answer!: (response: Response) => void;
+  f.request.mockImplementationOnce(() => new Promise<Response>((resolve) => (answer = resolve)));
+  Object.defineProperty(f.document, "visibilityState", { value: "visible", configurable: true });
+  f.document.dispatchEvent(new f.window.Event("visibilitychange"));
+  await vi.waitFor(() => expect(answer).toBeDefined());
+  // Meanwhile they press Unlink, which finishes first.
+  f.request.mockResolvedValueOnce(Response.json({ ok: true }));
+  f.session({ ...twoGateways, gateways: [cabin] });
+  f.button("Unlink gateway").click();
+  await vi.waitFor(() =>
+    expect(f.status()).toBe("“Fictional home” was unlinked from your account."),
+  );
+  // The late answer still lists the gateway; it is dropped.
+  answer(Response.json(twoGateways));
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  expect(rows(f).map((row) => row.text[0])).toEqual(["Fictional cabin"]);
+  expect(f.status()).toBe("“Fictional home” was unlinked from your account.");
 });
