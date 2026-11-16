@@ -281,14 +281,14 @@ jobs:
       - name: Apply dependency source and type-export patches without native builds
         run: node node_modules/patch-package/index.js
       - name: Validate timeout after target admission and independent helper closure
-        run: node scripts/run-check.mjs unit packages/platform/src/windows-job-stream.test.ts
+        run: node scripts/run-check.mjs unit packages/platform/src/windows-job-stream.test.ts scripts/ci/windows-checks.test.mjs
       - name: Validate all TypeScript and lint the fixture
         if: ${{ runner.os == 'Linux' }}
         env:
           NODE_OPTIONS: --max-old-space-size=6144
         run: >-
           node scripts/run-check.mjs typecheck && node scripts/run-check.mjs types-tests &&
-          node node_modules/eslint/bin/eslint.js packages/platform/src/windows-job-stream.test.ts
+          node node_modules/eslint/bin/eslint.js packages/platform/src/windows-job-stream.test.ts scripts/ci/windows-checks.mjs scripts/ci/windows-checks.test.mjs
   transcribe-service-baseline:
     if: ${{ inputs.scope == 'transcribe-service-baseline' }}
     strategy:
