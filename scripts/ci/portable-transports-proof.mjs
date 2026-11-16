@@ -16,7 +16,7 @@ process.exitCode = await runCheckCommand(
     "-timeout",
     "6m",
     "-run",
-    "^(TestActorProtocolCreatesRealPeersAndJoins|TestOfficialCLIThroughPrivateLocalAPI|TestPortableControlAndWireGuard|TestMapFingerprintPreservesTopologyChangesWithoutClockTraffic)$",
+    "^(TestActorProtocolCreatesRealPeersAndJoins|TestOfficialCLIThroughPrivateLocalAPI|TestPortableControlAndWireGuard|TestMapFingerprintPreservesTopologyChangesWithoutClockTraffic|TestStreamPresenceDrivesActualStatus)$",
     "-v",
     "./...",
   ],

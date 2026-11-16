@@ -25,6 +25,15 @@ func mapsWithoutCertificates(t *testing.T, control *testcontrol.Server) {
 	var mu sync.Mutex
 	active := map[key.NodePublic]int{}
 	generation := map[key.NodePublic]uint64{}
+    setPresence := func(response *tailcfg.MapResponse) {
+        mu.Lock()
+        defer mu.Unlock()
+        for _, node := range append([]*tailcfg.Node{response.Node}, response.Peers...) {
+            if node == nil { continue }
+            online := active[node.Key] > 0 && (node.KeyExpiry.IsZero() || node.KeyExpiry.After(time.Now()))
+            node.Online = &online
+        }
+    }
 	control.HoldMapRequest = func(request *tailcfg.MapRequest) func() {
 		if !request.Stream || request.ReadOnly {
 			return nil
@@ -36,6 +45,7 @@ func mapsWithoutCertificates(t *testing.T, control *testcontrol.Server) {
 		return func() { mu.Lock(); active[request.NodeKey]--; mu.Unlock() }
 	}
 	control.ModifyFirstMapResponse = func(response *tailcfg.MapResponse, request *tailcfg.MapRequest) {
+        setPresence(response)
 		if response.DNSConfig != nil {
 			response.DNSConfig.CertDomains = nil
 		}
@@ -70,6 +80,7 @@ func mapsWithoutCertificates(t *testing.T, control *testcontrol.Server) {
 					if err != nil || response == nil {
 						continue
 					}
+                    setPresence(response)
 					if response.DNSConfig != nil {
 						response.DNSConfig.CertDomains = nil
 					}

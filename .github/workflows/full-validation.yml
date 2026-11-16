@@ -248,7 +248,7 @@ jobs:
       - name: Format the fixture using its actual pinned Go toolchain
         if: inputs.scope == 'portable-gateway'
         working-directory: scripts/ci/audit-portable-tailnet-control
-        run: gofmt -w actor_test.go actor_protocol_test.go cli_wrapper_test.go control_test.go localapi_bridge_test.go localapi_bridge_windows_test.go localapi_bridge_posix_test.go localapi_transport_test.go map_stream_test.go proxy_transport_test.go
+        run: gofmt -w actor_test.go actor_protocol_test.go cli_wrapper_test.go control_test.go localapi_bridge_test.go localapi_bridge_windows_test.go localapi_bridge_posix_test.go localapi_transport_test.go map_stream_test.go proxy_transport_test.go presence_test.go
       - name: Make OpenSSL available for isolated Windows fixture certificates
         if: runner.os == 'Windows'
         shell: pwsh
@@ -783,7 +783,7 @@ jobs:
         working-directory: scripts/ci/audit-portable-tailnet-control
         env:
           PORTABLE_TAILSCALE_CLI_DIR: ${{ runner.temp }}/fixture-tailnet-cli
-        run: go test -mod=readonly -p 2 -failfast -count=3 -timeout 6m -run '^(TestActorProtocolCreatesRealPeersAndJoins|TestOfficialCLIThroughPrivateLocalAPI|TestPortableControlAndWireGuard|TestMapFingerprintPreservesTopologyChangesWithoutClockTraffic)$' -v ./...
+        run: go test -mod=readonly -p 2 -failfast -count=3 -timeout 6m -run '^(TestActorProtocolCreatesRealPeersAndJoins|TestOfficialCLIThroughPrivateLocalAPI|TestPortableControlAndWireGuard|TestMapFingerprintPreservesTopologyChangesWithoutClockTraffic|TestStreamPresenceDrivesActualStatus)$' -v ./...
       - name: Prove the official CLI reads the real private LocalAPI
         if: inputs.scope == 'portable-localapi'
         working-directory: scripts/ci/audit-portable-tailnet-control
