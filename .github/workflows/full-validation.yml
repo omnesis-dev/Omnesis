@@ -190,7 +190,7 @@ jobs:
         if: runner.os == 'Windows'
         run: node scripts/ci/build-windows-sqlite.mjs
       - name: Verify real actor producers and retained fixture inputs
-        run: node scripts/run-check.mjs unit packages/collector/src/e2e/portable-tailnet-actor.test.ts packages/collector/src/e2e/tailnet-machine-env.test.ts packages/collector/src/e2e/tailnet-fixture-cleanup.test.ts
+        run: node scripts/run-check.mjs unit packages/collector/src/e2e/portable-tailnet-actor.test.ts packages/collector/src/e2e/tailnet-machine-env.test.ts packages/collector/src/e2e/tailnet-fixture-cleanup.test.ts packages/cli/src/tailscale-join.test.ts
       - name: Repeat every on-disk token and canonical-name case with independent schema copies
         run: node scripts/ci/token-setup-repeats.mjs
       - name: Validate all source and test TypeScript projects
@@ -202,6 +202,7 @@ jobs:
           NODE_OPTIONS: --max-old-space-size=6144
         run: >-
           node node_modules/eslint/bin/eslint.js
+          packages/cli/src/tailscale-join.ts packages/cli/src/tailscale-join.test.ts
           packages/gateway/src/data/repositories/TokenRepository.test.ts
           packages/gateway/src/bootstrap/upgrade-placeholder-canonical-names.test.ts
           packages/collector/src/e2e/portable-tailnet-actor.ts

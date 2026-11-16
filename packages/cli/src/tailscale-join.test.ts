@@ -6,11 +6,86 @@ import {
   gatewayCandidates,
   isGatewayDeviceName,
   requestJoin,
+  readLocalTailnet,
   type JoinTransport,
 } from "./tailscale-join.js";
 
 const status = (peers: Record<string, unknown>, backend = "Running") =>
   JSON.stringify({ BackendState: backend, Self: { UserID: 7 }, Peer: peers });
+
+describe("readLocalTailnet command ownership", () => {
+  const candidates = () => [
+    { file: "invented-first-cli", bundledApp: false },
+    { file: "invented-second-cli", bundledApp: false },
+  ];
+  const running = () =>
+    status({ gateway: { DNSName: "omnesis.fixture.test.", Online: true, UserID: 7 } });
+
+  test("Windows uses the owned command and keeps fallback after an ordinary refusal", async () => {
+    const windows = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("invented missing CLI"))
+      .mockResolvedValueOnce({ stdout: running() });
+    const posix = vi.fn();
+    const result = await readLocalTailnet(undefined, {
+      platform: "win32",
+      candidates,
+      windows,
+      posix,
+    });
+    expect(result).toEqual({
+      running: true,
+      candidates: [{ dnsName: "omnesis.fixture.test", online: true, sameOwner: true }],
+    });
+    expect(windows).toHaveBeenNthCalledWith(
+      2,
+      "invented-second-cli",
+      ["status", "--json"],
+      expect.objectContaining({ timeout: 10_000, maxBuffer: 16 * 1024 * 1024 }),
+    );
+    expect(posix).not.toHaveBeenCalled();
+  });
+
+  test.each([undefined, new Error("invented unconfirmed descendant receipt")])(
+    "uncertain cleanup remains terminal without falling back (%s)",
+    async (failure) => {
+      const error = Object.assign(new Error("invented command cleanup uncertainty"), {
+        cleanupFailure: failure,
+      });
+      const windows = vi.fn().mockRejectedValue(error);
+      await expect(
+        readLocalTailnet(undefined, { platform: "win32", candidates, windows }),
+      ).rejects.toBe(error);
+      expect(windows).toHaveBeenCalledOnce();
+    },
+  );
+
+  test("macOS keeps its bundled-app environment and ordinary command execution", async () => {
+    const posix = vi.fn().mockResolvedValue({ stdout: running() });
+    const windows = vi.fn();
+    const result = await readLocalTailnet(undefined, {
+      platform: "darwin",
+      candidates: () => [{ file: "invented-bundled-cli", bundledApp: true }],
+      posix,
+      windows,
+    });
+    expect(result?.running).toBe(true);
+    expect(posix).toHaveBeenCalledWith(
+      "invented-bundled-cli",
+      ["status", "--json"],
+      expect.objectContaining({ env: expect.objectContaining({ TAILSCALE_BE_CLI: "1" }) }),
+    );
+    expect(windows).not.toHaveBeenCalled();
+  });
+
+  test("ordinary failures from every candidate still report an unavailable CLI", async () => {
+    const windows = vi.fn().mockRejectedValue(new Error("invented CLI refusal"));
+    await expect(
+      readLocalTailnet(undefined, { platform: "win32", candidates, windows }),
+    ).resolves.toBeNull();
+    expect(windows).toHaveBeenCalledTimes(2);
+  });
+});
 
 describe("isGatewayDeviceName", () => {
   test("matches the device name and Tailscale's numbered variants only", () => {
