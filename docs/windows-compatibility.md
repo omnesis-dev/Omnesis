@@ -140,17 +140,24 @@ targeted regression run passed all 128 tests on Windows, including native cache
 and bootstrap security cases. Linux passed 103 tests with 25 Windows-specific
 skips. Full source/test typechecks and lint passed for the same source snapshot.
 
-Manual acceptance of source revision `686a43ef0` passed on hosted Windows with
-both source and compiled entrypoints. Each mode initialized encrypted storage,
-booted the real Gateway and Collector, paired the Collector, synchronized three
-invented Obsidian documents, and exercised JSON status, search, document reads,
-SQLite and DuckDB analytics. After stopping both daemons, the restart checks
-proved offline status, an actually online Collector, and the same persisted
-document IDs. Keyless encrypted-database opens were refused, with an ordinary
-unencrypted database as the negative control. Every daemon stopped with exit code 0
-and a confirmed process-tree join; no forced fallback or cleanup uncertainty
-occurred. The job waited 4 seconds and ran 11 minutes 14 seconds. This is manual
-runtime evidence for that revision, not a passing broad suite or final tree.
+Manual acceptance of runtime revision `ddbfb5634`, frozen with its acceptance
+controller at `454b630744`, passed on hosted Windows x64 with both source and
+independently staged compiled entrypoints. Each mode initialized encrypted
+storage, booted the real Gateway and Collector, paired the Collector,
+synchronized three invented Obsidian documents, and exercised JSON status,
+search, document reads, SQLite and DuckDB analytics. After stopping both
+daemons, restart checks proved an actually online Collector and the same
+persisted document IDs. Keyless encrypted-database opens were refused, with an
+ordinary unencrypted database as the negative control. Every daemon stopped
+with exit code 0 and a confirmed process-tree join; no forced fallback or
+cleanup uncertainty occurred. Both modes also ran actual native Whisper
+transcription from a model path containing spaces and Unicode and disposed its
+worker before acceptance: approximately 33 seconds in source and 31 seconds
+compiled. Chat and agent-model inference remained disabled. Original 90-second
+readiness and 35-second graceful-shutdown budgets were preserved. This proves
+manual runtime operation for those exact bytes, not a passing final broad
+suite. The public manual instructions use direct Node commands because the
+collector and CLI npm aliases contain POSIX shell syntax.
 
 The focused x64 run at revision `11f70451d` passed all 1,889 unit tests across
 137 files, with 27 conditional skips. All 13 gateway E2E tests passed in about
