@@ -259,6 +259,7 @@ jobs:
         run: node scripts/ci/build-windows-usearch.mjs
       - name: Install the pinned native Hermes source
         id: hermes
+        if: ${{ !cancelled() && steps.native_bindings.outcome == 'success' }}
         run: |
           $harnessRoot = Join-Path $env:RUNNER_TEMP 'pinned-hermes'
           git init --quiet $harnessRoot

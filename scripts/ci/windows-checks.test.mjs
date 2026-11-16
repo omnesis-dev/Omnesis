@@ -140,6 +140,9 @@ describe("Windows CI coverage", () => {
       expect(host).not.toHaveProperty("continue-on-error");
     }
     expect(hosts[1].if).toContain("steps.hermes.outcome == 'success'");
+    const hermesSetup = job.steps.find(({ id }) => id === "hermes");
+    expect(hermesSetup.if).toContain("!cancelled()");
+    expect(hermesSetup.if).toContain("steps.native_bindings.outcome == 'success'");
     for (const step of job.steps.filter(({ uses }) => uses))
       expect(step.uses).toMatch(/@[0-9a-f]{40}$/u);
     expect(job.steps.find(({ uses }) => uses?.startsWith("actions/checkout@")).with).toEqual({
@@ -328,7 +331,7 @@ describe("Windows CI coverage", () => {
       ({ name }) => name === "Full Windows unit and adapter tests",
     );
     expect(runtimeStep.if).toBe(
-      "${{ !cancelled() && matrix.lane == 'unit' && steps.dependencies.outcome == 'success' && steps.native_sqlite.outcome == 'success' && steps.native_vector.outcome == 'success' }}",
+      "${{ !cancelled() && matrix.lane == 'unit' && steps.dependencies.outcome == 'success' && steps.native_sqlite.outcome == 'success' && steps.native_vector.outcome == 'success' && steps.native_ocr.outcome == 'success' && steps.verify_ocr.outcome == 'success' }}",
     );
   });
 
