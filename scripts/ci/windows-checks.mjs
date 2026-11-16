@@ -222,6 +222,7 @@ export const FOCUSED_UNIT_FILES = [
   "packages/collector/src/e2e/gateway-env.test.ts",
   "packages/collector/src/e2e/subprocess-reaper.test.ts",
   "packages/collector/src/e2e/enrollment-browser-fixture.test.ts",
+  "packages/collector/src/e2e/enrollment-fixture-cleanup.test.ts",
   "packages/collector/src/e2e/enrollment-terminal-fixture.test.ts",
   "packages/collector/src/e2e/enrollment-terminal-cohort.windows.test.ts",
   "packages/collector/src/file-watcher-manager.test.ts",

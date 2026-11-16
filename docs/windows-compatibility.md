@@ -7,7 +7,8 @@ below do not establish general Windows support.
 ## Acceptance criteria
 
 - Run the Gateway, Collector and CLI in actual Windows guests with invented data.
-- Validate Windows ARM64 and x64 runtimes, recording the guest and Node architecture.
+- Complete Windows x64 runtime acceptance, recording the runner and Node architecture.
+  ARM acceptance remains pending; retain verified generic ARM compatibility fixes.
 - Exercise source and compiled entrypoints, native dependencies, worker threads,
   subprocesses, TLS, pairing, sync, search, analytics, persistence and shutdown.
 - Every test without a fundamental product reason to be platform-specific must
@@ -21,7 +22,12 @@ below do not establish general Windows support.
 
 The proposed workflow runs focused Windows tests on pull requests and a broad
 sweep daily at 04:43 UTC. The daily sweep includes units, adapter tests,
-typechecks, two spawned-gateway shards and portal browser tests. All jobs use
+typechecks, two spawned-gateway shards and portal browser tests. The complete unit
+lane also enables the default indexer benchmark and requires real native Whisper
+and Tesseract acceptance inputs. A separate job runs the real pinned OpenClaw and
+Hermes enrollment, plugin-host, tool and uninstallation contracts sequentially
+after the broad matrix. These host contracts make no model-inference requests.
+All jobs use
 GitHub-hosted runners and read-only repository permissions. Real embedding
 coverage uses the pinned CPU model; its pins are checked against the existing
 Docker embedding lane. Scheduled execution begins only after the workflow
@@ -31,7 +37,11 @@ The schedule separates Windows from the existing 01:17 and 13:17 UTC full
 sweeps and avoids the top of the hour, when GitHub documents higher scheduling
 load. This is a spacing decision, not a guarantee of immediate runner admission.
 The broad sweep uses at most four standard runners concurrently; pull requests
-use one focused runner and supersede older runs for the same pull request.
+use one focused runner and supersede older runs for the same pull request. The
+native integration job waits for that matrix to finish, sharing one dependency
+setup for both hosts without adding a fifth concurrent runner. It runs only in
+scheduled and complete manual sweeps, including after a failed matrix lane, and
+never expands focused pull-request coverage.
 Standard hosted runners are free for public repositories under GitHub's
 [current billing policy](https://docs.github.com/en/actions/concepts/billing-and-usage).
 Runner occupancy and feedback time still matter; completed broad-run timings
@@ -68,6 +78,16 @@ The first complete Windows unit baseline took about 163 minutes. Its failures
 and helper initialization costs must be resolved before treating that as a
 representative daily runtime. Product operation deadlines remain enforced;
 changes to multi-stage fixture budgets are recorded with their evidence below.
+
+The full-size benchmark passed all five cases with its default eight scenarios
+and 6,000 documents on Windows in 17 minutes 41 seconds and Linux in 3 minutes
+2 seconds. Its measured Windows cost fits within the complete unit lane's
+180-minute job envelope alongside the later approximately 128-minute unit
+baseline; a complete fresh run must validate the combined envelope. The
+benchmark is absent from focused PR checks. Native OpenClaw and Hermes
+conformance cases passed in approximately 318 and 107 seconds respectively;
+the daily job shares native preparation and runs them sequentially. These are
+component measurements, not a passing final-tree sweep.
 
 ## Native Windows evidence
 

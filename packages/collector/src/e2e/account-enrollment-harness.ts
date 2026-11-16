@@ -28,13 +28,13 @@ import {
   randomUUID,
   type KeyObject,
 } from "node:crypto";
-import { execFile, spawn, type ChildProcess } from "node:child_process";
+import type { ChildProcess } from "node:child_process";
 import { once } from "node:events";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { createServer, type AddressInfo } from "node:net";
 import { join } from "node:path";
-import { promisify } from "node:util";
+import { StringDecoder } from "node:string_decoder";
 import {
   AccountEnrollmentAuthority,
   RelaySessions,
@@ -49,16 +49,19 @@ import {
   type CDPSession,
   type Page,
 } from "playwright";
-import { createWindowsPrivateFile } from "@omnesis/core";
+import { createWindowsPrivateFile, ownedProcessCleanupReceipt } from "@omnesis/core";
 import { E2EHarness } from "./harness.js";
 import { writeNoBrowserPreload } from "./enrollment-browser-fixture.js";
 import { e2eGatewayEnv, e2eTsxCommand, gatewayBootBudgetMs } from "./gateway-env.js";
 import { killSubprocessGroup, registerSubprocessGroup } from "./subprocess-reaper.js";
+import { spawnCliProcess, type SpawnedCli } from "./connect-process.js";
+import { closeEnrollmentFixture, closeEnrollmentServers } from "./enrollment-fixture-cleanup.js";
+import { execE2EBufferedCommand } from "./e2e-buffered-command.js";
+import { spawnE2ESubprocess, e2eProcessOutput, e2eProcessExit } from "./e2e-owned-process.js";
 
 /** Credential the fake DNS API accepts; invented for this harness. */
 const FIXTURE_DNS_TOKEN = "fixture-relay-dns-token";
 
-const execFileAsync = promisify(execFile);
 const require = createRequire(import.meta.url);
 export const REPO_ROOT = join(import.meta.dirname, "../../../..");
 export const RELAY_HOST = "relay.example.test";
@@ -187,6 +190,9 @@ export class EnrollmentWorld {
   readonly allowlistFile: string;
   readonly logs: string[] = [];
   relay?: ChildProcess;
+  private readonly cliRuns = new Set<SpawnedCli>();
+  private readonly gateways = new Set<EnrollmentGateway>();
+  private startupCleanupFailure: { error: unknown } | undefined;
   /** Google's stand-in, when the world offers Google sign-in. */
   google?: FakeGoogle;
   /** DNS-01 values the relay published, by record id: what a local ACME authority checks. */
@@ -232,26 +238,36 @@ export class EnrollmentWorld {
       { relay: await freePort(), data: await freePort() },
       options,
     );
-    if (process.platform === "win32")
-      await createWindowsPrivateFile(world.relayKeyFile, randomBytes(32));
-    else await writeFile(world.relayKeyFile, randomBytes(32), { mode: 0o600 });
-    const authorityKey = generateKeyPairSync("ed25519").privateKey.export({
-      type: "pkcs8",
-      format: "pem",
-    });
-    if (process.platform === "win32")
-      await createWindowsPrivateFile(world.accountKeyFile, Buffer.from(authorityKey));
-    else await writeFile(world.accountKeyFile, authorityKey, { mode: 0o600 });
-    await world.setAllowlist(options.allowlist ?? {});
-    world.dnsFixture = await startDnsFixture(world.dnsRecords);
-    if (options.google) world.google = await FakeGoogle.start(directory, pki);
-    await writeFile(
-      join(directory, "relay-dns-token.json"),
-      JSON.stringify({ token: "fixture-relay-dns-token" }),
-      { mode: 0o600 },
-    );
-    await world.startRelay();
-    return world;
+    try {
+      if (process.platform === "win32")
+        await createWindowsPrivateFile(world.relayKeyFile, randomBytes(32));
+      else await writeFile(world.relayKeyFile, randomBytes(32), { mode: 0o600 });
+      const authorityKey = generateKeyPairSync("ed25519").privateKey.export({
+        type: "pkcs8",
+        format: "pem",
+      });
+      if (process.platform === "win32")
+        await createWindowsPrivateFile(world.accountKeyFile, Buffer.from(authorityKey));
+      else await writeFile(world.accountKeyFile, authorityKey, { mode: 0o600 });
+      await world.setAllowlist(options.allowlist ?? {});
+      world.dnsFixture = await startDnsFixture(world.dnsRecords);
+      if (options.google) world.google = await FakeGoogle.start(directory, pki);
+      await writeFile(
+        join(directory, "relay-dns-token.json"),
+        JSON.stringify({ token: "fixture-relay-dns-token" }),
+        { mode: 0o600 },
+      );
+      await world.startRelay();
+      return world;
+    } catch (error) {
+      await closeEnrollmentFixture(undefined, [
+        () => world.close(),
+        () => {
+          throw error;
+        },
+      ]);
+      throw error;
+    }
   }
 
   /** Environment for any spawned Node process that talks to the fixture relay and gateways. */
@@ -293,7 +309,7 @@ export class EnrollmentWorld {
   async startRelay(options: Partial<WorldOptions> = {}): Promise<void> {
     this.options = { ...this.options, ...options };
     const command = e2eTsxCommand("packages/cloud-relay/src/main.ts");
-    const proc = spawn(command.command, [...command.args, "serve"], {
+    const proc = spawnE2ESubprocess(command.command, [...command.args, "serve"], {
       cwd: REPO_ROOT,
       env: {
         ...e2eGatewayEnv(),
@@ -342,31 +358,45 @@ export class EnrollmentWorld {
       detached: true,
       stdio: ["ignore", "pipe", "pipe"],
     });
-    await registerSubprocessGroup(proc);
     this.relay = proc;
     this.relayOutput = "";
-    await new Promise<void>((resolve, reject) => {
-      const timer = setTimeout(
+    let readyTimer: NodeJS.Timeout | undefined;
+    const ready = new Promise<void>((resolve, reject) => {
+      readyTimer = setTimeout(
         () => reject(new Error(`Relay did not become ready: ${this.relayOutput}`)),
         gatewayBootBudgetMs(),
       );
-      const inspect = (chunk: Buffer): void => {
-        this.relayOutput = (this.relayOutput + chunk.toString()).slice(-32_000);
+      const inspect = (text: string): void => {
+        this.relayOutput = (this.relayOutput + text).slice(-32_000);
         if (
           /Listening on https:\/\//.test(this.relayOutput) &&
           /TLS passthrough port/.test(this.relayOutput)
-        ) {
-          clearTimeout(timer);
+        )
           resolve();
-        }
       };
-      proc.stdout!.on("data", inspect);
-      proc.stderr!.on("data", inspect);
-      proc.once("exit", (code) => {
-        clearTimeout(timer);
-        reject(new Error(`Relay exited ${code}: ${this.relayOutput}`));
-      });
+      for (const stream of Object.values(e2eProcessOutput(proc))) {
+        const decoder = new StringDecoder("utf8");
+        stream?.on("data", (chunk: Buffer) => inspect(decoder.write(chunk)));
+        stream?.once("end", () => inspect(decoder.end()));
+      }
+      proc.once("error", reject);
+      void e2eProcessExit(proc).then(
+        (code) => reject(new Error(`Relay exited ${code}: ${this.relayOutput}`)),
+        (error: unknown) => {
+          this.holdInputsOnCleanupFailure(error);
+          reject(error);
+        },
+      );
     });
+    void ready.catch(() => {});
+    try {
+      await Promise.all([registerSubprocessGroup(proc), ready]);
+    } catch (error) {
+      this.holdInputsOnCleanupFailure(error);
+      throw error;
+    } finally {
+      clearTimeout(readyTimer);
+    }
   }
 
   relayLog(): string {
@@ -374,7 +404,12 @@ export class EnrollmentWorld {
   }
 
   async stopRelay(): Promise<void> {
-    if (this.relay) await killSubprocessGroup(this.relay);
+    // The relay CLI has signal handlers rather than the Gateway's parent IPC
+    // bridge. Its Windows fixture is cancelled explicitly and joins its Job.
+    if (this.relay)
+      await killSubprocessGroup(this.relay, {
+        initialSignal: process.platform === "win32" ? "SIGKILL" : "SIGTERM",
+      });
     this.relay = undefined;
   }
 
@@ -392,9 +427,36 @@ export class EnrollmentWorld {
   }
 
   async close(): Promise<void> {
-    await this.stopRelay();
-    await this.dnsFixture?.close();
-    await this.google?.close();
+    await closeEnrollmentFixture(undefined, [
+      ...[...this.cliRuns].map((run) => () => run.stop()),
+      ...[...this.gateways].map((gateway) => () => gateway.close()),
+      () => this.stopRelay(),
+      () => this.dnsFixture?.close(),
+      () => this.google?.close(),
+      () => {
+        if (this.startupCleanupFailure) throw this.startupCleanupFailure.error;
+      },
+    ]);
+  }
+
+  trackCli(run: SpawnedCli): void {
+    this.cliRuns.add(run);
+    void run.exit.then(
+      () => this.cliRuns.delete(run),
+      () => {},
+    );
+  }
+
+  trackGateway(gateway: EnrollmentGateway): void {
+    this.gateways.add(gateway);
+  }
+
+  releaseGateway(gateway: EnrollmentGateway): void {
+    this.gateways.delete(gateway);
+  }
+
+  holdInputsOnCleanupFailure(error: unknown): void {
+    if (ownedProcessCleanupReceipt(error) !== undefined) this.startupCleanupFailure ??= { error };
   }
 }
 
@@ -513,18 +575,28 @@ export class FakeGoogle {
         });
       },
     );
-    for (const server of [api, authorize]) {
-      server.listen(0, "127.0.0.1");
-      await once(server, "listening");
+    try {
+      for (const server of [api, authorize]) {
+        server.listen(0, "127.0.0.1");
+        await once(server, "listening");
+      }
+      return new FakeGoogle(
+        `http://127.0.0.1:${(api.address() as AddressInfo).port}`,
+        preload,
+        secretFile,
+        (authorize.address() as AddressInfo).port,
+        chosen,
+        [api, authorize],
+      );
+    } catch (error) {
+      await closeEnrollmentFixture(undefined, [
+        () => closeEnrollmentServers([api, authorize]),
+        () => {
+          throw error;
+        },
+      ]);
+      throw error;
     }
-    return new FakeGoogle(
-      `http://127.0.0.1:${(api.address() as AddressInfo).port}`,
-      preload,
-      secretFile,
-      (authorize.address() as AddressInfo).port,
-      chosen,
-      [api, authorize],
-    );
   }
 
   /** The digest a relay lists and a gateway pins for a Google account. */
@@ -543,8 +615,7 @@ export class FakeGoogle {
   }
 
   async close(): Promise<void> {
-    for (const server of this.servers)
-      await new Promise<void>((resolve) => server.close(() => resolve()));
+    await closeEnrollmentServers(this.servers);
   }
 }
 
@@ -713,76 +784,91 @@ export class EnrollmentGateway {
     const directory = join(world.directory, `gateway-${name}`);
     await mkdir(directory, { recursive: true, mode: 0o700 });
     const gateway = new EnrollmentGateway(world, directory);
-    gateway.leaf = await world.pki.leaf(
-      `gateway-${name}`,
-      [gateway.hostname, "localhost", "127.0.0.1"],
-      { sct: options.sct ?? true },
-    );
-    const invitationFile = join(directory, "invitation.json");
-    await writeFile(
-      invitationFile,
-      JSON.stringify({
-        enrollmentToken: await (
-          await world.sessions()
-        ).issueEnrollmentInvitation(gateway.gatewayId, world.relayOrigin),
-      }),
-      { mode: 0o600 },
-    );
-    const relayEnv = {
-      OMNESIS_CLOUD_RELAY_ENABLED: "1",
-      OMNESIS_CLOUD_RELAY_URL: world.relayOrigin,
-      OMNESIS_CLOUD_RELAY_SESSION_FILE: gateway.sessionFile,
-      OMNESIS_CLOUD_RELAY_OWNER_KEY_FILE: gateway.ownerKeyFile,
-      OMNESIS_CLOUD_RELAY_ENROLLMENT_TOKEN_FILE: invitationFile,
-      OMNESIS_CLOUD_RELAY_GATEWAY_ID: gateway.gatewayId,
-      OMNESIS_CLOUD_RELAY_GATEWAY_ORIGIN: gateway.publicOrigin,
-      // Certificate Transparency polling would reach a public log service.
-      OMNESIS_CLOUD_RELAY_CERTIFICATE_MONITOR_ENABLED: "0",
-      OMNESIS_TLS_CERT: gateway.leaf.certFile,
-      OMNESIS_TLS_KEY: gateway.leaf.keyFile,
-      ...world.googleEnv(),
-    };
-    const cli = e2eTsxCommand("packages/cli/src/index.ts");
+    world.trackGateway(gateway);
     try {
-      await execFileAsync(cli.command, [...cli.args, "cloud", "register-key"], {
-        cwd: REPO_ROOT,
-        env: e2eGatewayEnv({
-          ...process.env,
+      gateway.leaf = await world.pki.leaf(
+        `gateway-${name}`,
+        [gateway.hostname, "localhost", "127.0.0.1"],
+        { sct: options.sct ?? true },
+      );
+      const invitationFile = join(directory, "invitation.json");
+      await writeFile(
+        invitationFile,
+        JSON.stringify({
+          enrollmentToken: await (
+            await world.sessions()
+          ).issueEnrollmentInvitation(gateway.gatewayId, world.relayOrigin),
+        }),
+        { mode: 0o600 },
+      );
+      const relayEnv = {
+        OMNESIS_CLOUD_RELAY_ENABLED: "1",
+        OMNESIS_CLOUD_RELAY_URL: world.relayOrigin,
+        OMNESIS_CLOUD_RELAY_SESSION_FILE: gateway.sessionFile,
+        OMNESIS_CLOUD_RELAY_OWNER_KEY_FILE: gateway.ownerKeyFile,
+        OMNESIS_CLOUD_RELAY_ENROLLMENT_TOKEN_FILE: invitationFile,
+        OMNESIS_CLOUD_RELAY_GATEWAY_ID: gateway.gatewayId,
+        OMNESIS_CLOUD_RELAY_GATEWAY_ORIGIN: gateway.publicOrigin,
+        // Certificate Transparency polling would reach a public log service.
+        OMNESIS_CLOUD_RELAY_CERTIFICATE_MONITOR_ENABLED: "0",
+        OMNESIS_TLS_CERT: gateway.leaf.certFile,
+        OMNESIS_TLS_KEY: gateway.leaf.keyFile,
+        ...world.googleEnv(),
+      };
+      const cli = e2eTsxCommand("packages/cli/src/index.ts");
+      try {
+        await execE2EBufferedCommand(cli.command, [...cli.args, "cloud", "register-key"], {
+          cwd: REPO_ROOT,
+          env: e2eGatewayEnv({
+            ...process.env,
+            ...world.clientEnv(),
+            ...relayEnv,
+            OMNESIS_CONFIG_DIR: join(directory, "registration"),
+            OMNESIS_LOG_LEVEL: "error",
+          }),
+          timeout: 60_000,
+          maxBuffer: 1024 * 1024,
+        });
+      } catch (error) {
+        world.holdInputsOnCleanupFailure(error);
+        const receipt = ownedProcessCleanupReceipt(error);
+        const failure = new Error(
+          `Gateway registration failed. Relay log:\n${world.relayLog().slice(-4000)}`,
+          {
+            cause: error,
+          },
+        );
+        throw receipt === undefined
+          ? failure
+          : Object.assign(failure, { cleanupFailure: receipt.failure });
+      }
+      gateway.harness = new EnrollmentHarness({
+        extraGatewayEnv: {
           ...world.clientEnv(),
           ...relayEnv,
-          OMNESIS_CONFIG_DIR: join(directory, "registration"),
-          OMNESIS_LOG_LEVEL: "error",
-        }),
-        timeout: 60_000,
-      });
-    } catch (error) {
-      throw new Error(`Gateway registration failed. Relay log:\n${world.relayLog().slice(-4000)}`, {
-        cause: error,
-      });
-    }
-    gateway.harness = new EnrollmentHarness({
-      extraGatewayEnv: {
-        ...world.clientEnv(),
-        ...relayEnv,
-        get OMNESIS_PUBLIC_BASE_URL() {
-          return `https://localhost:${gateway.harness.gatewayPort}`;
+          get OMNESIS_PUBLIC_BASE_URL() {
+            return `https://localhost:${gateway.harness.gatewayPort}`;
+          },
+          ...options.extraEnv,
         },
-        ...options.extraEnv,
-      },
-    });
-    // Publishes the mock source type, so a collector that joins later can host it.
-    gateway.harness.registerMockSource({
-      sourceType: "mock-relay-notes",
-      providerType: "mock-relay",
-      accountId: "fictional",
-    });
-    await gateway.harness.start();
-    await waitFor(
-      async () => (await gateway.status()).tunnel.state === "online",
-      "the gateway tunnel to come online",
-      gatewayBootBudgetMs(),
-    );
-    return gateway;
+      });
+      // Publishes the mock source type, so a collector that joins later can host it.
+      gateway.harness.registerMockSource({
+        sourceType: "mock-relay-notes",
+        providerType: "mock-relay",
+        accountId: "fictional",
+      });
+      await gateway.harness.start();
+      await waitFor(
+        async () => (await gateway.status()).tunnel.state === "online",
+        "the gateway tunnel to come online",
+        gatewayBootBudgetMs(),
+      );
+      return gateway;
+    } catch (error) {
+      world.holdInputsOnCleanupFailure(error);
+      throw error;
+    }
   }
 
   async json<T = unknown>(path: string, init?: RequestInit): Promise<T> {
@@ -973,6 +1059,7 @@ export class EnrollmentGateway {
 
   async close(): Promise<void> {
     await this.harness?.destroy();
+    this.world.releaseGateway(this);
   }
 }
 
@@ -1282,9 +1369,9 @@ export function runCli(
   args: readonly string[],
   env: NodeJS.ProcessEnv,
 ): CliRun {
-  const command = e2eTsxCommand("packages/cli/src/index.ts");
-  const proc = spawn(command.command, [...command.args, ...args], {
-    cwd: REPO_ROOT,
+  const running = spawnCliProcess({
+    repositoryRoot: REPO_ROOT,
+    args,
     env: {
       ...e2eGatewayEnv(),
       ...world.clientEnv(),
@@ -1293,21 +1380,18 @@ export function runCli(
       OMNESIS_TOKEN: undefined,
       ...env,
     },
-    detached: true,
-    stdio: ["ignore", "pipe", "pipe"],
+    inheritEnv: false,
   });
-  registerSubprocessGroup(proc);
-  let stdout = "",
-    stderr = "";
-  proc.stdout!.on("data", (chunk: Buffer) => (stdout += chunk.toString()));
-  proc.stderr!.on("data", (chunk: Buffer) => (stderr += chunk.toString()));
-  let closed = false;
-  // "close" rather than "exit": output written just before exiting is only read by then.
-  const exit = once(proc, "close").then(([code]) => {
-    closed = true;
-    return code as number | null;
-  });
-  return { proc, stdout: () => stdout, stderr: () => stderr, exit, closed: () => closed };
+  world.trackCli(running);
+  const exit = running.exit.then((result) => result.code);
+  void exit.catch(() => {});
+  return {
+    proc: running.child,
+    stdout: running.stdout,
+    stderr: running.stderr,
+    exit,
+    closed: running.closed,
+  };
 }
 
 /** The connect URL and code a CLI prints when no browser opens. */

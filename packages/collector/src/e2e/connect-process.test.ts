@@ -12,6 +12,7 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 
 import {
   spawnConnect,
+  spawnCliProcess,
   terminateConnect,
   waitForExit,
   type SpawnedConnect,
@@ -145,6 +146,41 @@ describe("spawned connect process cleanup", () => {
       code: 0,
       output: JSON.stringify(["connect", "literal space", "quote'\"", "&$;", "雪"]),
     });
+  }, 20_000);
+
+  test("owns a general CLI command through its real nonzero exit and separate split UTF-8 streams", async () => {
+    const root = mkdtempSync(join(tmpdir(), "omnesis-cli literal-"));
+    roots.push(root);
+    const cliDir = join(root, "packages", "cli", "src");
+    mkdirSync(cliDir, { recursive: true });
+    writeFileSync(
+      join(cliDir, "index.ts"),
+      `void (async () => {
+  const streams = [[process.stdout, JSON.stringify({args: process.argv.slice(2), config: process.env.OMNESIS_CONFIG_DIR})], [process.stderr, 'invented stderr 雪']];
+  for (const [stream, text] of streams) {
+    for (const byte of Buffer.from(text)) {
+      stream.write(Buffer.from([byte]));
+      await new Promise(resolve => setImmediate(resolve));
+    }
+  }
+  process.exitCode = 7;
+})();`,
+    );
+    const args = ["cloud", "connect", "literal space", "雪", "&$;"];
+    const config = join(root, "custom profile");
+    const running = spawnCliProcess({
+      repositoryRoot: root,
+      args,
+      env: { OMNESIS_CONFIG_DIR: config },
+    });
+    runningProcesses.push(running);
+    expect(running.closed()).toBe(false);
+    expect((await running.exit).code).toBe(7);
+    expect(JSON.parse(running.stdout())).toEqual({ args, config });
+    expect(running.stderr()).toBe("invented stderr 雪");
+    expect(running.closed()).toBe(true);
+    await running.stop();
+    expect(running.closed()).toBe(true);
   }, 20_000);
 
   test.each([undefined, new Error("fixed unconfirmed registration")])(

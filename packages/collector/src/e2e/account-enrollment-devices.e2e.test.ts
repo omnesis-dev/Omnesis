@@ -27,7 +27,7 @@ import {
   randomBytes,
   randomUUID,
 } from "node:crypto";
-import { mkdir, mkdtemp, readFile, readdir, rm, stat } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -43,6 +43,7 @@ import { HttpGatewayClient, GatewayWsClient } from "@omnesis/gateway-client";
 import { inspectWindowsPrivatePathSync } from "@omnesis/core";
 import { AccountId, SourceId, SourceType, ProviderId } from "@omnesis/types";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
+import { closeEnrollmentFixture } from "./enrollment-fixture-cleanup.js";
 import {
   EnrollmentGateway,
   EnrollmentWorld,
@@ -253,15 +254,16 @@ describe.skipIf(!browserReady)("devices join a gateway by signing in", () => {
 
   afterAll(async () => {
     try {
-      await browser?.close();
-      await gateway?.close();
-      await world?.close();
+      await closeEnrollmentFixture(world ? directory : undefined, [
+        () => browser?.close(),
+        () => gateway?.close(),
+        () => world?.close(),
+      ]);
     } finally {
       if (priorCaFile === undefined) delete process.env.OMNESIS_CLOUD_RELAY_GATEWAY_CA_FILE;
       else process.env.OMNESIS_CLOUD_RELAY_GATEWAY_CA_FILE = priorCaFile;
       if (priorEnabled === undefined) delete process.env.OMNESIS_CLOUD_RELAY_ENABLED;
       else process.env.OMNESIS_CLOUD_RELAY_ENABLED = priorEnabled;
-      if (directory) await rm(directory, { recursive: true, force: true });
     }
   }, 60_000);
 
