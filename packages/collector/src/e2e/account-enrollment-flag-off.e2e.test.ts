@@ -27,6 +27,7 @@ describe("sign-in enrollment with the cloud relay flag off", () => {
   let harness: E2EHarness;
   let directory: string;
   const prior = process.env.OMNESIS_CLOUD_RELAY_ENABLED;
+  const priorTailscale = process.env.OMNESIS_TAILSCALE_EMBED_ENABLED;
 
   async function cli(args: string[], flag: boolean): Promise<string> {
     return (await cliRun(args, flag)).output;
@@ -61,6 +62,8 @@ describe("sign-in enrollment with the cloud relay flag off", () => {
 
   beforeAll(async () => {
     delete process.env.OMNESIS_CLOUD_RELAY_ENABLED;
+    // The gateway's own Tailscale device is the other way in that turns remote access on.
+    delete process.env.OMNESIS_TAILSCALE_EMBED_ENABLED;
     directory = await mkdtemp(join(tmpdir(), "omnesis-enroll-flag-off-"));
     harness = new E2EHarness();
     await harness.start();
@@ -71,6 +74,8 @@ describe("sign-in enrollment with the cloud relay flag off", () => {
     if (directory) await rm(directory, { recursive: true, force: true });
     if (prior === undefined) delete process.env.OMNESIS_CLOUD_RELAY_ENABLED;
     else process.env.OMNESIS_CLOUD_RELAY_ENABLED = prior;
+    if (priorTailscale === undefined) delete process.env.OMNESIS_TAILSCALE_EMBED_ENABLED;
+    else process.env.OMNESIS_TAILSCALE_EMBED_ENABLED = priorTailscale;
   }, 30_000);
 
   test("every enrollment route is absent", async () => {
@@ -102,6 +107,13 @@ describe("sign-in enrollment with the cloud relay flag off", () => {
       ["POST", "/admin/step-up", {}],
       ["POST", "/portal/api/handoff", {}],
       ["POST", "/portal/api/handoff/redeem", { code: "a".repeat(43) }],
+      // Remote access exists only with the relay or the gateway's own Tailscale device.
+      ["GET", "/admin/remote-access"],
+      ["PATCH", "/admin/remote-access", { first: "relay" }],
+      ["POST", "/admin/remote-access/check-address", { url: "https://omnesis.example.org" }],
+      ["GET", "/admin/remote-access/host-tailscale"],
+      ["POST", "/admin/remote-access/host-tailscale/publish", { public: false }],
+      ["GET", "/.well-known/omnesis-address-check/abcdefghijklmnopqrstuv"],
     ];
     const statuses = await Promise.all(
       routes.map(async ([method, path, body]) => {

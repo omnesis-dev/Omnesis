@@ -26,6 +26,13 @@ export function tailscalePollInterval(state) {
 }
 
 const TIMEOUT_MS = 10_000;
+/**
+ * Changes that may ask for the owner's passkey first (turning the device on,
+ * letting devices join automatically) wait for the person, not only for the
+ * network, as the relay's own hook does.
+ */
+const STEP_UP_OPERATIONS = new Set(["enable", "join-policy"]);
+const STEP_UP_TIMEOUT_MS = 130_000;
 
 function messageOf(error, timedOut) {
   if (timedOut) return "The gateway didn't answer in time. Check the connection and try again.";
@@ -63,7 +70,7 @@ export function useTailscaleAdmin() {
     const timeout = setTimeout(() => {
       attempt.timedOut = true;
       controller.abort();
-    }, TIMEOUT_MS);
+    }, STEP_UP_OPERATIONS.has(operation) ? STEP_UP_TIMEOUT_MS : TIMEOUT_MS);
     try {
       const result = await call(controller.signal);
       if (controller.signal.aborted) throw new Error("aborted");

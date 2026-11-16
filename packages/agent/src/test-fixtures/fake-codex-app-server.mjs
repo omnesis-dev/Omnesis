@@ -193,14 +193,21 @@ rl.on("line", (line) => {
     // after it or ahead of it, so they are all dispatched before the client
     // resumes from the response.
     const oneChunk = scenario === "early-events" || scenario.startsWith("stale-native-output");
+    // The backend arms its idle watchdog once it learns the turn id. A tool
+    // call written ahead of the response is held until then and admitted
+    // before the watchdog is armed, so a short idle timeout cannot end the
+    // turn before the tool runs, however long the client takes to read it.
+    const beforeResponse =
+      scenario === "stale-native-output-before-response" || scenario === "watchdog-after-tool";
     if (oneChunk) process.stdout.cork();
-    if (firstTurn && scenario === "stale-native-output-before-response") runScenario();
+    if (firstTurn && beforeResponse) runScenario();
     send({ id: msg.id, result: { turn: { id: turnId, status: "inProgress", items: [] } } });
     if (firstTurn && (scenario === "early-events" || scenario === "stale-native-output")) {
       runScenario();
     } else if (
       (firstTurn || scenario.startsWith("recovery") || scenario.startsWith("structured")) &&
-      !oneChunk
+      !oneChunk &&
+      !beforeResponse
     ) {
       setTimeout(runScenario, 0);
     }

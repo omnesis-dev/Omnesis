@@ -42,6 +42,7 @@ function qr(
     strictPinSpkiFingerprint?: () => string | undefined;
     relayAddress?: () => Promise<RelayPairingAddress | null>;
     tailnetAddress?: () => TailnetPairingAddress | null;
+    preferRelay?: () => boolean;
   } = {},
 ): PairingQrService {
   return new PairingQrService({
@@ -51,6 +52,7 @@ function qr(
     strictPinSpkiFingerprint: extra.strictPinSpkiFingerprint,
     relayAddress: extra.relayAddress,
     tailnetAddress: extra.tailnetAddress,
+    preferRelay: extra.preferRelay,
     systemTrustOrigins,
     pairingKind: () => kind,
     discoverIdentities: async () => extra.identities ?? IDENTITIES,
@@ -1254,6 +1256,67 @@ describe("the gateway's own tailnet device", () => {
       });
       // Another address on the same gateway is not marked.
       expect(encoded(service, "https://192.168.1.20:7600")).not.toHaveProperty("tailnet");
+    });
+
+    it("puts the tailnet address ahead of the relay's unless the owner chose the relay first", async () => {
+      vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "1");
+      const relayOrigin = "https://g-fictional.relay.example.test";
+      let relayFirst = false;
+      const service = qr(fingerprint, [], "ios", {
+        identities: lanOnly,
+        listenPort: 7600,
+        tailnetAddress: () => ({ origin: tailnetOrigin, trusted: true }),
+        relayAddress: async () => ({ origin: relayOrigin, ready: true }),
+        preferRelay: () => relayFirst,
+      });
+      const order = async () =>
+        (await service.pairingAddresses(input)).addresses.map((a) => a.gatewayUrl);
+      expect((await order()).slice(0, 2)).toEqual([tailnetOrigin, relayOrigin]);
+      relayFirst = true;
+      expect((await order()).slice(0, 2)).toEqual([relayOrigin, tailnetOrigin]);
+      expect((await service.pairingAddresses(input)).recommendedUrl).toBe(relayOrigin);
+    });
+
+    it("moves the relay ahead of the tailnet address only, never ahead of the owner's public address", async () => {
+      vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "1");
+      const relayOrigin = "https://g-fictional.relay.example.test";
+      const publicOrigin = "https://omnesis.example.org";
+      const service = (tailnet: TailnetPairingAddress | null, preferRelay: boolean) =>
+        qr(fingerprint, [], "ios", {
+          identities: lanOnly,
+          listenPort: 7600,
+          publiclyTrustedHosts: ["omnesis.example.org"],
+          tailnetAddress: () => tailnet,
+          relayAddress: async () => ({ origin: relayOrigin, ready: true }),
+          preferRelay: () => preferRelay,
+        });
+      const order = async (s: PairingQrService) =>
+        (
+          await s.pairingAddresses({
+            ...input,
+            requestHost: "omnesis.example.org",
+            requestPort: "443",
+          })
+        ).addresses.map((a) => a.gatewayUrl);
+      const tailnet = { origin: tailnetOrigin, trusted: true };
+      const before = await order(service(tailnet, false));
+      const after = await order(service(tailnet, true));
+      expect(before.indexOf(relayOrigin)).toBeGreaterThan(before.indexOf(publicOrigin));
+      expect(after.indexOf(relayOrigin)).toBe(after.indexOf(tailnetOrigin) - 1);
+      // Every other address keeps its order, the owner's public address after the tailnet's.
+      const withoutRelay = (list: string[]) => list.filter((url) => url !== relayOrigin);
+      expect(withoutRelay(after)).toEqual(withoutRelay(before));
+      // Without a relay address to offer, the choice changes nothing.
+      const noRelay = qr(fingerprint, [], "ios", {
+        identities: lanOnly,
+        listenPort: 7600,
+        tailnetAddress: () => tailnet,
+        relayAddress: async () => null,
+        preferRelay: () => true,
+      });
+      expect((await noRelay.pairingAddresses(input)).addresses[0]?.gatewayUrl).toBe(tailnetOrigin);
+      // Without the tailnet address, the choice changes nothing.
+      expect(await order(service(null, true))).toEqual(await order(service(null, false)));
     });
 
     it("pins the gateway's own certificate when the tailnet cannot certify its name, still marked", () => {

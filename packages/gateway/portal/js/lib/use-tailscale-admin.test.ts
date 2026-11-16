@@ -63,8 +63,9 @@ describe("useTailscaleAdmin polling", () => {
   let doc: Document;
   let hidden = false;
 
+  let admin: ReturnType<typeof useTailscaleAdmin>;
   function Probe() {
-    useTailscaleAdmin();
+    admin = useTailscaleAdmin();
     return null;
   }
 
@@ -137,5 +138,33 @@ describe("useTailscaleAdmin polling", () => {
     expect(signal?.aborted).toBe(true);
     await advance(20_000);
     expect(api.getTailscale).toHaveBeenCalledTimes(2);
+  });
+
+  test("a change that may ask for the passkey waits for the person; others time out at 10 s", async () => {
+    await mount(base());
+    const pending = () => {
+      let signal: AbortSignal | undefined;
+      const call = (s: AbortSignal) => {
+        signal = s;
+        return new Promise((_, reject) => s.addEventListener("abort", () => reject(new Error("aborted"))));
+      };
+      return { call, aborted: () => signal?.aborted };
+    };
+    for (const operation of ["enable", "join-policy"]) {
+      const change = pending();
+      let done: Promise<unknown>;
+      await act(async () => { done = admin.run(operation, change.call); });
+      await advance(60_000);
+      expect(change.aborted(), operation).toBe(false);
+      await advance(70_000);
+      expect(change.aborted(), operation).toBe(true);
+      await act(async () => { await done; });
+    }
+    const quick = pending();
+    let done: Promise<unknown>;
+    await act(async () => { done = admin.run("device-name", quick.call); });
+    await advance(10_000);
+    expect(quick.aborted()).toBe(true);
+    await act(async () => { await done; });
   });
 });
