@@ -222,7 +222,6 @@ jobs:
     timeout-minutes: 50
     env:
       GOMAXPROCS: "2"
-      OMNESIS_TAILNET_TOOLS_DIR: ${{ runner.temp }}/portable-tailnet-tools
       OMNESIS_UNIT_WORKERS: "1"
       OMNESIS_E2E_WORKERS: "1"
       OMNESIS_TEST_PORTABLE_TAILNET: ${{ inputs.scope == 'portable-gateway' && '1' || '0' }}
@@ -266,8 +265,12 @@ jobs:
         run: node scripts/run-check.mjs unit packages/collector/src/e2e/portable-tailnet-actor.test.ts packages/collector/src/e2e/tailnet-machine-env.test.ts packages/collector/src/e2e/tailnet-fixture-cleanup.test.ts
       - name: Prove the actual SDK actors, pinned CLI, encrypted transport and map deduplication
         if: inputs.scope == 'portable-gateway'
+        env:
+          OMNESIS_TAILNET_TOOLS_DIR: ${{ runner.temp }}/portable-tailnet-tools
         run: node scripts/ci/portable-transports-proof.mjs
       - name: Run every original Gateway and Collector network scenario with actual helper and CLI
+        env:
+          OMNESIS_TAILNET_TOOLS_DIR: ${{ runner.temp }}/portable-tailnet-tools
         run: node scripts/run-check.mjs e2e packages/collector/src/e2e/tailscale-embed.e2e.test.ts
       - name: Validate all source and test TypeScript projects
         if: ${{ !cancelled() && runner.os == 'Linux' }}
