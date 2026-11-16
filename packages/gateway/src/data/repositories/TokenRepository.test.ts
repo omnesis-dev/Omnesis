@@ -2,10 +2,18 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { createHash, randomUUID } from "node:crypto";
-import { unlinkSync, existsSync, readFileSync, rmSync, mkdtempSync, mkdirSync } from "node:fs";
+import {
+  unlinkSync,
+  existsSync,
+  readFileSync,
+  rmSync,
+  mkdtempSync,
+  mkdirSync,
+  copyFileSync,
+} from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { describe, test, expect, beforeEach, afterEach, vi } from "vitest";
+import { describe, test, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from "vitest";
 import {
   DEVICE_HOSTED_SOURCE_TYPES,
   SCOPE_ADMIN,
@@ -60,12 +68,33 @@ import {
 let dbPath: string;
 let db: ReturnType<typeof createDatabase>;
 let configDir: string;
+let schemaDirectory: string;
+let schemaPath: string;
+
+beforeAll(() => {
+  schemaDirectory = mkdtempSync(join(tmpdir(), "omnesis-token-schema-"));
+  schemaPath = join(schemaDirectory, "gateway.db");
+  const seed = createDatabase(schemaPath);
+  try {
+    seed.pragma("wal_checkpoint(TRUNCATE)");
+  } finally {
+    seed.close();
+  }
+});
+
+afterAll(() => {
+  if (schemaDirectory) rmSync(schemaDirectory, { recursive: true, force: true });
+});
 
 beforeEach(() => {
   bootstrapFiles.ensureFailure = undefined;
   bootstrapFiles.writeFailure = undefined;
   configDir = mkdtempSync(join(tmpdir(), "omnesis-tokens-"));
   dbPath = join(configDir, "gateway.db");
+  // Each case gets an independent file with the complete real schema. Replay
+  // historical migrations once; these tests exercise token transactions and
+  // credential publication rather than cold schema construction.
+  copyFileSync(schemaPath, dbPath);
   db = createDatabase(dbPath);
 });
 

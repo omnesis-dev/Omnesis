@@ -1,6 +1,6 @@
-name: Frozen process and TLS boundary proof
+name: Frozen on-disk fixture and boundary proof
 on:
-  workflow_dispatch:
+  workflow_dispatch: null
 permissions:
   contents: read
 jobs:
@@ -9,7 +9,10 @@ jobs:
       fail-fast: false
       max-parallel: 1
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        os:
+          - ubuntu-latest
+          - windows-latest
+          - macos-latest
     runs-on: ${{ matrix.os }}
     timeout-minutes: 25
     env:
@@ -33,13 +36,16 @@ jobs:
           }
       - name: Install locked native dependencies
         run: node scripts/ci/npm-ci.mjs --no-audit --no-fund
-      - name: Repeat exact input files with real process and TLS controls
+      - name: Prepare actual Windows SQLite binding
+        if: runner.os == 'Windows'
+        run: node scripts/ci/build-windows-sqlite.mjs
+      - name: Repeat exact process, TLS and on-disk database controls
         run: node scripts/ci/boundary-proof-repeats.mjs
       - name: Validate every source and test TypeScript project
         if: runner.os == 'Linux'
         run: node scripts/run-check.mjs typecheck && node scripts/run-check.mjs types-tests
-      - name: Lint exact process identity and TLS endpoint changes
+      - name: Lint exact boundary and independent-schema fixture changes
         if: runner.os == 'Linux'
         env:
           NODE_OPTIONS: --max-old-space-size=6144
-        run: node node_modules/eslint/bin/eslint.js packages/collector/src/e2e/enrollment-terminal-cohort.windows.test.ts packages/cloud-relay/src/tls-router.test.ts
+        run: node node_modules/eslint/bin/eslint.js packages/collector/src/e2e/enrollment-terminal-cohort.windows.test.ts packages/cloud-relay/src/tls-router.test.ts packages/gateway/src/data/repositories/TokenRepository.test.ts packages/gateway/src/bootstrap/upgrade-placeholder-canonical-names.test.ts
