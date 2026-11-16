@@ -18,13 +18,22 @@ function isAlive(pid: number): boolean {
   }
 }
 
-async function waitForFile(path: string, timeoutMs: number): Promise<void> {
+/**
+ * Waits for the fixture to record a process id. The file can exist before its
+ * contents are written, and an empty read would parse as pid 0 — which
+ * `process.kill` treats as this process's own group, so it would look alive
+ * forever. Only a positive integer counts.
+ */
+async function waitForPid(path: string, timeoutMs: number): Promise<number> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    if (existsSync(path)) return;
+    if (existsSync(path)) {
+      const text = readFileSync(path, "utf8").trim();
+      if (/^[1-9]\d*$/.test(text)) return Number(text);
+    }
     await new Promise<void>((resolve) => setTimeout(resolve, 25));
   }
-  throw new Error(`fixture did not write ${path}`);
+  throw new Error(`fixture did not write a pid to ${path}`);
 }
 
 describe("spawned connect process cleanup", () => {
@@ -81,8 +90,7 @@ describe("spawned connect process cleanup", () => {
       inheritEnv: false,
     });
     groups.push(running.child.pid!);
-    await waitForFile(descendantPidPath, 10_000);
-    const descendantPid = Number(readFileSync(descendantPidPath, "utf8"));
+    const descendantPid = await waitForPid(descendantPidPath, 10_000);
     expect(isAlive(descendantPid)).toBe(true);
 
     await terminateConnect(running);
