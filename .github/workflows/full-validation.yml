@@ -246,7 +246,11 @@ jobs:
           go-version-file: packages/tailnet-helper/go.mod
           cache-dependency-path: |
             packages/tailnet-helper/go.sum
-            scripts/ci/audit-portable-tailnet-control/go.sum
+            scripts/tailnet-test/control/go.sum
+      - name: Resolve the clean standalone fixture module
+        if: inputs.scope == 'portable-gateway'
+        working-directory: scripts/tailnet-test/control
+        run: go mod tidy
       - name: Make OpenSSL available for isolated Windows fixture certificates
         if: runner.os == 'Windows'
         shell: pwsh
@@ -299,9 +303,9 @@ jobs:
         with:
           name: portable-gateway-source-${{ runner.os }}
           path: |
-            scripts/ci/audit-portable-tailnet-control/*.go
-            scripts/ci/audit-portable-tailnet-control/go.mod
-            scripts/ci/audit-portable-tailnet-control/go.sum
+            scripts/tailnet-test/control/*.go
+            scripts/tailnet-test/control/go.mod
+            scripts/tailnet-test/control/go.sum
           retention-days: 3
   owned-e2e-three-os:
     if: ${{ inputs.scope == 'owned-e2e-three-os' || inputs.scope == 'portable-actor-node' }}

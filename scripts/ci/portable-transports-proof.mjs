@@ -21,7 +21,7 @@ process.exitCode = await runCheckCommand(
     "./...",
   ],
   {
-    cwd: "scripts/ci/audit-portable-tailnet-control",
+    cwd: "scripts/tailnet-test/control",
     env: {
       ...process.env,
       GOMAXPROCS: "2",

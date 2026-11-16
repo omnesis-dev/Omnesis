@@ -16,7 +16,7 @@ import { fileURLToPath } from "node:url";
 import { runCheckCommand } from "../lib/check-process.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
-const FIXTURE = join(ROOT, "scripts/ci/audit-portable-tailnet-control");
+const FIXTURE = join(ROOT, "scripts/tailnet-test/control");
 const HELPER = join(ROOT, "packages/tailnet-helper");
 
 function sourceFiles(directory) {
