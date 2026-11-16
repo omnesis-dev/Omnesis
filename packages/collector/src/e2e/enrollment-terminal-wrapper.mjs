@@ -26,5 +26,7 @@ terminal.onData((bytes) => {
 });
 process.stdout.on("drain", () => terminal.resume());
 terminal.onExit((event) => {
-  process.exitCode = event.exitCode;
+  // ConPTY's native agent can keep this host's loop alive after the target
+  // exits. Drain published output, then let the outer Job join every member.
+  process.stdout.write("", () => process.exit(event.exitCode));
 });

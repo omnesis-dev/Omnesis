@@ -5,7 +5,7 @@ import { connect } from "node:net";
 import { mkdtempSync, readFileSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { expect, test } from "vitest";
+import { expect, onTestFinished, test } from "vitest";
 import { WindowsProcessTree } from "@omnesis/core";
 import { runEnrollmentTerminal } from "./enrollment-terminal-fixture.js";
 
@@ -64,7 +64,21 @@ setInterval(()=>{if(fs.existsSync(process.argv[2]))process.exit(0)},25);
       env: process.env,
     });
     let recovery: WindowsProcessTree | undefined;
-    let joined = false;
+    let cleanupWork: Promise<void> | undefined;
+    const cleanup = () =>
+      (cleanupWork ??= (async () => {
+        const results = await Promise.allSettled([terminal.kill(), recovery?.kill()]);
+        const failures = results.flatMap((result) =>
+          result.status === "rejected" ? [result.reason as unknown] : [],
+        );
+        if (!failures.length && terminal.closed() && recovery && !recovery.alive)
+          rmSync(directory, { recursive: true, force: true });
+        if (failures.length)
+          throw new AggregateError(failures, "Terminal fixture cleanup failed; inputs retained");
+      })());
+    // Vitest can time out an unresolved body without unwinding its finally.
+    // The same idempotent cleanup also runs when the framework finishes it.
+    onTestFinished(cleanup);
     try {
       const ready = await waitFor(() => {
         try {
@@ -90,15 +104,7 @@ setInterval(()=>{if(fs.existsSync(process.argv[2]))process.exit(0)},25);
       expect(await reachable(ready.port)).toBe(false);
       expect(readFileSync(input, "utf8")).toContain("record");
     } finally {
-      try {
-        await terminal.kill();
-        if (recovery) {
-          await recovery.kill();
-          joined = !recovery.alive;
-        }
-      } finally {
-        if (joined) rmSync(directory, { recursive: true, force: true });
-      }
+      await cleanup();
     }
   },
   60_000,

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { expect, it, vi } from "vitest";
+import { expect, it, onTestFinished, vi } from "vitest";
 import { runEnrollmentTerminal } from "./enrollment-terminal-fixture.js";
 
 it("provides a real terminal and preserves literal argv without a shell", async () => {
@@ -18,6 +18,7 @@ console.log('OMNESIS_TERMINAL:'+Buffer.from(value).toString('base64'));
     ],
     { cwd: process.cwd(), env: process.env },
   );
+  onTestFinished(() => run.kill());
   try {
     expect(await run.exit).toBe(0);
     expect(run.stderr()).toBe(run.stdout());
@@ -41,6 +42,7 @@ it("owns terminal shutdown until the target exits", async () => {
       env: process.env,
     },
   );
+  onTestFinished(() => run.kill());
   try {
     await vi.waitFor(() => expect(run.stdout()).toContain("TERMINAL_READY"), { timeout: 15_000 });
     await run.kill();
