@@ -68,8 +68,13 @@ env:
 jobs:
   terminal-cohort:
     if: ${{ inputs.scope == 'terminal-cohort' }}
-    runs-on: windows-latest
-    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
     env:
       OMNESIS_UNIT_WORKERS: "1"
     steps:
@@ -85,6 +90,14 @@ jobs:
         run: node scripts/ci/npm-ci.mjs --no-audit --no-fund
       - name: Preserve real terminal controls and prove detached descendant cleanup
         run: node scripts/run-check.mjs unit packages/collector/src/e2e/enrollment-terminal-fixture.test.ts packages/collector/src/e2e/enrollment-terminal-cohort.windows.test.ts
+      - name: Validate source and test types
+        if: runner.os == 'Linux'
+        run: node scripts/run-check.mjs typecheck && node scripts/run-check.mjs types-tests
+      - name: Lint terminal owner and physical controls
+        if: runner.os == 'Linux'
+        env:
+          NODE_OPTIONS: --max-old-space-size=6144
+        run: node node_modules/eslint/bin/eslint.js packages/collector/src/e2e/enrollment-terminal-wrapper.mjs packages/collector/src/e2e/enrollment-terminal-fixture.ts packages/collector/src/e2e/enrollment-terminal-fixture.test.ts packages/collector/src/e2e/enrollment-terminal-cohort.windows.test.ts
   native-asr:
     if: ${{ inputs.scope == 'native-asr' }}
     strategy:

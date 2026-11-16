@@ -37,12 +37,13 @@ async function waitFor<T>(probe: () => T | undefined): Promise<T> {
   throw new Error("Terminal child did not publish readiness");
 }
 
-test.skipIf(process.platform !== "win32")(
-  "ConPTY shutdown closes an observed detached descendant before releasing its input",
-  async () => {
+test.skipIf(process.platform !== "win32").each(["kill", "natural"] as const)(
+  "ConPTY %s completion closes an observed detached descendant before releasing its input",
+  async (mode) => {
     const directory = mkdtempSync(join(tmpdir(), "terminal cohort-"));
     const input = join(directory, "owned input.json");
     const record = join(directory, "ready.json");
+    const release = join(directory, "release");
     writeFileSync(input, JSON.stringify({ record }));
     const descendant = `
 const fs=require('node:fs'),net=require('node:net');
@@ -55,9 +56,10 @@ setTimeout(()=>process.exit(0),60000);
     const root = `
 const {spawn}=require('node:child_process');
 spawn(process.execPath,['-e',${JSON.stringify(descendant)},process.argv[1]],{detached:true,stdio:'ignore'}).unref();
-setInterval(()=>{},1000);
+const fs=require('node:fs');
+setInterval(()=>{if(fs.existsSync(process.argv[2]))process.exit(0)},25);
 `;
-    const terminal = runEnrollmentTerminal(process.execPath, ["-e", root, input], {
+    const terminal = runEnrollmentTerminal(process.execPath, ["-e", root, input, release], {
       cwd: process.cwd(),
       env: process.env,
     });
@@ -79,7 +81,11 @@ setInterval(()=>{},1000);
       await recovery.refresh();
       expect(recovery.alive).toBe(true);
       expect(await reachable(ready.port)).toBe(true);
-      await terminal.kill();
+      if (mode === "kill") await terminal.kill();
+      else {
+        writeFileSync(release, "exit");
+        expect(await terminal.exit).toBe(0);
+      }
       expect(terminal.closed()).toBe(true);
       expect(await reachable(ready.port)).toBe(false);
       expect(readFileSync(input, "utf8")).toContain("record");
