@@ -2181,7 +2181,6 @@ jobs:
     env:
       OMNESIS_UNIT_WORKERS: "1"
       OMNESIS_E2E_WORKERS: "1"
-      OMNESIS_TEST_EMBEDDER_CACHE: ${{ runner.temp }}/omnesis-test-embedder
       TARGET_SOURCE_SHA: ${{ inputs.source_sha }}
     defaults:
       run:
@@ -2221,6 +2220,7 @@ jobs:
           NODE
       - name: Repeat unchanged real embedding and owned E2E commands with exit observations
         env:
+          OMNESIS_TEST_EMBEDDER_CACHE: ${{ runner.temp }}/omnesis-test-embedder
           OMNESIS_WINDOWS_E2E_FILES: '["packages/collector/src/e2e/search-quality.e2e.test.ts","packages/collector/src/e2e/gateway-lifecycle.e2e.test.ts"]'
         run: |
           verdict=0
