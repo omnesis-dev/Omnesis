@@ -247,18 +247,6 @@ jobs:
           cache-dependency-path: |
             packages/tailnet-helper/go.sum
             scripts/ci/audit-portable-tailnet-control/go.sum
-      - name: Resolve the pinned official CLI tool dependency graph for this prototype
-        if: inputs.scope == 'portable-gateway'
-        working-directory: scripts/ci/audit-portable-tailnet-control
-        run: go get -tool tailscale.com/cmd/tailscale@v1.104.7
-      - name: Lock every platform-specific SDK test dependency
-        if: inputs.scope == 'portable-gateway'
-        working-directory: scripts/ci/audit-portable-tailnet-control
-        run: go mod tidy
-      - name: Format the fixture using its actual pinned Go toolchain
-        if: inputs.scope == 'portable-gateway'
-        working-directory: scripts/ci/audit-portable-tailnet-control
-        run: gofmt -w actor_test.go actor_protocol_test.go cli_wrapper_test.go control_test.go localapi_bridge_test.go localapi_bridge_windows_test.go localapi_bridge_posix_test.go localapi_transport_test.go map_stream_test.go proxy_transport_test.go presence_test.go
       - name: Make OpenSSL available for isolated Windows fixture certificates
         if: runner.os == 'Windows'
         shell: pwsh

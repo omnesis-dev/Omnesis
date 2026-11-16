@@ -25,15 +25,17 @@ func mapsWithoutCertificates(t *testing.T, control *testcontrol.Server) {
 	var mu sync.Mutex
 	active := map[key.NodePublic]int{}
 	generation := map[key.NodePublic]uint64{}
-    setPresence := func(response *tailcfg.MapResponse) {
-        mu.Lock()
-        defer mu.Unlock()
-        for _, node := range append([]*tailcfg.Node{response.Node}, response.Peers...) {
-            if node == nil { continue }
-            online := active[node.Key] > 0 && (node.KeyExpiry.IsZero() || node.KeyExpiry.After(time.Now()))
-            node.Online = &online
-        }
-    }
+	setPresence := func(response *tailcfg.MapResponse) {
+		mu.Lock()
+		defer mu.Unlock()
+		for _, node := range append([]*tailcfg.Node{response.Node}, response.Peers...) {
+			if node == nil {
+				continue
+			}
+			online := active[node.Key] > 0 && (node.KeyExpiry.IsZero() || node.KeyExpiry.After(time.Now()))
+			node.Online = &online
+		}
+	}
 	control.HoldMapRequest = func(request *tailcfg.MapRequest) func() {
 		if !request.Stream || request.ReadOnly {
 			return nil
@@ -45,7 +47,7 @@ func mapsWithoutCertificates(t *testing.T, control *testcontrol.Server) {
 		return func() { mu.Lock(); active[request.NodeKey]--; mu.Unlock() }
 	}
 	control.ModifyFirstMapResponse = func(response *tailcfg.MapResponse, request *tailcfg.MapRequest) {
-        setPresence(response)
+		setPresence(response)
 		if response.DNSConfig != nil {
 			response.DNSConfig.CertDomains = nil
 		}
@@ -80,7 +82,7 @@ func mapsWithoutCertificates(t *testing.T, control *testcontrol.Server) {
 					if err != nil || response == nil {
 						continue
 					}
-                    setPresence(response)
+					setPresence(response)
 					if response.DNSConfig != nil {
 						response.DNSConfig.CertDomains = nil
 					}
@@ -103,38 +105,51 @@ func mapsWithoutCertificates(t *testing.T, control *testcontrol.Server) {
 	t.Cleanup(func() { cancel(); <-done })
 }
 
-
 // Server snapshots carry the current wall clock even when no topology changed.
 // Ignore it only for deduplication; the delivered map keeps its real clock.
-func mapFingerprint(response *tailcfg.MapResponse) ([32]byte,error) {
- copy:=*response
- copy.ControlTime=nil
- encoded,err:=json.Marshal(&copy)
- if err!=nil { return [32]byte{},err }
- return sha256.Sum256(encoded),nil
+func mapFingerprint(response *tailcfg.MapResponse) ([32]byte, error) {
+	copy := *response
+	copy.ControlTime = nil
+	encoded, err := json.Marshal(&copy)
+	if err != nil {
+		return [32]byte{}, err
+	}
+	return sha256.Sum256(encoded), nil
 }
 
 func TestMapFingerprintPreservesTopologyChangesWithoutClockTraffic(t *testing.T) {
- now:=time.Now()
- later:=now.Add(time.Second)
- original:=&tailcfg.MapResponse{ControlTime:&now,Node:&tailcfg.Node{ID:1,User:10}}
- same:=*original
- same.ControlTime=&later
- first,err:=mapFingerprint(original)
- if err!=nil { t.Fatal(err) }
- next,err:=mapFingerprint(&same)
- if err!=nil { t.Fatal(err) }
- if first!=next { t.Fatal("clock-only snapshots emitted duplicate topology") }
- if original.ControlTime!=&now || same.ControlTime!=&later { t.Fatal("deduplication changed the delivered control clock") }
- for _,node:=range []*tailcfg.Node{
-  {ID:1,User:11},
-  {ID:1,User:10,Tags:[]string{"tag:fixture"}},
-  {ID:1,User:10,KeyExpiry:later},
- } {
-  changed:=same
-  changed.Node=node
-  result,err:=mapFingerprint(&changed)
-  if err!=nil { t.Fatal(err) }
-  if result==first { t.Fatal("identity, tag or key-expiry update was suppressed") }
- }
+	now := time.Now()
+	later := now.Add(time.Second)
+	original := &tailcfg.MapResponse{ControlTime: &now, Node: &tailcfg.Node{ID: 1, User: 10}}
+	same := *original
+	same.ControlTime = &later
+	first, err := mapFingerprint(original)
+	if err != nil {
+		t.Fatal(err)
+	}
+	next, err := mapFingerprint(&same)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first != next {
+		t.Fatal("clock-only snapshots emitted duplicate topology")
+	}
+	if original.ControlTime != &now || same.ControlTime != &later {
+		t.Fatal("deduplication changed the delivered control clock")
+	}
+	for _, node := range []*tailcfg.Node{
+		{ID: 1, User: 11},
+		{ID: 1, User: 10, Tags: []string{"tag:fixture"}},
+		{ID: 1, User: 10, KeyExpiry: later},
+	} {
+		changed := same
+		changed.Node = node
+		result, err := mapFingerprint(&changed)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if result == first {
+			t.Fatal("identity, tag or key-expiry update was suppressed")
+		}
+	}
 }
