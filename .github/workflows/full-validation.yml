@@ -190,7 +190,7 @@ jobs:
         if: runner.os == 'Windows'
         run: node scripts/ci/build-windows-sqlite.mjs
       - name: Verify real actor producers and retained fixture inputs
-        run: node scripts/run-check.mjs unit packages/collector/src/e2e/portable-tailnet-actor.test.ts packages/collector/src/e2e/tailnet-machine-env.test.ts packages/collector/src/e2e/tailnet-fixture-cleanup.test.ts packages/cli/src/tailscale-join.test.ts
+        run: node scripts/run-check.mjs unit packages/collector/src/e2e/portable-tailnet-actor.test.ts packages/collector/src/e2e/tailnet-machine-env.test.ts packages/collector/src/e2e/tailnet-fixture-cleanup.test.ts packages/cli/src/tailscale-join.test.ts scripts/ci/windows-checks.test.mjs
       - name: Repeat every on-disk token and canonical-name case with independent schema copies
         run: node scripts/ci/token-setup-repeats.mjs
       - name: Validate all source and test TypeScript projects
@@ -216,7 +216,7 @@ jobs:
           packages/collector/src/e2e/tailnet-request.ts
           packages/collector/src/e2e/tailnet-harness.ts
           packages/collector/src/e2e/tailscale-embed.e2e.test.ts
-          scripts/tailnet-test/tools.mjs scripts/tailnet-test/portable-tools.mjs
+          scripts/tailnet-test/tools.mjs scripts/tailnet-test/portable-tools.mjs scripts/ci/windows-checks.mjs scripts/ci/windows-checks.test.mjs scripts/ci/portable-transports-proof.mjs
   portable-gateway:
     needs: portable-fixture-preflight
     if: ${{ !cancelled() && (inputs.scope == 'legacy-tailnet' || inputs.scope == 'portable-gateway' && needs.portable-fixture-preflight.result == 'success') }}
@@ -296,7 +296,7 @@ jobs:
           packages/collector/src/e2e/tailnet-request.ts
           packages/collector/src/e2e/tailnet-harness.ts
           packages/collector/src/e2e/tailscale-embed.e2e.test.ts
-          scripts/tailnet-test/tools.mjs scripts/tailnet-test/portable-tools.mjs
+          scripts/tailnet-test/tools.mjs scripts/tailnet-test/portable-tools.mjs scripts/ci/windows-checks.mjs scripts/ci/windows-checks.test.mjs scripts/ci/portable-transports-proof.mjs
       - name: Retain only public source and resolved fixture dependency manifests
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
