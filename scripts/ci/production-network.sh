@@ -11,10 +11,11 @@
 #            tripwire into every later step, and prove that both hold
 #   verify   fail the job if anything in it tried to reach one of them
 #
-# The resolver block covers every program on the runner, Node or not, and the
-# simulators that use the host's resolver. The tripwire records each attempt by
-# a Node process (including spawned gateways, CLIs and worker threads), so the
-# job fails even when the code under test swallowed the lookup error.
+# The DNS block covers every program on the runner, Node or not, the
+# simulators that use the host's resolver and, on Linux, Docker containers.
+# The tripwire records each attempt by a Node process (including spawned
+# gateways, CLIs and worker threads), so the job fails even when the code
+# under test swallowed the lookup error.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -23,23 +24,30 @@ PROBE="relay.${DOMAIN}"
 # A copy outside the checkout, so a lane that replaces its checkout keeps it.
 TRIPWIRE="${RUNNER_TEMP:?RUNNER_TEMP is not set}/omnesis-network-tripwire.cjs"
 LOG="${RUNNER_TEMP}/production-network-tripwire.log"
-# Nothing listens on the discard port, so a query sent there is refused at once.
+# macOS: nothing listens on the discard port, so a query sent there is refused.
 BLACKHOLE_ADDRESS="127.0.0.1"
 BLACKHOLE_PORT="9"
 
 block_linux() {
-  # systemd-resolved sends a name only to the scope whose routing domain matches
-  # it most specifically, so a global ~omnesis.app scope served by a port
-  # nobody answers on takes these names away from the runner's own DNS server.
-  systemctl is-active --quiet systemd-resolved || {
-    echo "::error::systemd-resolved is not running; cannot block ${DOMAIN}" >&2
-    return 1
-  }
-  sudo mkdir -p /etc/systemd/resolved.conf.d
-  printf '[Resolve]\nDNS=%s:%s\nDomains=~%s\n' "$BLACKHOLE_ADDRESS" "$BLACKHOLE_PORT" "$DOMAIN" |
-    sudo tee /etc/systemd/resolved.conf.d/omnesis-ci-no-production.conf >/dev/null
-  sudo systemctl restart systemd-resolved
-  sudo resolvectl flush-caches
+  # Reject every DNS query for omnesis.app or a name under it at the packet
+  # level: the name travels as length-prefixed labels, so "\x07omnesis\x03app\x00"
+  # ends the query name exactly when it is that domain or a subdomain of it.
+  # OUTPUT covers the runner's own processes, the systemd-resolved stub and the
+  # Docker daemon's resolver; DOCKER-USER covers containers that ask the
+  # runner's upstream server directly. This works the same on every Ubuntu
+  # release, unlike resolver routing.
+  local name='|07|omnesis|03|app|00|' tool chain
+  for tool in iptables ip6tables; do
+    command -v "$tool" >/dev/null || continue
+    for chain in OUTPUT DOCKER-USER; do
+      sudo "$tool" -n -L "$chain" >/dev/null 2>&1 || continue
+      sudo "$tool" -I "$chain" 1 -p udp --dport 53 -m string --algo bm --icase \
+        --hex-string "$name" -j REJECT
+      sudo "$tool" -I "$chain" 1 -p tcp --dport 53 -m string --algo bm --icase \
+        --hex-string "$name" -j REJECT --reject-with tcp-reset
+    done
+  done
+  if command -v resolvectl >/dev/null; then sudo resolvectl flush-caches || true; fi
 }
 
 block_macos() {

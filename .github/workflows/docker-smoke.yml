@@ -38,7 +38,7 @@ jobs:
           test "$(git rev-parse HEAD)" = "$TARGET_SHA"
       - name: Keep this job off production Omnesis services
         id: production-network
-        run: scripts/ci/production-network.sh isolate
+        run: $GITHUB_WORKSPACE/scripts/ci/production-network.sh isolate
       # Both lanes build the images; the runner's stock toolchains leave too
       # little room for them.
       - uses: ./.github/actions/free-runner-disk
@@ -58,7 +58,7 @@ jobs:
 
       - name: Check nothing tried to reach production Omnesis services
         if: ${{ always() && steps.production-network.outcome == 'success' }}
-        run: scripts/ci/production-network.sh verify
+        run: $GITHUB_WORKSPACE/scripts/ci/production-network.sh verify
 
   compiled-runtime-smoke:
     name: Compiled non-root gateway + seeded state
@@ -79,7 +79,7 @@ jobs:
           test "$(git rev-parse HEAD)" = "$TARGET_SHA"
       - name: Keep this job off production Omnesis services
         id: production-network
-        run: scripts/ci/production-network.sh isolate
+        run: $GITHUB_WORKSPACE/scripts/ci/production-network.sh isolate
       # Both lanes build the images; the runner's stock toolchains leave too
       # little room for them.
       - uses: ./.github/actions/free-runner-disk
@@ -109,4 +109,4 @@ jobs:
 
       - name: Check nothing tried to reach production Omnesis services
         if: ${{ always() && steps.production-network.outcome == 'success' }}
-        run: scripts/ci/production-network.sh verify
+        run: $GITHUB_WORKSPACE/scripts/ci/production-network.sh verify

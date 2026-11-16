@@ -162,7 +162,7 @@ describe("test jobs keep off production Omnesis services", () => {
         expect(checkout).toBeGreaterThan(-1);
         expect(steps[isolate]).toMatchObject({
           id: "production-network",
-          run: "scripts/ci/production-network.sh isolate",
+          run: "$GITHUB_WORKSPACE/scripts/ci/production-network.sh isolate",
         });
         // Nothing before the block runs Node, a test or an installer.
         for (const step of steps.slice(0, isolate))
@@ -170,7 +170,7 @@ describe("test jobs keep off production Omnesis services", () => {
         expect(steps.at(-1)).toMatchObject({
           name: VERIFY,
           if: "${{ always() && steps.production-network.outcome == 'success' }}",
-          run: "scripts/ci/production-network.sh verify",
+          run: "$GITHUB_WORKSPACE/scripts/ci/production-network.sh verify",
         });
         // A step-level NODE_OPTIONS would drop the tripwire for that step.
         for (const step of steps)

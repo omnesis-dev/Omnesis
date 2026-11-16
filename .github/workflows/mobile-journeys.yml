@@ -98,7 +98,7 @@ jobs:
 
       - name: Keep this job off production Omnesis services
         id: production-network
-        run: scripts/ci/production-network.sh isolate
+        run: $GITHUB_WORKSPACE/scripts/ci/production-network.sh isolate
 
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
@@ -178,7 +178,7 @@ jobs:
 
       - name: Check nothing tried to reach production Omnesis services
         if: ${{ always() && steps.production-network.outcome == 'success' }}
-        run: scripts/ci/production-network.sh verify
+        run: $GITHUB_WORKSPACE/scripts/ci/production-network.sh verify
 
   android:
     needs: changes
@@ -192,7 +192,7 @@ jobs:
 
       - name: Keep this job off production Omnesis services
         id: production-network
-        run: scripts/ci/production-network.sh isolate
+        run: $GITHUB_WORKSPACE/scripts/ci/production-network.sh isolate
 
       - name: Enable KVM
         # Hardware-accelerated emulation on the hosted Linux runner.
@@ -280,4 +280,4 @@ jobs:
 
       - name: Check nothing tried to reach production Omnesis services
         if: ${{ always() && steps.production-network.outcome == 'success' }}
-        run: scripts/ci/production-network.sh verify
+        run: $GITHUB_WORKSPACE/scripts/ci/production-network.sh verify
