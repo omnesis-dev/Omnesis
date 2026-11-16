@@ -211,6 +211,11 @@ jobs:
           packages/collector/src/e2e/tailnet-fixture-cleanup.test.ts
           packages/collector/src/e2e/tailnet-machine-env.ts
           packages/collector/src/e2e/tailnet-machine-env.test.ts
+          packages/collector/src/e2e/tailnet-fixture-addresses.ts
+          packages/collector/src/e2e/tailnet-request.ts
+          packages/collector/src/e2e/tailnet-harness.ts
+          packages/collector/src/e2e/tailscale-embed.e2e.test.ts
+          scripts/tailnet-test/tools.mjs scripts/tailnet-test/portable-tools.mjs
   portable-gateway:
     needs: portable-fixture-preflight
     if: ${{ !cancelled() && (inputs.scope == 'legacy-tailnet' || inputs.scope == 'portable-gateway' && needs.portable-fixture-preflight.result == 'success') }}
@@ -245,6 +250,10 @@ jobs:
         if: inputs.scope == 'portable-gateway'
         working-directory: scripts/ci/audit-portable-tailnet-control
         run: go get -tool tailscale.com/cmd/tailscale@v1.104.7
+      - name: Lock every platform-specific SDK test dependency
+        if: inputs.scope == 'portable-gateway'
+        working-directory: scripts/ci/audit-portable-tailnet-control
+        run: go mod tidy
       - name: Format the fixture using its actual pinned Go toolchain
         if: inputs.scope == 'portable-gateway'
         working-directory: scripts/ci/audit-portable-tailnet-control
@@ -263,6 +272,7 @@ jobs:
         if: runner.os == 'Windows'
         run: node scripts/ci/build-windows-sqlite.mjs && node scripts/ci/build-windows-usearch.mjs
       - name: Verify actor framing, actual child ownership and isolated authentication environment
+        if: inputs.scope == 'legacy-tailnet'
         run: node scripts/run-check.mjs unit packages/collector/src/e2e/portable-tailnet-actor.test.ts packages/collector/src/e2e/tailnet-machine-env.test.ts packages/collector/src/e2e/tailnet-fixture-cleanup.test.ts
       - name: Prove the actual SDK actors, pinned CLI, encrypted transport and map deduplication
         if: inputs.scope == 'portable-gateway'
@@ -274,10 +284,10 @@ jobs:
           OMNESIS_TAILNET_TOOLS_DIR: ${{ runner.temp }}/portable-tailnet-tools
         run: node scripts/run-check.mjs e2e packages/collector/src/e2e/tailscale-embed.e2e.test.ts
       - name: Validate all source and test TypeScript projects
-        if: ${{ !cancelled() && runner.os == 'Linux' }}
+        if: ${{ !cancelled() && inputs.scope == 'legacy-tailnet' && runner.os == 'Linux' }}
         run: node scripts/run-check.mjs typecheck && node scripts/run-check.mjs types-tests
       - name: Review typed fixture and provisioning boundaries
-        if: ${{ !cancelled() && runner.os == 'Linux' }}
+        if: ${{ !cancelled() && inputs.scope == 'legacy-tailnet' && runner.os == 'Linux' }}
         env:
           NODE_OPTIONS: --max-old-space-size=6144
         run: >-
