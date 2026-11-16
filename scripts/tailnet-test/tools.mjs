@@ -12,6 +12,8 @@
  * published SHA-256. The Tailscale programs are built with the Go toolchain at
  * the version the helper's go.mod pins, so the test tailnet speaks exactly
  * what the helper does.
+ * Windows uses the SDK's local test coordinator and userspace peers instead
+ * of Headscale. OMNESIS_TEST_PORTABLE_TAILNET=1 selects that fixture on POSIX.
  *
  *   node scripts/tailnet-test/tools.mjs          # provision, print the paths as JSON
  *

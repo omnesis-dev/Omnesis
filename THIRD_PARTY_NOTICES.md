@@ -612,6 +612,7 @@ travels with its source in the Go module cache.
 | Module                                                                                         | License      |
 | ---------------------------------------------------------------------------------------------- | ------------ |
 | `tailscale.com` (tsnet and its client libraries)                                               | BSD-3-Clause |
+| `github.com/tailscale/go-winio` (Windows named-pipe transport)                                 | MIT          |
 | `github.com/tailscale/wireguard-go`                                                            | MIT          |
 | `github.com/tailscale/hujson`, `github.com/tailscale/peercred`                                 | BSD-3-Clause |
 | `github.com/tailscale/web-client-prebuilt`                                                     | BSD-3-Clause |
@@ -629,6 +630,12 @@ travels with its source in the Go module cache.
 
 `go version -m omnesis-tailnet` lists the exact module versions in a given
 binary.
+
+The local network test tools under `scripts/tailnet-test/control/` also build
+the pinned Tailscale SDK test coordinator and official CLI. Their dependencies
+are resolved separately in that directory's `go.mod` and `go.sum`; upstream
+sources and license notices remain in the Go module cache. These test tools are
+not included in the published Omnesis packages.
 
 ---
 

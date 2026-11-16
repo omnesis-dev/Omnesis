@@ -248,10 +248,6 @@ jobs:
           cache-dependency-path: |
             packages/tailnet-helper/go.sum
             scripts/tailnet-test/control/go.sum
-      - name: Resolve the clean standalone fixture module
-        if: inputs.scope == 'portable-gateway'
-        working-directory: scripts/tailnet-test/control
-        run: go mod tidy
       - name: Make OpenSSL available for isolated Windows fixture certificates
         if: runner.os == 'Windows'
         shell: pwsh

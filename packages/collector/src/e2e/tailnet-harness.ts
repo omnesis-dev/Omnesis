@@ -6,9 +6,10 @@
  *
  * Headscale or the SDK's test coordinator and Tailscale's own relay run on
  * loopback. Windows uses an owned userspace actor with real SDK peers and
- * the official Tailscale CLI through private named pipes. Each test "machine" is a real tailscaled
- * in userspace mode, unprivileged, with its own state, its own Tailscale CLI
- * socket and an HTTP proxy that reaches the tailnet; a program sent through
+ * the official Tailscale CLI through private named pipes. POSIX machines use
+ * real tailscaled processes in unprivileged userspace mode. Each machine has
+ * its own state, a private CLI socket and an HTTP proxy reaching the tailnet;
+ * a program sent through
  * that proxy is, to the tailnet, that machine. The gateway under test runs
  * with the embedded-Tailscale opt-in and the real helper program, which joins
  * this tailnet as its own device.
