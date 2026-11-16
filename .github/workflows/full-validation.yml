@@ -3120,6 +3120,9 @@ jobs:
           const whoami='if (whoami.ok) {';
           assert.equal(text.split(whoami).length,2);
           text=text.replace(whoami,"process.stderr.write('[boot-probe] whoami='+whoami.status+'\\n');\n        "+whoami);
+          const readFailure='if (ownedProcessCleanupReceipt(error) !== undefined || this.destroying) throw error;';
+          assert.equal(text.split(readFailure).length,3);
+          text=text.replaceAll(readFailure,"process.stderr.write('[boot-probe] refusal='+String(error instanceof Error ? error.name : typeof error)+'\\n');\n          "+readFailure);
           writeFileSync(harness,text);
           process.stdout.write('DIAGNOSTIC ONLY: two files instrumented; deadlines, product logic, scenarios and assertions unchanged. Not unmodified-source acceptance.\n');
           NODE
