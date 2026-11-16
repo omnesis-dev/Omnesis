@@ -92,7 +92,7 @@ jobs:
 
       - name: TEMPORARY start heap measurement
         run: |
-          nproc
+          getconf _NPROCESSORS_ONLN
           free -m || true
           rm -f /tmp/omnesis-gc-*.log /tmp/omnesis-heap-runs.txt
           nohup bash ../scripts/ci/tmp-heap/sample.sh >/tmp/omnesis-heap-mem.log 2>&1 &
@@ -142,13 +142,16 @@ jobs:
           bash ../scripts/ci/tmp-heap/run.sh bundleFull ./gradlew :app:bundleFullRelease --no-daemon --max-workers=2
           bash ../scripts/ci/tmp-heap/run.sh wear ./gradlew :wear:assembleDebug :wear:bundleRelease --no-daemon --max-workers=2
 
-      # TEMPORARY: the Play release build again with every task rerun, three times,
-      # for the worst case and its spread.
+      # TEMPORARY: the Play release build with every task rerun under several
+      # Gradle daemon heap ceilings: 6g shows the unconstrained demand.
       - name: TEMPORARY rerun bundlePlayRelease
         run: |
-          for i in 1 2 3; do
-            bash ../scripts/ci/tmp-heap/run.sh rerun-bundlePlay-$i ./gradlew :app:bundlePlayRelease --rerun-tasks --no-daemon --max-workers=2
+          for heap in 6144m 6144m 3072m 4096m; do
+            sed -i "s/^org.gradle.jvmargs=-Xmx[0-9]*m/org.gradle.jvmargs=-Xmx$heap/" gradle.properties
+            grep '^org.gradle.jvmargs' gradle.properties
+            bash ../scripts/ci/tmp-heap/run.sh "rerun-$heap-$RANDOM" ./gradlew :app:bundlePlayRelease --rerun-tasks --no-daemon --max-workers=2
           done
+          git checkout gradle.properties
 
       - name: TEMPORARY heap measurement summary
         if: always()
@@ -238,7 +241,7 @@ jobs:
 
       - name: TEMPORARY start heap measurement
         run: |
-          nproc
+          getconf _NPROCESSORS_ONLN
           sysctl hw.memsize || free -m || true
           rm -f /tmp/omnesis-gc-*.log /tmp/omnesis-heap-runs.txt
           nohup bash ../scripts/ci/tmp-heap/sample.sh >/tmp/omnesis-heap-mem.log 2>&1 &
