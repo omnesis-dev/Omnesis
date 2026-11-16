@@ -445,7 +445,9 @@ jobs:
     needs: privacy
     if: ${{ inputs.run_macos }}
     runs-on: macos-latest
-    timeout-minutes: 120
+    # Include dependency preparation and post-job cache saves around the full
+    # unit suite; individual test and command budgets remain unchanged.
+    timeout-minutes: 150
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
