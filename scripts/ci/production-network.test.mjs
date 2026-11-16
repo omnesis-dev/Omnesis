@@ -104,6 +104,7 @@ describe("verify", () => {
 // Every job that runs tests, a gateway, an app or an installer is isolated.
 // The rest only read the checkout, or manage the runner's network themselves.
 const GUARDED_WORKFLOWS = [
+  "windows.yml",
   "ci.yml",
   "android.yml",
   "ios.yml",

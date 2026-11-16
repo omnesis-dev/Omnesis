@@ -1565,3 +1565,13 @@ and background producers must all respect the matching feature flag. Task automa
 requires both Brain and Tasks. Preserve cleanup and evidence invalidation when a feature
 is disabled. The canonical names, descriptions and original SVGs live in
 `packages/gateway/src/lab/catalog.ts` and are served to every client by `/admin/lab`.
+
+### Test jobs cannot resolve production service names
+
+Every CI test job invokes `scripts/ci/production-network.sh isolate` before tests
+and `verify` even after a test fails. Windows uses a loopback DNS proxy for native
+and direct resolvers, records protected questions, and blocks and audits attempts
+to bypass it with external DNS. The isolation step proves a blocked bypass before
+recording its baseline. The proxy remains available through runner post-job
+reporting and belongs to the disposable hosted VM, rather than to one test command.
+These scripts are CI infrastructure; they are not application setup commands.

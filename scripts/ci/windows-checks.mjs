@@ -33,6 +33,7 @@ export const INSTALLER_TEST_EXCLUSIONS = [
 // PRs keep native boundaries and runtime integration coverage. Expensive CLI
 // and service decision matrices run in the complete daily/manual unit lane.
 export const FOCUSED_UNIT_FILES = [
+  "scripts/ci/production-network.test.mjs",
   "packages/config/src/dotenv-writer.test.ts",
   "packages/config/src/load-dotenv.test.ts",
   "packages/config/src/dotenv-bootstrap.test.ts",

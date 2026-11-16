@@ -24,8 +24,9 @@ const workflow = () =>
   parse(readFileSync(new URL("../../.github/workflows/windows.yml", import.meta.url), "utf8"));
 
 describe("Windows CI coverage", () => {
-  test("keeps dotenv refusals and cleanup ownership in focused pull-request coverage", () => {
+  test("keeps dotenv refusals, CI isolation and cleanup ownership in focused pull-request coverage", () => {
     for (const file of [
+      "scripts/ci/production-network.test.mjs",
       "packages/config/src/dotenv-writer.test.ts",
       "packages/config/src/load-dotenv.test.ts",
       "packages/config/src/dotenv-bootstrap.test.ts",
