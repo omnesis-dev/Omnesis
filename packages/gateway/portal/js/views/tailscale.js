@@ -227,7 +227,8 @@ function SignIn({ state, busy, run }) {
           <div class="tailscale-actions">${newLink}</div>`}`;
 }
 
-function StatusPanel({ state, phase, busy, run }) {
+/** What to do about the device's state: turn it on, sign in, wait, or its address once connected. */
+export function StatusPanel({ state, phase, busy, run }) {
   const disabled = Boolean(busy) && busy !== "refresh";
   switch (phase) {
     case "off":
@@ -455,6 +456,13 @@ function nameProblem(name) {
   return "";
 }
 
+/** Turning the device off is confirmed first, in these words, wherever it is offered. */
+export const TURN_OFF_CONFIRM = {
+  title: "Turn off Tailscale?",
+  body: "Devices that use this gateway's Tailscale address lose access, and its public address for cloud agents closes. Your settings are kept, so you can turn it back on later.",
+  confirmLabel: "Turn off",
+};
+
 /**
  * The device's own settings at the foot of the main card: its name on the
  * tailnet, and signing it out or turning it off, each confirmed first.
@@ -553,9 +561,7 @@ function DeviceSettings({ state, phase, busy, run }) {
     />
     <${ConfirmModal}
       open=${confirming === "disable"}
-      title="Turn off Tailscale?"
-      body="Devices that use this gateway's Tailscale address lose access, and its public address for cloud agents closes. Your settings are kept, so you can turn it back on later."
-      confirmLabel="Turn off"
+      ...${TURN_OFF_CONFIRM}
       destructive
       onConfirm=${confirm}
       onCancel=${() => setConfirming("")}

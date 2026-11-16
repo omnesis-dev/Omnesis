@@ -6,38 +6,9 @@
 // OMNESIS_TAILSCALE_EMBED_ENABLED=1, which `/status` advertises as
 // `tailscaleEmbed: true`; the portal calls none of them otherwise.
 
-import { apiFetch } from "../api.js";
+import { adminJsonRequest } from "./admin-request.js";
 
-/**
- * One admin call. Rejects with an Error whose `serverMessage` is the gateway's
- * own sentence — for a refused field, the field's message rather than the
- * generic "Validation failed" — and whose `status` and `code` are the
- * response's.
- */
-async function tailscaleRequest(method, path, { body, signal } = {}) {
-  const response = await apiFetch(`/admin/tailscale${path}`, {
-    method,
-    cache: "no-store",
-    ...(signal ? { signal } : {}),
-    ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
-  });
-  if (!response.ok) {
-    let envelope = null;
-    try {
-      envelope = await response.json();
-    } catch {
-      // A body that is not JSON keeps the generic message.
-    }
-    const error = new Error(`Tailscale settings request failed (${response.status}).`);
-    error.status = response.status;
-    if (typeof envelope?.code === "string") error.code = envelope.code;
-    const field = Array.isArray(envelope?.detail) ? envelope.detail.find((d) => typeof d?.message === "string") : null;
-    const message = field?.message ?? (typeof envelope?.error === "string" ? envelope.error : null);
-    if (message) error.serverMessage = message;
-    throw error;
-  }
-  return response.json();
-}
+const tailscaleRequest = adminJsonRequest("/admin/tailscale", "Tailscale settings");
 
 export const getTailscale = (signal) => tailscaleRequest("GET", "", { signal });
 export const setTailscaleEnabled = (enabled, signal) =>
