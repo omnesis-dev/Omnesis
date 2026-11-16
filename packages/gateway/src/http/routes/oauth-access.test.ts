@@ -219,6 +219,27 @@ describe("MCP OAuth access routes", () => {
       },
     ]);
 
+    // An address whose trusted certificate is still being issued says so, by origin.
+    const arriving = createTestApp({
+      mcpResourceUrls: ["https://tailnet.example.net/mcp"],
+      tlsFingerprintSha256: () => fingerprint,
+      probeCertificate: async () => null,
+      pendingCertificateOrigins: async () => new Set(["https://tailnet.example.net"]),
+    });
+    const arrivingOverview = await arriving.request(`${ORIGIN}/admin/access`, {
+      headers: { "X-Test-Portal": "yes" },
+    });
+    expect((await arrivingOverview.json()).oauth.resources).toEqual([
+      { resource: RESOURCE, servedByGateway: false, direct: false, publiclyTrusted: false },
+      {
+        resource: "https://tailnet.example.net/mcp",
+        servedByGateway: false,
+        direct: false,
+        publiclyTrusted: false,
+        certificatePending: true,
+      },
+    ]);
+
     const withoutCertificate = await app.request(`${ORIGIN}/portal/api/access`, {
       headers: { "X-Test-Portal": "yes" },
     });

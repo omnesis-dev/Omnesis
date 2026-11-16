@@ -34,6 +34,8 @@ export function mountOAuthAccessRoutes(
     probeCertificate?: CertificateProbe;
     /** See `mountOAuthAuthorizationRoutes`. */
     agentCertificateTrust?: () => AgentCertificateTrust;
+    /** See `mountOAuthAuthorizationRoutes`. */
+    pendingCertificateOrigins?: () => Promise<ReadonlySet<string>>;
   } = {},
 ): void {
   mountOAuthAccessProtocolRoutes(app, access, options);
