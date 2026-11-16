@@ -3003,6 +3003,21 @@ jobs:
           git diff --exit-code
       - name: Validate all source and test TypeScript projects
         run: exec node scripts/run-check.mjs types-tests
+      - name: Check typed publication and bootstrap ownership boundaries
+        if: runner.os == 'Linux'
+        env:
+          NODE_OPTIONS: --max-old-space-size=6144
+        run: >-
+          node node_modules/eslint/bin/eslint.js
+          packages/core/src/update-lock.ts
+          packages/core/src/update-lock-guard.ts
+          packages/core/src/update-lock-publication.test.ts
+          packages/core/src/owned-process-cleanup.ts
+          packages/platform/src/owned-process-cleanup.ts
+          packages/config/src/dotenv-writer.ts
+          packages/config/src/dotenv-writer.test.ts
+          scripts/ci/windows-checks.mjs
+          scripts/ci/windows-checks.test.mjs
       - name: Build the exact candidate runtime packages
         run: node scripts/build-projects.mjs
       - name: Validate configuration refusals, public Core receipts and packaged worker graphs
