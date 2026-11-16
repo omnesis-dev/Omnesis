@@ -172,11 +172,20 @@ function HostTailscale({ remote, setRemote }) {
           <span aria-hidden="true">✓ </span>Serving this gateway at <code>${host.url}</code>,
           ${host.publicGateway ? " on your Tailscale network and to the Internet." : " to your Tailscale devices only."}
         </p>`
-      : html`<p class="remote-access-muted">
-          Omnesis can run the Tailscale command for you: serve this gateway on your Tailscale network,
-          and add a public address for cloud agents if you want one.
-        </p>`}
+      : host.blocked
+        ? html`<p class="remote-access-muted" role="status">${host.blocked}</p>`
+        : html`<p class="remote-access-muted">
+            Omnesis can run the Tailscale command for you: serve this gateway on your Tailscale network,
+            and add a public address for cloud agents if you want one.
+          </p>`}
+    ${!host.servesGateway &&
+    typeof host.port === "number" &&
+    host.port !== 443 &&
+    html`<p class="remote-access-muted">
+      Another app already uses <code>https://${host.dnsName}</code>, so this gateway uses port ${host.port}: <code>${host.url}</code>. ChatGPT connects only on port 443.
+    </p>`}
     ${!host.publicGateway &&
+    !host.blocked &&
     html`<label class="remote-access-check">
       <input type="checkbox" checked=${wantPublic} disabled=${busy} onChange=${(event) => setWantPublic(event.currentTarget.checked)} />
       <span>Also a public address for ChatGPT and Claude (Tailscale Funnel)</span>
@@ -188,17 +197,18 @@ function HostTailscale({ remote, setRemote }) {
     <//>`}
     ${(!host.servesGateway || (wantPublic && !host.publicGateway)) &&
     html`<div class="remote-access-buttons">
-      <button type="button" class="btn-primary" disabled=${busy || publicBlocked} onClick=${publish}>
+      ${!host.blocked &&
+      html`<button type="button" class="btn-primary" disabled=${busy || publicBlocked} onClick=${publish}>
         ${working === "publish" ? "Setting it up…" : "Set it up for me"}
-      </button>
+      </button>`}
       <button type="button" class="btn-secondary" disabled=${busy} onClick=${() => read("check")}>
-        ${working === "check" ? "Checking…" : "I have already done it, check it"}
+        ${working === "check" ? "Checking…" : host.blocked ? "Check again" : "I have already done it, check it"}
       </button>
     </div>`}
     ${outcome?.ok === false &&
     html`<div class="remote-access-command">
       <p class="remote-access-problem" role="alert">${outcome.reason}</p>
-      <${CopyBlock} text=${outcome.command} title="Copy command" />
+      ${outcome.command && html`<${CopyBlock} text=${outcome.command} title="Copy command" />`}
     </div>`}
     ${host.publicGateway &&
     configured !== host.url &&
