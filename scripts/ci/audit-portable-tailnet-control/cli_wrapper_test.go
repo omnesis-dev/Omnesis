@@ -37,6 +37,9 @@ func runFixtureCLI() error {
  configFile,err:=os.Open(filepath.Join(filepath.Dir(executable),"fixture-cli.json"))
  if err!=nil { return err }
  defer configFile.Close()
+ info,err:=configFile.Stat()
+ if err!=nil { return err }
+ if !info.Mode().IsRegular() || info.Size()>16*1024 { return fmt.Errorf("invalid fixture CLI configuration file") }
  decoder:=json.NewDecoder(io.LimitReader(configFile,16*1024))
  decoder.DisallowUnknownFields()
  var config fixtureCLIConfig

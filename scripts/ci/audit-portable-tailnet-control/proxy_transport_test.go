@@ -51,6 +51,13 @@ func fixturePeerProxyClient(t *testing.T,peer *tsnet.Server)*http.Client {
 // Track hijacked connections explicitly: http.Server.Close does not own them.
 func serveFixturePeerProxy(t *testing.T,peer *tsnet.Server) string {
  t.Helper()
+ ctx,cancel:=context.WithTimeout(context.Background(),5*time.Second)
+ defer cancel()
+ client,err:=peer.LocalClient()
+ if err!=nil { t.Fatal(err) }
+ state,err:=client.Status(ctx)
+ if err!=nil || state.CurrentTailnet==nil || state.CurrentTailnet.MagicDNSSuffix=="" { t.Fatal("fixture peer has no actual tailnet suffix") }
+ suffix:=strings.ToLower(strings.TrimSuffix(state.CurrentTailnet.MagicDNSSuffix,"."))
  var mu sync.Mutex
  stopping:=false
  tunnels:=map[net.Conn]net.Conn{}
@@ -59,7 +66,7 @@ func serveFixturePeerProxy(t *testing.T,peer *tsnet.Server) string {
   host,port,err:=net.SplitHostPort(r.Host)
   number,portErr:=strconv.Atoi(port)
   address,addressErr:=netip.ParseAddr(host)
-  localName:=strings.HasSuffix(strings.ToLower(host),".tailnet.test")
+  localName:=strings.HasSuffix(strings.TrimSuffix(strings.ToLower(host),"."),"."+suffix)
   if err!=nil || portErr!=nil || number<1 || number>65535 || (!localName && (addressErr!=nil || !tsaddr.CGNATRange().Contains(address))) { http.Error(w,"fixture tailnet target required",http.StatusBadRequest);return }
   ctx,cancel:=context.WithTimeout(r.Context(),10*time.Second)
   upstream,err:=peer.Dial(ctx,"tcp",r.Host)
