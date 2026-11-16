@@ -49,6 +49,16 @@ export function servesUntrustedCertificate(oauth) {
 }
 
 /**
+ * Whether the main address is still getting its publicly trusted certificate:
+ * a Tailscale name or relay address the gateway was just given. Agents that
+ * require a public certificate wait for it rather than for the owner.
+ */
+export function mainCertificatePending(oauth) {
+  const main = oauth.resources?.find((entry) => entry.resource === oauth.resource);
+  return main?.certificatePending === true;
+}
+
+/**
  * The gateway's own certificate, as the overview describes it, when the main
  * address presents it. A proxy in front with a certificate of its own makes
  * the gateway's certificate, and the file that vouches for it, beside the
@@ -153,7 +163,7 @@ function harnessCommands(harness, oauth, address, pairingCode) {
  * - `pairs` marks the managed integrations, which pair the machine they run on
  *   as an agent device before signing in.
  *
- * @param {{ resource: string, resources?: Array<{ resource: string, servedByGateway: boolean, direct: boolean, publiclyTrusted?: boolean }>, tlsFingerprintSha256?: string | null, certificate?: { kind: string, trustFile: string | null } | null }} oauth
+ * @param {{ resource: string, resources?: Array<{ resource: string, servedByGateway: boolean, direct: boolean, publiclyTrusted?: boolean, certificatePending?: boolean }>, tlsFingerprintSha256?: string | null, certificate?: { kind: string, trustFile: string | null } | null }} oauth
  * @param {{ harnessAddress?: { gatewayUrl: string, servedByGateway: boolean, direct: boolean }, pairingCode?: string, relay?: { state: string, url?: string }, tailscale?: { state: string, url?: string } }} [options]
  *   `oauth.resource` is the address selected in the dialog, `relay` the
  *   gateway's relay-hosted address, from `relayPublicAddress`, and `tailscale`

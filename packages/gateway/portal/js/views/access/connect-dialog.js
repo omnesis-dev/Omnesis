@@ -23,6 +23,7 @@ import {
   harnessAddresses,
   reconnectableHarnessDevices,
   mainAddressCertificate,
+  mainCertificatePending,
   servesUntrustedCertificate,
 } from "./client-setup.js";
 import { NO_RELAY, NO_TAILSCALE, addressChoices, leadsWithLocalAddress } from "./public-address.js";
@@ -84,6 +85,20 @@ function TrustedCertificateNotice({ agent, certificate }) {
       <${ExternalLink} href=${PUBLISH_DOCS.certificates}>Give the gateway a Tailscale certificate<//>${offersMkcert ? ", " : " or "}<${ExternalLink} href=${PUBLISH_DOCS.domain}>use a domain of your own<//>${offersMkcert
         ? html`, or <${ExternalLink} href=${PUBLISH_DOCS.certificates}>mint an mkcert certificate<//>, which ${agent.name} trusts with one setting`
         : ""}.
+    </p>
+  </div>`;
+}
+
+/**
+ * For an agent that only accepts a publicly trusted certificate, while the
+ * address it would dial is still getting one: nothing for the owner to do but
+ * wait, and the page looks again by itself.
+ */
+function CertificatePendingNotice({ agent }) {
+  return html`<div class="access-agent-public" role="status">
+    <p>
+      <strong>This address is still getting its trusted certificate.</strong>${" "}
+      ${agent.name} can connect once the gateway has it, usually within a minute. This page checks again by itself.
     </p>
   </div>`;
 }
@@ -370,7 +385,9 @@ function AgentSetupPicker({ oauth, relay, tailscale, addressSelectable }) {
       selected.addressNotice?.usable !== false &&
       selected.needsTrustedCertificate &&
       servesUntrustedCertificate(oauth) &&
-      html`<${TrustedCertificateNotice} agent=${selected} certificate=${mainAddressCertificate(oauth)} />`}
+      (mainCertificatePending(oauth)
+        ? html`<${CertificatePendingNotice} agent=${selected} />`
+        : html`<${TrustedCertificateNotice} agent=${selected} certificate=${mainAddressCertificate(oauth)} />`)}
       ${selected.trustStep && html`<${CertificateTrustStep} agent=${selected} />`}
       ${selected.pairs &&
       html`<${HarnessPairing}

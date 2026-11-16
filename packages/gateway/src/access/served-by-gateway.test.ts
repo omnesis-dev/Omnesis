@@ -116,6 +116,22 @@ describe("createServedByGatewayCheck", () => {
     expect(probe).toHaveBeenCalledTimes(3);
   });
 
+  test("asks again next time when an address did not answer", async () => {
+    // A Tailscale name whose certificate is still being issued may not answer
+    // yet; a remembered miss would keep it untrusted after it comes up.
+    let presented: PresentedCertificate | null = null;
+    const probe = vi.fn(async () => presented);
+    const check = createServedByGatewayCheck({ fingerprint: () => OWN, probe, now: () => 0 });
+
+    expect((await check([DIRECT])).get(DIRECT)?.publiclyTrusted).toBe(false);
+    presented = { fingerprint: "cd".repeat(32), publiclyTrusted: true };
+    expect((await check([DIRECT])).get(DIRECT)?.publiclyTrusted).toBe(true);
+    expect(probe).toHaveBeenCalledTimes(2);
+    // A real answer is remembered as before.
+    await check([DIRECT]);
+    expect(probe).toHaveBeenCalledTimes(2);
+  });
+
   test("treats every resource as proxied when the gateway has no certificate to compare", async () => {
     const probe = vi.fn(async () => SELF_SIGNED);
     const check = createServedByGatewayCheck({ fingerprint: () => undefined, probe });

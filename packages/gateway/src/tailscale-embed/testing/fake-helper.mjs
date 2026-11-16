@@ -13,6 +13,7 @@
  *   needs-sign-in     waits for sign-in until it receives "login" twice
  *   connected         signed in, Tailscale certificate ready
  *   https-disabled    signed in, the tailnet has HTTPS certificates off
+ *   certificate-pending  signed in, Tailscale still issuing the certificate
  *   needs-approval    signed in, waiting for a tailnet admin to approve
  *   public-needs-enable  like connected, but the public address needs allowing
  * The public address follows the gateway's configure commands.
@@ -59,10 +60,13 @@ function status() {
     };
   }
   if (scenario === "needs-approval") return { ...base, backend: "needs-approval" };
-  const trusted = scenario !== "https-disabled";
+  const trusted = scenario !== "https-disabled" && scenario !== "certificate-pending";
   const certificate = trusted
     ? { source: "tailscale" }
-    : { source: "gateway", reason: "https-disabled" };
+    : {
+        source: "gateway",
+        reason: scenario === "certificate-pending" ? "pending" : "https-disabled",
+      };
   let pub = { state: "off" };
   if (wantPublic) {
     pub = !trusted
