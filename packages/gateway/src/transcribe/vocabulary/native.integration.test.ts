@@ -97,6 +97,10 @@ test.skipIf(!model || !audioPath)(
               worker.write(frame);
             },
             kill: () => worker.kill(),
+            joined: worker.joined,
+            get joinedConfirmed() {
+              return worker.joinedConfirmed;
+            },
             onExit: (handler) => worker.onExit(handler),
             onMessage: (handler) => worker.onMessage(handler),
           };
