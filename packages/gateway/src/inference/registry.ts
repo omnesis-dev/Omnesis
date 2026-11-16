@@ -477,10 +477,12 @@ export class InferenceRegistry {
           });
           if (!unchanged) this.clearVerifyCache(key);
         } else if (unchanged) {
-          this.httpBackends.set(key, {
-            config: typedCfg,
-            status: { ...prev.status, hasApiKey },
-          });
+          // Keep the entry itself, not a copy: a probe still in flight writes
+          // its verdict onto the entry it started with, and a copy would hold
+          // that probe's starting status (`probing`) for the process's life.
+          prev.config = typedCfg;
+          prev.status = { ...prev.status, hasApiKey };
+          this.httpBackends.set(key, prev);
         } else {
           this.httpBackends.set(key, {
             config: typedCfg,
