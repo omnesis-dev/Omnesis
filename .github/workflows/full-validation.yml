@@ -493,7 +493,7 @@ jobs:
           cache-dependency-path: packages/tailnet-helper/go.sum
       - name: Format the diagnostic with its pinned Go toolchain
         working-directory: scripts/ci/audit-portable-tailnet-control
-        run: gofmt -w control_test.go auth_test.go map_stream_test.go
+        run: gofmt -w control_test.go auth_test.go map_stream_test.go product_node_test.go
       - name: Prove a portable local control plane and real encrypted userspace traffic
         working-directory: scripts/ci/audit-portable-tailnet-control
         run: go test -mod=mod -p 2 -failfast -count=5 -timeout 6m -v ./...
