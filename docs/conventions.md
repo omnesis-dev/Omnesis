@@ -1485,6 +1485,12 @@ When you set out to write code that matches one of the patterns above, open the 
 
 ---
 
+Update-lock owner publication holds a filesystem claim before the first owner write.
+An explicit native cleanup uncertainty retains that claim and the directory generation,
+propagates the original error, and stops heartbeat retries. Further claims in the same
+process refuse with the retained error; other processes still observe the physical claim.
+An ordinary joined write error releases its claim and preserves ordinary retry behavior.
+
 ## Layer 3 — Enforcement
 
 A pattern only survives if review or the toolchain catches its violations. Several of the conventions above are machine-checked (types, ESLint, knip, the parity and privacy guards, CI); the rest are review-enforced. The table below splits them.

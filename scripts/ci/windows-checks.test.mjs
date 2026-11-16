@@ -30,6 +30,7 @@ describe("Windows CI coverage", () => {
       "packages/config/src/load-dotenv.test.ts",
       "packages/config/src/dotenv-bootstrap.test.ts",
       "packages/core/src/owned-process-cleanup.test.ts",
+      "packages/core/src/update-lock-publication.test.ts",
     ])
       expect(FOCUSED_UNIT_FILES).toContain(file);
   });

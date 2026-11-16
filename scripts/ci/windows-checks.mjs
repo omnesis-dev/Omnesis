@@ -37,6 +37,7 @@ export const FOCUSED_UNIT_FILES = [
   "packages/config/src/load-dotenv.test.ts",
   "packages/config/src/dotenv-bootstrap.test.ts",
   "packages/core/src/owned-process-cleanup.test.ts",
+  "packages/core/src/update-lock-publication.test.ts",
   "scripts/lib/check-process.test.mjs",
   "scripts/run-e2e-status.test.mjs",
   "packages/cli/src/commands/status-json.test.ts",

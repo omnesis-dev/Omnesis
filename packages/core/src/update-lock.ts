@@ -6,7 +6,13 @@ import { lstatSync, mkdirSync, readFileSync, renameSync, rmSync } from "node:fs"
 import { join } from "node:path";
 import { atomicWriteFileSync } from "./atomic-write.js";
 import { processStart, sameProcess, processGroupExists } from "./update-lock-process.js";
-import { claimGuard, releaseGuard, DEFAULT_STALE_MS } from "./update-lock-guard.js";
+import { ownedProcessCleanupReceipt } from "./owned-process-cleanup.js";
+import {
+  claimGuard,
+  releaseGuard,
+  retainGuardOnUncertainPublication,
+  DEFAULT_STALE_MS,
+} from "./update-lock-guard.js";
 import {
   beginChildJoin,
   childJoinRestriction,
@@ -202,15 +208,23 @@ export function acquireUpdateLock(configDir: string, opts: UpdateLockOptions): U
         updatedAt: stamp,
         currentStep: opts.currentStep ?? "starting",
       };
+      const claim = claimGuard(lockDir);
+      if (!claim) throw new UpdateLockBusyError(null);
       try {
-        writeOwner(lockDir, owner);
+        writeOwner(lockDir, owner, claim);
       } catch (err) {
-        retireLock(lockDir);
+        if (!ownedProcessCleanupReceipt(err)) {
+          releaseGuard(claim);
+          retireLock(lockDir);
+        }
         throw err;
+      } finally {
+        releaseGuard(claim);
       }
       return createHandle(lockDir, owner.id, opts);
     } catch (err) {
-      if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
+      if (ownedProcessCleanupReceipt(err) || (err as NodeJS.ErrnoException).code !== "EEXIST")
+        throw err;
       const holder = readOwner(lockDir);
       const updated = holder ? Date.parse(holder.updatedAt) : lockMtime(lockDir);
       const age = now().getTime() - updated;
@@ -285,7 +299,7 @@ export function adoptUpdateLock(
       currentStep: opts.currentStep ?? owner.currentStep,
       returnTo,
     };
-    writeOwner(lockDir, adopted);
+    writeOwner(lockDir, adopted, claim);
   } finally {
     releaseGuard(claim);
   }
@@ -300,17 +314,43 @@ function createHandle(
 ): UpdateLock {
   const heartbeatMs = opts.heartbeatMs ?? DEFAULT_HEARTBEAT_MS;
   const now = opts.now ?? (() => new Date());
+  let publicationFailure: { error: unknown } | undefined;
   let released = false;
   let deferred = false;
   let releaseRetry: NodeJS.Timeout | null = null;
 
+  const takeClaim = (): string | null => {
+    try {
+      if (publicationFailure) throw publicationFailure.error;
+      return claimGuard(lockDir);
+    } catch (error) {
+      if (ownedProcessCleanupReceipt(error)) {
+        publicationFailure = { error };
+        finish(true);
+      }
+      throw error;
+    }
+  };
+  const publishOwner = (owner: UpdateLockOwner, claim: string): void => {
+    try {
+      writeOwner(lockDir, owner, claim);
+    } catch (error) {
+      if (ownedProcessCleanupReceipt(error)) {
+        publicationFailure = { error };
+        finish(true);
+      }
+      throw error;
+    }
+  };
+
   const update = (step?: string, required = false, processGroupPid?: number | null): void => {
+    if (publicationFailure) throw publicationFailure.error;
     if (released) {
       if (deferred && required && processGroupPid === undefined)
         throw new Error("This update handle finished with a pending child; refusing further work.");
       return;
     }
-    const claim = claimGuard(lockDir);
+    const claim = takeClaim();
     if (!claim) {
       if (required) throw new Error("Could not verify ownership of the host update lock.");
       return;
@@ -339,7 +379,7 @@ function createHandle(
         delete next.processGroupPid;
         delete next.processGroupStart;
       }
-      writeOwner(lockDir, next);
+      publishOwner(next, claim);
     } finally {
       releaseGuard(claim);
     }
@@ -368,7 +408,16 @@ function createHandle(
       finish(true);
       return;
     }
-    const result = retireLock(lockDir, id);
+    let result: RetireResult;
+    try {
+      result = retireLock(lockDir, id);
+    } catch (error) {
+      if (ownedProcessCleanupReceipt(error)) {
+        publicationFailure = { error };
+        finish(true);
+      }
+      throw error;
+    }
     if (result === "busy") {
       if (!releaseRetry) {
         releaseRetry = setTimeout(() => {
@@ -385,26 +434,28 @@ function createHandle(
   // came from, which is still waiting on this one; only a lock this process
   // took itself is released.
   const onExit = (): void => {
-    if (!returnTo) {
-      release();
-      return;
-    }
     try {
+      if (!returnTo) {
+        release();
+        return;
+      }
       handBack("returning the lock from an exited update process");
-    } catch {
-      release();
+    } catch (error) {
+      if (ownedProcessCleanupReceipt(error)) finish(true);
+      else release();
     }
   };
   process.on("exit", onExit);
 
   const handBack = (step = "finishing collector self-update"): void => {
+    if (publicationFailure) throw publicationFailure.error;
     if (released) return;
     if (hasPendingChildJoins(lockDir)) {
       finish(true);
       return;
     }
     if (!returnTo) throw new Error("This update lock has no previous owner to return to.");
-    const claim = claimGuard(lockDir);
+    const claim = takeClaim();
     if (!claim) throw new Error("Could not return ownership of the host update lock.");
     try {
       if (hasPendingChildJoins(lockDir)) {
@@ -415,12 +466,15 @@ function createHandle(
       if (!current || current.id !== id) {
         throw new Error("This update lost ownership of the host lock before hand-back.");
       }
-      writeOwner(lockDir, {
-        version: 1,
-        ...returnTo,
-        updatedAt: now().toISOString(),
-        currentStep: step,
-      });
+      publishOwner(
+        {
+          version: 1,
+          ...returnTo,
+          updatedAt: now().toISOString(),
+          currentStep: step,
+        },
+        claim,
+      );
     } finally {
       releaseGuard(claim);
     }
@@ -428,8 +482,9 @@ function createHandle(
   };
 
   const reclaim = (): boolean => {
+    if (publicationFailure) throw publicationFailure.error;
     if (released) return false;
-    const claim = claimGuard(lockDir);
+    const claim = takeClaim();
     if (!claim) return false;
     try {
       const current = readOwner(lockDir);
@@ -439,12 +494,15 @@ function createHandle(
       if (!current?.returnTo || current.returnTo.id !== id || updateWorkMayBeActive(current)) {
         return false;
       }
-      writeOwner(lockDir, {
-        version: 1,
-        ...current.returnTo,
-        updatedAt: now().toISOString(),
-        currentStep: "reclaimed from an update process that exited",
-      });
+      publishOwner(
+        {
+          version: 1,
+          ...current.returnTo,
+          updatedAt: now().toISOString(),
+          currentStep: "reclaimed from an update process that exited",
+        },
+        claim,
+      );
       return true;
     } finally {
       releaseGuard(claim);
@@ -463,8 +521,13 @@ function createHandle(
   };
 }
 
-function writeOwner(lockDir: string, owner: UpdateLockOwner): void {
-  atomicWriteFileSync(join(lockDir, OWNER_FILE), `${JSON.stringify(owner)}\n`, { mode: 0o600 });
+function writeOwner(lockDir: string, owner: UpdateLockOwner, claim: string): void {
+  try {
+    atomicWriteFileSync(join(lockDir, OWNER_FILE), `${JSON.stringify(owner)}\n`, { mode: 0o600 });
+  } catch (error) {
+    retainGuardOnUncertainPublication(claim, error);
+    throw error;
+  }
 }
 
 function readOwner(lockDir: string): UpdateLockOwner | null {

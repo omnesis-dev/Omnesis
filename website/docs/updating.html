@@ -710,7 +710,8 @@
             before continuing or restarting daemons. If that cleanup cannot be confirmed, it keeps
             the host update lock and any continuation receipt, reports the uncertainty, and stops
             without a fallback, rollback, or daemon restart. Review the update process state before
-            retrying.
+            retrying. A lock-file write with unconfirmed native cleanup also retains its ownership
+            guard and refuses further ownership changes.
           </p>
           <p>
             With <code>--backup</code>, a gateway that runs from the installation being updated is

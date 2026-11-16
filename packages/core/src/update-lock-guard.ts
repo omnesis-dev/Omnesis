@@ -3,9 +3,18 @@
 
 import { randomUUID } from "node:crypto";
 import { lstatSync, readdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { atomicWriteFileSync } from "./atomic-write.js";
 import { processStart, sameProcess } from "./update-lock-process.js";
+
+import { ownedProcessCleanupReceipt } from "./owned-process-cleanup.js";
+
+// An unjoined native publisher can still mutate this directory generation.
+const uncertainPublications = new Map<string, unknown>();
+
+export function retainGuardOnUncertainPublication(claim: string, error: unknown): void {
+  if (ownedProcessCleanupReceipt(error)) uncertainPublications.set(dirname(claim), error);
+}
 
 const CLAIM_PREFIX = ".claim-";
 export const DEFAULT_STALE_MS = 30_000;
@@ -20,6 +29,7 @@ interface GuardClaim {
 
 /** A filesystem-backed bakery lock serializes owner changes without a toolchain. */
 export function claimGuard(lockDir: string): string | null {
+  if (uncertainPublications.has(lockDir)) throw uncertainPublications.get(lockDir);
   const name = `${CLAIM_PREFIX}${randomUUID()}`;
   const claim = join(lockDir, name);
   const identity: GuardClaim = {
@@ -47,7 +57,9 @@ export function claimGuard(lockDir: string): string | null {
     identity.state = "waiting";
     identity.ticket = ticket;
     atomicWriteFileSync(claim, `${JSON.stringify(identity)}\n`, { mode: 0o600 });
-  } catch {
+  } catch (error) {
+    retainGuardOnUncertainPublication(claim, error);
+    if (ownedProcessCleanupReceipt(error)) throw error;
     releaseGuard(claim);
     return null;
   }
@@ -137,6 +149,7 @@ function discardStaleClaim(path: string): void {
 }
 
 export function releaseGuard(claim: string): void {
+  if (uncertainPublications.has(dirname(claim))) return;
   try {
     unlinkSync(claim);
   } catch {
