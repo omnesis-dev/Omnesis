@@ -60,6 +60,7 @@ on:
             boundary-followups,
             token-setup,
             legacy-tailnet,
+            harness-native,
             stream-timeout,
             provider-ownership,
           ]
@@ -1641,3 +1642,72 @@ jobs:
           packages/collector/src/e2e/portal-fleet-host-update.e2e.test.ts
           packages/collector/src/e2e/device-doctor.e2e.test.ts
           packages/gateway/src/agent/deep-research.e2e.test.ts
+
+  harness-native:
+    if: inputs.scope == 'harness-native'
+    runs-on: windows-latest
+    timeout-minutes: 75
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        harness: [openclaw, hermes]
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      OMNESIS_UNIT_WORKERS: "1"
+      OMNESIS_E2E_WORKERS: "1"
+      OMNESIS_HARNESS_CONFORMANCE: ${{ matrix.harness }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: "24"
+          cache: npm
+      - name: Provision Python for the pinned Hermes source
+        if: matrix.harness == 'hermes'
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0
+        with:
+          python-version: "3.12"
+      - name: Provision the same uv version as the Linux conformance lane
+        if: matrix.harness == 'hermes'
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2
+        with:
+          version: "0.9.28"
+          enable-cache: false
+      - name: Make OpenSSL available for private synthetic certificates
+        run: |
+          $auditOpenSsl = Join-Path $env:ProgramFiles 'Git\usr\bin'
+          if (Test-Path (Join-Path $auditOpenSsl 'openssl.exe')) {
+            $auditOpenSsl | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+          }
+      - name: Install locked Omnesis and pinned OpenClaw dependencies
+        run: node scripts/ci/npm-ci.mjs --no-audit --no-fund
+      - name: Prepare actual Windows SQLite and vector bindings
+        run: node scripts/ci/build-windows-sqlite.mjs && node scripts/ci/build-windows-usearch.mjs
+      - name: Install the exact pinned Hermes source used by Linux
+        if: matrix.harness == 'hermes'
+        run: |
+          $harnessRoot = Join-Path $env:RUNNER_TEMP 'pinned-hermes'
+          git init --quiet $harnessRoot
+          if ($LASTEXITCODE) { throw 'Hermes repository initialization failed' }
+          git -C $harnessRoot remote add origin https://github.com/NousResearch/hermes-agent.git
+          git -C $harnessRoot fetch --quiet --depth 1 origin 29112bef099274229cadff79cdff7bf7b99c4b77
+          if ($LASTEXITCODE) { throw 'Pinned Hermes fetch failed' }
+          git -C $harnessRoot checkout --quiet --detach FETCH_HEAD
+          if ($LASTEXITCODE) { throw 'Pinned Hermes checkout failed' }
+          if ((git -C $harnessRoot rev-parse HEAD) -ne '29112bef099274229cadff79cdff7bf7b99c4b77') { throw 'Unexpected Hermes source' }
+          uv sync --directory $harnessRoot --locked --no-dev --python 3.12
+          if ($LASTEXITCODE) { throw 'Pinned native Hermes environment failed' }
+          $harnessBin = Join-Path $harnessRoot '.venv\Scripts'
+          if (-not (Test-Path (Join-Path $harnessBin 'hermes.exe'))) { throw 'Native Hermes entrypoint is absent' }
+          if (-not (Test-Path (Join-Path $harnessBin 'python.exe'))) { throw 'Native Hermes interpreter is absent' }
+          $harnessBin | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+          "OMNESIS_HERMES_BIN=$(Join-Path $harnessBin 'hermes.exe')" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "OMNESIS_HERMES_PYTHON=$(Join-Path $harnessBin 'python.exe')" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+      - name: Run the unchanged real enrollment, plugin host, tools and uninstall contract without model inference
+        run: node scripts/run-check.mjs e2e packages/collector/src/e2e/harness-plugin-conformance.e2e.test.ts
