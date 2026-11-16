@@ -318,15 +318,8 @@ export class AccountServices {
       choices: (account) => directory.choices(account),
       unlinkGateway: (account, gatewayId) => {
         options.assertCurrent();
-        const owner = linkedOwners(account).find((candidate) => {
-          try {
-            return options.gatewayBinding(candidate)?.gatewayId.toLowerCase() === gatewayId;
-          } catch (error) {
-            // A registration revoked on its own is not listed, so it can't be the one meant.
-            if (error instanceof RelayError && error.status === 403) return false;
-            throw error;
-          }
-        });
+        // Only a gateway the account page lists can be the one meant.
+        const owner = directory.owner(account, gatewayId);
         if (!owner) throw new RelayError(404, "This gateway is not in your Omnesis account");
         options.removeGateway(owner);
       },

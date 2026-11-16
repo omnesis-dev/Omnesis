@@ -584,16 +584,15 @@ export function installAccountUI() {
         accountId: current.accountId,
         gatewayId: gateway.gatewayId,
         name: gateway.displayName ?? "Gateway",
-        online: gateway.online,
       });
       root.querySelector(".unlink h3")?.focus();
     },
     async unlinkGateway(intent = confirming) {
       failure = "The gateway could not be unlinked. Please try again.";
       // As the page last saw it, which a return to the tab may have changed since the question.
-      const online =
-        current.gateways.find((gateway) => gateway.gatewayId === intent.gatewayId)?.online ??
-        intent.online;
+      const online = current.gateways.some(
+        (gateway) => gateway.gatewayId === intent.gatewayId && gateway.online,
+      );
       try {
         await ui.api("gateways/unlink", {
           accountId: intent.accountId,
@@ -792,7 +791,10 @@ export function installAccountUI() {
       return { origin, href: new URL("/portal/", origin).href };
     },
     async refresh() {
-      current = await ui.api("session");
+      ui.show(await ui.api("session"));
+    },
+    show(session) {
+      current = session;
       // A handoff is kept only for the sign-in that was made for it.
       if (handoff && !(current.authenticated && current.handoff?.ready)) ui.forget();
       ui.render();
@@ -1279,10 +1281,7 @@ export function installAccountUI() {
     const seen = generation;
     ui.api("session")
       .then((session) => {
-        if (busy || generation !== seen) return;
-        current = session;
-        if (handoff && !(current.authenticated && current.handoff?.ready)) ui.forget();
-        ui.render();
+        if (!busy && generation === seen) ui.show(session);
       })
       .catch(() => {
         // The next action reports a problem; a background refresh says nothing.

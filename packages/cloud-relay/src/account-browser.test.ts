@@ -2867,3 +2867,36 @@ test("a refresh from returning to the tab that lands during an unlink draws noth
   expect(rows(f).map((row) => row.text[0])).toEqual(["Fictional cabin"]);
   expect(f.status()).toBe("“Fictional home” was unlinked from your account.");
 });
+
+test("an unnamed gateway is unlinked by its address's placeholder name, the message survives a refresh, and a refresh that fails changes nothing", async () => {
+  const unnamed = { ...home, displayName: undefined };
+  const f = await askToUnlink({ ...twoGateways, gateways: [unnamed, cabin] }, "Unlink “Gateway”");
+  expect(f.document.querySelector(".unlink h3")!.textContent).toBe(
+    "Unlink “Gateway” from your account?",
+  );
+  await vi.waitFor(() => expect(f.button("Unlink gateway").disabled).toBe(false));
+  f.request.mockResolvedValueOnce(Response.json({ ok: true }));
+  f.session({ ...twoGateways, gateways: [cabin] });
+  f.button("Unlink gateway").click();
+  await vi.waitFor(() => expect(f.status()).toBe("“Gateway” was unlinked from your account."));
+  await vi.waitFor(() => expect(idle(f.document)).toBe(true));
+  const inGateways = () =>
+    f.document.querySelector('[role="status"]')!.closest("section")!.querySelector("h2")!
+      .textContent;
+  Object.defineProperty(f.document, "visibilityState", { value: "visible", configurable: true });
+  // Read again on return to the tab, the message stays where it was.
+  f.document.dispatchEvent(new f.window.Event("visibilitychange"));
+  await vi.waitFor(() =>
+    expect(
+      f.request.mock.calls.filter(([url]) => String(url).includes("/api/session")).length,
+    ).toBeGreaterThan(2),
+  );
+  await vi.waitFor(() => expect(inGateways()).toBe("Your gateways"));
+  expect(f.status()).toBe("“Gateway” was unlinked from your account.");
+  // A read that fails says nothing and leaves the page as it was.
+  f.request.mockRejectedValueOnce(new TypeError("Fixture network down"));
+  f.document.dispatchEvent(new f.window.Event("visibilitychange"));
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  expect(f.alert()).toBe("");
+  expect(rows(f).map((row) => row.text[0])).toEqual(["Fictional cabin"]);
+});

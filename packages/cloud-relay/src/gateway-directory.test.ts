@@ -79,6 +79,9 @@ test("revoked or absent entries do not hide a healthy gateway while internal fai
     online: () => false,
   });
   expect(directory.select("google", query())).toEqual(binding(1));
+  // Only a listed gateway has an owner to act on: a revoked or absent one has none.
+  expect(directory.owner("google", id(1))).toBe("healthy");
+  expect(directory.owner("google", id(2))).toBeUndefined();
   for (const error of [new Error("database unavailable"), new RelayError(503, "unavailable")]) {
     const failed = new GatewayDirectory({
       accounts: () => ["owner"],

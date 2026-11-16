@@ -24,7 +24,9 @@ export class GatewayDirectory {
     },
   ) {}
 
-  private entries(identity: string): { choice: GatewayChoice; binding: GatewayBinding }[] {
+  private entries(
+    identity: string,
+  ): { account: string; choice: GatewayChoice; binding: GatewayBinding }[] {
     const entries = [];
     for (const account of this.source.accounts(identity)) {
       let binding;
@@ -38,6 +40,7 @@ export class GatewayDirectory {
       if (!binding) continue;
       const displayName = this.source.name(account);
       entries.push({
+        account,
         binding,
         choice: {
           gatewayId: binding.gatewayId,
@@ -48,6 +51,11 @@ export class GatewayDirectory {
       });
     }
     return entries.sort((a, b) => a.choice.gatewayId.localeCompare(b.choice.gatewayId));
+  }
+
+  /** The owner account of one listed gateway of this identity, by gateway id. */
+  owner(identity: string, gatewayId: string): string | undefined {
+    return this.entries(identity).find((entry) => entry.choice.gatewayId === gatewayId)?.account;
   }
 
   choices(identity: string): GatewayChoice[] {
