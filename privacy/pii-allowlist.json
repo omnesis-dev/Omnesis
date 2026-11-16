@@ -2519,6 +2519,11 @@
   ],
   "names": [
     {
+      "value": "Mach Virtual Memory",
+      "paths": ["scripts/lib/available-memory.test.mjs"],
+      "reason": "The header macOS vm_stat prints, quoted in a parser test; not a person's name."
+    },
+    {
       "value": "Tue Jan",
       "paths": ["packages/core/src/gateway-lock.test.ts"],
       "reason": "Invented process-start timestamp in locale regression tests, not a person's name."
