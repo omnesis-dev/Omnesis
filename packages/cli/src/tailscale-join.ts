@@ -12,8 +12,11 @@
  */
 
 import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import {
   assertNever,
+  execWindowsJob,
+  ownedProcessCleanupReceipt,
   DEFAULT_TAILSCALE_DEVICE_NAME,
   TAILSCALE_STATUS_TIMEOUT_MS,
   tailscaleCliCandidates,
@@ -95,24 +98,45 @@ export function gatewayCandidates(
   return { running: true, candidates };
 }
 
+type TailnetStatusExecutor = (
+  file: string,
+  args: readonly string[],
+  options: { env: NodeJS.ProcessEnv; timeout: number; maxBuffer: number },
+) => Promise<{ stdout: string }>;
+
+const execFileAsync = promisify(execFile);
+const execPosixStatus: TailnetStatusExecutor = (file, args, options) =>
+  execFileAsync(file, [...args], options);
+
 /** Read this machine's tailnet from the first Tailscale CLI that answers. */
 export async function readLocalTailnet(
   preferredName = DEFAULT_TAILSCALE_DEVICE_NAME,
+  dependencies: {
+    platform?: NodeJS.Platform;
+    candidates?: typeof tailscaleCliCandidates;
+    windows?: TailnetStatusExecutor;
+    posix?: TailnetStatusExecutor;
+  } = {},
 ): Promise<LocalTailnet | null> {
-  for (const candidate of tailscaleCliCandidates()) {
-    const output = await new Promise<string | null>((resolve) => {
-      execFile(
-        candidate.file,
-        ["status", "--json"],
-        {
-          env: tailscaleCliEnv(candidate),
-          timeout: TAILSCALE_STATUS_TIMEOUT_MS,
-          maxBuffer: 16 * 1024 * 1024,
-        },
-        (err, stdout) => resolve(err ? null : stdout),
-      );
-    });
-    if (output !== null) return gatewayCandidates(output, preferredName);
+  const execute =
+    (dependencies.platform ?? process.platform) === "win32"
+      ? (dependencies.windows ?? execWindowsJob)
+      : (dependencies.posix ?? execPosixStatus);
+  for (const candidate of (dependencies.candidates ?? tailscaleCliCandidates)()) {
+    let output: string;
+    try {
+      ({ stdout: output } = await execute(candidate.file, ["status", "--json"], {
+        env: tailscaleCliEnv(candidate),
+        timeout: TAILSCALE_STATUS_TIMEOUT_MS,
+        maxBuffer: 16 * 1024 * 1024,
+      }));
+    } catch (error) {
+      // An unconfirmed command owner is terminal; another candidate cannot
+      // establish that the previous process and its descendants have closed.
+      if (ownedProcessCleanupReceipt(error) !== undefined) throw error;
+      continue;
+    }
+    return gatewayCandidates(output, preferredName);
   }
   return null;
 }
