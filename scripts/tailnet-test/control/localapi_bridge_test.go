@@ -72,7 +72,17 @@ func TestOfficialCLIThroughPrivateLocalAPI(t *testing.T) {
 	if response.StatusCode != http.StatusForbidden {
 		t.Fatalf("uncredentialed API returned %d", response.StatusCode)
 	}
-	socket, err := serveFixtureLocalAPI(t, node, t.TempDir())
+	// Unix socket paths have a smaller bound than the test state directory.
+	socketDirectory, err := os.MkdirTemp("", "omtn-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := os.RemoveAll(socketDirectory); err != nil {
+			t.Error(err)
+		}
+	})
+	socket, err := serveFixtureLocalAPI(t, node, socketDirectory)
 	if err != nil {
 		t.Fatal(err)
 	}

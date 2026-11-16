@@ -665,7 +665,9 @@ const db = openReadOnlyDatabase(DB_PATH, {
 await writeGate.initializeLabFlags({
   brain: config.inference?.assignments?.["background-agent"] != null,
 });
+process.stderr.write("AUDIT_BOOT before-bootstrap-token\n");
 const bootstrapToken = await writeGate.ensureBootstrapToken(configDir);
+process.stderr.write("AUDIT_BOOT after-bootstrap-token\n");
 if (bootstrapToken) {
   log.info(
     `Bootstrap admin token generated and saved to ${configDir}/token — use 'cli devices pair' to provision a real device, then revoke.`,
@@ -1295,7 +1297,9 @@ const analyticsDb = new AnalyticsDb(analyticsDbPath, {
   // manager bring the gateway back.
   onFatal: () => requestShutdown(1),
 });
+process.stderr.write("AUDIT_BOOT before-analytics\n");
 await analyticsDb.open();
+process.stderr.write("AUDIT_BOOT after-analytics\n");
 // A rekey changes temporal projection ids in DuckDB; the annotations linking
 // them live in SQLite and follow through the move ledger. Draining it at boot
 // finishes any rekey whose links a crash left behind.
@@ -1447,7 +1451,9 @@ const subscriptionsPolicyStore = new PrivacyPolicyStore(configDir, { db, writeGa
 // server starts. Establish its first immutable revision before mounting any
 // route so overview, consent, token issuance, and invocation all observe the
 // same initialized authorization state on a fresh gateway.
+process.stderr.write("AUDIT_BOOT before-subscriptions-policy\n");
 await subscriptionsPolicyStore.get();
+process.stderr.write("AUDIT_BOOT after-subscriptions-policy\n");
 
 // Decision model — typed judgements (TypeSafe, a local or HTTP chat model read
 // through its token probabilities, or recorded replay). The Brain's worth gate
@@ -1569,7 +1575,9 @@ const agentLifecycle = new AgentLifecycle({
   // delivers it.
   notifyConversation: (notification) => conversationNotifier.notify(notification),
 });
+process.stderr.write("AUDIT_BOOT before-agent-lifecycle\n");
 await agentLifecycle.bootAgent();
+process.stderr.write("AUDIT_BOOT after-agent-lifecycle\n");
 
 // metrics + analyticsDb were initialised earlier (see the block before
 // the agent harness setup) so the agent's run_sql port could be wired.
@@ -1895,7 +1903,9 @@ const modelManager = new ModelManager({
     }
   },
 });
+process.stderr.write("AUDIT_BOOT before-model-reconcile\n");
 await modelManager.reconcileOnStartup();
+process.stderr.write("AUDIT_BOOT after-model-reconcile\n");
 
 // Per-capability model history for the picker's "Recently used" section.
 // A sidecar file next to the config (not in it), fed by the configStore
@@ -1910,6 +1920,7 @@ modelHistory.load();
 // SHA-256 fingerprint baked into the V3 QR pairing payload (TOFU); CLIs and
 // the desktop collector get the cert via standard OS trust (operator can
 // trust the cached cert manually) or the env-override path.
+process.stderr.write("AUDIT_BOOT before-tls-bundle\n");
 const tlsBundle = await resolveTlsBundle({
   configDir,
   envCertPath: process.env.OMNESIS_TLS_CERT,
@@ -3044,7 +3055,9 @@ void reconcileWakeAnchors?.();
 // colors) into sync_state. No collector syncs `web`, so the usual
 // sync.status-driven seed never fires for it; without this, native clients
 // render a placeholder glyph. Idempotent — setSourceMeta COALESCEs.
+process.stderr.write("AUDIT_BOOT before-web-meta\n");
 await seedWebSourceMeta(writeGate);
+process.stderr.write("AUDIT_BOOT after-web-meta\n");
 
 // Briefs feature gate (experimental). Seeds the
 // open-loops system source and starts the Agent Run Queue drainer plus the
@@ -3260,6 +3273,7 @@ subscribeMemoryInvalidators({
   log: log.child("memory"),
 });
 
+process.stderr.write("AUDIT_BOOT before-briefs\n");
 await bootBriefs({
   isEnabled: () => labFeatureEnabled(db, "brain"),
   registry: inferenceRegistry,
@@ -3385,7 +3399,9 @@ configStore.onChange((before, after) => {
 
 // Initial reconcile at boot so a newly-loaded config is projected onto the
 // DB before the first WS connection lands.
+process.stderr.write("AUDIT_BOOT before-config-reconcile\n");
 const bootReport = await reconcileConfig(db, writeGate, config);
+process.stderr.write("AUDIT_BOOT after-config-reconcile\n");
 if (bootReport.sourcesUpdated > 0) {
   log.info(
     `Config reconcile at boot: ${bootReport.sourcesUpdated} source row${bootReport.sourcesUpdated === 1 ? "" : "s"} updated from file`,
@@ -3472,7 +3488,9 @@ function startServer() {
   return server;
 }
 
+process.stderr.write("AUDIT_BOOT before-listener\n");
 const server = startServer();
+process.stderr.write("AUDIT_BOOT after-listener\n");
 scheduler.schedule(createTlsLifecycleTask(tlsLifecycle));
 if (tailscaleEmbed) {
   // The helper forwards to a private socket served by the same app, with the

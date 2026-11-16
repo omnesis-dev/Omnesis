@@ -20,6 +20,8 @@ import {
   secretFileWritesEncrypted,
   type SerializedProviderCredentialsSpec,
 } from "@omnesis/core";
+import { browserInvocation } from "./browser-command.js";
+export { browserInvocation } from "./browser-command.js";
 import { detectDockerContext, isWithinDir } from "./docker-install.js";
 import { c, gatewayJson, withSpinner, GATEWAY_URL } from "./utils.js";
 
@@ -176,26 +178,6 @@ export async function credentialsDestinationLines(
       : "Not encrypted at rest: this install has no keyring armed. Run `omnesis secure` to encrypt it, with every other secret file.",
   );
   return lines;
-}
-
-/** Launch the configured browser without interpreting the URL as shell syntax. */
-export function browserInvocation(
-  url: string,
-  platform: NodeJS.Platform = process.platform,
-): { command: string; args: string[] } {
-  if (platform === "win32") {
-    const script = `Start-Process -FilePath '${url.replaceAll("'", "''")}'`;
-    return {
-      command: "powershell.exe",
-      args: [
-        "-NoProfile",
-        "-NonInteractive",
-        "-EncodedCommand",
-        Buffer.from(script, "utf16le").toString("base64"),
-      ],
-    };
-  }
-  return { command: platform === "darwin" ? "open" : "xdg-open", args: [url] };
 }
 
 /** Best-effort; the wizard also prints the URL for manual opening. */

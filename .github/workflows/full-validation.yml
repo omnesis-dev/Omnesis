@@ -1715,14 +1715,20 @@ jobs:
         if: ${{ !cancelled() && inputs.scope == 'harness-readiness' }}
         run: node scripts/run-check.mjs unit packages/cloud-relay/src/relay-dos-limits.test.ts
 
-  portable-module-macos:
+  portable-module-regression:
     needs: harness-native
-    if: ${{ !cancelled() && inputs.scope == 'harness-native' }}
-    runs-on: macos-latest
+    if: ${{ !cancelled() && (inputs.scope == 'harness-native' || inputs.scope == 'harness-readiness') }}
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     env:
       OMNESIS_TEST_PORTABLE_TAILNET: "1"
       GOMAXPROCS: "2"
+      OMNESIS_UNIT_WORKERS: "1"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -1738,9 +1744,41 @@ jobs:
           cache-dependency-path: |
             packages/tailnet-helper/go.sum
             scripts/tailnet-test/control/go.sum
+      - name: Make OpenSSL available for real relay certificates
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $auditOpenSsl = Join-Path $env:ProgramFiles 'Git\usr\bin'
+          if (Test-Path (Join-Path $auditOpenSsl 'openssl.exe')) {
+            $auditOpenSsl | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+          }
       - name: Install locked source dependencies
         run: node scripts/ci/npm-ci.mjs --no-audit --no-fund
-      - name: Check the optional real SDK control fixture on macOS with its actual private Unix socket
+      - name: Verify literal browser commands, actual child producers and isolated native host environments
+        run: node scripts/run-check.mjs unit packages/cli/src/credentials-wizard.test.ts packages/cli/src/commands/connect-oauth.test.ts packages/collector/src/e2e/enrollment-browser-fixture.test.ts packages/collector/src/e2e/harness-runtime-conformance.test.ts packages/cloud-relay/src/relay-dos-limits.test.ts scripts/ci/windows-checks.test.mjs
+      - name: Verify all five actual SDK controls using the short private socket runtime directory
         env:
           OMNESIS_TAILNET_TOOLS_DIR: ${{ runner.temp }}/portable-tailnet-tools
         run: node scripts/ci/portable-transports-proof.mjs
+      - name: Validate every source and test TypeScript project
+        if: ${{ !cancelled() && runner.os == 'Linux' }}
+        run: node scripts/run-check.mjs typecheck && node scripts/run-check.mjs types-tests
+      - name: Check typed browser and native integration boundaries
+        if: ${{ !cancelled() && runner.os == 'Linux' }}
+        env:
+          NODE_OPTIONS: --max-old-space-size=6144
+        run: >-
+          node node_modules/eslint/bin/eslint.js
+          packages/cli/src/browser-command.ts packages/cli/src/credentials-wizard.ts
+          packages/cli/src/commands/connect-oauth.ts packages/cli/src/commands/connect-oauth.test.ts
+          packages/collector/src/e2e/enrollment-browser-fixture.ts packages/collector/src/e2e/enrollment-browser-fixture.test.ts
+          packages/collector/src/e2e/harness-plugin-conformance.e2e.test.ts
+          packages/collector/src/e2e/harness-runtime-conformance.ts packages/collector/src/e2e/harness-runtime-conformance.test.ts
+          packages/cloud-relay/src/relay-dos-limits.test.ts scripts/ci/windows-checks.mjs scripts/ci/windows-checks.test.mjs
+      - name: Retain only the formatted public socket regression source
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: native-socket-control-source-${{ runner.os }}
+          path: scripts/tailnet-test/control/localapi_bridge_test.go
+          retention-days: 3
