@@ -109,6 +109,7 @@ describe.skipIf(!browserReady)(
     let gateway: EnrollmentGateway;
     /** The owner's browser, holding the passkey the gateway pinned when it was linked. */
     let owner: PasskeySession;
+    const terminalRuns: ReturnType<typeof runEnrollmentTerminal>[] = [];
     const priorCaFile = process.env.OMNESIS_CLOUD_RELAY_GATEWAY_CA_FILE;
     const priorEnabled = process.env.OMNESIS_CLOUD_RELAY_ENABLED;
 
@@ -188,17 +189,33 @@ describe.skipIf(!browserReady)(
     }, gatewayBootBudgetMs() + 120_000);
 
     afterAll(async () => {
+      const failures: unknown[] = [];
+      const close = async (operation: () => unknown) => {
+        try {
+          await operation();
+        } catch (error) {
+          failures.push(error);
+        }
+      };
       try {
-        await browser?.close();
-        await gateway?.close();
-        await world?.close();
+        for (const run of terminalRuns) {
+          await close(() => run.kill());
+          if (!run.closed()) failures.push(new Error("Enrollment terminal closure is unconfirmed"));
+        }
+        // Independent owners still close when a preceding actor fails. All
+        // shared inputs stay in place until every close has succeeded.
+        await close(() => browser?.close());
+        await close(() => gateway?.close());
+        await close(() => world?.close());
       } finally {
         if (priorCaFile === undefined) delete process.env.OMNESIS_CLOUD_RELAY_GATEWAY_CA_FILE;
         else process.env.OMNESIS_CLOUD_RELAY_GATEWAY_CA_FILE = priorCaFile;
         if (priorEnabled === undefined) delete process.env.OMNESIS_CLOUD_RELAY_ENABLED;
         else process.env.OMNESIS_CLOUD_RELAY_ENABLED = priorEnabled;
-        if (directory) await rm(directory, { recursive: true, force: true });
       }
+      if (failures.length)
+        throw new AggregateError(failures, "Enrollment security cleanup failed; inputs retained");
+      if (directory) await rm(directory, { recursive: true, force: true });
     }, 60_000);
 
     test("TM-01: on the machine where the sign-in finished, the browser hands the CLI its completion over loopback, but a sign-in made on the relay's page is held, never joined on its own", async () => {
@@ -296,6 +313,7 @@ describe.skipIf(!browserReady)(
           },
         },
       );
+      terminalRuns.push(run);
       try {
         const printed = await printedConnectCode(run);
         expect(run.stdout()).toContain(

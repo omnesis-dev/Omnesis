@@ -48,6 +48,7 @@ on:
             codex-lifecycle,
             native-asr,
             terminal-cohort,
+            terminal-enrollment,
             stream-timeout,
             provider-ownership,
           ]
@@ -66,6 +67,63 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
   TZ: UTC
 jobs:
+  terminal-enrollment:
+    if: ${{ inputs.scope == 'terminal-enrollment' }}
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 35
+    env:
+      OMNESIS_UNIT_WORKERS: "1"
+      OMNESIS_E2E_WORKERS: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: "24"
+          cache: npm
+      - name: Keep OpenSSL available for isolated Windows certificates
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $auditOpenSsl = Join-Path $env:ProgramFiles 'Git\usr\bin'
+          if (Test-Path (Join-Path $auditOpenSsl 'openssl.exe')) {
+            $auditOpenSsl | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+          }
+      - name: Install locked dependencies
+        run: node scripts/ci/npm-ci.mjs --no-audit --no-fund
+      - name: Build and prove installed Windows SQLite
+        if: runner.os == 'Windows'
+        run: node scripts/ci/build-windows-sqlite.mjs
+      - name: Build and prove Windows vector publication
+        if: runner.os == 'Windows'
+        run: node scripts/ci/build-windows-usearch.mjs
+      - name: Install real Chromium for the passkey enrollment flow
+        run: npm exec --workspace packages/collector -- playwright install chromium
+      - name: Validate terminal and physical cohort controls
+        run: node scripts/run-check.mjs unit packages/collector/src/e2e/enrollment-terminal-fixture.test.ts packages/collector/src/e2e/enrollment-terminal-cohort.windows.test.ts
+      - name: Exercise the actual terminal CLI, passkey browser, relay and Gateway
+        id: runtime
+        continue-on-error: true
+        run: node scripts/run-check.mjs e2e packages/collector/src/e2e/account-enrollment-security.e2e.test.ts --testNamePattern="over SSH the real CLI"
+      - name: Validate source and test types
+        if: runner.os == 'Linux'
+        run: node scripts/run-check.mjs typecheck && node scripts/run-check.mjs types-tests
+      - name: Lint the terminal owner and cleanup caller
+        if: runner.os == 'Linux'
+        env:
+          NODE_OPTIONS: --max-old-space-size=6144
+        run: node node_modules/eslint/bin/eslint.js packages/collector/src/e2e/enrollment-terminal-wrapper.mjs packages/collector/src/e2e/enrollment-terminal-fixture.ts packages/collector/src/e2e/enrollment-terminal-fixture.test.ts packages/collector/src/e2e/enrollment-terminal-cohort.windows.test.ts packages/collector/src/e2e/account-enrollment-security.e2e.test.ts
+      - name: Retain the actual enrollment outcome
+        env:
+          RUNTIME_OUTCOME: ${{ steps.runtime.outcome }}
+        run: node -e "if (process.env.RUNTIME_OUTCOME !== 'success') process.exit(1)"
   terminal-cohort:
     if: ${{ inputs.scope == 'terminal-cohort' }}
     strategy:
