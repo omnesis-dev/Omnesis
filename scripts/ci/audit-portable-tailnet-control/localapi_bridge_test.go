@@ -89,5 +89,12 @@ func TestOfficialCLIThroughPrivateLocalAPI(t *testing.T) {
  if err!=nil { t.Fatalf("actual CLI: %v",err) }
  if err:=json.Unmarshal(output,&actual);err!=nil { t.Fatal(err) }
  if actual.BackendState!="Running" || actual.Self==nil || actual.Self.ID!=status.Self.ID || actual.Self.DNSName!="fixture-cli-laptop.tailnet.test." { t.Fatal("official CLI did not read the actual approved node") }
+ wrapper,err:=makeFixtureCLI(filepath.Join(t.TempDir(),"literal paths 雪"),socket,cli)
+ if err!=nil { t.Fatal(err) }
+ wrappedOutput,err:=exec.CommandContext(ctx,wrapper,"status","--json").Output()
+ if err!=nil { t.Fatalf("compiled fixture CLI adapter: %v",err) }
+ var wrapped ipnstate.Status
+ if err:=json.Unmarshal(wrappedOutput,&wrapped);err!=nil { t.Fatal(err) }
+ if wrapped.BackendState!="Running" || wrapped.Self==nil || wrapped.Self.ID!=actual.Self.ID || wrapped.Self.DNSName!=actual.Self.DNSName { t.Fatal("compiled adapter did not preserve the official CLI identity") }
  t.Log("official pinned CLI read real userspace identity through a private OS socket")
 }

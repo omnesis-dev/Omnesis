@@ -529,7 +529,7 @@ jobs:
           cache-dependency-path: packages/tailnet-helper/go.sum
       - name: Format the diagnostic with its pinned Go toolchain
         working-directory: scripts/ci/audit-portable-tailnet-control
-        run: gofmt -w control_test.go auth_test.go map_stream_test.go product_node_test.go localapi_bridge_test.go localapi_bridge_windows_test.go localapi_bridge_posix_test.go actor_test.go actor_protocol_test.go
+        run: gofmt -w control_test.go auth_test.go map_stream_test.go product_node_test.go localapi_bridge_test.go localapi_bridge_windows_test.go localapi_bridge_posix_test.go actor_test.go actor_protocol_test.go cli_wrapper_test.go
       - name: Prove bounded external actor protocol and real peer registration
         if: inputs.scope == 'portable-actor'
         working-directory: scripts/ci/audit-portable-tailnet-control
