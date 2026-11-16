@@ -49,7 +49,16 @@ $configFile = Join-Path $state 'proxy.json'
 $ready = Join-Path $state 'proxy-ready.txt'
 $errors = Join-Path $state 'proxy-errors.txt'
 $proxyFile = Join-Path $env:RUNNER_TEMP 'windows-network-proxy.py'
-$sink = Start-Process -FilePath $python -ArgumentList @('-u', ('"'+$proxyFile+'"'), ('"'+$configFile+'"')) -PassThru -RedirectStandardOutput $ready -RedirectStandardError $errors
+# This DNS infrastructure belongs to the disposable VM, including runner post-job reporting.
+# Per-command orphan cleanup must not remove the runner's resolver before it reports its result.
+$tracking = $env:RUNNER_TRACKING_ID
+try {
+  $env:RUNNER_TRACKING_ID = ''
+  $sink = Start-Process -FilePath $python -ArgumentList @('-u', ('"'+$proxyFile+'"'), ('"'+$configFile+'"')) -PassThru -RedirectStandardOutput $ready -RedirectStandardError $errors
+} finally {
+  if ($null -eq $tracking) { Remove-Item Env:RUNNER_TRACKING_ID -ErrorAction SilentlyContinue }
+  else { $env:RUNNER_TRACKING_ID = $tracking }
+}
 $limit = [DateTime]::UtcNow.AddSeconds(10)
 while (-not ((Test-Path $ready) -and ((Get-Content $ready -Raw) -match 'ready'))) {
   $sink.Refresh()
