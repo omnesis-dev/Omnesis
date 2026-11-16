@@ -19,6 +19,7 @@ on:
             windows-remaining,
             dotenv-refusal,
             update-lock-publication,
+            gateway-boot-trace,
             hermes,
             performance,
             e2e,
@@ -3032,3 +3033,101 @@ jobs:
           - windows-latest
           - ubuntu-latest
           - macos-15
+
+  gateway-boot-trace:
+    name: Diagnose unchanged Windows gateway boot budget (${{ matrix.os }})
+    if: inputs.scope == 'gateway-boot-trace'
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    env:
+      TZ: UTC
+      OMNESIS_UNIT_WORKERS: "1"
+      OMNESIS_E2E_WORKERS: "1"
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ inputs.source_sha }}
+          persist-credentials: false
+      - name: Verify fixed source revision
+        env:
+          TARGET_SHA: ${{ inputs.source_sha }}
+        run: |
+          [[ "$TARGET_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "$TARGET_SHA"
+      - name: Set up Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: "24"
+          cache: npm
+      - name: Install dependencies
+        id: dependencies
+        run: node scripts/ci/npm-ci.mjs --no-audit --no-fund
+      - name: Build and prove Windows SQLite recovery bindings
+        id: native_sqlite
+        run: node scripts/ci/build-windows-sqlite.mjs
+        if: runner.os == 'Windows'
+      - name: Build and prove Windows vector publication
+        id: native_vector
+        run: node scripts/ci/build-windows-usearch.mjs
+        if: runner.os == 'Windows'
+      - name: Make OpenSSL available for isolated TLS certificates
+        run: |
+          if (-not (Get-Command openssl -ErrorAction SilentlyContinue)) {
+            $opensslDir = Join-Path $env:ProgramFiles 'Git\usr\bin'
+            if (-not (Test-Path (Join-Path $opensslDir 'openssl.exe'))) { throw 'OpenSSL is required for gateway tests' }
+            $opensslDir | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+          }
+        if: runner.os == 'Windows'
+        shell: pwsh
+      - name: Add boot-only scalar observations to isolated diagnostic source
+        run: |-
+          node --input-type=module <<'NODE'
+          import assert from 'node:assert/strict';
+          import {readFileSync,writeFileSync} from 'node:fs';
+          const gateway='packages/gateway/src/index.ts';
+          let source=readFileSync(gateway,'utf8');
+          const stages=[
+           'await scheduler.start();',
+           'const bootstrapToken = await writeGate.ensureBootstrapToken(configDir);',
+           'await analyticsDb.open();',
+           'await subscriptionsPolicyStore.get();',
+           'await agentLifecycle.bootAgent();',
+           'await modelManager.reconcileOnStartup();',
+           'await seedWebSourceMeta(writeGate);',
+           'const server = startServer();',
+          ];
+          for(const [index,stage] of stages.entries()){
+           assert.equal(source.split(stage).length,2);
+           source=source.replace(stage,`process.stderr.write('[boot-phase] ${index} begin\\n');\n${stage}\nprocess.stderr.write('[boot-phase] ${index} end\\n');`);
+          }
+          const tls='const tlsBundle = await resolveTlsBundle({';
+          assert.equal(source.split(tls).length,2);
+          source=source.replace(tls,"process.stderr.write('[boot-phase] TLS begin\\n');\n"+tls);
+          writeFileSync(gateway,source);
+          const harness='packages/collector/src/e2e/multi-collector-harness.ts';
+          let text=readFileSync(harness,'utf8');
+          assert.equal(text.split('OMNESIS_LOG_LEVEL: "warn"').length,2);
+          text=text.replace('OMNESIS_LOG_LEVEL: "warn"','OMNESIS_LOG_LEVEL: "info"');
+          const output='const recordOutput = (chunk: Buffer | string): void => {';
+          assert.equal(text.split(output).length,2);
+          text=text.replace(output,output+"\n      process.stderr.write('[gateway-boot] '+String(chunk));");
+          const health='if (!health.ok) {';
+          assert.equal(text.split(health).length,2);
+          text=text.replace(health,"process.stderr.write('[boot-probe] health='+health.status+'\\n');\n        "+health);
+          const whoami='if (whoami.ok) {';
+          assert.equal(text.split(whoami).length,2);
+          text=text.replace(whoami,"process.stderr.write('[boot-probe] whoami='+whoami.status+'\\n');\n        "+whoami);
+          writeFileSync(harness,text);
+          process.stdout.write('DIAGNOSTIC ONLY: two files instrumented; deadlines, product logic, scenarios and assertions unchanged. Not unmodified-source acceptance.\n');
+          NODE
+      - name: Diagnose original four-file Windows boot invocation
+        run: exec node scripts/run-check.mjs e2e packages/collector/src/e2e/collector-parent-shutdown.e2e.test.ts packages/collector/src/e2e/gateway-lifecycle.e2e.test.ts packages/collector/src/e2e/synth-pipeline.e2e.test.ts packages/collector/src/e2e/source-descriptors.e2e.test.ts
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        os:
+          - windows-latest
