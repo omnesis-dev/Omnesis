@@ -29,8 +29,8 @@ afterEach(() => {
   vi.unstubAllEnvs();
 });
 
-/** These run on Linux, which alone routes all of 127/8 to loopback. */
-const onLinux = test.runIf(process.platform === "linux");
+/** Check physical loopback source-address fixtures on both audited platforms. */
+const onLinux = test.runIf(process.platform === "linux" || process.platform === "win32");
 const GATEWAY = "gateway.example.test";
 
 /** A TLS connection to the gateway's name through the data listener, or undefined if refused. */

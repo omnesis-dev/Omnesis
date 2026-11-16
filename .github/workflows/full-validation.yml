@@ -1706,8 +1706,14 @@ jobs:
           $harnessBin | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
           "OMNESIS_HERMES_BIN=$(Join-Path $harnessBin 'hermes.exe')" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
           "OMNESIS_HERMES_PYTHON=$(Join-Path $harnessBin 'python.exe')" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+      - name: Inspect native OCR dependency availability without image or model inference
+        if: inputs.scope == 'harness-readiness'
+        run: node --import tsx scripts/ci/windows-coverage-probes.mjs
       - name: Run the unchanged real enrollment, plugin host, tools and uninstall contract without model inference
         run: node scripts/run-check.mjs e2e packages/collector/src/e2e/harness-plugin-conformance.e2e.test.ts
+      - name: Check whether the existing real relay client-limit fixtures are actually Linux-specific
+        if: ${{ !cancelled() && inputs.scope == 'harness-readiness' }}
+        run: node scripts/run-check.mjs unit packages/cloud-relay/src/relay-dos-limits.test.ts
 
   portable-module-macos:
     needs: harness-native
