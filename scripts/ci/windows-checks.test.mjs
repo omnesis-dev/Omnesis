@@ -133,8 +133,9 @@ describe("Windows CI coverage", () => {
     expect(hosts.map(({ env }) => env.OMNESIS_HARNESS_CONFORMANCE)).toEqual(["openclaw", "hermes"]);
     for (const host of hosts) {
       expect(host.run).toBe(
-        "node scripts/run-check.mjs e2e packages/collector/src/e2e/harness-plugin-conformance.e2e.test.ts",
+        "exec node scripts/run-check.mjs e2e packages/collector/src/e2e/harness-plugin-conformance.e2e.test.ts",
       );
+      expect(host.shell).toBe("bash");
       expect(host.if).toContain("!cancelled()");
       expect(host.if).toContain("steps.native_bindings.outcome == 'success'");
       expect(host).not.toHaveProperty("continue-on-error");
