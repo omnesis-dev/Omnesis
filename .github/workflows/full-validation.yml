@@ -2349,6 +2349,7 @@ jobs:
           GOMAXPROCS: "2"
         run: node scripts/ci/portable-transports-proof.mjs
       - name: Add scalar-only diagnostic boundary observations
+        shell: bash
         run: |
           node --input-type=module <<'NODE'
           import {readFileSync,writeFileSync} from 'node:fs';
