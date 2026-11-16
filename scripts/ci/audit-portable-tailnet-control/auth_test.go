@@ -127,9 +127,12 @@ func runInteractiveAuth(t *testing.T, magicDNSOnly bool) {
  for {
   current, err := client.GetPrefs(ctx)
   if err != nil { t.Fatal(err) }
-  if current.Persist != nil && !current.Persist.PrivateNodeKey.IsZero() { break }
+  if current.Persist != nil && current.Persist.NodeID != "" && current.Persist.UserProfile.ID != 0 { break }
   select { case <-ctx.Done(): t.Fatal("new sign-in keys were not committed"); case <-readyTick.C: }
  }
+ // LocalAPI intentionally strips private keys, so use committed public
+ // profile/node identity rather than waiting for a secret it never returns.
+ if _, err := client.EditPrefs(ctx, &ipn.MaskedPrefs{WantRunningSet:true, Prefs:ipn.Prefs{WantRunning:true}}); err != nil { t.Fatal(err) }
  t.Log("new login keys committed before resuming the network")
  rejoined, err := second.Up(ctx)
  if err != nil || rejoined.Self == nil { t.Fatalf("did not rejoin: %v",err) }
