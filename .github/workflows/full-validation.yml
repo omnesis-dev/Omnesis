@@ -252,9 +252,22 @@ jobs:
         with:
           go-version-file: packages/tailnet-helper/go.mod
           cache-dependency-path: packages/tailnet-helper/go.sum
+      - name: Format the diagnostic with its pinned Go toolchain
+        working-directory: scripts/ci/audit-portable-tailnet-control
+        run: gofmt -w control_test.go auth_test.go
       - name: Prove a portable local control plane and real encrypted userspace traffic
         working-directory: scripts/ci/audit-portable-tailnet-control
         run: go test -mod=mod -p 2 -count=1 -timeout 3m -v ./...
+      - name: Retain exact diagnostic source and resolved test-only dependency manifests
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: portable-tailnet-control-${{ runner.os }}
+          path: |
+            scripts/ci/audit-portable-tailnet-control/*.go
+            scripts/ci/audit-portable-tailnet-control/go.mod
+            scripts/ci/audit-portable-tailnet-control/go.sum
+          retention-days: 3
   relay-ownership:
     if: ${{ inputs.scope == 'relay-ownership' }}
     strategy:

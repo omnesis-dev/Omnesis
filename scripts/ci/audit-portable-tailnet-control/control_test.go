@@ -90,7 +90,9 @@ func TestPortableControlAndWireGuard(t *testing.T) {
 				if err == nil && who.Node.User == node.User && who.Node.IsTagged() == (role == "tagged") { break }
 				select { case <-ctx.Done(): t.Fatal("gateway netmap did not learn peer ownership"); case <-tick.C: }
 			}
-			request, err := http.NewRequestWithContext(ctx, "GET", "http://"+net.JoinHostPort(address,"8080")+"/", nil)
+			target := address
+			if role == "owner" { target = "fixture-gateway.fixture.example.test" }
+			request, err := http.NewRequestWithContext(ctx, "GET", "http://"+net.JoinHostPort(target,"8080")+"/", nil)
 			if err != nil { t.Fatal(err) }
 			response, err := peer.HTTPClient().Do(request)
 			if err != nil { t.Fatalf("userspace network request: %v", err) }
