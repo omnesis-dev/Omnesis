@@ -1247,8 +1247,12 @@ The portal uses the installation's relay service implicitly; it has no endpoint
 field. New installations default to `https://relay.omnesis.app`. Operators may
 select a different service with `OMNESIS_CLOUD_RELAY_URL`; existing saved
 installations retain their selected service when that variable is absent.
-Request bodies cannot override it: the legacy CLI `--relay` option only asserts
-that the requested URL matches the installation selection. A conflicting
+Synthetic (`OMNESIS_SYNTHETIC=1`), isolated test (`OMNESIS_TEST_INSTANCE=1`) and
+spawned E2E gateways have no default: without `OMNESIS_CLOUD_RELAY_URL` or a
+saved selection they report `relay-service-unavailable` and never contact the
+production relay. Request bodies cannot override the selection: the legacy CLI
+`--relay` option only asserts that the requested URL matches the installation
+selection. A conflicting
 operator override on an already configured installation disables setup with
 `relay-service-mismatch`; it does not migrate an identity or send its credentials
 to another operator. Plan such a migration separately. The custom public gateway
