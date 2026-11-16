@@ -61,7 +61,8 @@
         "portal/vendor/*.js",
         "scripts/*.mjs"
       ],
-      "project": ["src/**/*.ts", "portal/js/**/*.js", "portal/vendor/**/*.js"]
+      "project": ["src/**/*.ts", "portal/js/**/*.js", "portal/vendor/**/*.js"],
+      "ignoreDependencies": ["snowball-stemmers"]
     },
     "packages/collector": {
       "entry": [

@@ -169,6 +169,14 @@
           surfaces near the top.
         </p>
         <p>
+          Keyword matching handles more than spaced, Latin-alphabet text: it finds the words of
+          Chinese, Japanese, Thai and other languages written without spaces, matches a Korean word
+          with or without the particle attached to it, matches Russian and Arabic words across their
+          grammatical forms, and treats Traditional and Simplified Chinese, and full-width and
+          ordinary letters, as the same. Text in the Latin alphabet is matched as before, with
+          English word forms folded together and accents ignored.
+        </p>
+        <p>
           Small indexed scopes use bounded exact vector scoring, so unrelated source updates do not
           change their nearest-neighbor ranking. Larger scopes use approximate search; its recall
           can change as the index evolves. Visibility and source filters apply to both.
