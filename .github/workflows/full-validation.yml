@@ -46,6 +46,7 @@ on:
             whisper-owner-green,
             transcribe-service-baseline,
             codex-lifecycle,
+            native-asr,
             stream-timeout,
             provider-ownership,
           ]
@@ -64,6 +65,53 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
   TZ: UTC
 jobs:
+  native-asr:
+    if: ${{ inputs.scope == 'native-asr' }}
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        os: [ubuntu-22.04, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 35
+    env:
+      OMNESIS_UNIT_WORKERS: "1"
+      npm_config_jobs: "2"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: "24"
+          cache: npm
+      - name: Install locked dependencies including actual native ASR
+        run: node scripts/ci/npm-ci.mjs --foreground-scripts --no-audit --no-fund
+      - name: Build and prove installed Windows SQLite
+        if: runner.os == 'Windows'
+        run: node scripts/ci/build-windows-sqlite.mjs
+      - name: Build and prove Windows vector publication
+        if: runner.os == 'Windows'
+        run: node scripts/ci/build-windows-usearch.mjs
+      - name: Require the actual binding and prepare checksum-verified public inputs
+        run: node scripts/ci/audit-native-asr-inputs.mjs
+      - name: Exercise actual worker inference and voice-note vocabulary paths
+        id: runtime
+        continue-on-error: true
+        run: node scripts/run-check.mjs unit packages/gateway/src/transcribe/whisper-transcriber.integration.test.ts packages/gateway/src/transcribe/vocabulary/native.integration.test.ts
+      - name: Validate source and test TypeScript
+        if: runner.os == 'Linux'
+        run: node scripts/run-check.mjs typecheck && node scripts/run-check.mjs types-tests
+      - name: Lint native integration fixtures
+        if: runner.os == 'Linux'
+        env:
+          NODE_OPTIONS: --max-old-space-size=6144
+        run: node node_modules/eslint/bin/eslint.js packages/gateway/src/transcribe/whisper-transcriber.integration.test.ts packages/gateway/src/transcribe/vocabulary/native.integration.test.ts
+      - name: Retain actual inference outcome
+        env:
+          RUNTIME_OUTCOME: ${{ steps.runtime.outcome }}
+        run: node -e "if (process.env.RUNTIME_OUTCOME !== 'success') process.exit(1)"
   codex-lifecycle:
     if: ${{ inputs.scope == 'codex-lifecycle' }}
     strategy:

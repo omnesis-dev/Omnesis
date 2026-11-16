@@ -4,10 +4,9 @@
 /**
  * Real-Whisper integration test for `WhisperTranscriber` — drives the actual
  * worker subprocess (which loads the smart-whisper native binding) + the
- * in-process ffmpeg decode against a real model file and audio clip, asserting
+ * owned ffmpeg subprocess decode against a real model file and audio clip, asserting
  * the produced transcript. It is SKIPPED unless pointed at a model/audio via
- * env, so CI (which has neither the heavy native deps nor the model) stays
- * green while the real path is still exercisable locally:
+ * env. Configured native acceptance runs must provide both inputs:
  *
  *   OMNESIS_WHISPER_TEST_MODEL=/path/ggml-tiny.bin \
  *   OMNESIS_WHISPER_TEST_AUDIO=/path/jfk.wav \
@@ -36,15 +35,17 @@ const RUN = !!MODEL && !!AUDIO;
       modelId: "whisper-test",
       gpu: false,
       decodeAudio: FFMPEG
-        ? (bytes) => decodeToPcm16kMono(bytes, { ffmpegPath: FFMPEG })
+        ? (bytes, _mimeType, signal) => decodeToPcm16kMono(bytes, { ffmpegPath: FFMPEG, signal })
         : undefined,
     });
-    const result = await t.transcribe(readFileSync(AUDIO!), "audio/wav");
-    await t.dispose();
-
-    // Non-empty transcript with real words — exact text varies by model size.
-    expect(result.text.length).toBeGreaterThan(10);
-    expect(result.text).toMatch(/[a-z]{3,}/i);
-    expect(result.durationSec).toBeGreaterThan(0);
+    try {
+      const result = await t.transcribe(readFileSync(AUDIO!), "audio/wav");
+      // Non-empty transcript with real words — exact text varies by model size.
+      expect(result.text.length).toBeGreaterThan(10);
+      expect(result.text).toMatch(/[a-z]{3,}/i);
+      expect(result.durationSec).toBeGreaterThan(0);
+    } finally {
+      await t.dispose();
+    }
   }, 120_000);
 });

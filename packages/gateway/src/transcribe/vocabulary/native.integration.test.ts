@@ -4,7 +4,7 @@
 /**
  * Opt-in local proof of gateway vocabulary with actual Whisper inference.
  * Supply OMNESIS_WHISPER_TEST_MODEL and OMNESIS_WHISPER_TEST_AUDIO pointing to
- * a downloaded model and an invented synthetic recording outside the repo.
+ * a downloaded model and public-domain or invented audio outside the repo.
  * No native model is mocked, no production gateway is used, and assertions
  * establish working transcription rather than a vocabulary accuracy gain.
  */
@@ -31,7 +31,11 @@ import {
   getTranscriptionVocabulary,
 } from "./storage.js";
 import { extractTranscriptionVocabulary } from "./extract.js";
-import type { ResolvedAssignment, TranscriptionContext } from "@omnesis/core";
+import {
+  ownedProcessCleanupReceipt,
+  type ResolvedAssignment,
+  type TranscriptionContext,
+} from "@omnesis/core";
 import type { VoiceNoteService } from "../../voice-notes/service.js";
 import type { OmnesisNotesRuntime } from "../../sources/omnesis-notes/index.js";
 
@@ -106,10 +110,43 @@ test.skipIf(!model || !audioPath)(
           };
         },
         ...(ffmpegPath
-          ? { decodeAudio: (bytes: Uint8Array) => decodeToPcm16kMono(bytes, { ffmpegPath }) }
+          ? {
+              decodeAudio: (bytes: Uint8Array, _mime: string, signal?: AbortSignal) =>
+                decodeToPcm16kMono(bytes, { ffmpegPath, signal }),
+            }
           : {}),
       },
     });
+    let uncertain = false;
+    const cleanup = async () => {
+      const failures: unknown[] = [];
+      const attempt = async (operation: () => unknown) => {
+        try {
+          await operation();
+        } catch (error) {
+          uncertain ||= ownedProcessCleanupReceipt(error) !== undefined;
+          failures.push(error);
+        }
+      };
+      await attempt(() => voiceNotes?.dispose());
+      // Closing the transcriber releases accepted voice work even if model
+      // startup failed. Independent cleanup still runs after any failure.
+      await attempt(() => transcriber.dispose());
+      await attempt(() => voiceNotes?.idle());
+      await attempt(() => notes?.flushAll());
+      await attempt(() => notes?.dispose());
+      const receipt = transcriber.cleanupFailure();
+      if (ownedProcessCleanupReceipt(receipt)) {
+        uncertain = true;
+        failures.push(receipt);
+      }
+      if (!uncertain) {
+        await attempt(() => db.close());
+        await attempt(() => rmSync(directory, { recursive: true, force: true }));
+      }
+      if (failures.length)
+        throw new AggregateError(failures, "Native vocabulary fixture cleanup failed");
+    };
     try {
       db.prepare(
         `INSERT INTO documents (id,provider_id,source_id,external_id,title,content,content_hash,metadata,
@@ -207,16 +244,16 @@ test.skipIf(!model || !audioPath)(
       expect(requests).toHaveLength(3);
       expect(requests[2].vocabularyHint).toBeUndefined();
       expect(contexts).toHaveLength(2);
+    } catch (error) {
+      uncertain ||= ownedProcessCleanupReceipt(error) !== undefined;
+      throw error;
     } finally {
-      voiceNotes?.dispose();
-      await voiceNotes?.idle();
-      await notes?.flushAll();
-      notes?.dispose();
-      await transcriber.dispose();
-      db.close();
-      rmSync(directory, { recursive: true, force: true });
-      if (priorExperimental === undefined) delete process.env.OMNESIS_EXPERIMENTAL;
-      else process.env.OMNESIS_EXPERIMENTAL = priorExperimental;
+      try {
+        await cleanup();
+      } finally {
+        if (priorExperimental === undefined) delete process.env.OMNESIS_EXPERIMENTAL;
+        else process.env.OMNESIS_EXPERIMENTAL = priorExperimental;
+      }
     }
   },
   180_000,
