@@ -164,8 +164,55 @@ jobs:
         run: node scripts/ci/npm-ci.mjs --no-audit --no-fund
       - name: Observe original TCP verdict, birth-bound process state and fresh peer challenge after Job closure
         run: node scripts/run-check.mjs unit packages/collector/src/e2e/enrollment-terminal-cohort.windows.test.ts
+  portable-fixture-preflight:
+    if: inputs.scope == 'portable-gateway'
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    env:
+      OMNESIS_UNIT_WORKERS: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: "24"
+          cache: npm
+      - name: Install locked dependencies
+        run: node scripts/ci/npm-ci.mjs --no-audit --no-fund
+      - name: Prepare actual Windows SQLite binding
+        if: runner.os == 'Windows'
+        run: node scripts/ci/build-windows-sqlite.mjs
+      - name: Verify real actor producers and retained fixture inputs
+        run: node scripts/run-check.mjs unit packages/collector/src/e2e/portable-tailnet-actor.test.ts packages/collector/src/e2e/tailnet-machine-env.test.ts packages/collector/src/e2e/tailnet-fixture-cleanup.test.ts
+      - name: Repeat every on-disk token case without replaying migrations per case
+        run: node scripts/ci/token-setup-repeats.mjs
+      - name: Validate all source and test TypeScript projects
+        if: runner.os == 'Linux'
+        run: node scripts/run-check.mjs typecheck && node scripts/run-check.mjs types-tests
+      - name: Lint token fixture and actor ownership changes
+        if: runner.os == 'Linux'
+        env:
+          NODE_OPTIONS: --max-old-space-size=6144
+        run: >-
+          node node_modules/eslint/bin/eslint.js
+          packages/gateway/src/data/repositories/TokenRepository.test.ts
+          packages/collector/src/e2e/portable-tailnet-actor.ts
+          packages/collector/src/e2e/portable-tailnet-actor.test.ts
+          packages/collector/src/e2e/portable-tailnet-harness.ts
+          packages/collector/src/e2e/tailnet-command-processes.ts
+          packages/collector/src/e2e/tailnet-fixture-cleanup.test.ts
+          packages/collector/src/e2e/tailnet-machine-env.ts
+          packages/collector/src/e2e/tailnet-machine-env.test.ts
   portable-gateway:
-    if: ${{ inputs.scope == 'portable-gateway' || inputs.scope == 'legacy-tailnet' }}
+    needs: portable-fixture-preflight
+    if: ${{ !cancelled() && (inputs.scope == 'legacy-tailnet' || inputs.scope == 'portable-gateway' && needs.portable-fixture-preflight.result == 'success') }}
     strategy:
       fail-fast: false
       max-parallel: 1

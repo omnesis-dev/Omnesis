@@ -218,18 +218,9 @@ export function closeDrainingWal(
 }
 
 export function createDatabase(path: string, opts: GatewayDatabaseOptions = {}): Db {
-  const auditStart = performance.now();
-  let auditPrevious = auditStart;
-  const auditPhases: { phase: string; ms: number }[] = [];
-  const auditPhase = (phase: string) => {
-    const now = performance.now();
-    auditPhases.push({ phase, ms: Math.round(now - auditPrevious) });
-    auditPrevious = now;
-  };
   const db = opts.encryptionKey
     ? (openEncryptedSqlite(path, { key: opts.encryptionKey }) as unknown as Db)
     : new Database(path);
-  auditPhase("open");
 
   const isNewDatabase =
     db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' LIMIT 1").get() === undefined;
@@ -252,22 +243,13 @@ export function createDatabase(path: string, opts: GatewayDatabaseOptions = {}):
   // created. Existing installs are deliberately left unchanged: converting
   // mode NONE online requires a full, exclusive VACUUM and can need roughly
   // twice the database's size in free space.
-  auditPhase("pragmas");
   runSchemaSetup(db);
-  auditPhase("schema");
   runDowngradeCompatCheck(db); // Per-source cursor reset on downgrade
-  auditPhase("downgrade");
   runMigrations(db);
-  auditPhase("migrations");
   // Cross-table triggers must follow historical table rebuilds, whose renames
   // would otherwise rewrite their references to temporary migration tables.
   db.transaction(() => installTemporalDocumentEpochs(db))();
   db.transaction(() => installConversationEvidence(db))();
-  auditPhase("triggers");
-  if (process.env.OMNESIS_TEST_TOKEN_SETUP_TIMINGS === "1")
-    process.stdout.write(
-      `[token-setup-phases] ${JSON.stringify({ totalMs: Math.round(performance.now() - auditStart), phases: auditPhases })}\n`,
-    );
 
   return db;
 }
