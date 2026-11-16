@@ -61,6 +61,7 @@ on:
             token-setup,
             legacy-tailnet,
             harness-native,
+            harness-readiness,
             stream-timeout,
             provider-ownership,
           ]
@@ -1640,14 +1641,14 @@ jobs:
           packages/gateway/src/agent/deep-research.e2e.test.ts
 
   harness-native:
-    if: inputs.scope == 'harness-native'
+    if: inputs.scope == 'harness-native' || inputs.scope == 'harness-readiness'
     runs-on: windows-latest
     timeout-minutes: 75
     strategy:
       fail-fast: false
       max-parallel: 1
       matrix:
-        harness: [openclaw, hermes]
+        harness: ${{ fromJSON(inputs.scope == 'harness-readiness' && '["openclaw"]' || '["openclaw","hermes"]') }}
     defaults:
       run:
         shell: pwsh
