@@ -105,6 +105,11 @@ export function mountOAuthAuthorizationRoutes(
     probeCertificate?: CertificateProbe;
     /** Who minted the served certificate and the file an agent on this machine trusts it by. */
     agentCertificateTrust?: () => AgentCertificateTrust;
+    /**
+     * The origins whose publicly trusted certificate is still being issued,
+     * so the portal can say to wait rather than to set up another one.
+     */
+    pendingCertificateOrigins?: () => Promise<ReadonlySet<string>>;
   } = {},
 ): void {
   const authorizationLimiter = oauthAuthorizationRateLimiter();
@@ -388,9 +393,12 @@ export function mountOAuthAuthorizationRoutes(
       options.loopbackBaseUrl,
       options.additionalOAuthIssuerUrls,
     );
-    const served = urls
-      ? await servedByGateway(urls.supportedResources)
-      : new Map<string, ServedResource>();
+    const [served, pending] = await Promise.all([
+      urls ? servedByGateway(urls.supportedResources) : new Map<string, ServedResource>(),
+      urls && options.pendingCertificateOrigins
+        ? options.pendingCertificateOrigins()
+        : new Set<string>(),
+    ]);
     return {
       ...access.overview(),
       oauth: urls
@@ -402,6 +410,7 @@ export function mountOAuthAuthorizationRoutes(
               servedByGateway: served.get(resource)?.servedByGateway ?? false,
               direct: served.get(resource)?.direct ?? false,
               publiclyTrusted: served.get(resource)?.publiclyTrusted ?? false,
+              ...(pending.has(new URL(resource).origin) ? { certificatePending: true } : {}),
             })),
             tlsFingerprintSha256: fingerprint() ?? null,
             certificate: options.agentCertificateTrust?.() ?? null,
