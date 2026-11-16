@@ -23,8 +23,24 @@ import { GatewayAccountLink } from "./gateway-account-link.js";
 import { GatewayUnregistered, readOrCreateGatewayOwnerKey } from "./gateway-key-client.js";
 
 let directory: string, manager: GatewayCloudRelayManagement | undefined;
+/** Requests no test answered; any one fails the test, even when the gateway swallows the error. */
+let unanswered: string[] = [];
+/**
+ * The network a test sees unless it answers a request itself: the relay has no managed Google
+ * browser client, and every other request is refused. No test reaches a real service, whether
+ * through the gateway's `fetch` or the global one.
+ */
+const offline: typeof fetch = (request) => {
+  const url = request instanceof Request ? request.url : String(request);
+  if (url.includes("/_relay/v2/google/browser/config"))
+    return Promise.resolve(new Response(null, { status: 404 }));
+  unanswered.push(url);
+  return Promise.reject(new Error(`No test answers ${url}`));
+};
 beforeEach(async () => {
   directory = await mkdtemp(join(tmpdir(), "relay-management-"));
+  unanswered = [];
+  vi.stubGlobal("fetch", offline);
 });
 afterEach(async () => {
   await manager?.close();
@@ -32,6 +48,7 @@ afterEach(async () => {
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
   await rm(directory, { recursive: true, force: true });
+  expect(unanswered).toEqual([]);
 });
 function fixture(overrides: Partial<CloudRelayManagerOptions> = {}) {
   const close = vi.fn(async () => {}),
@@ -56,11 +73,7 @@ function fixture(overrides: Partial<CloudRelayManagerOptions> = {}) {
   const options = {
     configDir: directory,
     gatewayUrl: () => "https://localhost:12345",
-    fetch: vi.fn<typeof fetch>(async (url, init) =>
-      String(url).includes("/_relay/v2/google/browser/config")
-        ? new Response(null, { status: 404 })
-        : fetch(url, init),
-    ),
+    fetch: vi.fn<typeof fetch>(offline),
     activate: vi.fn(async () => {}),
     directCertificateCoversHostname: () => false,
     directIdentity: () => ({
@@ -499,9 +512,13 @@ test("Google delegate remains independently optional and never bypasses configur
     }),
   ).rejects.toMatchObject({ code: "google-unavailable" });
   // Google configuration is not needed to remove a previously established directory alias.
-  const transport = vi.fn<typeof fetch>(async () => new Response(null, { status: 204 }));
-  vi.stubGlobal("fetch", transport);
+  const transport = vi.mocked(f.options.fetch);
+  transport.mockClear();
+  transport.mockImplementation(async () => new Response(null, { status: 204 }));
   await manager.googleUnlink();
+  expect(transport.mock.calls.map(([url]) => String(url))).toEqual([
+    "https://relay.example.test/_relay/v2/key/google-link",
+  ]);
   expect((await manager.status()).enabled).toBe(true);
 });
 test("disabled restart restores the existing hostname-specific context without renewal, and wrong-host material fails closed", async () => {
@@ -812,24 +829,35 @@ test("portal cannot select the relay and rejection happens before discovery or o
   );
 });
 test("new setup uses distribution default without a request URL and restart preserves the selected installation", async () => {
-  const f = fixture({ env: {} });
+  // The distribution's relay brings the official DNS broker, answered here by one in memory.
+  const broker = await brokerHarness({
+    origin: "https://dns.omnesis.app",
+    relayDomain: "relay.omnesis.app",
+    fallback: offline,
+  });
+  const f = fixture({ env: {}, fetch: broker.fetch });
   manager = await GatewayCloudRelayManagement.open(f.options);
   expect(await manager.status()).toMatchObject({
     serviceConfigured: true,
     config: { relayUrl: "https://relay.omnesis.app" },
   });
-  await manager.configure({ termsAccepted: true });
+  const { gatewayId } = await manager.configure({ termsAccepted: true });
   expect(f.discover).toHaveBeenCalledWith(
     "https://relay.omnesis.app",
-    expect.any(String),
+    gatewayId,
     expect.any(AbortSignal),
     f.options.fetch,
   );
+  const name = `name:${hostedGatewayHostname(gatewayId!, "relay.omnesis.app")}`;
+  expect(broker.calls).toEqual(["/_dns/v2/health", "/_dns/v2/challenge", "/_dns/v2/complete"]);
+  expect(broker.store.values.get(name)).toMatchObject({ gatewayId });
   await manager.close();
   manager = await GatewayCloudRelayManagement.open(f.options);
-  expect((await manager.configure({ termsAccepted: true })).config.relayUrl).toBe(
-    "https://relay.omnesis.app",
-  );
+  const restarted = await manager.configure({ termsAccepted: true });
+  expect(restarted.config.relayUrl).toBe("https://relay.omnesis.app");
+  expect(restarted.gatewayId).toBe(gatewayId);
+  // The restarted gateway claims its name again, which the broker already binds to it.
+  expect([...broker.store.values.keys()].filter((key) => key.startsWith("name:"))).toEqual([name]);
 });
 test("invalid operator service disables configuration with an actionable static failure", async () => {
   const f = fixture({ env: { OMNESIS_CLOUD_RELAY_URL: "invalid" } });
@@ -2238,8 +2266,6 @@ test("CAA drift raises the incident hold, which the owner acknowledges on the ga
     env: {
       OMNESIS_CLOUD_RELAY_URL: "https://relay.example.test",
       OMNESIS_CLOUD_RELAY_CERTIFICATE_MONITOR_ENABLED: "1",
-      // The certificate transparency side of the monitor fails fast on loopback.
-      OMNESIS_CLOUD_RELAY_CERTSPOTTER_URL: "https://127.0.0.1:9/",
     },
     caaLookup: async () => issue,
     onIncidentHold: held,
@@ -2251,6 +2277,11 @@ test("CAA drift raises the incident hold, which the owner acknowledges on the ga
     spkiFingerprintSha256: () => "c".repeat(64),
     expectedCaa: async () => account,
   }));
+  // Certificate transparency, the monitor's other side, lists no issuance.
+  vi.stubGlobal(
+    "fetch",
+    vi.fn<typeof fetch>(async () => Response.json([])),
+  );
   manager = await GatewayCloudRelayManagement.open(f.options);
   const monitor = (manager as unknown as { monitor: { checkCaa(): Promise<void> } }).monitor;
   // Before the gateway publishes anything, there is nothing to drift from.
