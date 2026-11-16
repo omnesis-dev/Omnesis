@@ -66,7 +66,7 @@ block_macos() {
   local tries=0
   until grep -q '^ready$' "${STATE}/dns-sink.out" 2>/dev/null; do
     ((++tries < 50)) || {
-      echo "::error::the DNS sink did not start" >&2
+      echo "::error::the DNS sink never reported that it was listening" >&2
       cat "${STATE}/dns-sink.out" >&2
       return 1
     }
