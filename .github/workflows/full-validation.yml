@@ -546,29 +546,29 @@ jobs:
         env:
           PORTABLE_TAILSCALE_CLI_DIR: ${{ runner.temp }}/fixture-tailnet-cli
         working-directory: scripts/ci/audit-portable-tailnet-control
-        run: go test -mod=mod -p 2 -failfast -count=3 -timeout 6m -run '^TestActorProtocolCreatesRealPeersAndJoins$' -v ./...
+        run: go test -mod=readonly -p 2 -failfast -count=3 -timeout 6m -run '^TestActorProtocolCreatesRealPeersAndJoins$' -v ./...
       - name: Prove real actor, native CLI adapters and encrypted CONNECT traffic
         if: inputs.scope == 'portable-transports'
         working-directory: scripts/ci/audit-portable-tailnet-control
         env:
           PORTABLE_TAILSCALE_CLI_DIR: ${{ runner.temp }}/fixture-tailnet-cli
-        run: go test -mod=mod -p 2 -failfast -count=3 -timeout 6m -run '^(TestActorProtocolCreatesRealPeersAndJoins|TestOfficialCLIThroughPrivateLocalAPI|TestPortableControlAndWireGuard)$' -v ./...
+        run: go test -mod=readonly -p 2 -failfast -count=3 -timeout 6m -run '^(TestActorProtocolCreatesRealPeersAndJoins|TestOfficialCLIThroughPrivateLocalAPI|TestPortableControlAndWireGuard)$' -v ./...
       - name: Prove the official CLI reads the real private LocalAPI
         if: inputs.scope == 'portable-localapi'
         working-directory: scripts/ci/audit-portable-tailnet-control
         env:
           PORTABLE_TAILSCALE_CLI_DIR: ${{ runner.temp }}/fixture-tailnet-cli
-        run: go test -mod=mod -p 2 -failfast -count=3 -timeout 3m -run '^TestOfficialCLIThroughPrivateLocalAPI$' -v ./...
+        run: go test -mod=readonly -p 2 -failfast -count=3 -timeout 3m -run '^TestOfficialCLIThroughPrivateLocalAPI$' -v ./...
       - name: Prove a portable local control plane and real encrypted userspace traffic
         env:
           PORTABLE_TAILSCALE_CLI_DIR: ${{ runner.temp }}/fixture-tailnet-cli
         if: inputs.scope == 'portable-tailnet-control'
         working-directory: scripts/ci/audit-portable-tailnet-control
-        run: go test -mod=mod -p 2 -failfast -count=5 -timeout 6m -v ./...
+        run: go test -mod=readonly -p 2 -failfast -count=5 -timeout 6m -v ./...
       - name: Isolate the actual product actor baseline
         if: inputs.scope == 'product-tailnet-node'
         working-directory: scripts/ci/audit-portable-tailnet-control
-        run: go test -mod=mod -p 2 -failfast -count=5 -timeout 3m -run '^TestActualProductNode' -v ./...
+        run: go test -mod=readonly -p 2 -failfast -count=5 -timeout 3m -run '^TestActualProductNode' -v ./...
       - name: Retain exact diagnostic source and resolved test-only dependency manifests
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
