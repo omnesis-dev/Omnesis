@@ -89,16 +89,19 @@ func TestInteractiveAuthPersistentRestartAndSignOut(t *testing.T) {
  initial, err := first.Up(ctx)
  if err != nil { t.Fatal(err) }
  if initial.Self == nil || len(initial.CertDomains) != 0 || initial.CurrentTailnet == nil || !initial.CurrentTailnet.MagicDNSEnabled { t.Fatalf("wrong capabilities: self=%t certificates=%d tailnet=%t magicDNS=%t", initial.Self != nil, len(initial.CertDomains), initial.CurrentTailnet != nil, initial.CurrentTailnet != nil && initial.CurrentTailnet.MagicDNSEnabled) }
+ t.Log("local sign-in and HTTPS-disabled capabilities accepted")
  closeNode(first)
  second := start()
  restarted, err := second.Up(ctx)
  if err != nil { t.Fatal(err) }
  if restarted.AuthURL != "" || restarted.Self == nil || restarted.Self.PublicKey != initial.Self.PublicKey { t.Fatal("restart lost the approved device identity") }
+ t.Log("persisted restart restored the same approved node key")
  client, err := second.LocalClient()
  if err != nil { t.Fatal(err) }
  if err := client.Logout(ctx); err != nil { t.Fatal(err) }
- prefs, err := client.GetPrefs(ctx)
- if err != nil { t.Fatal(err) }
+ prefs := ipn.NewPrefs()
+ prefs.Hostname = "fixture-auth-gateway"
+ prefs.ControlURL = control.HTTPTestServer.URL
  prefs.WantRunning = true
  if err := client.Start(ctx, ipn.Options{UpdatePrefs:prefs}); err != nil { t.Fatal(err) }
  if err := client.StartLoginInteractive(ctx); err != nil { t.Fatal(err) }
