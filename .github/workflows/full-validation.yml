@@ -54,6 +54,7 @@ on:
             portable-localapi,
             portable-actor,
             portable-transports,
+            portable-actor-node,
             stream-timeout,
             provider-ownership,
           ]
@@ -73,7 +74,7 @@ env:
   TZ: UTC
 jobs:
   owned-e2e-three-os:
-    if: ${{ inputs.scope == 'owned-e2e-three-os' }}
+    if: ${{ inputs.scope == 'owned-e2e-three-os' || inputs.scope == 'portable-actor-node' }}
     strategy:
       fail-fast: false
       max-parallel: 1
@@ -95,7 +96,11 @@ jobs:
       - name: Install locked native process dependencies
         run: node scripts/ci/npm-ci.mjs --no-audit --no-fund
       - name: Verify protocol, markers, actual writer stop and physical process-group closure
+        if: inputs.scope == 'owned-e2e-three-os'
         run: node scripts/run-check.mjs unit packages/collector/src/e2e/e2e-owned-process.test.ts packages/collector/src/e2e/connect-process.test.ts
+      - name: Prove bounded actor frames and actual owned Node producer lifecycle
+        if: inputs.scope == 'portable-actor-node'
+        run: node scripts/run-check.mjs unit packages/collector/src/e2e/portable-tailnet-actor.test.ts
       - name: Validate source and test types
         if: runner.os == 'Linux'
         run: node scripts/run-check.mjs typecheck && node scripts/run-check.mjs types-tests
@@ -103,7 +108,7 @@ jobs:
         if: runner.os == 'Linux'
         env:
           NODE_OPTIONS: --max-old-space-size=6144
-        run: node node_modules/eslint/bin/eslint.js packages/collector/src/e2e/e2e-owned-process.test.ts packages/collector/src/e2e/connect-process.test.ts
+        run: node node_modules/eslint/bin/eslint.js packages/collector/src/e2e/e2e-owned-process.test.ts packages/collector/src/e2e/connect-process.test.ts packages/collector/src/e2e/portable-tailnet-actor.ts packages/collector/src/e2e/portable-tailnet-actor.test.ts
   terminal-enrollment:
     if: ${{ inputs.scope == 'terminal-enrollment' }}
     strategy:
