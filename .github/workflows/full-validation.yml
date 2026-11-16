@@ -1688,6 +1688,7 @@ jobs:
       - name: Install locked Omnesis and pinned OpenClaw dependencies
         run: node scripts/ci/npm-ci.mjs --no-audit --no-fund
       - name: Prepare actual Windows SQLite and vector bindings
+        id: harness_native_bindings
         run: node scripts/ci/build-windows-sqlite.mjs && node scripts/ci/build-windows-usearch.mjs
       - name: Install the exact pinned Hermes source used by Linux
         if: matrix.harness == 'hermes'
@@ -1714,6 +1715,33 @@ jobs:
         run: node --import tsx scripts/ci/windows-coverage-probes.mjs
       - name: Run the unchanged real enrollment, plugin host, tools and uninstall contract without model inference
         run: node scripts/run-check.mjs e2e packages/collector/src/e2e/harness-plugin-conformance.e2e.test.ts
+      - name: Prepare the hash-pinned upstream native OCR engine in the disposable runner
+        id: audit_ocr_engine
+        if: ${{ !cancelled() && inputs.scope == 'harness-readiness' && steps.harness_native_bindings.outcome == 'success' }}
+        run: |
+          $ocrInstaller = Join-Path $env:RUNNER_TEMP 'tesseract-5.5.0.exe'
+          curl.exe --fail --location --silent --show-error --max-time 120 --max-filesize 30000000 https://github.com/tesseract-ocr/tesseract/releases/download/5.5.0/tesseract-ocr-w64-setup-5.5.0.20241111.exe --output $ocrInstaller
+          if ($LASTEXITCODE) { throw 'Pinned OCR engine download failed' }
+          if ((Get-FileHash -Algorithm SHA256 $ocrInstaller).Hash -ne 'f3fc4236425b690c8be756f35793f77394ee004be0a6460a440c754d892f68bc') { throw 'OCR engine hash mismatch' }
+          $ocrRoot = Join-Path $env:RUNNER_TEMP 'native OCR tools'
+          $installer = Start-Process -FilePath $ocrInstaller -ArgumentList "/S /D=$ocrRoot" -Wait -PassThru
+          if ($installer.ExitCode -ne 0) { throw 'Pinned OCR engine setup failed' }
+          if (-not (Test-Path (Join-Path $ocrRoot 'tesseract.exe'))) { throw 'Native OCR binary is absent' }
+          if (-not (Test-Path (Join-Path $ocrRoot 'tessdata\eng.traineddata'))) { throw 'Native OCR English data is absent' }
+          $ocrRoot | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+          "TESSDATA_PREFIX=$(Join-Path $ocrRoot 'tessdata')" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+      - name: Recognize the exact invented image through the production owned-process backend
+        if: ${{ !cancelled() && inputs.scope == 'harness-readiness' && steps.audit_ocr_engine.outcome == 'success' }}
+        run: node --import tsx scripts/ci/audit-ocr-acceptance.mjs
+      - name: Verify native availability cleanup and the existing real engine integration case
+        if: ${{ !cancelled() && inputs.scope == 'harness-readiness' && steps.audit_ocr_engine.outcome == 'success' }}
+        run: node scripts/run-check.mjs unit packages/gateway/src/ocr/tesseract-ocr.test.ts packages/gateway/src/ocr/ocr-backends.integration.test.ts
+
+      - name: Verify the default Windows backlog benchmark using the already-built native bindings
+        if: ${{ !cancelled() && inputs.scope == 'harness-readiness' && steps.harness_native_bindings.outcome == 'success' }}
+        env:
+          OMNESIS_INDEXER_BENCH: "1"
+        run: node scripts/run-check.mjs unit packages/gateway/src/indexer/indexer.throughput.test.ts
       - name: Check whether the existing real relay client-limit fixtures are actually Linux-specific
         if: ${{ !cancelled() && inputs.scope == 'harness-readiness' }}
         run: node scripts/run-check.mjs unit packages/cloud-relay/src/relay-dos-limits.test.ts
@@ -1727,7 +1755,7 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 30
+    timeout-minutes: 45
     env:
       OMNESIS_TEST_PORTABLE_TAILNET: "1"
       GOMAXPROCS: "2"
@@ -1763,6 +1791,11 @@ jobs:
         env:
           OMNESIS_TAILNET_TOOLS_DIR: ${{ runner.temp }}/portable-tailnet-tools
         run: node scripts/ci/portable-transports-proof.mjs
+      - name: Verify the same default backlog benchmark on Linux
+        if: ${{ !cancelled() && inputs.scope == 'harness-readiness' && runner.os == 'Linux' }}
+        env:
+          OMNESIS_INDEXER_BENCH: "1"
+        run: node scripts/run-check.mjs unit packages/gateway/src/indexer/indexer.throughput.test.ts
       - name: Validate every source and test TypeScript project
         if: ${{ !cancelled() && runner.os == 'Linux' }}
         run: node scripts/run-check.mjs typecheck && node scripts/run-check.mjs types-tests
