@@ -42,14 +42,14 @@ function serving(
   });
 }
 
-function service(answers: Record<string, string | Error>, port = 7600, trustProxy = true) {
+function service(answers: Record<string, string | Error>, port = 7600) {
   const run = vi.fn<RunCli>(async (_candidate, args) => {
     const answer = answers[args.join(" ")];
     if (answer === undefined) throw Object.assign(new Error("unknown command"), { stderr: "" });
     if (answer instanceof Error) throw answer;
     return answer;
   });
-  return { host: new HostTailscaleService(port, [cli], run, () => trustProxy), run };
+  return { host: new HostTailscaleService(port, [cli], run), run };
 }
 
 describe("HostTailscaleService", () => {
@@ -123,31 +123,6 @@ describe("HostTailscaleService", () => {
     expect(run.mock.calls.map(([, args]) => args.join(" "))).toContain(
       `funnel --bg ${gatewayTarget(7600)}`,
     );
-  });
-
-  test("a public address waits until the gateway trusts the proxy in front of it, running nothing", async () => {
-    const { host, run } = service(
-      { "status --json": running, [`funnel --bg ${gatewayTarget(7600)}`]: "" },
-      7600,
-      false,
-    );
-    expect(await host.publish(true)).toEqual({
-      ok: false,
-      reason: expect.stringContaining("OMNESIS_TRUST_PROXY=true"),
-      command: `tailscale funnel --bg ${gatewayTarget(7600)}`,
-    });
-    expect(run).not.toHaveBeenCalled();
-    // The tailnet alone needs no proxy trust.
-    const tailnetOnly = service(
-      {
-        "status --json": running,
-        "serve status --json": "{}",
-        [`serve --bg ${gatewayTarget(7600)}`]: "",
-      },
-      7600,
-      false,
-    );
-    expect((await tailnetOnly.host.publish(false)).ok).toBe(true);
   });
 
   test("Funnel's enable link, printed on stdout, is recognised", async () => {

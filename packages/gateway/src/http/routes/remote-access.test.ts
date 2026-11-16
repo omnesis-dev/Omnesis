@@ -119,10 +119,7 @@ describe("remote access routes", () => {
         configured: "https://omnesis.example.org",
         restartNeeded: true,
       },
-      trustProxy: false,
     });
-    vi.stubEnv("OMNESIS_TRUST_PROXY", "true");
-    expect((await (await send("GET", "/admin/remote-access")).json()).trustProxy).toBe(true);
     expect((await send("GET", "/admin/remote-access/host-tailscale")).status).toBe(404);
     expect(
       (await send("POST", "/admin/remote-access/host-tailscale/publish", { public: false })).status,
