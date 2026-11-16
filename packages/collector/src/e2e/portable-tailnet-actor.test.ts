@@ -79,7 +79,11 @@ test.each([Buffer.from("incomplete output"), Buffer.from([0xe9])])(
   },
 );
 
-async function actorFixture(bootstrap: unknown, marker?: Error): Promise<PortableTailnetActor> {
+async function actorFixture(
+  bootstrap: unknown,
+  marker?: Error,
+  invalidTrailer = false,
+): Promise<PortableTailnetActor> {
   const root = await mkdtemp(join(tmpdir(), "omnesis-tailnet actor literal-"));
   roots.push(root);
   const program = join(root, "actor.mjs");
@@ -88,11 +92,12 @@ async function actorFixture(bootstrap: unknown, marker?: Error): Promise<Portabl
     `
 import { createInterface } from "node:readline";
 const prefix = ${JSON.stringify(PREFIX)};
+const trailer = ${JSON.stringify(`${PREFIX}{invalid}\n`)};
 process.stdout.write(prefix + JSON.stringify(${JSON.stringify({ id: 0, value: bootstrap })}) + "\\n");
 createInterface({ input: process.stdin }).on("line", line => {
   const request = JSON.parse(line);
   const value = request.op === "stop" ? true : { name: request.name };
-  process.stdout.write(prefix + JSON.stringify({ id: request.id, value }) + "\\n", () => {
+  process.stdout.write(prefix + JSON.stringify({ id: request.id, value }) + "\\n" + (request.op === "stop" && ${invalidTrailer} ? trailer : ""), () => {
     if (request.op === "stop") process.exit(0);
   });
 });
@@ -152,6 +157,13 @@ test.each([undefined, new Error("invented fixture join receipt")])(
 test("bootstrap cannot point the actor owner outside loopback", async () => {
   const actor = await actorFixture({ controlUrl: "https://fixture.example.test" });
   await expect(actor.ready).rejects.toThrow("escaped loopback");
+  await expect(actor.stop()).rejects.toThrow();
+  expect(owners[0]!.joinedConfirmed).toBe(true);
+}, 30_000);
+
+test("a successful reply and exit zero cannot erase malformed trailing output", async () => {
+  const actor = await actorFixture({ controlUrl: "http://127.0.0.1:32145" }, undefined, true);
+  await actor.ready;
   await expect(actor.stop()).rejects.toThrow();
   expect(owners[0]!.joinedConfirmed).toBe(true);
 }, 30_000);

@@ -86,6 +86,9 @@ export class PortableTailnetActor {
   private readonly cleanupErrors: unknown[] = [];
   private nextId = 1;
   private ended = false;
+  private failurePresent = false;
+  private failure: unknown;
+  private cancellationStarted = false;
   private output = "";
   private stopping?: Promise<void>;
   readonly ready: Promise<string>;
@@ -117,6 +120,7 @@ export class PortableTailnetActor {
       },
     );
     child.stdout!.on("data", (bytes: Buffer) => {
+      if (this.failurePresent) return;
       try {
         frames.write(bytes);
       } catch (error) {
@@ -144,7 +148,9 @@ export class PortableTailnetActor {
       } catch (error) {
         this.fail(error);
       }
-      this.fail(new Error(`Tailnet fixture actor closed (${code})`));
+      const error = new Error(`Tailnet fixture actor closed (${code})`);
+      if (code !== 0) this.fail(error);
+      else this.rejectPending(error);
       this.closed.resolve(code);
     });
     void this.owner.ready.catch((error) => this.fail(error));
@@ -154,7 +160,10 @@ export class PortableTailnetActor {
       60_000,
       "Tailnet fixture actor did not prepare",
     );
-    void this.ready.catch(() => this.cancel());
+    void this.ready.catch((error) => {
+      this.fail(error);
+      this.cancel();
+    });
   }
 
   logs(): string {
@@ -216,11 +225,21 @@ export class PortableTailnetActor {
 
   private fail(error: unknown): void {
     if (ownedProcessCleanupReceipt(error) !== undefined) this.cleanupErrors.push(error);
+    if (!this.failurePresent) {
+      this.failurePresent = true;
+      this.failure = error;
+    }
+    this.rejectPending(error);
+  }
+
+  private rejectPending(error: unknown): void {
     this.bootstrap.reject(error);
     for (const pending of this.pending.values()) pending.reject(error);
   }
 
   private cancel(): void {
+    if (this.cancellationStarted) return;
+    this.cancellationStarted = true;
     void this.owner.stop().catch((error) => {
       this.cleanupErrors.push(error);
       this.fail(error);
@@ -263,6 +282,7 @@ export class PortableTailnetActor {
         { cleanupFailure: marked ? marked.failure : this.cleanupErrors[0] },
       );
     }
+    if (this.failurePresent) throw this.failure;
     if (operationFailed) throw operationError;
   }
 }
