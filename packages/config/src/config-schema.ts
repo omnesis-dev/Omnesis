@@ -697,6 +697,29 @@ const indexer = z
       .strict()
       .optional(),
     /**
+     * Pace of a keyword-index rebuild, which runs in the background when a
+     * release changes how text is cut into words. The indexer copies chunks
+     * into the new index in batches, pausing between them and pausing longer
+     * while a user request is in flight; search keeps using the old index
+     * until the new one is complete.
+     */
+    lexicalRebuild: z
+      .object({
+        batchSize: z
+          .number()
+          .int()
+          .positive()
+          .describe("Chunks copied into the new keyword index per batch. Default 1000.")
+          .optional(),
+        pause: duration
+          .describe(
+            "Pause between batches of a keyword-index rebuild. Default 50ms; at least 1s while a user request is in flight.",
+          )
+          .optional(),
+      })
+      .strict()
+      .optional(),
+    /**
      * Document chunker tunables. The chunker splits long content into
      * embedding-sized windows; these knobs balance recall vs. embedding
      * cost. Defaults match `DocumentChunker`'s built-in fallbacks

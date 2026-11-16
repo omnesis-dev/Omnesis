@@ -1226,6 +1226,13 @@ export class SyntheticE2EHarness {
           whileStopped?: () => void | Promise<void>;
           gatewayMode?: SyntheticGatewayMode;
           labFeatures?: Partial<Record<"brain" | "tasks" | "watches", boolean>>;
+          /** Replaces the constructor's `extraGatewayEnv` for this and later starts. */
+          extraGatewayEnv?: SyntheticHarnessOptions["extraGatewayEnv"];
+          /**
+           * `"SIGKILL"` stops the gateway the way a crash or the kernel's OOM
+           * killer does, with no chance to clean up. Default: an orderly stop.
+           */
+          signal?: "SIGTERM" | "SIGKILL";
         }
       | (() => void | Promise<void>) = {},
   ): Promise<void> {
@@ -1243,13 +1250,14 @@ export class SyntheticE2EHarness {
     // gateway directly over HTTP after the restart, so the sync loop is not
     // needed again.
     for (const device of this.devices) device.engine.stopSyncLoop();
-    await this.killGatewaySubprocess();
+    await this.killGatewaySubprocess(options.signal);
     // Wait until the old gateway is truly unreachable before rebinding the port.
     // Otherwise startGateway's readiness probe can latch onto an instance that is
     // still answering mid-shutdown, and the caller would measure the OLD process
     // (the new one may even fail to bind the port behind it).
     await this.waitForGatewayDown();
     await options.whileStopped?.();
+    if (options.extraGatewayEnv) this.extraGatewayEnv = options.extraGatewayEnv;
     this.gatewayMode = gatewayMode;
     await this.startGateway();
     for (const [id, enabled] of Object.entries(options.labFeatures ?? {}))
@@ -1284,6 +1292,11 @@ export class SyntheticE2EHarness {
   }
 
   /** The raw response, for callers asserting on a non-2xx status or body. */
+  /** The spawned gateway's `index.db`, for a test that inspects it while the gateway is stopped. */
+  get indexDbPath(): string {
+    return join(this.configDir, "index.db");
+  }
+
   async gatewayFetch(path: string, init?: RequestInit): Promise<Response> {
     return gatewayFetch(this.endpoint(), path, init);
   }
@@ -1903,7 +1916,7 @@ export class SyntheticE2EHarness {
     );
   }
 
-  private async killGatewaySubprocess(): Promise<void> {
+  private async killGatewaySubprocess(signal: "SIGTERM" | "SIGKILL" = "SIGTERM"): Promise<void> {
     const held = this.gatewayCleanupUnconfirmed;
     const heldFailure = this.gatewayCleanupFailure;
     const proc = this.gatewayProcess;
@@ -1912,7 +1925,7 @@ export class SyntheticE2EHarness {
       return;
     }
     try {
-      await killSubprocessGroup(proc);
+      await killSubprocessGroup(proc, { initialSignal: signal });
     } catch (error) {
       if (held)
         throw Object.assign(

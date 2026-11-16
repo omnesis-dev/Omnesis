@@ -60,6 +60,7 @@ describe("indexer worker model health", () => {
       minFreeDiskMb: 0,
       embedderEncoding: { kind: "none" },
       indexerCatchUp: { enabled: false, maxPageSize: 1000, minSleepMs: 0 },
+      lexicalRebuild: { batchSize: 1000, pauseMs: 50 },
       beginModelCall: health.callFactory("embedder"),
     } satisfies IndexerWorkerOptions;
     const proxy = new IndexerWorkerProxy(options);

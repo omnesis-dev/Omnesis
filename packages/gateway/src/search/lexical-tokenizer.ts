@@ -5,17 +5,18 @@
  * Tokenization for the in-memory lexical index, done by FTS5 itself.
  *
  * Query words and changed chunks are run through scratch FTS5 tables in the
- * connection's TEMP schema, created with the exact `tokenize=` spec of
- * `chunks_fts`, and read back through `fts5vocab`. That guarantees the terms
- * match the indexed ones — Porter stemming, diacritic folding and all — without
- * reimplementing any of it. TEMP tables are private to the connection and work
- * on read-only handles and inside an open read transaction.
+ * connection's TEMP schema, created with the exact `tokenize=` spec of the
+ * index being searched, and read back through `fts5vocab`. That guarantees the
+ * terms match the indexed ones — Porter stemming, diacritic folding and all —
+ * without reimplementing any of it. Text a lexical version rewrites (see
+ * lexical-versions.ts) arrives here already rewritten. TEMP tables are private
+ * to the connection and work on read-only handles and inside an open read
+ * transaction.
  */
 
 import type Database from "better-sqlite3";
 type Db = Database.Database;
 
-const DEFAULT_TOKENIZE = "porter unicode61 remove_diacritics 2";
 /** Column weights of `bm25(chunks_fts, 1.0, 2.0)`: content, title. */
 export const COLUMN_WEIGHTS: Readonly<Record<string, number>> = { content: 1, title: 2 };
 
@@ -42,18 +43,23 @@ export interface Fts5Tokenizer {
    * the stem `re`. Empty when the word holds no token characters.
    */
   fold(word: string): string;
-  /** Chunk rows tokenized as `chunks_fts` indexes them. */
+  /** Chunk rows tokenized as the index indexes them, after any rewrite. */
   chunks(rows: readonly ChunkRow[]): TokenizedChunk[];
 }
 
-const tokenizers = new WeakMap<Db, Fts5Tokenizer>();
+const tokenizers = new WeakMap<Db, Map<string, Fts5Tokenizer>>();
 
-/** The tokenizer bound to `db`, created on first use. */
-export function fts5Tokenizer(db: Db): Fts5Tokenizer {
-  let tokenizer = tokenizers.get(db);
+/** The tokenizer for `tokenize` (an FTS5 `tokenize=` spec) bound to `db`, created on first use. */
+export function fts5Tokenizer(db: Db, tokenize: string): Fts5Tokenizer {
+  let byTokenize = tokenizers.get(db);
+  if (!byTokenize) {
+    byTokenize = new Map();
+    tokenizers.set(db, byTokenize);
+  }
+  let tokenizer = byTokenize.get(tokenize);
   if (!tokenizer) {
-    tokenizer = createTokenizer(db);
-    tokenizers.set(db, tokenizer);
+    tokenizer = createTokenizer(db, tokenize, byTokenize.size);
+    byTokenize.set(tokenize, tokenizer);
   }
   return tokenizer;
 }
@@ -70,7 +76,7 @@ export function foldPrefix(word: string): string {
     .toLowerCase();
 }
 
-function createTokenizer(db: Db): Fts5Tokenizer {
+function createTokenizer(db: Db, tokenize: string, id: number): Fts5Tokenizer {
   // Chunk text staged in TEMP tables must not spill to disk unencrypted. Search
   // handles set this when they open; SQLite refuses the change inside a
   // transaction, and making it drops existing TEMP objects, so only a handle
@@ -78,40 +84,41 @@ function createTokenizer(db: Db): Fts5Tokenizer {
   if (!db.inTransaction && db.pragma("temp_store", { simple: true }) !== 2) {
     db.pragma("temp_store = MEMORY");
   }
-  const tokenize = chunksFtsTokenizeSpec(db);
   const spec = tokenize.replace(/'/g, "''");
   // The same tokenizer without its stemming wrapper, for prefix folding.
   const foldSpec = tokenize.replace(/^\s*porter\s+/i, "").replace(/'/g, "''");
   db.exec(`
-    CREATE VIRTUAL TABLE IF NOT EXISTS temp.lexical_words USING fts5(w, tokenize='${spec}');
-    CREATE VIRTUAL TABLE IF NOT EXISTS temp.lexical_words_tokens
-      USING fts5vocab(temp, lexical_words, 'instance');
-    CREATE VIRTUAL TABLE IF NOT EXISTS temp.lexical_chunks
+    CREATE VIRTUAL TABLE IF NOT EXISTS temp.lexical_words${id} USING fts5(w, tokenize='${spec}');
+    CREATE VIRTUAL TABLE IF NOT EXISTS temp.lexical_words${id}_tokens
+      USING fts5vocab(temp, lexical_words${id}, 'instance');
+    CREATE VIRTUAL TABLE IF NOT EXISTS temp.lexical_chunks${id}
       USING fts5(content, title, tokenize='${spec}');
-    CREATE VIRTUAL TABLE IF NOT EXISTS temp.lexical_chunks_tokens
-      USING fts5vocab(temp, lexical_chunks, 'instance');
-    CREATE VIRTUAL TABLE IF NOT EXISTS temp.lexical_fold USING fts5(w, tokenize='${foldSpec}');
-    CREATE VIRTUAL TABLE IF NOT EXISTS temp.lexical_fold_tokens
-      USING fts5vocab(temp, lexical_fold, 'instance');
+    CREATE VIRTUAL TABLE IF NOT EXISTS temp.lexical_chunks${id}_tokens
+      USING fts5vocab(temp, lexical_chunks${id}, 'instance');
+    CREATE VIRTUAL TABLE IF NOT EXISTS temp.lexical_fold${id} USING fts5(w, tokenize='${foldSpec}');
+    CREATE VIRTUAL TABLE IF NOT EXISTS temp.lexical_fold${id}_tokens
+      USING fts5vocab(temp, lexical_fold${id}, 'instance');
   `);
-  const clearFold = db.prepare("DELETE FROM temp.lexical_fold");
-  const insertFold = db.prepare("INSERT INTO temp.lexical_fold(rowid, w) VALUES (1, ?)");
+  const clearFold = db.prepare(`DELETE FROM temp.lexical_fold${id}`);
+  const insertFold = db.prepare(`INSERT INTO temp.lexical_fold${id}(rowid, w) VALUES (1, ?)`);
   const readFold = db
-    .prepare<[], [string]>("SELECT term FROM temp.lexical_fold_tokens ORDER BY offset")
+    .prepare<[], [string]>(`SELECT term FROM temp.lexical_fold${id}_tokens ORDER BY offset`)
     .raw();
-  const clearWords = db.prepare("DELETE FROM temp.lexical_words");
-  const insertWord = db.prepare("INSERT INTO temp.lexical_words(rowid, w) VALUES (?, ?)");
+  const clearWords = db.prepare(`DELETE FROM temp.lexical_words${id}`);
+  const insertWord = db.prepare(`INSERT INTO temp.lexical_words${id}(rowid, w) VALUES (?, ?)`);
   const readWords = db
     .prepare<[], [string, number]>(
-      "SELECT term, doc FROM temp.lexical_words_tokens ORDER BY doc, offset",
+      `SELECT term, doc FROM temp.lexical_words${id}_tokens ORDER BY doc, offset`,
     )
     .raw();
-  const clearChunks = db.prepare("DELETE FROM temp.lexical_chunks");
+  const clearChunks = db.prepare(`DELETE FROM temp.lexical_chunks${id}`);
   const insertChunk = db.prepare(
-    "INSERT INTO temp.lexical_chunks(rowid, content, title) VALUES (?, ?, ?)",
+    `INSERT INTO temp.lexical_chunks${id}(rowid, content, title) VALUES (?, ?, ?)`,
   );
   const readChunks = db
-    .prepare<[], [string, number, string]>("SELECT term, doc, col FROM temp.lexical_chunks_tokens")
+    .prepare<[], [string, number, string]>(
+      `SELECT term, doc, col FROM temp.lexical_chunks${id}_tokens`,
+    )
     .raw();
   return {
     fold(word) {
@@ -147,13 +154,4 @@ function createTokenizer(db: Db): Fts5Tokenizer {
       return [...byRowid.values()];
     },
   };
-}
-
-/** The `tokenize=` argument `chunks_fts` was created with. */
-function chunksFtsTokenizeSpec(db: Db): string {
-  const ddl = db
-    .prepare<[], { sql: string }>("SELECT sql FROM sqlite_master WHERE name = 'chunks_fts'")
-    .get()?.sql;
-  const match = ddl?.match(/tokenize\s*=\s*'((?:[^']|'')*)'/i);
-  return match ? match[1].replace(/''/g, "'") : DEFAULT_TOKENIZE;
 }

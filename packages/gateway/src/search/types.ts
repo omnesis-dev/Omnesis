@@ -253,6 +253,12 @@ export interface SearchStageReport {
   sqlMs?: number;
   /** Engine that ranked: "hnsw" or bounded "exact" for the vector stage; "memory" or "fts5" for BM25. */
   engine?: string;
+  /**
+   * BM25 stage: the lexical version (see lexical-versions.ts) of the index that
+   * ranked, and so of the rules the query was cut by. Absent when no keyword
+   * index could answer.
+   */
+  lexicalVersion?: number;
   /** Tokens dropped from BM25 MATCH for exceeding the common-token threshold. */
   droppedTokens?: string[];
   /** Temporal lane: documents the time index placed inside the windows. */

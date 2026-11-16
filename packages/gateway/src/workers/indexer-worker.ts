@@ -60,6 +60,11 @@ import {
 import { GraphKeeper, planGraphAdmission } from "../indexer/graph-keeper.js";
 import { memoryHeadroom } from "../memory-budget.js";
 import { openEncryptedSqlite } from "../sqlite-encryption.js";
+import {
+  lexicalRebuildStep,
+  readLexicalIndexState,
+  switchLexicalIndex,
+} from "../indexer/lexical-index-store.js";
 import { computeRatePerSec, type IndexRateSample } from "./indexer-rate.js";
 import { shouldRunIndexCycle } from "./indexer-disk-guard.js";
 import { applyPendingPurges } from "./pending-source-purges.js";
@@ -230,6 +235,9 @@ let state: {
   cycleTimer: ReturnType<typeof setTimeout> | null;
   reconcileTimer: ReturnType<typeof setTimeout> | null;
   reindexMissingTimer: ReturnType<typeof setTimeout> | null;
+  /** Next tick of the keyword-index rebuild (see {@link runLexicalRebuildTick}). */
+  lexicalTimer: ReturnType<typeof setTimeout> | null;
+  lexicalRebuild: { batchSize: number; pauseMs: number };
   heartbeatInterval: ReturnType<typeof setInterval>;
   /**
    * Single in-flight gate shared by all three indexer jobs (cycle,
@@ -835,6 +843,8 @@ async function handleInit(init: IndexerInit): Promise<void> {
       cycleTimer: null,
       reconcileTimer: null,
       reindexMissingTimer: null,
+      lexicalTimer: null,
+      lexicalRebuild: init.lexicalRebuild,
       heartbeatInterval,
       inFlightWork: null,
       pendingSourcePurges: new Set(listPendingSourceIndexPurges(indexDb)),
@@ -1115,6 +1125,7 @@ async function handleInit(init: IndexerInit): Promise<void> {
     armCycle();
     armReconcile();
     armReindexMissing();
+    armLexicalRebuild(0);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     startupIndexResources = null;
@@ -1329,6 +1340,102 @@ async function runReindexMissingCycle(
   });
   drainPendingWake();
   return outcome;
+}
+
+/** Pause between rebuild ticks while a user request is in flight. */
+const LEXICAL_BUSY_PAUSE_MS = 1_000;
+/** Check for rebuild work this often when there is none. */
+const LEXICAL_IDLE_MS = 60_000;
+/** Retry this soon when another indexer job held the worker, or it was quiesced. */
+const LEXICAL_RETRY_MS = 1_000;
+
+function armLexicalRebuild(delayMs: number): void {
+  if (!state || state.shuttingDown) return;
+  if (state.lexicalTimer) clearTimeout(state.lexicalTimer);
+  state.lexicalTimer = setTimeout(() => {
+    if (state) state.lexicalTimer = null;
+    void runLexicalRebuildTick().then(armLexicalRebuild, (err: unknown) => {
+      log(
+        "error",
+        "indexer-worker",
+        `keyword-index rebuild step failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      armLexicalRebuild(LEXICAL_IDLE_MS);
+    });
+  }, delayMs);
+}
+
+/**
+ * One tick of the keyword-index rebuild (see indexer/lexical-index-store.ts):
+ * copy one batch, as an exclusive indexer job so it never interleaves with a
+ * cycle's writes, and return the delay before the next tick. Steps that copy
+ * nothing (dropping a replaced or stale index, starting a build) run on in the
+ * same tick. A user request in flight stretches the pause, so the rebuild
+ * yields to foreground work. A build that has copied every chunk is announced
+ * to the main thread, which switches it in once its in-memory index of the new
+ * version is ready.
+ */
+async function runLexicalRebuildTick(): Promise<number> {
+  if (!state || state.shuttingDown) return LEXICAL_IDLE_MS;
+  // Quiesced for an embedder swap, or short of disk: try again later.
+  if (state.paused || !diskOkForCycle()) return LEXICAL_RETRY_MS * 5;
+  const { batchSize, pauseMs } = state.lexicalRebuild;
+  const outcome = await runExclusive((): Promise<"working" | "idle"> => {
+    try {
+      const db = state!.indexDb;
+      for (;;) {
+        const step = lexicalRebuildStep(db, { batchSize });
+        if (step === "backfilled-batch" || step === "retired-batch") {
+          return Promise.resolve("working");
+        }
+        // "idle" is the answer of every periodic check while there is no rebuild.
+        if (step !== "idle") log("info", "indexer-worker", `keyword-index rebuild: ${step}`);
+        if (step === "idle" || step === "backfill-complete") {
+          const { build } = readLexicalIndexState(db);
+          if (build?.backfilledAt) post({ type: "lexicalBackfilled", version: build.version });
+          return Promise.resolve("idle");
+        }
+      }
+    } finally {
+      drainPendingWake();
+    }
+  });
+  if (outcome === "skipped") return LEXICAL_RETRY_MS;
+  if (outcome === "idle") return LEXICAL_IDLE_MS;
+  return userActive ? Math.max(pauseMs, LEXICAL_BUSY_PAUSE_MS) : pauseMs;
+}
+
+/** Switch the backfilled keyword-index build in, between the worker's other jobs. */
+async function handleLexicalSwitch(id: number, version: number): Promise<void> {
+  for (;;) {
+    if (!state || state.shuttingDown) {
+      post({ type: "lexicalSwitchResult", id, switched: false, error: "indexer is shutting down" });
+      return;
+    }
+    let outcome: boolean | "skipped";
+    try {
+      outcome = await runExclusive(() =>
+        Promise.resolve(switchLexicalIndex(state!.indexDb, version)),
+      );
+    } catch (err) {
+      const error = err instanceof Error ? err.message : String(err);
+      log("error", "indexer-worker", `keyword-index switch to version ${version} failed: ${error}`);
+      post({ type: "lexicalSwitchResult", id, switched: false, error });
+      return;
+    }
+    if (outcome === "skipped") {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      continue;
+    }
+    drainPendingWake();
+    if (outcome) {
+      log("info", "indexer-worker", `keyword index switched to version ${version}`);
+      // The replaced index is dropped by the next rebuild tick.
+      armLexicalRebuild(0);
+    }
+    post({ type: "lexicalSwitchResult", id, switched: outcome });
+    return;
+  }
 }
 
 function handleWake(): void {
@@ -1576,6 +1683,7 @@ async function handleShutdown(): Promise<void> {
   if (state.cycleTimer) clearTimeout(state.cycleTimer);
   if (state.reconcileTimer) clearTimeout(state.reconcileTimer);
   if (state.reindexMissingTimer) clearTimeout(state.reindexMissingTimer);
+  if (state.lexicalTimer) clearTimeout(state.lexicalTimer);
   clearInterval(state.heartbeatInterval);
   state.indexer.stop();
 
@@ -1763,6 +1871,9 @@ parentPort.on("message", (msg: MainToIndexer) => {
       break;
     case "flushSave":
       void handleFlushSave(msg.id);
+      break;
+    case "lexicalSwitch":
+      void handleLexicalSwitch(msg.id, msg.version);
       break;
     case "shutdown":
       void handleShutdown();
