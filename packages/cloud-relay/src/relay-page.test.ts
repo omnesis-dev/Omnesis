@@ -72,7 +72,7 @@ test("every page a person sees carries the mark before the name, under an unchan
     expect(style).toContain("main.wide{max-width:calc(768px + 2rem)}");
     // A line between two items of a list, and none before the first or after the last.
     expect(style).toContain(
-      ".gateway+.gateway,.credential+.credential{border-top:1px solid var(--line)}",
+      ".gateway-item+.gateway-item,.confirm+.gateway-item,.credential+.credential{border-top:1px solid var(--line)}",
     );
     expect(style).not.toMatch(/\.list\{|border-bottom/);
     expect(style).toContain(".brand-mark path{fill:var(--mark)}");

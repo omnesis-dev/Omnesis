@@ -71,6 +71,13 @@ export class AccountServices {
       deleteAccount(account: string, version: number): void;
       /** Takes one gateway out of its account, with its registration and its live tunnel. */
       deleteGateway(owner: string): void;
+      /**
+       * The same, done from the account page rather than by the gateway, which the relay then
+       * tells why it no longer has it the next time it proves its keys.
+       */
+      removeGateway(owner: string): void;
+      /** Whether the relay holds a live tunnel for this gateway now. */
+      gatewayOnline(owner: string): boolean;
       authenticateOwner(
         req: IncomingMessage,
       ): Promise<AccountBrowserOwner & { sessionExpiresAt: number }>;
@@ -94,6 +101,7 @@ export class AccountServices {
       accounts: linkedOwners,
       binding: options.gatewayBinding,
       name: (owner) => options.accounts.gatewayDisplayName(owner),
+      online: options.gatewayOnline,
     });
     const migrate = (account: string, identities: readonly string[]) => {
       for (const identity of identities)
@@ -308,6 +316,20 @@ export class AccountServices {
       authentication: this.authentication,
       passkeys: this.passkeys,
       choices: (account) => directory.choices(account),
+      unlinkGateway: (account, gatewayId) => {
+        options.assertCurrent();
+        const owner = linkedOwners(account).find((candidate) => {
+          try {
+            return options.gatewayBinding(candidate)?.gatewayId.toLowerCase() === gatewayId;
+          } catch (error) {
+            // A registration revoked on its own is not listed, so it can't be the one meant.
+            if (error instanceof RelayError && error.status === 403) return false;
+            throw error;
+          }
+        });
+        if (!owner) throw new RelayError(404, "This gateway is not in your Omnesis account");
+        options.removeGateway(owner);
+      },
       deleteAccount: options.deleteAccount,
       googleAvailable: Boolean(options.google),
       admission: options.admission,

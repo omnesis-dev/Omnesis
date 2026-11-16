@@ -160,6 +160,7 @@ export function createCloudRelay(options: CloudRelayOptions): {
     accounts: gatewayAccounts,
     binding: gatewayBinding,
     name: (owner) => options.accounts.gatewayDisplayName(owner),
+    online: (owner) => broker.online(owner),
   });
   const linkedIdentity = (identity: string) =>
     gatewayAccounts(identity).some((owner) => owner !== identity);
@@ -213,6 +214,12 @@ export function createCloudRelay(options: CloudRelayOptions): {
           disconnect(owner);
           log.info("A gateway left its Omnesis account; its registration is removed");
         },
+        removeGateway: (owner) => {
+          options.accounts.deleteGateway(owner, { removedFromAccount: true });
+          disconnect(owner);
+          log.info("A gateway was unlinked on its account page; its registration is removed");
+        },
+        gatewayOnline: (owner) => broker.online(owner),
         assertCurrent: () => {
           if (options.recoveryPolicy) {
             try {
@@ -691,11 +698,13 @@ export function createCloudRelay(options: CloudRelayOptions): {
       throw new RelayError(404, "Use the gateway's end-to-end TLS origin");
     })().catch((error: unknown) => {
       if (res.destroyed || res.writableEnded) return;
+      const code = error instanceof RelayError ? error.code : undefined;
       if (!res.headersSent)
         res.writeHead(error instanceof RelayError ? error.status : 500, {
           "cache-control": "no-store",
+          ...(code ? { "content-type": "application/json" } : {}),
         });
-      res.end();
+      res.end(code ? JSON.stringify({ error: code }) : undefined);
     });
   });
 

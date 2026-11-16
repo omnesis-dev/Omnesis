@@ -166,9 +166,14 @@ test("deleting an account removes every row about it and its gateways, in every 
     // one that remembers deleted passkeys.
     const about = [account, digest, legacy, passkey, first.owner, second.owner, first.gatewayId];
     const forgotten = "omnesis_deleted_passkeys";
+    // Gateways unlinked on the account page, which deleting the account unlinks none of.
+    const unlinked = "relay_removed_gateways";
     expect(before.get(forgotten)).toEqual([]);
+    expect(before.get(unlinked)).toEqual([]);
     expect(
-      [...before.keys()].filter((table) => !table.startsWith("sqlite_") && table !== forgotten),
+      [...before.keys()].filter(
+        (table) => !table.startsWith("sqlite_") && table !== forgotten && table !== unlinked,
+      ),
     ).toEqual([...new Set(about.flatMap((value) => named(before, value)))].sort());
 
     // A session from before a sign-in method changed deletes nothing.
@@ -187,6 +192,7 @@ test("deleting an account removes every row about it and its gateways, in every 
         credential_digest: createHash("sha256").update(passkey).digest("hex"),
       }),
     ]);
+    expect(after.get(unlinked)).toEqual([]);
     // A hosted name keeps a digest in place of its gateway's id: it routes nowhere, nobody else
     // can be granted it, and the same gateway may ask for its address again.
     expect(after.get("relay_hosted_names")!.sort()).toEqual(
@@ -302,9 +308,21 @@ async function relayWithGateway(extra: Partial<CloudRelayOptions> = {}) {
         headers: { origin, cookie, "content-type": "application/json" },
         body: JSON.stringify({ accountId: account }),
       }),
+    /** The page's own browser cookie, with no account sign-in. */
+    browserOnly: cookie.split(";")[0]!,
+    unlink: (body: unknown, from = origin, withCookie = cookie) =>
+      fetch(url + "/_relay/account/api/gateways/unlink", {
+        method: "POST",
+        headers: { origin: from, cookie: withCookie, "content-type": "application/json" },
+        body: JSON.stringify(body),
+      }),
     session: () =>
       fetch(url + "/_relay/account/api/session", { headers: { cookie } }).then(
-        (response) => response.json() as Promise<{ authenticated: boolean }>,
+        (response) =>
+          response.json() as Promise<{
+            authenticated: boolean;
+            gateways?: { gatewayId: string; online: boolean }[];
+          }>,
       ),
     async close() {
       await relay.close();
@@ -353,7 +371,9 @@ test("deleting from the account page drops the gateway's live tunnel, refuses it
     });
     expect(status).toBe(401);
     // Proving its keys gets the one answer that means "you are no longer registered here"...
-    await expect(registerGatewayKey(f.options)).rejects.toBeInstanceOf(GatewayUnregistered);
+    await expect(registerGatewayKey(f.options)).rejects.toThrow(
+      expect.objectContaining({ constructor: GatewayUnregistered, removed: false }),
+    );
     // ...and neither that nor its spent invitation registers it again or brings the account back.
     expect(f.accounts.snapshot()).toMatchObject({ accounts: 0, gatewayBindings: 0 });
     expect(f.accounts.identities.snapshot()).toMatchObject({
@@ -463,6 +483,114 @@ test("a gateway its owner disconnects loses its registration and tunnel, while t
     expect(f.accounts.hostnameAvailable(f.hostname, randomUUID())).toBe(false);
     // Registered again is not linked again: that takes the account's own sign-in.
     expect(f.accounts.identities.gatewayAccount(f.gateway.accountId)).toBeUndefined();
+  } finally {
+    await f.close();
+  }
+});
+
+test("unlinking a gateway on the account page needs a fresh sign-in of its account, takes only that gateway off the relay at once, and tells it why when it next proves its keys", async () => {
+  const forget = vi.fn(async () => {});
+  const f = await relayWithGateway({
+    acmeDns: { forget, close: async () => {} } as unknown as AcmeDnsChallenges,
+  });
+  try {
+    const certificate = await readFile(f.options.certificateFile, "utf8");
+    const other = registeredGateway(f.accounts, certificate);
+    f.accounts.identities.linkGateway(
+      f.account,
+      other.owner,
+      f.sessions.sealAccountGatewayLink(origin, f.account, other.owner),
+    );
+    // Somebody else's gateway, in somebody else's account.
+    const stranger = registeredGateway(f.accounts, certificate);
+    const strangerAccount = f.accounts.identities.signInFederated("google", "f".repeat(64), {
+      gatewayId: stranger.gatewayId,
+      ownerAccountId: stranger.owner,
+      assertCurrent() {},
+    });
+    f.accounts.identities.linkGateway(
+      strangerAccount,
+      stranger.owner,
+      f.sessions.sealAccountGatewayLink(origin, strangerAccount, stranger.owner),
+    );
+    const live = f.tunnel(f.gateway.token);
+    await new Promise<void>((resolve, reject) => {
+      live.once("message", () => resolve());
+      live.once("error", reject);
+    });
+    const closed = new Promise<void>((resolve) => live.once("close", () => resolve()));
+    // The account page says which gateway the relay holds a live tunnel for.
+    const listed = (await f.session()).gateways!;
+    expect(listed.find((gateway) => gateway.gatewayId === f.options.gatewayId)).toMatchObject({
+      online: true,
+    });
+    expect(listed.find((gateway) => gateway.gatewayId === other.gatewayId)).toMatchObject({
+      online: false,
+    });
+
+    const body = { accountId: f.account, gatewayId: f.options.gatewayId };
+    // No sign-in, a cross-site page, a malformed request, another account's page or a gateway
+    // outside the account: nothing is unlinked.
+    expect((await f.unlink(body, origin, f.browserOnly)).status).toBe(401);
+    expect((await f.unlink(body, "https://foreign.example.test")).status).toBe(403);
+    expect((await f.unlink({ gatewayId: f.options.gatewayId })).status).toBe(400);
+    expect((await f.unlink({ ...body, gatewayId: "not-a-gateway" })).status).toBe(400);
+    expect((await f.unlink({ ...body, accountId: "d".repeat(64) })).status).toBe(409);
+    expect((await f.unlink({ ...body, gatewayId: stranger.gatewayId })).status).toBe(404);
+    expect((await f.unlink({ ...body, gatewayId: randomUUID() })).status).toBe(404);
+    // A sign-in that is still valid but no longer fresh unlinks nothing: a browser left signed
+    // in is not enough.
+    const now = vi.spyOn(Date, "now").mockReturnValue(Date.now() + 301_000);
+    try {
+      expect((await f.unlink(body)).status).toBe(401);
+    } finally {
+      now.mockRestore();
+    }
+    expect(f.accounts.registered(f.gateway.accountId)).toBe(true);
+    expect(f.accounts.registered(stranger.owner)).toBe(true);
+    expect(live.readyState).toBe(WebSocket.OPEN);
+    expect(forget).not.toHaveBeenCalled();
+
+    const unlinked = await f.unlink(body);
+    expect(unlinked.status).toBe(200);
+    expect(await unlinked.json()).toEqual({ ok: true });
+    // Its tunnel closes at once, its DNS challenge lease is dropped and its name routes nowhere.
+    await closed;
+    expect(forget).toHaveBeenCalledExactlyOnceWith(f.gateway.accountId);
+    expect(f.accounts.registered(f.gateway.accountId)).toBe(false);
+    expect(f.accounts.accountForHostname(f.hostname)).toBeUndefined();
+    // The person stays signed in to the same account, which keeps its other gateway.
+    expect(await f.session()).toMatchObject({
+      authenticated: true,
+      gateways: [{ gatewayId: other.gatewayId, online: false }],
+    });
+    expect(f.accounts.registered(other.owner)).toBe(true);
+    expect(f.accounts.registered(stranger.owner)).toBe(true);
+    // Once is enough: it is no longer in the account.
+    expect((await f.unlink(body)).status).toBe(404);
+    // The gateway's session opens nothing, and proving its keys says it was unlinked, not
+    // that its account was deleted.
+    await expect(registerGatewayKey(f.options)).rejects.toThrow(
+      expect.objectContaining({ constructor: GatewayUnregistered, removed: true }),
+    );
+    // Its address stays its own, for when it is connected again.
+    expect(f.accounts.hostnameAvailable(f.hostname, randomUUID())).toBe(false);
+    expect(f.accounts.hostnameAvailable(f.hostname, f.options.gatewayId)).toBe(true);
+
+    // Connected again from scratch, it is an ordinary registration; leaving later by itself is
+    // not an unlink on the account page.
+    await rm(f.options.sessionFile);
+    await writeFile(
+      f.enrollmentTokenFile,
+      JSON.stringify({
+        enrollmentToken: await f.sessions.issueEnrollmentInvitation(f.options.gatewayId, origin),
+      }),
+    );
+    expect((await registerGatewayKey(f.options)).accountId).toBe(f.gateway.accountId);
+    f.accounts.deleteGateway(f.gateway.accountId);
+    await expect(registerGatewayKey(f.options)).rejects.toThrow(
+      expect.objectContaining({ constructor: GatewayUnregistered, removed: false }),
+    );
   } finally {
     await f.close();
   }

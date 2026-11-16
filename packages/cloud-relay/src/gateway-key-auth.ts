@@ -23,6 +23,12 @@ import {
 import { RelayError } from "./tunnels.js";
 import { relayOrigin } from "./network.js";
 
+/**
+ * The word a relay's refusal carries when the gateway proving its keys was unlinked on its owner's
+ * account page, rather than its account deleted.
+ */
+export const GATEWAY_REMOVED = "gateway-removed";
+
 export const KEY_AUTH_ISSUER = "omnesis-gateway-owner-key-v2";
 export const KEY_BINDING_PREFIX = "omnesis-owner-key-v2:";
 export const keyRegistrationSchema = gatewayBindingSchema

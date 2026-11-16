@@ -77,6 +77,11 @@ export class RelayAccounts {
     }[];
     if (!bindingColumns.some((column) => column.name === "display_name"))
       this.db.exec("ALTER TABLE relay_gateway_bindings ADD COLUMN display_name TEXT");
+    // A gateway its owner unlinked on the account page, by the same digest as a released hosted
+    // name, until it learns why it was refused or registers again.
+    this.db.exec(`CREATE TABLE IF NOT EXISTS relay_removed_gateways (
+      gateway TEXT PRIMARY KEY
+    )`);
     this.db.exec(`CREATE TABLE IF NOT EXISTS relay_gateway_recovery (
       account_id TEXT PRIMARY KEY,
       receipt TEXT NOT NULL
@@ -170,6 +175,9 @@ export class RelayAccounts {
             ON CONFLICT(hostname) DO UPDATE SET gateway_id=excluded.gateway_id`,
           )
           .run(hostname, gatewayIdSchema.parse(binding.gatewayId));
+      this.db
+        .prepare("DELETE FROM relay_removed_gateways WHERE gateway = ?")
+        .run(releasedGateway(gatewayIdSchema.parse(binding.gatewayId)));
       this.db
         .prepare(
           `INSERT INTO relay_gateway_bindings(account_id, hostname, binding) VALUES (?, ?, ?)
@@ -426,13 +434,30 @@ export class RelayAccounts {
 
   /**
    * Takes one gateway out of its account and drops its registration, at its owner's request. The
-   * account stays, with its other gateways.
+   * account stays, with its other gateways. `removedFromAccount` is the account page doing it
+   * rather than the gateway: the relay remembers that much, so it can tell the gateway why.
    */
-  deleteGateway(owner: string): void {
+  deleteGateway(owner: string, options: { removedFromAccount?: boolean } = {}): void {
     this.db.transaction(() => {
+      const gateway = this.db
+        .prepare("SELECT lower(gateway_id) AS id FROM relay_accounts WHERE account_id = ?")
+        .get(owner) as { id: string | null } | undefined;
       this.identities.unlinkGatewayOwner(owner);
       this.removeRegistration(owner);
+      if (options.removedFromAccount && gateway?.id)
+        this.db
+          .prepare("INSERT OR IGNORE INTO relay_removed_gateways(gateway) VALUES (?)")
+          .run(releasedGateway(gateway.id));
     })();
+  }
+
+  /** Whether this unregistered gateway was unlinked on its account page, and has not registered since. */
+  removedFromAccount(gatewayId: string): boolean {
+    return (
+      this.db
+        .prepare("SELECT 1 FROM relay_removed_gateways WHERE gateway = ?")
+        .get(releasedGateway(gatewayIdSchema.parse(gatewayId))) !== undefined
+    );
   }
 
   /**

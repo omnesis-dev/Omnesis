@@ -563,7 +563,7 @@ export class GatewayCloudRelayManagement implements CloudRelayManagement {
     const signal = AbortSignal.any([this.abort.signal, AbortSignal.timeout(150_000)]);
     this.notice = undefined;
     this.pending = (async () => {
-      let unregistered = false;
+      let unregistered: GatewayUnregistered | undefined;
       this.enrollment = { state: "pending" };
       this.revision++;
       try {
@@ -595,7 +595,7 @@ export class GatewayCloudRelayManagement implements CloudRelayManagement {
         this.tunnel ??= (this.options.startTunnel ?? startGatewayCloudTunnel)(
           this.options.gatewayUrl(),
           this.environment(),
-          () => this.forgotten(),
+          (removed) => this.forgotten(removed),
         );
         if (force || !this.publicReady) {
           if (await this.controller?.renew(signal)) this.lastRenewedAt = new Date().toISOString();
@@ -607,7 +607,7 @@ export class GatewayCloudRelayManagement implements CloudRelayManagement {
         if (this.publicReady) this.publicError = undefined;
       } catch (error) {
         if (!this.abort.signal.aborted) {
-          unregistered = error instanceof GatewayUnregistered;
+          if (error instanceof GatewayUnregistered) unregistered = error;
           // The page only shows a code; the reason has to be findable in the gateway log.
           log.warn(`Connecting to the relay failed: ${String(error)}`);
           if (this.enrollment.state !== "enrolled")
@@ -622,7 +622,7 @@ export class GatewayCloudRelayManagement implements CloudRelayManagement {
       } finally {
         this.pending = undefined;
         this.revision++;
-        if (unregistered) this.forgotten();
+        if (unregistered) this.forgotten(unregistered.removed);
         else if (this.settings?.enabled && !this.abort.signal.aborted) this.scheduleNext(0);
       }
     })();
@@ -684,21 +684,26 @@ export class GatewayCloudRelayManagement implements CloudRelayManagement {
   }
   /**
    * The relay answered this gateway's own proven keys that it has no registration for it: its
-   * Omnesis account was deleted. The gateway leaves as if its owner had disconnected it, so it
-   * can be connected to another account. Devices already paired stay paired: they belong to
-   * the gateway. Nothing else the relay says, and no failure to reach it, leads here.
+   * Omnesis account was deleted, or its owner unlinked it on the account page (`removed`). The
+   * gateway leaves as if its owner had disconnected it here, so it can be connected again from
+   * scratch. Devices already paired stay paired: they belong to the gateway. Nothing else the
+   * relay says, and no failure to reach it, leads here.
    */
-  private forgotten(): void {
-    this.forgetting ??= this.forget()
-      .catch((error: unknown) => log.warn(`Leaving the deleted account failed: ${String(error)}`))
+  private forgotten(removed: boolean): void {
+    this.forgetting ??= this.forget(removed)
+      .catch((error: unknown) => log.warn(`Leaving the account failed: ${String(error)}`))
       .finally(() => (this.forgetting = undefined));
   }
-  private async forget(): Promise<void> {
+  private async forget(removed: boolean): Promise<void> {
     // A late word from a tunnel that is already stopped changes nothing.
     if (!this.settings!.enabled) return;
-    log.warn("The relay no longer has this gateway: its Omnesis account was deleted");
+    log.warn(
+      removed
+        ? "The relay no longer has this gateway: it was unlinked on its Omnesis account page"
+        : "The relay no longer has this gateway: its Omnesis account was deleted",
+    );
     await this.leave(false);
-    this.notice = "account-deleted";
+    this.notice = removed ? "gateway-removed" : "account-deleted";
     this.revision++;
   }
   private get releaseFile(): string {

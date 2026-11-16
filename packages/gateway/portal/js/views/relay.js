@@ -795,6 +795,14 @@ export function RelayView({ open = openOnGateway, location = globalThis.location
       </p>`
     }
     ${
+      status.notice === "gateway-removed" &&
+      html`<p role="status" class="relay-notice">
+        This gateway was unlinked from your Omnesis account on the account page, so it has no
+        address outside your home network. Nothing on it was deleted, and devices already paired
+        keep working at home. To reach it from anywhere again, connect it below.
+      </p>`
+    }
+    ${
       troubled &&
       html`<${RelayProblems}
         messages=${problems}

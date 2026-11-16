@@ -9,6 +9,8 @@ export interface GatewayChoice {
   gatewayId: string;
   publicOrigin: string;
   displayName?: string;
+  /** Whether the relay holds a live tunnel for it now. Shown to people; never decides anything. */
+  online: boolean;
 }
 
 /** Discovery selects a gateway, never a device credential or an authorization grant. */
@@ -18,6 +20,7 @@ export class GatewayDirectory {
       accounts(identity: string): string[];
       binding(account: string): GatewayBinding | undefined;
       name(account: string): string | undefined;
+      online(account: string): boolean;
     },
   ) {}
 
@@ -40,6 +43,7 @@ export class GatewayDirectory {
           gatewayId: binding.gatewayId,
           publicOrigin: binding.publicOrigin,
           ...(displayName === undefined ? {} : { displayName }),
+          online: this.source.online(account),
         },
       });
     }
