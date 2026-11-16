@@ -464,6 +464,9 @@ extension GatewayRoutingProxyTests {
             let factory = RepairableLiveListenerFactory(initialFailures: stalled ? 0 : 1, stallFirst: stalled, holdStartup: true)
             let port = try GatewayLoopbackSocket.releaseEphemeralPort()
             let pin = PinnedSession(spkiFingerprint: peer.info.spkiFingerprint, host: route.host)
+            // The listener's readiness deadline and repair backoff run on a scripted clock: a runner slow to report a
+            // listener ready cannot have it rebuilt, so the test decides exactly which listeners are made.
+            let listenerClock = ScriptedGatewayClock()
             let proxy = try GatewayRoutingProxy(
                 route: route,
                 limits: .production,
@@ -472,6 +475,7 @@ extension GatewayRoutingProxyTests {
                 transport: factory.transport,
                 // Scripted candidate deadlines: a slow trust verification still selects the loopback candidate.
                 clock: ScriptedGatewayClock().clock,
+                listenerClock: listenerClock.clock,
                 verifyTrust: { trust, host in pin.resolve(trust, challengeHost: host) == .pinned(systemTrusted: false) }
             )
             defer { proxy.close() }
@@ -494,6 +498,21 @@ extension GatewayRoutingProxyTests {
             } catch { XCTAssertTrue(error is URLError) }
             interrupted.cancel(with: .goingAway, reason: nil)
             factory.allowStartup()
+            if stalled {
+                // The stalled listener misses its readiness deadline and is retired; its port is released before the
+                // repair binds it again.
+                listenerClock.advance(GatewayRecoveringListener.readinessTimeout)
+                listenerClock.expireDue()
+                let released = ContinuousClock.now + .seconds(5)
+                while !factory.firstReleased, ContinuousClock.now < released {
+                    try await Task.sleep(for: .milliseconds(10))
+                }
+                XCTAssertTrue(factory.firstReleased)
+            }
+            // The first repair waits one second of backoff. The clock then stays put, so the repaired listener keeps
+            // its readiness deadline however long it takes to report ready.
+            listenerClock.advance(1)
+            listenerClock.expireDue()
             let deadline = ContinuousClock.now + .seconds(8)
             while !proxy.isListening, ContinuousClock.now < deadline {
                 try await Task.sleep(for: .milliseconds(10))
@@ -649,6 +668,7 @@ private final class RepairableLiveListenerFactory: @unchecked Sendable {
     private var initialFailures: Int
     private let stallFirst: Bool
     private var holdStartup: Bool
+    private var released = false
     init(initialFailures: Int = 0, stallFirst: Bool = false, holdStartup: Bool = false) {
         self.initialFailures = initialFailures
         self.stallFirst = stallFirst
@@ -659,6 +679,13 @@ private final class RepairableLiveListenerFactory: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         return listeners.count
+    }
+
+    /// Whether the first listener made has finished cancelling, so its port is free to bind again.
+    var firstReleased: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return released
     }
 
     func allowStartup() {
@@ -682,10 +709,15 @@ private final class RepairableLiveListenerFactory: @unchecked Sendable {
                 self.lock.unlock()
                 throw GatewayRoutingError.listenerUnavailable
             }
-            let stall = self.stallFirst && self.listeners.isEmpty
+            let first = self.listeners.isEmpty
             self.lock.unlock()
             let listener = try GatewayNetworkTransport.live.makeListener(parameters)
-            let wrapped = StalledLiveListener(listener, stall: stall)
+            let wrapped = StalledLiveListener(listener, stall: self.stallFirst && first) { [weak self] in
+                guard let self, first else { return }
+                self.lock.lock()
+                self.released = true
+                self.lock.unlock()
+            }
             self.lock.lock()
             self.listeners.append(wrapped)
             self.lock.unlock()
@@ -710,9 +742,11 @@ private final class FirstTrustStall: @unchecked Sendable {
 private final class StalledLiveListener: GatewayByteListener {
     private let wrapped: any GatewayByteListener
     private let stall: Bool
-    init(_ wrapped: any GatewayByteListener, stall: Bool) {
+    private let cancelled: () -> Void
+    init(_ wrapped: any GatewayByteListener, stall: Bool, cancelled: @escaping () -> Void) {
         self.wrapped = wrapped
         self.stall = stall
+        self.cancelled = cancelled
     }
 
     var port: UInt16? {
@@ -721,6 +755,7 @@ private final class StalledLiveListener: GatewayByteListener {
 
     func onState(_ handler: @escaping (NWListener.State) -> Void) {
         wrapped.onState { state in
+            if case .cancelled = state { self.cancelled() }
             if self.stall, case .ready = state { return }
             handler(state)
         }
