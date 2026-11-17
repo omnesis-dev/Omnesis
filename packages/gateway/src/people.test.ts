@@ -3,7 +3,6 @@
 
 import { describe, test, expect, beforeEach, afterEach } from "vitest";
 import { randomUUID } from "node:crypto";
-import type Database from "better-sqlite3";
 type Db = Database.Database;
 import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
@@ -41,6 +40,8 @@ import {
   upsertPeopleCounts,
   refreshPeopleCounts,
 } from "./people.js";
+import { walksByDate } from "./data/repositories/DocumentPeopleRepository.js";
+import type Database from "better-sqlite3";
 import type { SelfIdentitySource } from "./self-identity-sources.js";
 import type { PersonMention } from "@omnesis/types";
 
@@ -1793,6 +1794,103 @@ describe("seedFromContacts", () => {
 
 // ─── compute/upsert split ───────────────────────────────────────────
 
+describe("a logical merge leaves nothing behind for its undo", () => {
+  // While two people are logically merged, every mention of either resolves to
+  // the same canonical. What syncs in that window must still land on the row
+  // it belongs to: once the merge is undone, an identifier both rows share, or
+  // a contact-card mark on the wrong row, lets auto-detect fuse them
+  // physically, which no undo reverses.
+  const person = (id: string) =>
+    db
+      .prepare<[string], { source: string; is_self: number }>(
+        "SELECT source, is_self FROM people WHERE id = ?",
+      )
+      .get(id)!;
+  const sharedIdentifiers = () =>
+    db
+      .prepare(
+        `SELECT alias_type, alias FROM person_aliases WHERE alias_type != 'name'
+         GROUP BY alias_type, alias HAVING COUNT(DISTINCT person_id) > 1`,
+      )
+      .all();
+  const undo = (loser: string) =>
+    db.prepare("UPDATE people SET merged_into = NULL WHERE id = ?").run(loser);
+
+  test("identifiers each row owns stay on it, and only new ones are added", () => {
+    const a = findOrCreatePerson(
+      db,
+      { role: "sender", name: "Maya Reeves", emails: ["maya@example.com"] },
+      "gmail:test",
+      "2026-01-01",
+    )!;
+    const b = findOrCreatePerson(
+      db,
+      { role: "sender", name: "Maya Reeves", emails: ["mreeves@example.org"] },
+      "gmail:test",
+      "2026-01-02",
+    )!;
+    mergePeople(db, b, a);
+
+    const resolved = findOrCreatePerson(
+      db,
+      {
+        role: "sender",
+        name: "Maya Reeves",
+        emails: ["maya@example.com", "mreeves@example.org"],
+        phones: ["+15550100123"],
+      },
+      "gmail:other",
+      "2026-01-03",
+    );
+    expect(resolved).toBe(b);
+
+    undo(a);
+    expect(sharedIdentifiers()).toEqual([]);
+    expect(findPersonByAlias(db, "email", "maya@example.com")).toBe(a);
+    expect(findPersonByAlias(db, "email", "mreeves@example.org")).toBe(b);
+    // The new phone joined the row the mention anchored on, and the second
+    // source's vouch for B's address is recorded on B.
+    expect(findPersonByAlias(db, "phone", "+15550100123")).toBe(a);
+    const vouched = db
+      .prepare(
+        `SELECT COUNT(*) AS n FROM person_alias_assertions pas
+         JOIN person_aliases pa ON pa.id = pas.alias_id
+         WHERE pa.alias = 'mreeves@example.org' AND pa.person_id = ? AND pas.source_id = 'gmail:other'`,
+      )
+      .get(b) as { n: number };
+    expect(vouched.n).toBe(1);
+  });
+
+  test("a contact card marks the row holding its identifiers, not the canonical", () => {
+    const a = findOrCreatePerson(
+      db,
+      { role: "sender", name: "Jamie Lopez", emails: ["jamie@example.com"] },
+      "gmail:test",
+      "2026-01-01",
+    )!;
+    const b = findOrCreatePerson(
+      db,
+      { role: "sender", name: "Jamie Lopez", emails: ["jlopez@example.org"] },
+      "gmail:test",
+      "2026-01-02",
+    )!;
+    mergePeople(db, b, a);
+    insertDoc(
+      "card-a",
+      "apple-contacts:test",
+      [{ role: "contact", name: "Jamie Lopez", emails: ["jamie@example.com"] }],
+      { documentType: "contact", isMe: true },
+    );
+
+    upsertSeedFromContacts(db, computeSeedFromContacts(db));
+
+    expect(person(a)).toMatchObject({ source: "contacts", is_self: 1 });
+    expect(person(b)).toMatchObject({ source: "extracted", is_self: 0 });
+    undo(a);
+    expect(sharedIdentifiers()).toEqual([]);
+  });
+});
+
 describe("computeSeedFromContacts + upsertSeedFromContacts", () => {
   test("computeSeedFromContacts returns the same set the legacy path would process", () => {
     insertDoc(
@@ -3219,6 +3317,70 @@ describe("getPersonDocuments recency ordering", () => {
     ]);
     // Loser link: only its own pre-merge docs, still newest-first.
     expect(getPersonDocuments(db, loserId).map((d) => d.id)).toEqual(ownDocsByRecency[loserId]);
+  });
+});
+
+describe("getPersonDocuments for a person on most documents", () => {
+  // A person linked to millions of documents (an owner identity not yet
+  // merged into self) is read by walking documents newest-first instead of
+  // grouping every link; both plans must return the same page.
+  function seed(): { canonicalId: string; loserId: string } {
+    const docs: Array<[string, string, string | null, "sender" | "recipient"]> = [
+      ["w-jan", "alice@example.com", "2026-01-01T00:00:00Z", "sender"],
+      ["w-mar", "alice@example.com", "2026-03-01T00:00:00Z", "recipient"],
+      ["w-tie-b", "bob@example.com", "2026-05-01T00:00:00Z", "sender"],
+      ["w-tie-a", "alice@example.com", "2026-05-01T00:00:00Z", "sender"],
+      ["w-undated", "alice@example.com", null, "sender"],
+      ["w-jun", "bob@example.com", "2026-06-01T00:00:00Z", "recipient"],
+    ];
+    for (const [id, email, at, role] of docs) {
+      insertDoc(id, "gmail:test", [{ role, emails: [email] }], at ? { sourceCreatedAt: at } : {});
+    }
+    insertDoc("w-other", "gmail:test", [{ role: "sender", emails: ["carol@example.com"] }], {
+      sourceCreatedAt: "2026-07-01T00:00:00Z",
+    });
+    backfillManyPeople(db, 100);
+    const aliceId = findPersonByAlias(db, "email", "alice@example.com")!;
+    const bobId = findPersonByAlias(db, "email", "bob@example.com")!;
+    mergePeople(db, aliceId, bobId);
+    const canonicalId = getPersonById(db, aliceId)!.mergedInto == null ? aliceId : bobId;
+    return { canonicalId, loserId: canonicalId === aliceId ? bobId : aliceId };
+  }
+
+  const setLinks = (n: number) => db.prepare("UPDATE people SET doc_count = ?").run(n);
+
+  test("walks by date only when that reads fewer rows than grouping the links", () => {
+    const { canonicalId } = seed();
+    setLinks(0);
+    expect(walksByDate(db, canonicalId, true, 31)).toBe(false);
+    setLinks(2);
+    expect(walksByDate(db, canonicalId, true, 31)).toBe(false);
+    setLinks(1_000_000);
+    expect(walksByDate(db, canonicalId, true, 31)).toBe(true);
+  });
+
+  test("returns the same pages, roles and order by either plan", () => {
+    const { canonicalId, loserId } = seed();
+    const read = () =>
+      [
+        getPersonDocuments(db, canonicalId),
+        getPersonDocuments(db, canonicalId, { role: "sender" }),
+        getPersonDocuments(db, canonicalId, { limit: 2, offset: 2 }),
+        getPersonDocuments(db, loserId),
+      ].map((page) => page.map((d) => `${d.id}:${[...d.roles].sort().join("+")}`));
+    setLinks(0);
+    const grouped = read();
+    setLinks(1_000_000);
+    expect(walksByDate(db, canonicalId, true, 51)).toBe(true);
+    expect(read()).toEqual(grouped);
+    expect(grouped[0]).toEqual([
+      "w-jun:recipient",
+      "w-tie-a:sender",
+      "w-tie-b:sender",
+      "w-mar:recipient",
+      "w-jan:sender",
+      "w-undated:sender",
+    ]);
   });
 });
 

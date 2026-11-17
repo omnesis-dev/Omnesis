@@ -226,6 +226,7 @@ function addNewAliases(
   sourceId: string,
   cache?: AliasLookupCache,
   skipAliases?: AliasSkipSet,
+  ownedElsewhere?: ReadonlyMap<string, string>,
 ): void {
   const now = new Date().toISOString();
   const aliases = aliasWriter(db, sourceId, now);
@@ -252,6 +253,15 @@ function addNewAliases(
     // address fronts every notification of its kind, and an address ending
     // in a TLD that does not exist is a parser gluing text onto a real one.
     if (kind === "email" && (isNonIdentifyingEmail(stored) || !hasValidEmailTld(stored))) continue;
+    // An identifier another row of the same identity already owns stays on
+    // that row; this source's vouch goes there too. Copying it here would leave
+    // two rows sharing it once a logical merge is undone, and auto-detect then
+    // fuses them physically, past any undo.
+    const owner = ownedElsewhere?.get(aliasSkipKey(kind, stored));
+    if (owner && owner !== personId) {
+      aliases.vouch(owner, kind, stored);
+      continue;
+    }
     aliases.claim(personId, kind, stored);
   }
 
@@ -325,6 +335,11 @@ function dropNonIdentifyingEmails(
  *
  * When `cache` is provided, alias lookups short-circuit through the cache
  * within a batch (usually cuts half the DB round-trips on a hot thread).
+ *
+ * `resolvedRow`, when passed, receives the row that holds the mention's
+ * identifiers. It differs from the returned canonical only while that row is
+ * logically merged into another, and is the row a fact about this mention's
+ * person (a contact card, the owner's own card) belongs on.
  */
 export function findOrCreatePerson(
   db: Db,
@@ -333,6 +348,7 @@ export function findOrCreatePerson(
   docDate: string,
   cache?: AliasLookupCache,
   blocklist?: ReadonlySet<string>,
+  resolvedRow?: { row?: string },
 ): string | null {
   // An agent is not a person: no lookup, no creation, no alias — whatever
   // identifiers the mention carries and whatever person shares its name.
@@ -365,6 +381,7 @@ export function findOrCreatePerson(
       now,
       selfRow.id,
     );
+    if (resolvedRow) resolvedRow.row = selfRow.id;
     return selfRow.id;
   }
 
@@ -453,7 +470,13 @@ export function findOrCreatePerson(
         );
       }
     }
-    addNewAliases(db, anchor, mention, sourceId, cache, skipAliases);
+    const ownedElsewhere = new Map(
+      identifierMatches.flatMap((m) =>
+        m.ownerId ? [[aliasSkipKey(m.aliasType, m.value), m.ownerId] as const] : [],
+      ),
+    );
+    addNewAliases(db, anchor, mention, sourceId, cache, skipAliases, ownedElsewhere);
+    if (resolvedRow) resolvedRow.row = anchor;
     // Self-heal the displayed headline (the canonical's `canonical_name`),
     // not the anchor's: if it's still a phone/email placeholder and this
     // mention carries a trusted name, promote the real name.
@@ -533,6 +556,7 @@ export function findOrCreatePerson(
     );
 
     addNewAliases(db, winner, mention, sourceId, cache, skipAliases);
+    if (resolvedRow) resolvedRow.row = winner;
     // The winner is the row this document links to; if its headline is
     // still a placeholder and the mention carries a trusted name, heal it.
     maybeUpgradeCanonicalName(db, winner, mention);
@@ -564,6 +588,7 @@ export function findOrCreatePerson(
   ).run(personId, name, docDate, docDate, now, now);
 
   addNewAliases(db, personId, mention, sourceId, cache);
+  if (resolvedRow) resolvedRow.row = personId;
   return personId;
 }
 

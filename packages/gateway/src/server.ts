@@ -678,13 +678,13 @@ export function createServer(
      */
     hostNetwork?: () => HostNetwork | null;
     /**
-     * Externally-reachable HTTPS base URL of this gateway (no trailing
-     * slash). Forwarded to a collector's `auth.begin` so a source's
-     * `authFlow` can build `${publicBaseUrl}/oauth/callback`. Populated by
-     * `index.ts` from `runtime-settings.ts`; unset keeps the local-only
-     * `localhost:3003` callback fallback.
+     * The gateway's public address and the MCP resources it implies, read on
+     * every use: MCP OAuth derives its issuer from it, and a collector's
+     * `auth.begin` gets it so a source's `authFlow` can build
+     * `${publicBaseUrl}/oauth/callback`. Unset keeps loopback-only MCP OAuth
+     * and the local-only `localhost:3003` callback fallback.
      */
-    publicBaseUrl?: string;
+    publicAddress?: import("./public-address.js").PublicAddressSource;
     cloudRelayExposure?: () => boolean;
     cloudIdentitySource?: () =>
       import("./http/services/CloudPairingConfiguration.js").CloudPairingIdentity | undefined;
@@ -706,8 +706,6 @@ export function createServer(
       identity: import("@omnesis/cloud-relay").IdentityProvider;
       ownerAccountId: string;
     };
-    /** Exact externally reachable MCP protected-resource URLs. */
-    mcpResourceUrls?: readonly string[];
     additionalOAuthIssuerUrls?: import("./access/oauth-urls.js").OAuthIssuerSource;
     /**
      * Gateway listen port. Advertises the local MCP setup address and scopes the portal session
@@ -749,7 +747,7 @@ export function createServer(
   const mcpAddresses = remoteAccessSettings
     ? new McpAddresses({
         settings: remoteAccessSettings,
-        publicBaseUrl: () => opts?.publicBaseUrl,
+        publicBaseUrl: () => opts?.publicAddress?.baseUrl(),
         ...(opts?.relayPublicOrigin ? { relayOrigin: opts.relayPublicOrigin } : {}),
         ...(opts?.cloudRelayManagement
           ? { relayState: relayStateFrom(opts.cloudRelayManagement) }
@@ -1103,8 +1101,8 @@ export function createServer(
       const rawToken = authHeader.slice(7);
       const oauthUrls = resolveOAuthUrls(
         c.req.url,
-        opts?.publicBaseUrl,
-        opts?.mcpResourceUrls,
+        opts?.publicAddress?.baseUrl(),
+        opts?.publicAddress?.mcpResourceUrls(),
         opts?.additionalOAuthIssuerUrls,
       );
       const principal =
@@ -1591,9 +1589,8 @@ export function createServer(
   // `/portal/*` catch-all. Otherwise a real client reaches the HTML shell instead
   // of the JSON approval endpoints even though the route-level tests pass.
   mountOAuthAccessRoutes(app, accessService, {
-    publicBaseUrl: opts?.publicBaseUrl,
+    publicAddress: opts?.publicAddress,
     ...(opts?.port ? { loopbackBaseUrl: `https://localhost:${opts.port}` } : {}),
-    mcpResourceUrls: opts?.mcpResourceUrls,
     additionalOAuthIssuerUrls: opts?.additionalOAuthIssuerUrls,
     authorizationNotifier: opts?.accessAuthorizationNotifier,
     // A request arrived or was decided: wake the expiry sweep and the portals.
@@ -1778,7 +1775,7 @@ export function createServer(
     scheduler: opts?.scheduler,
     backgroundJobs: opts?.backgroundJobs,
     pairingTtlMs: opts?.timings?.pairingTtlMs,
-    publicBaseUrl: opts?.publicBaseUrl,
+    publicBaseUrl: () => opts?.publicAddress?.baseUrl(),
     resolveCollectorDeviceId,
     resolveCollectorDeviceIdForType,
     resolveCollectorDeviceIdForReauth,
@@ -1790,7 +1787,11 @@ export function createServer(
     tlsLifecycle: opts?.tlsLifecycle,
     cloudRelayManagement: opts?.cloudRelayManagement,
     systemTrustPairingOrigins:
-      opts?.systemTrustPairingOrigins ?? (opts?.publicBaseUrl ? [opts.publicBaseUrl] : []),
+      opts?.systemTrustPairingOrigins ??
+      (() => {
+        const address = opts?.publicAddress?.baseUrl();
+        return address ? [address] : [];
+      }),
     publiclyTrustedPairingHosts: opts?.publiclyTrustedPairingHosts,
     ...(remoteAccessSettings
       ? { pairingPrefersRelay: () => remoteAccessSettings.get().first === "relay" }
@@ -1821,13 +1822,11 @@ export function createServer(
   mountDirectCandidateRoutes(app, { configDir: opts?.configDir, port: opts?.port });
   mountTailscaleRoutes(app, opts?.tailscaleEmbed);
   if (remoteAccessSettings && mcpAddresses) {
-    const configStore = opts?.configStore;
     mountRemoteAccessRoutes(app, {
       settings: remoteAccessSettings,
       checks: new AddressChecks(),
       ...(hostTailscale && tailscaleEmbedEnabled() ? { hostTailscale } : {}),
-      servingPublicBaseUrl: () => opts?.publicBaseUrl ?? null,
-      configuredPublicBaseUrl: () => configStore?.get().gateway?.publicBaseUrl ?? null,
+      publicAddress: opts?.publicAddress,
       mcpAddresses,
     });
   }
@@ -1859,7 +1858,7 @@ export function createServer(
       return (typeof fingerprint === "function" ? fingerprint() : fingerprint) ?? "";
     },
     opts?.cloudIdentity,
-    opts?.publicBaseUrl,
+    () => opts?.publicAddress?.baseUrl(),
     opts?.cloudIdentitySource,
     opts?.cloudPairingPublicOrigin,
     opts?.cloudRelayManagement?.managedGoogleBrowser?.bind(opts.cloudRelayManagement),
@@ -1977,8 +1976,7 @@ export function createServer(
         device.capabilities.agentIntegration !== undefined
       );
     },
-    publicBaseUrl: opts?.publicBaseUrl,
-    mcpResourceUrls: opts?.mcpResourceUrls,
+    publicAddress: opts?.publicAddress,
     additionalOAuthIssuerUrls: opts?.additionalOAuthIssuerUrls,
     recordMcpToolInvocation: (input) => accessService.recordMcpToolInvocation(input),
     recordDirectAuditEvent: async (input) => {

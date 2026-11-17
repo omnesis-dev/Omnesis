@@ -16,6 +16,7 @@ struct MenuToolbarButton: View {
 
     var body: some View {
         Button {
+            AutomationTouchLog.menuAction("menu.toggle")
             withAnimation(MenuReveal.openCloseAnimation) {
                 isOpen.toggle()
             }

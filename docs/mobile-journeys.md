@@ -108,7 +108,10 @@ After a failure, `/tmp/omnesis-mobile-journeys/artifacts/` holds a screen
 recording of the whole run, the failure screenshots (inside the `.xcresult`
 bundle and exported to `failure-attachments/` on iOS; `failure-screenshots/`
 on Android, with the Compose semantics tree in `logcat.txt` under the
-`OmnesisJourney` tag), the test reports and the gateway's logs.
+`OmnesisJourney` tag), the test reports and the gateway's logs. On iOS,
+`app-touch.log` adds where each tap landed, the views it hit, the state every
+gesture recogniser on it reached, and which menu actions ran: the journeys
+launch the app with `DEMO_TOUCH_LOG=1`, which only a DEBUG build reads.
 
 ## In CI
 

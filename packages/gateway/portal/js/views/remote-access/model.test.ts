@@ -34,7 +34,7 @@ const remote = (over: Record<string, unknown> = {}) => ({
   setupCompletedAt: null,
   first: "tailscale",
   features: { cloudRelay: true, tailscaleEmbed: true },
-  publicBaseUrl: { serving: null, configured: null, restartNeeded: false },
+  publicBaseUrl: { configured: null, setByEnvironment: false },
   ...over,
 });
 
