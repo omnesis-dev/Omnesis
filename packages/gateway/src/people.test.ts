@@ -1794,6 +1794,103 @@ describe("seedFromContacts", () => {
 
 // ─── compute/upsert split ───────────────────────────────────────────
 
+describe("a logical merge leaves nothing behind for its undo", () => {
+  // While two people are logically merged, every mention of either resolves to
+  // the same canonical. What syncs in that window must still land on the row
+  // it belongs to: once the merge is undone, an identifier both rows share, or
+  // a contact-card mark on the wrong row, lets auto-detect fuse them
+  // physically, which no undo reverses.
+  const person = (id: string) =>
+    db
+      .prepare<[string], { source: string; is_self: number }>(
+        "SELECT source, is_self FROM people WHERE id = ?",
+      )
+      .get(id)!;
+  const sharedIdentifiers = () =>
+    db
+      .prepare(
+        `SELECT alias_type, alias FROM person_aliases WHERE alias_type != 'name'
+         GROUP BY alias_type, alias HAVING COUNT(DISTINCT person_id) > 1`,
+      )
+      .all();
+  const undo = (loser: string) =>
+    db.prepare("UPDATE people SET merged_into = NULL WHERE id = ?").run(loser);
+
+  test("identifiers each row owns stay on it, and only new ones are added", () => {
+    const a = findOrCreatePerson(
+      db,
+      { role: "sender", name: "Maya Reeves", emails: ["maya@example.com"] },
+      "gmail:test",
+      "2026-01-01",
+    )!;
+    const b = findOrCreatePerson(
+      db,
+      { role: "sender", name: "Maya Reeves", emails: ["mreeves@example.org"] },
+      "gmail:test",
+      "2026-01-02",
+    )!;
+    mergePeople(db, b, a);
+
+    const resolved = findOrCreatePerson(
+      db,
+      {
+        role: "sender",
+        name: "Maya Reeves",
+        emails: ["maya@example.com", "mreeves@example.org"],
+        phones: ["+15550100123"],
+      },
+      "gmail:other",
+      "2026-01-03",
+    );
+    expect(resolved).toBe(b);
+
+    undo(a);
+    expect(sharedIdentifiers()).toEqual([]);
+    expect(findPersonByAlias(db, "email", "maya@example.com")).toBe(a);
+    expect(findPersonByAlias(db, "email", "mreeves@example.org")).toBe(b);
+    // The new phone joined the row the mention anchored on, and the second
+    // source's vouch for B's address is recorded on B.
+    expect(findPersonByAlias(db, "phone", "+15550100123")).toBe(a);
+    const vouched = db
+      .prepare(
+        `SELECT COUNT(*) AS n FROM person_alias_assertions pas
+         JOIN person_aliases pa ON pa.id = pas.alias_id
+         WHERE pa.alias = 'mreeves@example.org' AND pa.person_id = ? AND pas.source_id = 'gmail:other'`,
+      )
+      .get(b) as { n: number };
+    expect(vouched.n).toBe(1);
+  });
+
+  test("a contact card marks the row holding its identifiers, not the canonical", () => {
+    const a = findOrCreatePerson(
+      db,
+      { role: "sender", name: "Jamie Lopez", emails: ["jamie@example.com"] },
+      "gmail:test",
+      "2026-01-01",
+    )!;
+    const b = findOrCreatePerson(
+      db,
+      { role: "sender", name: "Jamie Lopez", emails: ["jlopez@example.org"] },
+      "gmail:test",
+      "2026-01-02",
+    )!;
+    mergePeople(db, b, a);
+    insertDoc(
+      "card-a",
+      "apple-contacts:test",
+      [{ role: "contact", name: "Jamie Lopez", emails: ["jamie@example.com"] }],
+      { documentType: "contact", isMe: true },
+    );
+
+    upsertSeedFromContacts(db, computeSeedFromContacts(db));
+
+    expect(person(a)).toMatchObject({ source: "contacts", is_self: 1 });
+    expect(person(b)).toMatchObject({ source: "extracted", is_self: 0 });
+    undo(a);
+    expect(sharedIdentifiers()).toEqual([]);
+  });
+});
+
 describe("computeSeedFromContacts + upsertSeedFromContacts", () => {
   test("computeSeedFromContacts returns the same set the legacy path would process", () => {
     insertDoc(
