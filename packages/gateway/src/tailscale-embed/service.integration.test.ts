@@ -64,7 +64,11 @@ async function boot(scenario = "connected", { cloudRelay = false } = {}): Promis
       notifyJoined: (d) => notified.joined.push(d),
     },
   });
-  app = createServer(db, path, { tailscaleEmbed: service });
+  app = createServer(db, path, {
+    tailscaleEmbed: service,
+    // As the running gateway does: agents reach it by its tailnet name too.
+    additionalOAuthIssuerUrls: () => [service.tailnetOrigin()].filter((o): o is string => !!o),
+  });
   await service.attach({ listener: getRequestListener(app.fetch) });
 }
 
@@ -168,6 +172,7 @@ describe("owner controls", () => {
     });
     expect(service.tailnetOrigin()).toBe("https://omnesis.example-net.ts.net");
     expect(service.tailnetCertificateTrusted()).toBe(true);
+    expect(service.tailnetCertificatePending()).toBe(false);
     expect(service.publicOrigin()).toBeNull();
   });
 
@@ -507,6 +512,29 @@ describe("the pairing QR", () => {
     const payload = JSON.parse(qr.json.qrPayload);
     expect(payload.tailnet).toBe(true);
     expect(payload.tls?.mode).not.toBe("system");
+    // Certificates being off is not a certificate on its way.
+    expect(service.tailnetCertificatePending()).toBe(false);
+  });
+
+  test("the Access overview says the tailnet address's certificate is on its way", async () => {
+    await service.shutdown();
+    vi.unstubAllEnvs();
+    db.close();
+    rmSync(dir, { recursive: true, force: true });
+    await boot("certificate-pending");
+    await adminCall("POST", "/admin/tailscale/enable", { enabled: true });
+    await until((s) => s.connection === "connected" && s.certificate?.reason === "pending");
+    expect(service.tailnetCertificatePending()).toBe(true);
+    const overview = (await adminCall("GET", "/admin/access")).json as {
+      oauth: { resources: Array<{ resource: string; certificatePending?: boolean }> };
+    };
+    const tailnet = overview.oauth.resources.find((entry) =>
+      entry.resource.startsWith("https://omnesis.example-net.ts.net"),
+    );
+    expect(tailnet?.certificatePending).toBe(true);
+    expect(
+      overview.oauth.resources.filter((entry) => entry !== tailnet && entry.certificatePending),
+    ).toEqual([]);
   });
 });
 

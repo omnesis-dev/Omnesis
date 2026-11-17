@@ -9,6 +9,8 @@ export interface GatewayChoice {
   gatewayId: string;
   publicOrigin: string;
   displayName?: string;
+  /** Whether the relay holds a live tunnel for it now. Shown to people; never decides anything. */
+  online: boolean;
 }
 
 /** Discovery selects a gateway, never a device credential or an authorization grant. */
@@ -18,10 +20,13 @@ export class GatewayDirectory {
       accounts(identity: string): string[];
       binding(account: string): GatewayBinding | undefined;
       name(account: string): string | undefined;
+      online(account: string): boolean;
     },
   ) {}
 
-  private entries(identity: string): { choice: GatewayChoice; binding: GatewayBinding }[] {
+  private entries(
+    identity: string,
+  ): { account: string; choice: GatewayChoice; binding: GatewayBinding }[] {
     const entries = [];
     for (const account of this.source.accounts(identity)) {
       let binding;
@@ -35,15 +40,22 @@ export class GatewayDirectory {
       if (!binding) continue;
       const displayName = this.source.name(account);
       entries.push({
+        account,
         binding,
         choice: {
           gatewayId: binding.gatewayId,
           publicOrigin: binding.publicOrigin,
           ...(displayName === undefined ? {} : { displayName }),
+          online: this.source.online(account),
         },
       });
     }
     return entries.sort((a, b) => a.choice.gatewayId.localeCompare(b.choice.gatewayId));
+  }
+
+  /** The owner account of one listed gateway of this identity, by gateway id. */
+  owner(identity: string, gatewayId: string): string | undefined {
+    return this.entries(identity).find((entry) => entry.choice.gatewayId === gatewayId)?.account;
   }
 
   choices(identity: string): GatewayChoice[] {

@@ -1958,6 +1958,7 @@ const addressedHosts = () =>
       ...(configStore.get().gateway?.pairingSystemTrustOrigins ?? []),
     ],
     proxyTrusted: reverseProxyTrusted(),
+    gatewayPort: PORT,
   });
 let acmeController: Awaited<ReturnType<typeof createGatewayAcmeController>>;
 const publicSni = new GatewayPublicSni();
@@ -1989,6 +1990,14 @@ const tlsLifecycle = new TlsLifecycleService({
 });
 
 let cloudRelayManagement: GatewayCloudRelayManagement | undefined;
+/** The Omnesis relay origin agents reach this gateway by, once it has one. */
+const relayPublicOrigin = (): string | undefined =>
+  cloudRelayEnabled()
+    ? (cloudRelayManagement?.publicOrigin() ??
+      (process.env.OMNESIS_CLOUD_RELAY_GATEWAY_ORIGIN
+        ? publicGatewayOrigin(process.env)
+        : undefined))
+    : undefined;
 /** The key a device sees when it reaches this gateway through the relay. */
 const cloudPublicSpkiFingerprint = (): string | undefined =>
   cloudRelayManagement?.managesPublicCertificate()
@@ -2796,19 +2805,16 @@ const app = createServer(db, DB_PATH, {
   ...(cloudRelayEnabled() || tailscaleEmbed
     ? {
         additionalOAuthIssuerUrls: () => {
-          const relayOrigin = cloudRelayEnabled()
-            ? (cloudRelayManagement?.publicOrigin() ??
-              (process.env.OMNESIS_CLOUD_RELAY_GATEWAY_ORIGIN
-                ? publicGatewayOrigin(process.env)
-                : undefined))
-            : undefined;
           // Agents reach the gateway by its tailnet name, on the tailnet or
           // through its public address; both are the same origin.
           const tailnetOrigin = tailscaleEmbed?.tailnetOrigin() ?? undefined;
-          return [relayOrigin, tailnetOrigin].filter((origin): origin is string => !!origin);
+          return [relayPublicOrigin(), tailnetOrigin].filter(
+            (origin): origin is string => !!origin,
+          );
         },
       }
     : {}),
+  ...(cloudRelayEnabled() ? { relayPublicOrigin } : {}),
   tailscaleEmbed,
   cloudRelayManagement,
   cloudRelayExposure: () => cloudRelayManagement?.isExposing() ?? false,

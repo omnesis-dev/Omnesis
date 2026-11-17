@@ -244,6 +244,7 @@ struct AccountGatewayRow: View {
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                     .truncationMode(.middle)
+                AccountGatewayPresence(online: gateway.online)
             }
             Spacer(minLength: 8)
             Image(systemName: "chevron.right")
@@ -266,6 +267,31 @@ struct AccountGatewayRow: View {
     static func title(_ gateway: AccountGatewayChoice) -> String {
         let name = gateway.displayName?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         return name.isEmpty ? "Gateway" : name
+    }
+}
+
+/// Whether the relay holds this gateway's tunnel right now. The word is always shown, so the state
+/// never rests on colour alone; the dot is decoration and is not read aloud. A hint only: an offline
+/// gateway can still be chosen.
+@available(iOS 17.0, *)
+struct AccountGatewayPresence: View {
+    let online: Bool
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Circle()
+                .fill(online ? Theme.success : Theme.textMuted)
+                .frame(width: 8, height: 8)
+                .accessibilityHidden(true)
+            Text(Self.label(online: online))
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+        }
+    }
+
+    static func label(online: Bool) -> String {
+        online ? "Online" : "Offline"
     }
 }
 
@@ -307,6 +333,9 @@ struct AccountGatewayRow: View {
         onManual: {}
     )
 }
+
+#Preview("Choose a gateway, online and offline, dark") { PreviewMocks.accountPairingPanel(.choosing).preferredColorScheme(.dark) }
+#Preview("Choose a gateway, large text") { PreviewMocks.accountPairingPanel(.choosing).dynamicTypeSize(.accessibility2) }
 
 #Preview("Waiting for your OK") { PreviewMocks.accountPairingPanel(.comparing) }
 #Preview("Waiting for your OK, Face ID on the gateway") { PreviewMocks.accountPairingPanel(.comparing, approvalPage: true) }

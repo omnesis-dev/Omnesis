@@ -258,6 +258,9 @@ const DOTENV_TEMPLATE = `# Omnesis environment file — loaded on startup from $
 # OMNESIS_LOG_FILE=
 
 # ── Reverse-proxy ─────────────────────────────────────────────────────────
+# A proxy on this machine (Tailscale Funnel, Caddy, nginx) needs nothing here.
+# Set to 1 only for a proxy on another machine, with the gateway reachable
+# through that proxy alone.
 # OMNESIS_TRUST_PROXY=0
 
 # ── Experimental features ─────────────────────────────────────────────────

@@ -6,6 +6,7 @@ package dev.omnesis.android.pairing
 import dev.omnesis.android.transport.dto.GatewayPasskeyLocation
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.SerializationException
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.*
@@ -19,8 +20,9 @@ import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
 import javax.net.ssl.SSLException
 
+/** [online]: the relay holds a live tunnel for this gateway right now. A display hint only; it never changes what can be chosen. */
 @Serializable
-data class AccountGatewayChoice(val gatewayId: String, val publicOrigin: String, val displayName: String? = null)
+data class AccountGatewayChoice(val gatewayId: String, val publicOrigin: String, val displayName: String? = null, val online: Boolean)
 
 class AccountPairingException(val reason: Reason) : Exception("Account pairing could not be completed") {
     enum class Reason { UNAVAILABLE, NO_ACCOUNT, NO_GATEWAYS, INVALID_RESPONSE, EXPIRED, GATEWAY_OFFLINE, GATEWAY_UPDATE_REQUIRED, NOT_YOUR_GATEWAY }
@@ -160,7 +162,9 @@ class AccountCloudPairingClient(
         discovery = session
         val all = mutableListOf<AccountGatewayChoice>(); var cursor: String? = null
         do {
-            val page = decode<Directory>(request("/_relay/v3/gateways" + (cursor?.let { "?after=$it" } ?: ""), bearer = session.discoveryToken))
+            val response = request("/_relay/v3/gateways" + (cursor?.let { "?after=$it" } ?: ""), bearer = session.discoveryToken)
+            // An entry missing a required field, such as `online`, is as malformed as one with a bad identifier.
+            val page = try { decode<Directory>(response) } catch (_: SerializationException) { invalid() }
             checkOpen()
             if (page.gateways.size > 50) invalid()
             for (choice in page.gateways) {

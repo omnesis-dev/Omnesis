@@ -157,6 +157,58 @@ describe("MCP OAuth access routes", () => {
     expect((await localDiscovery.json()).issuer).toBe("https://localhost:17600");
   });
 
+  test("lists only the addresses that answer MCP, so the portal never offers one turned off", async () => {
+    const relay = "https://gw-fictional.relay.example.net";
+    let relayOn = true;
+    let domainOn = true;
+    const answersAt = (url: string) =>
+      new URL(url).origin === relay ? relayOn : new URL(url).origin === ORIGIN ? domainOn : true;
+    const overview = async (testApp: Hono<AppEnv>, at = ORIGIN) =>
+      (
+        (await (
+          await testApp.request(`${at}/admin/access`, { headers: { "X-Test-Portal": "yes" } })
+        ).json()) as {
+          oauth: { resource: string; loopbackOnly?: true; resources: Array<{ resource: string }> };
+        }
+      ).oauth;
+    const listed = (oauth: Awaited<ReturnType<typeof overview>>) =>
+      oauth && { ...oauth, resources: oauth.resources.map((entry) => entry.resource) };
+    const switched = createTestApp({
+      additionalOAuthIssuerUrls: [relay],
+      mcpAddresses: { answersAt, settle: async () => {} },
+    });
+    const plain = createTestApp({ additionalOAuthIssuerUrls: [relay] });
+    // Every address on: exactly the overview of a gateway without the switches.
+    expect(await overview(switched)).toEqual(await overview(plain));
+    expect(listed(await overview(switched))).toMatchObject({
+      resource: RESOURCE,
+      resources: [RESOURCE, `${relay}/mcp`],
+    });
+    domainOn = false;
+    expect(listed(await overview(switched))).toMatchObject({
+      resource: `${relay}/mcp`,
+      resources: [`${relay}/mcp`],
+    });
+    relayOn = false;
+    // Nothing public answers on a gateway with its own domain: no address to offer.
+    expect(await overview(switched)).toBeNull();
+    // Without a domain the gateway's own machine is what is left.
+    const local = createTestApp({
+      publicBaseUrl: undefined,
+      loopbackBaseUrl: "https://localhost:17600",
+      additionalOAuthIssuerUrls: [relay],
+      mcpAddresses: { answersAt, settle: async () => {} },
+    });
+    expect(listed(await overview(local, "https://192.0.2.10:17600"))).toMatchObject({
+      resource: "https://localhost:17600/mcp",
+      loopbackOnly: true,
+      resources: ["https://localhost:17600/mcp"],
+    });
+    // Tokens and discovery on the relay itself are not the overview's business.
+    const metadata = await switched.request(`${relay}/.well-known/oauth-protected-resource/mcp`);
+    expect(metadata.status).toBe(200);
+  });
+
   test("tells the portal which MCP resources present the gateway's own certificate", async () => {
     const fingerprint = "ab".repeat(32);
     const presented: Record<string, { fingerprint: string; publiclyTrusted: boolean } | null> = {
@@ -216,6 +268,27 @@ describe("MCP OAuth access routes", () => {
         servedByGateway: true,
         direct: true,
         publiclyTrusted: true,
+      },
+    ]);
+
+    // An address whose trusted certificate is still being issued says so, by origin.
+    const arriving = createTestApp({
+      mcpResourceUrls: ["https://tailnet.example.net/mcp"],
+      tlsFingerprintSha256: () => fingerprint,
+      probeCertificate: async () => null,
+      pendingCertificateOrigins: async () => new Set(["https://tailnet.example.net"]),
+    });
+    const arrivingOverview = await arriving.request(`${ORIGIN}/admin/access`, {
+      headers: { "X-Test-Portal": "yes" },
+    });
+    expect((await arrivingOverview.json()).oauth.resources).toEqual([
+      { resource: RESOURCE, servedByGateway: false, direct: false, publiclyTrusted: false },
+      {
+        resource: "https://tailnet.example.net/mcp",
+        servedByGateway: false,
+        direct: false,
+        publiclyTrusted: false,
+        certificatePending: true,
       },
     ]);
 

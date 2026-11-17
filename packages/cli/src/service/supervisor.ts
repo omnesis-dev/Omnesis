@@ -182,6 +182,8 @@ export interface LaunchdDeps {
   sleep?: (ms: number) => Promise<void>;
   /** How long a stop waits for launchd to report the job gone. */
   stopTimeoutMs?: number;
+  /** How long a refused start waits for launchd to report the job running. */
+  startConfirmTimeoutMs?: number;
   /** The live gateway holding a config dir's lock. Tests substitute a fixture. */
   gatewayHolder?: (configDir: string) => GatewayLockHolder | null;
   /** Send a signal to a process. Tests substitute a recorder. */
@@ -196,6 +198,11 @@ export interface LaunchdDeps {
  * report, not a daemon that is merely slow.
  */
 const LAUNCHD_STOP_TIMEOUT_MS = GATEWAY_EXIT_TIMEOUT_SECONDS * 1000 + 30_000;
+/**
+ * A job launchd is still spawning reports `running` within moments; one left
+ * pended never does, and is reported as not started once this has passed.
+ */
+const LAUNCHD_START_CONFIRM_MS = 5_000;
 const LAUNCHD_POLL_MS = 250;
 
 /** One `<key>` of a plist's EnvironmentVariables, as `generateLaunchdPlist` writes it. */
@@ -278,11 +285,7 @@ export class LaunchdSupervisor implements Supervisor {
     // before the new one opens them.
     await this.bootoutAndWait(spec.component, spec.instance);
     await this.bootstrap(spec.component, spec.instance);
-    // RunAtLoad is not reliable when bootstrap happens outside a real GUI
-    // login context (e.g. over SSH): launchd records the job with a pended
-    // "speculative" spawn and never execs it. Kick it explicitly so install
-    // always means started.
-    await this.kickstart(spec.component, spec.instance);
+    await this.startRegistered(spec.component, spec.instance);
   }
 
   async uninstall(component: ServiceComponent, instance?: string): Promise<void> {
@@ -293,12 +296,16 @@ export class LaunchdSupervisor implements Supervisor {
 
   async start(component: ServiceComponent, instance?: string): Promise<void> {
     this.requireInstalled(component, instance);
-    // `kickstart -k` restarts the job's own process. A gateway this job left
+    // `kickstart` reaches only the job's own process. A gateway this job left
     // behind would keep the config dir from whatever it starts.
     await this.stopOrphanedGateway(component, instance);
     // A stopped job is unloaded, so starting it means registering it again.
-    if (!(await this.isLoaded(component, instance))) await this.bootstrap(component, instance);
-    await this.kickstart(component, instance);
+    if (!(await this.isLoaded(component, instance))) {
+      await this.bootstrap(component, instance);
+      await this.startRegistered(component, instance);
+      return;
+    }
+    await this.restartRunning(component, instance);
   }
 
   async restart(component: ServiceComponent, instance?: string): Promise<void> {
@@ -309,7 +316,7 @@ export class LaunchdSupervisor implements Supervisor {
     this.requireInstalled(component, instance);
     await this.bootoutAndWait(component, instance);
     await this.bootstrap(component, instance);
-    await this.kickstart(component, instance);
+    await this.startRegistered(component, instance);
   }
 
   loadDefinition(component: ServiceComponent, instance?: string): Promise<boolean> {
@@ -468,7 +475,46 @@ export class LaunchdSupervisor implements Supervisor {
     };
   }
 
-  private async kickstart(component: ServiceComponent, instance?: string): Promise<void> {
+  /**
+   * Start a job that was just bootstrapped, so that it is certainly running.
+   *
+   * Bootstrapping already spawns the job (RunAtLoad), except outside a real
+   * GUI login context (e.g. over SSH), where launchd may leave that spawn
+   * pended and never exec it. A plain `kickstart` starts a pended job and
+   * leaves a running one alone. It must not be `kickstart -k`: that would
+   * kill the instance bootstrap just spawned — a gateway or collector
+   * barely started — and wait out the ThrottleInterval before spawning it
+   * again; launchd also refuses it at times ("Operation not permitted")
+   * when it follows the bootstrap at once, leaving the RunAtLoad instance
+   * running.
+   *
+   * A refused kickstart is a failure only if the job is not running: the
+   * request is to have it running, which the RunAtLoad spawn may already
+   * have done.
+   */
+  private async startRegistered(component: ServiceComponent, instance?: string): Promise<void> {
+    this.requireInstalled(component, instance);
+    const target = this.target(component, instance);
+    const res = await this.deps.exec("launchctl", ["kickstart", target]);
+    if (res.code === 0) return;
+    const timeoutMs = this.deps.startConfirmTimeoutMs ?? LAUNCHD_START_CONFIRM_MS;
+    const sleep =
+      this.deps.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
+    const deadline = Date.now() + timeoutMs;
+    for (;;) {
+      const job = await this.deps.exec("launchctl", ["print", target]);
+      if (job.code === 0 && parseLaunchctlPrint(job.stdout).state === "running") return;
+      if (Date.now() >= deadline) break;
+      await sleep(LAUNCHD_POLL_MS);
+    }
+    throw new CliError(
+      `launchctl kickstart failed (${res.code}): ${res.stderr.trim()}`,
+      EXIT_FAILURE,
+    );
+  }
+
+  /** Restart the process of a job launchd already has registered. */
+  private async restartRunning(component: ServiceComponent, instance?: string): Promise<void> {
     this.requireInstalled(component, instance);
     const res = await this.deps.exec("launchctl", [
       "kickstart",

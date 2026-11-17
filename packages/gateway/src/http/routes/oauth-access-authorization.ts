@@ -11,6 +11,7 @@ import {
   type ServedResource,
 } from "../../access/served-by-gateway.js";
 import {
+  narrowOAuthOverviewUrls,
   resolveOAuthOverviewUrls,
   resolveOAuthUrls,
   resolveOAuthResourceUrls,
@@ -65,6 +66,7 @@ import {
 import type { Context, MiddlewareHandler } from "hono";
 import type { AppEnv, RouteApp } from "./types.js";
 import type { AgentCertificateTrust } from "../../tls-lifecycle/agent-trust.js";
+import type { McpAddresses } from "../../remote-access/mcp-addresses.js";
 import type { AccessService } from "../../access/service.js";
 import type { AccessAuthorizationNotifier } from "../../access/authorization-notifier.js";
 
@@ -105,6 +107,16 @@ export function mountOAuthAuthorizationRoutes(
     probeCertificate?: CertificateProbe;
     /** Who minted the served certificate and the file an agent on this machine trusts it by. */
     agentCertificateTrust?: () => AgentCertificateTrust;
+    /**
+     * Which addresses away from home answer MCP. The access overview lists only those,
+     * so a client is never pointed at an address that answers 404.
+     */
+    mcpAddresses?: Pick<McpAddresses, "answersAt" | "settle">;
+    /**
+     * The origins whose publicly trusted certificate is still being issued,
+     * so the portal can say to wait rather than to set up another one.
+     */
+    pendingCertificateOrigins?: () => Promise<ReadonlySet<string>>;
   } = {},
 ): void {
   const authorizationLimiter = oauthAuthorizationRateLimiter();
@@ -380,17 +392,38 @@ export function mountOAuthAuthorizationRoutes(
     ...(options.listenPort !== undefined ? { listenPort: options.listenPort } : {}),
     ...(options.probeCertificate ? { probe: options.probeCertificate } : {}),
   });
-  const accessOverview = async (requestUrl: string) => {
-    const urls = resolveOAuthOverviewUrls(
-      requestUrl,
-      options.publicBaseUrl,
-      options.mcpResourceUrls,
-      options.loopbackBaseUrl,
-      options.additionalOAuthIssuerUrls,
+  // The overview lists only addresses that answer MCP. Tokens and every OAuth
+  // route keep resolving from the full configuration.
+  const answers = (resource: string) => options.mcpAddresses?.answersAt(resource) ?? true;
+  const overviewUrls = (requestUrl: string) =>
+    narrowOAuthOverviewUrls(
+      resolveOAuthOverviewUrls(
+        requestUrl,
+        options.publicBaseUrl,
+        options.mcpResourceUrls,
+        options.loopbackBaseUrl,
+        options.additionalOAuthIssuerUrls,
+      ),
+      answers,
+      // Nothing public answers: a gateway without its own domain still serves its own machine.
+      () =>
+        !options.publicBaseUrl && options.loopbackBaseUrl
+          ? narrowOAuthOverviewUrls(
+              resolveOAuthUrls(options.loopbackBaseUrl, undefined, options.mcpResourceUrls),
+              answers,
+              () => null,
+            )
+          : null,
     );
-    const served = urls
-      ? await servedByGateway(urls.supportedResources)
-      : new Map<string, ServedResource>();
+  const accessOverview = async (requestUrl: string) => {
+    await options.mcpAddresses?.settle();
+    const urls = overviewUrls(requestUrl);
+    const [served, pending] = await Promise.all([
+      urls ? servedByGateway(urls.supportedResources) : new Map<string, ServedResource>(),
+      urls && options.pendingCertificateOrigins
+        ? options.pendingCertificateOrigins()
+        : new Set<string>(),
+    ]);
     return {
       ...access.overview(),
       oauth: urls
@@ -402,6 +435,7 @@ export function mountOAuthAuthorizationRoutes(
               servedByGateway: served.get(resource)?.servedByGateway ?? false,
               direct: served.get(resource)?.direct ?? false,
               publiclyTrusted: served.get(resource)?.publiclyTrusted ?? false,
+              ...(pending.has(new URL(resource).origin) ? { certificatePending: true } : {}),
             })),
             tlsFingerprintSha256: fingerprint() ?? null,
             certificate: options.agentCertificateTrust?.() ?? null,
