@@ -807,6 +807,8 @@ function heldTunnel() {
   const waiting: Array<() => void> = [];
   const tunnel = {
     stop: vi.fn(),
+    close: async () => {},
+    cleanupFailure: () => undefined,
     status: () => ({ state }),
     online: vi.fn(
       (signal: AbortSignal) =>
