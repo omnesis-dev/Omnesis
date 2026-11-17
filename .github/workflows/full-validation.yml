@@ -5355,7 +5355,7 @@ jobs:
       DEBUG: pw:webserver
 
   address-fixture-cleanup-proof:
-    name: Joined address fixtures (${{ matrix.os }})
+    name: Joined address fixtures and Doctor read failures (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: ${{ matrix.lane == 'focused' && 40 || 180 }}
     strategy:
@@ -5518,7 +5518,7 @@ jobs:
           node node_modules/eslint/bin/eslint.js
           packages/gateway/src/server.test.ts
           packages/gateway/src/server.mcp-addresses.test.ts
-      - name: Validate every assertion in both address fixture suites
+      - name: Validate all address fixture and Doctor assertions
         shell: bash
         run: node scripts/run-check.mjs unit packages/gateway/src/server.test.ts
           packages/gateway/src/server.mcp-addresses.test.ts
