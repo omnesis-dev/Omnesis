@@ -31,7 +31,6 @@ import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
 import { setTimeout as sleep } from "node:timers/promises";
 import { parseCLI } from "vitest/node";
-import { availableMemory } from "./lib/available-memory.mjs";
 import { waitForChild } from "./lib/check-process.mjs";
 export { waitForChild, childGroupIsAlive } from "./lib/check-process.mjs";
 
@@ -272,7 +271,7 @@ function currentMemoryBudget() {
   return effectiveMemoryBudget({
     hostTotalBytes: totalmem(),
     constrainedBytes: process.constrainedMemory(),
-    availableBytes: availableMemory(),
+    availableBytes: process.availableMemory(),
   });
 }
 

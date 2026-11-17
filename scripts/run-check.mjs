@@ -8,7 +8,6 @@ import { availableParallelism, homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseCLI } from "vitest/node";
-import { availableMemory } from "./lib/available-memory.mjs";
 import { waitForChild } from "./lib/check-process.mjs";
 import { progressArgs, progressEnvironment } from "./lib/check-progress.mjs";
 import { assertTreeFingerprint } from "./nx/tree-state.mjs";
@@ -31,10 +30,20 @@ export function schedulerCommand(env = process.env) {
   return config.command;
 }
 
+/**
+ * Memory one unit file worker is budgeted. Measured on a 3-CPU, 7 GiB hosted
+ * macOS runner: two workers and the Vitest main process peaked at 2.3 GiB of
+ * resident memory together, with no swap-outs, while the machine reported
+ * about 4 GiB available before the run. 1.5 GiB keeps roughly a third of
+ * headroom over that peak and lets such a runner use two workers instead of
+ * one, which halves the lane.
+ */
+const UNIT_WORKER_BYTES = 1.5 * 1024 ** 3;
+
 export function unitWorkers(
   env = process.env,
   cpuCount = availableParallelism(),
-  available = availableMemory(),
+  available = process.availableMemory(),
 ) {
   if (env.OMNESIS_UNIT_WORKERS !== undefined) {
     const count = Number(env.OMNESIS_UNIT_WORKERS);
@@ -42,7 +51,7 @@ export function unitWorkers(
       throw new Error("OMNESIS_UNIT_WORKERS must be an integer from 1 to 8");
     return count;
   }
-  return Math.max(1, Math.min(4, cpuCount, Math.floor(available / (2 * 1024 ** 3))));
+  return Math.max(1, Math.min(4, cpuCount, Math.floor(available / UNIT_WORKER_BYTES)));
 }
 
 export function lintEnv(env = process.env) {
@@ -204,13 +213,11 @@ export async function main(argv = process.argv.slice(2)) {
       if (code === 0) code = await run("npm", ["run", "test:unit:raw"], env);
     } else if (kind === "unit" || kind === "smoke") {
       const cpus = availableParallelism();
-      const available = availableMemory();
+      const available = process.availableMemory();
       const automatic = unitWorkers(process.env, cpus, available);
       const workers = focused ? Math.min(2, automatic) : automatic;
-      const gib = (bytes) => `${(bytes / 1024 ** 3).toFixed(1)} GiB`;
-      const free = process.availableMemory();
       process.stderr.write(
-        `[check] ${kind} file workers: ${workers} (${cpus} CPUs, ${gib(available)} available${available === free ? "" : `, ${gib(free)} of it free`})\n`,
+        `[check] ${kind} file workers: ${workers} (${cpus} CPUs, ${(available / 1024 ** 3).toFixed(1)} GiB available)\n`,
       );
       const { filter, options } = parseCLI(["vitest", "run", ...args]);
       const requested = options.maxWorkers;
