@@ -9684,6 +9684,7 @@ div.source-activity-popover-link:hover {
   background: var(--bg-secondary);
   z-index: 1;
 }
+.add-source-modal:has(.add-source-picker) { max-width: 780px; }
 .add-source-header h3 {
   margin: 0;
   font-size: 15px;
