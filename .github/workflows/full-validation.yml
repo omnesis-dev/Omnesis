@@ -25,6 +25,7 @@ on:
             bootstrap-receipt-proof,
             account-unlink-integration,
             account-unlink-linux-proof,
+            windows-failure-triage,
             gateway-boot-trace,
             windows-network-pilot,
             windows-network-proxy-pilot,
@@ -3607,3 +3608,109 @@ jobs:
       max-parallel: 1
       matrix:
         os: ${{ fromJSON(inputs.scope == 'account-unlink-linux-proof' && '["ubuntu-latest"]' || '["windows-latest","ubuntu-latest","macos-15"]') }}
+
+  windows-failure-triage:
+    name: Windows runtime failure triage (${{ matrix.os }})
+    if: inputs.scope == 'windows-failure-triage'
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    env:
+      TZ: UTC
+      OMNESIS_UNIT_WORKERS: "1"
+      OMNESIS_E2E_WORKERS: "1"
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ inputs.source_sha }}
+          persist-credentials: false
+      - name: Keep this job off production Omnesis services
+        id: production-network
+        shell: bash
+        run: $GITHUB_WORKSPACE/scripts/ci/production-network.sh isolate
+      - name: Verify fixed source revision
+        env:
+          TARGET_SHA: ${{ inputs.source_sha }}
+        run: |
+          [[ "$TARGET_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "$TARGET_SHA"
+      - name: Set up Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: "24"
+          cache: npm
+      - name: Install dependencies
+        id: dependencies
+        run: node scripts/ci/npm-ci.mjs --no-audit --no-fund
+      - name: Build and prove Windows SQLite recovery bindings
+        id: native_sqlite
+        run: node scripts/ci/build-windows-sqlite.mjs
+        if: runner.os == 'Windows'
+      - name: Build and prove Windows vector publication
+        id: native_vector
+        run: node scripts/ci/build-windows-usearch.mjs
+        if: runner.os == 'Windows'
+      - name: Make OpenSSL available for isolated TLS certificates
+        run: |
+          if (-not (Get-Command openssl -ErrorAction SilentlyContinue)) {
+            $opensslDir = Join-Path $env:ProgramFiles 'Git\usr\bin'
+            if (-not (Test-Path (Join-Path $opensslDir 'openssl.exe'))) { throw 'OpenSSL is required for gateway tests' }
+            $opensslDir | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+          }
+        if: runner.os == 'Windows'
+        shell: pwsh
+      - name: Check merged relay ownership types and script bootstrap
+        if: runner.os == 'Linux'
+        env:
+          NODE_OPTIONS: --max-old-space-size=6144
+        run: node node_modules/eslint/bin/eslint.js packages/cloud-relay/src/management-service.ts scripts/lib/check-process.mjs scripts/lib/check-process.test.mjs scripts/ci/windows-checks.mjs scripts/ci/with-test-embedder.mjs scripts/nx/entrypoints.test.mjs
+      - name: Prove account unlink boundaries and retained cleanup ownership
+        run: exec node scripts/run-check.mjs unit packages/cloud-relay/src/management-service.test.ts packages/cloud-relay/src/gateway-integration.test.ts packages/cloud-relay/src/gateway-key-client.test.ts packages/cloud-relay/src/management-ownership-boundaries.test.ts packages/cli/src/service/supervisor.test.ts packages/gateway/portal/js/views/relay.test.ts scripts/lib/check-process.test.mjs scripts/nx/entrypoints.test.mjs
+        if: runner.os == 'Linux'
+      - name: Install the required real enrollment browser
+        run: npm exec --workspace packages/collector -- playwright install chromium
+      - name: Observe delivery state only if the unchanged thirty-second assertion fails
+        shell: bash
+        run: |
+          node --input-type=module - <<'JS'
+          import fs from 'node:fs';
+          const path='packages/collector/src/e2e/mcp-answer.e2e.test.ts';
+          const source=fs.readFileSync(path,'utf8');
+          const needle='      await expect.poll(() => runs.length, { timeout: 30_000 }).toBe(1);';
+          if(!source.includes(needle))throw Error('Expected unchanged MCP delivery assertion');
+          const replacement=`      try {
+                  await expect.poll(() => runs.length, { timeout: 30_000 }).toBe(1);
+                } catch (error) {
+                  const db = new Database(harness.getDbPath(), { readonly: true });
+                  try {
+                    const snapshot = db.prepare(
+                      "SELECT status, attempts, last_error, next_attempt_at, claim_expires_at FROM answer_completion_deliveries WHERE task_id = ?",
+                    ).all(taskId);
+                    throw new Error("MCP_RESTART_DIAGNOSTIC " + JSON.stringify({ now: Date.now(), runs: runs.length, snapshot }), { cause: error });
+                  } finally {
+                    db.close();
+                  }
+                }`;
+          fs.writeFileSync(path,source.replace(needle,replacement));
+          JS
+      - name: Reproduce the exact failed runtime suites and merged Linux account unlink
+        env:
+          MERGED_UNLINK_FILE: ${{ runner.os == 'Linux' && 'packages/collector/src/e2e/account-gateway-unlink.e2e.test.ts' || '' }}
+        run: exec node scripts/run-check.mjs e2e packages/collector/src/e2e/mcp-answer.e2e.test.ts packages/collector/src/e2e/briefs-reconcile.e2e.test.ts packages/collector/src/e2e/account-enrollment-google-group.e2e.test.ts $MERGED_UNLINK_FILE
+      - name: Require only the declared test diagnostic to differ
+        run: |-
+          test "$(git diff --name-only)" = packages/collector/src/e2e/mcp-answer.e2e.test.ts
+          git diff --exit-code -- . ":(exclude)packages/collector/src/e2e/mcp-answer.e2e.test.ts"
+      - name: Check nothing tried to reach production Omnesis services
+        if: ${{ always() && steps.production-network.outcome == 'success' }}
+        shell: bash
+        run: $GITHUB_WORKSPACE/scripts/ci/production-network.sh verify
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        os:
+          - windows-latest
+          - ubuntu-latest
