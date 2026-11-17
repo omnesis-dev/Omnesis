@@ -18,21 +18,22 @@
 // link, or `{ route, text }` for a link inside the portal.
 
 import { useEffect, useState } from "preact/hooks";
+import { ACCOUNT_PAGE, HOST_TAILSCALE_PAGE, OWN_ADDRESS_PAGE, RELAY_PAGE, TAILSCALE_PAGE } from "../remote-access/manage.js";
 
 import { relayManagement } from "../../lib/cloud-relay-api.js";
 import { getTailscale } from "../../lib/tailscale-api.js";
 
 /** The gateway does not serve the docs; these are the published pages. */
 export const DOCS = "https://omnesis.dev/docs";
-export const PUBLISH_FUNNEL = `${DOCS}/connect#tailscale-funnel`;
-export const PUBLISH_DOMAIN = `${DOCS}/setup#public-domain`;
 
 /** Where remote access is turned on, and where a gateway connects to an Omnesis account. */
-export const ACCOUNT_SETTINGS_ROUTE = "/portal/settings/account";
-const ACCOUNT_SETTINGS = { route: ACCOUNT_SETTINGS_ROUTE, text: "Settings, Account" };
+export const ACCOUNT_SETTINGS_ROUTE = ACCOUNT_PAGE;
+const ACCOUNT_SETTINGS = { route: ACCOUNT_PAGE, text: "Settings, Connectivity" };
+/** Where the relay's own problems and its on/off switch are. */
+const RELAY_SETTINGS = { route: RELAY_PAGE, text: "Settings, Connectivity" };
 /** Where the gateway's own Tailscale device and its public address are managed. */
-export const TAILSCALE_SETTINGS_ROUTE = "/portal/settings/tailscale";
-const TAILSCALE_SETTINGS = { route: TAILSCALE_SETTINGS_ROUTE, text: "Settings, Tailscale" };
+export const TAILSCALE_SETTINGS_ROUTE = TAILSCALE_PAGE;
+const TAILSCALE_SETTINGS = { route: TAILSCALE_PAGE, text: "Settings, Connectivity" };
 
 const PRIVATE_SUFFIXES = [".local", ".internal", ".lan", ".home.arpa", ".localhost"];
 
@@ -210,30 +211,32 @@ const RELAY_UNAVAILABLE = {
   off: {
     marker: "turned off",
     headline: "Remote access is turned off.",
-    action: ["Turn it on in ", ACCOUNT_SETTINGS, "."],
+    action: ["Turn it on in ", RELAY_SETTINGS, "."],
   },
   checking: {
     marker: "being checked",
     headline: "This gateway's Omnesis address is still being checked.",
-    action: ["This takes up to a minute. Follow it in ", ACCOUNT_SETTINGS, "."],
+    action: ["This takes up to a minute. Follow it in ", RELAY_SETTINGS, "."],
   },
   disconnected: {
     marker: "not connected",
     headline: "Remote access is not connected right now.",
-    action: ["Check it in ", ACCOUNT_SETTINGS, "."],
+    action: ["Check it in ", RELAY_SETTINGS, "."],
   },
   unreachable: {
     marker: "not reachable",
     headline: "This gateway's Omnesis address could not be reached.",
-    action: ["Check remote access in ", ACCOUNT_SETTINGS, "."],
+    action: ["Check the relay in ", RELAY_SETTINGS, "."],
   },
 };
 
+/** Publishing the gateway yourself, from Settings → Connectivity. */
 const PUBLISH_IT_YOURSELF = [
-  { href: PUBLISH_FUNNEL, text: "Publish the gateway with Tailscale Funnel" },
+  "Publish the gateway with ",
+  { route: HOST_TAILSCALE_PAGE, text: "Tailscale on this computer" },
   " or ",
-  { href: PUBLISH_DOMAIN, text: "use a domain of your own" },
-  ".",
+  { route: OWN_ADDRESS_PAGE, text: "a domain of your own" },
+  ", in Settings, Connectivity.",
 ];
 
 const CONNECT_AN_ACCOUNT = [
@@ -486,7 +489,15 @@ export function hostedClientsHint(relay = NO_RELAY, tailscale = NO_TAILSCALE) {
     return ["ChatGPT and Claude apps can use this gateway's Tailscale public address."];
   }
   if (relay.state === "none") {
-    if (tailscale.state === "none") return null;
+    if (tailscale.state === "none") {
+      return [
+        "ChatGPT and Claude apps need an Internet-reachable address: publish the gateway with ",
+        { route: HOST_TAILSCALE_PAGE, text: "Tailscale on this computer" },
+        " or ",
+        { route: OWN_ADDRESS_PAGE, text: "a domain of your own" },
+        ".",
+      ];
+    }
     return [
       "ChatGPT and Claude apps need an Internet-reachable address. Turning on the public address in ",
       TAILSCALE_SETTINGS,

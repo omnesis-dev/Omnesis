@@ -6,7 +6,7 @@ Status: phases 1–4 implemented (1: skeleton, auth, session, gate, registration
 
 ## 1. Goal and scope
 
-Add an **experimental** Telegram source. It archives the operator's own Telegram account (user account, MTProto, through mtcute) into Omnesis as one conversation document per chat per UTC day, the same shape WhatsApp uses.
+The Telegram source archives the operator's own Telegram account (user account, MTProto, through mtcute) into Omnesis as one conversation document per chat per UTC day, the same shape WhatsApp uses. It is available without experimental mode.
 
 **In scope:**
 
@@ -754,7 +754,7 @@ No gateway route, worker or migration is needed.
 
 ## 12. Docs checklist
 
-- `website/docs/sources.html`: a Telegram entry under "Email & messaging", clearly labelled **Experimental — offered only when the gateway and collector run with `OMNESIS_EXPERIMENTAL=1`**. It covers:
+- `website/docs/sources.html`: a Telegram entry under "Email & messaging", available without an experimental-mode gate. It covers:
   - what it contributes (day conversations, attachments, transcribed voice notes);
   - that you need your own API app from my.telegram.org (one per phone number), plus the "ERROR" popup advice;
   - QR sign-in and the 2FA password (not stored);
@@ -764,11 +764,9 @@ No gateway route, worker or migration is needed.
   - **Telegram's terms**: the API Terms of Service (https://core.telegram.org/api/terms) §1.5 prohibit "using, accessing or aggregating data obtained from the Telegram platform to train, fine-tune or otherwise engage in the development, enhancement or deployment of artificial intelligence, machine learning models and similar technologies", and the Terms of Service for Content Licensing (https://telegram.org/tos/content-licensing), section "Large Language Models and AI", prohibit "the scraping, indexing, harvesting, aggregation or use of data obtained from its platform" for those purposes, while permitting access to the data a legitimate third-party client needs to operate. Operators decide whether Omnesis's indexing and agent features over this data fit their reading of the terms (open question Q1);
   - the unofficial-client note: Telegram states (https://core.telegram.org/api/obtaining_api_id) that "all accounts that log in using unofficial Telegram API clients are automatically put under observation", and it can limit or ban accounts; the source paces its requests and backs off.
 
-  This is the first experimental source in the catalogue, so establish the label style there.
-
-- `website/docs/experimental.html`: one sentence that experimental sources (Telegram) appear in Add source under the gate, linking `/docs/sources#telegram`.
+- `website/docs/experimental.html`: Telegram setup belongs in the stable source catalogue, not behind the experimental gate.
 - `website/docs/building-sources.html`: no change unless the contract changes (Q6).
-- `README.md`: the source table (line ~101) lists GA sources only; leave Telegram out while it is experimental.
+- `README.md`: include Telegram in the source table under Email & messaging.
 - `docs/releasing.md` native-modules table: note that `@mtcute/node` pulls `better-sqlite3`, deduplicated to 13 through the override.
 - `docs/conventions.md`: add a row if the adapter-boundary pattern ("one module imports the vendor SDK") is to be imitated. Canonical example: `packages/providers/telegram/src/client/mtcute/adapter.ts`.
 - `docs/telegram-source.md`: this file. Keep it updated with resolved VERIFY items.

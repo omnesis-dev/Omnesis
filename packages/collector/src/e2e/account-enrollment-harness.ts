@@ -887,7 +887,7 @@ export class EnrollmentGateway {
   }
 
   /**
-   * What the portal's two buttons send: "Create an Omnesis account" is `create`,
+   * What the portal's two buttons send: "Create an account" is `create`,
    * "I already have one" is `existing`. Signing in never creates an account.
    */
   async connect(intent: "create" | "existing"): Promise<CloudRelayStatus> {

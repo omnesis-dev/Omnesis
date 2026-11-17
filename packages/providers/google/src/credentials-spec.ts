@@ -55,7 +55,7 @@ export const googleCredentialsSpec: ProviderCredentialsSpec = {
         kind: "open-url",
         title: "Create a Google Cloud project",
         body:
-          "Open the Cloud Console and create a new project (any name — e.g. `omnesis`). " +
+          "Open the Cloud Console and create a new project (any name — e.g. omnesis). " +
           "If you already have a project you want to reuse, just select it.",
         url: "https://console.cloud.google.com/projectcreate",
       },
@@ -74,7 +74,7 @@ export const googleCredentialsSpec: ProviderCredentialsSpec = {
         kind: "open-url",
         title: "Configure the consent screen and publish to Production",
         body:
-          "Pick **External**, then **Create**. Fill in the app name (e.g. `Omnesis`) " +
+          "Pick **External**, then **Create**. Fill in the app name (e.g. Omnesis) " +
           "and your email. You don't need a logo.\n\n" +
           "Google won't publish the app until it has a home page and a privacy policy " +
           "(the **Branding** page's **App domain** section), but you don't need a website " +
@@ -90,7 +90,7 @@ export const googleCredentialsSpec: ProviderCredentialsSpec = {
           "screen's **Publishing status**), click **Publish app** and confirm so the " +
           "status is **In production**. This is the important step: an app left in " +
           "**Testing** gets a refresh token that Google expires after 7 days, so every " +
-          "Google source would drop to `needs-auth` about once a week. Publishing stops " +
+          "Google source would drop to needs-auth about once a week. Publishing stops " +
           "that, and needs no Google verification for personal use — when you authorize, " +
           'just click through the one-time "Google hasn\'t verified this app" → ' +
           "**Advanced** → **Continue** warning.",

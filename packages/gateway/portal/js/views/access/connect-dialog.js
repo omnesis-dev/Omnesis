@@ -28,6 +28,7 @@ import {
 } from "./client-setup.js";
 import { NO_RELAY, NO_TAILSCALE, addressChoices, leadsWithLocalAddress } from "./public-address.js";
 import { AgentIcon } from "./agent-brand.js";
+import { OWN_ADDRESS_PAGE } from "../remote-access/manage.js";
 import { errorMessage } from "./shared.js";
 
 /**
@@ -82,7 +83,13 @@ function TrustedCertificateNotice({ agent, certificate }) {
         : `${agent.needsTrustedCertificate}, so it cannot connect to this gateway with ${selfSigned ? "its self-signed certificate" : "the certificate it serves"}.`}
     </p>
     <p>
-      <${ExternalLink} href=${PUBLISH_DOCS.certificates}>Give the gateway a Tailscale certificate<//>${offersMkcert ? ", " : " or "}<${ExternalLink} href=${PUBLISH_DOCS.domain}>use a domain of your own<//>${offersMkcert
+      <${ExternalLink} href=${PUBLISH_DOCS.certificates}>Give the gateway a Tailscale certificate<//>${offersMkcert ? ", " : " or "}<a
+        href=${OWN_ADDRESS_PAGE}
+        onClick=${(event) => {
+          event.preventDefault();
+          navigate(OWN_ADDRESS_PAGE);
+        }}
+      >use a domain of your own</a>${offersMkcert
         ? html`, or <${ExternalLink} href=${PUBLISH_DOCS.certificates}>mint an mkcert certificate<//>, which ${agent.name} trusts with one setting`
         : ""}.
     </p>
@@ -523,21 +530,20 @@ export function ConnectAgentDialog({ oauth: overviewOauth, relay = NO_RELAY, tai
         title="Add this MCP server to the client"
         caption=${addressCaption(oauth, choices.selectable)}
       >
-        ${choices.selectable &&
-        html`<label class="form-group access-address-choice">
-          <span>Address</span>
-          <select
-            id="access-mcp-address"
-            value=${address}
-            onChange=${(event) => setPickedAddress(event.currentTarget.value)}
-          >
-            ${choices.options.map(
-              (option) => html`<option key=${option.resource} value=${option.resource} selected=${option.resource === address}>${option.text}</option>`,
-            )}
-          </select>
-        </label>`}
-        <div class="access-mcp-resource">
-          <code>${oauth.resource}</code>
+        <div class="access-mcp-resource${choices.selectable ? " access-mcp-picker" : ""}">
+          ${choices.selectable
+            ? // The address is picked where it is shown and copied: one field, not a list above a copy of its choice.
+              html`<select
+                id="access-mcp-address"
+                aria-label="MCP server address"
+                value=${address}
+                onChange=${(event) => setPickedAddress(event.currentTarget.value)}
+              >
+                ${choices.options.map(
+                  (option) => html`<option key=${option.resource} value=${option.resource} selected=${option.resource === address}>${option.resource}</option>`,
+                )}
+              </select>`
+            : html`<code>${oauth.resource}</code>`}
           <${CopyIconButton}
             text=${oauth.resource}
             class="access-copy-button"

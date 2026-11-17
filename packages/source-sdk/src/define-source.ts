@@ -651,6 +651,8 @@ export interface SourceDefinition<
   primaryCount?: "documents" | "analytics";
   /** See `SourceDescriptor.gatewayHosted`. */
   gatewayHosted?: boolean;
+  /** See `SourceDescriptor.setupGuide`. */
+  setupGuide?: "browser-extension";
   /** Icon for portal */
   icon?: SourceIcon;
   /**
@@ -983,6 +985,8 @@ export interface ProviderSourceEntry<
   primaryCount?: "documents" | "analytics";
   /** See `SourceDescriptor.gatewayHosted`. */
   gatewayHosted?: boolean;
+  /** See `SourceDescriptor.setupGuide`. */
+  setupGuide?: "browser-extension";
   icon?: SourceIcon;
   /** See `SourceDefinition.attribution`. */
   attribution?: SourceAttribution;

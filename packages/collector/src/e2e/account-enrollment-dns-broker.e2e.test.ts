@@ -132,7 +132,7 @@ describe.skipIf(!browserReady)("gateway names at the DNS broker", () => {
         await page.goto(`${fresh.gatewayUrl}/portal/?token=${encodeURIComponent(fresh.apiKey)}`);
         await page.locator("nav.sidebar-nav").waitFor({ timeout: 30_000 });
         await page.goto(`${fresh.gatewayUrl}/portal/settings/account`);
-        await page.getByRole("button", { name: "Create an Omnesis account", exact: true }).click();
+        await page.getByRole("button", { name: "Create an account", exact: true }).click();
         await expectText(page, "Sign in to your Omnesis account", 30_000);
         const waiting = await fresh.gatewayJson<
           CloudRelayStatus & { hostname?: string; gatewayId?: string }

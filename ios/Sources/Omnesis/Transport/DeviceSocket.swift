@@ -354,6 +354,11 @@ public actor DeviceSocket {
     func currentPathForTesting() -> NetworkPathSnapshot? {
         currentPath
     }
+
+    /// True while a ping is waiting for its pong or its deadline.
+    func probeInFlightForTesting() -> Bool {
+        probeID != nil
+    }
     #endif
 
     /// Send an event frame upstream to the gateway.

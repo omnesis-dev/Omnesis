@@ -7,6 +7,7 @@ import { TASK_VIEW_KEYS } from "./tasks-model.js";
 import {
   SETTINGS_TAB_KEYS,
   DEFAULT_SETTINGS_TAB,
+  SETTINGS_TAB_RENAMES,
   SETTINGS_TABS_WITH_SECTION,
 } from "./settings-tabs.js";
 
@@ -214,7 +215,9 @@ export function parseRoute() {
   if (settingsMatch || settingsAliasMatch) {
     const match = settingsMatch ?? settingsAliasMatch;
     const requested = match[1];
-    const tab = SETTINGS_TAB_KEYS.includes(requested) ? requested : DEFAULT_SETTINGS_TAB;
+    const tab = SETTINGS_TAB_KEYS.includes(requested)
+      ? requested
+      : (Object.hasOwn(SETTINGS_TAB_RENAMES, requested) ? SETTINGS_TAB_RENAMES[requested] : DEFAULT_SETTINGS_TAB);
     // A stray segment under a tab that owns none is dropped (and redirected
     // away); `modelsSection` is null for those.
     const modelsSection = SETTINGS_TABS_WITH_SECTION.includes(tab) ? (match[2] ?? null) : null;

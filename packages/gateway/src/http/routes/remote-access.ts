@@ -2,12 +2,11 @@
 // Copyright (c) 2026 Adrien Conrath
 
 /**
- * Remote access as one setting: the guided setup's own state and the checks
- * for an address the owner runs themselves. Mounted only where the gateway
- * offers a way in of its own, the cloud relay (OMNESIS_CLOUD_RELAY_ENABLED=1)
- * or its own Tailscale device (OMNESIS_TAILSCALE_EMBED_ENABLED=1); with
- * neither, every route here is absent. Tailscale already on the host is part
- * of the Tailscale opt-in and is absent without it.
+ * Settings → Connectivity as one setting: the guided setup's own state, the
+ * checks for an address the owner runs themselves, and Tailscale already on
+ * the host. Every gateway has these; `features` says which optional ways in
+ * (the cloud relay, OMNESIS_CLOUD_RELAY_ENABLED=1, and the gateway's own
+ * Tailscale device, OMNESIS_TAILSCALE_EMBED_ENABLED=1) it also offers.
  *
  * The account, the relay and the gateway's Tailscale device keep their own
  * routes (cloud-relay.ts, tailscale.ts); the portal's guided setup calls them
@@ -38,6 +37,7 @@ import {
 import { scope } from "../scope.js";
 import { requireStepUp } from "../step-up.js";
 import { validateJson } from "../validate.js";
+import type { PublicAddressSource } from "../../public-address.js";
 import type { HostTailscaleService } from "../../remote-access/host-tailscale.js";
 import type { RouteApp } from "./types.js";
 
@@ -64,22 +64,15 @@ const nonceParam = /^[A-Za-z0-9_-]{16,64}$/;
 export interface RemoteAccessRouteOptions {
   settings: RemoteAccessSettingsStore;
   checks: AddressChecks;
-  /** Tailscale already on this computer; present only with the Tailscale opt-in. */
+  /** Tailscale already on this computer; present when the gateway listens on a port. */
   hostTailscale?: HostTailscaleService;
-  /** The public address the running gateway serves, read once at start. */
-  servingPublicBaseUrl: () => string | null;
-  /** The public address in the config file, which the next start serves. */
-  configuredPublicBaseUrl: () => string | null;
+  /** The gateway's public address, which applies as soon as it is saved. */
+  publicAddress?: PublicAddressSource;
   /** Which addresses away from home answer MCP. */
   mcpAddresses: McpAddresses;
 }
 
-export function remoteAccessEnabled(): boolean {
-  return cloudRelayEnabled() || tailscaleEmbedEnabled();
-}
-
 export function mountRemoteAccessRoutes(app: RouteApp, options: RemoteAccessRouteOptions): void {
-  if (!remoteAccessEnabled()) return;
   const bounded = bodyLimit({ maxSize: 4096 });
   const addresses = options.mcpAddresses;
   // Built per gateway: a switch for an address this gateway does not offer is refused.
@@ -103,8 +96,7 @@ export function mountRemoteAccessRoutes(app: RouteApp, options: RemoteAccessRout
       }
     });
   const state = async () => {
-    const serving = options.servingPublicBaseUrl();
-    const configured = options.configuredPublicBaseUrl();
+    const configured = options.publicAddress?.baseUrl() ?? null;
     // The stored MCP choices are only the owner's departures from the default; the list says
     // where MCP answers.
     const { mcp, ...choices } = options.settings.get();
@@ -116,10 +108,9 @@ export function mountRemoteAccessRoutes(app: RouteApp, options: RemoteAccessRout
       ...choices,
       features: { cloudRelay: cloudRelayEnabled(), tailscaleEmbed: tailscaleEmbedEnabled() },
       publicBaseUrl: {
-        serving,
         configured,
-        // A changed address takes effect when the gateway starts again.
-        restartNeeded: (configured ?? null) !== (serving ?? null),
+        // OMNESIS_PUBLIC_BASE_URL sets it, so one saved in the config changes nothing.
+        setByEnvironment: options.publicAddress?.setByEnvironment() ?? false,
         // The way in this address belongs to when it is not the owner's own domain:
         // "relay", "tailnet" or "host"; null for the owner's own.
         way,
@@ -170,7 +161,7 @@ export function mountRemoteAccessRoutes(app: RouteApp, options: RemoteAccessRout
   });
 
   const host = options.hostTailscale;
-  if (!tailscaleEmbedEnabled() || !host) return;
+  if (!host) return;
   app.get("/admin/remote-access/host-tailscale", scope.admin(), async (c) => {
     c.header("Cache-Control", "no-store");
     return c.json(await host.status());

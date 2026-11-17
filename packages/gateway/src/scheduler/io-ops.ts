@@ -551,6 +551,11 @@ const COMPUTE_OP_DEFS: readonly IoOpDef[] = [
     priority: "background",
     latencyBudgetMs: HEAVY_BUDGET_MS,
   },
+  {
+    name: "io.knowledgeHasRewrittenHistoryWork",
+    priority: "background",
+    latencyBudgetMs: HEAVY_BUDGET_MS,
+  },
   { name: "io.knowledgeArcs", priority: "background", latencyBudgetMs: HEAVY_BUDGET_MS },
   {
     name: "io.knowledgeDiscoveryBacklog",
@@ -717,6 +722,8 @@ export function ioGateFromScheduler(scheduler: Scheduler): IoGate {
     knowledgeStaleWork: (limit) => call("io.knowledgeStaleWork", [limit]),
     knowledgeHasExcludedWork: (excludedSources) =>
       call("io.knowledgeHasExcludedWork", [[...excludedSources]]),
+    knowledgeHasRewrittenHistoryWork: (now, recentWindowMs) =>
+      call("io.knowledgeHasRewrittenHistoryWork", [now, recentWindowMs]),
     knowledgeArcs: (inputs, bound) => call("io.knowledgeArcs", [[...inputs], bound]),
     knowledgeDiscoveryBacklog: (options) => call("io.knowledgeDiscoveryBacklog", [options]),
     watchPeopleDirectory: (knownHash) => call("io.watchPeopleDirectory", [knownHash]),

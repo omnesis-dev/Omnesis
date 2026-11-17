@@ -37,6 +37,9 @@ const PoliciesView = lazy(() => import("./policies.js").then((m) => m.PoliciesVi
 const DevicesView = lazy(() => import("./devices.js").then((m) => m.DevicesView));
 const RelayView = lazy(() => import("./relay.js").then((m) => m.RelayView));
 const TailscaleView = lazy(() => import("./tailscale.js").then((m) => m.TailscaleView));
+const HostTailscaleView = lazy(() => import("./remote-access/own-pages.js").then((m) => m.HostTailscaleView));
+const OwnAddressView = lazy(() => import("./remote-access/own-pages.js").then((m) => m.OwnAddressView));
+const McpView = lazy(() => import("./remote-access/own-pages.js").then((m) => m.McpView));
 const RemoteAccessView = lazy(() => import("./remote-access.js").then((m) => m.RemoteAccessView));
 const SweepsView = lazy(() => import("./sweeps.js").then((m) => m.SweepsView));
 
@@ -137,9 +140,9 @@ export function SettingsView({
   //
   // Re-selecting the tab already on screen is a no-op UNLESS that tab has a
   // page open below it, in which case clicking it walks back up to the tab's
-  // own list rather than sitting inert. Four tabs open pages: Remote access
-  // labels its summary and its detail pages (the Omnesis account, the
-  // Tailscale device), Models both the capability grid and every capability's
+  // own list rather than sitting inert. Four tabs open pages: Connectivity
+  // labels its summary and the pages behind it (the Omnesis account and
+  // relay, either Tailscale, the owner's own domain, the MCP server), Models both the capability grid and every capability's
   // detail, Policies both the list and one policy's editor, and Access both the
   // inventory and each of an access level's editor, a new level, an
   // authorization review, and the connect dialog.
@@ -160,7 +163,7 @@ export function SettingsView({
   return html`
     <div
       ref=${shell}
-      class=${`settings-view${cloudRelay || tailscaleEmbed ? " remote-access-on" : ""}${accessTask ? " settings-view--access-task" : ""}`}
+      class=${`settings-view${accessTask ? " settings-view--access-task" : ""}`}
     >
       <div class="settings-header">
         <div>
@@ -203,10 +206,14 @@ export function SettingsView({
       ${activeTab === "config" && html`<${ConfigView} />`}
       ${activeTab === "omnesis-md" && html`<${OmnesisMdView} />`}
       ${activeTab === "models" && html`<${ModelsView} section=${modelsSection ?? null} onModelsRefresh=${onModelsRefresh} />`}
-      ${parent && html`<button type="button" class="doc-back access-page-back remote-access-back" onClick=${() => switchTab(parent)}>← Remote access</button>`}
-      ${page === "account" && html`<${RelayView} />`}
+      ${parent && html`<button type="button" class="doc-back access-page-back remote-access-back" onClick=${() => switchTab(parent)}>← Connectivity</button>`}
+      ${page === "account" && html`<${RelayView} part="account" />`}
+      ${page === "relay" && html`<${RelayView} part="relay" />`}
+      ${page === "host-tailscale" && html`<${HostTailscaleView} />`}
+      ${page === "own-address" && html`<${OwnAddressView} />`}
+      ${page === "mcp" && html`<${McpView} />`}
       ${page === "tailscale" && html`<${TailscaleView} />`}
-      ${page === "remote-access" && html`<${RemoteAccessView} cloudRelay=${cloudRelay} tailscaleEmbed=${tailscaleEmbed} />`}
+      ${page === "connectivity" && html`<${RemoteAccessView} cloudRelay=${cloudRelay} tailscaleEmbed=${tailscaleEmbed} />`}
       ${activeTab === "sweeps" && html`<${SweepsView} />`}
       ${activeTab === "access" && html`<${AccessView}
         authorizationId=${accessAuthorizationId ?? null}

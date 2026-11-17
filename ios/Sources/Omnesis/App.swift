@@ -141,6 +141,7 @@ public struct OmnesisApp: App {
             }
         #if DEBUG
             .demoUIScale()
+            .automationTouchLog()
         #endif
     }
 

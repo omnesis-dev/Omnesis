@@ -56,6 +56,7 @@ describe("portal agent offline conversation flow", () => {
   it("keeps the fresh composer enabled for a disabled backend", () => {
     expect(agentComposerDisabled(null, { enabled: false })).toBe(false);
     expect(agentComposerDisabled(null, { enabled: true })).toBe(true);
+    expect(agentComposerDisabled(null, { enabled: true }, true)).toBe(false);
   });
 
   it("reconciles the authoritative resume snapshot before a recovered send", () => {

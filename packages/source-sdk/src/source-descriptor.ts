@@ -416,6 +416,11 @@ export interface SourceDescriptor {
    * it. Read generically — no source name is hardcoded downstream.
    */
   gatewayHosted?: boolean;
+  /**
+   * Installation guide shown instead of collector setup in clients that
+   * support it. The source declares how its external ingestion is installed.
+   */
+  setupGuide?: "browser-extension";
   /** See `SourceDefinition.urlHub`. */
   urlHub?: boolean;
   /** See `SourceDefinition.urlTargetRole`. */
@@ -655,6 +660,8 @@ export interface SerializedDescriptor {
   primaryCount?: "documents" | "analytics";
   /** See `SourceDescriptor.gatewayHosted`. */
   gatewayHosted?: boolean;
+  /** See `SourceDescriptor.setupGuide`. */
+  setupGuide?: "browser-extension";
   /** See `SourceDescriptor.urlHub`. */
   urlHub?: boolean;
   /** See `SourceDescriptor.urlTargetRole`. */
@@ -763,6 +770,7 @@ export function serializeDescriptor(d: SourceDescriptor): SerializedDescriptor {
     unitName: d.unitName,
     primaryCount: d.primaryCount,
     gatewayHosted: d.gatewayHosted,
+    setupGuide: d.setupGuide,
     urlHub: d.urlHub,
     urlTargetRole: d.urlTargetRole,
     provider: { id: String(d.provider.id), name: d.provider.name },

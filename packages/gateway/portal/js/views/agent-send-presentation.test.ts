@@ -32,13 +32,14 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-async function open({ busy = false, saved = null } = {}) {
+async function open({ busy = false, saved = null, fresh = false } = {}) {
   sid = `send-race-session-${++sequence}`;
   vi.useFakeTimers();
   const { document, window } = parseHTML("<html><body><main></main></body></html>");
   Object.defineProperty(window, "location", { configurable: true, value: {
-    pathname: `/portal/agent/${sid}`, href: `https://localhost/portal/agent/${sid}`,
+    pathname: fresh ? "/portal/agent" : `/portal/agent/${sid}`, href: `https://localhost/portal/agent/${sid}`,
   } });
+  vi.stubGlobal("history", { replaceState: vi.fn((state, title, path) => { window.location.pathname = path; }) });
   vi.stubGlobal("document", document);
   vi.stubGlobal("window", window);
   vi.stubGlobal("Event", window.Event);
@@ -66,7 +67,7 @@ async function open({ busy = false, saved = null } = {}) {
   };
   mocks.createAgentClient.mockReturnValue(client);
   mocks.getAgentModel.mockResolvedValue({ configured: true, modelName: "Example model" });
-  await act(async () => { render(h(AgentView, { convoId: sid }), host); });
+  await act(async () => { render(h(AgentView, { convoId: fresh ? null : sid }), host); });
   await act(async () => { await vi.advanceTimersByTimeAsync(1); });
   return { client, resolve: (value) => resolveSend(value), reject: (error) => rejectSend(error), emit: (event) => emit(event) };
 }
@@ -141,4 +142,58 @@ describe("sent message presentation during controls polling", () => {
     expect(host.querySelector('[aria-label="Unconfirmed message"]')).toBeNull();
     await act(async () => { request.resolve({ submission: { status: "running" } }); });
   });
+});
+
+
+describe("fresh conversation lifetime", () => {
+  it("creates the session only on first send after an idle landing", async () => {
+    const request = await open({ fresh: true });
+    expect(host.querySelector("textarea").disabled).toBe(false);
+    expect(request.client.createSession).not.toHaveBeenCalled();
+    await act(async () => { await vi.advanceTimersByTimeAsync(45 * 60 * 1000); });
+    expect(request.client.createSession).not.toHaveBeenCalled();
+    expect(request.client.getControls).not.toHaveBeenCalled();
+    await send("Send");
+    expect(request.client.createSession).toHaveBeenCalledExactlyOnceWith({});
+    expect(request.client.submitMessage).toHaveBeenCalledWith(sid, expect.objectContaining({ text: "Explain the revised budget" }));
+    expect(window.location.pathname).toBe(`/portal/agent/${sid}`);
+    expect(host.textContent).not.toContain("Conversation not found");
+    await act(async () => { request.resolve({ submission: { status: "running" } }); });
+  });
+
+  it("retains the draft when session creation fails and retries on send", async () => {
+    const request = await open({ fresh: true });
+    request.client.createSession.mockRejectedValueOnce(new Error("Backend unavailable"));
+    await send("Send");
+    expect(request.client.submitMessage).not.toHaveBeenCalled();
+    expect(window.location.pathname).toBe("/portal/agent");
+    expect(host.querySelector("textarea").value).toBe("Explain the revised budget");
+    await send("Send");
+    expect(request.client.createSession).toHaveBeenCalledTimes(2);
+    expect(request.client.submitMessage).toHaveBeenCalledOnce();
+    await act(async () => { request.resolve({ submission: { status: "running" } }); });
+  });
+
+  it("discards a delayed session activation after navigating to another conversation", async () => {
+    const request = await open({ fresh: true });
+    let complete;
+    request.client.createSession.mockImplementationOnce(() => new Promise((resolve) => { complete = resolve; }));
+    await send("Send");
+    await act(async () => { render(h(AgentView, { convoId: "another-conversation" }), host); });
+    await act(async () => { complete({ sessionId: "abandoned-session", model: "example-model", backend: "codex" }); });
+    expect(request.client.submitMessage).not.toHaveBeenCalled();
+    expect(request.client.onEvent.mock.calls.some(([id]) => id === "abandoned-session")).toBe(false);
+  });
+
+  it("does not send after the chat view is closed during session creation", async () => {
+    const request = await open({ fresh: true });
+    let complete;
+    request.client.createSession.mockImplementationOnce(() => new Promise((resolve) => { complete = resolve; }));
+    await send("Send");
+    await act(async () => { render(null, host); });
+    await act(async () => { complete({ sessionId: "abandoned-session", model: "example-model", backend: "codex" }); });
+    expect(request.client.submitMessage).not.toHaveBeenCalled();
+    expect(request.client.onEvent).not.toHaveBeenCalled();
+  });
+
 });

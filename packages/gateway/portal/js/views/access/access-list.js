@@ -375,7 +375,7 @@ export function AccessList({ entries, levels, overview, levelActions, connection
         <strong>No agent has access yet</strong>
         <span>${onConnect
           ? "Connect an agent to authorize ChatGPT, Claude, Codex or another MCP client."
-          : "Authorizing an MCP client runs over OAuth, which needs the Gateway public URL. Set it on the Config tab and this page will offer it."}</span>
+          : "Authorizing an MCP client runs over OAuth, which needs an address for the gateway. Set one up in Settings, Connectivity and this page will offer it."}</span>
         ${onConnect && html`<button type="button" class="btn-primary" onClick=${onConnect}>Connect an agent</button>`}
       </div>
     `;

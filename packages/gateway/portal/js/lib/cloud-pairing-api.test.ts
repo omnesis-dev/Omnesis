@@ -83,6 +83,6 @@ test("making every new device ask writes ask-first, and a refusal is said plainl
   });
   apiFetch.mockResolvedValueOnce(new Response("private backend detail", { status: 503 }));
   await expect(askBeforeEveryNewDevice()).rejects.toThrow(
-    "Couldn't change this. Try again in Settings → Omnesis account.",
+    "Couldn't change this. Try again in Settings → Connectivity.",
   );
 });

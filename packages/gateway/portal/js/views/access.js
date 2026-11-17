@@ -639,7 +639,7 @@ export function AccessView({
     if (connectOpen) replaceRoute(ACCESS_ROUTE);
   };
   const openConnect = () => setConnectLocal(true);
-  const configHref = "/portal/settings/config";
+  const connectivityHref = "/portal/settings/connectivity";
   const hostedHint = hostedClientsHint(relay, tailscale);
 
   return html`
@@ -667,8 +667,8 @@ export function AccessView({
         ? html`<div class="access-oauth-blocker" role="status">
             <strong>Local agents can connect.</strong>
             <span>Use Connect an agent for clients running on the gateway’s machine.
-              To connect from another machine, set <code>gateway.publicBaseUrl</code> on the${" "}
-              <a href=${configHref} onClick=${(event) => { event.preventDefault(); navigate(configHref); }}>Config tab</a>.${" "}
+              To connect from another machine, give the gateway an address in${" "}
+              <a href=${connectivityHref} onClick=${(event) => { event.preventDefault(); navigate(connectivityHref); }}>Settings, Connectivity</a>.${" "}
               ${hostedHint
                 ? html`This can be a private network address. ${hostedHint.map((part) => typeof part === "string"
                     ? part
@@ -685,11 +685,11 @@ export function AccessView({
             <span>
               Agents on the gateway’s machine can sign in over a loopback address.
               Connecting from another machine needs a configured Gateway public URL.
-              Set <code>gateway.publicBaseUrl</code> on the${" "}
+              Give the gateway an address in${" "}
               <a
-                href=${configHref}
-                onClick=${(event) => { event.preventDefault(); navigate(configHref); }}
-              >Config tab</a>, then reload this page.
+                href=${connectivityHref}
+                onClick=${(event) => { event.preventDefault(); navigate(connectivityHref); }}
+              >Settings, Connectivity</a>, then reload this page.
             </span>
           </div>`}
 

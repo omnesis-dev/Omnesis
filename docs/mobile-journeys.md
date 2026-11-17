@@ -122,7 +122,10 @@ recording of the whole run, the failure screenshots (inside the `.xcresult`
 bundle and exported to `failure-attachments/` on iOS, where the recording, the
 bundle and the xcodebuild log are kept per phase, `stable` and `experimental`;
 `failure-screenshots/` on Android, with the Compose semantics tree in `logcat.txt` under the
-`OmnesisJourney` tag), the test reports and the gateway's logs.
+`OmnesisJourney` tag), the test reports and the gateway's logs. On iOS,
+`app-touch-<phase>.log` adds where each tap landed, the views it hit, the state every
+gesture recogniser on it reached, and which menu actions ran: the journeys
+launch the app with `DEMO_TOUCH_LOG=1`, which only a DEBUG build reads.
 
 ## In CI
 

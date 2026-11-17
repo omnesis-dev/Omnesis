@@ -21,6 +21,7 @@ import { HttpError, errorResponse } from "../errors.js";
 import { commitPrivacyPolicy } from "../../privacy/policy-history.js";
 import { AccessAuthorizationNotifier } from "../../access/authorization-notifier.js";
 import { PushBroadcaster } from "../../push/broadcast.js";
+import { fixedPublicAddress } from "../../public-address.js";
 import { mountOAuthAccessRoutes } from "./oauth-access.js";
 import type { OAuthClientMetadataDocument } from "../../access/types.js";
 import type { Db } from "../../data/types.js";
@@ -66,7 +67,21 @@ beforeEach(() => {
   app = createTestApp();
 });
 
-function createTestApp(options: Parameters<typeof mountOAuthAccessRoutes>[2] = {}): Hono<AppEnv> {
+/** The route options, with the public address given as plain values (`ORIGIN` unless named). */
+type TestAppOptions = Omit<
+  NonNullable<Parameters<typeof mountOAuthAccessRoutes>[2]>,
+  "publicAddress"
+> & {
+  publicBaseUrl?: string;
+  mcpResourceUrls?: readonly string[];
+};
+
+function createTestApp(options: TestAppOptions = {}): Hono<AppEnv> {
+  const { publicBaseUrl, mcpResourceUrls, ...routeOptions } = options;
+  const publicAddress = fixedPublicAddress(
+    "publicBaseUrl" in options ? publicBaseUrl : ORIGIN,
+    mcpResourceUrls,
+  );
   const testApp = new Hono<AppEnv>();
   testApp.onError((error, c) => {
     if (error instanceof HttpError) return errorResponse(c, error);
@@ -93,8 +108,8 @@ function createTestApp(options: Parameters<typeof mountOAuthAccessRoutes>[2] = {
     await next();
   });
   mountOAuthAccessRoutes(testApp, new AccessService(db, directWriteGate(db)), {
-    publicBaseUrl: ORIGIN,
-    ...options,
+    publicAddress,
+    ...routeOptions,
   });
   return testApp;
 }
@@ -420,7 +435,7 @@ describe("MCP OAuth access routes", () => {
     const prefixedBase = `${ORIGIN}/omnesis`;
     const prefixedApp = new Hono<AppEnv>();
     mountOAuthAccessRoutes(prefixedApp, new AccessService(db, directWriteGate(db)), {
-      publicBaseUrl: prefixedBase,
+      publicAddress: fixedPublicAddress(prefixedBase),
     });
 
     const protectedResource = await prefixedApp.request(
@@ -443,6 +458,41 @@ describe("MCP OAuth access routes", () => {
       registration_endpoint: `${prefixedBase}/oauth/register`,
       revocation_endpoint: `${prefixedBase}/oauth/revoke`,
     });
+  });
+
+  test("discovery follows a public address saved while the gateway runs", async () => {
+    let address: string | undefined;
+    const liveApp = new Hono<AppEnv>();
+    mountOAuthAccessRoutes(liveApp, new AccessService(db, directWriteGate(db)), {
+      publicAddress: {
+        baseUrl: () => address,
+        mcpResourceUrls: () => (address ? [`${address}/mcp`] : []),
+        setByEnvironment: () => false,
+      },
+    });
+    const get = (path: string) => liveApp.request(`${ORIGIN}${path}`);
+
+    // No public address: remote discovery says OAuth needs one.
+    expect((await get("/.well-known/oauth-authorization-server")).status).toBe(503);
+
+    address = ORIGIN;
+    const server = await get("/.well-known/oauth-authorization-server");
+    expect(server.status).toBe(200);
+    expect((await server.json()).issuer).toBe(ORIGIN);
+    expect((await (await get("/.well-known/oauth-protected-resource/mcp")).json()).resource).toBe(
+      RESOURCE,
+    );
+
+    // Moved under a path: its discovery documents move with it, at once.
+    address = `${ORIGIN}/omnesis`;
+    const prefixed = await get("/.well-known/oauth-authorization-server/omnesis");
+    expect(prefixed.status).toBe(200);
+    expect((await prefixed.json()).issuer).toBe(address);
+    const openId = await get("/omnesis/.well-known/openid-configuration");
+    expect(openId.status).toBe(200);
+    expect((await openId.json()).issuer).toBe(address);
+    expect((await get("/.well-known/oauth-protected-resource/omnesis/mcp")).status).toBe(200);
+    expect((await get("/.well-known/oauth-protected-resource/mcp")).status).toBe(404);
   });
 
   test("publishes exact metadata for every configured MCP resource", async () => {

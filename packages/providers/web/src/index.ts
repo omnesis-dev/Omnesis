@@ -52,6 +52,7 @@ export default defineStructuredSource<SyncCursor>({
   // though they still carry this package in their registry. See
   // `SourceDescriptor.gatewayHosted`.
   gatewayHosted: true,
+  setupGuide: "browser-extension",
   singleInstance: true,
   execution: "external",
   contract: { outputRevision: 1 },

@@ -65,7 +65,7 @@ function sanitizeMarkdown(rawHtml, blockImages = false) {
 /** Copy targets originate only in parsed Markdown, never in raw HTML. */
 export function renderCopyableMarkdown(
   content,
-  { plainValueFences = false, blockImages = false } = {},
+  { plainValueFences = false, blockImages = false, linkCodeUrls = false } = {},
 ) {
   if (!content) return { html: "", targets: [] };
   const targets = [];
@@ -99,7 +99,14 @@ export function renderCopyableMarkdown(
         }
       }
       targets.push({ id, text, block: kind === "code", plain, closed });
-      return render.call(this, token).replace("<code", `<code id="${id}"`);
+      const code = render.call(this, token).replace("<code", `<code id="${id}"`);
+      if (linkCodeUrls && kind === "codespan" && /^https?:\/\/\S+$/i.test(text)) {
+        try {
+          const href = new URL(text).href.replace(/&/g, "&amp;").replace(/"/g, "&quot;");
+          return `<a href="${href}">${code}</a>`;
+        } catch { /* Invalid URLs remain copyable text. */ }
+      }
+      return code;
     };
   }
   return {

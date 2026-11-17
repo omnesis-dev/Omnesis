@@ -386,6 +386,40 @@
           token stays valid.
         </p>
 
+        <h3 id="connectivity">Settings → Connectivity</h3>
+        <p>
+          The portal's <strong>Settings → Connectivity</strong> tab lists how devices reach the
+          gateway away from home, one line each, with what is on and the address it uses. Each line
+          opens its own page to set that way up or change it, and
+          <strong>Set up step by step</strong> walks through the same choices one question at a
+          time. At home, devices always connect directly.
+        </p>
+        <ul>
+          <li>
+            <strong>Tailscale on this computer</strong> serves the gateway through the Tailscale app
+            already on the gateway machine, on your tailnet or, with Funnel, to the Internet. The
+            gateway runs the <code>tailscale serve</code> or <code>tailscale funnel</code> command
+            for you; where it may not change Tailscale (on Linux that takes root or the machine's
+            Tailscale operator), it shows the command to run, and
+            <strong>I have already done it, check it</strong> confirms the result. It publishes on
+            the machine's name at port 443, or at 8443 or 10000 when another app Tailscale serves
+            already uses 443, and never replaces that app; with all three in use it says so and
+            changes nothing. Published to the Internet, the address becomes the gateway's public
+            address. A gateway in a container does not offer this way: Tailscale on the host cannot
+            reach it there.
+          </li>
+          <li>
+            <strong>Your own domain or reverse proxy</strong> takes an https address you publish
+            yourself (see <a href="#public-domain">From the Internet</a>). The portal checks that
+            the name resolves, that its certificate is valid and that the gateway answers there,
+            then saves it as <code>gateway.publicBaseUrl</code>.
+          </li>
+          <li>
+            <strong>MCP server</strong> lists the addresses away from home and turns the MCP server
+            on or off at each (see <a href="connect#mcp-per-address">MCP on each address</a>).
+          </li>
+        </ul>
+
         <h3 id="away-from-home">Phones away from home</h3>
         <p>
           A phone paired to a LAN or <code>.local</code> address cannot reach the gateway once it
@@ -822,7 +856,8 @@ omnesis.example.com {
             >Chrome Web Store</a
           >
           (Chrome 130 or newer). In the portal, the Sources page links to the listing until the Web
-          Pages source exists. Then mint a code under
+          Pages source exists. Choosing <strong>Web Pages</strong> in <strong>Add a source</strong>
+          also opens the extension installation and pairing guide. Then mint a code under
           <strong>Settings → Devices → Pair device → Browser extension</strong>, or from the CLI:
         </p>
         <div class="term">

@@ -1,16 +1,21 @@
-# syntax=docker/dockerfile:1
+# Push relay image. Built only by .github/workflows/relay-image.yml, from the
+# repository root, for one exact commit of main that passed full validation.
+# That workflow signs the result; the relay host runs only images whose
+# signature it has checked (see README.md, "Container image").
+#
+# The base image is pinned by digest. linux/amd64 only. The process runs as
+# the image's `node` user (UID 1000), which owns the relay's data directory.
+ARG NODE_IMAGE=node:24-bookworm-slim@sha256:01d566e8d94d8c619591d78652babfccd3c6992a3dffa9ed5ab39e11cf6c70e9
 
-FROM node:24-bookworm-slim AS dependencies
+FROM ${NODE_IMAGE} AS dependencies
 WORKDIR /app
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends python3 make g++ \
-    && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends python3 make g++ && rm -rf /var/lib/apt/lists/*
 COPY package.json package-lock.json ./
 COPY packages ./packages
-RUN npm ci --ignore-scripts --omit=dev --workspace @omnesis/relay --include-workspace-root=false \
-    && npm rebuild better-sqlite3
+# Install scripts stay off; only the native SQLite binding is compiled.
+RUN npm ci --ignore-scripts --omit=dev --workspace @omnesis/relay --include-workspace-root=false && npm rebuild better-sqlite3
 
-FROM node:24-bookworm-slim AS runtime
+FROM ${NODE_IMAGE} AS runtime
 ENV NODE_ENV=production \
     OMNESIS_RELAY_HOST=0.0.0.0 \
     OMNESIS_RELAY_PORT=8080 \

@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 /**
- * The experimental Immich source: one Immich user's photo and video library,
+ * The Immich source: one Immich user's photo and video library,
  * read through that user's API key, one document per asset. Text and
  * metadata only — when, where, who, albums, camera — never the image.
  *
@@ -82,7 +82,6 @@ export function buildImmichProvider(
   return defineProvider<ImmichContext>({
     provider: { id: IMMICH_PROVIDER_ID, name: "Immich" },
     authType: "api-key",
-    experimental: true,
     credentials: immichCredentialsSpec,
 
     // An account is the Immich user the key belongs to, by email: each user

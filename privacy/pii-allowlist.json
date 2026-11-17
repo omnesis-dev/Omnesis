@@ -13071,19 +13071,6 @@
       "reason": "Product sign-in status label, not a person."
     },
     {
-      "value": "Omnesis Account",
-      "paths": [
-        "packages/collector/src/e2e/account-enrollment-connect.e2e.test.ts",
-        "packages/gateway/portal/js/views/relay.test.ts"
-      ],
-      "reason": "Product name in interface text asserted by a test, not a person's name."
-    },
-    {
-      "value": "An Omnesis",
-      "paths": ["packages/gateway/portal/js/views/relay.test.ts"],
-      "reason": "Product name in interface text asserted by a test, not a person's name."
-    },
-    {
       "value": "Omnesis Relay",
       "paths": ["packages/gateway/portal/js/views/relay.test.ts"],
       "reason": "Product name in interface text asserted by a test, not a person's name."
@@ -13102,14 +13089,6 @@
       "value": "Jamie Lopez",
       "paths": ["packages/collector/src/e2e/source-resync.e2e.test.ts"],
       "reason": "Invented correspondent in a fictional Maildir fixture for the resync suite."
-    },
-    {
-      "value": "Tailscale Funnel",
-      "paths": [
-        "packages/gateway/portal/js/views/access-cloud-relay.test.ts",
-        "packages/gateway/portal/js/views/access/public-address.test.ts"
-      ],
-      "reason": "Product or interface text asserted by a test, not a person's name."
     },
     {
       "value": "Fictional Drive",

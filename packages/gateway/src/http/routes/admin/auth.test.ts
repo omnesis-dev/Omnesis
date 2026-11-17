@@ -19,6 +19,7 @@ import { describe, expect, test, beforeEach, afterEach, vi } from "vitest";
 import { SCOPE_ADMIN, SCOPE_READ, DeviceId, SourceType, type Scope } from "@omnesis/types";
 import { friendlyOauthError } from "../../oauth-callback.js";
 import { createDatabase } from "../../../db.js";
+import { fixedPublicAddress } from "../../../public-address.js";
 import { createServer } from "../../../server.js";
 import { createToken } from "../../../data/repositories/TokenRepository.js";
 import { createDevice } from "../../../data/repositories/DeviceRepository.js";
@@ -264,7 +265,7 @@ describe("POST /admin/auth-flows", () => {
       writeGate: directWriteGate(db),
       authFlows,
       wsServer: { sendCommand, isConnected: () => true } as unknown as DeviceWsServer,
-      publicBaseUrl: "https://gw.example.com:7600",
+      publicAddress: fixedPublicAddress("https://gw.example.com:7600"),
     });
     createDevice(db, { name: `collector-${randomUUID()}`, kind: "collector" });
     const res = await startFlowRequest({ sourceType: "test-oauth-source" });
@@ -276,6 +277,29 @@ describe("POST /admin/auth-flows", () => {
     ];
     expect(command).toBe("auth.begin");
     expect(payload.publicBaseUrl).toBe("https://gw.example.com:7600");
+  });
+
+  test("forwards a public address saved while the gateway runs", async () => {
+    let address: string | undefined = undefined;
+    app = createServer(db, dbPath, {
+      writeGate: directWriteGate(db),
+      authFlows,
+      wsServer: { sendCommand, isConnected: () => true } as unknown as DeviceWsServer,
+      publicAddress: {
+        baseUrl: () => address,
+        mcpResourceUrls: () => [],
+        setByEnvironment: () => false,
+      },
+    });
+    createDevice(db, { name: `collector-${randomUUID()}`, kind: "collector" });
+    expect((await startFlowRequest({ sourceType: "test-oauth-source" })).status).toBe(200);
+    address = "https://gw.example.org";
+    expect((await startFlowRequest({ sourceType: "test-oauth-source" })).status).toBe(200);
+    const payloads = sendCommand.mock.calls.map((call) => call[2] as Record<string, unknown>);
+    expect(payloads.map((payload) => payload.publicBaseUrl)).toEqual([
+      undefined,
+      "https://gw.example.org",
+    ]);
   });
 
   test("publicBaseUrl is undefined in auth.begin when the gateway has none configured", async () => {

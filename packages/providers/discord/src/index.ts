@@ -40,8 +40,9 @@ export function parseIdList(value: unknown): string[] | undefined {
 const DISCORD_PARAMS = [
   {
     name: "guilds",
-    label:
-      "Servers to index (comma-separated server IDs). Leave empty to index every server the " +
+    label: "Servers to index",
+    help:
+      "Comma-separated server IDs. Leave empty to index every server the " +
       "bot has been invited to. Copy a server ID from Discord with Developer Mode on: " +
       "right-click the server → Copy Server ID.",
     type: "string" as const,
@@ -54,8 +55,9 @@ const DISCORD_PARAMS = [
   },
   {
     name: "selfUserId",
-    label:
-      "Your Discord user ID, so your own messages count as yours in the people graph. " +
+    label: "Your Discord user ID",
+    help:
+      "Your own messages count as yours in the people graph. " +
       "Right-click your name → Copy User ID (Developer Mode).",
     type: "string" as const,
     required: false,
@@ -122,7 +124,6 @@ export const discordDocumentProfile: DocumentEventProfile = {
 export default defineProvider<DiscordContext>({
   provider: { id: "discord", name: "Discord" },
   authType: "api-key",
-  experimental: true,
   credentials: discordCredentialsSpec,
 
   discover(ctx) {

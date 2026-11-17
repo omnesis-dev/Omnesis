@@ -30,7 +30,7 @@
 # every attempt fails the run. The screen is recorded for the whole run.
 # Everything worth reading after a failure lands in OMNESIS_JOURNEY_ARTIFACTS:
 # the recording, per-failure screenshots, test reports / the xcresult bundle,
-# and the gateway's logs.
+# the iOS app's touch log, and the gateway's logs.
 #
 # Overrides:
 #   OMNESIS_CONFIG_DIR               gateway state   (default: /tmp/omnesis-mobile-journeys/gateway)
@@ -214,6 +214,10 @@ print(json.dumps({"gatewayURL": os.environ["URL"], "token": os.environ["TOKEN"],
   RECORDER_PID=$!
 
   echo "→ Running the iOS journeys ($phase gateway)…"
+  # Where this run's part of the simulator's log begins, for the touch log
+  # kept on failure.
+  local log_start
+  log_start="$(date '+%Y-%m-%d %H:%M:%S')"
   # The full xcodebuild output goes to the artifacts; the console keeps the
   # test verdicts and errors.
   local status=0
@@ -236,6 +240,12 @@ print(json.dumps({"gatewayURL": os.environ["URL"], "token": os.environ["TOKEN"],
     mkdir -p "$ARTIFACTS/failure-attachments"
     xcrun xcresulttool export attachments --path "$result" \
       --output-path "$ARTIFACTS/failure-attachments" --only-failures >/dev/null 2>&1 || true
+    # Where each tap landed and which menu actions ran (`AutomationTouchLog`
+    # in the app): it tells a tap the app never received from one it
+    # received and did not act on.
+    xcrun simctl spawn "$udid" log show --start "$log_start" --style compact \
+      --predicate 'subsystem == "dev.omnesis.ios" AND category == "touch"' \
+      >"$ARTIFACTS/app-touch-$phase.log" 2>&1 || true
     echo "✗ iOS journeys failed on the $phase gateway (xcodebuild exit $status). Artifacts: $ARTIFACTS" >&2
     return "$status"
   fi

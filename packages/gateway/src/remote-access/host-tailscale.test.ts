@@ -42,24 +42,48 @@ function serving(
   });
 }
 
-function service(answers: Record<string, string | Error>, port = 7600) {
+/** A command that is not installed fails to start, as `execFile` reports it. */
+const notInstalled = () => Object.assign(new Error("spawn tailscale ENOENT"), { code: "ENOENT" });
+
+function service(answers: Record<string, string | Error>, port = 7600, inContainer = false) {
   const run = vi.fn<RunCli>(async (_candidate, args) => {
     const answer = answers[args.join(" ")];
-    if (answer === undefined) throw Object.assign(new Error("unknown command"), { stderr: "" });
+    if (answer === undefined) throw notInstalled();
     if (answer instanceof Error) throw answer;
     return answer;
   });
-  return { host: new HostTailscaleService(port, [cli], run), run };
+  return { host: new HostTailscaleService(port, [cli], run, inContainer), run };
 }
 
 describe("HostTailscaleService", () => {
-  test("not installed, or installed but signed out, is unavailable", async () => {
+  test("not installed is missing; installed but signed out or not running is stopped", async () => {
     expect(await service({}).host.status()).toEqual({
-      state: "unavailable",
-      reason: "Tailscale is not running on this computer.",
+      state: "missing",
+      reason: "Tailscale is not installed on this computer.",
     });
     const loggedOut = service({ "status --json": JSON.stringify({ BackendState: "NeedsLogin" }) });
-    expect((await loggedOut.host.status()).state).toBe("unavailable");
+    expect(await loggedOut.host.status()).toEqual({
+      state: "stopped",
+      reason: expect.stringContaining(
+        "installed on this computer but not running or not signed in",
+      ),
+    });
+    // A command that runs but fails, as when the daemon is down, is installed too.
+    const down = service({
+      "status --json": Object.assign(new Error("exit 1"), {
+        stderr: "failed to connect to local tailscaled",
+      }),
+    });
+    expect((await down.host.status()).state).toBe("stopped");
+  });
+
+  test("in a container, Tailscale on the computer is unsupported and never asked", async () => {
+    const { host, run } = service({ "status --json": running }, 7600, true);
+    expect(await host.status()).toEqual({
+      state: "unsupported",
+      reason: expect.stringContaining("runs in a container"),
+    });
+    expect(run).not.toHaveBeenCalled();
   });
 
   test("reports the machine's name and that nothing forwards to the gateway yet", async () => {
@@ -178,7 +202,7 @@ describe("HostTailscaleService", () => {
     });
     expect(await service({}).host.publish(false)).toEqual({
       ok: false,
-      reason: "Tailscale is not running on this computer.",
+      reason: "Tailscale is not installed on this computer.",
       command: "tailscale serve --bg https+insecure://localhost:7600",
     });
   });

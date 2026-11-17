@@ -96,6 +96,7 @@ function fixture(overrides: Partial<CloudRelayManagerOptions> = {}) {
     startTunnel: vi.fn(() => ({
       stop,
       status: () => ({ state: "online" as const }),
+      online: async () => {},
     })) as unknown as CloudRelayManagerOptions["startTunnel"],
     ...overrides,
     // The monitor is on by default; only the test that opts in may reach a CT provider.
@@ -623,6 +624,62 @@ test("an address that was not reachable at the first check is checked again shor
   expect(probe).toHaveBeenCalledTimes(3);
   // Only the address was looked at again: the gateway did not register a second time.
   expect(f.register).toHaveBeenCalledTimes(registrations);
+});
+/**
+ * A tunnel the relay accepts only when the test says so. The relay drops a public connection for a
+ * gateway whose tunnel is not online, so the probe answers from the tunnel's state.
+ */
+function heldTunnel() {
+  let state: "connecting" | "online" = "connecting";
+  const waiting: Array<() => void> = [];
+  const tunnel = {
+    stop: vi.fn(),
+    status: () => ({ state }),
+    online: vi.fn(
+      (signal: AbortSignal) =>
+        new Promise<void>((resolve, reject) => {
+          if (state === "online") return resolve();
+          waiting.push(resolve);
+          signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+        }),
+    ),
+  };
+  return {
+    startTunnel: vi.fn(() => tunnel) as unknown as CloudRelayManagerOptions["startTunnel"],
+    tunnel,
+    probe: vi.fn(async () => state === "online"),
+    goOnline() {
+      state = "online";
+      for (const resolve of waiting.splice(0)) resolve();
+    },
+  };
+}
+test("the public address is looked at once the tunnel is online, not before", async () => {
+  const held = heldTunnel();
+  // No recheck comes to the rescue: only the first look can make the address ready.
+  const f = fixture({ startTunnel: held.startTunnel, probe: held.probe, probeRetryMs: 3600_000 });
+  manager = await GatewayCloudRelayManagement.open(f.options);
+  await manager.configure(input);
+  await manager.enable();
+  // The launch has reached its look at the address: it is waiting for the tunnel, or has probed.
+  await vi.waitFor(() =>
+    expect(held.tunnel.online.mock.calls.length + held.probe.mock.calls.length).toBeGreaterThan(0),
+  );
+  held.goOnline();
+  await vi.waitFor(async () => expect((await manager!.status()).publicMcp.ready).toBe(true));
+  expect(held.probe).toHaveBeenCalledOnce();
+});
+test("a tunnel that does not come online delays the first look by one recheck interval at most", async () => {
+  const held = heldTunnel();
+  const f = fixture({ startTunnel: held.startTunnel, probe: held.probe, probeRetryMs: 1 });
+  manager = await GatewayCloudRelayManagement.open(f.options);
+  await manager.configure(input);
+  await manager.enable();
+  await vi.waitFor(() => expect(held.probe).toHaveBeenCalledTimes(21));
+  expect((await manager.status()).publicMcp).toMatchObject({
+    ready: false,
+    lastError: "public-endpoint-unreachable",
+  });
 });
 test("rechecks of an unreachable address stop after a while and leave it to the hourly refresh", async () => {
   const probe = vi.fn(async () => false);

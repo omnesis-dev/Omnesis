@@ -80,10 +80,10 @@ export function mountOAuthAuthorizationRoutes(
   app: RouteApp,
   access: AccessService,
   options: {
-    publicBaseUrl?: string;
+    /** The gateway's public address, read on every request so a saved one applies at once. */
+    publicAddress?: import("../../public-address.js").PublicAddressSource;
     /** Actual same-machine gateway origin advertised for local-only setup. */
     loopbackBaseUrl?: string;
-    mcpResourceUrls?: readonly string[];
     additionalOAuthIssuerUrls?: import("../../access/oauth-urls.js").OAuthIssuerSource;
     authorizationNotifier?: Pick<AccessAuthorizationNotifier, "targetDeviceIds" | "wakeQueued">;
     clientMetadataResolver?: Pick<ClientMetadataDocumentResolver, "resolve">;
@@ -152,18 +152,22 @@ export function mountOAuthAuthorizationRoutes(
     cloudRelayEnabled() || tailscaleEmbedEnabled()
       ? resolveOAuthResourceUrls(
           resource,
-          options.publicBaseUrl,
-          options.mcpResourceUrls,
+          options.publicAddress?.baseUrl(),
+          options.publicAddress?.mcpResourceUrls(),
           options.additionalOAuthIssuerUrls,
         )
-      : resolveOAuthUrls(requestUrl, options.publicBaseUrl, options.mcpResourceUrls);
+      : resolveOAuthUrls(
+          requestUrl,
+          options.publicAddress?.baseUrl(),
+          options.publicAddress?.mcpResourceUrls(),
+        );
 
   app.get("/oauth/authorize", noStore, scope.public(), async (c) => {
     if (authorizationLimiter.consume(clientIp(c))) return oauthRateLimitError(c);
     const urls = resolveOAuthUrls(
       c.req.url,
-      options.publicBaseUrl,
-      options.mcpResourceUrls,
+      options.publicAddress?.baseUrl(),
+      options.publicAddress?.mcpResourceUrls(),
       options.additionalOAuthIssuerUrls,
     );
     if (!urls) return oauthConfigurationRequired(c);
@@ -395,29 +399,32 @@ export function mountOAuthAuthorizationRoutes(
   // The overview lists only addresses that answer MCP. Tokens and every OAuth
   // route keep resolving from the full configuration.
   const answers = (resource: string) => options.mcpAddresses?.answersAt(resource) ?? true;
-  const overviewUrls = (requestUrl: string) =>
-    narrowOAuthOverviewUrls(
+  const overviewUrls = (requestUrl: string, publicBaseUrl: string | undefined) => {
+    const mcpResourceUrls = options.publicAddress?.mcpResourceUrls();
+    return narrowOAuthOverviewUrls(
       resolveOAuthOverviewUrls(
         requestUrl,
-        options.publicBaseUrl,
-        options.mcpResourceUrls,
+        publicBaseUrl,
+        mcpResourceUrls,
         options.loopbackBaseUrl,
         options.additionalOAuthIssuerUrls,
       ),
       answers,
       // Nothing public answers: a gateway without its own domain still serves its own machine.
       () =>
-        !options.publicBaseUrl && options.loopbackBaseUrl
+        !publicBaseUrl && options.loopbackBaseUrl
           ? narrowOAuthOverviewUrls(
-              resolveOAuthUrls(options.loopbackBaseUrl, undefined, options.mcpResourceUrls),
+              resolveOAuthUrls(options.loopbackBaseUrl, undefined, mcpResourceUrls),
               answers,
               () => null,
             )
           : null,
     );
+  };
   const accessOverview = async (requestUrl: string) => {
     await options.mcpAddresses?.settle();
-    const urls = overviewUrls(requestUrl);
+    const publicBaseUrl = options.publicAddress?.baseUrl();
+    const urls = overviewUrls(requestUrl, publicBaseUrl);
     const [served, pending] = await Promise.all([
       urls ? servedByGateway(urls.supportedResources) : new Map<string, ServedResource>(),
       urls && options.pendingCertificateOrigins
@@ -429,7 +436,7 @@ export function mountOAuthAuthorizationRoutes(
       oauth: urls
         ? {
             resource: urls.resource,
-            ...(!options.publicBaseUrl ? { loopbackOnly: true } : {}),
+            ...(!publicBaseUrl ? { loopbackOnly: true } : {}),
             resources: urls.supportedResources.map((resource) => ({
               resource,
               servedByGateway: served.get(resource)?.servedByGateway ?? false,

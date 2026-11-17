@@ -95,7 +95,7 @@ describe("access authorization selections", () => {
     expect(authorizationErrorMessage(refusal("client-completes"), fallback))
       .toBe("This client collects its own authorization code; there is nothing to finish from here.");
     expect(authorizationErrorMessage(refusal("oauth-not-configured", 503), fallback))
-      .toBe("The MCP client could not finish connecting: OAuth needs the Gateway public URL. Set gateway.publicBaseUrl on the Config tab and try again.");
+      .toBe("The MCP client could not finish connecting: OAuth needs an address for the gateway. Set one up in Settings, Connectivity and try again.");
     expect(authorizationErrorMessage(refusal("not-found", 404), fallback))
       .toBe("This authorization request no longer exists.");
     expect(authorizationErrorMessage(refusal("already-decided"), fallback))
@@ -359,19 +359,19 @@ describe("AccessView", () => {
     const blocker = host.querySelector(".access-oauth-blocker")!;
     expect(blocker.getAttribute("role")).toBe("status");
     const link = blocker.querySelector("a") as HTMLAnchorElement;
-    expect(link.getAttribute("href")).toBe("/portal/settings/config");
-    expect(link.textContent).toMatch(/config/i);
+    expect(link.getAttribute("href")).toBe("/portal/settings/connectivity");
+    expect(link.textContent).toMatch(/connectivity/i);
     await act(async () => {
       link.dispatchEvent(new window.Event("click", { bubbles: true, cancelable: true }));
     });
-    expect(router.navigate).toHaveBeenCalledWith("/portal/settings/config");
+    expect(router.navigate).toHaveBeenCalledWith("/portal/settings/connectivity");
 
     // The empty state offers no button, and says why rather than asking for
     // an action this page cannot carry out.
     const empty = host.querySelector(".access-empty")!;
     expect(empty.querySelector("button")).toBeNull();
     expect(empty.textContent).toMatch(/oauth/i);
-    expect(empty.textContent).toMatch(/public url/i);
+    expect(empty.textContent).toMatch(/Settings, Connectivity/u);
     expect(empty.textContent).not.toMatch(/^Connect an agent to authorize/);
   });
 
@@ -1681,7 +1681,7 @@ describe("AccessView", () => {
     expect(api.pairDevice).not.toHaveBeenCalled();
   });
 
-  test("points a hosted app at the publishing docs, and warns about a private address", async () => {
+  test("points a hosted app at publishing the gateway in Connectivity, and warns about a private address", async () => {
     api.getAccessOverview.mockResolvedValue({
       principals: [],
       oauth: { resource: "https://192.168.1.20:7600/mcp" },
@@ -1708,10 +1708,10 @@ describe("AccessView", () => {
     const notice = host.querySelector(".access-agent-public")!;
     expect(notice.classList.contains("is-warning")).toBe(true);
     expect(notice.textContent).toMatch(/This address is private/u);
-    expect(notice.textContent).toMatch(/Funnel or use a domain of your own/u);
+    expect(notice.textContent).toMatch(/Tailscale on this computer or a domain of your own/u);
     expect([...notice.querySelectorAll("a")].map((link) => link.getAttribute("href"))).toEqual([
-      "https://omnesis.dev/docs/connect#tailscale-funnel",
-      "https://omnesis.dev/docs/setup#public-domain",
+      "/portal/settings/host-tailscale",
+      "/portal/settings/own-address",
     ]);
     expect(host.querySelector(".access-agent-docs a")?.getAttribute("href")).toBe(
       "https://omnesis.dev/docs/connect#chatgpt",
@@ -1739,7 +1739,7 @@ describe("AccessView", () => {
     expect(notice.textContent).toMatch(/This gateway's certificate is not publicly trusted\./u);
     expect([...notice.querySelectorAll("a")].map((link) => link.getAttribute("href"))).toEqual([
       "https://omnesis.dev/docs/setup#certificates",
-      "https://omnesis.dev/docs/setup#public-domain",
+      "/portal/settings/own-address",
     ]);
   });
 
@@ -1879,7 +1879,7 @@ describe("AccessView", () => {
       expect(notice.textContent).toMatch(/mint an mkcert certificate/u);
       expect([...notice.querySelectorAll("a")].map((link) => link.getAttribute("href"))).toEqual([
         "https://omnesis.dev/docs/setup#certificates",
-        "https://omnesis.dev/docs/setup#public-domain",
+        "/portal/settings/own-address",
         "https://omnesis.dev/docs/setup#certificates",
       ]);
     });
@@ -3721,7 +3721,7 @@ describe("AccessView", () => {
 
     // The gateway's token is worded for the owner, and names the fix.
     expect(host.querySelector(".access-error")?.textContent).toBe(
-      "The MCP client could not finish connecting: OAuth needs the Gateway public URL. Set gateway.publicBaseUrl on the Config tab and try again.",
+      "The MCP client could not finish connecting: OAuth needs an address for the gateway. Set one up in Settings, Connectivity and try again.",
     );
     expect(router.replaceRoute).toHaveBeenCalledWith("/portal/settings/access");
   });

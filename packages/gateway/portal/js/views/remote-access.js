@@ -1,21 +1,25 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-// Settings → Remote access: how this gateway's devices reach it when they are
-// away from home. Only rendered when the gateway runs with the cloud relay
-// (OMNESIS_CLOUD_RELAY_ENABLED=1), its own Tailscale device
-// (OMNESIS_TAILSCALE_EMBED_ENABLED=1), or both; `/status` advertises each as
-// `cloudRelay` and `tailscaleEmbed`.
+// Settings → Connectivity: how this gateway's devices reach it when they are
+// away from home. Every gateway has it: the home network, Tailscale already on
+// the computer and the owner's own domain need no optional feature. With the
+// cloud relay (OMNESIS_CLOUD_RELAY_ENABLED=1) it adds the Omnesis account and
+// the relay, and with its own Tailscale device (OMNESIS_TAILSCALE_EMBED_ENABLED=1)
+// that device; `/status` advertises each as `cloudRelay` and `tailscaleEmbed`.
 //
-// The first visit opens a guided setup that asks one question per screen: the
-// Omnesis account (with the relay), the remote connection, then what new
-// devices may do. Afterwards the page is a short summary; "Review settings"
-// walks the same steps again, each asking whether it is still right. Every
+// The page is a summary of what is on, where everything can be set up or
+// changed: each line opens its own page, and the answers for new devices and
+// for which way is tried first change in place. A guided setup that asks one
+// question per screen — the Omnesis account (with the relay), the remote
+// connection, what new devices may do (once one can ask to join) and where the
+// MCP server answers (once there is an address away from home) — is there for
+// whoever prefers it, started from the summary and run again at will. Every
 // answer is applied at once through the relay's and the Tailscale device's own
 // routes, with their step-ups and checks; this page keeps only where the owner
 // is in the setup, in the tab's session storage, so a sign-in that leaves the
 // page comes back to the same step. The full account and device pages stay
-// one click away from the summary.
+// one click away from the summary and from each step.
 
 import { html } from "htm/preact";
 import { useEffect, useState } from "preact/hooks";
@@ -26,9 +30,16 @@ import { useAccountRefresh, useRelayManagement } from "../lib/use-relay-manageme
 import { useTailscaleAdmin } from "../lib/use-tailscale-admin.js";
 import { AccountStep } from "./remote-access/account-step.js";
 import { ConnectionStep } from "./remote-access/connection-step.js";
-import { DevicesStep } from "./remote-access/devices-step.js";
+import { DevicesStep, devicePolicies } from "./remote-access/devices-step.js";
+import { McpStep, mcpRows } from "./remote-access/mcp.js";
 import { Summary } from "./remote-access/summary.js";
-import { initialFlow, loadSetup, saveSetup, setupSteps, startFlow } from "./remote-access/model.js";
+import {
+  initialFlow,
+  loadSetup,
+  saveSetup,
+  setupSteps,
+  startFlow,
+} from "./remote-access/model.js";
 
 /** The relay's status and its one-at-a-time requests, read only when the relay is on. */
 function RelayFeed({ children }) {
@@ -53,17 +64,26 @@ function Feeds({ cloudRelay, tailscaleEmbed, children }) {
 }
 
 function Flow({ remote, setRemote, relay, tailscale, cloudRelay, tailscaleEmbed }) {
-  const steps = setupSteps({ cloudRelay });
-  const [flow, setFlow] = useState(() => initialFlow(remote, loadSetup(steps), steps));
+  const policies = devicePolicies(relay, tailscale);
+  const steps = setupSteps({
+    cloudRelay,
+    devices: policies.relayLinked || policies.tailscaleOn,
+    mcp: mcpRows(remote).length > 0,
+  });
+  const [stored, setFlow] = useState(() => initialFlow(loadSetup(steps)));
+  // A step that stops applying (step 3 once nothing can ask to join) gives way to the last one.
+  const flow =
+    stored.mode === "summary" || steps.includes(stored.step) ? stored : { ...stored, step: steps.at(-1), resume: null };
   const [finishing, setFinishing] = useState(false);
   const [error, setError] = useState("");
   useEffect(() => saveSetup(flow), [flow]);
   const headingRef = useStepFocus(flow.mode === "summary" ? "summary" : flow.step);
 
   const update = (patch) => setFlow((current) => ({ ...current, ...patch }));
+  // Moving by Back or the step bar leaves a detour to step 1, so Continue goes on from where the owner is.
   const go = (step) => {
     setError("");
-    update({ step });
+    update({ step, resume: null });
   };
   const finish = async () => {
     if (flow.mode === "review") {
@@ -94,10 +114,11 @@ function Flow({ remote, setRemote, relay, tailscale, cloudRelay, tailscaleEmbed 
   if (flow.mode === "summary")
     return html`<${Summary}
       remote=${remote}
+      setRemote=${setRemote}
       relay=${relay}
       tailscale=${tailscale}
       headingRef=${headingRef}
-      onReview=${() => setFlow(startFlow("review", steps, remote))}
+      onStart=${(mode) => setFlow(startFlow(mode, steps, remote))}
       onManage=${(path) => navigate(path)}
     />`;
 
@@ -109,6 +130,8 @@ function Flow({ remote, setRemote, relay, tailscale, cloudRelay, tailscaleEmbed 
     onStep: go,
     onNext: next,
     onBack: back,
+    // Every answer is applied as it is given, so the walk can be left at any step.
+    onCancel: () => setFlow({ mode: "summary" }),
     finishing,
     last: index === steps.length - 1 && !flow.resume,
   };
@@ -126,13 +149,15 @@ function Flow({ remote, setRemote, relay, tailscale, cloudRelay, tailscaleEmbed 
         onFlow=${update}
         onGetAccount=${() => update({ step: "account", resume: "connection" })}
       />`;
-    default:
+    case "devices":
       return html`<${DevicesStep} ...${common} relay=${relay} tailscale=${tailscale} />`;
+    default:
+      return html`<${McpStep} ...${common} remote=${remote} setRemote=${setRemote} />`;
   }
 }
 
 /** The gateway's remote-access settings, read once and replaced by every change's answer. */
-function useRemoteAccess() {
+export function useRemoteAccess() {
   const [remote, setRemote] = useState(null);
   const [error, setError] = useState("");
   const load = async () => {
@@ -149,7 +174,7 @@ function useRemoteAccess() {
 
 export function RemoteAccessView({ cloudRelay = false, tailscaleEmbed = false }) {
   const { remote, setRemote, error, load } = useRemoteAccess();
-  return html`<section class="remote-access-view" aria-label="Remote access">
+  return html`<section class="remote-access-view" aria-label="Connectivity">
     ${error &&
     html`<div class="remote-access-load-error" role="alert">
       <span>${error}</span>
@@ -158,14 +183,18 @@ export function RemoteAccessView({ cloudRelay = false, tailscaleEmbed = false })
     ${!remote && !error && html`<p class="remote-access-loading" role="status">Loading…</p>`}
     ${remote &&
     html`<${Feeds} cloudRelay=${cloudRelay} tailscaleEmbed=${tailscaleEmbed}>
-      ${(relay, tailscale) => html`<${Flow}
-        remote=${remote}
-        setRemote=${setRemote}
-        relay=${relay}
-        tailscale=${tailscale}
-        cloudRelay=${cloudRelay}
-        tailscaleEmbed=${tailscaleEmbed}
-      />`}
+      ${(relay, tailscale) =>
+        // Where the page opens depends on what is already on, so it waits for each feature's first answer.
+        (relay && !relay.status && !relay.error) || (tailscale && !tailscale.state && !tailscale.error)
+          ? html`<p class="remote-access-loading" role="status">Loading…</p>`
+          : html`<${Flow}
+              remote=${remote}
+              setRemote=${setRemote}
+              relay=${relay}
+              tailscale=${tailscale}
+              cloudRelay=${cloudRelay}
+              tailscaleEmbed=${tailscaleEmbed}
+            />`}
     <//>`}
   </section>`;
 }

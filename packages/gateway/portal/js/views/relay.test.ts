@@ -98,8 +98,9 @@ afterEach(() => {
   render(null, host);
   vi.unstubAllGlobals();
 });
-async function show() {
-  await act(async () => render(h(RelayView, {}), host));
+/** The account page by default; `"relay"` for the relay page. */
+async function show(part: "account" | "relay" = "account") {
+  await act(async () => render(h(RelayView, { part }), host));
 }
 /** Rendered text with HTML whitespace collapsed, as a browser shows it. */
 const text = () => (host.textContent ?? "").replace(/\s+/g, " ");
@@ -139,25 +140,21 @@ describe("relayPhase", () => {
   });
 });
 
-test("not connected: one headline, creating an account or signing in to one, and nothing else to fill in", async () => {
+test("not connected: the same choice as the setup's first step, and nothing else to fill in", async () => {
   await show();
-  expect(headline()).toBe("Enroll this gateway in your Omnesis Account");
+  expect(headline()).toBe("Do you want an Omnesis account?");
   expect(host.querySelector(".relay-dot")).toBeNull();
-  expect(host.querySelector(".relay-lede")?.textContent).toBe(
-    "An Omnesis account lets you reach your gateway from your phone and laptop outside your home network and pair new devices by signing in. Traffic is encrypted end to end, and the keys never leave this gateway. Connecting gives this gateway a public address and a certificate.",
-  );
-  // The two buttons are the whole page: no terms line, no preview note, no manual form.
+  const lede = host.querySelector(".relay-lede")?.textContent?.replace(/\s+/g, " ").trim();
+  expect(lede).toContain("None of your data goes to Omnesis");
+  expect(lede).toMatch(/It's optional: skip it and set it up any time from Settings, Connectivity\.$/u);
   expect(text()).not.toContain("terms of service");
-  expect(text()).not.toContain("in preview");
   expect(host.querySelector("details, form, input")).toBeNull();
-  expect(host.querySelector(".relay-hero")!.nextElementSibling).toBeNull();
-  // Creating an account is the primary action; signing in to one is the quiet one beside it.
+  // Creating an account is the primary action; signing in to one is the quieter one beside it.
   expect([...host.querySelectorAll(".btn-primary")].map((x) => x.textContent?.trim())).toEqual([
-    "Create an Omnesis account",
+    "Create an account",
   ]);
-  expect(button("I already have one").className).toBe("relay-quiet");
-  expect(button("Connect")).toBeUndefined();
-  await click("Create an Omnesis account");
+  expect(button("I already have one").className).toBe("btn-secondary");
+  await click("Create an account");
   expect(state.run).toHaveBeenCalledTimes(1);
   expect(state.run).toHaveBeenLastCalledWith("connect", { termsAccepted: true, intent: "create" });
   await click("I already have one");
@@ -174,12 +171,20 @@ test("not connected: one headline, creating an account or signing in to one, and
   await show();
   expect(button("Connecting…").disabled).toBe(true);
   expect(button("I already have one").disabled).toBe(true);
-  expect(button("Create an Omnesis account")).toBeUndefined();
+  expect(button("Create an account")).toBeUndefined();
   // A refresh in the background leaves both choices usable.
   state.busy = "refresh";
   await show();
-  expect(button("Create an Omnesis account").disabled).toBe(false);
+  expect(button("Create an account").disabled).toBe(false);
   expect(button("I already have one").disabled).toBe(false);
+});
+
+test("the relay page before an account says the relay needs one and opens the account page", async () => {
+  await show("relay");
+  expect(headline()).toBe(["The", "Omnesis relay needs an Omnesis account"].join(" "));
+  expect(button("Set up your account")).toBeDefined();
+  expect(button("Create an account")).toBeUndefined();
+  expect(host.querySelector(".relay-rows")).toBeNull();
 });
 
 test("waiting: open sign-in in a new tab, or enter the code on another device, or cancel", async () => {
@@ -274,7 +279,6 @@ test("registering and linking show progress with no actions", async () => {
     state.status = { ...base(), connect: { state: connect } };
     await show();
     expect(headline()).toBe(title);
-    expect(host.querySelector(".relay-dot-progress")).not.toBeNull();
     expect(host.querySelectorAll("button")).toHaveLength(0);
   }
 });
@@ -308,17 +312,18 @@ describe("invite-only relay", () => {
   const NOTICE =
     "Omnesis accounts are invite-only for now. Request access (groups.example.com) — you can create your account once it's approved.";
   const notice = () => host.querySelector(".relay-invite");
-  test("before connecting, says accounts need approval and links to the request page with its host shown", async () => {
+  const INLINE =
+    "Accounts are invite-only for now: request access (groups.example.com), then create your account once it's approved.";
+  test("before connecting, says accounts need approval in the same paragraph and links to the request page", async () => {
     state.status = { ...base(), signup: { inviteOnly: true, requestAccessUrl: JOIN } };
     await show();
-    expect(notice()?.textContent?.replace(/\s+/g, " ").trim()).toBe(NOTICE);
-    const request = link("Request access");
+    expect(host.querySelector(".relay-lede")?.textContent?.replace(/\s+/g, " ")).toContain(INLINE);
+    const request = link("request access");
     expect(request.getAttribute("href")).toBe(JOIN);
     expect(request.getAttribute("target")).toBe("_blank");
     expect(request.getAttribute("rel")).toBe("noopener noreferrer");
-    // Above the two choices, which both stay.
-    expect(notice()!.nextElementSibling?.className).toContain("relay-hero-action");
-    expect(button("Create an Omnesis account")).toBeDefined();
+    expect(notice()).toBeNull();
+    expect(button("Create an account")).toBeDefined();
     expect(button("I already have one")).toBeDefined();
   });
   test("says nothing when the relay is not invite-only or its link is not a safe https address", async () => {
@@ -334,9 +339,9 @@ describe("invite-only relay", () => {
     ]) {
       state.status = { ...base(), ...(signup ? { signup } : {}) };
       await show();
-      expect(notice()).toBeNull();
-      expect(link("Request access")).toBeUndefined();
-      expect(button("Create an Omnesis account")).toBeDefined();
+      expect(text()).not.toContain("invite-only");
+      expect(link("request access")).toBeUndefined();
+      expect(button("Create an account")).toBeDefined();
     }
   });
   test("is not shown once connecting or connected", async () => {
@@ -378,9 +383,14 @@ test("unavailable installations explain the situation, offer nothing to press an
     config: { ...base().config, relayUrl: "https://private-operator.example.test" },
   };
   await show();
-  expect(headline()).toBe("Remote access isn't available");
+  expect(headline()).toBe("Omnesis accounts aren't available here");
   expect(host.querySelectorAll("button")).toHaveLength(0);
   expect(text()).not.toContain("private-operator.example.test");
+  await show("relay");
+  expect(headline()).toBe(["The", "Omnesis relay isn't available"].join(" "));
+  expect(host.querySelectorAll("button")).toHaveLength(0);
+  expect(text()).not.toContain("private-operator.example.test");
+  await show();
   state.status.serviceError = "relay-service-mismatch";
   await show();
   expect(text()).toContain("installation service configuration does not match");
@@ -389,36 +399,46 @@ test("unavailable installations explain the situation, offer nothing to press an
 
 test("the portal link says why it cannot be used yet, and is left out without a public address", async () => {
   state.status = connected({ enabled: false });
-  await show();
+  await show("relay");
   // The reason is said once, under the address; the portal link carries no promise meanwhile.
   expect(host.querySelector(".relay-portal + .relay-hint")).toBeNull();
   expect(host.querySelector(".relay-address + .relay-hint")?.textContent?.trim()).toBe(
     "Not reachable while remote access is off.",
   );
   state.status = connected({ publicOrigin: "http://not-https.example.test" });
-  await show();
+  await show("relay");
   expect(host.querySelector(".relay-portal")).toBeNull();
   state.status = connected({ publicOrigin: undefined });
-  await show();
+  await show("relay");
   expect(host.querySelector(".relay-portal")).toBeNull();
   expect(host.querySelector('button[aria-label="Copy portal link"]')).toBeNull();
   // No confirmed address yet: neither the address nor the portal is offered.
   state.status = connected({ publicMcp: { ready: false } });
-  await show();
+  await show("relay");
   expect(host.querySelector(".relay-portal")).toBeNull();
 });
 
-test("connected: three plain sections, a copyable address and nothing technical", async () => {
+test("connected: the account page holds the account, the relay page the connection, each plain", async () => {
   state.status = connected();
   await show();
+  expect([...host.querySelectorAll(".relay-section-title")].map((x) => x.textContent)).toEqual([
+    "Account",
+    "Trusted sign-ins",
+  ]);
+  expect([...host.querySelectorAll(".relay-row-label")].map((x) => x.textContent)).toEqual(["This gateway"]);
+  expect(
+    [...host.querySelectorAll("button")].map((x) => x.textContent?.trim()).filter(Boolean),
+  ).toEqual(["Unlink this gateway"]);
+  expect(host.querySelector(".relay-portal")).toBeNull();
+
+  await show("relay");
   expect(headline()).toBe(`Connected as ${HOST}`);
   expect(host.querySelector(".relay-dot-ok")).not.toBeNull();
   expect(host.querySelector(".btn-primary")).toBeNull();
   const titles = [...host.querySelectorAll(".relay-section-title")];
-  expect(titles.map((x) => x.textContent)).toEqual(["Account", "Remote access", "New devices"]);
+  expect(titles.map((x) => x.textContent)).toEqual(["Remote access"]);
   expect(new Set(titles.map((x) => x.tagName))).toEqual(new Set(["H3"]));
   expect([...host.querySelectorAll(".relay-row-label")].map((x) => x.textContent)).toEqual([
-    "This gateway",
     "Portal",
     "Address",
     "Status",
@@ -453,16 +473,16 @@ test("connected: three plain sections, a copyable address and nothing technical"
     expect(text()).not.toContain(gone);
   expect(
     [...host.querySelectorAll("button")].map((x) => x.textContent?.trim()).filter(Boolean),
-  ).toEqual(["Unlink this gateway", "Turn off"]);
+  ).toEqual(["Turn off"]);
   state.status = connected({ hostname: undefined, can: { disable: false } });
-  await show();
+  await show("relay");
   expect(headline()).toBe("Connected as your gateway");
   expect(button("Turn off").disabled).toBe(true);
 });
 
 test("turning remote access off and on says what it does, to a pointer, a keyboard and a screen reader", async () => {
   state.status = connected();
-  await show();
+  await show("relay");
   const off = button("Turn off");
   const offTip =
     "Stops access from outside your home network. This gateway keeps its address and stays in your Omnesis account. You can turn it back on at any time.";
@@ -473,11 +493,11 @@ test("turning remote access off and on says what it does, to a pointer, a keyboa
   await click("Turn off");
   expect(state.run).toHaveBeenLastCalledWith("disable");
   state.busy = "disable";
-  await show();
+  await show("relay");
   expect(button("Turning off…").disabled).toBe(true);
   state.busy = "";
   state.status = connected({ enabled: false, tunnel: { state: "disabled" }, can: { enable: true } });
-  await show();
+  await show("relay");
   const on = button("Turn on");
   const onTip =
     "Makes this gateway reachable from outside your home network again, at the same address.";
@@ -488,7 +508,7 @@ test("turning remote access off and on says what it does, to a pointer, a keyboa
 test("the address says whether it can be used, and calls it unreachable only once the gateway does", async () => {
   const url = `https://${HOST}/mcp`;
   state.status = connected({ publicMcp: { ready: false, url } });
-  await show();
+  await show("relay");
   expect(text()).toContain(
     "Checking that this address answers. This takes up to a minute after the gateway connects.",
   );
@@ -498,39 +518,38 @@ test("the address says whether it can be used, and calls it unreachable only onc
   state.status = connected({
     publicMcp: { ready: false, url, lastError: "public-endpoint-unreachable" },
   });
-  await show();
+  await show("relay");
   expect(text()).not.toContain("Checking that this address answers");
   expect(text()).toContain("This address does not answer right now.");
   expect(host.querySelector(".relay-problems")!.textContent).toContain(
     "This gateway's address does not answer from outside your home network.",
   );
   state.status = connected({ tunnel: { state: "offline" }, publicMcp: { ready: false, url } });
-  await show();
+  await show("relay");
   expect(text()).toContain("Not reachable while this gateway is disconnected from the relay.");
   state.status = connected({
     enabled: false,
     tunnel: { state: "disabled" },
     publicMcp: { ready: false, url },
   });
-  await show();
+  await show("relay");
   expect(text()).toContain("Not reachable while remote access is off.");
   state.status = connected({ publicMcp: { ready: false } });
-  await show();
+  await show("relay");
   expect([...host.querySelectorAll(".relay-row-label")].map((x) => x.textContent)).toEqual([
-    "This gateway",
     "Status",
   ]);
 });
 
 test("reconnecting, disconnected and off each lead with their own state and action", async () => {
   state.status = connected({ tunnel: { state: "connecting" } });
-  await show();
+  await show("relay");
   expect(headline()).toBe("Reconnecting…");
   expect(host.querySelector(".relay-dot-warning")).not.toBeNull();
   await click("Turn off");
   expect(state.run).toHaveBeenLastCalledWith("disable");
   state.status = connected({ tunnel: { state: "offline", lastError: "tunnel-disconnected" } });
-  await show();
+  await show("relay");
   expect(headline()).toBe("Disconnected");
   expect(text()).toContain("Remote access was interrupted");
   // Said once, in the headline; the box offers the details.
@@ -539,12 +558,12 @@ test("reconnecting, disconnected and off each lead with their own state and acti
   await click("Reconnect");
   expect(state.run).toHaveBeenLastCalledWith("reconnect");
   state.status = connected({ tunnel: { state: "offline" }, can: { reconnect: false } });
-  await show();
+  await show("relay");
   expect(text()).toContain("Remote access dropped");
   expect(button("Reconnect").disabled).toBe(true);
   state.busy = "reconnect";
   state.status = connected({ tunnel: { state: "offline" } });
-  await show();
+  await show("relay");
   expect(button("Reconnecting…").disabled).toBe(true);
   state.busy = "";
   state.status = connected({
@@ -552,13 +571,12 @@ test("reconnecting, disconnected and off each lead with their own state and acti
     tunnel: { state: "disabled" },
     can: { enable: true },
   });
-  await show();
+  await show("relay");
   expect(headline()).toBe("Remote access is off");
   // Still in the account: it can be turned on, managed or disconnected from here.
   expect(
     [...host.querySelectorAll("button")].map((x) => x.textContent?.trim()).filter(Boolean),
-  ).toEqual(["Turn on", "Unlink this gateway"]);
-  expect(link("Manage your account")).toBeDefined();
+  ).toEqual(["Turn on"]);
   expect(host.querySelector(
       '[aria-labelledby="relay-remote-access-title"] .relay-row:last-child .relay-row-value',
     )?.textContent).toBe("Off");
@@ -566,7 +584,7 @@ test("reconnecting, disconnected and off each lead with their own state and acti
   await click("Turn on");
   expect(state.run).toHaveBeenLastCalledWith("enable", {});
   state.busy = "enable";
-  await show();
+  await show("relay");
   expect(button("Turning on…").disabled).toBe(true);
 });
 
@@ -625,7 +643,7 @@ describe("problems", () => {
   test("one box says each problem once in plain words, with the hook's own error kept apart", async () => {
     state.error = "Couldn't load or update your Omnesis account settings.";
     state.status = troubled();
-    await show();
+    await show("relay");
     const boxes = host.querySelectorAll(".relay-problems");
     expect(boxes).toHaveLength(1);
     const box = boxes[0]!;
@@ -650,13 +668,13 @@ describe("problems", () => {
     expect(text()).not.toContain(FINGERPRINT);
     state.error = "";
     state.status = connected({ certificate: { state: "expiring" } });
-    await show();
+    await show("relay");
     expect(text()).toContain("expires on a date soon");
     expect(host.querySelector(".relay-problems h3")?.textContent?.trim()).toBe(
       "Something needs your attention",
     );
     state.status = connected({ certificate: { state: "expired" } });
-    await show();
+    await show("relay");
     expect(text()).toContain("has expired, so devices away from home cannot connect");
     // With remote access off, what its certificate, tunnel and address last said is nobody's problem.
     state.status = connected({
@@ -665,7 +683,7 @@ describe("problems", () => {
       certificate: { state: "expired", lastError: "certificate-renewal-failed" },
       publicMcp: { ready: false, lastError: "public-endpoint-unreachable" },
     });
-    await show();
+    await show("relay");
     expect(host.querySelector(".relay-problems")).toBeNull();
   });
 
@@ -674,7 +692,7 @@ describe("problems", () => {
     vi.stubGlobal("navigator", { clipboard: { writeText } });
     state.version = "9.8.7";
     state.status = troubled();
-    await show();
+    await show("relay");
     await click("Copy details");
     expect(button("Copied")).toBeDefined();
     const copied = writeText.mock.calls[0]![0];
@@ -738,11 +756,11 @@ describe("problems", () => {
 test("a gateway whose account was deleted says so above the offer to connect again", async () => {
   state.status = { ...base(), notice: "account-deleted" };
   await show();
-  expect(headline()).toBe("Enroll this gateway in your Omnesis Account");
+  expect(headline()).toBe("Do you want an Omnesis account?");
   expect(host.querySelector('[role="status"].relay-notice')?.textContent).toContain(
     "Your Omnesis account was deleted, so this gateway is no longer linked to it",
   );
-  expect(button("Create an Omnesis account")).toBeDefined();
+  expect(button("Create an account")).toBeDefined();
   expect(host.querySelector(".relay-problems")).toBeNull();
   state.status = base();
   await show();
@@ -752,17 +770,27 @@ test("a gateway whose account was deleted says so above the offer to connect aga
 test("a gateway unlinked on its account page says so above the usual offer to connect", async () => {
   state.status = { ...base(), notice: "gateway-removed" };
   await show();
-  expect(headline()).toBe("Enroll this gateway in your Omnesis Account");
+  expect(headline()).toBe("Do you want an Omnesis account?");
   const notice = host.querySelector('[role="status"].relay-notice')?.textContent ?? "";
   expect(notice).toContain("This gateway was unlinked from your Omnesis account on the account page");
   expect(notice).toContain("Nothing on it was deleted");
   expect(notice).not.toContain("deleted, so");
-  expect(button("Create an Omnesis account")).toBeDefined();
+  expect(button("Create an account")).toBeDefined();
   expect(button("I already have one")).toBeDefined();
   expect(host.querySelector(".relay-problems")).toBeNull();
   state.status = base();
   await show();
   expect(host.querySelector(".relay-notice")).toBeNull();
+});
+
+test("an error before an account is said once, in the account choice", async () => {
+  state.error = "Couldn't load or update your Omnesis account settings. Check the connection and try again.";
+  await show();
+  expect([...host.querySelectorAll('[role="alert"]')].map((x) => x.textContent)).toEqual([state.error]);
+  expect(button("Create an account").disabled).toBe(false);
+  state.status = connected();
+  await show();
+  expect([...host.querySelectorAll('[role="alert"]')].map((x) => x.textContent)).toEqual([state.error]);
 });
 
 test("loading shows a skeleton and a failed first load offers a retry without exception details", async () => {
@@ -832,6 +860,8 @@ describe("account", () => {
     expect(text()).toContain(
       "Unlinked here. Your Omnesis account updates when the connection returns.",
     );
+    // A connected gateway's problems are listed on the relay page.
+    await show("relay");
     expect(host.querySelector(".relay-problems")!.textContent).toContain(
       "Existing device access is unchanged",
     );
@@ -867,10 +897,11 @@ describe("account", () => {
         lastError: "google-link-failed",
       },
     });
-    await show();
+    await show("relay");
     expect(host.querySelector(".relay-problems")!.textContent).toContain(
       "Couldn't connect with Google",
     );
+    await show();
     expect(button("Connect with Google").querySelector("img")?.getAttribute("src")).toBe(
       "/portal/img/google-sign-in-mark.png",
     );
@@ -901,7 +932,6 @@ describe("account", () => {
     expect(text()).not.toContain("What happens when a new device signs in");
     state.status = connected({ account: undefined, google: { configured: false } });
     await show();
-    expect(host.querySelectorAll(".relay-row-label")[0]?.textContent).toBe("Portal");
     // No account of either kind: the page has no Account heading.
     expect(
       [...host.querySelectorAll(".relay-section-title")].map((x) => x.textContent),
@@ -922,7 +952,7 @@ describe("certificate incident hold", () => {
       deviceEnrollment: { policy: "ask", trustedSignIns: [] },
       certificateMonitor: { state: "incident", incidents: [] },
     });
-    await show();
+    await show("relay");
     const said = [...host.querySelectorAll('.relay-problems [role="alert"]')].map(
       (alert) => alert.textContent,
     );
@@ -931,11 +961,6 @@ describe("certificate incident hold", () => {
     ]);
     // The fingerprints stay in the details, out of the page.
     expect(text()).not.toContain("e".repeat(64));
-    expect(text()).toContain(
-      "Every new device waits for your approval until the certificate problem above is dealt with.",
-    );
-    const radios = [...host.querySelectorAll('input[name="relay-policy"]')] as HTMLInputElement[];
-    expect(radios.every((radio) => radio.disabled)).toBe(true);
     await click("Copy details");
     const copied = writeText.mock.calls[0]![0];
     expect(copied).toContain("Error codes: incident-hold (new devices)");
@@ -943,108 +968,36 @@ describe("certificate incident hold", () => {
     // A hold without its list still prints.
     state.status = connected({ incidentHold: { since: HELD.since } });
     render(null, host);
-    await show();
+    await show("relay");
     await click("Copy details");
     expect(writeText.mock.calls[1]![0]).toContain("Incident hold: since 2028-01-02T00:00:00.000Z, 0 certificates");
   });
-  test("without a hold, the choice is free and the details say nothing about one", async () => {
+  test("without a hold, the relay page has no problem and nothing is locked", async () => {
     state.status = connected();
-    await show();
-    expect(text()).not.toContain("certificate problem above");
-    const radios = [...host.querySelectorAll('input[name="relay-policy"]')] as HTMLInputElement[];
-    expect(radios.some((radio) => radio.disabled)).toBe(false);
+    await show("relay");
+    expect(host.querySelector(".relay-problems")).toBeNull();
+    await click("Turn off");
+    expect(state.run).toHaveBeenLastCalledWith("disable");
   });
 });
 
 describe("new devices", () => {
-  test("the policy choice saves immediately, and trusted sign-ins are listed with nothing to remove", async () => {
+  test("the account page lists the trusted sign-ins, with nothing to remove, and leaves the new-device choice to Connectivity", async () => {
     state.status = connected();
     await show();
-    expect(text()).toContain("What happens when a new device signs in");
-    expect(text()).toContain(
-      "A device joins once you sign in with a passkey or Google account you confirmed on this gateway, on its own page or in an Omnesis app. Other sign-ins wait for your approval. You're notified and can remove a device any time.",
-    );
-    expect(text()).toContain(
-      "A device waits until you approve it on a device you already use, and the codes match. Someone with your Google password still can't get in.",
-    );
-    const radios = [...host.querySelectorAll('input[name="relay-policy"]')] as HTMLInputElement[];
-    expect(radios.map(checked)).toEqual([true, false]);
-    await act(async () => {
-      radios[0]!.dispatchEvent(new window.Event("change", { bubbles: true }));
-    });
-    expect(state.run).not.toHaveBeenCalled();
-    await act(async () => {
-      radios[1]!.dispatchEvent(new window.Event("change", { bubbles: true }));
-    });
-    expect(state.run).toHaveBeenLastCalledWith("enrollment", { policy: "ask" }, "PUT");
     expect(host.querySelectorAll(".relay-sign-in")).toHaveLength(2);
     expect(button("Remove")).toBeUndefined();
     expect(host.querySelector('button[aria-label^="Remove"]')).toBeNull();
+    expect(host.querySelector('[role="radiogroup"]')).toBeNull();
+    expect(text()).not.toContain("What happens when a new device signs in");
   });
-  test("when turning on automatic joins asks for the passkey here, the choice says so before the prompt", async () => {
-    state.status = connected({
-      stepUpRequired: true,
-      deviceEnrollment: { policy: "ask", trustedSignIns: [] },
-    });
-    await show();
-    const hints = [...host.querySelectorAll(".relay-option-step-up")];
-    expect(hints.map((hint) => hint.textContent)).toEqual(["Turns on with your passkey."]);
-    expect(hints[0]!.closest("label")?.querySelector("input")?.getAttribute("value")).toBe(
-      "automatic",
-    );
-    const radios = [...host.querySelectorAll('input[name="relay-policy"]')] as HTMLInputElement[];
-    await act(async () => {
-      radios[0]!.dispatchEvent(new window.Event("change", { bubbles: true }));
-    });
-    expect(state.run).toHaveBeenLastCalledWith("enrollment", { policy: "automatic" }, "PUT", {
-      stepUpAnnounced: true,
-    });
-    // Already automatic: nothing to turn on, and "ask me first" never asks.
-    state.status = connected({ stepUpRequired: true });
-    await show();
-    expect(host.querySelector(".relay-option-step-up")).toBeNull();
-    const again = [...host.querySelectorAll('input[name="relay-policy"]')] as HTMLInputElement[];
-    await act(async () => {
-      again[1]!.dispatchEvent(new window.Event("change", { bubbles: true }));
-    });
-    expect(state.run).toHaveBeenLastCalledWith("enrollment", { policy: "ask" }, "PUT");
-    // Without step-up here, no hint and nothing announced.
-    state.status = connected({ deviceEnrollment: { policy: "ask", trustedSignIns: [] } });
-    await show();
-    expect(host.querySelector(".relay-option-step-up")).toBeNull();
-    const plain = [...host.querySelectorAll('input[name="relay-policy"]')] as HTMLInputElement[];
-    await act(async () => {
-      plain[0]!.dispatchEvent(new window.Event("change", { bubbles: true }));
-    });
-    expect(state.run).toHaveBeenLastCalledWith("enrollment", { policy: "automatic" }, "PUT");
-  });
-  test("is absent without an enrollment status or before the gateway is connected", async () => {
+  test("has no Trusted sign-ins section without an enrollment status or any sign-in", async () => {
     state.status = connected({ deviceEnrollment: undefined });
     await show();
-    expect(text()).not.toContain("What happens when a new device signs in");
-    state.status = { ...connected(), enabled: false, enrollment: { state: "unconfigured" } };
-    await show();
-    expect(text()).not.toContain("What happens when a new device signs in");
-  });
-  test("right after linking, the settings show at once with Join automatically selected, and Ask me first is one click", async () => {
-    // Exactly what a freshly linked gateway reports: no stored choice, so the policy is automatic.
-    state.status = connected({ deviceEnrollment: { policy: "automatic", trustedSignIns: [] } });
-    await show();
-    expect(host.querySelector(".relay-rows")).not.toBeNull();
-    expect(host.querySelectorAll('[role="radiogroup"]')).toHaveLength(1);
-    expect(button("Continue")).toBeUndefined();
-    const radios = [...host.querySelectorAll('input[name="relay-policy"]')] as HTMLInputElement[];
-    expect(radios.map(checked)).toEqual([true, false]);
-    await act(async () => {
-      radios[1]!.dispatchEvent(new window.Event("change", { bubbles: true }));
-    });
-    expect(state.run).toHaveBeenLastCalledWith("enrollment", { policy: "ask" }, "PUT");
+    expect(text()).not.toContain("Trusted sign-ins");
     state.status = connected({ deviceEnrollment: { policy: "ask", trustedSignIns: [] } });
-    state.busy = "enrollment";
     await show();
-    const saving = [...host.querySelectorAll('input[name="relay-policy"]')] as HTMLInputElement[];
-    expect(saving.map(checked)).toEqual([false, true]);
-    expect(saving.every((radio) => radio.disabled)).toBe(true);
+    expect(text()).not.toContain("Trusted sign-ins");
   });
 });
 
@@ -1161,15 +1114,15 @@ describe("trusted sign-ins and confirming a passkey", () => {
     ];
     await show();
     expect(host.querySelector("#relay-setup-title")).toBeNull();
-    expect(headline()).toContain("Connected as");
+    expect(text()).toContain("This gateway is linked to your Omnesis account.");
   });
 
-  test("Not now leaves one amber line under New devices, remembered here, and Finish setup brings it back", async () => {
+  test("Not now leaves one amber line under Trusted sign-ins, remembered here, and Finish setup brings it back", async () => {
     state.status = fresh([GOOGLE]);
     await show();
     await click("Not now");
     expect(host.querySelector("#relay-setup-title")).toBeNull();
-    expect(headline()).toContain("Connected as");
+    expect(text()).toContain("This gateway is linked to your Omnesis account.");
     expect(text()).toContain("New devices wait for your OK until you finish setup.");
     expect(storage.get("omnesis.relay.setup-later")).toBe(state.status.gatewayId);
     // Remembered for this gateway on the next visit.

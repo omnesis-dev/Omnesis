@@ -661,7 +661,9 @@
         <p>
           <code>gateway.publicBaseUrl</code> (or the <code>OMNESIS_PUBLIC_BASE_URL</code>
           environment variable) is the gateway's HTTPS address for MCP sign-in: the OAuth issuer
-          every client remembers, so pick it once and keep it. Until it is set,
+          every client remembers, so pick it once and keep it. A saved address takes effect at once,
+          with no restart; when the environment variable is set, it wins over the setting. Until it
+          is set,
           <strong>Connect an agent</strong> offers a loopback address for agents running on the
           gateway’s own machine; hosted clients and clients on other machines need a configured
           address. This address can be private for local clients. A client on your machine, such as
@@ -703,6 +705,17 @@
           Dynamic Client Registration authenticate as public clients or with a client secret.
         </p>
 
+        <h3 id="mcp-per-address">MCP on each address</h3>
+        <p>
+          The MCP server answers at every address the gateway has. To keep agents from reaching it
+          at one of them, turn that address off in
+          <strong>Settings → Connectivity → MCP server</strong>. An address turned off answers the
+          MCP endpoint and the OAuth routes an MCP client signs in through with <code>404</code>, as
+          a gateway without them would, and its discovery documents stop listing it; the portal and
+          your devices' own connections at that address are unaffected. Agents on the gateway's
+          machine and on your home network always reach the MCP server.
+        </p>
+
         <h3 id="tailscale-funnel">Publish the gateway with Tailscale Funnel</h3>
         <p>
           If the gateway already serves a
@@ -713,6 +726,14 @@
           each request to the gateway on <code>localhost</code>. Funnel listens only on ports 443,
           8443 and 10000, so the public address has no <code>:7600</code>; your own devices keep
           dialling port 7600 as before. Publish on 443: ChatGPT connects only on that port.
+        </p>
+        <p>
+          The portal can do this for you: in <strong>Settings → Connectivity</strong>, open
+          <strong>Tailscale on this computer</strong>, tick
+          <strong>Also reachable from the Internet</strong> and press
+          <strong>Set it up for me</strong>. The gateway runs the command in step 2 and saves the
+          public address of step 3; if it may not change Tailscale, it shows the command to run
+          yourself. The steps below do the same by hand.
         </p>
         <ol>
           <li>
@@ -732,7 +753,7 @@
             Internet client.
           </li>
           <li>
-            Set the public address, without a port, and restart the gateway. The portal's
+            Set the public address, without a port. The gateway uses it at once: the portal's
             <strong>Connect an agent</strong> dialog then shows
             <code>https://studio.tail-example.ts.net/mcp</code>.
           </li>
@@ -758,10 +779,6 @@
               <span class="t-cmd"
                 >omnesis config set /gateway/publicBaseUrl https://studio.tail-example.ts.net</span
               >
-            </p>
-            <p>
-              <span class="t-prompt">❯</span>
-              <span class="t-cmd">omnesis service restart gateway</span>
             </p>
           </div>
         </div>

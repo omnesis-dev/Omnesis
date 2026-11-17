@@ -1,30 +1,29 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-// Step 1 of the Remote access setup, only with the cloud relay: whether the
+// Step 1 of the Connectivity setup, only with the cloud relay: whether the
 // owner wants an Omnesis account. It runs the relay's own connect flow — the
-// sign-in tab with its code, the registration, then "Finish setting up" — and
-// leaves the account's own settings on Settings → Omnesis account.
+// sign-in tab with its code, the registration, then "Finish setting up". A
+// linked gateway can be unlinked here, and "Manage account" opens the Omnesis
+// account page behind Settings → Connectivity for everything else about it.
 
 import { html } from "htm/preact";
+import { useState } from "preact/hooks";
+import { ConfirmModal } from "../../components/confirm-modal.js";
 import { FinishSetup, openOnGateway } from "../../components/gateway-passkey-confirm.js";
 import { relayError, relaySignupAccess } from "../../lib/cloud-relay-api.js";
 import {
   RequestAccess,
-  Unlink,
+  UNLINK_CONFIRM,
   Waiting,
   relayAccountSetup,
   relayPhase,
   usePasskeyHandoff,
   useSetupLater,
 } from "../relay.js";
+import { ACCOUNT_PAGE, ManageButton } from "./manage.js";
 import { accountState } from "./model.js";
 import { BackButton, StepFrame, nextLabel } from "./step-frame.js";
-
-const ASSURANCE = html`<p class="remote-access-assure">
-  <strong>None of your data goes to Omnesis.</strong> Your documents, searches and answers stay on
-  this gateway. The account knows your sign-in and which gateways are yours, nothing else.
-</p>`;
 
 const COPY = {
   loading: { heading: "Your Omnesis account", blurb: "Loading…" },
@@ -35,7 +34,7 @@ const COPY = {
   none: {
     heading: "Do you want an Omnesis account?",
     blurb:
-      "It helps your devices find this gateway: your phone signs in instead of scanning a QR code, and a new device can ask to join from anywhere. It also makes the Omnesis relay available.",
+      "It helps your devices find this gateway: your phone signs in instead of scanning a QR code, and a new device can ask to join from anywhere. None of your data goes to Omnesis: your documents, searches and answers stay on this gateway, and the account knows only your sign-in and which gateways are yours.",
   },
   waiting: {
     heading: "Sign in to your Omnesis account",
@@ -58,29 +57,19 @@ const COPY = {
   },
 };
 
-export function AccountStep({
-  flow,
-  steps,
-  headingRef,
-  error,
-  onStep,
-  onNext,
-  onBack,
-  last,
-  relay,
-  open = openOnGateway,
-  location = globalThis.location,
-}) {
+/**
+ * Connecting an Omnesis account, by the relay's status: the heading, the words
+ * under it, what shows beneath (the assurance, the invite, waiting for the
+ * sign-in) and the buttons that connect. Step 1 places them in its frame, with
+ * its own way on; the account page shows them as its header until an account
+ * is linked, so both offer exactly the same choice.
+ */
+export function accountConnect(relay) {
   const { status, busy, run } = relay;
-  const phase = relayPhase(status);
   const state = accountState(status);
-  const [later, chooseLater] = useSetupLater(status?.gatewayId);
-  const { enrollment, setup, ready } = relayAccountSetup(status, phase);
-  usePasskeyHandoff({ phase, enrollment, setup, ready, later, open, location });
   const disabled = Boolean(busy) && busy !== "refresh";
   // Creating an account is always the person's explicit choice, here and on the sign-in page.
   const connect = (intent) => run("connect", { termsAccepted: true, intent });
-  const google = !status?.account?.linked && status?.google?.linked;
   const copy = COPY[state];
   const blurb =
     state === "unavailable" && status.serviceError
@@ -89,49 +78,108 @@ export function AccountStep({
         ? relayError(status.connect?.error ?? status.enrollment?.error)
         : copy.blurb;
   const access = relaySignupAccess(status);
-  const invite = access && (state === "none" || (state === "failed" && status.connect?.error === "not-allowed"));
-
-  const checklist = state === "linked" && setup && !later && phase === "connected";
-  // Beside the checklist's own button, moving on is the quieter choice.
-  const forward = html`<button type="button" class=${checklist ? "btn-secondary" : "btn-primary"} disabled=${disabled} onClick=${onNext}>
-    ${state === "linked" && flow.mode === "review" ? "Keep it" : nextLabel(flow, last)}
-  </button>`;
-  const skip = html`<button type="button" class="btn-secondary" disabled=${disabled} onClick=${onNext}>Skip for now</button>`;
-  const actions = {
-    none: html`${skip}
-      <button type="button" class="btn-secondary" disabled=${disabled} onClick=${() => connect("existing")}>
+  // Before any account, everything to know is one paragraph: what it does, what it never
+  // sees, the invite, and that it can wait.
+  const fullBlurb =
+    state === "none"
+      ? html`${blurb}${access &&
+          html` Accounts are invite-only for now:${" "}<a href=${access.url} target="_blank" rel="noopener noreferrer">request access</a>${" "}(${access.host}), then create your account once it's approved.`}
+        It's optional: skip it and set it up any time from Settings, Connectivity.`
+      : blurb;
+  const invite = access && state === "failed" && status.connect?.error === "not-allowed";
+  const buttons = {
+    none: html`<button type="button" class="btn-secondary" disabled=${disabled} onClick=${() => connect("existing")}>
         I already have one
       </button>
       <button type="button" class="btn-primary" disabled=${disabled} onClick=${() => connect("create")}>
         ${busy === "connect" ? "Connecting…" : "Create an account"}
       </button>`,
-    failed: html`${skip}
-      <button type="button" class="btn-primary" disabled=${disabled} onClick=${() => connect()}>
-        ${busy === "connect" ? "Connecting…" : "Try again"}
-      </button>`,
-    enrolled: html`${status?.account?.canLink &&
+    failed: html`<button type="button" class="btn-primary" disabled=${disabled} onClick=${() => connect()}>
+      ${busy === "connect" ? "Connecting…" : "Try again"}
+    </button>`,
+    enrolled:
+      status?.account?.canLink &&
       html`<button type="button" class="btn-secondary" disabled=${disabled} onClick=${() => run("account/link")}>
         Connect to your Omnesis account
-      </button>`}
-      ${forward}`,
+      </button>`,
+  }[state] ?? null;
+  const body = html`${relay.error && html`<p role="alert" class="relay-notice">${relay.error}</p>`}
+    ${state === "loading" && !busy && html`<button type="button" class="btn-secondary" onClick=${() => run()}>Try again</button>`}
+    ${invite && html`<${RequestAccess} access=${access} />`}
+    ${state === "waiting" && html`<${Waiting} connect=${status.connect} busy=${busy} run=${run} />`}`;
+  return { state, heading: copy.heading, blurb: fullBlurb, body, buttons, disabled };
+}
+
+/** The account page's header until an account is linked: the same choice as step 1. */
+export function AccountConnect({ relay }) {
+  const { heading, blurb, body, buttons } = accountConnect(relay);
+  return html`<section class="relay-hero relay-hero-plain" aria-live="polite">
+    <div class="relay-hero-text">
+      <h2 class="relay-headline">${heading}</h2>
+      <p class="relay-lede">${blurb}</p>
+      <div class="relay-view remote-access-relay">${body}</div>
+      ${buttons && html`<div class="relay-actions relay-hero-action">${buttons}</div>`}
+    </div>
+  </section>`;
+}
+
+export function AccountStep({
+  flow,
+  steps,
+  headingRef,
+  error,
+  onStep,
+  onNext,
+  onCancel,
+  onBack,
+  last,
+  relay,
+  open = openOnGateway,
+  location = globalThis.location,
+}) {
+  const { status, busy, run } = relay;
+  const phase = relayPhase(status);
+  const { state, heading, blurb, body, buttons, disabled } = accountConnect(relay);
+  const [later, chooseLater] = useSetupLater(status?.gatewayId);
+  const { enrollment, setup, ready } = relayAccountSetup(status, phase);
+  usePasskeyHandoff({ phase, enrollment, setup, ready, later, open, location });
+  const [unlinking, setUnlinking] = useState(false);
+  const google = !status?.account?.linked && status?.google?.linked;
+
+  const checklist = state === "linked" && setup && !later && phase === "connected";
+  // Beside the checklist's own button, moving on is the quieter choice.
+  const forward = html`<button type="button" class=${checklist ? "btn-secondary" : "btn-primary"} disabled=${disabled} onClick=${onNext}>
+    ${nextLabel(last)}
+  </button>`;
+  const unlinkOperation = google ? "google/unlink" : "account/unlink";
+  const canUnlink = state === "linked" && (google ? status.google.canUnlink : status.account?.canUnlink);
+  const unlink =
+    canUnlink &&
+    html`<button type="button" class="btn-secondary relay-danger" disabled=${disabled} onClick=${() => setUnlinking(true)}>
+      ${busy === unlinkOperation ? "Unlinking…" : "Unlink this gateway"}
+    </button>`;
+  const manage = html`<${ManageButton} href=${ACCOUNT_PAGE} label="Manage account" disabled=${disabled} />`;
+  const skip = html`<button type="button" class="btn-secondary" disabled=${disabled} onClick=${onNext}>Skip for now</button>`;
+  const actions = {
+    none: html`${skip} ${buttons}`,
+    failed: html`${skip} ${buttons}`,
+    enrolled: html`${buttons} ${manage} ${forward}`,
+    linked: html`${unlink} ${manage} ${forward}`,
   }[state] ?? (["waiting", "registering", "linking", "loading"].includes(state) ? null : forward);
 
   return html`<${StepFrame}
     flow=${flow}
     steps=${steps}
-    heading=${state === "linked" && google ? "This gateway is linked with Google" : copy.heading}
+    heading=${state === "linked" && google ? "This gateway is linked with Google" : heading}
     blurb=${blurb}
     headingRef=${headingRef}
     error=${error}
     onStep=${onStep}
+    onCancel=${onCancel}
     actions=${html`<${BackButton} onBack=${onBack} disabled=${disabled} />${actions}`}
   >
     <div class="relay-view remote-access-relay">
-      ${relay.error && html`<p role="alert" class="relay-notice">${relay.error}</p>`}
-      ${state === "loading" && !busy && html`<button type="button" class="btn-secondary" onClick=${() => run()}>Try again</button>`}
-      ${state === "none" && ASSURANCE}
-      ${invite && html`<${RequestAccess} access=${access} />`}
-      ${state === "waiting" && html`<${Waiting} connect=${status.connect} busy=${busy} run=${run} />`}
+      ${body}
       ${checklist &&
       html`<${FinishSetup}
         enrollment=${enrollment}
@@ -144,15 +192,17 @@ export function AccountStep({
         location=${location}
         onDismiss=${() => chooseLater(true)}
       />`}
-      ${state === "linked" &&
-      flow.mode === "review" &&
-      (google ? status.google.canUnlink : status.account?.canUnlink) &&
-      html`<${Unlink}
-        operation=${google ? "google/unlink" : "account/unlink"}
-        disabled=${disabled}
-        busy=${busy}
-        run=${run}
-      />`}
     </div>
+    <${ConfirmModal}
+      open=${unlinking}
+      ...${UNLINK_CONFIRM}
+      confirmLabel="Unlink"
+      destructive
+      onConfirm=${() => {
+        setUnlinking(false);
+        void run(unlinkOperation);
+      }}
+      onCancel=${() => setUnlinking(false)}
+    />
   <//>`;
 }
