@@ -301,3 +301,21 @@ test("narrowing an overview keeps it whole while every resource answers, and lea
     ),
   ).toBeNull();
 });
+
+test("narrowing an overview preserves its enabled primary resource when a secondary address stops answering", () => {
+  const direct = "https://gateway.example.org";
+  const relay = "https://relay-gateway.example.test";
+  const urls = resolveOAuthUrls(`${direct}/mcp`, direct, [], [relay]);
+  expect(urls).not.toBeNull();
+  const narrowed = narrowOAuthOverviewUrls(
+    urls,
+    (resource) => resource !== `${relay}/mcp`,
+    () => null,
+  );
+  expect(narrowed).toMatchObject({
+    resource: `${direct}/mcp`,
+    supportedResources: [`${direct}/mcp`],
+    issuerResources: [`${direct}/mcp`],
+    protectedResourceMetadata: `${direct}/.well-known/oauth-protected-resource/mcp`,
+  });
+});
