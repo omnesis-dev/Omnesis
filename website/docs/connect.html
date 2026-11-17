@@ -722,16 +722,14 @@
           </li>
           <li>
             On the gateway machine, publish port 443 and forward it to the gateway (on Linux, as
-            root or the machine's Tailscale operator). <code>https+insecure</code> is needed because
-            the gateway's certificate names the MagicDNS name, not <code>localhost</code>; that hop
-            never leaves the machine. <code>--bg</code> keeps Funnel running across restarts.
-          </li>
-          <li>
-            Add <code>OMNESIS_TRUST_PROXY=true</code> to <code>~/.config/omnesis/.env</code>. Every
-            Funnel request reaches the gateway from the Tailscale daemon on the same machine, and
-            the gateway exempts same-machine callers from its rate limits. With this setting it
-            takes the client's address from the <code>X-Forwarded-For</code> header Tailscale sets,
-            so its limits apply to each Internet client.
+            root or the machine's Tailscale operator). It replaces anything already served on port
+            443, so check <code>tailscale serve status</code> first. <code>https+insecure</code> is
+            needed because the gateway's certificate names the MagicDNS name, not
+            <code>localhost</code>; that hop never leaves the machine. <code>--bg</code> keeps
+            Funnel running across restarts. Every Funnel request reaches the gateway from the
+            Tailscale daemon on the same machine; the gateway takes the client's address from the
+            <code>X-Forwarded-For</code> header Tailscale sets, so its rate limits apply to each
+            Internet client.
           </li>
           <li>
             Set the public address, without a port, and restart the gateway. The portal's
@@ -754,7 +752,7 @@
               <span class="t-prompt">❯</span>
               <span class="t-cmd">tailscale funnel --bg https+insecure://localhost:7600</span>
             </p>
-            <p class="t-dim"># step 4</p>
+            <p class="t-dim"># step 3</p>
             <p>
               <span class="t-prompt">❯</span>
               <span class="t-cmd"
@@ -768,11 +766,9 @@
           </div>
         </div>
         <p>
-          The gateway keeps listening on its tailnet and home-network addresses for your devices, so
-          with <code>OMNESIS_TRUST_PROXY</code> set it logs a warning at start: a client that
-          reaches port 7600 directly could name its own address in that header and choose which rate
-          limit it counts against. It can never pass as the gateway machine itself. Keep port 7600
-          closed to the Internet.
+          The gateway keeps listening on its tailnet and home-network addresses for your devices. A
+          client that reaches port 7600 directly is known by its own address, whatever header it
+          sends. Keep port 7600 closed to the Internet.
         </p>
         <p>
           Funnel publishes the whole gateway, not only <code>/mcp</code>. A connector needs the

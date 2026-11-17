@@ -129,10 +129,11 @@ export interface CloudRelayManagementStatus {
     confirmOrigin?: string;
   };
   /**
-   * The relay no longer has this gateway because its Omnesis account was deleted, so the gateway
-   * went back to not being connected. Shown until it connects again or restarts.
+   * The relay no longer has this gateway, so it went back to not being connected: its Omnesis
+   * account was deleted, or it was unlinked on the account page (`gateway-removed`). Shown until
+   * it connects again or restarts.
    */
-  notice?: "account-deleted";
+  notice?: "account-deleted" | "gateway-removed";
   /**
    * The relay's accounts need approval, and this is where to ask for it. Present only before this
    * gateway is linked to an account, once the relay has said so.

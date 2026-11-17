@@ -72,9 +72,21 @@ test("every page a person sees carries the mark before the name, under an unchan
     expect(style).toContain("main.wide{max-width:calc(768px + 2rem)}");
     // A line between two items of a list, and none before the first or after the last.
     expect(style).toContain(
-      ".gateway+.gateway,.credential+.credential{border-top:1px solid var(--line)}",
+      ".gateway-item+.gateway-item,.confirm+.gateway-item,.credential+.credential{border-top:1px solid var(--line)}",
     );
     expect(style).not.toMatch(/\.list\{|border-bottom/);
+    // A gateway row's "…" is lighter than the account's: smaller dots in the muted colour, darker
+    // on hover, focus or while open, on the same 44px target. The account's own "…" is unchanged.
+    expect(style).toContain(
+      ".row-more>button.more-button{margin:0;gap:.125rem;color:var(--muted)}.row-more>button.more-button span{width:.1875rem;height:.1875rem}",
+    );
+    expect(style).toContain(
+      ".row-more>button.more-button:hover,.row-more>button.more-button:focus-visible,.row-more>button.more-button[aria-expanded=true]{color:var(--fg)}",
+    );
+    expect(style).toMatch(
+      /button\.more-button\{width:2\.75rem;min-height:2\.75rem;margin:0 -\.75rem 0 0;[^}]*gap:\.1875rem;[^}]*color:var\(--fg\)\}/,
+    );
+    expect(style).toContain(".more-button span{width:.3125rem;height:.3125rem;");
     expect(style).toContain(".brand-mark path{fill:var(--mark)}");
     expect(style.match(/--mark:#[0-9a-f]{6}/g)).toEqual(["--mark:#1f6feb", "--mark:#58a6ff"]);
     // The page a desktop sign-in ends on is served by the device itself, with no stylesheet.

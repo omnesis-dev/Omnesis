@@ -1743,6 +1743,51 @@ describe("AccessView", () => {
     ]);
   });
 
+  test("says to wait while the address is still getting its trusted certificate, and looks again", async () => {
+    vi.useFakeTimers();
+    const TAILNET = "https://gateway.tail0000.ts.net/mcp";
+    const arriving = {
+      principals: [],
+      oauth: {
+        resource: TAILNET,
+        resources: [
+          { resource: TAILNET, servedByGateway: true, direct: true, publiclyTrusted: false, certificatePending: true },
+        ],
+      },
+    };
+    api.getAccessOverview.mockResolvedValue(arriving);
+    await mount({ connectOpen: true });
+    const card = () => host.querySelector<HTMLButtonElement>("button[data-agent='claude-code']")!;
+    // The agent still cannot connect, so the card keeps its warning.
+    expect(card().querySelector(".access-agent-warning")).not.toBeNull();
+    await act(async () => { card().click(); });
+    const notice = host.querySelector(".access-agent-public")!;
+    expect(notice.textContent).toMatch(/This address is still getting its trusted certificate\./u);
+    expect(notice.textContent).toMatch(/can connect once the gateway has it, usually within a minute/u);
+    // Nothing for the owner to fix: a calm status, not an alert with setup links.
+    expect(notice.classList.contains("is-warning")).toBe(false);
+    expect(notice.getAttribute("role")).toBe("status");
+    expect(notice.querySelectorAll("a")).toHaveLength(0);
+    expect(host.querySelector(".access-agent-command")).toBeNull();
+
+    // The page looks again every ten seconds while the certificate is on its way.
+    const reads = api.getAccessOverview.mock.calls.length;
+    api.getAccessOverview.mockResolvedValue({
+      ...arriving,
+      oauth: {
+        ...arriving.oauth,
+        resources: [{ resource: TAILNET, servedByGateway: false, direct: false, publiclyTrusted: true }],
+      },
+    });
+    await act(async () => { await vi.advanceTimersByTimeAsync(10_000); });
+    expect(api.getAccessOverview.mock.calls.length).toBe(reads + 1);
+    // Once it has landed, the agent's commands appear and the quick look stops.
+    expect(host.querySelector(".access-agent-public")).toBeNull();
+    expect(host.querySelector(".access-agent-command")).not.toBeNull();
+    await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });
+    expect(api.getAccessOverview.mock.calls.length).toBe(reads + 1);
+  });
+
   describe("the certificate trust step", () => {
     const MKCERT_ROOT = "/home/maya/.local/share/mkcert/rootCA.pem";
     const OWN_CERT = "/home/maya/.config/omnesis/tls/cert.pem";

@@ -38,4 +38,28 @@ describe("RemoteAccessSettingsStore", () => {
     expect(new RemoteAccessSettingsStore(dir).get()).toEqual(DEFAULT_REMOTE_ACCESS_SETTINGS);
     expect(readFileSync(join(dir, "remote-access.json"), "utf8")).toContain("nope");
   });
+
+  test("a file written before the MCP choices existed reads as before and is never rewritten", () => {
+    const path = join(dir, "remote-access.json");
+    const before = `${JSON.stringify({ setupCompletedAt: "2026-05-01T10:00:00.000Z", first: "relay" }, null, 2)}\n`;
+    writeFileSync(path, before);
+    const store = new RemoteAccessSettingsStore(dir);
+    expect(store.get()).toEqual({ setupCompletedAt: "2026-05-01T10:00:00.000Z", first: "relay" });
+    expect(store.get().mcp).toBeUndefined();
+    expect(readFileSync(path, "utf8")).toBe(before);
+  });
+
+  test("keeps only the MCP choices the owner made, alongside the others", () => {
+    const store = new RemoteAccessSettingsStore(dir);
+    store.update({ mcp: { domain: false } });
+    store.update({ first: "relay" });
+    expect(new RemoteAccessSettingsStore(dir).get()).toEqual({
+      setupCompletedAt: null,
+      first: "relay",
+      mcp: { domain: false },
+    });
+    expect(() => store.update({ mcp: { carrier: false } as never })).toThrow();
+    expect(() => store.update({ mcp: { domain: "off" } as never })).toThrow();
+    expect(store.get().mcp).toEqual({ domain: false });
+  });
 });

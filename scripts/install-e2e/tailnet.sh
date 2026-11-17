@@ -32,14 +32,64 @@ ts_register() {
   export TS_SUFFIX TS_SELF_IP
 }
 
-# Wait until a peer answers `tailscale ping`, for up to $2 seconds.
+# Wait until a peer answers `tailscale ping`, for up to $2 seconds, trying
+# every E2E_TS_POLL_SECONDS (default 5).
+#
+# A pong relayed through DERP counts: the lane needs the peer reachable, not
+# a direct path. By default `tailscale ping` stops only on a direct path, and
+# with -c 1 it fails ("direct connection not established") when its one pong
+# came through a relay. Two hosted runners whose NATs never let a direct path
+# form would then wait out the whole bound on a peer answering every ping.
 ts_wait_peer() {
-  local host="$1" deadline=$(($(date +%s) + $2))
-  until tailscale ping -c 1 --timeout 5s "$host" >/dev/null 2>&1; do
-    [ "$(date +%s)" -lt "$deadline" ] || die "peer $host never answered tailscale ping"
-    sleep 5
+  local host="$1" deadline=$(($(date +%s) + $2)) every="${E2E_TS_POLL_SECONDS:-5}" out
+  until out="$(tailscale ping --until-direct=false -c 1 --timeout 5s "$host" 2>&1)"; do
+    if [ "$(date +%s)" -ge "$deadline" ]; then
+      ts_peer_state "$host"
+      log "last ping: $(printf '%s\n' "$out" | tail -n 1 | without_addresses)"
+      die "peer $host never answered tailscale ping"
+    fi
+    sleep "$every"
   done
-  log "peer $host answers on the tailnet"
+  case "$out" in
+    *"via DERP("*) log "peer $host answers on the tailnet (relayed through DERP)" ;;
+    *"via peer-relay("*) log "peer $host answers on the tailnet (through a peer relay)" ;;
+    *) log "peer $host answers on the tailnet (direct)" ;;
+  esac
+}
+
+# How this node sees a peer, in one line without addresses: whether it is in
+# the network map, online, on a direct path, and its DERP home region.
+ts_peer_state() {
+  local status
+  status="$(tailscale status --json 2>/dev/null)" || {
+    log "tailscale status failed"
+    return 0
+  }
+  log "$(printf '%s' "$status" | node -e '
+    let s = ""; process.stdin.on("data", (d) => (s += d));
+    process.stdin.on("end", () => {
+      const j = JSON.parse(s);
+      const host = process.argv[1];
+      const label = (name) => String(name ?? "").split(".")[0].toLowerCase();
+      const peers = Object.values(j.Peer ?? {});
+      const p = peers.find(
+        (p) => label(p.DNSName) === host.toLowerCase() || String(p.HostName ?? "").toLowerCase() === host.toLowerCase(),
+      );
+      const self = j.BackendState ? `; this node is ${j.BackendState}` : "";
+      if (!p) {
+        process.stdout.write(`peer ${host} is not in the local network map (${peers.length} peers listed${self})`);
+        return;
+      }
+      const parts = [p.Online ? "online" : "offline", p.CurAddr ? "direct path" : "no direct path"];
+      if (p.Relay) parts.push(`DERP home ${p.Relay}`);
+      process.stdout.write(`peer ${host} is in the local network map: ${parts.join(", ")}${self}`);
+    });' "$1" | without_addresses)"
+}
+
+# Redact, and drop any IP address (a peer's public endpoint is not the
+# tailnet's, so the redactor alone would keep it).
+without_addresses() {
+  sed -E 's/[0-9]{1,3}(\.[0-9]{1,3}){3}(:[0-9]+)?/<addr>/g; s/\[?[0-9A-Fa-f]{1,4}(:[0-9A-Fa-f]{0,4}){2,7}\]?(:[0-9]+)?/<addr>/g' | redact
 }
 
 # Make sure a MagicDNS name resolves through the system resolver, which is

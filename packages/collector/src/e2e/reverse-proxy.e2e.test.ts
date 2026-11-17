@@ -4,9 +4,10 @@
 /**
  * The gateway behind a reverse proxy that terminates TLS — the documented
  * public-domain topology: `OMNESIS_BIND=127.0.0.1` keeps the gateway off
- * every other interface, `OMNESIS_TRUST_PROXY=true` lets it read the client
- * address the proxy appends, and the proxy's origin is the gateway's public
- * base URL.
+ * every other interface, the gateway reads the client address the proxy
+ * appends because the proxy reaches it from the same machine (no
+ * `OMNESIS_TRUST_PROXY` needed), and the proxy's origin is the gateway's
+ * public base URL.
  *
  * The proxy here is a small Node server standing in for Caddy or nginx: its
  * own certificate on the front, the gateway's self-signed one accepted on
@@ -212,7 +213,6 @@ describe("gateway behind a TLS-terminating reverse proxy", () => {
     harness = new MultiCollectorHarness({
       extraGatewayEnv: {
         OMNESIS_BIND: "127.0.0.1",
-        OMNESIS_TRUST_PROXY: "true",
         OMNESIS_PUBLIC_BASE_URL: publicOrigin,
       },
     });

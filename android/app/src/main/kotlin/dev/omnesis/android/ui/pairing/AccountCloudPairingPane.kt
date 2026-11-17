@@ -8,6 +8,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -204,8 +205,23 @@ private fun GatewayRow(gateway: AccountGatewayChoice, onClick: () -> Unit) {
             // A gateway linked before names existed has none; its address stays on the second line.
             Text(gateway.displayName?.trim().takeUnless { it.isNullOrEmpty() } ?: "Gateway", style = MaterialTheme.typography.titleMedium, color = colors.textPrimary, maxLines = 2, overflow = TextOverflow.Ellipsis)
             MiddleEllipsisText(host, style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace), color = colors.textSecondary, modifier = Modifier.fillMaxWidth())
+            GatewayPresence(gateway.online)
         }
         Icon(Icons.AutoMirrored.Outlined.KeyboardArrowRight, contentDescription = null, tint = colors.textMuted, modifier = Modifier.size(18.dp))
+    }
+}
+
+/**
+ * Whether the relay holds this gateway's tunnel right now. The word is always shown, so the state never
+ * rests on colour alone; the dot carries no semantics, so it is not read aloud. A hint only: an offline
+ * gateway can still be chosen.
+ */
+@Composable
+private fun GatewayPresence(online: Boolean) {
+    val colors = OmTheme.colors
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        Box(Modifier.size(8.dp).clip(CircleShape).background(if (online) colors.success else colors.textMuted))
+        Text(if (online) "Online" else "Offline", style = MaterialTheme.typography.bodySmall, color = colors.textSecondary, maxLines = 1)
     }
 }
 
@@ -305,7 +321,7 @@ const val PREVIEW_PAIRING_NOW = 1_800_000_000_000L
 
 fun accountPairingPreviewState(phase: AccountPairingPhase): AccountPairingState = AccountPairingState(
     phase = phase,
-    gateways = listOf(AccountGatewayChoice("00000000-0000-4000-8000-000000000001", "https://home.example.test", "Fictional home"), AccountGatewayChoice("00000000-0000-4000-8000-000000000002", "https://studio.example.test", "Fictional studio gateway with a long display name")),
+    gateways = listOf(AccountGatewayChoice("00000000-0000-4000-8000-000000000001", "https://home.example.test", "Fictional home", online = true), AccountGatewayChoice("00000000-0000-4000-8000-000000000002", "https://studio.example.test", "Fictional studio gateway with a long display name", online = false)),
     code = "465 774", host = "home.example.test",
     approved = phase == AccountPairingPhase.Pairing,
     expiresAt = if (phase == AccountPairingPhase.Comparing) PREVIEW_PAIRING_NOW + 272_000 else null,

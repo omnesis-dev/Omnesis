@@ -6,12 +6,15 @@ import { selectGoogleGateway } from "./gateway-choice-client.js";
 import type { GatewayChoice } from "./gateway-directory.js";
 
 const id = (value: number) => `00000000-0000-4000-8000-${String(value).padStart(12, "0")}`;
+/** Odd gateways are online, even ones offline: the flag is passed on, whatever it says. */
 const choice = (value = 1) => ({
   gatewayId: id(value),
   publicOrigin: `https://g-${value}.example.test`,
+  online: value % 2 === 1,
 });
 const binding = (value = 1) => ({
-  ...choice(value),
+  gatewayId: id(value),
+  publicOrigin: `https://g-${value}.example.test`,
   certificate: "fixture-public-leaf",
   identityToken: "fixture-public-proof",
 });
@@ -57,6 +60,9 @@ test("empty, oversized, repeated, malformed and misleading directories cannot ch
     { gateways: [choice(), choice()] },
     { gateways: [{ ...choice(), publicOrigin: "http://g-1.example.test" }] },
     { gateways: [{ ...choice(), displayName: "\u001b[2Jspoofed" }] },
+    // Whether a gateway is online is part of every entry, and only ever a yes or a no.
+    { gateways: [{ gatewayId: id(1), publicOrigin: "https://g-1.example.test" }] },
+    { gateways: [{ ...choice(), online: "yes" }] },
     { gateways: Array.from({ length: 51 }, (_, index) => choice(index + 1)) },
   ]) {
     const config = options();

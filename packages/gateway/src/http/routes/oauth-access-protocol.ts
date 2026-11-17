@@ -11,6 +11,7 @@ import type { ClientMetadataDocumentResolver } from "../../access/client-metadat
 import type { RouteApp } from "./types.js";
 import type { CertificateProbe } from "../../access/served-by-gateway.js";
 import type { AgentCertificateTrust } from "../../tls-lifecycle/agent-trust.js";
+import type { McpAddresses } from "../../remote-access/mcp-addresses.js";
 
 /** Compose focused OAuth protocol collaborators behind the stable access façade. */
 export function mountOAuthAccessProtocolRoutes(
@@ -36,6 +37,9 @@ export function mountOAuthAccessProtocolRoutes(
     probeCertificate?: CertificateProbe;
     /** See `mountOAuthAuthorizationRoutes`. */
     agentCertificateTrust?: () => AgentCertificateTrust;
+    /** See `mountOAuthAuthorizationRoutes`. */
+    mcpAddresses?: Pick<McpAddresses, "answersAt" | "settle">;
+    pendingCertificateOrigins?: () => Promise<ReadonlySet<string>>;
   } = {},
 ): void {
   mountOAuthMetadataRoutes(app, access, options);

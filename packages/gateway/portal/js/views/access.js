@@ -101,6 +101,8 @@ const UNLOADABLE_APPROVAL_MESSAGE = "This approval could not be loaded. Reload t
 // How often the open inventory page re-reads the overview for what no signal
 // covers, such as when a connection was last used.
 const INVENTORY_REFRESH_MS = 60_000;
+/** How often the page looks again while an address is still getting its trusted certificate. */
+const CERTIFICATE_PENDING_REFRESH_MS = 10_000;
 
 
 export function AccessView({
@@ -247,6 +249,14 @@ export function AccessView({
     () => { void refresh({ background: true }); },
     INVENTORY_REFRESH_MS,
     { enabled: !detail },
+  );
+  // An address whose trusted certificate is on its way is looked at again
+  // often, so the agents it blocks open up as soon as the certificate lands.
+  const certificateArriving = overview.oauth?.resources?.some((entry) => entry.certificatePending === true) ?? false;
+  useVisiblePoll(
+    () => { void refresh({ background: true }); },
+    CERTIFICATE_PENDING_REFRESH_MS,
+    { enabled: !detail && certificateArriving },
   );
   useEffect(() => {
     let cancelled = false;

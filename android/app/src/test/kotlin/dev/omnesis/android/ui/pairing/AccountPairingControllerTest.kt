@@ -25,8 +25,8 @@ import org.robolectric.annotation.Config
 @Config(sdk = [34])
 class AccountPairingControllerTest {
     private val context get() = ApplicationProvider.getApplicationContext<Context>()
-    private val choice = AccountGatewayChoice("00000000-0000-4000-8000-000000000001", "https://home.example.test", "Fictional home")
-    private val other = AccountGatewayChoice("00000000-0000-4000-8000-000000000002", "https://studio.example.test", "Fictional studio")
+    private val choice = AccountGatewayChoice("00000000-0000-4000-8000-000000000001", "https://home.example.test", "Fictional home", online = true)
+    private val other = AccountGatewayChoice("00000000-0000-4000-8000-000000000002", "https://studio.example.test", "Fictional studio", online = false)
     private inner class Attempt(val choices: List<AccountGatewayChoice> = listOf(choice, other)) : AccountPairingAttempt {
         val calls = mutableListOf<String>()
         override val code = "465 774"
