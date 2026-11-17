@@ -3,7 +3,6 @@
 
 import { describe, test, expect, beforeEach, afterEach } from "vitest";
 import { randomUUID } from "node:crypto";
-import type Database from "better-sqlite3";
 type Db = Database.Database;
 import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
@@ -41,6 +40,8 @@ import {
   upsertPeopleCounts,
   refreshPeopleCounts,
 } from "./people.js";
+import { walksByDate } from "./data/repositories/DocumentPeopleRepository.js";
+import type Database from "better-sqlite3";
 import type { SelfIdentitySource } from "./self-identity-sources.js";
 import type { PersonMention } from "@omnesis/types";
 
@@ -3219,6 +3220,70 @@ describe("getPersonDocuments recency ordering", () => {
     ]);
     // Loser link: only its own pre-merge docs, still newest-first.
     expect(getPersonDocuments(db, loserId).map((d) => d.id)).toEqual(ownDocsByRecency[loserId]);
+  });
+});
+
+describe("getPersonDocuments for a person on most documents", () => {
+  // A person linked to millions of documents (an owner identity not yet
+  // merged into self) is read by walking documents newest-first instead of
+  // grouping every link; both plans must return the same page.
+  function seed(): { canonicalId: string; loserId: string } {
+    const docs: Array<[string, string, string | null, "sender" | "recipient"]> = [
+      ["w-jan", "alice@example.com", "2026-01-01T00:00:00Z", "sender"],
+      ["w-mar", "alice@example.com", "2026-03-01T00:00:00Z", "recipient"],
+      ["w-tie-b", "bob@example.com", "2026-05-01T00:00:00Z", "sender"],
+      ["w-tie-a", "alice@example.com", "2026-05-01T00:00:00Z", "sender"],
+      ["w-undated", "alice@example.com", null, "sender"],
+      ["w-jun", "bob@example.com", "2026-06-01T00:00:00Z", "recipient"],
+    ];
+    for (const [id, email, at, role] of docs) {
+      insertDoc(id, "gmail:test", [{ role, emails: [email] }], at ? { sourceCreatedAt: at } : {});
+    }
+    insertDoc("w-other", "gmail:test", [{ role: "sender", emails: ["carol@example.com"] }], {
+      sourceCreatedAt: "2026-07-01T00:00:00Z",
+    });
+    backfillManyPeople(db, 100);
+    const aliceId = findPersonByAlias(db, "email", "alice@example.com")!;
+    const bobId = findPersonByAlias(db, "email", "bob@example.com")!;
+    mergePeople(db, aliceId, bobId);
+    const canonicalId = getPersonById(db, aliceId)!.mergedInto == null ? aliceId : bobId;
+    return { canonicalId, loserId: canonicalId === aliceId ? bobId : aliceId };
+  }
+
+  const setLinks = (n: number) => db.prepare("UPDATE people SET doc_count = ?").run(n);
+
+  test("walks by date only when that reads fewer rows than grouping the links", () => {
+    const { canonicalId } = seed();
+    setLinks(0);
+    expect(walksByDate(db, canonicalId, true, 31)).toBe(false);
+    setLinks(2);
+    expect(walksByDate(db, canonicalId, true, 31)).toBe(false);
+    setLinks(1_000_000);
+    expect(walksByDate(db, canonicalId, true, 31)).toBe(true);
+  });
+
+  test("returns the same pages, roles and order by either plan", () => {
+    const { canonicalId, loserId } = seed();
+    const read = () =>
+      [
+        getPersonDocuments(db, canonicalId),
+        getPersonDocuments(db, canonicalId, { role: "sender" }),
+        getPersonDocuments(db, canonicalId, { limit: 2, offset: 2 }),
+        getPersonDocuments(db, loserId),
+      ].map((page) => page.map((d) => `${d.id}:${[...d.roles].sort().join("+")}`));
+    setLinks(0);
+    const grouped = read();
+    setLinks(1_000_000);
+    expect(walksByDate(db, canonicalId, true, 51)).toBe(true);
+    expect(read()).toEqual(grouped);
+    expect(grouped[0]).toEqual([
+      "w-jun:recipient",
+      "w-tie-a:sender",
+      "w-tie-b:sender",
+      "w-mar:recipient",
+      "w-jan:sender",
+      "w-undated:sender",
+    ]);
   });
 });
 
