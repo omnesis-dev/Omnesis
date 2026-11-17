@@ -28,6 +28,7 @@ on:
             windows-failure-triage,
             windows-unit-recovery,
             key-registration-timing,
+            account-unlink-mac-proof,
             gateway-boot-trace,
             windows-network-pilot,
             windows-network-proxy-pilot,
@@ -4068,3 +4069,92 @@ jobs:
       TZ: UTC
       OMNESIS_UNIT_WORKERS: "2"
       OMNESIS_E2E_WORKERS: "1"
+
+  account-unlink-mac-proof:
+    name: macOS certificate fixtures with OpenSSL 3
+    if: inputs.scope == 'account-unlink-mac-proof'
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    env:
+      TZ: UTC
+      OMNESIS_UNIT_WORKERS: "1"
+      OMNESIS_E2E_WORKERS: "1"
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ inputs.source_sha }}
+          persist-credentials: false
+      - name: Keep this job off production Omnesis services
+        id: production-network
+        shell: bash
+        run: $GITHUB_WORKSPACE/scripts/ci/production-network.sh isolate
+      - name: Verify fixed source revision
+        env:
+          TARGET_SHA: ${{ inputs.source_sha }}
+        run: |
+          [[ "$TARGET_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "$TARGET_SHA"
+      - name: Set up Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: "24"
+          cache: npm
+      - name: Select OpenSSL 3 for certificate fixtures
+        shell: bash
+        run: |-
+          openssl_bin="$(brew --prefix openssl@3)/bin"
+          test -x "$openssl_bin/openssl"
+          "$openssl_bin/openssl" version
+          echo "$openssl_bin" >> "$GITHUB_PATH"
+      - name: Install dependencies
+        id: dependencies
+        run: node scripts/ci/npm-ci.mjs --no-audit --no-fund
+      - name: Build and prove Windows SQLite recovery bindings
+        id: native_sqlite
+        run: node scripts/ci/build-windows-sqlite.mjs
+        if: runner.os == 'Windows'
+      - name: Build and prove Windows vector publication
+        id: native_vector
+        run: node scripts/ci/build-windows-usearch.mjs
+        if: runner.os == 'Windows'
+      - name: Make OpenSSL available for isolated TLS certificates
+        run: |
+          if (-not (Get-Command openssl -ErrorAction SilentlyContinue)) {
+            $opensslDir = Join-Path $env:ProgramFiles 'Git\usr\bin'
+            if (-not (Test-Path (Join-Path $opensslDir 'openssl.exe'))) { throw 'OpenSSL is required for gateway tests' }
+            $opensslDir | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+          }
+        if: runner.os == 'Windows'
+        shell: pwsh
+      - name: Validate all source and test TypeScript projects
+        env:
+          NODE_OPTIONS: --max-old-space-size=4096
+        run: exec node scripts/run-check.mjs types-tests
+      - name: Check merged relay ownership types and script bootstrap
+        if: runner.os == 'Linux'
+        env:
+          NODE_OPTIONS: --max-old-space-size=6144
+        run: node node_modules/eslint/bin/eslint.js packages/cloud-relay/src/management-service.ts scripts/lib/check-process.mjs scripts/lib/check-process.test.mjs scripts/ci/windows-checks.mjs scripts/ci/with-test-embedder.mjs scripts/nx/entrypoints.test.mjs
+      - name: Build the exact candidate runtime packages
+        run: node scripts/build-projects.mjs
+      - name: Prove account unlink boundaries and retained cleanup ownership
+        run: exec node scripts/run-check.mjs unit packages/cloud-relay/src/management-service.test.ts packages/cloud-relay/src/gateway-integration.test.ts packages/cloud-relay/src/gateway-key-client.test.ts packages/cloud-relay/src/management-ownership-boundaries.test.ts packages/cli/src/service/supervisor.test.ts packages/gateway/portal/js/views/relay.test.ts scripts/lib/check-process.test.mjs scripts/nx/entrypoints.test.mjs
+      - name: Install the required real enrollment browser
+        run: npm exec --workspace packages/collector -- playwright install chromium
+      - name: Prove account unlink through real relay gateways and passkey browser
+        run: exec node scripts/run-check.mjs e2e packages/collector/src/e2e/account-gateway-unlink.e2e.test.ts
+      - name: Verify immutable source stayed unchanged
+        run: git diff --exit-code
+      - name: Check nothing tried to reach production Omnesis services
+        if: ${{ always() && steps.production-network.outcome == 'success' }}
+        shell: bash
+        run: $GITHUB_WORKSPACE/scripts/ci/production-network.sh verify
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        os:
+          - macos-15
