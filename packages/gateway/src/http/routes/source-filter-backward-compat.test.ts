@@ -17,6 +17,7 @@ import { permittedAnalyticsSourceIds, permittedSourceIds } from "../../access/pe
 import { AccessService } from "../../access/service.js";
 import { getGrantCapabilities, getLevelCapabilities } from "../../access/store-rules.js";
 import { createGatewaySearchPort } from "../../agent/ports.js";
+import { fixedPublicAddress } from "../../public-address.js";
 import { LATEST_SCHEMA_VERSION, runMigrations } from "../../data/migrations.js";
 import { runSchemaSetup } from "../../data/schema.js";
 import { commitPrivacyPolicy } from "../../privacy/policy-history.js";
@@ -120,7 +121,7 @@ beforeEach(() => {
     }
     await next();
   });
-  mountOAuthAccessRoutes(app, access, { publicBaseUrl: ORIGIN });
+  mountOAuthAccessRoutes(app, access, { publicAddress: fixedPublicAddress(ORIGIN) });
 });
 
 afterEach(() => {
