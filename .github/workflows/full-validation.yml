@@ -46,6 +46,8 @@ on:
             staging-archive-proof,
             source-contract-merge-proof,
             instructions-read-denial-proof,
+            windows-unit-smoke-final,
+            linux-writer-hold-proof,
             gateway-boot-trace,
             windows-network-pilot,
             windows-network-proxy-pilot,
@@ -6561,3 +6563,231 @@ jobs:
         if: ${{ always() && steps.production-network.outcome == 'success' }}
         shell: bash
         run: $GITHUB_WORKSPACE/scripts/ci/production-network.sh verify
+
+  windows-unit-smoke-final:
+    name: Windows x64 complete unit and smoke
+    if: inputs.scope == 'windows-unit-smoke-final'
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+      TZ: UTC
+      OMNESIS_UNIT_WORKERS: "2"
+      OMNESIS_E2E_WORKERS: "1"
+    runs-on: windows-latest
+    timeout-minutes: ${{ matrix.lane == 'focused' && 40 || matrix.lane == 'adapters' && 60 || matrix.lane == 'unit' && 210 || 180 }}
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        include: [{ name: "Windows unit", lane: "unit" }]
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - name: Use runner storage for SQLite latency fixtures
+        # Profile temporary storage can serialize scattered SQLite checkpoint
+        # writes. Keep the latency budgets unchanged on the runner's scratch disk.
+        run: |
+          "OMNESIS_TEST_SQLITE_TMP=$env:RUNNER_TEMP" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.source_sha }}
+          persist-credentials: false
+
+      - name: Keep this job off production Omnesis services
+        id: production-network
+        shell: bash
+        run: $GITHUB_WORKSPACE/scripts/ci/production-network.sh isolate
+
+      - name: Verify fixed source revision
+        env:
+          TARGET_SHA: ${{ inputs.source_sha }}
+        run: |
+          if ($env:TARGET_SHA -ne '2b7f61eb4fc992f127619cb72d10ade4265bd932') { throw 'Invalid target SHA' }
+          if ((git rev-parse HEAD) -ne $env:TARGET_SHA) { throw 'Unexpected checked-out revision' }
+
+      - name: Set up Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "24"
+          cache: npm
+
+      - name: Set up Go for the private transport boundary
+        if: ${{ matrix.lane != 'portal' && matrix.lane != 'adapters' }}
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: packages/tailnet-helper/go.mod
+          cache-dependency-path: |
+            packages/tailnet-helper/go.sum
+            scripts/tailnet-test/control/go.sum
+
+      - name: Privacy scan
+        run: node scripts/pii-scan.mjs --all
+
+      - name: Make OpenSSL available for isolated TLS certificates
+        run: |
+          if (-not (Get-Command openssl -ErrorAction SilentlyContinue)) {
+            $opensslDir = Join-Path $env:ProgramFiles 'Git\usr\bin'
+            if (-not (Test-Path (Join-Path $opensslDir 'openssl.exe'))) { throw 'OpenSSL is required for gateway tests' }
+            $opensslDir | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+          }
+
+      - name: Install dependencies
+        id: dependencies
+        run: node scripts/ci/npm-ci.mjs --no-audit --no-fund
+
+      - name: Validate optional E2E selection
+        if: ${{ matrix.lane == 'e2e' }}
+        env:
+          SHARD: ${{ matrix.shard }}
+          OMNESIS_WINDOWS_E2E_FILES: ${{ github.event_name == 'workflow_dispatch' && inputs.lane == 'e2e' && inputs.e2e_files || '' }}
+        run: |
+          $checkArgs = @('scripts/ci/windows-checks.mjs', 'e2e', '--list')
+          if ($env:SHARD) { $checkArgs += "--shard=$env:SHARD" }
+          node @checkArgs
+
+      - name: Build and prove Windows SQLite recovery bindings
+        id: native_sqlite
+        run: node scripts/ci/build-windows-sqlite.mjs
+
+      - name: Build and prove Windows vector publication
+        id: native_vector
+        run: node scripts/ci/build-windows-usearch.mjs
+
+      - name: Typecheck all TypeScript source and test projects
+        if: ${{ matrix.lane == 'unit' }}
+        shell: bash
+        run: exec node scripts/run-check.mjs types-tests
+
+      - name: Install spawned-gateway Chromium
+        if: ${{ matrix.lane == 'e2e' }}
+        run: npm exec --workspace packages/collector -- playwright install chromium
+
+      - name: Install portal and runtime-smoke Chromium
+        if: ${{ matrix.lane == 'portal' || matrix.lane == 'unit' }}
+        run: node node_modules/@playwright/test/cli.js install chromium
+
+      - name: Restore the reference embedding model
+        if: ${{ matrix.lane == 'e2e' }}
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/omnesis-test-embedder
+          key: windows-test-embedder-${{ hashFiles('scripts/ci/with-test-embedder.mjs', 'scripts/ci/reference-embedder.json') }}
+
+      - name: Focused Windows runtime tests
+        if: ${{ matrix.lane == 'focused' }}
+        run: node scripts/ci/windows-checks.mjs focused
+
+      - name: Verify real Go-to-Node private transport
+        if: ${{ !cancelled() && (matrix.lane == 'focused' || matrix.lane == 'unit') && steps.dependencies.outcome == 'success' }}
+        env:
+          GOMAXPROCS: "2"
+        run: node --import tsx scripts/ci/tailnet-transport.mjs
+
+      - name: Prepare real native Whisper acceptance inputs
+        # The full unit lane includes the actual model/voice-note integration
+        # tests; focused PR checks keep their bounded ownership coverage.
+        if: ${{ matrix.lane == 'unit' }}
+        run: node scripts/ci/prepare-whisper-test-inputs.mjs
+
+      - name: Prepare the pinned native OCR engine and English data
+        id: native_ocr
+        if: ${{ matrix.lane == 'unit' }}
+        run: ./scripts/ci/prepare-tesseract-test-inputs.ps1
+
+      - name: Require exact text from real native OCR
+        id: verify_ocr
+        if: ${{ matrix.lane == 'unit' }}
+        run: node --import tsx scripts/ci/verify-tesseract-test-inputs.mjs
+
+      - name: Full Windows unit and smoke tests
+        # Preserve a failing typecheck verdict while collecting runtime failures.
+        if: ${{ !cancelled() && matrix.lane == 'unit' && steps.dependencies.outcome == 'success' && steps.native_sqlite.outcome == 'success' && steps.native_vector.outcome == 'success' && steps.native_ocr.outcome == 'success' && steps.verify_ocr.outcome == 'success' }}
+        env:
+          OMNESIS_INDEXER_BENCH: "1"
+        run: node scripts/ci/windows-checks.mjs unit
+
+      - name: Build OpenClaw adapter prerequisites
+        if: ${{ matrix.lane == 'adapters' }}
+        run: node scripts/run-check.mjs typecheck packages/agent-integration
+
+      - name: Full Windows adapter tests
+        if: ${{ matrix.lane == 'adapters' }}
+        run: node scripts/ci/windows-checks.mjs adapters
+
+      - name: Prove real portable network fixture transports
+        # Run once per full sweep; both E2E shards use these native tools.
+        if: ${{ matrix.lane == 'e2e' && matrix.shard != '2/2' }}
+        env:
+          OMNESIS_TAILNET_TOOLS_DIR: ${{ runner.temp }}/omnesis-tailnet-tools
+          GOMAXPROCS: "2"
+        run: node scripts/ci/portable-transports-proof.mjs
+
+      - name: Full Windows E2E shard with the real reference embedder
+        if: ${{ matrix.lane == 'e2e' }}
+        env:
+          SHARD: ${{ matrix.shard }}
+          OMNESIS_WINDOWS_E2E_FILES: ${{ github.event_name == 'workflow_dispatch' && inputs.lane == 'e2e' && inputs.e2e_files || '' }}
+          OMNESIS_TEST_EMBEDDER_CACHE: ${{ runner.temp }}/omnesis-test-embedder
+          OMNESIS_TAILNET_TOOLS_DIR: ${{ runner.temp }}/omnesis-tailnet-tools
+          GOMAXPROCS: "2"
+        run: |
+          $checkArgs = @('scripts/ci/with-test-embedder.mjs', 'scripts/ci/windows-checks.mjs', 'e2e')
+          if ($env:SHARD) { $checkArgs += "--shard=$env:SHARD" }
+          node @checkArgs
+
+      - name: Full Windows portal tests
+        if: ${{ matrix.lane == 'portal' }}
+        run: node scripts/ci/windows-checks.mjs portal
+
+      - name: Preserve portal failure artifacts
+        if: ${{ failure() && matrix.lane == 'portal' }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: windows-portal-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            test-results/
+            playwright-report/
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Check nothing tried to reach production Omnesis services
+        if: ${{ always() && steps.production-network.outcome == 'success' }}
+        shell: bash
+        run: $GITHUB_WORKSPACE/scripts/ci/production-network.sh verify
+
+  linux-writer-hold-proof:
+    name: Linux encrypted writer hold regression
+    if: inputs.scope == 'linux-writer-hold-proof'
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      TZ: UTC
+      OMNESIS_E2E_WORKERS: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ inputs.source_sha }}
+          persist-credentials: false
+      - name: Verify exact source
+        env:
+          TARGET_SHA: ${{ inputs.source_sha }}
+        run: |
+          test "$TARGET_SHA" = 2b7f61eb4fc992f127619cb72d10ade4265bd932
+          test "$(git rev-parse HEAD)" = "$TARGET_SHA"
+      - name: Isolate production network
+        id: production-network
+        run: $GITHUB_WORKSPACE/scripts/ci/production-network.sh isolate
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: "24"
+          cache: npm
+      - name: Install dependencies
+        run: scripts/ci/npm-ci.sh
+      - name: Measure the full-size encrypted fixture
+        run: exec node scripts/run-check.mjs e2e packages/gateway/src/scheduler/writer-maintenance.preempt.e2e.test.ts
+      - name: Check source tree and network isolation
+        if: ${{ always() && steps.production-network.outcome == 'success' }}
+        run: |
+          git diff --exit-code
+          $GITHUB_WORKSPACE/scripts/ci/production-network.sh verify
