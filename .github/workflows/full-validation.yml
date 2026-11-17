@@ -4387,6 +4387,7 @@ jobs:
           fs.appendFileSync(process.env.GITHUB_ENV,'OMNESIS_UNIT_RECOVERY_REPORTER='+destination+'\n');
           JS
       - name: Isolate one disjoint quarter of the unchanged complete unit workload
+        shell: bash
         if: ${{ !cancelled() && matrix.lane == 'unit' && steps.dependencies.outcome == 'success' && steps.native_sqlite.outcome == 'success' && steps.native_vector.outcome == 'success' && steps.native_ocr.outcome == 'success' && steps.verify_ocr.outcome == 'success' }}
         env:
           OMNESIS_INDEXER_BENCH: "1"
