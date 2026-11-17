@@ -21,7 +21,7 @@ test("raw config revocation cancels rolling cleanup queued for the real writer; 
   const dir = mkdtempSync(join(tmpdir(), "omnesis-retention-authority-"));
   const dbPath = join(dir, "gateway.db");
   const sourceId = "fictional-notes:archive";
-  const seed = createDatabase(dbPath, { journalMode: "WAL" });
+  const seed = createDatabase(dbPath);
   upsertDocuments(seed, [
     {
       providerId: ProviderId("fictional-provider"),

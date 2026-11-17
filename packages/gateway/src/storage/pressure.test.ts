@@ -7,11 +7,12 @@ import {
   StoragePressureManager,
   resolveStoragePolicy,
   type StorageMeasurement,
+  type StoragePolicy,
 } from "./pressure.js";
 
 function setup() {
   let now = 1000;
-  let policy = { ...resolveStoragePolicy(undefined, 0), maxBytes: 1000 };
+  let policy: StoragePolicy = { ...resolveStoragePolicy(undefined, 0), maxBytes: 1000 };
   let measurement: StorageMeasurement = {
     usageBytes: 100,
     measuredAt: now,
