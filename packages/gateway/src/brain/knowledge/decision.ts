@@ -152,6 +152,19 @@ export async function judgeKnowledge(
   state: Record<string, unknown>,
   association: KnowledgeDecisionAssociation = {},
 ): Promise<number | null> {
+  return (await judgeKnowledgeVerdict(deps, purpose, state, association)).score;
+}
+/**
+ * A judgement with why it has no score. `failed` means a decision model was
+ * asked and gave no usable verdict (unreachable, refused, or an invalid
+ * answer); an unassigned role or a bypassed request is not a failure.
+ */
+export async function judgeKnowledgeVerdict(
+  deps: KnowledgeDecisionDeps,
+  purpose: KnowledgeDecisionPurpose,
+  state: Record<string, unknown>,
+  association: KnowledgeDecisionAssociation = {},
+): Promise<{ score: number | null; failed: boolean }> {
   const decision = deps.getDecision?.();
   const request = knowledgeDecisionRequest(purpose, state);
   if (purpose === "discovery") {
@@ -177,7 +190,7 @@ export async function judgeKnowledge(
         inputTokens: 0,
         bypass: { reason, inputBytes, budgetBytes: DISCOVERY_INPUT_MAX_BYTES },
       });
-      return null;
+      return { score: null, failed: false };
     }
   }
   if (!decision) {
@@ -192,7 +205,7 @@ export async function judgeKnowledge(
         latencyMs: 0,
         inputTokens: null,
       });
-    return null;
+    return { score: null, failed: false };
   }
   const result = await askScore(decision, request, purpose, {
     recordSpend: deps.recordSpend,
@@ -227,5 +240,5 @@ export async function judgeKnowledge(
         }
       : {}),
   });
-  return score;
+  return { score, failed: score === null };
 }

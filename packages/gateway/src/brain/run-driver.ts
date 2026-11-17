@@ -136,6 +136,13 @@ export interface CognitionRunOutcome {
   openedDocIds: string[];
 }
 
+/**
+ * What a preflight decided before any model turn. `{ deferUntil }` holds the
+ * run, without spending an attempt, until that time.
+ */
+export type CognitionPreflightVerdict =
+  "complete" | "continue" | "defer" | "yield" | { deferUntil: number };
+
 export interface CognitionRunDriverDeps {
   /**
    * Resolve the `background-agent` chat backend, fresh per run so a
@@ -144,7 +151,7 @@ export interface CognitionRunDriverDeps {
    */
   resolveBackend: () => ChatBackend | null;
   /** Deterministic/System One maintenance preflight, before model/backend resolution. */
-  preflight?: (run: ClaimedCognitionRun) => Promise<"complete" | "continue" | "defer" | "yield">;
+  preflight?: (run: ClaimedCognitionRun) => Promise<CognitionPreflightVerdict>;
   /** Confirms a tool-requested handoff was durably recorded for this run. */
   isRunHandedOff?: (run: ClaimedCognitionRun) => boolean;
   /**
@@ -232,16 +239,21 @@ export class CognitionRunDriver {
             finalText: "",
             citations: [],
             openedDocIds: [],
-            ...(verdict === "defer" || verdict === "yield"
+            ...(typeof verdict === "object"
               ? {
-                  deferredUntil: this.clock() + (verdict === "yield" ? 0 : 15000),
-                  ...(verdict === "yield" ? { continuation: true } : {}),
-                  errorMessage:
-                    verdict === "yield"
-                      ? "Maintenance advanced; continuing bounded work"
-                      : "Maintenance is waiting for current inputs",
+                  deferredUntil: verdict.deferUntil,
+                  errorMessage: "Maintenance is waiting for the decision model",
                 }
-              : {}),
+              : verdict === "defer" || verdict === "yield"
+                ? {
+                    deferredUntil: this.clock() + (verdict === "yield" ? 0 : 15000),
+                    ...(verdict === "yield" ? { continuation: true } : {}),
+                    errorMessage:
+                      verdict === "yield"
+                        ? "Maintenance advanced; continuing bounded work"
+                        : "Maintenance is waiting for current inputs",
+                  }
+                : {}),
           };
       } catch (error) {
         return {

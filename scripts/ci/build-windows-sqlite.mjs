@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 // Explicit source/CI preparation, outside the installer lifecycle. Retain the
-// existing SQLite engine and encryption format; rebuild only the Windows VFS.
+// locked dependency sources and encryption format for Windows recovery.
 import { copyFile, mkdir, mkdtemp, readFile, realpath, rename, rm } from "node:fs/promises";
 import { randomUUID, createHash } from "node:crypto";
 import { createRequire } from "node:module";
@@ -13,13 +13,16 @@ import { installParentShutdownHandler } from "../../packages/core/src/parent-shu
 import { completeNodeHeaders, hasCleanupFailure, npmJavaScriptEntry } from "./npm-ci.mjs";
 import { prepareWindowsNodeBuild, runWindowsBuildNode } from "./windows-native-build.mjs";
 
-const PACKAGES = ["better-sqlite3", "better-sqlite3-multiple-ciphers"];
+const PACKAGES = [
+  ["better-sqlite3", "13.1.1"],
+  ["better-sqlite3-multiple-ciphers", "13.0.3"],
+];
 
 export async function resolveSqlitePackages(cwd) {
   const checkout = await realpath(cwd);
   const require = createRequire(join(checkout, "packages/gateway/package.json"));
   return Promise.all(
-    PACKAGES.map(async (name) => {
+    PACKAGES.map(async ([name, version]) => {
       const root = await realpath(dirname(require.resolve(`${name}/package.json`)));
       const local = relative(checkout, root);
       if (!local || local === ".." || local.startsWith(`..${sep}`) || isAbsolute(local))
@@ -27,8 +30,8 @@ export async function resolveSqlitePackages(cwd) {
           "Windows SQLite preparation requires dependencies inside its isolated checkout",
         );
       const meta = JSON.parse(await readFile(join(root, "package.json"), "utf8"));
-      if (meta.name !== name || meta.version !== "13.0.3")
-        throw new Error("Windows SQLite backport requires the pinned dependency versions");
+      if (meta.name !== name || meta.version !== version)
+        throw new Error(`Windows SQLite preparation requires ${name}@${version}`);
       return { name, root };
     }),
   );
@@ -85,7 +88,7 @@ export async function buildWindowsSqlite({
         !source.includes("static int winZeroSharedMemory(") ||
         !source.includes("rc = winZeroSharedMemory(h);")
       )
-        throw new Error("The SQLite Windows shared-memory backport has not been applied");
+        throw new Error(`${name} lacks the SQLite Windows shared-memory recovery fix`);
       if (
         (await run(
           [

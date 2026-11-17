@@ -210,7 +210,7 @@ arrives, it runs when its routine delay ends. Maintenance tiers are configurable
 | `soonDelay`            | `1h`    | Delay for soon work                            |
 | `routineDelay`         | `6h`    | Delay for routine work                         |
 | `rootMaxChars`         | 8000    | Hard limit for the root wiki                   |
-| `maxSeeds`             | 64      | Admission bound per maintenance pass           |
+| `maxSeeds`             | 64      | Seeds per batch, packed routine sources too    |
 | `maxFrontierNodes`     | 32      | Maximum offered frontier size                  |
 | `maxFrontierChars`     | 65536   | Maximum JSON characters per frontier response  |
 | `maxVisitedPerSeed`    | 256     | Bounded affected-region traversal              |
@@ -230,6 +230,16 @@ inputs to the planner, which can coalesce the newly discovered overlap. That han
 ends the current model turn; it does not repeatedly retry an already contested write.
 Routing hints carry source revisions and do not become factual support links.
 
+Unrelated routine source changes are packed: once due, groups made only of
+fresh source work (no charged failure) at the routine tier, ready and outside
+every region an active batch holds, share one batch, up to `maxSeeds` sources
+and `maxVisitedPerSeed` region nodes, so one run's fixed prompt covers several
+sources instead of one each. Immediate and soon work, node work, retries and
+work not yet due keep batches of their own. A pack is an ordinary batch: its
+frontier offers sources in bounded chunks, a context handoff continues it, and
+it completes only when every source in it settles. A failed pack charges only
+the sources its run was offered, and each is then retried alone.
+
 A synthesis run asks `knowledge_next_frontier` for work. The engine checks input
 versions, runs relevance gates, and offers the next breadth-first frontier.
 The agent writes through validated tools; the engine records changed,
@@ -239,6 +249,14 @@ letting it overwrite a newer revision. Interrupted work remains durable.
 The first frontier is gated before starting the agent: a fully skipped batch
 does not consume a synthesis turn. Discovery checks judge bounded source content once;
 work with existing repair or discovery obligations bypasses this skip decision.
+When the assigned decision model fails to answer that check before the agent
+turn of a routine batch, the batch waits instead of failing open: its run is
+deferred, without spending an attempt, and the model is asked again after
+`soonDelay` (one question, not one per source). The wait lasts at most
+`routineDelay` from the first failed judgement of the outage; after that, and
+always for immediate and soon batches, for checks made during an agent turn,
+and when no decision model is assigned, the gate fails open as before. The
+outage is tracked in memory, so a restart asks again.
 Sources too large to judge in full also retain the interpretation path. Skipped
 history remains eligible for bounded reconsideration during organization.
 

@@ -30,7 +30,7 @@ function fixture({ failAt = 0, uncertainAt = 0, arch = "x64", patched = true } =
     mkdirSync(join(root, "prebuilds"));
     writeFileSync(
       join(root, "package.json"),
-      JSON.stringify({ name: names[index], version: "13.0.3" }),
+      JSON.stringify({ name: names[index], version: index === 0 ? "13.1.1" : "13.0.3" }),
     );
     writeFileSync(
       join(root, "deps/sqlite3/sqlite3.c"),
@@ -131,7 +131,9 @@ test.each([1, 2, 3, 4])(
 
 test("refuses unpatched source before compiling or publishing", async () => {
   const f = fixture({ patched: false });
-  await expect(buildWindowsSqlite(f.options)).rejects.toThrow("backport has not been applied");
+  await expect(buildWindowsSqlite(f.options)).rejects.toThrow(
+    "lacks the SQLite Windows shared-memory recovery fix",
+  );
   expect(f.calls).toHaveLength(1);
   expect(f.binaries()).toEqual(["old-0", "old-1"]);
 });
@@ -141,6 +143,21 @@ test("rejects shared dependencies outside the requested checkout", async () => {
   const nested = join(f.options.cwd, "another-checkout");
   mkdirSync(nested);
   await expect(resolveSqlitePackages(nested)).rejects.toThrow("inside its isolated checkout");
+});
+
+test("resolves the upstream plain binding and the retained cipher version from the checkout", async () => {
+  const f = fixture();
+  await expect(resolveSqlitePackages(f.options.cwd)).resolves.toEqual([
+    { name: "better-sqlite3", root: f.roots[0] },
+    { name: "better-sqlite3-multiple-ciphers", root: f.roots[1] },
+  ]);
+  writeFileSync(
+    join(f.roots[0], "package.json"),
+    JSON.stringify({ name: "better-sqlite3", version: "13.0.3" }),
+  );
+  await expect(resolveSqlitePackages(f.options.cwd)).rejects.toThrow(
+    "requires better-sqlite3@13.1.1",
+  );
 });
 
 test("does not rebuild the existing Linux or macOS bindings", async () => {

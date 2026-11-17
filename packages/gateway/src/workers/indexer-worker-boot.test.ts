@@ -171,6 +171,7 @@ type WorkerTestOptions = {
   reindexMissingAtBoot?: boolean;
   usearchBackfillPageSize?: number;
   usearchCheckpointIntervalMs?: number;
+  usearchBackfillHold?: SharedArrayBuffer;
   indexDbKeyHex?: string;
   memoryBudget?: MemoryBudget;
 };
@@ -211,8 +212,23 @@ function makeWorkerOptions(
     usearchIndexPath: paths.usearchIndexPath,
     usearchBackfillPageSize: options.usearchBackfillPageSize,
     usearchCheckpointIntervalMs: options.usearchCheckpointIntervalMs,
+    ...(options.usearchBackfillHold ? { usearchBackfillHold: options.usearchBackfillHold } : {}),
     ...(options.indexDbKeyHex ? { indexDbKeyHex: options.indexDbKeyHex } : {}),
     ...(options.memoryBudget ? { memoryBudget: options.memoryBudget } : {}),
+  };
+}
+
+/** A hold, engaged from the start, that keeps a cold rebuild at its first page boundary. */
+function createBackfillHold(): { buffer: SharedArrayBuffer; release(): void } {
+  const buffer = new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT);
+  const cell = new Int32Array(buffer);
+  Atomics.store(cell, 0, 1);
+  return {
+    buffer,
+    release() {
+      Atomics.store(cell, 0, 0);
+      Atomics.notify(cell, 0);
+    },
   };
 }
 
@@ -1293,6 +1309,7 @@ describe("indexer worker boot persistence", () => {
     ];
     const paths = createFixture(documents);
     const seedEmbedder = await startFakeEmbedder();
+    const backfillHold = createBackfillHold();
     let blockingEmbedder: FakeEmbedderServer | undefined;
     let proxy: IndexerWorkerProxy | undefined;
 
@@ -1305,15 +1322,26 @@ describe("indexer worker boot persistence", () => {
       await closeServer(seedEmbedder.server);
 
       // Force a cold graph rebuild while retaining the indexed SQLite corpus.
+      // The hold stops it after its first page until released below, so the
+      // purge lands mid-rebuild however the two threads are scheduled.
       rmSync(paths.usearchIndexPath, { force: true });
       blockingEmbedder = await startFakeEmbedder(["warmup"]);
-      proxy = createProxy(paths, blockingEmbedder.url, { usearchBackfillPageSize: 1 });
+      proxy = createProxy(paths, blockingEmbedder.url, {
+        usearchBackfillPageSize: 1,
+        usearchBackfillHold: backfillHold.buffer,
+      });
       const ready = proxy.whenReady();
+      // Awaited after the purge; a failure before then disposes the proxy,
+      // which rejects readiness, and that rejection must not go unobserved.
+      ready.catch(() => {});
       await waitForPartialBackfill(proxy);
 
       deleteDocumentsBySource(paths.gatewayDbPath, removedSourceId);
       await expect(proxy.deleteSourceIndex(removedSourceId)).resolves.toBe(1);
-      expect(proxy.bootProgress?.progress).toBeLessThan(1);
+      expect(proxy.bootProgress).toEqual({
+        stage: "hnsw-backfill",
+        progress: 1 / documents.length,
+      });
 
       const duringBackfillDb = openIndexDb(paths.indexDbPath, { readonly: true });
       try {
@@ -1335,6 +1363,7 @@ describe("indexer worker boot persistence", () => {
         duringBackfillDb.close();
       }
 
+      backfillHold.release();
       await blockingEmbedder.holds[0]!.started;
       blockingEmbedder.holds[0]!.release();
       await ready;
@@ -1346,6 +1375,7 @@ describe("indexer worker boot persistence", () => {
         reader.close();
       }
     } finally {
+      backfillHold.release();
       blockingEmbedder?.holds[0]?.release();
       await proxy?.dispose();
       if (blockingEmbedder) await closeServer(blockingEmbedder.server);
