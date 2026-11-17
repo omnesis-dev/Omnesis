@@ -871,6 +871,23 @@ describe("syncZonesBackfill", () => {
     expect(seen.filter((url) => url.includes("/activities/12345/zones"))).toHaveLength(1);
   });
 
+  test.each([99, "9223372036854775807"])("zones use the exact athlete ID %s", async (athleteId) => {
+    const sql: string[] = [];
+    const seen: string[] = [];
+    await syncZonesBackfill(
+      { phase: "zones-backfill" },
+      {
+        analytics: zonesPending([{ summit: true }], sql),
+        client: makeFetchedClient({ "/zones": [] }, seen),
+        sourceId: SOURCE_ID,
+        providerId: PROVIDER_ID,
+        athleteId,
+      },
+    );
+    expect(sql).toContain(`SELECT summit, premium FROM strava_athlete WHERE id = ${athleteId}`);
+    expect(seen.filter((path) => path.endsWith("/zones"))).toHaveLength(1);
+  });
+
   test("an athlete id that is not an integer reaches no read", async () => {
     const sql: string[] = [];
     const sync = syncZonesBackfill(
@@ -884,7 +901,7 @@ describe("syncZonesBackfill", () => {
       },
     );
 
-    await expect(sync).rejects.toThrow(/athlete id NaN$/);
+    await expect(sync).rejects.toThrow(/Invalid or imprecise Strava ID/);
     expect(sql).toEqual([]);
   });
 

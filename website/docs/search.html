@@ -535,6 +535,11 @@
           <code>--json</code> for column schemas); <code>omnesis sql</code> queries them directly,
           as does the <strong>Debug → Data tools → SQL</strong> tab in the portal.
         </p>
+        <p>
+          SQL results keep integers within JavaScript's safe integer range as JSON numbers. Larger
+          integers are returned as exact decimal strings so identifiers and other integer values
+          retain every digit.
+        </p>
         <div class="term">
           <div class="term-bar"><span></span><span></span><span></span></div>
           <div class="term-body">
