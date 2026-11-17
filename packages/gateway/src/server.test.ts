@@ -27,6 +27,7 @@ import { setLabFlag } from "./lab/store.js";
 
 import { computeSnapshotAbsencePlan, createDatabase, getSyncState, getWipeEpoch } from "./db.js";
 import { LATEST_SCHEMA_VERSION } from "./data/migrations.js";
+import { fixedPublicAddress } from "./public-address.js";
 import { createServer as createGatewayServer } from "./server.js";
 import { StatusCache } from "./http/services/StatusCache.js";
 import { STATUS_CACHE_READS } from "./http/services/status-cache-reads.js";
@@ -556,8 +557,7 @@ describe("generally available MCP", () => {
           restore: () => {},
           size: () => 0,
         },
-        publicBaseUrl: "https://omnesis.test",
-        mcpResourceUrls: [privateResource],
+        publicAddress: fixedPublicAddress("https://omnesis.test", [privateResource]),
         onMcpHttpRuntime: (value) => {
           runtime = value;
         },
@@ -10466,6 +10466,46 @@ describe("admin config endpoints", () => {
     expect(body.resolvedSearch.params.rrfK).toBe(17);
     // Untouched knobs keep their defaults rather than vanishing.
     expect(body.resolvedSearch.params.resultLimit).toBe(DEFAULT_SEARCH_PARAMS.resultLimit);
+  });
+
+  test("a public address saved through PATCH /admin/config applies at once", async () => {
+    const { PublicAddress } = await import("./public-address.js");
+    const liveApp = createServer(db, undefined, {
+      configDir,
+      configStore,
+      publicAddress: PublicAddress.following(configStore),
+    });
+    try {
+      const origin = "https://omnesis.example.org";
+      const discovery = () => liveApp.request(`${origin}/.well-known/oauth-authorization-server`);
+      expect((await discovery()).status).toBe(503);
+
+      const patched = await liveApp.request("/admin/config", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${cfgToken}` },
+        body: JSON.stringify({ gateway: { publicBaseUrl: origin } }),
+      });
+      expect(patched.status).toBe(200);
+
+      const server = await discovery();
+      expect(server.status).toBe(200);
+      expect((await server.json()).issuer).toBe(origin);
+      // An agent reaching MCP there is pointed at that address's sign-in, with no restart.
+      const challenge = await liveApp.request(`${origin}/mcp`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/json, text/event-stream",
+        },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: {} }),
+      });
+      expect(challenge.status).toBe(401);
+      expect(challenge.headers.get("WWW-Authenticate")).toContain(
+        `resource_metadata="${origin}/.well-known/oauth-protected-resource/mcp"`,
+      );
+    } finally {
+      await liveApp.close();
+    }
   });
 
   test("GET /admin/config returns empty config initially", async () => {

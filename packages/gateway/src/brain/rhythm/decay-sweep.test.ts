@@ -37,13 +37,15 @@ import {
 import { decayCheckRunDedupeKey } from "../run-payloads.js";
 import { nextDecayCheckAt, runDecaySweepPass, type DecaySweepWriteOps } from "./decay-sweep.js";
 import type Database from "better-sqlite3";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 type Db = Database.Database;
 
 const log = createLogger("test:briefs-decay");
 
 function testDbPath(): string {
-  return `/tmp/omnesis-test-${randomUUID()}.db`;
+  return fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
 }
 function cleanupDb(path: string): void {
   for (const suffix of ["", "-wal", "-shm", "-journal"]) {

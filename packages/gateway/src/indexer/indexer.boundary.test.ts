@@ -27,6 +27,8 @@ import { Indexer } from "./indexer.js";
 import { DocumentChunker } from "./chunker.js";
 import type { DocumentSource, Embedder, IndexableDocument } from "./types.js";
 import type Database from "better-sqlite3";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 type Db = Database.Database;
 
 /** Deterministic embedder — one fixed unit vector per input. */
@@ -111,7 +113,9 @@ describe("reindexMissing batch-loop bound", () => {
   let embedder: MockEmbedder;
 
   beforeEach(() => {
-    db = createIndexDatabase(`/tmp/omnesis-indexer-boundary-${randomUUID()}.db`);
+    db = createIndexDatabase(
+      fixtureJoin(fixtureTmpdir(), `omnesis-indexer-boundary-${randomUUID()}.db`),
+    );
     source = new MockSource();
     embedder = new MockEmbedder();
   });

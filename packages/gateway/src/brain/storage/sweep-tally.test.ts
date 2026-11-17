@@ -18,6 +18,8 @@ import { createObservation } from "./observations.js";
 import { appendOpenLoopLedger, createOpenLoop } from "./open-loops.js";
 import { countRunArtifacts, listSweepTallies, recordSweepTally } from "./sweep-tally.js";
 import type Database from "better-sqlite3";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 type Db = Database.Database;
 
@@ -29,7 +31,7 @@ describe("sweep tally", () => {
   let db: Db;
 
   beforeEach(() => {
-    path = `/tmp/omnesis-test-${randomUUID()}.db`;
+    path = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
     db = createDatabase(path);
   });
   afterEach(() => {

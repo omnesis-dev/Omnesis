@@ -60,7 +60,7 @@ let analyticsGate: Promise<void> | null = null;
 let releaseAnalytics: () => void = () => {};
 
 beforeEach(() => {
-  dbPath = `/tmp/omnesis-backup-http-${randomUUID()}.db`;
+  dbPath = join(tmpdir(), `omnesis-backup-http-${randomUUID()}.db`);
   db = createDatabase(dbPath);
   configDir = mkdtempSync(join(tmpdir(), "omnesis-backup-http-"));
   ADMIN_TOKEN = mintToken([SCOPE_ADMIN, SCOPE_READ]);

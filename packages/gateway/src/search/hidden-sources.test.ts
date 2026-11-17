@@ -33,6 +33,8 @@ import {
   withHiddenSourcesExcluded,
 } from "./hidden-sources.js";
 import type { UsearchReadHandle } from "../indexer/usearch-index.js";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 describe("registry", () => {
   test("the open-loops system source is registered hidden", () => {
@@ -131,7 +133,7 @@ describe("lexical choke point — buildMetadataFilter", () => {
 describe("vector choke point — hnswSearchCandidates post-filter", () => {
   let db: Db;
   beforeEach(() => {
-    db = createIndexDatabase(`/tmp/omnesis-test-${randomUUID()}.db`);
+    db = createIndexDatabase(fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`));
   });
   afterEach(() => {
     closeTempDb(db);

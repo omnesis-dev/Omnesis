@@ -83,7 +83,7 @@ describe("worth gate", () => {
   let seq = 0;
 
   beforeEach(() => {
-    dbPath = `/tmp/omnesis-test-${randomUUID()}.db`;
+    dbPath = join(tmpdir(), `omnesis-test-${randomUUID()}.db`);
     db = createDatabase(dbPath);
     dir = mkdtempSync(join(tmpdir(), "omnesis-worth-gate-"));
     now = Date.parse("2026-09-01T09:00:00.000Z");

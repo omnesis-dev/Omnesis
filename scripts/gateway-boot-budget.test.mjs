@@ -91,6 +91,7 @@ describe("every consumer reads the shared budget", () => {
 
   it.each([
     ["packages/collector/src/e2e/gateway-env.ts", "gateway-boot-budget.json"],
+    ["playwright.config.ts", "gateway-boot-budget.json"],
     ["packages/agent-integration/test/openclaw_gateway_probe.mjs", "gatewayBootBudgetMs"],
     [
       "packages/collector/src/e2e/harness-runtime-conformance.ts",

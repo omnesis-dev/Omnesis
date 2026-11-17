@@ -53,7 +53,7 @@ function cleanupDb(path: string): void {
 }
 
 beforeEach(async () => {
-  dbPath = `/tmp/omnesis-legacy-rows-http-${randomUUID()}.db`;
+  dbPath = join(tmpdir(), `omnesis-legacy-rows-http-${randomUUID()}.db`);
   db = createDatabase(dbPath);
   directory = mkdtempSync(join(tmpdir(), "omnesis-legacy-rows-"));
   analyticsDb = new AnalyticsDb(join(directory, "analytics.db"));

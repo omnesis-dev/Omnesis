@@ -106,13 +106,14 @@ export interface AdminRoutesDeps {
   pairingTtlMs?: number;
   /**
    * Externally-reachable HTTPS base URL of this gateway (no trailing
-   * slash), sourced from `gateway.publicBaseUrl` via `runtime-settings.ts`.
-   * Forwarded in the `auth.begin` command so a source's `authFlow` builds
-   * its OAuth redirect URI as `${publicBaseUrl}/oauth/callback` instead of
-   * relying on a same-machine localhost callback. Unset → providers keep
-   * the local-only `localhost:3003` fallback.
+   * slash) as it stands now, from `gateway.publicBaseUrl` (see
+   * `public-address.ts`). Forwarded in the `auth.begin` command so a
+   * source's `authFlow` builds its OAuth redirect URI as
+   * `${publicBaseUrl}/oauth/callback` instead of relying on a same-machine
+   * localhost callback. Unset → providers keep the local-only
+   * `localhost:3003` fallback.
    */
-  publicBaseUrl?: string;
+  publicBaseUrl?: () => string | undefined;
   /**
    * SHA-256 fingerprint (lowercase hex, no colons) of the TLS leaf cert
    * the gateway is currently serving. Echoed in `/admin/devices/pair` so

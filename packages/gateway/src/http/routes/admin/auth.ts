@@ -85,7 +85,7 @@ export function mountAuthRoutes(app: RouteApp, deps: AdminRoutesDeps): void {
           // `GET /admin/auth-flows` returns every flow to every admin caller
           // with no per-caller filter, so the flow record stays secret-free.
           credentials: body.credentials,
-          publicBaseUrl,
+          publicBaseUrl: publicBaseUrl?.(),
           renders: body.renders,
         },
         30_000,

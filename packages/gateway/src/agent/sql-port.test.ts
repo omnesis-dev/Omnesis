@@ -21,8 +21,10 @@ import { analyticsRowKey, parseAnalyticsRowKey } from "@omnesis/core";
 import { AnalyticsDb } from "../analytics-db.js";
 import { createGatewaySqlPort } from "./ports.js";
 import type { AnalyticsTableSchema } from "@omnesis/source-sdk";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
-const DB = `/tmp/omnesis-test-sql-port-${randomUUID()}.db`;
+const DB = fixtureJoin(fixtureTmpdir(), `omnesis-test-sql-port-${randomUUID()}.db`);
 
 // Two fictional structured sources: one with a composite primary key
 // (transactions) and one single-key (positions). Invented data only.

@@ -10,12 +10,14 @@ import { setSyncState, getSourceMeta } from "./SyncStateRepository.js";
 import { setSourceFamilyMeta } from "./SourceFamilyMetaRepository.js";
 import { markSourceCleanupDone } from "./SourceRepository.js";
 import { deleteAllBySource } from "./DocumentRepository.js";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 let path: string;
 let db: ReturnType<typeof createDatabase>;
 
 beforeEach(() => {
-  path = `/tmp/omnesis-source-family-${randomUUID()}.db`;
+  path = fixtureJoin(fixtureTmpdir(), `omnesis-source-family-${randomUUID()}.db`);
   db = createDatabase(path);
   db.prepare(
     "INSERT INTO devices (id, name, kind, paired_at) VALUES ('dev-1', 'a-collector', 'collector', 0)",

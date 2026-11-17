@@ -164,6 +164,28 @@ export function getDocumentsPeopleSummary(
   return result;
 }
 
+/**
+ * Whether a person's page is read by walking documents newest-first rather
+ * than by grouping the person's links. Grouping reads every link the person
+ * has before it can take a page, which for a person on millions of documents
+ * (an owner identity not yet merged into self) is minutes of work; the walk
+ * stops after the page, having read about `need × documents / links`
+ * documents. Each is chosen where it reads fewer rows. `MAX(rowid)` stands in
+ * for the document count, which `COUNT(*)` would cost a full scan to give.
+ */
+export function walksByDate(db: Db, personId: string, isCanonical: boolean, need: number): boolean {
+  const links =
+    db
+      .prepare<[{ id: string }], { n: number | null }>(
+        `SELECT SUM(doc_count) AS n FROM people WHERE id = @id${isCanonical ? " OR merged_into = @id" : ""}`,
+      )
+      .get({ id: personId })?.n ?? 0;
+  if (links <= 0) return false;
+  const documents =
+    db.prepare<[], { n: number | null }>("SELECT MAX(rowid) AS n FROM documents").get()?.n ?? 0;
+  return need * documents < links * links;
+}
+
 export function getPersonDocuments(
   db: Db,
   personId: string,
@@ -193,70 +215,43 @@ export function getPersonDocuments(
     )
     .get(personId);
   const isCanonical = row?.merged_into == null;
+  const members = isCanonical
+    ? "SELECT @personId UNION SELECT id FROM people WHERE merged_into = @personId"
+    : "SELECT @personId";
+  const roleFilter = opts?.role ? " AND dp.role = @role" : "";
 
-  // GROUP_CONCAT collapses the (DISTINCT doc, role) rows into one row
-  // per doc with a comma-joined role list. The role filter (when set)
-  // narrows the GROUP rows but the joined list still reflects every
-  // matching role for that doc.
+  // One row per document with a comma-joined list of the person's roles on
+  // it; the role filter (when set) narrows both the documents and the list.
   //
-  // Rows come back newest-first, ordered by the joined document's
+  // Rows come back newest-first, ordered by the document's
   // `source_created_at` — the same timestamp every client renders as the
   // per-row "time ago" — so the person page leads with the most recent
   // documents. `document_id` is a stable tiebreaker, which keeps
   // offset-based pagination deterministic when several docs share a
-  // timestamp. The join to `documents` is 1:1 (document_people.document_id
-  // references documents.id), so it neither drops rows nor inflates the
-  // DISTINCT role list.
-  type Row = { document_id: string; roles: string };
-
-  let rows: Row[];
-  if (opts?.role) {
-    rows = isCanonical
-      ? db
-          .prepare<[string, string, string, number, number], Row>(
-            `SELECT dp.document_id, GROUP_CONCAT(DISTINCT dp.role) AS roles
-             FROM document_people dp JOIN documents d ON d.id = dp.document_id
-             WHERE (dp.person_id = ? OR dp.person_id IN (SELECT id FROM people WHERE merged_into = ?))
-               AND dp.role = ?
-             GROUP BY dp.document_id
-             ORDER BY d.source_created_at DESC, dp.document_id
-             LIMIT ? OFFSET ?`,
-          )
-          .all(personId, personId, opts.role, limit, offset)
-      : db
-          .prepare<[string, string, number, number], Row>(
-            `SELECT dp.document_id, GROUP_CONCAT(DISTINCT dp.role) AS roles
-             FROM document_people dp JOIN documents d ON d.id = dp.document_id
-             WHERE dp.person_id = ? AND dp.role = ?
-             GROUP BY dp.document_id
-             ORDER BY d.source_created_at DESC, dp.document_id
-             LIMIT ? OFFSET ?`,
-          )
-          .all(personId, opts.role, limit, offset);
-  } else {
-    rows = isCanonical
-      ? db
-          .prepare<[string, string, number, number], Row>(
-            `SELECT dp.document_id, GROUP_CONCAT(DISTINCT dp.role) AS roles
-             FROM document_people dp JOIN documents d ON d.id = dp.document_id
-             WHERE dp.person_id = ?
-                OR dp.person_id IN (SELECT id FROM people WHERE merged_into = ?)
-             GROUP BY dp.document_id
-             ORDER BY d.source_created_at DESC, dp.document_id
-             LIMIT ? OFFSET ?`,
-          )
-          .all(personId, personId, limit, offset)
-      : db
-          .prepare<[string, number, number], Row>(
-            `SELECT dp.document_id, GROUP_CONCAT(DISTINCT dp.role) AS roles
-             FROM document_people dp JOIN documents d ON d.id = dp.document_id
-             WHERE dp.person_id = ?
-             GROUP BY dp.document_id
-             ORDER BY d.source_created_at DESC, dp.document_id
-             LIMIT ? OFFSET ?`,
-          )
-          .all(personId, limit, offset);
-  }
+  // timestamp. Both plans return the same rows in the same order.
+  const sql = walksByDate(db, personId, isCanonical, offset + limit)
+    ? `WITH members(id) AS (${members})
+       SELECT d.id AS document_id,
+              (SELECT GROUP_CONCAT(DISTINCT dp.role) FROM document_people dp
+                WHERE dp.document_id = d.id AND dp.person_id IN members${roleFilter}) AS roles
+       FROM documents d INDEXED BY idx_documents_source_created_at
+       WHERE EXISTS (SELECT 1 FROM document_people dp
+                      WHERE dp.document_id = d.id AND dp.person_id IN members${roleFilter})
+       ORDER BY d.source_created_at DESC, d.id
+       LIMIT @limit OFFSET @offset`
+    : `WITH members(id) AS (${members})
+       SELECT dp.document_id, GROUP_CONCAT(DISTINCT dp.role) AS roles
+       FROM document_people dp JOIN documents d ON d.id = dp.document_id
+       WHERE dp.person_id IN members${roleFilter}
+       GROUP BY dp.document_id
+       ORDER BY d.source_created_at DESC, dp.document_id
+       LIMIT @limit OFFSET @offset`;
+  const rows = db
+    .prepare<
+      [{ personId: string; role?: string; limit: number; offset: number }],
+      { document_id: string; roles: string | null }
+    >(sql)
+    .all({ personId, ...(opts?.role ? { role: opts.role } : {}), limit, offset });
 
   return rows.map((r) => ({
     id: r.document_id,

@@ -11,12 +11,14 @@ import {
   listSourceWatermarks,
   upsertSourceWatermark,
 } from "./WatermarkRepository.js";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 let path: string;
 let db: ReturnType<typeof createDatabase>;
 
 beforeEach(() => {
-  path = `/tmp/omnesis-watermark-${randomUUID()}.db`;
+  path = fixtureJoin(fixtureTmpdir(), `omnesis-watermark-${randomUUID()}.db`);
   db = createDatabase(path);
 });
 

@@ -5,6 +5,7 @@ import { mkdtempSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { defineConfig } from "@playwright/test";
+import gatewayBootBudget from "./scripts/lib/gateway-boot-budget.json";
 
 // Isolated high-port instance — never the live gateway (7600). A fresh temp
 // config dir per run means the gateway auto-generates its own token + self-
@@ -84,6 +85,6 @@ export default defineConfig({
     url: `${baseURL}/health`,
     ignoreHTTPSErrors: true,
     reuseExistingServer: !process.env.CI,
-    timeout: 30000,
+    timeout: gatewayBootBudget.seconds * 1000,
   },
 });

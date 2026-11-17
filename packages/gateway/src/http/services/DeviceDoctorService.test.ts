@@ -15,6 +15,8 @@ import { directWriteGate } from "../../write-gate.js";
 import { WsCommandError, type DeviceWsServer } from "../../ws.js";
 import { DeviceDoctorService } from "./DeviceDoctorService.js";
 import type { DoctorReport } from "@omnesis/core/doctor";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 const REPORT: DoctorReport = {
   ok: true,
@@ -34,7 +36,7 @@ let dbPath: string;
 let db: ReturnType<typeof createDatabase>;
 
 beforeEach(() => {
-  dbPath = `/tmp/omnesis-device-doctor-test-${randomUUID()}.db`;
+  dbPath = fixtureJoin(fixtureTmpdir(), `omnesis-device-doctor-test-${randomUUID()}.db`);
   db = createDatabase(dbPath);
 });
 

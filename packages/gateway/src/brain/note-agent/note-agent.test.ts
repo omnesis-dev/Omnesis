@@ -61,6 +61,8 @@ import {
 } from "./runner.js";
 import type { ChatBackend, ToolHandle, TurnInput } from "@omnesis/agent";
 import type Database from "better-sqlite3";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 const T0 = Date.parse("2026-03-10T08:00:00Z");
 const log = createLogger("test").child("note-agent");
@@ -71,7 +73,7 @@ let db: Database.Database;
 beforeEach(() => {
   vi.stubEnv("OMNESIS_SYNTHETIC", "0");
   vi.stubEnv("OMNESIS_EXPERIMENTAL", "1");
-  path = `/tmp/omnesis-test-${randomUUID()}.db`;
+  path = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
   db = createDatabase(path);
   setLabFlag(db, "brain", false);
   setLabFlag(db, "tasks", true);

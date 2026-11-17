@@ -30,6 +30,8 @@ import { getSource } from "../../data/repositories/SourceRepository.js";
 import { createToken } from "../../data/repositories/TokenRepository.js";
 import type { AnalyticsTableSchema } from "@omnesis/source-sdk";
 import type Database from "better-sqlite3";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 type Db = Database.Database;
 
@@ -103,8 +105,11 @@ function webDocUrls(): string[] {
 }
 
 beforeEach(async () => {
-  dbPath = `/tmp/omnesis-capture-policy-test-${randomUUID()}.db`;
-  analyticsPath = `/tmp/omnesis-capture-policy-test-${randomUUID()}.duckdb`;
+  dbPath = fixtureJoin(fixtureTmpdir(), `omnesis-capture-policy-test-${randomUUID()}.db`);
+  analyticsPath = fixtureJoin(
+    fixtureTmpdir(),
+    `omnesis-capture-policy-test-${randomUUID()}.duckdb`,
+  );
   db = createDatabase(dbPath);
   analyticsDb = new AnalyticsDb(analyticsPath);
   await analyticsDb.open();

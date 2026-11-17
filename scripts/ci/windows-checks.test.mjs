@@ -10,6 +10,7 @@ import { pathToFileURL } from "node:url";
 import { runInNewContext } from "node:vm";
 import { describe, expect, test } from "vitest";
 import { parse } from "yaml";
+import { gatewayBootBudgetMs } from "../lib/boot-budget.mjs";
 import { hermesTestInvocation } from "../test-hermes.mjs";
 import {
   FOCUSED_E2E_FILES,
@@ -427,6 +428,7 @@ test("portal gateway settings are environment values, including paths containing
     expect(result.status, result.stderr).toBe(0);
     const server = JSON.parse(result.stdout);
     expect(server.command).toBe("node --import tsx packages/gateway/src/index.ts");
+    expect(server.timeout).toBe(gatewayBootBudgetMs());
     expect(server.command).not.toContain(configDirectory);
     expect(server.env).toMatchObject({
       OMNESIS_CONFIG_DIR: configDirectory,
@@ -434,6 +436,24 @@ test("portal gateway settings are environment values, including paths containing
       OMNESIS_DB_PATH: join(configDirectory, "omnesis.db"),
       OMNESIS_ANALYTICS_DB_PATH: join(configDirectory, "analytics.db"),
     });
+    // Load the config through the browser runner without starting the web server.
+    const listed = spawnSync(
+      process.execPath,
+      [
+        createRequire(import.meta.url).resolve("@playwright/test/cli"),
+        "test",
+        "--list",
+        "--reporter=json",
+      ],
+      {
+        encoding: "utf8",
+        env: { ...process.env, OMNESIS_PORTAL_TEST_CONFIG_DIR: configDirectory },
+        timeout: 20_000,
+        maxBuffer: 4 * 1024 * 1024,
+      },
+    );
+    expect(listed.status, listed.stderr).toBe(0);
+    expect(JSON.parse(listed.stdout).suites.length).toBeGreaterThan(0);
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }

@@ -26,6 +26,8 @@ import { createDatabase } from "../db.js";
 import { listAccessAuditEvents } from "../access/store-audit.js";
 import { seedPilotCorpus } from "../scheduler/__fixtures__/pilot-corpus.js";
 import { getRecentDocuments } from "./repositories/DocumentRepository.js";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 type Db = Database.Database;
 
@@ -167,7 +169,7 @@ describe("rewritten keyset cursors", () => {
 
 describe("rewritten keyset pages end to end", () => {
   function corpus(): Db {
-    const path = `/tmp/omnesis-test-${randomUUID()}.db`;
+    const path = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
     const db = createDatabase(path) as unknown as Db;
     opened.push({ db, path });
     seedPilotCorpus(db, { docs: 2_000 });

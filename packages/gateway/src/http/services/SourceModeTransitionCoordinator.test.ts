@@ -20,6 +20,8 @@ import { SourceModeTransitionCoordinator } from "./SourceModeTransitionCoordinat
 import { AnalyticsSourceModeTransitionAdoption } from "./AnalyticsSourceModeTransitionAdoption.js";
 import { AnalyticsService } from "./AnalyticsService.js";
 import type { AnalyticsTableSchema } from "@omnesis/source-sdk";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 const databases: ReturnType<typeof createDatabase>[] = [];
 afterEach(() => databases.splice(0).forEach((db) => db.close()));
@@ -360,8 +362,14 @@ describe("SourceModeTransitionCoordinator", () => {
   });
 
   test("restart recovers after DuckDB commits but before SQLite finalizes without duplicates", async () => {
-    const sqlitePath = `/tmp/omnesis-transition-recovery-${crypto.randomUUID()}.sqlite`;
-    const analyticsPath = `/tmp/omnesis-transition-recovery-${crypto.randomUUID()}.duckdb`;
+    const sqlitePath = fixtureJoin(
+      fixtureTmpdir(),
+      `omnesis-transition-recovery-${crypto.randomUUID()}.sqlite`,
+    );
+    const analyticsPath = fixtureJoin(
+      fixtureTmpdir(),
+      `omnesis-transition-recovery-${crypto.randomUUID()}.duckdb`,
+    );
     let db = createDatabase(sqlitePath);
     let analytics = new AnalyticsDb(analyticsPath);
     let first: SourceModeTransitionCoordinator | null = null;

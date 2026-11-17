@@ -18,6 +18,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+import { ownedProcessCleanupReceipt } from "@omnesis/core";
 import { SCOPE_ADMIN, SCOPE_READ } from "@omnesis/types";
 import { authorizeInteractiveAccess } from "./access/test-utils.js";
 import { MCP_ACCESS_SCOPE } from "./access/types.js";
@@ -25,6 +26,7 @@ import { AnalyticsDb } from "./analytics-db.js";
 import { createDevice } from "./data/repositories/DeviceRepository.js";
 import { createToken } from "./data/repositories/TokenRepository.js";
 import { createDatabase } from "./db.js";
+import { fixedPublicAddress } from "./public-address.js";
 import { createServer } from "./server.js";
 import { recordTailnetCaller } from "./tailscale-embed/caller.js";
 import { TailscaleEmbedService } from "./tailscale-embed/service.js";
@@ -73,6 +75,7 @@ let db: ReturnType<typeof createDatabase>;
 let analyticsDb: AnalyticsDb;
 let admin: string;
 const closeables: Array<{ close(): Promise<unknown> | unknown }> = [];
+const apps = new Set<ReturnType<typeof createServer>>();
 
 beforeEach(async () => {
   vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "1");
@@ -87,7 +90,23 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
-  await Promise.allSettled(closeables.splice(0).map((closeable) => closeable.close()));
+  const sessions = await Promise.allSettled(
+    closeables.splice(0).map((closeable) => Promise.resolve().then(() => closeable.close())),
+  );
+  const servers = await Promise.allSettled(
+    [...apps].map((app) => Promise.resolve().then(() => app.close())),
+  );
+  apps.clear();
+  const failures = [...sessions, ...servers].flatMap((result) =>
+    result.status === "rejected" ? [result.reason] : [],
+  );
+  if (failures.length) {
+    vi.unstubAllEnvs();
+    throw new AggregateError(failures, "MCP address fixture cleanup failed", {
+      cause:
+        failures.find((error) => ownedProcessCleanupReceipt(error) !== undefined) ?? failures[0],
+    });
+  }
   await analyticsDb.close();
   db.close();
   vi.unstubAllEnvs();
@@ -100,9 +119,8 @@ function gateway(extra: { cloudRelayManagement?: CloudRelayManagement } = {}) {
     analyticsDb,
     searchPipeline: {} as SearchPipeline,
     port: 17631,
-    publicBaseUrl: DOMAIN,
     // An agent reaches this computer's Tailscale name as a resource the owner configured.
-    mcpResourceUrls: [`${DOMAIN}/mcp`, `${HOST}/mcp`],
+    publicAddress: fixedPublicAddress(DOMAIN, [`${DOMAIN}/mcp`, `${HOST}/mcp`]),
     additionalOAuthIssuerUrls: [RELAY, TAILNET],
     relayPublicOrigin: () => RELAY,
     tailscaleEmbed: new FixedTailnetDevice({
@@ -114,6 +132,7 @@ function gateway(extra: { cloudRelayManagement?: CloudRelayManagement } = {}) {
     onMcpHttpRuntime: (runtime: McpHttpRuntime) => closeables.push(runtime),
     ...extra,
   });
+  apps.add(app);
   /** A request as the tailnet helper's socket hands it over. */
   const fromTailnet = (): { incoming: IncomingMessage } => {
     const incoming = {

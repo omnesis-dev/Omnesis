@@ -33,6 +33,8 @@ import {
 import { getWipeEpoch, resetMemberCursor } from "./SyncStateRepository.js";
 import { recordDeletionClaims, recordPresenceClaims } from "./ReplicaDeletionClaimRepository.js";
 import type { Db } from "../types.js";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 const TYPE = SourceType("apple-notes");
 const PROVIDER = "apple";
@@ -78,7 +80,7 @@ describe("replica deletion claims across the member lifecycle", () => {
     }).id;
 
   beforeEach(() => {
-    dbPath = `/tmp/omnesis-test-${randomUUID()}.db`;
+    dbPath = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
     db = createDatabase(dbPath);
     macA = host("mac-a");
     macB = host("mac-b");

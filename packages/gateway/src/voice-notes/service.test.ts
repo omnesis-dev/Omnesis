@@ -26,6 +26,8 @@ import {
 import type { TranscriberReadiness } from "../transcribe/index.js";
 import type { TranscriptionResult } from "@omnesis/core";
 import type Database from "better-sqlite3";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 let dbPath: string;
 let db: Database.Database;
@@ -80,7 +82,7 @@ function advance(ms: number): void {
 }
 
 beforeEach(() => {
-  dbPath = `/tmp/omnesis-test-${randomUUID()}.db`;
+  dbPath = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
   db = createDatabase(dbPath);
   const gate = directWriteGate(db);
   notes = bootOmnesisNotes({

@@ -221,7 +221,7 @@ async function waitForCondition(fn: () => boolean, timeoutMs = 3000, pollMs = 10
 }
 
 beforeAll(async () => {
-  dbPath = `/tmp/omnesis-ws-test-${randomUUID()}.db`;
+  dbPath = join(tmpdir(), `omnesis-ws-test-${randomUUID()}.db`);
   db = createDatabase(dbPath);
 
   const collector = createDevice(db, { name: "collector", kind: "collector" });
@@ -277,7 +277,7 @@ describe("DeviceWsServer", () => {
     // Keep the production-adapter probe on its own server. The suite exercises
     // the real WS authentication limiter elsewhere; sharing that limiter made
     // this test order-dependent once enough hello attempts accumulated.
-    const localDbPath = `/tmp/omnesis-ws-hermes-${randomUUID()}.db`;
+    const localDbPath = join(tmpdir(), `omnesis-ws-hermes-${randomUUID()}.db`);
     const localDb = createDatabase(localDbPath);
     const agent = createDevice(localDb, { name: "fictional-hermes-agent", kind: "agent" });
     const token = createToken(localDb, agent.id, [SCOPE_SUBSCRIPTIONS_RECEIVE]).token;
@@ -740,7 +740,7 @@ describe("DeviceWsServer", () => {
   test("sendCommand round-trip via device echo", async () => {
     // Wire an onDeviceCommand that ignores; we set up a dedicated server here
     // to exercise sendCommand (gateway → device).
-    const localDbPath = `/tmp/omnesis-ws-rt-${randomUUID()}.db`;
+    const localDbPath = join(tmpdir(), `omnesis-ws-rt-${randomUUID()}.db`);
     const localDb = createDatabase(localDbPath);
     const device = createDevice(localDb, { name: "rt", kind: "collector" });
     const tok = createToken(localDb, device.id, [SCOPE_WRITE_ALL]).token;
@@ -806,7 +806,7 @@ describe("DeviceWsServer", () => {
   });
 
   test("sendCommand selects only a socket carrying the required receive scope", async () => {
-    const localDbPath = `/tmp/omnesis-ws-scoped-${randomUUID()}.db`;
+    const localDbPath = join(tmpdir(), `omnesis-ws-scoped-${randomUUID()}.db`);
     const localDb = createDatabase(localDbPath);
     const device = createDevice(localDb, { name: "fictional-agent", kind: "agent" });
     const managementToken = createToken(localDb, device.id, [SCOPE_ADMIN]).token;
@@ -953,7 +953,7 @@ describe("DeviceWsServer", () => {
   // it was dispatched on; `onClose` walks `pending` and rejects the
   // matching entries with "device disconnected".
   test("sendCommand rejects on device disconnect without waiting for timeout", async () => {
-    const localDbPath = `/tmp/omnesis-ws-disc-${randomUUID()}.db`;
+    const localDbPath = join(tmpdir(), `omnesis-ws-disc-${randomUUID()}.db`);
     const localDb = createDatabase(localDbPath);
     const device = createDevice(localDb, { name: "disc", kind: "collector" });
     const tok = createToken(localDb, device.id, [SCOPE_WRITE_ALL]).token;
@@ -1058,7 +1058,7 @@ describe("DeviceWsServer scope reconciliation on handshake", () => {
   let srv: DeviceWsServer;
 
   beforeEach(() => {
-    scopeDbPath = `/tmp/omnesis-ws-scope-${randomUUID()}.db`;
+    scopeDbPath = join(tmpdir(), `omnesis-ws-scope-${randomUUID()}.db`);
     scopeDb = createDatabase(scopeDbPath);
     srv = new DeviceWsServer({
       db: scopeDb,
@@ -1145,7 +1145,7 @@ describe("DeviceWsServer scope reconciliation on handshake", () => {
 
 describe("DeviceWsServer collector presence lifecycle", () => {
   test("awaits connect publication and disconnects only after the last socket", async () => {
-    const localDbPath = `/tmp/omnesis-ws-presence-${randomUUID()}.db`;
+    const localDbPath = join(tmpdir(), `omnesis-ws-presence-${randomUUID()}.db`);
     const localDb = createDatabase(localDbPath);
     const collector = createDevice(localDb, { name: "presence-collector", kind: "collector" });
     const { id: tokenId } = createToken(localDb, collector.id, [SCOPE_WRITE_ALL]);
@@ -1206,7 +1206,7 @@ describe("DeviceWsServer collector presence lifecycle", () => {
   // connection's epoch (the collector descriptor cache relies on it), so every
   // change to the device's sockets must give a number never seen before.
   test("connectionEpoch changes with every socket a device opens or closes and is 0 offline", async () => {
-    const localDbPath = `/tmp/omnesis-ws-epoch-${randomUUID()}.db`;
+    const localDbPath = join(tmpdir(), `omnesis-ws-epoch-${randomUUID()}.db`);
     const localDb = createDatabase(localDbPath);
     const collector = createDevice(localDb, { name: "epoch-collector", kind: "collector" });
     const { id: tokenId } = createToken(localDb, collector.id, [SCOPE_WRITE_ALL]);
@@ -1282,7 +1282,7 @@ describe("DeviceWsServer socket liveness", () => {
   let srv: DeviceWsServer;
 
   beforeEach(() => {
-    livenessDbPath = `/tmp/omnesis-ws-liveness-${randomUUID()}.db`;
+    livenessDbPath = join(tmpdir(), `omnesis-ws-liveness-${randomUUID()}.db`);
     livenessDb = createDatabase(livenessDbPath);
     srv = new DeviceWsServer({
       db: livenessDb,
@@ -1363,7 +1363,7 @@ describe("DeviceWsServer heartbeat on the device route", () => {
   test("a connected client answers every tick's ping and keeps its socket", async () => {
     const heartbeatIntervalMs = 1_000;
     vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
-    const localDbPath = `/tmp/omnesis-ws-heartbeat-${randomUUID()}.db`;
+    const localDbPath = join(tmpdir(), `omnesis-ws-heartbeat-${randomUUID()}.db`);
     const localDb = createDatabase(localDbPath);
     const device = createDevice(localDb, { name: "fictional-phone", kind: "ios" });
     const token = createToken(localDb, device.id, [SCOPE_READ]).token;
@@ -1417,7 +1417,7 @@ describe("DeviceWsServer heartbeat on the device route", () => {
 
 describe("DeviceWsServer connection cap", () => {
   test("refuses new connections past maxConnections, keeps existing ones", () => {
-    const capPath = `/tmp/omnesis-ws-cap-${randomUUID()}.db`;
+    const capPath = join(tmpdir(), `omnesis-ws-cap-${randomUUID()}.db`);
     const capDb = createDatabase(capPath);
     const srv = new DeviceWsServer({
       db: capDb,

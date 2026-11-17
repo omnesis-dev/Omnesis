@@ -16,6 +16,8 @@ import {
 } from "./storage.js";
 import type { Db } from "../../data/types.js";
 import type { DocumentInput } from "@omnesis/types";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 function cleanupDb(path: string): void {
   for (const suffix of ["", "-wal", "-shm", "-journal"]) {
@@ -71,7 +73,7 @@ describe("fetchDateExtractionBatch reads a bounded batch", () => {
   let dbPath: string;
 
   beforeEach(() => {
-    dbPath = `/tmp/omnesis-test-${randomUUID()}.db`;
+    dbPath = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
     db = createDatabase(dbPath);
     upsertDocuments(
       db,

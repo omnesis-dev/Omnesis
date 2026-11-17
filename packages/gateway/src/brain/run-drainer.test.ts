@@ -68,7 +68,7 @@ const taskCtx: TaskContext = {
 };
 
 function testDbPath(): string {
-  return `/tmp/omnesis-test-${randomUUID()}.db`;
+  return join(tmpdir(), `omnesis-test-${randomUUID()}.db`);
 }
 
 function happyScript(input: TurnInput): AgentEvent[] {

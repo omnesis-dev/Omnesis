@@ -25,6 +25,8 @@ import type {
   TemporalQueryInput,
   TemporalQueryResult,
 } from "@omnesis/core";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 const NOW = Date.parse("2026-07-02T06:00:00.000Z");
 const HOUR = 3_600_000;
@@ -425,7 +427,7 @@ describe("digest horizon over the real temporal query service", () => {
   let db: Database.Database;
 
   beforeEach(() => {
-    dbPath = `/tmp/omnesis-test-${randomUUID()}.db`;
+    dbPath = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
     db = createDatabase(dbPath);
   });
   afterEach(() => {

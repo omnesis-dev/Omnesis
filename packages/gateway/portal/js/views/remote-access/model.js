@@ -203,6 +203,3 @@ export function orderSentence({ tailscaleOn, relayOn, first }) {
     ? "Home network first, then the relay, then Tailscale."
     : "Home network first, then Tailscale, then the relay.";
 }
-
-/** The command that restarts the gateway, as `website/docs/operating.html` gives it. */
-export const RESTART_COMMAND = "omnesis service restart gateway";

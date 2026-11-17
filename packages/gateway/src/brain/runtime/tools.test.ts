@@ -47,6 +47,8 @@ import {
 import type Database from "better-sqlite3";
 import type { SearchPort, TemporalReadPort, ToolHandle } from "@omnesis/agent";
 import type { ToolResult } from "@omnesis/core";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 type Db = Database.Database;
 
@@ -54,7 +56,7 @@ const log = createLogger("test").child("loop-agent-tools");
 const CTX = { sessionId: "S", messageId: "M" };
 
 function testDbPath(): string {
-  return `/tmp/omnesis-test-${randomUUID()}.db`;
+  return fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
 }
 function cleanupDb(path: string): void {
   for (const suffix of ["", "-wal", "-shm", "-journal"]) {

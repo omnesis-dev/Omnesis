@@ -47,7 +47,7 @@ function qr(
 ): PairingQrService {
   return new PairingQrService({
     tlsFingerprint,
-    strictPinOrigins: extra.strictPinOrigins,
+    strictPinOrigins: extra.strictPinOrigins && (() => extra.strictPinOrigins ?? []),
     tlsSpkiFingerprint: extra.tlsSpkiFingerprint,
     strictPinSpkiFingerprint: extra.strictPinSpkiFingerprint,
     relayAddress: extra.relayAddress,

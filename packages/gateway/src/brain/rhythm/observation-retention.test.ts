@@ -25,6 +25,8 @@ import { createCognitionRhythmTasks, type CognitionRhythmOpts } from "./rhythm-t
 import type Database from "better-sqlite3";
 import type { Scheduler } from "../../scheduler/scheduler.js";
 import type { TaskContext } from "../../scheduler/types.js";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 const log = createLogger("test:observation-retention");
 const taskCtx = { signal: new AbortController().signal } as TaskContext;
@@ -88,7 +90,7 @@ const outcomeIds = () =>
     .sort();
 
 beforeEach(() => {
-  path = `/tmp/omnesis-test-${randomUUID()}.db`;
+  path = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
   db = createDatabase(path);
 });
 afterEach(() => {

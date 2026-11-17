@@ -84,7 +84,7 @@ export interface PairingQrServiceOptions {
    */
   relayAddress?: () => Promise<RelayPairingAddress | null>;
   /** Relay origins retain their verified key even if another certificate passes WebPKI. */
-  strictPinOrigins?: readonly string[];
+  strictPinOrigins?: () => readonly string[];
   /** The served leaf's fingerprint, read at encode time so a rotation applies at once. */
   tlsFingerprint?: string | (() => string);
   /** SHA256 of the currently served leaf's complete DER SubjectPublicKeyInfo. */
@@ -600,9 +600,9 @@ export class PairingQrService {
     // Relay pairing retains its verified key even when the origin also passes WebPKI.
     const strictPin =
       isRelay ||
-      this.options.strictPinOrigins?.some(
-        (origin) => canonicalOrigin(origin) === canonicalOrigin(input.gatewayUrl),
-      );
+      this.options
+        .strictPinOrigins?.()
+        .some((origin) => canonicalOrigin(origin) === canonicalOrigin(input.gatewayUrl));
     if (strictPin && input.trustMode === "system")
       throw new BadRequestError("Relay pairing requires a verified gateway certificate pin");
     const configuredSpki =

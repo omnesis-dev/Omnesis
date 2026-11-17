@@ -21,6 +21,7 @@ import {
 import { SCOPE_ADMIN, SCOPE_READ, SCOPE_PUSH_CLAIM } from "@omnesis/types";
 import { createDatabase } from "../../db.js";
 import { createServer } from "../../server.js";
+import { fixedPublicAddress } from "../../public-address.js";
 import { PortalSignals } from "../../portal-signals/hub.js";
 import { createDevice, listDevices } from "../../data/repositories/DeviceRepository.js";
 import {
@@ -315,7 +316,7 @@ function webApp() {
   vi.stubEnv("OMNESIS_CLOUD_RELAY_GOOGLE_WEB_CLIENT_ID", "fictional-web-client");
   vi.stubEnv("OMNESIS_CLOUD_RELAY_GOOGLE_WEB_SECRET_FILE", secretFile);
   return createServer(db, path, {
-    publicBaseUrl: "https://gateway.example.test",
+    publicAddress: fixedPublicAddress("https://gateway.example.test"),
     tlsFingerprintSha256: "a".repeat(64),
     cloudIdentity: { identity, ownerAccountId },
   });

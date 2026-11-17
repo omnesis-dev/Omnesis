@@ -27,6 +27,8 @@ import {
 } from "./result-links.js";
 import { closeTempDb } from "./test-utils.js";
 import type { SearchConfig } from "./search-config.js";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 const SOURCE = "archive:fictional";
 const NOW = "2025-02-01T10:00:00Z";
@@ -38,8 +40,8 @@ let index: Database.Database;
 let worker: Database.Database;
 
 beforeEach(() => {
-  gateway = createDatabase(`/tmp/omnesis-test-${randomUUID()}.db`);
-  index = createIndexDatabase(`/tmp/omnesis-test-${randomUUID()}.db`);
+  gateway = createDatabase(fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`));
+  index = createIndexDatabase(fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`));
   gateway
     .prepare(
       "INSERT INTO devices (id,name,kind,paired_at) VALUES ('device-1','Example desktop','collector',1)",

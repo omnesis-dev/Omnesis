@@ -18,6 +18,8 @@ import { createCognitionRuntime, type CognitionRuntimeDeps } from "./runtime.js"
 import { EXCLUDED_SOURCE_ERROR_CODE } from "./source-fence.js";
 import type { ClaimedCognitionRun } from "../storage/types.js";
 import type Database from "better-sqlite3";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 const log = createLogger("test").child("runtime-excluded-sources");
 const NOW = Date.parse("2026-07-02T10:00:00.000Z");
@@ -27,7 +29,7 @@ let db: Database.Database;
 let excludedSources: string[];
 
 beforeEach(() => {
-  path = `/tmp/omnesis-test-${randomUUID()}.db`;
+  path = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
   db = createDatabase(path);
   excludedSources = ["codex"];
   const insert = db.prepare(

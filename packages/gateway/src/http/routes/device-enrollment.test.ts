@@ -15,6 +15,8 @@ import {
 import { createToken, lookupToken } from "../../data/repositories/TokenRepository.js";
 import { createServer } from "../../server.js";
 import type Database from "better-sqlite3";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 const SPKI = "a".repeat(64);
 
@@ -41,7 +43,7 @@ function boot(): void {
 
 beforeEach(() => {
   vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "1");
-  dbPath = `/tmp/omnesis-device-enrollment-${randomUUID()}.db`;
+  dbPath = fixtureJoin(fixtureTmpdir(), `omnesis-device-enrollment-${randomUUID()}.db`);
   db = createDatabase(dbPath);
   const admin = createDevice(db, { name: "Admin phone", kind: "ios" });
   adminToken = createToken(db, admin.id, defaultScopesForDeviceKind("ios")).token;

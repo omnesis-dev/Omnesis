@@ -13,6 +13,8 @@ import {
   type BootstrapBacklog,
   type BootstrapSettingsView,
 } from "./bootstrap-status.js";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 const DEFAULTS: BootstrapSettingsView = {
   enabled: true,
@@ -34,7 +36,7 @@ describe("bootstrap status", () => {
   let path: string;
 
   beforeEach(() => {
-    path = `/tmp/omnesis-test-${randomUUID()}.db`;
+    path = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
     db = new Database(path);
     runSchemaSetup(db);
     // Starting the backfill is its own operator decision, so a fresh database

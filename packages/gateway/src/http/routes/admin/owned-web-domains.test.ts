@@ -22,6 +22,8 @@ import { resetOwnedWebDomains } from "../../../owned-web-domains.js";
 import { createDevice } from "../../../data/repositories/DeviceRepository.js";
 import { createToken } from "../../../data/repositories/TokenRepository.js";
 import type Database from "better-sqlite3";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 type Db = Database.Database;
 
@@ -41,7 +43,7 @@ function mintToken(scopes: readonly import("@omnesis/types").Scope[]): string {
 }
 
 beforeEach(() => {
-  dbPath = `/tmp/omnesis-owned-domains-test-${randomUUID()}.db`;
+  dbPath = fixtureJoin(fixtureTmpdir(), `omnesis-owned-domains-test-${randomUUID()}.db`);
   db = createDatabase(dbPath);
   app = createServer(db);
   resetOwnedWebDomains();

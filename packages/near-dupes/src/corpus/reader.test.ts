@@ -6,6 +6,8 @@ import { unlinkSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import Database from "better-sqlite3";
 import { CorpusReader } from "./reader.js";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 function seed(path: string): void {
   const db = new Database(path);
@@ -66,7 +68,7 @@ describe("CorpusReader", () => {
   let path: string;
 
   beforeEach(() => {
-    path = `/tmp/omnesis-corpus-test-${randomUUID()}.db`;
+    path = fixtureJoin(fixtureTmpdir(), `omnesis-corpus-test-${randomUUID()}.db`);
     seed(path);
   });
 

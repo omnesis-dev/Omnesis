@@ -31,7 +31,7 @@ type Db = Database.Database;
 const dbs: Db[] = [];
 const dirs: string[] = [];
 function freshDb(): Db {
-  const db = createIndexDatabase(`/tmp/omnesis-versioned-test-${randomUUID()}.db`);
+  const db = createIndexDatabase(join(tmpdir(), `omnesis-versioned-test-${randomUUID()}.db`));
   dbs.push(db);
   return db;
 }
@@ -66,7 +66,7 @@ describe("versioned-index schema", () => {
   });
 
   test("re-opening createIndexDatabase on an existing file replays cleanly", () => {
-    const path = `/tmp/omnesis-versioned-test-${randomUUID()}.db`;
+    const path = join(tmpdir(), `omnesis-versioned-test-${randomUUID()}.db`);
     const db1 = createIndexDatabase(path);
     setIndexEmbedModel(db1, "nomic-embed-text-v1.5.Q8_0", 768);
     db1.close();

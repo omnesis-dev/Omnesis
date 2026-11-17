@@ -11,6 +11,8 @@ import type Database from "better-sqlite3";
 import type { TemporalItem, TemporalQueryInput } from "@omnesis/core";
 import type { VectorReadSource } from "../indexer/usearch-index.js";
 import type { SearchConfig } from "./search-config.js";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 // Wednesday 7 October 2026, morning in London.
 const NOW = new Date("2026-10-07T09:00:00Z");
@@ -74,7 +76,9 @@ describe("SearchPipeline temporal lane", () => {
   });
   afterAll(() => vi.useRealTimers());
   beforeEach(() => {
-    db = createIndexDatabase(`/tmp/omnesis-temporal-pipeline-${randomUUID()}.db`);
+    db = createIndexDatabase(
+      fixtureJoin(fixtureTmpdir(), `omnesis-temporal-pipeline-${randomUUID()}.db`),
+    );
     seed(db);
   });
   afterEach(() => closeTempDb(db));

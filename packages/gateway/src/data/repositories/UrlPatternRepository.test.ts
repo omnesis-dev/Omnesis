@@ -13,6 +13,8 @@ import {
   getUrlIdPatterns,
   invalidateUrlIdPatternCache,
 } from "./UrlPatternRepository.js";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 type Db = Database.Database;
 
@@ -128,7 +130,7 @@ describe("cached URL pattern staleness on a worker read handle", () => {
   let reader: Db;
 
   beforeEach(() => {
-    file = `/tmp/omnesis-test-${randomUUID()}.db`;
+    file = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
     writer = new Database(file);
     runSchemaSetup(writer);
     runMigrations(writer);

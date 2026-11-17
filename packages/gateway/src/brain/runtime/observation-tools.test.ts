@@ -32,6 +32,8 @@ import type { ObservationScoringInput } from "../observations/noting.js";
 import type { SearchPort, ToolHandle } from "@omnesis/agent";
 import type { ToolResult } from "@omnesis/core";
 import type Database from "better-sqlite3";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 type Db = Database.Database;
 
@@ -129,7 +131,7 @@ describe("observation tools", () => {
   }
 
   beforeEach(() => {
-    path = `/tmp/omnesis-test-${randomUUID()}.db`;
+    path = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
     db = createDatabase(path);
     nowMs = Date.parse("2026-07-02T10:00:00.000Z");
     seq = 0;

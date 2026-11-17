@@ -13,6 +13,8 @@ import {
 import { closeTempDb } from "./test-utils.js";
 import type Database from "better-sqlite3";
 import type { VectorReadSource } from "../indexer/usearch-index.js";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 /** A unit vector along one axis, so similarity picks out the chunks on that axis. */
 function axis(i: number): Float32Array {
@@ -127,7 +129,9 @@ function widen(db: Database.Database): void {
 describe("temporalLaneCandidates", () => {
   let db: Database.Database;
   beforeEach(() => {
-    db = createIndexDatabase(`/tmp/omnesis-temporal-lane-${randomUUID()}.db`);
+    db = createIndexDatabase(
+      fixtureJoin(fixtureTmpdir(), `omnesis-temporal-lane-${randomUUID()}.db`),
+    );
     insert(db, [
       // Inside the week by document time.
       {

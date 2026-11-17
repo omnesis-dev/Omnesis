@@ -55,12 +55,14 @@ import {
 import { createSource, listSources } from "./SourceRepository.js";
 import { getReauthReminder, reserveReauthReminder } from "./ReauthRemindersRepository.js";
 import { createToken, listTokens } from "./TokenRepository.js";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 let dbPath: string;
 let db: ReturnType<typeof createDatabase>;
 
 beforeEach(() => {
-  dbPath = `/tmp/omnesis-devices-test-${randomUUID()}.db`;
+  dbPath = fixtureJoin(fixtureTmpdir(), `omnesis-devices-test-${randomUUID()}.db`);
   db = createDatabase(dbPath);
 });
 

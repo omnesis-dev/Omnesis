@@ -54,8 +54,8 @@ export function mountOAuthTokenRoutes(
   app: RouteApp,
   access: AccessService,
   options: {
-    publicBaseUrl?: string;
-    mcpResourceUrls?: readonly string[];
+    /** The gateway's public address, read on every request so a saved one applies at once. */
+    publicAddress?: import("../../public-address.js").PublicAddressSource;
     additionalOAuthIssuerUrls?: import("../../access/oauth-urls.js").OAuthIssuerSource;
     clientAssertionVerifier?: Pick<ClientAssertionVerifier, "verify">;
   },
@@ -180,8 +180,8 @@ export function mountOAuthTokenRoutes(
       }
       const urls = resolveOAuthUrls(
         c.req.url,
-        options.publicBaseUrl,
-        options.mcpResourceUrls,
+        options.publicAddress?.baseUrl(),
+        options.publicAddress?.mcpResourceUrls(),
         options.additionalOAuthIssuerUrls,
       );
       if (!urls) return oauthConfigurationRequired(c);
@@ -274,8 +274,8 @@ export function mountOAuthTokenRoutes(
       }
       const urls = resolveOAuthUrls(
         c.req.url,
-        options.publicBaseUrl,
-        options.mcpResourceUrls,
+        options.publicAddress?.baseUrl(),
+        options.publicAddress?.mcpResourceUrls(),
         options.additionalOAuthIssuerUrls,
       );
       if (!urls) return oauthConfigurationRequired(c);

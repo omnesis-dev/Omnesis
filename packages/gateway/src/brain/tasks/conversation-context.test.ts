@@ -24,6 +24,8 @@ import {
 } from "./conversation-context.js";
 import type { TaskConversationOrigin } from "../../agent/conversation-store.js";
 import type Database from "better-sqlite3";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 const NOW = Date.parse("2026-03-10T12:00:00Z");
 const ORIGIN = { surface: "tasks", runId: "user:tasks" } as const;
@@ -33,7 +35,7 @@ let path: string;
 let tasks: TaskService;
 
 beforeEach(() => {
-  path = `/tmp/omnesis-test-${randomUUID()}.db`;
+  path = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
   db = createDatabase(path);
   vi.stubEnv("OMNESIS_EXPERIMENTAL", "1");
   setLabFlag(db, "tasks", true);

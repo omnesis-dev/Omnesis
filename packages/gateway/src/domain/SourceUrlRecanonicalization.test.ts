@@ -17,13 +17,15 @@ import {
   planSourceUrlRecanonicalization,
 } from "./SourceUrlRecanonicalization.js";
 import type { UrlCanonicalizerSpec } from "@omnesis/core";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 describe("source URL recanonicalization", () => {
   let path: string;
   let db: ReturnType<typeof createDatabase>;
 
   beforeEach(() => {
-    path = `/tmp/omnesis-source-url-recanonicalization-${randomUUID()}.db`;
+    path = fixtureJoin(fixtureTmpdir(), `omnesis-source-url-recanonicalization-${randomUUID()}.db`);
     db = createDatabase(path);
   });
 
