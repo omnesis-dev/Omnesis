@@ -106,3 +106,44 @@ export function probeFixtureReadDenial(
 /** Root bypasses POSIX modes; Windows tests require an effective owned-file denial. */
 export const canDenyFixtureReads =
   process.platform === "win32" ? probeFixtureReadDenial() : process.getuid?.() !== 0;
+
+/** Detect whether this process can enforce creation denial on its owned directory. */
+export function probeFixtureDirectoryWriteDenial(
+  write: (path: string) => unknown = (path) =>
+    writeFileSync(path, "Invented write probe", { flag: "wx" }),
+  setWritable: (path: string, writable: boolean) => void = setFixtureDirectoryWritable,
+): boolean {
+  const root = mkdtempSync(join(tmpdir(), "owned-write-capability-"));
+  const file = join(root, "probe.txt");
+  const errors: unknown[] = [];
+  let denied = false;
+  try {
+    setWritable(root, false);
+    try {
+      write(file);
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code !== "EACCES" && code !== "EPERM") throw error;
+      denied = true;
+    }
+  } catch (error) {
+    errors.push(error);
+  } finally {
+    try {
+      setWritable(root, true);
+    } catch (error) {
+      errors.push(error);
+    }
+    try {
+      rmSync(root, { recursive: true });
+    } catch (error) {
+      errors.push(error);
+    }
+  }
+  if (errors.length === 1) throw errors[0];
+  if (errors.length > 1) throw new AggregateError(errors, "Write capability probe failed");
+  return denied;
+}
+
+/** Root and Windows restore privilege can bypass directory write denial. */
+export const canDenyFixtureDirectoryWrites = probeFixtureDirectoryWriteDenial();

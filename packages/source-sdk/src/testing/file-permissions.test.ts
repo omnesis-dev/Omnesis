@@ -15,6 +15,8 @@ import { join } from "node:path";
 import { expect, test } from "vitest";
 import {
   canDenyFixtureReads,
+  canDenyFixtureDirectoryWrites,
+  probeFixtureDirectoryWriteDenial,
   probeFixtureReadDenial,
   setFixtureMode,
   setFixtureDirectoryWritable,
@@ -104,7 +106,7 @@ test.each(["setup", "read", "restore"])(
   },
 );
 
-test.skipIf(process.getuid?.() === 0)(
+test.skipIf(!canDenyFixtureDirectoryWrites)(
   "owned directories deny new children while retaining reads and recover publication",
   () => {
     const root = mkdtempSync(join(tmpdir(), "owned-write-denial-"));
@@ -126,5 +128,65 @@ test.skipIf(process.getuid?.() === 0)(
       setFixtureDirectoryWritable(root, true);
       rmSync(root, { recursive: true, force: true });
     }
+  },
+);
+
+test.each(["EACCES", "EPERM"])(
+  "directory capability probe recognizes %s, restores and removes its owned directory",
+  (code) => {
+    let root = "";
+    const states: boolean[] = [];
+    expect(
+      probeFixtureDirectoryWriteDenial(
+        () => {
+          throw Object.assign(new Error("Invented directory denial"), { code });
+        },
+        (path, writable) => {
+          root = path;
+          states.push(writable);
+        },
+      ),
+    ).toBe(true);
+    expect(states).toEqual([false, true]);
+    expect(existsSync(root)).toBe(false);
+  },
+);
+
+test("directory capability probe reports a privileged successful write and restores its directory", () => {
+  let root = "";
+  const states: boolean[] = [];
+  expect(
+    probeFixtureDirectoryWriteDenial(
+      (path) => writeFileSync(path, "Invented privileged write", { flag: "wx" }),
+      (path, writable) => {
+        root = path;
+        states.push(writable);
+      },
+    ),
+  ).toBe(false);
+  expect(states).toEqual([false, true]);
+  expect(existsSync(root)).toBe(false);
+});
+
+test.each(["setup", "write", "restore"])(
+  "directory capability probe surfaces unexpected %s errors after restoring its directory",
+  (stage) => {
+    let root = "";
+    const states: boolean[] = [];
+    const failure = new Error(`Invented ${stage} failure`);
+    expect(() =>
+      probeFixtureDirectoryWriteDenial(
+        () => {
+          if (stage === "write") throw failure;
+        },
+        (path, writable) => {
+          root = path;
+          states.push(writable);
+          if ((stage === "setup" && !writable) || (stage === "restore" && writable)) throw failure;
+        },
+      ),
+    ).toThrow(failure);
+    expect(states).toEqual([false, true]);
+    expect(existsSync(root)).toBe(false);
   },
 );
