@@ -20,6 +20,8 @@ on:
             dotenv-refusal,
             update-lock-publication,
             windows-isolation-integration,
+            mac-isolation-integration,
+            network-fixture-proof,
             gateway-boot-trace,
             windows-network-pilot,
             windows-network-proxy-pilot,
@@ -3279,7 +3281,7 @@ jobs:
 
   windows-isolation-integration:
     name: Exact merged-source isolation and ownership (${{ matrix.os }})
-    if: inputs.scope == 'windows-isolation-integration'
+    if: inputs.scope == 'windows-isolation-integration' || inputs.scope == 'mac-isolation-integration'
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     env:
@@ -3396,6 +3398,8 @@ jobs:
           NODE
           git diff --exit-code
       - name: Validate all source and test TypeScript projects
+        env:
+          NODE_OPTIONS: --max-old-space-size=4096
         run: exec node scripts/run-check.mjs types-tests
       - name: Check typed publication and bootstrap ownership boundaries
         if: runner.os == 'Linux'
@@ -3416,7 +3420,55 @@ jobs:
       fail-fast: false
       max-parallel: 1
       matrix:
+        os: ${{ fromJSON(inputs.scope == 'mac-isolation-integration' && '["macos-15"]' || '["windows-latest","ubuntu-latest","macos-15"]') }}
+
+  network-fixture-proof:
+    name: Exact DNS fixture portability (${{ matrix.os }})
+    if: inputs.scope == 'network-fixture-proof'
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    env:
+      TZ: UTC
+      OMNESIS_UNIT_WORKERS: "1"
+      OMNESIS_E2E_WORKERS: "1"
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ inputs.source_sha }}
+          persist-credentials: false
+      - name: Keep this job off production Omnesis services
+        id: production-network
+        shell: bash
+        run: $GITHUB_WORKSPACE/scripts/ci/production-network.sh isolate
+      - name: Verify fixed source revision
+        env:
+          TARGET_SHA: ${{ inputs.source_sha }}
+        run: |
+          [[ "$TARGET_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "$TARGET_SHA"
+      - name: Set up Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: "24"
+          cache: npm
+      - name: Install dependencies
+        id: dependencies
+        run: node scripts/ci/npm-ci.mjs --no-audit --no-fund
+      - name: Prove DNS fixture and Windows workflow policy
+        run: exec node scripts/run-check.mjs unit scripts/ci/production-network.test.mjs scripts/ci/windows-checks.test.mjs
+      - name: Verify immutable source stayed unchanged
+        run: git diff --exit-code
+      - name: Check nothing tried to reach production Omnesis services
+        if: ${{ always() && steps.production-network.outcome == 'success' }}
+        shell: bash
+        run: $GITHUB_WORKSPACE/scripts/ci/production-network.sh verify
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
         os:
           - windows-latest
           - ubuntu-latest
-          - macos-15
