@@ -145,5 +145,9 @@ export function probeFixtureDirectoryWriteDenial(
   return denied;
 }
 
-/** Root and Windows restore privilege can bypass directory write denial. */
-export const canDenyFixtureDirectoryWrites = probeFixtureDirectoryWriteDenial();
+let directoryWriteDenial: boolean | undefined;
+
+/** Probe only when a physical denial test needs this process's effective capability. */
+export function canDenyFixtureDirectoryWrites(): boolean {
+  return (directoryWriteDenial ??= probeFixtureDirectoryWriteDenial());
+}

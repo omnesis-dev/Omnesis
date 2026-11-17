@@ -106,7 +106,7 @@ test.each(["setup", "read", "restore"])(
   },
 );
 
-test.skipIf(!canDenyFixtureDirectoryWrites)(
+test.skipIf(!canDenyFixtureDirectoryWrites())(
   "owned directories deny new children while retaining reads and recover publication",
   () => {
     const root = mkdtempSync(join(tmpdir(), "owned-write-denial-"));
