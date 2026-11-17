@@ -10,13 +10,13 @@
  * can be unit-tested without Preact / DOM.
  *
  * URL contract:
- *   /portal/agent            landing — mints a fresh hero session. The URL
+ *   /portal/agent            landing — prepares a fresh hero composer. The URL
  *                            is silently replaced with `/portal/agent/<id>`
  *                            the first time the user sends a message in it
  *                            (that's the point the gateway persists the
  *                            transcript and the link becomes resumable).
- *                            "+ New" transitions back here mint a fresh
- *                            session.
+ *                            "+ New" transitions back here prepare a fresh
+ *                            composer; the first send creates its session.
  *   /portal/agent/<convoId>  load that specific transcript; 404 surfaces a
  *                            "conversation not found" inline banner instead
  *                            of redirecting.
@@ -69,8 +69,8 @@ export function activatePendingSession(client, pending) {
   });
 }
 
-export function agentComposerDisabled(sessionId, agentConfig) {
-  return !sessionId && agentConfig?.enabled !== false;
+export function agentComposerDisabled(sessionId, agentConfig, pending = false) {
+  return !sessionId && !pending && agentConfig?.enabled !== false;
 }
 
 /** Require the gateway to acknowledge a stop request before treating it as accepted. */
@@ -255,7 +255,7 @@ export function AgentView({ convoId, experimental = false, developer = false }) 
   // Guards the "first mount auto-resumes the most recent" branch from
   // re-firing later when the URL bounces back to `/portal/agent` via "+ New".
   // Without this, clicking "+ New" would always re-resume the last
-  // conversation instead of minting a fresh session.
+  // conversation instead of preparing a fresh composer.
   const didInitialAutoResumeRef = useRef(false);
   // Latest convoId seen by the URL-driven effect — used to short-circuit
   // re-fires (e.g. when the rail dispatches `pushState` for the already
@@ -270,9 +270,9 @@ export function AgentView({ convoId, experimental = false, developer = false }) 
   // attach listeners or replace reducer state.
   const sessionLoadSeqRef = useRef(0);
   const activeSessionIdRef = useRef(null);
-  // When inference is unavailable, the composer and persisted transcript can
-  // still render without minting a live session. The first send retries that
-  // mint (resuming the stored id when present) before posting the message.
+  // Fresh composers defer session creation until send, so an idle landing
+  // cannot outlive its server session. Unavailable inference also defers
+  // activation, resuming the stored id when present before posting a message.
   const pendingSessionRef = useRef(null);
   const pendingActivationRef = useRef(null);
   // If we had to resume a still-busy session, its in-flight history snapshot
@@ -441,35 +441,17 @@ export function AgentView({ convoId, experimental = false, developer = false }) 
     setHistoryLoading(false);
     setHistoryError(null);
     const cfg = await ensureAgentConfig();
-    if (cfg && !cfg.enabled) {
-      pendingSessionRef.current = {};
-      activeSessionIdRef.current = null;
-      unsubscribeRef.current?.();
-      dispatch({ kind: "agent-unconfigured", config: cfg });
-      dispatch({ kind: "reset-conversation", sessionId: null, model: "", backend: cfg.backend });
-      return;
-    }
-    try {
-      const session = await clientRef.current.createSession();
-      if (loadSeq !== sessionLoadSeqRef.current) return;
-      pendingSessionRef.current = null;
-      activeSessionIdRef.current = session.sessionId;
-      attachToSession(session.sessionId, session.eventCursor);
-      dispatch({
-        kind: "reset-conversation",
-        sessionId: session.sessionId,
-        model: session.model,
-        backend: session.backend,
-      });
-      setHistoryLoading(false);
-      setHistoryError(null);
-      lastLoadedConvoIdRef.current = null;
-      // Fresh session — no conversation is highlighted in the sidebar
-      // yet. (Once the user sends a turn, the new convo appears.)
-      window.dispatchEvent(new CustomEvent("omnesis:agent-active-convo", { detail: { id: null } }));
-    } catch (err) {
-      dispatch({ kind: "session-failed", error: err.message ?? String(err) });
-    }
+    if (loadSeq !== sessionLoadSeqRef.current) return;
+    // An empty landing has no durable conversation to resume after eviction.
+    // Allocate its live session only when the owner actually sends a message.
+    pendingSessionRef.current = {};
+    activeSessionIdRef.current = null;
+    unsubscribeRef.current?.();
+    unsubscribeRef.current = null;
+    if (cfg) dispatch({ kind: "agent-unconfigured", config: cfg });
+    dispatch({ kind: "reset-conversation", sessionId: null, model: "", backend: cfg?.backend });
+    lastLoadedConvoIdRef.current = null;
+    window.dispatchEvent(new CustomEvent("omnesis:agent-active-convo", { detail: { id: null } }));
   }
 
   // "+ New" — push back to the bare landing URL.
@@ -480,9 +462,9 @@ export function AgentView({ convoId, experimental = false, developer = false }) 
   // resumed conversation. In that case `navigate("/portal/agent")`
   // doesn't change the prop, so the `[convoId]` effect doesn't re-fire
   // — and the view stays stuck on the resumed conversation. Detect
-  // that case (prop already null) and mint the fresh session directly.
+  // that case (prop already null) and prepare the fresh composer directly.
   // When the prop IS non-null, the navigate WILL change the prop, the
-  // effect re-fires, falls through to createFreshSession — so one mint.
+  // effect re-fires and falls through to createFreshSession.
   function newConversation() {
     sendGenerationRef.current += 1;
     cancelGenerationRef.current += 1;
@@ -682,7 +664,7 @@ export function AgentView({ convoId, experimental = false, developer = false }) 
       await clientRef.current.deleteConversation(id);
       // If the user deleted the active conversation, navigate back to
       // the landing URL — that will either auto-resume the new most
-      // recent or mint a fresh session.
+      // recent or prepare a fresh composer.
       if (id === state.sessionId) navigate("/portal/agent");
       await refreshConversations();
     } catch (err) {
@@ -705,6 +687,9 @@ export function AgentView({ convoId, experimental = false, developer = false }) 
     const client = createAgentClient();
     clientRef.current = client;
     return () => {
+      sessionLoadSeqRef.current += 1;
+      pendingSessionRef.current = null;
+      clientRef.current = null;
       unsubscribeRef.current?.();
       client.close();
     };
@@ -863,7 +848,7 @@ export function AgentView({ convoId, experimental = false, developer = false }) 
 
   // Sidebar "+ New" — when the user is already at /portal/agent (no
   // convoId in the URL), navigate doesn't re-fire the URL effect, so
-  // we explicitly mint a fresh session here.
+  // we explicitly prepare a fresh composer here.
   useEffect(() => {
     const onNew = () => {
       if (convoId == null) {
@@ -968,7 +953,7 @@ export function AgentView({ convoId, experimental = false, developer = false }) 
   // Research pill contributes `{ deepResearch: true }`); the Composer clears
   // its pill after handing them off so the next send is an ordinary turn.
   async function send(text, options = {}) {
-    if (!clientRef.current || state.terminalFailure) return false;
+    if (!clientRef.current || state.terminalFailure || pendingActivationRef.current) return false;
     // Sending follows the transcript to the bottom, wherever the reader was.
     anchorOnLoadRef.current = false;
     pinnedToBottomRef.current = true;
@@ -1246,7 +1231,7 @@ export function AgentView({ convoId, experimental = false, developer = false }) 
                 onSendNow=${sendQueuedNow}
               />
                   <${Composer}
-                    disabled=${agentComposerDisabled(state.sessionId, state.agentConfig)}
+                    disabled=${agentComposerDisabled(state.sessionId, state.agentConfig, pendingSessionRef.current !== null)}
                     busy=${state.busy || (controls?.sessionId === state.sessionId && controls.busy)}
                     controlsSupported=${!(controls?.sessionId === state.sessionId && controls.unsupported)}
                     key=${editPrompt ? "editing" : "draft"}
@@ -1318,7 +1303,7 @@ export function AgentView({ convoId, experimental = false, developer = false }) 
                     onNewConversation=${newConversation}
                   />`
                 : html`<${Composer}
-                    disabled=${agentComposerDisabled(state.sessionId, state.agentConfig)}
+                    disabled=${agentComposerDisabled(state.sessionId, state.agentConfig, pendingSessionRef.current !== null)}
                     busy=${state.busy || (controls?.sessionId === state.sessionId && controls.busy)}
                     controlsSupported=${!(controls?.sessionId === state.sessionId && controls.unsupported)}
                     key=${editPrompt ? "editing" : "draft"}
