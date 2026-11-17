@@ -118,6 +118,29 @@ test("start is idempotent, validates control frames, preserves session headers a
   expect(sockets()).toHaveLength(3);
 });
 
+test("online settles when the relay accepts the tunnel, at once when it already has, and on abort", async () => {
+  const tunnel = new GatewayTunnel(options());
+  const aborted = new AbortController();
+  const settled: string[] = [];
+  void tunnel.online(new AbortController().signal).then(() => settled.push("first"));
+  void tunnel.online(aborted.signal).catch((error: Error) => settled.push(error.message));
+  tunnel.start();
+  await flush();
+  const control = sockets()[0];
+  control.open();
+  aborted.abort(new Error("gave up"));
+  await flush();
+  expect(settled).toEqual(["gave up"]);
+  control.emit("message", Buffer.from('{"type":"ready","version":1,"heartbeatMs":30000}'));
+  await flush();
+  expect(settled).toEqual(["gave up", "first"]);
+  await tunnel.online(new AbortController().signal);
+  // Once accepted, a later wait does not need the signal at all.
+  await expect(tunnel.online(AbortSignal.abort(new Error("late")))).resolves.toBeUndefined();
+  tunnel.stop();
+  await expect(tunnel.online(AbortSignal.abort(new Error("stopped")))).rejects.toThrow("stopped");
+});
+
 test("synchronous/asynchronous session failures retry and stopping cancels an in-flight credential read", async () => {
   const session = vi
     .fn<GatewayTunnelOptions["session"]>()
