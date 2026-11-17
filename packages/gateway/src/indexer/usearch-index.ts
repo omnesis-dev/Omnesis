@@ -94,6 +94,8 @@ type BackfillOptions = {
    * the caller can release the graph's memory and resume on a later start.
    */
   shouldStop?: () => boolean;
+  /** Awaited between pages by the cooperative build, after it has yielded. */
+  betweenPages?: () => Promise<void>;
 };
 
 /** `skipped`: the graph already matched; `stopped`: `shouldStop` ended it early. */
@@ -375,7 +377,7 @@ export class UsearchWriteHandle {
     db: Database.Database,
     opts?: BackfillOptions,
   ): Promise<GraphBuildOutcome> {
-    return drainCooperatively(this.backfillFromDbBatches(db, opts));
+    return drainCooperatively(this.backfillFromDbBatches(db, opts), opts?.betweenPages);
   }
 
   /**
@@ -625,11 +627,15 @@ function drain<T>(steps: Generator<void, T, void>): T {
   }
 }
 
-async function drainCooperatively<T>(steps: Generator<void, T, void>): Promise<T> {
+async function drainCooperatively<T>(
+  steps: Generator<void, T, void>,
+  betweenSteps?: () => Promise<void>,
+): Promise<T> {
   for (;;) {
     const step = steps.next();
     if (step.done) return step.value;
     await new Promise<void>((resolve) => setImmediate(resolve));
+    if (betweenSteps) await betweenSteps();
   }
 }
 
