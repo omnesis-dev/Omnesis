@@ -63,7 +63,7 @@ final class ScopeLevelNounTests: XCTestCase {
         let email = { ScopeIdentifier(type: "email", value: $0) }
         let two = ScopeRef.person(label: "Maya Reeves", identifiers: [email("maya@example.com"), email("m.reeves@example.org")])
         XCTAssertEqual(scopePickerAddressLine(two), "maya@example.com, m.reeves@example.org")
-        let five = ScopeRef.person(label: "Jamie Lopez", identifiers: (1...5).map { email("jamie\($0)@example.io") })
+        let five = ScopeRef.person(label: "Jamie Lopez", identifiers: (1 ... 5).map { email("jamie\($0)@example.io") })
         XCTAssertEqual(scopePickerAddressLine(five), "jamie1@example.io, jamie2@example.io, jamie3@example.io and 2 more")
         // An address typed by hand is its own title; a person known by one address still shows it.
         XCTAssertNil(scopePickerAddressLine(.person(label: "david@example.com", identifiers: [email("david@example.com")])))

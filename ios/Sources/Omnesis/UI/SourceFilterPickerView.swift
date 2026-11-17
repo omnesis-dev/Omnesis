@@ -366,8 +366,10 @@ struct SourceFilterPickerView: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(title).accessText(.rowTitle).fontWeight(.regular).multilineTextAlignment(.leading)
                     if let addresses = scopePickerAddressLine(item.ref) {
-                        Text(addresses).accessText(.rowSecondary, color: AccessUI.secondary)
-                            .multilineTextAlignment(.leading).lineLimit(2)
+                        Text(addresses)
+                            .accessText(.rowSecondary, color: AccessUI.secondary)
+                            .multilineTextAlignment(.leading)
+                            .lineLimit(2)
                     }
                 }
                 Spacer(minLength: 0)
