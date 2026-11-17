@@ -43,6 +43,6 @@ export async function askBeforeEveryNewDevice() {
     body: JSON.stringify({ policy: "ask" }),
   });
   if (!response.ok)
-    throw new Error("Couldn't change this. Try again in Settings → Omnesis account.");
+    throw new Error("Couldn't change this. Try again in Settings → Connectivity.");
   return response.json();
 }

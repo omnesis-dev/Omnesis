@@ -42,6 +42,18 @@ test("ticks finished steps, marks the current one and holds the rest", async () 
   expect([...host.querySelectorAll("button")].every((b) => b.hasAttribute("disabled"))).toBe(true);
 });
 
+test("a step the flow marks reachable can be clicked ahead, keeping its number", async () => {
+  const onSelect = vi.fn();
+  const ahead = [items[0], items[1], { ...items[2], reachable: true }];
+  await act(async () => render(h(StepNav, { items: ahead, onSelect }), host));
+  const buttons = [...host.querySelectorAll("nav.access-wizard-steps button")] as HTMLButtonElement[];
+  expect(buttons.map((b) => b.textContent)).toEqual(["✓First", "2Second", "3Third"]);
+  expect(buttons.map((b) => b.hasAttribute("disabled"))).toEqual([false, false, false]);
+  await act(async () => buttons[2].click());
+  await act(async () => buttons[1].click());
+  expect(onSelect.mock.calls).toEqual([["c"]]);
+});
+
 test("focus follows the step, but not on the first render", async () => {
   function Step({ step }: { step: number }) {
     const ref = useStepFocus(step);

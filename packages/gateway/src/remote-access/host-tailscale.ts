@@ -20,6 +20,7 @@
  * finds no host Tailscale and says so.
  */
 
+import { existsSync } from "node:fs";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import {
@@ -30,6 +31,9 @@ import {
 } from "@omnesis/core";
 
 const execFileAsync = promisify(execFile);
+const NOT_RUNNING =
+  "Tailscale is installed on this computer but not running or not signed in. Open Tailscale and sign in.";
+const NOT_INSTALLED = "Tailscale is not installed on this computer.";
 const STATUS_TIMEOUT_MS = 5_000;
 const PUBLISH_TIMEOUT_MS = 30_000;
 
@@ -39,8 +43,16 @@ const FUNNEL_PORTS = [443, 8443, 10000] as const;
 export const NO_FREE_PORT =
   "Tailscale on this computer already serves other apps on 443, 8443 and 10000, the ports it can publish. Free one of them, then check again.";
 
+/**
+ * Tailscale already on this computer, as the gateway finds it:
+ * - `unsupported`: the gateway runs in a container, whose own network Tailscale on the
+ *   host cannot forward to, so the option does not apply here;
+ * - `missing`: no Tailscale command on this computer;
+ * - `stopped`: Tailscale is installed but not running or not signed in;
+ * - `available`: running, with the machine's name on the tailnet.
+ */
 export type HostTailscale =
-  | { state: "unavailable"; reason: string }
+  | { state: "unsupported" | "missing" | "stopped"; reason: string }
   | {
       state: "available";
       /** The machine's MagicDNS name, without the trailing dot. */
@@ -172,15 +184,25 @@ export class HostTailscaleService {
     private readonly port: number,
     private readonly candidates: TailscaleCliCandidate[] = tailscaleCliCandidates(),
     private readonly run: RunCli = liveRun,
+    private readonly inContainer: boolean = existsSync("/.dockerenv"),
   ) {}
 
   async status(): Promise<HostTailscale> {
-    const found = await this.findRunning();
-    if (!found) {
-      return { state: "unavailable", reason: "Tailscale is not running on this computer." };
+    if (this.inContainer) {
+      return {
+        state: "unsupported",
+        reason:
+          "This gateway runs in a container, where Tailscale on the computer cannot reach it.",
+      };
     }
-    const { dnsName } = found;
-    const served = (await this.served(found)) ?? NOTHING_SERVED;
+    const found = await this.findRunning();
+    if (!found.running) {
+      return found.installed
+        ? { state: "stopped", reason: NOT_RUNNING }
+        : { state: "missing", reason: NOT_INSTALLED };
+    }
+    const { dnsName } = found.running;
+    const served = (await this.served(found.running)) ?? NOTHING_SERVED;
     const port = choosePort(served, false);
     const servesGateway = port !== null && served.gateway.has(port);
     return {
@@ -203,14 +225,14 @@ export class HostTailscaleService {
     const commandOn = (port: number) =>
       `tailscale ${verb} ${this.publishArgs(publicly, port).slice(1).join(" ")}`;
     const found = await this.findRunning();
-    if (!found) {
+    if (!found.running) {
       return {
         ok: false,
-        reason: "Tailscale is not running on this computer.",
+        reason: found.installed ? NOT_RUNNING : NOT_INSTALLED,
         command: commandOn(443),
       };
     }
-    const served = await this.served(found);
+    const served = await this.served(found.running);
     // Without knowing what the machine serves, any port could be another app's.
     if (!served) {
       return {
@@ -223,8 +245,8 @@ export class HostTailscaleService {
     const port = choosePort(served, publicly);
     if (port === null) return { ok: false, reason: NO_FREE_PORT };
     try {
-      await this.run(found.candidate, this.publishArgs(publicly, port), PUBLISH_TIMEOUT_MS);
-      return { ok: true, url: addressOn(found.dnsName, port) };
+      await this.run(found.running.candidate, this.publishArgs(publicly, port), PUBLISH_TIMEOUT_MS);
+      return { ok: true, url: addressOn(found.running.dnsName, port) };
     } catch (error) {
       // Tailscale prints the link that enables Funnel on stdout, its refusals on stderr.
       const failed = error as { stdout?: string; stderr?: string };
@@ -265,24 +287,31 @@ export class HostTailscaleService {
     }
   }
 
+  /**
+   * The first Tailscale command that reports a running, signed-in node, and whether any
+   * command exists at all: a command that runs but reports no node (or exits with an
+   * error because the daemon is down) still counts as installed; only a missing file does not.
+   */
   private async findRunning(): Promise<{
-    candidate: TailscaleCliCandidate;
-    dnsName: string;
-  } | null> {
+    installed: boolean;
+    running: { candidate: TailscaleCliCandidate; dnsName: string } | null;
+  }> {
+    let installed = false;
     for (const candidate of this.candidates) {
       try {
         const output = await this.run(candidate, ["status", "--json"], STATUS_TIMEOUT_MS);
+        installed = true;
         if (!tailscaleIsRunningStatus(output)) continue;
         const dnsName = String(
           (JSON.parse(output) as { Self?: { DNSName?: unknown } }).Self?.DNSName ?? "",
         )
           .replace(/\.$/, "")
           .toLowerCase();
-        if (dnsName) return { candidate, dnsName };
-      } catch {
-        // Not installed here, or not answering: try the next one.
+        if (dnsName) return { installed, running: { candidate, dnsName } };
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") installed = true;
       }
     }
-    return null;
+    return { installed, running: null };
   }
 }

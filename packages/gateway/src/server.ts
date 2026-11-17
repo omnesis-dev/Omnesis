@@ -15,7 +15,6 @@ import {
   createLogger,
   parseDuration,
   type HostNetwork,
-  tailscaleEmbedEnabled,
   type WsRequestPayload,
 } from "@omnesis/core";
 import {
@@ -25,7 +24,7 @@ import {
   type DeviceRecord,
 } from "@omnesis/types";
 import { mountTailscaleRoutes } from "./http/routes/tailscale.js";
-import { mountRemoteAccessRoutes, remoteAccessEnabled } from "./http/routes/remote-access.js";
+import { mountRemoteAccessRoutes } from "./http/routes/remote-access.js";
 import { AddressChecks } from "./remote-access/address-check.js";
 import { HostTailscaleService } from "./remote-access/host-tailscale.js";
 import { RemoteAccessSettingsStore } from "./remote-access/settings.js";
@@ -732,12 +731,11 @@ export function createServer(
 ) {
   const app = strictRoute(new Hono<AppEnv>());
   const portalSignals = opts?.portalSignals ?? new PortalSignals();
-  // The remote-access choices that belong to no single way in; present only where the gateway
-  // offers a way in of its own.
-  const remoteAccessSettings =
-    opts?.configDir && remoteAccessEnabled()
-      ? new RemoteAccessSettingsStore(opts.configDir)
-      : undefined;
+  // The connectivity choices that belong to no single way in. Every gateway has them: the owner's
+  // own domain and Tailscale already on the computer need neither optional feature.
+  const remoteAccessSettings = opts?.configDir
+    ? new RemoteAccessSettingsStore(opts.configDir)
+    : undefined;
   // Tailscale already on this computer forwards to the port the gateway listens on.
   const hostTailscale = opts?.port ? new HostTailscaleService(opts.port) : undefined;
   // Which addresses away from home answer MCP; enforced wherever the owner's choices are kept.
@@ -1821,7 +1819,7 @@ export function createServer(
     mountRemoteAccessRoutes(app, {
       settings: remoteAccessSettings,
       checks: new AddressChecks(),
-      ...(hostTailscale && tailscaleEmbedEnabled() ? { hostTailscale } : {}),
+      ...(hostTailscale ? { hostTailscale } : {}),
       publicAddress: opts?.publicAddress,
       mcpAddresses,
     });

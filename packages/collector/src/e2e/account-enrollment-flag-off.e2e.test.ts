@@ -105,13 +105,6 @@ describe("sign-in enrollment with the cloud relay flag off", () => {
       ["POST", "/admin/step-up", {}],
       ["POST", "/portal/api/handoff", {}],
       ["POST", "/portal/api/handoff/redeem", { code: "a".repeat(43) }],
-      // Remote access exists only with the relay or the gateway's own Tailscale device.
-      ["GET", "/admin/remote-access"],
-      ["PATCH", "/admin/remote-access", { first: "relay" }],
-      ["POST", "/admin/remote-access/check-address", { url: "https://omnesis.example.org" }],
-      ["GET", "/admin/remote-access/host-tailscale"],
-      ["POST", "/admin/remote-access/host-tailscale/publish", { public: false }],
-      ["GET", "/.well-known/omnesis-address-check/abcdefghijklmnopqrstuv"],
     ];
     const statuses = await Promise.all(
       routes.map(async ([method, path, body]) => {
@@ -124,6 +117,17 @@ describe("sign-in enrollment with the cloud relay flag off", () => {
       }),
     );
     expect(statuses).toEqual(routes.map(([method, path]) => `${method} ${path} 404`));
+  });
+
+  test("Connectivity, on every gateway, offers neither the relay nor the gateway's own Tailscale device", async () => {
+    const response = await harness.gatewayFetch("/admin/remote-access");
+    expect(response.status).toBe(200);
+    const state = (await response.json()) as {
+      features: Record<string, boolean>;
+      mcpAddresses: Array<{ id: string }>;
+    };
+    expect(state.features).toEqual({ cloudRelay: false, tailscaleEmbed: false });
+    expect(state.mcpAddresses.map((row) => row.id)).toEqual(["host", "domain"]);
   });
 
   /** Status and body of a request sent without the harness's credential. */

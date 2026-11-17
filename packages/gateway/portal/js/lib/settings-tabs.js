@@ -20,9 +20,8 @@
 // to render it or fall back.
 //
 // `cloudRelay` and `tailscaleEmbed` mark a tab that only exists when the
-// gateway runs with that optional feature on, and `remoteAccess` one that
-// exists when either is; like experimental tabs, the router keeps their keys
-// and the view decides.
+// gateway runs with that optional feature on; like experimental tabs, the
+// router keeps their keys and the view decides.
 //
 // `parent` marks a detail page: it has its own path, but no tab of its own —
 // the tab bar shows its parent as the current tab.
@@ -43,10 +42,20 @@ const TABS = [
   { key: "access", label: "Access" },
   { key: "policies", label: "Policies" },
   { key: "devices", label: "Devices" },
-  { key: "remote-access", label: "Remote access", remoteAccess: true },
-  { key: "account", label: "Omnesis account", cloudRelay: true, parent: "remote-access" },
-  { key: "tailscale", label: "Tailscale", tailscaleEmbed: true, parent: "remote-access" },
+  { key: "connectivity", label: "Connectivity" },
+  { key: "account", label: "Omnesis account", cloudRelay: true, parent: "connectivity" },
+  { key: "relay", label: "Omnesis relay", cloudRelay: true, parent: "connectivity" },
+  { key: "host-tailscale", label: "Tailscale on this computer", parent: "connectivity" },
+  { key: "own-address", label: "Your own domain", parent: "connectivity" },
+  { key: "mcp", label: "MCP server", parent: "connectivity" },
+  { key: "tailscale", label: "Tailscale", tailscaleEmbed: true, parent: "connectivity" },
 ];
+
+/**
+ * Tab keys that were renamed, with the key each now lives under: the router
+ * resolves the old one to the new and redirects, so bookmarks keep working.
+ */
+export const SETTINGS_TAB_RENAMES = { "remote-access": "connectivity" };
 
 /** Every tab key — what the router accepts as a path segment. */
 export const SETTINGS_TAB_KEYS = TABS.map((t) => t.key);
@@ -69,7 +78,6 @@ export function settingsTabParent(key) {
 export function settingsTabAvailable(key, { cloudRelay = false, tailscaleEmbed = false } = {}) {
   const tab = TABS.find((t) => t.key === key);
   if (!tab) return false;
-  if (tab.remoteAccess) return cloudRelay || tailscaleEmbed;
   return (!tab.cloudRelay || cloudRelay) && (!tab.tailscaleEmbed || tailscaleEmbed);
 }
 

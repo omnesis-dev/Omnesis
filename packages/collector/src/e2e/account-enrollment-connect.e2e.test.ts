@@ -171,10 +171,10 @@ describe.skipIf(!browserReady)("connect a gateway by signing in", () => {
         await page.goto(`${fresh.gatewayUrl}/portal/?token=${encodeURIComponent(fresh.apiKey)}`);
         await page.locator("nav.sidebar-nav").waitFor({ timeout: 30_000 });
         await page.goto(`${fresh.gatewayUrl}/portal/settings/account`);
-        await expectText(page, "Enroll this gateway in your Omnesis Account", 30_000);
+        await expectText(page, "Do you want an Omnesis account?", 30_000);
         expect(await page.getByRole("button", { name: "Connect", exact: true }).count()).toBe(0);
         await page.getByRole("button", { name: "I already have one", exact: true }).waitFor();
-        await page.getByRole("button", { name: "Create an Omnesis account", exact: true }).click();
+        await page.getByRole("button", { name: "Create an account", exact: true }).click();
         await expectText(page, "Sign in to your Omnesis account", 30_000);
 
         const waiting = await fresh.gatewayJson<CloudRelayStatus & { hostname?: string }>(
@@ -234,15 +234,12 @@ describe.skipIf(!browserReady)("connect a gateway by signing in", () => {
         );
         await expectText(page, "Finish setting up", 30_000);
         await expectText(page, "Let your passkey add devices", 30_000);
-        // Nothing to choose first: the settings are all there, with automatic joining selected.
-        await expectText(page, "What happens when a new device signs in", 30_000);
-        expect(await page.getByRole("radio", { name: /^Join automatically/ }).isChecked()).toBe(
-          true,
-        );
-        expect(await page.getByRole("radio", { name: /^Ask me first/ }).isChecked()).toBe(false);
+        // Nothing to choose first: the account is there at once, and what new devices may do
+        // is chosen once for every way in, under Settings → Connectivity.
         expect(await page.getByRole("button", { name: "Continue", exact: true }).count()).toBe(0);
         await expectText(page, "This gateway is linked to your Omnesis account.", 30_000);
-        // The address answers once no hint is left under it.
+        // The relay's page shows its address, which answers once no hint is left under it.
+        await page.goto(new URL("/portal/settings/relay", page.url()).href);
         await page.locator(".relay-address").waitFor({ timeout: 30_000 });
         await expect
           .poll(() => page.locator(".relay-address + .relay-hint").count(), { timeout: 30_000 })
