@@ -4,6 +4,7 @@
 import { createHash } from "node:crypto";
 import { brainSourceInclusionSql } from "../source-exclusion.js";
 import { cognitionSpendDay } from "../storage/spend.js";
+import { hasSourceInventoryTables } from "../../data/repositories/SourceInventoryRepository.js";
 import { assertCandidateReservation } from "./candidate-affinity.js";
 import { pendingCandidateDecisions } from "./candidate-decision.js";
 import { knowledgeSourceRevisionSql } from "./source-revision.js";
@@ -12,7 +13,11 @@ import { getKnowledgeNode } from "./storage-read.js";
 import { associateKnowledgeUrgency } from "./decision-debug.js";
 import { snapshotClaimMaintenance, settleClaimMaintenance } from "./claim-maintenance.js";
 import { assertKnowledgeRunFence } from "./run-fence.js";
-import { recordKnowledgeCoverage, type KnowledgeCoverageInput } from "./discovery.js";
+import {
+  recentInventoryDocumentSql,
+  recordKnowledgeCoverage,
+  type KnowledgeCoverageInput,
+} from "./discovery.js";
 import { sourceHasDiscoveryObligation } from "./discovery-gate.js";
 import { assertKnowledgeDiscoveryComplete } from "./discovery-completion.js";
 import { KnowledgeStorageError } from "./types.js";
@@ -30,8 +35,15 @@ export interface EnqueueKnowledgeWork {
   tier: MaintenanceTier;
   dueAt: number;
   urgencyDecision?: { id: string; anchorAt: number };
-  readinessReason?: "pending_content" | "derivation";
+  /**
+   * Why pending work waits on something besides its deadline. `awaiting_urgency`
+   * marks routine work scheduled without a usable urgency verdict; the planner
+   * judges it again while it waits and runs it as routine if no verdict comes.
+   */
+  readinessReason?: "pending_content" | "derivation" | typeof KNOWLEDGE_AWAITING_URGENCY;
 }
+/** `last_error` of pending source work scheduled without an urgency verdict. */
+export const KNOWLEDGE_AWAITING_URGENCY = "awaiting_urgency";
 export interface KnowledgeWork extends EnqueueKnowledgeWork {
   inputChangedAt: number;
   generation: number;
@@ -308,6 +320,113 @@ export function retireKnowledgeWorkFromExcludedSources(
         LIMIT ${RETIRE_BATCH})`,
     )
     .run(...inclusion.params).changes;
+}
+
+/**
+ * Rewritten unread history: a stored source document rewritten after it first
+ * arrived, which the Brain has never read, and whose own dates — when it was
+ * written or sent, and when its provider last changed it — both lie before
+ * the recent window. Nothing the owner did recently changed it: a resync or a
+ * migration rewrote the stored row, often together with thousands of others
+ * in one day. Reading it belongs to historical admission (`bootstrap()`),
+ * under the history horizon and the operator's caps, not to the reactive
+ * change lane, which would otherwise queue one maintenance run per row.
+ *
+ * Everything else stays reactive. A first arrival is live whatever its date,
+ * so late delivery of old mail is still read as it arrives. A document the
+ * Brain has read — discovery coverage at any revision, work beyond a pending
+ * row, or anything in the knowledge graph citing it — keeps its maintenance.
+ * A document its provider says changed within the window is a live edit,
+ * whatever its creation date. A document its source's recent initial
+ * inventory still admits belongs to that lane. The rewrite mark is the source
+ * revision generation, which only an update or a re-insertion advances.
+ * Trusted SQL alias only; bound parameters: the cutoff twice, then (with
+ * inventory tables) the recent window in days.
+ */
+function rewrittenHistorySql(alias: string, inventory: boolean): string {
+  return `${alias}.source_created_at<? AND COALESCE(${alias}.source_updated_at,${alias}.source_created_at)<?
+    AND EXISTS(SELECT 1 FROM knowledge_source_revisions r WHERE r.document_id=${alias}.id AND r.generation>0)
+    AND NOT EXISTS(SELECT 1 FROM knowledge_discovery_coverage cov WHERE cov.subject_id=${alias}.id)
+    AND NOT EXISTS(SELECT 1 FROM knowledge_work prior WHERE prior.subject_kind='source' AND prior.subject_id=${alias}.id AND prior.status!='pending')
+    AND NOT EXISTS(SELECT 1 FROM knowledge_dependencies dep WHERE dep.target_kind='source' AND dep.target_id=${alias}.id)
+    AND NOT EXISTS(SELECT 1 FROM knowledge_revision_dependencies dep WHERE dep.target_kind='source' AND dep.target_id=${alias}.id)
+    AND NOT EXISTS(SELECT 1 FROM knowledge_evidence e WHERE e.document_id=${alias}.id)
+    AND NOT EXISTS(SELECT 1 FROM knowledge_candidate_sources cs WHERE cs.document_id=${alias}.id)
+    ${inventory ? `AND NOT ${recentInventoryDocumentSql(alias)}` : ""}`;
+}
+
+/** The recent window's lower bound and the parameters `rewrittenHistorySql` binds. */
+function rewrittenHistoryParams(
+  db: Database.Database,
+  now: number,
+  recentWindowMs: number,
+): { inventory: boolean; params: (string | number)[] } {
+  const cutoff = new Date(now - recentWindowMs).toISOString();
+  const inventory = hasSourceInventoryTables(db);
+  return {
+    inventory,
+    params: [cutoff, cutoff, ...(inventory ? [recentWindowMs / 86_400_000] : [])],
+  };
+}
+
+/** Whether a changed source is rewritten unread history (`rewrittenHistorySql`); index seeks only. */
+export function isRewrittenUnreadHistory(
+  db: Database.Database,
+  documentId: string,
+  now: number,
+  recentWindowMs: number,
+): boolean {
+  const { inventory, params } = rewrittenHistoryParams(db, now, recentWindowMs);
+  return !!db
+    .prepare<unknown[], { one: number }>(
+      `SELECT 1 AS one FROM documents d WHERE d.id=? AND ${rewrittenHistorySql("d", inventory)}`,
+    )
+    .get(documentId, ...params);
+}
+
+/**
+ * Pending reactive work for rewritten unread history — queued before intake
+ * routed it to historical admission. Read side of the retirement below, driven from the
+ * pending work rather than the corpus.
+ */
+export function hasRewrittenHistoryChangeWork(
+  db: Database.Database,
+  now: number,
+  recentWindowMs: number,
+): boolean {
+  const { inventory, params } = rewrittenHistoryParams(db, now, recentWindowMs);
+  return !!db
+    .prepare<unknown[], { one: number }>(
+      `SELECT 1 AS one FROM knowledge_work w JOIN documents d ON d.id=w.subject_id
+      WHERE w.status='pending' AND w.subject_kind='source' AND w.reason='change'
+        AND NOT EXISTS(SELECT 1 FROM knowledge_candidate_decision_work cw WHERE cw.work_id=w.id)
+        AND ${rewrittenHistorySql("d", inventory)} LIMIT 1`,
+    )
+    .get(...params);
+}
+
+/**
+ * Retire pending reactive work for rewritten unread history. Nothing was bought for it,
+ * so the row is removed rather than settled and no coverage is recorded:
+ * historical admission reads the document if the operator's horizon and caps
+ * reach it. Batched work is left to finish, and work carrying a candidate's
+ * decision obligation is kept. Idempotent; at most RETIRE_BATCH rows per call.
+ */
+export function retireRewrittenHistoryChangeWork(
+  db: Database.Database,
+  now: number,
+  recentWindowMs: number,
+): number {
+  const { inventory, params } = rewrittenHistoryParams(db, now, recentWindowMs);
+  return db
+    .prepare<unknown[]>(
+      `DELETE FROM knowledge_work WHERE id IN (
+        SELECT w.id FROM knowledge_work w JOIN documents d ON d.id=w.subject_id
+        WHERE w.status='pending' AND w.subject_kind='source' AND w.reason='change'
+          AND NOT EXISTS(SELECT 1 FROM knowledge_candidate_decision_work cw WHERE cw.work_id=w.id)
+          AND ${rewrittenHistorySql("d", inventory)} LIMIT ${RETIRE_BATCH})`,
+    )
+    .run(...params).changes;
 }
 
 /** Identity-free counters survive corpus erasure; deleting evidence never refunds consent limits. */

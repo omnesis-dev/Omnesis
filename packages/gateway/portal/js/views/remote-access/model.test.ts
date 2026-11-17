@@ -10,14 +10,12 @@ import {
   joinWays,
   listSentence,
   loadSetup,
-  orderSentence,
   policyChanges,
   policyChoices,
   policyDifference,
   saveSetup,
   setupSteps,
   startFlow,
-  tailscaleKeptOff,
   // @ts-expect-error — portal modules are plain JS.
 } from "./model.js";
 
@@ -34,25 +32,31 @@ const remote = (over: Record<string, unknown> = {}) => ({
   setupCompletedAt: null,
   first: "tailscale",
   features: { cloudRelay: true, tailscaleEmbed: true },
-  publicBaseUrl: { configured: null, setByEnvironment: false },
+  publicBaseUrl: { configured: null, setByEnvironment: false, way: null },
   ...over,
 });
 
 describe("the setup's steps and progress", () => {
-  test("the account is asked only with the relay", () => {
-    expect(setupSteps({ cloudRelay: true })).toEqual(["account", "connection", "devices"]);
-    expect(setupSteps({ cloudRelay: false })).toEqual(["connection", "devices"]);
-    expect(setupSteps()).toEqual(["connection", "devices"]);
+  test("the account is asked only with the relay, new devices only while one can ask, MCP only with an address away", () => {
+    expect(setupSteps({ cloudRelay: true })).toEqual(["account", "connection"]);
+    expect(setupSteps({ cloudRelay: false })).toEqual(["connection"]);
+    expect(setupSteps()).toEqual(["connection"]);
+    expect(setupSteps({ cloudRelay: true, devices: true, mcp: true })).toEqual(["account", "connection", "devices", "mcp"]);
+    expect(setupSteps({ devices: true })).toEqual(["connection", "devices"]);
+    expect(setupSteps({ mcp: true })).toEqual(["connection", "mcp"]);
   });
 
   test("a saved flow comes back only when well formed for these steps", () => {
     const steps = ["account", "connection", "devices"];
-    const saved = { mode: "setup", step: "connection", resume: "devices", self: true, own: "host", url: "https://omnesis.example.org" };
+    const saved = { mode: "setup", step: "connection", resume: "devices", host: true, domain: true, url: "https://omnesis.example.org" };
     expect(loadSetup(steps, memory({ [SETUP_STORAGE_KEY]: JSON.stringify(saved) }))).toEqual(saved);
+    // An unanswered host choice stays unanswered, so the option shows whether it is set up.
+    expect(loadSetup(steps, memory({ [SETUP_STORAGE_KEY]: JSON.stringify({ ...saved, host: undefined }) }))?.host).toBeNull();
     // Anything odd is dropped or replaced, never trusted.
     expect(
-      loadSetup(steps, memory({ [SETUP_STORAGE_KEY]: JSON.stringify({ ...saved, resume: "nowhere", self: "yes", own: "ftp", url: 7 }) })),
-    ).toEqual({ ...saved, resume: null, self: false, own: "url", url: "" });
+      loadSetup(steps, memory({ [SETUP_STORAGE_KEY]: JSON.stringify({ ...saved, resume: "nowhere", host: "yes", domain: "yes", url: 7 }) })),
+    ).toEqual({ ...saved, resume: null, host: null, domain: false, url: "" });
+    expect(loadSetup(steps, memory({ [SETUP_STORAGE_KEY]: JSON.stringify({ ...saved, url: "x".repeat(5000) }) }))?.url).toHaveLength(2048);
     for (const value of ["{", "null", "7", JSON.stringify({ ...saved, mode: "summary" }), JSON.stringify({ ...saved, step: "account" })])
       expect(loadSetup(["connection", "devices"], memory({ [SETUP_STORAGE_KEY]: value }))).toBeNull();
     expect(loadSetup(steps, memory())).toBeNull();
@@ -71,25 +75,24 @@ describe("the setup's steps and progress", () => {
     expect(() => saveSetup({ mode: "setup" }, undefined)).not.toThrow();
   });
 
-  test("the first visit opens the setup, later visits the summary, and a saved flow resumes", () => {
-    const steps = ["account", "connection", "devices"];
-    expect(initialFlow(remote(), null, steps)).toEqual({ mode: "setup", step: "account", resume: null, self: false, own: "host", url: "" });
-    expect(initialFlow(remote({ setupCompletedAt: "2026-11-15T10:00:00Z" }), null, steps)).toEqual({ mode: "summary" });
-    const setup = { mode: "setup", step: "devices", resume: null, self: false, own: "url", url: "" };
-    expect(initialFlow(remote(), setup, steps)).toBe(setup);
-    // A setup finished elsewhere is not resumed; a review is.
-    expect(initialFlow(remote({ setupCompletedAt: "2026-11-15T10:00:00Z" }), setup, steps)).toEqual({ mode: "summary" });
+  test("the page opens on the summary, and a saved setup or review resumes", () => {
+    expect(initialFlow(null)).toEqual({ mode: "summary" });
+    const setup = { mode: "setup", step: "devices", resume: null, host: null, domain: false, url: "" };
+    expect(initialFlow(setup)).toBe(setup);
     const review = { ...setup, mode: "review" };
-    expect(initialFlow(remote({ setupCompletedAt: "2026-11-15T10:00:00Z" }), review, steps)).toBe(review);
+    expect(initialFlow(review)).toBe(review);
   });
 
-  test("own setup starts on the address the gateway already has, else on Tailscale where it can look", () => {
+  test("a setup starts with the own domain open only when the public address is the owner's own", () => {
     const steps = ["connection", "devices"];
-    expect(startFlow("review", steps, remote({ publicBaseUrl: { configured: "https://omnesis.example.org" } }))).toMatchObject({
-      mode: "review", step: "connection", self: true, own: "url",
+    expect(startFlow("review", steps, remote({ publicBaseUrl: { configured: "https://omnesis.example.org", way: null } }))).toEqual({
+      mode: "review", step: "connection", resume: null, host: null, domain: true, url: "",
     });
-    expect(startFlow("setup", steps, remote({ features: { cloudRelay: true, tailscaleEmbed: false } }))).toMatchObject({ self: false, own: "url" });
-    expect(startFlow("setup", steps, { setupCompletedAt: null })).toMatchObject({ self: false, own: "url" });
+    // An address that is Tailscale on this computer's, the relay's or the device's is that way's.
+    for (const way of ["host", "relay", "tailnet"])
+      expect(startFlow("setup", steps, remote({ publicBaseUrl: { configured: "https://studio.example-net.ts.net", way } }))).toMatchObject({ domain: false });
+    expect(startFlow("setup", steps, remote())).toMatchObject({ step: "connection", host: null, domain: false });
+    expect(startFlow("setup", ["account", "connection"], { setupCompletedAt: null })).toMatchObject({ step: "account", domain: false });
   });
 });
 
@@ -140,14 +143,13 @@ describe("one answer for new devices", () => {
     ]);
   });
 
-  test("with an account linked, a device at pairing codes is never opened by the shared answer", () => {
+  test("the one answer reaches every way in, a Tailscale device at pairing codes included", () => {
     const linked = { relayLinked: true, tailscaleOn: true, tailscalePolicy: "off" };
-    expect(tailscaleKeptOff(linked)).toBe(true);
-    expect(tailscaleKeptOff({ relayLinked: false, tailscalePolicy: "off" })).toBe(false);
-    expect(tailscaleKeptOff({ relayLinked: true, tailscalePolicy: "ask" })).toBe(false);
-    expect(tailscaleKeptOff({ relayLinked: true })).toBe(false);
-    expect(policyChanges("ask", linked)).toEqual([{ target: "relay", policy: "ask" }]);
-    expect(policyChanges("automatic", linked)).toEqual([{ target: "relay", policy: "automatic" }]);
+    expect(policyChanges("ask", linked)).toEqual([{ target: "relay", policy: "ask" }, { target: "tailscale", policy: "ask" }]);
+    expect(policyChanges("automatic", linked)).toEqual([
+      { target: "relay", policy: "automatic" },
+      { target: "tailscale", policy: "automatic" },
+    ]);
   });
 
   test("the question and a difference are said in words", () => {
@@ -168,17 +170,10 @@ describe("one answer for new devices", () => {
 });
 
 describe("summary sentences", () => {
-  test("lists and the order between Tailscale and the relay", () => {
+  test("lists read as a sentence", () => {
     expect(listSentence([])).toBe("");
     expect(listSentence(["a"])).toBe("a");
     expect(listSentence(["a", "b"])).toBe("a and b");
     expect(listSentence(["a", "b", "c"])).toBe("a, b and c");
-    expect(orderSentence({ tailscaleOn: true, relayOn: false, first: "relay" })).toBe("Your home network comes first.");
-    expect(orderSentence({ tailscaleOn: true, relayOn: true, first: "tailscale" })).toBe(
-      "Home network first, then Tailscale, then the relay.",
-    );
-    expect(orderSentence({ tailscaleOn: true, relayOn: true, first: "relay" })).toBe(
-      "Home network first, then the relay, then Tailscale.",
-    );
   });
 });

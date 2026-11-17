@@ -37,6 +37,7 @@ import { makeOutcomeAssessment, recordOutcomeAssessmentAttempt } from "./outcome
 import { convertKnowledgeOwner } from "./owner-adapters.js";
 import { installKnowledgeOwnerTriggers } from "./owner-triggers.js";
 import { createKnowledgeSourceTriggers } from "./source-triggers.js";
+import { readKnowledgeSourceRevision } from "./source-revision.js";
 import { createKnowledgeDecisionTable, recordKnowledgeDecision } from "./decision-storage.js";
 import { readKnowledgeDecisionAudit } from "./decision-query.js";
 import { createKnowledgeTables } from "./schema.js";
@@ -2900,6 +2901,10 @@ describe("explicit initial inventory admission", () => {
     inventorySource("old", Date.parse("2020-01-01T00:00:00Z"));
     source("late", "v1", "A newly received old letter.", Date.parse("2020-01-01T00:00:00Z"));
     source("old", "v2", "A new correction to older evidence.", Date.parse("2020-01-01T00:00:00Z"));
+    // The owner's correction: its provider records the edit as recent.
+    db.prepare("UPDATE documents SET source_updated_at=? WHERE id='old'").run(
+      new Date(now).toISOString(),
+    );
     await engine.tick();
     expect(
       db
@@ -3541,8 +3546,9 @@ it.each([
       score: available ? 0.5 : null,
       scheduling: {
         status: "scheduled",
-        applied: { tier: coalesce ? "immediate" : "soon" },
-        fallbackSoon: !available,
+        // A missing verdict never outranks judged work: routine, judged again later.
+        applied: { tier: coalesce ? "immediate" : available ? "soon" : "routine" },
+        awaitingVerdict: !available,
       },
       input: available
         ? {
@@ -4187,4 +4193,185 @@ it("leaves an owner a source discovery just created to that discovery, not a rev
   const view = await engine.next(batch.id, batch.runId);
   expect(view.interrupted).toBeUndefined();
   expect(view.items.map((item) => item.id)).toEqual(["rehearsal"]);
+});
+
+describe("rewrites of unread history", () => {
+  const archived = Date.parse("2019-06-01T00:00:00Z");
+  /** A document already stored before the Brain ran: no journal obligation. */
+  function stored(id: string, at = archived) {
+    source(id, "v1", "An invented archived workshop invoice.", at);
+    db.exec("DELETE FROM knowledge_changes");
+  }
+  const work = () =>
+    db
+      .prepare(
+        "SELECT subject_id,reason,status FROM knowledge_work WHERE subject_kind='source' ORDER BY subject_id",
+      )
+      .all();
+  const read = (id: string) =>
+    recordKnowledgeCoverage(
+      db,
+      {
+        subjectId: id,
+        inputRevision: "v1",
+        phase: "organization",
+        policyVersion: KNOWLEDGE_DISCOVERY_POLICY,
+        status: "considered",
+      },
+      now,
+    );
+
+  it("leaves a rewrite of an unread old document to historical admission without asking urgency", async () => {
+    stored("rewritten");
+    source("rewritten", "v2", "An invented archived workshop invoice, renormalized.", archived);
+    await engine.tick();
+    expect(work()).toEqual([]);
+    expect(decisions).toBe(0);
+    expect(db.prepare("SELECT COUNT(*) AS count FROM knowledge_changes").get()).toEqual({
+      count: 0,
+    });
+    // Historical admission reads it once the operator starts it.
+    settings = resolveBrainSettings({ bootstrap: { enabled: true, horizon: "3650d" } });
+    db.prepare(
+      "INSERT INTO cognition_engine_state(key,value) VALUES('bootstrap_started_at',?)",
+    ).run(String(now));
+    await engine.tick();
+    expect(work()).toEqual([{ subject_id: "rewritten", reason: "discovery", status: "batched" }]);
+  });
+
+  it("keeps first arrivals, recent edits and rewrites of read documents reactive", async () => {
+    stored("edited");
+    stored("read");
+    // A first arrival is live whatever its date.
+    source("late-arrival", "v1", "An invented letter delivered late.", archived);
+    // The provider records an owner's edit within the recent window.
+    source("edited", "v2", "An invented workshop note, edited today.", archived);
+    db.prepare("UPDATE documents SET source_updated_at=? WHERE id='edited'").run(
+      new Date(now).toISOString(),
+    );
+    // This one was already read at its earlier revision.
+    read("read");
+    source("read", "v2", "An invented archived workshop invoice, corrected.", archived);
+    await engine.tick();
+    expect(work()).toEqual([
+      { subject_id: "edited", reason: "change", status: "batched" },
+      { subject_id: "late-arrival", reason: "change", status: "batched" },
+      { subject_id: "read", reason: "change", status: "batched" },
+    ]);
+  });
+
+  it("retires reactive work a mass rewrite queued earlier, keeping live and read work", async () => {
+    stored("backlog");
+    source("backlog", "v2", "An invented archived workshop invoice, rewritten.", archived);
+    stored("read");
+    read("read");
+    source("read", "v2", "An invented archived workshop invoice, corrected.", archived);
+    stored("recent", now - 86_400_000);
+    source("recent", "v2", "An invented workshop plan.", now - 86_400_000);
+    db.exec("DELETE FROM knowledge_changes");
+    // Queued as the engine did before rewrites of unread history were routed.
+    for (const id of ["backlog", "read", "recent"])
+      await writeGate["knowledge.enqueue"](
+        {
+          id: `kw-${id}`,
+          subjectId: id,
+          subjectKind: "source",
+          reason: "change",
+          inputRevision: readKnowledgeSourceRevision(db, id)!,
+          tier: "soon",
+          dueAt: now + 86_400_000,
+        },
+        now,
+      );
+    await engine.tick();
+    expect(work()).toEqual([
+      { subject_id: "read", reason: "change", status: "pending" },
+      { subject_id: "recent", reason: "change", status: "pending" },
+    ]);
+  });
+});
+
+describe("urgency without a verdict", () => {
+  let available: boolean, failing: boolean, asked: number;
+  beforeEach(() => {
+    available = false;
+    failing = false;
+    asked = 0;
+    const decision: DecisionCapability = {
+      modelId: "scripted",
+      dispose() {},
+      async decide(request) {
+        asked++;
+        if (failing) throw new Error("decision backend unreachable");
+        return {
+          model: "scripted",
+          answers: Object.fromEntries(
+            Object.keys(request.questions).map((key) => [
+              key,
+              { type: "score" as const, score: 1.8 },
+            ]),
+          ),
+        };
+      },
+    };
+    engine = new KnowledgeEngine({
+      db,
+      writeGate,
+      service,
+      getSettings: () => settings,
+      clock: () => now,
+      log,
+      idGen: () => String(++serial),
+      decisions: {
+        getDecision: () => (available ? decision : null),
+        log,
+        recordSpend: async () => {},
+      },
+    });
+  });
+  const pending = () =>
+    db
+      .prepare(
+        "SELECT tier,due_at AS dueAt,status,last_error AS lastError FROM knowledge_work WHERE subject_id='input'",
+      )
+      .get();
+
+  it("schedules routine work awaiting a verdict and promotes it once the model answers", async () => {
+    source();
+    await engine.tick();
+    expect(pending()).toEqual({
+      tier: "routine",
+      dueAt: now + settings.knowledge.routineDelayMs,
+      status: "pending",
+      lastError: "awaiting_urgency",
+    });
+    // No model: nothing is asked again, and the work keeps waiting.
+    await engine.tick();
+    expect(pending()).toMatchObject({ tier: "routine", status: "pending" });
+    available = true;
+    await engine.tick();
+    expect(asked).toBe(1);
+    expect(pending()).toMatchObject({ tier: "immediate", status: "batched", lastError: null });
+  });
+
+  it("asks an unreachable model again only after a soon delay, and still runs the work as routine", async () => {
+    available = true;
+    failing = true;
+    source();
+    await engine.tick();
+    expect(pending()).toMatchObject({ tier: "routine", lastError: "awaiting_urgency" });
+    // The planner's first retry in the same tick failed too, so it now rests.
+    const first = asked;
+    await engine.tick();
+    await engine.tick();
+    expect(asked).toBe(first);
+    now += settings.knowledge.soonDelayMs;
+    await engine.tick();
+    expect(asked - first).toBe(1);
+    expect(pending()).toMatchObject({ tier: "routine", status: "pending" });
+    // Fail open: the routine deadline still runs it without a verdict.
+    now += settings.knowledge.routineDelayMs;
+    await engine.tick();
+    expect(pending()).toMatchObject({ tier: "routine", status: "batched", lastError: null });
+  });
 });

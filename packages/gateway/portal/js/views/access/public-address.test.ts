@@ -119,7 +119,10 @@ function hosted(agent: Agent, resource: string, relay: Relay, lead = resource, o
   return hostedClientAddress(agent, resource, relay, addressChoices(oauth(lead, others), relay));
 }
 
-const FUNNEL_PARAGRAPH = "Publish the gateway with Tailscale Funnel or use a domain of your own.";
+const FUNNEL_PARAGRAPH = "Publish the gateway with Tailscale on this computer or a domain of your own, in Settings, Connectivity.";
+/** The pages FUNNEL_PARAGRAPH links to, and where an unavailable relay is looked at. */
+const PUBLISH_ROUTES = ["/portal/settings/host-tailscale", "/portal/settings/own-address"];
+const RELAY_ROUTE = "/portal/settings/relay";
 
 describe("relayPublicAddress", () => {
   test("shows nothing of the relay when the gateway does not advertise it", () => {
@@ -169,10 +172,10 @@ describe("relayPublicAddress", () => {
 
 const READY: Relay = { state: "ready", url: RELAY };
 const UNAVAILABLE = [
-  ["off", "turned off", "Remote access is turned off.", "Turn it on in Settings, Account."],
-  ["checking", "being checked", "This gateway's Omnesis address is still being checked.", "This takes up to a minute. Follow it in Settings, Account."],
-  ["disconnected", "not connected", "Remote access is not connected right now.", "Check it in Settings, Account."],
-  ["unreachable", "not reachable", "This gateway's Omnesis address could not be reached.", "Check remote access in Settings, Account."],
+  ["off", "turned off", "Remote access is turned off.", "Turn it on in Settings, Connectivity."],
+  ["checking", "being checked", "This gateway's Omnesis address is still being checked.", "This takes up to a minute. Follow it in Settings, Connectivity."],
+  ["disconnected", "not connected", "Remote access is not connected right now.", "Check it in Settings, Connectivity."],
+  ["unreachable", "not reachable", "This gateway's Omnesis address could not be reached.", "Check the relay in Settings, Connectivity."],
 ] as const;
 const PRIVATE_CLAUDE =
   "This address is private. Claude connects from Anthropic's servers, so it cannot reach this gateway until you publish it.";
@@ -229,11 +232,8 @@ describe("hostedClientAddress", () => {
       expect(notice.usable).toBe(false);
       expect(notice.notice.warning).toBe(true);
       expect(paragraphs(notice)).toEqual([PRIVATE_CLAUDE, FUNNEL_PARAGRAPH]);
-      expect(links(notice)).toEqual([
-        "https://omnesis.dev/docs/connect#tailscale-funnel",
-        "https://omnesis.dev/docs/setup#public-domain",
-      ]);
-      expect(routes(notice)).toEqual([]);
+      expect(links(notice)).toEqual([]);
+      expect(routes(notice)).toEqual(PUBLISH_ROUTES);
     });
 
     test("an address the owner published is taken at its word", () => {
@@ -270,14 +270,14 @@ describe("hostedClientAddress", () => {
     expect(paragraphs(notice)).toEqual([
       PRIVATE_CLAUDE,
       FUNNEL_PARAGRAPH,
-      "Or connect this gateway to an Omnesis account in Settings, Account to give it a public address.",
+      "Or connect this gateway to an Omnesis account in Settings, Connectivity to give it a public address.",
     ]);
-    expect(routes(notice)).toEqual([ACCOUNT_SETTINGS_ROUTE]);
+    expect(routes(notice)).toEqual([...PUBLISH_ROUTES, ACCOUNT_SETTINGS_ROUTE]);
     expect(ACCOUNT_SETTINGS_ROUTE).toBe("/portal/settings/account");
     expect(paragraphs(hosted(CLAUDE, OWN, { state: "not-connected" }, OWN, []))).toEqual([
       REACHABLE_CLAUDE,
       FUNNEL_PARAGRAPH,
-      "Or connect this gateway to an Omnesis account in Settings, Account to give it a public address.",
+      "Or connect this gateway to an Omnesis account in Settings, Connectivity to give it a public address.",
     ]);
   });
 
@@ -307,7 +307,7 @@ describe("hostedClientAddress", () => {
           `${headline} Claude connects from Anthropic's servers, so it cannot reach this address right now.`,
           action,
         ]);
-        expect(routes(notice)).toEqual([ACCOUNT_SETTINGS_ROUTE]);
+        expect(routes(notice)).toEqual([RELAY_ROUTE]);
         expect(links(notice)).toEqual([]);
       }
     });
@@ -355,7 +355,7 @@ describe("hostedClientAddress", () => {
       const notice = hosted(CLAUDE, TAILNET, { state, url: RELAY });
       expect(notice.usable).toBe(false);
       expect(paragraphs(notice)).toEqual([PRIVATE_CLAUDE, `This gateway has an Omnesis address. ${headline} ${action}`]);
-      expect(routes(notice)).toEqual([ACCOUNT_SETTINGS_ROUTE]);
+      expect(routes(notice)).toEqual([RELAY_ROUTE]);
       expect(links(notice)).toEqual([]);
     });
 
@@ -363,7 +363,7 @@ describe("hostedClientAddress", () => {
       expect(paragraphs(hosted(CLAUDE, TAILNET, { state: "not-connected" }, TAILNET, [LOCAL]))).toEqual([
         PRIVATE_CLAUDE,
         FUNNEL_PARAGRAPH,
-        "Or connect this gateway to an Omnesis account in Settings, Account to give it a public address.",
+        "Or connect this gateway to an Omnesis account in Settings, Connectivity to give it a public address.",
       ]);
     });
 
@@ -497,16 +497,18 @@ describe("agentSetups with the relay", () => {
 });
 
 describe("hostedClientsHint", () => {
-  test("keeps the page's own sentence without the relay", () => {
-    expect(hostedClientsHint()).toBeNull();
-    expect(hostedClientsHint({ state: "none" })).toBeNull();
+  test("without the relay or the device, points at publishing the gateway in Connectivity", () => {
+    const hint = "ChatGPT and Claude apps need an Internet-reachable address: publish the gateway with Tailscale on this computer or a domain of your own.";
+    expect(text(hostedClientsHint()!)).toBe(hint);
+    expect(text(hostedClientsHint({ state: "none" })!)).toBe(hint);
+    expect(hostedClientsHint()!.flatMap((part) => (typeof part === "object" && "route" in part ? [part.route] : []))).toEqual(PUBLISH_ROUTES);
   });
 
   test.each([
     ["ready", "ChatGPT and Claude apps can use this gateway's Omnesis address."],
-    ["off", "ChatGPT and Claude apps can use this gateway's Omnesis address. Remote access is turned off. Turn it on in Settings, Account."],
-    ["checking", "ChatGPT and Claude apps can use this gateway's Omnesis address. This gateway's Omnesis address is still being checked. This takes up to a minute. Follow it in Settings, Account."],
-    ["not-connected", "ChatGPT and Claude apps need an Internet-reachable address. Connecting this gateway to an Omnesis account in Settings, Account gives it one."],
+    ["off", "ChatGPT and Claude apps can use this gateway's Omnesis address. Remote access is turned off. Turn it on in Settings, Connectivity."],
+    ["checking", "ChatGPT and Claude apps can use this gateway's Omnesis address. This gateway's Omnesis address is still being checked. This takes up to a minute. Follow it in Settings, Connectivity."],
+    ["not-connected", "ChatGPT and Claude apps need an Internet-reachable address. Connecting this gateway to an Omnesis account in Settings, Connectivity gives it one."],
   ])("%s", (state, expected) => {
     expect(text(hostedClientsHint({ state, url: RELAY })!)).toBe(expected);
   });
@@ -572,7 +574,7 @@ describe("the gateway's own Tailscale device", () => {
     expect(notice.notice.warning).toBe(true);
     expect(paragraphs(notice)).toEqual([
       "This address only answers on your Tailscale network. Claude connects from Anthropic's servers, so it cannot reach this gateway there.",
-      "Turn on its public address in Settings, Tailscale.",
+      "Turn on its public address in Settings, Connectivity.",
     ]);
     expect(routes(notice)).toEqual(["/portal/settings/tailscale"]);
     // An agent on the owner's own network uses it as it is.
@@ -581,7 +583,7 @@ describe("the gateway's own Tailscale device", () => {
     const lead = hostedClientAddress(CLAUDE, LOCAL, NO_RELAY_FOR_TEST, choices);
     expect(lead.usable).toBe(false);
     expect(paragraphs(lead).at(-1)).toBe(
-      "This gateway's Tailscale device has an address. This address only answers on your Tailscale network. Turn on its public address in Settings, Tailscale.",
+      "This gateway's Tailscale device has an address. This address only answers on your Tailscale network. Turn on its public address in Settings, Connectivity.",
     );
   });
 
@@ -590,7 +592,7 @@ describe("the gateway's own Tailscale device", () => {
     expect(choices.initial).toBe(OWN);
     expect(paragraphs(notice)).toEqual([
       "This address's public access is still opening. Claude connects from Anthropic's servers, so it cannot reach this gateway there.",
-      "This takes up to a minute. Follow it in Settings, Tailscale.",
+      "This takes up to a minute. Follow it in Settings, Connectivity.",
       "Or pick another address from the list above.",
     ]);
   });
@@ -599,7 +601,7 @@ describe("the gateway's own Tailscale device", () => {
     const { notice } = choose(LOCAL, [DEVICE], NO_RELAY_FOR_TEST, { state: "refused", url: DEVICE }, DEVICE);
     expect(paragraphs(notice)).toEqual([
       "Tailscale is not letting this address be public yet. Claude connects from Anthropic's servers, so it cannot reach this gateway there.",
-      "See what it needs in Settings, Tailscale.",
+      "See what it needs in Settings, Connectivity.",
     ]);
   });
 
@@ -608,8 +610,8 @@ describe("the gateway's own Tailscale device", () => {
     const choices = addressChoices(oauth(LOCAL, [DEVICE]), relay, OFF);
     const lead = hostedClientAddress(CLAUDE, LOCAL, relay, choices);
     expect(paragraphs(lead).slice(-2)).toEqual([
-      "This gateway's Tailscale device has an address. This address only answers on your Tailscale network. Turn on its public address in Settings, Tailscale.",
-      "Or connect this gateway to an Omnesis account in Settings, Account to give it a public address.",
+      "This gateway's Tailscale device has an address. This address only answers on your Tailscale network. Turn on its public address in Settings, Connectivity.",
+      "Or connect this gateway to an Omnesis account in Settings, Connectivity to give it a public address.",
     ]);
   });
 
@@ -628,12 +630,12 @@ describe("the gateway's own Tailscale device", () => {
   });
 
   test("a localhost-led page names the device's address to hosted apps, the relay's wording first", () => {
-    expect(hostedClientsHint(NO_RELAY_FOR_TEST, NONE)).toBeNull();
+    expect(text(hostedClientsHint(NO_RELAY_FOR_TEST, NONE)!)).toMatch(/^ChatGPT and Claude apps need an Internet-reachable address: publish/u);
     expect(text(hostedClientsHint(NO_RELAY_FOR_TEST, ON)!)).toBe(
       "ChatGPT and Claude apps can use this gateway's Tailscale public address.",
     );
     expect(text(hostedClientsHint(NO_RELAY_FOR_TEST, OFF)!)).toBe(
-      "ChatGPT and Claude apps need an Internet-reachable address. Turning on the public address in Settings, Tailscale gives this gateway one.",
+      "ChatGPT and Claude apps need an Internet-reachable address. Turning on the public address in Settings, Connectivity gives this gateway one.",
     );
     expect(text(hostedClientsHint({ state: "ready", url: RELAY }, OFF)!)).toBe(
       "ChatGPT and Claude apps can use this gateway's Omnesis address.",

@@ -131,6 +131,7 @@ import {
 } from "../brain/knowledge/review-selection.js";
 import {
   hasKnowledgeWorkFromExcludedSources,
+  hasRewrittenHistoryChangeWork,
   listStaleKnowledgeWork,
 } from "../brain/knowledge/work.js";
 import { readKnowledgeArcs } from "../brain/knowledge/engine-graph.js";
@@ -208,6 +209,8 @@ export const ioHandlers = {
   "io.knowledgeStaleWork": (db: Db, limit: number) => listStaleKnowledgeWork(db, limit),
   "io.knowledgeHasExcludedWork": (db: Db, excludedSources: string[]) =>
     hasKnowledgeWorkFromExcludedSources(db, excludedSources),
+  "io.knowledgeHasRewrittenHistoryWork": (db: Db, now: number, recentWindowMs: number) =>
+    hasRewrittenHistoryChangeWork(db, now, recentWindowMs),
   "io.knowledgeArcs": (db: Db, inputs: string[], bound: number) =>
     readKnowledgeArcs(db, inputs, bound),
   "io.knowledgeDiscoveryBacklog": (db: Db, options: KnowledgeDiscoveryBacklogOptions) =>

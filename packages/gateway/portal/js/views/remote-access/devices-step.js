@@ -1,17 +1,18 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-// The last step of the Remote access setup: one answer for every way a new
-// device can ask to join — signing in with the Omnesis account, or from the
-// owner's Tailscale network. The answer is applied at once to the account's
-// policy and to the Tailscale device's, each through its own route; letting
+// The Connectivity setup's step for new devices, also on its summary: the one
+// setting for every way a new device can ask to join — signing in with the
+// Omnesis account, or from the owner's Tailscale network. The account and
+// Tailscale pages leave it to Connectivity. The answer is
+// applied at once to the account's policy and to the Tailscale device's, each
+// through its own route; letting
 // devices join automatically asks for the owner's passkey where the gateway
 // requires it, as on the account page. Requests that wait are still decided
 // on Settings → Devices.
 
 import { html } from "htm/preact";
 import { useState } from "preact/hooks";
-import { navigate } from "../../lib/router.js";
 import { updateTailscaleSettings } from "../../lib/tailscale-api.js";
 import { relayAccountSetup, relayPhase } from "../relay.js";
 import {
@@ -21,12 +22,9 @@ import {
   policyChanges,
   policyChoices,
   policyDifference,
-  tailscaleKeptOff,
 } from "./model.js";
 import { BackButton, StepFrame, nextLabel } from "./step-frame.js";
 
-/** The Tailscale device's own page, where its pairing-code-only policy is changed. */
-const TAILSCALE_PAGE = "/portal/settings/tailscale";
 
 /** Where the relay's and the Tailscale device's own policies stand: what this step offers and shows. */
 export function devicePolicies(relay, tailscale) {
@@ -35,25 +33,31 @@ export function devicePolicies(relay, tailscale) {
   const tailscaleOn = tailscale?.state?.enabled === true;
   const relayPolicy = enrollment?.policy;
   const tailscalePolicy = tailscaleOn ? tailscale.state.joinPolicy : undefined;
-  // A device kept at pairing codes has no part in the shared answer.
-  const keptOff = tailscaleKeptOff({ relayLinked, tailscalePolicy });
   return {
     relayLinked,
     tailscaleOn,
-    tailscaleKeptOff: keptOff,
     relayPolicy,
     tailscalePolicy,
     held: Boolean(relay?.status?.incidentHold),
     stepUpRequired: relay?.status?.stepUpRequired === true,
-    ...currentPolicy({ relayPolicy, tailscalePolicy: keptOff ? undefined : tailscalePolicy }),
+    ...currentPolicy({ relayPolicy, tailscalePolicy }),
   };
 }
 
-export function DevicesStep({ flow, steps, headingRef, error, onStep, onNext, onBack, last, finishing, relay, tailscale }) {
+/**
+ * The one answer for new devices, changed in place: each choice is applied at
+ * once to the account's policy and the Tailscale device's, each through its
+ * own hook, which shows its own failure; a failure stops the rest. Step 3 and
+ * the summary both show it: short choices on one line, the one picked
+ * explained beneath. `onSaving` hears while a choice is being applied.
+ */
+export function DevicesChoice({ relay, tailscale, disabled: held = false, name = "remote-access-policy", onSaving }) {
   const policies = devicePolicies(relay, tailscale);
-  const [saving, setSaving] = useState("");
-  const applies = policies.relayLinked || policies.tailscaleOn;
-  // Each side is changed through its own hook, which shows its own failure; a failure stops the rest.
+  const [saving, setSavingState] = useState("");
+  const setSaving = (choice) => {
+    setSavingState(choice);
+    onSaving?.(Boolean(choice));
+  };
   const choose = async (choice) => {
     if (choice === policies.value) return;
     setSaving(choice);
@@ -72,59 +76,63 @@ export function DevicesStep({ flow, steps, headingRef, error, onStep, onNext, on
     }
   };
   const value = saving || policies.value;
-  const disabled = Boolean(saving) || finishing || policies.held;
+  const disabled = Boolean(saving) || held || policies.held;
+  return html`<fieldset class="remote-access-choices is-compact" aria-label="When a new device asks to join">
+    ${policies.held &&
+    html`<p class="remote-access-problem">
+      Every new device waits for your approval until the certificate problem on the Omnesis account page is dealt with.
+    </p>`}
+    ${policies.differ && !saving && html`<p class="remote-access-muted">${policyDifference(policies)}</p>`}
+    ${policyChoices(policies).map(
+      (choice) => html`<label
+        key=${choice}
+        class=${`remote-access-choice${value === choice ? " is-on" : ""}`}
+        title=${POLICY_CHOICES[choice].text}
+      >
+        <input
+          type="radio"
+          name=${name}
+          value=${choice}
+          checked=${value === choice}
+          disabled=${disabled}
+          onChange=${() => choose(choice)}
+        />
+        <span class="remote-access-option-text">
+          <strong>${POLICY_CHOICES[choice].short}</strong>
+          ${choice === "automatic" &&
+          policies.relayLinked &&
+          policies.stepUpRequired &&
+          policies.relayPolicy !== "automatic" &&
+          html`<small class="remote-access-step-up">Turns on with your passkey.</small>`}
+        </span>
+      </label>`,
+    )}
+    ${POLICY_CHOICES[value] && html`<p class="remote-access-choice-detail">${POLICY_CHOICES[value].text}</p>`}
+    ${relay?.error && html`<p class="remote-access-problem" role="alert">${relay.error}</p>`}
+    ${tailscale?.error && html`<p class="remote-access-problem" role="alert">${tailscale.error.message}</p>`}
+  </fieldset>`;
+}
+
+export function DevicesStep({ flow, steps, headingRef, error, onStep, onNext,
+  onCancel, onBack, last, finishing, relay, tailscale }) {
+  const policies = devicePolicies(relay, tailscale);
+  const [saving, setSaving] = useState(false);
+  const applies = policies.relayLinked || policies.tailscaleOn;
 
   return html`<${StepFrame}
     flow=${flow}
     steps=${steps}
     heading="When a new device asks to join, what should happen?"
-    blurb=${joinWays({ relayLinked: policies.relayLinked, tailscaleOn: policies.tailscaleOn && !policies.tailscaleKeptOff })}
+    blurb=${joinWays({ relayLinked: policies.relayLinked, tailscaleOn: policies.tailscaleOn })}
     headingRef=${headingRef}
     error=${error}
     onStep=${onStep}
+    onCancel=${onCancel}
     actions=${html`<${BackButton} onBack=${onBack} disabled=${finishing} />
-      <button type="button" class="btn-primary" disabled=${finishing || Boolean(saving)} onClick=${onNext}>
-        ${finishing ? "Finishing…" : nextLabel(flow, last)}
+      <button type="button" class="btn-primary" disabled=${finishing || saving} onClick=${onNext}>
+        ${finishing ? "Finishing…" : nextLabel(last)}
       </button>`}
   >
-    ${applies &&
-    html`<fieldset class="remote-access-choices" aria-label="When a new device asks to join">
-      ${policies.held &&
-      html`<p class="remote-access-problem">
-        Every new device waits for your approval until the certificate problem on Settings, Omnesis account is dealt with.
-      </p>`}
-      ${policies.differ && !saving && html`<p class="remote-access-muted">${policyDifference(policies)}</p>`}
-      ${policyChoices(policies).map(
-        (choice) => html`<label key=${choice} class=${`remote-access-choice${value === choice ? " is-on" : ""}`}>
-          <input
-            type="radio"
-            name="remote-access-policy"
-            value=${choice}
-            checked=${value === choice}
-            disabled=${disabled}
-            onChange=${() => choose(choice)}
-          />
-          <span class="remote-access-option-text">
-            <strong>${POLICY_CHOICES[choice].title}</strong>
-            <small>${POLICY_CHOICES[choice].text}</small>
-            ${choice === "automatic" &&
-            policies.relayLinked &&
-            policies.stepUpRequired &&
-            policies.relayPolicy !== "automatic" &&
-            html`<small class="remote-access-step-up">Turns on with your passkey.</small>`}
-          </span>
-        </label>`,
-      )}
-      ${policies.tailscaleKeptOff &&
-      html`<p class="remote-access-muted">
-        The gateway's Tailscale device still takes only pairing codes.${" "}
-        <a href=${TAILSCALE_PAGE} onClick=${(event) => {
-          event.preventDefault();
-          navigate(TAILSCALE_PAGE);
-        }}>Change that on its page</a>.
-      </p>`}
-      ${relay?.error && html`<p class="remote-access-problem" role="alert">${relay.error}</p>`}
-      ${tailscale?.error && html`<p class="remote-access-problem" role="alert">${tailscale.error.message}</p>`}
-    </fieldset>`}
+    ${applies && html`<${DevicesChoice} relay=${relay} tailscale=${tailscale} disabled=${finishing} onSaving=${setSaving} />`}
   <//>`;
 }

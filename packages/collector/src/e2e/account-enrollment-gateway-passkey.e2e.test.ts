@@ -177,7 +177,8 @@ describe.skipIf(!browserReady)("passkeys on the gateway's own page", () => {
     ]);
     await expectText(page, /(?:^| · )Confirmed on this gateway$/);
     await page.locator("#relay-setup-title").waitFor({ state: "detached", timeout: 20_000 });
-    await expectText(page, "Connected as");
+    // Set up: the checklist gives way to the account itself.
+    await expectText(page, "This gateway is linked to your Omnesis account.");
     expect(await page.getByText("Finish setting up").count()).toBe(0);
     await shot(page, "confirmed");
     // The list the CLI reads says the same.

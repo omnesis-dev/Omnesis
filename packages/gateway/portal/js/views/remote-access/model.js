@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-// The pure half of Settings → Remote access: which questions the guided setup
+// The pure half of Settings → Connectivity: which questions the guided setup
 // asks for the gateway's features, where it stands between page loads, and
 // how one answer about new devices maps onto the relay's and the Tailscale
 // device's own policies. Nothing here decides what is trusted: every answer is
@@ -14,18 +14,29 @@ export const STEP_LABELS = {
   account: "Your Omnesis account",
   connection: "Remote connection",
   devices: "New devices",
+  mcp: "MCP server",
 };
 
-/** The steps the setup walks, by the gateway's features: the account only with the relay. */
-export function setupSteps({ cloudRelay = false } = {}) {
-  return [...(cloudRelay ? ["account"] : []), "connection", "devices"];
+/**
+ * The steps the setup walks: the account only with the relay; new devices
+ * only while a device can ask to join (`devices`: an account is linked or the
+ * gateway's own Tailscale device is on); and the MCP server last, only while
+ * some address away from home exists to offer it on (`mcp`). A step with
+ * nothing to choose is left out.
+ */
+export function setupSteps({ cloudRelay = false, devices = false, mcp = false } = {}) {
+  return [
+    ...(cloudRelay ? ["account"] : []),
+    "connection",
+    ...(devices ? ["devices"] : []),
+    ...(mcp ? ["mcp"] : []),
+  ];
 }
 
 /** Where the setup's progress is kept while the page is away, in this browser tab only. */
 export const SETUP_STORAGE_KEY = "omnesis.remote-access.setup";
 
 const MODES = ["setup", "review"];
-const OWN_CHOICES = ["host", "url"];
 
 /**
  * The flow as last saved, or null. Only well-formed values for these `steps`
@@ -44,8 +55,9 @@ export function loadSetup(steps, storage = globalThis.sessionStorage) {
     mode: saved.mode,
     step: saved.step,
     resume: steps.includes(saved.resume) ? saved.resume : null,
-    self: saved.self === true,
-    own: OWN_CHOICES.includes(saved.own) ? saved.own : "url",
+    // Null until the owner ticks or unticks it: the option then shows whether it is set up.
+    host: typeof saved.host === "boolean" ? saved.host : null,
+    domain: saved.domain === true,
     url: typeof saved.url === "string" ? saved.url.slice(0, 2048) : "",
   };
 }
@@ -60,31 +72,24 @@ export function saveSetup(flow, storage = globalThis.sessionStorage) {
   }
 }
 
-/**
- * Where the page opens: a saved setup or review resumes; otherwise the first
- * visit (`setupCompletedAt` null) starts the setup and later visits show the
- * summary. A saved setup is dropped once the gateway says it was completed.
- */
-export function initialFlow(remote, saved, steps) {
-  const done = remote.setupCompletedAt !== null;
-  if (saved && (saved.mode === "review" || !done)) return saved;
-  return done ? { mode: "summary" } : startFlow("setup", steps, remote);
+/** Where the page opens: a saved setup or review resumes (a sign-in can leave the page mid-setup); otherwise the summary. */
+export function initialFlow(saved) {
+  return saved ?? { mode: "summary" };
 }
 
 /**
- * A setup or review from its first step. "Use my own setup" starts chosen when
- * the gateway already has a public address of the owner's, and opens on that
- * address; otherwise on Tailscale on this computer, where the gateway can look
- * for it.
+ * A setup or review from its first step. "My own domain or reverse proxy"
+ * starts open when the gateway already has a public address of the owner's;
+ * "Tailscale on this computer" opens when chosen, and then looks for it.
  */
 export function startFlow(mode, steps, remote) {
-  const configured = Boolean(remote.publicBaseUrl?.configured);
+  const configured = Boolean(remote.publicBaseUrl?.configured) && !remote.publicBaseUrl?.way;
   return {
     mode,
     step: steps[0],
     resume: null,
-    self: configured,
-    own: remote.features?.tailscaleEmbed && !configured ? "host" : "url",
+    host: null,
+    domain: configured,
     url: "",
   };
 }
@@ -105,15 +110,15 @@ export function accountState(status) {
 /** The answers to "When a new device asks to join", in the order they are offered. */
 export const POLICY_CHOICES = {
   ask: {
-    title: "Ask me first (recommended)",
+    short: "Ask me first",
     text: "You approve each one in Settings, Devices, or on your phone.",
   },
   automatic: {
-    title: "Let my own devices join automatically",
+    short: "My devices join automatically",
     text: "A device signed in as you joins at once, and you get a notification.",
   },
   code: {
-    title: "Only with a pairing code",
+    short: "Pairing code only",
     text: "New devices need a code from Settings, Devices.",
   },
 };
@@ -124,16 +129,6 @@ export const POLICY_CHOICES = {
  */
 export function policyChoices({ relayLinked }) {
   return relayLinked ? ["ask", "automatic"] : ["ask", "automatic", "code"];
-}
-
-/**
- * Whether the Tailscale device keeps taking only pairing codes whatever the
- * answer: it does while an account is linked and the device's policy is `off`,
- * since the answers then offer no pairing-code choice, and opening joins from
- * the Tailscale network is left to the device's own page.
- */
-export function tailscaleKeptOff({ relayLinked, tailscalePolicy }) {
-  return Boolean(relayLinked) && tailscalePolicy === "off";
 }
 
 /**
@@ -151,23 +146,15 @@ export function currentPolicy({ relayPolicy, tailscalePolicy }) {
 }
 
 /**
- * The changes one answer makes: the account's policy and the device's, where
- * each applies. A device kept at pairing codes (`tailscaleKeptOff`) is left as it is.
+ * The changes one answer makes: it is the one setting for every way in, so it
+ * sets the account's policy and the device's, wherever each applies.
  */
-export function policyChanges(choice, { relayLinked, tailscaleOn, tailscalePolicy }) {
+export function policyChanges(choice, { relayLinked, tailscaleOn }) {
   const changes = [];
   if (relayLinked && choice !== "code") changes.push({ target: "relay", policy: choice });
-  if (tailscaleOn && !tailscaleKeptOff({ relayLinked, tailscalePolicy }))
-    changes.push({ target: "tailscale", policy: choice === "code" ? "off" : choice });
+  if (tailscaleOn) changes.push({ target: "tailscale", policy: choice === "code" ? "off" : choice });
   return changes;
 }
-
-/** How the summary names one answer. */
-export const POLICY_SUMMARY = {
-  ask: "Ask me first",
-  automatic: "My own devices join automatically",
-  code: "Only with a pairing code",
-};
 
 /** How the devices step introduces its question, by the ways a new device can ask to join. */
 export function joinWays({ relayLinked, tailscaleOn }) {
@@ -194,12 +181,4 @@ export function policyDifference({ relayPolicy, tailscalePolicy }) {
 /** "a", "a and b", "a, b and c". */
 export function listSentence(items) {
   return items.length < 2 ? (items[0] ?? "") : `${items.slice(0, -1).join(", ")} and ${items.at(-1)}`;
-}
-
-/** The order the summary states: home first, then the order chosen when both can answer. */
-export function orderSentence({ tailscaleOn, relayOn, first }) {
-  if (!(tailscaleOn && relayOn)) return "Your home network comes first.";
-  return first === "relay"
-    ? "Home network first, then the relay, then Tailscale."
-    : "Home network first, then Tailscale, then the relay.";
 }

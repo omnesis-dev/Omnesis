@@ -127,7 +127,7 @@ describe("Access page with the gateway's Tailscale device", () => {
     await mount({ tailscaleEmbed: true });
     expect(tailscaleApi.getTailscale).toHaveBeenCalled();
     expect(relayApi.relayManagement).not.toHaveBeenCalled();
-    expect(addressOptions()).toEqual([`This machine only: ${LOCAL}`, `Tailscale public address: ${DEVICE}`]);
+    expect(addressOptions()).toEqual([`${LOCAL}`, `${DEVICE}`]);
     expect(addressSelect()?.value).toBe(DEVICE);
   });
 
@@ -135,9 +135,9 @@ describe("Access page with the gateway's Tailscale device", () => {
     api.getAccessOverview.mockResolvedValue(overview(OWN, {}, [RELAY, DEVICE]));
     await mount({ cloudRelay: true, tailscaleEmbed: true });
     expect(addressOptions()).toEqual([
-      `Your public address: ${OWN}`,
-      `Omnesis address (remote access): ${RELAY}`,
-      `Tailscale public address: ${DEVICE}`,
+      `${OWN}`,
+      `${RELAY}`,
+      `${DEVICE}`,
     ]);
     expect(addressSelect()?.value).toBe(OWN);
   });
@@ -146,7 +146,7 @@ describe("Access page with the gateway's Tailscale device", () => {
     tailscaleApi.getTailscale.mockResolvedValue(device("off"));
     api.getAccessOverview.mockResolvedValue(overview(LOCAL, { loopbackOnly: true }, [DEVICE]));
     await mount({ tailscaleEmbed: true });
-    expect(addressOptions()).toEqual([`This machine only: ${LOCAL}`, `Tailscale network only: ${DEVICE}`]);
+    expect(addressOptions()).toEqual([`${LOCAL}`, `${DEVICE}`]);
     expect(addressSelect()?.value).toBe(LOCAL);
   });
 });

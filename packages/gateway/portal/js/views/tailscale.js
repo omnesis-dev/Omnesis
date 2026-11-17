@@ -17,7 +17,6 @@ import { html } from "htm/preact";
 import { useEffect, useRef, useState } from "preact/hooks";
 import { ConfirmModal } from "../components/confirm-modal.js";
 import { QrCanvas } from "../components/qr-canvas.js";
-import { navigate } from "../lib/router.js";
 import {
   TAILSCALE_ADMIN,
   setTailscaleEnabled,
@@ -377,78 +376,6 @@ function PublicSection({ state, busy, run }) {
   </section>`;
 }
 
-const JOIN_CHOICES = [
-  {
-    value: "ask",
-    title: "Ask me first (recommended)",
-    text: "A collector on one of your own Tailscale devices asks to join; you approve it in Devices or on your phone.",
-  },
-  {
-    value: "automatic",
-    title: "Join automatically",
-    text: "Your own Tailscale devices join without asking. You get a notification each time.",
-  },
-  { value: "off", title: "Off", text: "Every device pairs with a pairing code." },
-];
-
-function JoinSection({ state, busy, run }) {
-  const [pending, setPending] = useState(null);
-  const policy = pending ?? state.joinPolicy;
-  const disabled = Boolean(busy) && busy !== "refresh";
-  const choose = async (value) => {
-    if (value === state.joinPolicy) return;
-    setPending(value);
-    await run("join-policy", (signal) => updateTailscaleSettings({ joinPolicy: value }, signal));
-    setPending(null);
-  };
-  const waiting = (state.joinRequests ?? []).length;
-  return html`<section class="tailscale-section" aria-labelledby="tailscale-join-title">
-    <h3 class="tailscale-section-title" id="tailscale-join-title">
-      Your devices joining through Tailscale
-    </h3>
-    ${waiting > 0 &&
-    html`<p class="tailscale-notice tailscale-waiting-devices" role="status">
-      ${waiting === 1 ? "A collector is waiting for your OK." : `${waiting} collectors are waiting for your OK.`}
-      ${" "}<a href=${DEVICES_ROUTE} onClick=${openDevices}>Review in Devices</a>
-    </p>`}
-    <p class="tailscale-section-text">
-      What happens when a collector on one of your Tailscale devices asks to join this gateway.
-      A request that waits for you appears in
-      ${" "}<a href=${DEVICES_ROUTE} onClick=${openDevices}>Settings, Devices</a>, with every other
-      device waiting for your OK.
-    </p>
-    <div class="tailscale-options" role="radiogroup" aria-labelledby="tailscale-join-title">
-      ${JOIN_CHOICES.map(
-        (choice) => html`<label
-          key=${choice.value}
-          class=${`tailscale-option ${policy === choice.value ? "tailscale-option-selected" : ""}`}
-        >
-          <input
-            type="radio"
-            name="tailscale-join-policy"
-            value=${choice.value}
-            checked=${policy === choice.value}
-            disabled=${disabled}
-            onChange=${() => choose(choice.value)}
-          />
-          <span>
-            <span class="tailscale-option-title">${choice.title}</span>
-            <span class="tailscale-option-text">${choice.text}</span>
-          </span>
-        </label>`,
-      )}
-    </div>
-  </section>`;
-}
-
-const DEVICES_ROUTE = "/portal/settings/devices";
-
-/** Settings → Devices, opened without reloading the page. */
-function openDevices(event) {
-  event.preventDefault();
-  navigate(DEVICES_ROUTE);
-}
-
 /** Client-side checks that only save a round trip; the gateway's rule is the authority. */
 function nameProblem(name) {
   if (!name) return "Enter a name.";
@@ -456,12 +383,24 @@ function nameProblem(name) {
   return "";
 }
 
+/** Whether this page was opened at the device's own Tailscale address, which signing out or turning off removes. */
+export function viewedThroughDevice(state, location = globalThis.location) {
+  const name = (state?.node?.dnsName ?? "").replace(/\.$/u, "").toLowerCase();
+  return Boolean(name) && location?.hostname?.toLowerCase() === name;
+}
+
+/** Said before a change that removes the address this page is open at. */
+const LEAVES_THIS_PAGE =
+  " You are using this page at that address, so it stops loading once you confirm: to keep using the portal, open it at another of this gateway's addresses, such as its address on your home network.";
+
 /** Turning the device off is confirmed first, in these words, wherever it is offered. */
-export const TURN_OFF_CONFIRM = {
-  title: "Turn off Tailscale?",
-  body: "Devices that use this gateway's Tailscale address lose access, and its public address for cloud agents closes. Your settings are kept, so you can turn it back on later.",
-  confirmLabel: "Turn off",
-};
+export function turnOffConfirm(state) {
+  return {
+    title: "Turn off Tailscale?",
+    body: `Devices that use this gateway's Tailscale address lose access, and its public address for your MCP server closes. Your settings are kept, so you can turn it back on later.${viewedThroughDevice(state) ? LEAVES_THIS_PAGE : ""}`,
+    confirmLabel: "Turn off",
+  };
+}
 
 /**
  * The device's own settings at the foot of the main card: its name on the
@@ -553,7 +492,7 @@ function DeviceSettings({ state, phase, busy, run }) {
     <${ConfirmModal}
       open=${confirming === "sign-out"}
       title="Sign out of Tailscale?"
-      body="This gateway leaves your Tailscale network until you sign in again. Devices that reach it at its Tailscale address lose access meanwhile, and its public address closes."
+      body=${`This gateway leaves your Tailscale network until you sign in again. Devices that reach it at its Tailscale address lose access meanwhile, and its public address closes.${viewedThroughDevice(state) ? LEAVES_THIS_PAGE : ""}`}
       confirmLabel="Sign out"
       destructive
       onConfirm=${confirm}
@@ -561,7 +500,7 @@ function DeviceSettings({ state, phase, busy, run }) {
     />
     <${ConfirmModal}
       open=${confirming === "disable"}
-      ...${TURN_OFF_CONFIRM}
+      ...${turnOffConfirm(state)}
       destructive
       onConfirm=${confirm}
       onCancel=${() => setConfirming("")}
@@ -603,6 +542,6 @@ export function TailscaleView() {
         <${DeviceSettings} state=${state} phase=${phase} busy=${busy} run=${run} />
       </div>
       ${connected && html`<${PublicSection} state=${state} busy=${busy} run=${run} />`}
-      ${connected && html`<${JoinSection} state=${state} busy=${busy} run=${run} />`}`}
+      `}
   </section>`;
 }
