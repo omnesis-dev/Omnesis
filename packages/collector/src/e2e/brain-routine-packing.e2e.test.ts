@@ -237,7 +237,10 @@ it("retries a source a failed pack left unfinished alone", async () => {
   expect(retry).toMatchObject({ status: "pending", failures: 1 });
   stubborn = false;
   await bench.clock.set(retry.dueAt);
-  const retryBatch = await waitFor("the isolated retry", () => latestWork(stubbornId)?.batchId);
+  const retryBatch = await waitFor(
+    "the isolated retry",
+    () => latestWork(stubbornId)?.batchId ?? null,
+  );
   expect(retryBatch).not.toBe(batch);
   expect(batchSize(retryBatch)).toBe(1);
   await allCompleted([stubbornId]);
