@@ -504,6 +504,14 @@ jobs:
           node-version: "24"
           cache: npm
 
+      - name: Select OpenSSL 3 for certificate fixtures
+        # macOS also supplies LibreSSL, whose x509 command lacks the fixture's extension-copy flag.
+        run: |
+          openssl_bin="$(brew --prefix openssl@3)/bin"
+          test -x "$openssl_bin/openssl"
+          "$openssl_bin/openssl" version
+          echo "$openssl_bin" >> "$GITHUB_PATH"
+
       - name: Install dependencies
         run: scripts/ci/npm-ci.sh
 
