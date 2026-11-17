@@ -12890,11 +12890,6 @@
       "reason": "Product sign-in status label, not a person."
     },
     {
-      "value": "Omnesis Account",
-      "paths": ["packages/collector/src/e2e/account-enrollment-connect.e2e.test.ts"],
-      "reason": "Product name in interface text asserted by a test, not a person's name."
-    },
-    {
       "value": "Omnesis Relay",
       "paths": ["packages/gateway/portal/js/views/relay.test.ts"],
       "reason": "Product name in interface text asserted by a test, not a person's name."
