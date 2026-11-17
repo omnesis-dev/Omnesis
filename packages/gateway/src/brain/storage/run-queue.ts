@@ -834,9 +834,12 @@ function claimOneCognitionRun(db: Db, opts: ClaimCognitionRunsOpts): ClaimedCogn
     THEN (SELECT CASE b.tier WHEN 'immediate' THEN 1.2 ELSE 1.3 END
       FROM knowledge_batches b WHERE ${BOUND_MAINTENANCE_BATCH_SQL})`
       : "";
+  // The day's morning brief is what the owner reads; urgent or soon
+  // maintenance (1.2/1.3) can be a backlog of thousands of runs, and must
+  // not hold it back for days. It still follows the reactions (0 and 1).
   const rankSql = CLAIM_KIND_RANK_SQL.replace(
     "ELSE 2",
-    `WHEN id=? THEN 1.1 WHEN id=? THEN 1.15 WHEN (${policyMarker}) OR (${INITIAL_ROOT_SQL})${eligibleOrganization}${eligibleRoot} THEN 2.1 ${tierRank} ELSE 2`,
+    `WHEN ${MORNING_BRIEF_RUN_SQL} THEN 1.05 WHEN id=? THEN 1.1 WHEN id=? THEN 1.15 WHEN (${policyMarker}) OR (${INITIAL_ROOT_SQL})${eligibleOrganization}${eligibleRoot} THEN 2.1 ${tierRank} ELSE 2`,
   );
   const rows = db
     .prepare<

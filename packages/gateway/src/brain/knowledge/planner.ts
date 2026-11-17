@@ -195,7 +195,12 @@ export interface UrgencyPolicy {
   routineDelayMs: number;
 }
 
-/** Missing decision evidence takes the sooner bounded tier; explicit user urgency wins. */
+/**
+ * Explicit user urgency wins. A missing or invalid verdict is no evidence of
+ * urgency: it takes the routine tier, never outranking judged work, and the
+ * planner asks again once the decision model answers (`awaiting_urgency`).
+ * Nothing is dropped; unjudged work still runs when its routine delay ends.
+ */
 export function scheduleKnowledgeChange(
   score: number | null,
   changedAt: number,
@@ -208,7 +213,7 @@ export function scheduleKnowledgeChange(
   ) {
     return { tier: "immediate", dueAt: changedAt };
   }
-  if (score === null || !Number.isFinite(score) || score >= policy.soonThreshold) {
+  if (score !== null && Number.isFinite(score) && score >= policy.soonThreshold) {
     return { tier: "soon", dueAt: changedAt + policy.soonDelayMs };
   }
   return { tier: "routine", dueAt: changedAt + policy.routineDelayMs };
