@@ -62,6 +62,26 @@ private final class TouchDeliveryHostView: UIView {
     override init(frame: CGRect) {
         super.init(frame: frame)
         isUserInteractionEnabled = false
+        // A system alert over the app makes it resign active, which cancels
+        // the touch in progress: the log says when that happened. Selector
+        // observers are dropped with the view.
+        let center = NotificationCenter.default
+        center.addObserver(
+            self, selector: #selector(willResignActive), name: UIApplication.willResignActiveNotification, object: nil
+        )
+        center.addObserver(
+            self, selector: #selector(didBecomeActive), name: UIApplication.didBecomeActiveNotification, object: nil
+        )
+    }
+
+    @objc
+    private func willResignActive() {
+        AutomationTouchLog.log.notice("app will resign active")
+    }
+
+    @objc
+    private func didBecomeActive() {
+        AutomationTouchLog.log.notice("app became active")
     }
 
     @available(*, unavailable)
@@ -83,19 +103,30 @@ private final class TouchDeliveryHostView: UIView {
 }
 
 /// Watches every touch on its window and never recognises anything: it
-/// cancels, delays and blocks no touch, and fails once the touch ends.
+/// cancels, delays and blocks no touch, and fails once the touch ends. It
+/// recognises alongside every other recogniser, so one that takes the touch
+/// does not stop it from seeing how the touch ended.
 ///
 /// For each touch it logs where it went down and the chain of views it hit,
 /// then how it ended and the state every recogniser attached to it reached.
 /// A tap that never shows up here did not reach the app's window. For one that
 /// hit the control while its action line is missing, the end line's recogniser
 /// states say which gesture took the touch or failed to act on it.
-private final class TouchDeliveryObserver: UIGestureRecognizer {
+private final class TouchDeliveryObserver: UIGestureRecognizer, UIGestureRecognizerDelegate {
     init() {
         super.init(target: nil, action: nil)
         cancelsTouchesInView = false
         delaysTouchesBegan = false
         delaysTouchesEnded = false
+        delegate = self
+    }
+
+    func gestureRecognizer(
+        _ gestureRecognizer: UIGestureRecognizer,
+        shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer
+    )
+        -> Bool {
+        true
     }
 
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent) {
