@@ -155,6 +155,22 @@ final class MobileJourneyUITests: XCTestCase {
         try ask()
     }
 
+    /// Verification only: the journey's steps before the fix, with the first
+    /// Send touch cancelled. Expected to fail.
+    func testUnfixedAskWithCancelledSend() throws {
+        app.launchEnvironment["DEMO_CANCEL_TOUCHES"] = "2"
+        try gateway.deleteAllConversations()
+        try launchPaired()
+        let composer = app.textFields["agentComposer"]
+        tap(composer, "the Ask composer")
+        composer.typeText(Self.agentQuestion)
+        tap(app.buttons["agentSendButton"], "the Send button")
+        XCTAssertTrue(
+            element(containing: Self.agentAnswer).waitForExistence(timeout: 60),
+            "the agent's answer did not mention \"\(Self.agentAnswer)\""
+        )
+    }
+
     /// Settings → the gateway goes away → the row says it is retrying, without
     /// asking to pair again → the gateway returns and the user comes back to the
     /// app → connected on the same pairing. The forwarder stands in for the

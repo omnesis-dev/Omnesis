@@ -190,7 +190,8 @@ print(json.dumps({"gatewayURL": os.environ["URL"], "token": os.environ["TOKEN"],
   local tests=()
   local expected=0
   if [[ -n "${OMNESIS_JOURNEY_ONLY:-}" ]]; then
-    tests=("-only-testing:OmnesisDemoUITests/$OMNESIS_JOURNEY_ONLY")
+    local only
+    for only in $OMNESIS_JOURNEY_ONLY; do tests+=("-only-testing:OmnesisDemoUITests/$only"); done
   else
     local class
     for class in "${classes[@]}"; do
@@ -219,12 +220,16 @@ print(json.dumps({"gatewayURL": os.environ["URL"], "token": os.environ["TOKEN"],
     -derivedDataPath "$IOS_DERIVED_DATA" \
     "${IOS_PACKAGE_FLAGS[@]}" \
     -resultBundlePath "$ARTIFACTS/ios-journeys.xcresult" \
-    -retry-tests-on-failure -test-iterations $((RETRIES + 1)) \
+    -test-iterations "${OMNESIS_JOURNEY_DIAG_ITERATIONS:-$((RETRIES + 1))}" \
     "${tests[@]}" 2>&1 | tee "$ARTIFACTS/xcodebuild.log" \
     | grep -E --line-buffered '^(Test Case|Test Suite|Testing|Executed|\*\*)|error:'
   status="${PIPESTATUS[0]}"
   set -e
   stop_recording
+  xcrun simctl spawn "$udid" log show --start "$log_start" --style compact \
+    --predicate 'subsystem == "dev.omnesis.ios" AND category == "touch"' \
+    >"$ARTIFACTS/app-touch-all.log" 2>&1 || true
+  rm -f "$ARTIFACTS/ios-journeys.mp4"
 
   if [[ "$status" != 0 ]]; then
     mkdir -p "$ARTIFACTS/failure-attachments"
