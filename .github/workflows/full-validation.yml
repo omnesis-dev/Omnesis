@@ -5691,6 +5691,7 @@ jobs:
           node --input-type=module - <<'JS'
           import fs from 'node:fs';import path from 'node:path';
           import {runWindowsCheckTasks} from './scripts/ci/windows-checks.mjs';
+          if(process.platform!=='win32'){
           const sourcePath='packages/agent/src/codex-app-server-backend.ts';
           const source=fs.readFileSync(sourcePath);
           const fixed='    for (const replay of held ?? []) markActivity("agent.codex.message", replay);';
@@ -5705,7 +5706,9 @@ jobs:
           const failed=cases.filter(test=>test.status==='failed');
           if(code!==1||active.length!==2||!failed.every(test=>test.fullName.includes('activity mark'))||!failed.some(test=>test.fullName.includes('early-events')&&test.failureMessages.some(message=>message.includes('agent.codex.message'))))throw Error('Original replay must reproduce the deterministic early-events activity failure');
           console.log('Original held-message replay fails the deterministic activity-mark assertion; source restored');
-          process.exitCode=await runWindowsCheckTasks([['scripts/run-check.mjs','unit',...["packages/agent/src/codex-app-server-backend.test.ts","packages/agent/src/codex-runtime-pool.test.ts","packages/agent/src/json-rpc-lines.test.ts","packages/cloud-relay/src/management-service.test.ts","packages/cloud-relay/src/tunnel-client.test.ts","scripts/ci/production-network.test.mjs","scripts/ci/relay-image-gate.test.mjs"]]]);
+          }
+          const files=process.platform==='win32'?["packages/cloud-relay/src/management-service.test.ts","packages/cloud-relay/src/tunnel-client.test.ts"]:["packages/agent/src/codex-app-server-backend.test.ts","packages/agent/src/codex-runtime-pool.test.ts","packages/agent/src/json-rpc-lines.test.ts","packages/cloud-relay/src/management-service.test.ts","packages/cloud-relay/src/tunnel-client.test.ts","scripts/ci/production-network.test.mjs","scripts/ci/relay-image-gate.test.mjs"];
+          process.exitCode=await runWindowsCheckTasks([['scripts/run-check.mjs','unit',...files]]);
           JS
         shell: bash
       - name: Require immutable candidate source
