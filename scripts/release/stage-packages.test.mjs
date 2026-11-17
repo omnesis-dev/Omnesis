@@ -237,6 +237,25 @@ describe("release package runtime assets", () => {
     }
   });
 
+  test("keeps the Apple read-denial test fixture out of the published provider", () => {
+    const temp = mkdtempSync(join(tmpdir(), "omnesis-apple-stage-test-"));
+    try {
+      const entry = listPublishablePackages().find(
+        ({ pkg }) => pkg.name === "@omnesis/provider-apple",
+      );
+      expect(entry).toBeDefined();
+      const staged = stagePackage(entry, join(temp, "staged"));
+      expect(existsSync(join(staged, "dist", "index.js"))).toBe(true);
+      for (const suffix of ["js", "d.ts", "js.map"]) {
+        expect(
+          existsSync(join(staged, "dist", "testing", `apple-read-denial.test.fixture.${suffix}`)),
+        ).toBe(false);
+      }
+    } finally {
+      rmSync(temp, { recursive: true, force: true });
+    }
+  });
+
   test("refuses to stage a package whose manifest points at a missing file", () => {
     // The guard itself, against a manifest that names something not staged.
     const temp = mkdtempSync(join(repoRoot, ".missing-export-test-"));

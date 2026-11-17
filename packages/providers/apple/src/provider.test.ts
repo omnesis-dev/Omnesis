@@ -9,7 +9,7 @@
  * database costs exactly the sources that read it, and nothing else.
  */
 
-import { setAppleFixtureReadable } from "./testing/apple-read-denial.js";
+import { setAppleFixtureReadable } from "./testing/apple-read-denial.test.fixture.js";
 import { existsSync, rmSync } from "node:fs";
 import { describe, expect, test, beforeEach, afterEach } from "vitest";
 import { makeAppleDbFixture, type AppleDbFixture } from "./testing/apple-db-fixtures.js";
