@@ -10,6 +10,7 @@ import { pathToFileURL } from "node:url";
 import { runInNewContext } from "node:vm";
 import { describe, expect, test } from "vitest";
 import { parse } from "yaml";
+import { gatewayBootBudgetMs } from "../lib/boot-budget.mjs";
 import { hermesTestInvocation } from "../test-hermes.mjs";
 import {
   FOCUSED_E2E_FILES,
@@ -427,6 +428,7 @@ test("portal gateway settings are environment values, including paths containing
     expect(result.status, result.stderr).toBe(0);
     const server = JSON.parse(result.stdout);
     expect(server.command).toBe("node --import tsx packages/gateway/src/index.ts");
+    expect(server.timeout).toBe(gatewayBootBudgetMs());
     expect(server.command).not.toContain(configDirectory);
     expect(server.env).toMatchObject({
       OMNESIS_CONFIG_DIR: configDirectory,

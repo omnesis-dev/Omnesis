@@ -17,6 +17,7 @@
     "scripts/record-demos.sh",
     "scripts/install-e2e/macos-variants-runtime.py",
     "scripts/install-e2e/services-health.mjs",
-    "packages/agent-integration/test/openclaw_gateway_probe.mjs"
+    "packages/agent-integration/test/openclaw_gateway_probe.mjs",
+    "playwright.config.ts"
   ]
 }
