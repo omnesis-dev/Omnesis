@@ -12,6 +12,7 @@ import type Database from "better-sqlite3";
 import type { AbsenceCascade } from "../data/repositories/AbsenceRepository.js";
 import type { SourceWriteEpochFence } from "../source-write-epoch-fence.js";
 import type { WriteGate } from "../write-gate.js";
+import type { ConfigRevisionFence } from "../config-store.js";
 
 export interface StorageRetentionPolicy {
   sourceId: string;
@@ -61,6 +62,7 @@ export interface StorageRetentionDeps {
   finishCascade: (cascade: AbsenceCascade) => Promise<void>;
   clock?: () => number;
   reads?: Pick<StorageReads, "storageRetentionCandidates">;
+  captureAuthority?: () => ConfigRevisionFence;
 }
 
 /** User approval covers one bounded, source-bound, revision-frozen batch. */
@@ -201,6 +203,9 @@ export class StorageRetentionService {
         before: plan.preview.before,
         candidates: plan.candidates,
         tombstone,
+        ...(assertAuthority && this.deps.captureAuthority
+          ? { authority: this.deps.captureAuthority() }
+          : {}),
       });
       if (result.stale)
         throw new StorageRetentionError(

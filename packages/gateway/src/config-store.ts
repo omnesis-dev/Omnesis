@@ -75,6 +75,12 @@ export interface ConfigStatus {
   lastError: ConfigLoadError | null;
 }
 
+/** Shared with a worker so queued operations can reject authority revoked by a later config edit. */
+export interface ConfigRevisionFence {
+  buffer: SharedArrayBuffer;
+  revision: number;
+}
+
 export type ConfigChangeListener = (
   before: OmnesisConfig,
   after: OmnesisConfig,
@@ -121,6 +127,9 @@ export class ConfigStore {
   private current: OmnesisConfig = {};
   private rawText = "";
   private version = 0;
+  private readonly revisionFence = new Int32Array(
+    new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT),
+  );
   private lastLoadedAt = 0;
   private lastWrittenAt: number | null = null;
   private lastError: ConfigLoadError | null = null;
@@ -163,6 +172,10 @@ export class ConfigStore {
     return this.rawText;
   }
 
+  captureRevisionFence(): ConfigRevisionFence {
+    return { buffer: this.revisionFence.buffer, revision: Atomics.load(this.revisionFence, 0) };
+  }
+
   getStatus(): ConfigStatus {
     return {
       ok: this.lastError === null,
@@ -203,6 +216,11 @@ export class ConfigStore {
   }
 
   // ── internals ────────────────────────────────────────────────────────────
+
+  private advanceVersion(): void {
+    this.version += 1;
+    Atomics.add(this.revisionFence, 0, 1);
+  }
 
   private restoreNewerSettings(release: string): void {
     const copy = newerSettingsPath(this.filePath);
@@ -277,7 +295,7 @@ export class ConfigStore {
     this.writeFileAtomic(serialized);
     this.current = after;
     this.rawText = serialized;
-    this.version += 1;
+    this.advanceVersion();
     this.lastLoadedAt = Date.now();
     this.lastWrittenAt = this.lastLoadedAt;
     this.lastError = null;
@@ -307,7 +325,7 @@ export class ConfigStore {
       if (ctx.source === "watcher") {
         const changed = diffConfigPaths(before, this.current);
         if (changed.length > 0) {
-          this.version += 1;
+          this.advanceVersion();
           this.notify(before, this.current, changed).catch((err) => {
             log.warn(`Change listener threw: ${err instanceof Error ? err.message : String(err)}`);
           });
@@ -414,7 +432,7 @@ export class ConfigStore {
     this.lastLoadedAt = Date.now();
     this.lastError = null;
     if (ctx.source === "boot" || changedPaths.length > 0) {
-      this.version += 1;
+      this.advanceVersion();
     }
     if (ctx.source === "watcher" && changedPaths.length > 0) {
       this.notify(before, after, changedPaths).catch((err) => {

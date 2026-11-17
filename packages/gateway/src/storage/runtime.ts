@@ -65,8 +65,7 @@ export class StorageRuntime {
       periodMs: 1_000,
       initialArgs: undefined,
       run: async () => {
-        const interval =
-          this.deps.configStore.get().gateway?.storage?.measurementIntervalMs ?? 30_000;
+        const interval = this.pressure.snapshot().policy.measurementIntervalMs;
         const last = this.pressure.snapshot().measuredAt;
         if (last === null || Date.now() - last >= interval) await this.pressure.refresh();
         this.publishPressure();

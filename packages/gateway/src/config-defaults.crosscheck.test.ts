@@ -22,6 +22,7 @@ import {
 import { CONFIG_DEFAULTS, configDefaultAt, configUnsetDescriptionAt } from "@omnesis/config";
 import { DEFAULT_MAX_TOOL_ITERATIONS } from "@omnesis/agent";
 import { DEFAULT_NOTE_AGENT_ENABLED } from "./brain/note-agent/runner.js";
+import { resolveStoragePolicy } from "./storage/pressure.js";
 import { resolveRuntimeSettings } from "./runtime-settings.js";
 import { IO_POOL_MAX, SEARCH_POOL_MAX } from "./worker-pool-sizing.js";
 import { resolveNearDupConfig } from "./near-dupes/config.js";
@@ -125,6 +126,18 @@ describe("CONFIG_DEFAULTS cross-check against live resolvers", () => {
     expect(defAt("/gateway/ingestYieldBatch")).toBe(rt.ingestYieldBatch);
     expect(defAt("/gateway/analyticsStreamRekeyMaxRows")).toBe(rt.analyticsStreamRekeyMaxRows);
     expect(defAt("/gateway/minFreeDiskMb")).toBe(rt.minFreeDiskMb);
+    const storage = resolveStoragePolicy();
+    for (const key of [
+      "maxDiskUsedPercent",
+      "resumeMarginPercent",
+      "measurementIntervalMs",
+      "measurementMaxAgeMs",
+    ] as const) {
+      expect(defAt(`/gateway/storage/${key}`)).toBe(storage[key]);
+    }
+    expect(defAt("/gateway/storage/maxBytes")).toBeUndefined();
+    expect(storage.maxBytes).toBeNull();
+    expect(defAt("/gateway/storage/retention")).toEqual([]);
     // The snapshot-absence thresholds are hand-copied between CONFIG_DEFAULTS
     // and the runtime DEFAULTS (config can't import from gateway); pin the
     // four together so a floor under an irreversible delete can't drift.

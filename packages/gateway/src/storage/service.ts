@@ -2,6 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { SourceId } from "@omnesis/types";
+import { applyMergePatch, type GatewayStoragePolicySettings } from "@omnesis/config";
 import {
   BadRequestError,
   ConflictError,
@@ -13,7 +14,6 @@ import { StorageRetentionError, type StorageRetentionService } from "./retention
 import type { ConfigStore } from "../config-store.js";
 import type { DiskUsageSnapshot } from "@omnesis/core/doctor";
 import type { StoragePressureManager } from "./pressure.js";
-import type { GatewayStoragePolicySettings } from "@omnesis/config";
 
 export interface StorageServiceDeps {
   pressure: StoragePressureManager;
@@ -67,12 +67,19 @@ export class StorageService {
         const sourceCreatedAt = this.deps.sourceCreatedAt(sourceId);
         if (maxAgeDays !== null && sourceCreatedAt === null)
           throw new NotFoundError("Source no longer exists");
-        const retention = (this.deps.configStore?.get().gateway?.storage?.retention ?? []).filter(
-          (policy) => policy.sourceId !== sourceId,
-        );
-        if (maxAgeDays !== null)
-          retention.push({ sourceId, maxAgeDays, sourceCreatedAt: sourceCreatedAt! });
-        await this.patch({ gateway: { storage: { retention } } });
+        if (!this.deps.configStore)
+          throw new ServiceUnavailableError("Storage settings are unavailable");
+        // Read-modify-write shares the config store's mutex with raw config
+        // edits as well as this service's targeted source-policy mutations.
+        const result = await this.deps.configStore.update((current) => {
+          const retention = (current.gateway?.storage?.retention ?? []).filter(
+            (policy) => policy.sourceId !== sourceId,
+          );
+          if (maxAgeDays !== null)
+            retention.push({ sourceId, maxAgeDays, sourceCreatedAt: sourceCreatedAt! });
+          return applyMergePatch(current, { gateway: { storage: { retention } } });
+        });
+        if (!result.ok) throw new ValidationError("Invalid storage settings", result.errors);
         return this.snapshot();
       }),
     );

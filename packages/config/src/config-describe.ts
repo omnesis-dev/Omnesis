@@ -106,6 +106,11 @@ interface OwnershipEntry extends ConfigOwnership {
 
 export const CONFIG_PATHS_OWNED_ELSEWHERE: readonly OwnershipEntry[] = [
   {
+    path: ["gateway", "storage", "retention"],
+    page: "Storage",
+    reason: "Source retention policies are previewed and managed on the Storage tab.",
+  },
+  {
     path: ["inference"],
     page: "Models",
     reason: "Model selection and inference backends are managed on the Models tab.",
@@ -308,8 +313,8 @@ function leaf(inner: ZodAny): Pick<ConfigLeafNode, "kind" | "constraints" | "opt
     const values = def.values ?? Object.values(def.entries ?? {});
     return { kind: "enum", options: values.map(String) };
   }
-  // Every array in the schema is `z.array(z.string())`, rendered as a
-  // one-per-line textarea. A non-string element array would need its own kind.
+  // Rendered arrays contain strings and use a one-per-line textarea.
+  // Object arrays belong to a dedicated owned page and are never rendered here.
   if (inner instanceof z.ZodArray) return { kind: "stringArray" };
   // Literals and unions only occur under `inference.*` (the assignment-slot
   // `string | null` shape), which is an owned subtree and never walked to a

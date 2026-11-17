@@ -235,3 +235,40 @@ test("an incarnation-bound retention policy never filters a replacement or absen
   expect(response.status).toBe(200);
   expect(docCount()).toBe(1);
 });
+
+test.each(["/documents", "/documents/with-cursor"])(
+  "rolling retention at %s preserves unknown and offset dates",
+  async (path) => {
+    app = createServer(db, dbPath, {
+      config: { gateway: { storage: { retention: [{ sourceId: "gmail", maxAgeDays: 30 }] } } },
+    });
+    const old = JSON.parse(ingestBody("canonical-old")).documents[0];
+    const documents = [
+      { ...old, sourceCreatedAt: "2000-01-01T00:00:00Z" },
+      { ...old, externalId: "invalid-old", sourceCreatedAt: "2000-unknown" },
+      { ...old, externalId: "offset-old", sourceCreatedAt: "2000-01-01T00:00:00+02:00" },
+      { ...old, externalId: "recent", sourceCreatedAt: new Date().toISOString() },
+    ];
+    const page = path.endsWith("with-cursor")
+      ? { providerId: "google", sourceId: "gmail", documents, cursor: { page: 1 }, hasMore: false }
+      : { documents };
+    const response = await req(path, { method: "POST", body: JSON.stringify(page) });
+    expect(response.status).toBe(200);
+    expect(db.prepare("SELECT external_id FROM documents ORDER BY external_id").all()).toEqual([
+      { external_id: "invalid-old" },
+      { external_id: "offset-old" },
+      { external_id: "recent" },
+    ]);
+  },
+);
+
+test("legacy import maxAge retains its existing comparison for ambiguous dates", async () => {
+  app = createServer(db, dbPath, { config: { dataRetention: { maxAge: "1y" } } });
+  const old = JSON.parse(ingestBody("legacy-ambiguous")).documents[0];
+  const response = await req("/documents", {
+    method: "POST",
+    body: JSON.stringify({ documents: [{ ...old, sourceCreatedAt: "2000-unknown" }] }),
+  });
+  expect(response.status).toBe(200);
+  expect(docCount()).toBe(0);
+});

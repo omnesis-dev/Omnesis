@@ -47,7 +47,9 @@ Capacity limits only pause growth. Deletion requires a confirmed, expiring,
 single-use preview of exact document revisions, or an explicit per-source
 rolling-retention policy. The writer revalidates every approved revision before
 any deletion and commits a durable derived-store cleanup obligation with it.
-Index cleanup uses the owning worker's bounded document-purge protocol; an
+Rolling batches also carry a shared config-revision fence to the writer, so
+a raw config edit can revoke work still waiting in its queue. Index cleanup
+uses the owning worker's bounded document-purge protocol; an
 incomplete purge must not acknowledge the obligation. Privacy invalidation and
 reclamation remain runnable while growth is paused.
 

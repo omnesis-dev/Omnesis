@@ -10,7 +10,7 @@ import {
   validateDocumentTemporalProjectionContracts,
 } from "@omnesis/core";
 import { SourceId, sourceTypeOf, type DocumentInput, type Scope } from "@omnesis/types";
-import { retentionCutoff } from "../../storage/retention-policy.js";
+import { isBeforeRetentionCutoff, retentionCutoff } from "../../storage/retention-policy.js";
 import { getInitialSourceInventory } from "../../data/repositories/SourceInventoryRepository.js";
 import { isKnowledgeDocumentReadable } from "../../brain/knowledge/retrieval-fence.js";
 import {
@@ -332,28 +332,35 @@ export class DocumentService {
    */
   private applyMaxAgeCutoff(documents: readonly DocumentInput[]): DocumentInput[] {
     const liveConfig = this.deps.configStore?.get() ?? this.deps.config ?? {};
-    const cutoffCache = new Map<string, string | null>();
+    const cutoffCache = new Map<string, { maxAge: string | null; retention: string | null }>();
+    const now = Date.now();
     const before = documents.length;
     const filtered = documents.filter((d) => {
       if (d.metadata?.documentType === "contact") return true;
-      let cutoff = cutoffCache.get(d.sourceId);
-      if (cutoff === undefined) {
-        cutoff = getSourceCutoffDate(liveConfig, d.sourceId);
+      let cutoffs = cutoffCache.get(d.sourceId);
+      if (cutoffs === undefined) {
         const retention = liveConfig.gateway?.storage?.retention?.find(
           (policy) => policy.sourceId === d.sourceId,
         );
         const matchesIncarnation =
           retention?.sourceCreatedAt === undefined ||
           retention.sourceCreatedAt === getSource(this.deps.db, SourceId(d.sourceId))?.createdAt;
-        const retainedSince = retentionCutoff(
-          matchesIncarnation && retention ? [retention] : undefined,
-          d.sourceId,
-        );
-        if (retainedSince !== null && (cutoff === null || retainedSince > cutoff))
-          cutoff = retainedSince;
-        cutoffCache.set(d.sourceId, cutoff);
+        cutoffs = {
+          maxAge: getSourceCutoffDate(liveConfig, d.sourceId),
+          retention: retentionCutoff(
+            matchesIncarnation && retention ? [retention] : undefined,
+            d.sourceId,
+            now,
+          ),
+        };
+        cutoffCache.set(d.sourceId, cutoffs);
       }
-      return cutoff === null || d.sourceCreatedAt >= cutoff;
+      // Preserve the established import maxAge comparison. Rolling retention
+      // is independent and only excludes documents whose age is trustworthy.
+      if (cutoffs.maxAge !== null && d.sourceCreatedAt < cutoffs.maxAge) return false;
+      return (
+        cutoffs.retention === null || !isBeforeRetentionCutoff(d.sourceCreatedAt, cutoffs.retention)
+      );
     });
     const dropped = before - filtered.length;
     if (dropped > 0) {

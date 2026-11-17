@@ -9,6 +9,7 @@ export interface StoragePolicy {
   maxDiskUsedPercent: number;
   resumeMarginPercent: number;
   measurementMaxAgeMs: number;
+  measurementIntervalMs: number;
   minFreeBytes: number;
 }
 
@@ -21,6 +22,7 @@ export function resolveStoragePolicy(
     maxDiskUsedPercent: settings?.maxDiskUsedPercent ?? 95,
     resumeMarginPercent: settings?.resumeMarginPercent ?? 2,
     measurementMaxAgeMs: settings?.measurementMaxAgeMs ?? 120_000,
+    measurementIntervalMs: settings?.measurementIntervalMs ?? 30_000,
     minFreeBytes: minFreeDiskMb * 1024 * 1024,
   };
 }

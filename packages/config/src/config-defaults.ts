@@ -259,6 +259,13 @@ export const CONFIG_DEFAULTS = {
       cacheSizeBytes: 64 * 1024 * 1024,
     },
     minFreeDiskMb: 500,
+    storage: {
+      maxDiskUsedPercent: 95,
+      resumeMarginPercent: 2,
+      measurementIntervalMs: 30_000,
+      measurementMaxAgeMs: 120_000,
+      retention: [],
+    },
     // Mirrors DEFAULTS.snapshotAbsence* in the gateway's runtime-settings
     // (config can't import from gateway); the cross-check test pins the two
     // together.
@@ -540,6 +547,7 @@ export const NO_STATIC_DEFAULT_PATHS: readonly string[] = [
   "/dataRetention/maxAge", // globally optional; no fallback
   "/activityRetention/maxAge", // globally optional; absent keeps activity forever
   "/brain/transcriptRetention", // legacy per-cognition override; absent inherits activity retention
+  "/gateway/storage/maxBytes", // unset/null = no gateway byte quota; disk safeguards still apply
   "/gateway/ioConcurrency", // machine-dependent: clamp(memory budget / 2.5 GiB, 2, 6)
   "/gateway/searchWorker/concurrency", // machine-dependent: clamp(memory budget / 5 GiB, 1, 3)
   // machine-dependent: max(1, min(max(2, floor(cores / 2) - 2), memory budget / 4 GiB))
@@ -564,6 +572,7 @@ export const NO_STATIC_DEFAULT_PATHS: readonly string[] = [
  * inherited, automatic, or simply not configured.
  */
 const CONFIG_UNSET_DESCRIPTIONS: Readonly<Record<string, string>> = {
+  "/gateway/storage/maxBytes": "No gateway size limit; disk capacity safeguards still apply.",
   "/self/name": "No display name is configured.",
   "/self/emails": "No self email addresses are configured.",
   "/self/phones": "No self phone numbers are configured.",

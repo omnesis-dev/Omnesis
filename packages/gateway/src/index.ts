@@ -323,7 +323,7 @@ import {
 } from "./brain/storage/engine-state.js";
 import { HostedProcessLauncher, setProcessLauncher } from "./process-launcher/index.js";
 import { chatRoleReadiness, type ChatRoleReadinessDeps } from "./models/chat-role-readiness.js";
-import type { StoragePressureManager } from "./storage/pressure.js";
+import { resolveStoragePolicy, type StoragePressureManager } from "./storage/pressure.js";
 import type { WatchDefinition } from "@omnesis/watch";
 import type { SourceDocCount } from "./search/source-isf-prior.js";
 import type { WriteGate } from "./write-gate.js";
@@ -1797,7 +1797,16 @@ const indexerLifecycle: IndexerLifecycle = new IndexerLifecycle({
   backgroundJobs,
   runtime,
   initialProbe,
-  getStoragePressure: () => storagePressure.snapshot(),
+  getStoragePressure: () =>
+    storagePressureHandle?.snapshot() ?? {
+      state: "unknown",
+      reasons: ["measurement"],
+      measuredAt: null,
+      usageBytes: null,
+      volumes: [],
+      policy: resolveStoragePolicy(configStore.get().gateway?.storage, runtime.minFreeDiskMb),
+      validUntil: 0,
+    },
   log,
   gatewayDbPath: DB_PATH,
   gatewayDbKeyHex: storageEncryption.mainDbKeyHex,
@@ -3550,6 +3559,7 @@ const transcriptionVocabularyJob = periodicJob(transcriptionVocabularyTask, {
 
 const backfillBundle = createBackfillTasks(
   {
+    canGrow: storageCanGrow,
     writeGate,
     ioGate,
     cpuGate,

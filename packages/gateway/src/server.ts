@@ -4,7 +4,6 @@
 import { Hono, type MiddlewareHandler } from "hono";
 import { HTTPException } from "hono/http-exception";
 
-
 import { strictRoute } from "./http/scope.js";
 import { httpActivityName, withActivity } from "./observability/main-activity.js";
 type Db = Database.Database;
@@ -1427,6 +1426,9 @@ export function createServer(
       writeGate: w,
       sourceWriteEpochFence,
       reads: opts.storageReads,
+      captureAuthority: opts.configStore
+        ? () => opts.configStore!.captureRevisionFence()
+        : undefined,
       finishCascade: async (cascade) => {
         await finishDocumentCascade(cascade, {
           deleteIndex: indexWriteGate

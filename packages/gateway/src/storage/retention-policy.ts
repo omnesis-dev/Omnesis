@@ -10,3 +10,15 @@ export function retentionCutoff(
   const policy = policies?.find((item) => item.sourceId === sourceId);
   return policy ? new Date(now - policy.maxAgeDays * 86_400_000).toISOString() : null;
 }
+
+/** Destructive age policies preserve ambiguous encodings until a provider normalizes them. */
+export function isCanonicalRetentionDate(value: string): boolean {
+  const timestamp = Date.parse(value);
+  if (!Number.isFinite(timestamp)) return false;
+  const normalized = new Date(timestamp).toISOString();
+  return value === normalized || value === normalized.replace(".000Z", "Z");
+}
+
+export function isBeforeRetentionCutoff(value: string, cutoff: string): boolean {
+  return isCanonicalRetentionDate(value) && Date.parse(value) < Date.parse(cutoff);
+}

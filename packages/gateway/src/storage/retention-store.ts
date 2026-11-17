@@ -9,7 +9,9 @@ import {
   enqueueDocumentCascade,
   type AbsenceCascade,
 } from "../data/repositories/AbsenceRepository.js";
+import { isCanonicalRetentionDate } from "./retention-policy.js";
 import type Database from "better-sqlite3";
+import type { ConfigRevisionFence } from "../config-store.js";
 
 export const STORAGE_RETENTION_BATCH_SIZE = 100;
 
@@ -34,20 +36,14 @@ export interface StorageRetentionBatch {
   before: string;
   candidates: StorageRetentionCandidate[];
   tombstone: boolean;
+  /** Rolling cleanup carries live config authority across the writer queue. */
+  authority?: ConfigRevisionFence;
 }
 
 export interface StorageRetentionDeleteResult {
   stale: boolean;
   deleted: number;
   cascade?: AbsenceCascade;
-}
-
-/** Destructive cleanup keeps legacy/ambiguous date encodings until normalized. */
-function isCanonicalUtcDate(value: string): boolean {
-  const timestamp = Date.parse(value);
-  if (!Number.isFinite(timestamp)) return false;
-  const normalized = new Date(timestamp).toISOString();
-  return value === normalized || value === normalized.replace(".000Z", "Z");
 }
 
 /**
@@ -64,6 +60,12 @@ export function deleteStorageRetentionBatch(
     throw new Error("Storage retention batch exceeds its bound");
   }
   return db.transaction(() => {
+    if (
+      batch.authority &&
+      Atomics.load(new Int32Array(batch.authority.buffer), 0) !== batch.authority.revision
+    ) {
+      return { stale: true, deleted: 0 };
+    }
     const read = db.prepare<[string], StorageRetentionCandidate & { document_type: string | null }>(
       `SELECT id, provider_id, source_id, stream_id, external_id, content_hash,
               updated_at, source_updated_at, source_created_at, title, metadata,
@@ -78,7 +80,7 @@ export function deleteStorageRetentionBatch(
         ids.has(current.id) ||
         current.source_id !== batch.sourceId ||
         current.document_type === "contact" ||
-        !isCanonicalUtcDate(current.source_created_at) ||
+        !isCanonicalRetentionDate(current.source_created_at) ||
         Date.parse(current.source_created_at) >= Date.parse(batch.before) ||
         current.provider_id !== expected.provider_id ||
         current.stream_id !== expected.stream_id ||
