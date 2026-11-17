@@ -22,26 +22,29 @@ jobs:
       # Repo owner and bot accounts — never asked to sign.
       BASE_ALLOWLIST: adrienconrath,*[bot]
     steps:
-      # The default branch's script only, never the pull request's code: this
-      # job runs with write permissions.
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ github.event.repository.default_branch }}
-          persist-credentials: false
-          sparse-checkout: scripts/ci/cla-allowlist.mjs
-          sparse-checkout-cone-mode: false
-
       # A signed author's coding-agent commits (Claude Code commits as `claude`)
-      # count as the author's own; every other committer still signs.
+      # count as the author's own; every other committer still signs. The script
+      # comes from the default branch, never from the pull request: this job has
+      # write permissions, so it checks nothing out.
       - name: Vouch for a signed author's coding-agent commits
         id: allowlist
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPOSITORY: ${{ github.repository }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
           PR_NUMBER: ${{ github.event.pull_request.number || github.event.issue.number }}
           SIGNATURES_PATH: signatures/cla.json
           SIGNATURES_BRANCH: cla-signatures
-        run: node scripts/ci/cla-allowlist.mjs >> "$GITHUB_OUTPUT"
+        run: |
+          script="$RUNNER_TEMP/cla-allowlist.mjs"
+          if gh api -H "Accept: application/vnd.github.raw+json" \
+            "repos/$REPOSITORY/contents/scripts/ci/cla-allowlist.mjs?ref=$DEFAULT_BRANCH" >"$script"; then
+            node "$script" >>"$GITHUB_OUTPUT"
+          else
+            echo "::warning::Coding-agent commits not vouched for: could not fetch the script"
+            echo "allowlist=$BASE_ALLOWLIST" >>"$GITHUB_OUTPUT"
+          fi
 
       - name: CLA Assistant
         uses: contributor-assistant/github-action@ca4a40a7d1004f18d9960b404b97e5f30a505a08 # v2.6.1
