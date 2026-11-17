@@ -13,6 +13,7 @@ import {
   note,
   preserveCurrentOwner,
   sourceInterpretations,
+  urgencyOnlyDecisionPolicy,
 } from "./brain-bench/index.js";
 import { startVerdictServer, type VerdictServer } from "./brain-bench/verdict-servers.js";
 
@@ -105,10 +106,13 @@ it("bounds overlapping remote verifications and closes timed-out calls before re
   if (!address || typeof address === "string")
     throw new Error("Fixture server address unavailable");
   bench = await BrainBench.start({
+    // Judged soon, each source keeps its own batch: routine changes would
+    // share one run, and the two verifications would no longer overlap.
+    decision: { policy: urgencyOnlyDecisionPolicy() },
     experimental: true,
     brain: {
       workerConcurrency: 2,
-      knowledge: { soonDelay: "1s", routineDelay: "1s", maxSeedsPerBatch: 1, maxFrontierItems: 1 },
+      knowledge: { soonDelay: "1s", routineDelay: "1s", maxFrontierItems: 1 },
     },
     extraInference: {
       backends: { cancellation: { type: "http", url: `http://127.0.0.1:${address.port}` } },
