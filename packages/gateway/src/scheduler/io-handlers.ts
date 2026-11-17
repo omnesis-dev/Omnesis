@@ -36,6 +36,7 @@ import {
   type PersonSortBy,
 } from "../data/repositories/PersonRepository.js";
 import { getPersonDocuments } from "../data/repositories/DocumentPeopleRepository.js";
+import { listMergeRuleGroups, type MergeRuleGroupsOptions } from "../domain/merge/rule-groups.js";
 import { assemblePersonLookup } from "../domain/person-lookup.js";
 import { countMessagesByPerson, type MessageCountsQuery } from "../domain/message-counts.js";
 import { likeSearchDocuments } from "../search/like-search.js";
@@ -288,6 +289,11 @@ export const ioHandlers = {
   // serializable output.
   "io.mergeCandidateVisibility": (db: Db, opts: { status: "pending" | "accepted" | "denied" }) =>
     explainMergeCandidateVisibility(db, opts),
+
+  // The People → Rules page (GET /people/merge-rule-groups). Grouping resolves
+  // the winner of every active rule and enriching a page reads its people's
+  // documents, so the read grows with the store and stays off the main thread.
+  "io.mergeRuleGroups": (db: Db, opts: MergeRuleGroupsOptions) => listMergeRuleGroups(db, opts),
 
   // Legacy LIKE search (GET /documents/search) — a leading-wildcard
   // `content LIKE '%q%'` full-table scan. Low-traffic legacy path, moved off

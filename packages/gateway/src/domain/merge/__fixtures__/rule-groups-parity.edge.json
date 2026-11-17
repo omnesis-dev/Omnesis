@@ -1,0 +1,1540 @@
+{
+ "{\"limit\":1}": [
+  {
+   "keys": [
+    "p-sarah"
+   ],
+   "hasMore": true,
+   "last": {
+    "latest": "2026-01-21T00:00:00.000Z",
+    "key": "p-sarah"
+   }
+  },
+  {
+   "keys": [
+    "email=ghost@example.com"
+   ],
+   "hasMore": true,
+   "last": {
+    "latest": "2026-01-20T00:00:00.000Z",
+    "key": "email=ghost@example.com"
+   }
+  },
+  {
+   "keys": [
+    "p-root"
+   ],
+   "hasMore": true,
+   "last": {
+    "latest": "2026-01-19T00:00:00.000Z",
+    "key": "p-root"
+   }
+  },
+  {
+   "keys": [
+    "p-percent"
+   ],
+   "hasMore": true,
+   "last": {
+    "latest": "2026-01-16T00:00:00.000Z",
+    "key": "p-percent"
+   }
+  },
+  {
+   "keys": [
+    "p-back"
+   ],
+   "hasMore": true,
+   "last": {
+    "latest": "2026-01-15T00:00:00.000Z",
+    "key": "p-back"
+   }
+  },
+  {
+   "keys": [
+    "p-tie-b"
+   ],
+   "hasMore": true,
+   "last": {
+    "latest": "2026-01-13T00:00:00.000Z",
+    "key": "p-tie-b"
+   }
+  },
+  {
+   "keys": [
+    "p-tie-a"
+   ],
+   "hasMore": false,
+   "last": {
+    "latest": "2026-01-13T00:00:00.000Z",
+    "key": "p-tie-a"
+   }
+  }
+ ],
+ "{\"limit\":3}": [
+  {
+   "keys": [
+    "p-sarah",
+    "email=ghost@example.com",
+    "p-root"
+   ],
+   "hasMore": true,
+   "last": {
+    "latest": "2026-01-19T00:00:00.000Z",
+    "key": "p-root"
+   }
+  },
+  {
+   "keys": [
+    "p-percent",
+    "p-back",
+    "p-tie-b"
+   ],
+   "hasMore": true,
+   "last": {
+    "latest": "2026-01-13T00:00:00.000Z",
+    "key": "p-tie-b"
+   }
+  },
+  {
+   "keys": [
+    "p-tie-a"
+   ],
+   "hasMore": false,
+   "last": {
+    "latest": "2026-01-13T00:00:00.000Z",
+    "key": "p-tie-a"
+   }
+  }
+ ],
+ "{\"limit\":50}": [
+  {
+   "items": [
+    {
+     "key": "p-sarah",
+     "person": {
+      "id": "p-sarah-2",
+      "canonicalName": "Sarah mendez",
+      "interactionScoreRecent": 0,
+      "aliases": [
+       {
+        "aliasType": "name",
+        "alias": "SARAH MENDEZ"
+       }
+      ],
+      "sourceIds": [
+       "notes-fixture"
+      ]
+     },
+     "name": "Sarah mendez",
+     "canonicalEmail": null,
+     "sourceIds": [
+      "notes-fixture"
+     ],
+     "kinds": [
+      "user"
+     ],
+     "ruleIds": [
+      "r-name"
+     ],
+     "groupIds": [],
+     "latest": "2026-01-21T00:00:00.000Z",
+     "sources": [
+      {
+       "ruleId": "r-name",
+       "groupId": null,
+       "alias": "s.mendez@example.org",
+       "aliasType": "email",
+       "name": "S. Mendez",
+       "personId": "p-sarah-old",
+       "sourceIds": [],
+       "when": "2026-01-21T00:00:00.000Z",
+       "reason": null
+      }
+     ]
+    },
+    {
+     "key": "email=ghost@example.com",
+     "person": null,
+     "name": "email=ghost@example.com",
+     "canonicalEmail": "ghost@example.com",
+     "sourceIds": [],
+     "kinds": [
+      "system",
+      "user"
+     ],
+     "ruleIds": [
+      "r-orphan",
+      "r-orphan-2"
+     ],
+     "groupIds": [],
+     "latest": "2026-01-20T00:00:00.000Z",
+     "sources": [
+      {
+       "ruleId": "r-orphan",
+       "groupId": null,
+       "alias": "nobody@example.com",
+       "aliasType": "email",
+       "name": null,
+       "personId": null,
+       "sourceIds": [],
+       "when": "2026-01-20T00:00:00.000Z",
+       "reason": null
+      },
+      {
+       "ruleId": "r-orphan-2",
+       "groupId": null,
+       "alias": "+15550100150",
+       "aliasType": "phone",
+       "name": null,
+       "personId": null,
+       "sourceIds": [],
+       "when": "2026-01-19T00:00:05.000Z",
+       "reason": null
+      }
+     ]
+    },
+    {
+     "key": "p-root",
+     "person": {
+      "id": "p-root",
+      "canonicalName": "Jamie R. Lopez",
+      "interactionScoreRecent": 0,
+      "aliases": [
+       {
+        "aliasType": "email",
+        "alias": "jamie.root@example.com"
+       }
+      ],
+      "sourceIds": [
+       "chat-fixture"
+      ]
+     },
+     "name": "Jamie R. Lopez",
+     "canonicalEmail": "jamie.root@example.com",
+     "sourceIds": [
+      "chat-fixture"
+     ],
+     "kinds": [
+      "user",
+      "system"
+     ],
+     "ruleIds": [
+      "r-merged-winner",
+      "r-root",
+      "r-lid"
+     ],
+     "groupIds": [],
+     "latest": "2026-01-19T00:00:00.000Z",
+     "sources": [
+      {
+       "ruleId": "r-merged-winner",
+       "groupId": null,
+       "alias": "lid-0001",
+       "aliasType": "lid",
+       "name": "Jamie (chat)",
+       "personId": "p-jamie-lid",
+       "sourceIds": [],
+       "when": "2026-01-19T00:00:00.000Z",
+       "reason": null
+      },
+      {
+       "ruleId": "r-root",
+       "groupId": null,
+       "alias": "jamie@example.com",
+       "aliasType": "email",
+       "name": "Jamie lopez",
+       "personId": "p-jamie",
+       "sourceIds": [],
+       "when": "2026-01-18T00:00:00.000Z",
+       "reason": null
+      },
+      {
+       "ruleId": "r-lid",
+       "groupId": null,
+       "alias": "loser@example.com",
+       "aliasType": "email",
+       "name": "Loser",
+       "personId": "p-loser",
+       "sourceIds": [],
+       "when": "2026-01-17T00:00:00.000Z",
+       "reason": null
+      }
+     ]
+    },
+    {
+     "key": "p-percent",
+     "person": {
+      "id": "p-percent",
+      "canonicalName": "100% Studio_Northstar",
+      "interactionScoreRecent": 0,
+      "aliases": [
+       {
+        "aliasType": "email",
+        "alias": "studio@example.io"
+       }
+      ],
+      "sourceIds": []
+     },
+     "name": "100% Studio_Northstar",
+     "canonicalEmail": "studio@example.io",
+     "sourceIds": [],
+     "kinds": [
+      "user"
+     ],
+     "ruleIds": [
+      "r-percent"
+     ],
+     "groupIds": [],
+     "latest": "2026-01-16T00:00:00.000Z",
+     "sources": [
+      {
+       "ruleId": "r-percent",
+       "groupId": null,
+       "alias": "studio_alt@example.io",
+       "aliasType": "email",
+       "name": "Studio",
+       "personId": "p-percent-alt",
+       "sourceIds": [],
+       "when": "2026-01-16T00:00:00.000Z",
+       "reason": null
+      }
+     ]
+    },
+    {
+     "key": "p-back",
+     "person": {
+      "id": "p-back",
+      "canonicalName": "Back\\Slash",
+      "interactionScoreRecent": 0,
+      "aliases": [
+       {
+        "aliasType": "phone",
+        "alias": "+15550100199"
+       }
+      ],
+      "sourceIds": []
+     },
+     "name": "Back\\Slash",
+     "canonicalEmail": null,
+     "sourceIds": [],
+     "kinds": [
+      "user"
+     ],
+     "ruleIds": [
+      "r-back"
+     ],
+     "groupIds": [],
+     "latest": "2026-01-15T00:00:00.000Z",
+     "sources": [
+      {
+       "ruleId": "r-back",
+       "groupId": null,
+       "alias": "back@example.com",
+       "aliasType": "email",
+       "name": "Back",
+       "personId": "p-back-alt",
+       "sourceIds": [],
+       "when": "2026-01-15T00:00:00.000Z",
+       "reason": null
+      }
+     ]
+    },
+    {
+     "key": "p-tie-b",
+     "person": {
+      "id": "p-tie-b",
+      "canonicalName": "Tie beta",
+      "interactionScoreRecent": 0,
+      "aliases": [
+       {
+        "aliasType": "email",
+        "alias": "tie.b@example.com"
+       }
+      ],
+      "sourceIds": []
+     },
+     "name": "Tie beta",
+     "canonicalEmail": "tie.b@example.com",
+     "sourceIds": [],
+     "kinds": [
+      "user"
+     ],
+     "ruleIds": [
+      "r-tie-b"
+     ],
+     "groupIds": [],
+     "latest": "2026-01-13T00:00:00.000Z",
+     "sources": [
+      {
+       "ruleId": "r-tie-b",
+       "groupId": null,
+       "alias": "x.b@example.com",
+       "aliasType": "email",
+       "name": null,
+       "personId": null,
+       "sourceIds": [],
+       "when": "2026-01-13T00:00:00.000Z",
+       "reason": null
+      }
+     ]
+    },
+    {
+     "key": "p-tie-a",
+     "person": {
+      "id": "p-tie-a",
+      "canonicalName": "Tie alpha",
+      "interactionScoreRecent": 0,
+      "aliases": [
+       {
+        "aliasType": "email",
+        "alias": "tie.a@example.com"
+       }
+      ],
+      "sourceIds": []
+     },
+     "name": "Tie alpha",
+     "canonicalEmail": "tie.a@example.com",
+     "sourceIds": [],
+     "kinds": [
+      "user"
+     ],
+     "ruleIds": [
+      "r-tie-a"
+     ],
+     "groupIds": [],
+     "latest": "2026-01-13T00:00:00.000Z",
+     "sources": [
+      {
+       "ruleId": "r-tie-a",
+       "groupId": null,
+       "alias": "x.a@example.com",
+       "aliasType": "email",
+       "name": null,
+       "personId": null,
+       "sourceIds": [],
+       "when": "2026-01-13T00:00:00.000Z",
+       "reason": null
+      }
+     ]
+    }
+   ],
+   "hasMore": false,
+   "last": {
+    "latest": "2026-01-13T00:00:00.000Z",
+    "key": "p-tie-a"
+   }
+  }
+ ],
+ "{\"kind\":\"user\",\"limit\":1}": [
+  {
+   "keys": [
+    "p-sarah"
+   ],
+   "hasMore": true,
+   "last": {
+    "latest": "2026-01-21T00:00:00.000Z",
+    "key": "p-sarah"
+   }
+  },
+  {
+   "keys": [
+    "email=ghost@example.com"
+   ],
+   "hasMore": true,
+   "last": {
+    "latest": "2026-01-19T00:00:05.000Z",
+    "key": "email=ghost@example.com"
+   }
+  },
+  {
+   "keys": [
+    "p-root"
+   ],
+   "hasMore": true,
+   "last": {
+    "latest": "2026-01-19T00:00:00.000Z",
+    "key": "p-root"
+   }
+  },
+  {
+   "keys": [
+    "p-percent"
+   ],
+   "hasMore": true,
+   "last": {
+    "latest": "2026-01-16T00:00:00.000Z",
+    "key": "p-percent"
+   }
+  },
+  {
+   "keys": [
+    "p-back"
+   ],
+   "hasMore": true,
+   "last": {
+    "latest": "2026-01-15T00:00:00.000Z",
+    "key": "p-back"
+   }
+  },
+  {
+   "keys": [
+    "p-tie-b"
+   ],
+   "hasMore": true,
+   "last": {
+    "latest": "2026-01-13T00:00:00.000Z",
+    "key": "p-tie-b"
+   }
+  },
+  {
+   "keys": [
+    "p-tie-a"
+   ],
+   "hasMore": false,
+   "last": {
+    "latest": "2026-01-13T00:00:00.000Z",
+    "key": "p-tie-a"
+   }
+  }
+ ],
+ "{\"kind\":\"user\",\"limit\":3}": [
+  {
+   "keys": [
+    "p-sarah",
+    "email=ghost@example.com",
+    "p-root"
+   ],
+   "hasMore": true,
+   "last": {
+    "latest": "2026-01-19T00:00:00.000Z",
+    "key": "p-root"
+   }
+  },
+  {
+   "keys": [
+    "p-percent",
+    "p-back",
+    "p-tie-b"
+   ],
+   "hasMore": true,
+   "last": {
+    "latest": "2026-01-13T00:00:00.000Z",
+    "key": "p-tie-b"
+   }
+  },
+  {
+   "keys": [
+    "p-tie-a"
+   ],
+   "hasMore": false,
+   "last": {
+    "latest": "2026-01-13T00:00:00.000Z",
+    "key": "p-tie-a"
+   }
+  }
+ ],
+ "{\"kind\":\"user\",\"limit\":50}": [
+  {
+   "items": [
+    {
+     "key": "p-sarah",
+     "person": {
+      "id": "p-sarah-2",
+      "canonicalName": "Sarah mendez",
+      "interactionScoreRecent": 0,
+      "aliases": [
+       {
+        "aliasType": "name",
+        "alias": "SARAH MENDEZ"
+       }
+      ],
+      "sourceIds": [
+       "notes-fixture"
+      ]
+     },
+     "name": "Sarah mendez",
+     "canonicalEmail": null,
+     "sourceIds": [
+      "notes-fixture"
+     ],
+     "kinds": [
+      "user"
+     ],
+     "ruleIds": [
+      "r-name"
+     ],
+     "groupIds": [],
+     "latest": "2026-01-21T00:00:00.000Z",
+     "sources": [
+      {
+       "ruleId": "r-name",
+       "groupId": null,
+       "alias": "s.mendez@example.org",
+       "aliasType": "email",
+       "name": "S. Mendez",
+       "personId": "p-sarah-old",
+       "sourceIds": [],
+       "when": "2026-01-21T00:00:00.000Z",
+       "reason": null
+      }
+     ]
+    },
+    {
+     "key": "email=ghost@example.com",
+     "person": null,
+     "name": "email=ghost@example.com",
+     "canonicalEmail": "ghost@example.com",
+     "sourceIds": [],
+     "kinds": [
+      "user"
+     ],
+     "ruleIds": [
+      "r-orphan-2"
+     ],
+     "groupIds": [],
+     "latest": "2026-01-19T00:00:05.000Z",
+     "sources": [
+      {
+       "ruleId": "r-orphan-2",
+       "groupId": null,
+       "alias": "+15550100150",
+       "aliasType": "phone",
+       "name": null,
+       "personId": null,
+       "sourceIds": [],
+       "when": "2026-01-19T00:00:05.000Z",
+       "reason": null
+      }
+     ]
+    },
+    {
+     "key": "p-root",
+     "person": {
+      "id": "p-root",
+      "canonicalName": "Jamie R. Lopez",
+      "interactionScoreRecent": 0,
+      "aliases": [
+       {
+        "aliasType": "email",
+        "alias": "jamie.root@example.com"
+       }
+      ],
+      "sourceIds": [
+       "chat-fixture"
+      ]
+     },
+     "name": "Jamie R. Lopez",
+     "canonicalEmail": "jamie.root@example.com",
+     "sourceIds": [
+      "chat-fixture"
+     ],
+     "kinds": [
+      "user"
+     ],
+     "ruleIds": [
+      "r-merged-winner"
+     ],
+     "groupIds": [],
+     "latest": "2026-01-19T00:00:00.000Z",
+     "sources": [
+      {
+       "ruleId": "r-merged-winner",
+       "groupId": null,
+       "alias": "lid-0001",
+       "aliasType": "lid",
+       "name": "Jamie (chat)",
+       "personId": "p-jamie-lid",
+       "sourceIds": [],
+       "when": "2026-01-19T00:00:00.000Z",
+       "reason": null
+      }
+     ]
+    },
+    {
+     "key": "p-percent",
+     "person": {
+      "id": "p-percent",
+      "canonicalName": "100% Studio_Northstar",
+      "interactionScoreRecent": 0,
+      "aliases": [
+       {
+        "aliasType": "email",
+        "alias": "studio@example.io"
+       }
+      ],
+      "sourceIds": []
+     },
+     "name": "100% Studio_Northstar",
+     "canonicalEmail": "studio@example.io",
+     "sourceIds": [],
+     "kinds": [
+      "user"
+     ],
+     "ruleIds": [
+      "r-percent"
+     ],
+     "groupIds": [],
+     "latest": "2026-01-16T00:00:00.000Z",
+     "sources": [
+      {
+       "ruleId": "r-percent",
+       "groupId": null,
+       "alias": "studio_alt@example.io",
+       "aliasType": "email",
+       "name": "Studio",
+       "personId": "p-percent-alt",
+       "sourceIds": [],
+       "when": "2026-01-16T00:00:00.000Z",
+       "reason": null
+      }
+     ]
+    },
+    {
+     "key": "p-back",
+     "person": {
+      "id": "p-back",
+      "canonicalName": "Back\\Slash",
+      "interactionScoreRecent": 0,
+      "aliases": [
+       {
+        "aliasType": "phone",
+        "alias": "+15550100199"
+       }
+      ],
+      "sourceIds": []
+     },
+     "name": "Back\\Slash",
+     "canonicalEmail": null,
+     "sourceIds": [],
+     "kinds": [
+      "user"
+     ],
+     "ruleIds": [
+      "r-back"
+     ],
+     "groupIds": [],
+     "latest": "2026-01-15T00:00:00.000Z",
+     "sources": [
+      {
+       "ruleId": "r-back",
+       "groupId": null,
+       "alias": "back@example.com",
+       "aliasType": "email",
+       "name": "Back",
+       "personId": "p-back-alt",
+       "sourceIds": [],
+       "when": "2026-01-15T00:00:00.000Z",
+       "reason": null
+      }
+     ]
+    },
+    {
+     "key": "p-tie-b",
+     "person": {
+      "id": "p-tie-b",
+      "canonicalName": "Tie beta",
+      "interactionScoreRecent": 0,
+      "aliases": [
+       {
+        "aliasType": "email",
+        "alias": "tie.b@example.com"
+       }
+      ],
+      "sourceIds": []
+     },
+     "name": "Tie beta",
+     "canonicalEmail": "tie.b@example.com",
+     "sourceIds": [],
+     "kinds": [
+      "user"
+     ],
+     "ruleIds": [
+      "r-tie-b"
+     ],
+     "groupIds": [],
+     "latest": "2026-01-13T00:00:00.000Z",
+     "sources": [
+      {
+       "ruleId": "r-tie-b",
+       "groupId": null,
+       "alias": "x.b@example.com",
+       "aliasType": "email",
+       "name": null,
+       "personId": null,
+       "sourceIds": [],
+       "when": "2026-01-13T00:00:00.000Z",
+       "reason": null
+      }
+     ]
+    },
+    {
+     "key": "p-tie-a",
+     "person": {
+      "id": "p-tie-a",
+      "canonicalName": "Tie alpha",
+      "interactionScoreRecent": 0,
+      "aliases": [
+       {
+        "aliasType": "email",
+        "alias": "tie.a@example.com"
+       }
+      ],
+      "sourceIds": []
+     },
+     "name": "Tie alpha",
+     "canonicalEmail": "tie.a@example.com",
+     "sourceIds": [],
+     "kinds": [
+      "user"
+     ],
+     "ruleIds": [
+      "r-tie-a"
+     ],
+     "groupIds": [],
+     "latest": "2026-01-13T00:00:00.000Z",
+     "sources": [
+      {
+       "ruleId": "r-tie-a",
+       "groupId": null,
+       "alias": "x.a@example.com",
+       "aliasType": "email",
+       "name": null,
+       "personId": null,
+       "sourceIds": [],
+       "when": "2026-01-13T00:00:00.000Z",
+       "reason": null
+      }
+     ]
+    }
+   ],
+   "hasMore": false,
+   "last": {
+    "latest": "2026-01-13T00:00:00.000Z",
+    "key": "p-tie-a"
+   }
+  }
+ ],
+ "{\"kind\":\"system\",\"limit\":1}": [
+  {
+   "keys": [
+    "email=ghost@example.com"
+   ],
+   "hasMore": true,
+   "last": {
+    "latest": "2026-01-20T00:00:00.000Z",
+    "key": "email=ghost@example.com"
+   }
+  },
+  {
+   "keys": [
+    "p-root"
+   ],
+   "hasMore": false,
+   "last": {
+    "latest": "2026-01-18T00:00:00.000Z",
+    "key": "p-root"
+   }
+  }
+ ],
+ "{\"kind\":\"system\",\"limit\":3}": [
+  {
+   "keys": [
+    "email=ghost@example.com",
+    "p-root"
+   ],
+   "hasMore": false,
+   "last": {
+    "latest": "2026-01-18T00:00:00.000Z",
+    "key": "p-root"
+   }
+  }
+ ],
+ "{\"kind\":\"system\",\"limit\":50}": [
+  {
+   "items": [
+    {
+     "key": "email=ghost@example.com",
+     "person": null,
+     "name": "email=ghost@example.com",
+     "canonicalEmail": "ghost@example.com",
+     "sourceIds": [],
+     "kinds": [
+      "system"
+     ],
+     "ruleIds": [
+      "r-orphan"
+     ],
+     "groupIds": [],
+     "latest": "2026-01-20T00:00:00.000Z",
+     "sources": [
+      {
+       "ruleId": "r-orphan",
+       "groupId": null,
+       "alias": "nobody@example.com",
+       "aliasType": "email",
+       "name": null,
+       "personId": null,
+       "sourceIds": [],
+       "when": "2026-01-20T00:00:00.000Z",
+       "reason": null
+      }
+     ]
+    },
+    {
+     "key": "p-root",
+     "person": {
+      "id": "p-root",
+      "canonicalName": "Jamie R. Lopez",
+      "interactionScoreRecent": 0,
+      "aliases": [
+       {
+        "aliasType": "email",
+        "alias": "jamie.root@example.com"
+       }
+      ],
+      "sourceIds": [
+       "chat-fixture"
+      ]
+     },
+     "name": "Jamie R. Lopez",
+     "canonicalEmail": "jamie.root@example.com",
+     "sourceIds": [
+      "chat-fixture"
+     ],
+     "kinds": [
+      "system"
+     ],
+     "ruleIds": [
+      "r-root",
+      "r-lid"
+     ],
+     "groupIds": [],
+     "latest": "2026-01-18T00:00:00.000Z",
+     "sources": [
+      {
+       "ruleId": "r-root",
+       "groupId": null,
+       "alias": "jamie@example.com",
+       "aliasType": "email",
+       "name": "Jamie lopez",
+       "personId": "p-jamie",
+       "sourceIds": [],
+       "when": "2026-01-18T00:00:00.000Z",
+       "reason": null
+      },
+      {
+       "ruleId": "r-lid",
+       "groupId": null,
+       "alias": "loser@example.com",
+       "aliasType": "email",
+       "name": "Loser",
+       "personId": "p-loser",
+       "sourceIds": [],
+       "when": "2026-01-17T00:00:00.000Z",
+       "reason": null
+      }
+     ]
+    }
+   ],
+   "hasMore": false,
+   "last": {
+    "latest": "2026-01-18T00:00:00.000Z",
+    "key": "p-root"
+   }
+  }
+ ],
+ "{\"q\":\"reeves\",\"limit\":1}": [
+  {
+   "keys": [],
+   "hasMore": false,
+   "last": null
+  }
+ ],
+ "{\"q\":\"reeves\",\"limit\":3}": [
+  {
+   "keys": [],
+   "hasMore": false,
+   "last": null
+  }
+ ],
+ "{\"q\":\"reeves\",\"limit\":50}": [
+  {
+   "items": [],
+   "hasMore": false
+  }
+ ],
+ "{\"q\":\"NORTHSTAR\",\"limit\":1}": [
+  {
+   "keys": [
+    "p-percent"
+   ],
+   "hasMore": false,
+   "last": {
+    "latest": "2026-01-16T00:00:00.000Z",
+    "key": "p-percent"
+   }
+  }
+ ],
+ "{\"q\":\"NORTHSTAR\",\"limit\":3}": [
+  {
+   "keys": [
+    "p-percent"
+   ],
+   "hasMore": false,
+   "last": {
+    "latest": "2026-01-16T00:00:00.000Z",
+    "key": "p-percent"
+   }
+  }
+ ],
+ "{\"q\":\"NORTHSTAR\",\"limit\":50}": [
+  {
+   "items": [
+    {
+     "key": "p-percent",
+     "person": {
+      "id": "p-percent",
+      "canonicalName": "100% Studio_Northstar",
+      "interactionScoreRecent": 0,
+      "aliases": [
+       {
+        "aliasType": "email",
+        "alias": "studio@example.io"
+       }
+      ],
+      "sourceIds": []
+     },
+     "name": "100% Studio_Northstar",
+     "canonicalEmail": "studio@example.io",
+     "sourceIds": [],
+     "kinds": [
+      "user"
+     ],
+     "ruleIds": [
+      "r-percent"
+     ],
+     "groupIds": [],
+     "latest": "2026-01-16T00:00:00.000Z",
+     "sources": [
+      {
+       "ruleId": "r-percent",
+       "groupId": null,
+       "alias": "studio_alt@example.io",
+       "aliasType": "email",
+       "name": "Studio",
+       "personId": "p-percent-alt",
+       "sourceIds": [],
+       "when": "2026-01-16T00:00:00.000Z",
+       "reason": null
+      }
+     ]
+    }
+   ],
+   "hasMore": false,
+   "last": {
+    "latest": "2026-01-16T00:00:00.000Z",
+    "key": "p-percent"
+   }
+  }
+ ],
+ "{\"q\":\"mendez\",\"kind\":\"user\",\"limit\":1}": [
+  {
+   "keys": [
+    "p-sarah"
+   ],
+   "hasMore": false,
+   "last": {
+    "latest": "2026-01-21T00:00:00.000Z",
+    "key": "p-sarah"
+   }
+  }
+ ],
+ "{\"q\":\"mendez\",\"kind\":\"user\",\"limit\":3}": [
+  {
+   "keys": [
+    "p-sarah"
+   ],
+   "hasMore": false,
+   "last": {
+    "latest": "2026-01-21T00:00:00.000Z",
+    "key": "p-sarah"
+   }
+  }
+ ],
+ "{\"q\":\"mendez\",\"kind\":\"user\",\"limit\":50}": [
+  {
+   "items": [
+    {
+     "key": "p-sarah",
+     "person": {
+      "id": "p-sarah-2",
+      "canonicalName": "Sarah mendez",
+      "interactionScoreRecent": 0,
+      "aliases": [
+       {
+        "aliasType": "name",
+        "alias": "SARAH MENDEZ"
+       }
+      ],
+      "sourceIds": [
+       "notes-fixture"
+      ]
+     },
+     "name": "Sarah mendez",
+     "canonicalEmail": null,
+     "sourceIds": [
+      "notes-fixture"
+     ],
+     "kinds": [
+      "user"
+     ],
+     "ruleIds": [
+      "r-name"
+     ],
+     "groupIds": [],
+     "latest": "2026-01-21T00:00:00.000Z",
+     "sources": [
+      {
+       "ruleId": "r-name",
+       "groupId": null,
+       "alias": "s.mendez@example.org",
+       "aliasType": "email",
+       "name": "S. Mendez",
+       "personId": "p-sarah-old",
+       "sourceIds": [],
+       "when": "2026-01-21T00:00:00.000Z",
+       "reason": null
+      }
+     ]
+    }
+   ],
+   "hasMore": false,
+   "last": {
+    "latest": "2026-01-21T00:00:00.000Z",
+    "key": "p-sarah"
+   }
+  }
+ ],
+ "{\"q\":\"jamie r.\",\"limit\":1}": [
+  {
+   "keys": [
+    "p-root"
+   ],
+   "hasMore": false,
+   "last": {
+    "latest": "2026-01-19T00:00:00.000Z",
+    "key": "p-root"
+   }
+  }
+ ],
+ "{\"q\":\"jamie r.\",\"limit\":3}": [
+  {
+   "keys": [
+    "p-root"
+   ],
+   "hasMore": false,
+   "last": {
+    "latest": "2026-01-19T00:00:00.000Z",
+    "key": "p-root"
+   }
+  }
+ ],
+ "{\"q\":\"jamie r.\",\"limit\":50}": [
+  {
+   "items": [
+    {
+     "key": "p-root",
+     "person": {
+      "id": "p-root",
+      "canonicalName": "Jamie R. Lopez",
+      "interactionScoreRecent": 0,
+      "aliases": [
+       {
+        "aliasType": "email",
+        "alias": "jamie.root@example.com"
+       }
+      ],
+      "sourceIds": [
+       "chat-fixture"
+      ]
+     },
+     "name": "Jamie R. Lopez",
+     "canonicalEmail": "jamie.root@example.com",
+     "sourceIds": [
+      "chat-fixture"
+     ],
+     "kinds": [
+      "user",
+      "system"
+     ],
+     "ruleIds": [
+      "r-merged-winner",
+      "r-root",
+      "r-lid"
+     ],
+     "groupIds": [],
+     "latest": "2026-01-19T00:00:00.000Z",
+     "sources": [
+      {
+       "ruleId": "r-merged-winner",
+       "groupId": null,
+       "alias": "lid-0001",
+       "aliasType": "lid",
+       "name": "Jamie (chat)",
+       "personId": "p-jamie-lid",
+       "sourceIds": [],
+       "when": "2026-01-19T00:00:00.000Z",
+       "reason": null
+      },
+      {
+       "ruleId": "r-root",
+       "groupId": null,
+       "alias": "jamie@example.com",
+       "aliasType": "email",
+       "name": "Jamie lopez",
+       "personId": "p-jamie",
+       "sourceIds": [],
+       "when": "2026-01-18T00:00:00.000Z",
+       "reason": null
+      },
+      {
+       "ruleId": "r-lid",
+       "groupId": null,
+       "alias": "loser@example.com",
+       "aliasType": "email",
+       "name": "Loser",
+       "personId": "p-loser",
+       "sourceIds": [],
+       "when": "2026-01-17T00:00:00.000Z",
+       "reason": null
+      }
+     ]
+    }
+   ],
+   "hasMore": false,
+   "last": {
+    "latest": "2026-01-19T00:00:00.000Z",
+    "key": "p-root"
+   }
+  }
+ ],
+ "{\"q\":\"%\",\"limit\":1}": [
+  {
+   "keys": [
+    "p-percent"
+   ],
+   "hasMore": false,
+   "last": {
+    "latest": "2026-01-16T00:00:00.000Z",
+    "key": "p-percent"
+   }
+  }
+ ],
+ "{\"q\":\"%\",\"limit\":3}": [
+  {
+   "keys": [
+    "p-percent"
+   ],
+   "hasMore": false,
+   "last": {
+    "latest": "2026-01-16T00:00:00.000Z",
+    "key": "p-percent"
+   }
+  }
+ ],
+ "{\"q\":\"%\",\"limit\":50}": [
+  {
+   "items": [
+    {
+     "key": "p-percent",
+     "person": {
+      "id": "p-percent",
+      "canonicalName": "100% Studio_Northstar",
+      "interactionScoreRecent": 0,
+      "aliases": [
+       {
+        "aliasType": "email",
+        "alias": "studio@example.io"
+       }
+      ],
+      "sourceIds": []
+     },
+     "name": "100% Studio_Northstar",
+     "canonicalEmail": "studio@example.io",
+     "sourceIds": [],
+     "kinds": [
+      "user"
+     ],
+     "ruleIds": [
+      "r-percent"
+     ],
+     "groupIds": [],
+     "latest": "2026-01-16T00:00:00.000Z",
+     "sources": [
+      {
+       "ruleId": "r-percent",
+       "groupId": null,
+       "alias": "studio_alt@example.io",
+       "aliasType": "email",
+       "name": "Studio",
+       "personId": "p-percent-alt",
+       "sourceIds": [],
+       "when": "2026-01-16T00:00:00.000Z",
+       "reason": null
+      }
+     ]
+    }
+   ],
+   "hasMore": false,
+   "last": {
+    "latest": "2026-01-16T00:00:00.000Z",
+    "key": "p-percent"
+   }
+  }
+ ],
+ "{\"q\":\"_alt\",\"limit\":1}": [
+  {
+   "keys": [
+    "p-percent"
+   ],
+   "hasMore": false,
+   "last": {
+    "latest": "2026-01-16T00:00:00.000Z",
+    "key": "p-percent"
+   }
+  }
+ ],
+ "{\"q\":\"_alt\",\"limit\":3}": [
+  {
+   "keys": [
+    "p-percent"
+   ],
+   "hasMore": false,
+   "last": {
+    "latest": "2026-01-16T00:00:00.000Z",
+    "key": "p-percent"
+   }
+  }
+ ],
+ "{\"q\":\"_alt\",\"limit\":50}": [
+  {
+   "items": [
+    {
+     "key": "p-percent",
+     "person": {
+      "id": "p-percent",
+      "canonicalName": "100% Studio_Northstar",
+      "interactionScoreRecent": 0,
+      "aliases": [
+       {
+        "aliasType": "email",
+        "alias": "studio@example.io"
+       }
+      ],
+      "sourceIds": []
+     },
+     "name": "100% Studio_Northstar",
+     "canonicalEmail": "studio@example.io",
+     "sourceIds": [],
+     "kinds": [
+      "user"
+     ],
+     "ruleIds": [
+      "r-percent"
+     ],
+     "groupIds": [],
+     "latest": "2026-01-16T00:00:00.000Z",
+     "sources": [
+      {
+       "ruleId": "r-percent",
+       "groupId": null,
+       "alias": "studio_alt@example.io",
+       "aliasType": "email",
+       "name": "Studio",
+       "personId": "p-percent-alt",
+       "sourceIds": [],
+       "when": "2026-01-16T00:00:00.000Z",
+       "reason": null
+      }
+     ]
+    }
+   ],
+   "hasMore": false,
+   "last": {
+    "latest": "2026-01-16T00:00:00.000Z",
+    "key": "p-percent"
+   }
+  }
+ ],
+ "{\"q\":\"\\\\\",\"limit\":1}": [
+  {
+   "keys": [
+    "p-back"
+   ],
+   "hasMore": false,
+   "last": {
+    "latest": "2026-01-15T00:00:00.000Z",
+    "key": "p-back"
+   }
+  }
+ ],
+ "{\"q\":\"\\\\\",\"limit\":3}": [
+  {
+   "keys": [
+    "p-back"
+   ],
+   "hasMore": false,
+   "last": {
+    "latest": "2026-01-15T00:00:00.000Z",
+    "key": "p-back"
+   }
+  }
+ ],
+ "{\"q\":\"\\\\\",\"limit\":50}": [
+  {
+   "items": [
+    {
+     "key": "p-back",
+     "person": {
+      "id": "p-back",
+      "canonicalName": "Back\\Slash",
+      "interactionScoreRecent": 0,
+      "aliases": [
+       {
+        "aliasType": "phone",
+        "alias": "+15550100199"
+       }
+      ],
+      "sourceIds": []
+     },
+     "name": "Back\\Slash",
+     "canonicalEmail": null,
+     "sourceIds": [],
+     "kinds": [
+      "user"
+     ],
+     "ruleIds": [
+      "r-back"
+     ],
+     "groupIds": [],
+     "latest": "2026-01-15T00:00:00.000Z",
+     "sources": [
+      {
+       "ruleId": "r-back",
+       "groupId": null,
+       "alias": "back@example.com",
+       "aliasType": "email",
+       "name": "Back",
+       "personId": "p-back-alt",
+       "sourceIds": [],
+       "when": "2026-01-15T00:00:00.000Z",
+       "reason": null
+      }
+     ]
+    }
+   ],
+   "hasMore": false,
+   "last": {
+    "latest": "2026-01-15T00:00:00.000Z",
+    "key": "p-back"
+   }
+  }
+ ],
+ "{\"q\":\"ghost\",\"limit\":1}": [
+  {
+   "keys": [
+    "email=ghost@example.com"
+   ],
+   "hasMore": false,
+   "last": {
+    "latest": "2026-01-20T00:00:00.000Z",
+    "key": "email=ghost@example.com"
+   }
+  }
+ ],
+ "{\"q\":\"ghost\",\"limit\":3}": [
+  {
+   "keys": [
+    "email=ghost@example.com"
+   ],
+   "hasMore": false,
+   "last": {
+    "latest": "2026-01-20T00:00:00.000Z",
+    "key": "email=ghost@example.com"
+   }
+  }
+ ],
+ "{\"q\":\"ghost\",\"limit\":50}": [
+  {
+   "items": [
+    {
+     "key": "email=ghost@example.com",
+     "person": null,
+     "name": "email=ghost@example.com",
+     "canonicalEmail": "ghost@example.com",
+     "sourceIds": [],
+     "kinds": [
+      "system",
+      "user"
+     ],
+     "ruleIds": [
+      "r-orphan",
+      "r-orphan-2"
+     ],
+     "groupIds": [],
+     "latest": "2026-01-20T00:00:00.000Z",
+     "sources": [
+      {
+       "ruleId": "r-orphan",
+       "groupId": null,
+       "alias": "nobody@example.com",
+       "aliasType": "email",
+       "name": null,
+       "personId": null,
+       "sourceIds": [],
+       "when": "2026-01-20T00:00:00.000Z",
+       "reason": null
+      },
+      {
+       "ruleId": "r-orphan-2",
+       "groupId": null,
+       "alias": "+15550100150",
+       "aliasType": "phone",
+       "name": null,
+       "personId": null,
+       "sourceIds": [],
+       "when": "2026-01-19T00:00:05.000Z",
+       "reason": null
+      }
+     ]
+    }
+   ],
+   "hasMore": false,
+   "last": {
+    "latest": "2026-01-20T00:00:00.000Z",
+    "key": "email=ghost@example.com"
+   }
+  }
+ ],
+ "{\"q\":\"no such identity\",\"limit\":1}": [
+  {
+   "keys": [],
+   "hasMore": false,
+   "last": null
+  }
+ ],
+ "{\"q\":\"no such identity\",\"limit\":3}": [
+  {
+   "keys": [],
+   "hasMore": false,
+   "last": null
+  }
+ ],
+ "{\"q\":\"no such identity\",\"limit\":50}": [
+  {
+   "items": [],
+   "hasMore": false
+  }
+ ]
+}

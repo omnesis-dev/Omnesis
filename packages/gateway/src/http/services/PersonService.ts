@@ -12,7 +12,6 @@ import {
   getPeopleStats,
   listMergeRules,
   countMergeRules,
-  resolveAliasSide,
   type PeopleStats,
   type CreateMergeRuleInput,
   type MergeRuleAliasType,
@@ -36,6 +35,11 @@ import {
   personAnnotationIdsOnExcludedSources,
 } from "../../brain/storage/person-annotations.js";
 import { resolvePersonId } from "../../domain/PeopleResolutionService.js";
+import {
+  listMergeRuleGroups,
+  type MergeRuleGroupsOptions,
+  type MergeRuleGroupsPage,
+} from "../../domain/merge/rule-groups.js";
 import { ValidationError } from "../errors.js";
 import { listSelfIdentitySources } from "../../self-identity-sources.js";
 import { matchDocumentIdPrefix } from "../../data/like-prefix-seek.js";
@@ -53,8 +57,9 @@ type Db = Database.Database;
 /**
  * The read-worker capabilities {@link PersonService} delegates its heavy reads
  * to. `browsePeople` powers GET /people; `enrichedMergeCandidates` powers GET
- * /people/merge-candidates. Both are optional — absent (tests, minimal servers)
- * the service falls back to a synchronous main-thread read. The full `IoGate`
+ * /people/merge-candidates; `mergeRuleGroups` powers GET
+ * /people/merge-rule-groups. Absent a gate (tests, minimal servers) the
+ * service falls back to a synchronous read on its own handle. The full `IoGate`
  * from the scheduler structurally satisfies this.
  */
 export interface PeopleBrowseGate {
@@ -77,38 +82,10 @@ export interface PeopleBrowseGate {
   mergeCandidateVisibility?(opts: {
     status: "pending" | "accepted" | "denied";
   }): Promise<MergeCandidateVisibility[]>;
+  mergeRuleGroups?(opts: MergeRuleGroupsOptions): Promise<MergeRuleGroupsPage>;
 }
 
 const log = createLogger("gateway:people");
-
-export interface MergeRuleGroupItem {
-  key: string;
-  person: {
-    id: string;
-    canonicalName: string;
-    interactionScoreRecent?: number;
-    aliases?: Array<{ aliasType: string; alias: string }>;
-    sourceIds?: string[];
-  } | null;
-  name: string;
-  canonicalEmail: string | null;
-  sourceIds: string[];
-  kinds: MergeRuleKind[];
-  ruleIds: string[];
-  groupIds: string[];
-  latest: string;
-  sources: Array<{
-    ruleId: string;
-    groupId: string | null;
-    alias: string;
-    aliasType: string;
-    name: string | null;
-    personId: string | null;
-    sourceIds: string[];
-    when: string | null;
-    reason: string | null;
-  }>;
-}
 
 /**
  * How long a user-facing merge mutation waits for the fast-lane
@@ -489,179 +466,14 @@ export class PersonService {
   }
 
   /**
-   * Page the merge-rule audit by whole display identity. SQL first selects a
-   * bounded page of current canonical winner keys; only those groups' rules
-   * receive the relatively expensive alias/source enrichment.
+   * Page the merge-rule audit by whole identity (see `listMergeRuleGroups`).
+   * Grouping resolves every active rule's winner, so the read runs on an io
+   * worker when a gate is wired; absent one it reads on the service's handle.
    */
-  listMergeRuleGroups(opts: {
-    limit: number;
-    q?: string;
-    kind?: MergeRuleKind;
-    before?: { latest: string; key: string };
-  }): {
-    items: MergeRuleGroupItem[];
-    hasMore: boolean;
-    last?: { latest: string; key: string };
-  } {
-    const winnerType =
-      "CASE mr.winner_side WHEN 'a' THEN mr.side_a_alias_type ELSE mr.side_b_alias_type END";
-    const winnerAlias =
-      "CASE mr.winner_side WHEN 'a' THEN mr.side_a_alias ELSE mr.side_b_alias END";
-    const loserAlias = "CASE mr.winner_side WHEN 'a' THEN mr.side_b_alias ELSE mr.side_a_alias END";
-    const canonicalId = `(
-      SELECT COALESCE(p.merged_into, p.id)
-        FROM person_aliases pa
-        JOIN people p ON p.id = pa.person_id
-       WHERE pa.alias_type = winner_type
-         AND ((winner_type = 'name' AND LOWER(pa.alias) = LOWER(winner_alias))
-              OR (winner_type <> 'name' AND pa.alias = winner_alias))
-       ORDER BY COALESCE(p.merged_into, p.id), p.id
-       LIMIT 1
-    )`;
-    const filters: string[] = ["mr.active = 1"];
-    const params: Array<string | number> = [];
-    if (opts.kind) {
-      filters.push("mr.kind = ?");
-      params.push(opts.kind);
-    }
-    const q = opts.q?.trim().toLowerCase() ?? "";
-    if (q) {
-      const pattern = `%${q.replace(/[\\%_]/g, (ch) => `\\${ch}`)}%`;
-      filters.push(`(
-        LOWER(winner_alias) LIKE ? ESCAPE '\\'
-        OR LOWER(loser_alias) LIKE ? ESCAPE '\\'
-        OR EXISTS (
-          SELECT 1 FROM people qp
-           WHERE qp.id = canonical_id AND LOWER(qp.canonical_name) LIKE ? ESCAPE '\\'
-        )
-      )`);
-      params.push(pattern, pattern, pattern);
-    }
-    const cursor = opts.before ? "WHERE (latest, display_key) < (?, ?)" : "";
-    if (opts.before) params.push(opts.before.latest, opts.before.key);
-    params.push(opts.limit + 1);
-    const groupRows = this.db
-      .prepare<
-        (string | number)[],
-        { display_key: string; canonical_id: string | null; latest: string }
-      >(
-        `WITH winner AS (
-           SELECT mr.*, ${winnerType} AS winner_type,
-                  ${winnerAlias} AS winner_alias, ${loserAlias} AS loser_alias
-             FROM merge_rules mr
-         ),
-         resolved AS (
-           SELECT mr.*, ${canonicalId} AS canonical_id
-             FROM winner mr
-         ),
-         grouped AS (
-           SELECT COALESCE(canonical_id, winner_type || '=' || winner_alias) AS display_key,
-                  canonical_id, MAX(created_at) AS latest
-             FROM resolved mr
-            WHERE ${filters.join(" AND ")}
-            GROUP BY display_key, canonical_id
-         )
-         SELECT display_key, canonical_id, latest
-           FROM grouped
-           ${cursor}
-          ORDER BY latest DESC, display_key DESC
-          LIMIT ?`,
-      )
-      .all(...params);
-    const hasMore = groupRows.length > opts.limit;
-    const pageRows = hasMore ? groupRows.slice(0, opts.limit) : groupRows;
-    if (pageRows.length === 0) return { items: [], hasMore };
-
-    const keys = pageRows.map((row) => row.display_key);
-    const keyPlaceholders = keys.map(() => "?").join(", ");
-    const selected = this.db
-      .prepare<(string | number)[], { id: string; display_key: string }>(
-        `WITH winner AS (
-           SELECT mr.*, ${winnerType} AS winner_type, ${winnerAlias} AS winner_alias
-             FROM merge_rules mr
-         ),
-         resolved AS (
-           SELECT mr.*, ${canonicalId} AS canonical_id
-             FROM winner mr
-         )
-         SELECT id, COALESCE(canonical_id, winner_type || '=' || winner_alias) AS display_key
-           FROM resolved mr
-          WHERE mr.active = 1
-            ${opts.kind ? "AND mr.kind = ?" : ""}
-            AND COALESCE(canonical_id, winner_type || '=' || winner_alias)
-                IN (${keyPlaceholders})`,
-      )
-      .all(...(opts.kind ? [opts.kind, ...keys] : keys));
-    const keyByRuleId = new Map(selected.map((row) => [row.id, row.display_key]));
-    const rules = listMergeRules(this.db, {
-      active: true,
-      ...(opts.kind ? { kind: opts.kind } : {}),
-      ruleIds: selected.map((row) => row.id),
-      withResolved: true,
-      withDetails: true,
-      preMerge: true,
-    });
-    const rulesByKey = new Map<string, typeof rules>();
-    for (const rule of rules) {
-      const key = keyByRuleId.get(rule.id);
-      if (!key) continue;
-      const bucket = rulesByKey.get(key) ?? [];
-      bucket.push(rule);
-      rulesByKey.set(key, bucket);
-    }
-    const canonicalCache = new Map<string, ReturnType<typeof resolveAliasSide>>();
-    const items = pageRows.map((group): MergeRuleGroupItem => {
-      const groupRules = rulesByKey.get(group.display_key) ?? [];
-      const first = groupRules[0];
-      const winnerKey = first?.winnerSide === "b" ? "B" : "A";
-      const winnerSide = first ? first[`side${winnerKey}`] : null;
-      const person = winnerSide
-        ? (resolveAliasSide(this.db, winnerSide, {
-            withDetails: true,
-            cache: canonicalCache,
-          })[0] ?? null)
-        : null;
-      const canonicalEmail =
-        person?.aliases?.find((alias) => alias.aliasType === "email")?.alias ??
-        (winnerSide?.aliasType === "email" ? winnerSide.alias : null);
-      const sources = groupRules.map((rule) => {
-        const ruleWinnerKey = rule.winnerSide === "a" ? "A" : "B";
-        const ruleLoserKey = ruleWinnerKey === "A" ? "B" : "A";
-        const loser = (rule[`resolvedSide${ruleLoserKey}`] ?? [])[0] ?? null;
-        const side = rule[`side${ruleLoserKey}`];
-        return {
-          ruleId: rule.id,
-          groupId: rule.groupId ?? null,
-          alias: side.alias,
-          aliasType: side.aliasType,
-          name: loser?.canonicalName ?? null,
-          personId: loser?.id ?? null,
-          sourceIds: loser?.sourceIds ?? [],
-          when: rule.createdAt ?? null,
-          reason: rule.reason ?? null,
-        };
-      });
-      return {
-        key: group.display_key,
-        person,
-        name:
-          person?.canonicalName ??
-          (winnerSide ? `${winnerSide.aliasType}=${winnerSide.alias}` : group.display_key),
-        canonicalEmail,
-        sourceIds: person?.sourceIds ?? [],
-        kinds: [...new Set(groupRules.map((rule) => rule.kind))],
-        ruleIds: groupRules.map((rule) => rule.id),
-        groupIds: [...new Set(groupRules.flatMap((rule) => (rule.groupId ? [rule.groupId] : [])))],
-        latest: group.latest,
-        sources,
-      };
-    });
-    const lastRow = pageRows.at(-1);
-    return {
-      items,
-      hasMore,
-      ...(lastRow ? { last: { latest: lastRow.latest, key: lastRow.display_key } } : {}),
-    };
+  async listMergeRuleGroups(opts: MergeRuleGroupsOptions): Promise<MergeRuleGroupsPage> {
+    return this.ioGate?.mergeRuleGroups
+      ? this.ioGate.mergeRuleGroups(opts)
+      : listMergeRuleGroups(this.db, opts);
   }
 
   /**

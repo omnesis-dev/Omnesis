@@ -86,6 +86,8 @@ const WOUND_BACK = [
   216,
   // 217 adds the sign-in id columns and the revoked key table, which undoStickyRevocation drops.
   217,
+  // 218 indexes name aliases by their lowercased text; windBack drops the index.
+  218,
 ];
 
 let dir: string;
@@ -296,6 +298,7 @@ function undoStickyRevocation(db: Db): void {
 }
 
 function windBack(db: Db): void {
+  db.exec("DROP INDEX idx_person_aliases_name_lower");
   undoStickyRevocation(db);
   db.exec("DROP INDEX idx_documents_id_document_type");
   db.exec("DROP TABLE lab_features");
