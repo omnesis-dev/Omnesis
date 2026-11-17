@@ -32,7 +32,7 @@ export function startGatewayCloudTunnel(
   gatewayUrl: string,
   env: NodeJS.ProcessEnv = process.env,
   /** Called when the relay says it no longer has this gateway, which no retry will change. */
-  unregistered?: () => void,
+  unregistered?: (removed: boolean) => void,
 ): GatewayTunnel | undefined {
   // A relay URL alone only chooses the service; a gateway without an ID is connected from the portal.
   if (
@@ -110,7 +110,7 @@ export function startGatewayCloudTunnel(
           "Owner-key routing requires the gateway TLS certificate, private key and public origin",
         );
       return keySource(signal).catch((error: unknown) => {
-        if (error instanceof GatewayUnregistered) unregistered?.();
+        if (error instanceof GatewayUnregistered) unregistered?.(error.removed);
         throw error;
       });
     }

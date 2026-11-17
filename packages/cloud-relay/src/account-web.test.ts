@@ -78,6 +78,7 @@ async function fixture(
     passkeys,
     choices: () => [],
     deleteAccount: (account, version) => void accounts.delete(account, version),
+    unlinkGateway: () => {},
     googleAvailable,
     desktop,
     signupAdmission: signup === "missing" ? undefined : () => admission,

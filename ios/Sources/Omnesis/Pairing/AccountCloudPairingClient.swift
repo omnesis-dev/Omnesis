@@ -7,6 +7,9 @@ public struct AccountGatewayChoice: Codable, Sendable, Equatable, Identifiable {
     public let gatewayId: String
     public let publicOrigin: String
     public let displayName: String?
+    /// The relay holds a live tunnel for this gateway right now. A display hint only: it never
+    /// changes what can be chosen.
+    public let online: Bool
     public var id: String {
         gatewayId
     }
@@ -286,10 +289,16 @@ public actor AccountCloudPairingClient {
         discovery = session
         var all: [AccountGatewayChoice] = [], cursor: String?
         repeat {
-            let page: Directory = try await request(
-                "/_relay/v3/gateways" + (cursor.map { "?after=\($0)" } ?? ""),
-                bearer: session.discoveryToken
-            )
+            let page: Directory
+            do {
+                page = try await request(
+                    "/_relay/v3/gateways" + (cursor.map { "?after=\($0)" } ?? ""),
+                    bearer: session.discoveryToken
+                )
+            } catch is DecodingError {
+                // An entry missing a required field, such as `online`, is as malformed as one with a bad identifier.
+                throw AccountPairingError.response
+            }
             guard page.gateways.count <= 50 else { throw AccountPairingError.response }
             for choice in page.gateways {
                 guard Self.uuid(choice.gatewayId), try Self.exactOrigin(choice.publicOrigin).absoluteString == choice.publicOrigin,

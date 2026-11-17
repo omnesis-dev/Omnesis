@@ -9,17 +9,20 @@ extension PreviewMocks {
         AccountGatewayChoice(
             gatewayId: "00000000-0000-4000-8000-000000000001",
             publicOrigin: "https://home.example.test",
-            displayName: "Fictional home"
+            displayName: "Fictional home",
+            online: true
         ),
         AccountGatewayChoice(
             gatewayId: "00000000-0000-4000-8000-000000000002",
             publicOrigin: "https://studio.example.test",
-            displayName: "Fictional studio gateway with a long display name"
+            displayName: "Fictional studio gateway with a long display name",
+            online: false
         ),
         AccountGatewayChoice(
             gatewayId: "00000000-0000-4000-8000-000000000003",
             publicOrigin: "https://g-00000000000040008000000000000003.relay.example.test",
-            displayName: nil
+            displayName: nil,
+            online: true
         ),
     ]
     static let accountCloudPairingConfiguration = AccountCloudPairingConfiguration(

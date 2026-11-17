@@ -9,9 +9,11 @@ import { CloudRelayMetrics } from "./metrics.js";
 import { clientBucket } from "./client-bucket.js";
 
 export class RelayError extends Error {
+  /** `code`, when set, is the one word the response body carries for the client to act on. */
   constructor(
     readonly status: number,
     message: string,
+    readonly code?: string,
   ) {
     super(message);
   }
@@ -277,6 +279,11 @@ export class TunnelBroker {
       maxStreams: this.limits.maxStreams,
       maxStreamsPerGateway: this.limits.maxStreamsPerGateway,
     };
+  }
+
+  /** Whether this gateway holds a live tunnel right now: a hint for people choosing a gateway. */
+  online(account: string): boolean {
+    return this.gateways.get(account)?.socket.readyState === WebSocket.OPEN;
   }
 
   closeAccount(account: string): void {

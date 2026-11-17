@@ -75,8 +75,8 @@ class AccountCloudPairingClientTest {
                 url.startsWith("$origin/_relay/v3/gateways") -> {
                     assertEquals("opaque-discovery", bearer)
                     json { putJsonArray("gateways") {
-                        if (attack != "empty") add(buildJsonObject { put("gatewayId", candidate.gatewayId); put("publicOrigin", candidate.publicOrigin); put("displayName", "Fictional home") })
-                        if (attack == "duplicate") add(buildJsonObject { put("gatewayId", candidate.gatewayId); put("publicOrigin", candidate.publicOrigin) })
+                        if (attack != "empty") add(buildJsonObject { put("gatewayId", candidate.gatewayId); put("publicOrigin", candidate.publicOrigin); put("displayName", "Fictional home"); put("online", true) })
+                        if (attack == "duplicate") add(buildJsonObject { put("gatewayId", candidate.gatewayId); put("publicOrigin", candidate.publicOrigin); put("online", true) })
                     } }
                 }
                 url == "$origin/_relay/v3/gateway?gatewayId=${candidate.gatewayId}" -> {
@@ -288,21 +288,42 @@ class AccountCloudPairingClientTest {
             if (java.net.URI(url).path != "/_relay/v3/gateways") response else {
                 val second = java.net.URI(url).rawQuery != null
                 val id = if (second) "00000000-0000-4000-8000-000000000002" else "00000000-0000-4000-8000-000000000001"
-                json { putJsonArray("gateways") { add(buildJsonObject { put("gatewayId", id); put("publicOrigin", "https://gateway.example.test") }) }; if (!second) put("nextCursor", id) }
+                json { putJsonArray("gateways") { add(buildJsonObject { put("gatewayId", id); put("publicOrigin", "https://gateway.example.test"); put("online", false) }) }; if (!second) put("nextCursor", id) }
             }
         })
         client.begin(challenge); assertEquals(2, client.passkey(client.passkeyOptions(), "{}").size)
         assertFalse(calls.any { it.contains("/gateway?") }); client.close()
         for (fields in listOf(
-            buildJsonObject { put("gatewayId", "invalid"); put("publicOrigin", candidate.publicOrigin) },
-            buildJsonObject { put("gatewayId", candidate.gatewayId); put("publicOrigin", "http://gateway.example.test") },
-            buildJsonObject { put("gatewayId", candidate.gatewayId); put("publicOrigin", candidate.publicOrigin); put("displayName", " ") },
-            buildJsonObject { put("gatewayId", candidate.gatewayId); put("publicOrigin", candidate.publicOrigin); put("displayName", "a".repeat(81)) },
+            buildJsonObject { put("gatewayId", "invalid"); put("publicOrigin", candidate.publicOrigin); put("online", true) },
+            buildJsonObject { put("gatewayId", candidate.gatewayId); put("publicOrigin", "http://gateway.example.test"); put("online", true) },
+            buildJsonObject { put("gatewayId", candidate.gatewayId); put("publicOrigin", candidate.publicOrigin); put("displayName", " "); put("online", true) },
+            buildJsonObject { put("gatewayId", candidate.gatewayId); put("publicOrigin", candidate.publicOrigin); put("displayName", "a".repeat(81)); put("online", true) },
         )) {
             val (invalid, request, _) = fixture(mutateControl = mutation("/_relay/v3/gateways", buildJsonObject { put("gateways", JsonArray(listOf(fields))) }))
             invalid.begin(request)
             try { invalid.passkey(invalid.passkeyOptions(), "{}"); fail("Invalid choice accepted") } catch (_: AccountPairingException) {}
             invalid.close()
+        }
+    }
+
+    @Test fun `each choice carries whether the relay holds its gateway online and an entry without it is refused`(): Unit = runBlocking {
+        val home = "00000000-0000-4000-8000-000000000001"; val studio = "00000000-0000-4000-8000-000000000002"
+        val (client, challenge, calls) = fixture(mutateControl = mutation("/_relay/v3/gateways", buildJsonObject { putJsonArray("gateways") {
+            add(buildJsonObject { put("gatewayId", home); put("publicOrigin", "https://home.example.test"); put("displayName", "Fictional home"); put("online", true) })
+            add(buildJsonObject { put("gatewayId", studio); put("publicOrigin", "https://studio.example.test"); put("online", false) })
+        } }))
+        client.begin(challenge)
+        val choices = client.passkey(client.passkeyOptions(), "{}")
+        assertEquals(listOf(home to true, studio to false), choices.map { it.gatewayId to it.online })
+        assertFalse(calls.any { it.contains("/gateway?") }); client.close()
+        for (fields in listOf(
+            buildJsonObject { put("gatewayId", home); put("publicOrigin", "https://home.example.test"); put("displayName", "Fictional home") },
+            buildJsonObject { put("gatewayId", home); put("publicOrigin", "https://home.example.test"); put("online", "yes") },
+        )) {
+            val (invalid, request, invalidCalls) = fixture(mutateControl = mutation("/_relay/v3/gateways", buildJsonObject { put("gateways", JsonArray(listOf(fields))) }))
+            invalid.begin(request)
+            try { invalid.passkey(invalid.passkeyOptions(), "{}"); fail("A directory entry without a boolean online was accepted") } catch (error: AccountPairingException) { assertEquals(AccountPairingException.Reason.INVALID_RESPONSE, error.reason) }
+            assertFalse(invalidCalls.any { it.contains("/gateway?") }); invalid.close()
         }
     }
 
