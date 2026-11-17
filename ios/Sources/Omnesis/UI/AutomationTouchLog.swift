@@ -14,8 +14,8 @@ import UIKit
 /// reached the app at all, which view it hit, or whether the control's action
 /// ran. A DEBUG build launched with `DEMO_TOUCH_LOG=1` logs each of these
 /// under the `touch` category of `AppLog.subsystem`, and the journey lane keeps
-/// the simulator's log of that category beside the result bundle. Release
-/// builds compile none of it.
+/// the simulator's log of that category beside the result bundle. A release
+/// build installs nothing and logs nothing.
 enum AutomationTouchLog {
     #if DEBUG
     static let enabled = ProcessInfo.processInfo.environment["DEMO_TOUCH_LOG"] == "1"
@@ -87,9 +87,9 @@ private final class TouchDeliveryHostView: UIView {
 ///
 /// For each touch it logs where it went down and the chain of views it hit,
 /// then how it ended and the state every recogniser attached to it reached.
-/// A tap that never shows up here did not reach the app's window; one that hit
-/// the control but whose action line is missing was taken by a recogniser
-/// named on its end line.
+/// A tap that never shows up here did not reach the app's window. For one that
+/// hit the control while its action line is missing, the end line's recogniser
+/// states say which gesture took the touch or failed to act on it.
 private final class TouchDeliveryObserver: UIGestureRecognizer {
     init() {
         super.init(target: nil, action: nil)
