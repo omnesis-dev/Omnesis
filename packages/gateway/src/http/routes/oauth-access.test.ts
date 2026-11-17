@@ -21,6 +21,7 @@ import { HttpError, errorResponse } from "../errors.js";
 import { commitPrivacyPolicy } from "../../privacy/policy-history.js";
 import { AccessAuthorizationNotifier } from "../../access/authorization-notifier.js";
 import { PushBroadcaster } from "../../push/broadcast.js";
+import { fixedPublicAddress } from "../../public-address.js";
 import { mountOAuthAccessRoutes } from "./oauth-access.js";
 import type { OAuthClientMetadataDocument } from "../../access/types.js";
 import type { Db } from "../../data/types.js";
@@ -66,7 +67,21 @@ beforeEach(() => {
   app = createTestApp();
 });
 
-function createTestApp(options: Parameters<typeof mountOAuthAccessRoutes>[2] = {}): Hono<AppEnv> {
+/** The route options, with the public address given as plain values (`ORIGIN` unless named). */
+type TestAppOptions = Omit<
+  NonNullable<Parameters<typeof mountOAuthAccessRoutes>[2]>,
+  "publicAddress"
+> & {
+  publicBaseUrl?: string;
+  mcpResourceUrls?: readonly string[];
+};
+
+function createTestApp(options: TestAppOptions = {}): Hono<AppEnv> {
+  const { publicBaseUrl, mcpResourceUrls, ...routeOptions } = options;
+  const publicAddress = fixedPublicAddress(
+    "publicBaseUrl" in options ? publicBaseUrl : ORIGIN,
+    mcpResourceUrls,
+  );
   const testApp = new Hono<AppEnv>();
   testApp.onError((error, c) => {
     if (error instanceof HttpError) return errorResponse(c, error);
@@ -93,8 +108,8 @@ function createTestApp(options: Parameters<typeof mountOAuthAccessRoutes>[2] = {
     await next();
   });
   mountOAuthAccessRoutes(testApp, new AccessService(db, directWriteGate(db)), {
-    publicBaseUrl: ORIGIN,
-    ...options,
+    publicAddress,
+    ...routeOptions,
   });
   return testApp;
 }
@@ -157,6 +172,58 @@ describe("MCP OAuth access routes", () => {
     expect((await localDiscovery.json()).issuer).toBe("https://localhost:17600");
   });
 
+  test("lists only the addresses that answer MCP, so the portal never offers one turned off", async () => {
+    const relay = "https://gw-fictional.relay.example.net";
+    let relayOn = true;
+    let domainOn = true;
+    const answersAt = (url: string) =>
+      new URL(url).origin === relay ? relayOn : new URL(url).origin === ORIGIN ? domainOn : true;
+    const overview = async (testApp: Hono<AppEnv>, at = ORIGIN) =>
+      (
+        (await (
+          await testApp.request(`${at}/admin/access`, { headers: { "X-Test-Portal": "yes" } })
+        ).json()) as {
+          oauth: { resource: string; loopbackOnly?: true; resources: Array<{ resource: string }> };
+        }
+      ).oauth;
+    const listed = (oauth: Awaited<ReturnType<typeof overview>>) =>
+      oauth && { ...oauth, resources: oauth.resources.map((entry) => entry.resource) };
+    const switched = createTestApp({
+      additionalOAuthIssuerUrls: [relay],
+      mcpAddresses: { answersAt, settle: async () => {} },
+    });
+    const plain = createTestApp({ additionalOAuthIssuerUrls: [relay] });
+    // Every address on: exactly the overview of a gateway without the switches.
+    expect(await overview(switched)).toEqual(await overview(plain));
+    expect(listed(await overview(switched))).toMatchObject({
+      resource: RESOURCE,
+      resources: [RESOURCE, `${relay}/mcp`],
+    });
+    domainOn = false;
+    expect(listed(await overview(switched))).toMatchObject({
+      resource: `${relay}/mcp`,
+      resources: [`${relay}/mcp`],
+    });
+    relayOn = false;
+    // Nothing public answers on a gateway with its own domain: no address to offer.
+    expect(await overview(switched)).toBeNull();
+    // Without a domain the gateway's own machine is what is left.
+    const local = createTestApp({
+      publicBaseUrl: undefined,
+      loopbackBaseUrl: "https://localhost:17600",
+      additionalOAuthIssuerUrls: [relay],
+      mcpAddresses: { answersAt, settle: async () => {} },
+    });
+    expect(listed(await overview(local, "https://192.0.2.10:17600"))).toMatchObject({
+      resource: "https://localhost:17600/mcp",
+      loopbackOnly: true,
+      resources: ["https://localhost:17600/mcp"],
+    });
+    // Tokens and discovery on the relay itself are not the overview's business.
+    const metadata = await switched.request(`${relay}/.well-known/oauth-protected-resource/mcp`);
+    expect(metadata.status).toBe(200);
+  });
+
   test("tells the portal which MCP resources present the gateway's own certificate", async () => {
     const fingerprint = "ab".repeat(32);
     const presented: Record<string, { fingerprint: string; publiclyTrusted: boolean } | null> = {
@@ -216,6 +283,27 @@ describe("MCP OAuth access routes", () => {
         servedByGateway: true,
         direct: true,
         publiclyTrusted: true,
+      },
+    ]);
+
+    // An address whose trusted certificate is still being issued says so, by origin.
+    const arriving = createTestApp({
+      mcpResourceUrls: ["https://tailnet.example.net/mcp"],
+      tlsFingerprintSha256: () => fingerprint,
+      probeCertificate: async () => null,
+      pendingCertificateOrigins: async () => new Set(["https://tailnet.example.net"]),
+    });
+    const arrivingOverview = await arriving.request(`${ORIGIN}/admin/access`, {
+      headers: { "X-Test-Portal": "yes" },
+    });
+    expect((await arrivingOverview.json()).oauth.resources).toEqual([
+      { resource: RESOURCE, servedByGateway: false, direct: false, publiclyTrusted: false },
+      {
+        resource: "https://tailnet.example.net/mcp",
+        servedByGateway: false,
+        direct: false,
+        publiclyTrusted: false,
+        certificatePending: true,
       },
     ]);
 
@@ -347,7 +435,7 @@ describe("MCP OAuth access routes", () => {
     const prefixedBase = `${ORIGIN}/omnesis`;
     const prefixedApp = new Hono<AppEnv>();
     mountOAuthAccessRoutes(prefixedApp, new AccessService(db, directWriteGate(db)), {
-      publicBaseUrl: prefixedBase,
+      publicAddress: fixedPublicAddress(prefixedBase),
     });
 
     const protectedResource = await prefixedApp.request(
@@ -370,6 +458,41 @@ describe("MCP OAuth access routes", () => {
       registration_endpoint: `${prefixedBase}/oauth/register`,
       revocation_endpoint: `${prefixedBase}/oauth/revoke`,
     });
+  });
+
+  test("discovery follows a public address saved while the gateway runs", async () => {
+    let address: string | undefined;
+    const liveApp = new Hono<AppEnv>();
+    mountOAuthAccessRoutes(liveApp, new AccessService(db, directWriteGate(db)), {
+      publicAddress: {
+        baseUrl: () => address,
+        mcpResourceUrls: () => (address ? [`${address}/mcp`] : []),
+        setByEnvironment: () => false,
+      },
+    });
+    const get = (path: string) => liveApp.request(`${ORIGIN}${path}`);
+
+    // No public address: remote discovery says OAuth needs one.
+    expect((await get("/.well-known/oauth-authorization-server")).status).toBe(503);
+
+    address = ORIGIN;
+    const server = await get("/.well-known/oauth-authorization-server");
+    expect(server.status).toBe(200);
+    expect((await server.json()).issuer).toBe(ORIGIN);
+    expect((await (await get("/.well-known/oauth-protected-resource/mcp")).json()).resource).toBe(
+      RESOURCE,
+    );
+
+    // Moved under a path: its discovery documents move with it, at once.
+    address = `${ORIGIN}/omnesis`;
+    const prefixed = await get("/.well-known/oauth-authorization-server/omnesis");
+    expect(prefixed.status).toBe(200);
+    expect((await prefixed.json()).issuer).toBe(address);
+    const openId = await get("/omnesis/.well-known/openid-configuration");
+    expect(openId.status).toBe(200);
+    expect((await openId.json()).issuer).toBe(address);
+    expect((await get("/.well-known/oauth-protected-resource/omnesis/mcp")).status).toBe(200);
+    expect((await get("/.well-known/oauth-protected-resource/mcp")).status).toBe(404);
   });
 
   test("publishes exact metadata for every configured MCP resource", async () => {

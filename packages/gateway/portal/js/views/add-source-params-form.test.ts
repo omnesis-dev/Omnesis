@@ -14,7 +14,10 @@
 import { h, render } from "preact";
 import { act } from "preact/test-utils";
 import { parseHTML } from "linkedom";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+
+// Sanitizer behavior is covered in the browser suite; linkedom is not a browser window.
+vi.mock("dompurify", () => ({ default: { sanitize: (html: string) => html } }));
 
 import {
   ParamsForm,
@@ -45,12 +48,18 @@ async function renderForm(params: unknown[]) {
       host,
     );
   });
-  const hints = [...host.querySelectorAll(".form-hint")].map((n) => n.textContent);
-  const labels = [...host.querySelectorAll("label")].map((n) => n.textContent);
+  const hints = [...host.querySelectorAll(".form-hint")].map((n) => n.textContent?.trim());
+  const labels = [...host.querySelectorAll("label")].map((n) => n.textContent?.trim());
+  const richHints = {
+    bold: host.querySelector(".form-hint strong")?.textContent,
+    url: host.querySelector(".form-hint a")?.getAttribute("href"),
+    value: host.querySelector(".form-hint code")?.textContent,
+    copyLabel: host.querySelector(".form-hint .agent-value-copy-btn")?.getAttribute("aria-label"),
+  };
   render(null, host);
   globalThis.document = originalDocument;
   globalThis.window = originalWindow;
-  return { hints, labels };
+  return { hints, labels, richHints };
 }
 
 describe("the settings step", () => {
@@ -87,4 +96,16 @@ describe("the settings step", () => {
     expect(labels[0]).toContain("*");
     expect(labels[1]).not.toContain("*");
   });
+
+  it("renders formatting, clickable links and copy controls in source parameter instructions", async () => {
+    const { richHints } = await renderForm([{
+      name: "key", label: "API key", type: "secret",
+      help: "Open **Settings** at https://example.com and paste `http://localhost:3002/callback`.",
+    }]);
+    expect(richHints.bold).toBe("Settings");
+    expect(richHints.url).toBe("https://example.com");
+    expect(richHints.value).toBe("http://localhost:3002/callback");
+    expect(richHints.copyLabel).toContain("Copy value: http://localhost:3002/callback");
+  });
+
 });

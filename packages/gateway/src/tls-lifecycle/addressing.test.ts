@@ -33,16 +33,43 @@ describe("partitionAddressedHosts", () => {
     gatewayUrl: "https://localhost:7600",
     publicBaseUrl: "https://omnesis.example.com",
     trustOrigins: ["https://omnesis.example.com", "https://gw.tail.example:7600"],
+    gatewayPort: 7600,
   };
 
-  test("without a trusted proxy every addressed name is the gateway's own to cover", () => {
+  test("without the proxy setting, a name reached at another port is the same-machine proxy's", () => {
     expect(partitionAddressedHosts({ ...input, proxyTrusted: false })).toEqual({
-      required: ["localhost", "omnesis.example.com", "gw.tail.example"],
-      proxied: [],
+      required: ["localhost", "gw.tail.example"],
+      proxied: ["omnesis.example.com"],
     });
   });
 
-  test("with one, the public base URL and the pairing origins are the proxy's", () => {
+  test("without it, every name addressed at the gateway's own port is the gateway's", () => {
+    expect(
+      partitionAddressedHosts({
+        gatewayUrl: "https://localhost:7600",
+        publicBaseUrl: "https://omnesis.example.com:7600",
+        trustOrigins: ["https://gw.tail.example:7600"],
+        proxyTrusted: false,
+        gatewayPort: 7600,
+      }),
+    ).toEqual({ required: ["localhost", "omnesis.example.com", "gw.tail.example"], proxied: [] });
+  });
+
+  test("a name served by a proxy and at the gateway's own port stays the gateway's to cover", () => {
+    // A proxy publishing the machine's name on 443 while the gateway's own
+    // certificate answers for the same name on its port.
+    expect(
+      partitionAddressedHosts({
+        gatewayUrl: "https://localhost:7600",
+        publicBaseUrl: "https://gw.tail.example",
+        trustOrigins: ["https://gw.tail.example:7600"],
+        proxyTrusted: false,
+        gatewayPort: 7600,
+      }),
+    ).toEqual({ required: ["localhost", "gw.tail.example"], proxied: [] });
+  });
+
+  test("with OMNESIS_TRUST_PROXY, the public base URL and the pairing origins are the proxy's", () => {
     expect(partitionAddressedHosts({ ...input, proxyTrusted: true })).toEqual({
       required: ["localhost"],
       proxied: ["omnesis.example.com", "gw.tail.example"],
@@ -56,6 +83,7 @@ describe("partitionAddressedHosts", () => {
         publicBaseUrl: "https://omnesis.example.com",
         trustOrigins: ["https://OMNESIS.example.com:7600"],
         proxyTrusted: true,
+        gatewayPort: 7600,
       }),
     ).toEqual({ required: [], proxied: ["omnesis.example.com"] });
   });
@@ -67,6 +95,7 @@ describe("partitionAddressedHosts", () => {
         publicBaseUrl: "https://omnesis.example.com",
         trustOrigins: [],
         proxyTrusted: true,
+        gatewayPort: 7600,
       }),
     ).toEqual({ required: [], proxied: ["omnesis.example.com"] });
     expect(
@@ -75,6 +104,7 @@ describe("partitionAddressedHosts", () => {
         publicBaseUrl: undefined,
         trustOrigins: [],
         proxyTrusted: true,
+        gatewayPort: 7600,
       }),
     ).toEqual({ required: ["studio.local"], proxied: [] });
   });

@@ -15,6 +15,7 @@ import { runSchemaSetup } from "../../data/schema.js";
 import { commitPrivacyPolicy } from "../../privacy/policy-history.js";
 import { directWriteGate } from "../../write-gate.js";
 import { errorResponse, HttpError } from "../errors.js";
+import { fixedPublicAddress } from "../../public-address.js";
 import { mountOAuthAccessRoutes } from "./oauth-access.js";
 import type { Db } from "../../data/types.js";
 import type { AppEnv } from "./types.js";
@@ -69,7 +70,7 @@ function createTestApp(options: Parameters<typeof mountOAuthAccessRoutes>[2] = {
     await next();
   });
   mountOAuthAccessRoutes(testApp, new AccessService(db, directWriteGate(db)), {
-    publicBaseUrl: ORIGIN,
+    publicAddress: fixedPublicAddress(ORIGIN),
     ...options,
   });
   return testApp;

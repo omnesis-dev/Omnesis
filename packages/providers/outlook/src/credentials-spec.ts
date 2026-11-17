@@ -58,7 +58,7 @@ export const outlookCredentialsSpec: ProviderCredentialsSpec = {
         kind: "instruction",
         title: "Register the app",
         body:
-          "Name: anything (e.g. `Omnesis`).\n" +
+          "Name: anything (e.g. Omnesis).\n" +
           "Supported account types: **Personal Microsoft accounts only**. Omnesis " +
           "signs in against the consumer authority, so a multi-tenant registration " +
           "would still be refused a work or school account.\n" +

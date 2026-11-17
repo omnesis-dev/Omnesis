@@ -256,6 +256,7 @@ export function DecisionScheduling({ scheduling }) {
     ${differs && html`<dt>Proposed schedule</dt><dd>${proposed.tier} · ${timestamp(proposed.dueAt)}</dd>`}
     ${applied && html`<dt>Applied tier</dt><dd>${applied.tier}</dd><dt>Eligible from</dt><dd>${timestamp(applied.dueAt)}</dd>`}
     ${differs && applied && html`<dt>Schedule adjustment</dt><dd>The applied schedule incorporates existing work obligations.</dd>`}
+    ${scheduling.awaitingVerdict && html`<dt>Fallback</dt><dd>Routine, without a usable urgency verdict; judged again when the decision model answers</dd>`}
     ${scheduling.fallbackSoon && html`<dt>Fallback</dt><dd>Soon, without a usable urgency verdict</dd>`}
   </dl>`;
 }

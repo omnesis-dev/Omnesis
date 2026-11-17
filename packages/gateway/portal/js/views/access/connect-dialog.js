@@ -23,10 +23,12 @@ import {
   harnessAddresses,
   reconnectableHarnessDevices,
   mainAddressCertificate,
+  mainCertificatePending,
   servesUntrustedCertificate,
 } from "./client-setup.js";
 import { NO_RELAY, NO_TAILSCALE, addressChoices, leadsWithLocalAddress } from "./public-address.js";
 import { AgentIcon } from "./agent-brand.js";
+import { OWN_ADDRESS_PAGE } from "../remote-access/manage.js";
 import { errorMessage } from "./shared.js";
 
 /**
@@ -81,9 +83,29 @@ function TrustedCertificateNotice({ agent, certificate }) {
         : `${agent.needsTrustedCertificate}, so it cannot connect to this gateway with ${selfSigned ? "its self-signed certificate" : "the certificate it serves"}.`}
     </p>
     <p>
-      <${ExternalLink} href=${PUBLISH_DOCS.certificates}>Give the gateway a Tailscale certificate<//>${offersMkcert ? ", " : " or "}<${ExternalLink} href=${PUBLISH_DOCS.domain}>use a domain of your own<//>${offersMkcert
+      <${ExternalLink} href=${PUBLISH_DOCS.certificates}>Give the gateway a Tailscale certificate<//>${offersMkcert ? ", " : " or "}<a
+        href=${OWN_ADDRESS_PAGE}
+        onClick=${(event) => {
+          event.preventDefault();
+          navigate(OWN_ADDRESS_PAGE);
+        }}
+      >use a domain of your own</a>${offersMkcert
         ? html`, or <${ExternalLink} href=${PUBLISH_DOCS.certificates}>mint an mkcert certificate<//>, which ${agent.name} trusts with one setting`
         : ""}.
+    </p>
+  </div>`;
+}
+
+/**
+ * For an agent that only accepts a publicly trusted certificate, while the
+ * address it would dial is still getting one: nothing for the owner to do but
+ * wait, and the page looks again by itself.
+ */
+function CertificatePendingNotice({ agent }) {
+  return html`<div class="access-agent-public" role="status">
+    <p>
+      <strong>This address is still getting its trusted certificate.</strong>${" "}
+      ${agent.name} can connect once the gateway has it, usually within a minute. This page checks again by itself.
     </p>
   </div>`;
 }
@@ -370,7 +392,9 @@ function AgentSetupPicker({ oauth, relay, tailscale, addressSelectable }) {
       selected.addressNotice?.usable !== false &&
       selected.needsTrustedCertificate &&
       servesUntrustedCertificate(oauth) &&
-      html`<${TrustedCertificateNotice} agent=${selected} certificate=${mainAddressCertificate(oauth)} />`}
+      (mainCertificatePending(oauth)
+        ? html`<${CertificatePendingNotice} agent=${selected} />`
+        : html`<${TrustedCertificateNotice} agent=${selected} certificate=${mainAddressCertificate(oauth)} />`)}
       ${selected.trustStep && html`<${CertificateTrustStep} agent=${selected} />`}
       ${selected.pairs &&
       html`<${HarnessPairing}
@@ -506,21 +530,20 @@ export function ConnectAgentDialog({ oauth: overviewOauth, relay = NO_RELAY, tai
         title="Add this MCP server to the client"
         caption=${addressCaption(oauth, choices.selectable)}
       >
-        ${choices.selectable &&
-        html`<label class="form-group access-address-choice">
-          <span>Address</span>
-          <select
-            id="access-mcp-address"
-            value=${address}
-            onChange=${(event) => setPickedAddress(event.currentTarget.value)}
-          >
-            ${choices.options.map(
-              (option) => html`<option key=${option.resource} value=${option.resource} selected=${option.resource === address}>${option.text}</option>`,
-            )}
-          </select>
-        </label>`}
-        <div class="access-mcp-resource">
-          <code>${oauth.resource}</code>
+        <div class="access-mcp-resource${choices.selectable ? " access-mcp-picker" : ""}">
+          ${choices.selectable
+            ? // The address is picked where it is shown and copied: one field, not a list above a copy of its choice.
+              html`<select
+                id="access-mcp-address"
+                aria-label="MCP server address"
+                value=${address}
+                onChange=${(event) => setPickedAddress(event.currentTarget.value)}
+              >
+                ${choices.options.map(
+                  (option) => html`<option key=${option.resource} value=${option.resource} selected=${option.resource === address}>${option.resource}</option>`,
+                )}
+              </select>`
+            : html`<code>${oauth.resource}</code>`}
           <${CopyIconButton}
             text=${oauth.resource}
             class="access-copy-button"

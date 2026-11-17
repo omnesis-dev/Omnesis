@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-// Settings → Remote access in a real browser. The gateway under test runs without the cloud relay
-// or its own Tailscale device, so the portal is told they are on and every route the page uses is
-// answered here by a small in-memory gateway. Fictional data throughout.
+// Settings → Connectivity in a real browser. The gateway under test runs without the cloud relay
+// or its own Tailscale device, so where a test needs them the portal is told they are on and every
+// route the page uses is answered here by a small in-memory gateway. Fictional data throughout.
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { expect, test, type Page, type Route } from "@playwright/test";
@@ -122,14 +122,15 @@ async function remoteGateway(page: Page, flags: { cloudRelay: boolean; tailscale
       setupCompletedAt: null,
       first: "tailscale",
       features: flags,
-      trustProxy: false,
-      publicBaseUrl: { serving: null, configured: null, restartNeeded: false },
+      publicBaseUrl: { configured: null, setByEnvironment: false, way: null },
+      mcpAddresses: [] as Json[],
     },
     relay: relayNone(),
     tailscale: tailscaleOff(),
     host: {
       state: "available",
       dnsName: "studio.example-net.ts.net",
+      port: 443,
       url: "https://studio.example-net.ts.net",
       servesGateway: false,
       publicGateway: false,
@@ -167,6 +168,10 @@ async function remoteGateway(page: Page, flags: { cloudRelay: boolean; tailscale
       });
     if (method === "PATCH") {
       if (body.first) state.remote.first = body.first;
+      for (const [id, enabled] of Object.entries((body.mcp ?? {}) as Record<string, boolean>))
+        state.remote.mcpAddresses = state.remote.mcpAddresses.map((row: Json) =>
+          row.id === id ? { ...row, enabled } : row,
+        );
       if (body.setupCompleted !== undefined)
         state.remote.setupCompletedAt = body.setupCompleted ? "2028-01-01T00:00:00Z" : null;
     }
@@ -177,9 +182,9 @@ async function remoteGateway(page: Page, flags: { cloudRelay: boolean; tailscale
     const body = route.request().postDataJSON();
     calls.push(["config", "PATCH", body]);
     state.remote.publicBaseUrl = {
-      serving: null,
       configured: body.gateway.publicBaseUrl,
-      restartNeeded: true,
+      setByEnvironment: false,
+      way: null,
     };
     return route.fulfill({ json: { ok: true } });
   });
@@ -223,19 +228,25 @@ async function remoteGateway(page: Page, flags: { cloudRelay: boolean; tailscale
 const heading = (page: Page) => page.locator(".remote-access-view .access-wizard-copy h3");
 const button = (page: Page, name: string) => page.getByRole("button", { name, exact: true });
 
-test("without the relay or Tailscale, Settings has no Remote access tab and asks for nothing", async ({
+test("without the relay or Tailscale, Connectivity still offers this computer's Tailscale, a domain and MCP", async ({
   page,
 }) => {
   const requested: string[] = [];
   page.on("request", (request) => {
-    if (/\/admin\/(remote-access|cloud-relay|tailscale)/.test(request.url()))
-      requested.push(request.url());
+    if (/\/admin\/(cloud-relay|tailscale)/.test(request.url())) requested.push(request.url());
   });
   await signIn(page);
+  // The tab's earlier address leads to it.
   await page.goto("/portal/settings/remote-access");
-  await expect(page.locator(".config-tab.active")).toHaveText("Config");
-  await expect(page.locator(".config-tab", { hasText: "Remote access" })).toHaveCount(0);
-  await expect(page.locator(".settings-view")).toHaveAttribute("class", "settings-view");
+  await expect(page).toHaveURL(/\/portal\/settings\/connectivity$/);
+  await expect(page.locator(".config-tab.active")).toHaveText("Connectivity");
+  await expect(heading(page)).toHaveText("Connectivity");
+  await expect(page.locator(".remote-access-item-title")).toHaveText([
+    "Tailscale on this computer",
+    "Your own domain or reverse proxy",
+    "MCP server",
+  ]);
+  await expect(page.locator(".remote-access-summary")).not.toContainText("Omnesis account");
   expect(requested).toEqual([]);
 });
 
@@ -244,9 +255,11 @@ test("the guided setup with both: account, connection, devices, then the summary
 }) => {
   const gateway = await remoteGateway(page, { cloudRelay: true, tailscaleEmbed: true });
   await signIn(page);
-  await page.goto("/portal/settings/remote-access");
+  await page.goto("/portal/settings/connectivity");
+  await expect(heading(page)).toHaveText("Connectivity");
+  await button(page, "Set up step by step").click();
   await expect(heading(page)).toHaveText("Do you want an Omnesis account?");
-  await expect(page.getByText("None of your data goes to Omnesis.")).toBeVisible();
+  await expect(page.getByText("None of your data goes to Omnesis", { exact: false })).toBeVisible();
   await button(page, "Skip for now").click();
 
   // Step 2: the relay waits for an account; the way back keeps the choices and returns here.
@@ -281,11 +294,9 @@ test("the guided setup with both: account, connection, devices, then the summary
 
   // Step 3: one answer sets the account's policy and the Tailscale device's.
   await expect(heading(page)).toHaveText("When a new device asks to join, what should happen?");
-  await expect(page.getByRole("radio", { name: /^Only with a pairing code/ })).toHaveCount(0);
-  await page.getByRole("radio", { name: /^Let my own devices join automatically/ }).check();
-  await expect(
-    page.getByRole("radio", { name: /^Let my own devices join automatically/ }),
-  ).toBeChecked();
+  await expect(page.getByRole("radio", { name: /^Pairing code only/ })).toHaveCount(0);
+  await page.getByRole("radio", { name: /^My devices join automatically/ }).check();
+  await expect(page.getByRole("radio", { name: /^My devices join automatically/ })).toBeChecked();
   await expect
     .poll(() =>
       gateway.calls.filter(([, change]) => change === "enrollment" || change === "/settings"),
@@ -296,38 +307,31 @@ test("the guided setup with both: account, connection, devices, then the summary
     ]);
   await button(page, "Finish").click();
 
-  await expect(heading(page)).toHaveText("Remote access is set up");
+  await expect(heading(page)).toHaveText("Connectivity");
   await expect(page.locator(".remote-access-summary")).toContainText(
-    "Tailscale (omnesis.example-net.ts.net) and the Omnesis relay. Home network first, then the relay, then Tailscale.",
-  );
-  await expect(page.locator(".remote-access-summary")).toContainText(
-    "My own devices join automatically.",
+    "Linked to your Omnesis account",
   );
   expect(gateway.state.remote.setupCompletedAt).not.toBeNull();
 
-  await button(page, "Review settings").click();
-  await expect(heading(page)).toHaveText(
-    "Still good? This gateway is linked to your Omnesis account",
-  );
+  await button(page, "Run the setup again").click();
+  await expect(heading(page)).toHaveText("This gateway is linked to your Omnesis account");
   await expect(button(page, "Unlink this gateway")).toBeVisible();
-  await button(page, "Keep it").click();
-  await expect(heading(page)).toHaveText(
-    "Still good? How should your devices reach this gateway when they are away from home?",
-  );
-  await button(page, "Keep and continue").click();
-  await button(page, "Keep and finish").click();
-  await expect(heading(page)).toHaveText("Remote access is set up");
+  await button(page, "Continue").click();
+  await button(page, "Continue").click();
+  await button(page, "Finish").click();
+  await expect(heading(page)).toHaveText("Connectivity");
 
   // The detail pages stay one click away and lead back.
-  await page.getByRole("link", { name: "Manage account" }).click();
+  await page.getByRole("button", { name: "Omnesis account", exact: true }).click();
   await expect(page).toHaveURL(/\/portal\/settings\/account$/);
-  await expect(page.locator(".config-tab.active")).toHaveText("Remote access");
-  await expect(page.locator(".relay-view .relay-headline")).toBeVisible();
-  await button(page, "← Remote access").click();
-  await expect(page).toHaveURL(/\/portal\/settings\/remote-access$/);
-  await page.getByRole("link", { name: "Manage Tailscale device" }).click();
+  await expect(page.locator(".config-tab.active")).toHaveText("Connectivity");
+  await button(page, "← Connectivity").click();
+  await expect(page).toHaveURL(/\/portal\/settings\/connectivity$/);
+  await page
+    .getByRole("button", { name: "This gateway's own Tailscale device", exact: true })
+    .click();
   await expect(page.locator(".tailscale-view h2")).toHaveText("Tailscale");
-  await expect(page.locator(".config-tab.active")).toHaveText("Remote access");
+  await expect(page.locator(".config-tab.active")).toHaveText("Connectivity");
 });
 
 test("my own setup: Tailscale on this computer refused with its command, and my own address checked", async ({
@@ -341,12 +345,10 @@ test("my own setup: Tailscale on this computer refused with its command, and my 
     command: "tailscale serve --bg https+insecure://localhost:7600",
   };
   await signIn(page);
-  await page.goto("/portal/settings/remote-access");
-  await expect(page.locator(".access-wizard-steps button")).toHaveText([
-    "1Remote connection",
-    "2New devices",
-  ]);
-  await page.locator("#remote-access-way-self").check();
+  await page.goto("/portal/settings/connectivity");
+  await button(page, "Set up step by step").click();
+  await expect(page.locator(".access-wizard-steps button")).toHaveText(["1Remote connection"]);
+  await page.locator("#remote-access-way-host").check();
   await expect(
     page.getByText("Found: this computer is on your Tailscale network as"),
   ).toBeVisible();
@@ -357,16 +359,12 @@ test("my own setup: Tailscale on this computer refused with its command, and my 
   await expect(page.locator(".copy-block-code")).toHaveText(
     "tailscale serve --bg https+insecure://localhost:7600",
   );
-  // A public address waits until the gateway trusts the proxy, and says how.
-  await page.getByText("Also a public address for ChatGPT and Claude").click();
-  await expect(page.locator(".remote-access-todo .copy-block-code")).toHaveText([
-    "OMNESIS_TRUST_PROXY=true",
-    "omnesis service restart gateway",
-  ]);
-  await expect(button(page, "Set it up for me")).toBeDisabled();
-  await page.getByText("Also a public address for ChatGPT and Claude").click();
+  // A public address needs nothing set on the gateway first.
+  await page.getByText("Also reachable from the Internet (Tailscale Funnel)").click();
+  await expect(button(page, "Set it up for me")).toBeEnabled();
+  await page.getByText("Also reachable from the Internet (Tailscale Funnel)").click();
 
-  await page.getByRole("radio", { name: /^My own domain or reverse proxy/ }).check();
+  await page.locator("#remote-access-way-domain").check();
   await page.locator("#remote-access-own-url").fill("https://omnesis.example.org");
   await button(page, "Check it").click();
   await expect(page.locator(".remote-access-checks li")).toHaveCount(4);
@@ -374,10 +372,12 @@ test("my own setup: Tailscale on this computer refused with its command, and my 
     "can't tell whether the address is reachable from outside",
   );
   await button(page, "Use this address").click();
-  await expect(page.getByText("Restart the gateway to start using it")).toBeVisible();
-  expect(gateway.calls.filter(([kind]) => kind === "config")).toEqual([
-    ["config", "PATCH", { gateway: { publicBaseUrl: "https://omnesis.example.org" } }],
-  ]);
+  // Saved, the address is in use at once: no restart to ask for.
+  await expect(page.getByText("This gateway uses this address.")).toBeVisible();
+  await expect(page.getByText("Restart the gateway")).toHaveCount(0);
+  await expect
+    .poll(() => gateway.calls.filter(([kind]) => kind === "config"))
+    .toEqual([["config", "PATCH", { gateway: { publicBaseUrl: "https://omnesis.example.org" } }]]);
 
   // On a phone the setup fits the screen: nothing scrolls sideways but the tab bar.
   await page.setViewportSize({ width: 390, height: 844 });
@@ -385,4 +385,40 @@ test("my own setup: Tailscale on this computer refused with its command, and my 
     () => document.documentElement.scrollWidth - window.innerWidth,
   );
   expect(overflow).toBeLessThanOrEqual(0);
+});
+
+test("the MCP server: the setup's last step and its own page turn each address on or off", async ({
+  page,
+}) => {
+  const gateway = await remoteGateway(page, { cloudRelay: false, tailscaleEmbed: true });
+  gateway.state.host = { ...gateway.state.host, servesGateway: true };
+  gateway.state.remote.mcpAddresses = [
+    { id: "host", url: "https://studio.example-net.ts.net", enabled: true, available: true },
+  ];
+  await signIn(page);
+  await page.goto("/portal/settings/connectivity");
+  await expect(page.locator(".remote-access-summary")).toContainText(
+    "On Tailscale on this computer.",
+  );
+  await button(page, "Run the setup again").click();
+  await expect(page.locator(".access-wizard-steps button")).toHaveText([
+    "1Remote connection",
+    "2MCP server",
+  ]);
+  await button(page, "Continue").click();
+  await expect(heading(page)).toHaveText("Where may agents reach your MCP server?");
+  await expect(page.getByText("https://studio.example-net.ts.net/mcp")).toBeVisible();
+  await page.getByRole("checkbox", { name: /^Tailscale on this computer/ }).uncheck();
+  await expect
+    .poll(() => gateway.calls.filter(([, path]) => path === "/admin/remote-access"))
+    .toEqual([["remote", "/admin/remote-access", { mcp: { host: false } }]]);
+  await button(page, "Finish").click();
+  await expect(page.locator(".remote-access-summary")).toContainText(
+    "Off on every address away from home.",
+  );
+  await page.goto("/portal/settings/mcp");
+  await expect(page.locator(".config-tab.active")).toHaveText("Connectivity");
+  await expect(
+    page.getByRole("checkbox", { name: /^Tailscale on this computer/ }),
+  ).not.toBeChecked();
 });

@@ -1,70 +1,69 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-// Settings → Remote access once the setup is done: one card per question, in
-// the setup's words, with the full account and Tailscale device pages one
-// click away and "Review settings" to walk the questions again.
+// Settings → Connectivity: what is on and what is not, one line each with a
+// tick or a dash — the account, every way in from away from home, and the
+// answer for new devices. Each line opens its own page to set it up or manage
+// it, the order and the answer for new devices change in place, and the
+// guided setup can be walked from here at will.
 
 import { html } from "htm/preact";
-import { useEffect, useState } from "preact/hooks";
-import { getHostTailscale } from "../../lib/remote-access-api.js";
 import { relayPhase, relayEstablished } from "../relay.js";
 import { tailscalePhase } from "../tailscale.js";
-import { devicePolicies } from "./devices-step.js";
-import { PublicWithoutTrustProxy } from "./own-setup.js";
-import { POLICY_SUMMARY, RESTART_COMMAND, accountState, listSentence, orderSentence } from "./model.js";
+import { DevicesChoice, devicePolicies } from "./devices-step.js";
+import { FirstChoice } from "./connection-step.js";
+import { ACCOUNT_PAGE, AddressLink, HOST_TAILSCALE_PAGE, MCP_PAGE, OWN_ADDRESS_PAGE, RELAY_PAGE, TAILSCALE_PAGE } from "./manage.js";
+import { MCP_ADDRESS_LABELS, mcpRows } from "./mcp.js";
+import { useHostTailscale } from "./own-setup.js";
+import { accountState, listSentence } from "./model.js";
 
-/** The detail pages the summary links to. */
-export const ACCOUNT_PAGE = "/portal/settings/account";
-export const TAILSCALE_PAGE = "/portal/settings/tailscale";
-
-const ACCOUNT_LINES = {
-  loading: "Loading…",
-  unavailable: "Not available on this installation.",
-  none: "Not used.",
-  waiting: "Waiting for you to sign in.",
-  registering: "Registering this gateway…",
-  linking: "Connecting…",
-  failed: "Couldn't connect. Nothing on this gateway changed.",
-  linked: "This gateway is linked to your Omnesis account.",
-  enrolled: "This gateway is registered with the Omnesis relay but linked to no account.",
+/** The account line: `[mark, title, detail]` by what step 1 shows. */
+const ACCOUNT_ITEMS = {
+  loading: ["off", "Your Omnesis account", "Loading…"],
+  unavailable: ["off", "Omnesis accounts", "Not available on this installation."],
+  none: ["off", "No Omnesis account", "Devices pair with a code from Settings, Devices."],
+  waiting: ["warn", "Waiting for you to sign in", "Continue in the sign-in tab."],
+  registering: ["warn", "Registering this gateway…", "This usually takes less than a minute."],
+  linking: ["warn", "Connecting to your Omnesis account…", "Almost done."],
+  failed: ["warn", "Couldn't connect to your Omnesis account", "Nothing on this gateway changed."],
+  linked: ["on", "Linked to your Omnesis account", "Your apps find this gateway by signing in."],
+  enrolled: ["warn", "Registered with the Omnesis relay, linked to no account", "Link it to find this gateway when you sign in."],
 };
 
-/** How the Tailscale device reads in a list of ways in. */
-function tailscaleWay(state) {
-  switch (tailscalePhase(state)) {
-    case "connected":
-      return `Tailscale (${state.node?.dnsName ?? state.deviceName})`;
-    case "needs-sign-in":
-      return "Tailscale (sign-in pending)";
-    case "needs-approval":
-      return "Tailscale (waiting for approval)";
-    case "starting":
-      return "Tailscale (starting)";
-    default:
-      return "Tailscale (needs attention)";
-  }
+/** The Tailscale device's line while it is on but not connected. */
+const TAILSCALE_PENDING = {
+  "needs-sign-in": "Waiting for you to sign in to Tailscale.",
+  "needs-approval": "Waiting for approval in your Tailscale admin console.",
+  starting: "Starting…",
+};
+
+const MARKS = { on: "✓", off: "–", warn: "!" };
+
+/**
+ * One line of the summary: a tick when it is on, a dash when it is off, a bang
+ * when it needs you, and `action`, the way to manage that one thing.
+ */
+function Item({ mark, title, detail = null, action = null }) {
+  return html`<li class=${`remote-access-item is-${mark}`}>
+    <span class="remote-access-mark" aria-hidden="true">${MARKS[mark]}</span>
+    <span class="remote-access-item-text">
+      <span class="remote-access-item-title">${title}</span>
+      ${detail && html`<span class="remote-access-item-detail">${detail}</span>`}
+    </span>
+    ${action}
+  </li>`;
 }
 
-/** A sentence that may start with a lower-case way in. */
-const capitalized = (sentence) => sentence.charAt(0).toUpperCase() + sentence.slice(1);
-
-/** A detail page's link, opened without reloading the portal. */
-function Manage({ href, label, onManage }) {
-  return html`<a
-    class="remote-access-manage"
-    href=${href}
-    onClick=${(event) => {
-      event.preventDefault();
-      onManage(href);
-    }}
-    >${label}</a
-  >`;
+/** The quiet link on one line that opens that thing's own page: "Manage" when it is on, "Set up" when not. */
+function ItemManage({ href, label, on = true, onManage }) {
+  return html`<button type="button" class="remote-access-item-action" aria-label=${label} onClick=${() => onManage(href)}>
+    ${on ? "Manage" : "Set up"}
+  </button>`;
 }
 
-function Card({ title, children, action }) {
-  return html`<div class="remote-access-card">
-    <div class="remote-access-card-text">
+function Row({ title, children, action }) {
+  return html`<div class="remote-access-row">
+    <div class="remote-access-row-text">
       <h4>${title}</h4>
       ${children}
     </div>
@@ -72,72 +71,126 @@ function Card({ title, children, action }) {
   </div>`;
 }
 
-/**
- * Tailscale already on this computer, read once with the Tailscale feature, or
- * null without it or when it cannot be read.
- */
-function useHostTailscale(enabled) {
-  const [host, setHost] = useState(null);
-  useEffect(() => {
-    if (!enabled) return undefined;
-    let live = true;
-    getHostTailscale().then(
-      (value) => live && setHost(value),
-      () => {},
-    );
-    return () => {
-      live = false;
-    };
-  }, [enabled]);
-  return host;
-}
-
-export function Summary({ remote, relay, tailscale, headingRef, onReview, onManage }) {
-  const host = useHostTailscale(Boolean(tailscale));
+export function Summary({ remote, setRemote, relay, tailscale, headingRef, onStart, onManage }) {
+  const host = useHostTailscale();
   const relayStatus = relay?.status;
-  const relayOn = relayEstablished(relayPhase(relayStatus)) && relayStatus.enabled === true;
-  const tailscaleOn = tailscale?.state?.enabled === true;
-  const ownAddress = remote.publicBaseUrl?.configured;
+  const relayPhaseNow = relayPhase(relayStatus);
+  const relayReady = relayEstablished(relayPhaseNow);
+  const relayOn = relayReady && relayStatus.enabled === true;
+  const tailscaleState = tailscale?.state;
+  const tailscaleOn = tailscaleState?.enabled === true;
+  const tailscaleNow = tailscalePhase(tailscaleState);
+  // A public address that is the relay's or a Tailscale name is shown on that way's row.
+  const ownAddress = remote.publicBaseUrl?.way ? null : remote.publicBaseUrl?.configured;
   const hostServes = host?.state === "available" && host.servesGateway;
-  const ways = [
-    tailscaleOn ? tailscaleWay(tailscale.state) : null,
-    relayOn ? "the Omnesis relay" : null,
-    hostServes ? `Tailscale on this computer (${host.url})` : null,
-    ownAddress && !(hostServes && ownAddress === host.url) ? `your own address (${ownAddress})` : null,
-  ].filter(Boolean);
   const policies = devicePolicies(relay, tailscale);
   const applies = policies.relayLinked || policies.tailscaleOn;
-  const devices = !applies
-    ? "Only with a pairing code from Settings, Devices."
-    : policies.differ
-      ? "Your account and Tailscale answer differently. Review settings to choose one answer."
-      : `${POLICY_SUMMARY[policies.value]}.${policies.tailscaleKeptOff ? " The Tailscale device takes only pairing codes." : ""}`;
+  const [accountMark, accountTitle, accountDetail] = ACCOUNT_ITEMS[accountState(relayStatus)];
+  const google = !relayStatus?.account?.linked && relayStatus?.google?.linked;
+  const mcp = mcpRows(remote);
+  const mcpOn = mcp.filter((row) => row.enabled);
+  const accountOn = accountMark === "on" || accountState(relayStatus) === "enrolled";
+  const anything = accountOn || tailscaleOn || relayOn || hostServes || Boolean(ownAddress);
+  const joinWays = [policies.relayLinked && "devices signing in with your account", policies.tailscaleOn && "devices on your Tailscale network"].filter(Boolean);
+
   return html`<div class="remote-access-summary">
     <div class="access-wizard-copy">
-      <h3 ref=${headingRef} tabIndex="-1">Remote access is set up</h3>
-      <p>How your devices reach this gateway when they are away from home.</p>
+      <h3 ref=${headingRef} tabIndex="-1">Connectivity</h3>
+      <p>What is on, and how your devices reach this gateway when they are away from home.</p>
     </div>
     ${relay &&
-    html`<${Card}
-      title="Your Omnesis account"
-      action=${html`<${Manage} href=${ACCOUNT_PAGE} label="Manage account" onManage=${onManage} />`}
-    >
-      <p>${ACCOUNT_LINES[accountState(relayStatus)]}</p>
+    html`<${Row} title="Omnesis account">
+      <ul class="remote-access-items">
+        <${Item}
+          mark=${accountMark}
+          title=${accountMark === "on" && google ? "Linked with Google" : accountTitle}
+          detail=${accountDetail}
+          action=${accountState(relayStatus) !== "unavailable" &&
+          html`<${ItemManage} href=${ACCOUNT_PAGE} label="Omnesis account" on=${accountOn} onManage=${onManage} />`}
+        />
+      </ul>
     <//>`}
-    <${Card}
-      title="Away from home"
-      action=${tailscale && html`<${Manage} href=${TAILSCALE_PAGE} label="Manage Tailscale device" onManage=${onManage} />`}
-    >
-      <p>
-        ${ways.length ? `${capitalized(listSentence(ways))}. ` : "Home network only. "}${orderSentence({ tailscaleOn, relayOn, first: remote.first })}
-      </p>
-      ${host?.publicGateway && remote.trustProxy !== true && html`<${PublicWithoutTrustProxy} />`}
-      ${remote.publicBaseUrl?.restartNeeded &&
-      html`<p class="remote-access-warning">Restart the gateway to use its new address: <code>${RESTART_COMMAND}</code></p>`}
+    <${Row} title="Remote connectivity">
+      <ul class="remote-access-items">
+        ${tailscale &&
+        html`<${Item}
+          mark=${!tailscaleOn ? "off" : tailscaleNow === "connected" ? "on" : "warn"}
+          title="This gateway's own Tailscale device"
+          detail=${!tailscaleOn
+            ? "Off."
+            : tailscaleNow === "connected"
+              ? tailscaleState.node?.dnsName
+                ? html`<${AddressLink} url=${`https://${tailscaleState.node.dnsName}`} />${tailscaleState.certificate?.source === "tailscale" ? ", with a trusted certificate" : ""}.`
+                : `${tailscaleState.deviceName}.`
+              : (TAILSCALE_PENDING[tailscaleNow] ?? "Needs attention on its page.")}
+          action=${html`<${ItemManage} href=${TAILSCALE_PAGE} label="This gateway's own Tailscale device" on=${tailscaleOn} onManage=${onManage} />`}
+        />`}
+        ${relay &&
+        html`<${Item}
+          mark=${!relayOn ? "off" : relayPhaseNow === "connected" ? "on" : "warn"}
+          title="Omnesis relay"
+          detail=${!relayReady
+            ? "Needs an Omnesis account."
+            : !relayOn
+              ? "Off."
+              : relayPhaseNow === "connected"
+                ? relayStatus.hostname
+                  ? html`<${AddressLink} url=${`https://${relayStatus.hostname}`} />. Works from any network, nothing to install.`
+                  : "Connected. Works from any network, nothing to install."
+                : "Reconnecting…"}
+          action=${html`<${ItemManage} href=${RELAY_PAGE} label="Omnesis relay" on=${relayOn} onManage=${onManage} />`}
+        />`}
+        ${host?.state !== "unsupported" &&
+        html`<${Item}
+          mark=${hostServes ? "on" : "off"}
+          title="Tailscale on this computer"
+          detail=${hostServes
+            ? html`<${AddressLink} url=${host.url} />${host.publicGateway ? ", public on the Internet." : ", on your Tailscale network only. Not public on the Internet."}`
+            : !host
+              ? "Checking…"
+              : host.state === "available"
+                ? "Not serving this gateway."
+                : host.state === "missing"
+                  ? "Not installed on this computer."
+                  : host.state === "stopped"
+                    ? "Installed, but not running or not signed in."
+                    : "Couldn't check."}
+          action=${html`<${ItemManage} href=${HOST_TAILSCALE_PAGE} label="Tailscale on this computer" on=${hostServes} onManage=${onManage} />`}
+        />`}
+        <${Item}
+          mark=${ownAddress ? "on" : "off"}
+          title="Your own domain or reverse proxy"
+          detail=${ownAddress ? html`<${AddressLink} url=${ownAddress} />.` : "None."}
+          action=${html`<${ItemManage} href=${OWN_ADDRESS_PAGE} label="Your own domain" on=${Boolean(ownAddress)} onManage=${onManage} />`}
+        />
+        <${Item}
+          mark=${mcpOn.length > 0 ? "on" : "off"}
+          title="MCP server"
+          detail=${mcp.length === 0
+            ? "On this computer and your home network only, until an address away from home is set up."
+            : mcpOn.length > 0
+              ? `On ${listSentence(mcpOn.map((row) => MCP_ADDRESS_LABELS[row.id] ?? row.id))}.`
+              : "Off on every address away from home."}
+          action=${html`<${ItemManage} href=${MCP_PAGE} label="MCP server" on=${mcpOn.length > 0} onManage=${onManage} />`}
+        />
+      </ul>
+      ${tailscaleOn && relayOn && html`<${FirstChoice} remote=${remote} setRemote=${setRemote} />`}
     <//>
-    <${Card} title="New devices"><p>${devices}</p><//>
+    ${(relay || tailscale) &&
+    html`<${Row} title="New devices">
+      ${applies
+        ? html`<p class="remote-access-row-hint">
+              One answer for ${joinWays.join(" and ")}. A pairing code from Settings, Devices always works too.
+            </p>
+            <${DevicesChoice} relay=${relay} tailscale=${tailscale} name="remote-access-summary-policy" />`
+        : html`<ul class="remote-access-items">
+            <${Item} mark="off" title="Only with a pairing code" detail="From Settings, Devices." />
+          </ul>`}
+    <//>`}
     <div class="remote-access-buttons">
-      <button type="button" class="btn-primary" onClick=${onReview}>Review settings</button>
+      <button type="button" class="btn-secondary" onClick=${() => onStart(anything ? "review" : "setup")}>
+        ${anything ? "Run the setup again" : "Set up step by step"}
+      </button>
     </div>
   </div>`;
 }

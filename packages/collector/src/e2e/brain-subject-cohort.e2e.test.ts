@@ -12,6 +12,7 @@ import {
   email,
   preserveCurrentOwner,
   waitFor,
+  urgencyOnlyDecisionPolicy,
 } from "./brain-bench/index.js";
 import { knowledgePuppet } from "./brain-bench/knowledge-puppet.js";
 import { structuredData } from "./brain-bench/puppet-plan.js";
@@ -71,6 +72,9 @@ async function startScenario(
   const known: Record<"studio" | "mooring", string[]> = { studio: [], mooring: [] };
   const matterOf = (title: string) => (title.startsWith("Mooring") ? "mooring" : "studio");
   const bench = await BrainBench.start({
+    // Work without an urgency verdict waits at routine priority; these
+    // changes are judged soon so they are processed within the test.
+    decision: { policy: urgencyOnlyDecisionPolicy() },
     experimental: true,
     syncSources: false,
     entailment: "accept-all",

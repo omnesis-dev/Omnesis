@@ -153,6 +153,8 @@ export class GatewayCloudRelayManagement implements CloudRelayManagement {
   private connectAbort = new AbortController();
   private notice: CloudRelayManagementStatus["notice"];
   private forgetting: Promise<void> | undefined;
+  /** Whether any answer behind the leaving under way said the gateway was unlinked. */
+  private forgetRemoved = false;
   private releasing: Promise<void> | undefined;
   private releaseTimer: ReturnType<typeof setTimeout> | undefined;
   private closed = false;
@@ -563,7 +565,7 @@ export class GatewayCloudRelayManagement implements CloudRelayManagement {
     const signal = AbortSignal.any([this.abort.signal, AbortSignal.timeout(150_000)]);
     this.notice = undefined;
     this.pending = (async () => {
-      let unregistered = false;
+      let unregistered: GatewayUnregistered | undefined;
       this.enrollment = { state: "pending" };
       this.revision++;
       try {
@@ -595,19 +597,26 @@ export class GatewayCloudRelayManagement implements CloudRelayManagement {
         this.tunnel ??= (this.options.startTunnel ?? startGatewayCloudTunnel)(
           this.options.gatewayUrl(),
           this.environment(),
-          () => this.forgotten(),
+          (removed) => this.forgotten(removed),
         );
         if (force || !this.publicReady) {
           if (await this.controller?.renew(signal)) this.lastRenewedAt = new Date().toISOString();
         }
         signal.throwIfAborted();
         this.certificateError = undefined;
+        // The relay drops public connections until it has accepted the tunnel, so a look taken
+        // earlier would call a working address unreachable until the next recheck. A tunnel that
+        // does not come online by then is looked at anyway and rechecked as usual.
+        await this.tunnel
+          ?.online(AbortSignal.any([signal, AbortSignal.timeout(this.recheckMs())]))
+          .catch(() => {});
+        signal.throwIfAborted();
         this.publicReady = await this.reachable(signal);
         // A first miss is not an error yet: the address is looked at again for a few minutes.
         if (this.publicReady) this.publicError = undefined;
       } catch (error) {
         if (!this.abort.signal.aborted) {
-          unregistered = error instanceof GatewayUnregistered;
+          if (error instanceof GatewayUnregistered) unregistered = error;
           // The page only shows a code; the reason has to be findable in the gateway log.
           log.warn(`Connecting to the relay failed: ${String(error)}`);
           if (this.enrollment.state !== "enrolled")
@@ -622,17 +631,18 @@ export class GatewayCloudRelayManagement implements CloudRelayManagement {
       } finally {
         this.pending = undefined;
         this.revision++;
-        if (unregistered) this.forgotten();
+        if (unregistered) this.forgotten(unregistered.removed);
         else if (this.settings?.enabled && !this.abort.signal.aborted) this.scheduleNext(0);
       }
     })();
   }
   /**
-   * The first check runs the moment the tunnel is started, usually before it is online. Without a
-   * prompt second look the Relay page would call a working address unreachable for an hour.
+   * The first check can still miss a working address: the tunnel did not come online in time, or
+   * the public name does not answer yet. Without a prompt second look the Relay page would call it
+   * unreachable for an hour.
    */
   private scheduleNext(attempt: number): void {
-    const soon = this.options.probeRetryMs ?? 15_000;
+    const soon = this.recheckMs();
     if (this.enrollment.state !== "enrolled" && this.registrationRetries < PROBE_RETRIES) {
       // A registration that failed is tried again by itself: one hiccup must not cost an hour.
       this.registrationRetries++;
@@ -648,6 +658,9 @@ export class GatewayCloudRelayManagement implements CloudRelayManagement {
         : setTimeout(() => this.launch(true), 60 * 60_000);
     }
     this.timer.unref();
+  }
+  private recheckMs(): number {
+    return this.options.probeRetryMs ?? 15_000;
   }
   private reachable(signal: AbortSignal): Promise<boolean> {
     return (this.options.probe ?? defaultPublicProbe)(this.settings!.publicOrigin, signal).catch(
@@ -684,21 +697,36 @@ export class GatewayCloudRelayManagement implements CloudRelayManagement {
   }
   /**
    * The relay answered this gateway's own proven keys that it has no registration for it: its
-   * Omnesis account was deleted. The gateway leaves as if its owner had disconnected it, so it
-   * can be connected to another account. Devices already paired stay paired: they belong to
-   * the gateway. Nothing else the relay says, and no failure to reach it, leads here.
+   * Omnesis account was deleted, or its owner unlinked it on the account page (`removed`). The
+   * gateway leaves as if its owner had disconnected it here, so it can be connected again from
+   * scratch. Devices already paired stay paired: they belong to the gateway. Nothing else the
+   * relay says, and no failure to reach it, leads here.
    */
-  private forgotten(): void {
+  private forgotten(removed: boolean): void {
+    // An unlink outranks a deletion: whichever answer arrived first, the more specific one shows.
+    if (removed && this.notice === "account-deleted") {
+      this.notice = "gateway-removed";
+      this.revision++;
+    }
+    this.forgetRemoved ||= removed;
     this.forgetting ??= this.forget()
-      .catch((error: unknown) => log.warn(`Leaving the deleted account failed: ${String(error)}`))
-      .finally(() => (this.forgetting = undefined));
+      .catch((error: unknown) => log.warn(`Leaving the account failed: ${String(error)}`))
+      .finally(() => {
+        this.forgetting = undefined;
+        this.forgetRemoved = false;
+      });
   }
   private async forget(): Promise<void> {
     // A late word from a tunnel that is already stopped changes nothing.
     if (!this.settings!.enabled) return;
-    log.warn("The relay no longer has this gateway: its Omnesis account was deleted");
+    const removed = this.forgetRemoved;
+    log.warn(
+      removed
+        ? "The relay no longer has this gateway: it was unlinked on its Omnesis account page"
+        : "The relay no longer has this gateway: its Omnesis account was deleted",
+    );
     await this.leave(false);
-    this.notice = "account-deleted";
+    this.notice = this.forgetRemoved ? "gateway-removed" : "account-deleted";
     this.revision++;
   }
   private get releaseFile(): string {

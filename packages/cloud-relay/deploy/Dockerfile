@@ -1,4 +1,4 @@
-# Cloud relay image. Built only by .github/workflows/cloud-relay-image.yml, from
+# Cloud relay image. Built only by .github/workflows/relay-image.yml, from
 # the repository root, for one exact commit of main that passed full
 # validation. That workflow signs the result; a relay host should run only
 # images whose signature it has checked (see packages/cloud-relay/README.md).

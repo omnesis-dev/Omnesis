@@ -53,6 +53,8 @@ test("fresh provider login migrates only independently available gateway associa
       currentOwner: () => undefined,
       deleteAccount: () => {},
       deleteGateway: () => {},
+      removeGateway: () => {},
+      gatewayOnline: () => false,
       authenticateOwner: async () => {
         throw new RelayError(401, "Synthetic unauthorized owner");
       },
@@ -184,6 +186,8 @@ test("legacy account admission skips revoked, spent and untrusted registrations 
       gatewayBinding: () => undefined,
       deleteAccount: () => {},
       deleteGateway: () => {},
+      removeGateway: () => {},
+      gatewayOnline: () => false,
       currentOwner: (id) => {
         if (id === first.ownerAccountId) {
           if (mode === "revoked") throw new RelayError(403, "Revoked registration");

@@ -176,8 +176,8 @@ describe.skipIf(!browserReady)("passkeys on the gateway's own page", () => {
       expect.objectContaining({ source: "link-page", confirmed: true }),
     ]);
     await expectText(page, "Confirmed on this gateway");
-    // Set up: the checklist gives way to the ordinary headline.
-    await expectText(page, "Connected as");
+    // Set up: the checklist gives way to the account itself.
+    await expectText(page, "This gateway is linked to your Omnesis account.");
     expect(await page.getByText("Finish setting up").count()).toBe(0);
     await shot(page, "confirmed");
     // The list the CLI reads says the same.

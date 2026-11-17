@@ -19,6 +19,7 @@ import {
 import { errorResponse, GatewayTimeoutError, HttpError } from "../errors.js";
 import { strictRoute } from "../scope.js";
 import { DirectMcpExecutionBoundary } from "../../mcp/direct-execution-boundary.js";
+import { fixedPublicAddress } from "../../public-address.js";
 import { mountMcpStreamableRoutes } from "./mcp-streamable.js";
 import type { Db } from "../../data/types.js";
 import type { AppEnv, PrincipalOAuthAuthContext } from "./types.js";
@@ -284,8 +285,7 @@ function appFixture(
         : { answerService },
     isAgentIntegrationDevice:
       options.isAgentIntegrationDevice ?? ((deviceId) => deviceId === DEVICE_IDS[agentAnswerToken]),
-    publicBaseUrl: "https://omnesis.test",
-    mcpResourceUrls: options.mcpResourceUrls,
+    publicAddress: fixedPublicAddress("https://omnesis.test", options.mcpResourceUrls),
     recordMcpToolInvocation,
     recordDirectAuditEvent,
   });

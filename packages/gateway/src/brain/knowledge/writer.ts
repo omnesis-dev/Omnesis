@@ -43,6 +43,7 @@ import {
   enqueueKnowledgeWork,
   retireHistoricalKnowledgeWorkBeyond,
   retireKnowledgeWorkFromExcludedSources,
+  retireRewrittenHistoryChangeWork,
   createKnowledgeBatch,
   appendKnowledgeFrontier,
   appendKnowledgeBatchWork,
@@ -131,6 +132,7 @@ export const knowledgeWriterHandlers = {
   "knowledge.enqueue": enqueueKnowledgeWork,
   "knowledge.retireBeyondHorizon": retireHistoricalKnowledgeWorkBeyond,
   "knowledge.retireExcludedSources": retireKnowledgeWorkFromExcludedSources,
+  "knowledge.retireRewrittenHistory": retireRewrittenHistoryChangeWork,
   "knowledge.startBatch": startKnowledgeBatch,
   "knowledge.appendFrontier": appendKnowledgeFrontier,
   "knowledge.frontierOutcome": setKnowledgeFrontierOutcome,
@@ -197,6 +199,7 @@ export function knowledgeGateFromCall(call: WriterCallFn): KnowledgeWriteGate {
     "knowledge.enqueue": (...args) => call("knowledge.enqueue", args),
     "knowledge.retireBeyondHorizon": (...args) => call("knowledge.retireBeyondHorizon", args),
     "knowledge.retireExcludedSources": (...args) => call("knowledge.retireExcludedSources", args),
+    "knowledge.retireRewrittenHistory": (...args) => call("knowledge.retireRewrittenHistory", args),
     "knowledge.classifyInitialRootBatches": (...args) =>
       call("knowledge.classifyInitialRootBatches", args),
     "knowledge.startBatch": (...args) => call("knowledge.startBatch", args),
@@ -251,6 +254,8 @@ export function directKnowledgeGate(db: Database.Database): KnowledgeWriteGate {
       retireHistoricalKnowledgeWorkBeyond(db, ...args),
     "knowledge.retireExcludedSources": async (...args) =>
       retireKnowledgeWorkFromExcludedSources(db, ...args),
+    "knowledge.retireRewrittenHistory": async (...args) =>
+      retireRewrittenHistoryChangeWork(db, ...args),
     "knowledge.classifyInitialRootBatches": async (...args) =>
       classifyInitialRootBatches(db, ...args),
     "knowledge.startBatch": async (...args) => startKnowledgeBatch(db, ...args),

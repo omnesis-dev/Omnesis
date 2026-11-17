@@ -13,6 +13,7 @@ describe("gatewayHostedDescriptors", () => {
     const web = gatewayHostedDescriptors().find((d) => d.id === "web");
     expect(web).toBeTruthy();
     expect(web?.gatewayHosted).toBe(true);
+    expect(web?.setupGuide).toBe("browser-extension");
     // The whole point: clients get web's metadata from the gateway, not a collector.
     expect(web?.name).toBe("Web Pages");
     expect(web?.unitName).toBe("web pages");

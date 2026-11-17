@@ -165,12 +165,26 @@ export function upsertSeedFromContacts(
   let selfDetected = false;
 
   for (const doc of plan.contactDocs) {
-    const personId = findOrCreatePerson(db, doc.mention, doc.sourceId, doc.docDate);
+    const resolved: { row?: string } = {};
+    const personId = findOrCreatePerson(
+      db,
+      doc.mention,
+      doc.sourceId,
+      doc.docDate,
+      undefined,
+      undefined,
+      resolved,
+    );
     if (!personId) continue;
+    // The card describes the row holding its identifiers, not whichever row
+    // that one is logically merged into: marking the canonical would outlive
+    // an undo of the merge, and leave a person counted as a contact card that
+    // the same-name contact merge then fuses for good.
+    const cardRow = resolved.row ?? personId;
 
     db.prepare(
       "UPDATE people SET source = 'contacts', updated_at = ? WHERE id = ? AND source = 'extracted'",
-    ).run(new Date().toISOString(), personId);
+    ).run(new Date().toISOString(), cardRow);
 
     db.prepare(
       `INSERT OR IGNORE INTO document_people (document_id, person_id, role, source_id)
@@ -185,7 +199,7 @@ export function upsertSeedFromContacts(
     if (doc.isMe) {
       db.prepare("UPDATE people SET is_self = TRUE, updated_at = ? WHERE id = ?").run(
         new Date().toISOString(),
-        personId,
+        cardRow,
       );
       selfDetected = true;
     }

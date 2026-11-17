@@ -35,6 +35,7 @@ import {
   type PersonBrowseCursor,
   type PersonSortBy,
 } from "../data/repositories/PersonRepository.js";
+import { getPersonDocuments } from "../data/repositories/DocumentPeopleRepository.js";
 import { assemblePersonLookup } from "../domain/person-lookup.js";
 import { countMessagesByPerson, type MessageCountsQuery } from "../domain/message-counts.js";
 import { likeSearchDocuments } from "../search/like-search.js";
@@ -130,6 +131,7 @@ import {
 } from "../brain/knowledge/review-selection.js";
 import {
   hasKnowledgeWorkFromExcludedSources,
+  hasRewrittenHistoryChangeWork,
   listStaleKnowledgeWork,
 } from "../brain/knowledge/work.js";
 import { readKnowledgeArcs } from "../brain/knowledge/engine-graph.js";
@@ -207,6 +209,8 @@ export const ioHandlers = {
   "io.knowledgeStaleWork": (db: Db, limit: number) => listStaleKnowledgeWork(db, limit),
   "io.knowledgeHasExcludedWork": (db: Db, excludedSources: string[]) =>
     hasKnowledgeWorkFromExcludedSources(db, excludedSources),
+  "io.knowledgeHasRewrittenHistoryWork": (db: Db, now: number, recentWindowMs: number) =>
+    hasRewrittenHistoryChangeWork(db, now, recentWindowMs),
   "io.knowledgeArcs": (db: Db, inputs: string[], bound: number) =>
     readKnowledgeArcs(db, inputs, bound),
   "io.knowledgeDiscoveryBacklog": (db: Db, options: KnowledgeDiscoveryBacklogOptions) =>
@@ -244,6 +248,14 @@ export const ioHandlers = {
     limit: number,
     options: { sortBy?: PersonSortBy; after?: PersonBrowseCursor },
   ) => searchPeople(db, query, limit, options),
+
+  // A page of a person's documents (GET /people/:id/documents). On the main
+  // thread, a person on millions of documents froze the gateway for minutes.
+  "io.personDocuments": (
+    db: Db,
+    personId: string,
+    options: { role?: string; limit?: number; offset?: number },
+  ) => getPersonDocuments(db, personId, options),
 
   // Person lookup (agent `lookup_people`). The same heavy `searchPeople` join
   // as browse, plus up to ~limit per-candidate follow-ups; on the main thread

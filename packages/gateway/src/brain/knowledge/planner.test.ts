@@ -153,12 +153,15 @@ describe("bounded maintenance scheduling", () => {
     soonDelayMs: 100,
     routineDelayMs: 600,
   };
-  it("routes model scores and fails conservatively when no decision is available", () => {
+  it("routes model scores and never promotes work over judged work without a verdict", () => {
     expect(scheduleKnowledgeChange(0.9, 10, policy)).toEqual({ tier: "immediate", dueAt: 10 });
     expect(scheduleKnowledgeChange(0.5, 10, policy)).toEqual({ tier: "soon", dueAt: 110 });
     expect(scheduleKnowledgeChange(0.1, 10, policy)).toEqual({ tier: "routine", dueAt: 610 });
-    expect(scheduleKnowledgeChange(null, 10, policy)).toEqual({ tier: "soon", dueAt: 110 });
-    expect(scheduleKnowledgeChange(Number.NaN, 10, policy)).toEqual({ tier: "soon", dueAt: 110 });
+    expect(scheduleKnowledgeChange(null, 10, policy)).toEqual({ tier: "routine", dueAt: 610 });
+    expect(scheduleKnowledgeChange(Number.NaN, 10, policy)).toEqual({
+      tier: "routine",
+      dueAt: 610,
+    });
     expect(scheduleKnowledgeChange(0.1, 10, policy, true)).toEqual({
       tier: "immediate",
       dueAt: 10,

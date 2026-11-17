@@ -829,7 +829,7 @@ verifying an intentional gateway key change.
 
 `deploy/Dockerfile` builds the relay image (linux/amd64, UID 10001, base image
 pinned by digest) from the repository root. Only
-`.github/workflows/cloud-relay-image.yml` publishes it, as
+`.github/workflows/relay-image.yml` publishes it, as
 `ghcr.io/omnesis-dev/omnesis-cloud-relay`, and only for a commit of `main` whose
 manually dispatched `full-validation` run with every lane passed: it starts by
 itself when such a run finishes, or by hand with that run's id. It pushes the
@@ -843,13 +843,13 @@ to run, and should refer to images by digest only:
 
 ```sh
 cosign verify \
-  --certificate-identity https://github.com/omnesis-dev/Omnesis/.github/workflows/cloud-relay-image.yml@refs/heads/main \
+  --certificate-identity https://github.com/omnesis-dev/Omnesis/.github/workflows/relay-image.yml@refs/heads/main \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
   -a dev.omnesis.source-sha=<40-character commit> \
   ghcr.io/omnesis-dev/omnesis-cloud-relay@sha256:<digest>
 gh attestation verify oci://ghcr.io/omnesis-dev/omnesis-cloud-relay@sha256:<digest> \
   --repo omnesis-dev/Omnesis \
-  --signer-workflow omnesis-dev/Omnesis/.github/workflows/cloud-relay-image.yml
+  --signer-workflow omnesis-dev/Omnesis/.github/workflows/relay-image.yml
 ```
 
 ## Validation
@@ -1247,8 +1247,12 @@ The portal uses the installation's relay service implicitly; it has no endpoint
 field. New installations default to `https://relay.omnesis.app`. Operators may
 select a different service with `OMNESIS_CLOUD_RELAY_URL`; existing saved
 installations retain their selected service when that variable is absent.
-Request bodies cannot override it: the legacy CLI `--relay` option only asserts
-that the requested URL matches the installation selection. A conflicting
+Synthetic (`OMNESIS_SYNTHETIC=1`), isolated test (`OMNESIS_TEST_INSTANCE=1`) and
+spawned E2E gateways have no default: without `OMNESIS_CLOUD_RELAY_URL` or a
+saved selection they report `relay-service-unavailable` and never contact the
+production relay. Request bodies cannot override the selection: the legacy CLI
+`--relay` option only asserts that the requested URL matches the installation
+selection. A conflicting
 operator override on an already configured installation disables setup with
 `relay-service-mismatch`; it does not migrate an identity or send its credentials
 to another operator. Plan such a migration separately. The custom public gateway

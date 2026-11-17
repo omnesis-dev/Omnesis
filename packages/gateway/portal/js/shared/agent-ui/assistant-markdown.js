@@ -13,15 +13,16 @@ export function AssistantMarkdown({
   copyable = false,
   blockImages = false,
   plainValueFences = true,
+  linkCodeUrls = false,
   className = "agent-part-text",
 }) {
   const root = useRef(null);
   const result = useMemo(
     () =>
       copyable || plainValueFences
-        ? renderCopyableMarkdown(text, { plainValueFences, blockImages })
+        ? renderCopyableMarkdown(text, { plainValueFences, blockImages, linkCodeUrls })
         : { html: renderMarkdown(text, { blockImages }), targets: [] },
-    [text, copyable, plainValueFences, blockImages],
+    [text, copyable, plainValueFences, blockImages, linkCodeUrls],
   );
 
   useLayoutEffect(() => {

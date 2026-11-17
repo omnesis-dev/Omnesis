@@ -1,13 +1,14 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-// Step 2 of the Remote access setup: how devices reach the gateway away from
+// Step 2 of the Connectivity setup: how devices reach the gateway away from
 // home. At home they always connect directly. The gateway's own Tailscale
 // device (with that feature) and the Omnesis relay (with an enrolled account)
-// are switched on and off here through their own routes; "Use my own setup"
-// stands for Tailscale already on the computer or the owner's own address,
-// and choosing it turns the other two off. When the Tailscale device and the
-// relay are both on, the owner says which devices try first.
+// are switched on and off here through their own routes; Tailscale already on
+// the computer (with that feature) and the owner's own domain are set up in
+// their panels. All four are independent and can all be on at once. When the Tailscale
+// device and the relay are both on, the owner says which devices try first.
+// Each option links to the full page that manages it.
 
 import { html } from "htm/preact";
 import { useState } from "preact/hooks";
@@ -15,8 +16,9 @@ import { ConfirmModal } from "../../components/confirm-modal.js";
 import { setTailscaleEnabled } from "../../lib/tailscale-api.js";
 import { updateRemoteAccess } from "../../lib/remote-access-api.js";
 import { relayEstablished, relayPhase } from "../relay.js";
-import { StatusPanel, TURN_OFF_CONFIRM, tailscalePhase } from "../tailscale.js";
-import { OwnSetup } from "./own-setup.js";
+import { StatusPanel, tailscalePhase, turnOffConfirm } from "../tailscale.js";
+import { HostTailscale, InstallTailscale, OwnAddress, useHostTailscale } from "./own-setup.js";
+import { ManageButton, RELAY_PAGE, TAILSCALE_PAGE } from "./manage.js";
 import { BackButton, StepFrame, nextLabel } from "./step-frame.js";
 
 /** One way in: a checkbox card, with what it needs (`body`) underneath while there is any. */
@@ -63,7 +65,7 @@ function RelayInline({ status, phase }) {
     </p>`;
   if (phase === "off") return null;
   return html`<p class="remote-access-muted" role="status">
-    ${phase === "disconnected" ? "Disconnected. It reconnects by itself; Settings, Omnesis account says more." : "Connecting to the relay…"}
+    ${phase === "disconnected" ? "Disconnected. It reconnects by itself; Manage relay says more." : "Connecting to the relay…"}
   </p>`;
 }
 
@@ -80,7 +82,8 @@ const FIRST_CHOICES = [
   },
 ];
 
-function FirstChoice({ remote, setRemote }) {
+/** Which way devices try first when both the Tailscale device and the relay can answer; step 2 and the summary show it. */
+export function FirstChoice({ remote, setRemote }) {
   const [saving, setSaving] = useState("");
   const [error, setError] = useState("");
   const choose = async (first) => {
@@ -96,10 +99,11 @@ function FirstChoice({ remote, setRemote }) {
     }
   };
   const value = saving || remote.first;
-  return html`<fieldset class="remote-access-first">
+  const picked = FIRST_CHOICES.find((choice) => choice.value === value);
+  return html`<fieldset class="remote-access-choices is-compact remote-access-first">
     <legend>When both can answer, try first</legend>
     ${FIRST_CHOICES.map(
-      (choice) => html`<label key=${choice.value} class=${`remote-access-choice${value === choice.value ? " is-on" : ""}`}>
+      (choice) => html`<label key=${choice.value} class=${`remote-access-choice${value === choice.value ? " is-on" : ""}`} title=${choice.text}>
         <input
           type="radio"
           name="remote-access-first"
@@ -108,10 +112,10 @@ function FirstChoice({ remote, setRemote }) {
           disabled=${Boolean(saving)}
           onChange=${() => choose(choice.value)}
         />
-        <span class="remote-access-option-text"><strong>${choice.title}</strong><small>${choice.text}</small></span>
+        <span class="remote-access-option-text"><strong>${choice.title}</strong></span>
       </label>`,
     )}
-    <p class="remote-access-muted">Your home network always comes first, whatever you pick.</p>
+    <p class="remote-access-choice-detail">${picked ? `${picked.text} ` : ""}Your home network always comes first.</p>
     ${error && html`<p class="remote-access-problem" role="alert">${error}</p>`}
   </fieldset>`;
 }
@@ -123,6 +127,7 @@ export function ConnectionStep({
   error,
   onStep,
   onNext,
+  onCancel,
   onBack,
   last,
   remote,
@@ -136,6 +141,7 @@ export function ConnectionStep({
   // Which confirmation is open: turning the Tailscale device off, or choosing the owner's own setup.
   const [confirming, setConfirming] = useState("");
   const relayStatus = relay?.status;
+  const host = useHostTailscale();
   const phase = relayPhase(relayStatus);
   const relayReady = relayEstablished(phase);
   const relayOn = relayReady && relayStatus.enabled === true;
@@ -148,47 +154,36 @@ export function ConnectionStep({
   const setTailscale = (enabled) =>
     tailscale.run(enabled ? "enable" : "disable", (signal) => setTailscaleEnabled(enabled, signal));
   const setRelay = (enabled) => relay.run(enabled ? "enable" : "disable", {});
+  // The three ways in are independent: any of them can be on beside the others.
   const chooseTailscale = (checked) => {
     if (!checked) return setConfirming("tailscale-off");
-    onFlow({ self: false });
     void setTailscale(true);
   };
-  const chooseRelay = (checked) => {
-    if (checked) onFlow({ self: false });
-    void setRelay(checked);
-  };
-  const chooseSelf = (checked) => {
-    if (checked && (tailscaleOn || relayOn)) return setConfirming("self");
-    onFlow({ self: checked });
-  };
+  const chooseRelay = (checked) => void setRelay(checked);
+  const chooseHost = (checked) => onFlow({ host: checked });
+  // Ticked when the owner ticked it, or, until they choose, when this computer already serves the gateway.
+  const hostChosen = (flow.host ?? host?.servesGateway === true) && host?.state !== "missing";
+  const chooseDomain = (checked) => onFlow({ domain: checked });
   const confirm = async () => {
-    const which = confirming;
     setConfirming("");
-    if (which === "tailscale-off") {
-      await setTailscale(false);
-      return;
-    }
-    // A way that would not turn off says why on its own option, and the owner's setup waits.
-    if (relayOn && (await setRelay(false)) === undefined) return;
-    if (tailscaleOn && (await setTailscale(false)) === undefined) return;
-    onFlow({ self: true });
+    await setTailscale(false);
   };
 
   const relayText = relayReady
     ? RELAY_TEXT
     : html`Needs an Omnesis account.${" "}<button type="button" class="remote-access-link" onClick=${onGetAccount}>Set one up in step 1</button>; your choices here are kept.`;
-  const offWays = [tailscaleOn && "the gateway's own Tailscale device", relayOn && "the Omnesis relay"].filter(Boolean);
 
   return html`<${StepFrame}
     flow=${flow}
     steps=${steps}
     heading="How should your devices reach this gateway when they are away from home?"
-    blurb="At home they always connect directly, over your home network. Choose one or both."
+    blurb="At home they always connect directly, over your home network. Choose any of these; they work side by side."
     headingRef=${headingRef}
     error=${error}
     onStep=${onStep}
+    onCancel=${onCancel}
     actions=${html`<${BackButton} onBack=${onBack} />
-      <button type="button" class="btn-primary" onClick=${onNext}>${nextLabel(flow, last)}</button>`}
+      <button type="button" class="btn-primary" onClick=${onNext}>${nextLabel(last)}</button>`}
   >
     <div class="remote-access-options">
       ${tailscaleEmbed &&
@@ -199,7 +194,24 @@ export function ConnectionStep({
         checked=${shown(tailscale.busy, tailscaleOn)}
         disabled=${!tailscale.state || tailscaleBusy}
         onChange=${chooseTailscale}
-        body=${(tailscaleOn || tailscale.error) && html`<${TailscaleInline} tailscale=${tailscale} />`}
+        body=${(tailscaleOn || tailscale.error) &&
+        html`<${TailscaleInline} tailscale=${tailscale} />
+          ${tailscaleOn &&
+          html`<p class="remote-access-more">
+            <${ManageButton} href=${TAILSCALE_PAGE} label="Manage Tailscale device" />
+          </p>`}`}
+      />`}
+      ${host?.state !== "unsupported" &&
+      html`<${WayOption}
+        id="remote-access-way-host"
+        title="Tailscale on this computer"
+        text=${host?.state === "missing"
+          ? html`Install Tailscale on this computer to use this.${" "}<${InstallTailscale} />`
+          : "Serve this gateway from the Tailscale app already on this computer."}
+        checked=${hostChosen}
+        disabled=${host?.state === "missing"}
+        onChange=${chooseHost}
+        body=${hostChosen && html`<${HostTailscale} remote=${remote} setRemote=${setRemote} />`}
       />`}
       ${relay &&
       html`<${WayOption}
@@ -209,42 +221,28 @@ export function ConnectionStep({
         checked=${shown(relay.busy, relayOn)}
         disabled=${!relayReady || relayBusy || !(relayOn ? relayStatus.can?.disable : relayStatus.can?.enable)}
         onChange=${chooseRelay}
-        body=${(relayOn || relay.error) &&
+        body=${(relayReady || relay.error) &&
         html`${relayOn && html`<${RelayInline} status=${relayStatus} phase=${phase} />`}
-          ${relay.error && html`<p class="remote-access-problem" role="alert">${relay.error}</p>`}`}
+          ${relay.error && html`<p class="remote-access-problem" role="alert">${relay.error}</p>`}
+          ${relayReady &&
+          html`<p class="remote-access-more">
+            <${ManageButton} href=${RELAY_PAGE} label="Manage relay" />
+          </p>`}`}
       />`}
       <${WayOption}
-        id="remote-access-way-self"
-        title="Use my own setup"
-        text=${tailscaleEmbed
-          ? "Tailscale already on this computer, or a domain you publish yourself. Omnesis checks that it works."
-          : "A domain or reverse proxy you publish yourself. Omnesis checks that it works."}
-        checked=${flow.self}
-        onChange=${chooseSelf}
-        body=${flow.self &&
-        html`<${OwnSetup}
-          remote=${remote}
-          setRemote=${setRemote}
-          tailscaleEmbed=${tailscaleEmbed}
-          own=${flow.own}
-          url=${flow.url}
-          onFlow=${onFlow}
-        />`}
+        id="remote-access-way-domain"
+        title="My own domain or reverse proxy"
+        text="An https address you run in front of this gateway. Omnesis checks that it works."
+        checked=${flow.domain}
+        onChange=${chooseDomain}
+        body=${flow.domain &&
+        html`<${OwnAddress} remote=${remote} setRemote=${setRemote} url=${flow.url} onUrl=${(value) => onFlow({ url: value })} />`}
       />
       ${tailscaleOn && relayOn && html`<${FirstChoice} remote=${remote} setRemote=${setRemote} />`}
     </div>
     <${ConfirmModal}
       open=${confirming === "tailscale-off"}
-      ...${TURN_OFF_CONFIRM}
-      destructive
-      onConfirm=${confirm}
-      onCancel=${() => setConfirming("")}
-    />
-    <${ConfirmModal}
-      open=${confirming === "self"}
-      title="Use your own setup instead?"
-      body=${`This turns off ${offWays.join(" and ")}. Devices that reach this gateway through them lose access away from home until your own setup works.`}
-      confirmLabel="Turn off and continue"
+      ...${turnOffConfirm(tailscale?.state)}
       destructive
       onConfirm=${confirm}
       onCancel=${() => setConfirming("")}

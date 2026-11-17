@@ -23,8 +23,24 @@ import { GatewayAccountLink } from "./gateway-account-link.js";
 import { GatewayUnregistered, readOrCreateGatewayOwnerKey } from "./gateway-key-client.js";
 
 let directory: string, manager: GatewayCloudRelayManagement | undefined;
+/** Requests no test answered; any one fails the test, even when the gateway swallows the error. */
+let unanswered: string[] = [];
+/**
+ * The network a test sees unless it answers a request itself: the relay has no managed Google
+ * browser client, and every other request is refused. No test reaches a real service, whether
+ * through the gateway's `fetch` or the global one.
+ */
+const offline: typeof fetch = (request) => {
+  const url = request instanceof Request ? request.url : String(request);
+  if (url.includes("/_relay/v2/google/browser/config"))
+    return Promise.resolve(new Response(null, { status: 404 }));
+  unanswered.push(url);
+  return Promise.reject(new Error(`No test answers ${url}`));
+};
 beforeEach(async () => {
   directory = await mkdtemp(join(tmpdir(), "relay-management-"));
+  unanswered = [];
+  vi.stubGlobal("fetch", offline);
 });
 afterEach(async () => {
   await manager?.close();
@@ -32,6 +48,7 @@ afterEach(async () => {
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
   await rm(directory, { recursive: true, force: true });
+  expect(unanswered).toEqual([]);
 });
 function fixture(overrides: Partial<CloudRelayManagerOptions> = {}) {
   const close = vi.fn(async () => {}),
@@ -56,11 +73,7 @@ function fixture(overrides: Partial<CloudRelayManagerOptions> = {}) {
   const options = {
     configDir: directory,
     gatewayUrl: () => "https://localhost:12345",
-    fetch: vi.fn<typeof fetch>(async (url, init) =>
-      String(url).includes("/_relay/v2/google/browser/config")
-        ? new Response(null, { status: 404 })
-        : fetch(url, init),
-    ),
+    fetch: vi.fn<typeof fetch>(offline),
     activate: vi.fn(async () => {}),
     directCertificateCoversHostname: () => false,
     directIdentity: () => ({
@@ -83,6 +96,7 @@ function fixture(overrides: Partial<CloudRelayManagerOptions> = {}) {
     startTunnel: vi.fn(() => ({
       stop,
       status: () => ({ state: "online" as const }),
+      online: async () => {},
     })) as unknown as CloudRelayManagerOptions["startTunnel"],
     ...overrides,
     // The monitor is on by default; only the test that opts in may reach a CT provider.
@@ -499,9 +513,13 @@ test("Google delegate remains independently optional and never bypasses configur
     }),
   ).rejects.toMatchObject({ code: "google-unavailable" });
   // Google configuration is not needed to remove a previously established directory alias.
-  const transport = vi.fn<typeof fetch>(async () => new Response(null, { status: 204 }));
-  vi.stubGlobal("fetch", transport);
+  const transport = vi.mocked(f.options.fetch);
+  transport.mockClear();
+  transport.mockImplementation(async () => new Response(null, { status: 204 }));
   await manager.googleUnlink();
+  expect(transport.mock.calls.map(([url]) => String(url))).toEqual([
+    "https://relay.example.test/_relay/v2/key/google-link",
+  ]);
   expect((await manager.status()).enabled).toBe(true);
 });
 test("disabled restart restores the existing hostname-specific context without renewal, and wrong-host material fails closed", async () => {
@@ -606,6 +624,62 @@ test("an address that was not reachable at the first check is checked again shor
   expect(probe).toHaveBeenCalledTimes(3);
   // Only the address was looked at again: the gateway did not register a second time.
   expect(f.register).toHaveBeenCalledTimes(registrations);
+});
+/**
+ * A tunnel the relay accepts only when the test says so. The relay drops a public connection for a
+ * gateway whose tunnel is not online, so the probe answers from the tunnel's state.
+ */
+function heldTunnel() {
+  let state: "connecting" | "online" = "connecting";
+  const waiting: Array<() => void> = [];
+  const tunnel = {
+    stop: vi.fn(),
+    status: () => ({ state }),
+    online: vi.fn(
+      (signal: AbortSignal) =>
+        new Promise<void>((resolve, reject) => {
+          if (state === "online") return resolve();
+          waiting.push(resolve);
+          signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+        }),
+    ),
+  };
+  return {
+    startTunnel: vi.fn(() => tunnel) as unknown as CloudRelayManagerOptions["startTunnel"],
+    tunnel,
+    probe: vi.fn(async () => state === "online"),
+    goOnline() {
+      state = "online";
+      for (const resolve of waiting.splice(0)) resolve();
+    },
+  };
+}
+test("the public address is looked at once the tunnel is online, not before", async () => {
+  const held = heldTunnel();
+  // No recheck comes to the rescue: only the first look can make the address ready.
+  const f = fixture({ startTunnel: held.startTunnel, probe: held.probe, probeRetryMs: 3600_000 });
+  manager = await GatewayCloudRelayManagement.open(f.options);
+  await manager.configure(input);
+  await manager.enable();
+  // The launch has reached its look at the address: it is waiting for the tunnel, or has probed.
+  await vi.waitFor(() =>
+    expect(held.tunnel.online.mock.calls.length + held.probe.mock.calls.length).toBeGreaterThan(0),
+  );
+  held.goOnline();
+  await vi.waitFor(async () => expect((await manager!.status()).publicMcp.ready).toBe(true));
+  expect(held.probe).toHaveBeenCalledOnce();
+});
+test("a tunnel that does not come online delays the first look by one recheck interval at most", async () => {
+  const held = heldTunnel();
+  const f = fixture({ startTunnel: held.startTunnel, probe: held.probe, probeRetryMs: 1 });
+  manager = await GatewayCloudRelayManagement.open(f.options);
+  await manager.configure(input);
+  await manager.enable();
+  await vi.waitFor(() => expect(held.probe).toHaveBeenCalledTimes(21));
+  expect((await manager.status()).publicMcp).toMatchObject({
+    ready: false,
+    lastError: "public-endpoint-unreachable",
+  });
 });
 test("rechecks of an unreachable address stop after a while and leave it to the hourly refresh", async () => {
   const probe = vi.fn(async () => false);
@@ -812,24 +886,35 @@ test("portal cannot select the relay and rejection happens before discovery or o
   );
 });
 test("new setup uses distribution default without a request URL and restart preserves the selected installation", async () => {
-  const f = fixture({ env: {} });
+  // The distribution's relay brings the official DNS broker, answered here by one in memory.
+  const broker = await brokerHarness({
+    origin: "https://dns.omnesis.app",
+    relayDomain: "relay.omnesis.app",
+    fallback: offline,
+  });
+  const f = fixture({ env: {}, fetch: broker.fetch });
   manager = await GatewayCloudRelayManagement.open(f.options);
   expect(await manager.status()).toMatchObject({
     serviceConfigured: true,
     config: { relayUrl: "https://relay.omnesis.app" },
   });
-  await manager.configure({ termsAccepted: true });
+  const { gatewayId } = await manager.configure({ termsAccepted: true });
   expect(f.discover).toHaveBeenCalledWith(
     "https://relay.omnesis.app",
-    expect.any(String),
+    gatewayId,
     expect.any(AbortSignal),
     f.options.fetch,
   );
+  const name = `name:${hostedGatewayHostname(gatewayId!, "relay.omnesis.app")}`;
+  expect(broker.calls).toEqual(["/_dns/v2/health", "/_dns/v2/challenge", "/_dns/v2/complete"]);
+  expect(broker.store.values.get(name)).toMatchObject({ gatewayId });
   await manager.close();
   manager = await GatewayCloudRelayManagement.open(f.options);
-  expect((await manager.configure({ termsAccepted: true })).config.relayUrl).toBe(
-    "https://relay.omnesis.app",
-  );
+  const restarted = await manager.configure({ termsAccepted: true });
+  expect(restarted.config.relayUrl).toBe("https://relay.omnesis.app");
+  expect(restarted.gatewayId).toBe(gatewayId);
+  // The restarted gateway claims its name again, which the broker already binds to it.
+  expect([...broker.store.values.keys()].filter((key) => key.startsWith("name:"))).toEqual([name]);
 });
 test("invalid operator service disables configuration with an actionable static failure", async () => {
   const f = fixture({ env: { OMNESIS_CLOUD_RELAY_URL: "invalid" } });
@@ -1636,12 +1721,12 @@ test("connecting again after a registration that failed registers the gateway ag
 });
 
 /** What the manager handed the tunnel to call when the relay says it no longer has this gateway. */
-function relayForgot(f: ReturnType<typeof fixture>): () => void {
+function relayForgot(f: ReturnType<typeof fixture>): (removed?: boolean) => void {
   const start = f.options.startTunnel as unknown as { mock: { calls: unknown[][] } };
-  return start.mock.calls.at(-1)![2] as () => void;
+  return start.mock.calls.at(-1)![2] as (removed?: boolean) => void;
 }
-async function forgotten() {
-  await vi.waitFor(async () => expect((await manager!.status()).notice).toBe("account-deleted"), {
+async function forgotten(notice: "account-deleted" | "gateway-removed" = "account-deleted") {
+  await vi.waitFor(async () => expect((await manager!.status()).notice).toBe(notice), {
     timeout: 10_000,
   });
   return manager!.status();
@@ -1774,6 +1859,48 @@ test(
     });
   },
 );
+test("a gateway unlinked on its account page leaves its account the same way, and says it was unlinked", async () => {
+  const f = await connectedGateway({ probeRetryMs: 1 });
+  // Found by its next registration, such as when it starts again after being offline.
+  f.register.mockRejectedValueOnce(new GatewayUnregistered(true));
+  await manager!.reconnect();
+  const after = await forgotten("gateway-removed");
+  expect(after).toMatchObject(disconnected);
+  expect(after.connect).toBeUndefined();
+  expect(manager!.verifiedAccountId()).toBeUndefined();
+  expect(manager!.isExposing()).toBe(false);
+  expect((await readdir(f.relayDirectory)).sort()).toEqual(RETAINED);
+  // Nothing is tried again.
+  const registrations = f.register.mock.calls.length;
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  expect(f.register).toHaveBeenCalledTimes(registrations);
+  // Its owner connects it again from scratch, and the notice goes.
+  f.relay.poll({ status: "approved" });
+  expect(await manager!.connect({ termsAccepted: true })).not.toHaveProperty("notice");
+  expect(await settled("done")).toMatchObject({ enabled: true, account: { linked: true } });
+});
+test("a running gateway's tunnel learning it was unlinked on its account page leaves the account at once", async () => {
+  const f = await connectedGateway();
+  relayForgot(f)(true);
+  expect(await forgotten("gateway-removed")).toMatchObject(disconnected);
+  expect(f.stop).toHaveBeenCalledOnce();
+});
+test("an answer that says the gateway was unlinked wins over one that could not say why, while leaving", async () => {
+  const f = await connectedGateway();
+  relayForgot(f)(false);
+  relayForgot(f)(true);
+  expect(await forgotten("gateway-removed")).toMatchObject(disconnected);
+});
+test("an answer that says the gateway was unlinked wins over one that could not say why, after leaving", async () => {
+  const g = await connectedGateway();
+  relayForgot(g)(false);
+  await forgotten("account-deleted");
+  relayForgot(g)(true);
+  expect((await manager!.status()).notice).toBe("gateway-removed");
+  // And never the other way round.
+  relayForgot(g)(false);
+  expect((await manager!.status()).notice).toBe("gateway-removed");
+});
 test("the tunnel learning that the relay forgot the gateway ends a connection under way, once", async () => {
   const f = await connecting();
   manager = await GatewayCloudRelayManagement.open(f.options);
@@ -2238,8 +2365,6 @@ test("CAA drift raises the incident hold, which the owner acknowledges on the ga
     env: {
       OMNESIS_CLOUD_RELAY_URL: "https://relay.example.test",
       OMNESIS_CLOUD_RELAY_CERTIFICATE_MONITOR_ENABLED: "1",
-      // The certificate transparency side of the monitor fails fast on loopback.
-      OMNESIS_CLOUD_RELAY_CERTSPOTTER_URL: "https://127.0.0.1:9/",
     },
     caaLookup: async () => issue,
     onIncidentHold: held,
@@ -2251,6 +2376,11 @@ test("CAA drift raises the incident hold, which the owner acknowledges on the ga
     spkiFingerprintSha256: () => "c".repeat(64),
     expectedCaa: async () => account,
   }));
+  // Certificate transparency, the monitor's other side, lists no issuance.
+  vi.stubGlobal(
+    "fetch",
+    vi.fn<typeof fetch>(async () => Response.json([])),
+  );
   manager = await GatewayCloudRelayManagement.open(f.options);
   const monitor = (manager as unknown as { monitor: { checkCaa(): Promise<void> } }).monitor;
   // Before the gateway publishes anything, there is nothing to drift from.

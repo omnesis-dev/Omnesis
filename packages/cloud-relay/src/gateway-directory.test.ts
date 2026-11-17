@@ -20,11 +20,17 @@ test("directory selects only the signed-in account's gateway and refuses ambiguo
     accounts: (identity) => (identity === "google" ? ["2", "1"] : []),
     binding: (owner) => binding(Number(owner)),
     name: (owner) => (owner === "1" ? "Fictional home" : undefined),
+    online: (owner) => owner === "2",
   });
   expect(directory.list("google", query())).toEqual({
     gateways: [
-      { gatewayId: id(1), publicOrigin: binding(1).publicOrigin, displayName: "Fictional home" },
-      { gatewayId: id(2), publicOrigin: binding(2).publicOrigin },
+      {
+        gatewayId: id(1),
+        publicOrigin: binding(1).publicOrigin,
+        displayName: "Fictional home",
+        online: false,
+      },
+      { gatewayId: id(2), publicOrigin: binding(2).publicOrigin, online: true },
     ],
   });
   expect(() => directory.select("google", query())).toThrow("Select a gateway");
@@ -41,12 +47,13 @@ test("pagination is bounded, stable and refuses stale or malformed cursors and s
     accounts: () => Array.from({ length: 51 }, (_, n) => String(n + 1)),
     binding: (owner) => binding(Number(owner)),
     name: () => undefined,
+    online: () => false,
   });
   const first = directory.list("google", query());
   expect(first.gateways).toHaveLength(50);
   expect(first.nextCursor).toBe(id(50));
   expect(directory.list("google", query(`after=${first.nextCursor}`))).toEqual({
-    gateways: [{ gatewayId: id(51), publicOrigin: binding(51).publicOrigin }],
+    gateways: [{ gatewayId: id(51), publicOrigin: binding(51).publicOrigin, online: false }],
   });
   expect(directory.list("google", query(`after=${id(51)}`))).toEqual({ gateways: [] });
   expect(() => directory.list("google", query(`after=${id(52)}`))).toThrow("changed");
@@ -69,8 +76,12 @@ test("revoked or absent entries do not hide a healthy gateway while internal fai
       return owner === "healthy" ? binding(1) : undefined;
     },
     name: () => undefined,
+    online: () => false,
   });
   expect(directory.select("google", query())).toEqual(binding(1));
+  // Only a listed gateway has an owner to act on: a revoked or absent one has none.
+  expect(directory.owner("google", id(1))).toBe("healthy");
+  expect(directory.owner("google", id(2))).toBeUndefined();
   for (const error of [new Error("database unavailable"), new RelayError(503, "unavailable")]) {
     const failed = new GatewayDirectory({
       accounts: () => ["owner"],
@@ -78,6 +89,7 @@ test("revoked or absent entries do not hide a healthy gateway while internal fai
         throw error;
       },
       name: () => undefined,
+      online: () => false,
     });
     expect(() => failed.list("google", query())).toThrow(error);
   }
@@ -88,6 +100,7 @@ test("hosted selection bounds the rendered directory", () => {
     accounts: () => Array.from({ length: 1001 }, (_, n) => String(n + 1)),
     binding: (owner) => binding(Number(owner)),
     name: () => undefined,
+    online: () => false,
   });
   expect(() => directory.choices("google")).toThrow("Too many gateways");
 });

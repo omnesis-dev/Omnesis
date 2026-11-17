@@ -112,7 +112,11 @@ export type {
 export { salienceDecisionPolicy, isSalienceRequest, salienceSubject } from "./salience-policy.js";
 export type { SalienceScript } from "./salience-policy.js";
 
-export { startDecisionServer, DECISION_SERVER_MODEL_ID } from "./decision-server.js";
+export {
+  startDecisionServer,
+  urgencyOnlyDecisionPolicy,
+  DECISION_SERVER_MODEL_ID,
+} from "./decision-server.js";
 export type {
   DecisionServer,
   DecisionServerCall,

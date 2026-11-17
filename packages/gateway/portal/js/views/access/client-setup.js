@@ -11,8 +11,6 @@
 import { AGENT_ICONS } from "./agent-brand.js";
 import {
   DOCS,
-  PUBLISH_DOMAIN,
-  PUBLISH_FUNNEL,
   addressChoices,
   hostedClientAddress,
   localClientAddress,
@@ -24,8 +22,6 @@ const SERVER_NAME = "omnesis";
 
 const DEVELOPER_MODE_GUIDE = "https://developers.openai.com/api/docs/guides/developer-mode";
 export const PUBLISH_DOCS = {
-  funnel: PUBLISH_FUNNEL,
-  domain: PUBLISH_DOMAIN,
   certificates: `${DOCS}/setup#certificates`,
   trust: `${DOCS}/connect#trust-certificate`,
 };
@@ -46,6 +42,16 @@ function shellQuote(value) {
 export function servesUntrustedCertificate(oauth) {
   const main = oauth.resources?.find((entry) => entry.resource === oauth.resource);
   return main?.publiclyTrusted === false;
+}
+
+/**
+ * Whether the main address is still getting its publicly trusted certificate:
+ * a Tailscale name or relay address the gateway was just given. Agents that
+ * require a public certificate wait for it rather than for the owner.
+ */
+export function mainCertificatePending(oauth) {
+  const main = oauth.resources?.find((entry) => entry.resource === oauth.resource);
+  return main?.certificatePending === true;
 }
 
 /**
@@ -153,7 +159,7 @@ function harnessCommands(harness, oauth, address, pairingCode) {
  * - `pairs` marks the managed integrations, which pair the machine they run on
  *   as an agent device before signing in.
  *
- * @param {{ resource: string, resources?: Array<{ resource: string, servedByGateway: boolean, direct: boolean, publiclyTrusted?: boolean }>, tlsFingerprintSha256?: string | null, certificate?: { kind: string, trustFile: string | null } | null }} oauth
+ * @param {{ resource: string, resources?: Array<{ resource: string, servedByGateway: boolean, direct: boolean, publiclyTrusted?: boolean, certificatePending?: boolean }>, tlsFingerprintSha256?: string | null, certificate?: { kind: string, trustFile: string | null } | null }} oauth
  * @param {{ harnessAddress?: { gatewayUrl: string, servedByGateway: boolean, direct: boolean }, pairingCode?: string, relay?: { state: string, url?: string }, tailscale?: { state: string, url?: string } }} [options]
  *   `oauth.resource` is the address selected in the dialog, `relay` the
  *   gateway's relay-hosted address, from `relayPublicAddress`, and `tailscale`

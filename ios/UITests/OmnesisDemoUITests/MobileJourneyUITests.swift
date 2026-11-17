@@ -30,6 +30,9 @@ final class MobileJourneyUITests: XCTestCase {
         app = XCUIApplication()
         // Glass chrome never reports idle to XCTest; see `AutomationGlass`.
         app.launchEnvironment["DEMO_PLAIN_GLASS"] = "1"
+        // Logs where each tap lands and which menu actions ran; the journey
+        // script keeps that log when a journey fails. See `AutomationTouchLog`.
+        app.launchEnvironment["DEMO_TOUCH_LOG"] = "1"
         // The app asks for notification, speech and microphone access as its
         // screens appear. Answer whichever system alert shows up whenever it
         // blocks the next interaction.

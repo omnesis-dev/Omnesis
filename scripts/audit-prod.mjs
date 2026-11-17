@@ -51,6 +51,15 @@ const ALLOWLIST = {
     "Nothing reads an untrusted archive through it at runtime. A patched 7.5.22 " +
     "exists; take it whenever cmake-js widens its range or the dependency tree " +
     "is next refreshed.",
+  "GHSA-fc5q-39xc-vjpf":
+    "picomatch has no patched release; every version through 4.0.7 compiles a " +
+    "repeated single-branch extglob such as +(*a) into an exponentially " +
+    "backtracking expression. The production copies are the Local Files, " +
+    "Obsidian and Maildir providers' own dependency, which compile only the " +
+    "operator's exclude patterns, and every one of those calls passes " +
+    "noextglob, so extglob groups are literal text and never reach that parser " +
+    "path. Each provider's tests sync a folder past a hostile extglob pattern. " +
+    "Revisit when picomatch ships a fix or a new production caller appears.",
 };
 
 const SEV_FAIL = new Set(["moderate", "high", "critical"]);

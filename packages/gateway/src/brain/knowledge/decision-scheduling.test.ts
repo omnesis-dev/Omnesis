@@ -125,13 +125,22 @@ it("retains a truthful unscheduled judgment when enqueue loses its source revisi
     input: { availability: "available" },
   });
 });
-it("records missing-backend fallbackSoon without pretending that a request or model answer exists", async () => {
+it("records a missing-backend routine fallback without pretending that a request or model answer exists", async () => {
   expect(await judge("decision-none", false)).toBeNull();
-  enqueueKnowledgeWork(db, { ...work, urgencyDecision: { id: "decision-none", anchorAt: 10 } }, 10);
+  enqueueKnowledgeWork(
+    db,
+    {
+      ...work,
+      tier: "routine",
+      dueAt: 610,
+      urgencyDecision: { id: "decision-none", anchorAt: 10 },
+    },
+    10,
+  );
   expect(readKnowledgeDecisionAudit(db, "decision-none")).toMatchObject({
     score: null,
     modelId: "unavailable",
-    scheduling: { fallbackSoon: true, applied: { tier: "soon", dueAt: 110 } },
+    scheduling: { awaitingVerdict: true, applied: { tier: "routine", dueAt: 610 } },
     input: { availability: "unavailable", request: null, response: null },
   });
 });

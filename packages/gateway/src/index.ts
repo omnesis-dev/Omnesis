@@ -209,6 +209,7 @@ import {
   backfillOptsFromRuntime,
   resolveRuntimeSettings,
 } from "./runtime-settings.js";
+import { PublicAddress } from "./public-address.js";
 import { SearchPipeline } from "./search/pipeline.js";
 import { SearchWorkerPool } from "./workers/search-pool.js";
 import { startSearchCacheWarm, type SearchCacheWarm } from "./workers/search-warm.js";
@@ -457,6 +458,12 @@ const config = configStore.get();
 // individual key in `gateway.*` / `indexer.*`. See src/mitigations.ts.
 const runtime = resolveRuntimeSettings(config);
 announceRuntimeSettings(runtime);
+// The public address applies as soon as it is saved: everything that uses it
+// reads it from here on each use.
+const publicAddress = PublicAddress.following(configStore);
+log.info(
+  `Public address: ${publicAddress.baseUrl() ?? "(unset — loopback OAuth/callback fallback only)"}`,
+);
 // How much memory the gateway may use: the knob, else the cgroup limit, else
 // the host's memory. The worker pools are sized from it, and the indexer keeps
 // the HNSW graph within it.
@@ -1952,12 +1959,13 @@ const tlsExtraHosts = tlsExtraHostNames(process.env.OMNESIS_TLS_EXTRA_NAMES);
 const addressedHosts = () =>
   partitionAddressedHosts({
     gatewayUrl: process.env.OMNESIS_GATEWAY_URL,
-    publicBaseUrl: runtime.publicBaseUrl,
+    publicBaseUrl: publicAddress.baseUrl(),
     trustOrigins: [
       ...runtime.pairingSystemTrustOrigins,
       ...(configStore.get().gateway?.pairingSystemTrustOrigins ?? []),
     ],
     proxyTrusted: reverseProxyTrusted(),
+    gatewayPort: PORT,
   });
 let acmeController: Awaited<ReturnType<typeof createGatewayAcmeController>>;
 const publicSni = new GatewayPublicSni();
@@ -1989,6 +1997,14 @@ const tlsLifecycle = new TlsLifecycleService({
 });
 
 let cloudRelayManagement: GatewayCloudRelayManagement | undefined;
+/** The Omnesis relay origin agents reach this gateway by, once it has one. */
+const relayPublicOrigin = (): string | undefined =>
+  cloudRelayEnabled()
+    ? (cloudRelayManagement?.publicOrigin() ??
+      (process.env.OMNESIS_CLOUD_RELAY_GATEWAY_ORIGIN
+        ? publicGatewayOrigin(process.env)
+        : undefined))
+    : undefined;
 /** The key a device sees when it reaches this gateway through the relay. */
 const cloudPublicSpkiFingerprint = (): string | undefined =>
   cloudRelayManagement?.managesPublicCertificate()
@@ -2007,9 +2023,9 @@ try {
           const hostNetwork = inContainer ? readHostNetwork(configDir) : null;
           return {
             origins: [
-              runtime.publicBaseUrl,
+              publicAddress.baseUrl(),
               cloudRelayManagement?.publicOrigin(),
-              ...runtime.mcpResourceUrls.map((value) => new URL(value).origin),
+              ...publicAddress.mcpResourceUrls().map((value) => new URL(value).origin),
             ],
             localNames: ["localhost", osHostname(), `${osHostname()}.local`, ...tlsExtraHosts],
             port: hostNetwork?.port ?? cloudListenPort,
@@ -2789,26 +2805,22 @@ const app = createServer(db, DB_PATH, {
     sessionTtlMs: runtime.sessionTtlMs,
     sessionRefreshThrottleMs: runtime.sessionRefreshThrottleMs,
   },
-  // Externally-reachable HTTPS base URL (gateway.publicBaseUrl); forwarded
-  // in auth.begin so OAuth/aggregator sources build their redirect URI as
-  // `${publicBaseUrl}/oauth/callback`. See runtime-settings.ts.
-  publicBaseUrl: runtime.publicBaseUrl,
+  // Externally-reachable HTTPS base URL (gateway.publicBaseUrl) and the MCP
+  // resources it implies, as they stand at each request.
+  publicAddress,
   ...(cloudRelayEnabled() || tailscaleEmbed
     ? {
         additionalOAuthIssuerUrls: () => {
-          const relayOrigin = cloudRelayEnabled()
-            ? (cloudRelayManagement?.publicOrigin() ??
-              (process.env.OMNESIS_CLOUD_RELAY_GATEWAY_ORIGIN
-                ? publicGatewayOrigin(process.env)
-                : undefined))
-            : undefined;
           // Agents reach the gateway by its tailnet name, on the tailnet or
           // through its public address; both are the same origin.
           const tailnetOrigin = tailscaleEmbed?.tailnetOrigin() ?? undefined;
-          return [relayOrigin, tailnetOrigin].filter((origin): origin is string => !!origin);
+          return [relayPublicOrigin(), tailnetOrigin].filter(
+            (origin): origin is string => !!origin,
+          );
         },
       }
     : {}),
+  ...(cloudRelayEnabled() ? { relayPublicOrigin } : {}),
   tailscaleEmbed,
   cloudRelayManagement,
   cloudRelayExposure: () => cloudRelayManagement?.isExposing() ?? false,
@@ -2821,8 +2833,7 @@ const app = createServer(db, DB_PATH, {
     cloudRelayManagement?.publicOrigin() ??
     (process.env.OMNESIS_CLOUD_RELAY_GATEWAY_ORIGIN
       ? publicGatewayOrigin(process.env)
-      : runtime.publicBaseUrl),
-  mcpResourceUrls: runtime.mcpResourceUrls,
+      : publicAddress.baseUrl()),
   indexerModel: indexerLifecycle.modelInfo,
   indexerReadiness: () => indexerStatus.getReadiness(),
   getSemanticSearch: () => indexerLifecycle.vectorIndex,
@@ -3019,7 +3030,7 @@ const app = createServer(db, DB_PATH, {
   // host's launcher records the host's, which is where phones reach it.
   hostNetwork: inContainer ? () => readHostNetwork(configDir) : undefined,
   systemTrustPairingOrigins: () => [
-    ...(runtime.publicBaseUrl ? [runtime.publicBaseUrl] : []),
+    ...[publicAddress.baseUrl()].filter((origin): origin is string => !!origin),
     ...runtime.pairingSystemTrustOrigins,
     ...(configStore.get().gateway?.pairingSystemTrustOrigins ?? []),
   ],

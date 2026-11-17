@@ -5,19 +5,27 @@
  * Where a request came from, for rate limiting, audit lines and the loopback
  * exemptions.
  *
- * By default the answer is the TCP peer. Forwarded headers are attacker
- * controlled on a gateway that is reachable directly, so they are ignored
- * unless `OMNESIS_TRUST_PROXY=true`, which means exactly one reverse proxy
- * sits in front of the gateway and every request passes through it (the
- * gateway bound to loopback with `OMNESIS_BIND`). That proxy appends the
- * address it accepted the connection from to `X-Forwarded-For`, so the
+ * By default the answer is the TCP peer. A proxy reports the client it
+ * forwards for in `X-Forwarded-For`, appending (or, like Tailscale Serve and
+ * Funnel, setting) the address it accepted the connection from, so the
  * trustworthy entry is the last one; the entries before it were supplied by
  * the client and may say anything. `X-Real-IP`, which a proxy sets rather
- * than appends to, is the fallback. The proxy has to set or append that
- * header itself: one that passes a client's `X-Forwarded-For` through
- * untouched, or a gateway bound to every interface with the flag on, lets a
- * direct client choose its own rate-limit bucket. The loopback exemption
- * stays closed either way, since the socket peer must itself be loopback.
+ * than appends to, is the fallback.
+ *
+ * Those headers are believed on a connection from this computer itself: a
+ * proxy on the gateway's machine (Tailscale Serve or Funnel, Caddy, nginx, a
+ * tunnel client) reaches it over loopback, and a client that connects
+ * directly from anywhere else never does, so it cannot choose its own
+ * address. A program on the gateway's machine that names another address
+ * only gives up the loopback exemption. A proxy on another machine reaches
+ * the gateway from that machine's address, which the gateway cannot tell
+ * apart from a direct client; `OMNESIS_TRUST_PROXY=true` declares that
+ * exactly one proxy sits in front and every request passes through it (the
+ * gateway bound to loopback with `OMNESIS_BIND`, or reachable only from the
+ * proxy), and the headers are then believed from any peer. A proxy that
+ * passes a client's `X-Forwarded-For` through untouched lets that client
+ * choose its rate-limit bucket either way.
+ *
  * Requests through this gateway's own cloud relay tunnel are counted by the
  * address the relay reported for them instead (`relayedClientBucket`), and
  * requests through its own tailnet device by the address Tailscale reported
@@ -65,12 +73,28 @@ export function reverseProxyTrusted(): boolean {
 }
 
 /**
- * The client address the trusted proxy reports, or undefined when no proxy
- * is trusted or the request carries no forwarded header (a caller that
- * reached the gateway without passing through the proxy).
+ * Whether the request's forwarded headers come from a proxy the gateway
+ * trusts: one on this computer, connecting over loopback, or any peer under
+ * `OMNESIS_TRUST_PROXY`. The relay tunnel's sockets are loopback too, but the
+ * headers on them are the remote client's own.
  */
-export function forwardedClientAddress(header: HeaderReader): string | undefined {
-  if (!reverseProxyTrusted()) return undefined;
+function forwardedHeadersTrusted(env: unknown): boolean {
+  if (reverseProxyTrusted()) return true;
+  const socket = (
+    env as { incoming?: { socket?: { remoteAddress?: string; remotePort?: number } } }
+  )?.incoming?.socket;
+  if (socket && isRelayTunnelPeer(socket)) return false;
+  const peer = socketPeerAddress(env);
+  return peer !== undefined && isLoopbackIp(peer);
+}
+
+/**
+ * The client address a trusted proxy reports, or undefined when the
+ * request's peer is not a trusted proxy or the request carries no forwarded
+ * header (a caller that reached the gateway without passing through one).
+ */
+export function forwardedClientAddress(header: HeaderReader, env: unknown): string | undefined {
+  if (!forwardedHeadersTrusted(env)) return undefined;
   const forwardedFor = header("x-forwarded-for");
   if (forwardedFor) {
     const entries = forwardedFor
@@ -124,7 +148,7 @@ export function clientAddress(header: HeaderReader, env: unknown): string {
   return (
     tailnetClientBucket(env) ??
     relayedClientBucket(env) ??
-    forwardedClientAddress(header) ??
+    forwardedClientAddress(header, env) ??
     socketPeerAddress(env) ??
     "unknown"
   );
@@ -165,9 +189,9 @@ export function isLoopbackIp(ip: string): boolean {
  *
  * The socket peer must be loopback: a remote caller cannot claim `127.0.0.1`
  * through a header, since headers are read only from a trusted proxy. And
- * when a proxy is trusted, the address it reports must be loopback too, so
- * that a proxy on the gateway host, whose every connection arrives over
- * loopback, does not exempt the whole Internet.
+ * the address a proxy reports must be loopback too, so that a proxy on the
+ * gateway host, whose every connection arrives over loopback, does not
+ * exempt the whole Internet.
  */
 export function isLoopbackClient(header: HeaderReader, env: unknown): boolean {
   // Relay traffic arrives on a local tunnel socket but remains remote traffic.
@@ -181,7 +205,7 @@ export function isLoopbackClient(header: HeaderReader, env: unknown): boolean {
     return false;
   const peer = socketPeerAddress(env);
   if (peer === undefined || !isLoopbackIp(peer)) return false;
-  const forwarded = forwardedClientAddress(header);
+  const forwarded = forwardedClientAddress(header, env);
   return forwarded === undefined || isLoopbackIp(forwarded);
 }
 

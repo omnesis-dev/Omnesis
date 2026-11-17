@@ -25,7 +25,7 @@ describe("Agent landing after cloud inference recovery", () => {
     if (originalWindow === undefined) delete globalThis.window; else globalThis.window = originalWindow;
   });
 
-  it("creates a fresh ready session after consent without sending a message", async () => {
+  it("enables the fresh composer after consent without allocating an idle session", async () => {
     originalDocument = globalThis.document;
     originalWindow = globalThis.window;
     const parsed = parseHTML("<html><body><main id='root'></main></body></html>");
@@ -37,11 +37,10 @@ describe("Agent landing after cloud inference recovery", () => {
     vi.stubGlobal("CustomEvent", parsed.window.CustomEvent);
     host = parsed.document.querySelector("#root");
 
-    let completeSession;
     const client = {
       getConfig: vi.fn().mockResolvedValueOnce({ enabled: false, backend: "codex", disabledCode: "remote_inference_disabled" })
         .mockResolvedValue({ enabled: true, backend: "codex" }),
-      createSession: vi.fn(() => new Promise((resolve) => { completeSession = resolve; })),
+      createSession: vi.fn(),
       listConversations: vi.fn().mockResolvedValue({ conversations: [] }),
       onEvent: vi.fn(() => () => {}), onResync: vi.fn(() => () => {}),
       send: vi.fn(), close: vi.fn(),
@@ -60,15 +59,12 @@ describe("Agent landing after cloud inference recovery", () => {
     };
     await click("Enable cloud inference…");
     await click("Enable cloud inference");
-    await vi.waitFor(() => expect(client.createSession).toHaveBeenCalledOnce());
-    await act(async () => {});
-    expect(host.querySelector("textarea").disabled).toBe(true);
-    await act(async () => { completeSession({ sessionId: "ready-session", model: "example-model", backend: "codex" }); });
     await vi.waitFor(() => {
       expect(host.querySelector("textarea"), host.textContent).not.toBeNull();
       expect(host.querySelector("textarea").disabled).toBe(false);
     });
-    expect(client.onEvent).toHaveBeenCalledWith("ready-session", expect.any(Function), expect.any(Object));
+    expect(client.createSession).not.toHaveBeenCalled();
+    expect(client.onEvent).not.toHaveBeenCalled();
     expect(client.getConfig).toHaveBeenCalledTimes(2);
     expect(client.send).not.toHaveBeenCalled();
     expect(host.textContent).not.toContain("Cloud inference is disabled");

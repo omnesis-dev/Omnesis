@@ -24,6 +24,7 @@ it("presents pending input groups as a compact semantic table with readiness and
   const rendered = text(tree);
   expect(rendered).toContain("WorkInputsReadiness");
   expect(rendered).toContain("Awaiting content");
+  expect(text(WaitingWork({ status: { work: [{ status: "pending", reason: "change", tier: "routine", count: 2, readiness: "awaiting_urgency", nextDueAt: 1_700_000_000_000 }] } }))).toContain("Awaiting urgency verdict");
   expect(rendered).toContain("Eligible");
   expect(rendered).toContain("SoonScheduled review4");
 });

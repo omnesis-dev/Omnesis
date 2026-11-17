@@ -11,6 +11,7 @@ import {
   type ServedResource,
 } from "../../access/served-by-gateway.js";
 import {
+  narrowOAuthOverviewUrls,
   resolveOAuthOverviewUrls,
   resolveOAuthUrls,
   resolveOAuthResourceUrls,
@@ -65,6 +66,7 @@ import {
 import type { Context, MiddlewareHandler } from "hono";
 import type { AppEnv, RouteApp } from "./types.js";
 import type { AgentCertificateTrust } from "../../tls-lifecycle/agent-trust.js";
+import type { McpAddresses } from "../../remote-access/mcp-addresses.js";
 import type { AccessService } from "../../access/service.js";
 import type { AccessAuthorizationNotifier } from "../../access/authorization-notifier.js";
 
@@ -78,10 +80,10 @@ export function mountOAuthAuthorizationRoutes(
   app: RouteApp,
   access: AccessService,
   options: {
-    publicBaseUrl?: string;
+    /** The gateway's public address, read on every request so a saved one applies at once. */
+    publicAddress?: import("../../public-address.js").PublicAddressSource;
     /** Actual same-machine gateway origin advertised for local-only setup. */
     loopbackBaseUrl?: string;
-    mcpResourceUrls?: readonly string[];
     additionalOAuthIssuerUrls?: import("../../access/oauth-urls.js").OAuthIssuerSource;
     authorizationNotifier?: Pick<AccessAuthorizationNotifier, "targetDeviceIds" | "wakeQueued">;
     clientMetadataResolver?: Pick<ClientMetadataDocumentResolver, "resolve">;
@@ -105,6 +107,16 @@ export function mountOAuthAuthorizationRoutes(
     probeCertificate?: CertificateProbe;
     /** Who minted the served certificate and the file an agent on this machine trusts it by. */
     agentCertificateTrust?: () => AgentCertificateTrust;
+    /**
+     * Which addresses away from home answer MCP. The access overview lists only those,
+     * so a client is never pointed at an address that answers 404.
+     */
+    mcpAddresses?: Pick<McpAddresses, "answersAt" | "settle">;
+    /**
+     * The origins whose publicly trusted certificate is still being issued,
+     * so the portal can say to wait rather than to set up another one.
+     */
+    pendingCertificateOrigins?: () => Promise<ReadonlySet<string>>;
   } = {},
 ): void {
   const authorizationLimiter = oauthAuthorizationRateLimiter();
@@ -140,18 +152,22 @@ export function mountOAuthAuthorizationRoutes(
     cloudRelayEnabled() || tailscaleEmbedEnabled()
       ? resolveOAuthResourceUrls(
           resource,
-          options.publicBaseUrl,
-          options.mcpResourceUrls,
+          options.publicAddress?.baseUrl(),
+          options.publicAddress?.mcpResourceUrls(),
           options.additionalOAuthIssuerUrls,
         )
-      : resolveOAuthUrls(requestUrl, options.publicBaseUrl, options.mcpResourceUrls);
+      : resolveOAuthUrls(
+          requestUrl,
+          options.publicAddress?.baseUrl(),
+          options.publicAddress?.mcpResourceUrls(),
+        );
 
   app.get("/oauth/authorize", noStore, scope.public(), async (c) => {
     if (authorizationLimiter.consume(clientIp(c))) return oauthRateLimitError(c);
     const urls = resolveOAuthUrls(
       c.req.url,
-      options.publicBaseUrl,
-      options.mcpResourceUrls,
+      options.publicAddress?.baseUrl(),
+      options.publicAddress?.mcpResourceUrls(),
       options.additionalOAuthIssuerUrls,
     );
     if (!urls) return oauthConfigurationRequired(c);
@@ -380,28 +396,53 @@ export function mountOAuthAuthorizationRoutes(
     ...(options.listenPort !== undefined ? { listenPort: options.listenPort } : {}),
     ...(options.probeCertificate ? { probe: options.probeCertificate } : {}),
   });
-  const accessOverview = async (requestUrl: string) => {
-    const urls = resolveOAuthOverviewUrls(
-      requestUrl,
-      options.publicBaseUrl,
-      options.mcpResourceUrls,
-      options.loopbackBaseUrl,
-      options.additionalOAuthIssuerUrls,
+  // The overview lists only addresses that answer MCP. Tokens and every OAuth
+  // route keep resolving from the full configuration.
+  const answers = (resource: string) => options.mcpAddresses?.answersAt(resource) ?? true;
+  const overviewUrls = (requestUrl: string, publicBaseUrl: string | undefined) => {
+    const mcpResourceUrls = options.publicAddress?.mcpResourceUrls();
+    return narrowOAuthOverviewUrls(
+      resolveOAuthOverviewUrls(
+        requestUrl,
+        publicBaseUrl,
+        mcpResourceUrls,
+        options.loopbackBaseUrl,
+        options.additionalOAuthIssuerUrls,
+      ),
+      answers,
+      // Nothing public answers: a gateway without its own domain still serves its own machine.
+      () =>
+        !publicBaseUrl && options.loopbackBaseUrl
+          ? narrowOAuthOverviewUrls(
+              resolveOAuthUrls(options.loopbackBaseUrl, undefined, mcpResourceUrls),
+              answers,
+              () => null,
+            )
+          : null,
     );
-    const served = urls
-      ? await servedByGateway(urls.supportedResources)
-      : new Map<string, ServedResource>();
+  };
+  const accessOverview = async (requestUrl: string) => {
+    await options.mcpAddresses?.settle();
+    const publicBaseUrl = options.publicAddress?.baseUrl();
+    const urls = overviewUrls(requestUrl, publicBaseUrl);
+    const [served, pending] = await Promise.all([
+      urls ? servedByGateway(urls.supportedResources) : new Map<string, ServedResource>(),
+      urls && options.pendingCertificateOrigins
+        ? options.pendingCertificateOrigins()
+        : new Set<string>(),
+    ]);
     return {
       ...access.overview(),
       oauth: urls
         ? {
             resource: urls.resource,
-            ...(!options.publicBaseUrl ? { loopbackOnly: true } : {}),
+            ...(!publicBaseUrl ? { loopbackOnly: true } : {}),
             resources: urls.supportedResources.map((resource) => ({
               resource,
               servedByGateway: served.get(resource)?.servedByGateway ?? false,
               direct: served.get(resource)?.direct ?? false,
               publiclyTrusted: served.get(resource)?.publiclyTrusted ?? false,
+              ...(pending.has(new URL(resource).origin) ? { certificatePending: true } : {}),
             })),
             tlsFingerprintSha256: fingerprint() ?? null,
             certificate: options.agentCertificateTrust?.() ?? null,

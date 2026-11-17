@@ -35,6 +35,7 @@ import type {
   PersonSortBy,
   PersonSummary,
 } from "../data/repositories/PersonRepository.js";
+import type { PersonDocumentEntry } from "../data/repositories/DocumentPeopleRepository.js";
 import type { InteractionScoresChunkResult } from "../domain/InteractionScoreService.js";
 import type { AnalyticsSweepCandidate, AnalyticsSweepPlan, SourceStatsAggregation } from "../db.js";
 import type {
@@ -171,6 +172,15 @@ export interface IoGate extends ReadPort<typeof IO_READS>, KnowledgeSelectionRea
     limit: number,
     options: { sortBy?: PersonSortBy; after?: PersonBrowseCursor },
   ): Promise<PersonSummary[]>;
+  /**
+   * A page of a person's documents for GET /people/:id/documents. For a person
+   * on millions of documents it is still a large read, so it runs on a read
+   * worker at user priority rather than on the main thread.
+   */
+  personDocuments(
+    personId: string,
+    options: { role?: string; limit?: number; offset?: number },
+  ): Promise<PersonDocumentEntry[]>;
   /**
    * Person lookup for the agent's `lookup_people` tool. The same heavy join as
    * browse plus up to ~limit per-candidate follow-ups; it fires on nearly every
@@ -531,6 +541,11 @@ const COMPUTE_OP_DEFS: readonly IoOpDef[] = [
     priority: "background",
     latencyBudgetMs: HEAVY_BUDGET_MS,
   },
+  {
+    name: "io.knowledgeHasRewrittenHistoryWork",
+    priority: "background",
+    latencyBudgetMs: HEAVY_BUDGET_MS,
+  },
   { name: "io.knowledgeArcs", priority: "background", latencyBudgetMs: HEAVY_BUDGET_MS },
   {
     name: "io.knowledgeDiscoveryBacklog",
@@ -553,6 +568,7 @@ const COMPUTE_OP_DEFS: readonly IoOpDef[] = [
   },
   { name: "io.conversationRetentionCandidates", priority: "background" },
   { name: "io.browsePeople", priority: "user" },
+  { name: "io.personDocuments", priority: "user" },
   // The three interactive reads moved off the main event loop — user priority
   // (preempts background compute), heavy budget so the slow-op alarm only fires
   // on a genuine outlier.
@@ -696,6 +712,8 @@ export function ioGateFromScheduler(scheduler: Scheduler): IoGate {
     knowledgeStaleWork: (limit) => call("io.knowledgeStaleWork", [limit]),
     knowledgeHasExcludedWork: (excludedSources) =>
       call("io.knowledgeHasExcludedWork", [[...excludedSources]]),
+    knowledgeHasRewrittenHistoryWork: (now, recentWindowMs) =>
+      call("io.knowledgeHasRewrittenHistoryWork", [now, recentWindowMs]),
     knowledgeArcs: (inputs, bound) => call("io.knowledgeArcs", [[...inputs], bound]),
     knowledgeDiscoveryBacklog: (options) => call("io.knowledgeDiscoveryBacklog", [options]),
     watchPeopleDirectory: (knownHash) => call("io.watchPeopleDirectory", [knownHash]),
@@ -707,6 +725,7 @@ export function ioGateFromScheduler(scheduler: Scheduler): IoGate {
     conversationRetentionCandidates: (files, cutoffMs) =>
       call("io.conversationRetentionCandidates", [files, cutoffMs]),
     browsePeople: (query, limit, options) => call("io.browsePeople", [query, limit, options]),
+    personDocuments: (personId, options) => call("io.personDocuments", [personId, options]),
     lookupPeople: (query, limit, opts) => call("io.lookupPeople", [query, limit, opts]),
     messageCounts: (query) => call("io.messageCounts", [query]),
     enrichedMergeCandidates: (opts) => call("io.enrichedMergeCandidates", [opts]),

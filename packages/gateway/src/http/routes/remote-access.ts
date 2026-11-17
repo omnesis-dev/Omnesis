@@ -2,16 +2,23 @@
 // Copyright (c) 2026 Adrien Conrath
 
 /**
- * Remote access as one setting: the guided setup's own state and the checks
- * for an address the owner runs themselves. Mounted only where the gateway
- * offers a way in of its own, the cloud relay (OMNESIS_CLOUD_RELAY_ENABLED=1)
- * or its own Tailscale device (OMNESIS_TAILSCALE_EMBED_ENABLED=1); with
- * neither, every route here is absent. Tailscale already on the host is part
- * of the Tailscale opt-in and is absent without it.
+ * Settings → Connectivity as one setting: the guided setup's own state, the
+ * checks for an address the owner runs themselves, and Tailscale already on
+ * the host. Every gateway has these; `features` says which optional ways in
+ * (the cloud relay, OMNESIS_CLOUD_RELAY_ENABLED=1, and the gateway's own
+ * Tailscale device, OMNESIS_TAILSCALE_EMBED_ENABLED=1) it also offers.
  *
  * The account, the relay and the gateway's Tailscale device keep their own
  * routes (cloud-relay.ts, tailscale.ts); the portal's guided setup calls them
  * directly, so their step-ups and checks apply unchanged.
+ *
+ * `mcpAddresses` lists each address away from home with whether MCP answers
+ * there (see mcp-addresses.ts); PATCH `{ mcp: { <id>: boolean } }` turns it
+ * on or off. Turning one on loosens the gateway, so it asks for a step-up
+ * where the gateway requires one; turning one off never does.
+ * `mcp.tailscalePublic` is the Tailscale device's own public-address setting,
+ * written through the same service call as PATCH /admin/tailscale/settings,
+ * under the same step-up rule.
  */
 
 import { cloudRelayEnabled, tailscaleEmbedEnabled } from "@omnesis/core";
@@ -19,18 +26,28 @@ import { bodyLimit } from "hono/body-limit";
 import { z } from "zod";
 import { ADDRESS_CHECK_PATH, type AddressChecks } from "../../remote-access/address-check.js";
 import {
+  MCP_ADDRESS_IDS,
+  type McpAddresses,
+  type McpAddressId,
+} from "../../remote-access/mcp-addresses.js";
+import {
   remoteAccessFirstSchema,
   type RemoteAccessSettingsStore,
 } from "../../remote-access/settings.js";
-import { reverseProxyTrusted } from "../client-ip.js";
 import { scope } from "../scope.js";
 import { requireStepUp } from "../step-up.js";
 import { validateJson } from "../validate.js";
+import type { PublicAddressSource } from "../../public-address.js";
 import type { HostTailscaleService } from "../../remote-access/host-tailscale.js";
 import type { RouteApp } from "./types.js";
 
-const settingsBody = z
-  .object({ setupCompleted: z.boolean().optional(), first: remoteAccessFirstSchema.optional() })
+const mcpBody = z
+  .object(
+    Object.fromEntries(MCP_ADDRESS_IDS.map((id) => [id, z.boolean().optional()])) as Record<
+      McpAddressId,
+      z.ZodOptional<z.ZodBoolean>
+    >,
+  )
   .strict()
   .refine((body) => Object.keys(body).length > 0, { message: "Nothing to change." });
 const httpsAddress = z
@@ -47,53 +64,85 @@ const nonceParam = /^[A-Za-z0-9_-]{16,64}$/;
 export interface RemoteAccessRouteOptions {
   settings: RemoteAccessSettingsStore;
   checks: AddressChecks;
-  /** Tailscale already on this computer; present only with the Tailscale opt-in. */
+  /** Tailscale already on this computer; present when the gateway listens on a port. */
   hostTailscale?: HostTailscaleService;
-  /** The public address the running gateway serves, read once at start. */
-  servingPublicBaseUrl: () => string | null;
-  /** The public address in the config file, which the next start serves. */
-  configuredPublicBaseUrl: () => string | null;
-}
-
-export function remoteAccessEnabled(): boolean {
-  return cloudRelayEnabled() || tailscaleEmbedEnabled();
+  /** The gateway's public address, which applies as soon as it is saved. */
+  publicAddress?: PublicAddressSource;
+  /** Which addresses away from home answer MCP. */
+  mcpAddresses: McpAddresses;
 }
 
 export function mountRemoteAccessRoutes(app: RouteApp, options: RemoteAccessRouteOptions): void {
-  if (!remoteAccessEnabled()) return;
   const bounded = bodyLimit({ maxSize: 4096 });
-  const state = () => {
-    const serving = options.servingPublicBaseUrl();
-    const configured = options.configuredPublicBaseUrl();
+  const addresses = options.mcpAddresses;
+  // Built per gateway: a switch for an address this gateway does not offer is refused.
+  const settingsBody = z
+    .object({
+      setupCompleted: z.boolean().optional(),
+      first: remoteAccessFirstSchema.optional(),
+      mcp: mcpBody.optional(),
+    })
+    .strict()
+    .refine((body) => Object.keys(body).length > 0, { message: "Nothing to change." })
+    .superRefine((body, ctx) => {
+      const offered = new Set<string>(addresses.offered());
+      for (const key of Object.keys(body.mcp ?? {})) {
+        if (!offered.has(key))
+          ctx.addIssue({
+            code: "custom",
+            path: ["mcp", key],
+            message: "This gateway has no such address.",
+          });
+      }
+    });
+  const state = async () => {
+    const configured = options.publicAddress?.baseUrl() ?? null;
+    // The stored MCP choices are only the owner's departures from the default; the list says
+    // where MCP answers.
+    const { mcp, ...choices } = options.settings.get();
+    const [mcpAddresses, way] = await Promise.all([
+      addresses.list(),
+      addresses.publicAddressWay(configured),
+    ]);
     return {
-      ...options.settings.get(),
+      ...choices,
       features: { cloudRelay: cloudRelayEnabled(), tailscaleEmbed: tailscaleEmbedEnabled() },
       publicBaseUrl: {
-        serving,
         configured,
-        // A changed address takes effect when the gateway starts again.
-        restartNeeded: (configured ?? null) !== (serving ?? null),
+        // OMNESIS_PUBLIC_BASE_URL sets it, so one saved in the config changes nothing.
+        setByEnvironment: options.publicAddress?.setByEnvironment() ?? false,
+        // The way in this address belongs to when it is not the owner's own domain:
+        // "relay", "tailnet" or "host"; null for the owner's own.
+        way,
       },
-      // Whether the gateway reads the client's address from a proxy in front of it, which an
-      // address published through a proxy (a reverse proxy, Tailscale Funnel) needs.
-      trustProxy: reverseProxyTrusted(),
+      mcpAddresses,
     };
   };
 
-  app.get("/admin/remote-access", scope.admin(), (c) => {
+  app.get("/admin/remote-access", scope.admin(), async (c) => {
     c.header("Cache-Control", "no-store");
-    return c.json(state());
+    return c.json(await state());
   });
-  app.patch("/admin/remote-access", scope.admin(), bounded, validateJson(settingsBody), (c) => {
-    const body = c.req.valid("json");
-    options.settings.update({
-      ...(body.first ? { first: body.first } : {}),
-      ...(body.setupCompleted === undefined
-        ? {}
-        : { setupCompletedAt: body.setupCompleted ? new Date().toISOString() : null }),
-    });
-    return c.json(state());
-  });
+  app.patch(
+    "/admin/remote-access",
+    scope.admin(),
+    bounded,
+    requireStepUp((body) => !addresses.loosens((body as { mcp?: unknown } | null)?.mcp)),
+    validateJson(settingsBody),
+    async (c) => {
+      const { mcp, ...body } = c.req.valid("json");
+      if (mcp) await addresses.update(mcp);
+      if (body.first || body.setupCompleted !== undefined) {
+        options.settings.update({
+          ...(body.first ? { first: body.first } : {}),
+          ...(body.setupCompleted === undefined
+            ? {}
+            : { setupCompletedAt: body.setupCompleted ? new Date().toISOString() : null }),
+        });
+      }
+      return c.json(await state());
+    },
+  );
 
   app.post(
     "/admin/remote-access/check-address",
@@ -112,7 +161,7 @@ export function mountRemoteAccessRoutes(app: RouteApp, options: RemoteAccessRout
   });
 
   const host = options.hostTailscale;
-  if (!tailscaleEmbedEnabled() || !host) return;
+  if (!host) return;
   app.get("/admin/remote-access/host-tailscale", scope.admin(), async (c) => {
     c.header("Cache-Control", "no-store");
     return c.json(await host.status());

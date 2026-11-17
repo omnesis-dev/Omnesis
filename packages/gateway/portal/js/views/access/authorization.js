@@ -121,7 +121,7 @@ const AUTHORIZATION_ERROR_MESSAGES = {
   "client-completes":
     "This client collects its own authorization code; there is nothing to finish from here.",
   "oauth-not-configured":
-    "The MCP client could not finish connecting: OAuth needs the Gateway public URL. Set gateway.publicBaseUrl on the Config tab and try again.",
+    "The MCP client could not finish connecting: OAuth needs an address for the gateway. Set one up in Settings, Connectivity and try again.",
 };
 
 /**
