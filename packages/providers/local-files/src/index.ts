@@ -525,9 +525,12 @@ export default defineSource({
       if (refusal) throw new Error(refusal);
     }
     const isInside = createContainmentChecker(roots);
+    // Extglob groups such as `+(…)` stay literal: a repeated single-branch group
+    // compiles to a regular expression that backtracks exponentially on an
+    // ordinary file name (GHSA-fc5q-39xc-vjpf), and no picomatch release fixes it.
     const excludeMatchers = (config?.exclude ?? [])
       .filter((p) => p.length > 0)
-      .map((p) => picomatch(p));
+      .map((p) => picomatch(p, { noextglob: true }));
     const isExcluded = (relPath: string): boolean => excludeMatchers.some((m) => m(relPath));
     const extractAttachment = host?.extractAttachment;
 
