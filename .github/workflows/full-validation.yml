@@ -39,6 +39,7 @@ on:
             address-fixture-cleanup-proof,
             doctor-unreadable-proof,
             codex-held-activity-proof,
+            windows-unit-third-recovery,
             gateway-boot-trace,
             windows-network-pilot,
             windows-network-proxy-pilot,
@@ -5726,3 +5727,251 @@ jobs:
           - windows-latest
           - ubuntu-latest
           - macos-15
+
+  windows-unit-third-recovery:
+    name: Remaining third-quarter Windows units (${{ matrix.label }})
+    runs-on: windows-latest
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        include:
+          - name: Remaining unit group 1
+            lane: unit
+            unitShard: recovery-1
+            cohort: 0
+            label: 1/2
+            id: "1"
+          - name: Remaining unit group 2
+            lane: unit
+            unitShard: recovery-2
+            cohort: 1
+            label: 2/2
+            id: "2"
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - name: Use runner storage for SQLite latency fixtures
+        run: >
+          "OMNESIS_TEST_SQLITE_TMP=$env:RUNNER_TEMP" | Out-File -FilePath
+          $env:GITHUB_ENV -Append -Encoding utf8
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ inputs.source_sha }}
+          persist-credentials: false
+      - name: Keep this job off production Omnesis services
+        id: production-network
+        shell: bash
+        run: $GITHUB_WORKSPACE/scripts/ci/production-network.sh isolate
+      - name: Verify fixed source revision
+        env:
+          TARGET_SHA: ${{ inputs.source_sha }}
+        run: >
+          if ($env:TARGET_SHA -notmatch '^[0-9a-f]{40}$') { throw 'Invalid
+          target SHA' }
+
+          if ((git rev-parse HEAD) -ne $env:TARGET_SHA) { throw 'Unexpected
+          checked-out revision' }
+      - name: Set up Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: "24"
+          cache: npm
+      - name: Set up Go for the private transport boundary
+        if: ${{ matrix.lane != 'portal' }}
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e
+        with:
+          go-version-file: packages/tailnet-helper/go.mod
+          cache-dependency-path: |
+            packages/tailnet-helper/go.sum
+            scripts/tailnet-test/control/go.sum
+      - name: Privacy scan
+        run: node scripts/pii-scan.mjs --all
+      - name: Make OpenSSL available for isolated TLS certificates
+        run: >
+          if (-not (Get-Command openssl -ErrorAction SilentlyContinue)) {
+            $opensslDir = Join-Path $env:ProgramFiles 'Git\usr\bin'
+            if (-not (Test-Path (Join-Path $opensslDir 'openssl.exe'))) { throw 'OpenSSL is required for gateway tests' }
+            $opensslDir | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+          }
+      - name: Install dependencies
+        id: dependencies
+        run: node scripts/ci/npm-ci.mjs --no-audit --no-fund
+      - name: Validate optional E2E selection
+        if: ${{ matrix.lane == 'e2e' }}
+        env:
+          SHARD: ${{ matrix.shard }}
+          OMNESIS_WINDOWS_E2E_FILES: ${{ github.event_name == 'workflow_dispatch' &&
+            inputs.lane == 'e2e' && inputs.e2e_files || '' }}
+        run: |
+          $checkArgs = @('scripts/ci/windows-checks.mjs', 'e2e', '--list')
+          if ($env:SHARD) { $checkArgs += "--shard=$env:SHARD" }
+          node @checkArgs
+      - name: Build and prove Windows SQLite recovery bindings
+        id: native_sqlite
+        run: node scripts/ci/build-windows-sqlite.mjs
+      - name: Build and prove Windows vector publication
+        id: native_vector
+        run: node scripts/ci/build-windows-usearch.mjs
+      - name: Typecheck all TypeScript source and test projects
+        if: ${{ matrix.cohort == 0 }}
+        shell: bash
+        run: exec node scripts/run-check.mjs types-tests
+      - name: Install spawned-gateway Chromium
+        if: ${{ matrix.lane == 'e2e' }}
+        run: npm exec --workspace packages/collector -- playwright install chromium
+      - name: Install portal and runtime-smoke Chromium
+        if: ${{ matrix.lane == 'portal' || matrix.lane == 'unit' }}
+        run: node node_modules/@playwright/test/cli.js install chromium
+      - name: Restore the reference embedding model
+        if: ${{ matrix.lane == 'e2e' }}
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: ${{ runner.temp }}/omnesis-test-embedder
+          key: windows-test-embedder-${{ hashFiles('scripts/ci/with-test-embedder.mjs',
+            'scripts/ci/reference-embedder.json') }}
+      - name: Focused Windows runtime tests
+        if: ${{ matrix.lane == 'focused' }}
+        run: node scripts/ci/windows-checks.mjs focused
+      - name: Verify real Go-to-Node private transport
+        if: ${{ !cancelled() && (matrix.lane == 'focused' || matrix.lane == 'unit') &&
+          steps.dependencies.outcome == 'success' }}
+        env:
+          GOMAXPROCS: "2"
+        run: node --import tsx scripts/ci/tailnet-transport.mjs
+      - name: Prepare real native Whisper acceptance inputs
+        if: ${{ matrix.lane == 'unit' }}
+        run: node scripts/ci/prepare-whisper-test-inputs.mjs
+      - name: Prepare the pinned native OCR engine and English data
+        id: native_ocr
+        if: ${{ matrix.lane == 'unit' }}
+        run: ./scripts/ci/prepare-tesseract-test-inputs.ps1
+      - name: Require exact text from real native OCR
+        id: verify_ocr
+        if: ${{ matrix.lane == 'unit' }}
+        run: node --import tsx scripts/ci/verify-tesseract-test-inputs.mjs
+      - name: Record hosted capacity and resolver identity before the complete unit
+          phase
+        shell: pwsh
+        run: >-
+          $os = Get-CimInstance Win32_OperatingSystem
+
+          $state = Join-Path $env:RUNNER_TEMP 'production-network/baseline.json'
+
+          $baseline = Get-Content $state -Raw | ConvertFrom-Json
+
+          $proxy = Get-Process -Id $baseline.pid
+
+          [ordered]@{ totalPhysicalKiB=$os.TotalVisibleMemorySize;
+          freePhysicalKiB=$os.FreePhysicalMemory; proxyAlive=$true;
+          proxyBirthMatches=($proxy.StartTime.ToUniversalTime().Ticks -eq
+          $baseline.start); unitWorkers=$env:OMNESIS_UNIT_WORKERS } |
+          ConvertTo-Json -Compress
+      - name: Prepare event-driven resource checkpoints without background polling
+        shell: bash
+        run: |-
+          node --input-type=module - <<'JS'
+          import fs from 'node:fs';import path from 'node:path';
+          const destination=path.join(process.env.RUNNER_TEMP,'unit-resource-reporter.mjs');
+          fs.writeFileSync(destination,`import os from 'node:os';import fs from 'node:fs';import path from 'node:path';
+          export default class ResourceReporter {
+           count=0;
+           onTestRunStart(specifications){this.planned=specifications.length;this.report('start');}
+           onTestModuleStart(module){this.report('module-start',module.relativeModuleId);}
+           onTestModuleEnd(module){this.count++;this.report('module-end',module.relativeModuleId,module.state());}
+           onTestRunEnd(){this.report('end');}
+           report(event,file,state){
+            let proxyPidExists=false;
+            try {const baseline=JSON.parse(fs.readFileSync(path.join(process.env.RUNNER_TEMP,'production-network','baseline.json'),'utf8'));process.kill(baseline.pid,0);proxyPidExists=true;}catch{}
+            const record={at:new Date().toISOString(),cohort:process.env.UNIT_COHORT,event,file,state,completed:this.count,planned:this.planned,freeMiB:Math.round(os.freemem()/1024**2),availableMiB:Math.round(process.availableMemory()/1024**2),mainRssMiB:Math.round(process.memoryUsage().rss/1024**2),proxyPidExists};
+            const line=JSON.stringify(record)+String.fromCharCode(10);fs.appendFileSync(path.join(process.env.RUNNER_TEMP,'quarter3-resources.jsonl'),line);process.stdout.write('[unit-resource] '+line);
+           }
+          }`);
+          fs.appendFileSync(process.env.GITHUB_ENV,'OMNESIS_UNIT_RECOVERY_REPORTER='+destination+'\n');
+          JS
+      - name: Validate one exact disjoint half of the unvalidated unit files
+        shell: bash
+        if: ${{ !cancelled() && matrix.lane == 'unit' && steps.dependencies.outcome ==
+          'success' && steps.native_sqlite.outcome == 'success' &&
+          steps.native_vector.outcome == 'success' && steps.native_ocr.outcome
+          == 'success' && steps.verify_ocr.outcome == 'success' }}
+        env:
+          OMNESIS_INDEXER_BENCH: "1"
+          UNIT_SHARD: ${{ matrix.unitShard }}
+        run: |-
+          node --input-type=module - <<'JS'
+          import fs from 'node:fs';import path from 'node:path';import {createHash} from 'node:crypto';
+          import {windowsCheckTasks,runWindowsCheckTasks} from './scripts/ci/windows-checks.mjs';
+          const groups=[["packages/gateway/src/server.test.ts","packages/gateway/src/brain/knowledge/engine.test.ts","packages/gateway/src/people.test.ts","packages/gateway/src/http/routes/watch.test.ts","packages/providers/apple/src/imessage.test.ts","packages/cli/src/commands/devices.test.ts","packages/gateway/src/subscriptions/store.test.ts","packages/gateway/src/http/routes/subscriptions.test.ts","packages/providers/strava/src/no-subscription.test.ts","packages/gateway/src/agent/knowledge-document-port.test.ts","packages/config/src/config-schema.test.ts","packages/gateway/src/http/routes/privacy.test.ts","packages/gateway/src/http/services/SourceService.test.ts","packages/gateway/src/http/services/FleetUpdateService.test.ts","packages/gateway/src/realtime/backend.test.ts","packages/cloud-relay/src/automatic-enrollment.test.ts","packages/gateway/src/watch/materializer.test.ts","packages/gateway-client/src/http-gateway-client.test.ts","packages/providers/apple/src/call-log.test.ts","packages/gateway/portal/js/views/remote-access.test.ts","extension/src/chrome/find-service.test.ts","packages/providers/enable-banking/src/accounts.test.ts","packages/agent/src/replay-backend.test.ts","packages/cli/src/update/source-adoption.test.ts","packages/gateway/src/subscriptions/delivery.test.ts","packages/cloud-relay/src/passkeys.test.ts","packages/agent-integration/src/native-answer-mcp.test.ts","extension/src/chrome/content-script.test.ts","extension/src/chrome/find-panel.test.ts","packages/providers/google/src/gmail-sync.test.ts","extension/src/push/client.test.ts","packages/providers/screen-time/src/screen-time.test.ts","packages/gateway/src/models/routes.test.ts","packages/cloud-relay/src/account-deletion.test.ts","packages/cli/src/commands/add-noninteractive.test.ts","packages/collector/src/main.test.ts","packages/gateway/src/brain/tasks/tools.test.ts","packages/cli/src/service/hardened.test.ts","packages/gateway/src/agent/service-generic-subagent.test.ts","packages/gateway/src/http/routes/browser-extension-contract.test.ts","packages/gateway/src/brain/calibration.test.ts","packages/gateway/src/config-defaults.crosscheck.test.ts","packages/gateway/src/agent/service-voice.test.ts","packages/gateway/src/models/models-dev-catalog.test.ts","packages/providers/google/src/provider.test.ts","packages/cloud-relay/src/gateway-certificate-monitor.test.ts","packages/collector/src/auth-subprocess-stdin.test.ts","packages/gateway/src/process-launcher/process-launcher.test.ts","packages/cloud-relay/src/recovery-authority.test.ts","packages/cli/src/commands/secure-docker.test.ts","packages/gateway/src/http/services/DoctorService.test.ts","packages/gateway/portal/js/lib/use-cursor-page.test.ts","packages/gateway/src/models/codex-generation-supervisor.test.ts","packages/gateway/src/indexer/usearch-boot-guard.test.ts","packages/gateway/portal/js/lib/watch-dag.test.ts","packages/agent/src/model-reasoning-http.test.ts","packages/gateway/src/domain/InteractionScoreService.drip.test.ts","packages/providers/google/src/contacts.test.ts","packages/gateway/src/brain/interest/engine.test.ts","packages/cli/src/update/fleet.test.ts","packages/providers/notion/src/provider.test.ts","packages/gateway/src/brain/knowledge/engine-retry.test.ts","packages/gateway/portal/js/lib/backend-options.test.ts","packages/providers/strava/src/sync-cycle.test.ts","packages/watch/src/runtime/adversarial.test.ts","packages/gateway/src/data/repositories/PersonRepository.drip.test.ts","packages/gateway/src/privacy/store.test.ts","packages/gateway/src/brain/runtime/runtime-morning-digest.test.ts","packages/gateway/src/http/services/WsEventHandler.ownership.test.ts","packages/gateway/src/agent/service-subagent.test.ts","packages/watch/src/ontology/snapshot.test.ts","packages/cli/src/commands/answer.test.ts","packages/gateway/portal/js/lib/use-attention.test.ts","packages/near-dupes/src/algo/weighted.test.ts","packages/collector/src/service-restart.test.ts","packages/gateway/src/icon-normalizer.test.ts","packages/gateway/src/privacy/policy-schema.test.ts","packages/gateway/src/workers/search-pool.respawn.test.ts","packages/source-sdk/src/define-source.test.ts","packages/cloud-relay/src/google-browser-broker.test.ts","packages/providers/apple/src/voicemail.test.ts","packages/gateway/src/near-dupes/NearDupDfService.test.ts","packages/providers/google/src/gmail-message.test.ts","packages/gateway/portal/js/views/cognition-knowledge.test.ts","packages/cli/src/update/service-definitions.test.ts","packages/gateway/src/agent/service-controls.test.ts","packages/gateway/src/brain/admin-http-observation-routes.test.ts","packages/gateway/src/inference/contextual-entailment.test.ts","packages/gateway/src/sources/omnesis-notes/upsert.test.ts","packages/gateway/portal/js/components/gateway-passkey-confirm.test.ts","packages/gateway/src/brain/knowledge/candidate-affinity.test.ts","packages/core/src/credentials.test.ts","packages/core/src/backup-layout.test.ts","packages/gateway/src/brain/knowledge/retrieval-fence.worker.test.ts","packages/gateway/src/brain/knowledge/canonical-enrollment.test.ts","packages/gateway/src/indexer/indexer.resume.test.ts","packages/cloud-relay/src/certificate-monitor-crtsh.test.ts","packages/gateway/src/storage-encryption.test.ts","packages/providers/lunchflow/src/normalizer.test.ts","packages/gateway/src/search/stages/diversity-stage.test.ts","packages/agent/src/http-error.test.ts","packages/gateway/src/scheduler/tasks/near-dup-inbox.test.ts","packages/gateway/src/watch/store.test.ts","packages/gateway/src/access/client-metadata-document.test.ts","packages/gateway/src/near-dupes/cpu-signing.test.ts","packages/cloud-relay/src/management-cleanup-lifecycle.test.ts","packages/watch/src/eval/prompts.test.ts","packages/gateway/src/brain/knowledge/outcome-assessment.test.ts","packages/cli/src/commands/keyring.test.ts","packages/cloud-relay/src/account-authority-key.test.ts","packages/gateway/portal/js/lib/router-settings.test.ts","packages/gateway/src/http/services/SourceDataRemovalService.race.test.ts","packages/providers/telegram/src/provider.test.ts","packages/gateway/src/data/repositories/DocumentRepository.latest-activity.test.ts","packages/agent-integration/src/openclaw-forwarded-tools.test.ts","packages/watch/src/runtime/hosted.test.ts","evals/briefs/src/spend-meter.test.ts","packages/providers/imap/src/broker.test.ts","packages/gateway/src/sources/omnesis-chat/upsert.test.ts","packages/gateway/src/models/models-dev-routes.test.ts","packages/cli/src/commands/codex.test.ts","packages/cli/src/commands/model.test.ts","packages/gateway/src/watch/in-flight-requests.test.ts","packages/collector/src/source-config-schema.test.ts","packages/gateway/src/inference/decision/http-chat-decision.test.ts","packages/gateway/src/brain/storage/morning-brief-items.test.ts","packages/watch/src/backtest/goldens.test.ts","packages/cloud-relay/src/runtime-direct.test.ts","packages/core/src/agent-conversations.test.ts","packages/cli/src/credentials-wizard.test.ts","packages/cloud-relay/src/account-runtime-configuration.test.ts","packages/gateway/src/transcribe/transcribe-service.ownership.test.ts","packages/cli/src/commands/backend-patch.test.ts","packages/gateway/portal/js/views/claude-code-ui.test.ts","packages/gateway/src/scheduler/tasks/transcription-vocabulary.test.ts","packages/gateway/src/indexer/versioned-index.test.ts","packages/agent/src/tool-result-text.test.ts","packages/gateway/src/brain/knowledge/person-review.test.ts","packages/cloud-relay/src/acme-renewal-cleanup.test.ts","packages/providers/whatsapp/src/import/msgstore-parser.test.ts","packages/gateway/src/sources/omnesis-notes/storage-auth.test.ts","packages/cli/src/commands/sync.test.ts","packages/gateway/portal/js/components/note-day-references.test.ts","packages/gateway/src/near-dupes/cpu-signing-serialization.test.ts","packages/gateway/src/http/routes/admin/source-document-profiles.test.ts","packages/providers/discord/src/normalizer.test.ts","packages/cli/src/utils.test.ts","packages/gateway/src/http/routes/temporal.test.ts","packages/cli/src/update/docker-registry.test.ts","packages/gateway/src/http/routes/backup.test.ts","packages/core/src/network-discovery.test.ts","packages/core/src/client-version.test.ts","packages/gateway/src/privacy/completion-delivery.test.ts","packages/config/src/load-dotenv.test.ts","scripts/typecheck-lanes.test.mjs","packages/gateway/src/brain/tasks/conversation-http.test.ts","packages/gateway/portal/js/views/add-source-flow.test.ts","scripts/release/plan.test.mjs","packages/cloud-relay/src/cdn-front.test.ts","packages/gateway/src/brain/tasks/conversation-context.test.ts","packages/watch/src/dsl/delivery.test.ts","packages/core/src/atomic-write.windows.test.ts","packages/gateway/src/brain/knowledge/wiki-page-shape.test.ts","packages/gateway/src/search/temporal-intent.test.ts","packages/gateway/src/access/service.test.ts","packages/gateway/src/brain/knowledge/organization-worth.test.ts","packages/gateway/src/search/vector-bounded-exact.test.ts","packages/gateway/src/sources/omnesis-chat/wiring.test.ts","packages/gateway/src/http/services/server-read-ports.worker.test.ts","packages/providers/apple/src/imessage-transcript-durability.test.ts","packages/gateway/src/indexer/direct-document-source.test.ts","packages/gateway/src/http/routes/admin/self-identity-sources.test.ts","packages/providers/telegram/src/document-event-profile.test.ts","packages/providers/granola/src/broker.test.ts","packages/providers/apple/src/read-access.test.ts","packages/gateway/src/indexer/embedder-scheduling.test.ts","scripts/ci/production-network.test.mjs","packages/gateway/src/data/repositories/person-match.test.ts","packages/cli/src/commands/config.test.ts","packages/types/src/temporal-vocabulary.test.ts","packages/cloud-relay/src/proxy-protocol-relay.test.ts","packages/agent/src/tools/batch.test.ts","packages/gateway/src/enrichment/dates/task.test.ts","packages/gateway/src/http/routes/documents.edges.test.ts","packages/providers/imap/src/document-event-profile.test.ts","packages/gateway/src/enrichment/temporal/temporal-store-window.worker.test.ts","packages/providers/whatsapp/src/import/decrypt-parse.test.ts","packages/gateway/portal/css/privacy-palette.test.ts","packages/gateway/src/brain/runtime/entailment-recheck.test.ts","packages/agent-integration/src/refusal-vocabulary.test.ts","packages/gateway/src/absence/document-cascade.test.ts","extension/src/chrome/handoff-storage.test.ts","packages/gateway/src/watch/examples/examples.test.ts","packages/gateway/src/agent/interactive-knowledge-read.test.ts","packages/gateway/src/data/document-prior-content.test.ts","packages/core/src/rate-limiter.test.ts","packages/gateway/src/watch/canonical-row.test.ts","packages/gateway/src/data/occ-materialized.test.ts","packages/providers-synth/outlook/src/onedrive-fixtures.test.ts","packages/gateway/portal/js/components/agent/assistant-markdown.test.ts","packages/core/src/utils.test.ts","extension/src/chrome/options-actions.test.ts","packages/gateway/src/transcribe/vocabulary/text.test.ts","packages/cloud-relay/src/certificate-monitor-cleanup.test.ts","packages/providers/apple/src/provider.test.ts","packages/collector/src/attachments/extract-ocr.test.ts","packages/gateway/src/brain/knowledge/wiki-value-check.test.ts","extension/src/push/queue.test.ts","packages/gateway/src/model-credentials.test.ts","packages/gateway/src/agent/voice-session.test.ts","packages/gateway/src/domain/DocumentNeighbourhood.test.ts","packages/gateway/src/brain/runtime/tool-summaries.test.ts","packages/gateway/src/http/routes/ocr.test.ts","packages/agent-integration/src/harness-update-process.windows.test.ts","packages/providers/apple/src/reminders-registration.test.ts","packages/gateway/src/workers/shutdown-worker.test.ts","packages/gateway/portal/js/views/agent-cancel.test.ts","packages/gateway/portal/js/views/agent-cloud-inference-render.test.ts","packages/platform/src/native/windows-job-source.test.ts","packages/providers/whatsapp/src/libsignal-console.test.ts","packages/gateway/src/http/reported-client-version.test.ts","packages/gateway/src/http/routes/portal-csp.test.ts","packages/gateway/src/agent/trail-port-graph-context.test.ts","packages/gateway/src/data/migration-26.test.ts","packages/gateway/portal/js/lib/note-agent.test.ts","packages/gateway/portal/js/views/agent-cloud-inference.test.ts","packages/gateway/src/brain/runtime/runtime-excluded-sources.test.ts","packages/gateway/src/data/migration-64.test.ts","packages/gateway/src/data/migration-54.test.ts","packages/collector/src/e2e/build-embedder-delivery-gate.test.ts","packages/gateway/src/data/migration-154.test.ts","packages/gateway/src/memory-budget.test.ts","packages/gateway/src/agent/conversation-read-state.test.ts","packages/cloud-relay/src/gateway-directory.test.ts","packages/gateway/src/scheduler/runners/main.test.ts","packages/gateway/src/brain/self-memory.test.ts","packages/gateway/src/observability/main-activity.test.ts","packages/providers-synth/apple-health/src/schemas.test.ts","packages/providers/discord/src/provider.test.ts","packages/gateway/src/search/bm25.boundary.test.ts","packages/gateway/src/workers/build-embedder-worker.test.ts","packages/gateway/src/known-url-pattern-safety.test.ts","packages/collector/src/e2e/gateway-env.test.ts","packages/gateway/src/workers/search-warm.test.ts","packages/relay/src/credentials.test.ts","packages/providers/web/src/setup.test.ts","packages/gateway/src/brain/knowledge/connections.test.ts","packages/gateway/src/realtime/call-error.test.ts","packages/gateway/src/http/session-origin.test.ts","packages/gateway/src/http/routes/analytics-lifecycle.test.ts","packages/gateway/src/agent/direct-list-tables.test.ts","packages/providers/telegram/src/client/download.test.ts","packages/gateway/src/http/services/WsEventHandler.agent-auth.test.ts","packages/gateway/src/worker-pool-sizing.test.ts","packages/collector/src/attachments/extract-stt.test.ts","packages/gateway/portal/js/components/widget-renderers.test.ts","packages/agent/src/prompt-truncation.test.ts","packages/gateway/portal/js/lib/slash-commands.test.ts","packages/gateway/src/enrichment/temporal/temporal-range.test.ts","packages/gateway/src/transcribe/vocabulary/spelling.test.ts","packages/relay/src/windows-storage.test.ts","packages/gateway/src/sync-lease.test.ts","packages/gateway/src/push/transports/relay.test.ts","packages/gateway/portal/js/views/remediation-grouping.test.ts","packages/cli/src/negated-flags.test.ts","packages/gateway/src/worth/answers.test.ts","packages/providers/whatsapp/src/import/bplist.test.ts","packages/gateway/src/data/migration-139.test.ts","extension/src/chrome/content-registration.test.ts","packages/gateway/src/data/migration-37.test.ts","packages/providers/whatsapp/src/state.test.ts","packages/agent/src/tools/run-sql.test.ts","packages/gateway/src/brain/knowledge/tools-schema.test.ts","packages/cloud-relay/src/acme-caa.test.ts","packages/cli/src/commands/claude-code.test.ts","packages/cloud-relay/src/google-browser-callback.test.ts","packages/providers/browser-history/src/arc-windows.test.ts","packages/watch/src/validator/validate.test.ts","packages/agent-integration/src/forwarded-tools-parity.test.ts","packages/source-sdk/src/node-path-boundary-aliases.test.ts","packages/providers/local-files/src/unsafe-paths.test.ts","packages/gateway/src/public-address.test.ts","packages/cloud-relay/src/app-associations.test.ts","packages/providers/whatsapp/src/provider.history-sync.test.ts","packages/core/src/cognition-envelope.test.ts","packages/gateway/src/search/result-links.worker.test.ts","packages/providers/things/src/state.test.ts","packages/cli/src/service/node-bin-dir.test.ts","packages/providers-synth/apple/src/fixtures.test.ts","packages/gateway/src/brain/open-loop-source/document-projection.test.ts","packages/gateway/src/inference/anthropic-messages.test.ts","packages/gateway/src/data/migration-176.test.ts","scripts/release/ci-verdict.test.mjs","packages/cloud-relay/src/gateway-certificate.test.ts","packages/core/src/host-network.test.ts","packages/gateway/portal/js/views/cognition-bootstrap-mount.test.ts","packages/gateway/src/release-check/service.test.ts","packages/agent-integration/src/ingestion.test.ts","packages/gateway/src/workers/build-embedder-proxy.test.ts","packages/gateway/portal/js/lib/step-up-sheet.test.ts","packages/gateway/portal/js/views/knowledge-stale-notice.test.ts","packages/gateway/src/data/migration-150.test.ts","packages/collector/src/gateway-command-handler.test.ts","packages/gateway/src/http/device-path-observation.test.ts","packages/gateway/src/near-dupes/df-sab.test.ts","scripts/ci/verify-ios-e2e-results.test.mjs","packages/gateway/src/data/pairing-generation-fence.test.ts","packages/providers/screen-time/src/read-access.test.ts","packages/cli/src/commands/cloud-recovery.test.ts","packages/gateway/src/indexer/indexer-status.test.ts","packages/providers/google/src/setup.test.ts","packages/providers/plaid/src/decimal.test.ts","scripts/release/seeded-state-entrypoint.test.mjs","packages/gateway/src/instructions/render.test.ts","packages/core/src/models/backends.test.ts","packages/providers/telegram/src/media-retry.test.ts","packages/gateway/src/transcribe/caf-stream.test.ts","packages/core/src/sync-issues.test.ts","packages/gateway/src/agent/answer-push.test.ts","packages/gateway/portal/js/notes-api.test.ts","packages/gateway/portal/js/views/knowledge-connections.test.ts","packages/gateway/src/http/services/SourceStreamCleanupCoordinator.test.ts","packages/gateway/src/data/migration-166.test.ts","packages/providers/google/src/credential-state.test.ts","packages/near-dupes/src/algo/hash.test.ts","packages/providers/local-files/src/identity.test.ts","packages/gateway/src/http/services/test-instance.test.ts","packages/gateway/src/brain/knowledge/decision-storage.test.ts","packages/gateway/src/brain/knowledge/query-service.test.ts","packages/gateway/portal/js/views/knowledge-canonical-library.test.ts","packages/gateway/src/http/pagination-cursor.test.ts","packages/providers/immich/src/album-store.test.ts","packages/providers/granola/src/credential-cleanup.test.ts","packages/gateway/portal/js/lib/router-retired.test.ts","packages/providers/whatsapp/src/local-store-probe.test.ts","packages/gateway/src/indexer/embedder.test.ts","extension/src/chrome/messages.test.ts","packages/gateway/src/realtime/rate-limit.test.ts","packages/gateway/src/owned-web-domains.test.ts","packages/collector/src/device-name.test.ts","packages/gateway/src/transcribe/vocabulary/evidence-quality.test.ts","packages/gateway/src/data/migration-69.test.ts","packages/gateway/portal/js/lib/cloud-pairing-waiting.test.ts","packages/core/src/ws-auth.test.ts","packages/near-dupes/src/report/clusters.test.ts","packages/cli/src/commands/edges.test.ts","packages/gateway/src/http/schemas/admin.reauth.test.ts","packages/gateway/portal/js/views/knowledge-decision-audit.test.ts","packages/gateway/src/brain/system-sources.test.ts","packages/core/src/operator-command.test.ts","packages/gateway/src/http/schemas/source-contract-wire-fixtures.test.ts","extension/src/chrome/message-timeout.test.ts"],["packages/cli/src/commands/update.test.ts","packages/cli/src/commands/connect.test.ts","packages/collector/src/source-sync-runner.test.ts","packages/providers/strava/src/enrichment.test.ts","packages/gateway/src/brain/storage/run-queue.test.ts","packages/agent/src/session.test.ts","packages/gateway/src/http/routes/cloud-pairing.test.ts","packages/agent/src/anthropic-backend.test.ts","packages/gateway/src/watch/anchors.test.ts","packages/gateway/src/brain/knowledge/service.test.ts","packages/gateway/src/data/schema.migration.test.ts","packages/gateway/src/transcribe/vocabulary/storage.test.ts","packages/gateway/src/privacy/reviewer.test.ts","packages/gateway/src/brain/knowledge/organization-cohorts.test.ts","packages/gateway/src/agent/answer.test.ts","packages/gateway/src/brain/runtime/runtime.test.ts","packages/providers/whatsapp/src/message-store.test.ts","packages/collector/src/self-update.test.ts","packages/gateway/portal/js/views/models-backends-decision.test.ts","packages/providers/obsidian/src/obsidian-notes.test.ts","packages/gateway/src/http/routes/notes.test.ts","packages/gateway/src/brain/run-driver.test.ts","packages/gateway/src/brain/feature-gate.test.ts","packages/gateway/src/tls-lifecycle/service.test.ts","packages/gateway/src/interaction-scores.test.ts","packages/gateway/src/scheduler/scheduler.test.ts","packages/gateway/src/http/routes/admin/cloud-relay.test.ts","packages/gateway/src/watch/judge.test.ts","packages/config/src/config-describe.test.ts","packages/gateway/src/brain/transcripts.test.ts","packages/providers/apple/src/imessage-normalizer.test.ts","packages/gateway/src/data/migration-171.test.ts","packages/watch/src/compiler/prompt.test.ts","packages/cloud-relay/src/acme-integration.test.ts","packages/gateway/src/brain/http.test.ts","packages/gateway/src/watch/traces.test.ts","packages/gateway/src/brain/config.test.ts","packages/cli/src/commands/resync.test.ts","packages/gateway/src/agent/watch-port.test.ts","packages/gateway/src/domain/LinkExtraction.test.ts","packages/gateway/src/data/repositories/SourceModeTransitionRepository.test.ts","packages/providers/plaid/src/transactions.test.ts","packages/gateway/src/push/wake-retry.test.ts","scripts/pii-scan.test.mjs","packages/gateway/src/agent/sql-port.test.ts","packages/gateway/portal/js/components/decision-card.test.ts","packages/providers/plaid/src/snapshot.test.ts","packages/gateway/src/http/services/analytics-omission-retry.test.ts","packages/gateway/src/privacy/policy-history.test.ts","packages/cloud-relay/src/certificate-monitor.test.ts","packages/gateway/src/watch/preflight.test.ts","packages/gateway/portal/js/app-layout.test.ts","packages/cli/src/commands/connect-oauth.test.ts","packages/cli/src/commands/sync-wait.test.ts","scripts/release/stage-packages.test.mjs","packages/core/src/secret-store.test.ts","packages/gateway/portal/js/components/agent/brief-thread.test.ts","packages/gateway/src/brain/runtime/observation-tools.test.ts","packages/providers/coinbase/src/provider.test.ts","packages/cloud-relay/src/account-authentication.test.ts","packages/gateway/src/brain/knowledge/navigation.test.ts","packages/cli/src/service/units.test.ts","packages/cli/src/commands/tls-provision.test.ts","packages/gateway/src/config-store.test.ts","packages/collector/src/source-state-contract.test.ts","packages/gateway/src/sources/omnesis-notes/wiring.test.ts","packages/gateway/src/http/routes/web-capture-policy.test.ts","packages/core/src/credential-broker.test.ts","packages/cloud-relay/src/account-device-pairing.test.ts","extension/src/chrome/notes-service.test.ts","packages/source-sdk/src/state-runtime.test.ts","packages/gateway/src/brain/knowledge/decision-query.test.ts","packages/providers/lunchflow/src/provider.test.ts","packages/gateway/src/ocr/ocr-service.test.ts","packages/gateway/src/tailscale-embed/supervisor.test.ts","packages/gateway/src/realtime/live-service.test.ts","packages/cloud-relay/src/google-credentials.test.ts","packages/providers/granola/src/provider.test.ts","packages/gateway/src/analytics-sandbox.test.ts","packages/gateway/src/search/lexical-index-service.test.ts","packages/providers/telegram/src/messages.test.ts","packages/relay/src/store.test.ts","packages/providers/paperless/src/provider.test.ts","packages/cloud-relay/src/portal-sign-in.test.ts","packages/gateway/src/http/services/PushAdminService.test.ts","packages/gateway/src/privacy/exchange-reads.worker.test.ts","packages/gateway/src/transcribe/whisper-transcriber.test.ts","packages/gateway/src/brain/observations/brief-reactions.test.ts","packages/watch/src/runtime/engine.test.ts","packages/gateway/src/near-dupes/NearDupWriterOps.equivalence.test.ts","packages/gateway/src/analytics/sandbox-tables.test.ts","packages/gateway/src/http/services/PushRegistrationService.test.ts","packages/gateway/src/http/routes/cognition.test.ts","packages/providers/telegram/src/auth.test.ts","packages/watch/src/compiler/model.test.ts","packages/gateway/src/brain/knowledge/decision.test.ts","packages/watch/src/runtime/row-predicate-types.test.ts","packages/cloud-relay/src/desktop-account-http.test.ts","packages/source-sdk/src/temporal-projection.test.ts","packages/gateway/portal/js/privacy-api.test.ts","packages/gateway/portal/js/components/cloud-pairing-login-handoff.test.ts","packages/gateway/src/watch/delivery.test.ts","extension/src/capture/handoff.test.ts","packages/agent/src/reasoning-bound-http.test.ts","packages/gateway/src/brain/knowledge/engine-organization.test.ts","packages/relay/src/carriers/carriers.test.ts","packages/gateway/src/sources/omnesis-chat/evidence-projection.test.ts","packages/gateway/src/data/migration-197.test.ts","packages/gateway/src/remote-access/host-tailscale.test.ts","packages/core/src/models/provider-presets.test.ts","packages/gateway/src/brain/knowledge/claim-preservation.test.ts","packages/gateway/src/agent/conversation-notify.test.ts","packages/gateway/src/brain/rhythm/collision-sweep-task.test.ts","packages/gateway/src/http/services/CollectorDescriptorCache.test.ts","packages/gateway/src/brain/loop-list-receipts.test.ts","packages/collector/src/gateway-config.test.ts","packages/gateway/src/analytics/bound-documents.test.ts","scripts/ci/relay-image-gate.test.mjs","packages/gateway/src/brain/knowledge/projection.test.ts","packages/source-sdk/src/coverage-contract.test.ts","packages/gateway/portal/js/views/remote-access/model.test.ts","packages/core/src/tls-distrust.test.ts","packages/collector/src/sync-scheduler.test.ts","packages/gateway/src/inference/agent-turn-completer.test.ts","packages/platform/src/windows-private-repair-streams.windows.test.ts","packages/gateway/src/search/search-worker-ordering.test.ts","packages/collector/src/e2e/multi-collector-harness-cleanup.test.ts","packages/gateway/src/agent/trail-record-port.test.ts","packages/core/src/pairing-address.test.ts","packages/gateway/src/brain/interest/lookup.test.ts","packages/gateway/src/inference/decision/llama-cpp-decision.test.ts","packages/gateway/src/search/browse.test.ts","packages/agent/src/tools/loops.test.ts","packages/providers/google/src/state.test.ts","packages/gateway/src/scheduler/runners/writer.test.ts","packages/collector/src/e2e/briefs-saboteur.test.ts","packages/providers-synth/apple/src/temporal-projections.test.ts","packages/core/src/local-gateway-url.test.ts","packages/providers/outlook/src/document-event-profiles.test.ts","packages/gateway/src/brain/storage/schema.test.ts","packages/gateway/src/privacy/answer-diff.test.ts","packages/gateway/portal/js/oauth-consent-controller.test.ts","packages/cloud-relay/src/google-desktop.test.ts","packages/gateway/portal/js/views/agent-reducer-batch.test.ts","packages/gateway/src/tailscale-embed/service.ownership.test.ts","packages/core/src/models/http-rate-limit-retry.test.ts","packages/core/src/atomic-write.test.ts","packages/gateway/src/ws-path.test.ts","packages/cloud-relay/src/certificate-monitor-certspotter.test.ts","packages/gateway/src/domain/person-lookup.test.ts","packages/providers/whatsapp/src/history-seal.test.ts","packages/gateway/portal/js/views/agent-send-presentation.test.ts","packages/gateway/portal/js/views/cognition-runs.test.ts","packages/gateway/src/search/find/decision.test.ts","packages/gateway/portal/js/components/extension-promo.test.ts","packages/near-dupes/src/filters/annotate.boundary.test.ts","packages/gateway/src/watch/judge-provider-cache.test.ts","evals/briefs/src/scorecard-report.test.ts","packages/watch/src/runtime/failure-record.test.ts","packages/gateway/portal/js/views/model-config-recent.test.ts","packages/providers/obsidian/src/identity.test.ts","packages/cli/src/service/rebind.test.ts","packages/near-dupes/src/runner/runner.boundary.test.ts","packages/gateway/src/transcribe/vocabulary/profiles.test.ts","packages/gateway/src/tls-lifecycle/browser-trust.test.ts","packages/gateway/src/observability/profile-summary.test.ts","packages/providers/coinbase/src/client.test.ts","packages/gateway/src/domain/graph-walk.test.ts","packages/gateway/src/push/select-transport.test.ts","packages/gateway/src/brain/knowledge/continuation.test.ts","packages/gateway/src/search/temporal-intent.worker.test.ts","packages/gateway/src/search/lexical-analysis.test.ts","scripts/release/check-product-version.test.mjs","packages/gateway/src/domain/DocumentDerivation.test.ts","packages/cloud-relay/src/acme-controller-cleanup.test.ts","packages/gateway/portal/js/components/modal.test.ts","packages/gateway/src/keyed-debounced-runner.test.ts","packages/gateway/src/search/lexical-index-follower.test.ts","packages/config/src/config-schema.decision-backends.test.ts","packages/gateway/src/inference/model-health.integration.test.ts","packages/near-dupes/src/filters/edge-gate.test.ts","extension/src/capture/normalize.test.ts","extension/src/chrome/notes-background.test.ts","packages/gateway/portal/js/views/access-tailscale.test.ts","packages/gateway/src/http/routes/admin/doctor.test.ts","packages/cloud-relay/src/client-proxy-credentials.test.ts","packages/core/src/portal-fleet-update.test.ts","packages/gateway/src/access/served-by-gateway.test.ts","packages/gateway/src/http/services/WsEventHandler.auth-fields.test.ts","packages/gateway/src/data/like-prefix-seek.test.ts","packages/gateway/src/brain/person-refs.test.ts","packages/gateway/src/tailscale-embed-flag-off.test.ts","packages/cloud-relay/src/acme-caa-cleanup.test.ts","packages/gateway/src/data/migration-102.test.ts","packages/core/src/config-secret-materialization.test.ts","packages/gateway/src/near-dupes/event-handler.test.ts","packages/gateway/portal/js/lib/device-grouping.test.ts","packages/gateway/portal/js/components/resync-modal.test.ts","scripts/lib/decision-agreement.test.mjs","packages/gateway/src/data/migration-118.test.ts","packages/gateway/src/data/migration-60.test.ts","packages/watch/src/validator/date-trunc.test.ts","packages/gateway/src/http/middleware/cors.test.ts","packages/gateway/src/process-vitals.test.ts","packages/providers/web/src/capture-policy.test.ts","packages/gateway/src/data/migration-55.test.ts","packages/gateway/src/indexer/usearch-sidecar-crypto.test.ts","packages/cloud-relay/src/account-signin-integration.test.ts","packages/gateway/src/http/services/BrowserFindService.test.ts","scripts/run-e2e-status.test.mjs","packages/gateway/portal/js/components/model-health.test.ts","packages/watch/src/dsl/expression.test.ts","packages/gateway/src/scheduler/runners/io-dispatch.test.ts","packages/gateway/src/data/release-upgrade.test.ts","packages/providers/notion/src/broker.test.ts","packages/gateway/src/brain/knowledge/batch-query.test.ts","packages/gateway/portal/js/views/cognition-doclist.test.ts","packages/collector/src/e2e/briefs-backtest-bridge.test.ts","packages/gateway/src/brain/sweeps/file-format.test.ts","packages/gateway/src/http/routes/portal-signals.test.ts","packages/gateway/src/agent/persist-slim.test.ts","packages/gateway/src/domain/InteractionScoreService.call-log.test.ts","packages/gateway/portal/js/shared/agent-ui/replay-render.test.ts","packages/relay/src/admin.test.ts","packages/gateway/src/enrichment/dates/language-route.test.ts","packages/gateway/portal/js/views/knowledge-history-timeline.test.ts","packages/gateway/src/http/routes/admin/host-fleet-update.test.ts","packages/gateway/src/brain/observation-evidence-context.test.ts","packages/cli/src/commands/openclaw-capability-consent.test.ts","packages/cloud-relay/src/owned-cleanup-lifecycle.test.ts","packages/gateway/portal/js/views/watch-debug/firing-audit.test.ts","packages/collector/src/doctor-read-access.test.ts","packages/gateway/src/data/source-addressing.test.ts","packages/gateway/src/widget-renderers.test.ts","packages/gateway/portal/js/views/agent-offline.test.ts","packages/providers/coinbase/src/decimal.test.ts","packages/gateway/src/transcribe/vocabulary/identity.test.ts","packages/gateway/src/events.test.ts","packages/gateway/src/http/routes/analytics-sql-refusal.test.ts","packages/collector/src/e2e/fake-apns.test.ts","packages/gateway/portal/js/components/waiting-devices-banner.test.ts","packages/gateway/src/models/model-history.test.ts","packages/cli/src/commands/reauth-routing.test.ts","packages/gateway/src/brain/storage/engine-state.test.ts","packages/collector/src/provider-credential-state.test.ts","packages/providers/outlook/src/setup.test.ts","packages/gateway/src/brain/task-isolation.test.ts","scripts/lib/patched-files.test.mjs","packages/source-sdk/src/source-descriptor.test.ts","extension/src/chrome/panel-dismiss.test.ts","packages/relay/src/config.test.ts","packages/gateway/src/search/vector-hnsw.boundary.test.ts","packages/gateway/src/push/tailscale-join-delivery.test.ts","packages/watch/src/runtime/degrade-count.test.ts","packages/core/src/doctor/security-cleanup.test.ts","scripts/demo-host/synthetic-demo-host-lifecycle.test.ts","packages/agent/src/specialists/define-specialist.test.ts","packages/agent/src/tools/lookup-document-by-url.test.ts","packages/gateway/src/search/temporal-event-docs.test.ts","packages/providers/strava/src/setup.test.ts","packages/gateway/src/workers/worker-priority.test.ts","evals/universes/sacha-bellamy/_build/scenario-evening.test.mjs","packages/watch/src/eval/answer-log.test.ts","packages/providers/whatsapp/src/doctor-key-cleanup.test.ts","packages/gateway/src/brain/knowledge/decision-budget.test.ts","packages/gateway/portal/js/lib/knowledge-link-icons.test.ts","packages/watch/src/compiler/refusal.test.ts","packages/core/src/doctor/windows-permissions.windows.test.ts","packages/cloud-relay/src/relay-client-address.test.ts","packages/providers/telegram/src/client/mtcute/storage.test.ts","evals/search/src/metrics.test.ts","packages/core/src/models/manifest.test.ts","packages/gateway/portal/js/components/relay-device-enrollment.test.ts","packages/gateway/portal/js/views/policies/policy-diff.test.ts","packages/config/src/config-schema.decision-thresholds.test.ts","evals/universes/sacha-bellamy/_build/cross-source.test.mjs","packages/providers/claude-code/src/config.test.ts","packages/gateway/src/data/migration-68.test.ts","packages/cli/src/commands/tls-provision.trust.test.ts","packages/gateway/portal/js/views/add-source-params-form.test.ts","packages/gateway/src/agent/unattributed-caller.test.ts","packages/gateway/src/data/migration-81.test.ts","packages/gateway/src/watch/write-lease.test.ts","packages/core/src/parent-shutdown.test.ts","packages/core/src/models/capabilities.test.ts","packages/gateway/src/models/decision-tools.test.ts","packages/providers/telegram/src/credentials-spec.test.ts","packages/providers-synth/whatsapp/src/fixtures.test.ts","packages/core/src/tailscale-cli.test.ts","packages/gateway/src/brain/knowledge/tool-summaries.test.ts","packages/gateway/src/agent/conversation-reader.test.ts","packages/gateway/src/brain/clock-discipline.test.ts","packages/gateway/src/brain/backend-resolver.test.ts","packages/gateway/portal/js/views/sweeps-format.test.ts","packages/cloud-relay/src/gateway-private-key.test.ts","packages/gateway/src/data/migration-96.test.ts","packages/providers/discord/src/sync-cycle.test.ts","packages/core/src/rate-limiter.boundary.test.ts","packages/providers/discord/src/document-event-profile.test.ts","packages/gateway/src/disk-usage-identity.test.ts","packages/gateway/src/tailscale-embed/settings.test.ts","packages/providers/obsidian/src/read-access.test.ts","packages/gateway/portal/js/views/cognition-run-usage.test.ts","packages/core/src/doctor/schema.test.ts","packages/gateway/src/scheduler/read-port.test.ts","packages/gateway/src/brain/artifact-provenance.test.ts","packages/gateway/src/data/migration-141.test.ts","packages/gateway/src/dictation/watch-routing.test.ts","packages/gateway/src/http/routes/admin/internals.test.ts","packages/gateway/portal/js/views/remediation-banner.test.ts","packages/providers-synth/web/src/index.test.ts","packages/collector/src/e2e/brain-bench/local-calendar.test.ts","packages/cloud-relay/src/installation-relay.test.ts","packages/providers/screen-time/src/digest.test.ts","packages/collector/src/e2e/brain-bench/worth-gate-mail.test.ts","packages/gateway/src/agent/conversation-memory-tool.test.ts","packages/watch/src/validator/node-traits.test.ts","scripts/render-sweep-examples.test.mjs","packages/core/src/terminal-fx/capability.test.ts","extension/src/bundle-boundaries.test.ts","packages/providers/plaid/src/types.test.ts","packages/collector/src/e2e/hermes-command-fixture.test.ts","packages/gateway/src/data/migration-187.test.ts","packages/agent-integration/src/refresh-lease.test.ts","packages/core/src/default-config-dir.test.ts","packages/tailnet-helper/go.test.mjs","packages/core/src/tofu.boundary.test.ts","packages/gateway/portal/js/views/knowledge-claim-layout.test.ts","packages/cli/src/docker-build-tag.test.ts","packages/core/src/doctor/security-worker.test.ts","packages/config/src/config-diff.test.ts","packages/gateway/portal/js/lib/capability-state.test.ts","packages/gateway/src/http/schemas/browser-notes.test.ts","packages/agent/src/codex-compat.test.ts","packages/gateway/src/data/repositories/SourceStreamCleanupRepository.test.ts","packages/core/src/ws-messages.source-mode.test.ts","packages/gateway/portal/js/lib/router-tasks.test.ts","packages/gateway/src/host-network.test.ts","packages/agent-integration/src/pending-authorization-access.test.ts","packages/gateway/src/access/authorization-notifier.test.ts","packages/gateway/src/data/migration-90.test.ts","packages/collector/src/doctor-process-vitals.test.ts","packages/providers/imap/src/client.test.ts","evals/universes/sacha-bellamy/_build/background.test.mjs","packages/gateway/src/release-check/task.test.ts","packages/gateway/src/capability-icon-drift.test.ts","packages/providers/discord/src/icons.test.ts","packages/providers-synth/activity-segments/src/icons.test.ts","packages/providers/strava/src/sql.test.ts","packages/providers/hermes/src/icons.test.ts","extension/src/chrome/find-query.test.ts"]];
+          const source="ec1a4d52e0ad04664e04efb30b99c604fc5caae8";
+          if(process.env.TARGET_SOURCE_SHA!==source)throw Error('Recompute the recovery manifest for this source');
+          const all=groups.flat();if(new Set(all).size!==703||!all.every(file=>fs.existsSync(file)))throw Error('Recovery paths are missing or duplicated');
+          const digest=createHash('sha256').update([...all].sort().join('\n')).digest('hex');if(digest!=="ab05b3079662b5a34c0742e919e8c851c6bccf5a113586b196268427d75bb25f")throw Error('Recovery path digest differs');
+          const cohort=Number(process.env.UNIT_COHORT);if(![0,1].includes(cohort))throw Error('Invalid recovery group');
+          fs.writeFileSync(path.join(process.env.RUNNER_TEMP,'quarter3-selection.json'),JSON.stringify({source,originalSource:"94717ba8879f5a166b85579a4b55e2c46c1fc3bc",originalMissingFiles:701,addedTests:["packages/gateway/src/public-address.test.ts","scripts/ci/relay-image-gate.test.mjs"],selectedTotal:703,digest,cohort,files:groups[cohort]},null,2));
+          const task=windowsCheckTasks('unit')[0];task.push(...groups[cohort],'--reporter=default','--reporter='+process.env.OMNESIS_UNIT_RECOVERY_REPORTER);
+          process.exitCode=await runWindowsCheckTasks([task]);
+          JS
+      - name: Prove real portable network fixture transports
+        if: ${{ matrix.lane == 'e2e' && matrix.shard != '2/2' }}
+        env:
+          OMNESIS_TAILNET_TOOLS_DIR: ${{ runner.temp }}/omnesis-tailnet-tools
+          GOMAXPROCS: "2"
+        run: node scripts/ci/portable-transports-proof.mjs
+      - name: Full Windows E2E shard with the real reference embedder
+        if: ${{ matrix.lane == 'e2e' }}
+        env:
+          SHARD: ${{ matrix.shard }}
+          OMNESIS_WINDOWS_E2E_FILES: ${{ github.event_name == 'workflow_dispatch' &&
+            inputs.lane == 'e2e' && inputs.e2e_files || '' }}
+          OMNESIS_TEST_EMBEDDER_CACHE: ${{ runner.temp }}/omnesis-test-embedder
+          OMNESIS_TAILNET_TOOLS_DIR: ${{ runner.temp }}/omnesis-tailnet-tools
+          GOMAXPROCS: "2"
+        run: >
+          $checkArgs = @('scripts/ci/with-test-embedder.mjs',
+          'scripts/ci/windows-checks.mjs', 'e2e')
+
+          if ($env:SHARD) { $checkArgs += "--shard=$env:SHARD" }
+
+          node @checkArgs
+      - name: Full Windows portal tests
+        if: ${{ matrix.lane == 'portal' }}
+        run: node scripts/ci/windows-checks.mjs portal
+      - name: Preserve portal failure artifacts
+        if: ${{ failure() && matrix.lane == 'portal' }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: windows-portal-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            test-results/
+            playwright-report/
+          if-no-files-found: ignore
+          retention-days: 7
+      - name: Require the tested runtime source to remain immutable
+        if: ${{ always() }}
+        run: git diff --exit-code
+      - name: Check nothing tried to reach production Omnesis services
+        if: ${{ always() && steps.production-network.outcome == 'success' }}
+        shell: bash
+        run: $GITHUB_WORKSPACE/scripts/ci/production-network.sh verify
+      - name: Preserve only unit selection and resource evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: windows-quarter3-${{ matrix.id }}-${{ github.run_id }}-${{
+            github.run_attempt }}
+          path: |-
+            ${{ runner.temp }}/quarter3-selection.json
+            ${{ runner.temp }}/quarter3-resources.jsonl
+          if-no-files-found: warn
+          retention-days: 3
+    if: inputs.scope == 'windows-unit-third-recovery'
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+      TZ: UTC
+      OMNESIS_UNIT_WORKERS: "1"
+      OMNESIS_E2E_WORKERS: "1"
+      UNIT_COHORT: ${{ matrix.cohort }}
+      TARGET_SOURCE_SHA: ${{ inputs.source_sha }}
