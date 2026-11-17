@@ -29,6 +29,8 @@ import { mountRemoteAccessRoutes, remoteAccessEnabled } from "./http/routes/remo
 import { AddressChecks } from "./remote-access/address-check.js";
 import { HostTailscaleService } from "./remote-access/host-tailscale.js";
 import { RemoteAccessSettingsStore } from "./remote-access/settings.js";
+import { McpAddresses, relayStateFrom } from "./remote-access/mcp-addresses.js";
+import { mcpAddressGate } from "./http/mcp-address-gate.js";
 import { mountPortalSignalRoutes } from "./http/routes/portal-signals.js";
 import { PortalSignals } from "./portal-signals/hub.js";
 import { markRelayRequestExposure } from "./http/client-ip.js";
@@ -695,6 +697,8 @@ export function createServer(
     onDeviceJoined?: import("./http/services/PairingService.js").PairingServiceDeps["onDeviceJoined"];
     /** The gateway's own tailnet device; present only with OMNESIS_TAILSCALE_EMBED_ENABLED=1. */
     tailscaleEmbed?: import("./tailscale-embed/service.js").TailscaleEmbedService;
+    /** The Omnesis relay origin the gateway is enrolled under; only with the relay opt-in. */
+    relayPublicOrigin?: () => string | undefined;
     cloudIdentity?: {
       identity: import("@omnesis/cloud-relay").IdentityProvider;
       ownerAccountId: string;
@@ -736,6 +740,21 @@ export function createServer(
     opts?.configDir && remoteAccessEnabled()
       ? new RemoteAccessSettingsStore(opts.configDir)
       : undefined;
+  // Tailscale already on this computer forwards to the port the gateway listens on.
+  const hostTailscale = opts?.port ? new HostTailscaleService(opts.port) : undefined;
+  // Which addresses away from home answer MCP; enforced wherever the owner's choices are kept.
+  const mcpAddresses = remoteAccessSettings
+    ? new McpAddresses({
+        settings: remoteAccessSettings,
+        publicBaseUrl: () => opts?.publicBaseUrl,
+        ...(opts?.relayPublicOrigin ? { relayOrigin: opts.relayPublicOrigin } : {}),
+        ...(opts?.cloudRelayManagement
+          ? { relayState: relayStateFrom(opts.cloudRelayManagement) }
+          : {}),
+        ...(opts?.tailscaleEmbed ? { tailscale: opts.tailscaleEmbed } : {}),
+        ...(hostTailscale ? { hostTailscale } : {}),
+      })
+    : undefined;
   app.use("*", async (c, next) => {
     let release: (() => void) | undefined;
     if (opts?.cloudRelayExposure?.()) {
@@ -762,6 +781,8 @@ export function createServer(
     "*",
     corsMiddleware(() => opts?.configStore?.get().gateway?.cors),
   );
+  // An address the owner turned MCP off on serves none of MCP's paths.
+  if (mcpAddresses) app.use("*", mcpAddressGate(mcpAddresses));
 
   // Centralized error mapping. Every route handler can either:
   //
@@ -1581,6 +1602,7 @@ export function createServer(
     tlsFingerprintSha256: opts?.tlsFingerprintSha256,
     listenPort: opts?.port,
     agentCertificateTrust: opts?.agentCertificateTrust,
+    ...(mcpAddresses ? { mcpAddresses } : {}),
     ...(opts?.tailscaleEmbed || opts?.cloudRelayManagement
       ? {
           pendingCertificateOrigins: () =>
@@ -1794,16 +1816,15 @@ export function createServer(
   });
   mountDirectCandidateRoutes(app, { configDir: opts?.configDir, port: opts?.port });
   mountTailscaleRoutes(app, opts?.tailscaleEmbed);
-  if (remoteAccessSettings) {
+  if (remoteAccessSettings && mcpAddresses) {
     const configStore = opts?.configStore;
     mountRemoteAccessRoutes(app, {
       settings: remoteAccessSettings,
       checks: new AddressChecks(),
-      ...(opts?.port && tailscaleEmbedEnabled()
-        ? { hostTailscale: new HostTailscaleService(opts.port) }
-        : {}),
+      ...(hostTailscale && tailscaleEmbedEnabled() ? { hostTailscale } : {}),
       servingPublicBaseUrl: () => opts?.publicBaseUrl ?? null,
       configuredPublicBaseUrl: () => configStore?.get().gateway?.publicBaseUrl ?? null,
+      mcpAddresses,
     });
   }
   const localSpkiFingerprint = () =>
