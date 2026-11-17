@@ -10,6 +10,7 @@ import {
   validateDocumentTemporalProjectionContracts,
 } from "@omnesis/core";
 import { SourceId, sourceTypeOf, type DocumentInput, type Scope } from "@omnesis/types";
+import { retentionCutoff } from "../../storage/retention-policy.js";
 import { getInitialSourceInventory } from "../../data/repositories/SourceInventoryRepository.js";
 import { isKnowledgeDocumentReadable } from "../../brain/knowledge/retrieval-fence.js";
 import {
@@ -44,7 +45,7 @@ import { resolveRuntimeSettings } from "../../runtime-settings.js";
 import { getNearDupEdges } from "../../near-dupes/index.js";
 import { withHiddenSourcesExcluded } from "../../search/hidden-sources.js";
 import { runWithPriority } from "../../priority.js";
-import { isSourceRemoved } from "../../data/repositories/SourceRepository.js";
+import { getSource, isSourceRemoved } from "../../data/repositories/SourceRepository.js";
 import { hasFreeDiskSpace, type DiskSpaceCheck } from "../../disk-guard.js";
 import { BadRequestError, InsufficientStorageError } from "../errors.js";
 import { normalizeSnapshot, vouchesForWholeSource } from "../../absence/snapshot-claims.js";
@@ -113,6 +114,8 @@ export interface IngestResult {
 }
 
 export interface DocumentServiceDeps {
+  /** Shared capacity admission; only growth paths consult it, never user deletion. */
+  assertStorageCanGrow?: () => void;
   db: Db;
   writeGate: WriteGate;
   events: EventService;
@@ -253,6 +256,7 @@ export class DocumentService {
    * lost. Inert when no `gatewayDbPath` / `minFreeDiskBytes` is wired.
    */
   private assertDiskSpace(): void {
+    this.deps.assertStorageCanGrow?.();
     const { gatewayDbPath, minFreeDiskBytes } = this.deps;
     if (!gatewayDbPath || minFreeDiskBytes === undefined) return;
     const check = this.deps.checkDiskSpace ?? hasFreeDiskSpace;
@@ -335,6 +339,18 @@ export class DocumentService {
       let cutoff = cutoffCache.get(d.sourceId);
       if (cutoff === undefined) {
         cutoff = getSourceCutoffDate(liveConfig, d.sourceId);
+        const retention = liveConfig.gateway?.storage?.retention?.find(
+          (policy) => policy.sourceId === d.sourceId,
+        );
+        const matchesIncarnation =
+          retention?.sourceCreatedAt === undefined ||
+          retention.sourceCreatedAt === getSource(this.deps.db, SourceId(d.sourceId))?.createdAt;
+        const retainedSince = retentionCutoff(
+          matchesIncarnation && retention ? [retention] : undefined,
+          d.sourceId,
+        );
+        if (retainedSince !== null && (cutoff === null || retainedSince > cutoff))
+          cutoff = retainedSince;
         cutoffCache.set(d.sourceId, cutoff);
       }
       return cutoff === null || d.sourceCreatedAt >= cutoff;

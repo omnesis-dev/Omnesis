@@ -112,6 +112,7 @@ const WRITE_OP_DEFS: readonly WriteOpDef[] = [
   // User-initiated single-document privacy delete — interactive,
   // so "user" priority like the other user-driven deletes below.
   { name: "db.deleteDocumentForUser", priority: "user" },
+  { name: "db.deleteStorageRetentionBatch", priority: "background" },
   { name: "db.deleteDocumentForRetention", priority: "background" },
   { name: "db.completeDocumentRetention", priority: "background" },
   // The page-embedded marks ride inside `db.upsertWithCursor`; this op serves

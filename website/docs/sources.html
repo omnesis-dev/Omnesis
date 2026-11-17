@@ -1823,6 +1823,38 @@
           <code>omnesis broker status</code> runs the same check on every link.
         </p>
 
+        <h3 id="storage-retention">Storage and retention</h3>
+        <p>
+          <strong>Settings → Storage</strong> compares document payload by source and month and
+          offers two ways to remove older documents from Omnesis. Neither changes the originals in
+          your connected service. Contact documents are exempt from age-based trimming.
+        </p>
+        <ul>
+          <li>
+            <strong>One-off trim:</strong> choose a source and cutoff date, review the bounded
+            preview, then confirm. Each approval removes at most 100 exact document revisions; when
+            more remain, preview another batch. A changed document requires a new approval. Removed
+            items are suppressed locally so a later sync does not immediately restore them. Other
+            sources and newer documents are outside the approved selection.
+          </li>
+          <li>
+            <strong>Rolling retention:</strong> choose how many days to keep for one source and
+            confirm automatic removal. Older stored documents are removed in background batches, and
+            older incoming documents are filtered out. Turn it off to stop automatic removal.
+            Widening the window permits older data to be imported again; a completed source may need
+            a resync to fetch history it no longer visits.
+          </li>
+        </ul>
+        <p>
+          The existing <code>maxAge</code> import setting keeps its meaning: narrowing it filters
+          incoming documents and does not authorize deletion of existing data. A source with both an
+          import window and rolling retention accepts only documents within both windows. Rolling
+          retention applies to source documents, not analytics rows or collector-owned archives.
+          Deleting documents makes database pages reusable but may not shrink files on disk. See
+          <a href="operating#storage">Storage protection</a> for capacity limits and what happens
+          when space runs low.
+        </p>
+
         <h3 id="day-to-day">Day-to-day tasks</h3>
         <p>
           Each task names the portal action on the <strong>Sources</strong> page first, then the CLI

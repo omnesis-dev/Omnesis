@@ -3,14 +3,18 @@
 
 import { Hono, type MiddlewareHandler } from "hono";
 import { HTTPException } from "hono/http-exception";
-import { matchedRoutes } from "hono/route";
+
+
+import { strictRoute } from "./http/scope.js";
+import { httpActivityName, withActivity } from "./observability/main-activity.js";
+type Db = Database.Database;
+import { join } from "node:path";
 import {
-  DEFAULT_PUSH_RELAY_URL,
-  DEFAULT_SYNC_LEASE_TTL,
-  ownSourceSettings,
-  pickSourceSettings,
-  type OmnesisConfig,
-} from "@omnesis/config";
+  missingHostedWriteScopes,
+  SourceId,
+  type DeviceId,
+  type DeviceRecord,
+} from "@omnesis/types";
 import {
   createLogger,
   parseDuration,
@@ -18,21 +22,21 @@ import {
   type WsRequestPayload,
 } from "@omnesis/core";
 import {
-  missingHostedWriteScopes,
-  SourceId,
-  type DeviceId,
-  type DeviceRecord,
-} from "@omnesis/types";
-import { markRelayRequestExposure } from "./http/client-ip.js";
-
-import { labFeatureEnabled } from "./lab/store.js";
-import { LabService } from "./lab/service.js";
+  DEFAULT_PUSH_RELAY_URL,
+  DEFAULT_SYNC_LEASE_TTL,
+  ownSourceSettings,
+  pickSourceSettings,
+  type OmnesisConfig,
+} from "@omnesis/config";
+import { matchedRoutes } from "hono/route";
+import { finishDocumentCascade } from "./absence/document-cascade.js";
+import { StorageRetentionService } from "./storage/retention.js";
+import { StorageService } from "./storage/service.js";
+import { mountStorageRoutes } from "./http/routes/storage.js";
 import { mountLabRoutes } from "./http/routes/lab.js";
-
-import { strictRoute } from "./http/scope.js";
-import { httpActivityName, withActivity } from "./observability/main-activity.js";
-type Db = Database.Database;
-import { join } from "node:path";
+import { LabService } from "./lab/service.js";
+import { labFeatureEnabled } from "./lab/store.js";
+import { markRelayRequestExposure } from "./http/client-ip.js";
 import { lookupToken, lookupSession } from "./data/repositories/TokenRepository.js";
 import { getDevice, isRevokedDeviceKey } from "./data/repositories/DeviceRepository.js";
 import {
@@ -185,6 +189,8 @@ import {
   portalCsrfToken,
   sessionCookieName,
 } from "./http/cookies.js";
+import type { StorageAccounting } from "./storage/accounting.js";
+import type { StoragePressureManager } from "./storage/pressure.js";
 import type { SemanticSearchStatus } from "@omnesis/source-sdk";
 import type { DiskUsageSnapshot } from "@omnesis/core/doctor";
 import type { TlsLifecyclePort } from "./http/routes/admin/internals.js";
@@ -411,6 +417,11 @@ export function createServer(
        * worker owns the handle, so the caller can safely use the direct path.
        */
       deleteSourceIndex?: (sourceId: string) => Promise<number> | undefined;
+      deleteDocumentIndexBatch?: (
+        id: string,
+        limit: number,
+        sourceDeleted: boolean,
+      ) => Promise<import("./indexer/db.js").DocumentIndexDeleteBatchResult> | undefined;
       /** Latest docs/sec indexing throughput, or null when unknown. */
       getIndexRate?: () => number | null;
     };
@@ -596,6 +607,13 @@ export function createServer(
      * doctor. Optional so test gateways need not walk a config dir.
      */
     getDiskUsage?: () => DiskUsageSnapshot | null;
+    storagePressure?: StoragePressureManager;
+    storageReads?: import("./storage/reads.js").StorageReads;
+    assertStorageCanGrow?: () => void;
+    getStorageLogical?: () => StorageAccounting | null;
+    getStorageIndex?: () => import("./storage/index-accounting.js").IndexStorageAccounting | null;
+    onStorageService?: (service: StorageService) => void;
+    refreshStorage?: () => Promise<void>;
     /**
      * Called after a model-provider credential file is written or
      * cleared. The gateway uses this to rebuild the affected provider in
@@ -837,8 +855,11 @@ export function createServer(
   // backfill, so it routes through the worker (serialized, owning the usearch
   // handle) when one is running, falling back to the direct path otherwise.
   const indexWriteGate: IndexWriteGate | undefined = opts?.indexDb
-    ? workerCoordinatedIndexWriteGate(opts.indexDb, (sourceId) =>
-        opts?.indexerControl?.deleteSourceIndex?.(sourceId),
+    ? workerCoordinatedIndexWriteGate(
+        opts.indexDb,
+        (sourceId) => opts?.indexerControl?.deleteSourceIndex?.(sourceId),
+        (id, limit, sourceDeleted) =>
+          opts?.indexerControl?.deleteDocumentIndexBatch?.(id, limit, sourceDeleted),
       )
     : undefined;
 
@@ -878,6 +899,7 @@ export function createServer(
     // Low-disk ingestion guard. Inert unless both the DB path and a
     // threshold are wired (production always wires both; most tests omit).
     gatewayDbPath: dbPath,
+    assertStorageCanGrow: opts?.assertStorageCanGrow,
     minFreeDiskBytes:
       opts?.minFreeDiskMb !== undefined ? opts.minFreeDiskMb * 1024 * 1024 : undefined,
   });
@@ -933,11 +955,12 @@ export function createServer(
           recordPresence: (args) => w.recordAnalyticsPresence(args),
           recordRestorerOmissions: (args) => w.recordAnalyticsRestorerOmissions(args),
         },
-        opts?.minFreeDiskMb === undefined || dbPath === undefined
+        !opts?.assertStorageCanGrow && (opts?.minFreeDiskMb === undefined || dbPath === undefined)
           ? undefined
           : {
-              dbPath,
-              minFreeBytes: opts.minFreeDiskMb * 1024 * 1024,
+              dbPath: dbPath ?? ".",
+              minFreeBytes: (opts?.minFreeDiskMb ?? 0) * 1024 * 1024,
+              assertStorageCanGrow: opts?.assertStorageCanGrow,
             },
       )
     : null;
@@ -1398,6 +1421,37 @@ export function createServer(
     await agentDeps.agentService?.refreshLabFeatures();
   });
   mountLabRoutes(app, labService);
+  if (opts?.storagePressure) {
+    const retention = new StorageRetentionService({
+      db,
+      writeGate: w,
+      sourceWriteEpochFence,
+      reads: opts.storageReads,
+      finishCascade: async (cascade) => {
+        await finishDocumentCascade(cascade, {
+          deleteIndex: indexWriteGate
+            ? (ids) => indexWriteGate.deleteChunksByDocuments(ids)
+            : undefined,
+          cascadeCognition: (ids) => cascadeCognitiveStateThroughGate(db, w, ids),
+          acknowledge: (id, part) => w.acknowledgeAbsenceCascade(id, part),
+        });
+      },
+    });
+    const storage = new StorageService({
+      pressure: opts.storagePressure,
+      physical: opts.getDiskUsage ?? (() => null),
+      logical: opts.getStorageLogical ?? (() => null),
+      index: opts.getStorageIndex ?? (() => null),
+      refresh: opts.refreshStorage ?? (() => Promise.resolve()),
+      configStore: opts.configStore,
+      retention,
+      sourceWriteEpochFence,
+      sourceExists: (sourceId) => getSource(db, SourceId(sourceId)) !== null,
+      sourceCreatedAt: (sourceId) => getSource(db, SourceId(sourceId))?.createdAt ?? null,
+    });
+    mountStorageRoutes(app, storage);
+    opts.onStorageService?.(storage);
+  }
 
   const watchRouting = new WatchRoutingService({
     getConfig: () => opts?.configStore?.get() ?? opts?.config,
@@ -1434,6 +1488,7 @@ export function createServer(
     getTranscriptionVocabularyEnabled: () =>
       opts?.transcriptionVocabularyService?.enabled() ?? false,
     getDiskUsage: opts?.getDiskUsage,
+    getStoragePressure: () => opts?.storagePressure?.snapshot() ?? null,
     vetAssignment: opts?.vetAssignment,
   });
 

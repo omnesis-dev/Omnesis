@@ -46,6 +46,21 @@ afterEach(() => {
 });
 
 describe("measureDiskUsage", () => {
+  test("strict quota measurement propagates unreadable store paths", async () => {
+    const plain = join(root, "not-a-directory");
+    file(plain, 1);
+    const invalid = layout({ dbPath: join(plain, "omnesis.db") });
+    await expect(
+      measureDiskUsage(invalid, () => new Date(), { strict: true }),
+    ).rejects.toMatchObject({ code: "ENOTDIR" });
+    await expect(measureDiskUsage(invalid)).resolves.toBeDefined();
+  });
+
+  test("strict quota measurement still tolerates stores absent on a fresh install", async () => {
+    const snapshot = await measureDiskUsage(layout(), () => new Date(), { strict: true });
+    expect(snapshot.totalBytes).toBe(0);
+  });
+
   test("counts every store with its sidecars and puts the rest under other", async () => {
     file(join(configDir, "omnesis.db"), 1000);
     file(join(configDir, "omnesis.db-wal"), 100);

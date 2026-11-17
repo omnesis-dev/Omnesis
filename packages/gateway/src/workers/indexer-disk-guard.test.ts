@@ -47,3 +47,26 @@ describe("shouldRunIndexCycle", () => {
     expect(probed).toBe(false);
   });
 });
+
+describe("shared storage pressure", () => {
+  it("blocks quota growth even with plentiful free disk and resumes independently", () => {
+    const check = () => ({ ok: true, freeBytes: 1e12 });
+    expect(
+      shouldRunIndexCycle("/tmp", 500, check, { blocked: true, validUntil: 2000 }, 1000).shouldRun,
+    ).toBe(false);
+    expect(
+      shouldRunIndexCycle("/tmp", 500, check, { blocked: false, validUntil: 2000 }, 1000).shouldRun,
+    ).toBe(true);
+  });
+
+  it("fails closed when capacity messages expire without disabling the disk floor", () => {
+    expect(
+      shouldRunIndexCycle("/tmp", 0, undefined, { blocked: false, validUntil: 1000 }, 1000)
+        .shouldRun,
+    ).toBe(false);
+    const check = () => ({ ok: false, freeBytes: 1 });
+    expect(
+      shouldRunIndexCycle("/tmp", 500, check, { blocked: false, validUntil: 2000 }, 1000).shouldRun,
+    ).toBe(false);
+  });
+});

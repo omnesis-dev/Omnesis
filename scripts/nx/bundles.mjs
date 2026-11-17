@@ -28,6 +28,7 @@ export const bundles = {
       "sync-tombstone-cascade.e2e.test.ts",
       "structured-claims.e2e.test.ts",
       "state-migration.e2e.test.ts",
+      "storage-management.e2e.test.ts",
       "auth-challenge.e2e.test.ts",
       "old-collector-wire.e2e.test.ts",
       "new-collector-old-gateway.e2e.test.ts",

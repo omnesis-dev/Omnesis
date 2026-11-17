@@ -1,6 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import {
+  deleteStorageRetentionBatch,
+  type StorageRetentionBatch,
+  type StorageRetentionDeleteResult,
+} from "./storage/retention-store.js";
 import { initializeLabFlags, setLabFlag, type LabFeatureId, type LabFlags } from "./lab/store.js";
 
 import {
@@ -785,6 +790,8 @@ export interface WriteGate extends KnowledgeWriteGate {
     streamId?: string,
     tombstone?: boolean,
   ): Promise<string[]>;
+  /** Exact revision-checked, bounded storage removal with durable cleanup. */
+  deleteStorageRetentionBatch(batch: StorageRetentionBatch): Promise<StorageRetentionDeleteResult>;
   /** Bounded, exact document delete used by activity retention. */
   deleteDocumentForRetention(
     providerId: string,
@@ -2443,6 +2450,7 @@ export function writeGateFromCall(call: WriterCallFn): WriteGate {
       ]),
     deleteDocumentForUser: (providerId, sourceId, externalId, streamId, tombstone) =>
       call("db.deleteDocumentForUser", [providerId, sourceId, externalId, streamId, tombstone]),
+    deleteStorageRetentionBatch: (batch) => call("db.deleteStorageRetentionBatch", [batch]),
     deleteDocumentForRetention: (providerId, sourceId, externalId) =>
       call("db.deleteDocumentForRetention", [providerId, sourceId, externalId]),
     completeDocumentRetention: (providerId, sourceId, externalId) =>
@@ -3024,6 +3032,7 @@ export function directWriteGate(db: Db): WriteGate {
         streamId ?? "",
         tombstone ?? true,
       ),
+    deleteStorageRetentionBatch: async (batch) => deleteStorageRetentionBatch(db, batch),
     deleteDocumentForRetention: async (providerId, sourceId, externalId) =>
       deleteDocumentForRetention(db, providerId, sourceId, externalId),
     completeDocumentRetention: async (providerId, sourceId, externalId) =>

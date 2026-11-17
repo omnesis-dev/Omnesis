@@ -21,6 +21,10 @@ import {
   type MultiDeviceMode,
   type SyncRemediation,
 } from "@omnesis/types";
+import {
+  deleteStorageRetentionBatch,
+  type StorageRetentionBatch,
+} from "../storage/retention-store.js";
 import { initializeLabFlags, setLabFlag, type LabFeatureId, type LabFlags } from "../lab/store.js";
 
 import {
@@ -791,6 +795,8 @@ export const writerHandlers = {
     tombstone?: boolean,
   ) =>
     deleteDocumentForUser(db, providerId, sourceId, externalId, streamId ?? "", tombstone ?? true),
+  "db.deleteStorageRetentionBatch": (db: Db, batch: StorageRetentionBatch) =>
+    deleteStorageRetentionBatch(db, batch),
   "db.deleteDocumentForRetention": (
     db: Db,
     providerId: string,

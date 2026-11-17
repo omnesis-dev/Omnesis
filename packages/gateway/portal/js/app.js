@@ -304,6 +304,7 @@ function App() {
   const [releaseUpdate, setReleaseUpdate] = useState(null);
   const statusRequestGeneration = useRef(0);
   const [modelHealth, setModelHealth] = useState({ warnings: [] });
+  const [storagePressure, setStoragePressure] = useState(null);
 
   // Half the window the gateway believes a viewing mark for, so a refresh
   // always lands well inside it. Derived rather than hardcoded: the two
@@ -376,6 +377,7 @@ function App() {
       const status = await getStatus();
       if (generation !== statusRequestGeneration.current) return;
       setModelHealth(status?.modelHealth ?? { warnings: [] });
+      setStoragePressure(status?.storagePressure ?? null);
       setExperimental(status?.experimental === true);
       setLabAvailable(status?.labAvailable === true);
       setLab({ brain: status?.lab?.brain === true, tasks: status?.lab?.tasks === true, watches: status?.lab?.watches === true });
@@ -660,7 +662,8 @@ function App() {
             const isActive = route.view === item.view && !(item.isNewConvo && activeConvoId);
             const pending = pendingDecisions[item.view] ?? 0;
             const modelWarning = item.view === "settings" && modelHealth.warnings.length > 0;
-            const href = modelWarning ? "/portal/settings/models" : item.href;
+            const storageWarning = item.view === "settings" && storagePressure && storagePressure.state !== "normal";
+            const href = storageWarning ? "/portal/settings/storage" : modelWarning ? "/portal/settings/models" : item.href;
             return html`
               <a
                 key=${item.view}
@@ -678,7 +681,7 @@ function App() {
                 <span class="sidebar-label"
                   >${item.view === "tasks" ? countLabel(item.label, openTasksToday) : item.label}</span
                 >
-                ${modelWarning && html`<${WarningTriangle} label="Models need attention" />`}
+                ${storageWarning ? html`<${WarningTriangle} label="Storage needs attention" />` : modelWarning && html`<${WarningTriangle} label="Models need attention" />`}
                 ${pending > 0
                   ? html`<span class="sidebar-badge" aria-hidden="true">${pending > 99 ? "99+" : pending}</span
                       ><span class="sr-only">${pending} ${pending === 1 ? "decision" : "decisions"} waiting for you. </span>`
@@ -809,6 +812,8 @@ function App() {
               tab=${route.tab}
               modelsSection=${route.modelsSection}
               modelHealth=${modelHealth}
+              storagePressure=${storagePressure}
+              onStorageRefresh=${refreshGatewayStatus}
               onModelsRefresh=${refreshGatewayStatus}
               onLabChange=${refreshGatewayStatus}
               accessAuthorizationId=${route.accessAuthorizationId}

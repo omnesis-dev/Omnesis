@@ -24,6 +24,7 @@ import {
 } from "../lib/settings-tabs.js";
 
 const LabView = lazy(() => import("./lab.js").then((m) => m.LabView));
+const StorageView = lazy(() => import("./storage.js").then((m) => m.StorageView));
 const ConfigView = lazy(() => import("./config.js").then((m) => m.ConfigView));
 const OmnesisMdView = lazy(() => import("./omnesis-md.js").then((m) => m.OmnesisMdView));
 const ModelsView = lazy(() => import("./models.js").then((m) => m.ModelsView));
@@ -40,6 +41,8 @@ export function SettingsView({
   tab,
   modelsSection,
   modelHealth,
+  storagePressure,
+  onStorageRefresh,
   onModelsRefresh,
   onLabChange,
   accessAuthorizationId,
@@ -127,10 +130,13 @@ export function SettingsView({
         active=${activeTab}
         onSelect=${switchTab}
         tabs=${settingsTabs({ experimental, brain: lab.brain, labAvailable, cloudRelay }).map((item) => item.key === "models" && modelHealth?.warnings?.length
-          ? { ...item, label: html`Models <${WarningTriangle} label="Models need attention" />` } : item)}
+          ? { ...item, label: html`Models <${WarningTriangle} label="Models need attention" />` }
+          : item.key === "storage" && storagePressure && storagePressure.state !== "normal"
+          ? { ...item, label: html`Storage <${WarningTriangle} label="Storage needs attention" />` } : item)}
       />
       ${activeTab === "lab" && html`<${LabView} onChange=${onLabChange} />`}
       ${activeTab === "config" && html`<${ConfigView} />`}
+      ${activeTab === "storage" && html`<${StorageView} onChange=${onStorageRefresh} />`}
       ${activeTab === "omnesis-md" && html`<${OmnesisMdView} />`}
       ${activeTab === "models" && html`<${ModelsView} section=${modelsSection ?? null} onModelsRefresh=${onModelsRefresh} />`}
       ${activeTab === "account" && html`<${RelayView} />`}

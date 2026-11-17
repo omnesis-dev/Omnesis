@@ -18,6 +18,7 @@
  */
 
 import { sourceSettingKeys } from "@omnesis/config";
+import type { IndexStorageAccounting } from "../storage/index-accounting.js";
 import type { EmbedderEncoding } from "../indexer/embedder-prefixes.js";
 import type { WalCheckpointRun } from "./wal-checkpoint.js";
 import type { SemanticSearchStatus } from "@omnesis/source-sdk";
@@ -136,6 +137,7 @@ export type IndexerInit = {
    * `gateway.minFreeDiskMb` (default 500).
    */
   minFreeDiskMb: number;
+  storagePressure?: { blocked: boolean; validUntil: number };
   /**
    * Per-model retrieval encoding: none | text-prefix | api-param.
    * Resolved at boot from `search.embedderPrefixes.enabled` × the family /
@@ -170,6 +172,7 @@ export type MainToIndexer =
   | IndexerInit
   | { type: "embedQuery"; id: number; text: string; sentAtMs: number }
   | { type: "runReindexMissing"; id: number }
+  | { type: "storageAccounting"; id: number }
   // Remove all index data for a source (chunks, indexed_documents,
   // index_totals, HNSW vectors), serialized against indexing cycles inside
   // the worker so a source deletion can't race an in-flight backfill and
@@ -191,6 +194,7 @@ export type MainToIndexer =
   // (the scheduler's admission control is engaged). Sent on change only. The
   // scan returns to its configured pace while it is true.
   | { type: "pressure"; userActive: boolean }
+  | { type: "storagePressure"; blocked: boolean; validUntil: number }
   // Hot-reload of per-source maxAge map. Sent on every config.changed where
   // dataRetention or sources.<id>.maxAge moved. Worker swaps the map atomically.
   | { type: "updateCutoffs"; cutoffs: IndexerCutoffMap }
@@ -282,6 +286,8 @@ export type IndexerToMain =
   | { type: "embedQueryError"; id: number; error: string }
   | { type: "runReindexMissingResult"; id: number; indexed: number; errors: number }
   | { type: "runReindexMissingError"; id: number; error: string }
+  | { type: "storageAccountingResult"; id: number; accounting: IndexStorageAccounting }
+  | { type: "storageAccountingError"; id: number; error: string }
   | { type: "deleteSourceIndexResult"; id: number; deleted: number }
   | { type: "deleteSourceIndexError"; id: number; error: string }
   | {

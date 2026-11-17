@@ -1758,6 +1758,69 @@ const gatewayTls = z
   })
   .strict();
 
+/** Capacity limits pause growth; they never authorize deleting indexed data. */
+export const gatewayStoragePolicySchema = z
+  .object({
+    maxBytes: z
+      .number()
+      .int()
+      .positive()
+      .max(Number.MAX_SAFE_INTEGER)
+      .nullable()
+      .optional()
+      .describe("Maximum gateway footprint in bytes; null means no size limit."),
+    maxDiskUsedPercent: z
+      .number()
+      .min(50)
+      .max(99)
+      .optional()
+      .describe("Pause growth when any gateway volume reaches this used percentage. Default 95."),
+    resumeMarginPercent: z
+      .number()
+      .min(0.1)
+      .max(10)
+      .optional()
+      .describe("Recovery margin in percentage points below disk and quota limits. Default 2."),
+    measurementIntervalMs: z
+      .number()
+      .int()
+      .min(1000)
+      .max(300000)
+      .optional()
+      .describe("Capacity inventory cadence in milliseconds. Default 30000."),
+    retention: z
+      .array(
+        z
+          .object({
+            sourceId: z.string().min(1).max(512),
+            sourceCreatedAt: z.number().int().nonnegative().optional(),
+            maxAgeDays: z.number().int().positive().max(36500),
+          })
+          .strict(),
+      )
+      .max(1000)
+      .refine(
+        (policies) => new Set(policies.map((policy) => policy.sourceId)).size === policies.length,
+        "Each source may have only one retention policy",
+      )
+      .optional()
+      .describe(
+        "Explicit rolling document retention policies. Omitted means no automatic trimming.",
+      ),
+    measurementMaxAgeMs: z
+      .number()
+      .int()
+      .min(1000)
+      .max(3600000)
+      .optional()
+      .describe(
+        "Maximum age of a successful capacity measurement before growth pauses. Default 120000.",
+      ),
+  })
+  .strict();
+
+export type GatewayStoragePolicySettings = z.infer<typeof gatewayStoragePolicySchema>;
+
 const gateway = z
   .object({
     /**
@@ -1951,6 +2014,7 @@ const gateway = z
         "Worker threads for the analytics DuckDB instance. Applied at gateway start. Default: half the cores, 2–8.",
       )
       .optional(),
+    storage: gatewayStoragePolicySchema.optional(),
     /**
      * Minimum free disk space (megabytes) on the gateway DB volume below
      * which the gateway pauses writes: document ingestion is rejected with

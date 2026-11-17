@@ -52,6 +52,16 @@ describe("Settings header actions", () => {
     expect(host.querySelector(".warning-triangle")).toBeNull();
   });
 
+  test("marks Storage independently and clears after recovery", async () => {
+    await act(async () => { render(h(SettingsView, { tab: "config", storagePressure: { state: "blocked" } }), host); });
+    const warning = host.querySelector('[aria-label="Storage needs attention"]');
+    expect(warning).not.toBeNull();
+    await act(async () => { (warning?.closest("button") as HTMLButtonElement).click(); });
+    expect(router.replaceRoute).toHaveBeenCalledWith("/portal/settings/storage");
+    await act(async () => { render(h(SettingsView, { tab: "config", storagePressure: { state: "normal" } }), host); });
+    expect(host.querySelector('[aria-label="Storage needs attention"]')).toBeNull();
+  });
+
   test("the cloud relay adds its tab and scoping class only when the gateway enables it", async () => {
     await act(async () => { render(h(SettingsView, { tab: "account" }), host); });
     expect(host.querySelector(".settings-view")?.getAttribute("class")).toBe("settings-view");

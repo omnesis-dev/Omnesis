@@ -208,6 +208,16 @@ describe("decisions waiting, badged on the nav item where each is decided", () =
     expect(itemNamed("Settings")?.getAttribute("href")).toBe("/portal/settings");
   });
 
+  test("prioritizes storage protection on Settings and preserves model warnings after recovery", async () => {
+    getStatus.mockResolvedValue({ storagePressure: { state: "blocked" }, modelHealth: { warnings: [{ role: "agent" }] } } as never);
+    await mount();
+    await vi.waitFor(() => expect(itemNamed("Settings")?.getAttribute("href")).toBe("/portal/settings/storage"));
+    expect(itemNamed("Settings")?.querySelector('[aria-label="Storage needs attention"]')).not.toBeNull();
+    getStatus.mockResolvedValue({ storagePressure: { state: "normal" }, modelHealth: { warnings: [{ role: "agent" }] } } as never);
+    await act(async () => { document.dispatchEvent(new window.Event("visibilitychange")); });
+    await vi.waitFor(() => expect(itemNamed("Settings")?.getAttribute("href")).toBe("/portal/settings/models"));
+  });
+
   test("refreshes authoritative status after Models reads instead of accepting an old overview", async () => {
     getStatus.mockResolvedValue({
       experimental: false, developer: false,

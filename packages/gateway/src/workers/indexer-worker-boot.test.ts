@@ -2107,3 +2107,56 @@ test("source and document reapply journals stay pending until the in-flight owne
     await closeServer(fake.server);
   }
 }, 30_000);
+
+test("storage pressure gates initial indexing and recovery without restarting the worker", async () => {
+  const paths = createFixture([makeDocument("capacity-one", "fictional orange prism")]);
+  const proxy = new IndexerWorkerProxy({
+    ...makeWorkerOptions(paths, "http://127.0.0.1:9"),
+    lexicalOnly: true,
+    embedDim: 1,
+    modelName: "keyword-only",
+    storagePressure: { blocked: true, validUntil: Date.now() + 60000 },
+  });
+  try {
+    await proxy.whenReady();
+    const before = await proxy.storageAccounting();
+    expect(before.sources).toEqual([]);
+    proxy.setStoragePressure(false, Date.now() + 60000);
+    await waitForCycleRuns(proxy, 1);
+    const after = await proxy.storageAccounting();
+    expect(after.sources.reduce((sum, source) => sum + source.chunkCount, 0)).toBeGreaterThan(0);
+  } finally {
+    await proxy.dispose();
+  }
+});
+
+test("semantic startup preserves stored graphs while pressure blocks model replacement", async () => {
+  const paths = createFixture([makeDocument("capacity-semantic", "fictional blue lantern")]);
+  const fake = await startFakeEmbedder();
+  let proxy: IndexerWorkerProxy | undefined;
+  try {
+    proxy = createProxy(paths, fake.url);
+    await proxy.whenReady();
+    await waitForCycleRuns(proxy, 1);
+    await proxy.dispose();
+    proxy = undefined;
+    const stored = readFileSync(paths.usearchIndexPath);
+    proxy = new IndexerWorkerProxy({
+      ...makeWorkerOptions(paths, fake.url),
+      modelName: "replacement-test-model",
+      storagePressure: { blocked: true, validUntil: Date.now() + 60000 },
+    });
+    const deadline = Date.now() + 10000;
+    while (proxy.vectorIndex?.state !== "degraded" && Date.now() < deadline)
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    expect(proxy.vectorIndex?.state).toBe("degraded");
+    expect(readFileSync(paths.usearchIndexPath)).toEqual(stored);
+    proxy.setStoragePressure(false, Date.now() + 60000);
+    await proxy.whenReady();
+    await waitForCycleRuns(proxy, 1);
+    expect(countVectors(paths.indexDbPath)).toBeGreaterThan(0);
+  } finally {
+    await proxy?.dispose();
+    await new Promise<void>((resolve) => fake.server.close(() => resolve()));
+  }
+});

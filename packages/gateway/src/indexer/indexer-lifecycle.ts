@@ -9,6 +9,7 @@ import {
   type ResolvedAssignment,
 } from "@omnesis/core";
 import { IndexerWorkerProxy, buildIndexerCutoffMap } from "../workers/indexer-worker-proxy.js";
+import { InsufficientStorageError } from "../http/errors.js";
 import { canonicalEmbedIdentity } from "./embed-identity.js";
 import {
   cleanupStaleBuildingState,
@@ -134,6 +135,7 @@ export interface IndexerModelInfo {
  * these are re-created inside the lifecycle.
  */
 export interface IndexerLifecycleDeps {
+  getStoragePressure?: () => import("../storage/pressure.js").StoragePressureSnapshot;
   /** Capability→backend resolver. loadConfig/resolve('embedder')/getBackendApiKey. */
   inferenceRegistry: InferenceRegistry;
   /** Live config store. .get() is read on every startIndexer/runEmbedSwap. */
@@ -290,6 +292,11 @@ export class IndexerLifecycle {
   }
 
   /** Live worker proxy, or null while not ready / mid-swap / shut down. */
+  /** Capacity leases reach the owner during startup as well as steady-state work. */
+  setStoragePressure(blocked: boolean, validUntil: number): void {
+    this._indexerOwner?.setStoragePressure(blocked, validUntil);
+  }
+
   get indexerProxy(): IndexerWorkerProxy | null {
     return this._indexerProxy;
   }
@@ -672,7 +679,16 @@ export class IndexerLifecycle {
       );
     }
 
+    const storagePressure = this.deps.getStoragePressure?.();
     const proxy = new IndexerWorkerProxy({
+      ...(storagePressure
+        ? {
+            storagePressure: {
+              blocked: storagePressure.state === "blocked" || storagePressure.state === "unknown",
+              validUntil: storagePressure.validUntil,
+            },
+          }
+        : {}),
       lexicalOnly,
       beginModelCall,
       modelPath,
@@ -832,6 +848,12 @@ export class IndexerLifecycle {
     // Publish to the live ref so POST /admin/index/reindex-missing
     // (and any future operator triggers) can drive the worker.
     this._indexerProxy = proxy;
+    const pressure = this.deps.getStoragePressure?.();
+    if (pressure)
+      proxy.setStoragePressure(
+        pressure.state === "blocked" || pressure.state === "unknown",
+        pressure.validUntil,
+      );
     // Writes can land after HTTP starts but before the scheduler has a live
     // proxy to wake. Reconcile once after publication; if the worker is still
     // in its exclusive boot scan this coalesces into one trailing cycle.
@@ -1020,6 +1042,8 @@ export class IndexerLifecycle {
       return;
     }
 
+    this.assertStorageCanGrow();
+
     // For HTTP, probe the server first to discover the served model id and
     // native dimension — both feed the canonical stamp identity below. The
     // probe runs BEFORE the old worker is torn down so a failure leaves the
@@ -1049,9 +1073,11 @@ export class IndexerLifecycle {
       }
     }
 
+    this.assertStorageCanGrow();
     if (this.lexicalOnly || hasLexicalWrites(this.deps.indexDb)) {
       await this.retireStaleBootAfterSwapValidation();
       if (signal.aborted) return;
+      this.assertStorageCanGrow();
       // The next worker warms the model before resetting lexical-only hashes.
       // A graceful generation swap assumes the old worker has a query embedder.
       await this.stopWorker();
@@ -1073,6 +1099,7 @@ export class IndexerLifecycle {
     // generation's live worker and remains until the swap's normal quiesce.
     await this.retireStaleBootAfterSwapValidation();
     if (signal.aborted) return;
+    this.assertStorageCanGrow();
 
     // Graceful (double-buffered) swap: build a new generation
     // while the active one keeps serving, then atomically flip. Eligible when
@@ -1153,6 +1180,8 @@ export class IndexerLifecycle {
     });
 
     await this.stopWorker();
+
+    this.assertStorageCanGrow();
 
     // Delete the stale on-disk usearch file. It was built at the OLD model's
     // dimension; leaving it in place lets the fresh worker `load()` an
@@ -1253,6 +1282,7 @@ export class IndexerLifecycle {
     signal: AbortSignal,
     opts: { resumeVersion?: number; beginModelCall: ModelCallFactory },
   ): Promise<void> {
+    this.assertStorageCanGrow();
     const beginModelCall = opts.beginModelCall;
     const db = this.deps.indexDb;
     // Whether the NEW (target) model runs in-process (local GGUF). A local
@@ -1326,9 +1356,24 @@ export class IndexerLifecycle {
       newDim,
       {
         signal,
+        assertCanGrow: () => this.assertStorageCanGrow(),
       },
     );
+    const abandonBuild = async (): Promise<void> => {
+      cleanupStaleBuildingState(db, this.deps.indexDbPath);
+      await buildEmbedder.dispose().catch(() => {});
+      if (pausedForQuiesce && this._indexerProxy) this._indexerProxy.resumeIndexing();
+      const pressure = this.deps.getStoragePressure?.();
+      if (
+        this.indexerShutdownHandle == null &&
+        pressure?.state !== "blocked" &&
+        pressure?.state !== "unknown"
+      ) {
+        await this.startIndexerAttempt(signal);
+      }
+    };
     try {
+      this.assertStorageCanGrow();
       if (resuming) {
         // Resume runs at boot BEFORE the steady-state worker starts, so the
         // corpus is frozen: a single resume pass (rebuild the usearch file from
@@ -1358,6 +1403,7 @@ export class IndexerLifecycle {
         }
         await builder.catchUp();
       }
+      this.assertStorageCanGrow();
     } catch (err) {
       const abandoned = signal.aborted || err instanceof BuildAbortedError;
       if (abandoned) {
@@ -1369,16 +1415,12 @@ export class IndexerLifecycle {
           `Graceful build of generation ${newVersion} failed — abandoning, generation ${activeVersion} keeps serving: ${err instanceof Error ? err.message : String(err)}`,
         );
       }
-      cleanupStaleBuildingState(db, this.deps.indexDbPath);
-      await buildEmbedder.dispose().catch(() => {});
       // Leave the UNCHANGED active generation serving. If the worker was paused
       // for the quiesce (a LOCAL old model) it is still alive — un-pause it so the
       // active generation keeps ingesting. If it was disposed (HTTP old model) or
       // never reached the quiesce, restart it only when no worker is running.
-      if (pausedForQuiesce && this._indexerProxy) {
-        this._indexerProxy.resumeIndexing();
-      }
-      if (this.indexerShutdownHandle == null) await this.startIndexerAttempt(signal);
+      await abandonBuild();
+      if (err instanceof InsufficientStorageError) throw err;
       return;
     }
     // 3. Atomic flip + repoint query embedding. Build the new search embedder
@@ -1408,6 +1450,13 @@ export class IndexerLifecycle {
         encoding,
         apiKey,
       });
+    }
+    try {
+      this.assertStorageCanGrow();
+    } catch (error) {
+      if (searchEmbedder !== buildEmbedder) await searchEmbedder.dispose().catch(() => {});
+      await abandonBuild();
+      throw error;
     }
     flipActiveIndexVersion(db, {
       newVersion,
@@ -1457,6 +1506,15 @@ export class IndexerLifecycle {
     // copy). For an HTTP target it was already disposed before the flip.
     if (localTarget) {
       await buildEmbedder.dispose().catch(() => {});
+    }
+  }
+
+  private assertStorageCanGrow(): void {
+    const pressure = this.deps.getStoragePressure?.();
+    if (pressure?.state === "blocked" || pressure?.state === "unknown") {
+      throw new InsufficientStorageError(
+        "Model migration is paused because gateway storage is unavailable. Open Settings → Storage to reclaim space, then retry.",
+      );
     }
   }
 

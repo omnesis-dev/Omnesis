@@ -108,7 +108,7 @@ import { createActivityRetentionTask } from "./activity-retention/task.js";
 import { createAbsenceSweepTask } from "./absence/task.js";
 import { createOwnershipRepairTask } from "./analytics/ownership-repair-task.js";
 import { createTemporalProjectionRelinker } from "./analytics/projection-relink.js";
-import { directIndexWriteGate } from "./indexer/index-write-gate.js";
+import { workerCoordinatedIndexWriteGate } from "./indexer/index-write-gate.js";
 import { cascadeCognitiveStateThroughGate } from "./brain/cognitive-state-cascade.js";
 import { resolveRelaySettings } from "./push/relay-settings.js";
 import { generateSelfSigned, resolveTlsBundle, tlsExtraHostNames } from "./tls.js";
@@ -220,7 +220,9 @@ import { AnalyticsDb } from "./analytics-db.js";
 import { defaultMemoryLimitMiB as defaultAnalyticsMemoryLimitMiB } from "./analytics/connection-pool.js";
 import { startWatchV2 } from "./watch/host.js";
 import { resolveWatchJournal, watchJournalPath } from "./watch/journal-path.js";
-import { DiskUsageMonitor, measureDiskUsage } from "./disk-usage.js";
+import { StorageRuntime } from "./storage/runtime.js";
+import { assertStorageVolumeGrowth } from "./storage/volumes.js";
+import { InsufficientStorageError } from "./http/errors.js";
 import {
   analyticsPortFor,
   openWatchStores,
@@ -321,6 +323,7 @@ import {
 } from "./brain/storage/engine-state.js";
 import { HostedProcessLauncher, setProcessLauncher } from "./process-launcher/index.js";
 import { chatRoleReadiness, type ChatRoleReadinessDeps } from "./models/chat-role-readiness.js";
+import type { StoragePressureManager } from "./storage/pressure.js";
 import type { WatchDefinition } from "@omnesis/watch";
 import type { SourceDocCount } from "./search/source-isf-prior.js";
 import type { WriteGate } from "./write-gate.js";
@@ -389,6 +392,11 @@ process.on("uncaughtException", (err) => {
 const configDir = process.env.OMNESIS_CONFIG_DIR ?? DEFAULT_CONFIG_DIR;
 const DB_PATH = process.env.OMNESIS_DB_PATH ?? join(configDir, "omnesis.db");
 const PORT = parseInt(process.env.OMNESIS_GATEWAY_PORT ?? "7600", 10);
+let storagePressureHandle: StoragePressureManager | undefined = undefined;
+function storageCanGrow(): boolean {
+  const state = storagePressureHandle?.snapshot().state;
+  return state === "normal" || state === "warning";
+}
 
 // Single source of truth for all user-editable settings. The file is watched
 // for external edits (vim, CLI, portal); API mutations go through the same
@@ -1701,7 +1709,10 @@ const mentionWorthGate = bootMentionWorthGate({
   backgroundJobs,
   ioGate,
   writeGate,
-  getSettings: () => resolveDateEnrichmentSettings(configStore.get().enrichment),
+  getSettings: () => {
+    const settings = resolveDateEnrichmentSettings(configStore.get().enrichment);
+    return { ...settings, enabled: settings.enabled && storageCanGrow() };
+  },
   getDecision: () => decisionService.get(),
   recordSpend: (modelId, inputTokens) =>
     recordDecisionSpend(
@@ -1712,7 +1723,7 @@ const mentionWorthGate = bootMentionWorthGate({
       inputTokens,
     ),
   countPending: () => countPendingMentionJudgements(db),
-  active: mentionWorthGateActive,
+  active: () => storageCanGrow() && mentionWorthGateActive(),
   log: log.child("enrichment:mention-worth-gate"),
 });
 // Turning the gate on, assigning a decision model or moving the threshold
@@ -1739,7 +1750,10 @@ const dateEnrichment = bootDateEnrichment({
   ioGate,
   cpuGate,
   writeGate,
-  getSettings: () => resolveDateEnrichmentSettings(configStore.get().enrichment),
+  getSettings: () => {
+    const settings = resolveDateEnrichmentSettings(configStore.get().enrichment);
+    return { ...settings, enabled: settings.enabled && storageCanGrow() };
+  },
   countPending: () => countPendingDateExtraction(db),
   onApplied: mentionWorthGate.kick,
   // A notes day holding a voice note still being transcribed is read once the
@@ -1775,7 +1789,7 @@ const recordCompleterSpend =
       });
   };
 
-const indexerLifecycle = new IndexerLifecycle({
+const indexerLifecycle: IndexerLifecycle = new IndexerLifecycle({
   inferenceRegistry,
   configStore,
   indexerStatus,
@@ -1783,6 +1797,7 @@ const indexerLifecycle = new IndexerLifecycle({
   backgroundJobs,
   runtime,
   initialProbe,
+  getStoragePressure: () => storagePressure.snapshot(),
   log,
   gatewayDbPath: DB_PATH,
   gatewayDbKeyHex: storageEncryption.mainDbKeyHex,
@@ -1807,6 +1822,15 @@ const indexerLifecycle = new IndexerLifecycle({
 // wipe-and-reindex for the embedder; a hot swap for the rest).
 const lastModelProgressBroadcastAt = new Map<string, number>();
 const modelManager = new ModelManager({
+  assertStorageCanGrow: (additionalBytes) => {
+    if (!storagePressureHandle)
+      throw new InsufficientStorageError(
+        "Storage measurement is still starting. Open Settings → Storage.",
+      );
+    const policy = storagePressureHandle.snapshot().policy;
+    assertStorageVolumeGrowth(MODELS_DIR, policy, additionalBytes);
+    storagePressureHandle.assertCanGrow(additionalBytes);
+  },
   modelsDir: MODELS_DIR,
   configDir,
   catalog: () => anthropicCatalogService.catalog(),
@@ -2222,7 +2246,7 @@ function tryStart<T>(what: string, build: () => T): T | null {
 const watchV2 = journal.ok
   ? tryStart("the watch journal", () =>
       startWatchV2({
-        active: () => labFeatureEnabled(db, "watches"),
+        active: () => storageCanGrow() && labFeatureEnabled(db, "watches"),
         journalPath: journal.path,
         db,
         indexDb,
@@ -2568,10 +2592,8 @@ if (watchV2 && watchStores?.ok) {
   watchV2EngineHandle = watchV2Engine;
 }
 
-// Measured in the background from boot, so the first /status already carries
-// the whole footprint rather than falling back to the main database alone.
-const diskUsage = new DiskUsageMonitor(() =>
-  measureDiskUsage({
+const storageRuntime: StorageRuntime = new StorageRuntime({
+  layout: {
     configDir,
     dbPath: DB_PATH,
     indexDbPath,
@@ -2581,9 +2603,18 @@ const diskUsage = new DiskUsageMonitor(() =>
     conversationsDir,
     modelsDir: MODELS_DIR,
     backupsDir,
-  }),
-);
-void diskUsage.refresh();
+  },
+  configStore,
+  scheduler,
+  reads: ioGate,
+  getMinFreeDiskMb: () => resolveRuntimeSettings(configStore.get()).minFreeDiskMb,
+  getIndexer: () => indexerLifecycle.indexerProxy,
+  setStoragePressure: (blocked, validUntil) =>
+    indexerLifecycle.setStoragePressure(blocked, validUntil),
+});
+const storagePressure: StoragePressureManager = storageRuntime.pressure;
+storagePressureHandle = storagePressure;
+storageRuntime.start();
 
 const httpShutdown = new GatewayHttpShutdown();
 // What follows a task change, wherever it is made: the searchable loop mirror
@@ -2629,7 +2660,16 @@ const taskService = new TaskService(db, writeGate, briefsVirtualClock ?? Date.no
 const app = createServer(db, DB_PATH, {
   interest: interestEngine,
   taskEffects,
-  getDiskUsage: () => diskUsage.snapshot(),
+  getDiskUsage: () => storageRuntime.physical,
+  storagePressure,
+  storageReads: ioGate,
+  assertStorageCanGrow: () => storagePressure.assertCanGrow(),
+  getStorageLogical: () => storageRuntime.logical,
+  getStorageIndex: () => storageRuntime.index,
+  onStorageService: (service) => {
+    storageRuntime.service = service;
+  },
+  refreshStorage: () => storageRuntime.refresh(),
   requestAdmission: (_c, next) => Promise.resolve(httpShutdown.guard(next)),
   // The same store the agent prompts read from, so a portal save and the next
   // prompt build cannot disagree about what the file says.
@@ -2772,6 +2812,8 @@ const app = createServer(db, DB_PATH, {
     // before it is ready for search/admin calls. Returns undefined only when no
     // worker owns the handle, when the direct fallback is safe.
     deleteSourceIndex: (sourceId) => indexerLifecycle.deleteSourceIndex(sourceId),
+    deleteDocumentIndexBatch: (id, limit, sourceDeleted) =>
+      indexerLifecycle.deleteDocumentIndexBatch(id, limit, sourceDeleted),
     wake: () => {
       // Routed through the Scheduler's debounced wake primitive — see
       // `indexerWakeTask` registration below. Drops if the worker
@@ -3192,6 +3234,7 @@ subscribeMemoryInvalidators({
 });
 
 await bootBriefs({
+  canGrow: storageCanGrow,
   isEnabled: () => labFeatureEnabled(db, "brain"),
   registry: inferenceRegistry,
   readiness: chatRoleReadinessDeps,
@@ -3727,7 +3770,12 @@ const absenceSweepBundle = createAbsenceSweepTask(
   {
     writeGate,
     ioGate,
-    indexWriteGate: directIndexWriteGate(indexDb),
+    indexWriteGate: workerCoordinatedIndexWriteGate(
+      indexDb,
+      (sourceId) => indexerLifecycle.deleteSourceIndex(sourceId),
+      (id, limit, sourceDeleted) =>
+        indexerLifecycle.deleteDocumentIndexBatch(id, limit, sourceDeleted),
+    ),
     analyticsDb,
     cascadeCognitionFor: (documentIds) =>
       cascadeCognitiveStateThroughGate(db, writeGate, documentIds),
@@ -3786,7 +3834,7 @@ const subscriptionDeliveryService = new SubscriptionDeliveryService({
   getDevice: (deviceId) => getDevice(db, deviceId),
   policyStore: subscriptionsPolicyStore,
   log: log.child("subscriptions:delivery"),
-  isEnabled: () => labFeatureEnabled(db, "watches"),
+  isEnabled: () => storageCanGrow() && labFeatureEnabled(db, "watches"),
   reevaluatePendingWatchPolicies: () =>
     subscriptionService?.reevaluatePendingWatchPolicies() ?? Promise.resolve(0),
   reapplyOperatorApprovals: () =>

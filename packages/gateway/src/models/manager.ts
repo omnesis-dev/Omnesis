@@ -90,6 +90,8 @@ export type ProgressBroadcast =
   | { kind: "cancelled"; downloadId: string; modelId: string };
 
 export interface ModelManagerOptions {
+  /** Capacity preflight and per-chunk admission; applies across concurrent model downloads. */
+  assertStorageCanGrow?: (additionalBytes?: number) => void;
   modelsDir: string;
   /**
    * Gateway-host config dir. Used by the default `hasAnthropicApiKey`
@@ -116,6 +118,7 @@ export interface ModelManagerOptions {
 }
 
 export class ModelManager {
+  private readonly assertStorageCanGrow?: (additionalBytes?: number) => void;
   private readonly modelsDir: string;
   private readonly manifestPath: string;
   private readonly onBroadcast?: (event: ProgressBroadcast) => void;
@@ -133,6 +136,7 @@ export class ModelManager {
   >();
 
   constructor(opts: ModelManagerOptions) {
+    this.assertStorageCanGrow = opts.assertStorageCanGrow;
     this.modelsDir = opts.modelsDir;
     this.manifestPath = opts.manifestPath ?? join(opts.modelsDir, "manifest.json");
     this.onBroadcast = opts.onBroadcast;
@@ -313,6 +317,18 @@ export class ModelManager {
       throw new Error(`${catalogId} is already downloading`);
     }
 
+    // Reserve planned capacity against every model already downloading; a
+    // second install cannot independently claim the same available headroom.
+    const otherRemaining = () =>
+      Array.from(this.active.entries()).reduce(
+        (sum, [id, active]) =>
+          sum +
+          (id === catalogId
+            ? 0
+            : Math.max(0, active.entry.sizeBytes - active.progress.downloadedBytes)),
+        0,
+      );
+    this.assertStorageCanGrow?.(otherRemaining() + entry.sizeBytes);
     const downloadId = randomUUID();
     const startedAt = new Date().toISOString();
     const initialProgress: DownloadProgress = {
@@ -324,6 +340,8 @@ export class ModelManager {
 
     const handle = startDownload(entry, {
       modelsDir: this.modelsDir,
+      assertCanGrow: (remainingBytes) =>
+        this.assertStorageCanGrow?.(otherRemaining() + remainingBytes),
       onProgress: (progress) => {
         const a = this.active.get(catalogId);
         if (!a) return;

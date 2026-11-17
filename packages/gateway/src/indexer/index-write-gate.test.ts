@@ -3,13 +3,73 @@
 
 import { randomUUID } from "node:crypto";
 import { rmSync } from "node:fs";
-import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+import { finishDocumentCascade } from "../absence/document-cascade.js";
 import { createIndexDatabase, EMBEDDING_DIM, upsertChunks } from "./db.js";
 import {
   directIndexWriteGate,
   withFreshIndexWriteGate,
   workerCoordinatedIndexWriteGate,
+  IndexCleanupPendingError,
 } from "./index-write-gate.js";
+
+test("document cascades keep the outbox pending until the worker's stale writes have drained", async () => {
+  const db = createIndexDatabase(":memory:");
+  try {
+    let inFlight = true;
+    const direct = directIndexWriteGate(db);
+    const worker = vi.fn(async (id: string, limit: number, sourceDeleted: boolean) => {
+      const result = await direct.deleteChunksByDocumentBatch(id, limit, sourceDeleted);
+      return { ...result, complete: !inFlight && result.complete };
+    });
+    const gate = workerCoordinatedIndexWriteGate(db, () => undefined, worker);
+    upsertChunks(db, [dummyChunk("c-1", "doc-1"), dummyChunk("c-2", "doc-2")]);
+    const acknowledge = vi.fn(async () => {});
+    const cascade = {
+      id: 1,
+      documentIds: ["doc-1", "doc-2"],
+      indexDone: false,
+      cognitionDone: false,
+    };
+    const ops = {
+      deleteIndex: (ids: readonly string[]) => gate.deleteChunksByDocuments(ids),
+      cascadeCognition: async () => {},
+      acknowledge,
+    };
+    await expect(finishDocumentCascade(cascade, ops)).rejects.toBeInstanceOf(
+      IndexCleanupPendingError,
+    );
+    expect(worker).toHaveBeenCalledWith("doc-1", 64, true);
+    expect(worker).toHaveBeenCalledWith("doc-2", 64, true);
+    expect(acknowledge).not.toHaveBeenCalledWith(1, "index");
+    expect(acknowledge).toHaveBeenCalledWith(1, "cognition");
+    // A cycle which read the old document may publish after the first delete.
+    upsertChunks(db, [dummyChunk("restored", "doc-1")]);
+    inFlight = false;
+    await finishDocumentCascade({ ...cascade, cognitionDone: true }, ops);
+    expect(acknowledge).toHaveBeenCalledWith(1, "index");
+    expect(
+      db.prepare<[], { count: number }>("SELECT COUNT(*) AS count FROM chunks").get()!.count,
+    ).toBe(0);
+  } finally {
+    db.close();
+  }
+});
+
+test("document cascades use the direct fallback only when no worker owns the stores", async () => {
+  const db = createIndexDatabase(":memory:");
+  try {
+    upsertChunks(db, [dummyChunk("c-1", "doc-1")]);
+    const gate = workerCoordinatedIndexWriteGate(
+      db,
+      () => undefined,
+      () => undefined,
+    );
+    expect(await gate.deleteChunksByDocuments(["doc-1", "doc-1"])).toBe(1);
+  } finally {
+    db.close();
+  }
+});
 
 function tmpPath(): string {
   return `/tmp/omnesis-index-gate-${randomUUID()}.db`;

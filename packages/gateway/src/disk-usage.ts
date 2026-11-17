@@ -95,21 +95,24 @@ async function sizeOf(
   root: string,
   exclude: ReadonlySet<string>,
   seen: Set<string>,
+  strict: boolean,
 ): Promise<number> {
   if (exclude.has(root)) return 0;
   let resolved: string;
   try {
     resolved = await realpath(root);
-  } catch {
+  } catch (error) {
+    rethrowUnreadable(error, strict);
     return 0; // absent
   }
   let dev: number;
   try {
     dev = (await lstat(resolved)).dev;
-  } catch {
+  } catch (error) {
+    rethrowUnreadable(error, strict);
     return 0;
   }
-  return walk(resolved, dev, exclude, seen);
+  return walk(resolved, dev, exclude, seen, strict);
 }
 
 async function walk(
@@ -117,12 +120,14 @@ async function walk(
   dev: number,
   exclude: ReadonlySet<string>,
   seen: Set<string>,
+  strict: boolean,
 ): Promise<number> {
   if (exclude.has(path)) return 0;
   let st;
   try {
     st = await lstat(path);
-  } catch {
+  } catch (error) {
+    rethrowUnreadable(error, strict);
     return 0; // vanished mid-walk
   }
   if (st.dev !== dev) return 0;
@@ -130,11 +135,12 @@ async function walk(
     let names: string[];
     try {
       names = await readdir(path);
-    } catch {
+    } catch (error) {
+      rethrowUnreadable(error, strict);
       return 0;
     }
     let total = 0;
-    for (const name of names) total += await walk(join(path, name), dev, exclude, seen);
+    for (const name of names) total += await walk(join(path, name), dev, exclude, seen, strict);
     return total;
   }
   if (!st.isFile()) return 0;
@@ -142,6 +148,13 @@ async function walk(
   if (seen.has(key)) return 0;
   seen.add(key);
   return st.size;
+}
+
+/** Missing files are normal during churn; unreadable files cannot count as zero for quotas. */
+function rethrowUnreadable(error: unknown, strict: boolean): void {
+  if (strict && (!(error instanceof Error) || !("code" in error) || error.code !== "ENOENT")) {
+    throw error;
+  }
 }
 
 /**
@@ -158,11 +171,13 @@ async function canonical(path: string): Promise<string> {
   }
 }
 
-/** Measure the footprint once. Missing paths count as zero; the walk never throws. */
+/** Measure once. Missing paths count as zero; strict quota inventories reject unreadable paths. */
 export async function measureDiskUsage(
   layout: DiskUsageLayout,
   now: () => Date = () => new Date(),
+  options: { strict?: boolean } = {},
 ): Promise<DiskUsageSnapshot> {
+  const strict = options.strict ?? false;
   const configDir = await realpath(layout.configDir).catch(() => resolve(layout.configDir));
   const parts = await Promise.all(
     partsFor(layout).map(async (part) => ({
@@ -174,7 +189,8 @@ export async function measureDiskUsage(
   let configDirEntries: string[] = [];
   try {
     configDirEntries = await readdir(configDir);
-  } catch {
+  } catch (error) {
+    rethrowUnreadable(error, strict);
     // No config dir: only stores placed elsewhere can contribute.
   }
   for (const part of parts) {
@@ -189,13 +205,13 @@ export async function measureDiskUsage(
   const stores: DiskUsageStore[] = [];
   for (const part of parts) {
     let bytes = 0;
-    for (const path of new Set(part.paths)) bytes += await sizeOf(path, NOTHING, seen);
+    for (const path of new Set(part.paths)) bytes += await sizeOf(path, NOTHING, seen, strict);
     if (bytes > 0) stores.push({ id: part.id, label: part.label, bytes });
   }
 
   // Everything else in the config dir. Claimed paths are skipped rather than
   // relying on `seen` alone, so the walk never descends into models/ or backups/.
-  const other = await sizeOf(configDir, claimed, seen);
+  const other = await sizeOf(configDir, claimed, seen, strict);
   if (other > 0) stores.push({ id: "other", label: "Other", bytes: other });
 
   return {

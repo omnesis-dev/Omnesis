@@ -21,7 +21,7 @@ import {
 } from "@omnesis/core";
 
 import { ConfigStore } from "../config-store.js";
-import { HttpError, errorResponse } from "../http/errors.js";
+import { InsufficientStorageError, HttpError, errorResponse } from "../http/errors.js";
 import { strictRoute } from "../http/scope.js";
 import { InferenceRegistry } from "../inference/registry.js";
 import { getSystemInfo } from "../system-info.js";
@@ -202,6 +202,26 @@ describe("POST /admin/models/activate", () => {
       startCodexLogin,
       logoutCodex,
     });
+  });
+
+  test("preserves actionable 507 storage admission errors from model installation", async () => {
+    const install = vi.spyOn(ModelManager.prototype, "install").mockImplementation(() => {
+      throw new InsufficientStorageError("open settings/storage before downloading this model");
+    });
+    try {
+      const response = await app.request("/admin/models/install", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ id: "bge-small-en-v1.5.Q8_0" }),
+      });
+      expect(response.status).toBe(507);
+      expect(await response.json()).toMatchObject({
+        code: "INSUFFICIENT_STORAGE",
+        error: "open settings/storage before downloading this model",
+      });
+    } finally {
+      install.mockRestore();
+    }
   });
 
   test("refreshes Claude Code and assigns an unassigned agent to a listed model", async () => {

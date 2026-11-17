@@ -6,6 +6,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, test, vi, beforeEach } from "vitest";
 import { InferenceHealth } from "../inference/model-health.js";
+import {
+  resolveStoragePolicy,
+  type StoragePressureSnapshot,
+  type StoragePressureState,
+} from "../storage/pressure.js";
 import { IndexerLifecycle, type IndexerLifecycleDeps } from "./indexer-lifecycle.js";
 import { IndexerStatusReporter } from "./indexer-status.js";
 import {
@@ -130,6 +135,7 @@ class FakeProxy {
   }));
   createBackgroundJobs = vi.fn(() => []);
   updateCutoffs = vi.fn();
+  setStoragePressure = vi.fn();
   embedQuery = vi.fn(async () => new Float32Array([0.1, 0.2]));
   reindexMissing = vi.fn(async () => ({ queued: 0 }));
   wake = vi.fn();
@@ -303,6 +309,121 @@ function makeDeps(overrides: Partial<IndexerLifecycleDeps> = {}): {
   };
   return { deps, setEmbedder, setVectorSearchUnavailable, registerAll, resolve, statusReporter };
 }
+
+function capacitySnapshot(state: StoragePressureState): StoragePressureSnapshot {
+  return {
+    state,
+    reasons: state === "blocked" ? ["quota"] : [],
+    measuredAt: Date.now(),
+    usageBytes: 100,
+    volumes: [],
+    policy: resolveStoragePolicy(undefined, 0),
+    validUntil: Date.now() + 60_000,
+  };
+}
+
+test.each(["graceful", "hard"] as const)(
+  "%s migration refuses capacity pressure before stopping the active worker",
+  async (mode) => {
+    const { deps, setEmbedder } = makeDeps({
+      getStoragePressure: () => capacitySnapshot("blocked"),
+    });
+    const lifecycle = new IndexerLifecycle(deps);
+    try {
+      await lifecycle.startIndexer();
+      const owner = proxyInstances[0]!;
+      setEmbedder.mockClear();
+      await expect(lifecycle.applyEmbedSwap(mode)).rejects.toMatchObject({ status: 507 });
+      expect(owner.dispose).not.toHaveBeenCalled();
+      expect(setEmbedder).not.toHaveBeenCalled();
+      expect(wipeAndRecreateVectorIndex).not.toHaveBeenCalled();
+    } finally {
+      await lifecycle.shutdownIndexer();
+      deps.indexDb.close();
+    }
+  },
+);
+
+test("removing an embedder assignment remains available under capacity pressure", async () => {
+  const { deps, resolve, setEmbedder } = makeDeps({
+    getStoragePressure: () => capacitySnapshot("blocked"),
+  });
+  const lifecycle = new IndexerLifecycle(deps);
+  try {
+    await lifecycle.startIndexer();
+    const owner = proxyInstances[0]!;
+    resolve.mockReturnValue({ kind: "disabled" });
+    await lifecycle.applyEmbedSwap();
+    expect(owner.dispose).toHaveBeenCalled();
+    expect(setEmbedder).toHaveBeenCalledWith(undefined);
+    expect(wipeAndRecreateVectorIndex).not.toHaveBeenCalled();
+  } finally {
+    await lifecycle.shutdownIndexer();
+    deps.indexDb.close();
+  }
+});
+
+test.each(["embedding", "quiesce"])(
+  "capacity lost during %s abandons only the building generation",
+  async (phase) => {
+    const dir = mkdtempSync(join(tmpdir(), "omnesis-capacity-migration-"));
+    const dbPath = join(dir, "index.db");
+    const indexDb = createIndexDatabase(dbPath);
+    let blocked = false;
+    const { deps } = makeDeps({
+      indexDb,
+      indexDbPath: dbPath,
+      configDir: dir,
+      getStoragePressure: () => capacitySnapshot(blocked ? "blocked" : "normal"),
+    });
+    const lifecycle = new IndexerLifecycle(deps);
+    try {
+      upsertChunks(indexDb, [
+        {
+          id: "fictional-chunk",
+          documentId: "fictional-document",
+          chunkIndex: 0,
+          content: "Invented reference text.",
+          embedding: new Float32Array(32).fill(0.1),
+          sourceId: "fictional-notes",
+          title: "Reference",
+          sourceCreatedAt: "2020-01-01T00:00:00.000Z",
+        },
+      ]);
+      setIndexEmbedModel(indexDb, "old-embedder", 32);
+      migrateAdoptInPlaceVersion(indexDb);
+      const writer = new UsearchWriteHandle(usearchPathForVersion(dir, 1), 32);
+      writer.backfillFromDb(indexDb);
+      writer.close();
+      await lifecycle.startIndexer();
+      let swap: Promise<void>;
+      if (phase === "embedding") {
+        const gate = armEmbedGate();
+        swap = lifecycle.applyEmbedSwap();
+        await gate.reached;
+        blocked = true;
+        gate.release();
+      } else {
+        proxyInstances[0]!.dispose.mockImplementation(async () => {
+          blocked = true;
+        });
+        swap = lifecycle.applyEmbedSwap();
+      }
+      await expect(swap).rejects.toMatchObject({ status: 507 });
+      expect(getActiveIndexVersion(indexDb)).toBe(1);
+      expect(getBuildingIndexVersion(indexDb)).toBeNull();
+      expect(getBuildingEmbeddingCount(indexDb)).toBe(0);
+      expect(existsSync(usearchPathForVersion(dir, 1))).toBe(true);
+      expect(existsSync(usearchPathForVersion(dir, 2))).toBe(false);
+      expect(wipeAndRecreateVectorIndex).not.toHaveBeenCalled();
+      expect(proxyInstances).toHaveLength(1);
+    } finally {
+      await lifecycle.shutdownIndexer();
+      indexDb.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  },
+);
 
 /** Count on-disk generation usearch files (`index.usearch` / `index-N.usearch`),
  *  ignoring atomic-save `.tmp` siblings — the bounded-to-two invariant. */

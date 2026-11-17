@@ -74,6 +74,13 @@ export interface IndexWriteGate {
   wipeAndRecreateVectorIndex(embeddingDim: number, embedModelName?: string): Promise<void>;
 }
 
+/** A durable purge is still draining; callers must keep their cleanup outbox pending. */
+export class IndexCleanupPendingError extends Error {
+  constructor() {
+    super("Search cleanup is continuing in the background.");
+  }
+}
+
 /**
  * Direct in-process implementation backed by a writable handle on
  * `index.db`. Used by tests AND production HTTP services — both have
@@ -114,11 +121,10 @@ export function directIndexWriteGate(db: Db): IndexWriteGate {
 }
 
 /**
- * Gate that routes the one op which must not race the indexer worker —
- * `deleteIndexBySource` — through the worker instead of running it on the
- * HTTP thread, while leaving every other op on the direct in-process path.
+ * Route source and document cascades through the active index writer so a
+ * cycle which already read deleted documents cannot resurrect their chunks.
  *
- * Why only this op: a source deletion mutates `chunks` / `indexed_documents`
+ * A source deletion mutates `chunks` / `indexed_documents`
  * / `index_totals` and the HNSW sidecar, and the worker owns the live usearch
  * write handle whenever it is running. The worker performs the deletion
  * immediately on arrival — it cannot interleave with a cycle, since usearch
@@ -131,14 +137,38 @@ export function directIndexWriteGate(db: Db): IndexWriteGate {
  * files, including during startup, or `undefined` when none does (tests,
  * agent/briefs runtimes, before worker spawn) — in which case the direct path
  * is safe precisely because no worker owns the usearch handle.
+ * Document cleanup follows the same ownership rule, in bounded 64-chunk
+ * batches. An incomplete batch keeps the caller's durable cascade pending;
+ * retries can acknowledge it only once the writer reports completion.
  */
 export function workerCoordinatedIndexWriteGate(
   db: Db,
   deleteViaWorker: (sourceId: string) => Promise<number> | undefined,
+  deleteDocumentBatchViaWorker?: (
+    documentId: string,
+    limit: number,
+    sourceDeleted: boolean,
+  ) => Promise<DocumentIndexDeleteBatchResult> | undefined,
 ): IndexWriteGate {
   const direct = directIndexWriteGate(db);
   return {
     ...direct,
+    async deleteChunksByDocuments(documentIds) {
+      let deleted = 0;
+      let pending = false;
+      for (const documentId of new Set(documentIds)) {
+        const viaWorker = deleteDocumentBatchViaWorker?.(documentId, 64, true);
+        if (!viaWorker) {
+          deleted += await direct.deleteChunksByDocument(documentId);
+          continue;
+        }
+        const result = await viaWorker;
+        deleted += result.deletedChunks;
+        pending ||= !result.complete;
+      }
+      if (pending) throw new IndexCleanupPendingError();
+      return deleted;
+    },
     async deleteIndexBySource(sourceId) {
       const viaWorker = deleteViaWorker(sourceId);
       if (viaWorker) return viaWorker;
