@@ -17,11 +17,10 @@ import {
 import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { ensurePrivateDirSync } from "../security-files.js";
 import { atomicWriteFileSync } from "../atomic-write.js";
 import {
-  denyOwnedDirectoryReads,
   ownedWindowsFixtureOperation,
   snapshotWindowsFixtureAcl,
   windowsFixtureCleanupMustWait,
@@ -36,6 +35,40 @@ import {
   HOST_DISK_ENCRYPTION_FILE,
   type SecurityCommandRunner,
 } from "./security.js";
+
+const unreadablePaths = vi.hoisted(() => new Set<string>());
+
+// Inject read failures at the filesystem boundary even when the runner can bypass ACLs.
+vi.mock("node:fs", async (importOriginal) => {
+  const fs = await importOriginal<typeof import("node:fs")>();
+  const { relative, isAbsolute, sep } = await import("node:path");
+  function checkRead(path: unknown): void {
+    if (typeof path !== "string") return;
+    for (const root of unreadablePaths) {
+      const suffix = relative(root, path);
+      if (
+        suffix === "" ||
+        (suffix !== ".." && !suffix.startsWith(`..${sep}`) && !isAbsolute(suffix))
+      ) {
+        throw Object.assign(new Error(`Fixture path is unreadable: ${path}`), {
+          code: "EACCES",
+          path,
+        });
+      }
+    }
+  }
+  return {
+    ...fs,
+    readFileSync: ((...args: Parameters<typeof fs.readFileSync>) => {
+      checkRead(args[0]);
+      return fs.readFileSync(...args);
+    }) as typeof fs.readFileSync,
+    statSync: ((...args: Parameters<typeof fs.statSync>) => {
+      checkRead(args[0]);
+      return fs.statSync(...args);
+    }) as typeof fs.statSync,
+  };
+});
 
 // Execute-bit policy and POSIX Codex link exceptions have no Windows ACL equivalent.
 const posixTest = test.skipIf(process.platform === "win32");
@@ -755,14 +788,15 @@ describe("collectSecurityData — gateway isolation", () => {
   });
 
   test("an existing but unreadable system unit is assumed dedicated-user", async () => {
-    // Root can read anything, so the unreadable-file branch is untestable there.
-    if (typeof process.getuid === "function" && process.getuid() === 0) return;
     const { homeDir, unitPath } = writeSystemUnit("DynamicUser=yes\n");
-    setFixtureMode(unitPath, 0o000);
-
-    const data = await collect(homeDir, unitPath);
-    expect(data.gatewayIsolation.status).toBe("dedicated-user");
-    expect(data.gatewayIsolation.detail).toContain("not readable without root");
+    unreadablePaths.add(unitPath);
+    try {
+      const data = await collect(homeDir, unitPath);
+      expect(data.gatewayIsolation.status).toBe("dedicated-user");
+      expect(data.gatewayIsolation.detail).toContain("not readable without root");
+    } finally {
+      unreadablePaths.delete(unitPath);
+    }
   });
 });
 
@@ -1070,8 +1104,6 @@ describe("keyring wiring", () => {
 });
 
 describe("unreadable key material", () => {
-  // Root ignores the mode bits this fixture relies on.
-  const asUnprivilegedUser = process.platform === "win32" || (process.getuid?.() ?? 0) !== 0;
   let savedBackend: string | undefined;
 
   beforeEach(() => {
@@ -1087,57 +1119,51 @@ describe("unreadable key material", () => {
   // store lives outside it reads the root key fine and only trips on the
   // wrapped keys and markers underneath the same unreadable directory.
   for (const backend of ["file", "secret-service"] as const) {
-    test.skipIf(!asUnprivilegedUser)(
-      `reports the keyring as unreadable instead of abandoning the report (${backend})`,
-      async () => {
-        process.env.OMNESIS_SECRET_STORE = backend;
-        // The condition an operator runs the doctor to diagnose: it must not
-        // throw the report away, and must not describe the install as unarmed,
-        // which is what every underlying reading answers on its own.
-        const configDir = tmp("omnesis-doctor-unreadable-");
-        const keyring = join(configDir, "keyring");
-        mkdirSync(keyring, { recursive: true });
-        const marker = join(keyring, "storage-encryption-required");
-        const markerBytes = "omnesis.storage-encryption.required.v1\n";
-        let restore: () => void | Promise<void>;
-        if (process.platform === "win32") {
-          ownedWindowsFixtureOperation(keyring, () => ensurePrivateDirSync(keyring));
-          ownedWindowsFixtureOperation(marker, () =>
-            atomicWriteFileSync(marker, markerBytes, { mode: 0o600 }),
-          );
-          restore = await denyOwnedDirectoryReads(keyring, marker);
-        } else {
-          writeFileSync(marker, markerBytes);
-          setFixtureMode(keyring, 0o000);
-          restore = () => setFixtureMode(keyring, 0o700);
-        }
-        try {
-          // A list-only denial is insufficient: both backends know the marker path.
-          for (const read of [() => statSync(marker), () => readFileSync(marker)]) {
-            let error: unknown;
-            try {
-              read();
-            } catch (caught) {
-              error = caught;
-            }
-            expect(error).toMatchObject({ code: expect.stringMatching(/^(EACCES|EPERM)$/u) });
+    test(`reports the keyring as unreadable instead of abandoning the report (${backend})`, async () => {
+      process.env.OMNESIS_SECRET_STORE = backend;
+      // The condition an operator runs the doctor to diagnose: it must not
+      // throw the report away, and must not describe the install as unarmed,
+      // which is what every underlying reading answers on its own.
+      const configDir = tmp("omnesis-doctor-unreadable-");
+      const keyring = join(configDir, "keyring");
+      mkdirSync(keyring, { recursive: true });
+      const marker = join(keyring, "storage-encryption-required");
+      const markerBytes = "omnesis.storage-encryption.required.v1\n";
+      if (process.platform === "win32") {
+        ownedWindowsFixtureOperation(keyring, () => ensurePrivateDirSync(keyring));
+        ownedWindowsFixtureOperation(marker, () =>
+          atomicWriteFileSync(marker, markerBytes, { mode: 0o600 }),
+        );
+      } else {
+        writeFileSync(marker, markerBytes);
+      }
+      unreadablePaths.add(keyring);
+      try {
+        // Deny metadata and reads: both backends know the marker path.
+        for (const read of [() => statSync(marker), () => readFileSync(marker)]) {
+          let error: unknown;
+          try {
+            read();
+          } catch (caught) {
+            error = caught;
           }
-          const data = await collectSecurityData({
-            configDir,
-            fixPermissions: false,
-            platform: "linux",
-            homeDir: tmp("omnesis-doctor-home-"),
-            runCommand: async () => ({ code: 1, stdout: "", stderr: "" }),
-          });
-          expect(data.keyringAccess).toMatchObject({ readable: false });
-          // Not reported as a plain "off" install — that is the misreading.
-          expect(data.databaseEncryption.status).toBe("blocked");
-          expect(data.keyring.valid).toBe(false);
-        } finally {
-          await restore();
+          expect(error).toMatchObject({ code: expect.stringMatching(/^(EACCES|EPERM)$/u) });
         }
-      },
-    );
+        const data = await collectSecurityData({
+          configDir,
+          fixPermissions: false,
+          platform: "linux",
+          homeDir: tmp("omnesis-doctor-home-"),
+          runCommand: async () => ({ code: 1, stdout: "", stderr: "" }),
+        });
+        expect(data.keyringAccess).toMatchObject({ readable: false });
+        // Not reported as a plain "off" install — that is the misreading.
+        expect(data.databaseEncryption.status).toBe("blocked");
+        expect(data.keyring.valid).toBe(false);
+      } finally {
+        unreadablePaths.delete(keyring);
+      }
+    });
   }
 
   test("a readable install reports its keyring as readable", async () => {
