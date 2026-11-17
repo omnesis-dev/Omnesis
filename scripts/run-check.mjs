@@ -232,10 +232,19 @@ export async function main(argv = process.argv.slice(2)) {
       ) {
         throw new Error(`Unit --maxWorkers must be between 1 and ${workers} for this invocation`);
       }
-      // The scripts project includes release staging tests against workspace
-      // dist output. Build inside the admitted job, before Vitest can start.
+      // Broad units and release staging tests require workspace dist output.
+      // Build inside the admitted job, before Vitest can start.
       code = 0;
-      if (kind === "unit" && filter.some((path) => resolve(path) === resolve("scripts"))) {
+      const compiledInputs = [
+        "scripts",
+        "scripts/release",
+        "scripts/release/stage-packages.test.mjs",
+        "scripts/release/stage-runtime.test.mjs",
+      ].map((path) => resolve(path));
+      if (
+        kind === "unit" &&
+        (filter.length === 0 || filter.some((path) => compiledInputs.includes(resolve(path))))
+      ) {
         code = await run(process.execPath, [nodeModule("typescript/bin/tsc"), "--build"], env);
       }
       const selection =

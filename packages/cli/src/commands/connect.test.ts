@@ -1428,21 +1428,22 @@ describe("OpenClaw source artifact", () => {
         entry: join(fixture, "src", "index.ts"),
       });
       try {
+        // GNU tar treats an absolute Windows drive prefix as a remote host.
+        const archiveName = basename(artifact.archivePath);
+        const archiveOptions = { cwd: dirname(artifact.archivePath), encoding: "utf8" as const };
         const compiled = execFileSync(
           "tar",
-          ["-xOf", artifact.archivePath, "package/dist/openclaw.js"],
-          { encoding: "utf8" },
+          ["-xOf", archiveName, "package/dist/openclaw.js"],
+          archiveOptions,
         );
         expect(compiled).toContain("readSessionTranscriptEvents");
         expect(compiled).not.toContain("ambient stale artifact");
         const manifest = JSON.parse(
-          execFileSync("tar", ["-xOf", artifact.archivePath, "package/package.json"], {
-            encoding: "utf8",
-          }),
+          execFileSync("tar", ["-xOf", archiveName, "package/package.json"], archiveOptions),
         ) as { main: string; devDependencies?: unknown };
         expect(manifest.main).toBe("./dist/index.js");
         expect(manifest.devDependencies).toBeUndefined();
-        const packed = execFileSync("tar", ["-tf", artifact.archivePath], { encoding: "utf8" });
+        const packed = execFileSync("tar", ["-tf", archiveName], archiveOptions);
         expect(packed).toContain("package/openclaw.plugin.json");
         // The three runtime assets ship; the adapter's own test suite sits in
         // that same directory and has no business on an operator's machine.

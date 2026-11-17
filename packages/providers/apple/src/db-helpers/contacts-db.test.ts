@@ -8,7 +8,7 @@
  * failure to raise at all.
  */
 
-import { setAppleFixtureReadable } from "../testing/apple-read-denial.js";
+import { setAppleFixtureReadable } from "../testing/apple-read-denial.test.fixture.js";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
