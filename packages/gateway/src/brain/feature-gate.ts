@@ -637,7 +637,9 @@ export async function bootBriefs(deps: {
                 !payload.batchId
               )
                 return "continue" as const;
-              const frontier = await maintenanceEngine.next(payload.batchId, run.id);
+              const frontier = await maintenanceEngine.next(payload.batchId, run.id, {
+                preflight: true,
+              });
               return knowledgeFrontierPreflight(frontier);
             },
           }

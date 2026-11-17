@@ -300,14 +300,13 @@
               <tr>
                 <td>
                   Telegram Messages<br /><span class="pill">any collector</span>
-                  <span class="pill">QR sign-in</span> <span class="pill">experimental</span>
+                  <span class="pill">QR sign-in</span>
                 </td>
                 <td>
-                  <strong>Experimental</strong> — offered only when the gateway and collector run
-                  with <code>OMNESIS_EXPERIMENTAL=1</code>. Your chats as conversational documents,
-                  one per chat per day, through a Telegram API app you create yourself. Voice notes
-                  are transcribed when a transcriber model is assigned, and photo and document text
-                  is extracted. See <a href="#telegram">Telegram</a>.
+                  Your chats as conversational documents, one per chat per day, through a Telegram
+                  API app you create yourself. Voice notes are transcribed when a transcriber model
+                  is assigned, and photo and document text is extracted. See
+                  <a href="#telegram">Telegram</a>.
                 </td>
               </tr>
               <tr>
@@ -334,13 +333,12 @@
               <tr>
                 <td>
                   Discord<br /><span class="pill">any collector</span>
-                  <span class="pill">Bot token</span> <span class="pill">Experimental</span>
+                  <span class="pill">Bot token</span>
                 </td>
                 <td>
                   Each channel's day as one conversation document, across the servers a bot of yours
-                  belongs to, threads and forum posts included; posters feed the people graph.
-                  Offered only when the Gateway runs with
-                  <code>OMNESIS_EXPERIMENTAL=1</code> — see <a href="#discord">Discord</a>.
+                  belongs to, threads and forum posts included; posters feed the people graph. See
+                  <a href="#discord">Discord</a>.
                 </td>
               </tr>
             </tbody>
@@ -348,11 +346,6 @@
         </div>
 
         <h3 id="discord">Discord</h3>
-        <p>
-          Discord is <strong>experimental</strong>: it appears in the source picker only when the
-          Gateway runs with <code>OMNESIS_EXPERIMENTAL=1</code>, and its behavior may change between
-          releases.
-        </p>
         <p>
           Discord hands message history to bots only — an ordinary account may not be automated, and
           no OAuth2 scope reads messages. So you create an application in Discord's Developer
@@ -536,11 +529,6 @@
         </ul>
 
         <h3 id="telegram">Telegram</h3>
-        <div class="callout warn">
-          <strong>Experimental.</strong> The Telegram source is unstable and offered in
-          <strong>Add source</strong> only when the gateway and the collector run with
-          <code>OMNESIS_EXPERIMENTAL=1</code>; see <a href="experimental">Experimental</a>.
-        </div>
         <p>
           Telegram Messages archives your own Telegram account — signed in as you, not as a bot —
           into Omnesis. It reads your chats through the Telegram API with a developer app that you
@@ -974,26 +962,24 @@
               <tr>
                 <td>
                   Immich<br /><span class="pill">any collector</span>
-                  <span class="pill">API key</span> <span class="pill">experimental</span>
+                  <span class="pill">API key</span>
                 </td>
                 <td>
-                  <strong>Experimental</strong> — offered only when the gateway and collector run
-                  with <code>OMNESIS_EXPERIMENTAL=1</code>. One document per photo or video in a
-                  self-hosted Immich library — when and where it was taken, the people Immich
-                  recognised and you named, its albums, description and camera — with a link back to
-                  the asset. Never the images. See <a href="#immich">Immich</a>.
+                  One document per photo or video in a self-hosted Immich library — when and where
+                  it was taken, the people Immich recognised and you named, its albums, description
+                  and camera — with a link back to the asset. Never the images. See
+                  <a href="#immich">Immich</a>.
                 </td>
               </tr>
               <tr>
                 <td>
                   Paperless-ngx<br /><span class="pill">any collector</span>
-                  <span class="pill">API token</span> <span class="pill">Experimental</span>
+                  <span class="pill">API token</span>
                 </td>
                 <td>
                   Archived documents from a self-hosted Paperless-ngx, with their OCR text, notes,
                   correspondent, document type, tags and custom fields; custom field values are
-                  queryable in SQL. Offered only when the Gateway runs with
-                  <code>OMNESIS_EXPERIMENTAL=1</code> — see <a href="#paperless">Paperless-ngx</a>.
+                  queryable in SQL. See <a href="#paperless">Paperless-ngx</a>.
                 </td>
               </tr>
             </tbody>
@@ -1026,7 +1012,8 @@
           <li>
             <strong>Folders you name.</strong> There are no default folders. Name each one when you
             add the source; each machine that joins it names its own. An <em>Exclude</em> setting
-            takes glob patterns to skip inside those folders.
+            takes glob patterns to skip inside those folders, using <code>*</code>, <code>**</code>,
+            <code>?</code> and <code>{a,b}</code>.
           </li>
           <li>
             <strong>What it refuses.</strong> System and configuration folders such as
@@ -1054,11 +1041,6 @@
         </ul>
 
         <h3 id="immich">Immich</h3>
-        <div class="callout warn">
-          <strong>Experimental.</strong> The Immich source is unstable and offered in
-          <strong>Add source</strong> only when the gateway and the collector run with
-          <code>OMNESIS_EXPERIMENTAL=1</code>; see <a href="experimental">Experimental</a>.
-        </div>
         <p>
           Immich indexes one Immich user's photo and video library from a server you run, version
           3.0 or later. It reads text and metadata only: the capture time and place, the people
@@ -1125,11 +1107,6 @@
         </ul>
 
         <h3 id="paperless">Paperless-ngx</h3>
-        <p>
-          Paperless-ngx is <strong>experimental</strong>: it appears in the source picker only when
-          the Gateway runs with <code>OMNESIS_EXPERIMENTAL=1</code>, and its behavior may change
-          between releases.
-        </p>
         <p>
           Paperless-ngx indexes the documents a self-hosted
           <a href="https://docs.paperless-ngx.com/">Paperless-ngx</a> instance has archived; it

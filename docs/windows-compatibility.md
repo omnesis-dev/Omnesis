@@ -109,8 +109,9 @@ node scripts/ci/build-windows-usearch.mjs
 Run these from an isolated checkout after installing its locked dependencies.
 The native builds require MSVC and Python and verify the running Node version's
 headers before compilation.
-The SQLite backport preserves the existing engine and encryption format. It
-applies the upstream Windows shared-memory recovery fix: under the exclusive
+The plain binding's SQLite 3.54.1 includes the upstream Windows shared-memory
+recovery fix. The encrypted binding backports the same fix to SQLite 3.53.4
+with its existing encryption format. Under the exclusive
 dead-man-switch lock, a still-mapped shared-memory file is reset by writing its
 header when Windows refuses truncation. This follows SQLite's
 [upstream fix](https://sqlite.org/forum/info/ba7afbd0e81501118563617430fe06d0aca052e55ece2b0d457f8e16fcf85bba?t=c).
@@ -119,7 +120,7 @@ encrypted Gateway schema; tests hold a stale mapping through recovery. Linux
 and macOS retain their existing prebuilt libraries. This preparation remains
 separate from Windows installation support, which is outside the audit.
 
-Targeted backport validation passed 208 tests on Windows and 205 on Linux;
+The original backport validation passed 208 tests on Windows and 205 on Linux;
 the three mapped-view tests are Windows-specific. Original Windows binaries
 fail those three recovery cases. The rebuilt cipher also passed a full Gateway
 schema check and reads and writes files interchangeably with the original

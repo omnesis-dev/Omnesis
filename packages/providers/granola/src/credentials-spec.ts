@@ -54,8 +54,8 @@ export const granolaCredentialsSpec: ProviderCredentialsSpec = {
         kind: "instruction",
         title: "Create and copy a new key",
         body:
-          "Click **+ New API key**, give it a name like 'Omnesis', and copy the " +
-          "generated key. It starts with `grn_`. Paste it on the next screen.",
+          "Click **+ New API key**, give it a name like Omnesis, and copy the " +
+          "generated key. It starts with grn_. Paste it on the next screen.",
       },
     ],
   },

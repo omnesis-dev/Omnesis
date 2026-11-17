@@ -354,6 +354,9 @@ export function windowsCheckTasks(lane, shard, files = []) {
         ],
         // The generic unit runner keeps the script smoke phase separate.
         ["scripts/run-check.mjs", "smoke"],
+      ];
+    case "adapters":
+      return [
         ["packages/agent-integration/test/openclaw_gateway_probe.mjs"],
         ["scripts/test-hermes.mjs"],
       ];
@@ -362,7 +365,7 @@ export function windowsCheckTasks(lane, shard, files = []) {
     case "portal":
       return [["scripts/run-check.mjs", "portal"]];
     default:
-      throw new Error("Expected Windows lane: focused, unit, e2e, portal");
+      throw new Error("Expected Windows lane: focused, unit, adapters, e2e, portal");
   }
 }
 

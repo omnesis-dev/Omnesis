@@ -99,8 +99,6 @@ export default defineProvider<PaperlessContext>({
       unitName: "documents",
       primaryCount: "documents",
       icon: paperlessIcon,
-      // Not yet run against enough real archives to trust by default.
-      experimental: true,
       analyticsSchemas: allSchemas,
       documentEventProfile: paperlessDocumentEventProfile,
       contract: {

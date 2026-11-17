@@ -13,11 +13,12 @@ const require = createRequire(import.meta.url);
 const [scratch, ...roots] = process.argv.slice(2);
 assert.equal(process.platform, "win32");
 assert.equal(roots.length, 2);
+const engineVersions = ["3.54.1", "3.53.4"];
 for (const [index, root] of roots.entries()) {
   const Constructor = require(root);
   const db = new Constructor(join(scratch, `binding-${index}.db`));
   try {
-    assert.equal(db.prepare("SELECT sqlite_version()").pluck().get(), "3.53.4");
+    assert.equal(db.prepare("SELECT sqlite_version()").pluck().get(), engineVersions[index]);
     db.pragma("journal_mode=WAL");
     db.exec("CREATE TABLE notes(body TEXT);INSERT INTO notes VALUES('invented durable note')");
     assert.deepEqual(db.prepare("SELECT body FROM notes").all(), [
@@ -95,4 +96,6 @@ if (existsSync(previous)) {
   }
   process.stdout.write("Original and rebuilt SQLite cipher bindings preserve file compatibility\n");
 }
-process.stdout.write("SQLite 3.53.4 default bindings and full encrypted Gateway schema passed\n");
+process.stdout.write(
+  "Default plain and encrypted SQLite bindings and full Gateway schema passed\n",
+);

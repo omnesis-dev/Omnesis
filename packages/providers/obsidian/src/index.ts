@@ -156,7 +156,10 @@ export default defineSource({
     const canonicalVaultPath = realpathSync(vaultPath);
     const isInsideVault = (path: string): boolean =>
       containsCanonicalPath(canonicalVaultPath, path);
-    const excludeMatchers = (config?.exclude ?? []).map((p) => picomatch(p));
+    // Extglob groups such as `+(…)` stay literal: a repeated single-branch group
+    // compiles to a regular expression that backtracks exponentially on an
+    // ordinary note path (GHSA-fc5q-39xc-vjpf), and no picomatch release fixes it.
+    const excludeMatchers = (config?.exclude ?? []).map((p) => picomatch(p, { noextglob: true }));
 
     function isExcluded(relPath: string): boolean {
       return excludeMatchers.some((m) => m(relPath.split(sep).join("/")));

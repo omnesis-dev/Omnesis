@@ -149,6 +149,25 @@ describe("HostTailscaleService", () => {
     );
   });
 
+  test("taking a public gateway off the Internet keeps its address on the tailnet", async () => {
+    // A docs-style setup: 443 publishes the gateway through Funnel, 8443 holds another app.
+    const { host, run } = service({
+      "status --json": running,
+      "serve status --json": serving(
+        { 443: { "/": GATEWAY }, 8443: { "/": "http://127.0.0.1:3000" } },
+        [443],
+      ),
+      [`serve --bg ${GATEWAY}`]: "",
+    });
+    expect(await host.publish(false)).toEqual({ ok: true, url: `https://${NAME}` });
+    // `serve` on the same port turns Funnel off and keeps tailnet serving; no other port is touched.
+    expect(run.mock.calls.map(([, args]) => args.join(" "))).toEqual([
+      "status --json",
+      "serve status --json",
+      `serve --bg ${GATEWAY}`,
+    ]);
+  });
+
   test("Funnel's enable link, printed on stdout, is recognised", async () => {
     const { host } = service({
       "status --json": running,

@@ -180,6 +180,23 @@ describe("CognitionRunDriver", () => {
     });
   });
 
+  test("holds work waiting for the decision model until the time it names", async () => {
+    const driver = makeDriver({
+      preflight: async () =>
+        knowledgeFrontierPreflight({ done: false, items: [], heldUntil: 3_605_000 }),
+      resolveBackend: () => {
+        throw new Error("must not resolve");
+      },
+    });
+    expect(await driver.execute(claimed())).toMatchObject({
+      ok: false,
+      deferredUntil: 3_605_000,
+      errorMessage: "Maintenance is waiting for the decision model",
+      modelId: null,
+      usage: null,
+    });
+  });
+
   test("a successful run harvests text + usage and persists a transcript", async () => {
     const driver = makeDriver({
       resolveBackend: () =>

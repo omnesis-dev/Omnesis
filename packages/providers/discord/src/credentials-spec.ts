@@ -46,7 +46,7 @@ export const discordCredentialsSpec: ProviderCredentialsSpec = {
         kind: "open-url",
         title: "Create an application with a bot",
         body:
-          "Click **New Application**, name it (for example _Omnesis_), open **Bot** in the " +
+          "Click **New Application**, name it (for example Omnesis), open **Bot** in the " +
           "sidebar and click **Reset Token**. Copy the token — Discord shows it only once.",
         url: "https://discord.com/developers/applications",
       },

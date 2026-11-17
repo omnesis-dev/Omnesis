@@ -1178,6 +1178,16 @@ Two consequences worth stating, because they are where this gets violated:
 
 - Examples: `ios/Sources/Omnesis/UI/MainMenuDrawer.swift` and `android/app/src/main/kotlin/dev/omnesis/android/ui/home/MainMenuDrawer.kt` (the queued-notes warning), `packages/gateway/src/brain/feature-gate.ts` (`BriefsFeatureStatus`)
 
+### Source setup prose shares the conversation renderer
+
+Provider credential steps, authentication instructions and source-setting help
+render through `packages/gateway/portal/js/components/setup-markdown.js`.
+It uses the shared sanitized Markdown and copy controls from agent conversations.
+Put substantial exact values the operator pastes elsewhere in backticks; keep
+simple words and example names such as localhost or Omnesis in plain text. HTTP(S) URLs,
+including code spans, are clickable in setup prose; other code values stay text.
+Keep input labels short and put explanations in the source-owned `help` field.
+
 ### Portal tables share one vocabulary
 
 Every tabular listing in the portal is built from the same primitives rather than a class family of its own: `.portal-table` inside `.portal-table-wrap`, with `.portal-table-name` for the row's subject — styled identically whether it opens a route or a dialog, so the two never read as different kinds of thing — `.portal-table-sub` for the identifiers and pills belonging to that name, `.portal-table-num` for right-aligned tabular figures, `.portal-table-actions-col` for the collapsing trailing column, and `.portal-pill` with `-muted` / `-accent` / `-warning` for a one-word label on a row.

@@ -192,7 +192,7 @@ describe("Immich descriptor", () => {
     expect(entry.urlPatterns![0]!.regex.length).toBeLessThanOrEqual(300);
   });
 
-  it("declares a complete icon, a unit noun and an experimental gate", () => {
+  it("declares a complete icon, a unit noun and stable availability", () => {
     expect(entry.icon).toMatchObject({
       sfSymbol: expect.any(String),
       color: expect.stringMatching(/^#[0-9A-F]{6}$/i),
@@ -200,6 +200,7 @@ describe("Immich descriptor", () => {
       imageDataUri: expect.stringMatching(/^data:image\/svg\+xml;base64,/),
     });
     expect(entry.unitName).toBe("photos");
-    expect(immich.experimental).toBe(true);
+    expect(immich.experimental).toBeFalsy();
+    expect(entry.experimental).toBeFalsy();
   });
 });

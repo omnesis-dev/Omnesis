@@ -28,7 +28,7 @@ on:
         description: Validation coverage (daily runs always include every lane)
         type: choice
         default: all
-        options: [all, unit, e2e, portal]
+        options: [all, unit, adapters, e2e, portal]
       e2e_files:
         description: Optional JSON array of E2E paths for manual e2e diagnosis (1–16 files)
         type: string
@@ -51,12 +51,12 @@ jobs:
   windows:
     name: ${{ matrix.name }}
     runs-on: windows-latest
-    timeout-minutes: ${{ matrix.lane == 'focused' && 40 || 180 }}
+    timeout-minutes: ${{ matrix.lane == 'focused' && 40 || matrix.lane == 'adapters' && 60 || matrix.lane == 'unit' && 210 || 180 }}
     strategy:
       fail-fast: false
       max-parallel: 4
       matrix:
-        include: ${{ fromJSON(github.event_name == 'pull_request' && '[{"name":"Windows focused","lane":"focused"}]' || github.event_name == 'workflow_dispatch' && inputs.lane == 'unit' && '[{"name":"Windows unit","lane":"unit"}]' || github.event_name == 'workflow_dispatch' && inputs.lane == 'e2e' && inputs.e2e_files != '' && '[{"name":"Windows E2E diagnosis","lane":"e2e"}]' || github.event_name == 'workflow_dispatch' && inputs.lane == 'e2e' && '[{"name":"Windows E2E 1/2","lane":"e2e","shard":"1/2"},{"name":"Windows E2E 2/2","lane":"e2e","shard":"2/2"}]' || github.event_name == 'workflow_dispatch' && inputs.lane == 'portal' && '[{"name":"Windows portal","lane":"portal"}]' || '[{"name":"Windows unit","lane":"unit"},{"name":"Windows E2E 1/2","lane":"e2e","shard":"1/2"},{"name":"Windows E2E 2/2","lane":"e2e","shard":"2/2"},{"name":"Windows portal","lane":"portal"}]') }}
+        include: ${{ fromJSON(github.event_name == 'pull_request' && '[{"name":"Windows focused","lane":"focused"}]' || github.event_name == 'workflow_dispatch' && inputs.lane == 'unit' && '[{"name":"Windows unit","lane":"unit"},{"name":"Windows adapters","lane":"adapters"}]' || github.event_name == 'workflow_dispatch' && inputs.lane == 'adapters' && '[{"name":"Windows adapters","lane":"adapters"}]' || github.event_name == 'workflow_dispatch' && inputs.lane == 'e2e' && inputs.e2e_files != '' && '[{"name":"Windows E2E diagnosis","lane":"e2e"}]' || github.event_name == 'workflow_dispatch' && inputs.lane == 'e2e' && '[{"name":"Windows E2E 1/2","lane":"e2e","shard":"1/2"},{"name":"Windows E2E 2/2","lane":"e2e","shard":"2/2"}]' || github.event_name == 'workflow_dispatch' && inputs.lane == 'portal' && '[{"name":"Windows portal","lane":"portal"}]' || '[{"name":"Windows unit","lane":"unit"},{"name":"Windows adapters","lane":"adapters"},{"name":"Windows E2E 1/2","lane":"e2e","shard":"1/2"},{"name":"Windows E2E 2/2","lane":"e2e","shard":"2/2"},{"name":"Windows portal","lane":"portal"}]') }}
     defaults:
       run:
         shell: pwsh
@@ -91,7 +91,7 @@ jobs:
           cache: npm
 
       - name: Set up Go for the private transport boundary
-        if: ${{ matrix.lane != 'portal' }}
+        if: ${{ matrix.lane != 'portal' && matrix.lane != 'adapters' }}
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: packages/tailnet-helper/go.mod
@@ -178,12 +178,20 @@ jobs:
         if: ${{ matrix.lane == 'unit' }}
         run: node --import tsx scripts/ci/verify-tesseract-test-inputs.mjs
 
-      - name: Full Windows unit and adapter tests
+      - name: Full Windows unit and smoke tests
         # Preserve a failing typecheck verdict while collecting runtime failures.
         if: ${{ !cancelled() && matrix.lane == 'unit' && steps.dependencies.outcome == 'success' && steps.native_sqlite.outcome == 'success' && steps.native_vector.outcome == 'success' && steps.native_ocr.outcome == 'success' && steps.verify_ocr.outcome == 'success' }}
         env:
           OMNESIS_INDEXER_BENCH: "1"
         run: node scripts/ci/windows-checks.mjs unit
+
+      - name: Build OpenClaw adapter prerequisites
+        if: ${{ matrix.lane == 'adapters' }}
+        run: node scripts/run-check.mjs typecheck packages/agent-integration
+
+      - name: Full Windows adapter tests
+        if: ${{ matrix.lane == 'adapters' }}
+        run: node scripts/ci/windows-checks.mjs adapters
 
       - name: Prove real portable network fixture transports
         # Run once per full sweep; both E2E shards use these native tools.
