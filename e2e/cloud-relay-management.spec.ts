@@ -56,10 +56,12 @@ const CONNECTED = {
   certificate: { state: "valid", expiresAt: "2029-01-01T00:00:00Z" },
   can: { configure: false, enable: false, disable: true, reconnect: true, renew: true },
 };
+/** The relay's status, answered in memory, on the account page or (with `part` "relay") the relay's page. */
 async function management(
   page: Page,
   google: Record<string, unknown> = { configured: false },
   overrides: Record<string, unknown> = {},
+  part: "account" | "relay" = "account",
 ) {
   let status: Record<string, any> = { ...initial(), google, ...overrides };
   const calls: Array<{ operation: string; body: unknown }> = [];
@@ -127,8 +129,8 @@ async function management(
     await route.fulfill({ json: status });
   });
   await signIn(page);
-  await page.goto("/portal/settings/account");
-  await expect(page.locator(".relay-view .relay-headline")).toBeVisible();
+  await page.goto(`/portal/settings/${part}`);
+  await expect(page.locator(".relay-view").first()).toBeVisible();
   return {
     calls,
     refreshes: () => refreshes,
@@ -154,20 +156,18 @@ const TURN_OFF_TIP =
 const TURN_ON_TIP =
   "Makes this gateway reachable from outside your home network again, at the same address.";
 
-test("portal offers no manual setup form; connected it is three plain sections, a problem is one box with details to copy, and it turns off and on", async ({
+test("portal offers no manual setup form; connected the relay's page is one plain section, a problem is one box with details to copy, and it turns off and on", async ({
   page,
   context,
 }) => {
   const first = await management(page);
   await expect(
-    page.getByRole("heading", { name: "Enroll this gateway in your Omnesis Account" }),
+    page.getByRole("heading", { name: "Do you want an Omnesis account?" }),
   ).toBeVisible();
-  await expect(
-    page.getByText(
-      "An Omnesis account lets you reach your gateway from your phone and laptop outside your home network and pair new devices by signing in. Traffic is encrypted end to end, and the keys never leave this gateway. Connecting gives this gateway a public address and a certificate.",
-      { exact: true },
-    ),
-  ).toBeVisible();
+  await expect(page.locator(".relay-lede")).toContainText("None of your data goes to Omnesis");
+  await expect(page.locator(".relay-lede")).toContainText(
+    "It's optional: skip it and set it up any time from Settings, Connectivity.",
+  );
   // Two buttons and nothing to fill in: a self-hosted relay is set up from the environment or the CLI.
   await expect(page.locator(".relay-view").locator("details, form, input")).toHaveCount(0);
   await expect(page.locator(".relay-view")).not.toContainText("terms of service");
@@ -202,16 +202,13 @@ test("portal offers no manual setup form; connected it is three plain sections, 
         ],
       },
     },
+    "relay",
   );
   const view = page.locator(".relay-view");
   await expect(
     page.getByRole("heading", { name: "Connected as g-fictional.relay.example.test" }),
   ).toBeVisible();
-  await expect(view.getByRole("heading", { level: 3 })).toHaveText([
-    "Account",
-    "Remote access",
-    "New devices",
-  ]);
+  await expect(view.getByRole("heading", { level: 3 })).toHaveText(["Remote access"]);
   await expect(page.getByText("https://g-fictional.relay.example.test/mcp")).toBeVisible();
   // A ready address needs no hint under it.
   await expect(view.locator(".relay-address + .relay-hint")).toHaveCount(0);
@@ -226,7 +223,7 @@ test("portal offers no manual setup form; connected it is three plain sections, 
     await expect(view).not.toContainText(gone);
   await expect(view.locator(".relay-problems")).toHaveCount(0);
   // The two empty names are the icon buttons that copy the portal link and the address.
-  await expect(view.getByRole("button")).toHaveText(["Unlink this gateway", "", "", "Turn off"]);
+  await expect(view.getByRole("button")).toHaveText(["", "", "Turn off"]);
   // The portal at the public address is offered as a link that opens it.
   const portal = view.locator(".relay-portal a");
   await expect(portal).toHaveAttribute("href", /^https:\/\/[^/]+\/portal\/$/);
@@ -316,7 +313,7 @@ test("portal offers no manual setup form; connected it is three plain sections, 
     true,
   );
 
-  // Off: the headline turns it back on, and the account can still be managed or left.
+  // Off: the headline turns it back on; the account stays on its own page.
   await page.getByRole("button", { name: "Turn off", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Remote access is off" })).toBeVisible();
   const turnOn = page.getByRole("button", { name: "Turn on", exact: true });
@@ -324,10 +321,6 @@ test("portal offers no manual setup form; connected it is three plain sections, 
   await expect(turnOn).toBeEnabled();
   await expect(turnOn).toHaveAttribute("title", TURN_ON_TIP);
   await expect(turnOn).toHaveAccessibleDescription(TURN_ON_TIP);
-  await expect(page.getByRole("link", { name: "Manage your account" })).toBeVisible();
-  await expect(
-    page.getByRole("button", { name: "Unlink this gateway", exact: true }),
-  ).toBeVisible();
   await page.screenshot({ path: "/tmp/omnesis-relay-off-mobile.png", fullPage: true });
   await turnOn.click();
   await expect(
@@ -340,13 +333,15 @@ test("an unavailable installation service disables setup without offering a rela
   page,
 }) => {
   const { calls } = await management(page, { configured: false }, { serviceConfigured: false });
-  await expect(page.getByRole("heading", { name: "Remote access isn't available" })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Omnesis accounts aren't available here" }),
+  ).toBeVisible();
   await expect(
     page.getByText(
       "This installation is not set up for Omnesis accounts. Direct connections and QR pairing keep working.",
     ),
   ).toBeVisible();
-  for (const name of ["Connect", "Create an Omnesis account", "I already have one"])
+  for (const name of ["Connect", "Create an account", "I already have one"])
     await expect(page.getByRole("button", { name, exact: true })).toHaveCount(0);
   await expect(page.locator(".relay-view").locator("details, form, input")).toHaveCount(0);
   expect(calls).toEqual([]);
@@ -359,12 +354,12 @@ test("portal keeps setup actionable after errors and does not render server secr
   await page.route("**/admin/cloud-relay/connect", (route) =>
     route.fulfill({ status: 503, json: { error: "private-key-secret /private/path" } }),
   );
-  await page.getByRole("button", { name: "Create an Omnesis account", exact: true }).click();
+  await page.getByRole("button", { name: "Create an account", exact: true }).click();
   await expect(page.getByRole("alert")).toHaveText(
     "Couldn't load or update your Omnesis account settings. Check the connection and try again.",
   );
   await expect(page.getByText("private-key-secret", { exact: false })).toHaveCount(0);
-  for (const name of ["Create an Omnesis account", "I already have one"])
+  for (const name of ["Create an account", "I already have one"])
     await expect(page.getByRole("button", { name, exact: true })).toBeEnabled();
   expect(calls).toEqual([]);
 });
@@ -377,7 +372,7 @@ test("creating an account and using one are two explicit choices, and each tells
   await expect(page.locator(".relay-invite")).toHaveCount(0);
   // One "Connect" that might create an account as a side effect is gone.
   await expect(page.getByRole("button", { name: "Connect", exact: true })).toHaveCount(0);
-  const create = page.getByRole("button", { name: "Create an Omnesis account", exact: true });
+  const create = page.getByRole("button", { name: "Create an account", exact: true });
   const existing = page.getByRole("button", { name: "I already have one", exact: true });
   await create.click();
   await expect
@@ -399,7 +394,7 @@ test("creating an account and using one are two explicit choices, and each tells
   });
 });
 
-test("an invite-only relay says so above the two choices, with where to request access and its host", async ({
+test("an invite-only relay says so in the paragraph above the two choices, with where to request access and its host", async ({
   page,
 }) => {
   const requestAccessUrl = "https://groups.example.com/g/fictional-testers";
@@ -408,15 +403,15 @@ test("an invite-only relay says so above the two choices, with where to request 
     { configured: false },
     { signup: { inviteOnly: true, requestAccessUrl } },
   );
-  const notice = page.locator(".relay-hero .relay-invite");
-  await expect(notice).toHaveText(
-    "Omnesis accounts are invite-only for now. Request access (groups.example.com) — you can create your account once it's approved.",
+  const notice = page.locator(".relay-hero .relay-lede");
+  await expect(notice).toContainText(
+    "Accounts are invite-only for now: request access (groups.example.com), then create your account once it's approved.",
   );
-  const request = notice.getByRole("link", { name: "Request access", exact: true });
+  const request = notice.getByRole("link", { name: "request access", exact: true });
   await expect(request).toHaveAttribute("href", requestAccessUrl);
   await expect(request).toHaveAttribute("target", "_blank");
   await expect(request).toHaveAttribute("rel", "noopener noreferrer");
-  const create = page.getByRole("button", { name: "Create an Omnesis account", exact: true });
+  const create = page.getByRole("button", { name: "Create an account", exact: true });
   await expect(create).toBeEnabled();
   await expect(page.getByRole("button", { name: "I already have one", exact: true })).toBeEnabled();
   // The notice sits above the choices.
@@ -474,6 +469,8 @@ test("Google management navigates only to the real authorization endpoint, then 
     page.getByRole("button", { name: "Connect with Google", exact: true }),
   ).toBeVisible();
   expect(calls.map((x) => x.operation)).toEqual(["google/link", "google/unlink"]);
+  // The relay is untouched.
+  await page.goto("/portal/settings/relay");
   await expect(
     page.getByRole("heading", { name: "Connected as g-fictional.relay.example.test" }),
   ).toBeVisible();
@@ -614,13 +611,14 @@ test("the account row offers the account page and a disconnect that asks first, 
   expect(relay.calls.map((x) => x.operation)).toEqual(["account/unlink"]);
   expect(dialogs).toBe(0);
   // Leaving the account leaves remote access as it was.
+  await page.goto("/portal/settings/relay");
   await expect(
     page.getByRole("heading", { name: "Connected as g-fictional.relay.example.test" }),
   ).toBeVisible();
   await expect(page.getByRole("button", { name: "Turn off", exact: true })).toBeEnabled();
 });
 
-test("a freshly linked gateway shows its settings at once with automatic joining selected, and Ask me first is one click", async ({
+test("a freshly linked gateway shows its account at once, and Connectivity's answer for new devices starts on automatic with Ask me first one click away", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 1280, height: 900 });
@@ -670,21 +668,17 @@ test("a freshly linked gateway shows its settings at once with automatic joining
     page.getByText("This gateway is linked to your Omnesis account.", { exact: true }),
   ).toBeVisible();
   await expect(page.getByRole("button", { name: "Continue", exact: true })).toHaveCount(0);
-  await expect(page.getByRole("radiogroup", { name: "When a new device signs in" })).toHaveCount(1);
-  // The account page sits under Remote access, with the way back to it; its sections are named
-  // for the account, not for the relay.
-  await expect(page.locator(".config-tab.active")).toHaveText("Remote access");
-  await expect(page.getByRole("button", { name: "Omnesis account", exact: true })).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "← Remote access", exact: true })).toBeVisible();
-  for (const name of ["Account", "Remote access", "New devices"])
-    await expect(page.getByRole("heading", { name, exact: true })).toBeVisible();
-  const automatic = page.getByRole("radio", { name: /^Join automatically/ });
-  const ask = page.getByRole("radio", { name: /^Ask me first/ });
-  await expect(automatic).toBeChecked();
-  await expect(ask).not.toBeChecked();
+  // The account page sits under Connectivity, with the way back to it; its sections are the
+  // account's own, and what new devices may do is answered once, on Connectivity.
+  await expect(page.locator(".config-tab.active")).toHaveText("Connectivity");
+  await expect(page.getByRole("button", { name: "← Connectivity", exact: true })).toBeVisible();
+  await expect(page.locator(".relay-view").getByRole("heading", { level: 3 })).toHaveText([
+    "Account",
+    "Trusted sign-ins",
+  ]);
+  await expect(page.getByRole("radiogroup")).toHaveCount(0);
   // The sign-ins on record are listed with where each came from and whether the owner confirmed
   // it here; they are managed on the account page, so there is nothing to remove here.
-  await expect(page.getByText("Sign-ins", { exact: true })).toBeVisible();
   await expect(page.locator(".relay-sign-in")).toHaveCount(2);
   await expect(page.locator(".relay-sign-in").first()).toContainText(
     "Used to connect this gateway · Not confirmed on this gateway: devices using it wait for your approval",
@@ -696,7 +690,13 @@ test("a freshly linked gateway shows its settings at once with automatic joining
     fullPage: true,
   });
 
-  // The radios follow the gateway's saved policy, so each settles once the save returns.
+  // On Connectivity the one answer for new devices follows the account's saved policy.
+  await page.getByRole("button", { name: "← Connectivity", exact: true }).click();
+  const automatic = page.getByRole("radio", { name: /^My devices join automatically/ });
+  const ask = page.getByRole("radio", { name: /^Ask me first/ });
+  await expect(automatic).toBeChecked();
+  await expect(ask).not.toBeChecked();
+  // Each settles once the save returns.
   await ask.click();
   await expect(ask).toBeChecked();
   await expect(automatic).not.toBeChecked();

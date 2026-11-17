@@ -55,7 +55,10 @@ function addresses(overrides: Partial<McpAddressesOptions> = {}) {
             servesGateway: true,
             publicGateway: false,
           }
-        : { state: "unavailable" as const, reason: "Tailscale is not running on this computer." },
+        : {
+            state: "stopped" as const,
+            reason: "Tailscale is installed on this computer but not running or not signed in.",
+          },
     ),
   };
   let clock = 1_000_000;

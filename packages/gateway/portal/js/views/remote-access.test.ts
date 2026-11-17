@@ -701,11 +701,11 @@ describe("both", () => {
     expect(text()).toContain(`Serving this gateway at ${HOST_URL}, on your Tailscale network and to the Internet.`);
   });
 
-  test("Tailscale on this computer: a check re-reads, and an unavailable daemon gives the reason", async () => {
-    gateway.host = { state: "unavailable", reason: "Tailscale is not running on this computer." };
+  test("Tailscale on this computer: a check re-reads, and a stopped daemon gives the reason", async () => {
+    gateway.host = { state: "stopped", reason: "Tailscale is installed on this computer but not running or not signed in." };
     savedSetup("connection", { host: true });
     await mount(FLAGS.both);
-    expect(text()).toContain("Tailscale is not running on this computer.");
+    expect(text()).toContain("Tailscale is installed on this computer but not running or not signed in.");
     gateway.host = { state: "available", dnsName: "studio.example-net.ts.net", url: HOST_URL, servesGateway: true, publicGateway: false };
     await click("Check again");
     expect(text()).toContain(`Serving this gateway at ${HOST_URL}, to your Tailscale devices only.`);

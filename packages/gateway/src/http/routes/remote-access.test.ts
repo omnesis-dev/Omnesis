@@ -46,7 +46,10 @@ function app({
             servesGateway: true,
             publicGateway: false,
           }
-        : { state: "unavailable", reason: "Tailscale is not running on this computer." },
+        : {
+            state: "stopped",
+            reason: "Tailscale is installed on this computer but not running or not signed in.",
+          },
     ),
     publish: vi.fn(async () => ({ ok: true, url: "https://studio.example-net.ts.net" })),
   } as unknown as HostTailscaleService;
