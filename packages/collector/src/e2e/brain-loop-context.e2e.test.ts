@@ -15,6 +15,7 @@ import {
   email,
   preserveCurrentOwner,
   sourceInterpretations,
+  urgencyOnlyDecisionPolicy,
 } from "./brain-bench/index.js";
 
 compressCognitionCadences();
@@ -75,6 +76,9 @@ test("split outcome claims retain final interpretation context through real term
     ],
   });
   const bench = await BrainBench.start({
+    // Work without an urgency verdict waits at routine priority; these
+    // changes are judged soon so they are processed within the test.
+    decision: { policy: urgencyOnlyDecisionPolicy() },
     experimental: true,
     embedder: true,
     syncSources: false,
