@@ -18,7 +18,34 @@ jobs:
     runs-on: ubuntu-latest
     # Only run on the signing comment or on pull-request events — skip unrelated comments.
     if: (github.event.comment.body == 'recheck' || github.event.comment.body == 'I have read the CLA Document and I hereby sign the CLA') || github.event_name == 'pull_request_target'
+    env:
+      # Repo owner and bot accounts — never asked to sign.
+      BASE_ALLOWLIST: adrienconrath,*[bot]
     steps:
+      # A signed author's coding-agent commits (Claude Code commits as `claude`)
+      # count as the author's own; every other committer still signs. The script
+      # comes from the default branch, never from the pull request: this job has
+      # write permissions, so it checks nothing out.
+      - name: Vouch for a signed author's coding-agent commits
+        id: allowlist
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPOSITORY: ${{ github.repository }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          PR_NUMBER: ${{ github.event.pull_request.number || github.event.issue.number }}
+          SIGNATURES_PATH: signatures/cla.json
+          SIGNATURES_BRANCH: cla-signatures
+        run: |
+          script="$RUNNER_TEMP/cla-allowlist.mjs"
+          if gh api -H "Accept: application/vnd.github.raw+json" \
+            "repos/$REPOSITORY/contents/scripts/ci/cla-allowlist.mjs?ref=$DEFAULT_BRANCH" >"$script"; then
+            node "$script" >>"$GITHUB_OUTPUT"
+          else
+            echo "::warning::Coding-agent commits not vouched for: could not fetch the script"
+            echo "allowlist=$BASE_ALLOWLIST" >>"$GITHUB_OUTPUT"
+          fi
+
       - name: CLA Assistant
         uses: contributor-assistant/github-action@ca4a40a7d1004f18d9960b404b97e5f30a505a08 # v2.6.1
         env:
@@ -31,7 +58,7 @@ jobs:
           branch: cla-signatures
           # The CLA document contributors read before signing.
           path-to-document: https://github.com/omnesis-dev/Omnesis/blob/main/CLA.md
-          # Repo owner and bot accounts — never asked to sign.
-          allowlist: adrienconrath,*[bot]
+          # BASE_ALLOWLIST, plus the coding-agent authors when the PR's author signed.
+          allowlist: ${{ steps.allowlist.outputs.allowlist }}
           custom-pr-sign-comment: "I have read the CLA Document and I hereby sign the CLA"
           custom-allsigned-prcomment: "All contributors have signed the CLA."

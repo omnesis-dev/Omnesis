@@ -248,6 +248,8 @@ commercial license alongside the AGPL). The CLA-Assistant bot runs on your first
 pull request and asks you to sign by leaving a comment; it records your signature
 in [`signatures/cla.json` on the `cla-signatures` branch](https://github.com/omnesis-dev/Omnesis/blob/cla-signatures/signatures/cla.json).
 The required `cla-assistant` check blocks merging until all non-exempt contributors
-have signed. The repository owner and bot accounts are exempt. If the assignment
+have signed. The repository owner and bot accounts are exempt. Commits your
+coding agent authored (Claude Code commits as `claude`) count as your own once
+you have signed, so only the people on a pull request sign. If the assignment
 model is a blocker for you, open an issue — we'd rather find a path than lose the
 contribution.
