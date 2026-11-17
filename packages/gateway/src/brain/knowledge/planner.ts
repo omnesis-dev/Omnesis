@@ -165,6 +165,51 @@ export function planMaintenanceGroups(
     .sort((a, b) => a.dueAt - b.dueAt || a.seeds[0]!.id.localeCompare(b.seeds[0]!.id));
 }
 
+/**
+ * Packs unrelated groups into shared batches, so one run's fixed prompt cost
+ * covers several of them. In order, each `packable` group joins the latest
+ * pack while the pack stays within `maxSeeds` seeds and `maxNodes` region
+ * nodes; otherwise it opens a new pack. The groups are disjoint already, so a
+ * pack's region is the union of theirs. Other groups pass through unchanged,
+ * in place.
+ */
+export function packMaintenanceGroups(
+  groups: readonly MaintenanceGroup[],
+  packable: (group: MaintenanceGroup) => boolean,
+  limits: { maxSeeds: number; maxNodes: number },
+): MaintenanceGroup[] {
+  const result: MaintenanceGroup[] = [];
+  let open: number | null = null;
+  for (const group of groups) {
+    if (!packable(group)) {
+      result.push(group);
+      continue;
+    }
+    const pack = open === null ? null : result[open]!;
+    const nodes = pack ? new Set([...pack.nodes, ...group.nodes]) : null;
+    if (
+      pack &&
+      nodes &&
+      pack.seeds.length + group.seeds.length <= limits.maxSeeds &&
+      nodes.size <= limits.maxNodes
+    ) {
+      result[open!] = {
+        seeds: [...pack.seeds, ...group.seeds].sort(
+          (a, b) => a.changedAt - b.changedAt || a.id.localeCompare(b.id),
+        ),
+        nodes: [...nodes].sort(),
+        aggregates: [...new Set([...pack.aggregates, ...group.aggregates])].sort(),
+        dueAt: Math.min(pack.dueAt, group.dueAt),
+        tier: tierRank[group.tier] < tierRank[pack.tier] ? group.tier : pack.tier,
+      };
+      continue;
+    }
+    open = result.length;
+    result.push(group);
+  }
+  return result;
+}
+
 export interface CompletedMaintenanceNode {
   id: string;
   outcome: "skipped" | "unchanged" | "changed";

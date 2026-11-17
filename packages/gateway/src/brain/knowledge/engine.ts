@@ -29,7 +29,11 @@ import {
 } from "./work.js";
 import { planMaintenanceGroups } from "./planner.js";
 import { sourceHasDiscoveryObligation } from "./discovery-gate.js";
-import { discoveryDecisionState, judgeKnowledge, type KnowledgeDecisionDeps } from "./decision.js";
+import {
+  discoveryDecisionState,
+  judgeKnowledgeVerdict,
+  type KnowledgeDecisionDeps,
+} from "./decision.js";
 import { KNOWLEDGE_DISCOVERY_POLICY } from "./discovery.js";
 import { knowledgeSourceReadiness } from "./engine-readiness.js";
 import { KnowledgeGraph } from "./engine-graph.js";
@@ -105,6 +109,11 @@ export interface KnowledgeFrontierView {
   done: boolean;
   organization?: ReturnType<KnowledgeOrganization["view"]>;
   candidateDecisions?: Array<{ id: string; revision: number }>;
+  /**
+   * Before an agent turn only: routine source work waits for the decision
+   * model, which failed its last judgement, until this time. No items.
+   */
+  heldUntil?: number;
   items: Array<{
     id: string;
     inputFingerprint: string;
@@ -355,6 +364,12 @@ export class KnowledgeEngine {
         .all(),
     };
   }
+  private batchTier(batchId: string): string | undefined {
+    return this.deps.db
+      .prepare<[string], { tier: string }>("SELECT tier FROM knowledge_batches WHERE id=?")
+      .get(batchId)?.tier;
+  }
+
   private batch(batchId: string, runId: string): BatchRow {
     const batch = this.deps.db
       .prepare<[string], BatchRow>(
@@ -414,7 +429,22 @@ export class KnowledgeEngine {
     }
   }
 
-  async next(batchId: string, runId: string): Promise<KnowledgeFrontierView> {
+  /**
+   * The decision model's current outage, from its first failed judgement to
+   * the next judgement that answers. In memory: a restart asks again.
+   */
+  private decisionOutage: { since: number; retryAt: number } | null = null;
+
+  /**
+   * The next frontier. `preflight` marks the call made before any agent turn:
+   * only then can a decision outage hold routine source work instead of
+   * failing open into a model run.
+   */
+  async next(
+    batchId: string,
+    runId: string,
+    opts: { preflight?: boolean } = {},
+  ): Promise<KnowledgeFrontierView> {
     // A shutdown can leave the run pending after its batch committed completion.
     // Settle that queue receipt without reopening work or resolving a backend.
     if (this.batch(batchId, runId).status === "completed")
@@ -422,7 +452,7 @@ export class KnowledgeEngine {
     if (!ownsCandidateTurn(this.deps.db, batchId)) return { batchId, done: false, items: [] };
     if (!(await this.organization.current(batchId)))
       return { batchId, done: true, interrupted: true, items: [] };
-    const result = await this.nextMaintenance(batchId, runId);
+    const result = await this.nextMaintenance(batchId, runId, opts.preflight === true);
     if (!(await this.organization.current(batchId)))
       return { batchId, done: true, interrupted: true, items: [] };
     if (!ownsCandidateTurn(this.deps.db, batchId)) return { batchId, done: false, items: [] };
@@ -432,7 +462,11 @@ export class KnowledgeEngine {
       this.deps.getSettings().knowledge.maxFrontierChars,
     );
   }
-  private async nextMaintenance(batchId: string, runId: string): Promise<KnowledgeFrontierView> {
+  private async nextMaintenance(
+    batchId: string,
+    runId: string,
+    preflight: boolean,
+  ): Promise<KnowledgeFrontierView> {
     if (this.batch(batchId, runId).status === "abandoned")
       return { batchId, done: true, interrupted: true, items: [] };
     if (!ownsCandidateTurn(this.deps.db, batchId)) return { batchId, done: false, items: [] };
@@ -480,6 +514,7 @@ export class KnowledgeEngine {
         };
       const depth = Math.min(...unresolved.map((item) => item.depth));
       const offered: KnowledgeFrontierView["items"] = [];
+      let held = false;
       let offeredSources = 0;
       let remainingChars =
         cfg.maxFrontierChars - JSON.stringify({ batchId, done: false, items: [] }).length;
@@ -634,50 +669,85 @@ export class KnowledgeEngine {
           const settleBelow = source
             ? this.deps.getSettings().thresholds.discovery
             : this.deps.getSettings().thresholds.impact;
-          const score =
+          const judged = !(
             isReview ||
             isDiscoveryTarget ||
             isInitialRoot ||
             rootContextUnavailable ||
             node?.validity === "stale" ||
             (source && sourceHasDiscoveryObligation(this.deps.db, source.id))
-              ? null
-              : await judgeKnowledge(
-                  this.deps.decisions,
-                  source ? "discovery" : "impact",
-                  source
-                    ? discoveryDecisionState(source)
-                    : {
-                        inputVersions: item.inputVersions,
-                        node,
-                        changedInputs,
-                        ...(rootOrientation ? { orientation: rootOrientation } : {}),
+          );
+          // A routine source the gate would judge waits out a decision outage
+          // before any agent turn, rather than failing open into a model run.
+          // Only while a decision model is assigned (an unassigned role never
+          // answers, so nothing waits for it) and for at most `routineDelay`
+          // from the outage's start; after that the gate fails open as before.
+          const holdable =
+            preflight &&
+            judged &&
+            !!source &&
+            !!this.deps.decisions.getDecision?.() &&
+            this.batchTier(batchId) === "routine";
+          const outage = this.decisionOutage;
+          if (
+            holdable &&
+            outage &&
+            this.deps.clock() < outage.retryAt &&
+            this.deps.clock() < outage.since + cfg.routineDelayMs
+          ) {
+            held = true;
+            continue;
+          }
+          const verdict = !judged
+            ? { score: null, failed: false }
+            : await judgeKnowledgeVerdict(
+                this.deps.decisions,
+                source ? "discovery" : "impact",
+                source
+                  ? discoveryDecisionState(source)
+                  : {
+                      inputVersions: item.inputVersions,
+                      node,
+                      changedInputs,
+                      ...(rootOrientation ? { orientation: rootOrientation } : {}),
+                    },
+                {
+                  runId,
+                  batchId,
+                  nodeId: item.nodeId,
+                  threshold: settleBelow,
+                  payloadCapture:
+                    (await knowledgeSelectionReads(this.deps).knowledgeDecisionPayloadSubjects(
+                      {
+                        sourceIds: source ? [source.id] : changedInputs.map((input) => input.id),
+                        nodeIds: source
+                          ? []
+                          : [item.nodeId, ...(rootOrientation ?? []).map((input) => input.id)],
+                        nodeRevisions: node
+                          ? Object.fromEntries(
+                              [node, ...(rootOrientation ?? [])].map((input) => [
+                                input.id,
+                                input.revision,
+                              ]),
+                            )
+                          : undefined,
                       },
-                  {
-                    runId,
-                    batchId,
-                    nodeId: item.nodeId,
-                    threshold: settleBelow,
-                    payloadCapture:
-                      (await knowledgeSelectionReads(this.deps).knowledgeDecisionPayloadSubjects(
-                        {
-                          sourceIds: source ? [source.id] : changedInputs.map((input) => input.id),
-                          nodeIds: source
-                            ? []
-                            : [item.nodeId, ...(rootOrientation ?? []).map((input) => input.id)],
-                          nodeRevisions: node
-                            ? Object.fromEntries(
-                                [node, ...(rootOrientation ?? [])].map((input) => [
-                                  input.id,
-                                  input.revision,
-                                ]),
-                              )
-                            : undefined,
-                        },
-                        payloadGeneration,
-                      )) ?? undefined,
-                  },
-                );
+                      payloadGeneration,
+                    )) ?? undefined,
+                },
+              );
+          if (verdict.failed) {
+            const at = this.deps.clock();
+            this.decisionOutage = {
+              since: this.decisionOutage?.since ?? at,
+              retryAt: at + cfg.soonDelayMs,
+            };
+            if (holdable && at < this.decisionOutage.since + cfg.routineDelayMs) {
+              held = true;
+              continue;
+            }
+          } else if (verdict.score !== null) this.decisionOutage = null;
+          const score = verdict.score;
           if (
             !isReview &&
             !isDiscoveryTarget &&
@@ -783,6 +853,18 @@ export class KnowledgeEngine {
         offered.push(fitted);
         if (item.nodeId.startsWith("source:")) offeredSources++;
         remainingChars -= JSON.stringify(fitted).length + progressChars + 1;
+      }
+      if (held && this.decisionOutage) {
+        const outage = this.decisionOutage;
+        this.deps.log.info(
+          `Maintenance batch ${batchId} waits for the decision model before its agent turn`,
+        );
+        return {
+          batchId,
+          done: false,
+          items: [],
+          heldUntil: Math.min(outage.retryAt, outage.since + cfg.routineDelayMs),
+        };
       }
       if (offered.length) return { batchId, done: false, items: offered };
     }
