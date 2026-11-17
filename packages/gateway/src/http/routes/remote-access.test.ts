@@ -10,6 +10,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { SCOPE_ADMIN } from "@omnesis/types";
 import { AddressChecks } from "../../remote-access/address-check.js";
 import { McpAddresses } from "../../remote-access/mcp-addresses.js";
+import { fixedPublicAddress, type PublicAddressSource } from "../../public-address.js";
 import { RemoteAccessSettingsStore } from "../../remote-access/settings.js";
 import { errorResponse, HttpError } from "../errors.js";
 import { strictRoute } from "../scope.js";
@@ -29,7 +30,12 @@ afterEach(() => {
   rmSync(dir, { recursive: true, force: true });
 });
 
-function app({ stepUp = false, configured = null as string | null, hostRunning = false } = {}) {
+function app({
+  stepUp = false,
+  configured = null as string | null,
+  hostRunning = false,
+  publicAddress = fixedPublicAddress(configured ?? undefined) as PublicAddressSource,
+} = {}) {
   const host = {
     status: vi.fn(async () =>
       hostRunning
@@ -90,7 +96,7 @@ function app({ stepUp = false, configured = null as string | null, hostRunning =
     checks,
     mcpAddresses: new McpAddresses({
       settings,
-      publicBaseUrl: () => "https://omnesis.example.org",
+      publicBaseUrl: () => publicAddress.baseUrl(),
       relayOrigin: () => "https://gw-fictional.relay.example.net",
       relayState: async () => ({
         origin: "https://gw-fictional.relay.example.net",
@@ -100,8 +106,7 @@ function app({ stepUp = false, configured = null as string | null, hostRunning =
       hostTailscale: host,
     }),
     hostTailscale: host,
-    servingPublicBaseUrl: () => null,
-    configuredPublicBaseUrl: () => configured,
+    publicAddress,
   });
   const send = (
     method: string,
@@ -135,6 +140,36 @@ describe("remote access routes", () => {
     }
   });
 
+  test("the public address is the one in use now, and says when the environment sets it", async () => {
+    vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "1");
+    let address: string | undefined;
+    let fromEnvironment = false;
+    const { send } = app({
+      publicAddress: {
+        baseUrl: () => address,
+        mcpResourceUrls: () => (address ? [`${address}/mcp`] : []),
+        setByEnvironment: () => fromEnvironment,
+      },
+    });
+    const read = async () =>
+      (await (await send("GET", "/admin/remote-access")).json()).publicBaseUrl;
+    expect(await read()).toEqual({ configured: null, setByEnvironment: false, way: null });
+    // Saved while the gateway runs: the next read has it, with no restart.
+    address = "https://omnesis.example.org";
+    expect(await read()).toEqual({
+      configured: "https://omnesis.example.org",
+      setByEnvironment: false,
+      way: null,
+    });
+    address = "https://env.example.org";
+    fromEnvironment = true;
+    expect(await read()).toEqual({
+      configured: "https://env.example.org",
+      setByEnvironment: true,
+      way: null,
+    });
+  });
+
   test("with the relay only, the setup's state exists and Tailscale on the host does not", async () => {
     vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "1");
     const { send } = app({ configured: "https://omnesis.example.org" });
@@ -144,9 +179,8 @@ describe("remote access routes", () => {
       first: "tailscale",
       features: { cloudRelay: true, tailscaleEmbed: false },
       publicBaseUrl: {
-        serving: null,
         configured: "https://omnesis.example.org",
-        restartNeeded: true,
+        setByEnvironment: false,
         way: null,
       },
       mcpAddresses: [
@@ -278,7 +312,10 @@ describe("remote access routes", () => {
   test("lists every address with its switch, on until the owner turns it off", async () => {
     vi.stubEnv("OMNESIS_TAILSCALE_EMBED_ENABLED", "1");
     vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "1");
-    const { send, settings, tailscale } = app({ hostRunning: true });
+    const { send, settings, tailscale } = app({
+      configured: "https://omnesis.example.org",
+      hostRunning: true,
+    });
     const rows = (body: { mcpAddresses: Array<{ id: string; enabled: boolean }> }) =>
       Object.fromEntries(body.mcpAddresses.map((row) => [row.id, row.enabled]));
     const before = await (await send("GET", "/admin/remote-access")).json();

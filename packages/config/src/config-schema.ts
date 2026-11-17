@@ -2112,7 +2112,7 @@ const gateway = z
         message: "publicBaseUrl must not have a trailing slash",
       })
       .describe(
-        "Externally-reachable HTTPS base URL for MCP OAuth and provider callbacks. Required for remote MCP access; no trailing slash.",
+        "Externally-reachable HTTPS base URL for MCP OAuth and provider callbacks. Required for remote MCP access; no trailing slash. Takes effect without a restart; OMNESIS_PUBLIC_BASE_URL, when set, wins over it.",
       )
       .optional(),
     /**
@@ -2148,7 +2148,9 @@ const gateway = z
           .url(),
       )
       .max(16)
-      .describe("Additional trusted external URLs for the gateway's MCP protected resource.")
+      .describe(
+        "Additional trusted external URLs for the gateway's MCP protected resource. Takes effect without a restart.",
+      )
       .optional(),
   })
   .strict()

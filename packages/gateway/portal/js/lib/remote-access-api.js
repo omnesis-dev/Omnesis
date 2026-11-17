@@ -14,7 +14,8 @@ import { adminJsonRequest } from "./admin-request.js";
 const remoteAccessRequest = adminJsonRequest("/admin/remote-access", "Remote access");
 
 /**
- * `{ setupCompletedAt, first, features, publicBaseUrl: { serving, configured, restartNeeded } }`.
+ * `{ setupCompletedAt, first, features, publicBaseUrl: { configured, setByEnvironment } }`:
+ * `configured` is the public address in use now, or null.
  */
 export const getRemoteAccess = (signal) => remoteAccessRequest("GET", "", { signal });
 

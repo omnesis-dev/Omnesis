@@ -163,10 +163,10 @@ export function mountDeviceRoutes(app: RouteApp, deps: AdminRoutesDeps): void {
     sourceService,
   } = deps;
   const pairingQrService = new PairingQrService({
-    strictPinOrigins:
-      cloudRelayEnabled() && process.env.OMNESIS_CLOUD_RELAY_URL && deps.publicBaseUrl
-        ? [deps.publicBaseUrl]
-        : [],
+    strictPinOrigins: () => {
+      const address = deps.publicBaseUrl?.();
+      return cloudRelayEnabled() && process.env.OMNESIS_CLOUD_RELAY_URL && address ? [address] : [];
+    },
     // A gateway connected from the portal gets its address at run time, so it
     // is read from the management service on every request.
     relayAddress:

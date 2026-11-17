@@ -38,6 +38,7 @@ import {
 import { scope } from "../scope.js";
 import { requireStepUp } from "../step-up.js";
 import { validateJson } from "../validate.js";
+import type { PublicAddressSource } from "../../public-address.js";
 import type { HostTailscaleService } from "../../remote-access/host-tailscale.js";
 import type { RouteApp } from "./types.js";
 
@@ -66,10 +67,8 @@ export interface RemoteAccessRouteOptions {
   checks: AddressChecks;
   /** Tailscale already on this computer; present only with the Tailscale opt-in. */
   hostTailscale?: HostTailscaleService;
-  /** The public address the running gateway serves, read once at start. */
-  servingPublicBaseUrl: () => string | null;
-  /** The public address in the config file, which the next start serves. */
-  configuredPublicBaseUrl: () => string | null;
+  /** The gateway's public address, which applies as soon as it is saved. */
+  publicAddress?: PublicAddressSource;
   /** Which addresses away from home answer MCP. */
   mcpAddresses: McpAddresses;
 }
@@ -103,8 +102,7 @@ export function mountRemoteAccessRoutes(app: RouteApp, options: RemoteAccessRout
       }
     });
   const state = async () => {
-    const serving = options.servingPublicBaseUrl();
-    const configured = options.configuredPublicBaseUrl();
+    const configured = options.publicAddress?.baseUrl() ?? null;
     // The stored MCP choices are only the owner's departures from the default; the list says
     // where MCP answers.
     const { mcp, ...choices } = options.settings.get();
@@ -116,10 +114,9 @@ export function mountRemoteAccessRoutes(app: RouteApp, options: RemoteAccessRout
       ...choices,
       features: { cloudRelay: cloudRelayEnabled(), tailscaleEmbed: tailscaleEmbedEnabled() },
       publicBaseUrl: {
-        serving,
         configured,
-        // A changed address takes effect when the gateway starts again.
-        restartNeeded: (configured ?? null) !== (serving ?? null),
+        // OMNESIS_PUBLIC_BASE_URL sets it, so one saved in the config changes nothing.
+        setByEnvironment: options.publicAddress?.setByEnvironment() ?? false,
         // The way in this address belongs to when it is not the owner's own domain:
         // "relay", "tailnet" or "host"; null for the owner's own.
         way,

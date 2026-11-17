@@ -11,7 +11,7 @@ import { getHostTailscale } from "../../lib/remote-access-api.js";
 import { relayPhase, relayEstablished } from "../relay.js";
 import { tailscalePhase } from "../tailscale.js";
 import { devicePolicies } from "./devices-step.js";
-import { POLICY_SUMMARY, RESTART_COMMAND, accountState, listSentence, orderSentence } from "./model.js";
+import { POLICY_SUMMARY, accountState, listSentence, orderSentence } from "./model.js";
 
 /** The detail pages the summary links to. */
 export const ACCOUNT_PAGE = "/portal/settings/account";
@@ -130,8 +130,6 @@ export function Summary({ remote, relay, tailscale, headingRef, onReview, onMana
       <p>
         ${ways.length ? `${capitalized(listSentence(ways))}. ` : "Home network only. "}${orderSentence({ tailscaleOn, relayOn, first: remote.first })}
       </p>
-      ${remote.publicBaseUrl?.restartNeeded &&
-      html`<p class="remote-access-warning">Restart the gateway to use its new address: <code>${RESTART_COMMAND}</code></p>`}
     <//>
     <${Card} title="New devices"><p>${devices}</p><//>
     <div class="remote-access-buttons">
