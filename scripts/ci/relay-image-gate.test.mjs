@@ -9,7 +9,7 @@ import {
   REQUIRED_STEPS,
   checkValidationRun,
   validateValidationRun,
-} from "./cloud-relay-image-gate.mjs";
+} from "./relay-image-gate.mjs";
 
 const source = "a".repeat(40);
 const makeRun = (overrides = {}) => ({
@@ -40,7 +40,7 @@ const makeJobs = () =>
     })),
   }));
 
-describe("F9: the cloud relay image is built only for a fully validated commit of main", () => {
+describe("F9: relay images are built only for a fully validated commit of main", () => {
   test("a complete green all-lanes dispatch on main passes, with optional jobs skipped", () => {
     const jobs = [
       ...makeJobs(),
@@ -203,7 +203,7 @@ describe("F9: the cloud relay image is built only for a fully validated commit o
 
 describe("F9: the image workflow", () => {
   const workflow = readFileSync(
-    new URL("../../.github/workflows/cloud-relay-image.yml", import.meta.url),
+    new URL("../../.github/workflows/relay-image.yml", import.meta.url),
     "utf8",
   );
   const job = (name) => {
@@ -227,27 +227,63 @@ describe("F9: the image workflow", () => {
     expect(workflow).toMatch(/\npermissions: \{\}\n/u);
   });
 
+  const RELAYS = [
+    [
+      "cloud-relay",
+      "ghcr.io/omnesis-dev/omnesis-cloud-relay",
+      "packages/cloud-relay/deploy/Dockerfile",
+    ],
+    ["push-relay", "ghcr.io/omnesis-dev/omnesis-push-relay", "packages/relay/Dockerfile"],
+  ];
+
   test("only the main branch of this repository builds or signs", () => {
     expect(job("gate")).toContain("github.repository == 'omnesis-dev/Omnesis'");
     expect(job("gate")).toContain("github.ref == 'refs/heads/main'");
-    expect(job("build")).toMatch(/needs: gate\n/u);
-    expect(job("sign")).toMatch(/needs: \[gate, build\]/u);
+    for (const [relay] of RELAYS) {
+      expect(job(`build-${relay}`)).toMatch(/needs: gate\n/u);
+      expect(job(`sign-${relay}`)).toContain(`needs: [gate, build-${relay}]`);
+    }
   });
 
-  test("only the signing job can request an identity token", () => {
+  test("builds both relays, each from its own Dockerfile into its own repository", () => {
+    expect(workflow).toContain("CLOUD_RELAY_IMAGE: ghcr.io/omnesis-dev/omnesis-cloud-relay\n");
+    expect(workflow).toContain("PUSH_RELAY_IMAGE: ghcr.io/omnesis-dev/omnesis-push-relay\n");
+    for (const [relay, image, dockerfile] of RELAYS) {
+      const build = job(`build-${relay}`);
+      expect(build).toContain(`file: ${dockerfile}\n`);
+      expect(build).toContain("platforms: linux/amd64");
+      expect(build).toContain(
+        "org.opencontainers.image.revision=${{ needs.gate.outputs.source_sha }}",
+      );
+      expect(build).toContain("Smoke-test the pushed image");
+      expect(job(`sign-${relay}`)).toContain(`IMAGE: ${image}\n`);
+      expect(job(`sign-${relay}`)).toContain(`subject-name: ${image}\n`);
+    }
+  });
+
+  test("only the signing jobs can request an identity token", () => {
     expect(job("gate")).not.toContain("id-token");
-    expect(job("build")).not.toContain("id-token");
-    expect(job("sign")).toContain("id-token: write");
     expect(job("gate")).not.toContain("packages: write");
+    for (const [relay] of RELAYS) {
+      expect(job(`build-${relay}`)).not.toContain("id-token");
+      expect(job(`sign-${relay}`)).toContain("id-token: write");
+    }
   });
 
-  test("the signing job runs no repository code and signs the built digest", () => {
-    const sign = job("sign");
-    expect(sign).not.toContain("actions/checkout");
-    expect(sign).not.toMatch(/npm |node scripts/u);
-    expect(sign).toContain("needs.build.outputs.digest");
-    expect(sign).toContain("dev.omnesis.source-sha=");
-    expect(sign).toContain("--certificate-identity");
+  test("the signing jobs run no repository code and sign their own build's digest", () => {
+    for (const [relay] of RELAYS) {
+      const sign = job(`sign-${relay}`);
+      expect(sign).not.toContain("actions/checkout");
+      expect(sign).not.toMatch(/npm |node scripts/u);
+      expect(sign).toContain(`needs.build-${relay}.outputs.digest`);
+      for (const [other] of RELAYS)
+        if (other !== relay) expect(sign).not.toContain(`build-${other}`);
+      expect(sign).toContain("dev.omnesis.source-sha=");
+      expect(sign).toContain("--certificate-identity");
+    }
+    expect(workflow).toContain(
+      "IDENTITY: https://github.com/omnesis-dev/Omnesis/.github/workflows/relay-image.yml@refs/heads/main",
+    );
   });
 
   test("every action is pinned to a commit and cosign to a checksum", () => {
