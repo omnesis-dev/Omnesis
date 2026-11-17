@@ -223,7 +223,7 @@ internal fun SourceFilterPicker(
                                 ChoiceRow("Select this $level", isSelected(current.ref), picker.countOf(current), last = options.isEmpty() && addresses.isEmpty()) { toggle(current.ref) }
                             }
                             itemsIndexed(options, key = { _, item -> filterRefKey(item.ref) }) { index, item ->
-                                ChoiceRow(if (browsing) item.shortLabel ?: item.label else item.label, isSelected(item.ref), item.count,
+                                ChoiceRow(if (browsing) item.shortLabel ?: item.label else item.label, isSelected(item.ref), item.count, detail = personAddressLine(item.ref),
                                     last = index == options.lastIndex && more == null && addresses.isEmpty(),
                                     open = if (item.hasChildren == true) { { picker.open(item) } } else null) { toggle(item.ref) }
                             }
@@ -310,14 +310,17 @@ internal const val FIELD_UNAVAILABLE_MESSAGE = "This version of Omnesis can’t 
 
 /** One choice: a tick box, its name, how many records it matches (a spinner while counted), and for a folder with subfolders a way in. */
 @Composable
-private fun ChoiceRow(label: String, checked: Boolean, count: Long?, last: Boolean, open: (() -> Unit)? = null, toggle: () -> Unit) {
+private fun ChoiceRow(label: String, checked: Boolean, count: Long?, last: Boolean, detail: String? = null, open: (() -> Unit)? = null, toggle: () -> Unit) {
     val colors = AccessUi.colors
     Column(Modifier.fillMaxWidth()) {
         Row(Modifier.fillMaxWidth().heightIn(min = 56.dp), verticalAlignment = Alignment.CenterVertically) {
             Row(Modifier.weight(1f).toggleable(value = checked, role = Role.Checkbox, onValueChange = { toggle() }).padding(vertical = 14.dp),
                 verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 AccessCheckMark(checked)
-                Text(label, style = AccessType.RowTitle.copy(fontWeight = FontWeight.Normal), color = colors.primary, maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text(label, style = AccessType.RowTitle.copy(fontWeight = FontWeight.Normal), color = colors.primary, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    if (detail != null) Text(detail, style = AccessType.RowSecondary, color = colors.secondary, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                }
                 if (count != null) AccessMatchCount(count) else AccessSpinner()
             }
             if (open != null) Box(Modifier.size(44.dp).clickable(role = Role.Button, onClick = open).semantics { contentDescription = "Open $label" }, contentAlignment = Alignment.CenterEnd) {
@@ -354,6 +357,17 @@ private fun addressTitle(type: String): String = when (type) {
     "email" -> "Email address"
     "domain" -> "Email domain"
     else -> "Address"
+}
+
+/**
+ * The addresses a known person is matched by, for the line under their name: the first three, then how many more.
+ * Null for any other entry, and for an address typed by hand, which is already its own name.
+ */
+internal fun personAddressLine(ref: FilterRef): String? {
+    val identifiers = ref.identifiers.orEmpty().takeIf { ref.isPerson && it.isNotEmpty() } ?: return null
+    if (identifiers.size == 1 && identifiers.single().value == ref.label) return null
+    val shown = identifiers.take(3).joinToString(", ") { it.value }
+    return if (identifiers.size > 3) "$shown and ${identifiers.size - 3} more" else shown
 }
 
 /** The action that adds a typed address, naming only the kinds the source accepts: "Add an email, domain or phone number". */

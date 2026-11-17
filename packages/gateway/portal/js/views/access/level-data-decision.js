@@ -62,11 +62,11 @@ export function LevelDataDecision({
     ${
       all.length
         ? html`<label class="guided-source-search"
-              >Find an account<input
+              >Find a source<input
                 type="search"
                 value=${query}
                 onInput=${(event) => setQuery(event.currentTarget.value)}
-                placeholder="Search accounts"
+                placeholder="Search sources"
             /></label>
             <div class="guided-source-tools">
               <span

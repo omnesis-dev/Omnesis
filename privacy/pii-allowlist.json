@@ -3343,6 +3343,7 @@
         "packages/providers/immich/src/source.test.ts",
         "packages/providers/strava/src/broker.test.ts",
         "packages/core/src/filter-identifiers.test.ts",
+        "packages/gateway/portal/js/components/source-filter-editor.test.ts",
         "packages/gateway/src/access/filter-decision.test.ts",
         "packages/gateway/src/access/filter-editor-reads.test.ts",
         "packages/gateway/src/access/filter-people.test.ts",

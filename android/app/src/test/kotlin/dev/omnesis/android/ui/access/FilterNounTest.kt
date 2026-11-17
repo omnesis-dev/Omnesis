@@ -22,6 +22,14 @@ class FilterNounTest {
         assertEquals("Shelf or binder", filterEntryCaption(ref(shelves, "d"), shelves, -1))
         assertEquals("All shelves", shelves.rootLabel(showDeviceLevel = false))
     }
+    @Test fun aKnownPersonListsTheAddressesTheyAreMatchedByAndATypedAddressListsNone() {
+        fun email(value: String) = FilterIdentifier("email", value)
+        assertEquals("maya@example.com, m.reeves@example.org", personAddressLine(FilterRef.person("Maya Reeves", listOf(email("maya@example.com"), email("m.reeves@example.org")))))
+        assertEquals("jamie1@example.io, jamie2@example.io, jamie3@example.io and 2 more", personAddressLine(FilterRef.person("Jamie Lopez", (1..5).map { email("jamie$it@example.io") })))
+        assertNull(personAddressLine(FilterRef.person("david@example.com", listOf(email("david@example.com")))))
+        assertEquals("david@example.com", personAddressLine(FilterRef.person("David Lin", listOf(email("david@example.com")))))
+        assertNull(personAddressLine(ref(labels, "a")))
+    }
     @Test fun aPerDeviceTreeStartsAtTheDevicesOnlyWhenTheAccountHasSeveral() {
         assertEquals("All devices", folders.rootLabel(showDeviceLevel = true))
         assertEquals("All project folders", folders.rootLabel(showDeviceLevel = false))

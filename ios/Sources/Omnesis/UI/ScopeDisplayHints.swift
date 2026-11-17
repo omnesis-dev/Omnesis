@@ -146,6 +146,15 @@ func scopePickerRowTitle(_ item: ScopeOption, inTree: Bool, searching: Bool) -> 
     inTree && !searching ? item.shortLabel : item.label
 }
 
+/// The addresses a known person is matched by, for the line under their name: the first three, then how many
+/// more. Nil for any other entry, and for an address typed by hand, which is already its own title.
+func scopePickerAddressLine(_ ref: ScopeRef) -> String? {
+    guard ref.capability == "person", let identifiers = ref.identifiers, !identifiers.isEmpty else { return nil }
+    if identifiers.count == 1, identifiers[0].value == ref.label { return nil }
+    let shown = identifiers.prefix(3).map(\.value).joined(separator: ", ")
+    return identifiers.count > 3 ? "\(shown) and \(identifiers.count - 3) more" : shown
+}
+
 /// What an empty list of a field's items says: "No labels match this search." or "No folders here."
 func scopePickerEmptyText(_ many: String, searching: Bool) -> String {
     searching ? "No \(many) match this search." : "No \(many) here."

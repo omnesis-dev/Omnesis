@@ -7,6 +7,7 @@ import { checkFilterIdentifier } from "../api.js";
 import { useScopeLabelGeneration } from "./source-filter-labels.js";
 import { readFilterOptions } from "./source-filter-requests.js";
 import {
+  exactIdentifier,
   fieldLevelNoun,
   fieldNoun,
   fieldSearchPrompt,
@@ -18,6 +19,35 @@ import { identifierRef, isDeviceRef, scopeRefKey } from "./source-filter-state.j
 
 /** Pages of one field's items kept per picker, so going back up a tree is instant. */
 const RETAINED_PAGES = 16;
+
+/** Addresses a person's card lists before it says how many more there are. */
+const CARD_ADDRESSES = 12;
+
+/** The addresses a known person is matched by, or none for any other entry. */
+export function personAddresses(ref) {
+  return ref?.capability === "person" && !exactIdentifier(ref) ? (ref.identifiers ?? []) : [];
+}
+
+/** Room a person's card needs beside the list: its widest size and a gap on each side. */
+const CARD_BESIDE = 260 + 16;
+
+/**
+ * Where a person's card goes for the row it describes: beside the list when
+ * the window has room there, so it covers no other row; otherwise under the
+ * row, or above it when the row sits in the lower half of the window.
+ */
+export function personCardPlacement(rect, viewport) {
+  const lower = rect.top > viewport.height / 2;
+  if (viewport.width - rect.right >= CARD_BESIDE)
+    return {
+      left: rect.right + 8,
+      ...(lower ? { bottom: viewport.height - rect.bottom } : { top: rect.top }),
+    };
+  return {
+    left: Math.max(8, rect.left),
+    ...(lower ? { bottom: viewport.height - rect.top + 4 } : { top: rect.bottom + 4 }),
+  };
+}
 
 /**
  * One field's items, to tick into a filter: searched, or browsed level by
@@ -44,6 +74,19 @@ export function SourceFilterPicker({
   const results = useRef(null);
   const restoringFocus = useRef(false);
   const resultsId = useId();
+  const cardId = useId();
+  // The person whose addresses are shown: the row pointed at, or the one holding focus.
+  const [card, setCard] = useState(null);
+  const showCard = (item, row) =>
+    setCard({
+      key: scopeRefKey(item.ref),
+      label: item.label,
+      addresses: personAddresses(item.ref),
+      ...personCardPlacement(row.getBoundingClientRect(), {
+        width: window.innerWidth,
+        height: window.innerHeight,
+      }),
+    });
   const visibleActive = active && (!overlay || open);
   const sourceId = accountIdOf(source);
   const sourceKey = `${sourceId}:${field.field}`;
@@ -187,6 +230,14 @@ export function SourceFilterPicker({
     document.addEventListener("pointerdown", dismiss);
     return () => document.removeEventListener("pointerdown", dismiss);
   }, [overlay, open, onClose]);
+  // A card is placed for where its row was, so it goes when the list moves or closes.
+  useEffect(() => {
+    if (!card) return;
+    if (!visibleActive) return setCard(null);
+    const hide = () => setCard(null);
+    window.addEventListener("scroll", hide, true);
+    return () => window.removeEventListener("scroll", hide, true);
+  }, [card, visibleActive]);
   const retained = catalogues.current.get(identity);
   const visible =
     state.identity === identity
@@ -297,12 +348,21 @@ export function SourceFilterPicker({
       <ul class="source-filter-options">
         ${visible.items.map((item) => {
           const label = browsable && !query ? item.shortLabel || item.label : item.label;
-          return html`<li key=${scopeRefKey(item.ref)}>
+          const described = personAddresses(item.ref).length > 0;
+          const shown = described && card?.key === scopeRefKey(item.ref);
+          return html`<li
+            key=${scopeRefKey(item.ref)}
+            onMouseEnter=${described ? (event) => showCard(item, event.currentTarget) : undefined}
+            onMouseLeave=${described ? () => setCard(null) : undefined}
+            onFocusIn=${described ? (event) => showCard(item, event.currentTarget) : undefined}
+            onFocusOut=${described ? () => setCard(null) : undefined}
+          >
             <label
               ><input
                 type="checkbox"
                 checked=${keys.has(scopeRefKey(item.ref))}
                 disabled=${disabled}
+                aria-describedby=${shown ? cardId : undefined}
                 onChange=${() => onToggle(item.ref, item)}
               /><span>${label}</span>${Number.isFinite(item.count) ? html`<small>${item.count.toLocaleString()} matching</small>` : html`<${CountSpinner} />`}</label
             >
@@ -327,6 +387,27 @@ export function SourceFilterPicker({
           : null
       }
     </div>
+    ${
+      card
+        ? html`<div
+            class="source-filter-person-card"
+            role="tooltip"
+            id=${cardId}
+            style=${{
+              left: `${card.left}px`,
+              top: card.top === undefined ? "auto" : `${card.top}px`,
+              bottom: card.bottom === undefined ? "auto" : `${card.bottom}px`,
+            }}
+          >
+            <strong>${card.label}</strong>
+            <span>${card.addresses.length === 1 ? "Matched by this address" : `Matched by any of these ${card.addresses.length} addresses`}</span>
+            <ul>
+              ${card.addresses.slice(0, CARD_ADDRESSES).map((id) => html`<li key=${`${id.type}:${id.value}`}>${id.value}</li>`)}
+            </ul>
+            ${card.addresses.length > CARD_ADDRESSES ? html`<span>${`and ${card.addresses.length - CARD_ADDRESSES} more`}</span>` : null}
+          </div>`
+        : null
+    }
   </section>`;
 }
 

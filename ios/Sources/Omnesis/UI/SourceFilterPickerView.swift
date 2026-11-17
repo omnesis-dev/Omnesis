@@ -342,6 +342,7 @@ struct SourceFilterPickerView: View {
         return AccessRow(last: last, dividerInset: AccessUI.controlSize + AccessUI.iconGap) {
             HStack(spacing: 12) {
                 checkButton(title, item: item).accessibilityLabel("Select \(title)")
+                    .accessibilityValue(scopePickerAddressLine(item.ref) ?? "")
                 if item.hasChildren == true, query.isEmpty {
                     Button { open(item) } label: {
                         Image(systemName: "chevron.right")
@@ -362,7 +363,13 @@ struct SourceFilterPickerView: View {
         Button { selected(item.ref) } label: {
             HStack(alignment: .center, spacing: AccessUI.iconGap) {
                 AccessControlMark(kind: .checkbox, selected: isSelected(item.ref))
-                Text(title).accessText(.rowTitle).fontWeight(.regular).multilineTextAlignment(.leading)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title).accessText(.rowTitle).fontWeight(.regular).multilineTextAlignment(.leading)
+                    if let addresses = scopePickerAddressLine(item.ref) {
+                        Text(addresses).accessText(.rowSecondary, color: AccessUI.secondary)
+                            .multilineTextAlignment(.leading).lineLimit(2)
+                    }
+                }
                 Spacer(minLength: 0)
                 AccessMatchCount(count: item.count, counting: item.count == nil)
             }

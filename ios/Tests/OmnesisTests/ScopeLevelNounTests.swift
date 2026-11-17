@@ -59,6 +59,18 @@ final class ScopeLevelNounTests: XCTestCase {
         XCTAssertEqual(scopePickerRowTitle(repository, inTree: false, searching: false), "northstar-labs/atlas-api")
     }
 
+    func testAKnownPersonListsTheAddressesTheyAreMatchedByAndATypedAddressListsNone() {
+        let email = { ScopeIdentifier(type: "email", value: $0) }
+        let two = ScopeRef.person(label: "Maya Reeves", identifiers: [email("maya@example.com"), email("m.reeves@example.org")])
+        XCTAssertEqual(scopePickerAddressLine(two), "maya@example.com, m.reeves@example.org")
+        let five = ScopeRef.person(label: "Jamie Lopez", identifiers: (1...5).map { email("jamie\($0)@example.io") })
+        XCTAssertEqual(scopePickerAddressLine(five), "jamie1@example.io, jamie2@example.io, jamie3@example.io and 2 more")
+        // An address typed by hand is its own title; a person known by one address still shows it.
+        XCTAssertNil(scopePickerAddressLine(.person(label: "david@example.com", identifiers: [email("david@example.com")])))
+        XCTAssertEqual(scopePickerAddressLine(.person(label: "David Lin", identifiers: [email("david@example.com")])), "david@example.com")
+        XCTAssertNil(scopePickerAddressLine(.tree(field: "extra.repositoryIds", id: "repo:5201")))
+    }
+
     func testARememberedNameKeepsTheWordALaterHintDoesNotCarry() {
         let item = ScopeRef.tree(field: "extra.repositoryIds", id: "repo:5201")
         let listed = ScopeItemHint(ref: item, label: "northstar-labs/atlas-api", count: 19, noun: "repository")

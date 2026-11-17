@@ -308,9 +308,44 @@ p > .source-filter-spinner,
   min-width: 0;
   min-height: 32px;
 }
-.source-filter-options label > span {
+.source-filter-options label > span:not(.source-filter-spinner) {
   flex: 1;
   min-width: 0;
+}
+.source-filter-options label > .source-filter-spinner {
+  flex: none;
+}
+/* Placed by the picker for the row it describes; never takes the pointer from the list under it. */
+.source-filter-person-card {
+  position: fixed;
+  z-index: 6;
+  display: grid;
+  gap: 4px;
+  max-width: min(260px, calc(100vw - 16px));
+  padding: 10px 12px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: 0 8px 24px #0003;
+  color: var(--text-primary);
+  font-size: 12px;
+  pointer-events: none;
+}
+.source-filter-person-card strong {
+  font-size: 13px;
+}
+.source-filter-person-card > span {
+  color: var(--text-secondary);
+}
+.source-filter-person-card ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 2px;
+}
+.source-filter-person-card li {
+  overflow-wrap: anywhere;
 }
 .source-filter-options small {
   display: inline;

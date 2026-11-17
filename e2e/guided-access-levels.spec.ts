@@ -899,7 +899,7 @@ for (const theme of ["dark", "light"])
       );
       await page.goto("/portal/settings/access/levels/new");
       await forward();
-      await expect(page.getByRole("searchbox", { name: "Find an account" })).toBeVisible();
+      await expect(page.getByRole("searchbox", { name: "Find a source" })).toBeVisible();
       await page.getByRole("button", { name: "Allow all", exact: true }).click();
       const account = page
         .locator(".guided-source-row")

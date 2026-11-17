@@ -94,7 +94,7 @@ internal fun AccessDataQuestion(
                 AccessTextAction("Block all", enabled = editing && permitted(none), alignment = Alignment.CenterEnd) { choose(none) }
             }
             AccessDivider()
-            if (visible.isEmpty()) Text("No accounts match this search.", style = AccessType.Subtitle, color = colors.secondary, modifier = Modifier.padding(top = 14.dp))
+            if (visible.isEmpty()) Text("No sources match this search.", style = AccessType.Subtitle, color = colors.secondary, modifier = Modifier.padding(top = 14.dp))
         }
         visible.forEachIndexed { index, source ->
             val allowed = selection.allows(source.id)

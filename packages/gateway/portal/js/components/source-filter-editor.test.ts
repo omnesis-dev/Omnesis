@@ -16,7 +16,7 @@ vi.mock("../api.js", () => api);
 // @ts-expect-error — portal modules are plain JavaScript.
 import { SourceFilterEditor } from "./source-filter-editor.js";
 // @ts-expect-error — portal modules are plain JavaScript.
-import { SourceFilterPicker } from "./source-filter-picker.js";
+import { SourceFilterPicker, personCardPlacement } from "./source-filter-picker.js";
 // @ts-expect-error — portal modules are plain JavaScript.
 import { LevelDecisionSummary } from "../views/access/level-review.js";
 // @ts-expect-error — portal modules are plain JavaScript.
@@ -1108,4 +1108,68 @@ test("rows still being counted are counted again without losing the pages alread
   await flushUI();
   expect(rows()).toEqual(["first-page-room3 matching", "second-page-room7 matching"]);
   expect(picker.querySelector(".source-filter-spinner")).toBeNull();
+});
+
+test("a known person's row shows the addresses they are matched by while pointed at or focused; other rows show none", async () => {
+  const person = {
+    capability: "person",
+    label: "Maya Reeves",
+    identifiers: [
+      { type: "email", value: "maya@example.com" },
+      { type: "email", value: "m.reeves@example.org" },
+    ],
+  };
+  const typed = {
+    capability: "person",
+    label: "jamie@example.io",
+    identifiers: [{ type: "email", value: "jamie@example.io" }],
+  };
+  api.getSourceFilterOptions.mockReset().mockResolvedValue({
+    sourceId: source.id,
+    items: [
+      { ref: person, label: "Maya Reeves", shortLabel: "Maya Reeves", count: 0, personId: "p1" },
+      { ref: typed, label: "jamie@example.io", shortLabel: "jamie@example.io", count: 0 },
+    ],
+  });
+  await act(async () =>
+    render(
+      h(SourceFilterPicker, { source, editor: editorWith([peopleField]), field: peopleField, selected: [], onToggle: vi.fn() }),
+      host,
+    ),
+  );
+  await waitOptions();
+  await flushUI();
+  const [known, address] = [...host.querySelectorAll(".source-filter-options li")] as HTMLElement[];
+  for (const row of [known, address])
+    row.getBoundingClientRect = () => ({ top: 10, bottom: 42, left: 24, right: 424 }) as DOMRect;
+  const card = () => host.querySelector(".source-filter-person-card");
+  expect(card()).toBeNull();
+
+  await act(async () => void known.dispatchEvent(new window.Event("mouseenter")));
+  expect(card()?.getAttribute("role")).toBe("tooltip");
+  expect(card()?.querySelector("strong")?.textContent).toBe("Maya Reeves");
+  expect(card()?.textContent).toContain("Matched by any of these 2 addresses");
+  expect([...card()!.querySelectorAll("li")].map((li) => li.textContent)).toEqual([
+    "maya@example.com",
+    "m.reeves@example.org",
+  ]);
+  expect(known.querySelector("input")?.getAttribute("aria-describedby")).toBe(card()?.id);
+  await act(async () => void known.dispatchEvent(new window.Event("mouseleave")));
+  expect(card()).toBeNull();
+
+  await act(async () => void known.dispatchEvent(new window.Event("focusin", { bubbles: true })));
+  expect(card()?.textContent).toContain("maya@example.com");
+  await act(async () => void known.dispatchEvent(new window.Event("focusout", { bubbles: true })));
+  expect(card()).toBeNull();
+
+  // Beside the list where the window has room, so no other row is covered; else under or above the row.
+  const row = { top: 10, bottom: 42, left: 24, right: 424 };
+  expect(personCardPlacement(row, { width: 1280, height: 720 })).toEqual({ left: 432, top: 10 });
+  expect(personCardPlacement({ ...row, top: 600, bottom: 632 }, { width: 1280, height: 720 })).toEqual({ left: 432, bottom: 88 });
+  expect(personCardPlacement(row, { width: 440, height: 720 })).toEqual({ left: 24, top: 46 });
+  expect(personCardPlacement({ ...row, top: 600, bottom: 632 }, { width: 440, height: 720 })).toEqual({ left: 24, bottom: 124 });
+
+  // An address typed by hand is its own row label, so it has nothing more to show.
+  await act(async () => void address.dispatchEvent(new window.Event("mouseenter")));
+  expect(card()).toBeNull();
 });

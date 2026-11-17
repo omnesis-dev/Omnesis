@@ -118,7 +118,7 @@ struct AccessSourcesStep: View {
                 }
             }
             if visible.isEmpty {
-                Text("No accounts match this search.").accessText(.rowSecondary, color: AccessUI.secondary).padding(.top, 12)
+                Text("No sources match this search.").accessText(.rowSecondary, color: AccessUI.secondary).padding(.top, 12)
             }
         }
         AccessProblemText(text: decisions.problem(step))
