@@ -126,18 +126,15 @@ function app({
 }
 
 describe("remote access routes", () => {
-  test("with neither way in of its own, no route exists", async () => {
+  test("with neither way in of its own, every route still exists", async () => {
     const { send } = app();
-    for (const [method, path] of [
-      ["GET", "/admin/remote-access"],
-      ["PATCH", "/admin/remote-access"],
-      ["POST", "/admin/remote-access/check-address"],
-      ["GET", "/admin/remote-access/host-tailscale"],
-      ["POST", "/admin/remote-access/host-tailscale/publish"],
-      ["GET", "/.well-known/omnesis-address-check/abcdefghijklmnopqrstuv"],
-    ] as const) {
-      expect((await send(method, path, method === "GET" ? undefined : {})).status, path).toBe(404);
-    }
+    const state = await (await send("GET", "/admin/remote-access")).json();
+    expect(state.features).toEqual({ cloudRelay: false, tailscaleEmbed: false });
+    expect(state.mcpAddresses.map((row: { id: string }) => row.id)).toEqual(["host", "domain"]);
+    expect((await send("GET", "/admin/remote-access/host-tailscale")).status).toBe(200);
+    expect(
+      (await send("POST", "/admin/remote-access/check-address", { url: "http://x" })).status,
+    ).toBe(400);
   });
 
   test("the public address is the one in use now, and says when the environment sets it", async () => {
@@ -170,7 +167,7 @@ describe("remote access routes", () => {
     });
   });
 
-  test("with the relay only, the setup's state exists and Tailscale on the host does not", async () => {
+  test("with the relay only, the setup's state lists the relay beside this computer and the domain", async () => {
     vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "1");
     const { send } = app({ configured: "https://omnesis.example.org" });
     const state = await (await send("GET", "/admin/remote-access")).json();
@@ -194,10 +191,6 @@ describe("remote access routes", () => {
         { id: "domain", url: "https://omnesis.example.org", enabled: true, available: true },
       ],
     });
-    expect((await send("GET", "/admin/remote-access/host-tailscale")).status).toBe(404);
-    expect(
-      (await send("POST", "/admin/remote-access/host-tailscale/publish", { public: false })).status,
-    ).toBe(404);
   });
 
   test("the setup records its order and when it was finished, and refuses an empty or unknown change", async () => {

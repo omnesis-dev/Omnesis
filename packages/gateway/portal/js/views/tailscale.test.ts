@@ -24,7 +24,7 @@ vi.mock("../lib/tailscale-api.js", async (importOriginal) => ({
 }));
 
 // @ts-expect-error — portal modules are plain JS.
-import { TailscaleView, tailscalePhase } from "./tailscale.js";
+import { TailscaleView, tailscalePhase, viewedThroughDevice } from "./tailscale.js";
 
 type State = Record<string, any>;
 
@@ -279,39 +279,19 @@ describe("TailscaleView", () => {
     expect(host.querySelector("details")).toBeNull();
   });
 
-  test("join policy radios save the choice", async () => {
-    await show(connected());
-    const radios = [...host.querySelectorAll('input[name="tailscale-join-policy"]')] as HTMLInputElement[];
-    expect(radios.map((r) => r.value)).toEqual(["ask", "automatic", "off"]);
-    expect(text()).toContain("Ask me first (recommended)");
-    api.updateTailscaleSettings.mockResolvedValue(connected({ joinPolicy: "automatic" }));
-    await act(async () => {
-      radios[1].dispatchEvent(new (window as any).Event("change"));
-    });
-    await act(async () => {});
-    expect(api.updateTailscaleSettings).toHaveBeenCalledWith({ joinPolicy: "automatic" }, expect.anything());
-    expect(host.querySelector(".tailscale-option-selected")?.textContent).toContain("Join automatically");
+  test("joining devices are chosen in the Connectivity setup, not on this page", async () => {
+    await show(connected({ joinRequests: [request] }));
+    expect(host.querySelector('input[name="tailscale-join-policy"]')).toBeNull();
+    expect(host.querySelector(".tailscale-waiting-devices")).toBeNull();
+    expect(button("Approve")).toBeUndefined();
   });
 
-  test("waiting join requests are decided on Devices, which the join section links to", async () => {
-    await show(connected());
-    expect(host.querySelector(".tailscale-waiting-devices")).toBeNull();
-    expect(link("Settings, Devices")?.getAttribute("href")).toBe("/portal/settings/devices");
-    render(null, host);
-    await show(connected({ joinRequests: [request] }));
-    expect(host.querySelector(".tailscale-waiting-devices")?.textContent).toContain(
-      "A collector is waiting for your OK.",
-    );
-    render(null, host);
-    await show(connected({ joinRequests: [request, { ...request, id: "req-2" }] }));
-    expect(host.querySelector(".tailscale-waiting-devices")?.textContent).toContain(
-      "2 collectors are waiting for your OK.",
-    );
-    expect(link("Review in Devices")?.getAttribute("href")).toBe("/portal/settings/devices");
-    await act(async () => link("Review in Devices").click());
-    expect(router.navigate).toHaveBeenCalledExactlyOnceWith("/portal/settings/devices");
-    expect(button("Approve")).toBeUndefined();
-    expect(api.decideTailscaleJoin).not.toHaveBeenCalled();
+  test("signing out or turning off warns when this page is open at the device's own address", () => {
+    const state = connected();
+    const name = state.node.dnsName.replace(/\.$/u, "");
+    expect(viewedThroughDevice(state, { hostname: name.toUpperCase() })).toBe(true);
+    expect(viewedThroughDevice(state, { hostname: "198.51.100.4" })).toBe(false);
+    expect(viewedThroughDevice({ node: null }, { hostname: name })).toBe(false);
   });
 
   test("the main card renames the device and shows the gateway's validation message", async () => {
@@ -376,7 +356,7 @@ describe("TailscaleView", () => {
 
     await click("Turn off");
     expect(doc.querySelector(".confirm-modal-title")?.textContent).toBe("Turn off Tailscale?");
-    expect(text()).toContain("public address for cloud agents closes");
+    expect(text()).toContain("public address for your MCP server closes");
     api.setTailscaleEnabled.mockResolvedValue(off());
     const confirm = host.querySelector(".confirm-modal .btn-primary") as HTMLButtonElement;
     await act(async () => confirm.click());

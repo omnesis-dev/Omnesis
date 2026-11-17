@@ -217,18 +217,19 @@ describe("Settings page tabs", () => {
     // to render — so the only thing that must differ is what the bar offers.
     const shown = (experimental: boolean) =>
       (settingsTabs({ experimental }) as Array<{ key: string }>).map((t) => t.key);
-    // The relay's and the Tailscale device's pages sit behind one Remote access tab, and keep their paths.
-    expect(shown(true)).not.toContain("remote-access");
-    expect(
-      (settingsTabs({ experimental: false, cloudRelay: true }) as Array<{ key: string }>).map((tab) => tab.key),
-    ).toContain("remote-access");
-    expect(
-      (settingsTabs({ experimental: false, tailscaleEmbed: true }) as Array<{ key: string }>).map((tab) => tab.key),
-    ).toContain("remote-access");
-    for (const key of ["remote-access", "account", "tailscale"]) {
+    // Every gateway has the Connectivity tab; the pages behind it keep their own paths.
+    expect(shown(true)).toContain("connectivity");
+    expect(shown(false)).toContain("connectivity");
+    for (const key of ["connectivity", "account", "relay", "tailscale", "host-tailscale", "own-address", "mcp"]) {
       expect(SETTINGS_TAB_KEYS).toContain(key);
       expect(route(`/portal/settings/${key}`)).toMatchObject({ view: "settings", tab: key });
     }
+    // The tab's earlier name resolves to it and redirects, keeping the query string.
+    expect(route("/portal/settings/remote-access")).toMatchObject({
+      view: "settings",
+      tab: "connectivity",
+      redirectTo: "/portal/settings/connectivity",
+    });
     expect(shown(true)).toContain("sweeps");
     expect(shown(false)).not.toContain("sweeps");
     expect(SETTINGS_TAB_KEYS).toContain("sweeps");
