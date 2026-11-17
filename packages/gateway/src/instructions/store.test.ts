@@ -13,7 +13,6 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { inspectWindowsPrivatePathSync } from "@omnesis/core";
-import { canDenyFixtureReads, setFixtureMode } from "@omnesis/source-sdk/testing";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
 import {
@@ -28,6 +27,21 @@ import {
 } from "./store.js";
 
 const writing = vi.hoisted(() => ({ beforeWrite: undefined as (() => Promise<void>) | undefined }));
+const unreadablePaths = vi.hoisted(() => new Set<string>());
+
+vi.mock("node:fs", async (original) => {
+  const fs = await original<typeof import("node:fs")>();
+  return {
+    ...fs,
+    readFileSync: ((...args: Parameters<typeof fs.readFileSync>) => {
+      if (typeof args[0] === "string" && unreadablePaths.has(args[0])) {
+        throw Object.assign(new Error("Fixture instructions are unreadable"), { code: "EACCES" });
+      }
+      return fs.readFileSync(...args);
+    }) as typeof fs.readFileSync,
+  };
+});
+
 vi.mock("@omnesis/core", async (original) => {
   const core = await original<typeof import("@omnesis/core")>();
   return {
@@ -63,6 +77,7 @@ describe("OperatorInstructionsStore", () => {
 
   beforeEach(() => {
     writing.beforeWrite = undefined;
+    unreadablePaths.clear();
     dir = mkdtempSync(join(tmpdir(), "omnesis-instructions-"));
     file = join(dir, OPERATOR_INSTRUCTIONS_FILENAME);
     store = new OperatorInstructionsStore(dir);
@@ -70,6 +85,7 @@ describe("OperatorInstructionsStore", () => {
 
   afterEach(() => {
     writing.beforeWrite = undefined;
+    unreadablePaths.clear();
     rmSync(dir, { recursive: true, force: true });
   });
 
@@ -163,25 +179,23 @@ describe("OperatorInstructionsStore", () => {
     expect(store.promptText()).toBe("");
   });
 
-  test.skipIf(!canDenyFixtureReads)(
-    "reports an unreadable file as a problem, not as absent",
-    () => {
-      // Reporting "no file" for a file that plainly exists would leave the
-      // operator with nothing to act on but a log line — and would let the
-      // portal offer to create the file that is already there.
-      writeFileSync(file, "secret instructions", { encoding: "utf8", mode: 0o600 });
-      setFixtureMode(file, 0o000);
-      try {
-        const current = store.read();
-        expect(current.exists).toBe(true);
-        expect(current.problem).toBe("unreadable");
-        expect(current.content).toBe("");
-        expect(store.promptText()).toBe("");
-      } finally {
-        setFixtureMode(file, 0o600);
-      }
-    },
-  );
+  test("reports an unreadable file as a problem, not as absent", () => {
+    // Reporting "no file" for a file that plainly exists would leave the
+    // operator with nothing to act on but a log line — and would let the
+    // portal offer to create the file that is already there.
+    writeFileSync(file, "secret instructions", { encoding: "utf8", mode: 0o600 });
+    // Test the read error even when a privileged runner can bypass permission bits or ACLs.
+    unreadablePaths.add(file);
+    try {
+      const current = store.read();
+      expect(current.exists).toBe(true);
+      expect(current.problem).toBe("unreadable");
+      expect(current.content).toBe("");
+      expect(store.promptText()).toBe("");
+    } finally {
+      unreadablePaths.delete(file);
+    }
+  });
 
   test("refuses to write over something that is not a regular file", async () => {
     rmSync(file, { force: true });
