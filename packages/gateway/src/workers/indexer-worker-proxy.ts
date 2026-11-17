@@ -129,6 +129,8 @@ export interface IndexerWorkerOptions {
   usearchBackfillPageSize?: number;
   /** Optional cold-rebuild checkpoint interval, ms; primarily for crash-resume tests. */
   usearchCheckpointIntervalMs?: number;
+  /** Holds the cold rebuild between pages while non-zero; for tests (see `IndexerInit`). */
+  usearchBackfillHold?: SharedArrayBuffer;
   /** The gateway's memory budget; the worker keeps the HNSW graph within it. */
   memoryBudget?: MemoryBudget;
   heartbeatIntervalMs?: number;
@@ -320,6 +322,7 @@ export class IndexerWorkerProxy implements Embedder {
       usearchIndexPath: opts.usearchIndexPath,
       usearchBackfillPageSize: opts.usearchBackfillPageSize,
       usearchCheckpointIntervalMs: opts.usearchCheckpointIntervalMs,
+      ...(opts.usearchBackfillHold ? { usearchBackfillHold: opts.usearchBackfillHold } : {}),
       ...(opts.memoryBudget ? { memoryBudget: opts.memoryBudget } : {}),
       heartbeatIntervalMs: opts.heartbeatIntervalMs ?? 30_000,
       ...(opts.gatewayDbKeyHex ? { gatewayDbKeyHex: opts.gatewayDbKeyHex } : {}),

@@ -620,6 +620,17 @@ function flushDeferredDocumentDeletes(): void {
   }
 }
 
+/**
+ * Wait without blocking the event loop until the hold cell reads zero, so a
+ * held rebuild keeps serving messages. See `IndexerInit.usearchBackfillHold`.
+ */
+async function waitForBackfillRelease(hold: Int32Array): Promise<void> {
+  for (let value = Atomics.load(hold, 0); value !== 0; value = Atomics.load(hold, 0)) {
+    const wait = Atomics.waitAsync(hold, 0, value);
+    if (wait.async) await wait.value;
+  }
+}
+
 /** Construct the configured embedder (HTTP backend, or the local model). */
 let embeddingSequence = 0;
 
@@ -752,6 +763,9 @@ async function handleInit(init: IndexerInit): Promise<void> {
             loading: graphFileExisted && getUsearchBackfillCursor(indexDb) === null,
           })
         : ({ admitted: true } as const);
+      const backfillHold = init.usearchBackfillHold
+        ? new Int32Array(init.usearchBackfillHold)
+        : null;
       usearchHandle = new UsearchWriteHandle(init.usearchIndexPath, init.embedDim, {
         detached: !admission.admitted,
       });
@@ -764,6 +778,7 @@ async function handleInit(init: IndexerInit): Promise<void> {
         budget: init.memoryBudget ?? null,
         pageSize: init.usearchBackfillPageSize,
         checkpointIntervalMs: init.usearchCheckpointIntervalMs,
+        ...(backfillHold ? { betweenPages: () => waitForBackfillRelease(backfillHold) } : {}),
         onProgress: (fraction) =>
           post({ type: "bootProgress", stage: "hnsw-backfill", progress: fraction }),
         onState: (graph) => post({ type: "vectorIndex", ...graph }),

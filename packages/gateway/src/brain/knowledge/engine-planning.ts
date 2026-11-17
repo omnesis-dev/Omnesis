@@ -17,6 +17,7 @@ import { knowledgeSourceReadiness } from "./engine-readiness.js";
 import {
   scheduleKnowledgeChange,
   planMaintenanceGroups,
+  packMaintenanceGroups,
   MaintenancePlanLimitError,
   type MaintenanceAdjacency,
   type MaintenanceGroup,
@@ -176,7 +177,6 @@ export class KnowledgeBatchPlanner {
     // Work a failed batch left unfinished is planned alone below, so it can
     // neither hold a fresh region's batch open nor ride in on its deadline.
     let eligible = work.filter((item) => item.failures === 0);
-    // See #1035 — planned: pack unrelated routine source seeds into one batch.
     let groups: ReturnType<typeof planMaintenanceGroups> = [];
     while (eligible.length) {
       try {
@@ -196,9 +196,39 @@ export class KnowledgeBatchPlanner {
     }
     const initialRoot = this.context.initialRoot();
     let enqueued = 0;
-    for (const group of groups)
-      if (await this.admit(group, group.seeds.slice(0, cfg.maxSeeds), byId, initialRoot))
-        enqueued++;
+    // Unrelated routine source changes share a run, up to `maxSeeds` sources
+    // and one seed's region bound, instead of paying a run's fixed prompt
+    // each. Urgent tiers, node work, retries (excluded above), work not yet
+    // due or ready, and regions an active batch holds keep their own batches.
+    const reserved = this.context.deps.db.prepare(
+      "SELECT 1 FROM knowledge_batch_regions r JOIN knowledge_batches b ON b.id=r.batch_id WHERE r.node_id=? AND b.status NOT IN ('completed','abandoned') LIMIT 1",
+    );
+    const now = this.context.deps.clock();
+    const packed = packMaintenanceGroups(
+      groups,
+      (group) =>
+        group.tier === "routine" &&
+        group.dueAt <= now &&
+        group.seeds.every((seed) => {
+          const item = byId.get(seed.id)!;
+          return (
+            item.subjectKind === "source" &&
+            item.failures === 0 &&
+            knowledgeSourceReadiness(this.context.deps, item.subjectId, item.inputChangedAt).ready
+          );
+        }) &&
+        !group.nodes.some((node) => reserved.get(node)),
+      { maxSeeds: cfg.maxSeeds, maxNodes: cfg.maxVisitedPerSeed },
+    );
+    for (const group of packed) {
+      if (!(await this.admit(group, group.seeds.slice(0, cfg.maxSeeds), byId, initialRoot)))
+        continue;
+      enqueued++;
+      if (!groups.includes(group))
+        this.context.deps.log.info(
+          `Packed ${group.seeds.length} unrelated routine source changes into one maintenance batch`,
+        );
+    }
     for (const item of work) {
       if (item.failures === 0 || item.dueAt > this.context.deps.clock()) continue;
       let solo: ReturnType<typeof planMaintenanceGroups>[number] | undefined;

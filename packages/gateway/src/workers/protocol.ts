@@ -152,6 +152,11 @@ export type IndexerInit = {
   /** Optional cold-rebuild checkpoint interval, ms; production uses the write handle default. */
   usearchCheckpointIntervalMs?: number;
   /**
+   * Test seam: one Int32 cell. While it is non-zero the cold rebuild waits at
+   * its next page boundary, still serving messages. Production leaves it unset.
+   */
+  usearchBackfillHold?: SharedArrayBuffer;
+  /**
    * The gateway's memory budget (see `memory-budget.ts`). The worker holds the
    * HNSW graph in memory only while it fits; absent, nothing is checked.
    */

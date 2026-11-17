@@ -1822,6 +1822,15 @@
           entries still receive their evidence review.
         </p>
         <p>
+          Unrelated routine source changes share one maintenance run, up to
+          <code>brain.knowledge.maxSeeds</code> sources, and the relevance check runs before that
+          run's agent turn: low-scored sources settle without one. When the assigned decision model
+          does not answer that check, a routine batch waits for it, asking again after
+          <code>brain.knowledge.soonDelay</code>, for at most
+          <code>brain.knowledge.routineDelay</code> of continuous outage; then, as for immediate and
+          hourly work and when no decision model is assigned, the batch goes to the agent unjudged.
+        </p>
+        <p>
           These checks send the selected evidence context to the decision model. A hosted model
           needs <code>inference.allowRemoteInference: true</code> and the provider's API key; a
           decision server on this machine needs neither. Set it up from

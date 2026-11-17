@@ -12,6 +12,11 @@ const state = vi.hoisted(() => ({
   version: "",
 }));
 const accountRefresh = vi.hoisted(() => vi.fn());
+const navigate = vi.hoisted(() => vi.fn());
+vi.mock("../lib/router.js", async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  navigate,
+}));
 vi.mock("../lib/use-relay-management.js", () => ({
   useRelayManagement: () => state,
   useAccountRefresh: accountRefresh,
@@ -93,6 +98,7 @@ beforeEach(() => {
   state.version = "";
   state.run.mockReset();
   state.run.mockResolvedValue({});
+  navigate.mockReset();
 });
 afterEach(() => {
   render(null, host);
@@ -185,6 +191,16 @@ test("the relay page before an account says the relay needs one and opens the ac
   expect(button("Set up your account")).toBeDefined();
   expect(button("Create an account")).toBeUndefined();
   expect(host.querySelector(".relay-rows")).toBeNull();
+  await click("Set up your account");
+  expect(navigate).toHaveBeenCalledExactlyOnceWith("/portal/settings/account");
+});
+
+test("the relay page says why the relay service is unavailable when the gateway knows", async () => {
+  state.status = { ...base(), serviceConfigured: false, serviceError: "relay-service-unavailable" };
+  await show("relay");
+  expect(headline()).toBe(["The", "Omnesis relay isn't available"].join(" "));
+  expect(text()).toContain("Ask the installation administrator to configure the relay service.");
+  expect(text()).not.toContain("This installation is not set up for Omnesis accounts.");
 });
 
 test("waiting: open sign-in in a new tab, or enter the code on another device, or cancel", async () => {
@@ -1115,6 +1131,16 @@ describe("trusted sign-ins and confirming a passkey", () => {
     await show();
     expect(host.querySelector("#relay-setup-title")).toBeNull();
     expect(text()).toContain("This gateway is linked to your Omnesis account.");
+  });
+
+  test("Not now with no sign-in on record yet leaves the reminder alone under Trusted sign-ins", async () => {
+    // A Google account linked under automatic joins, before the gateway lists any sign-in.
+    state.status = connected({ deviceEnrollment: { policy: "automatic" } });
+    await show();
+    await click("Not now");
+    expect(host.querySelector("#relay-sign-ins-title")?.textContent).toBe("Trusted sign-ins");
+    expect(text()).toContain("New devices wait for your OK until you finish setup.");
+    expect(host.querySelector(".relay-sign-ins")).toBeNull();
   });
 
   test("Not now leaves one amber line under Trusted sign-ins, remembered here, and Finish setup brings it back", async () => {

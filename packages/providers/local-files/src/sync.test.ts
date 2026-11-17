@@ -121,6 +121,23 @@ describe("local-files sync", () => {
     expect(result.documents[0]?.content).toContain("Fictional public note");
   });
 
+  test("an extglob group in an exclude pattern is literal, so a hostile one cannot stall the walk", async () => {
+    // Against this name, `+(*a)` compiled as an extglob backtracks for tens of seconds.
+    write(root, `${"a".repeat(25)}!.txt`, "Fictional note with a long name");
+    write(root, "a.md", "Fictional note that an extglob group would match");
+    const source = await definition.create!({
+      accountId: "host",
+      sourceId,
+      providerId,
+      config: { roots: [root], exclude: ["+(*a)", "+(a|b).md"] },
+    });
+    const result = await source.sync(null);
+    expect(result.documents.map((doc) => doc.content).sort()).toEqual([
+      expect.stringContaining("Fictional note that an extglob group would match"),
+      expect.stringContaining("Fictional note with a long name"),
+    ]);
+  });
+
   test("prunes git repos, linked worktrees, and obsidian vaults", async () => {
     write(root, "keep.txt", "ordinary document that stays indexed here");
     write(root, "repo/.git/HEAD", "ref: refs/heads/main");

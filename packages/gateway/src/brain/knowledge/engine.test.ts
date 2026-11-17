@@ -4373,3 +4373,200 @@ describe("urgency without a verdict", () => {
     expect(pending()).toMatchObject({ tier: "routine", status: "batched", lastError: null });
   });
 });
+
+describe("unrelated routine source changes", () => {
+  let mode: "up" | "down" | "unassigned";
+  let scores: Record<string, number>;
+  let asked: string[];
+  beforeEach(() => {
+    mode = "up";
+    // Routine urgency; worth interpreting.
+    scores = { urgency: 0.1, discovery: 1, impact: 1 };
+    asked = [];
+    const decision: DecisionCapability = {
+      modelId: "scripted",
+      dispose() {},
+      async decide(request) {
+        asked.push(...Object.keys(request.questions));
+        if (mode === "down") throw new Error("decision backend unreachable");
+        return {
+          model: "scripted",
+          answers: Object.fromEntries(
+            Object.keys(request.questions).map((key) => [
+              key,
+              { type: "score" as const, score: (scores[key] ?? 1) * 2 },
+            ]),
+          ),
+        };
+      },
+    };
+    engine = new KnowledgeEngine({
+      db,
+      writeGate,
+      service,
+      getSettings: () => settings,
+      clock: () => now,
+      log,
+      idGen: () => String(++serial),
+      decisions: {
+        getDecision: () => (mode === "unassigned" ? null : decision),
+        log,
+        recordSpend: async () => {},
+      },
+    });
+  });
+  const ids = ["memo-a", "memo-b", "memo-c"];
+  const note = (id: string) => source(id, "v1", `An invented note numbered ${id}.`);
+  /** Three unrelated routine changes, due and planned. */
+  async function dueRoutine(): Promise<{ id: string; runId: string }> {
+    for (const id of ids) note(id);
+    await engine.tick();
+    now += settings.knowledge.routineDelayMs;
+    await engine.tick();
+    return batchFor(ids[0]!);
+  }
+  const batches = () =>
+    db
+      .prepare(
+        "SELECT DISTINCT batch_id AS batchId FROM knowledge_work WHERE subject_kind='source' AND status='batched'",
+      )
+      .all() as Array<{ batchId: string }>;
+  const offeredSources = (view: { items: Array<{ source?: { id: string } }> }) =>
+    view.items.flatMap((item) => (item.source ? [item.source.id] : [])).sort();
+
+  it("packs them into one batch that a single run settles", async () => {
+    const batch = await dueRoutine();
+    expect(batches()).toEqual([{ batchId: batch.id }]);
+    expect(db.prepare("SELECT tier FROM knowledge_batches WHERE id=?").get(batch.id)).toEqual({
+      tier: "routine",
+    });
+    const view = await engine.next(batch.id, batch.runId, { preflight: true });
+    expect(offeredSources(view)).toEqual(ids);
+    for (const item of view.items)
+      await engine.completeSource(batch.id, batch.runId, item.id, item.inputFingerprint);
+    expect((await engine.next(batch.id, batch.runId)).done).toBe(true);
+  });
+
+  it("settles the ones the gate scores low before any agent turn", async () => {
+    const batch = await dueRoutine();
+    scores.discovery = 0;
+    expect(
+      knowledgeFrontierPreflight(await engine.next(batch.id, batch.runId, { preflight: true })),
+    ).toBe("complete");
+    expect(
+      db
+        .prepare(
+          "SELECT DISTINCT status FROM knowledge_discovery_coverage WHERE subject_id IN ('memo-a','memo-b','memo-c')",
+        )
+        .all(),
+    ).toEqual([{ status: "gated" }]);
+  });
+
+  it("keeps urgent work, and work not yet due, out of a pack", async () => {
+    note("memo-a");
+    await engine.tick();
+    now += settings.knowledge.routineDelayMs;
+    note("memo-c");
+    await engine.tick();
+    const routine = batchFor("memo-a");
+    expect(db.prepare("SELECT status FROM knowledge_work WHERE subject_id='memo-c'").get()).toEqual(
+      { status: "pending" },
+    );
+    scores.urgency = 1;
+    note("memo-b");
+    await engine.tick();
+    expect(batchFor("memo-b").id).not.toBe(routine.id);
+    expect(batches()).toHaveLength(2);
+  });
+
+  it("retries each source of a failed pack alone", async () => {
+    const pack = await dueRoutine();
+    // The failed run had every source offered, so each failure is charged.
+    expect(offeredSources(await engine.next(pack.id, pack.runId, { preflight: true }))).toEqual(
+      ids,
+    );
+    db.prepare("UPDATE cognition_runs SET status='failed' WHERE id=?").run(pack.runId);
+    await engine.tick();
+    expect(db.prepare("SELECT status FROM knowledge_batches WHERE id=?").get(pack.id)).toEqual({
+      status: "abandoned",
+    });
+    now += settings.knowledge.retryBackoffCapMs + settings.knowledge.routineDelayMs;
+    await engine.tick();
+    const retried = ids.map((id) => batchFor(id).id);
+    expect(new Set(retried).size).toBe(ids.length);
+    expect(retried).not.toContain(pack.id);
+  });
+
+  it("holds a routine batch during a decision outage and asks once per retry", async () => {
+    const batch = await dueRoutine();
+    mode = "down";
+    asked = [];
+    const held = await engine.next(batch.id, batch.runId, { preflight: true });
+    expect(held).toMatchObject({ done: false, items: [] });
+    expect(held.heldUntil).toBe(now + settings.knowledge.soonDelayMs);
+    expect(knowledgeFrontierPreflight(held)).toEqual({ deferUntil: held.heldUntil });
+    // One failed question for the batch, not one per source; nothing offered.
+    expect(asked).toEqual(["discovery"]);
+    expect(listKnowledgeFrontier(db, batch.id).map((row) => row.status)).toEqual([
+      "pending",
+      "pending",
+      "pending",
+    ]);
+    // Within the retry delay the model is not asked again.
+    await engine.next(batch.id, batch.runId, { preflight: true });
+    expect(asked).toHaveLength(1);
+    // Once it answers, the gate settles the batch without an agent turn.
+    now = held.heldUntil!;
+    mode = "up";
+    scores.discovery = 0;
+    await engine.next(batch.id, batch.runId, { preflight: true });
+    expect(await engine.next(batch.id, batch.runId, { preflight: true })).toMatchObject({
+      done: true,
+    });
+  });
+
+  it("fails open once an outage outlasts the routine delay", async () => {
+    const batch = await dueRoutine();
+    mode = "down";
+    const start = now;
+    let view = await engine.next(batch.id, batch.runId, { preflight: true });
+    while (view.heldUntil !== undefined) {
+      expect(view.heldUntil).toBeLessThanOrEqual(start + settings.knowledge.routineDelayMs);
+      now = view.heldUntil;
+      view = await engine.next(batch.id, batch.runId, { preflight: true });
+    }
+    expect(now).toBe(start + settings.knowledge.routineDelayMs);
+    expect(offeredSources(view)).toEqual(ids);
+  });
+
+  it("never holds when no decision model is assigned, inside a run, or for urgent work", async () => {
+    const batch = await dueRoutine();
+    mode = "unassigned";
+    expect(offeredSources(await engine.next(batch.id, batch.runId, { preflight: true }))).toEqual(
+      ids,
+    );
+
+    mode = "up";
+    note("memo-d");
+    await engine.tick();
+    now += settings.knowledge.routineDelayMs;
+    await engine.tick();
+    const inRun = batchFor("memo-d");
+    mode = "down";
+    // An agent turn already paid for: the gate fails open as before.
+    expect(offeredSources(await engine.next(inRun.id, inRun.runId))).toEqual(["memo-d"]);
+
+    mode = "up";
+    scores.urgency = 1;
+    note("memo-e");
+    await engine.tick();
+    const urgent = batchFor("memo-e");
+    expect(db.prepare("SELECT tier FROM knowledge_batches WHERE id=?").get(urgent.id)).toEqual({
+      tier: "immediate",
+    });
+    mode = "down";
+    expect(offeredSources(await engine.next(urgent.id, urgent.runId, { preflight: true }))).toEqual(
+      ["memo-e"],
+    );
+  });
+});

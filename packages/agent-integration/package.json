@@ -30,13 +30,13 @@
   },
   "dependencies": {
     "@modelcontextprotocol/client": "2.4.0",
-    "ws": "^8.22.1",
+    "ws": "^8.23.0",
     "zod": "^4.6.7"
   },
   "devDependencies": {
     "@omnesis/types": "*",
     "@types/ws": "^8.18.2",
-    "openclaw": "2026.11.1"
+    "openclaw": "2026.11.3"
   },
   "files": [
     "dist",

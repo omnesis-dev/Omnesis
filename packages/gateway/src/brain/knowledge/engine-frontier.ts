@@ -12,10 +12,11 @@ export const SOURCE_READ_PROGRESS_CHARS = 96;
 export function knowledgeFrontierPreflight(
   frontier: Pick<
     KnowledgeFrontierView,
-    "done" | "items" | "organization" | "continuation" | "candidateDecisions"
+    "done" | "items" | "organization" | "continuation" | "candidateDecisions" | "heldUntil"
   >,
-): "complete" | "continue" | "yield" | "defer" {
+): "complete" | "continue" | "yield" | "defer" | { deferUntil: number } {
   if (frontier.done) return "complete";
+  if (frontier.heldUntil !== undefined) return { deferUntil: frontier.heldUntil };
   if (
     frontier.items.length ||
     frontier.organization?.readyToComplete ||
