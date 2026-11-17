@@ -371,6 +371,13 @@ describe("the summary", () => {
     expect(button("Run the setup again")).toBeTruthy();
   });
 
+  test("Tailscale on this computer serving only the tailnet says it is not public", async () => {
+    gateway.host = { ...gateway.host, servesGateway: true, publicGateway: false };
+    await mount({ cloudRelay: false, tailscaleEmbed: false });
+    expect(mark("Tailscale on this computer")).toBe("on");
+    expect(detail("Tailscale on this computer")).toBe(`${HOST_URL}, on your Tailscale network only. Not public on the Internet.`);
+  });
+
   test("a public address that is Tailscale on this computer's is shown once, on that line", async () => {
     gateway.host = { ...gateway.host, servesGateway: true, publicGateway: true };
     gateway.remote!.publicBaseUrl = { configured: HOST_URL, setByEnvironment: false, way: "host" };
