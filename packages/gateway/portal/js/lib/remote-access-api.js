@@ -1,12 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-// Settings → Remote access: the guided setup's own state and the checks for a
-// way in the owner runs themselves. Every route exists only when the gateway
-// runs with the cloud relay or its own Tailscale device on (`cloudRelay` or
-// `tailscaleEmbed` on `/status`); the host's Tailscale routes only with the
-// latter. The portal calls none of them otherwise. The account, the relay and
-// the gateway's Tailscale device keep their own routes (cloud-relay-api.js,
+// Settings → Connectivity: the guided setup's own state, the MCP server's
+// switch on each address, and the checks for a way in the owner runs
+// themselves. Every gateway has these routes. The account, the relay and the
+// gateway's Tailscale device keep their own routes (cloud-relay-api.js,
 // tailscale-api.js).
 
 import { adminJsonRequest } from "./admin-request.js";
@@ -14,12 +12,13 @@ import { adminJsonRequest } from "./admin-request.js";
 const remoteAccessRequest = adminJsonRequest("/admin/remote-access", "Remote access");
 
 /**
- * `{ setupCompletedAt, first, features, publicBaseUrl: { configured, setByEnvironment } }`:
- * `configured` is the public address in use now, or null.
+ * `{ setupCompletedAt, first, features, publicBaseUrl: { configured, setByEnvironment, way },
+ * mcpAddresses: [{ id, url, enabled, available }] }`: `configured` is the public address in
+ * use now, or null.
  */
 export const getRemoteAccess = (signal) => remoteAccessRequest("GET", "", { signal });
 
-/** `{ setupCompleted?, first? }`; answers with the same shape as `getRemoteAccess`. */
+/** `{ setupCompleted?, first?, mcp? }`; answers with the same shape as `getRemoteAccess`. */
 export const updateRemoteAccess = (patch, signal) =>
   remoteAccessRequest("PATCH", "", { body: patch, signal });
 

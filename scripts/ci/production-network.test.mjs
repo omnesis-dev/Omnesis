@@ -166,7 +166,7 @@ describe("test jobs keep off production Omnesis services", () => {
   }
 
   test("workflows that publish to production are left alone", () => {
-    for (const file of ["site.yml", "release.yml", "cloud-relay-image.yml", "docker-publish.yml"])
+    for (const file of ["site.yml", "release.yml", "relay-image.yml", "docker-publish.yml"])
       expect(readFileSync(join(root, ".github", "workflows", file), "utf8")).not.toContain(
         "production-network.sh",
       );

@@ -6,10 +6,11 @@ import { StepNav } from "../../components/step-nav.js";
 import { STEP_LABELS } from "./model.js";
 
 /**
- * One screen of the Remote access setup: the step bar, one question, its
- * answers, and the way on. In a review every question opens with "Still good?".
+ * One screen of the Connectivity setup: the step bar, one question, its
+ * answers, and the way on. A review shows the same screens with what is set now,
+ * and can be left at any step with Cancel.
  */
-export function StepFrame({ flow, steps, heading, blurb, headingRef, error, actions, onStep, children }) {
+export function StepFrame({ flow, steps, heading, blurb, headingRef, error, actions, onStep, onCancel = null, children }) {
   const index = steps.indexOf(flow.step);
   return html`<div class="access-request access-request--page remote-access-setup">
     <${StepNav}
@@ -18,18 +19,21 @@ export function StepFrame({ flow, steps, heading, blurb, headingRef, error, acti
         label: STEP_LABELS[key],
         current: key === flow.step,
         complete: position < index,
+        // A review can open any question; a setup the next one too, as Continue would.
+        reachable: flow.mode === "review" || position === index + 1,
       }))}
       onSelect=${onStep}
     />
     <div class="access-wizard-panel">
       <div class="access-wizard-copy">
-        <h3 ref=${headingRef} tabIndex="-1">${flow.mode === "review" ? "Still good? " : ""}${heading}</h3>
+        <h3 ref=${headingRef} tabIndex="-1">${heading}</h3>
         ${blurb && html`<p>${blurb}</p>`}
       </div>
       ${children}
     </div>
     ${error && html`<p class="access-error" role="alert">${error}</p>`}
     <div class="access-request-actions remote-access-actions">
+      ${onCancel && html`<button type="button" class="btn-ghost" onClick=${onCancel}>Cancel</button>`}
       <span class="access-wizard-nav">${actions}</span>
     </div>
   </div>`;
@@ -40,8 +44,7 @@ export function BackButton({ onBack, disabled = false }) {
   return onBack && html`<button type="button" class="btn-secondary" disabled=${disabled} onClick=${onBack}>Back</button>`;
 }
 
-/** The label of the button that moves on: a review keeps, the last step finishes. */
-export function nextLabel(flow, last) {
-  if (flow.mode === "review") return last ? "Keep and finish" : "Keep and continue";
+/** The label of the button that moves on: the last step finishes. */
+export function nextLabel(last) {
   return last ? "Finish" : "Continue";
 }

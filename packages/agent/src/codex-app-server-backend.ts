@@ -1132,7 +1132,7 @@ export class CodexAppServerRuntime {
   private releaseHeldMessages(state: ActiveCodexTurn): void {
     const held = state.heldForTurnId;
     state.heldForTurnId = null;
-    for (const replay of held ?? []) replay();
+    for (const replay of held ?? []) markActivity("agent.codex.message", replay);
   }
 
   private failActiveTurn(code: string, message: string): void {

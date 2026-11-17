@@ -72,6 +72,7 @@ export class GatewayTunnel {
   private sessionAbort: AbortController | undefined;
   private invalidatedGeneration = -1;
   private readonly dialing = new Set<AbortController>();
+  private readonly onlineWaiters = new Set<() => void>();
   private watchdog: ReturnType<typeof setTimeout> | undefined;
   private readonly maxChannels: number;
   private readonly reconnectMs: number;
@@ -110,6 +111,27 @@ export class GatewayTunnel {
       lastConnectedAt: this.lastConnectedAt,
       lastError: this.lastError,
     };
+  }
+
+  /**
+   * Settles once the relay has accepted this tunnel, at once when it already has, or rejects when
+   * `signal` aborts first. Until then the relay drops public connections for this gateway.
+   */
+  online(signal: AbortSignal): Promise<void> {
+    if (this.connectionState === "online") return Promise.resolve();
+    if (signal.aborted) return Promise.reject(signal.reason);
+    return new Promise<void>((resolve, reject) => {
+      const accepted = (): void => {
+        signal.removeEventListener("abort", aborted);
+        resolve();
+      };
+      const aborted = (): void => {
+        this.onlineWaiters.delete(accepted);
+        reject(signal.reason);
+      };
+      this.onlineWaiters.add(accepted);
+      signal.addEventListener("abort", aborted, { once: true });
+    });
   }
 
   start(): void {
@@ -168,6 +190,8 @@ export class GatewayTunnel {
             this.lastError = undefined;
             watchdogMs = message.heartbeatMs * 3;
             heartbeat();
+            for (const accepted of this.onlineWaiters) accepted();
+            this.onlineWaiters.clear();
           }
           if (message.type === "open") {
             if (this.channels.size >= this.maxChannels) {

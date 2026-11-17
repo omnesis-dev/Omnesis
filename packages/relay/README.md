@@ -93,6 +93,29 @@ Mount both credential files read-only from owner-only host paths. Do not copy
 them into an image or place them in the build context. The Dockerfile copies
 source and dependencies only, runs as the unprivileged `node` user, exposes
 port 8080 inside the container, and contains no TLS or certificate handling.
+
+### Container image
+
+`Dockerfile` builds the image (linux/amd64, base image pinned by digest) from
+the repository root. Only `.github/workflows/relay-image.yml` publishes it, as
+`ghcr.io/omnesis-dev/omnesis-push-relay`, the same way and in the same run as the
+cloud relay image: only for a commit of `main` whose manually dispatched
+`full-validation` run with every lane passed. It pushes the image by digest,
+signs it keylessly with cosign through GitHub's OIDC identity, and attaches a
+build provenance attestation. A relay host should run only an image that passes
+this check for the commit it means to run, referred to by digest:
+
+```sh
+cosign verify \
+  --certificate-identity https://github.com/omnesis-dev/Omnesis/.github/workflows/relay-image.yml@refs/heads/main \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  -a dev.omnesis.source-sha=<40-character commit> \
+  ghcr.io/omnesis-dev/omnesis-push-relay@sha256:<digest>
+gh attestation verify oci://ghcr.io/omnesis-dev/omnesis-push-relay@sha256:<digest> \
+  --repo omnesis-dev/Omnesis \
+  --signer-workflow omnesis-dev/Omnesis/.github/workflows/relay-image.yml
+```
+
 Startup fails before binding the HTTP port unless both mounted paths are regular
 owner-only files, the APNs file contains an EC private key, and the FCM JSON
 contains the required identity and a parseable RSA private key.

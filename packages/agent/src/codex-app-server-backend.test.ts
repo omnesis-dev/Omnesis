@@ -560,49 +560,52 @@ describe("CodexAppServerBackend", () => {
     }
   });
 
-  it("handles every app-server message under the host's activity mark", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "omnesis-codex-activity-"));
-    const backend = makeBackend({
-      codexHome: join(dir, "home"),
-      workspaceDir: join(dir, "workspace"),
-      logPath: join(dir, "fake-codex.jsonl"),
-      scenario: "unicode-tool",
-    });
-    const marked: string[] = [];
-    const open: string[] = [];
-    let toolRanUnder: string[] | null = null;
-    setActivityMarker((name, fn) => {
-      marked.push(name);
-      open.push(name);
+  it.each(["unicode-tool", "early-events"])(
+    "handles every app-server message under the host's activity mark (%s)",
+    async (scenario) => {
+      const dir = mkdtempSync(join(tmpdir(), "omnesis-codex-activity-"));
+      const backend = makeBackend({
+        codexHome: join(dir, "home"),
+        workspaceDir: join(dir, "workspace"),
+        logPath: join(dir, "fake-codex.jsonl"),
+        scenario,
+      });
+      const marked: string[] = [];
+      const open: string[] = [];
+      let toolRanUnder: string[] | null = null;
+      setActivityMarker((name, fn) => {
+        marked.push(name);
+        open.push(name);
+        try {
+          return fn();
+        } finally {
+          open.pop();
+        }
+      });
       try {
-        return fn();
+        await collect(
+          backend.runTurn(
+            baseInput({
+              tools: [
+                fakeToolHandle("search_documents", () => {
+                  toolRanUnder = [...open];
+                  return { kind: "structured", resultType: "synthetic.result", data: {} };
+                }),
+              ],
+            }),
+          ),
+        );
+        expect(marked.length).toBeGreaterThan(0);
+        expect(new Set(marked)).toEqual(new Set(["agent.codex.message"]));
+        // The model's tool call reaches the tool from the message that asked for it.
+        expect(toolRanUnder).toEqual(["agent.codex.message"]);
       } finally {
-        open.pop();
+        setActivityMarker(null);
+        await backend.dispose();
+        rmSync(dir, { recursive: true, force: true });
       }
-    });
-    try {
-      await collect(
-        backend.runTurn(
-          baseInput({
-            tools: [
-              fakeToolHandle("search_documents", () => {
-                toolRanUnder = [...open];
-                return { kind: "structured", resultType: "synthetic.result", data: {} };
-              }),
-            ],
-          }),
-        ),
-      );
-      expect(marked.length).toBeGreaterThan(0);
-      expect(new Set(marked)).toEqual(new Set(["agent.codex.message"]));
-      // The model's tool call reaches the tool from the message that asked for it.
-      expect(toolRanUnder).toEqual(["agent.codex.message"]);
-    } finally {
-      setActivityMarker(null);
-      await backend.dispose();
-      rmSync(dir, { recursive: true, force: true });
-    }
-  });
+    },
+  );
 
   // POSIX execute bits do not represent Windows process permissions.
   it.skipIf(process.platform === "win32").each(["probe", "app-server"])(

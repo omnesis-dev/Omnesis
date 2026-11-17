@@ -15,6 +15,7 @@ import {
   readRunContext,
   structuredData,
   waitFor,
+  urgencyOnlyDecisionPolicy,
 } from "./brain-bench/index.js";
 import { knowledgePuppet } from "./brain-bench/knowledge-puppet.js";
 import { startOpenAiServer, userPromptOf } from "./brain-bench/openai-server.js";
@@ -73,6 +74,9 @@ it("runs four independent discoveries by default and refills a free slot while s
     },
   });
   bench = await BrainBench.start({
+    // Work without an urgency verdict waits at routine priority; these
+    // changes are judged soon so they are processed within the test.
+    decision: { policy: urgencyOnlyDecisionPolicy() },
     experimental: true,
     syncSources: false,
     extraInference: {

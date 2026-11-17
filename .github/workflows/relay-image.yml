@@ -1,0 +1,353 @@
+name: relay-image
+
+# Builds, signs and attests the container images of both hosted relays, the
+# cloud relay and the push relay, for one exact commit of main, and only after
+# that commit passed a manually dispatched full validation with every lane
+# (`full-validation`, lanes: all).
+#
+# A relay host checks, before it runs an image, that the image was signed by
+# this workflow file on refs/heads/main of this repository for the commit it
+# was asked to deploy (the `dev.omnesis.source-sha` annotation). The signature
+# also names the image repository, so a cloud relay image can't be run as the
+# push relay or the other way round. So nothing built elsewhere, on another
+# branch or from another commit can be deployed. Publishing an image deploys
+# nothing by itself.
+#
+# Jobs are split by privilege: `gate` reads the validation run, the `build-*`
+# jobs run the repository's build and can push to the registry, and only the
+# `sign-*` jobs, which run no repository code, can request an identity token.
+# Each relay has its own build and sign job, so each signature covers exactly
+# the digest its own build job pushed.
+on:
+  workflow_run:
+    workflows: [full-validation]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      validation_run:
+        description: "ID of a green full-validation run (workflow_dispatch, lanes: all) on main"
+        required: true
+        type: string
+
+permissions: {}
+
+concurrency:
+  group: relay-image-${{ github.event.workflow_run.id || inputs.validation_run }}
+  cancel-in-progress: false
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+  CLOUD_RELAY_IMAGE: ghcr.io/omnesis-dev/omnesis-cloud-relay
+  PUSH_RELAY_IMAGE: ghcr.io/omnesis-dev/omnesis-push-relay
+  COSIGN_VERSION: v3.1.4
+  COSIGN_SHA256: 424e2c97d0b45fd7a6b608a87f090f35633f4c23ece5f092d48bba11aaf4bbfa
+  IDENTITY: https://github.com/omnesis-dev/Omnesis/.github/workflows/relay-image.yml@refs/heads/main
+  ISSUER: https://token.actions.githubusercontent.com
+
+jobs:
+  gate:
+    # A cheap filter so pull-request and push runs end here; the gate script
+    # reads the run again from the API and checks everything itself.
+    if: >-
+      github.repository == 'omnesis-dev/Omnesis' && github.ref == 'refs/heads/main' &&
+      (github.event_name == 'workflow_dispatch' ||
+       (github.event.workflow_run.event == 'workflow_dispatch' &&
+        github.event.workflow_run.conclusion == 'success' &&
+        github.event.workflow_run.head_branch == 'main'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      source_sha: ${{ steps.gate.outputs.source_sha }}
+      validation_run: ${{ steps.gate.outputs.validation_run }}
+    steps:
+      # The gate script comes from main itself, never from the commit under test.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "24"
+
+      - name: Check the validation run
+        id: gate
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VALIDATION_RUN: ${{ github.event.workflow_run.id || inputs.validation_run }}
+        run: node scripts/ci/relay-image-gate.mjs "$VALIDATION_RUN" >> "$GITHUB_OUTPUT"
+
+  build-cloud-relay:
+    needs: gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      digest: ${{ steps.build.outputs.digest }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.gate.outputs.source_sha }}
+          persist-credentials: false
+
+      - name: Verify fixed source revision
+        env:
+          TARGET_SHA: ${{ needs.gate.outputs.source_sha }}
+        run: |
+          [[ "$TARGET_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "$TARGET_SHA"
+
+      # Timestamps come from the commit, so a rebuild of the same commit
+      # changes only what the pinned base image and build tools change.
+      - name: Source date
+        run: echo "SOURCE_DATE_EPOCH=$(git log -1 --format=%ct)" >> "$GITHUB_ENV"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        id: build
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: packages/cloud-relay/deploy/Dockerfile
+          platforms: linux/amd64
+          provenance: false
+          sbom: false
+          tags: ${{ env.CLOUD_RELAY_IMAGE }}:sha-${{ needs.gate.outputs.source_sha }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/omnesis-dev/Omnesis
+            org.opencontainers.image.revision=${{ needs.gate.outputs.source_sha }}
+            org.opencontainers.image.title=omnesis-cloud-relay
+          outputs: type=image,push=true,rewrite-timestamp=true
+
+      # The pushed image, by digest: it carries its source and its native
+      # SQLite binding loads, with no network.
+      - name: Smoke-test the pushed image
+        env:
+          IMAGE: ${{ env.CLOUD_RELAY_IMAGE }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+          SOURCE_SHA: ${{ needs.gate.outputs.source_sha }}
+        run: |
+          [[ "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
+          docker pull "$IMAGE@$DIGEST"
+          revision=$(docker image inspect "$IMAGE@$DIGEST" --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}')
+          test "$revision" = "$SOURCE_SHA"
+          docker run --rm --network none --entrypoint node "$IMAGE@$DIGEST" --import tsx --input-type=module -e \
+            "import Database from 'better-sqlite3'; const db = new Database(':memory:'); db.exec('CREATE TABLE t(id INTEGER)'); db.close(); await import('@omnesis/core'); await import('@omnesis/cloud-relay'); console.log('imports and native SQLite load');"
+
+  sign-cloud-relay:
+    needs: [gate, build-cloud-relay]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    env:
+      IMAGE: ghcr.io/omnesis-dev/omnesis-cloud-relay
+      DIGEST: ${{ needs.build-cloud-relay.outputs.digest }}
+      SOURCE_SHA: ${{ needs.gate.outputs.source_sha }}
+      VALIDATION_RUN: ${{ needs.gate.outputs.validation_run }}
+    steps:
+      - name: Install cosign
+        run: |
+          [[ "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
+          [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          curl -fsSL --retry 3 -o "$RUNNER_TEMP/cosign" \
+            "https://github.com/sigstore/cosign/releases/download/${COSIGN_VERSION}/cosign-linux-amd64"
+          echo "${COSIGN_SHA256}  $RUNNER_TEMP/cosign" | sha256sum -c -
+          chmod 0755 "$RUNNER_TEMP/cosign"
+
+      - name: Log in to GHCR
+        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Keyless: the certificate names this workflow, its ref and its run; the
+      # annotations name the source commit and the validation run.
+      - name: Sign the image
+        run: |
+          "$RUNNER_TEMP/cosign" sign --yes \
+            -a "dev.omnesis.source-sha=$SOURCE_SHA" \
+            -a "dev.omnesis.validation-run=$VALIDATION_RUN" \
+            "$IMAGE@$DIGEST"
+
+      # The same check a relay host makes before it runs the image.
+      - name: Verify the signature as a relay host would
+        run: |
+          "$RUNNER_TEMP/cosign" verify \
+            --certificate-identity "$IDENTITY" \
+            --certificate-oidc-issuer "$ISSUER" \
+            --certificate-github-workflow-repository omnesis-dev/Omnesis \
+            --certificate-github-workflow-ref refs/heads/main \
+            -a "dev.omnesis.source-sha=$SOURCE_SHA" \
+            "$IMAGE@$DIGEST" > /dev/null
+
+      - name: Attest build provenance
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-name: ghcr.io/omnesis-dev/omnesis-cloud-relay
+          subject-digest: ${{ needs.build-cloud-relay.outputs.digest }}
+          push-to-registry: true
+          create-storage-record: false
+
+      - name: Summary
+        run: |
+          {
+            echo "### Cloud relay image"
+            echo
+            echo "- Image: \`$IMAGE@$DIGEST\`"
+            echo "- Source: \`$SOURCE_SHA\`"
+            echo "- Validation run: $VALIDATION_RUN"
+            echo "- Signed by: \`$IDENTITY\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  build-push-relay:
+    needs: gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      digest: ${{ steps.build.outputs.digest }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.gate.outputs.source_sha }}
+          persist-credentials: false
+
+      - name: Verify fixed source revision
+        env:
+          TARGET_SHA: ${{ needs.gate.outputs.source_sha }}
+        run: |
+          [[ "$TARGET_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "$TARGET_SHA"
+
+      - name: Source date
+        run: echo "SOURCE_DATE_EPOCH=$(git log -1 --format=%ct)" >> "$GITHUB_ENV"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        id: build
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: packages/relay/Dockerfile
+          platforms: linux/amd64
+          provenance: false
+          sbom: false
+          tags: ${{ env.PUSH_RELAY_IMAGE }}:sha-${{ needs.gate.outputs.source_sha }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/omnesis-dev/Omnesis
+            org.opencontainers.image.revision=${{ needs.gate.outputs.source_sha }}
+            org.opencontainers.image.title=omnesis-push-relay
+          outputs: type=image,push=true,rewrite-timestamp=true
+
+      # The pushed image, by digest: it carries its source, its native SQLite
+      # binding loads, and the relay's own health command runs, with no network.
+      - name: Smoke-test the pushed image
+        env:
+          IMAGE: ${{ env.PUSH_RELAY_IMAGE }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+          SOURCE_SHA: ${{ needs.gate.outputs.source_sha }}
+        run: |
+          [[ "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
+          docker pull "$IMAGE@$DIGEST"
+          revision=$(docker image inspect "$IMAGE@$DIGEST" --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}')
+          test "$revision" = "$SOURCE_SHA"
+          test "$(docker image inspect "$IMAGE@$DIGEST" --format '{{ .Config.User }}')" = "node"
+          docker run --rm --network none --entrypoint node "$IMAGE@$DIGEST" --import tsx --input-type=module -e \
+            "import Database from 'better-sqlite3'; const db = new Database(':memory:'); db.exec('CREATE TABLE t(id INTEGER)'); db.close(); await import('@omnesis/core'); await import('@omnesis/relay'); console.log('imports and native SQLite load');"
+
+  sign-push-relay:
+    needs: [gate, build-push-relay]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    env:
+      IMAGE: ghcr.io/omnesis-dev/omnesis-push-relay
+      DIGEST: ${{ needs.build-push-relay.outputs.digest }}
+      SOURCE_SHA: ${{ needs.gate.outputs.source_sha }}
+      VALIDATION_RUN: ${{ needs.gate.outputs.validation_run }}
+    steps:
+      - name: Install cosign
+        run: |
+          [[ "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
+          [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          curl -fsSL --retry 3 -o "$RUNNER_TEMP/cosign" \
+            "https://github.com/sigstore/cosign/releases/download/${COSIGN_VERSION}/cosign-linux-amd64"
+          echo "${COSIGN_SHA256}  $RUNNER_TEMP/cosign" | sha256sum -c -
+          chmod 0755 "$RUNNER_TEMP/cosign"
+
+      - name: Log in to GHCR
+        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Sign the image
+        run: |
+          "$RUNNER_TEMP/cosign" sign --yes \
+            -a "dev.omnesis.source-sha=$SOURCE_SHA" \
+            -a "dev.omnesis.validation-run=$VALIDATION_RUN" \
+            "$IMAGE@$DIGEST"
+
+      - name: Verify the signature as a relay host would
+        run: |
+          "$RUNNER_TEMP/cosign" verify \
+            --certificate-identity "$IDENTITY" \
+            --certificate-oidc-issuer "$ISSUER" \
+            --certificate-github-workflow-repository omnesis-dev/Omnesis \
+            --certificate-github-workflow-ref refs/heads/main \
+            -a "dev.omnesis.source-sha=$SOURCE_SHA" \
+            "$IMAGE@$DIGEST" > /dev/null
+
+      - name: Attest build provenance
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-name: ghcr.io/omnesis-dev/omnesis-push-relay
+          subject-digest: ${{ needs.build-push-relay.outputs.digest }}
+          push-to-registry: true
+          create-storage-record: false
+
+      - name: Summary
+        run: |
+          {
+            echo "### Push relay image"
+            echo
+            echo "- Image: \`$IMAGE@$DIGEST\`"
+            echo "- Source: \`$SOURCE_SHA\`"
+            echo "- Validation run: $VALIDATION_RUN"
+            echo "- Signed by: \`$IDENTITY\`"
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -776,6 +776,13 @@ export class GatewayCloudRelayManagement implements CloudRelayManagement {
         }
         signal.throwIfAborted();
         this.certificateError = undefined;
+        // The relay drops public connections until it has accepted the tunnel, so a look taken
+        // earlier would call a working address unreachable until the next recheck. A tunnel that
+        // does not come online by then is looked at anyway and rechecked as usual.
+        await this.tunnel
+          ?.online(AbortSignal.any([signal, AbortSignal.timeout(this.recheckMs())]))
+          .catch(() => {});
+        signal.throwIfAborted();
         this.publicReady = await this.admitted(() => this.reachable(signal));
         // A first miss is not an error yet: the address is looked at again for a few minutes.
         if (this.publicReady) this.publicError = undefined;
@@ -805,8 +812,9 @@ export class GatewayCloudRelayManagement implements CloudRelayManagement {
     void this.pending.catch(() => {});
   }
   /**
-   * The first check runs the moment the tunnel is started, usually before it is online. Without a
-   * prompt second look the Relay page would call a working address unreachable for an hour.
+   * The first check can still miss a working address: the tunnel did not come online in time, or
+   * the public name does not answer yet. Without a prompt second look the Relay page would call it
+   * unreachable for an hour.
    */
   private scheduleNext(attempt: number): void {
     try {
@@ -814,7 +822,7 @@ export class GatewayCloudRelayManagement implements CloudRelayManagement {
     } catch {
       return;
     }
-    const soon = this.options.probeRetryMs ?? 15_000;
+    const soon = this.recheckMs();
     if (this.enrollment.state !== "enrolled" && this.registrationRetries < PROBE_RETRIES) {
       // A registration that failed is tried again by itself: one hiccup must not cost an hour.
       this.registrationRetries++;
@@ -832,6 +840,9 @@ export class GatewayCloudRelayManagement implements CloudRelayManagement {
         : setTimeout(() => this.launch(true), 60 * 60_000);
     }
     this.timer.unref();
+  }
+  private recheckMs(): number {
+    return this.options.probeRetryMs ?? 15_000;
   }
   private reachable(signal: AbortSignal): Promise<boolean> {
     return (this.options.probe ?? defaultPublicProbe)(this.settings!.publicOrigin, signal).catch(

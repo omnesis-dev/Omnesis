@@ -105,6 +105,15 @@ export interface KnowledgeDiscoveryBacklogOptions {
 }
 
 /**
+ * Whether a document belongs, at its current content, to its source's recent
+ * initial inventory: dated within the window before the inventory began. One
+ * bound parameter, the window in days. Trusted SQL aliases only.
+ */
+export function recentInventoryDocumentSql(alias: string): string {
+  return `EXISTS(SELECT 1 FROM source_inventory_documents si JOIN source_inventories inv ON inv.id=si.inventory_id WHERE si.document_id=${alias}.id AND si.input_revision=${alias}.content_hash AND julianday(${alias}.source_created_at)>=julianday(inv.first_received_at/1000.0,'unixepoch')-?)`;
+}
+
+/**
  * The backlog's conditions on the knowledge ledgers for one document at one
  * revision: not covered for the phase and policy, not already pending or
  * batched, and not parked. Binds the phase, the policy version and now.
@@ -147,8 +156,8 @@ export function listKnowledgeDiscoveryBacklog(
     WHERE COALESCE(r.deleted,0)=0 AND ${exclusion.sql || "1"} ${removalFence}
       ${options.sourceId === undefined ? "" : "AND d.source_id=?"}
       ${options.notBefore === undefined ? "" : "AND d.source_created_at>=?"}
-      ${options.recentInventoryWindowMs === undefined ? "" : `AND EXISTS(SELECT 1 FROM source_inventory_documents si JOIN source_inventories inv ON inv.id=si.inventory_id WHERE si.document_id=d.id AND si.input_revision=d.content_hash AND julianday(d.source_created_at)>=julianday(inv.first_received_at/1000.0,'unixepoch')-?)`}
-      ${options.excludeRecentInventoryWindowMs === undefined ? "" : `AND NOT EXISTS(SELECT 1 FROM source_inventory_documents si JOIN source_inventories inv ON inv.id=si.inventory_id WHERE si.document_id=d.id AND si.input_revision=d.content_hash AND julianday(d.source_created_at)>=julianday(inv.first_received_at/1000.0,'unixepoch')-?)`}
+      ${options.recentInventoryWindowMs === undefined ? "" : `AND ${recentInventoryDocumentSql("d")}`}
+      ${options.excludeRecentInventoryWindowMs === undefined ? "" : `AND NOT ${recentInventoryDocumentSql("d")}`}
       AND ${backlogLedgerSql("d.id", knowledgeSourceRevisionSql())}
     ORDER BY d.source_created_at ${options.direction === "oldest-first" ? "ASC" : "DESC"},d.id LIMIT ?`,
     )

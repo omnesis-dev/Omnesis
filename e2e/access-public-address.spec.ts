@@ -115,7 +115,7 @@ test("without the cloud relay there is one address and a hosted app is told to p
     await agentCard(page, id).click();
     await expect(notice(page).locator("p")).toHaveText([
       `This address is private. ${needs}, so it cannot reach this gateway until you publish it.`,
-      "Publish the gateway with Tailscale Funnel or use a domain of your own.",
+      "Publish the gateway with Tailscale on this computer or a domain of your own, in Settings, Connectivity.",
     ]);
     await expect(agentCard(page, id).locator(".access-agent-warning")).toBeVisible();
     await agentCard(page, id).click();
@@ -134,13 +134,10 @@ test("the owner's public address and a ready relay address: a drop-down that sta
   await openConnectDialog(page);
   const select = addressSelect(page);
   await expect(select).toBeVisible();
-  await expect(select.locator("option")).toHaveText([
-    `Your public address: ${OWN}`,
-    `Omnesis address (remote access): ${RELAY}`,
-  ]);
+  // The address is picked where it is shown and copied: the field holds the addresses themselves.
+  await expect(select.locator("option")).toHaveText([OWN, RELAY]);
   await expect(select).toHaveValue(OWN);
-  await expect(shownAddress(page)).toHaveText(OWN);
-  await expect(page.getByRole("combobox", { name: /^Address/u })).toHaveCount(1);
+  await expect(page.getByRole("combobox", { name: "MCP server address" })).toHaveCount(1);
 
   await agentCard(page, "claude-apps").click();
   await expect(notice(page).locator("p")).toHaveText([
@@ -153,7 +150,6 @@ test("the owner's public address and a ready relay address: a drop-down that sta
   await select.focus();
   await select.press("ArrowDown");
   await expect(select).toHaveValue(RELAY);
-  await expect(shownAddress(page)).toHaveText(RELAY);
   await expect(notice(page).locator("p")).toHaveText([
     "Claude connects from Anthropic's servers, and this address is reachable from the Internet.",
   ]);
@@ -207,10 +203,7 @@ test("a ready relay address beside the localhost address: the dialog starts on t
   await connectedGateway(page, READY, "keep");
   await openConnectDialog(page);
   const select = addressSelect(page);
-  await expect(select.locator("option")).toHaveText([
-    /^This machine only: https:\/\/localhost:/u,
-    `Omnesis address (remote access): ${RELAY}`,
-  ]);
+  await expect(select.locator("option")).toHaveText([/^https:\/\/localhost:/u, RELAY]);
   await expect(select).toHaveValue(RELAY);
   await agentCard(page, "chatgpt").click();
   await expect(notice(page).locator("p")).toHaveText([
@@ -223,22 +216,20 @@ test("a ready relay address beside the localhost address: the dialog starts on t
   ]);
 });
 
-test("a relay address with remote access turned off is marked, says so and leads to the account settings", async ({
+test("a relay address with remote access turned off is not picked, says so and leads to the relay's page", async ({
   page,
 }) => {
   await connectedGateway(page, OFF, "keep");
   await openConnectDialog(page);
   const select = addressSelect(page);
-  await expect(select.locator("option").nth(1)).toHaveText(
-    `Omnesis address (turned off): ${RELAY}`,
-  );
+  await expect(select.locator("option").nth(1)).toHaveText(RELAY);
   await expect(select).not.toHaveValue(RELAY);
   for (const [id, , needs] of HOSTED) {
     await expect(agentCard(page, id).locator(".access-agent-warning")).toBeVisible();
     await agentCard(page, id).click();
     await expect(notice(page).locator("p")).toHaveText([
       `This address is private. ${needs}, so it cannot reach this gateway until you publish it.`,
-      "This gateway has an Omnesis address. Remote access is turned off. Turn it on in Settings, Account.",
+      "This gateway has an Omnesis address. Remote access is turned off. Turn it on in Settings, Connectivity.",
     ]);
     await expect(page.locator(".access-agent-steps")).not.toContainText("Funnel");
     await agentCard(page, id).click();
@@ -247,7 +238,7 @@ test("a relay address with remote access turned off is marked, says so and leads
   await agentCard(page, "claude-apps").click();
   await expect(notice(page).locator("p")).toHaveText([
     "Remote access is turned off. Claude connects from Anthropic's servers, so it cannot reach this address right now.",
-    "Turn it on in Settings, Account.",
+    "Turn it on in Settings, Connectivity.",
   ]);
   await expect(notice(page)).toHaveClass(/is-warning/u);
   // An agent on the owner's network is told the same, and has the localhost address to fall back on.
@@ -255,11 +246,11 @@ test("a relay address with remote access turned off is marked, says so and leads
   await agentCard(page, "codex").click();
   await expect(notice(page).locator("p")).toHaveText([
     "Remote access is turned off. This address does not answer right now.",
-    "Turn it on in Settings, Account.",
+    "Turn it on in Settings, Connectivity.",
     "Or pick another address from the list above.",
   ]);
   await expect(commands(page)).toHaveCount(0);
-  await notice(page).getByRole("link", { name: "Settings, Account" }).click();
-  await expect(page).toHaveURL(/\/portal\/settings\/account$/u);
+  await notice(page).getByRole("link", { name: "Settings, Connectivity" }).click();
+  await expect(page).toHaveURL(/\/portal\/settings\/relay$/u);
   await expect(page.locator(".relay-view")).toBeVisible();
 });

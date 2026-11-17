@@ -11,8 +11,6 @@
 import { AGENT_ICONS } from "./agent-brand.js";
 import {
   DOCS,
-  PUBLISH_DOMAIN,
-  PUBLISH_FUNNEL,
   addressChoices,
   hostedClientAddress,
   localClientAddress,
@@ -24,8 +22,6 @@ const SERVER_NAME = "omnesis";
 
 const DEVELOPER_MODE_GUIDE = "https://developers.openai.com/api/docs/guides/developer-mode";
 export const PUBLISH_DOCS = {
-  funnel: PUBLISH_FUNNEL,
-  domain: PUBLISH_DOMAIN,
   certificates: `${DOCS}/setup#certificates`,
   trust: `${DOCS}/connect#trust-certificate`,
 };

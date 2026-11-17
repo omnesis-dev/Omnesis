@@ -12,8 +12,8 @@
  * a connection-wide condition, and its `SyncError` says so via `scope`.
  */
 
+import { setAppleFixtureReadable } from "./testing/apple-read-denial.js";
 import { rmSync } from "node:fs";
-import { setFixtureMode } from "@omnesis/source-sdk/testing";
 import { describe, expect, test, beforeEach, afterEach } from "vitest";
 import { SyncError } from "@omnesis/types";
 import { AppleNotesSource } from "./notes.js";
@@ -21,11 +21,7 @@ import { AppleIMessageSource } from "./imessage.js";
 import { AppleCalendarSource } from "./calendar.js";
 import { AppleCallLogSource } from "./call-log.js";
 import { describeListingGap, throwOnOpenFailure } from "./db-helpers/internal.js";
-import {
-  canDenyReads,
-  makeAppleDbFixture,
-  type AppleDbFixture,
-} from "./testing/apple-db-fixtures.js";
+import { makeAppleDbFixture, type AppleDbFixture } from "./testing/apple-db-fixtures.js";
 import type { AppleProvider } from "./provider.js";
 
 const IDS = {
@@ -45,51 +41,48 @@ describe("an unreadable database costs only the source that reads it", () => {
     rmSync(fixture.dir, { recursive: true, force: true });
   });
 
-  test.skipIf(!canDenyReads)(
-    "the notes source reports the denial while imessage syncs its messages",
-    async () => {
-      setFixtureMode(fixture.notesPath, 0o000);
-      await fixture.provider.authenticate();
+  test("the notes source reports the denial while imessage syncs its messages", async () => {
+    setAppleFixtureReadable(fixture.notesPath, false);
+    await fixture.provider.authenticate();
 
-      const notes = new AppleNotesSource(fixture.provider, IDS);
-      const imessage = new AppleIMessageSource(fixture.provider, {
-        sourceId: "apple-imessage:tester@example.com",
-        providerId: IDS.providerId,
-      });
+    const notes = new AppleNotesSource(fixture.provider, IDS);
+    const imessage = new AppleIMessageSource(fixture.provider, {
+      sourceId: "apple-imessage:tester@example.com",
+      providerId: IDS.providerId,
+    });
 
-      const denial = await notes.sync(null).then(
-        () => null,
-        (err: unknown) => err,
-      );
-      expect(denial).toBeInstanceOf(SyncError);
-      expect((denial as SyncError).kind).toBe("permission");
-      // full-disk access is denied to the executable, not to Notes alone —
-      // iMessage syncing fine below is a race this source has not lost yet,
-      // not proof the grant only ever covered Notes.
-      expect((denial as SyncError).scope).toBe("connection");
-      expect((denial as SyncError).message).toMatch(/full disk access/i);
-      expect((denial as SyncError).remediation).toMatchObject({
-        summary: expect.stringMatching(/full disk access is required/i),
-        executable: process.execPath,
-        restartRequired: true,
-      });
+    const denial = await notes.sync(null).then(
+      () => null,
+      (err: unknown) => err,
+    );
+    expect(denial).toBeInstanceOf(SyncError);
+    expect((denial as SyncError).kind).toBe("permission");
+    // full-disk access is denied to the executable, not to Notes alone —
+    // iMessage syncing fine below is a race this source has not lost yet,
+    // not proof the grant only ever covered Notes.
+    expect((denial as SyncError).scope).toBe("connection");
+    expect((denial as SyncError).message).toMatch(/full disk access/i);
+    expect((denial as SyncError).remediation).toMatchObject({
+      summary: expect.stringMatching(/full disk access is required/i),
+      executable: process.execPath,
+      restartRequired: true,
+    });
 
-      const result = await imessage.sync(null);
-      expect(result.documents).toHaveLength(1);
-      expect(result.documents[0].content).toContain("Are we still on for Thursday?");
-    },
-  );
+    const result = await imessage.sync(null);
+    expect(result.documents).toHaveLength(1);
+    expect(result.documents[0].content).toContain("Are we still on for Thursday?");
+  });
 
   // Every single-file source shares one rule, so it is worth proving on more
   // than the one database the report was filed about.
-  test.skipIf(!canDenyReads)("every source raises its own database's denial", async () => {
+  test("every source raises its own database's denial", async () => {
     for (const path of [
       fixture.notesPath,
       fixture.imessagePath,
       fixture.calendarPath,
       fixture.callLogPath,
     ]) {
-      setFixtureMode(path, 0o000);
+      setAppleFixtureReadable(path, false);
     }
     // Every database is refused, so the provider itself refuses; the sources
     // are constructed directly to reach their own reporting.

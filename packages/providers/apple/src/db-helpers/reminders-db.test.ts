@@ -1,13 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import { setAppleFixtureReadable } from "../testing/apple-read-denial.js";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { setFixtureMode } from "@omnesis/source-sdk/testing";
 import Database from "better-sqlite3";
 import { describe, test, expect, beforeEach, afterEach, vi } from "vitest";
-import { canDenyReads } from "../testing/apple-db-fixtures.js";
 import { RemindersDbHelper } from "./reminders-db.js";
 
 function seedStore(path: string, titles: string[]): void {
@@ -151,8 +150,8 @@ describe("RemindersDbHelper — the reason nothing could be read", () => {
 
   // The provider opens every Apple database in one pass, so a directory this
   // process cannot even list must not end that pass.
-  test.skipIf(!canDenyReads)("a directory that cannot be listed is recorded, not thrown", () => {
-    setFixtureMode(dir, 0o000);
+  test("a directory that cannot be listed is recorded, not thrown", () => {
+    setAppleFixtureReadable(dir, false);
     const helper = new RemindersDbHelper(dir);
     try {
       expect(() => helper.open()).not.toThrow();
@@ -161,7 +160,7 @@ describe("RemindersDbHelper — the reason nothing could be read", () => {
         remediation: { summary: expect.stringMatching(/full disk access is required/i) },
       });
     } finally {
-      setFixtureMode(dir, 0o755);
+      setAppleFixtureReadable(dir, true);
       helper.close();
     }
   });
