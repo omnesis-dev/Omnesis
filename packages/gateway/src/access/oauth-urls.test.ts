@@ -285,6 +285,18 @@ test("narrowing an overview keeps it whole while every resource answers, and lea
     supportedResources: [`${relay}/mcp`],
     protectedResourceMetadata: `${relay}/.well-known/oauth-protected-resource/mcp`,
   });
+  // The overview's own resource still answers, so it stays first after the relay is dropped.
+  const withoutRelay = narrowOAuthOverviewUrls(
+    urls,
+    (resource) => !resource.startsWith(relay),
+    () => null,
+  );
+  expect(withoutRelay).toMatchObject({
+    resource: "https://omnesis.example.org/mcp",
+    supportedResources: ["https://omnesis.example.org/mcp"],
+    protectedResourceMetadata:
+      "https://omnesis.example.org/.well-known/oauth-protected-resource/mcp",
+  });
   const fallback = resolveOAuthUrls("https://localhost:7600/mcp");
   expect(
     narrowOAuthOverviewUrls(
