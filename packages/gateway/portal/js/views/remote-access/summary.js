@@ -145,7 +145,7 @@ export function Summary({ remote, setRemote, relay, tailscale, headingRef, onSta
           mark=${hostServes ? "on" : "off"}
           title="Tailscale on this computer"
           detail=${hostServes
-            ? html`<${AddressLink} url=${host.url} />${host.publicGateway ? ", public on the Internet" : ", on your Tailscale network"}.`
+            ? html`<${AddressLink} url=${host.url} />${host.publicGateway ? ", public on the Internet." : ", on your Tailscale network only. Not public on the Internet."}`
             : !host
               ? "Checking…"
               : host.state === "available"
