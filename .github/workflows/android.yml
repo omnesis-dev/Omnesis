@@ -138,28 +138,6 @@ jobs:
           ./gradlew :app:bundleFullRelease --no-daemon --max-workers=2
           ./gradlew :wear:assembleDebug :wear:bundleRelease --no-daemon --max-workers=2
 
-      # TEMPORARY fail-fast proof (removed before merge): the Play release build
-      # with every task rerun under a Gradle heap too small for it, first with the
-      # committed jvmargs, then without ExitOnOutOfMemoryError, each bounded.
-      - name: TEMPORARY fail-fast proof
-        run: |
-          set +e
-          for mode in with-exit-on-oom without-exit-on-oom; do
-            git checkout gradle.properties
-            sed -i 's/^org.gradle.jvmargs=-Xmx4096m/org.gradle.jvmargs=-Xmx768m/' gradle.properties
-            if [ "$mode" = without-exit-on-oom ]; then
-              sed -i 's/ -XX:+ExitOnOutOfMemoryError//' gradle.properties
-            fi
-            grep '^org.gradle.jvmargs' gradle.properties
-            start=$(date +%s)
-            timeout 900 ./gradlew :app:bundlePlayRelease --rerun-tasks --no-daemon --max-workers=2
-            rc=$?
-            echo "::notice::fail-fast proof $mode: exit=$rc after $(( $(date +%s) - start ))s (124 = killed by the 900s bound)"
-            pkill -f GradleDaemon || true
-          done
-          git checkout gradle.properties
-          exit 0
-
       - name: Check nothing tried to reach production Omnesis services
         if: ${{ always() && steps.production-network.outcome == 'success' }}
         run: $GITHUB_WORKSPACE/scripts/ci/production-network.sh verify
@@ -237,15 +215,6 @@ jobs:
           echo "Using JDK 17 at $JAVA_HOME and Android SDK at $SDK"
           "$JAVA_HOME/bin/java" -version
 
-      # TEMPORARY (removed before merge): GC log for the Gradle daemon at the
-      # committed 4g ceiling, and the summed resident size of every JVM.
-      - name: TEMPORARY start memory measurement
-        run: |
-          sysctl hw.memsize || true
-          sed -i.bak 's|^org.gradle.jvmargs=.*|& -Xlog:gc:file=/tmp/omnesis-gc-gradle-%p.log|' gradle.properties
-          grep '^org.gradle.jvmargs' gradle.properties
-          nohup bash -c 'while true; do ps -axo rss=,args= | awk "/[j]ava/ {s+=\$1} END {print int(s/1024)}"; sleep 5; done' >/tmp/omnesis-jvm-rss.log 2>&1 &
-
       # Roborazzi VERIFY (not record): compares a fresh render against the
       # tracked goldens under each module's src/test/roborazzi/. A drift (or a
       # render that hangs / writes nothing) fails the job. We do NOT record in
@@ -265,17 +234,7 @@ jobs:
             :feature-activity-segments:verifyRoborazziDebug \
             :feature-photos:verifyRoborazziDebug \
             :wear:verifyRoborazziDebug \
-            --rerun-tasks --no-daemon --max-workers=2
-
-      - name: TEMPORARY memory measurement summary
-        if: always()
-        run: |
-          mv gradle.properties.bak gradle.properties || true
-          sort -n /tmp/omnesis-jvm-rss.log | tail -1 | sed 's/^/peak summed JVM RSS MiB: /'
-          for f in /tmp/omnesis-gc-gradle-*.log; do
-            grep -Eo '[0-9]+M->[0-9]+M\([0-9]+M\)' "$f" | sed -E 's/([0-9]+)M->([0-9]+)M\(([0-9]+)M\)/\1 \2 \3/' \
-              | awk -v f="$f" '{if($1>b)b=$1; if($2>a)a=$2; if($3>c)c=$3} END {print f": maxBefore="b" maxAfter="a" maxCommitted="c" MiB"}'
-          done
+            --no-daemon --max-workers=2
 
       # On a verify failure, surface the diff/actual images so a reviewer/agent
       # can see WHAT drifted. A failed upload (e.g. storage quota) must not mask
