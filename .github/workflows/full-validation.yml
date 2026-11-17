@@ -40,6 +40,7 @@ on:
             doctor-unreadable-proof,
             codex-held-activity-proof,
             windows-unit-third-recovery,
+            mac-relay-openssl-proof,
             gateway-boot-trace,
             windows-network-pilot,
             windows-network-proxy-pilot,
@@ -5975,3 +5976,64 @@ jobs:
       OMNESIS_E2E_WORKERS: "1"
       UNIT_COHORT: ${{ matrix.cohort }}
       TARGET_SOURCE_SHA: ${{ inputs.source_sha }}
+
+  mac-relay-openssl-proof:
+    name: macOS relay certificate fixture toolchain
+    if: inputs.scope == 'mac-relay-openssl-proof'
+    runs-on: macos-15
+    timeout-minutes: 45
+    env:
+      TZ: UTC
+      OMNESIS_UNIT_WORKERS: "1"
+      OMNESIS_E2E_WORKERS: "1"
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ inputs.source_sha }}
+          persist-credentials: false
+      - name: Keep this job off production Omnesis services
+        id: production-network
+        shell: bash
+        run: $GITHUB_WORKSPACE/scripts/ci/production-network.sh isolate
+      - name: Verify fixed source revision
+        env:
+          TARGET_SHA: ${{ inputs.source_sha }}
+        run: 'test "$TARGET_SHA" = ec1a4d52e0ad04664e04efb30b99c604fc5caae8
+
+          test "$(git rev-parse HEAD)" = "$TARGET_SHA"
+
+          '
+      - name: Set up Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: "24"
+          cache: npm
+      - name: Select OpenSSL 3 for certificate fixtures
+        shell: bash
+        run: 'openssl_bin="$(brew --prefix openssl@3)/bin"
+
+          test -x "$openssl_bin/openssl"
+
+          "$openssl_bin/openssl" version
+
+          echo "$openssl_bin" >> "$GITHUB_PATH"'
+      - name: Install dependencies
+        id: dependencies
+        run: node scripts/ci/npm-ci.mjs --no-audit --no-fund
+      - name: Complete relay management suite with intended OpenSSL
+        run: "openssl version
+
+          node scripts/run-check.mjs unit packages/cloud-relay/src/management-service.test.ts
+
+          "
+        shell: bash
+      - name: Require immutable candidate source
+        run: git diff --exit-code
+        if: ${{ always() }}
+      - name: Check nothing tried to reach production Omnesis services
+        if: ${{ always() && steps.production-network.outcome == 'success' }}
+        shell: bash
+        run: $GITHUB_WORKSPACE/scripts/ci/production-network.sh verify
