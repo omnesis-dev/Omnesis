@@ -210,7 +210,12 @@ describe("portable check entrypoint", () => {
   });
   test("bounds unit workers using available memory and validates override", () => {
     expect(unitWorkers({}, 64, 64 * 1024 ** 3)).toBe(4);
-    expect(unitWorkers({}, 64, 3 * 1024 ** 3)).toBe(1);
+    expect(unitWorkers({}, 64, 2.9 * 1024 ** 3)).toBe(1);
+    // A hosted macOS runner: 3 CPUs and about 4 GiB available after the
+    // typecheck. Its measured peak fits two workers.
+    expect(unitWorkers({}, 3, 3 * 1024 ** 3)).toBe(2);
+    expect(unitWorkers({}, 3, 4.2 * 1024 ** 3)).toBe(2);
+    expect(unitWorkers({}, 3, 6 * 1024 ** 3)).toBe(3);
     expect(unitWorkers({ OMNESIS_UNIT_WORKERS: "2" }, 64, 0)).toBe(2);
     expect(() => unitWorkers({ OMNESIS_UNIT_WORKERS: "0" })).toThrow(/1 to 8/);
   });

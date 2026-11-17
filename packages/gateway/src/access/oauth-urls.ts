@@ -119,6 +119,30 @@ export function resolveOAuthOverviewUrls(
   return resolveOAuthUrls(loopbackBaseUrl, undefined, configuredResources, additionalIssuers);
 }
 
+/**
+ * Keep only the resources `answers` accepts, leading with the overview's own
+ * resource while it is one of them. With none left, `fallback` decides. When
+ * every resource answers the overview is returned unchanged.
+ */
+export function narrowOAuthOverviewUrls(
+  urls: OAuthEndpointUrls | null,
+  answers: (resource: string) => boolean,
+  fallback: () => OAuthEndpointUrls | null,
+): OAuthEndpointUrls | null {
+  if (!urls) return null;
+  const supportedResources = urls.supportedResources.filter(answers);
+  if (supportedResources.length === urls.supportedResources.length) return urls;
+  if (supportedResources.length === 0) return fallback();
+  const resource = answers(urls.resource) ? urls.resource : supportedResources[0]!;
+  return {
+    ...urls,
+    resource,
+    supportedResources,
+    issuerResources: urls.issuerResources.filter(answers),
+    protectedResourceMetadata: protectedResourceMetadataUrl(resource),
+  };
+}
+
 export function resolveOAuthMetadataPaths(
   configuredBaseUrl?: string,
   configuredResources?: readonly string[],

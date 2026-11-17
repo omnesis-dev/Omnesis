@@ -478,6 +478,12 @@ jobs:
     timeout-minutes: 150
 
     steps:
+      # A hosted Mac has 3 vCPUs. Left on, Spotlight indexes the fresh
+      # checkout, node_modules and every file the tests write, taking CPU from
+      # the unit workers for the whole lane.
+      - name: Turn off Spotlight indexing
+        run: sudo mdutil -a -i off
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.target_sha }}

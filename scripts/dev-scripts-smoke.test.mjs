@@ -2849,6 +2849,12 @@ describe("full-validation workflow topology", () => {
     expect(onLinux).toContain("exec node scripts/run-check.mjs unit-all");
   });
 
+  it("turns Spotlight off before the macOS lane checks anything out", () => {
+    const steps = workflows.ci.jobs["node-macos"].steps;
+    expect(steps[0].run).toBe("sudo mdutil -a -i off");
+    expect(steps.findIndex((step) => step.uses?.startsWith("actions/checkout@"))).toBe(1);
+  });
+
   it("shards the spawned-gateway suite and gives the embedder suites their server", () => {
     const e2e = workflows.ci.jobs.e2e;
     const shards = JSON.parse(workflows.ci.on.workflow_call.inputs.e2e_matrix.default);

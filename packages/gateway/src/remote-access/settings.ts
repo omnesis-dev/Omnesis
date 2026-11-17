@@ -3,10 +3,11 @@
 
 /**
  * The owner's remote-access choices that belong to no single way in, kept in
- * `<config>/remote-access.json`: whether the guided setup was finished, and
- * which way in a device tries first when both the gateway's own Tailscale
- * device and the Omnesis relay can answer. Nothing is written until the owner
- * makes a choice, so a gateway that never opens the setup has no such file.
+ * `<config>/remote-access.json`: whether the guided setup was finished, which
+ * way in a device tries first when both the gateway's own Tailscale device and
+ * the Omnesis relay can answer, and which addresses away from home answer
+ * MCP. Nothing is written until the owner makes a choice, so a gateway that
+ * never opens the setup has no such file.
  */
 
 import { existsSync, readFileSync } from "node:fs";
@@ -20,11 +21,32 @@ const log = createLogger("gateway:remote-access");
 export const remoteAccessFirstSchema = z.enum(["tailscale", "relay"]);
 export type RemoteAccessFirst = z.infer<typeof remoteAccessFirstSchema>;
 
+/**
+ * Whether MCP answers on each address away from home (see
+ * mcp-addresses.ts). Only a choice the owner made is stored: an address
+ * missing here answers MCP, so a file written before this choice existed, or
+ * none at all, leaves every address on. The public Tailscale address is the
+ * Tailscale device's own setting and is not kept here.
+ */
+const mcpAddressChoicesSchema = z
+  .object({
+    /** The Omnesis relay address. */
+    relay: z.boolean().optional(),
+    /** The gateway's own Tailscale device, on the owner's Tailscale network. */
+    tailnet: z.boolean().optional(),
+    /** Tailscale already on this computer, by the machine's MagicDNS name. */
+    host: z.boolean().optional(),
+    /** The address in `gateway.publicBaseUrl`. */
+    domain: z.boolean().optional(),
+  })
+  .strict();
+
 const remoteAccessSettingsSchema = z
   .object({
     /** When the owner finished the guided setup, as an ISO time; null until then. */
     setupCompletedAt: z.string().datetime().nullable(),
     first: remoteAccessFirstSchema,
+    mcp: mcpAddressChoicesSchema.optional(),
   })
   .strict();
 export type RemoteAccessSettings = z.infer<typeof remoteAccessSettingsSchema>;
