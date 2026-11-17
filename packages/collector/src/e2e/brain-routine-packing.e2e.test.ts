@@ -111,11 +111,16 @@ interface WorkRow {
   dueAt: number;
   batchId: string | null;
 }
+/**
+ * A source's latest change work. Advancing the virtual clock past the retry
+ * backoff also makes an interpreted source's review due; that is other work.
+ */
 const latestWork = (docId: string): WorkRow | undefined =>
   bench.sql
     .prepare<[string], WorkRow>(
       `SELECT status,failures,due_at AS dueAt,batch_id AS batchId FROM knowledge_work
-      WHERE subject_kind='source' AND subject_id=? ORDER BY created_at DESC,rowid DESC LIMIT 1`,
+      WHERE subject_kind='source' AND subject_id=? AND reason='change'
+      ORDER BY created_at DESC,rowid DESC LIMIT 1`,
     )
     .get(docId);
 const batchSize = (batchId: string): number =>
