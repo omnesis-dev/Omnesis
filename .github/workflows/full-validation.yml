@@ -24,6 +24,7 @@ on:
             network-fixture-proof,
             bootstrap-receipt-proof,
             account-unlink-integration,
+            account-unlink-linux-proof,
             gateway-boot-trace,
             windows-network-pilot,
             windows-network-proxy-pilot,
@@ -3528,7 +3529,7 @@ jobs:
 
   account-unlink-integration:
     name: Merged account unlink and cleanup ownership (${{ matrix.os }})
-    if: inputs.scope == 'account-unlink-integration'
+    if: inputs.scope == 'account-unlink-integration' || inputs.scope == 'account-unlink-linux-proof'
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     env:
@@ -3585,7 +3586,7 @@ jobs:
       - name: Check merged relay ownership types and script bootstrap
         if: runner.os == 'Linux'
         env:
-          NODE_OPTIONS: --max-old-space-size=4096
+          NODE_OPTIONS: --max-old-space-size=6144
         run: node node_modules/eslint/bin/eslint.js packages/cloud-relay/src/management-service.ts scripts/lib/check-process.mjs scripts/lib/check-process.test.mjs scripts/ci/windows-checks.mjs scripts/ci/with-test-embedder.mjs scripts/nx/entrypoints.test.mjs
       - name: Build the exact candidate runtime packages
         run: node scripts/build-projects.mjs
@@ -3605,4 +3606,4 @@ jobs:
       fail-fast: false
       max-parallel: 1
       matrix:
-        os: [windows-latest, ubuntu-latest, macos-15]
+        os: ${{ fromJSON(inputs.scope == 'account-unlink-linux-proof' && '["ubuntu-latest"]' || '["windows-latest","ubuntu-latest","macos-15"]') }}
