@@ -82,6 +82,8 @@ export function HostTailscale({ remote, setRemote }) {
   const [host, setHost] = useState(null);
   const [error, setError] = useState("");
   const [working, setWorking] = useState("");
+  // Whether the owner wants the gateway on the Internet; it follows what Tailscale does
+  // until the owner changes it.
   const [wantPublic, setWantPublic] = useState(false);
   // The last publish: `{ ok: true, url }`, or `{ ok: false, reason, command }`.
   const [outcome, setOutcome] = useState(null);
@@ -96,6 +98,7 @@ export function HostTailscale({ remote, setRemote }) {
     try {
       const found = await getHostTailscale();
       setHost(found);
+      if (why === "read") setWantPublic(found.publicGateway === true);
       if (why === "check") {
         setRemote(await getRemoteAccess());
         // A check that finds nothing new says so, rather than leaving the page as it was.
@@ -103,6 +106,8 @@ export function HostTailscale({ remote, setRemote }) {
           setNotYet("Tailscale on this computer isn't serving this gateway yet. Set it up, or run the command, then check again.");
         else if (found.state === "available" && wantPublic && !found.publicGateway)
           setNotYet("This gateway isn't reachable from the Internet yet. Set it up, or run the command, then check again.");
+        else if (found.state === "available" && !wantPublic && found.publicGateway)
+          setNotYet("This gateway is still reachable from the Internet. Take it off, or run the command, then check again.");
       }
     } catch (cause) {
       setError(problem(cause, "Couldn't look for Tailscale on this computer. Try again."));
@@ -123,7 +128,9 @@ export function HostTailscale({ remote, setRemote }) {
         const failed = await savePublicAddress(result.url, setRemote);
         if (failed) setError(failed);
       }
-      setHost(await getHostTailscale());
+      const found = await getHostTailscale();
+      setHost(found);
+      if (result.ok) setWantPublic(found.publicGateway === true);
     } catch (cause) {
       setError(problem(cause, "Couldn't set up Tailscale on this computer. Try again."));
     } finally {
@@ -158,6 +165,8 @@ export function HostTailscale({ remote, setRemote }) {
         </button>
       </div>`;
   const busy = Boolean(working);
+  // Public now, and the owner unticked it: the press takes the gateway off the Internet.
+  const leaving = host.publicGateway && !wantPublic;
   const configured = remote.publicBaseUrl?.configured ?? null;
   return html`<p class="remote-access-muted">
       Found: this computer is on your Tailscale network as <code>${host.dnsName}</code>.
@@ -179,17 +188,27 @@ export function HostTailscale({ remote, setRemote }) {
     html`<p class="remote-access-muted">
       Another app already uses <code>https://${host.dnsName}</code>, so this gateway uses port ${host.port}: <code>${host.url}</code>. ChatGPT connects only on port 443.
     </p>`}
-    ${!host.publicGateway &&
-    !host.blocked &&
+    ${!host.blocked &&
     html`<label class="remote-access-check">
       <input type="checkbox" checked=${wantPublic} disabled=${busy} onChange=${(event) => setWantPublic(event.currentTarget.checked)} />
       <span>Also reachable from the Internet (Tailscale Funnel)</span>
     </label>`}
-    ${(!host.servesGateway || (wantPublic && !host.publicGateway)) &&
+    ${leaving &&
+    html`<p class="remote-access-muted">
+      ChatGPT, Claude and other agents that connect from the Internet will no longer reach this gateway. Your devices on your
+      Tailscale network still will.
+    </p>`}
+    ${(!host.servesGateway || wantPublic !== host.publicGateway) &&
     html`<div class="remote-access-buttons">
       ${!host.blocked &&
       html`<button type="button" class="btn-primary" disabled=${busy} onClick=${publish}>
-        ${working === "publish" ? "Setting it up…" : "Set it up for me"}
+        ${leaving
+          ? working === "publish"
+            ? "Taking it off…"
+            : "Take it off the Internet"
+          : working === "publish"
+            ? "Setting it up…"
+            : "Set it up for me"}
       </button>`}
       <button type="button" class="btn-secondary" disabled=${busy} onClick=${() => read("check")}>
         ${working === "check" ? "Checking…" : host.blocked ? "Check again" : "I have already done it, check it"}
@@ -202,6 +221,7 @@ export function HostTailscale({ remote, setRemote }) {
       ${outcome.command && html`<${CopyBlock} text=${outcome.command} title="Copy command" />`}
     </div>`}
     ${host.publicGateway &&
+    !leaving &&
     configured !== host.url &&
     !remote.publicBaseUrl?.setByEnvironment &&
     html`<div class="remote-access-buttons">
