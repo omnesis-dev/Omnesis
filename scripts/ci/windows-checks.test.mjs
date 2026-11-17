@@ -57,6 +57,7 @@ describe("Windows CI coverage", () => {
     for (const event of ["schedule", "workflow_dispatch"]) {
       expect(matrix(event).map(({ lane, shard }) => [lane, shard ?? null])).toEqual([
         ["unit", null],
+        ["adapters", null],
         ["e2e", "1/2"],
         ["e2e", "2/2"],
         ["portal", null],
@@ -65,9 +66,13 @@ describe("Windows CI coverage", () => {
     expect(config.on.workflow_dispatch.inputs.lane).toMatchObject({
       type: "choice",
       default: "all",
-      options: ["all", "unit", "e2e", "portal"],
+      options: ["all", "unit", "adapters", "e2e", "portal"],
     });
-    expect(matrix("workflow_dispatch", "unit").map(({ lane }) => lane)).toEqual(["unit"]);
+    expect(matrix("workflow_dispatch", "unit").map(({ lane }) => lane)).toEqual([
+      "unit",
+      "adapters",
+    ]);
+    expect(matrix("workflow_dispatch", "adapters").map(({ lane }) => lane)).toEqual(["adapters"]);
     expect(matrix("workflow_dispatch", "e2e").map(({ shard }) => shard)).toEqual(["1/2", "2/2"]);
     expect(matrix("workflow_dispatch", "portal").map(({ lane }) => lane)).toEqual(["portal"]);
     const selected = JSON.stringify(["packages/collector/src/e2e/cli.e2e.test.ts"]);
@@ -100,7 +105,7 @@ describe("Windows CI coverage", () => {
     expect(steps[index].if).toBe("${{ matrix.lane == 'unit' }}");
     expect(steps[index].run).toBe("node scripts/ci/prepare-whisper-test-inputs.mjs");
     expect(index).toBeLessThan(
-      steps.findIndex(({ name }) => name === "Full Windows unit and adapter tests"),
+      steps.findIndex(({ name }) => name === "Full Windows unit and smoke tests"),
     );
   });
 
@@ -108,7 +113,7 @@ describe("Windows CI coverage", () => {
     const steps = workflow().jobs.windows.steps;
     const prepare = steps.findIndex(({ id }) => id === "native_ocr");
     const verify = steps.findIndex(({ id }) => id === "verify_ocr");
-    const unit = steps.findIndex(({ name }) => name === "Full Windows unit and adapter tests");
+    const unit = steps.findIndex(({ name }) => name === "Full Windows unit and smoke tests");
     expect(prepare).toBeGreaterThan(-1);
     expect(verify).toBeGreaterThan(prepare);
     expect(unit).toBeGreaterThan(verify);
@@ -282,7 +287,7 @@ describe("Windows CI coverage", () => {
     expect(steps[prepare]).not.toHaveProperty("if");
     expect(steps[prepare]).not.toHaveProperty("continue-on-error");
     expect(steps[prepare].id).toBe("native_vector");
-    const unit = steps.find(({ name }) => name === "Full Windows unit and adapter tests");
+    const unit = steps.find(({ name }) => name === "Full Windows unit and smoke tests");
     expect(unit.if).toContain("steps.native_vector.outcome == 'success'");
     expect(unit.if).toContain("steps.native_sqlite.outcome == 'success'");
 
@@ -343,7 +348,7 @@ describe("Windows CI coverage", () => {
     const dependencyStep = workflow().jobs.windows.steps.find(({ id }) => id === "dependencies");
     expect(dependencyStep.name).toBe("Install dependencies");
     const runtimeStep = workflow().jobs.windows.steps.find(
-      ({ name }) => name === "Full Windows unit and adapter tests",
+      ({ name }) => name === "Full Windows unit and smoke tests",
     );
     expect(runtimeStep.if).toBe(
       "${{ !cancelled() && matrix.lane == 'unit' && steps.dependencies.outcome == 'success' && steps.native_sqlite.outcome == 'success' && steps.native_vector.outcome == 'success' && steps.native_ocr.outcome == 'success' && steps.verify_ocr.outcome == 'success' }}",
@@ -351,7 +356,9 @@ describe("Windows CI coverage", () => {
   });
 
   test("full units are discovered normally and exclude only explicitly documented installation tests", () => {
-    const [unit, smoke, adapter, hermes] = windowsCheckTasks("unit");
+    const [unit, smoke] = windowsCheckTasks("unit");
+    expect(windowsCheckTasks("unit")).toHaveLength(2);
+    const [adapter, hermes] = windowsCheckTasks("adapters");
     for (const file of [
       "packages/cli/src/update/build-heap.test.ts",
       "packages/cli/src/update/source-launcher.test.ts",
