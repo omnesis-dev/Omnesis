@@ -749,6 +749,22 @@ test("a gateway whose account was deleted says so above the offer to connect aga
   expect(host.querySelector(".relay-notice")).toBeNull();
 });
 
+test("a gateway unlinked on its account page says so above the usual offer to connect", async () => {
+  state.status = { ...base(), notice: "gateway-removed" };
+  await show();
+  expect(headline()).toBe("Enroll this gateway in your Omnesis Account");
+  const notice = host.querySelector('[role="status"].relay-notice')?.textContent ?? "";
+  expect(notice).toContain("This gateway was unlinked from your Omnesis account on the account page");
+  expect(notice).toContain("Nothing on it was deleted");
+  expect(notice).not.toContain("deleted, so");
+  expect(button("Create an Omnesis account")).toBeDefined();
+  expect(button("I already have one")).toBeDefined();
+  expect(host.querySelector(".relay-problems")).toBeNull();
+  state.status = base();
+  await show();
+  expect(host.querySelector(".relay-notice")).toBeNull();
+});
+
 test("loading shows a skeleton and a failed first load offers a retry without exception details", async () => {
   state.status = null;
   state.busy = "refresh";

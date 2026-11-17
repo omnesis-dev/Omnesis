@@ -16,6 +16,7 @@ import { dirname } from "node:path";
 import { atomicWriteFile, atomicWriteFileSync } from "@omnesis/core";
 import { z } from "zod";
 import {
+  GATEWAY_REMOVED,
   keyChallengeSchema,
   keyAuthenticationTranscript,
   gatewayKeyAccount,
@@ -50,11 +51,12 @@ const sessionSchema = z.object({
 type Session = z.infer<typeof sessionSchema>;
 /**
  * The relay answered a gateway it had registered before, with both keys proven, that it holds no
- * registration for it: its Omnesis account was deleted. Only this answer means that; a relay that
- * is unreachable or failing says something else.
+ * registration for it: its Omnesis account was deleted, or its owner unlinked it on the account
+ * page (`removed`). Only this answer means that; a relay that is unreachable or failing says
+ * something else.
  */
 export class GatewayUnregistered extends Error {
-  constructor() {
+  constructor(readonly removed = false) {
     super("The relay no longer has a registration for this gateway");
   }
 }
@@ -241,7 +243,17 @@ async function exchange(
         ? AbortSignal.any([options.signal, AbortSignal.timeout(15_000)])
         : AbortSignal.timeout(15_000),
     });
-    if (response.status === 410 && material.enrolled) throw new GatewayUnregistered();
+    if (response.status === 410 && material.enrolled) {
+      let removed = false;
+      try {
+        removed = z
+          .object({ error: z.literal(GATEWAY_REMOVED) })
+          .safeParse(await readBoundedJson(response)).success;
+      } catch {
+        // A refusal with no readable reason is the account's deletion.
+      }
+      throw new GatewayUnregistered(removed);
+    }
     if (!response.ok) throw new Error("Gateway key registration refused");
     const value = await readBoundedJson(response);
     options.signal?.throwIfAborted();

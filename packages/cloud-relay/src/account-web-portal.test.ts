@@ -59,6 +59,7 @@ async function fixture(withPortal = true) {
     accounts: () => ["owner"],
     binding: () => binding,
     name: () => undefined,
+    online: () => true,
   });
   const portal = withPortal
     ? new PortalSignIn({
@@ -82,6 +83,7 @@ async function fixture(withPortal = true) {
     passkeys,
     choices: (account) => directory.choices(account),
     deleteAccount: () => {},
+    unlinkGateway: () => {},
     googleAvailable: true,
     portal,
     signupAdmission,

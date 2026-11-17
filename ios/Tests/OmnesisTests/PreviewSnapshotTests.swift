@@ -104,6 +104,10 @@ final class PreviewSnapshotTests: XCTestCase {
             }.dynamicTypeSize(.accessibility2),
             name: "account-pairing-approved-large"
         )
+        snapshot(
+            NavigationStack { PreviewMocks.accountPairingPanel(.choosing) }.dynamicTypeSize(.accessibility2),
+            name: "account-pairing-choosing-large"
+        )
     }
 
     func testPairingEntryWithAnOmnesisAccount() {

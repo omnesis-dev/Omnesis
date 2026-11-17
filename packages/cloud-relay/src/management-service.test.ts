@@ -1664,12 +1664,12 @@ test("connecting again after a registration that failed registers the gateway ag
 });
 
 /** What the manager handed the tunnel to call when the relay says it no longer has this gateway. */
-function relayForgot(f: ReturnType<typeof fixture>): () => void {
+function relayForgot(f: ReturnType<typeof fixture>): (removed?: boolean) => void {
   const start = f.options.startTunnel as unknown as { mock: { calls: unknown[][] } };
-  return start.mock.calls.at(-1)![2] as () => void;
+  return start.mock.calls.at(-1)![2] as (removed?: boolean) => void;
 }
-async function forgotten() {
-  await vi.waitFor(async () => expect((await manager!.status()).notice).toBe("account-deleted"), {
+async function forgotten(notice: "account-deleted" | "gateway-removed" = "account-deleted") {
+  await vi.waitFor(async () => expect((await manager!.status()).notice).toBe(notice), {
     timeout: 10_000,
   });
   return manager!.status();
@@ -1802,6 +1802,48 @@ test(
     });
   },
 );
+test("a gateway unlinked on its account page leaves its account the same way, and says it was unlinked", async () => {
+  const f = await connectedGateway({ probeRetryMs: 1 });
+  // Found by its next registration, such as when it starts again after being offline.
+  f.register.mockRejectedValueOnce(new GatewayUnregistered(true));
+  await manager!.reconnect();
+  const after = await forgotten("gateway-removed");
+  expect(after).toMatchObject(disconnected);
+  expect(after.connect).toBeUndefined();
+  expect(manager!.verifiedAccountId()).toBeUndefined();
+  expect(manager!.isExposing()).toBe(false);
+  expect((await readdir(f.relayDirectory)).sort()).toEqual(RETAINED);
+  // Nothing is tried again.
+  const registrations = f.register.mock.calls.length;
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  expect(f.register).toHaveBeenCalledTimes(registrations);
+  // Its owner connects it again from scratch, and the notice goes.
+  f.relay.poll({ status: "approved" });
+  expect(await manager!.connect({ termsAccepted: true })).not.toHaveProperty("notice");
+  expect(await settled("done")).toMatchObject({ enabled: true, account: { linked: true } });
+});
+test("a running gateway's tunnel learning it was unlinked on its account page leaves the account at once", async () => {
+  const f = await connectedGateway();
+  relayForgot(f)(true);
+  expect(await forgotten("gateway-removed")).toMatchObject(disconnected);
+  expect(f.stop).toHaveBeenCalledOnce();
+});
+test("an answer that says the gateway was unlinked wins over one that could not say why, while leaving", async () => {
+  const f = await connectedGateway();
+  relayForgot(f)(false);
+  relayForgot(f)(true);
+  expect(await forgotten("gateway-removed")).toMatchObject(disconnected);
+});
+test("an answer that says the gateway was unlinked wins over one that could not say why, after leaving", async () => {
+  const g = await connectedGateway();
+  relayForgot(g)(false);
+  await forgotten("account-deleted");
+  relayForgot(g)(true);
+  expect((await manager!.status()).notice).toBe("gateway-removed");
+  // And never the other way round.
+  relayForgot(g)(false);
+  expect((await manager!.status()).notice).toBe("gateway-removed");
+});
 test("the tunnel learning that the relay forgot the gateway ends a connection under way, once", async () => {
   const f = await connecting();
   manager = await GatewayCloudRelayManagement.open(f.options);

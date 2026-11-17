@@ -766,7 +766,8 @@ private actor AccountModelSession: AccountPairingSession {
             AccountGatewayChoice(
                 gatewayId: "00000000-0000-4000-8000-0000000000aa",
                 publicOrigin: "https://second.example.test",
-                displayName: "Fictional second"
+                displayName: "Fictional second",
+                online: false
             ),
         ]
     }
@@ -778,7 +779,12 @@ private actor AccountModelSession: AccountPairingSession {
 
     func google(idToken: String) async throws -> [AccountGatewayChoice] {
         XCTAssertEqual(idToken, "fictional-native-google-token")
-        return withSecondChoice(AccountGatewayChoice(gatewayId: binding.gatewayId, publicOrigin: binding.publicOrigin, displayName: nil))
+        return withSecondChoice(AccountGatewayChoice(
+            gatewayId: binding.gatewayId,
+            publicOrigin: binding.publicOrigin,
+            displayName: nil,
+            online: true
+        ))
     }
 
     func passkeyOptions() async throws -> AccountCloudPairingClient.PasskeyOptions {
@@ -793,7 +799,8 @@ private actor AccountModelSession: AccountPairingSession {
         return withSecondChoice(AccountGatewayChoice(
             gatewayId: binding.gatewayId,
             publicOrigin: binding.publicOrigin,
-            displayName: "Fictional home"
+            displayName: "Fictional home",
+            online: true
         ))
     }
 
