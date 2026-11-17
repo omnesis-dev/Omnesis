@@ -6513,7 +6513,7 @@ jobs:
       DEBUG: pw:webserver
 
   instructions-read-denial-proof:
-    name: Instructions read failures on privileged runtimes (${{ matrix.os }})
+    name: Remaining relay and worker fixtures (${{ matrix.os }})
     if: inputs.scope == 'instructions-read-denial-proof'
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
@@ -6536,7 +6536,7 @@ jobs:
       - name: Verify fixed source revision
         env:
           TARGET_SHA: ${{ inputs.source_sha }}
-        run: 'test "$TARGET_SHA" = 0b4c0cfca7286855e73c0e5309762ba439413f0b
+        run: 'test "$TARGET_SHA" = 3ea81b36fc57beaa525709a80bb179c9b2828d5e
 
           test "$(git rev-parse HEAD)" = "$TARGET_SHA"
 
@@ -6557,19 +6557,17 @@ jobs:
         env:
           NODE_OPTIONS: --max-old-space-size=4096
         run: exec node scripts/run-check.mjs types-tests
-      - name: Typed lint of unconditional instructions read error
+      - name: Typed lint of the account-link fixture
         if: runner.os == 'Linux'
         env:
           NODE_OPTIONS: --max-old-space-size=6144
-        run: "node node_modules/eslint/bin/eslint.js packages/gateway/src/instructions/store.test.ts
+        run:
+          "node node_modules/eslint/bin/eslint.js packages/cloud-relay/src/gateway-account-link.test.ts
 
           "
         shell: bash
-      - name: Validate instructions, notes and SQLite recovery
-        run:
-          "node scripts/run-check.mjs unit packages/gateway/src/instructions/store.test.ts packages/gateway/src/http/routes/notes.test.ts packages/gateway/src/sqlite-windows-wal-recovery.test.ts scripts/ci/build-windows-sqlite.test.mjs
-
-          "
+      - name: Validate account refresh, worker setup and Windows workflow policy
+        run: node scripts/run-check.mjs unit packages/cloud-relay/src/gateway-account-link.test.ts packages/gateway/src/brain/rhythm/collision-sweep-reads.worker.test.ts scripts/ci/windows-checks.test.mjs --reporter=verbose
         shell: bash
       - name: Require immutable candidate source
         run: git diff --exit-code
