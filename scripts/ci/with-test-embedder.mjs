@@ -13,7 +13,7 @@ import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { pathToFileURL } from "node:url";
 import { runCheckCommand, checkFailureMessage } from "../lib/check-process.mjs";
-import { ownedProcessCleanupReceipt } from "../../packages/core/src/owned-process-cleanup.ts";
+import { ownedProcessCleanupReceipt } from "../../packages/platform/src/owned-process-cleanup.ts";
 
 const retainedRuntimes = new Set();
 let retainedRuntimeHold;

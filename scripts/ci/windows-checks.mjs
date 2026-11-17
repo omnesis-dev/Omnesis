@@ -3,7 +3,7 @@
 
 import { existsSync } from "node:fs";
 import { runCheckCommand } from "../lib/check-process.mjs";
-import { ownedProcessCleanupReceipt } from "../../packages/core/src/owned-process-cleanup.ts";
+import { ownedProcessCleanupReceipt } from "../../packages/platform/src/owned-process-cleanup.ts";
 
 /** Installation is outside the Windows runtime compatibility contract. */
 export const INSTALLER_TEST_EXCLUSIONS = [

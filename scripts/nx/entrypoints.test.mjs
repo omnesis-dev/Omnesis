@@ -16,7 +16,7 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { afterEach, describe, expect, test } from "vitest";
 import { execute, nxInvocation } from "./checks.mjs";
-import { ownedProcessCleanupReceipt } from "../../packages/core/src/owned-process-cleanup.ts";
+import { ownedProcessCleanupReceipt } from "../../packages/platform/src/owned-process-cleanup.ts";
 
 const repoRoot = join(import.meta.dirname, "../..");
 const roots = [];

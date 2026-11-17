@@ -6,7 +6,7 @@ import {
   installParentShutdownHandler,
 } from "../../packages/core/src/parent-shutdown.ts";
 import { spawn } from "node:child_process";
-import { ownedProcessCleanupReceipt } from "../../packages/core/src/owned-process-cleanup.ts";
+import { ownedProcessCleanupReceipt } from "../../packages/platform/src/owned-process-cleanup.ts";
 import { resolveNpmInvocation } from "../../packages/core/src/node-command.ts";
 import {
   waitForChild as waitForOwnedChild,
