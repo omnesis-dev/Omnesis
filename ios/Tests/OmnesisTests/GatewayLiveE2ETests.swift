@@ -534,7 +534,7 @@ extension GatewayLiveE2ETests {
         try await waitUntil("the gateway's answer") { forwarder.heldReplyBytes > 0 }
         try await Task.sleep(for: .seconds(2))
         forwarder.releaseReplies()
-        try await waitUntil("the probe to settle") { !(await socket.probeInFlightForTesting()) }
+        try await waitUntil("the probe to settle") { await !socket.probeInFlightForTesting() }
         let connected = await isConnected(socket)
         XCTAssertTrue(connected)
         XCTAssertEqual(forwarder.acceptedConnections, 1)
