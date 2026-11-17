@@ -1,13 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import { setAppleFixtureReadable } from "../testing/apple-read-denial.js";
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { setFixtureMode } from "@omnesis/source-sdk/testing";
 import Database from "better-sqlite3";
 import { describe, expect, test, beforeEach, afterEach, vi } from "vitest";
-import { canDenyReads } from "../testing/apple-db-fixtures.js";
 import { SingleFileAppleDb } from "./single-file-db.js";
 import { classifyOpenError, fullDiskAccessDenial, type Db } from "./internal.js";
 import type { Logger } from "@omnesis/core";
@@ -83,8 +82,8 @@ describe("SingleFileAppleDb", () => {
 
   // The provider opens all seven Apple databases in one pass. A helper that
   // threw would end that pass, so every failure below is recorded instead.
-  test.skipIf(!canDenyReads)("a denied read is recorded, not thrown", () => {
-    setFixtureMode(path, 0o000);
+  test("a denied read is recorded, not thrown", () => {
+    setAppleFixtureReadable(path, false);
 
     expect(() => helper.open()).not.toThrow();
 
@@ -116,28 +115,25 @@ describe("SingleFileAppleDb", () => {
     expect(helper.getLastOpenFailure()?.message).toContain("file is not a database");
   });
 
-  test.skipIf(!canDenyReads)(
-    "access restored on a later cycle opens and clears the failure",
-    () => {
-      setFixtureMode(path, 0o000);
-      helper.open();
-      expect(helper.getLastOpenFailure()).not.toBeNull();
-
-      setFixtureMode(path, 0o644);
-
-      expect(helper.getDb()).not.toBeNull();
-      expect(helper.getLastOpenFailure()).toBeNull();
-    },
-  );
-
-  // Otherwise the source would keep telling the operator to grant access to a
-  // database that is no longer on the host.
-  test.skipIf(!canDenyReads)("a failure does not outlive the database it was about", () => {
-    setFixtureMode(path, 0o000);
+  test("access restored on a later cycle opens and clears the failure", () => {
+    setAppleFixtureReadable(path, false);
     helper.open();
     expect(helper.getLastOpenFailure()).not.toBeNull();
 
-    setFixtureMode(path, 0o644);
+    setAppleFixtureReadable(path, true);
+
+    expect(helper.getDb()).not.toBeNull();
+    expect(helper.getLastOpenFailure()).toBeNull();
+  });
+
+  // Otherwise the source would keep telling the operator to grant access to a
+  // database that is no longer on the host.
+  test("a failure does not outlive the database it was about", () => {
+    setAppleFixtureReadable(path, false);
+    helper.open();
+    expect(helper.getLastOpenFailure()).not.toBeNull();
+
+    setAppleFixtureReadable(path, true);
     rmSync(path, { force: true });
 
     expect(helper.getDb()).toBeNull();
@@ -147,8 +143,8 @@ describe("SingleFileAppleDb", () => {
 
   // `open()` runs on every cycle and on every lazy `getDb()`. The durable
   // channel for a standing failure is the source's sync error, not the log.
-  test.skipIf(!canDenyReads)("a standing failure is announced once, not once a call", () => {
-    setFixtureMode(path, 0o000);
+  test("a standing failure is announced once, not once a call", () => {
+    setAppleFixtureReadable(path, false);
 
     helper.open();
     helper.getDb();
@@ -208,13 +204,13 @@ describe("the remediation an operator is handed", () => {
   // The grant has no consent prompt, and its pane lists binaries rather than
   // apps — the one that must be listed is the process actually running, which
   // is the detail an operator has no way to guess.
-  test.skipIf(!canDenyReads)("names the grant, the pane, and the binary that needs it", () => {
+  test("names the grant, the pane, and the binary that needs it", () => {
     const dir = mkdtempSync(join(tmpdir(), "omnesis-apple-hint-test-"));
     try {
       const path = join(dir, "store.sqlite");
       new Database(path).close();
       const helper = new TestDbWithRealHint(path, fakeLogger());
-      setFixtureMode(path, 0o000);
+      setAppleFixtureReadable(path, false);
       helper.open();
 
       const failure = helper.getLastOpenFailure();

@@ -5,24 +5,16 @@
  * Fixtures for the tests that stage an Apple database the collector cannot
  * read.
  *
- * The denial is staged with a file mode of `000`. That is the same condition
- * macOS's privacy layer produces for a database behind a grant the process
- * does not hold: SQLite reports both as `SQLITE_CANTOPEN: unable to open
- * database file`, which is the string `classifyOpenError` reads. Root ignores
- * the mode, so a test that stages one must skip there. Windows uses an explicit
- * current-user read denial on its owned fixture instead of chmod.
+ * The databases are real SQLite files. Logical refusal tests import the
+ * read-denial fixture before the provider so they also run on privileged hosts.
  */
 
 import { mkdtempSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { canDenyFixtureReads } from "@omnesis/source-sdk/testing";
 import Database from "better-sqlite3";
 import { APPLE_EPOCH_OFFSET_SECONDS } from "../epoch.js";
 import { AppleProvider } from "../provider.js";
-
-/** Root reads through a 000 file mode, so the denial cannot be staged there. */
-export const canDenyReads = canDenyFixtureReads;
 
 export interface AppleDbFixture {
   dir: string;
