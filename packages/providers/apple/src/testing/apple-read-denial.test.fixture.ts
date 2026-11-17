@@ -7,12 +7,13 @@ import { afterEach, vi } from "vitest";
 const denied = vi.hoisted(() => ({
   paths: new Set<string>(),
   errorFor(path: unknown): NodeJS.ErrnoException | undefined {
-    if (typeof path !== "string") return;
+    if (typeof path !== "string") return undefined;
     for (const root of this.paths) {
       if (path === root || path.startsWith(`${root}/`) || path.startsWith(`${root}\\`)) {
         return Object.assign(new Error("Fixture read access denied"), { code: "EACCES" });
       }
     }
+    return undefined;
   },
 }));
 
