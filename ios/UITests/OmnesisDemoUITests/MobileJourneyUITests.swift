@@ -141,15 +141,18 @@ final class MobileJourneyUITests: XCTestCase {
     /// The gateway's replay backend answers from a recorded scenario, so no
     /// model runs.
     func testAskingTheAgentShowsItsAnswer() throws {
-        try launchPaired()
-        let composer = app.textFields["agentComposer"]
-        tap(composer, "the Ask composer")
-        composer.typeText(Self.agentQuestion)
-        tap(app.buttons["agentSendButton"], "the Send button")
-        XCTAssertTrue(
-            element(containing: Self.agentAnswer).waitForExistence(timeout: 60),
-            "the agent's answer did not mention \"\(Self.agentAnswer)\""
-        )
+        try ask()
+    }
+
+    /// The same journey when the system takes the first tap on Send away, as
+    /// its gesture gate sometimes does on a simulator: the button shows its
+    /// pressed state and never acts. The journey notices that the question is
+    /// still in the composer and taps Send again.
+    func testAskingTheAgentSurvivesACancelledSendTap() throws {
+        // Touch 1 is the tap on the composer and touch 2 the first tap on
+        // Send; typing sends key events, not touches.
+        app.launchEnvironment["DEMO_CANCEL_TOUCHES"] = "2"
+        try ask()
     }
 
     /// Settings → the gateway goes away → the row says it is retrying, without
@@ -200,6 +203,52 @@ final class MobileJourneyUITests: XCTestCase {
     }
 
     // MARK: - Steps
+
+    /// Asks the replayed question from a fresh Ask screen and waits for its
+    /// answer.
+    private func ask() throws {
+        try gateway.deleteAllConversations()
+        try launchPaired()
+        let composer = app.textFields["agentComposer"]
+        focus(composer)
+        composer.typeText(Self.agentQuestion)
+        send(from: composer)
+        XCTAssertTrue(
+            element(containing: Self.agentAnswer).waitForExistence(timeout: 60),
+            "the agent's answer did not mention \"\(Self.agentAnswer)\""
+        )
+    }
+
+    /// Taps the composer until it holds the keyboard focus that typing needs.
+    /// The system can claim a touch for one of its own gestures, cancelling it
+    /// before the field sees the tap, so a tap that left the field without
+    /// focus is made again.
+    private func focus(_ composer: XCUIElement) {
+        for _ in 0 ..< 3 {
+            tap(composer, "the Ask composer")
+            if reaches(composer, keyboardFocus: true) { return }
+        }
+        XCTFail("the Ask composer never took the keyboard focus")
+    }
+
+    /// Taps Send until the composer gives up the keyboard focus, which the
+    /// Send action does first, before any request. A touch the system
+    /// cancelled leaves the question in the still-focused composer; that is
+    /// the only case in which Send is tapped again, so a question is never
+    /// sent twice.
+    private func send(from composer: XCUIElement) {
+        for _ in 0 ..< 3 {
+            tap(app.buttons["agentSendButton"], "the Send button")
+            if reaches(composer, keyboardFocus: false) { return }
+        }
+        XCTFail("tapping Send never sent the question")
+    }
+
+    private func reaches(_ element: XCUIElement, keyboardFocus: Bool) -> Bool {
+        let focus = NSPredicate(format: "hasKeyboardFocus == %@", NSNumber(value: keyboardFocus))
+        let reached = XCTNSPredicateExpectation(predicate: focus, object: element)
+        return XCTWaiter.wait(for: [reached], timeout: 10) == .completed
+    }
 
     private func launchPaired(pairedUrl: URL? = nil) throws {
         let deviceName = "Journey iPhone \(UUID().uuidString.prefix(8))"
