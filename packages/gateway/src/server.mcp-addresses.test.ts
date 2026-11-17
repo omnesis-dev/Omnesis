@@ -18,6 +18,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Client, StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+import { ownedProcessCleanupReceipt } from "@omnesis/core";
 import { SCOPE_ADMIN, SCOPE_READ } from "@omnesis/types";
 import { authorizeInteractiveAccess } from "./access/test-utils.js";
 import { MCP_ACCESS_SCOPE } from "./access/types.js";
@@ -92,14 +93,19 @@ afterEach(async () => {
   const sessions = await Promise.allSettled(
     closeables.splice(0).map((closeable) => Promise.resolve().then(() => closeable.close())),
   );
-  const servers = await Promise.allSettled([...apps].map((app) => app.close()));
+  const servers = await Promise.allSettled(
+    [...apps].map((app) => Promise.resolve().then(() => app.close())),
+  );
   apps.clear();
   const failures = [...sessions, ...servers].flatMap((result) =>
     result.status === "rejected" ? [result.reason] : [],
   );
   if (failures.length) {
     vi.unstubAllEnvs();
-    throw new AggregateError(failures, "MCP address fixture cleanup failed");
+    throw new AggregateError(failures, "MCP address fixture cleanup failed", {
+      cause:
+        failures.find((error) => ownedProcessCleanupReceipt(error) !== undefined) ?? failures[0],
+    });
   }
   await analyticsDb.close();
   db.close();
