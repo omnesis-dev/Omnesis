@@ -261,7 +261,9 @@
           user-supplied parameters. Push-only and gateway-hosted sources declare <code>local</code>.
           The portal, CLI, and apps read all of it through the registry — shared code never branches
           on a source name. If a consumer needs something source-specific, the descriptor grows a
-          field; the name never leaks downstream.
+          field; the name never leaks downstream. An externally fed source can declare
+          <code>setupGuide: "browser-extension"</code> to show the browser extension install and
+          pairing guide in the portal instead of collector setup.
         </p>
         <p>
           Give every source an <code>icon</code>: an SF Symbol name, a brand <code>color</code> and

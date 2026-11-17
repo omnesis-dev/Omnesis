@@ -46,7 +46,7 @@ export const immichCredentialsSpec: ProviderCredentialsSpec = {
         title: "Create an API key in Immich",
         body:
           "Sign in to Immich as the user whose library you want to index, open **Account Settings → " +
-          "API Keys** and create a key named 'Omnesis'. Grant it **asset.read**, **album.read** and " +
+          "API Keys** and create a key named Omnesis. Grant it **asset.read**, **album.read** and " +
           "**user.read**. Nothing else is needed.",
       },
       {

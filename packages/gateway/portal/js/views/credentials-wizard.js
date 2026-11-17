@@ -10,7 +10,7 @@ import {
   publicBaseUrlFromAdminConfig,
   expandSpecTokens,
 } from "@omnesis/core/credentials-tokens";
-import { CopyValue } from "../components/copy-button.js";
+import { SetupMarkdown } from "../components/setup-markdown.js";
 
 /**
  * Modal wizard for configuring a provider's credentials. Spec-driven
@@ -173,35 +173,20 @@ export function CredentialsWizard({ entry, deviceId, saveCredentials, collectOnl
 
   const renderIntro = () => html`
     <div class="creds-wizard-section">
-      <p class="creds-wizard-intro">${expandedSpec.wizard.intro}</p>
+      <${SetupMarkdown} className="creds-wizard-intro" text=${expandedSpec.wizard.intro} />
       <div class="creds-wizard-why">
-        <strong>Why?</strong> ${expandedSpec.wizard.why}
+        <strong>Why?</strong>
+        <${SetupMarkdown} text=${expandedSpec.wizard.why} />
       </div>
       <p class="creds-wizard-est">Estimated time: ~${expandedSpec.wizard.estMinutes} minute${expandedSpec.wizard.estMinutes === 1 ? "" : "s"}.</p>
     </div>
   `;
 
-  // Render a step body: one <p> per line, with `backtick` spans surfaced as
-  // inline <code>. A code span that carries the resolved gateway origin is an
-  // exact paste-and-match value (e.g. the redirect URL the user whitelists in
-  // this very step) — attach a one-click copy button. Generic: keys on the
-  // substituted origin, not on any source-specific URL shape.
-  const renderStepBody = (body) =>
-    body.split("\n").map((line, i) => {
-      const parts = line.split(/`([^`]+)`/g).map((seg, j) => {
-        if (j % 2 === 0) return seg;
-        return gatewayOrigin && seg.includes(gatewayOrigin)
-          ? html`<${CopyValue} key=${j} text=${seg} />`
-          : html`<code key=${j}>${seg}</code>`;
-      });
-      return html`<p key=${i}>${parts}</p>`;
-    });
-
   const renderStep = (step, idx) => html`
     <div class="creds-wizard-section">
       <div class="creds-wizard-step-num">Step ${idx + 1} of ${totalSteps}</div>
       <h3 class="creds-wizard-step-title">${step.title}</h3>
-      <div class="creds-wizard-step-body">${renderStepBody(step.body)}</div>
+      <${SetupMarkdown} className="creds-wizard-step-body" text=${step.body} />
       ${step.kind === "open-url" && step.url
         ? html`
           <a class="creds-wizard-link" href=${step.url} target="_blank" rel="noopener noreferrer">

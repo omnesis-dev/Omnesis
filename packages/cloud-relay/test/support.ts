@@ -285,6 +285,14 @@ export async function openWs(
   return ws;
 }
 
+/**
+ * A fresh self-signed certificate for `hostname`, `localhost` and the loopback addresses.
+ *
+ * Each certificate gets its own subject name. A trust store holding two self-signed
+ * certificates with the same subject can only tell them apart by their authority key
+ * identifier, which recent OpenSSL releases leave out of self-signed certificates, so a
+ * shared subject makes the client check the peer against the wrong root and refuse it.
+ */
 export function tlsFiles(
   directory: string,
   hostname = "localhost",
@@ -306,7 +314,7 @@ export function tlsFiles(
       "-days",
       "1",
       "-subj",
-      "/CN=localhost",
+      `/CN=localhost/O=Omnesis test ${randomUUID()}`,
       "-addext",
       `subjectAltName=DNS:${hostname},DNS:localhost,IP:127.0.0.1,IP:::1`,
     ],

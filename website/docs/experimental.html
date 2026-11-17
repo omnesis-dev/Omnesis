@@ -207,7 +207,8 @@
           </div>
         </div>
         <p>
-          For services, add the variable to each unit. Re-running <code>service install</code>
+          For a gateway service, add the variable to its unit. Re-running
+          <code>service install</code>
           rewrites the unit from the flags you pass, so include the ones the service was installed
           with (such as its keyring flags), then restart it:
         </p>
@@ -222,22 +223,15 @@
             </p>
             <p>
               <span class="t-prompt">❯</span>
-              <span class="t-cmd"
-                >omnesis service install collector --env OMNESIS_EXPERIMENTAL=1</span
-              >
-            </p>
-            <p>
-              <span class="t-prompt">❯</span>
               <span class="t-cmd">omnesis service restart</span>
             </p>
           </div>
         </div>
         <p>
           <code>GET /status</code> reports whether the gateway is in experimental mode, and the
-          portal, the mobile apps and the CLI use it to show or hide these controls. The flag on the
-          collector matters only for sources: a source marked experimental is offered in the source
-          picker only by a collector that runs with the flag itself. Experimental sources are
-          listed, labelled, in the <a href="sources">sources catalogue</a>.
+          portal, the mobile apps and the CLI use it to show or hide these controls. The
+          <a href="sources">available sources</a> do not require experimental mode on either the
+          gateway or the collector.
         </p>
 
         <h2 id="realtime-voice">Realtime voice in Omnesis Demo</h2>

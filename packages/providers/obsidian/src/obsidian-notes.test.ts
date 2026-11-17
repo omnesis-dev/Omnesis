@@ -502,6 +502,25 @@ describe("ObsidianNotesSource", () => {
     expect(result.documents[0].metadata.extra!.relativePath).toBe("real-note.md");
   });
 
+  test("an extglob group in an exclude pattern is literal, so a hostile one cannot stall the walk", async () => {
+    const excludeInstance = await definition.create!({
+      accountId: "TestVault",
+      sourceId: SourceId("obsidian-notes:TestVault"),
+      providerId: ProviderId("obsidian:TestVault"),
+      config: { vaultPath, exclude: ["+(*a)", "+(a|b).md"] },
+    });
+
+    // Against this path, `+(*a)` compiled as an extglob backtracks for tens of seconds.
+    writeNote(vaultPath, `${"a".repeat(25)}!.md`, "Long name");
+    writeNote(vaultPath, "a.md", "Short name");
+
+    const result = await excludeInstance.sync(null);
+    expect(result.documents.map((doc) => doc.metadata.extra!.relativePath).sort()).toEqual([
+      "a.md",
+      `${"a".repeat(25)}!.md`,
+    ]);
+  });
+
   test("ignores non-md files", async () => {
     writeNote(vaultPath, "note.md", "Markdown");
     writeFileSync(join(vaultPath, "image.png"), "binary-data");
