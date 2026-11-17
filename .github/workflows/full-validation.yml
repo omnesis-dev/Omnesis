@@ -38,6 +38,7 @@ on:
             merged-public-address-proof,
             address-fixture-cleanup-proof,
             doctor-unreadable-proof,
+            codex-held-activity-proof,
             gateway-boot-trace,
             windows-network-pilot,
             windows-network-proxy-pilot,
@@ -5628,3 +5629,91 @@ jobs:
         os:
           - windows-latest
           - ubuntu-latest
+
+  codex-held-activity-proof:
+    name: Codex held-message activity (${{ matrix.os }})
+    if: inputs.scope == 'codex-held-activity-proof'
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 120
+    env:
+      TZ: UTC
+      OMNESIS_UNIT_WORKERS: "1"
+      OMNESIS_E2E_WORKERS: "1"
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ inputs.source_sha }}
+          persist-credentials: false
+      - name: Keep this job off production Omnesis services
+        id: production-network
+        shell: bash
+        run: $GITHUB_WORKSPACE/scripts/ci/production-network.sh isolate
+      - name: Verify fixed source revision
+        env:
+          TARGET_SHA: ${{ inputs.source_sha }}
+        run: |
+          [[ "$TARGET_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "$TARGET_SHA"
+      - name: Set up Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: "24"
+          cache: npm
+      - name: Install dependencies
+        id: dependencies
+        run: node scripts/ci/npm-ci.mjs --no-audit --no-fund
+      - name: Validate source and test types
+        if: runner.os == 'Linux'
+        env:
+          NODE_OPTIONS: --max-old-space-size=4096
+        run: exec node scripts/run-check.mjs types-tests
+      - name: Check typed Codex replay and regression cases
+        if: runner.os == 'Linux'
+        env:
+          NODE_OPTIONS: --max-old-space-size=6144
+        run: node node_modules/eslint/bin/eslint.js
+          packages/agent/src/codex-app-server-backend.ts
+          packages/agent/src/codex-app-server-backend.test.ts
+          packages/agent/src/codex-runtime-pool.test.ts
+          packages/agent/src/json-rpc-lines.test.ts
+        shell: bash
+      - name: Prove held-message regression and run complete Codex/RPC suites
+        run: |-
+          node --input-type=module - <<'JS'
+          import fs from 'node:fs';import path from 'node:path';
+          import {runWindowsCheckTasks} from './scripts/ci/windows-checks.mjs';
+          const sourcePath='packages/agent/src/codex-app-server-backend.ts';
+          const source=fs.readFileSync(sourcePath);
+          const fixed='    for (const replay of held ?? []) markActivity("agent.codex.message", replay);';
+          if(source.toString().split(fixed).length!==2)throw Error('Expected exactly one held-message activity seam');
+          fs.writeFileSync(sourcePath,source.toString().replace(fixed,'    for (const replay of held ?? []) replay();'));
+          const report=path.join(process.env.RUNNER_TEMP,'held-activity-baseline.json');
+          const code=await runWindowsCheckTasks([['scripts/run-check.mjs','unit','packages/agent/src/codex-app-server-backend.test.ts','-t',"handles every app-server message under the host's activity mark",'--reporter=json','--outputFile='+report]]);
+          fs.writeFileSync(sourcePath,source);
+          const verdict=JSON.parse(fs.readFileSync(report,'utf8'));
+          const cases=verdict.testResults.flatMap(file=>file.assertionResults);
+          const active=cases.filter(test=>['failed','passed'].includes(test.status));
+          const failed=cases.filter(test=>test.status==='failed');
+          if(code!==1||active.length!==2||!failed.every(test=>test.fullName.includes('activity mark'))||!failed.some(test=>test.fullName.includes('early-events')&&test.failureMessages.some(message=>message.includes('agent.codex.message'))))throw Error('Original replay must reproduce the deterministic early-events activity failure');
+          console.log('Original held-message replay fails the deterministic activity-mark assertion; source restored');
+          process.exitCode=await runWindowsCheckTasks([['scripts/run-check.mjs','unit',...["packages/agent/src/codex-app-server-backend.test.ts","packages/agent/src/codex-runtime-pool.test.ts","packages/agent/src/json-rpc-lines.test.ts"]]]);
+          JS
+        shell: bash
+      - name: Require immutable candidate source
+        run: git diff --exit-code
+        if: ${{ always() }}
+      - name: Check nothing tried to reach production Omnesis services
+        if: ${{ always() && steps.production-network.outcome == 'success' }}
+        shell: bash
+        run: $GITHUB_WORKSPACE/scripts/ci/production-network.sh verify
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        os:
+          - windows-latest
+          - ubuntu-latest
+          - macos-15
