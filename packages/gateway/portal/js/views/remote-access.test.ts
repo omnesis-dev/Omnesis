@@ -686,6 +686,32 @@ describe("both", () => {
     expect(text()).toContain(`Serving this gateway at ${HOST_URL}, on your Tailscale network and to the Internet.`);
   });
 
+  test("Tailscale on this computer: a public gateway keeps its ticked box, and unticking it takes the gateway off the Internet", async () => {
+    gateway.host = { ...gateway.host, servesGateway: true, publicGateway: true };
+    gateway.publish = { ok: true, url: HOST_URL };
+    savedSetup("connection", { host: true });
+    await mount({ cloudRelay: false, tailscaleEmbed: false });
+    expect(text()).toContain(`Serving this gateway at ${HOST_URL}, on your Tailscale network and to the Internet.`);
+    expect(isChecked(host.querySelector(".remote-access-check input"))).toBe(true);
+    // Nothing to apply while the box says what Tailscale does.
+    expect(button("Set it up for me")).toBeUndefined();
+    expect(button("Take it off the Internet")).toBeUndefined();
+    await toggle(".remote-access-check input", false);
+    expect(text()).toContain("will no longer reach this gateway");
+    await click("Take it off the Internet");
+    expect(calls("publish")).toEqual([["publish", false]]);
+    // The public address stays: the tailnet still answers at it.
+    expect(calls("config")).toEqual([]);
+    expect(text()).toContain(`Serving this gateway at ${HOST_URL}, to your Tailscale devices only.`);
+    expect(isChecked(host.querySelector(".remote-access-check input"))).toBe(false);
+    expect(button("Take it off the Internet")).toBeUndefined();
+    // And it can be ticked again.
+    await toggle(".remote-access-check input", true);
+    await click("Set it up for me");
+    expect(calls("publish").at(-1)).toEqual(["publish", true]);
+    expect(isChecked(host.querySelector(".remote-access-check input"))).toBe(true);
+  });
+
   test("a check says what it found when nothing changed", async () => {
     savedSetup("connection", { host: true });
     await mount(FLAGS.tailscale);
