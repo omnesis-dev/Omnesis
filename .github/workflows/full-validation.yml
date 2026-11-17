@@ -5055,6 +5055,15 @@ jobs:
           if ($env:SHARD) { $checkArgs += "--shard=$env:SHARD" }
 
           node @checkArgs
+      - name: Check source, test types and portal budget lint
+        if: runner.os == 'Linux'
+        shell: bash
+        env:
+          NODE_OPTIONS: --max-old-space-size=6144
+        run: |
+          set -e
+          node scripts/run-check.mjs types-tests
+          node node_modules/eslint/bin/eslint.js playwright.config.ts scripts/ci/windows-checks.test.mjs scripts/gateway-boot-budget.test.mjs
       - name: Prove original budget mismatch and shared-budget regression coverage
         shell: bash
         run: |-
