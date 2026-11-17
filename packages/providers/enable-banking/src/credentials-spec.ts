@@ -68,7 +68,7 @@ export const enableBankingCredentialsSpec: ProviderCredentialsSpec = {
           "bank redirect then lands straight in Omnesis). Note: after the bank redirects there, your " +
           "browser may warn about the gateway's self-signed certificate — click through " +
           "it; the code still reaches Omnesis. You can also whitelist any other HTTPS URL " +
-          "you control and copy the `?code=` value from the address bar manually. " +
+          "you control and copy the ?code= value from the address bar manually. " +
           "Registering downloads the private key as `<application_id>.pem` — keep it.",
       },
       {
@@ -85,7 +85,7 @@ export const enableBankingCredentialsSpec: ProviderCredentialsSpec = {
         title: "Paste the application credentials",
         body:
           "On the next screen paste the **Application ID**, the **private key** — either " +
-          "the absolute path to the downloaded `.pem` file on the machine running the " +
+          "the absolute path to the downloaded .pem file on the machine running the " +
           "collector, or the PEM content itself — and the **redirect URL** you whitelisted.",
       },
     ],

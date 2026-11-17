@@ -54,6 +54,8 @@ import { KindIcon } from "../lib/device-kind-icon.js";
 import { AuthStep, useAuthFlow } from "../components/auth-flow.js";
 import { ConfirmModal } from "../components/confirm-modal.js";
 import { CopyBlock } from "../components/copy-button.js";
+import { ExtensionPromoCard } from "../components/extension-promo.js";
+import { SetupMarkdown } from "../components/setup-markdown.js";
 import { CredentialsWizard } from "./credentials-wizard.js";
 
 // Prefer the descriptor's own icon (freshest — pushed from collector over WS)
@@ -625,14 +627,14 @@ export function AddSourceModal({ onClose, onAdded }) {
   const visibleDescriptors = useMemo(() => {
     return descriptors
       .map((d) => {
-        const state = describeTileState(d, registeredSources, devices);
+        const state = d.setupGuide === "browser-extension"
+          ? { kind: "add" }
+          : describeTileState(d, registeredSources, devices);
         return { d, state, configured: state.kind === "configured" };
       })
-      // Push-based sources (e.g. the browser extension) aren't user-added —
-      // they self-register when their paired device first pushes — so hide
-      // them from the picker. Their descriptor still flows through the feed so
-      // the sources list / doc view / iOS can render their icon.
-      .filter(({ d }) => !d.pushBased)
+      // Externally fed sources with an install guide stay discoverable;
+      // their guide replaces the collector setup flow.
+      .filter(({ d }) => d.setupGuide === "browser-extension" || !(d.pushBased || d.execution === "external"))
       .filter(({ d }) => {
         if (!filter.trim()) return true;
         const q = filter.toLowerCase();
@@ -670,6 +672,11 @@ export function AddSourceModal({ onClose, onAdded }) {
     setTileState(state ?? null);
     setMoveTarget(null);
     setMemberAction(null);
+
+    if (d.setupGuide === "browser-extension") {
+      setStep("installation");
+      return;
+    }
 
     // A source another device already hosts is joined or moved, not added.
     if (state?.kind === "join") {
@@ -1156,6 +1163,12 @@ export function AddSourceModal({ onClose, onAdded }) {
       onPick=${selectDescriptor}
       hasDescriptors=${descriptors.length > 0}
     />`,
+    installation: () => html`
+      <${ExtensionPromoCard} />
+      <div class="add-source-actions">
+        <button class="btn-tiny" onClick=${() => setStep("picker")}>Back</button>
+      </div>
+    `,
     devicePick: () => html`<${DevicePickStep}
       descriptor=${descriptor}
       devices=${pendingDevices}
@@ -1601,7 +1614,7 @@ export function paramHint(p) {
 export function ParamsForm({ descriptor, params, errors, onChange, onBack, onContinue }) {
   return html`
     <div class="add-source-form">
-      <p class="add-source-step-hint">${descriptor.description}</p>
+      <${SetupMarkdown} className="add-source-step-hint" text=${descriptor.description} />
       ${descriptor.params.map((p) => html`
         <div class="form-group" key=${p.name}>
           <label>${p.label}${p.required ? html`<span class="add-source-req"> *</span>` : null}</label>
@@ -1619,7 +1632,7 @@ export function ParamsForm({ descriptor, params, errors, onChange, onBack, onCon
                 value=${params[p.name] || ""}
                 onInput=${(e) => onChange({ ...params, [p.name]: e.target.value })}
               />`}
-          ${paramHint(p) && html`<span class="form-hint">${paramHint(p)}</span>`}
+          ${paramHint(p) && html`<${SetupMarkdown} className="form-hint" text=${paramHint(p)} />`}
           ${errors[p.name] && html`<span class="add-source-field-error">${errors[p.name]}</span>`}
         </div>
       `)}

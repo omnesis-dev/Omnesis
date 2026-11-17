@@ -95,8 +95,8 @@ export const plaidCredentialsSpec: ProviderCredentialsSpec = {
         title: "Paste the values",
         body:
           "On the next screen, paste your client ID and secret, type the environment " +
-          "(`sandbox` or `production`) you copied the secret from, and list the countries " +
-          "whose banks you want offered (for example `US,CA` or `GB`).",
+          "(sandbox or production) you copied the secret from, and list the countries " +
+          "whose banks you want offered (for example US,CA or GB).",
       },
     ],
   },

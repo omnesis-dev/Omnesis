@@ -98,11 +98,11 @@ Every source is opt-in, and once added it syncs by itself. The full catalogue, w
 
 | Category                | Sources                                                                                                                                       |
 | ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
-| Email & messaging       | Gmail, Outlook, IMAP, Maildir (mbsync, offlineimap, Thunderbird), WhatsApp, iMessage                                                          |
+| Email & messaging       | Gmail, Outlook, IMAP, Maildir (mbsync, offlineimap, Thunderbird), WhatsApp, Telegram, Discord, iMessage                                       |
 | Notes, tasks & meetings | Apple Notes, Reminders, Notion pages and databases, Obsidian, Things 3, Granola                                                               |
 | Coding agents & code    | Claude Code, Codex and Pi sessions, GitHub                                                                                                    |
 | Calendar & contacts     | Google, Apple and Outlook calendars; Google and Apple contacts                                                                                |
-| Files & web             | Google Drive, OneDrive, local files, Chrome bookmarks, browser history, pages you read (browser extension)                                    |
+| Files & web             | Google Drive, OneDrive, local files, Paperless-ngx, Immich, Chrome bookmarks, browser history, pages you read (browser extension)             |
 | Phone & device          | Apple Health, Health Connect, photos and screenshots (on-device OCR), activity, location visits, call logs, voicemail, app usage, Screen Time |
 | Finance & fitness       | Bank accounts (Enable Banking, Lunch Flow, Plaid), Coinbase, Strava                                                                           |
 | Omnesis itself          | Your notes to Omnesis, agent conversations, OpenClaw and Hermes transcripts                                                                   |

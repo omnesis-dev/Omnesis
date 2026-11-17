@@ -2,7 +2,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 /**
- * The experimental Telegram source: the operator's own account, archived over
+ * The Telegram source: the operator's own account, archived over
  * MTProto through their own Telegram API app (`docs/telegram-source.md`).
  *
  * `buildTelegramProvider` takes the client factory, so the tests and the
@@ -103,7 +103,6 @@ export function buildTelegramProvider(
   return defineProvider<TelegramProvider>({
     provider: { id: TELEGRAM_PROVIDER_ID, name: "Telegram" },
     authType: "qr",
-    experimental: true,
     // Exclusive, because the other modes cannot work: the archive is local to
     // its host and the cursor is bound to that archive's storeId, so a
     // handoff would hand a cursor no other host can resume; and Telegram's
