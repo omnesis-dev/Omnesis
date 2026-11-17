@@ -29,6 +29,7 @@ on:
             windows-unit-recovery,
             key-registration-timing,
             account-unlink-mac-proof,
+            inode-oauth-proof,
             gateway-boot-trace,
             windows-network-pilot,
             windows-network-proxy-pilot,
@@ -4158,3 +4159,84 @@ jobs:
       matrix:
         os:
           - macos-15
+
+  inode-oauth-proof:
+    name: Exact file identity and OAuth coverage (${{ matrix.os }})
+    if: inputs.scope == 'inode-oauth-proof'
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 35
+    env:
+      TZ: UTC
+      OMNESIS_UNIT_WORKERS: "1"
+      OMNESIS_E2E_WORKERS: "1"
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ inputs.source_sha }}
+          persist-credentials: false
+      - name: Keep this job off production Omnesis services
+        id: production-network
+        shell: bash
+        run: $GITHUB_WORKSPACE/scripts/ci/production-network.sh isolate
+      - name: Verify fixed source revision
+        env:
+          TARGET_SHA: ${{ inputs.source_sha }}
+        run: |
+          [[ "$TARGET_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "$TARGET_SHA"
+      - name: Set up Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: "24"
+          cache: npm
+      - name: Install dependencies
+        id: dependencies
+        run: node scripts/ci/npm-ci.mjs --no-audit --no-fund
+      - name: Build and prove Windows SQLite recovery bindings
+        id: native_sqlite
+        run: node scripts/ci/build-windows-sqlite.mjs
+        if: runner.os == 'Windows'
+      - name: Build and prove Windows vector publication
+        id: native_vector
+        run: node scripts/ci/build-windows-usearch.mjs
+        if: runner.os == 'Windows'
+      - name: Make OpenSSL available for isolated TLS certificates
+        run: |
+          if (-not (Get-Command openssl -ErrorAction SilentlyContinue)) {
+            $opensslDir = Join-Path $env:ProgramFiles 'Git\usr\bin'
+            if (-not (Test-Path (Join-Path $opensslDir 'openssl.exe'))) { throw 'OpenSSL is required for gateway tests' }
+            $opensslDir | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+          }
+        if: runner.os == 'Windows'
+        shell: pwsh
+      - name: Validate source and test types
+        if: runner.os == 'Linux'
+        env:
+          NODE_OPTIONS: --max-old-space-size=4096
+        run: exec node scripts/run-check.mjs types-tests
+      - name: Check full-width file identity and OAuth behavior types
+        if: runner.os == 'Linux'
+        env:
+          NODE_OPTIONS: --max-old-space-size=6144
+        run: node node_modules/eslint/bin/eslint.js packages/providers/local-files/src/sync.test.ts packages/gateway/src/access/oauth-urls.test.ts
+      - name: Prove actual atomic replacement and OAuth resource selection
+        run: exec node scripts/run-check.mjs unit packages/providers/local-files/src/sync.test.ts packages/providers/local-files/src/identity.test.ts packages/gateway/src/access/oauth-urls.test.ts
+      - name: Require the unchanged complete relay coverage gate
+        if: runner.os == 'Linux'
+        run: exec node scripts/run-check.mjs unit --config packages/cloud-relay/vitest.config.ts --coverage
+      - name: Require immutable candidate source
+        run: git diff --exit-code
+      - name: Check nothing tried to reach production Omnesis services
+        if: ${{ always() && steps.production-network.outcome == 'success' }}
+        shell: bash
+        run: $GITHUB_WORKSPACE/scripts/ci/production-network.sh verify
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        os:
+          - windows-latest
+          - ubuntu-latest
