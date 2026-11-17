@@ -6,6 +6,9 @@ import { act } from "preact/test-utils";
 import { parseHTML } from "linkedom";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
+// Sanitizer behavior is covered in the browser suite; linkedom is not a browser window.
+vi.mock("dompurify", () => ({ default: { sanitize: (html: string) => html } }));
+
 const api = vi.hoisted(() => ({
   addSource: vi.fn(),
   cancelAuthFlow: vi.fn(),
@@ -200,4 +203,34 @@ describe("AddSourceModal single-instance account routing", () => {
       "replicated mode was enabled, but Studio-Mini could not join: synthetic join refusal",
     );
   });
+
+  test.each([false, true])("an external source with a browser install guide opens the shared extension card (pushBased=%s)", async (pushBased) => {
+    render(null, host);
+    api.getSourceDescriptorsUnion.mockResolvedValue({ items: [{
+      ...descriptor,
+      id: "capture-synth",
+      name: "Captured pages",
+      execution: "external",
+      pushBased,
+      setupGuide: "browser-extension",
+      devices: [],
+    }] });
+    api.getAdminSources.mockResolvedValue({ items: [] });
+    api.listDevices.mockResolvedValue({ items: [] });
+    await act(async () => render(h(AddSourceModal, { onClose: vi.fn(), onAdded }), host));
+    await settleEffects();
+    const tile = [...host.querySelectorAll("button")].find((button) => button.textContent?.includes("Captured pages")) as HTMLButtonElement;
+    expect(tile).toBeTruthy();
+    await act(async () => tile.click());
+    expect(host.textContent).toContain("Install the Chrome extension");
+    expect(host.textContent).not.toContain("No online collector");
+    const learnMore = host.querySelector(".ext-promo-open") as HTMLButtonElement;
+    await act(async () => learnMore.click());
+    expect(host.querySelector("a.ext-promo-install")?.getAttribute("href")).toContain("chromewebstore.google.com");
+    expect(host.querySelector("a.ext-promo-pair")).toBeTruthy();
+    expect(api.getSourcesSnapshot).not.toHaveBeenCalled();
+    expect(api.addSource).not.toHaveBeenCalled();
+    expect(api.startAuthFlow).not.toHaveBeenCalled();
+  });
+
 });

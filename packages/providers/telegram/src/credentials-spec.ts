@@ -77,7 +77,7 @@ export const telegramCredentialsSpec: ProviderCredentialsSpec = {
         kind: "instruction",
         title: "Create an app",
         body:
-          "Fill in the form: a title without the word Telegram (for example `Omnesis archive`), " +
+          "Fill in the form: a title without the word Telegram (for example Omnesis archive), " +
           "a short name of 5 to 32 letters or digits, and **Desktop** as the platform.",
       },
       {
