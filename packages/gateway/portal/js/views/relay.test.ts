@@ -783,6 +783,16 @@ test("a gateway unlinked on its account page says so above the usual offer to co
   expect(host.querySelector(".relay-notice")).toBeNull();
 });
 
+test("an error before an account is said once, in the account choice", async () => {
+  state.error = "Couldn't load or update your Omnesis account settings. Check the connection and try again.";
+  await show();
+  expect([...host.querySelectorAll('[role="alert"]')].map((x) => x.textContent)).toEqual([state.error]);
+  expect(button("Create an account").disabled).toBe(false);
+  state.status = connected();
+  await show();
+  expect([...host.querySelectorAll('[role="alert"]')].map((x) => x.textContent)).toEqual([state.error]);
+});
+
 test("loading shows a skeleton and a failed first load offers a retry without exception details", async () => {
   state.status = null;
   state.busy = "refresh";

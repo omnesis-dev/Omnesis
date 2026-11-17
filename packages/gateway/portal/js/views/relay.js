@@ -685,6 +685,8 @@ export function RelayView({ part = "account", open = openOnGateway, location = g
       <${RemoteAccess} status=${status} busy=${busy} run=${run} />
     </div>`;
   }
+  // The account choice says its own error, so the page says it only beside anything else.
+  const pageError = error && (checklist || established);
   return html`<div class="relay-view">
     ${
       checklist
@@ -701,7 +703,7 @@ export function RelayView({ part = "account", open = openOnGateway, location = g
           />`
         : !established && html`<${AccountConnect} relay=${{ status, busy, run, error }} />`
     }
-    ${error && html`<p role="alert" class="relay-notice">${error}</p>`}
+    ${pageError && html`<p role="alert" class="relay-notice">${error}</p>`}
     ${
       status.notice === "account-deleted" &&
       html`<p role="status" class="relay-notice">

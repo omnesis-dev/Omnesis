@@ -170,8 +170,8 @@ test("portal offers no manual setup form; connected the relay's page is one plai
   );
   // Two buttons and nothing to fill in: a self-hosted relay is set up from the environment or the CLI.
   await expect(page.locator(".relay-view").locator("details, form, input")).toHaveCount(0);
-  await expect(page.locator(".relay-view")).not.toContainText("terms of service");
-  await expect(page.locator(".relay-view")).not.toContainText("in preview");
+  await expect(page.locator(".relay-view").first()).not.toContainText("terms of service");
+  await expect(page.locator(".relay-view").first()).not.toContainText("in preview");
   await expect(page.locator("body")).not.toContainText("relay.omnesis.app");
   expect(first.calls).toEqual([]);
   // Opening the page asked the gateway to read the account once.
