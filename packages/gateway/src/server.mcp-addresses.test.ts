@@ -25,6 +25,7 @@ import { AnalyticsDb } from "./analytics-db.js";
 import { createDevice } from "./data/repositories/DeviceRepository.js";
 import { createToken } from "./data/repositories/TokenRepository.js";
 import { createDatabase } from "./db.js";
+import { fixedPublicAddress } from "./public-address.js";
 import { createServer } from "./server.js";
 import { recordTailnetCaller } from "./tailscale-embed/caller.js";
 import { TailscaleEmbedService } from "./tailscale-embed/service.js";
@@ -100,9 +101,8 @@ function gateway(extra: { cloudRelayManagement?: CloudRelayManagement } = {}) {
     analyticsDb,
     searchPipeline: {} as SearchPipeline,
     port: 17631,
-    publicBaseUrl: DOMAIN,
     // An agent reaches this computer's Tailscale name as a resource the owner configured.
-    mcpResourceUrls: [`${DOMAIN}/mcp`, `${HOST}/mcp`],
+    publicAddress: fixedPublicAddress(DOMAIN, [`${DOMAIN}/mcp`, `${HOST}/mcp`]),
     additionalOAuthIssuerUrls: [RELAY, TAILNET],
     relayPublicOrigin: () => RELAY,
     tailscaleEmbed: new FixedTailnetDevice({
