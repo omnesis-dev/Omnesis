@@ -3,7 +3,8 @@
 // Copyright (c) 2026 Adrien Conrath
 
 /**
- * Whether a full-validation run lets the cloud relay image be built and signed.
+ * Whether a full-validation run lets the relay images (the cloud relay and the
+ * push relay) be built and signed.
  *
  * Only a manually dispatched run with every lane (`lanes: all`) on `main` of
  * this repository counts, and only when it finished green with every backend,
@@ -14,7 +15,7 @@
  *
  * The commit must also still be on main.
  *
- * Usage: cloud-relay-image-gate.mjs <validation run id>
+ * Usage: relay-image-gate.mjs <validation run id>
  * Reads GH_TOKEN and GITHUB_API_URL; prints `source_sha=…`, `validation_run=…`
  * and `run_attempt=…` lines for $GITHUB_OUTPUT.
  */

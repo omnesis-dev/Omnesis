@@ -829,7 +829,7 @@ verifying an intentional gateway key change.
 
 `deploy/Dockerfile` builds the relay image (linux/amd64, UID 10001, base image
 pinned by digest) from the repository root. Only
-`.github/workflows/cloud-relay-image.yml` publishes it, as
+`.github/workflows/relay-image.yml` publishes it, as
 `ghcr.io/omnesis-dev/omnesis-cloud-relay`, and only for a commit of `main` whose
 manually dispatched `full-validation` run with every lane passed: it starts by
 itself when such a run finishes, or by hand with that run's id. It pushes the
@@ -843,13 +843,13 @@ to run, and should refer to images by digest only:
 
 ```sh
 cosign verify \
-  --certificate-identity https://github.com/omnesis-dev/Omnesis/.github/workflows/cloud-relay-image.yml@refs/heads/main \
+  --certificate-identity https://github.com/omnesis-dev/Omnesis/.github/workflows/relay-image.yml@refs/heads/main \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
   -a dev.omnesis.source-sha=<40-character commit> \
   ghcr.io/omnesis-dev/omnesis-cloud-relay@sha256:<digest>
 gh attestation verify oci://ghcr.io/omnesis-dev/omnesis-cloud-relay@sha256:<digest> \
   --repo omnesis-dev/Omnesis \
-  --signer-workflow omnesis-dev/Omnesis/.github/workflows/cloud-relay-image.yml
+  --signer-workflow omnesis-dev/Omnesis/.github/workflows/relay-image.yml
 ```
 
 ## Validation
