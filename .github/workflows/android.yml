@@ -143,7 +143,7 @@ jobs:
           set +e
           for mode in with-exit-on-oom without-exit-on-oom; do
             git checkout gradle.properties
-            sed -i 's/^org.gradle.jvmargs=-Xmx4096m/org.gradle.jvmargs=-Xmx1536m/' gradle.properties
+            sed -i 's/^org.gradle.jvmargs=-Xmx4096m/org.gradle.jvmargs=-Xmx768m/' gradle.properties
             if [ "$mode" = without-exit-on-oom ]; then
               sed -i 's/ -XX:+ExitOnOutOfMemoryError//' gradle.properties
             fi
@@ -255,7 +255,7 @@ jobs:
             :feature-activity-segments:verifyRoborazziDebug \
             :feature-photos:verifyRoborazziDebug \
             :wear:verifyRoborazziDebug \
-            --no-daemon --max-workers=2
+            --rerun-tasks --no-daemon --max-workers=2
 
       - name: TEMPORARY memory measurement summary
         if: always()

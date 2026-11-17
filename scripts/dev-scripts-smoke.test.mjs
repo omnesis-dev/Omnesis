@@ -1786,6 +1786,27 @@ describe("android.yml CI workflow structure (C20)", () => {
     }
   });
 
+  it("gives every Gradle phase a daemon that exits on OutOfMemoryError instead of hanging", () => {
+    // Every lane reads its daemon JVM settings from gradle.properties. A daemon
+    // that survives an OutOfMemoryError stops making progress and holds the job
+    // until its time limit; ExitOnOutOfMemoryError fails the build at once.
+    const properties = Object.fromEntries(
+      readFileSync(join(repoRoot, "android/gradle.properties"), "utf8")
+        .split("\n")
+        .filter((line) => line.trim() && !line.trimStart().startsWith("#"))
+        .map((line) => [
+          line.slice(0, line.indexOf("=")).trim(),
+          line.slice(line.indexOf("=") + 1).trim(),
+        ]),
+    );
+    const gradleArgs = properties["org.gradle.jvmargs"].split(/\s+/u);
+    expect(gradleArgs).toContain("-XX:+ExitOnOutOfMemoryError");
+    // The release build's measured heap needs this much; see gradle.properties.
+    expect(gradleArgs).toContain("-Xmx4096m");
+    // Kotlin compilation gets a heap of its own instead of inheriting the Gradle daemon's.
+    expect(properties["kotlin.daemon.jvmargs"]).toMatch(/^-Xmx\d+[mg]$/u);
+  });
+
   it.each([undefined, ":app:bundlePlayRelease", ":app:bundleFullRelease", ":wear:bundleRelease"])(
     "builds both release variants and the Wear OS app in bounded fresh processes and propagates failure (%s)",
     (failedTask) => {
