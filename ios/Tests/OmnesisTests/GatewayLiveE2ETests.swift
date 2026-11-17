@@ -287,6 +287,14 @@ extension GatewayLiveE2ETests {
         return limits
     }
 
+    /// A ping deadline as long as any wait in this suite, so only the pong (or
+    /// the connection ending) settles the probe, however slow the runner is.
+    private static var patientProbe: DeviceSocketReconnectPolicy.Limits {
+        var limits = longBackoff
+        limits.probeTimeout = .seconds(240)
+        return limits
+    }
+
     private static let wifi = NetworkPathSnapshot(isUsable: true, interfaces: [.wifi])
     private static let cellular = NetworkPathSnapshot(isUsable: true, interfaces: [.cellular])
     private static let noNetwork = NetworkPathSnapshot(isUsable: false, interfaces: [])
@@ -324,7 +332,8 @@ extension GatewayLiveE2ETests {
         port: UInt16,
         token: String,
         paths: ScriptedPaths,
-        session: URLSession? = nil
+        session: URLSession? = nil,
+        limits: DeviceSocketReconnectPolicy.Limits = GatewayLiveE2ETests.longBackoff
     ) throws
         -> DeviceSocket {
         try DeviceSocket(
@@ -333,7 +342,7 @@ extension GatewayLiveE2ETests {
             connector: URLSessionDeviceSocketConnector(session: session ?? self.session),
             pathObserver: paths,
             clock: ContinuousDeviceSocketClock(),
-            limits: Self.longBackoff
+            limits: limits
         )
     }
 
@@ -514,13 +523,18 @@ extension GatewayLiveE2ETests {
         defer { forwarder.stop() }
         let port = try await forwarder.start()
         let paths = ScriptedPaths()
-        let socket = try socket(port: port, token: token, paths: paths)
+        let socket = try socket(port: port, token: token, paths: paths, limits: Self.patientProbe)
         try await start(socket, paths: paths, initial: Self.wifi)
         try await waitUntil("the first connection") { await self.isConnected(socket) }
 
+        // The pong comes back late, as on a slow network or from a busy gateway:
+        // later than the one-second deadline the unanswered-ping test uses.
+        forwarder.holdRepliesOnExistingConnections()
         await socket.appDidBecomeActive()
-        // Past the probe timeout, so a missing pong would already have replaced it.
+        try await waitUntil("the gateway's answer") { forwarder.heldReplyBytes > 0 }
         try await Task.sleep(for: .seconds(2))
+        forwarder.releaseReplies()
+        try await waitUntil("the probe to settle") { await !socket.probeInFlightForTesting() }
         let connected = await isConnected(socket)
         XCTAssertTrue(connected)
         XCTAssertEqual(forwarder.acceptedConnections, 1)
