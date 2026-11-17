@@ -106,7 +106,8 @@ describe("stravaCredentialsSpec", () => {
     const step = stravaCredentialsSpec.wizard.steps.find((s) => s.body.includes("Callback"));
     expect(step?.body).toContain("gateway.publicBaseUrl");
     expect(step?.body).toContain("host name");
-    expect(step?.body).toContain("`localhost`");
+    expect(step?.body).toContain("enter localhost");
+    expect(step?.body).not.toContain("`localhost`");
   });
 });
 

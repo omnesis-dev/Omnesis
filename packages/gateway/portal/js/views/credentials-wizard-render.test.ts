@@ -32,7 +32,9 @@ afterEach(() => {
 
 async function click(selector: string) {
   await act(async () => {
-    host.querySelector<HTMLElement>(selector)!.click();
+    // Linkedom replays the target handler at ancestors when clicks bubble.
+    // Browser validation covers the modal's actual event propagation.
+    host.querySelector<HTMLElement>(selector)!.dispatchEvent(new window.Event("click", { bubbles: false }));
   });
 }
 
@@ -77,8 +79,8 @@ test("renders setup Markdown and copies every exact value across wizard steps", 
   await click(".creds-wizard-btn-primary");
   const buttons = host.querySelectorAll<HTMLButtonElement>(".agent-value-copy-btn");
   expect(buttons).toHaveLength(2);
-  await act(async () => { buttons[0].click(); });
+  await act(async () => { buttons[0].dispatchEvent(new window.Event("click", { bubbles: false })); });
   expect(writeText).toHaveBeenLastCalledWith("read:items");
-  await act(async () => { buttons[1].click(); });
+  await act(async () => { buttons[1].dispatchEvent(new window.Event("click", { bubbles: false })); });
   expect(writeText).toHaveBeenLastCalledWith("localhost");
 });

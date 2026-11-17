@@ -19,7 +19,10 @@
 import { h, render } from "preact";
 import { act } from "preact/test-utils";
 import { parseHTML } from "linkedom";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+
+// Linkedom lacks the browser DOM used by DOMPurify; browser validation checks sanitization.
+vi.mock("dompurify", () => ({ default: { sanitize: (value: string) => value } }));
 
 import {
   ChallengeStep,
