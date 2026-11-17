@@ -11,7 +11,7 @@ import { createConnection } from "node:net";
 import { afterEach, expect, test, vi } from "vitest";
 import { runCheckCommand } from "./check-process.mjs";
 import * as bootstrap from "./bootstrap-platform.mjs";
-import { ownedProcessCleanupReceipt } from "../../packages/core/src/owned-process-cleanup.ts";
+import { ownedProcessCleanupReceipt } from "../../packages/platform/src/owned-process-cleanup.ts";
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -171,7 +171,7 @@ test("command adapter imports without dependencies or workspace aliases", () => 
       "scripts/lib/check-process-runtime.mjs",
       "scripts/lib/bootstrap-platform.mjs",
       "packages/core/src/parent-shutdown.ts",
-      "packages/core/src/owned-process-cleanup.ts",
+      "packages/platform/src/owned-process-cleanup.ts",
       "packages/core/src/node-command.ts",
     ]) {
       const path = join(root, file);

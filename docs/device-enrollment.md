@@ -1013,6 +1013,34 @@ in place of the id. The label is forty bits of a hash and can be ground, and
 that gateway's devices still know the address, so no other gateway is given it;
 the same gateway, presenting the same id, gets it back.
 
+### Unlinking a gateway on the account page
+
+The account page lists the account's gateways, each with a green "Online" or grey
+"Offline" dot: whether the relay holds a live tunnel for it right now. The same
+`online` boolean is on every entry of `/_relay/v3/gateways`, which the apps'
+gateway chooser shows. It is a display hint only and decides nothing. The page
+reads it again when its tab is shown again; nothing polls.
+
+Each row's "Unlink" opens an in-page question that says nothing on the gateway is
+deleted and that it must be connected again to be reached from outside the home
+network. Unlinking needs the same fresh sign-in as removing a sign-in method: a
+passkey confirmation that unlinks right away, or, for an account without a passkey,
+a Google confirmation after which "Unlink gateway" is one press away.
+`POST /_relay/account/api/gateways/unlink` names the account the page showed and the
+gateway id, is refused for any other account, and answers 404 for a gateway that is
+not in it.
+
+The relay then does what a gateway's own disconnect does: it removes the link,
+owner row, binding and recovery receipt, holds the hosted name for that gateway by
+digest, ends its DNS challenge leases and closes its tunnel. It also records the
+digest of the gateway id in `relay_removed_gateways`, until that gateway registers
+again, so that its next proven registration is answered `410` with
+`{"error":"gateway-removed"}` rather than the bare `410` of a deleted account. A
+running gateway hears it as soon as its tunnel reconnects, and one that was off at
+its next start. Either does locally what a disconnect does and its status carries
+`notice: "gateway-removed"` until it connects again or restarts, so the portal says
+it was unlinked and offers the usual way to connect it.
+
 ### Deleting an account
 
 A person deletes their account on the relay's account page (`/_relay/account`,

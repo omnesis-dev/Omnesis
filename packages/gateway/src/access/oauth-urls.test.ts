@@ -4,6 +4,7 @@
 import { describe, expect, test } from "vitest";
 
 import {
+  narrowOAuthOverviewUrls,
   resolveMetadataRequestResource,
   resolveMcpRequestResource,
   resolveOAuthMetadataPaths,
@@ -256,4 +257,65 @@ test("trusted management can add an independent issuer after startup without tru
       source,
     ),
   ).toBeNull();
+});
+
+test("narrowing an overview keeps it whole while every resource answers, and leads with one that does", () => {
+  const relay = "https://gw-fictional.relay.example.net";
+  const urls = resolveOAuthUrls(
+    "https://omnesis.example.org/mcp",
+    "https://omnesis.example.org",
+    [],
+    [relay],
+  );
+  expect(urls).not.toBeNull();
+  expect(
+    narrowOAuthOverviewUrls(
+      urls,
+      () => true,
+      () => null,
+    ),
+  ).toBe(urls);
+  const withoutDomain = narrowOAuthOverviewUrls(
+    urls,
+    (resource) => !resource.startsWith("https://omnesis.example.org"),
+    () => null,
+  );
+  expect(withoutDomain).toMatchObject({
+    resource: `${relay}/mcp`,
+    supportedResources: [`${relay}/mcp`],
+    protectedResourceMetadata: `${relay}/.well-known/oauth-protected-resource/mcp`,
+  });
+  const fallback = resolveOAuthUrls("https://localhost:7600/mcp");
+  expect(
+    narrowOAuthOverviewUrls(
+      urls,
+      () => false,
+      () => fallback,
+    ),
+  ).toBe(fallback);
+  expect(
+    narrowOAuthOverviewUrls(
+      null,
+      () => false,
+      () => fallback,
+    ),
+  ).toBeNull();
+});
+
+test("narrowing an overview preserves its enabled primary resource when a secondary address stops answering", () => {
+  const direct = "https://gateway.example.org";
+  const relay = "https://relay-gateway.example.test";
+  const urls = resolveOAuthUrls(`${direct}/mcp`, direct, [], [relay]);
+  expect(urls).not.toBeNull();
+  const narrowed = narrowOAuthOverviewUrls(
+    urls,
+    (resource) => resource !== `${relay}/mcp`,
+    () => null,
+  );
+  expect(narrowed).toMatchObject({
+    resource: `${direct}/mcp`,
+    supportedResources: [`${direct}/mcp`],
+    issuerResources: [`${direct}/mcp`],
+    protectedResourceMetadata: `${direct}/.well-known/oauth-protected-resource/mcp`,
+  });
 });

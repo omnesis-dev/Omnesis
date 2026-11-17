@@ -279,7 +279,7 @@ export async function chooseGateway(
       choices
         .map(
           (choice, index) =>
-            `${index + 1}. ${(choice.displayName ?? new URL(choice.publicOrigin).hostname).replace(/[\p{Cc}\p{Cf}]/gu, " ")} — ${bindingOrigin(choice.publicOrigin).origin}`,
+            `${index + 1}. ${(choice.displayName ?? new URL(choice.publicOrigin).hostname).replace(/[\p{Cc}\p{Cf}]/gu, " ")} — ${bindingOrigin(choice.publicOrigin).origin} (${choice.online ? "online" : "offline"})`,
         )
         .join("\n") +
       "\n",

@@ -419,12 +419,13 @@ describe("local-files sync", () => {
     const instance = await createInstance(root);
     const first = await instance.sync(null);
     const stableId = first.documents[0]!.externalId;
-    const before = statSync(join(root, "budget.txt")).ino;
+    // NTFS file IDs can exceed Number.MAX_SAFE_INTEGER, just as the provider's exact identities do.
+    const before = statSync(join(root, "budget.txt"), { bigint: true }).ino;
 
     write(root, ".budget.txt.swp", "Quarterly budget, revised after review");
     utimesSync(join(root, ".budget.txt.swp"), new Date(), new Date(Date.now() + 5_000));
     renameSync(join(root, ".budget.txt.swp"), join(root, "budget.txt"));
-    expect(statSync(join(root, "budget.txt")).ino).not.toBe(before);
+    expect(statSync(join(root, "budget.txt"), { bigint: true }).ino).not.toBe(before);
 
     const second = await instance.sync(first.cursor as LocalFilesSyncCursor);
     expect(second.documents.map((doc) => doc.externalId)).toEqual([stableId]);

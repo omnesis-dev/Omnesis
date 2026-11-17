@@ -226,3 +226,26 @@ test("a claimed channel is pinged while it is open, so an idle stream is not cut
   broker.close();
   expect(vi.getTimerCount()).toBe(0);
 });
+
+test("a gateway is online only while its tunnel is open, and closing its account takes it offline at once", () => {
+  const broker = new TunnelBroker();
+  const control = new Control();
+  expect(broker.online("account")).toBe(false);
+  broker.attach("account", control.socket, 3600);
+  expect(broker.online("account")).toBe(true);
+  expect(broker.online("other")).toBe(false);
+  // A tunnel that is closing carries nothing, so it doesn't count.
+  control.readyState = WebSocket.CLOSING;
+  expect(broker.online("account")).toBe(false);
+  control.readyState = WebSocket.OPEN;
+  broker.closeAccount("account");
+  expect(control.terminate).toHaveBeenCalled();
+  expect(broker.online("account")).toBe(false);
+  // Back again, it is online again.
+  const again = new Control();
+  broker.attach("account", again.socket, 3600);
+  expect(broker.online("account")).toBe(true);
+  again.emit("close");
+  expect(broker.online("account")).toBe(false);
+  broker.close();
+});

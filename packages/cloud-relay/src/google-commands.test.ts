@@ -540,10 +540,12 @@ test("gateway selection is explicit, abortable and refuses unlisted choices with
       gatewayId: vectors.gateway.gatewayId,
       publicOrigin: vectors.gateway.publicOrigin,
       displayName: "Fictional\u001b home",
+      online: true,
     },
     {
       gatewayId: "00000000-0000-4000-8000-000000000002",
       publicOrigin: "https://studio.example.test",
+      online: false,
     },
   ];
   const signal = new AbortController().signal;
@@ -576,6 +578,11 @@ test("gateway selection is explicit, abortable and refuses unlisted choices with
   await expect(chooseGateway(choices, signal)).rejects.toThrow("Cancelled");
   expect(terminal.close).toHaveBeenCalledTimes(4);
   expect(output.mock.calls.flat().join("")).toContain("Fictional  home");
+  // Whether each is online is said in words, as a hint; an offline gateway can still be chosen.
+  expect(output.mock.calls.flat().join("")).toMatch(/home — \S+ \(online\)\n2\. /);
+  expect(output.mock.calls.flat().join("")).toContain(
+    "2. studio.example.test — https://studio.example.test (offline)",
+  );
   expect(output.mock.calls.flat().join("")).not.toContain("\u001b");
 });
 test("the installed account command uses account pairing and the explicitly configured gateway target", async () => {
@@ -591,7 +598,7 @@ test("the installed account command uses account pairing and the explicitly conf
   const pair = vi.spyOn(accountPairing, "pairAccountDevice").mockImplementation(async (options) => {
     expect(
       await options.selectGateway(
-        [{ gatewayId: result.deviceId, publicOrigin: result.gatewayUrl }],
+        [{ gatewayId: result.deviceId, publicOrigin: result.gatewayUrl, online: true }],
         new AbortController().signal,
       ),
     ).toBe(result.deviceId);

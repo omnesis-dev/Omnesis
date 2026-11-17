@@ -74,6 +74,7 @@ function setup() {
                 gatewayId: candidate.gatewayId,
                 publicOrigin: candidate.publicOrigin,
                 displayName: "Fictional home",
+                online: true,
               },
             ],
           }
@@ -221,8 +222,16 @@ test("empty directories, unlisted choices, denied comparison and missing approva
       new URL(String(url)).pathname.endsWith("/gateways")
         ? {
             gateways: [
-              { gatewayId: candidate.gatewayId, publicOrigin: candidate.publicOrigin },
-              { gatewayId: randomUUID(), publicOrigin: "https://other.example.test" },
+              {
+                gatewayId: candidate.gatewayId,
+                publicOrigin: candidate.publicOrigin,
+                online: true,
+              },
+              {
+                gatewayId: randomUUID(),
+                publicOrigin: "https://other.example.test",
+                online: false,
+              },
             ],
           }
         : unlisted.selected,
