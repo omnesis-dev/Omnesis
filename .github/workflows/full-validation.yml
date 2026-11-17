@@ -45,6 +45,7 @@ on:
             apple-read-denial-proof,
             staging-archive-proof,
             source-contract-merge-proof,
+            instructions-read-denial-proof,
             gateway-boot-trace,
             windows-network-pilot,
             windows-network-proxy-pilot,
@@ -6510,3 +6511,73 @@ jobs:
       OMNESIS_UNIT_WORKERS: "1"
       OMNESIS_E2E_WORKERS: "1"
       DEBUG: pw:webserver
+
+  instructions-read-denial-proof:
+    name: Instructions read failures on privileged runtimes (${{ matrix.os }})
+    if: inputs.scope == 'instructions-read-denial-proof'
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    env:
+      TZ: UTC
+      OMNESIS_UNIT_WORKERS: "1"
+      OMNESIS_E2E_WORKERS: "1"
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ inputs.source_sha }}
+          persist-credentials: false
+      - name: Keep this job off production Omnesis services
+        id: production-network
+        shell: bash
+        run: $GITHUB_WORKSPACE/scripts/ci/production-network.sh isolate
+      - name: Verify fixed source revision
+        env:
+          TARGET_SHA: ${{ inputs.source_sha }}
+        run: 'test "$TARGET_SHA" = 28e08138d12a5c84eb308d9550fb6d0384586d6a
+
+          test "$(git rev-parse HEAD)" = "$TARGET_SHA"
+
+          '
+      - name: Set up Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: "24"
+          cache: npm
+      - name: Install dependencies
+        id: dependencies
+        run: node scripts/ci/npm-ci.mjs --no-audit --no-fund
+      - name: Validate source and test types
+        if: runner.os == 'Linux'
+        env:
+          NODE_OPTIONS: --max-old-space-size=4096
+        run: exec node scripts/run-check.mjs types-tests
+      - name: Typed lint of unconditional instructions read error
+        if: runner.os == 'Linux'
+        env:
+          NODE_OPTIONS: --max-old-space-size=6144
+        run: "node node_modules/eslint/bin/eslint.js packages/gateway/src/instructions/store.test.ts
+
+          "
+        shell: bash
+      - name: Complete operator instructions store suite
+        run: "node scripts/run-check.mjs unit packages/gateway/src/instructions/store.test.ts
+
+          "
+        shell: bash
+      - name: Require immutable candidate source
+        run: git diff --exit-code
+        if: ${{ always() }}
+      - name: Check nothing tried to reach production Omnesis services
+        if: ${{ always() && steps.production-network.outcome == 'success' }}
+        shell: bash
+        run: $GITHUB_WORKSPACE/scripts/ci/production-network.sh verify
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        os:
+          - windows-latest
+          - ubuntu-latest
