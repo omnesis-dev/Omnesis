@@ -12,7 +12,12 @@ import { brainSourceInclusionSql } from "../source-exclusion.js";
 import { knowledgeDecisionErasureGeneration } from "./decision-debug.js";
 import { getKnowledgeDependencies, getKnowledgeNode, listKnowledgeChanges } from "./storage.js";
 import { knowledgeSourceReadiness } from "./engine-readiness.js";
-import { hasHistoricalKnowledgeWorkBeyond, historicalKnowledgeAdmissions } from "./work.js";
+import {
+  KNOWLEDGE_AWAITING_URGENCY,
+  hasHistoricalKnowledgeWorkBeyond,
+  historicalKnowledgeAdmissions,
+  isRewrittenUnreadHistory,
+} from "./work.js";
 import { historyHorizonFloor } from "./history-horizon.js";
 import { knowledgeSelectionReads } from "./selection-reads.js";
 import {
@@ -95,6 +100,18 @@ export class KnowledgeIntake {
     );
   }
   async intake(): Promise<void> {
+    let history = 0;
+    try {
+      await this.drainChanges(() => history++);
+    } finally {
+      if (history)
+        this.context.deps.log.info(
+          `Left ${history} rewritten unread source(s) dated before the recent window to historical admission`,
+        );
+    }
+  }
+
+  private async drainChanges(rewrittenHistory: () => void): Promise<void> {
     const cfg = this.context.deps.getSettings().knowledge;
     const changes = listKnowledgeChanges(this.context.deps.db, { limit: cfg.discoveryBatchSize });
     for (const change of changes) {
@@ -142,8 +159,24 @@ export class KnowledgeIntake {
             await this.context.deps.writeGate["knowledge.ackChanges"](change.seq);
             continue;
           }
-          // Journal entries describe arrivals or edits, regardless of occurrence age.
-          // Historical corpus admission is handled separately by bootstrap().
+          // Arrivals and edits are reactive regardless of occurrence age. A
+          // rewrite of a stored document the Brain never read, which its own
+          // dates place before the recent window, is neither: a resync or a
+          // migration rewrote the row. Reading it is historical admission's
+          // to schedule, under the history horizon and the operator's caps
+          // (bootstrap()). See `isRewrittenUnreadHistory`.
+          if (
+            isRewrittenUnreadHistory(
+              this.context.deps.db,
+              source.id,
+              this.context.deps.clock(),
+              cfg.recentWindowMs,
+            )
+          ) {
+            rewrittenHistory();
+            await this.context.deps.writeGate["knowledge.ackChanges"](change.seq);
+            continue;
+          }
           const readiness = knowledgeSourceReadiness(
             this.context.deps,
             source.id,
@@ -194,7 +227,11 @@ export class KnowledgeIntake {
               ...(readiness.ready
                 ? scheduleKnowledgeChange(score, now, cfg)
                 : { tier: "routine" as const, dueAt: now + cfg.routineDelayMs }),
-              ...(readiness.reason ? { readinessReason: readiness.reason } : {}),
+              ...(readiness.reason
+                ? { readinessReason: readiness.reason }
+                : score === null
+                  ? { readinessReason: KNOWLEDGE_AWAITING_URGENCY }
+                  : {}),
             },
             now,
           );
@@ -416,6 +453,22 @@ export class KnowledgeIntake {
       const retired = await this.context.deps.writeGate["knowledge.retireBeyondHorizon"](notBefore);
       this.context.deps.log.info(
         `Retired ${retired} pending historical work item(s) dated before the history horizon (${notBefore})`,
+      );
+    }
+    // Reactive work queued for rewritten unread history before intake routed
+    // it here, like a backlog a mass rewrite left behind, is history's too.
+    if (
+      await knowledgeSelectionReads(this.context.deps).knowledgeHasRewrittenHistoryWork(
+        this.context.deps.clock(),
+        cfg.recentWindowMs,
+      )
+    ) {
+      const retired = await this.context.deps.writeGate["knowledge.retireRewrittenHistory"](
+        this.context.deps.clock(),
+        cfg.recentWindowMs,
+      );
+      this.context.deps.log.info(
+        `Retired ${retired} pending change work item(s) for rewritten unread sources dated before the recent window; historical admission reads them`,
       );
     }
     const excluded = settings.excludedSources;

@@ -126,6 +126,42 @@ describe("Brain run queue", () => {
     ]);
   });
 
+  test("the morning brief is claimed ahead of an urgent maintenance backlog", () => {
+    for (let index = 0; index < 64; index++) {
+      maintenanceRun(`backlog-${index}`);
+      db.prepare("UPDATE knowledge_batches SET tier=? WHERE run_id=?").run(
+        index % 2 ? "soon" : "immediate",
+        `backlog-${index}`,
+      );
+    }
+    enqueueCognitionRun(
+      db,
+      {
+        id: "source-review",
+        kind: "daily",
+        payload: { sourceId: "src_1", dateFrom: "2026-07-02", dateTo: "2026-07-03" },
+        dedupeKey: dailySourceRunDedupeKey("src_1", "2026-07-03"),
+      },
+      101,
+    );
+    enqueueCognitionRun(
+      db,
+      {
+        id: "brief",
+        kind: "daily",
+        payload: { digest: true, date: "2026-07-03" },
+        dedupeKey: digestRunDedupeKey("2026-07-03"),
+      },
+      101,
+    );
+    enqueueCognitionRun(db, { id: "data", kind: "data", payload: {} }, 101);
+    expect(claimDueCognitionRuns(db, { now: 102, limit: 3 }).map((run) => run.id)).toEqual([
+      "data",
+      "brief",
+      expect.stringMatching(/^backlog-/),
+    ]);
+  });
+
   test.each(["initial", "populated"] as const)(
     "preferred %s root work advances under a continuously replenished immediate backlog",
     (rootKind) => {
