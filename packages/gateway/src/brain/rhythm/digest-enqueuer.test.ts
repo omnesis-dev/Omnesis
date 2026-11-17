@@ -25,6 +25,8 @@ import {
 import { digestRunDedupeKey } from "../run-payloads.js";
 import { runDigestEnqueuePass, type DigestEnqueuerDeps } from "./digest-enqueuer.js";
 import type Database from "better-sqlite3";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 type Db = Database.Database;
 
@@ -35,7 +37,7 @@ const NOW = new Date(2026, 6, 2, 7, 10, 0).getTime();
 const TODAY = "2026-07-02";
 
 function testDbPath(): string {
-  return `/tmp/omnesis-test-${randomUUID()}.db`;
+  return fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
 }
 function cleanupDb(path: string): void {
   for (const suffix of ["", "-wal", "-shm", "-journal"]) {

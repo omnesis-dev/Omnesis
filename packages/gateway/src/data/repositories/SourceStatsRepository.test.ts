@@ -15,6 +15,8 @@ import {
 } from "./SourceStatsRepository.js";
 import type { Db } from "../types.js";
 import type { DocumentInput } from "@omnesis/types";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 function cleanupDb(path: string): void {
   for (const suffix of ["", "-wal", "-shm", "-journal"]) {
@@ -60,7 +62,7 @@ describe("computeSourceStatsRow reads a source in chunks", () => {
   let dbPath: string;
 
   beforeEach(() => {
-    dbPath = `/tmp/omnesis-test-${randomUUID()}.db`;
+    dbPath = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
     db = createDatabase(dbPath);
     const docs: DocumentInput[] = [];
     for (let n = 0; n < 230; n++) docs.push(inventedDoc(n % 3 === 0 ? "synth-b" : "synth-a", n));

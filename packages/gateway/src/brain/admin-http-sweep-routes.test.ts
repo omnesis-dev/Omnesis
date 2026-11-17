@@ -91,7 +91,7 @@ function sweepFile(id: string): string {
 }
 
 beforeEach(() => {
-  dbPath = `/tmp/omnesis-test-${randomUUID()}.db`;
+  dbPath = join(tmpdir(), `omnesis-test-${randomUUID()}.db`);
   db = createDatabase(dbPath);
   configDir = mkdtempSync(join(tmpdir(), "omnesis-sweep-routes-"));
   ADMIN_TOKEN = mintToken([SCOPE_ADMIN, SCOPE_READ]);

@@ -19,6 +19,8 @@ import { OMNESIS_NOTES_SOURCE_ID } from "../../../sources/omnesis-notes/index.js
 import type { Scope } from "@omnesis/types";
 import type { OmnesisNotesRuntime } from "../../../sources/omnesis-notes/index.js";
 import type Database from "better-sqlite3";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 type Db = Database.Database;
 
@@ -53,7 +55,7 @@ function req(path: string, init: RequestInit = {}): Promise<Response> {
 }
 
 beforeEach(() => {
-  dbPath = `/tmp/omnesis-test-${randomUUID()}.db`;
+  dbPath = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
   db = createDatabase(dbPath);
   token = mintToken([SCOPE_ADMIN, SCOPE_READ, SCOPE_WRITE_ALL]);
   notesRuntime = undefined;

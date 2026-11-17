@@ -13,12 +13,14 @@ import { WsEventHandler } from "./WsEventHandler.js";
 import type { CollectorDescriptorCache } from "./CollectorDescriptorCache.js";
 import type { DeviceWsServer } from "../../ws.js";
 import type { WriteGate } from "../../write-gate.js";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 let dbPath: string;
 let db: ReturnType<typeof createDatabase>;
 
 beforeEach(() => {
-  dbPath = `/tmp/omnesis-ws-descriptors-${randomUUID()}.db`;
+  dbPath = fixtureJoin(fixtureTmpdir(), `omnesis-ws-descriptors-${randomUUID()}.db`);
   db = createDatabase(dbPath);
 });
 

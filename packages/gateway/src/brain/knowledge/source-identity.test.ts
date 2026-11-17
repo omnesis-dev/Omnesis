@@ -9,12 +9,14 @@ import { directWriteGate } from "../../write-gate.js";
 import { KNOWLEDGE_SOURCE_ID } from "./source-meta.js";
 import { KNOWLEDGE_SOURCE_LABEL, seedKnowledgeSourceMeta } from "./source-identity.js";
 import type Database from "better-sqlite3";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 describe("seedKnowledgeSourceMeta", () => {
   let path: string;
   let db: Database.Database;
   beforeEach(() => {
-    path = `/tmp/omnesis-test-${randomUUID()}.db`;
+    path = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
     db = createDatabase(path);
   });
   afterEach(() => {

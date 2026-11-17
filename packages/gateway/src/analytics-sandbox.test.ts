@@ -12,6 +12,8 @@ import { randomUUID } from "node:crypto";
 import { DuckDBConnection, DuckDBPreparedStatement } from "@duckdb/node-api";
 import { describe, test, expect, beforeEach, afterEach, vi } from "vitest";
 import { AnalyticsDb } from "./analytics-db.js";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 let db: AnalyticsDb;
 let path: string;
@@ -19,7 +21,7 @@ let path: string;
 type DuckDBInstanceLike = { connect(): Promise<DuckDBConnection> };
 
 beforeEach(async () => {
-  path = `/tmp/omnesis-sandbox-${randomUUID()}.db`;
+  path = fixtureJoin(fixtureTmpdir(), `omnesis-sandbox-${randomUUID()}.db`);
   db = new AnalyticsDb(path, { memoryLimitMiB: 768 });
   await db.open();
 });

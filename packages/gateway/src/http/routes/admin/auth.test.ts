@@ -26,6 +26,8 @@ import { directWriteGate } from "../../../write-gate.js";
 import { AuthFlowRegistry, type AuthFlow } from "../../../auth-flows.js";
 import type { DeviceWsServer } from "../../../ws.js";
 import type { WireChallenge } from "@omnesis/source-sdk";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 type Db = ReturnType<typeof createDatabase>;
 
@@ -134,7 +136,7 @@ describe("typed challenge answers", () => {
 });
 
 beforeEach(() => {
-  dbPath = `/tmp/omnesis-auth-code-http-${randomUUID()}.db`;
+  dbPath = fixtureJoin(fixtureTmpdir(), `omnesis-auth-code-http-${randomUUID()}.db`);
   db = createDatabase(dbPath);
   ADMIN_TOKEN = mintToken([SCOPE_ADMIN, SCOPE_READ]);
   authFlows = new AuthFlowRegistry();

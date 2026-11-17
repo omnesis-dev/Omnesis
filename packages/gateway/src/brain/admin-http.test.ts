@@ -219,7 +219,7 @@ const ALL_ROUTES: Array<{ method: "GET" | "POST"; path: string }> = [
 ];
 
 beforeEach(() => {
-  dbPath = `/tmp/omnesis-briefs-admin-http-${randomUUID()}.db`;
+  dbPath = join(tmpdir(), `omnesis-briefs-admin-http-${randomUUID()}.db`);
   configDir = mkdtempSync(join(tmpdir(), "omnesis-briefs-admin-"));
   db = createDatabase(dbPath);
   ADMIN_TOKEN = mintToken([SCOPE_ADMIN]);

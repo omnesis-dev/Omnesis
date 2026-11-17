@@ -29,10 +29,12 @@ import { createGatewayTrailPort } from "./ports.js";
 import type Database from "better-sqlite3";
 import type { AnalyticsTableSchema } from "@omnesis/source-sdk";
 import type { TrailEvent } from "@omnesis/core";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 type Db = Database.Database;
 
-const ANALYTICS_DB = `/tmp/omnesis-test-trail-record-${randomUUID()}.db`;
+const ANALYTICS_DB = fixtureJoin(fixtureTmpdir(), `omnesis-test-trail-record-${randomUUID()}.db`);
 
 // A fictional structured source with a 1:1 doc↔row binding + a sensitive
 // column and a declared semantic time.
@@ -114,7 +116,7 @@ beforeEach(async () => {
   await analytics.open();
   await analytics.ensureTable(activitySchema, "demo:acct1");
   await analytics.ensureTable(profileSchema, "demo:acct1");
-  sqlitePath = `/tmp/omnesis-test-trail-record-sqlite-${randomUUID()}.db`;
+  sqlitePath = fixtureJoin(fixtureTmpdir(), `omnesis-test-trail-record-sqlite-${randomUUID()}.db`);
   db = createDatabase(sqlitePath);
 });
 

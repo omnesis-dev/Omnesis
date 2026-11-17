@@ -23,11 +23,15 @@ import { hnswSearchCandidates } from "./vector-hnsw.js";
 import type { UsearchReadHandle } from "../indexer/usearch-index.js";
 import type { SearchFilters } from "./types.js";
 import { closeTempDb } from "./test-utils.js";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 let db: Db;
 
 beforeEach(() => {
-  db = createIndexDatabase(`/tmp/omnesis-vector-hnsw-boundary-${randomUUID()}.db`);
+  db = createIndexDatabase(
+    fixtureJoin(fixtureTmpdir(), `omnesis-vector-hnsw-boundary-${randomUUID()}.db`),
+  );
 });
 
 afterEach(() => {

@@ -34,6 +34,8 @@ import { createCognitionRuntime, type CognitionRuntimeDeps } from "./runtime.js"
 import type { MorningBriefConversationPort } from "../observations/morning-brief.js";
 import type { ClaimedCognitionRun } from "../storage/types.js";
 import type Database from "better-sqlite3";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 const log = createLogger("test").child("runtime-morning-digest");
 const NOW = Date.parse("2026-07-02T10:00:00.000Z");
@@ -171,7 +173,7 @@ async function send(rt: Awaited<ReturnType<typeof runtime>>, args: unknown): Pro
 }
 
 beforeEach(() => {
-  path = `/tmp/omnesis-test-${randomUUID()}.db`;
+  path = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
   db = createDatabase(path);
   appended = [];
   decide = vi.fn(async () => scores(3, 2));

@@ -18,6 +18,8 @@ import {
 } from "../data/repositories/AbsenceRepository.js";
 import { finishDocumentCascade } from "./document-cascade.js";
 import type Database from "better-sqlite3";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 const PROVIDER = ProviderId("notes-synth");
 const SOURCE = SourceId("notes-synth:local");
@@ -41,7 +43,7 @@ describe("sync tombstone cascade outbox", () => {
   let path: string;
 
   beforeEach(() => {
-    path = `/tmp/omnesis-test-${randomUUID()}.db`;
+    path = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
     db = createDatabase(path);
   });
 

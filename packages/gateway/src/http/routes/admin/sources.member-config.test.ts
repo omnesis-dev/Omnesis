@@ -18,6 +18,8 @@ import { createToken } from "../../../data/repositories/TokenRepository.js";
 import { createServer } from "../../../server.js";
 import { directWriteGate } from "../../../write-gate.js";
 import type { DeviceWsServer } from "../../../ws.js";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 type Db = ReturnType<typeof createDatabase>;
 
@@ -35,7 +37,7 @@ function cleanupDb(path: string): void {
 }
 
 beforeEach(() => {
-  dbPath = `/tmp/omnesis-member-config-http-${randomUUID()}.db`;
+  dbPath = fixtureJoin(fixtureTmpdir(), `omnesis-member-config-http-${randomUUID()}.db`);
   db = createDatabase(dbPath);
   const cli = createDevice(db, { name: "Fictional CLI", kind: "cli" });
   adminToken = createToken(db, cli.id, [SCOPE_ADMIN, SCOPE_READ]).token;

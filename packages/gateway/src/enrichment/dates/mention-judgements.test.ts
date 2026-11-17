@@ -22,6 +22,8 @@ import {
 } from "./mention-judgements.js";
 import type { Db } from "../../data/types.js";
 import type { DocumentInput, ExtractedDate } from "@omnesis/types";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 const MODEL = "jev-test";
 
@@ -42,7 +44,7 @@ describe("mention judgements", () => {
   let dbPath: string;
 
   beforeEach(() => {
-    dbPath = `/tmp/omnesis-test-${randomUUID()}.db`;
+    dbPath = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
     db = createDatabase(dbPath);
   });
   afterEach(() => {

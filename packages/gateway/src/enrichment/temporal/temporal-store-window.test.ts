@@ -22,6 +22,8 @@ import {
   type FixtureIds,
 } from "./__fixtures__/test-utils.js";
 import type { TemporalItem, TemporalQueryInput } from "@omnesis/core";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 function cleanup(path: string): void {
   for (const suffix of ["", "-wal", "-shm", "-journal"]) {
@@ -48,7 +50,7 @@ describe("temporal store window", () => {
   let ids: FixtureIds;
 
   beforeEach(() => {
-    path = `/tmp/omnesis-test-${randomUUID()}.db`;
+    path = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
     db = createDatabase(path);
     ids = seedTemporalFixture(db);
   });

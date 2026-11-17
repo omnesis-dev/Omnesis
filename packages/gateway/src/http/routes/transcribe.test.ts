@@ -24,6 +24,8 @@ import { createToken } from "../../data/repositories/TokenRepository.js";
 import { createDevice } from "../../data/repositories/DeviceRepository.js";
 import { AudioDecodeError, TranscribeService } from "../../transcribe/index.js";
 import type Database from "better-sqlite3";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 type Db = Database.Database;
 
@@ -70,7 +72,7 @@ function post(
 const enc = (s: string) => new TextEncoder().encode(s);
 
 beforeEach(() => {
-  dbPath = `/tmp/omnesis-transcribe-http-${randomUUID()}.db`;
+  dbPath = fixtureJoin(fixtureTmpdir(), `omnesis-transcribe-http-${randomUUID()}.db`);
   db = createDatabase(dbPath);
   WRITE_TOKEN = mintToken([SCOPE_WRITE_ALL]);
   READ_TOKEN = mintToken([SCOPE_READ]);

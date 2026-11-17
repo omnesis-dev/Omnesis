@@ -26,6 +26,8 @@ import { startOrganizationBatch } from "./organization-writer.js";
 import { KnowledgeStorageError } from "./types.js";
 import { LEDGERS, ledgerScans, queryPlan, recordStatements } from "./test-utils.js";
 import type Database from "better-sqlite3";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 const NOW = Date.parse("2027-04-06T09:00:00Z");
 const DAY = 86_400_000;
@@ -40,7 +42,7 @@ let dbPath: string;
 let db: Database.Database;
 
 beforeEach(() => {
-  dbPath = `/tmp/omnesis-test-${randomUUID()}.db`;
+  dbPath = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
   db = createDatabase(dbPath) as unknown as Database.Database;
 });
 afterEach(() => {

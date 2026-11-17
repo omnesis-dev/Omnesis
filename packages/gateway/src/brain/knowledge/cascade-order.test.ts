@@ -30,6 +30,8 @@ import {
   KNOWLEDGE_CASCADE_NEXT_ROW_SQL,
   nextKnowledgeCascadeItem,
 } from "./storage-invalidation.js";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 /** The pick this change replaced, kept here as the order it must reproduce. */
 const SORTED_PICK = `SELECT f.*,j.kind,j.target_kind AS root_kind,j.target_id AS root_id
@@ -43,7 +45,7 @@ let path: string;
 let db: Database.Database;
 
 beforeEach(() => {
-  path = `/tmp/omnesis-test-${randomUUID()}.db`;
+  path = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
   db = createDatabase(path);
 });
 

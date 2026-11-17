@@ -9,12 +9,14 @@ import { afterEach, describe, expect, it } from "vitest";
 import { openEncryptedSqlite } from "../sqlite-encryption.js";
 import { DEFAULT_WAL_CHECKPOINT_POLICY } from "./wal-checkpoint.js";
 import { openWriteConn } from "./writer-connection.js";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 const opened: Database.Database[] = [];
 let path = "";
 
 function seed(): void {
-  path = `/tmp/omnesis-test-${randomUUID()}.db`;
+  path = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
   const db = new Database(path);
   db.exec("PRAGMA journal_mode = WAL");
   db.exec("CREATE TABLE counters (key TEXT PRIMARY KEY, value INTEGER NOT NULL)");
@@ -81,7 +83,7 @@ describe("openWriteConn", () => {
     ["plaintext", undefined],
     ["encrypted", randomBytes(32)],
   ])("configures a %s WAL handle for checkpoints made between ops", (_label, key) => {
-    path = `/tmp/omnesis-test-${randomUUID()}.db`;
+    path = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
     if (key) {
       const seedDb = openEncryptedSqlite(path, { key });
       seedDb.exec("PRAGMA journal_mode = WAL");

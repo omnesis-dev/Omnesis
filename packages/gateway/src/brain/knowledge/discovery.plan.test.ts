@@ -15,12 +15,14 @@ import { afterEach, beforeEach, expect, it } from "vitest";
 import { createDatabase } from "../../db.js";
 import { listKnowledgeDiscoveryBacklog } from "./discovery.js";
 import type Database from "better-sqlite3";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 let dbPath: string;
 let db: Database.Database;
 
 beforeEach(() => {
-  dbPath = `/tmp/omnesis-test-${randomUUID()}.db`;
+  dbPath = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
   db = createDatabase(dbPath) as unknown as Database.Database;
 });
 afterEach(() => {

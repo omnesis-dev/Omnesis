@@ -47,6 +47,8 @@ import type { WriteGate } from "../write-gate.js";
 import type { TaskContext } from "../scheduler/types.js";
 import type { NearDupApplyBatch } from "./types.js";
 import type { VerifiedPair, VerifyPairInput } from "./cpu-signing.js";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 /**
  * Text processing this thread runs. The workers load their own copy of the
@@ -139,7 +141,7 @@ function drainInbox(): void {
 }
 
 beforeEach(async () => {
-  dbPath = `/tmp/omnesis-test-${randomUUID()}.db`;
+  dbPath = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
   db = createDatabase(dbPath) as unknown as Database.Database;
   const handle = db as unknown as Db;
   setActiveAlgoVersion(handle, algoVersion);

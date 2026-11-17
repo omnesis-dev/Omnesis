@@ -23,6 +23,8 @@ import {
 import { subscribeTemporalAnnotationInvalidator } from "./temporal-annotation-invalidator.js";
 import type { Logger } from "@omnesis/core";
 import type Database from "better-sqlite3";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 type Db = Database.Database;
 
@@ -106,7 +108,7 @@ function wire(over: Partial<Parameters<typeof subscribeTemporalAnnotationInvalid
 }
 
 beforeEach(() => {
-  dbPath = `/tmp/omnesis-test-${randomUUID()}.db`;
+  dbPath = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
   db = createDatabase(dbPath);
   seedDoc("doc_cited");
   seedDoc("doc_uncited");

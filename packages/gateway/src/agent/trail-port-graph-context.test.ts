@@ -15,6 +15,8 @@ import { AnalyticsDb } from "../analytics-db.js";
 import { createDatabase } from "../db.js";
 import { createGatewayTrailPort } from "./ports.js";
 import type Database from "better-sqlite3";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 const NOW = "2026-02-01T09:00:00.000Z";
 let db: Database.Database;
@@ -23,10 +25,13 @@ let sqlitePath: string;
 let analyticsPath: string;
 
 beforeEach(async () => {
-  analyticsPath = `/tmp/omnesis-test-trail-gc-analytics-${randomUUID()}.db`;
+  analyticsPath = fixtureJoin(
+    fixtureTmpdir(),
+    `omnesis-test-trail-gc-analytics-${randomUUID()}.db`,
+  );
   analytics = new AnalyticsDb(analyticsPath);
   await analytics.open();
-  sqlitePath = `/tmp/omnesis-test-trail-gc-${randomUUID()}.db`;
+  sqlitePath = fixtureJoin(fixtureTmpdir(), `omnesis-test-trail-gc-${randomUUID()}.db`);
   db = createDatabase(sqlitePath);
 });
 

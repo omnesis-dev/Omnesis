@@ -15,8 +15,9 @@ import { describe, test, expect, beforeEach, afterEach } from "vitest";
 import { DuckDBInstance } from "@duckdb/node-api";
 import { AnalyticsDb } from "../analytics-db.js";
 import type { AnalyticsTableSchema } from "@omnesis/source-sdk";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
-const DIR = `/tmp/omnesis-test-analytics-backup-${randomUUID()}`;
+const DIR = join(fixtureTmpdir(), `omnesis-test-analytics-backup-${randomUUID()}`);
 const SRC = join(DIR, "analytics.db");
 const DEST = join(DIR, "copy", "analytics.db");
 

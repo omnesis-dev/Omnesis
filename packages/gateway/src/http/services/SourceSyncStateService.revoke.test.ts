@@ -12,6 +12,8 @@ import { SourceWriteEpochFence } from "../../source-write-epoch-fence.js";
 import { directWriteGate, type WriteGate } from "../../write-gate.js";
 import { SourceSyncStateService } from "./SourceSyncStateService.js";
 import type Database from "better-sqlite3";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 describe("SourceSyncStateService attempt revocation", () => {
   let sqlite: Database.Database;
@@ -19,7 +21,7 @@ describe("SourceSyncStateService attempt revocation", () => {
   let gate: WriteGate;
 
   beforeEach(() => {
-    sqlitePath = `/tmp/omnesis-test-${randomUUID()}.db`;
+    sqlitePath = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
     sqlite = createDatabase(sqlitePath);
     gate = directWriteGate(sqlite);
   });

@@ -15,6 +15,8 @@ import { createIndexDatabase } from "../../indexer/db.js";
 import { createDevice } from "../../data/repositories/DeviceRepository.js";
 import { createToken } from "../../data/repositories/TokenRepository.js";
 import type Database from "better-sqlite3";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 type Db = Database.Database;
 
@@ -82,8 +84,8 @@ function seedPending(from: string, type: string, targetExt: string): void {
 }
 
 beforeEach(() => {
-  dbPath = `/tmp/omnesis-edges-route-test-${randomUUID()}.db`;
-  indexDbPath = `/tmp/omnesis-edges-route-index-${randomUUID()}.db`;
+  dbPath = fixtureJoin(fixtureTmpdir(), `omnesis-edges-route-test-${randomUUID()}.db`);
+  indexDbPath = fixtureJoin(fixtureTmpdir(), `omnesis-edges-route-index-${randomUUID()}.db`);
   db = createDatabase(dbPath);
   indexDb = createIndexDatabase(indexDbPath);
   const dev = createDevice(db, { name: `test-${randomUUID()}`, kind: "cli" });

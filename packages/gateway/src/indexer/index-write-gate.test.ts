@@ -10,9 +10,11 @@ import {
   withFreshIndexWriteGate,
   workerCoordinatedIndexWriteGate,
 } from "./index-write-gate.js";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 function tmpPath(): string {
-  return `/tmp/omnesis-index-gate-${randomUUID()}.db`;
+  return fixtureJoin(fixtureTmpdir(), `omnesis-index-gate-${randomUUID()}.db`);
 }
 
 function dummyChunk(id: string, documentId: string, sourceId = "test:1") {

@@ -26,6 +26,8 @@ import { directWriteGate, type WriteGate } from "../../write-gate.js";
 import { FleetUpdateService } from "./FleetUpdateService.js";
 import type { DeviceWsServer } from "../../ws.js";
 import type { DeviceId, DeviceKind } from "@omnesis/types";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 const TARGET = "9.9.2";
 const BEHIND = "9.9.0";
@@ -35,7 +37,7 @@ let dbPath: string;
 let db: ReturnType<typeof createDatabase>;
 
 beforeEach(() => {
-  dbPath = `/tmp/omnesis-fleet-update-test-${randomUUID()}.db`;
+  dbPath = fixtureJoin(fixtureTmpdir(), `omnesis-fleet-update-test-${randomUUID()}.db`);
   db = createDatabase(dbPath);
 });
 

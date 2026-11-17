@@ -14,11 +14,13 @@ import {
 } from "../indexer/db.js";
 import { bm25Search, filterCommonTokens, toFts5Query } from "./bm25.js";
 import { closeTempDb } from "./test-utils.js";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 let db: Db;
 
 beforeEach(() => {
-  db = createIndexDatabase(`/tmp/omnesis-bm25-search-${randomUUID()}.db`);
+  db = createIndexDatabase(fixtureJoin(fixtureTmpdir(), `omnesis-bm25-search-${randomUUID()}.db`));
 });
 
 afterEach(() => {

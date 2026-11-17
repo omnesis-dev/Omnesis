@@ -83,7 +83,7 @@ let analyticsGate: Promise<void> | null = null;
 let releaseAnalytics: () => void = () => {};
 
 beforeEach(() => {
-  dbPath = `/tmp/omnesis-export-http-${randomUUID()}.db`;
+  dbPath = join(tmpdir(), `omnesis-export-http-${randomUUID()}.db`);
   db = createDatabase(dbPath);
   configDir = mkdtempSync(join(tmpdir(), "omnesis-export-http-"));
   ADMIN_TOKEN = mintToken([SCOPE_ADMIN, SCOPE_READ]);

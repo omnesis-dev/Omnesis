@@ -32,6 +32,8 @@ import { directWriteGate, type WriteGate } from "../../write-gate.js";
 import { DocumentService } from "./DocumentService.js";
 import { EventService } from "./EventService.js";
 import type Database from "better-sqlite3";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 type Db = Database.Database;
 
@@ -171,7 +173,7 @@ function markedExternalIds(): string[] {
 }
 
 beforeEach(() => {
-  dbPath = `/tmp/omnesis-test-${randomUUID()}.db`;
+  dbPath = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
   db = createDatabase(dbPath);
 });
 

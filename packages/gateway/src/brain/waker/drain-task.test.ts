@@ -30,6 +30,8 @@ import { briefsWakerDrainTask, type BriefsWakerDrainBundle } from "./drain-task.
 import { createBriefsWakerBuffer, subscribeBriefsWaker } from "./event-handler.js";
 import type Database from "better-sqlite3";
 import type { Scheduler } from "../../scheduler/scheduler.js";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 type Db = Database.Database;
 
@@ -50,7 +52,7 @@ const CFG = {
 };
 
 function testDbPath(): string {
-  return `/tmp/omnesis-test-${randomUUID()}.db`;
+  return fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
 }
 
 function projection(overrides: Partial<DocumentProjection> = {}): DocumentProjection {

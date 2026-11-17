@@ -22,6 +22,8 @@ import { directAgentProvenanceReads, type AgentProvenanceReads } from "./agent-p
 import { closeTempDb } from "./test-utils.js";
 import type Database from "better-sqlite3";
 import type { SearchConfig } from "./search-config.js";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 const BODY =
   "The invented Northstar equipment agreement specifies delivery in September, replacement parts, inspection, and a twelve-month warranty.";
@@ -32,8 +34,8 @@ let gateway: Database.Database;
 let index: Database.Database;
 
 beforeEach(() => {
-  gateway = createDatabase(`/tmp/omnesis-test-${randomUUID()}.db`);
-  index = createIndexDatabase(`/tmp/omnesis-test-${randomUUID()}.db`);
+  gateway = createDatabase(fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`));
+  index = createIndexDatabase(fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`));
   gateway
     .prepare(
       "INSERT INTO devices (id,name,kind,paired_at) VALUES (?,'Example desktop','collector',1)",

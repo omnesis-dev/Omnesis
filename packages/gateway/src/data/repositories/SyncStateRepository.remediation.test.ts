@@ -23,6 +23,8 @@ import {
 } from "./SyncStateRepository.js";
 import { createDevice } from "./DeviceRepository.js";
 import { addSourceMember, createSource } from "./SourceRepository.js";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 let dbPath: string;
 let db: ReturnType<typeof createDatabase>;
@@ -35,7 +37,7 @@ const REMEDY = {
 };
 
 beforeEach(() => {
-  dbPath = `/tmp/omnesis-syncstate-remediation-test-${randomUUID()}.db`;
+  dbPath = fixtureJoin(fixtureTmpdir(), `omnesis-syncstate-remediation-test-${randomUUID()}.db`);
   db = createDatabase(dbPath);
 });
 

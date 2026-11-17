@@ -11,13 +11,15 @@ import { createDevice } from "../../../data/repositories/DeviceRepository.js";
 import { createToken } from "../../../data/repositories/TokenRepository.js";
 import { upsertSourceWatermark } from "../../../data/repositories/WatermarkRepository.js";
 import type Database from "better-sqlite3";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 let db: Database.Database;
 let app: ReturnType<typeof createServer>;
 let dbPath: string;
 
 beforeEach(() => {
-  dbPath = `/tmp/omnesis-watermarks-route-test-${randomUUID()}.db`;
+  dbPath = fixtureJoin(fixtureTmpdir(), `omnesis-watermarks-route-test-${randomUUID()}.db`);
   db = createDatabase(dbPath);
   app = createServer(db, dbPath);
 });

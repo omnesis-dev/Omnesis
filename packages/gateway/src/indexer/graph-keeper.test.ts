@@ -113,7 +113,7 @@ describe("GraphKeeper", () => {
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), "graph-keeper-"));
     path = join(dir, "index.usearch");
-    db = createIndexDatabase(`/tmp/omnesis-graph-keeper-${randomUUID()}.db`);
+    db = createIndexDatabase(join(tmpdir(), `omnesis-graph-keeper-${randomUUID()}.db`));
     setIndexEmbedModel(db, "test-embedder", EMBEDDING_DIM);
     headroom = 8 * GIB;
     states = [];

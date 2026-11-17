@@ -11,11 +11,13 @@ import { createPersonAnnotation } from "../../brain/storage/person-annotations.j
 import { insertTemporalAnnotation } from "../../enrichment/temporal-annotations/storage.js";
 import { reapEntityContext } from "./CognitiveGraphService.js";
 import type Database from "better-sqlite3";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 type Db = Database.Database;
 
 function testDbPath(): string {
-  return `/tmp/omnesis-test-${randomUUID()}.db`;
+  return fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
 }
 function cleanup(p: string): void {
   for (const s of ["", "-wal", "-shm", "-journal"]) if (existsSync(p + s)) unlinkSync(p + s);
