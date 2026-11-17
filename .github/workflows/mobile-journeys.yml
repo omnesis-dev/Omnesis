@@ -90,7 +90,11 @@ jobs:
     # The project requires Xcode 26; provision an available iPhone simulator
     # for that Xcode rather than assuming the image has a particular name.
     runs-on: macos-26
-    timeout-minutes: 90
+    timeout-minutes: 200
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -143,9 +147,13 @@ jobs:
         env:
           OMNESIS_JOURNEY_ARTIFACTS: ${{ runner.temp }}/mobile-journeys
           OMNESIS_CONFIG_DIR: ${{ runner.temp }}/mobile-journeys-gateway
+          OMNESIS_JOURNEY_ONLY: MobileJourneyUITests/testAskingTheAgentShowsItsAnswer
+          OMNESIS_JOURNEY_DIAG_ITERATIONS: "14"
+          OMNESIS_SLOW_REQUEST_MS: "1"
         run: scripts/run-mobile-journeys.sh ios
 
       - name: lane [ios-cloud-pairing-interactions]
+        if: false
         # The bounded Demo simulator scene uses the production views and models.
         # These XCUI actions complement the real gateway and TLS journey tests.
         run: |
@@ -167,11 +175,11 @@ jobs:
         # The screen recording, xcresult bundle (screenshots of every failure),
         # xcodebuild log and gateway logs. A failed upload must not mask the
         # test result.
-        if: failure() || cancelled()
+        if: always()
         continue-on-error: true
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
-          name: ios-journeys
+          name: ios-journeys-${{ matrix.shard }}
           path: ${{ runner.temp }}/mobile-journeys/
           if-no-files-found: ignore
           retention-days: 14

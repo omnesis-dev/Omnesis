@@ -587,6 +587,7 @@ public struct AgentView: View {
     }
 
     private func submitComposer(_ text: String, command: SlashCommand? = nil) {
+        AutomationTouchLog.note("submitComposer focused=\(composerFocused)")
         composerFocused = false
         // A send follows the conversation down, wherever the reader was.
         scrollToBottomTrigger &+= 1
@@ -594,6 +595,7 @@ public struct AgentView: View {
             let sent = await store.agent.submitDraft(
                 text: text, deepResearch: command?.deepResearch ?? false
             )
+            AutomationTouchLog.note("submitDraft returned \(sent)")
             if sent, composerText == text {
                 composerText = store.agent.draft(for: store.agent.composerDraftKey)
                 editingDraft = store.agent.draftHasBackup(for: store.agent.composerDraftKey)
@@ -1969,6 +1971,7 @@ struct AgentComposer: View {
     }
 
     private func submit() {
+        AutomationTouchLog.note("send action ran disabled=\(disabled) busy=\(busy) queue=\(queueEnabled) chars=\(text.count)")
         guard !disabled, !busy || queueEnabled else { return }
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }

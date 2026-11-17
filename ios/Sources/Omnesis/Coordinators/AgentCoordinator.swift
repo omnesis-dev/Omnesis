@@ -331,6 +331,7 @@ public final class AgentCoordinator {
 
     /// Keep the unsent draft until the gateway acknowledges its durable submission.
     func submitDraft(text: String, interrupt: Bool = false, deepResearch: Bool = false) async -> Bool {
+        AutomationTouchLog.note("submitDraft client=\(client != nil) canCompose=\(canComposeMessage) submitting=\(submitting) controls=\(conversationControlsSupported) session=\(sessionId != nil)")
         guard let client, canComposeMessage, !submitting else { return false }
         let cleaned = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !cleaned.isEmpty else { return false }
@@ -471,6 +472,7 @@ public final class AgentCoordinator {
     /// per-caller session cap from being burned by every TestFlight
     /// reinstall.
     func rebuild(pairing: Pairing) {
+        AutomationTouchLog.note("agent rebuild")
         teardown()
         self.pairing = pairing
         let client = AgentClient(baseURL: pairing.url, token: pairing.token)
@@ -492,7 +494,9 @@ public final class AgentCoordinator {
 
     private func bootstrap() async {
         let choice = sessionChoiceCount
+        AutomationTouchLog.note("bootstrap start choice=\(choice)")
         await refreshConversations()
+        AutomationTouchLog.note("bootstrap conversations=\(conversations.count) choice=\(sessionChoiceCount)")
         // An explicit open that landed while the list was loading (e.g. a
         // push deep-open racing a cold start) owns the surface — skip the
         // default resume entirely.
@@ -519,6 +523,7 @@ public final class AgentCoordinator {
                 resumeFromId: resumeFromId,
                 transcriptLimit: resumeFromId == nil ? nil : 25
             )
+            AutomationTouchLog.note("default session returned current=\(sessionChoiceCount == choice)")
             guard sessionChoiceCount == choice, snapshotHandoffIsCurrent(handoff) else {
                 discardSnapshotHandoff(handoff)
                 return
@@ -526,6 +531,7 @@ public final class AgentCoordinator {
             await applyCreatedSession(session)
             await finishSnapshotHandoff(handoff, after: session.eventCursor)
         } catch {
+            AutomationTouchLog.note("default session failed: \(String(describing: error))")
             guard sessionChoiceCount == choice, snapshotHandoffIsCurrent(handoff) else {
                 discardSnapshotHandoff(handoff)
                 return

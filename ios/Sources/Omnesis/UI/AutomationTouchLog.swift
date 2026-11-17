@@ -25,6 +25,13 @@ enum AutomationTouchLog {
     /// Records that a menu control's action ran. `id` matches the control's
     /// accessibility identifier, so a line pairs with the test step that
     /// tapped it.
+    static func note(_ message: String) {
+        #if DEBUG
+        guard enabled else { return }
+        log.notice("diag: \(message, privacy: .public)")
+        #endif
+    }
+
     static func menuAction(_ id: String) {
         #if DEBUG
         guard enabled else { return }

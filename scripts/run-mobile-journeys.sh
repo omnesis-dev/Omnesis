@@ -219,12 +219,15 @@ print(json.dumps({"gatewayURL": os.environ["URL"], "token": os.environ["TOKEN"],
     -derivedDataPath "$IOS_DERIVED_DATA" \
     "${IOS_PACKAGE_FLAGS[@]}" \
     -resultBundlePath "$ARTIFACTS/ios-journeys.xcresult" \
-    -retry-tests-on-failure -test-iterations $((RETRIES + 1)) \
+    -test-iterations "${OMNESIS_JOURNEY_DIAG_ITERATIONS:-$((RETRIES + 1))}" \
     "${tests[@]}" 2>&1 | tee "$ARTIFACTS/xcodebuild.log" \
     | grep -E --line-buffered '^(Test Case|Test Suite|Testing|Executed|\*\*)|error:'
   status="${PIPESTATUS[0]}"
   set -e
   stop_recording
+  xcrun simctl spawn "$udid" log show --start "$log_start" --style compact \
+    --predicate 'subsystem == "dev.omnesis.ios" AND category == "touch"' \
+    >"$ARTIFACTS/app-touch-all.log" 2>&1 || true
 
   if [[ "$status" != 0 ]]; then
     mkdir -p "$ARTIFACTS/failure-attachments"
