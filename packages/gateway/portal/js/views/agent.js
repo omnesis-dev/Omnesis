@@ -963,7 +963,6 @@ export function AgentView({ convoId, experimental = false, developer = false }) 
     let sessionId = state.sessionId;
     const pending = pendingSessionRef.current;
     if (pending) {
-      if (pendingActivationRef.current) return false;
       const loadSeq = sessionLoadSeqRef.current;
       const activation = activatePendingSession(clientRef.current, pending);
       pendingActivationRef.current = activation;
