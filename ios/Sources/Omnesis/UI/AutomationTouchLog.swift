@@ -18,18 +18,19 @@ import UIKit
 /// build installs nothing and logs nothing.
 ///
 /// The same seam can also take a touch away, the way the system does when it
-/// claims a touch for one of its own gestures: its `_UISystemGestureGate`
-/// recogniser fires, every view under the touch is sent `touchesCancelled`,
-/// and a button that already showed its pressed state never runs its action.
-/// `DEMO_CANCEL_TOUCHES` lists the ordinals (counting from 1) of the touches to
-/// cancel, so a UI test can prove that its steps notice a tap that did nothing.
+/// claims a touch for one of its own gestures: its
+/// `_UISystemGestureGateGestureRecognizer` recognises, every view under the
+/// touch is sent `touchesCancelled`, and a button that already showed its
+/// pressed state never runs its action. `DEMO_CANCEL_TOUCHES` lists the
+/// ordinals (counting from 1) of the touches to cancel, so a UI test can prove
+/// that its steps notice a tap that did nothing.
 enum AutomationTouchLog {
     #if DEBUG
     static let enabled = ProcessInfo.processInfo.environment["DEMO_TOUCH_LOG"] == "1"
     static let log = AppLog.make(category: "touch")
     static let cancelledTouches = parseOrdinals(ProcessInfo.processInfo.environment["DEMO_CANCEL_TOUCHES"])
 
-    static func parseOrdinals(_ value: String?) -> Set<Int> {
+    private static func parseOrdinals(_ value: String?) -> Set<Int> {
         Set((value ?? "").split(separator: ",").compactMap { Int($0.trimmingCharacters(in: .whitespaces)) }
             .filter { $0 > 0 })
     }
