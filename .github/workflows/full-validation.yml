@@ -6293,7 +6293,7 @@ jobs:
       - name: Verify fixed source revision
         env:
           TARGET_SHA: ${{ inputs.source_sha }}
-        run: 'test "$TARGET_SHA" = 60c3de2ee3d56ec44f5f28c6bfee6206aecb7b03
+        run: 'test "$TARGET_SHA" = f2f9e8faa4c6b38cdac8faac4971cb3159823956
 
           test "$(git rev-parse HEAD)" = "$TARGET_SHA"
 
@@ -6326,11 +6326,22 @@ jobs:
 
           "
         shell: bash
-      - name: Complete staging, archive, runner and Windows plan suites
-        run:
-          "node scripts/run-check.mjs unit packages/cli/src/commands/connect.test.ts scripts/release/stage-packages.test.mjs scripts/release/stage-runtime.test.mjs scripts/run-check.test.mjs scripts/ci/windows-checks.test.mjs
+      - name: Complete remaining Apple, staging, archive and runner proofs
+        run: 'node --input-type=module - <<''JS''
 
-          "
+          import {runWindowsCheckTasks} from ''./scripts/ci/windows-checks.mjs'';
+
+          const tasks=[];
+
+          if(process.platform===''linux'')tasks.push([''scripts/run-check.mjs'',''unit'',''packages/providers/apple'']);
+
+          tasks.push([''scripts/run-check.mjs'',''unit'',...["packages/cli/src/commands/connect.test.ts", "scripts/release/stage-packages.test.mjs", "scripts/release/stage-runtime.test.mjs", "scripts/run-check.test.mjs", "scripts/ci/windows-checks.test.mjs"]]);
+
+          process.exitCode=await runWindowsCheckTasks(tasks);
+
+          JS
+
+          '
         shell: bash
       - name: Require immutable candidate source
         run: git diff --exit-code
