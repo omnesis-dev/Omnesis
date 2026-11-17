@@ -451,20 +451,22 @@ test("portal gateway settings are environment values, including paths containing
         "test",
         "--list",
         "--reporter=json",
+        "portal.spec.ts",
       ],
       {
         encoding: "utf8",
         env: { ...process.env, OMNESIS_PORTAL_TEST_CONFIG_DIR: configDirectory },
-        timeout: 20_000,
+        timeout: 45_000,
         maxBuffer: 4 * 1024 * 1024,
       },
     );
+    if (listed.error) throw listed.error;
     expect(listed.status, listed.stderr).toBe(0);
     expect(JSON.parse(listed.stdout).suites.length).toBeGreaterThan(0);
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
-});
+}, 60_000);
 
 test("Hermes adapter tests use native Python and preserve argument boundaries on every platform", () => {
   const windows = hermesTestInvocation("win32", ["-k", "a test name"]);

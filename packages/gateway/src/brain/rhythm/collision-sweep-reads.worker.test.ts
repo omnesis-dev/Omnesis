@@ -47,10 +47,11 @@ describe.each(Object.keys(FIXTURES))("the %s fixture on the io worker", (name) =
   let worker: CollisionSweepReads;
   let direct: CollisionSweepReads;
 
+  // A cold TypeScript worker load can exceed Vitest's default hook budget.
   beforeAll(async () => {
     dbPath = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
     db = createDatabase(dbPath) as unknown as Database.Database;
-    FIXTURES[name]!(db);
+    db.transaction(FIXTURES[name]!)(db);
     direct = directReadPort(COLLISION_SWEEP_READS, db);
     scheduler = new Scheduler({ enablePreemption: false });
     scheduler.registerRunner(
@@ -64,7 +65,7 @@ describe.each(Object.keys(FIXTURES))("the %s fixture on the io worker", (name) =
     );
     await scheduler.start();
     worker = ioGateFromScheduler(scheduler);
-  });
+  }, 30_000);
 
   afterAll(async () => {
     await scheduler.dispose();
