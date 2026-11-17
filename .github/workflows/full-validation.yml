@@ -6536,7 +6536,7 @@ jobs:
       - name: Verify fixed source revision
         env:
           TARGET_SHA: ${{ inputs.source_sha }}
-        run: 'test "$TARGET_SHA" = 28e08138d12a5c84eb308d9550fb6d0384586d6a
+        run: 'test "$TARGET_SHA" = 0b4c0cfca7286855e73c0e5309762ba439413f0b
 
           test "$(git rev-parse HEAD)" = "$TARGET_SHA"
 
@@ -6549,6 +6549,9 @@ jobs:
       - name: Install dependencies
         id: dependencies
         run: node scripts/ci/npm-ci.mjs --no-audit --no-fund
+      - name: Build and verify Windows SQLite bindings
+        if: runner.os == 'Windows'
+        run: node scripts/ci/build-windows-sqlite.mjs
       - name: Validate source and test types
         if: runner.os == 'Linux'
         env:
@@ -6562,8 +6565,9 @@ jobs:
 
           "
         shell: bash
-      - name: Complete operator instructions store suite
-        run: "node scripts/run-check.mjs unit packages/gateway/src/instructions/store.test.ts
+      - name: Validate instructions, notes and SQLite recovery
+        run:
+          "node scripts/run-check.mjs unit packages/gateway/src/instructions/store.test.ts packages/gateway/src/http/routes/notes.test.ts packages/gateway/src/sqlite-windows-wal-recovery.test.ts scripts/ci/build-windows-sqlite.test.mjs
 
           "
         shell: bash
