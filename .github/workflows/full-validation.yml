@@ -3661,11 +3661,16 @@ jobs:
           }
         if: runner.os == 'Windows'
         shell: pwsh
+      - name: Validate current source and test TypeScript after the TOFU fixture correction
+        if: runner.os == 'Linux'
+        env:
+          NODE_OPTIONS: --max-old-space-size=4096
+        run: exec node scripts/run-check.mjs types-tests
       - name: Check merged relay ownership types and script bootstrap
         if: runner.os == 'Linux'
         env:
           NODE_OPTIONS: --max-old-space-size=6144
-        run: node node_modules/eslint/bin/eslint.js packages/cloud-relay/src/management-service.ts scripts/lib/check-process.mjs scripts/lib/check-process.test.mjs scripts/ci/windows-checks.mjs scripts/ci/with-test-embedder.mjs scripts/nx/entrypoints.test.mjs
+        run: node node_modules/eslint/bin/eslint.js packages/cloud-relay/src/management-service.ts scripts/lib/check-process.mjs scripts/lib/check-process.test.mjs scripts/ci/windows-checks.mjs scripts/ci/with-test-embedder.mjs scripts/nx/entrypoints.test.mjs packages/collector/src/e2e/tofu.e2e.test.ts
       - name: Prove account unlink boundaries and retained cleanup ownership
         run: exec node scripts/run-check.mjs unit packages/cloud-relay/src/management-service.test.ts packages/cloud-relay/src/gateway-integration.test.ts packages/cloud-relay/src/gateway-key-client.test.ts packages/cloud-relay/src/management-ownership-boundaries.test.ts packages/cli/src/service/supervisor.test.ts packages/gateway/portal/js/views/relay.test.ts scripts/lib/check-process.test.mjs scripts/nx/entrypoints.test.mjs
         if: runner.os == 'Linux'
@@ -3698,7 +3703,7 @@ jobs:
       - name: Reproduce the exact failed runtime suites and merged Linux account unlink
         env:
           MERGED_UNLINK_FILE: ${{ runner.os == 'Linux' && 'packages/collector/src/e2e/account-gateway-unlink.e2e.test.ts' || '' }}
-        run: exec node scripts/run-check.mjs e2e packages/collector/src/e2e/mcp-answer.e2e.test.ts packages/collector/src/e2e/briefs-reconcile.e2e.test.ts packages/collector/src/e2e/account-enrollment-google-group.e2e.test.ts $MERGED_UNLINK_FILE
+        run: exec node scripts/run-check.mjs e2e packages/collector/src/e2e/mcp-answer.e2e.test.ts packages/collector/src/e2e/briefs-reconcile.e2e.test.ts packages/collector/src/e2e/account-enrollment-google-group.e2e.test.ts packages/collector/src/e2e/self-identity-registry.e2e.test.ts packages/collector/src/e2e/tofu.e2e.test.ts $MERGED_UNLINK_FILE
       - name: Require only the declared test diagnostic to differ
         run: |-
           test "$(git diff --name-only)" = packages/collector/src/e2e/mcp-answer.e2e.test.ts
