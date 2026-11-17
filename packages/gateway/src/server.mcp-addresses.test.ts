@@ -74,6 +74,7 @@ let db: ReturnType<typeof createDatabase>;
 let analyticsDb: AnalyticsDb;
 let admin: string;
 const closeables: Array<{ close(): Promise<unknown> | unknown }> = [];
+const apps = new Set<ReturnType<typeof createServer>>();
 
 beforeEach(async () => {
   vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "1");
@@ -88,7 +89,18 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
-  await Promise.allSettled(closeables.splice(0).map((closeable) => closeable.close()));
+  const sessions = await Promise.allSettled(
+    closeables.splice(0).map((closeable) => Promise.resolve().then(() => closeable.close())),
+  );
+  const servers = await Promise.allSettled([...apps].map((app) => app.close()));
+  apps.clear();
+  const failures = [...sessions, ...servers].flatMap((result) =>
+    result.status === "rejected" ? [result.reason] : [],
+  );
+  if (failures.length) {
+    vi.unstubAllEnvs();
+    throw new AggregateError(failures, "MCP address fixture cleanup failed");
+  }
   await analyticsDb.close();
   db.close();
   vi.unstubAllEnvs();
@@ -114,6 +126,7 @@ function gateway(extra: { cloudRelayManagement?: CloudRelayManagement } = {}) {
     onMcpHttpRuntime: (runtime: McpHttpRuntime) => closeables.push(runtime),
     ...extra,
   });
+  apps.add(app);
   /** A request as the tailnet helper's socket hands it over. */
   const fromTailnet = (): { incoming: IncomingMessage } => {
     const incoming = {

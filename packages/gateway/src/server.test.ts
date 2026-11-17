@@ -10475,33 +10475,37 @@ describe("admin config endpoints", () => {
       configStore,
       publicAddress: PublicAddress.following(configStore),
     });
-    const origin = "https://omnesis.example.org";
-    const discovery = () => liveApp.request(`${origin}/.well-known/oauth-authorization-server`);
-    expect((await discovery()).status).toBe(503);
+    try {
+      const origin = "https://omnesis.example.org";
+      const discovery = () => liveApp.request(`${origin}/.well-known/oauth-authorization-server`);
+      expect((await discovery()).status).toBe(503);
 
-    const patched = await liveApp.request("/admin/config", {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${cfgToken}` },
-      body: JSON.stringify({ gateway: { publicBaseUrl: origin } }),
-    });
-    expect(patched.status).toBe(200);
+      const patched = await liveApp.request("/admin/config", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${cfgToken}` },
+        body: JSON.stringify({ gateway: { publicBaseUrl: origin } }),
+      });
+      expect(patched.status).toBe(200);
 
-    const server = await discovery();
-    expect(server.status).toBe(200);
-    expect((await server.json()).issuer).toBe(origin);
-    // An agent reaching MCP there is pointed at that address's sign-in, with no restart.
-    const challenge = await liveApp.request(`${origin}/mcp`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Accept: "application/json, text/event-stream",
-      },
-      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: {} }),
-    });
-    expect(challenge.status).toBe(401);
-    expect(challenge.headers.get("WWW-Authenticate")).toContain(
-      `resource_metadata="${origin}/.well-known/oauth-protected-resource/mcp"`,
-    );
+      const server = await discovery();
+      expect(server.status).toBe(200);
+      expect((await server.json()).issuer).toBe(origin);
+      // An agent reaching MCP there is pointed at that address's sign-in, with no restart.
+      const challenge = await liveApp.request(`${origin}/mcp`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/json, text/event-stream",
+        },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: {} }),
+      });
+      expect(challenge.status).toBe(401);
+      expect(challenge.headers.get("WWW-Authenticate")).toContain(
+        `resource_metadata="${origin}/.well-known/oauth-protected-resource/mcp"`,
+      );
+    } finally {
+      await liveApp.close();
+    }
   });
 
   test("GET /admin/config returns empty config initially", async () => {
