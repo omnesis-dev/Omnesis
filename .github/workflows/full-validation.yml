@@ -43,6 +43,7 @@ on:
             mac-relay-openssl-proof,
             merged-connectivity-proof,
             apple-read-denial-proof,
+            staging-archive-proof,
             gateway-boot-trace,
             windows-network-pilot,
             windows-network-proxy-pilot,
@@ -6267,3 +6268,81 @@ jobs:
           - windows-latest
           - ubuntu-latest
           - macos-15
+
+  staging-archive-proof:
+    name: Compiled staging and archive portability (${{ matrix.os }})
+    if: inputs.scope == 'staging-archive-proof'
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    env:
+      TZ: UTC
+      OMNESIS_UNIT_WORKERS: "1"
+      OMNESIS_E2E_WORKERS: "1"
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ inputs.source_sha }}
+          persist-credentials: false
+      - name: Keep this job off production Omnesis services
+        id: production-network
+        shell: bash
+        run: $GITHUB_WORKSPACE/scripts/ci/production-network.sh isolate
+      - name: Verify fixed source revision
+        env:
+          TARGET_SHA: ${{ inputs.source_sha }}
+        run: 'test "$TARGET_SHA" = 60c3de2ee3d56ec44f5f28c6bfee6206aecb7b03
+
+          test "$(git rev-parse HEAD)" = "$TARGET_SHA"
+
+          '
+      - name: Set up Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: "24"
+          cache: npm
+      - name: Install dependencies
+        id: dependencies
+        run: node scripts/ci/npm-ci.mjs --no-audit --no-fund
+      - name: Build and prove Windows SQLite recovery bindings
+        if: runner.os == 'Windows'
+        run: node scripts/ci/build-windows-sqlite.mjs
+      - name: Build and prove Windows vector publication
+        if: runner.os == 'Windows'
+        run: node scripts/ci/build-windows-usearch.mjs
+      - name: Validate source and test types
+        if: runner.os == 'Linux'
+        env:
+          NODE_OPTIONS: --max-old-space-size=4096
+        run: exec node scripts/run-check.mjs types-tests
+      - name: Typed lint of archive, runner and fixture packaging fixes
+        if: runner.os == 'Linux'
+        env:
+          NODE_OPTIONS: --max-old-space-size=6144
+        run:
+          "node node_modules/eslint/bin/eslint.js packages/cli/src/commands/connect.test.ts scripts/release/stage-packages.test.mjs scripts/run-check.mjs scripts/run-check.test.mjs packages/providers/apple/src/testing/apple-read-denial.test.fixture.ts
+
+          "
+        shell: bash
+      - name: Complete staging, archive, runner and Windows plan suites
+        run:
+          "node scripts/run-check.mjs unit packages/cli/src/commands/connect.test.ts scripts/release/stage-packages.test.mjs scripts/release/stage-runtime.test.mjs scripts/run-check.test.mjs scripts/ci/windows-checks.test.mjs
+
+          "
+        shell: bash
+      - name: Require immutable candidate source
+        run: git diff --exit-code
+        if: ${{ always() }}
+      - name: Check nothing tried to reach production Omnesis services
+        if: ${{ always() && steps.production-network.outcome == 'success' }}
+        shell: bash
+        run: $GITHUB_WORKSPACE/scripts/ci/production-network.sh verify
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        os:
+          - windows-latest
+          - ubuntu-latest
