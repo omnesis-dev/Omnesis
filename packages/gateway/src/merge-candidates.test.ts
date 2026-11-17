@@ -2249,6 +2249,32 @@ describe("isHighConfidenceMerge", () => {
     ).toBe(true);
   });
 
+  test("two address-only records at one domain are never auto-merged on a distinctive match", () => {
+    expect(
+      isHighConfidenceMerge({
+        aliasesA: em("maya.reeves@northstar.example"),
+        aliasesB: em("reeves.maya@northstar.example"),
+        score: 1,
+        matchStrength: 2.2,
+        isPersonA: false,
+        isPersonB: false,
+      }),
+    ).toBe(false);
+  });
+
+  test("a generated address with digits is not a person signal", () => {
+    expect(
+      isHighConfidenceMerge({
+        aliasesA: em("share.4417.reeves@drive.example"),
+        aliasesB: em("reeves.share.902@files.example"),
+        score: 1,
+        matchStrength: 2.6,
+        isPersonA: false,
+        isPersonB: false,
+      }),
+    ).toBe(false);
+  });
+
   test("org named after its domain is NOT merged via the email-only path", () => {
     // "Northwind Health" ↔ northwindhealth@partner.example — the name appears in
     // the org's own domain (northwindhealth.example), so it's a brand, not a person.
