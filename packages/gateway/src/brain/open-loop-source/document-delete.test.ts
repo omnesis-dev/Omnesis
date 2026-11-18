@@ -25,9 +25,11 @@ import { createObservation, getObservation } from "../storage/observations.js";
 import { buildOpenLoopDocumentInput } from "./document-projection.js";
 import { OPEN_LOOP_SOURCE_ID } from "./source-meta.js";
 import type Database from "better-sqlite3";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 function testDbPath(): string {
-  return `/tmp/omnesis-test-${randomUUID()}.db`;
+  return fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
 }
 function cleanupDb(path: string): void {
   for (const suffix of ["", "-wal", "-shm", "-journal"]) {

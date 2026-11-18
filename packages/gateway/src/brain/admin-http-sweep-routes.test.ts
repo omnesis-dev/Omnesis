@@ -91,7 +91,7 @@ function sweepFile(id: string): string {
 }
 
 beforeEach(() => {
-  dbPath = `/tmp/omnesis-test-${randomUUID()}.db`;
+  dbPath = join(tmpdir(), `omnesis-test-${randomUUID()}.db`);
   db = createDatabase(dbPath);
   configDir = mkdtempSync(join(tmpdir(), "omnesis-sweep-routes-"));
   ADMIN_TOKEN = mintToken([SCOPE_ADMIN, SCOPE_READ]);
@@ -113,7 +113,8 @@ beforeEach(() => {
   });
 });
 
-afterEach(() => {
+afterEach(async () => {
+  await app.close();
   db.close();
   for (const suffix of ["", "-wal", "-shm", "-journal"]) {
     if (existsSync(dbPath + suffix)) unlinkSync(dbPath + suffix);

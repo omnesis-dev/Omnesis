@@ -3,7 +3,7 @@
 
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { deliverMessage } from "@omnesis/provider-maildir/testing";
+import { deliverMessage, maildirFileName } from "@omnesis/provider-maildir/testing";
 import {
   loadActiveUniverse,
   loadBinaryFixtureAssets,
@@ -98,7 +98,8 @@ export function materializeMaildir(
       const uniq = `${seconds}.${entry.id}-${index}.synth`;
       const mailboxDir = join(root, ...folder.split("/"));
       const flags = entry.flags ?? "";
-      const name = flags ? `cur/${uniq}:2,${[...flags].sort().join("")}` : `new/${uniq}`;
+      const subdir = flags ? "cur" : "new";
+      const name = join(subdir, maildirFileName(uniq, subdir, flags));
       if (existsSync(join(mailboxDir, name))) continue;
       deliverMessage(
         mailboxDir,

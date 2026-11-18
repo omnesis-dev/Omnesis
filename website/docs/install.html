@@ -211,7 +211,11 @@
             gateway. Local embeddings use a CUDA or Vulkan GPU when one is present and the CPU
             otherwise; <code>OMNESIS_LLAMA_GPU=false</code> forces the CPU.
           </li>
-          <li><strong>Windows</strong> is not supported.</li>
+          <li>
+            <strong>Windows x64</strong> runs <a href="#windows-source">manually from source</a>.
+            The installer and background-service management support macOS and Linux. Windows ARM
+            support remains pending.
+          </li>
           <li>
             <strong>Node.js 24.16 or newer within Node 24, or Node.js 26.1 or newer</strong>, for a
             source install. Node 25 and Node 24.0 to 24.15 are not supported. When no supported Node
@@ -1537,8 +1541,8 @@ Share /Users/maya/Documents/Vault with the collector, read-only? [Y/n]</pre>
         <h2 id="from-source">From source</h2>
         <p>
           For development, use the Node version recorded in <code>.nvmrc</code>. Source builds
-          require Node 24.16 or newer within Node 24, or Node 26.1 or newer. Run the two daemons
-          directly from a checkout:
+          require Node 24.16 or newer within Node 24, or Node 26.1 or newer. On macOS or Linux, run
+          the two daemons directly from a checkout:
         </p>
         <div class="term">
           <div class="term-bar"><span></span><span></span><span></span></div>
@@ -1564,8 +1568,62 @@ Share /Users/maya/Documents/Vault with the collector, read-only? [Y/n]</pre>
           equivalents of <code>omnesis gateway serve</code> and <code>omnesis collector run</code>.
           <code>npm run collector</code> and <code>npm run cli</code> trust the gateway's
           self-signed certificate for you. To run them as supervised services instead of in two
-          terminals, use <code>npm run cli -- service install</code>.
+          terminals on macOS or Linux, use <code>npm run cli -- service install</code>.
         </p>
+        <h3 id="windows-source">Windows x64: manual runtime</h3>
+        <p>
+          Use x64 Node 24.16 or newer within Node 24, Python 3, Visual Studio Build Tools with
+          Desktop development with C++ and a Windows SDK, and Git for Windows with OpenSSL. Clone
+          the repository, then run these commands in PowerShell from the checkout:
+        </p>
+        <div class="term">
+          <div class="term-bar"><span></span><span></span><span></span></div>
+          <div class="term-body">
+            <pre>
+npm ci
+node scripts/ci/build-windows-sqlite.mjs
+node scripts/ci/build-windows-usearch.mjs
+$env:PATH = "$env:ProgramFiles\Git\usr\bin;$env:PATH"</pre>
+          </div>
+        </div>
+        <p>
+          Windows has no automatic Omnesis OS-keyring backend. Set
+          <code>OMNESIS_SECRET_STORE=passphrase</code> and supply a strong passphrase through
+          <code>OMNESIS_KEYRING_PASSPHRASE</code> or <code>OMNESIS_KEYRING_PASSPHRASE_FILE</code>,
+          as described under <a href="security#passphrase">passphrase-backed encryption</a>. Use the
+          same values and configuration directory in every terminal. Initialize the encrypted stores
+          and start the gateway:
+        </p>
+        <div class="term">
+          <div class="term-bar"><span></span><span></span><span></span></div>
+          <div class="term-body">
+            <pre>
+$env:OMNESIS_SECRET_STORE = "passphrase"
+node --import tsx packages/cli/src/index.ts keyring init --backend passphrase
+node --import tsx packages/cli/src/index.ts keyring storage-init --backend passphrase --host all
+node --import tsx packages/cli/src/index.ts gateway serve</pre>
+          </div>
+        </div>
+        <p>
+          In another terminal with the same environment, start the collector. Use a third terminal
+          for CLI commands:
+        </p>
+        <div class="term">
+          <div class="term-bar"><span></span><span></span><span></span></div>
+          <div class="term-body">
+            <pre>
+# terminal 2
+node --import tsx packages/cli/src/index.ts collector run
+# terminal 3
+node --import tsx packages/cli/src/index.ts status</pre>
+          </div>
+        </div>
+        <p>
+          These are manually managed processes. Windows installation scripts, service registration,
+          automatic updates and full uninstallation are outside this setup. Providers that require
+          macOS still need a Mac collector. Windows ARM support remains pending.
+        </p>
+
         <p>
           To change Omnesis rather than only run it, read the
           <a href="https://github.com/omnesis-dev/Omnesis/blob/main/CONTRIBUTING.md"
@@ -1576,7 +1634,7 @@ Share /Users/maya/Documents/Vault with the collector, read-only? [Y/n]</pre>
         </p>
 
         <p>
-          For an isolated test gateway from a development checkout, use
+          For an isolated test gateway from a development checkout on macOS or Linux, use
           <code
             >scripts/dev-instance.sh start --session "Codex: navigation" --purpose "Try the new
             navigation"</code
@@ -1591,9 +1649,9 @@ Share /Users/maya/Documents/Vault with the collector, read-only? [Y/n]</pre>
 
         <h2 id="uninstall">Uninstall</h2>
         <p>
-          <code>omnesis uninstall</code> removes Omnesis from the machine it runs on: everything it
-          finds, or only the parts you name. Your data stays in the config directory unless you add
-          <code>--purge</code>, which deletes it.
+          On macOS and Linux, <code>omnesis uninstall</code> removes Omnesis from the machine it
+          runs on: everything it finds, or only the parts you name. Your data stays in the config
+          directory unless you add <code>--purge</code>, which deletes it.
         </p>
         <div class="term">
           <div class="term-bar"><span></span><span></span><span></span></div>

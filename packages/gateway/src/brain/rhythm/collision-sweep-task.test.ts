@@ -26,6 +26,8 @@ import type { CollisionSweepReads } from "./collision-sweep-reads.js";
 import type Database from "better-sqlite3";
 import type { Scheduler } from "../../scheduler/scheduler.js";
 import type { PeriodicTask, TaskContext } from "../../scheduler/types.js";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 type Db = Database.Database;
 
@@ -44,7 +46,7 @@ let prepared: string[];
 let calls: string[];
 
 beforeEach(() => {
-  path = `/tmp/omnesis-test-${randomUUID()}.db`;
+  path = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
   db = createDatabase(path);
   // A collision on the main handle: a sweep that read it would enqueue L1+L2.
   for (const id of ["L1", "L2"])

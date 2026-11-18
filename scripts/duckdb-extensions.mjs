@@ -49,8 +49,14 @@ import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
 import { gunzipSync } from "node:zlib";
 
-/** The platforms Omnesis runs its gateway on: the Linux images and hosts, and macOS. */
-export const SUPPORTED_PLATFORMS = ["linux_amd64", "linux_arm64", "osx_amd64", "osx_arm64"];
+/** Platforms with bundled, upstream-signed gateway extension binaries. */
+export const SUPPORTED_PLATFORMS = [
+  "linux_amd64",
+  "linux_arm64",
+  "osx_amd64",
+  "osx_arm64",
+  "windows_amd64",
+];
 
 const DEFAULT_ATTEMPTS = 4;
 const DEFAULT_RETRY_DELAY_MS = 1000;

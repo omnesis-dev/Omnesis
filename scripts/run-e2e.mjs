@@ -28,10 +28,9 @@ import { createRequire } from "node:module";
 import { availableParallelism, tmpdir, totalmem } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { spawn } from "node:child_process";
 import { setTimeout as sleep } from "node:timers/promises";
 import { parseCLI } from "vitest/node";
-import { waitForChild } from "./lib/check-process.mjs";
+import { runCheckCommand } from "./lib/check-process.mjs";
 export { waitForChild, childGroupIsAlive } from "./lib/check-process.mjs";
 
 import { progressArgs, progressEnvironment } from "./lib/check-progress.mjs";
@@ -443,13 +442,10 @@ export function buildE2EPhases(vitestEntry, args, workerArgs) {
 }
 
 async function runVitest(vitestArgs, env) {
-  const child = spawn(process.execPath, vitestArgs, {
+  return await runCheckCommand(process.execPath, vitestArgs, {
     cwd: join(dirname(fileURLToPath(import.meta.url)), ".."),
     env,
-    stdio: "inherit",
-    detached: process.platform !== "win32",
   });
-  return await waitForChild(child);
 }
 
 /** Read-only inspection: never starts a test or removes another process's ticket. */

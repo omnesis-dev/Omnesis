@@ -5,6 +5,7 @@ import { createHash, timingSafeEqual } from "node:crypto";
 
 import DatabaseConstructor, { type Database } from "better-sqlite3";
 
+import { prepareWindowsRelayDatabase } from "./windows-storage.js";
 import type { RelayPlatform, RelayTarget } from "./types.js";
 import type { RelayMetricStoreSnapshot } from "./metrics.js";
 
@@ -52,11 +53,29 @@ export class RelayStore {
   readonly db: Database;
 
   constructor(path: string | Buffer = ":memory:") {
-    this.db = new DatabaseConstructor(path);
-    this.db.pragma("journal_mode = WAL");
-    this.db.pragma("foreign_keys = ON");
-    this.db.pragma("busy_timeout = 5000");
-    this.migrate();
+    const filename =
+      process.platform === "win32" && typeof path === "string" && path !== ":memory:"
+        ? prepareWindowsRelayDatabase(path)
+        : path;
+    this.db = new DatabaseConstructor(filename);
+    try {
+      this.db.pragma("journal_mode = WAL");
+      this.db.pragma("foreign_keys = ON");
+      this.db.pragma("busy_timeout = 5000");
+      this.migrate();
+    } catch (error) {
+      const errors = [error];
+      try {
+        this.db.close();
+      } catch (cleanup) {
+        errors.push(cleanup);
+      }
+      if (errors.length > 1)
+        throw new AggregateError(errors, "Relay database initialization and cleanup failed", {
+          cause: error,
+        });
+      throw error;
+    }
   }
 
   close(): void {

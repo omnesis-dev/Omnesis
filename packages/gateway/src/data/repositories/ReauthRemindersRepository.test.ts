@@ -12,12 +12,14 @@ import {
   clearReauthReminder,
   reserveReauthReminder,
 } from "./ReauthRemindersRepository.js";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 let dbPath: string;
 let db: ReturnType<typeof createDatabase>;
 
 beforeEach(() => {
-  dbPath = `/tmp/omnesis-reauth-test-${randomUUID()}.db`;
+  dbPath = fixtureJoin(fixtureTmpdir(), `omnesis-reauth-test-${randomUUID()}.db`);
   db = createDatabase(dbPath);
 });
 

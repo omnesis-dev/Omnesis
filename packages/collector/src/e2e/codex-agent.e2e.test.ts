@@ -7,7 +7,9 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { afterAll, describe, expect, test } from "vitest";
+import { afterAll, beforeAll, describe, expect, test } from "vitest";
+import { ownedProcessCleanupReceipt } from "@omnesis/core";
+import { gatewayBootBudgetMs } from "./gateway-env.js";
 
 import { gatewayJson, runAgentTurn, waitForAgentSearchReady } from "./agent-turn-helpers.js";
 import { SyntheticE2EHarness } from "./synth-harness.js";
@@ -32,27 +34,57 @@ const ENV_KEYS = [
 ] as const;
 
 describe("Codex agent backend — spawned gateway E2E", () => {
-  const tempDirs: string[] = [];
-
+  const tempDirs = new Map<string, boolean>();
+  type Fixture = {
+    dir: string;
+    logPath: string;
+    restoreEnv: () => void;
+    harness: SyntheticE2EHarness;
+  };
+  const retainOnUncertainty = (dir: string, error: unknown) => {
+    if (ownedProcessCleanupReceipt(error)) tempDirs.set(dir, true);
+  };
+  function createFixture(
+    prefix: string,
+    scenario: string,
+    options: ConstructorParameters<typeof SyntheticE2EHarness>[0],
+  ): Fixture {
+    const dir = mkdtempSync(join(tmpdir(), prefix));
+    tempDirs.set(dir, false);
+    const logPath = join(dir, "fake-codex.jsonl");
+    const restoreEnv = applyCodexEnv(logPath, scenario);
+    try {
+      return { dir, logPath, restoreEnv, harness: new SyntheticE2EHarness(options) };
+    } catch (error) {
+      retainOnUncertainty(dir, error);
+      restoreEnv();
+      throw error;
+    }
+  }
+  async function stopFixture(fixture: Fixture): Promise<void> {
+    try {
+      await fixture.harness.destroy();
+    } catch (error) {
+      retainOnUncertainty(fixture.dir, error);
+      throw error;
+    } finally {
+      fixture.restoreEnv();
+    }
+  }
   afterAll(() => {
-    for (const dir of tempDirs) rmSync(dir, { recursive: true, force: true });
+    for (const [dir, retained] of tempDirs)
+      if (!retained) rmSync(dir, { recursive: true, force: true });
   });
 
   test("runs the main Omnesis agent through Codex app-server with dynamic Omnesis tools", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "omnesis-codex-e2e-tool-"));
-    tempDirs.push(dir);
-    const logPath = join(dir, "fake-codex.jsonl");
-    const restoreEnv = applyCodexEnv(logPath, "tool");
-    const harness = new SyntheticE2EHarness({
+    const fixture = createFixture("omnesis-codex-e2e-tool-", "tool", {
       gatewayMode: "experimental",
       labFeatures: { brain: true, tasks: true, watches: true },
       universe: "e2e-minimal",
       embedderBackend: "fake",
-      extraInference: {
-        assignments: { agent: "codex/gpt-5.4" },
-        allowRemoteInference: true,
-      },
+      extraInference: { assignments: { agent: "codex/gpt-5.4" }, allowRemoteInference: true },
     });
+    const { harness, logPath } = fixture;
 
     try {
       await harness.start();
@@ -126,40 +158,44 @@ describe("Codex agent backend — spawned gateway E2E", () => {
       expect(threadStart.dynamicToolNames).toContain("watch_create");
       expect(threadStart.dynamicToolNames).toContain("spawn_subagent");
       expect(threadStart.dynamicToolNames).toContain("join_subagents");
+    } catch (error) {
+      retainOnUncertainty(fixture.dir, error);
+      throw error;
     } finally {
-      restoreEnv();
-      await harness.destroy();
+      await stopFixture(fixture);
     }
   }, 240_000);
 
-  test("fails the turn if Codex emits native command output", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "omnesis-codex-e2e-native-"));
-    tempDirs.push(dir);
-    const logPath = join(dir, "fake-codex.jsonl");
-    const restoreEnv = applyCodexEnv(logPath, "native-output");
-    const harness = new SyntheticE2EHarness({
-      gatewayMode: "stable",
-      universe: "e2e-minimal",
-      extraInference: {
-        assignments: { agent: "codex/gpt-5.4" },
-        allowRemoteInference: true,
-      },
-    });
+  describe("native command refusal", () => {
+    let fixture: Fixture | undefined;
+    beforeAll(async () => {
+      fixture = createFixture("omnesis-codex-e2e-native-", "native-output", {
+        gatewayMode: "stable",
+        universe: "e2e-minimal",
+        extraInference: { assignments: { agent: "codex/gpt-5.4" }, allowRemoteInference: true },
+      });
+      try {
+        await fixture.harness.start();
+      } catch (error) {
+        retainOnUncertainty(fixture.dir, error);
+        throw error;
+      }
+    }, gatewayBootBudgetMs() + 30_000);
+    afterAll(async () => {
+      if (fixture) await stopFixture(fixture);
+    }, gatewayBootBudgetMs() + 30_000);
 
-    try {
-      await harness.start();
-
-      const { events } = await runAgentTurn(harness, "Try a native command.");
+    // Boot and physical teardown have their own budgets. The agent turn keeps
+    // its independent minute even when encrypted gateway startup is cold.
+    test("fails the turn if Codex emits native command output", async () => {
+      const { events } = await runAgentTurn(fixture!.harness, "Try a native command.");
       const error = events.find((event) => event.type === "agent.error");
       expect(error?.payload.code).toBe("codex_native_tool_unavailable");
       expect(error?.payload.message).toContain("native item");
       const end = events.find((event) => event.type === "agent.message.end");
       expect(end?.payload.stopReason).toBe("error");
-    } finally {
-      restoreEnv();
-      await harness.destroy();
-    }
-  }, 60_000);
+    }, 60_000);
+  });
 });
 
 function applyCodexEnv(logPath: string, scenario: string): () => void {

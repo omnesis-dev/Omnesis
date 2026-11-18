@@ -66,7 +66,9 @@ test("account identity authority persists independently, with optional private a
   expect(first.associations).toBeUndefined();
   const key = join(f.dir, "account-authority.pem"),
     bytes = await readFile(key);
-  expect((await stat(key)).mode & 0o777).toBe(0o600);
+  if (process.platform !== "win32") {
+    expect((await stat(key)).mode & 0o777).toBe(0o600);
+  }
   const second = (await accountRuntimeConfiguration({ ...f, env }))!;
   expect(second.enrollmentAuthority!.jwks()).toEqual(first.enrollmentAuthority!.jwks());
   expect(await readFile(key)).toEqual(bytes);

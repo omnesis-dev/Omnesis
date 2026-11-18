@@ -35,6 +35,8 @@ import {
 } from "./store.js";
 import type Database from "better-sqlite3";
 import type { PrivacyReviewRecord } from "@omnesis/types/privacy";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 const WORKER_URL = new URL("../workers/io-worker.ts", import.meta.url);
 const LOADER_URL = new URL("../workers/register-tsx.mjs", import.meta.url).href;
@@ -267,7 +269,7 @@ describe.each(["empty", "seeded"])("the %s exchange history on the io worker", (
   let direct: PrivacyExchangeReads;
 
   beforeAll(async () => {
-    dbPath = `/tmp/omnesis-test-${randomUUID()}.db`;
+    dbPath = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
     db = createDatabase(dbPath) as unknown as Database.Database;
     if (fixture === "seeded") seed(db);
     direct = directPrivacyExchangeReads(db);

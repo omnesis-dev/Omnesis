@@ -22,6 +22,8 @@ import {
   deleteDocuments,
   deleteDocumentsByIds,
 } from "./DocumentRepository.js";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 const PROVIDER = "example-provider";
 const SOURCE = "example-notes:memory";
@@ -35,7 +37,7 @@ describe("document deletion keeps durable annotations for review", () => {
   let survivorId: string;
 
   beforeEach(() => {
-    path = `/tmp/omnesis-test-${randomUUID()}.db`;
+    path = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
     db = createDatabase(path);
     for (const externalId of ["evidence", "survivor"]) {
       upsertDocuments(db, [

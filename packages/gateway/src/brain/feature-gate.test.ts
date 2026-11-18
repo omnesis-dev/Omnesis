@@ -382,15 +382,17 @@ describe("bootBriefs — the run-queue drainer follows the live model gate", () 
   let db: Database.Database;
   let dbPath: string;
   let transcriptsDir: string;
+  const transcriptStores: { close(): Promise<void> }[] = [];
 
   beforeEach(() => {
-    dbPath = `/tmp/omnesis-test-${randomUUID()}.db`;
+    dbPath = join(tmpdir(), `omnesis-test-${randomUUID()}.db`);
     db = createDatabase(dbPath);
     setLabFlag(db, "tasks", true);
     transcriptsDir = mkdtempSync(join(tmpdir(), "omnesis-briefs-boot-"));
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    await Promise.all(transcriptStores.splice(0).map((store) => store.close()));
     db.close();
     for (const suffix of ["", "-wal", "-shm"]) rmSync(dbPath + suffix, { force: true });
     rmSync(transcriptsDir, { recursive: true, force: true });
@@ -431,6 +433,9 @@ describe("bootBriefs — the run-queue drainer follows the live model gate", () 
       getSettings,
       resolveBackend: () => null,
       transcriptsDir,
+      onTranscriptStore: (store: { close(): Promise<void> }) => {
+        transcriptStores.push(store);
+      },
     };
     return {
       deps: { registry: resolver, readiness: READY_DEPS, writeGate, log, runQueue },
@@ -606,6 +611,9 @@ describe("bootBriefs — the run-queue drainer follows the live model gate", () 
         getSettings: () => resolveBrainSettings(undefined),
         resolveBackend: () => (assigned ? successfulBackend() : null),
         transcriptsDir,
+        onTranscriptStore: (store: { close(): Promise<void> }) => {
+          transcriptStores.push(store);
+        },
         clock: () => 1_000,
         promptBuilder: async () => "Evaluate the fictional queued datum.",
       },
@@ -772,7 +780,7 @@ describe("GET /status advertises the brain gate", () => {
   let sourceRuntimes: Array<{ flushAll(): Promise<void>; dispose(): void }>;
 
   beforeEach(() => {
-    dbPath = `/tmp/omnesis-test-${randomUUID()}.db`;
+    dbPath = join(tmpdir(), `omnesis-test-${randomUUID()}.db`);
     db = createDatabase(dbPath);
     setLabFlag(db, "tasks", true);
     const dev = createDevice(db, { name: `briefs-gate-${randomUUID()}`, kind: "cli" });

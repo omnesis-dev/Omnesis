@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import { ownedProcessCleanupReceipt } from "@omnesis/core";
+
 /**
  * E2E test harness: starts a real gateway subprocess + collector in-process
  * with injected mock providers. Tests communicate via direct harness method
@@ -15,7 +17,7 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync } from "nod
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { createServer, type AddressInfo } from "node:net";
-import { spawn, type ChildProcess } from "node:child_process";
+import type { ChildProcess } from "node:child_process";
 import { parseSourceKey, websocketAuthProtocol } from "@omnesis/core";
 import { SourceId } from "@omnesis/types";
 import { GatewayWsClient, HttpGatewayClient } from "@omnesis/gateway-client";
@@ -23,8 +25,14 @@ import { SyncEngine } from "../sync-engine.js";
 import { SourceManager } from "../source-manager.js";
 import { e2eGatewayEnv, e2eTsxCommand, gatewayBootBudgetMs } from "./gateway-env.js";
 import { handleHarnessCommand } from "./harness-commands.js";
-import { gatewayFetch, gatewayJson, type GatewayEndpoint } from "./gateway-request.js";
+import {
+  gatewayFetch,
+  gatewayJson,
+  gatewayLogTail,
+  type GatewayEndpoint,
+} from "./gateway-request.js";
 import { killSubprocessGroup, registerSubprocessGroup } from "./subprocess-reaper.js";
+import { spawnE2ESubprocess, e2eApplicationStatus } from "./e2e-owned-process.js";
 import {
   MockSource,
   createMockProvider,
@@ -86,6 +94,8 @@ export class E2EHarness {
   private dbPath: string;
   private configPath: string;
   private gatewayProcess: ChildProcess | null = null;
+  private gatewayCleanupUnconfirmed = false;
+  private gatewayCleanupFailure: unknown;
   private engine: SyncEngine | null = null;
   private manager: SourceManager | null = null;
   private gateway: HttpGatewayClient | null = null;
@@ -492,6 +502,7 @@ export class E2EHarness {
   }
 
   private async startGateway(): Promise<void> {
+    if (this.gatewayCleanupUnconfirmed) throw this.gatewayCleanupFailure;
     const env = {
       ...e2eGatewayEnv(),
       ...this.options.extraGatewayEnv,
@@ -517,26 +528,38 @@ export class E2EHarness {
     // to the port — the next fork's harness would then see
     // `/health` from the zombie and authenticate its freshly minted
     // bootstrap token against the wrong DB (→ 401 storm).
+    const startTime = Date.now();
+    const timeout = gatewayBootBudgetMs();
     const gatewayCommand = e2eTsxCommand("packages/gateway/src/index.ts");
-    this.gatewayProcess = spawn(gatewayCommand.command, gatewayCommand.args, {
-      env,
-      cwd: join(import.meta.dirname, "../../../.."), // monorepo root
-      stdio: ["ignore", "ignore", "ignore"],
-      detached: true,
-    });
+    try {
+      this.gatewayProcess = spawnE2ESubprocess(gatewayCommand.command, gatewayCommand.args, {
+        env,
+        cwd: join(import.meta.dirname, "../../../.."), // monorepo root
+        stdio: ["ignore", "ignore", "ignore"],
+        detached: true,
+      });
+    } catch (error) {
+      if (ownedProcessCleanupReceipt(error) !== undefined) {
+        this.gatewayCleanupUnconfirmed = true;
+        this.gatewayCleanupFailure = error;
+      }
+      throw error;
+    }
     // Reap this detached group even if the runner dies before stop() runs
     // (e.g. `timeout` SIGTERMs the e2e run) — otherwise the gateway orphans.
-    registerSubprocessGroup(this.gatewayProcess);
+    await registerSubprocessGroup(this.gatewayProcess);
 
     // Wait for gateway to be ready AND for the token we read to be
     // accepted by it. Just hitting `/health` isn't enough — a stale
     // gateway from a previous fork could be answering on the same port
     // with a different DB. The `/whoami` round-trip with our token
     // proves we're talking to the right one.
-    const startTime = Date.now();
-    const timeout = gatewayBootBudgetMs();
     const tokenPath = join(this.configDir, "token");
     while (Date.now() - startTime < timeout) {
+      if (this.gatewayProcess) {
+        const status = e2eApplicationStatus(this.gatewayProcess);
+        if (status.exitCode !== null || status.signalCode !== null) break;
+      }
       try {
         const health = await fetch(`${this.gatewayUrl}/health`);
         if (!health.ok) {
@@ -566,12 +589,23 @@ export class E2EHarness {
       }
       await new Promise((r) => setTimeout(r, 100));
     }
-    throw new Error(`Gateway did not start (or auth) within ${timeout}ms`);
+    throw new Error(
+      `Gateway did not start (or auth) within ${timeout}ms${gatewayLogTail(join(this.tempDir, "gateway.log"))}`,
+    );
   }
 
   private async killGatewaySubprocess(): Promise<void> {
+    if (this.gatewayCleanupUnconfirmed) throw this.gatewayCleanupFailure;
     const proc = this.gatewayProcess;
     if (!proc) return;
-    await killSubprocessGroup(proc);
+    try {
+      await killSubprocessGroup(proc);
+    } catch (error) {
+      if (ownedProcessCleanupReceipt(error) !== undefined) {
+        this.gatewayCleanupUnconfirmed = true;
+        this.gatewayCleanupFailure = error;
+      }
+      throw error;
+    }
   }
 }

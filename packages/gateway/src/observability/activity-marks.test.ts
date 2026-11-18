@@ -44,6 +44,8 @@ import { captureActivity, nameStall } from "./stall-test-utils.js";
 import { withActivity } from "./main-activity.js";
 import type { ActivitySample } from "./stall-protocol.js";
 import type { PeriodicTask } from "../scheduler/types.js";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 beforeAll(() => setActivityMarker(withActivity));
 afterAll(() => setActivityMarker(null));
@@ -206,7 +208,7 @@ describe("push delivery", () => {
 
 describe("the device WebSocket server", () => {
   it("names a stall in its heartbeat and in a closing connection", async () => {
-    const dbPath = `/tmp/omnesis-test-${randomUUID()}.db`;
+    const dbPath = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
     const db = createDatabase(dbPath);
     let inHeartbeat: ActivitySample | undefined;
     let inClose: ActivitySample | undefined;

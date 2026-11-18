@@ -40,8 +40,10 @@ test("the local archive probe uses the source host's config root", async () => {
     providerId: ProviderId("whatsapp:+15550100001"),
     host,
   });
-  await source.probeLocalStores!({ signal: new AbortController().signal });
+  const signal = new AbortController().signal;
+  await source.probeLocalStores!({ signal });
   expect(inspectMessageStore).toHaveBeenCalledWith(
     join(host.configDir, "whatsapp", "+15550100001"),
+    signal,
   );
 });

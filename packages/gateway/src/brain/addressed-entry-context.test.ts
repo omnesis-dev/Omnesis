@@ -13,6 +13,8 @@ import {
   resolveAddressedEntries,
 } from "./addressed-entry-context.js";
 import type Database from "better-sqlite3";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 type Db = Database.Database;
 
@@ -69,7 +71,7 @@ describe("claim-time addressed entry resolution", () => {
   let db: Db;
 
   beforeEach(() => {
-    path = `/tmp/omnesis-test-${randomUUID()}.db`;
+    path = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
     db = createDatabase(path);
   });
   afterEach(() => {

@@ -176,10 +176,9 @@ export class LlamaCppEmbedder implements Embedder {
     if (texts.length === 0) return [];
 
     // Fan out across the indexer slots (1..N-1), leaving slot 0 free
-    // for embedQuery. Each slot's `busy` promise acts as a per-slot
-    // lock — chaining work onto it serialises native calls that share
-    // a single EmbeddingContext while still letting the pool run in
-    // parallel across slots.
+    // for embedQuery. Each consumer queues one input at a time on its slot,
+    // so a query sharing slot 0 can run between inputs instead of waiting
+    // behind a whole indexing page. Other slots continue independently.
     //
     // Document-side prefix is applied here before the slot dispatch so
     // truncation in `runOnSlot` measures against the post-prefix
@@ -187,14 +186,14 @@ export class LlamaCppEmbedder implements Embedder {
     // outlier inputs.
     const docPrefix = this.prefixes.document;
     const results = new Array<Float32Array>(texts.length);
-    const tasks = texts.map((text, i) =>
-      this.runOnSlot(
-        pickIndexerSlotIndex(this.slots.length, i),
-        docPrefix ? docPrefix + text : text,
-        i,
-        results,
-      ),
-    );
+    const consumers = Math.min(texts.length, Math.max(1, this.slots.length - 1));
+    const tasks = Array.from({ length: consumers }, async (_, consumer) => {
+      const slot = pickIndexerSlotIndex(this.slots.length, consumer);
+      for (let i = consumer; i < texts.length; i += consumers) {
+        const text = texts[i];
+        await this.runOnSlot(slot, docPrefix ? docPrefix + text : text, i, results);
+      }
+    });
     await Promise.all(tasks);
     return results;
   }

@@ -57,7 +57,8 @@ const log = () => {
   }
 };
 
-describe("hardened hosted-runner disk preparation", () => {
+// The script prepares GitHub-hosted Linux Docker storage and Linux SDK paths.
+describe.skipIf(process.platform === "win32")("hardened hosted-runner disk preparation", () => {
   test.each([
     { GITHUB_ACTIONS: "false" },
     { RUNNER_ENVIRONMENT: "self-hosted" },

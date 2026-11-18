@@ -67,7 +67,7 @@ type Db = Database.Database;
 let db: Db;
 
 beforeEach(() => {
-  db = createIndexDatabase(`/tmp/omnesis-indexer-test-${randomUUID()}.db`);
+  db = createIndexDatabase(join(tmpdir(), `omnesis-indexer-test-${randomUUID()}.db`));
 });
 
 afterEach(() => {
@@ -118,7 +118,7 @@ describe("schema", () => {
   });
 
   test("an index database that predates the stats index gets it on reopen", () => {
-    const path = `/tmp/omnesis-indexer-test-${randomUUID()}.db`;
+    const path = join(tmpdir(), `omnesis-indexer-test-${randomUUID()}.db`);
     const older = createIndexDatabase(path);
     upsertChunks(older, [makeChunk("doc-1", 0), makeChunk("doc-2", 0)]);
     older.exec(`DROP INDEX ${CHUNK_STATS_INDEX}`);
@@ -1393,7 +1393,7 @@ describe("chunks_fts tokenizer migration", () => {
   });
 
   test("a legacy bare-unicode61 index keeps serving and is rebuilt step by step", () => {
-    const path = `/tmp/omnesis-fts-migration-${randomUUID()}.db`;
+    const path = join(tmpdir(), `omnesis-fts-migration-${randomUUID()}.db`);
 
     // First open: standard DB so we get all schema, chunks, triggers, etc.
     const legacy = createIndexDatabase(path);
@@ -1483,7 +1483,7 @@ describe("chunks_fts tokenizer migration", () => {
   });
 
   test("rebuilds FTS when a restored database contains chunks but no shadow index", () => {
-    const path = `/tmp/omnesis-fts-restored-${randomUUID()}.db`;
+    const path = join(tmpdir(), `omnesis-fts-restored-${randomUUID()}.db`);
     const restored = createIndexDatabase(path);
     upsertChunks(restored, [
       {

@@ -13,11 +13,14 @@
  * The binary path is overridable for tests via `OMNESIS_PDFTOPPM_BIN`.
  */
 
-import { readdir, readFile, writeFile, rm, mkdtemp } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { readdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { createLogger } from "@omnesis/core";
-import { processLauncher } from "../process-launcher/index.js";
+import { createLogger, createPrivateScratchAsync } from "@omnesis/core";
+import {
+  processLauncher,
+  assertProcessCleanupConfirmed,
+  hasUnconfirmedProcessCleanup,
+} from "../process-launcher/index.js";
 
 const log = createLogger("gateway:ocr:pdf");
 
@@ -35,10 +38,12 @@ function pdftoppmBin(): string {
 }
 
 export const rasterizePdfToImages: PdfRasterizer = async (pdf) => {
-  const dir = await mkdtemp(join(tmpdir(), "omnesis-pdf-"));
+  const scratch = await createPrivateScratchAsync("ocr-pdf", { requiresProcessJoin: true });
+  const dir = scratch.path;
+  let retain = false;
   const inputPath = join(dir, "in.pdf");
   try {
-    await writeFile(inputPath, pdf);
+    await writeFile(inputPath, pdf, { mode: 0o600, flag: "wx" });
     const ok = await runPdftoppm(inputPath, join(dir, "page"));
     if (!ok) return null;
     // pdftoppm names outputs `page-<n>.png`. Sort by the numeric page index
@@ -53,10 +58,14 @@ export const rasterizePdfToImages: PdfRasterizer = async (pdf) => {
     log.debug(`Rasterized PDF to ${pages.length} page image(s)`);
     return pages;
   } catch (err) {
+    if (hasUnconfirmedProcessCleanup(err)) {
+      retain = true;
+      throw err;
+    }
     log.debug(`PDF rasterization failed: ${err instanceof Error ? err.message : String(err)}`);
     return null;
   } finally {
-    await rm(dir, { recursive: true, force: true }).catch(() => {});
+    if (!retain) await scratch.cleanup().catch(() => {});
   }
 };
 
@@ -75,11 +84,13 @@ function heifConvertBin(): string {
 }
 
 export const transcodeHeicToPng: ImageTranscoder = async (heic) => {
-  const dir = await mkdtemp(join(tmpdir(), "omnesis-heic-"));
+  const scratch = await createPrivateScratchAsync("ocr-heic", { requiresProcessJoin: true });
+  const dir = scratch.path;
+  let retain = false;
   const inPath = join(dir, "in.heic");
   const outPath = join(dir, "out.png");
   try {
-    await writeFile(inPath, heic);
+    await writeFile(inPath, heic, { mode: 0o600, flag: "wx" });
     const { ok, stderr } = await runProcessCapturing(heifConvertBin(), [inPath, outPath]);
     // heif-convert writes `out.png` for a single-image file, but `out-1.png`,
     // `out-2.png`, … when the HEIC holds MULTIPLE top-level images (common in
@@ -97,10 +108,14 @@ export const transcodeHeicToPng: ImageTranscoder = async (heic) => {
     }
     return new Uint8Array(await readFile(join(dir, produced[0])));
   } catch (err) {
+    if (hasUnconfirmedProcessCleanup(err)) {
+      retain = true;
+      throw err;
+    }
     log.warn(`HEIC transcode failed: ${err instanceof Error ? err.message : String(err)}`);
     return null;
   } finally {
-    await rm(dir, { recursive: true, force: true }).catch(() => {});
+    if (!retain) await scratch.cleanup().catch(() => {});
   }
 };
 
@@ -190,6 +205,7 @@ async function runProcessCapturing(
     timeoutMs: TIMEOUT_MS,
     captureStdout: false,
   });
+  assertProcessCleanupConfirmed(run);
   return {
     ok: !run.failure && run.exitCode === 0,
     stderr: (run.stderr + (run.failureMessage ?? "")).slice(0, 2000),
@@ -202,5 +218,6 @@ async function runPdftoppm(inputPath: string, outPrefix: string): Promise<boolea
     ["-png", "-r", String(RENDER_DPI), "-l", String(MAX_PAGES), inputPath, outPrefix],
     { timeoutMs: TIMEOUT_MS, captureStdout: false },
   );
+  assertProcessCleanupConfirmed(run);
   return !run.failure && run.exitCode === 0;
 }

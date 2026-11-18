@@ -47,7 +47,9 @@ test("offline commands provision an independent authority and a pinned policy wi
   expect(output).not.toHaveBeenCalled();
   expect(await runRelayRecoveryCommand("recovery-create-authority", operator)).toBe(true);
   const signingKey = await readFile(privateFile, "utf8");
-  expect((await stat(privateFile)).mode & 0o777).toBe(0o600);
+  if (process.platform !== "win32") {
+    expect((await stat(privateFile)).mode & 0o777).toBe(0o600);
+  }
   await writeFile(inputFile, JSON.stringify(f.receipt().payload));
   await runRelayRecoveryCommand("recovery-sign-receipt", operator);
   expect(JSON.parse(await readFile(signedFile, "utf8")).payload.gatewayId).toBe(
@@ -155,7 +157,9 @@ test("relay-only credential rotation invalidates old sessions and invitations wh
     fresh = new RelaySessions(secret);
   expect(secret).toHaveLength(32);
   expect(secret.equals(oldSecret)).toBe(false);
-  expect((await stat(keyFile)).mode & 0o777).toBe(0o600);
+  if (process.platform !== "win32") {
+    expect((await stat(keyFile)).mode & 0o777).toBe(0o600);
+  }
   await expect(fresh.verify(prior.token)).rejects.toThrow();
   await expect(fresh.verifyEnrollmentInvitation(invitation, gatewayId, origin)).rejects.toThrow();
   expect(output.mock.calls.flat().join("")).not.toContain(secret.toString("hex"));

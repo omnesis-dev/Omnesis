@@ -8,6 +8,7 @@ import { mkdtemp, readFile, rm, writeFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
+import * as core from "@omnesis/core";
 import { recoveryFixture } from "../test/recovery-fixture.js";
 import { tlsFiles } from "../test/support.js";
 import { brokerCall, brokerOwner } from "../test/dns-broker-owner.js";
@@ -17,11 +18,13 @@ import { runRelayCommand, startRelayDaemon } from "./runtime.js";
 import { signRecoveryPolicy } from "./recovery-authority.js";
 import { recoveryPolicyDigest } from "./recovery-contract.js";
 import { AcmeDnsChallenges } from "./acme-dns.js";
+import { savePrivateJson } from "./google-credentials.js";
 import type { AddressInfo } from "node:net";
 
 let directory: string;
 beforeEach(async () => {
   directory = await mkdtemp(join(tmpdir(), "omnesis-independent-dns-runtime-"));
+  if (process.platform === "win32") await core.ensurePrivateDirs([directory]);
 });
 afterEach(async () => {
   vi.restoreAllMocks();
@@ -52,7 +55,7 @@ async function environment() {
     tokenFile = join(directory, "dns-token.json");
   await writeFile(publicFile, f.authority.publicKey);
   await writeFile(policyFile, JSON.stringify(policy));
-  await writeFile(tokenFile, JSON.stringify({ token: "fixture-dns-edit-token" }));
+  await savePrivateJson(tokenFile, { token: "fixture-dns-edit-token" });
   return {
     OMNESIS_ACME_DNS_BROKER_URL: "https://dns.example.test",
     OMNESIS_CLOUD_RELAY_DNS_BROKER_PORT: "0",
@@ -150,7 +153,7 @@ test("a gateway claims and leases through the daemon against a loopback DNS API"
   const api = await serveFakeCloudflare(cloudflare);
   const env = await environment();
   const importToken = join(directory, "import-token.json");
-  await writeFile(importToken, JSON.stringify({ token: "i".repeat(40) }));
+  await savePrivateJson(importToken, { token: "i".repeat(40) });
   const daemon = await startIndependentDnsDaemon({
     ...env,
     OMNESIS_ACME_DNS_BROKER_URL: "http://127.0.0.1:8789",

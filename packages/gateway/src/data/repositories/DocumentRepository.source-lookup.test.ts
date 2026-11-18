@@ -7,12 +7,14 @@ import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { createDatabase } from "../../db.js";
 import { sourcePrefixPredicate } from "../source-addressing.js";
 import { findDocumentIdBySourceExternalId } from "./DocumentRepository.js";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 let path: string;
 let db: ReturnType<typeof createDatabase>;
 
 beforeEach(() => {
-  path = `/tmp/omnesis-document-source-lookup-${randomUUID()}.db`;
+  path = fixtureJoin(fixtureTmpdir(), `omnesis-document-source-lookup-${randomUUID()}.db`);
   db = createDatabase(path);
 });
 

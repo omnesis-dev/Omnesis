@@ -165,6 +165,11 @@ export class CognitionAdminQueryService {
    */
   private readonly startedAt: number;
 
+  /** Release only the transcript facade owned by this service, never the caller's DB. */
+  async close(): Promise<void> {
+    await this.transcripts?.close();
+  }
+
   constructor(
     private readonly db: Database.Database,
     transcriptsDir: string | undefined,

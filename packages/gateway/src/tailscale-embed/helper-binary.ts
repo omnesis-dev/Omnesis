@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { accessSync, constants } from "node:fs";
+import { accessSync, constants, statSync } from "node:fs";
 import { isAbsolute } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -17,6 +17,7 @@ const BUILT_IN_TREE = fileURLToPath(
 
 function executable(path: string): boolean {
   try {
+    if (!statSync(path).isFile()) return false;
     accessSync(path, constants.X_OK);
     return true;
   } catch {

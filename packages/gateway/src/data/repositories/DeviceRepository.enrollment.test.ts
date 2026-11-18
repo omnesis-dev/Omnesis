@@ -24,6 +24,8 @@ import {
 import { createToken, lookupToken } from "./TokenRepository.js";
 import type { DeviceCapability, DeviceKind } from "@omnesis/types";
 import type Database from "better-sqlite3";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 const VICTIM_KEY = "victim-device-key";
 const ATTACKER_KEY = "attacker-device-key";
@@ -34,7 +36,7 @@ let path: string;
 beforeEach(() => {
   // Enrollment records are read back only with the cloud relay opt-in.
   vi.stubEnv("OMNESIS_CLOUD_RELAY_ENABLED", "1");
-  path = `/tmp/omnesis-enrollment-${randomUUID()}.db`;
+  path = fixtureJoin(fixtureTmpdir(), `omnesis-enrollment-${randomUUID()}.db`);
   db = createDatabase(path);
 });
 

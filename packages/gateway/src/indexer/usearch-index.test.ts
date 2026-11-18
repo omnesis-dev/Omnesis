@@ -2,13 +2,32 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { join } from "node:path";
-import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
 import { UsearchWriteHandle, UsearchReadHandle } from "./usearch-index.js";
 import { EMBEDDING_DIM, createIndexDatabase, getVectorChangeHead, upsertChunks } from "./db.js";
 import type Database from "better-sqlite3";
+
+const disposeHandles: Array<() => void> = [];
+
+function createWriter(
+  ...args: ConstructorParameters<typeof UsearchWriteHandle>
+): UsearchWriteHandle {
+  const handle = new UsearchWriteHandle(...args);
+  disposeHandles.push(() => handle.release());
+  return handle;
+}
+
+function openReader(...args: Parameters<typeof UsearchReadHandle.open>): UsearchReadHandle {
+  const handle = UsearchReadHandle.open(...args);
+  disposeHandles.push(() => handle.close());
+  return handle;
+}
+
+function releaseHandles(): void {
+  for (const dispose of disposeHandles.splice(0).reverse()) dispose();
+}
 
 const DIMS = 32;
 
@@ -61,6 +80,7 @@ describe("UsearchWriteHandle", () => {
   });
 
   afterEach(() => {
+    releaseHandles();
     rmSync(dir, { recursive: true, force: true });
   });
 
@@ -72,7 +92,7 @@ describe("UsearchWriteHandle", () => {
     near[0] = -near[0];
     const far = Float32Array.from(base, (x) => -x);
     far[0] = base[0];
-    const writer = new UsearchWriteHandle(path, DIMS);
+    const writer = createWriter(path, DIMS);
     expect(writer.encoding).toBe("b1");
     writer.add(1n, base);
     writer.add(2n, near);
@@ -80,7 +100,7 @@ describe("UsearchWriteHandle", () => {
     writer.save();
     writer.close();
 
-    const reader = UsearchReadHandle.open(path, DIMS);
+    const reader = openReader(path, DIMS);
     expect(reader.encoding()).toBe("b1");
     const hits = reader.search(base, 3);
     expect(hits.map((h) => [h.key, h.distance])).toEqual([
@@ -92,7 +112,7 @@ describe("UsearchWriteHandle", () => {
   });
 
   it("creates an empty index and adds vectors", () => {
-    const handle = new UsearchWriteHandle(path, DIMS);
+    const handle = createWriter(path, DIMS);
     expect(handle.size()).toBe(0);
 
     handle.add(1n, randomVector());
@@ -102,12 +122,12 @@ describe("UsearchWriteHandle", () => {
   });
 
   it("saves and loads from disk", () => {
-    const h1 = new UsearchWriteHandle(path, DIMS);
+    const h1 = createWriter(path, DIMS);
     h1.add(1n, randomVector());
     h1.add(2n, randomVector());
     h1.save();
 
-    const h2 = new UsearchWriteHandle(path, DIMS);
+    const h2 = createWriter(path, DIMS);
     expect(h2.size()).toBe(2);
     h2.close();
     h1.close();
@@ -119,13 +139,13 @@ describe("UsearchWriteHandle", () => {
     // adopted the file's 32 dims and the first 64-dim add() threw "flattened
     // vectors must be a multiple of the dimension", wedging the indexer. The
     // dim-guard must discard the stale file and start empty at the new dim.
-    const h1 = new UsearchWriteHandle(path, 32);
+    const h1 = createWriter(path, 32);
     h1.add(1n, randomVector(32));
     h1.add(2n, randomVector(32));
     h1.save();
     h1.close();
 
-    const h2 = new UsearchWriteHandle(path, 64);
+    const h2 = createWriter(path, 64);
     expect(h2.size()).toBe(0); // stale file discarded, fresh empty index
     expect(() => h2.add(1n, randomVector(64))).not.toThrow();
     expect(h2.size()).toBe(1);
@@ -133,7 +153,7 @@ describe("UsearchWriteHandle", () => {
   });
 
   it("removes vectors", () => {
-    const handle = new UsearchWriteHandle(path, DIMS);
+    const handle = createWriter(path, DIMS);
     handle.add(1n, randomVector());
     handle.add(2n, randomVector());
     handle.remove(1n);
@@ -142,14 +162,14 @@ describe("UsearchWriteHandle", () => {
   });
 
   it("remove of non-existent key is a no-op", () => {
-    const handle = new UsearchWriteHandle(path, DIMS);
+    const handle = createWriter(path, DIMS);
     handle.remove(999n);
     expect(handle.size()).toBe(0);
     handle.close();
   });
 
   it("add with existing key updates the vector", () => {
-    const handle = new UsearchWriteHandle(path, DIMS);
+    const handle = createWriter(path, DIMS);
     const v1 = randomVector();
     const v2 = randomVector();
     handle.add(1n, v1);
@@ -159,7 +179,7 @@ describe("UsearchWriteHandle", () => {
   });
 
   it("clear resets the index", () => {
-    const handle = new UsearchWriteHandle(path, DIMS);
+    const handle = createWriter(path, DIMS);
     handle.add(1n, randomVector());
     handle.add(2n, randomVector());
     handle.save();
@@ -169,7 +189,7 @@ describe("UsearchWriteHandle", () => {
   });
 
   it("addBatch and removeBatch work", () => {
-    const handle = new UsearchWriteHandle(path, DIMS);
+    const handle = createWriter(path, DIMS);
     handle.addBatch([
       { key: 1n, vector: randomVector() },
       { key: 2n, vector: randomVector() },
@@ -192,6 +212,7 @@ describe("UsearchReadHandle", () => {
   });
 
   afterEach(() => {
+    releaseHandles();
     rmSync(dir, { recursive: true, force: true });
   });
 
@@ -199,11 +220,11 @@ describe("UsearchReadHandle", () => {
     // A gateway can boot before its first index build, so the handle must be
     // usable (empty) without a file, and pick up the writer's first save via
     // maybeRefresh() — no restart needed.
-    const reader = UsearchReadHandle.open(path, DIMS);
+    const reader = openReader(path, DIMS);
     expect(reader.size()).toBe(0);
     expect(reader.search(randomVector(), 5)).toEqual([]);
 
-    const writer = new UsearchWriteHandle(path, DIMS);
+    const writer = createWriter(path, DIMS);
     writer.add(1n, randomVector());
     writer.save();
     writer.close();
@@ -214,11 +235,11 @@ describe("UsearchReadHandle", () => {
   });
 
   it("maybeRefresh re-views only when the file changed (mtime-gated)", () => {
-    const writer = new UsearchWriteHandle(path, DIMS);
+    const writer = createWriter(path, DIMS);
     writer.add(1n, randomVector());
     writer.save();
 
-    const reader = UsearchReadHandle.open(path, DIMS);
+    const reader = openReader(path, DIMS);
     expect(reader.size()).toBe(1);
 
     // No new save → maybeRefresh is a no-op (mtime unchanged).
@@ -237,18 +258,21 @@ describe("UsearchReadHandle", () => {
   });
 
   it("keeps one native mapping across repeated atomic publications", () => {
-    const writer = new UsearchWriteHandle(path, DIMS);
+    const writer = createWriter(path, DIMS);
     const first = deterministicVector(1);
     writer.add(1n, first);
     writer.save();
 
-    const reader = UsearchReadHandle.open(path, DIMS);
+    const reader = openReader(path, DIMS);
     expect(reader.search(first, 1)[0]?.key).toBe(1n);
 
     for (let publication = 2; publication <= 10; publication++) {
       const vector = deterministicVector(publication);
       writer.add(BigInt(publication), vector);
       writer.save();
+      // Publication preserves the old generation until this reader refreshes.
+      expect(reader.size()).toBe(publication - 1);
+      expect(reader.search(first, 1)[0]?.key).toBe(1n);
       reader.maybeRefresh();
 
       expect(reader.size()).toBe(publication);
@@ -264,14 +288,27 @@ describe("UsearchReadHandle", () => {
     writer.close();
   });
 
+  it.runIf(process.platform === "win32")("releases the native map before close returns", () => {
+    const writer = createWriter(path, DIMS);
+    writer.add(1n, deterministicVector(1));
+    writer.save();
+    const reader = openReader(path, DIMS);
+    reader.close();
+    reader.close();
+    expect(reader.size()).toBe(0);
+    rmSync(path);
+    expect(existsSync(path)).toBe(false);
+    writer.close();
+  });
+
   it("recovers after native view fails without retaining the failed mapping", () => {
     const initial = randomVector(DIMS);
-    const writer = new UsearchWriteHandle(path, DIMS);
+    const writer = createWriter(path, DIMS);
     writer.add(1n, initial);
     writer.save();
     writer.close();
 
-    const reader = UsearchReadHandle.open(path, DIMS);
+    const reader = openReader(path, DIMS);
     expect(reader.search(initial, 1)[0]?.key).toBe(1n);
 
     // A directory has a valid stat signature but cannot be mmap-viewed as an
@@ -284,7 +321,7 @@ describe("UsearchReadHandle", () => {
 
     const recovered = randomVector(DIMS);
     const recoveryPath = join(dir, "recovery.usearch");
-    const recoveryWriter = new UsearchWriteHandle(recoveryPath, DIMS);
+    const recoveryWriter = createWriter(recoveryPath, DIMS);
     recoveryWriter.add(3n, recovered);
     recoveryWriter.save();
     recoveryWriter.close();
@@ -301,7 +338,7 @@ describe("UsearchReadHandle", () => {
   });
 
   it("retries the durability callback after it fails", () => {
-    const writer = new UsearchWriteHandle(path, DIMS);
+    const writer = createWriter(path, DIMS);
     writer.add(1n, randomVector());
     const onSaved = vi
       .fn<() => void>()
@@ -312,7 +349,7 @@ describe("UsearchReadHandle", () => {
     writer.setOnSaved(onSaved);
 
     expect(() => writer.save()).toThrow("stamp failed");
-    const reader = UsearchReadHandle.open(path, DIMS);
+    const reader = openReader(path, DIMS);
     expect(reader.size()).toBe(1);
     reader.close();
 
@@ -325,12 +362,12 @@ describe("UsearchReadHandle", () => {
     // Simulates an embedder swap: the index file is rebuilt at a different
     // dimension. view() adopts the file's stored dim, so the reader follows
     // along and can search the new-dimension vectors without a restart.
-    const writerA = new UsearchWriteHandle(path, DIMS);
+    const writerA = createWriter(path, DIMS);
     writerA.add(1n, randomVector(DIMS));
     writerA.save();
     writerA.close();
 
-    const reader = UsearchReadHandle.open(path, DIMS);
+    const reader = openReader(path, DIMS);
     expect(reader.size()).toBe(1);
     expect(reader.search(randomVector(DIMS), 1).length).toBe(1);
 
@@ -339,7 +376,7 @@ describe("UsearchReadHandle", () => {
     // dimension), so simulate that wipe here.
     rmSync(path, { force: true });
     const otherDims = DIMS * 2;
-    const writerB = new UsearchWriteHandle(path, otherDims);
+    const writerB = createWriter(path, otherDims);
     writerB.add(10n, randomVector(otherDims));
     writerB.add(11n, randomVector(otherDims));
     writerB.save();
@@ -353,7 +390,7 @@ describe("UsearchReadHandle", () => {
   });
 
   it("opens a saved index and searches", () => {
-    const writer = new UsearchWriteHandle(path, DIMS);
+    const writer = createWriter(path, DIMS);
     const target = randomVector();
     writer.add(1n, target);
     writer.add(2n, randomVector());
@@ -361,7 +398,7 @@ describe("UsearchReadHandle", () => {
     writer.save();
     writer.close();
 
-    const reader = UsearchReadHandle.open(path, DIMS);
+    const reader = openReader(path, DIMS);
     expect(reader.size()).toBe(3);
 
     const results = reader.search(target, 3);
@@ -372,11 +409,11 @@ describe("UsearchReadHandle", () => {
   });
 
   it("reopen picks up new writes", () => {
-    const writer = new UsearchWriteHandle(path, DIMS);
+    const writer = createWriter(path, DIMS);
     writer.add(1n, randomVector());
     writer.save();
 
-    const reader = UsearchReadHandle.open(path, DIMS);
+    const reader = openReader(path, DIMS);
     expect(reader.size()).toBe(1);
 
     writer.add(2n, randomVector());
@@ -392,12 +429,12 @@ describe("UsearchReadHandle", () => {
   });
 
   it("search returns empty when index has one vector and k exceeds size", () => {
-    const writer = new UsearchWriteHandle(path, DIMS);
+    const writer = createWriter(path, DIMS);
     writer.add(1n, randomVector());
     writer.save();
     writer.close();
 
-    const reader = UsearchReadHandle.open(path, DIMS);
+    const reader = openReader(path, DIMS);
     const results = reader.search(randomVector(), 5);
     expect(results.length).toBe(1);
     reader.close();
@@ -412,10 +449,11 @@ describe("UsearchWriteHandle.backfillFromDb", () => {
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), "usearch-backfill-"));
     path = join(dir, "test.usearch");
-    db = createIndexDatabase(`/tmp/omnesis-backfill-test-${randomUUID()}.db`);
+    db = createIndexDatabase(join(dir, "index.db"));
   });
 
   afterEach(() => {
+    releaseHandles();
     db.close();
     rmSync(dir, { recursive: true, force: true });
   });
@@ -439,7 +477,7 @@ describe("UsearchWriteHandle.backfillFromDb", () => {
 
   it("rebuilds the HNSW index from chunks.embedding and is searchable", () => {
     seedChunks(12);
-    const handle = new UsearchWriteHandle(path, EMBEDDING_DIM);
+    const handle = createWriter(path, EMBEDDING_DIM);
     expect(handle.size()).toBe(0);
 
     handle.backfillFromDb(db);
@@ -453,7 +491,7 @@ describe("UsearchWriteHandle.backfillFromDb", () => {
     const rowid5 = db
       .prepare<[string], { rowid: number }>("SELECT rowid FROM chunks WHERE document_id = ?")
       .get("doc-5")!.rowid;
-    const reader = UsearchReadHandle.open(path, EMBEDDING_DIM);
+    const reader = openReader(path, EMBEDDING_DIM);
     const hit = reader.search(makeEmbedding(6), 1)[0]; // doc-5 seeded with makeEmbedding(6)
     expect(hit.key).toBe(BigInt(rowid5));
     reader.close();
@@ -462,7 +500,7 @@ describe("UsearchWriteHandle.backfillFromDb", () => {
 
   it("is idempotent — a second backfill into an already-full index is a fast no-op skip", () => {
     seedChunks(8);
-    const handle = new UsearchWriteHandle(path, EMBEDDING_DIM);
+    const handle = createWriter(path, EMBEDDING_DIM);
     handle.backfillFromDb(db);
     expect(handle.size()).toBe(8);
 
@@ -480,7 +518,7 @@ describe("UsearchWriteHandle.backfillFromDb", () => {
 
   it("force-rebuilds a stale graph even when its vector count matches the DB", () => {
     seedChunks(2);
-    const handle = new UsearchWriteHandle(path, EMBEDDING_DIM);
+    const handle = createWriter(path, EMBEDDING_DIM);
     handle.backfillFromDb(db);
     const staleRowid = db
       .prepare<[string], { rowid: number }>("SELECT rowid FROM chunks WHERE document_id = ?")
@@ -509,7 +547,7 @@ describe("UsearchWriteHandle.backfillFromDb", () => {
         .all()
         .map((row) => BigInt(row.rowid)),
     );
-    const reader = UsearchReadHandle.open(path, EMBEDDING_DIM);
+    const reader = openReader(path, EMBEDDING_DIM);
     const graphRowids = new Set(reader.search(makeEmbedding(99), 2).map((hit) => hit.key));
     expect(graphRowids).toEqual(liveRowids);
     expect(graphRowids.has(BigInt(staleRowid))).toBe(false);
@@ -519,7 +557,7 @@ describe("UsearchWriteHandle.backfillFromDb", () => {
 
   it("rebuilds from scratch when the index is partially populated (stale/smaller than DB)", () => {
     seedChunks(10);
-    const handle = new UsearchWriteHandle(path, EMBEDDING_DIM);
+    const handle = createWriter(path, EMBEDDING_DIM);
     // Pre-seed the index with a single stale vector at a key that does NOT
     // correspond to any real chunk rowid.
     handle.add(999999n, makeEmbedding(1));
@@ -531,7 +569,7 @@ describe("UsearchWriteHandle.backfillFromDb", () => {
 
     expect(handle.size()).toBe(10);
     handle.save();
-    const reader = UsearchReadHandle.open(path, EMBEDDING_DIM);
+    const reader = openReader(path, EMBEDDING_DIM);
     // The orphan key is gone after the rebuild — every key now maps to a
     // real chunk rowid.
     const realRowids = new Set(
@@ -556,11 +594,11 @@ describe("UsearchWriteHandle.backfillFromDb", () => {
     // index whether built single-threaded or in parallel.
     for (const threads of [1, 4]) {
       const p = join(dir, `threads-${threads}.usearch`);
-      const handle = new UsearchWriteHandle(p, EMBEDDING_DIM);
+      const handle = createWriter(p, EMBEDDING_DIM);
       handle.backfillFromDb(db, { threads });
       expect(handle.size()).toBe(20);
       handle.save();
-      const reader = UsearchReadHandle.open(p, EMBEDDING_DIM);
+      const reader = openReader(p, EMBEDDING_DIM);
       // doc-7 was seeded with makeEmbedding(8) → its own vector is its NN.
       expect(reader.search(makeEmbedding(8), 1)[0].key).toBe(BigInt(rowid7));
       reader.close();
@@ -576,7 +614,7 @@ describe("UsearchWriteHandle.backfillFromDb", () => {
     db.prepare("UPDATE chunks SET embedding = ? WHERE document_id = 'doc-4'").run(
       Buffer.alloc((EMBEDDING_DIM + 1) * 4),
     );
-    const handle = new UsearchWriteHandle(path, EMBEDDING_DIM);
+    const handle = createWriter(path, EMBEDDING_DIM);
     // pageSize 3 over 7 rows → pages of 3, 3, 1; doc-4 (rowid 5) is in page 2.
     handle.backfillFromDb(db, { pageSize: 3 });
     expect(handle.size()).toBe(6); // 7 seeded − 1 corrupt
@@ -585,7 +623,7 @@ describe("UsearchWriteHandle.backfillFromDb", () => {
     const rowid6 = db
       .prepare<[string], { rowid: number }>("SELECT rowid FROM chunks WHERE document_id = ?")
       .get("doc-6")!.rowid;
-    const reader = UsearchReadHandle.open(path, EMBEDDING_DIM);
+    const reader = openReader(path, EMBEDDING_DIM);
     // doc-6 (seeded with makeEmbedding(7)) is in the last page and searchable.
     expect(reader.search(makeEmbedding(7), 1)[0].key).toBe(BigInt(rowid6));
     reader.close();
@@ -600,7 +638,7 @@ describe("UsearchWriteHandle.backfillFromDb", () => {
     db.prepare("UPDATE chunks SET embedding = ? WHERE document_id = 'doc-3'").run(
       Buffer.alloc((EMBEDDING_DIM + 2) * 4),
     );
-    const handle = new UsearchWriteHandle(path, EMBEDDING_DIM);
+    const handle = createWriter(path, EMBEDDING_DIM);
     handle.backfillFromDb(db);
     // Five good vectors indexed; the corrupt one skipped rather than crashing.
     expect(handle.size()).toBe(5);
@@ -616,10 +654,11 @@ describe("UsearchWriteHandle durable rebuild and catch-up", () => {
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), "usearch-durable-"));
     path = join(dir, "test.usearch");
-    db = createIndexDatabase(`/tmp/omnesis-durable-test-${randomUUID()}.db`);
+    db = createIndexDatabase(join(dir, "index.db"));
   });
 
   afterEach(() => {
+    releaseHandles();
     db.close();
     rmSync(dir, { recursive: true, force: true });
   });
@@ -646,7 +685,7 @@ describe("UsearchWriteHandle durable rebuild and catch-up", () => {
   }
 
   function nearest(vector: Float32Array): { key: bigint; distance: number } {
-    const reader = UsearchReadHandle.open(path, EMBEDDING_DIM);
+    const reader = openReader(path, EMBEDDING_DIM);
     try {
       return reader.search(vector, 1)[0]!;
     } finally {
@@ -672,7 +711,7 @@ describe("UsearchWriteHandle durable rebuild and catch-up", () => {
     for (let i = 0; i < 10; i++) upsert(i);
     let pages = 0;
     let rebuildStarts = 0;
-    const first = new UsearchWriteHandle(path, EMBEDDING_DIM);
+    const first = createWriter(path, EMBEDDING_DIM);
     const outcome = first.backfillFromDb(db, {
       pageSize: 2,
       checkpointIntervalMs: 60_000,
@@ -683,7 +722,7 @@ describe("UsearchWriteHandle durable rebuild and catch-up", () => {
     expect(first.backfillCursor).toBe(rowidOf(5));
     expect(existsSync(path)).toBe(true);
 
-    const resumed = new UsearchWriteHandle(path, EMBEDDING_DIM);
+    const resumed = createWriter(path, EMBEDDING_DIM);
     expect(resumed.size()).toBe(6);
     const progress: number[] = [];
     expect(
@@ -703,8 +742,8 @@ describe("UsearchWriteHandle durable rebuild and catch-up", () => {
 
   it("a resumed build replaces rowids its file already holds past the cursor", () => {
     for (let i = 0; i < 6; i++) upsert(i);
-    new UsearchWriteHandle(path, EMBEDDING_DIM).backfillFromDb(db);
-    const resumed = new UsearchWriteHandle(path, EMBEDDING_DIM);
+    createWriter(path, EMBEDDING_DIM).backfillFromDb(db);
+    const resumed = createWriter(path, EMBEDDING_DIM);
     expect(resumed.backfillFromDb(db, { pageSize: 2, resumeAfterRowid: rowidOf(2) })).toBe(
       "complete",
     );
@@ -713,7 +752,7 @@ describe("UsearchWriteHandle durable rebuild and catch-up", () => {
 
   it("catching up from the change log brings a stale graph level with the database", async () => {
     for (let i = 0; i < 10; i++) upsert(i);
-    new UsearchWriteHandle(path, EMBEDDING_DIM).backfillFromDb(db);
+    createWriter(path, EMBEDDING_DIM).backfillFromDb(db);
     const savedAt = getVectorChangeHead(db);
     const deletedRowid = rowidOf(2);
 
@@ -722,7 +761,7 @@ describe("UsearchWriteHandle durable rebuild and catch-up", () => {
     db.prepare("DELETE FROM chunks WHERE id = ?").run("chunk-2");
     upsert(10);
 
-    const handle = new UsearchWriteHandle(path, EMBEDDING_DIM);
+    const handle = createWriter(path, EMBEDDING_DIM);
     await expect(handle.catchUpFromChangeLog(db, savedAt)).resolves.toBe("complete");
     handle.save();
 
@@ -736,7 +775,7 @@ describe("UsearchWriteHandle durable rebuild and catch-up", () => {
 
   it("a released handle gives the graph up and leaves the file alone", () => {
     for (let i = 0; i < 4; i++) upsert(i);
-    const handle = new UsearchWriteHandle(path, EMBEDDING_DIM);
+    const handle = createWriter(path, EMBEDDING_DIM);
     handle.backfillFromDb(db);
     const before = readFileSync(path);
 
@@ -749,7 +788,7 @@ describe("UsearchWriteHandle durable rebuild and catch-up", () => {
     expect(handle.size()).toBe(0);
     expect(readFileSync(path).equals(before)).toBe(true);
     // A detached open is the same: nothing loaded, nothing written.
-    const detached = new UsearchWriteHandle(path, EMBEDDING_DIM, { detached: true });
+    const detached = createWriter(path, EMBEDDING_DIM, { detached: true });
     expect(detached.size()).toBe(0);
     expect(detached.backfillFromDb(db)).toBe("skipped");
     expect(readFileSync(path).equals(before)).toBe(true);
@@ -759,7 +798,7 @@ describe("UsearchWriteHandle durable rebuild and catch-up", () => {
     for (let i = 0; i < 4; i++) upsert(i);
     db.pragma("cache_size = -65536");
     const during: number[] = [];
-    new UsearchWriteHandle(path, EMBEDDING_DIM).backfillFromDb(db, {
+    createWriter(path, EMBEDDING_DIM).backfillFromDb(db, {
       pageSize: 2,
       onProgress: () => during.push(db.pragma("cache_size", { simple: true }) as number),
     });

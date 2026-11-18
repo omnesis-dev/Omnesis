@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Worker } from "node:worker_threads";
 import { describe, it, expect, afterEach, vi } from "vitest";
+import { inspectWindowsPrivatePathSync } from "@omnesis/core";
 import { MessageStore } from "../message-store.js";
 import { importWhatsAppHistory } from "./importer.js";
 import {
@@ -245,7 +246,9 @@ describe("importWhatsAppHistory — merge + idempotency", () => {
             if (progress.phase !== "parse") return;
             const path = join(scratches.at(-1)!, "ChatStorage.sqlite");
             observedPlaintext = existsSync(path);
-            expect(statSync(path).mode & 0o777).toBe(0o600);
+            if (process.platform === "win32")
+              expect(inspectWindowsPrivatePathSync(path, "file").private).toBe(true);
+            else expect(statSync(path).mode & 0o777).toBe(0o600);
             controller.abort();
           },
         },
@@ -461,7 +464,9 @@ describe("importWhatsAppHistory — Android backup", () => {
             if (progress.phase !== "parse") return;
             const path = join(scratches.at(-1)!, "msgstore.db");
             observedPlaintext = existsSync(path);
-            expect(statSync(path).mode & 0o777).toBe(0o600);
+            if (process.platform === "win32")
+              expect(inspectWindowsPrivatePathSync(path, "file").private).toBe(true);
+            else expect(statSync(path).mode & 0o777).toBe(0o600);
             controller.abort();
           },
         },

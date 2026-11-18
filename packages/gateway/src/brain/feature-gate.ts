@@ -166,6 +166,8 @@ export interface BriefsRunQueueBootDeps {
   getOperatorInstructions?: () => string;
   /** Directory run transcripts persist under (created on demand). */
   transcriptsDir: string;
+  /** Register the owned transcript facade for closure after scheduled work drains. */
+  onTranscriptStore?: (store: { close(): Promise<void> }) => void;
   /**
    * The sweep set (system definitions layered with the operator's files).
    * Omitted by storage-only tests, which then schedule no sweeps at all.
@@ -361,6 +363,12 @@ export async function bootBriefs(deps: {
       import("./transcripts.js"),
     ]);
     const transcripts = new FsCognitionTranscriptStore(rq.transcriptsDir);
+    try {
+      rq.onTranscriptStore?.(transcripts);
+    } catch (error) {
+      await transcripts.close();
+      throw error;
+    }
     // The real Brain (tools + per-kind prompts + notes injection),
     // unless a test passed explicit seam overrides. Lazy-loaded like the
     // drainer so inert builds never pull the agent-ports graph.

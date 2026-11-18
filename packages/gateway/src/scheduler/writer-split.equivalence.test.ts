@@ -26,6 +26,8 @@ import {
   sweepCollapsedMergeCandidates,
 } from "../merge-candidates.js";
 import { pilotEmail, seedPilotCorpus, type PilotCorpus } from "./__fixtures__/pilot-corpus.js";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 type Db = Database.Database;
 
@@ -36,7 +38,7 @@ function twin(options: Parameters<typeof seedPilotCorpus>[1]): {
   path: string;
   corpus: PilotCorpus;
 } {
-  const path = `/tmp/omnesis-test-${randomUUID()}.db`;
+  const path = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
   const db = createDatabase(path) as unknown as Db;
   const corpus = seedPilotCorpus(db, options);
   opened.push({ db, path });

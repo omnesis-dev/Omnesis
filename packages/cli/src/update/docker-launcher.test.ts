@@ -111,6 +111,8 @@ describe("refreshDockerLauncher", () => {
 
     const write = calls.at(-1)!;
     expect(write.command).toBe("docker");
+    const volume = write.args[write.args.indexOf("--volume") + 1];
+    expect(volume).toBe("/home/maya/.local/bin:/home/maya/.local/bin");
     expect(write.args).toEqual(
       expect.arrayContaining([
         "--profile",

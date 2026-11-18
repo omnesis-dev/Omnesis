@@ -12,6 +12,7 @@ import { cloudflareBrokerZone } from "./dns-broker-zone.js";
 import { FileBrokerStore, createDnsBrokerServer } from "./dns-broker-node.js";
 import { loadRelayRecoveryPolicy } from "./relay-recovery-runtime.js";
 import { readPrivateJson } from "./google-credentials.js";
+import { readPrivateText } from "./private-inputs.js";
 import type { TrustedRecoveryPolicy } from "./recovery-verifier.js";
 import type { AddressInfo } from "node:net";
 
@@ -105,7 +106,7 @@ export async function startIndependentDnsDaemon(
   await broker.expire();
   const tls =
     certFile && keyFile
-      ? { cert: await readFile(certFile, "utf8"), key: await readFile(keyFile, "utf8") }
+      ? { cert: await readFile(certFile, "utf8"), key: await readPrivateText(keyFile) }
       : undefined;
   const legacy = policy
     ? await legacyBroker(config.OMNESIS_ACME_DNS_BROKER_URL, policy, {

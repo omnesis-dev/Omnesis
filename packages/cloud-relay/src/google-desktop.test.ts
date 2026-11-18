@@ -140,26 +140,35 @@ test("isolated loopback callback exchanges exactly one matching browser authoriz
   await expect(fetch(redirect)).rejects.toThrow();
 });
 
-test("default Google verifier, browser launcher and direct token transport compose without a relay", async () => {
-  vi.spyOn(identities, "googleIdentityProvider").mockReturnValue(identity);
-  const direct = globalThis.fetch;
-  const transport = vi.fn<typeof fetch>(tokens);
-  vi.stubGlobal("fetch", transport);
-  spawn.mockImplementation((_command, args: string[]) => {
-    const child = new EventEmitter();
-    queueMicrotask(() => child.emit("exit", 0));
-    const auth = new URL(args[0]!);
-    void direct(
-      `${auth.searchParams.get("redirect_uri")}?code=fictional&state=${auth.searchParams.get("state")}`,
-    );
-    return child;
-  });
-  expect(
-    (await authorizeGoogleDesktop({ clientId: "fixture-client", nonce })).identity.subject,
-  ).toBe("fictional-owner");
-  expect(transport).toHaveBeenCalledTimes(1);
-  expect(transport.mock.calls[0]![0]).toBe("https://oauth2.googleapis.com/token");
-});
+test.each(["darwin", "win32", "linux"] as const)(
+  "%s default Google verifier, browser launcher and token transport compose without a relay",
+  async (platform) => {
+    Object.defineProperty(process, "platform", { value: platform, configurable: true });
+    vi.spyOn(identities, "googleIdentityProvider").mockReturnValue(identity);
+    const direct = globalThis.fetch;
+    const transport = vi.fn<typeof fetch>(tokens);
+    vi.stubGlobal("fetch", transport);
+    spawn.mockImplementation((_command, args: string[]) => {
+      const child = new EventEmitter();
+      queueMicrotask(() => child.emit("exit", 0));
+      const expected =
+        platform === "darwin" ? "open" : platform === "win32" ? "rundll32" : "xdg-open";
+      expect(_command).toBe(expected);
+      if (platform === "win32") expect(args[0]).toBe("url.dll,FileProtocolHandler");
+      expect(args).toHaveLength(platform === "win32" ? 2 : 1);
+      const auth = new URL(args.at(-1)!);
+      void direct(
+        `${auth.searchParams.get("redirect_uri")}?code=fictional&state=${auth.searchParams.get("state")}`,
+      );
+      return child;
+    });
+    expect(
+      (await authorizeGoogleDesktop({ clientId: "fixture-client", nonce })).identity.subject,
+    ).toBe("fictional-owner");
+    expect(transport).toHaveBeenCalledTimes(1);
+    expect(transport.mock.calls[0]![0]).toBe("https://oauth2.googleapis.com/token");
+  },
+);
 
 test("an abandoned sign-in times out and closes its listener", async () => {
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });

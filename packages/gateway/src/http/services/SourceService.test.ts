@@ -52,6 +52,8 @@ import type { AnalyticsDb } from "../../analytics-db.js";
 import type { IndexWriteGate } from "../../indexer/index-write-gate.js";
 import type { DeviceWsServer } from "../../ws.js";
 import type Database from "better-sqlite3";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 type Db = Database.Database;
 
@@ -59,7 +61,7 @@ let db: Db;
 let dbPath: string;
 
 beforeEach(() => {
-  dbPath = `/tmp/omnesis-sourceservice-${randomUUID()}.db`;
+  dbPath = fixtureJoin(fixtureTmpdir(), `omnesis-sourceservice-${randomUUID()}.db`);
   db = createDatabase(dbPath);
 });
 

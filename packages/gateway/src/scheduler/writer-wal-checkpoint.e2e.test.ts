@@ -41,7 +41,7 @@
  * `OMNESIS_WAL_BENCH_BACKLOG_KIB` and `OMNESIS_WAL_BENCH_DF_ROWS` size it for a bench.
  */
 
-import { randomBytes, randomUUID } from "node:crypto";
+import { randomBytes } from "node:crypto";
 import { existsSync, statSync, unlinkSync } from "node:fs";
 import { Worker } from "node:worker_threads";
 import { ProviderId, SourceId } from "@omnesis/core";
@@ -54,6 +54,7 @@ import { Scheduler } from "./scheduler.js";
 import { WriterTaskRunner } from "./runners/writer.js";
 import { writeGateFromScheduler } from "./write-ops.js";
 import { PILOT_ALGO, seedPilotCorpus } from "./__fixtures__/pilot-corpus.js";
+import { sqlitePerformanceDatabasePath } from "../../test/sqlite-performance-temp.js";
 import type { WriteGate } from "../write-gate.js";
 import type { SyncCursor } from "@omnesis/source-sdk";
 import type { DocumentInput } from "@omnesis/types";
@@ -217,7 +218,7 @@ interface Bench {
 
 async function startBench(seedExtra?: (db: Database.Database) => void): Promise<Bench> {
   const key = randomBytes(32);
-  const dbPath = `/tmp/omnesis-test-${randomUUID()}.db`;
+  const dbPath = sqlitePerformanceDatabasePath();
   const seed = createDatabase(dbPath, { encryptionKey: key }) as unknown as Database.Database;
   try {
     seedPilotCorpus(seed, { docs: DOCS });

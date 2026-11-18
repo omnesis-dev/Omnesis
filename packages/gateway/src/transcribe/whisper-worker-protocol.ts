@@ -90,13 +90,21 @@ export function encodeFrame(header: object, tail?: ArrayBufferView): Buffer {
  */
 export class FrameDecoder {
   private buf: Buffer = Buffer.alloc(0);
-  constructor(private readonly onFrame: (header: unknown, tail: Buffer) => void) {}
+  constructor(
+    private readonly onFrame: (header: unknown, tail: Buffer) => void,
+    private readonly limits: { maxTailBytes?: number } = {},
+  ) {}
 
   push(chunk: Buffer): void {
     this.buf = this.buf.byteLength === 0 ? chunk : (Buffer.concat([this.buf, chunk]) as Buffer);
     for (;;) {
       if (this.buf.byteLength < 4) return;
       const headerLen = this.buf.readUInt32BE(0);
+      // A ten-minute float32 chunk fits below 40 MiB; headers never carry PCM.
+      if (headerLen === 0 || headerLen > 1024 * 1024) {
+        this.buf = Buffer.alloc(0);
+        throw new Error("Invalid Whisper frame header length");
+      }
       // We don't know the tail length from the prefix alone — the header
       // carries it (`pcmBytes`). Parse the header first, then wait for its tail.
       if (this.buf.byteLength < 4 + headerLen) return;
@@ -105,12 +113,16 @@ export class FrameDecoder {
       try {
         header = JSON.parse(headerJson);
       } catch {
-        // Unparseable header means the stream is corrupt; drop everything so we
+        // Unparseable headers terminate the corrupt stream; discard everything so we
         // don't loop forever on a bad prefix.
         this.buf = Buffer.alloc(0);
-        return;
+        throw new Error("Invalid Whisper frame JSON");
       }
       const tailLen = frameTailLength(header);
+      if (tailLen > (this.limits.maxTailBytes ?? 40 * 1024 * 1024)) {
+        this.buf = Buffer.alloc(0);
+        throw new Error("Invalid Whisper frame tail length");
+      }
       const frameEnd = 4 + headerLen + tailLen;
       if (this.buf.byteLength < frameEnd) return;
       const tail = this.buf.subarray(4 + headerLen, frameEnd);
@@ -128,7 +140,9 @@ function frameTailLength(header: unknown): number {
     (header as { type?: unknown }).type === "request"
   ) {
     const n = (header as { pcmBytes?: unknown }).pcmBytes;
-    return typeof n === "number" && Number.isFinite(n) && n >= 0 ? n : 0;
+    if (typeof n !== "number" || !Number.isSafeInteger(n) || n < 0 || n % 4 !== 0)
+      throw new Error("Invalid Whisper PCM length");
+    return n;
   }
   return 0;
 }

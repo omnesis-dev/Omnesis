@@ -16,6 +16,8 @@ import {
 import { markMorningBriefSent, replaceMorningBriefItems } from "../storage/morning-brief-items.js";
 import { redactTaintedMorningBriefs } from "./redaction.js";
 import type Database from "better-sqlite3";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 const NOW = Date.parse("2026-03-10T07:00:00Z");
 const log = createLogger("test").child("redaction");
@@ -23,7 +25,7 @@ let path: string;
 let db: Database.Database;
 
 beforeEach(() => {
-  path = `/tmp/omnesis-test-${randomUUID()}.db`;
+  path = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
   db = createDatabase(path);
   const iso = new Date(NOW - 86_400_000).toISOString();
   for (const id of ["doc_kept", "doc_gone"])

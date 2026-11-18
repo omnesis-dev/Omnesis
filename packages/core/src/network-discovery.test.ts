@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { chmodSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
-import { describe, test, expect } from "vitest";
+import { join } from "node:path";
+import { pathToFileURL } from "node:url";
+import { describe, test, expect, vi } from "vitest";
 import {
   discoverTailscale,
   realLanIpv4s,
@@ -43,29 +44,32 @@ describe("localMdnsHostname", () => {
   });
 });
 
-test("network discovery falls through a logged-out CLI to the connected macOS app", async () => {
-  const home = mkdtempSync(join(tmpdir(), "omnesis-network-tailnet-"));
+test("network discovery falls through logged-out status to the bundled-app CLI mode", async () => {
+  const home = mkdtempSync(join(tmpdir(), "omnesis network-tailnet-"));
   try {
-    const disconnected = join(home, "bin/tailscale");
-    const app = join(home, "Applications/Tailscale.app/Contents/MacOS/Tailscale");
-    mkdirSync(dirname(disconnected), { recursive: true });
-    mkdirSync(dirname(app), { recursive: true });
-    writeFileSync(disconnected, '#!/bin/sh\nprintf \'{"BackendState":"NeedsLogin"}\\n\'\n');
+    const preload = join(home, "status-fixture.mjs");
     writeFileSync(
-      app,
-      '#!/bin/sh\n[ "$TAILSCALE_BE_CLI" = 1 ] || exit 1\nprintf \'{"BackendState":"Running","Self":{"DNSName":"gw.example.ts.net.","TailscaleIPs":["100.101.102.103"]}}\\n\'\n',
+      preload,
+      `const status = process.env.TAILSCALE_BE_CLI === '1'
+        ? {BackendState:'Running',Self:{DNSName:'gw.example.ts.net.',TailscaleIPs:['100.101.102.103']}}
+        : {BackendState:'NeedsLogin'};
+      console.log(JSON.stringify(status));process.exit(0);`,
     );
-    chmodSync(disconnected, 0o755);
-    chmodSync(app, 0o755);
+    vi.stubEnv("TAILSCALE_BE_CLI", undefined);
+    vi.stubEnv(
+      "NODE_OPTIONS",
+      `${process.env.NODE_OPTIONS ?? ""} --import=${pathToFileURL(preload).href}`,
+    );
     const identities = await discoverTailscale([
-      { file: disconnected, bundledApp: false },
-      { file: app, bundledApp: true },
+      { file: process.execPath, bundledApp: false },
+      { file: process.execPath, bundledApp: true },
     ]);
     expect(identities.map((identity) => identity.address)).toEqual([
       "gw.example.ts.net",
       "100.101.102.103",
     ]);
   } finally {
+    vi.unstubAllEnvs();
     rmSync(home, { recursive: true, force: true });
   }
 });

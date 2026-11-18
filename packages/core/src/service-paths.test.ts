@@ -1,13 +1,33 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
+
+// Exercise a Windows rendering host even when this pure suite runs on Unix.
+vi.mock("node:path", async (original) => {
+  const path = await original<typeof import("node:path")>();
+  return { ...path, join: path.win32.join, dirname: path.win32.dirname };
+});
 import {
   launchdLabel,
   launchdLabelInstance,
+  launchdPlistPath,
+  systemdUnitPath,
   systemdUnitInstance,
   systemdUnitName,
 } from "./service-paths.js";
+
+describe("Unix service target paths", () => {
+  test("retains POSIX separators and literal backslashes in the target home", () => {
+    const home = "/home/invented\\archive";
+    expect(launchdPlistPath(home, "collector", "staging")).toBe(
+      `${home}/Library/LaunchAgents/dev.omnesis.collector.staging.plist`,
+    );
+    expect(systemdUnitPath(home, "gateway")).toBe(
+      `${home}/.config/systemd/user/omnesis-gateway.service`,
+    );
+  });
+});
 
 describe("launchdLabelInstance", () => {
   test("reads the default and a named instance back from the labels launchdLabel writes", () => {

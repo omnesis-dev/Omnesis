@@ -28,7 +28,7 @@ import { setLabFlag } from "./lab/store.js";
 import { computeSnapshotAbsencePlan, createDatabase, getSyncState, getWipeEpoch } from "./db.js";
 import { LATEST_SCHEMA_VERSION } from "./data/migrations.js";
 import { fixedPublicAddress } from "./public-address.js";
-import { createServer } from "./server.js";
+import { createServer as createGatewayServer } from "./server.js";
 import { StatusCache } from "./http/services/StatusCache.js";
 import { STATUS_CACHE_READS } from "./http/services/status-cache-reads.js";
 import { ANALYTICS_REPLICA_READS } from "./http/services/analytics-replica-reads.js";
@@ -54,7 +54,9 @@ import { DEFAULT_SEARCH_PARAMS, DEFAULT_SEARCH_BOOSTS } from "./search/search-co
 import type { IComputeScheduler } from "./http/services/ports.js";
 import type Database from "better-sqlite3";
 type Db = Database.Database;
-import { unlinkSync, existsSync, rmSync, statSync } from "node:fs";
+import { unlinkSync, existsSync, mkdtempSync, rmSync, statSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import type { SearchPipeline } from "./search/pipeline.js";
 import type { McpHttpRuntime } from "./http/routes/mcp-streamable.js";
@@ -72,8 +74,16 @@ import { STALE_DEVICE_REVOCATION_IMPACT_ERROR } from "./access/agent-device-auth
 let db: Db;
 let app: ReturnType<typeof createServer>;
 let dbPath: string;
+let testDir: string;
 let TEST_TOKEN: string;
 let DECLARATION_TOKEN: string | null;
+const servers = new Set<ReturnType<typeof createGatewayServer>>();
+
+function createServer(...args: Parameters<typeof createGatewayServer>) {
+  const server = createGatewayServer(...args);
+  servers.add(server);
+  return server;
+}
 
 function deferred<T = void>() {
   let resolve!: (value: T | PromiseLike<T>) => void;
@@ -149,7 +159,8 @@ function makeDocPayload(externalId = "msg-1", providerId = "google", sourceId = 
 }
 
 beforeEach(() => {
-  dbPath = `/tmp/omnesis-server-test-${randomUUID()}.db`;
+  testDir = mkdtempSync(join(tmpdir(), "omnesis-server-test-"));
+  dbPath = join(testDir, `omnesis-server-test-${randomUUID()}.db`);
   db = createDatabase(dbPath);
   // Full-scope token used by the shared `req` helper.
   TEST_TOKEN = mintToken([SCOPE_ADMIN, SCOPE_READ, SCOPE_WRITE_ALL]).token;
@@ -157,10 +168,13 @@ beforeEach(() => {
   app = createServer(db);
 });
 
-afterEach(() => {
+afterEach(async () => {
   resetConnectedCollectorDeclarations();
+  await Promise.all([...servers].map((server) => server.close()));
+  servers.clear();
   db.close();
   cleanupDb(dbPath);
+  rmSync(testDir, { recursive: true, force: true });
 });
 
 test("the status cache's periodic refresh reads through the server's read ports", async () => {
@@ -191,7 +205,7 @@ test("transport admission rejects requests before route services run", async () 
 
 test("production server wires analytics adoption into an exclusive to partitioned PATCH", async () => {
   const { AnalyticsDb } = await import("./analytics-db.js");
-  const analyticsPath = `/tmp/omnesis-mode-transition-${randomUUID()}.duckdb`;
+  const analyticsPath = join(testDir, `omnesis-mode-transition-${randomUUID()}.duckdb`);
   const analyticsDb = new AnalyticsDb(analyticsPath);
   await analyticsDb.open();
   const owner = createDevice(db, {
@@ -255,12 +269,13 @@ test("production server wires analytics adoption into an exclusive to partitione
 
 describe("source settings mirrored to the config file", () => {
   test("a source edit does not copy an inherited maxAge into the source's own block", async () => {
-    const configDir = `/tmp/omnesis-source-mirror-${randomUUID()}`;
+    const configDir = join(testDir, `omnesis-source-mirror-${randomUUID()}`);
     const configStore = new ConfigStore({
       filePath: `${configDir}/omnesis.json`,
       watchDebounceMs: 40,
     });
     await configStore.load();
+    let mirrorApp: ReturnType<typeof createServer> | undefined;
     try {
       const owner = createDevice(db, {
         name: "mirror-host",
@@ -274,7 +289,7 @@ describe("source settings mirrored to the config file", () => {
         config: { maxAge: "2y", syncInterval: "5m" },
       });
       await configStore.put({ sources: { "notes-synth": { maxAge: "2y" } } });
-      const mirrorApp = createServer(db, undefined, { configStore });
+      mirrorApp = createServer(db, undefined, { configStore });
 
       const res = await mirrorApp.request(`/admin/sources/${encodeURIComponent(source.id)}`, {
         method: "PATCH",
@@ -290,6 +305,7 @@ describe("source settings mirrored to the config file", () => {
       await configStore.put({ sources: { [source.id]: own! } });
       expect(resolveSourceMaxAge(configStore.get(), source.id)).toBeUndefined();
     } finally {
+      await mirrorApp?.close();
       configStore.stop();
       rmSync(configDir, { recursive: true, force: true });
     }
@@ -299,8 +315,8 @@ describe("source settings mirrored to the config file", () => {
 describe("mode-transition config publication ordering", () => {
   async function raceFixture() {
     const { AnalyticsDb } = await import("./analytics-db.js");
-    const analyticsPath = `/tmp/omnesis-mode-config-race-${randomUUID()}.duckdb`;
-    const configDir = `/tmp/omnesis-mode-config-race-${randomUUID()}`;
+    const analyticsPath = join(testDir, `omnesis-mode-config-race-${randomUUID()}.duckdb`);
+    const configDir = join(testDir, `omnesis-mode-config-race-${randomUUID()}`);
     const analyticsDb = new AnalyticsDb(analyticsPath);
     await analyticsDb.open();
     const configStore = new ConfigStore({
@@ -358,6 +374,7 @@ describe("mode-transition config publication ordering", () => {
         ...(body === undefined ? {} : { body: JSON.stringify(body) }),
       });
     const cleanup = async () => {
+      await raceApp.close();
       configStore.stop();
       await analyticsDb.close();
       rmSync(configDir, { recursive: true, force: true });
@@ -506,7 +523,7 @@ describe("generally available MCP", () => {
   test("constructs Direct in production mode", async () => {
     const previousExperimental = process.env.OMNESIS_EXPERIMENTAL;
     const previousSynthetic = process.env.OMNESIS_SYNTHETIC;
-    const analyticsPath = `/tmp/omnesis-mcp-ga-analytics-${randomUUID()}.db`;
+    const analyticsPath = join(testDir, `omnesis-mcp-ga-analytics-${randomUUID()}.db`);
     const { AnalyticsDb } = await import("./analytics-db.js");
     const analyticsDb = new AnalyticsDb(analyticsPath);
     let runtime: McpHttpRuntime | undefined;
@@ -1077,7 +1094,7 @@ describe("auth middleware", () => {
     ).toEqual({ count: 0 });
 
     const { AnalyticsDb } = await import("./analytics-db.js");
-    const analyticsPath = `/tmp/omnesis-contract-analytics-${randomUUID()}.db`;
+    const analyticsPath = join(testDir, `omnesis-contract-analytics-${randomUUID()}.db`);
     const analyticsDb = new AnalyticsDb(analyticsPath);
     await analyticsDb.open();
     const withAnalytics = createServer(db, undefined, { analyticsDb });
@@ -1139,7 +1156,7 @@ describe("auth middleware", () => {
     const currentEpoch = await begin();
 
     const { AnalyticsDb } = await import("./analytics-db.js");
-    const analyticsPath = `/tmp/omnesis-analytics-test-${randomUUID()}.db`;
+    const analyticsPath = join(testDir, `omnesis-analytics-test-${randomUUID()}.db`);
     const analyticsDb = new AnalyticsDb(analyticsPath);
     await analyticsDb.open();
     const withAnalytics = createServer(db, undefined, { analyticsDb });
@@ -5269,7 +5286,7 @@ describe("sync state endpoints", () => {
 
     // POST /analytics/ingest — each phone's namesake rows land in its own stream.
     const { AnalyticsDb } = await import("./analytics-db.js");
-    const analyticsPath = `/tmp/omnesis-analytics-test-${randomUUID()}.db`;
+    const analyticsPath = join(testDir, `omnesis-analytics-test-${randomUUID()}.db`);
     const analyticsDb = new AnalyticsDb(analyticsPath);
     await analyticsDb.open();
     const withAnalytics = createServer(db, undefined, { analyticsDb });
@@ -5843,7 +5860,7 @@ describe("sync state endpoints", () => {
     addSourceMember(db, source.id, beta.id);
 
     const { AnalyticsDb } = await import("./analytics-db.js");
-    const analyticsPath = `/tmp/omnesis-analytics-test-${randomUUID()}.db`;
+    const analyticsPath = join(testDir, `omnesis-analytics-test-${randomUUID()}.db`);
     const analyticsDb = new AnalyticsDb(analyticsPath);
     await analyticsDb.open();
     const withAnalytics = createServer(db, undefined, { analyticsDb });
@@ -5949,7 +5966,7 @@ describe("sync state endpoints", () => {
     addSourceMember(db, source.id, beta.id);
 
     const { AnalyticsDb } = await import("./analytics-db.js");
-    const analyticsPath = `/tmp/omnesis-analytics-test-${randomUUID()}.db`;
+    const analyticsPath = join(testDir, `omnesis-analytics-test-${randomUUID()}.db`);
     const analyticsDb = new AnalyticsDb(analyticsPath);
     await analyticsDb.open();
     const withAnalytics = createServer(db, undefined, { analyticsDb });
@@ -6281,7 +6298,7 @@ describe("sync state endpoints", () => {
 
     // POST /analytics/ingest — the same DB behind a server with an analytics store.
     const { AnalyticsDb } = await import("./analytics-db.js");
-    const analyticsPath = `/tmp/omnesis-analytics-test-${randomUUID()}.db`;
+    const analyticsPath = join(testDir, `omnesis-analytics-test-${randomUUID()}.db`);
     const analyticsDb = new AnalyticsDb(analyticsPath);
     await analyticsDb.open();
     const withAnalytics = createServer(db, undefined, { analyticsDb });
@@ -8570,7 +8587,7 @@ describe("GET /sources/:sourceId/recent", () => {
 
   test("falls back to analytics table when source has no documents", async () => {
     const { AnalyticsDb } = await import("./analytics-db.js");
-    const analyticsPath = `/tmp/omnesis-analytics-test-${randomUUID()}.db`;
+    const analyticsPath = join(testDir, `omnesis-analytics-test-${randomUUID()}.db`);
     const analyticsDb = new AnalyticsDb(analyticsPath);
     await analyticsDb.open();
 
@@ -8642,7 +8659,7 @@ describe("GET /sources/:sourceId/recent", () => {
 
   test("matches analytics table by source type prefix", async () => {
     const { AnalyticsDb } = await import("./analytics-db.js");
-    const analyticsPath = `/tmp/omnesis-analytics-test-${randomUUID()}.db`;
+    const analyticsPath = join(testDir, `omnesis-analytics-test-${randomUUID()}.db`);
     const analyticsDb = new AnalyticsDb(analyticsPath);
     await analyticsDb.open();
 
@@ -8687,7 +8704,7 @@ describe("GET /sources/:sourceId/recent", () => {
 
   test("prefers documents over analytics when source has both", async () => {
     const { AnalyticsDb } = await import("./analytics-db.js");
-    const analyticsPath = `/tmp/omnesis-analytics-test-${randomUUID()}.db`;
+    const analyticsPath = join(testDir, `omnesis-analytics-test-${randomUUID()}.db`);
     const analyticsDb = new AnalyticsDb(analyticsPath);
     await analyticsDb.open();
 
@@ -8734,7 +8751,7 @@ describe("GET /sources/:sourceId/recent", () => {
 
   test("returns empty when analytics has no matching table", async () => {
     const { AnalyticsDb } = await import("./analytics-db.js");
-    const analyticsPath = `/tmp/omnesis-analytics-test-${randomUUID()}.db`;
+    const analyticsPath = join(testDir, `omnesis-analytics-test-${randomUUID()}.db`);
     const analyticsDb = new AnalyticsDb(analyticsPath);
     await analyticsDb.open();
 
@@ -8755,7 +8772,7 @@ describe("GET /sources/:sourceId/recent", () => {
 
   test("picks analytics table with highest record count among candidates", async () => {
     const { AnalyticsDb } = await import("./analytics-db.js");
-    const analyticsPath = `/tmp/omnesis-analytics-test-${randomUUID()}.db`;
+    const analyticsPath = join(testDir, `omnesis-analytics-test-${randomUUID()}.db`);
     const analyticsDb = new AnalyticsDb(analyticsPath);
     await analyticsDb.open();
 
@@ -9880,7 +9897,7 @@ describe("GET /status", () => {
     const { AnalyticsDb } = await import("./analytics-db.js");
     const { createSource } = await import("./data/repositories/SourceRepository.js");
     const { AccountId, SourceType } = await import("@omnesis/core");
-    const analyticsPath = `/tmp/omnesis-analytics-test-${randomUUID()}.db`;
+    const analyticsPath = join(testDir, `omnesis-analytics-test-${randomUUID()}.db`);
     const analyticsDb = new AnalyticsDb(analyticsPath);
     await analyticsDb.open();
 
@@ -9952,7 +9969,7 @@ describe("GET /status", () => {
     const { AnalyticsDb } = await import("./analytics-db.js");
     const { createSource } = await import("./data/repositories/SourceRepository.js");
     const { AccountId, SourceType } = await import("@omnesis/core");
-    const analyticsPath = `/tmp/omnesis-analytics-test-${randomUUID()}.db`;
+    const analyticsPath = join(testDir, `omnesis-analytics-test-${randomUUID()}.db`);
     const analyticsDb = new AnalyticsDb(analyticsPath);
     await analyticsDb.open();
 
@@ -10015,7 +10032,7 @@ describe("GET /status", () => {
     const { AnalyticsDb } = await import("./analytics-db.js");
     const { createSource } = await import("./data/repositories/SourceRepository.js");
     const { AccountId, SourceType } = await import("@omnesis/core");
-    const analyticsPath = `/tmp/omnesis-analytics-test-${randomUUID()}.db`;
+    const analyticsPath = join(testDir, `omnesis-analytics-test-${randomUUID()}.db`);
     const analyticsDb = new AnalyticsDb(analyticsPath);
     await analyticsDb.open();
 
@@ -10083,7 +10100,7 @@ describe("GET /status", () => {
     const { createSource } = await import("./data/repositories/SourceRepository.js");
     const { upsertDocuments } = await import("./db.js");
     const { AccountId, SourceType } = await import("@omnesis/core");
-    const analyticsPath = `/tmp/omnesis-analytics-test-${randomUUID()}.db`;
+    const analyticsPath = join(testDir, `omnesis-analytics-test-${randomUUID()}.db`);
     const analyticsDb = new AnalyticsDb(analyticsPath);
     await analyticsDb.open();
 
@@ -10409,7 +10426,8 @@ describe("admin config endpoints", () => {
     cfgApp = createServer(db, undefined, { configDir, configStore });
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    await cfgApp.close();
     configStore.stop();
     rmSync(configDir, { recursive: true, force: true });
   });
@@ -10457,33 +10475,37 @@ describe("admin config endpoints", () => {
       configStore,
       publicAddress: PublicAddress.following(configStore),
     });
-    const origin = "https://omnesis.example.org";
-    const discovery = () => liveApp.request(`${origin}/.well-known/oauth-authorization-server`);
-    expect((await discovery()).status).toBe(503);
+    try {
+      const origin = "https://omnesis.example.org";
+      const discovery = () => liveApp.request(`${origin}/.well-known/oauth-authorization-server`);
+      expect((await discovery()).status).toBe(503);
 
-    const patched = await liveApp.request("/admin/config", {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${cfgToken}` },
-      body: JSON.stringify({ gateway: { publicBaseUrl: origin } }),
-    });
-    expect(patched.status).toBe(200);
+      const patched = await liveApp.request("/admin/config", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${cfgToken}` },
+        body: JSON.stringify({ gateway: { publicBaseUrl: origin } }),
+      });
+      expect(patched.status).toBe(200);
 
-    const server = await discovery();
-    expect(server.status).toBe(200);
-    expect((await server.json()).issuer).toBe(origin);
-    // An agent reaching MCP there is pointed at that address's sign-in, with no restart.
-    const challenge = await liveApp.request(`${origin}/mcp`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Accept: "application/json, text/event-stream",
-      },
-      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: {} }),
-    });
-    expect(challenge.status).toBe(401);
-    expect(challenge.headers.get("WWW-Authenticate")).toContain(
-      `resource_metadata="${origin}/.well-known/oauth-protected-resource/mcp"`,
-    );
+      const server = await discovery();
+      expect(server.status).toBe(200);
+      expect((await server.json()).issuer).toBe(origin);
+      // An agent reaching MCP there is pointed at that address's sign-in, with no restart.
+      const challenge = await liveApp.request(`${origin}/mcp`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/json, text/event-stream",
+        },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize", params: {} }),
+      });
+      expect(challenge.status).toBe(401);
+      expect(challenge.headers.get("WWW-Authenticate")).toContain(
+        `resource_metadata="${origin}/.well-known/oauth-protected-resource/mcp"`,
+      );
+    } finally {
+      await liveApp.close();
+    }
   });
 
   test("GET /admin/config returns empty config initially", async () => {
@@ -10537,34 +10559,38 @@ describe("admin config endpoints", () => {
         body: JSON.stringify(body),
       });
 
-    const refused = await vetReq({
-      inference: { assignments: { transcriber: "ollama/qwen3-asr" } },
-    });
-    expect(refused.status).toBe(400);
-    const refusal = (await refused.json()) as { error: string; code: string; detail: unknown };
-    expect(refusal.code).toBe("VALIDATION_ERROR");
-    expect(refusal.error).toBe(
-      'Backend "ollama" cannot transcribe with qwen3-asr: no transcription endpoint',
-    );
-    expect(refusal.detail).toEqual([
-      { path: "/inference/assignments/transcriber", message: refusal.error },
-    ]);
-    const unchanged = (await (await cfgReq("/admin/config")).json()) as { config: unknown };
-    expect(unchanged.config).toEqual({});
+    try {
+      const refused = await vetReq({
+        inference: { assignments: { transcriber: "ollama/qwen3-asr" } },
+      });
+      expect(refused.status).toBe(400);
+      const refusal = (await refused.json()) as { error: string; code: string; detail: unknown };
+      expect(refusal.code).toBe("VALIDATION_ERROR");
+      expect(refusal.error).toBe(
+        'Backend "ollama" cannot transcribe with qwen3-asr: no transcription endpoint',
+      );
+      expect(refusal.detail).toEqual([
+        { path: "/inference/assignments/transcriber", message: refusal.error },
+      ]);
+      const unchanged = (await (await cfgReq("/admin/config")).json()) as { config: unknown };
+      expect(unchanged.config).toEqual({});
 
-    // Every assignment the body sets is vetted; one the hook accepts is written.
-    const accepted = await vetReq({
-      inference: { assignments: { transcriber: "local/whisper-base", agent: null } },
-    });
-    expect(accepted.status).toBe(200);
-    expect(vetted).toEqual([
-      ["transcriber", "ollama/qwen3-asr"],
-      ["transcriber", "local/whisper-base"],
-      ["agent", null],
-    ]);
-    // A body that sets no assignment is not vetted at all.
-    expect((await vetReq({ indexer: { cycleInterval: "5m" } })).status).toBe(200);
-    expect(vetted).toHaveLength(3);
+      // Every assignment the body sets is vetted; one the hook accepts is written.
+      const accepted = await vetReq({
+        inference: { assignments: { transcriber: "local/whisper-base", agent: null } },
+      });
+      expect(accepted.status).toBe(200);
+      expect(vetted).toEqual([
+        ["transcriber", "ollama/qwen3-asr"],
+        ["transcriber", "local/whisper-base"],
+        ["agent", null],
+      ]);
+      // A body that sets no assignment is not vetted at all.
+      expect((await vetReq({ indexer: { cycleInterval: "5m" } })).status).toBe(200);
+      expect(vetted).toHaveLength(3);
+    } finally {
+      await vetApp.close();
+    }
   });
 
   test("PATCH /admin/config stores inference backend apiKey as a config secret reference", async () => {
@@ -11872,7 +11898,7 @@ describe("CORS middleware (wired in createServer)", () => {
   ): Promise<void> {
     const { ConfigStore, defaultConfigPath } = await import("./config-store.js");
     const { writeFileSync, mkdirSync } = await import("node:fs");
-    const dir = `/tmp/omnesis-cors-test-${randomUUID()}`;
+    const dir = join(testDir, `omnesis-cors-test-${randomUUID()}`);
     mkdirSync(dir, { recursive: true });
     const cfgPath = defaultConfigPath(dir);
     writeFileSync(
@@ -11885,6 +11911,7 @@ describe("CORS middleware (wired in createServer)", () => {
     try {
       await fn(corsApp);
     } finally {
+      await corsApp.close();
       store.stop();
       rmSync(dir, { recursive: true, force: true });
     }

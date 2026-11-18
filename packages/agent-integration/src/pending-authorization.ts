@@ -30,6 +30,8 @@
 import { readFileSync, unlinkSync } from "node:fs";
 import { z } from "zod";
 
+import { privateWindowsFiles } from "./windows-files.js";
+
 import { writeSecretFileDurably } from "./credentials.js";
 
 // Not strict: a record written by a newer CLI with fields this version does
@@ -55,16 +57,26 @@ export function pendingAuthorizationPath(credentialsPath: string): string {
 /**
  * The recorded approval request, or null when there is none.
  *
- * An unreadable or malformed record counts as none: it can name no request
- * this process could finish, and the worst that follows is one fresh request.
+ * A missing or malformed record counts as none. Windows access-control failures
+ * remain actionable errors; unsafe verifier material must never be reused.
  */
 export function loadPendingAuthorization(
   credentialsPath: string,
 ): PendingIntegrationAuthorization | null {
   let text: string;
   try {
-    text = readFileSync(pendingAuthorizationPath(credentialsPath), "utf8");
-  } catch {
+    text =
+      process.platform === "win32"
+        ? privateWindowsFiles()
+            .readWindowsPrivateFileContentsSync(pendingAuthorizationPath(credentialsPath))
+            .toString("utf8")
+        : readFileSync(pendingAuthorizationPath(credentialsPath), "utf8");
+  } catch (error) {
+    if (
+      process.platform === "win32" &&
+      !(error instanceof Error && "code" in error && error.code === "ENOENT")
+    )
+      throw error;
     return null;
   }
   try {

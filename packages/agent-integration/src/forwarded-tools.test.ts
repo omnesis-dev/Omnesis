@@ -5,6 +5,7 @@ import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, test, vi } from "vitest";
+import { privateWindowsFiles } from "./windows-files.js";
 
 import {
   FORWARDED_TOOLS_RETRY_MS,
@@ -245,7 +246,9 @@ describe("the connection's tool catalogue", () => {
       "run_sql",
       "list_tables",
     ]);
-    expect(statSync(path).mode & 0o777).toBe(0o600);
+    if (process.platform === "win32")
+      expect(privateWindowsFiles().inspectWindowsPrivatePathSync(path, "file").private).toBe(true);
+    else expect(statSync(path).mode & 0o777).toBe(0o600);
   });
 
   test("re-reads a stale listing in the background and a failed one only after a pause", async () => {

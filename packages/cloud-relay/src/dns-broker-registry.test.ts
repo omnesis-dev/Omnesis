@@ -5,7 +5,9 @@ import { generateKeyPairSync, randomUUID } from "node:crypto";
 import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { ensurePrivateDirs, execWindowsJob, inspectWindowsPrivatePathSync } from "@omnesis/core";
 import Database from "better-sqlite3";
+import * as core from "@omnesis/core";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { tlsFiles } from "../test/support.js";
 import { brokerCall, brokerOwner, memoryStore, ownerFrom } from "../test/dns-broker-owner.js";
@@ -17,11 +19,13 @@ import { DnsBroker } from "./dns-broker-core.js";
 import { cloudflareBrokerZone } from "./dns-broker-zone.js";
 import { exportGatewayKeys, importRegistry, readRegistryExport } from "./dns-broker-registry.js";
 import { runRelayCommand } from "./runtime.js";
+import { savePrivateJson } from "./google-credentials.js";
 
 const domain = "relay.example.test";
 let directory: string;
 beforeEach(async () => {
   directory = await mkdtemp(join(tmpdir(), "omnesis-dns-broker-registry-"));
+  if (process.platform === "win32") await ensurePrivateDirs([directory]);
 });
 afterEach(async () => {
   vi.restoreAllMocks();
@@ -77,7 +81,11 @@ async function relayDatabase() {
 test("the export holds each hosted name with its gateway and owner key, and nothing else", async () => {
   const { path, owner } = await relayDatabase();
   expect(exportGatewayKeys(path, domain)).toEqual([
-    { hostname: owner.hostname, gatewayId: owner.gatewayId, ownerPublicKey: owner.ownerPublicKey },
+    {
+      hostname: owner.hostname,
+      gatewayId: owner.gatewayId,
+      ownerPublicKey: owner.ownerPublicKey,
+    },
   ]);
   expect(() => exportGatewayKeys(join(directory, "missing.sqlite"), domain)).toThrow();
 });
@@ -122,7 +130,12 @@ test("an imported gateway keeps its name, and a relay that races it with another
   const handle = (request: Request) => broker.handle(request);
   expect((await brokerCall(handle, relay, { type: "claim" })).status).toBe(409);
   expect(
-    (await brokerCall(handle, owner, { type: "txt-create", value: "a".repeat(43) })).status,
+    (
+      await brokerCall(handle, owner, {
+        type: "txt-create",
+        value: "a".repeat(43),
+      })
+    ).status,
   ).toBe(200);
   await expect(
     importRegistry({
@@ -144,14 +157,21 @@ test("the operator exports from the relay database and imports into the broker",
       OMNESIS_CLOUD_RELAY_DNS_BROKER_EXPORT_FILE: exportFile,
     }),
   ).toBeUndefined();
-  expect((await stat(exportFile)).mode & 0o777).toBe(0o600);
+  if (process.platform === "win32")
+    expect(inspectWindowsPrivatePathSync(exportFile, "file").private).toBe(true);
+  else expect((await stat(exportFile)).mode & 0o777).toBe(0o600);
   expect(await readRegistryExport(exportFile)).toMatchObject([{ hostname: owner.hostname }]);
   const tokenFile = join(directory, "import-token.json");
-  await writeFile(tokenFile, JSON.stringify({ token: "i".repeat(40) }));
+  await savePrivateJson(tokenFile, { token: "i".repeat(40) });
   const sent: unknown[] = [];
   vi.stubGlobal("fetch", async (_input: unknown, init: RequestInit) => {
     sent.push(JSON.parse(String(init.body)));
-    return Response.json({ imported: 1, existing: 0, conflicts: 0, invalid: 0 });
+    return Response.json({
+      imported: 1,
+      existing: 0,
+      conflicts: 0,
+      invalid: 0,
+    });
   });
   const output = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
   try {
@@ -174,3 +194,43 @@ test("an oversized export is refused before it is parsed", async () => {
   await truncate(file, 64 * 1024 * 1024 + 1);
   await expect(readRegistryExport(file)).rejects.toThrow("too large");
 });
+
+test("an explicit public registry export keeps its ordinary file permissions", async () => {
+  const file = join(directory, "ordinary-export.json");
+  await writeFile(file, JSON.stringify({ entries: [] }));
+  if (process.platform === "win32") {
+    await execWindowsJob(join(process.env.SystemRoot!, "System32", "icacls.exe"), [
+      file,
+      "/grant",
+      "*S-1-1-0:(R)",
+      "/Q",
+    ]);
+    expect(inspectWindowsPrivatePathSync(file, "file").private).toBe(false);
+  }
+  expect(await readRegistryExport(file)).toEqual([]);
+});
+
+test.each([
+  { bytes: Buffer.from('{"entries":[]}'), size: 14n, expected: undefined },
+  { bytes: Buffer.alloc(0), size: 64n * 1024n * 1024n + 1n, expected: "too large" },
+  { bytes: Buffer.from('{"entries":[]}'), size: 15n, expected: "read completely" },
+])(
+  "Windows registry import validates the held ordinary-file receipt before parsing: $expected",
+  async ({ bytes, size, expected }) => {
+    const path = join(directory, "external-registry.json");
+    const read = vi
+      .spyOn(core, "readWindowsRegularFilePrefix")
+      .mockResolvedValueOnce({ bytes, size });
+    const privateRead = vi.spyOn(core, "readWindowsPrivateFile");
+    const descriptor = Object.getOwnPropertyDescriptor(process, "platform")!;
+    Object.defineProperty(process, "platform", { ...descriptor, value: "win32" });
+    try {
+      if (expected) await expect(readRegistryExport(path)).rejects.toThrow(expected);
+      else expect(await readRegistryExport(path)).toEqual([]);
+      expect(read).toHaveBeenCalledExactlyOnceWith(path, 64 * 1024 * 1024);
+      expect(privateRead).not.toHaveBeenCalled();
+    } finally {
+      Object.defineProperty(process, "platform", descriptor);
+    }
+  },
+);

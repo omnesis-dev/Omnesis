@@ -14,7 +14,7 @@ import {
 import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { SyncError } from "@omnesis/types";
 import {
   decodeImapUtf7,
@@ -29,10 +29,31 @@ import {
   createMailbox,
   createThunderbirdFolder,
   deliverMessage,
+  maildirFileName,
   storeThunderbirdMessage,
 } from "./testing/maildir-writer.js";
 
+import { deniedFixturePaths } from "./testing/permission-fixture.js";
+
 const LIMITS = { maxMailboxes: 100, maxFiles: 1000 };
+
+vi.mock("node:fs", async (original) => {
+  const actual = await original<typeof import("node:fs")>();
+  const { withFixturePermissions } = await import("./testing/permission-fixture.js");
+  return {
+    ...actual,
+    readdirSync: withFixturePermissions(actual.readdirSync),
+    lstatSync: withFixturePermissions(actual.lstatSync),
+    openSync: withFixturePermissions(actual.openSync),
+  };
+});
+
+function setFixtureMode(path: string, mode: number): void {
+  if (process.platform !== "win32") chmodSync(path, mode);
+  else if (mode === 0) deniedFixturePaths.add(path);
+  else deniedFixturePaths.delete(path);
+}
+
 const isRoot = process.getuid?.() === 0;
 
 let root: string;
@@ -40,6 +61,7 @@ beforeEach(() => {
   root = mkdtempSync(join(tmpdir(), "omnesis-maildir-layout-"));
 });
 afterEach(() => {
+  deniedFixturePaths.clear();
   rmSync(root, { recursive: true, force: true });
 });
 
@@ -168,7 +190,7 @@ describe("walkMaildir", () => {
       {
         mailboxId: "INBOX",
         uniq: "101.b.host",
-        relPath: "cur/101.b.host:2,FS",
+        relPath: `cur/${maildirFileName("101.b.host", "cur", "FS")}`,
         flags: "FS",
         version: "",
       },
@@ -178,13 +200,20 @@ describe("walkMaildir", () => {
   test("keywords do not mark a message trashed, and symbolic links are never followed", () => {
     const inbox = createMailbox(join(root, "INBOX"));
     deliverMessage(inbox, "100.a.host", "Subject: a\r\n\r\nx", { flags: "S" });
-    renameSync(join(inbox, "cur", "100.a.host:2,S"), join(inbox, "cur", "100.a.host:2,Sdt"));
-    symlinkSync(join(root, "elsewhere"), join(inbox, "cur", "200.link.host:2,S"));
+    renameSync(
+      join(inbox, "cur", maildirFileName("100.a.host", "cur", "S")),
+      join(inbox, "cur", maildirFileName("100.a.host", "cur", "Sdt")),
+    );
+    symlinkSync(
+      join(root, "elsewhere"),
+      join(inbox, "cur", maildirFileName("200.link.host", "cur", "S")),
+      "junction",
+    );
     expect(walkMaildir(root, [], LIMITS).files).toEqual([
       {
         mailboxId: "INBOX",
         uniq: "100.a.host",
-        relPath: "cur/100.a.host:2,Sdt",
+        relPath: `cur/${maildirFileName("100.a.host", "cur", "Sdt")}`,
         flags: "S",
         version: "",
       },
@@ -207,7 +236,7 @@ describe("walkMaildir", () => {
     expect(names.sort()).toEqual(["INBOX", "Work"]);
   });
 
-  test("pipes and other special files are never taken for messages", () => {
+  test.runIf(process.platform !== "win32")("POSIX FIFO files are never taken for messages", () => {
     const inbox = createMailbox(join(root, "INBOX"));
     execFileSync("mkfifo", [join(inbox, "cur", "300.pipe.host:2,S")]);
     deliverMessage(inbox, "100.a.host", "Subject: a\r\n\r\nx", { flags: "S" });
@@ -219,7 +248,7 @@ describe("walkMaildir", () => {
     deliverMessage(inbox, "100.a.host", "Subject: a\r\n\r\nx", { subdir: "new" });
     deliverMessage(inbox, "100.a.host", "Subject: a\r\n\r\nx", { flags: "S" });
     expect(walkMaildir(root, [], LIMITS).files.map((f) => f.relPath)).toEqual([
-      "cur/100.a.host:2,S",
+      `cur/${maildirFileName("100.a.host", "cur", "S")}`,
     ]);
   });
 
@@ -258,13 +287,13 @@ describe("walkMaildir", () => {
     createMailbox(join(root, "INBOX"));
     const locked = createMailbox(join(root, "Archive"));
     deliverMessage(locked, "1.x", "Subject: 1\r\n\r\nx");
-    chmodSync(join(locked, "cur"), 0o000);
+    setFixtureMode(join(locked, "cur"), 0o000);
     try {
       const walk = walkMaildir(root, [], LIMITS);
       expect(walk.gaps.map((g) => g.mailboxId)).toEqual(["Archive"]);
       expect(walk.files).toEqual([]);
     } finally {
-      chmodSync(join(locked, "cur"), 0o755);
+      setFixtureMode(join(locked, "cur"), 0o755);
     }
   });
 
@@ -272,21 +301,21 @@ describe("walkMaildir", () => {
     createMailbox(root);
     const work = createMailbox(join(root, ".Work"));
     const trash = createMailbox(join(root, ".Trash"));
-    chmodSync(work, 0o000);
-    chmodSync(trash, 0o000);
+    setFixtureMode(work, 0o000);
+    setFixtureMode(trash, 0o000);
     try {
       const walk = walkMaildir(root, [], LIMITS);
       expect(walk.gaps.map((g) => g.mailboxId)).toEqual([".Work"]);
       expect(walk.mailboxes.map((m) => m.name)).toEqual(["INBOX"]);
     } finally {
-      chmodSync(work, 0o755);
-      chmodSync(trash, 0o755);
+      setFixtureMode(work, 0o755);
+      setFixtureMode(trash, 0o755);
     }
   });
 
   test.skipIf(isRoot)("an unreadable root is a permission error with a remedy", () => {
     createMailbox(join(root, "INBOX"));
-    chmodSync(root, 0o000);
+    setFixtureMode(root, 0o000);
     try {
       expect(() => walkMaildir(root, [], LIMITS)).toThrow(
         expect.objectContaining({
@@ -295,7 +324,7 @@ describe("walkMaildir", () => {
         }) as Error,
       );
     } finally {
-      chmodSync(root, 0o755);
+      setFixtureMode(root, 0o755);
     }
   });
 });

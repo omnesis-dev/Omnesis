@@ -90,7 +90,8 @@ test("fetches a missing build into DuckDB's layout, then keeps a verified copy",
     "https://extensions.example.org/v9.8.7/linux_amd64/httpfs.duckdb_extension.gz",
   ]);
   expect(readFileSync(path)).toEqual(binary);
-  expect(statSync(path).mode & 0o777).toBe(0o644);
+  if (process.platform === "win32") expect(statSync(path).mode & 0o200).toBe(0o200);
+  else expect(statSync(path).mode & 0o777).toBe(0o644);
 
   const second = await ensureBundledExtensions({
     packageDir,

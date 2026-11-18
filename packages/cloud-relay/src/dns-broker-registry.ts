@@ -10,6 +10,7 @@ import { createPublicKey } from "node:crypto";
 import { open } from "node:fs/promises";
 import Database from "better-sqlite3";
 import { z } from "zod";
+import { readWindowsRegularFilePrefix } from "@omnesis/core";
 import { gatewayBindingSchema } from "./gateway-binding.js";
 import { keyBindingOwnerPublicKey } from "./gateway-key-auth.js";
 import { hostedGatewayHostname } from "./hosted-name.js";
@@ -29,7 +30,10 @@ import {
  */
 export function exportGatewayKeys(databaseFile: string, relayDomain: string): RegistryEntry[] {
   const domain = relayDomainSchema.parse(relayDomain);
-  const db = new Database(databaseFile, { readonly: true, fileMustExist: true });
+  const db = new Database(databaseFile, {
+    readonly: true,
+    fileMustExist: true,
+  });
   try {
     const rows = db
       .prepare("SELECT hostname, binding FROM relay_gateway_bindings ORDER BY hostname")
@@ -61,6 +65,17 @@ export function exportGatewayKeys(databaseFile: string, relayDomain: string): Re
 }
 
 export async function readRegistryExport(file: string): Promise<RegistryEntry[]> {
+  if (process.platform === "win32") {
+    const maximum = 64 * 1024 * 1024;
+    const { bytes, size } = await readWindowsRegularFilePrefix(file, maximum);
+    if (size > BigInt(maximum)) throw new Error("The registry export is too large");
+    if (BigInt(bytes.byteLength) !== size)
+      throw new Error("The registry export could not be read completely");
+    return z
+      .object({ entries: z.array(registryEntrySchema) })
+      .strict()
+      .parse(JSON.parse(bytes.toString("utf8"))).entries;
+  }
   const handle = await open(file, "r");
   try {
     if ((await handle.stat()).size > 64 * 1024 * 1024)
@@ -92,7 +107,12 @@ export async function importRegistry(options: {
   fetch?: typeof fetch;
 }): Promise<RegistryImportResult> {
   const broker = relayOrigin(options.brokerUrl);
-  const total: RegistryImportResult = { imported: 0, existing: 0, conflicts: 0, invalid: 0 };
+  const total: RegistryImportResult = {
+    imported: 0,
+    existing: 0,
+    conflicts: 0,
+    invalid: 0,
+  };
   for (let index = 0; index < options.entries.length; index += 500) {
     const batch = registryImportSchema.parse({
       entries: options.entries.slice(index, index + 500),
@@ -101,7 +121,10 @@ export async function importRegistry(options: {
       method: "POST",
       redirect: "error",
       signal: AbortSignal.timeout(30_000),
-      headers: { "content-type": "application/json", authorization: `Bearer ${options.token}` },
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${options.token}`,
+      },
       body: JSON.stringify(batch),
     });
     if (!response.ok) {

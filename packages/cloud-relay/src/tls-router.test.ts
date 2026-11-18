@@ -119,11 +119,30 @@ test("even another trusted certificate for the same hostname cannot replace a pi
   await bind(attacker);
   try {
     // Trust both roots: CA trust alone would accept the substitution.
-    const origin = new URL(`https://localhost:${port(attacker)}`);
-    const accepted = await connectOrigin(origin, cert + otherCert);
+    // The endpoint is IPv4-only. Keep the certificate's real hostname for
+    // identity checks and dial the exact listener rather than another service
+    // that could own the same port on IPv6 loopback.
+    const origin = new URL(`https://${host}:${port(attacker)}`);
+    const accepted = await connectOrigin(
+      origin,
+      cert + otherCert,
+      undefined,
+      false,
+      undefined,
+      "127.0.0.1",
+    );
+    expect("remoteAddress" in accepted && accepted.remoteAddress).toBe("127.0.0.1");
+    expect("servername" in accepted && accepted.servername).toBe(host);
     accepted.destroy();
     await expect(
-      connectOrigin(origin, cert + otherCert, undefined, false, certificateFingerprint(cert)),
+      connectOrigin(
+        origin,
+        cert + otherCert,
+        undefined,
+        false,
+        certificateFingerprint(cert),
+        "127.0.0.1",
+      ),
     ).rejects.toThrow("pin mismatch");
     expect(requests).toBe(0);
   } finally {

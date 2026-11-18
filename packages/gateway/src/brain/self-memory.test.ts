@@ -15,12 +15,14 @@ import { createDatabase, upsertDocuments } from "../db.js";
 import { createPersonAnnotation } from "./storage/person-annotations.js";
 import { resolveSelfMemory } from "./self-memory.js";
 import type Database from "better-sqlite3";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 type Db = Database.Database;
 const NOW = Date.parse("2026-07-02T10:00:00.000Z");
 
 function testDbPath(): string {
-  return `/tmp/omnesis-test-${randomUUID()}.db`;
+  return fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
 }
 function cleanupDb(path: string): void {
   for (const s of ["", "-wal", "-shm", "-journal"]) if (existsSync(path + s)) unlinkSync(path + s);

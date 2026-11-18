@@ -103,9 +103,9 @@ async function sizeOf(
   } catch {
     return 0; // absent
   }
-  let dev: number;
+  let dev: bigint;
   try {
-    dev = (await lstat(resolved)).dev;
+    dev = (await lstat(resolved, { bigint: true })).dev;
   } catch {
     return 0;
   }
@@ -114,14 +114,14 @@ async function sizeOf(
 
 async function walk(
   path: string,
-  dev: number,
+  dev: bigint,
   exclude: ReadonlySet<string>,
   seen: Set<string>,
 ): Promise<number> {
   if (exclude.has(path)) return 0;
   let st;
   try {
-    st = await lstat(path);
+    st = await lstat(path, { bigint: true });
   } catch {
     return 0; // vanished mid-walk
   }
@@ -141,7 +141,7 @@ async function walk(
   const key = `${st.dev}:${st.ino}`;
   if (seen.has(key)) return 0;
   seen.add(key);
-  return st.size;
+  return Number(st.size);
 }
 
 /**

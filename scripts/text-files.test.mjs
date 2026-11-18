@@ -54,7 +54,7 @@ const TEXT_EXTENSIONS = new Set([
  * Third-party bundles we vendor verbatim. Their bytes are upstream's business;
  * rewriting them would defeat the point of vendoring a known artifact.
  */
-const isVendored = (file) => file.split(path.sep).includes("vendor");
+const isVendored = (file) => file.split("/").includes("vendor");
 
 /**
  * Tab, newline and carriage return are the legitimate control characters in a

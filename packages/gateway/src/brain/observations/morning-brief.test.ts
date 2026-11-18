@@ -32,6 +32,8 @@ import {
   type MorningBriefSenderDeps,
 } from "./morning-brief.js";
 import type Database from "better-sqlite3";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 const log = createLogger("test").child("morning-brief");
 const NOW = Date.parse("2026-07-02T07:00:00.000Z");
@@ -62,7 +64,7 @@ describe("morning brief sending", () => {
   }
 
   beforeEach(() => {
-    path = `/tmp/omnesis-test-${randomUUID()}.db`;
+    path = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
     db = createDatabase(path);
     pushEnabled = true;
     messageSeq = 0;

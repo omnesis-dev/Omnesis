@@ -19,6 +19,12 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+case "$(uname -s)" in
+  MINGW* | MSYS* | CYGWIN*)
+    exec pwsh -NoLogo -NoProfile -NonInteractive -File "${ROOT}/scripts/ci/production-network.windows.ps1" "${1:-}"
+    ;;
+esac
+
 DOMAINS=(omnesis.app omnesis.dev)
 # The deliberate lookups that must fail: the relay and the installer's host.
 PROBES=(relay.omnesis.app omnesis.dev)

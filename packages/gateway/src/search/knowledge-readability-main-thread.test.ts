@@ -29,6 +29,8 @@ import {
 } from "../indexer/db.js";
 import { SearchPipeline } from "./pipeline.js";
 import { closeTempDb } from "./test-utils.js";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 const BODY =
   "The invented Riverside telescope rota assigns two observers per night and a spare lens kit.";
@@ -92,9 +94,9 @@ function addDocument(
 }
 
 beforeEach(() => {
-  const path = `/tmp/omnesis-test-${randomUUID()}.db`;
+  const path = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
   gateway = createDatabase(path);
-  index = createIndexDatabase(`/tmp/omnesis-test-${randomUUID()}.db`);
+  index = createIndexDatabase(fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`));
   for (const id of ["rota", "rota-copy"])
     addDocument(id, SOURCE, id, "Telescope rota", BODY, { documentType: "file" });
   const cited = gateway

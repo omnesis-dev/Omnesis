@@ -12,6 +12,7 @@ import {
   bindingOrigin,
   certificateFingerprint,
   gatewayBindingNonce,
+  publicLeafCertificate,
   verifyGatewayBinding,
 } from "./gateway-binding.js";
 import { accountId, googleIdentityProvider, localIdentityProvider } from "./identity.js";
@@ -61,6 +62,22 @@ test("a client independently verifies the account's signed certificate binding",
     gatewayBindingNonce(binding()),
   );
   expect(() => gatewayBindingNonce({ ...binding(), gatewayId: "invalid" })).toThrow();
+});
+
+test("native PEM line endings preserve the signed leaf identity without admitting extra material", () => {
+  const lf = new X509Certificate(certificate).toString();
+  const crlf = lf.replace(/\n/g, "\r\n");
+  expect(publicLeafCertificate(crlf).raw).toEqual(publicLeafCertificate(lf).raw);
+  expect(gatewayBindingNonce({ ...binding(), certificate: crlf })).toBe(
+    gatewayBindingNonce({ ...binding(), certificate: lf }),
+  );
+  for (const invalid of [
+    crlf + crlf,
+    crlf + "\r\n-----BEGIN PRIVATE KEY-----\r\ninvented\r\n-----END PRIVATE KEY-----",
+    "unexpected text\r\n" + crlf,
+    lf.replace(/\n/g, "\r"),
+  ])
+    expect(() => publicLeafCertificate(invalid)).toThrow();
 });
 
 test("Google signs the nonce; possession of a directory or relay session cannot forge it", async () => {

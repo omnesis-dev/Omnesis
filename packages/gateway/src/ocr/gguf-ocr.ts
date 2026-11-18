@@ -14,12 +14,14 @@
  */
 
 import { existsSync } from "node:fs";
-import { writeFile, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { randomUUID } from "node:crypto";
-import { createLogger } from "@omnesis/core";
-import { processLauncher } from "../process-launcher/index.js";
+import { writeFile } from "node:fs/promises";
+import { basename, join } from "node:path";
+import { createLogger, createPrivateScratchAsync } from "@omnesis/core";
+import {
+  processLauncher,
+  assertProcessCleanupConfirmed,
+  hasUnconfirmedProcessCleanup,
+} from "../process-launcher/index.js";
 import { OCR_PROMPT, layoutReplyText } from "./http-vlm-ocr.js";
 import type { OcrCapability, OcrResult } from "@omnesis/core";
 
@@ -49,7 +51,7 @@ function binaryResolvable(binPath: string): Promise<boolean> {
   }
   return processLauncher()
     .run(binPath, ["--version"], { timeoutMs: 5_000, captureStdout: false })
-    .then((run) => run.failure === undefined);
+    .then((run) => !hasUnconfirmedProcessCleanup(run) && run.failure === undefined);
 }
 
 /**
@@ -87,6 +89,7 @@ const defaultMtmdRunner: MtmdRunner = async (args) => {
     ],
     { timeoutMs: args.timeoutMs, ...(args.signal ? { signal: args.signal } : {}) },
   );
+  assertProcessCleanupConfirmed(run);
   if (run.failure === "timeout")
     throw new Error(`llama-mtmd-cli timed out after ${args.timeoutMs}ms`);
   if (run.failure === "aborted")
@@ -122,7 +125,7 @@ export class GgufOcr implements OcrCapability {
     this.runMtmd = opts.runMtmd ?? defaultMtmdRunner;
     this.timeoutMs = opts.timeoutMs ?? 180_000;
     // Surface the model filename as the id, so the portal/CLI shows which GGUF.
-    this.modelId = opts.modelPath.split("/").pop() ?? "gguf";
+    this.modelId = basename(opts.modelPath) || "gguf";
   }
 
   async recognize(
@@ -132,9 +135,11 @@ export class GgufOcr implements OcrCapability {
   ): Promise<OcrResult> {
     // llama-mtmd-cli reads the image from a path, so spill the bytes to a temp
     // file for the duration of the call and remove it afterwards.
-    const imagePath = join(tmpdir(), `omnesis-ocr-${randomUUID()}`);
-    await writeFile(imagePath, image);
+    const scratch = await createPrivateScratchAsync("ocr-gguf", { requiresProcessJoin: true });
+    let result: OcrResult;
+    const imagePath = join(scratch.path, "image");
     try {
+      await writeFile(imagePath, image, { flag: "wx", mode: 0o600 });
       const raw = await this.runMtmd({
         binPath: this.binPath,
         modelPath: this.modelPath,
@@ -146,10 +151,24 @@ export class GgufOcr implements OcrCapability {
       });
       const text = layoutReplyText(raw.trim());
       log.debug(`GGUF OCR (${this.modelId}): ${image.byteLength} bytes → ${text.length} chars`);
-      return { text };
-    } finally {
-      await rm(imagePath, { force: true }).catch(() => {});
+      result = { text };
+    } catch (error) {
+      if (hasUnconfirmedProcessCleanup(error)) throw error;
+      const errors = [error];
+      try {
+        await scratch.cleanup();
+      } catch (cleanupError) {
+        errors.push(cleanupError);
+      }
+      if (errors.length > 1) {
+        throw new AggregateError(errors, "GGUF OCR and private scratch cleanup failed", {
+          cause: error,
+        });
+      }
+      throw error;
     }
+    await scratch.cleanup();
+    return result;
   }
 
   async dispose(): Promise<void> {}

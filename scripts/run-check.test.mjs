@@ -12,7 +12,7 @@ import {
 } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import {
@@ -104,6 +104,35 @@ describe("portable check entrypoint", () => {
       }
     },
   );
+  test.each(
+    [
+      [],
+      ["--exclude", "scripts/install-e2e/**"],
+      ["scripts/release"],
+      ["scripts/release/stage-packages.test.mjs"],
+      ["scripts/release/stage-runtime.test.mjs"],
+    ].flatMap((selection) => [0, 6].map((buildExit) => ({ selection, buildExit }))),
+  )(
+    "unit selection $selection prepares compiled assets and preserves build exit $buildExit",
+    ({ selection, buildExit }) => {
+      const cwd = root();
+      const output = join(cwd, "sequence");
+      stub(
+        cwd,
+        "typescript/bin/tsc",
+        `require("node:fs").appendFileSync(process.env.OUTPUT, "build\\n"); process.exit(${buildExit});`,
+      );
+      stub(
+        cwd,
+        "vitest/vitest.mjs",
+        'import fs from "node:fs"; fs.appendFileSync(process.env.OUTPUT, "test\\n");',
+      );
+      const result = invoke(cwd, ["unit", ...selection], { OUTPUT: output });
+      expect(result.status, result.stderr).toBe(buildExit);
+      expect(readFileSync(output, "utf8")).toBe(buildExit === 0 ? "build\ntest\n" : "build\n");
+    },
+  );
+
   test("isolates fixture invocations from inherited Nx admission state", () => {
     vi.stubEnv("OMNESIS_FORCE_TEST_ADMISSION", "1");
     vi.stubEnv("OMNESIS_TREE_BASE", "fixture-parent-base");
@@ -171,13 +200,15 @@ describe("portable check entrypoint", () => {
     const bin = join(cwd, "bin");
     mkdirSync(bin);
     const npm = join(bin, "npm");
-    writeFileSync(
-      npm,
-      '#!/usr/bin/env node\nimport fs from "node:fs"; fs.appendFileSync(process.env.SEQUENCE, `npm ${process.argv.slice(2).join(" ")}\\n`);\n',
-    );
+    const npmCli = join(bin, "npm-cli.mjs");
+    const npmSource =
+      '#!/usr/bin/env node\nimport fs from "node:fs"; fs.appendFileSync(process.env.SEQUENCE, `npm ${process.argv.slice(2).join(" ")}\\n`);\n';
+    writeFileSync(npm, npmSource);
+    writeFileSync(npmCli, npmSource);
     chmodSync(npm, 0o755);
     const result = invoke(cwd, ["unit-all"], {
-      PATH: `${bin}:${process.env.PATH}`,
+      PATH: `${bin}${delimiter}${process.env.PATH}`,
+      npm_execpath: npmCli,
       SEQUENCE: sequence,
     });
     expect(result.status).toBe(0);

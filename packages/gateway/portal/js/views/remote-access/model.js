@@ -182,4 +182,3 @@ export function policyDifference({ relayPolicy, tailscalePolicy }) {
 export function listSentence(items) {
   return items.length < 2 ? (items[0] ?? "") : `${items.slice(0, -1).join(", ")} and ${items.at(-1)}`;
 }
-

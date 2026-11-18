@@ -26,8 +26,12 @@
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createLogger } from "@omnesis/core";
-import { processLauncher } from "../process-launcher/index.js";
+import { createLogger, ensurePrivateDirs } from "@omnesis/core";
+import {
+  processLauncher,
+  assertProcessCleanupConfirmed,
+  hasUnconfirmedProcessCleanup,
+} from "../process-launcher/index.js";
 import { streamableCaf } from "./caf-stream.js";
 
 const log = createLogger("gateway:transcribe");
@@ -38,7 +42,11 @@ const FFMPEG_STATIC_SPECIFIER = "ffmpeg-static";
 export const PCM_SAMPLE_RATE = 16_000;
 
 /** Decode audio bytes to 16 kHz mono float PCM. Injectable so tests skip ffmpeg. */
-export type AudioDecoder = (bytes: Uint8Array, mimeType: string) => Promise<Float32Array>;
+export type AudioDecoder = (
+  bytes: Uint8Array,
+  mimeType: string,
+  opts?: { signal?: AbortSignal },
+) => Promise<Float32Array>;
 
 /** Resolve the bundled ffmpeg binary path, or null if ffmpeg-static is absent. */
 export async function resolveFfmpegPath(): Promise<string | null> {
@@ -105,33 +113,52 @@ export function needsSeekableInput(bytes: Uint8Array): boolean {
  * `ffmpegPath` is injectable for tests; when omitted it resolves the
  * ffmpeg-static binary. `tempDir` is where the private folder for a seekable
  * copy is made (the system temporary directory by default); the folder is
- * removed however decoding ends. Throws `AudioDecodeError` when ffmpeg is
+ * removed after confirmed process completion and retained if cleanup is uncertain.
+ * Throws `AudioDecodeError` when ffmpeg is
  * missing, exits non-zero, or produces no samples; the error is `unreadable`
  * when the input is at fault (see {@link AudioDecodeError.unreadable}).
  */
 export async function decodeToPcm16kMono(
   bytes: Uint8Array,
-  opts: { ffmpegPath?: string; timeoutMs?: number; tempDir?: string } = {},
+  opts: { ffmpegPath?: string; timeoutMs?: number; tempDir?: string; signal?: AbortSignal } = {},
 ): Promise<Float32Array> {
+  opts.signal?.throwIfAborted();
   const ffmpegPath = opts.ffmpegPath ?? (await resolveFfmpegPath());
   if (!ffmpegPath) {
     throw new AudioDecodeError("ffmpeg-static is not installed");
   }
+  opts.signal?.throwIfAborted();
   const timeoutMs = opts.timeoutMs ?? 120_000;
   if (!needsSeekableInput(bytes)) {
-    return runFfmpeg(ffmpegPath, ["-i", "pipe:0"], { input: streamableCaf(bytes), timeoutMs });
+    return runFfmpeg(ffmpegPath, ["-i", "pipe:0"], {
+      input: streamableCaf(bytes),
+      timeoutMs,
+      signal: opts.signal,
+    });
   }
 
   let dir: string;
   try {
-    // mkdtemp makes the folder owner-only (0700); the copy is 0600 within it.
+    // POSIX mkdtemp is 0700; Windows ACL preparation below precedes any bytes.
     dir = await mkdtemp(join(opts.tempDir ?? tmpdir(), "omnesis-audio-"));
   } catch (err) {
     throw new AudioDecodeError(
       `could not create a temporary folder for decoding: ${err instanceof Error ? err.message : String(err)}`,
     );
   }
+  let retain = false;
   try {
+    if (process.platform === "win32") {
+      try {
+        await ensurePrivateDirs([dir]);
+      } catch (err) {
+        if (hasUnconfirmedProcessCleanup(err)) throw err;
+        throw new AudioDecodeError(
+          `could not protect the temporary audio folder: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    }
+    opts.signal?.throwIfAborted();
     const path = join(dir, "input");
     try {
       await writeFile(path, bytes, { mode: 0o600, flag: "wx" });
@@ -142,13 +169,20 @@ export async function decodeToPcm16kMono(
     }
     // `file:` keeps ffmpeg from reading a protocol into the path; -nostdin
     // keeps it off the stdin it is not reading from.
-    return await runFfmpeg(ffmpegPath, ["-nostdin", "-i", `file:${path}`], { timeoutMs });
-  } finally {
-    await rm(dir, { recursive: true, force: true }).catch((err: unknown) => {
-      log.warn(
-        `Could not remove the temporary audio folder ${dir}: ${err instanceof Error ? err.message : String(err)}`,
-      );
+    return await runFfmpeg(ffmpegPath, ["-nostdin", "-i", `file:${path}`], {
+      timeoutMs,
+      signal: opts.signal,
     });
+  } catch (error) {
+    retain = hasUnconfirmedProcessCleanup(error);
+    throw error;
+  } finally {
+    if (!retain)
+      await rm(dir, { recursive: true, force: true }).catch((err: unknown) => {
+        log.warn(
+          `Could not remove the temporary audio folder ${dir}: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      });
   }
 }
 
@@ -156,7 +190,7 @@ export async function decodeToPcm16kMono(
 async function runFfmpeg(
   ffmpegPath: string,
   inputArgs: string[],
-  opts: { input?: Uint8Array; timeoutMs: number },
+  opts: { input?: Uint8Array; timeoutMs: number; signal?: AbortSignal },
 ): Promise<Float32Array> {
   const { timeoutMs } = opts;
   const run = await processLauncher().run(
@@ -174,8 +208,13 @@ async function runFfmpeg(
       String(PCM_SAMPLE_RATE),
       "pipe:1",
     ],
-    { ...(opts.input ? { input: opts.input } : {}), timeoutMs },
+    {
+      ...(opts.input ? { input: opts.input } : {}),
+      timeoutMs,
+      ...(opts.signal ? { signal: opts.signal } : {}),
+    },
   );
+  assertProcessCleanupConfirmed(run);
   if (run.failure === "timeout")
     throw new AudioDecodeError(`ffmpeg timed out after ${timeoutMs}ms`);
   if (run.failure)

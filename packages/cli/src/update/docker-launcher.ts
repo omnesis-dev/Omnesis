@@ -23,7 +23,7 @@
 
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
-import { dirname, isAbsolute, join } from "node:path";
+import { dirname, join, posix } from "node:path";
 import { fileURLToPath } from "node:url";
 
 /** The launcher's host path, which the installer gives the updater service. */
@@ -55,9 +55,9 @@ export type LauncherRefresh = "refreshed" | "current" | "skipped";
  */
 export function dockerLauncherPath(projectDir: string, env: NodeJS.ProcessEnv): string | null {
   const recorded = env[DOCKER_LAUNCHER_ENV];
-  if (recorded && isAbsolute(recorded)) return recorded;
+  if (recorded && posix.isAbsolute(recorded)) return recorded;
   const home = projectDir.match(/^(\/.+)\/\.config\/omnesis\/?$/u)?.[1];
-  return home ? join(home, ".local", "bin", "omnesis") : null;
+  return home ? posix.join(home, ".local", "bin", "omnesis") : null;
 }
 
 /** The service a launcher runs its commands in, when it is this install's launcher. */
@@ -71,7 +71,7 @@ export function launcherService(text: string, composeFile: string): "gateway" | 
 
 /** A one-shot container of the updater service with the launcher's directory mounted. */
 function launcherContainer(composeFile: string, launcher: string, tail: string[]): LauncherRun {
-  const dir = dirname(launcher);
+  const dir = posix.dirname(launcher);
   return {
     command: "docker",
     args: [

@@ -2,17 +2,37 @@
   "comment": "Messages both sides of the helper protocol must agree on. The Go tests check the helper parses every command and emits every event exactly as written; the gateway's tests check it reads every event and writes every command exactly as written.",
   "commands": [
     {
-      "type": "configure",
-      "public": { "enabled": true, "paths": ["/mcp", "/oauth/token", "/portal/css/"] }
+      "type": "gateway-certificate",
+      "certificate": {
+        "cert": "invented-certificate",
+        "key": "invented-key"
+      }
     },
-    { "type": "configure", "public": { "enabled": false, "paths": [] } },
-    { "type": "login" },
-    { "type": "logout" }
+    {
+      "type": "configure",
+      "public": {
+        "enabled": true,
+        "paths": ["/mcp", "/oauth/token", "/portal/css/"]
+      }
+    },
+    {
+      "type": "configure",
+      "public": {
+        "enabled": false,
+        "paths": []
+      }
+    },
+    {
+      "type": "login"
+    },
+    {
+      "type": "logout"
+    }
   ],
   "events": [
     {
       "type": "status",
-      "protocol": 1,
+      "protocol": 2,
       "backend": "running",
       "node": {
         "dnsName": "omnesis.example-net.ts.net",
@@ -20,20 +40,32 @@
         "tailnet": "example-net.ts.net",
         "ips": ["100.64.0.1", "fd7a:115c:a1e0::1"]
       },
-      "owner": { "id": "7", "login": "maya@example.com", "displayName": "Maya Reeves" },
-      "certificate": { "source": "tailscale" },
-      "public": { "state": "on", "url": "https://omnesis.example-net.ts.net" }
+      "owner": {
+        "id": "7",
+        "login": "maya@example.com",
+        "displayName": "Maya Reeves"
+      },
+      "certificate": {
+        "source": "tailscale"
+      },
+      "public": {
+        "state": "on",
+        "url": "https://omnesis.example-net.ts.net"
+      }
     },
     {
       "type": "status",
-      "protocol": 1,
+      "protocol": 2,
       "backend": "running",
       "node": {
         "dnsName": "omnesis.example-net.ts.net",
         "hostName": "omnesis",
         "ips": ["100.64.0.1"]
       },
-      "certificate": { "source": "gateway", "reason": "https-disabled" },
+      "certificate": {
+        "source": "gateway",
+        "reason": "https-disabled"
+      },
       "public": {
         "state": "needs-enable",
         "enableUrl": "https://login.tailscale.com/f/funnel?node=nExample",
@@ -42,12 +74,20 @@
     },
     {
       "type": "status",
-      "protocol": 1,
+      "protocol": 2,
       "backend": "needs-login",
       "loginUrl": "https://login.tailscale.com/a/0123456789abcd",
-      "certificate": { "source": "gateway", "reason": "pending" },
-      "public": { "state": "off" }
+      "certificate": {
+        "source": "gateway",
+        "reason": "pending"
+      },
+      "public": {
+        "state": "off"
+      }
     },
-    { "type": "fatal", "message": "tailscale backend stopped" }
+    {
+      "type": "fatal",
+      "message": "tailscale backend stopped"
+    }
   ]
 }

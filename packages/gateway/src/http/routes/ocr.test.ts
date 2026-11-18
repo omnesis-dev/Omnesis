@@ -20,6 +20,8 @@ import { createDevice } from "../../data/repositories/DeviceRepository.js";
 import { OcrService } from "../../ocr/index.js";
 import type Database from "better-sqlite3";
 import type { ResolvedAssignment } from "@omnesis/core";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 type Db = Database.Database;
 
@@ -58,7 +60,7 @@ function post(
 const enc = (s: string) => new TextEncoder().encode(s);
 
 beforeEach(() => {
-  dbPath = `/tmp/omnesis-ocr-http-${randomUUID()}.db`;
+  dbPath = fixtureJoin(fixtureTmpdir(), `omnesis-ocr-http-${randomUUID()}.db`);
   db = createDatabase(dbPath);
   WRITE_TOKEN = mintToken([SCOPE_WRITE_ALL]);
   READ_TOKEN = mintToken([SCOPE_READ]);

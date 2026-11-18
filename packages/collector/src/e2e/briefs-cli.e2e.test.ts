@@ -30,6 +30,7 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 import Database from "better-sqlite3";
 import { describe, test, expect, beforeAll, afterAll } from "vitest";
+import { e2eTsxCommand } from "./gateway-env.js";
 import { SyntheticE2EHarness } from "./synth-harness.js";
 
 const execFileAsync = promisify(execFile);
@@ -393,7 +394,8 @@ async function runCli(harness: SyntheticE2EHarness, args: string[]): Promise<Cli
     delete cliEnv.NODE_TLS_REJECT_UNAUTHORIZED;
     delete cliEnv.NODE_EXTRA_CA_CERTS;
     delete cliEnv.OMNESIS_INSECURE_TLS;
-    const { stdout, stderr } = await execFileAsync("npx", ["tsx", CLI_ENTRY, ...args], {
+    const cli = e2eTsxCommand(CLI_ENTRY);
+    const { stdout, stderr } = await execFileAsync(cli.command, [...cli.args, ...args], {
       cwd: REPO_ROOT,
       env: cliEnv,
       timeout: CLI_TIMEOUT_MS,

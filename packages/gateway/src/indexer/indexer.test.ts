@@ -38,6 +38,8 @@ import type { UrlCanonicalizerSpec } from "@omnesis/core";
 import type { DocumentSource, Embedder, IndexableDocument } from "./types.js";
 import type { DocumentInput } from "@omnesis/types";
 import type Database from "better-sqlite3";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 type Db = Database.Database;
 
 // Mock embedder that returns deterministic vectors, with optional failure injection
@@ -206,7 +208,7 @@ let embedder: MockEmbedder;
 let indexer: Indexer;
 
 beforeEach(() => {
-  db = createIndexDatabase(`/tmp/omnesis-indexer-test-${randomUUID()}.db`);
+  db = createIndexDatabase(fixtureJoin(fixtureTmpdir(), `omnesis-indexer-test-${randomUUID()}.db`));
   source = new MockSource();
   embedder = new MockEmbedder();
   indexer = new Indexer(db, source, new DocumentChunker(), embedder);
@@ -1268,7 +1270,7 @@ describe("Indexer", () => {
     }
 
     function gwDbPath() {
-      return `/tmp/omnesis-recanon-test-${randomUUID()}.db`;
+      return fixtureJoin(fixtureTmpdir(), `omnesis-recanon-test-${randomUUID()}.db`);
     }
 
     function makeGwDoc(overrides: Partial<DocumentInput> = {}): DocumentInput {

@@ -15,6 +15,8 @@ import { Scheduler } from "../scheduler/scheduler.js";
 import { IoTaskRunner } from "../scheduler/runners/io.js";
 import { ioGateFromScheduler } from "../scheduler/io-ops.js";
 import { readSearchResultLinks } from "./result-links.js";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 const WORKER_URL = new URL("../workers/io-worker.ts", import.meta.url);
 const LOADER_URL = new URL("../workers/register-tsx.mjs", import.meta.url).href;
@@ -31,7 +33,7 @@ afterEach(async () => {
 });
 
 it("returns what the direct read returns", async () => {
-  const path = `/tmp/omnesis-test-${randomUUID()}.db`;
+  const path = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
   paths.push(path);
   const db = createDatabase(path);
   const insert = db.prepare(

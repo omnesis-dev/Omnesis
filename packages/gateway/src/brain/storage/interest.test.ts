@@ -40,6 +40,8 @@ import { createObservation, getObservation, setObservationUserAction } from "./o
 import { createOpenLoop, listOpenLoopLedger } from "./open-loops.js";
 import { applyTaskCommand } from "./tasks.js";
 import type Database from "better-sqlite3";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 const NOW = Date.parse("2026-03-10T09:00:00Z");
 const MINUTE = 60_000;
@@ -48,7 +50,7 @@ let path: string;
 let db: Database.Database;
 
 beforeEach(() => {
-  path = `/tmp/omnesis-test-${randomUUID()}.db`;
+  path = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
   db = createDatabase(path);
 });
 afterEach(() => {

@@ -12,6 +12,8 @@ import { replaceDocumentTemporalProjections } from "../temporal-projections/docu
 import { TemporalQueryInputError, TemporalQueryService } from "./temporal-query-service.js";
 import type { AnalyticsTableSchema } from "@omnesis/source-sdk";
 import type { DocumentInput } from "@omnesis/types";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 function cleanup(path: string): void {
   for (const suffix of ["", "-wal", "-shm", "-journal"]) {
@@ -60,8 +62,8 @@ describe("TemporalQueryService", () => {
   let emailProjectionId: string;
 
   beforeEach(async () => {
-    sqlitePath = `/tmp/omnesis-test-${randomUUID()}.db`;
-    duckPath = `/tmp/omnesis-test-${randomUUID()}.duckdb`;
+    sqlitePath = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
+    duckPath = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.duckdb`);
     db = createDatabase(sqlitePath);
     analytics = new AnalyticsDb(duckPath);
     await analytics.open();

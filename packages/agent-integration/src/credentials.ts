@@ -15,6 +15,7 @@ import {
 } from "node:fs";
 import { dirname } from "node:path";
 import { z } from "zod";
+import { privateWindowsFiles } from "./windows-files.js";
 
 import {
   normalizeFingerprint,
@@ -90,7 +91,11 @@ export type OperationalIntegrationCredentials =
 function readJson(path: string): unknown {
   let value: unknown;
   try {
-    value = JSON.parse(readFileSync(path, "utf8"));
+    value = JSON.parse(
+      process.platform === "win32"
+        ? privateWindowsFiles().readWindowsPrivateFileContentsSync(path).toString("utf8")
+        : readFileSync(path, "utf8"),
+    );
   } catch (error) {
     throw new Error(
       `could not read integration credentials at ${path}: ${
@@ -233,6 +238,11 @@ export function writeIntegrationCredentials(
 /** Replace a private integration file atomically, readable only by its owner. */
 export function writeSecretFileDurably(path: string, data: string): void {
   const parent = dirname(path);
+  if (process.platform === "win32") {
+    mkdirSync(parent, { recursive: true });
+    privateWindowsFiles().writeWindowsPrivateFileAtomicSync(path, Buffer.from(data, "utf8"));
+    return;
+  }
   const temporary = `${path}.omnesis-${process.pid.toString(36)}${randomBytes(6).toString("hex")}.tmp`;
   mkdirSync(parent, { recursive: true });
   try {
@@ -253,7 +263,6 @@ export function writeSecretFileDurably(path: string, data: string): void {
     }
     throw error;
   }
-  if (process.platform === "win32") return;
   let directory: number;
   try {
     directory = openSync(parent, "r");

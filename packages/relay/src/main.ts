@@ -25,7 +25,8 @@ const log = createLogger("relay");
 function main(): void {
   const config = loadRelayConfig();
   validateRelayCredentialFiles(config);
-  mkdirSync(dirname(config.dbPath), { recursive: true, mode: 0o700 });
+  if (process.platform !== "win32")
+    mkdirSync(dirname(config.dbPath), { recursive: true, mode: 0o700 });
   const store = new RelayStore(config.dbPath);
   const metrics = new RelayMetrics();
   const service = new RelayService({

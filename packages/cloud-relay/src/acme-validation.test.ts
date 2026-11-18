@@ -9,6 +9,7 @@ import { join } from "node:path";
 import { X509Certificate } from "node:crypto";
 import { beforeAll, afterAll, afterEach, expect, test, vi } from "vitest";
 import { tlsFiles } from "../test/support.js";
+import * as privateInputs from "./private-inputs.js";
 import { GatewayAcmeRenewal, validateAcmeCertificate, relayDnsPresenter } from "./acme-gateway.js";
 
 const systemTrust = vi.hoisted(() => ({ certificates: [] as string[] }));
@@ -332,11 +333,12 @@ test("account read failures preserve existing material without treating arbitrar
     accountPath = join(directory, "unreadable-account");
   await writeFile(certPath, bootstrap);
   await writeFile(keyPath, key);
+  const originalPrivateRead = privateInputs.readPrivateText;
+  const privateRead = vi.spyOn(privateInputs, "readPrivateText");
   for (const error of [null, "read-error", {}]) {
-    vi.mocked(fileOps.readFile).mockImplementation((async (path, encoding) => {
-      if (String(path) === accountPath) throw error;
-      return actualFiles.readFile(path, encoding);
-    }) as typeof fileOps.readFile);
+    privateRead.mockImplementation((path) =>
+      path === accountPath ? Promise.reject(error) : originalPrivateRead(path),
+    );
     const renewal = new GatewayAcmeRenewal({
       directoryUrl: "https://ca.example.test",
       publicOrigin: `https://${hostname}`,

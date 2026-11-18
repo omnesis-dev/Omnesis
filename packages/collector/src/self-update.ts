@@ -38,9 +38,12 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import {
   capDeviceUpdateDetail,
+  beginUpdateLockChildJoin,
   createLogger,
   DEFAULT_CONFIG_DIR,
   getUpdateLockProcessGroup,
+  nodeCommandInvocation,
+  spawnWindowsJob,
   summarizeCommandFailure,
   UPDATE_LOCK_ENV,
   UpdateLockBusyError,
@@ -61,6 +64,9 @@ export interface SelfUpdateAttempt {
   detail?: string;
   /** Keep the host fenced when a timed-out updater could not be proven stopped. */
   retainLock?: boolean;
+  /** Internal diagnostics; only detail crosses the gateway reporting boundary. */
+  cause?: unknown;
+  cleanupFailure?: unknown;
   /** A later service-manager close can prove a retained fence is safe to release. */
   releaseFenceWhenStopped?: Promise<void>;
 }
@@ -178,7 +184,7 @@ export function updateInvocation(
         : {}),
     };
   }
-  return { command: cliPath, args };
+  return nodeCommandInvocation(cliPath, args, platform);
 }
 
 /**
@@ -256,13 +262,15 @@ function signalUpdaterTree(child: ReturnType<typeof spawn>, signal: NodeJS.Signa
 }
 
 function signalPublishedApplyGroup(configDir: string, signal: NodeJS.Signals): boolean {
-  if (process.platform === "win32") return true;
   const group = getUpdateLockProcessGroup(configDir);
   if (group.state === "none") {
     log.warn("The unresponsive updater published no apply process group");
     return false;
   }
   if (group.state === "gone") return true;
+  // A published PID from another process is insufficient authority to kill
+  // it on Windows. The retained outer job owns only this updater subtree.
+  if (process.platform === "win32") return false;
   if (group.state === "unverified") {
     log.warn(`Refusing to signal reused or unverifiable update process group ${group.pid}`);
     return false;
@@ -322,11 +330,30 @@ export function createCliUpdater(
           lockWaitMinutes(limitMs),
         );
         log.info(`Running ${invocation.command} ${invocation.args.join(" ")}`);
-        const child = spawnProcess(invocation.command, invocation.args, {
-          stdio: ["ignore", "pipe", "pipe"],
-          env,
-          detached: invocation.command !== "systemd-run" && platform !== "win32",
-        });
+        const ownedWindowsJob = platform === "win32" && !opts.spawnFn;
+        const childJoin = ownedWindowsJob ? beginUpdateLockChildJoin(configDir, lockId) : undefined;
+        let ownedJob: ReturnType<typeof spawnWindowsJob> | undefined;
+        let child: ReturnType<typeof spawn>;
+        try {
+          child = ownedWindowsJob
+            ? (ownedJob = spawnWindowsJob(invocation.command, invocation.args, { env }))
+            : spawnProcess(invocation.command, invocation.args, {
+                stdio: ["ignore", "pipe", "pipe"],
+                env,
+                detached: invocation.command !== "systemd-run" && platform !== "win32",
+              });
+        } catch (error) {
+          // No child was returned, so target creation was never permitted.
+          childJoin?.joined();
+          throw error;
+        }
+        let creationError: unknown;
+        if ("jobReady" in child) {
+          child.stdin?.end();
+          (child.jobReady as Promise<void>).catch((error: unknown) => {
+            creationError = error;
+          });
+        }
         let confirmStopped!: () => void;
         const stopped = new Promise<void>((resolveStopped) => {
           confirmStopped = resolveStopped;
@@ -398,8 +425,15 @@ export function createCliUpdater(
             });
             escalation = setTimeout(force, stopGraceMs);
           } else {
-            signalUpdaterTree(child, "SIGTERM");
+            if (ownedWindowsJob) child.kill("SIGKILL");
+            else signalUpdaterTree(child, "SIGTERM");
             escalation = setTimeout(() => {
+              if (ownedWindowsJob) {
+                // Closing this retained helper closes the kernel job, including
+                // nested apply jobs. Publication evidence is checked after close.
+                child.kill("SIGKILL");
+                return;
+              }
               if (!signalPublishedApplyGroup(configDir, "SIGKILL")) {
                 settle({
                   state: "failed",
@@ -430,6 +464,10 @@ export function createCliUpdater(
           errors = `${errors}${chunk.toString()}`.slice(-CAPTURED_OUTPUT_BYTES);
         });
         child.on("error", (err) => {
+          if (ownedWindowsJob) {
+            creationError ??= err;
+            return;
+          }
           settle({
             state: "failed",
             detail:
@@ -438,36 +476,72 @@ export function createCliUpdater(
           });
         });
         child.on("close", (code) => {
-          confirmStopped();
-          if (timedOut) {
-            const group = getUpdateLockProcessGroup(configDir);
-            if (!invocation.stop && group.state !== "none" && group.state !== "gone") {
+          void (async () => {
+            if (ownedJob) {
+              try {
+                await ownedJob.jobClosed;
+                childJoin!.joined();
+              } catch (cleanupError) {
+                settle({
+                  state: "failed",
+                  retainLock: true,
+                  cause: creationError,
+                  cleanupFailure: cleanupError,
+                  detail:
+                    (creationError
+                      ? "The update CLI failed to start. "
+                      : timedOut
+                        ? `The update exceeded ${limitMinutes} minutes. `
+                        : "") +
+                    "Update process cleanup was not confirmed. The host update lock remains held; review the update process state before retrying.",
+                });
+                return;
+              }
+            }
+            confirmStopped();
+            if (timedOut) {
+              const group = getUpdateLockProcessGroup(configDir);
+              if (!invocation.stop && group.state !== "none" && group.state !== "gone") {
+                settle({
+                  state: "failed",
+                  retainLock: true,
+                  detail:
+                    `The update exceeded ${limitMinutes} minutes, and its ` +
+                    "detached apply process has not been proven stopped. The host update lock remains held.",
+                });
+                return;
+              }
               settle({
                 state: "failed",
-                retainLock: true,
-                detail:
-                  `The update exceeded ${limitMinutes} minutes, and its ` +
-                  "detached apply process has not been proven stopped. The host update lock remains held.",
+                detail: `The update did not finish within ${limitMinutes} minutes and was stopped.`,
               });
               return;
             }
+            if (creationError) {
+              settle({
+                state: "failed",
+                detail: `Could not start the update CLI: ${creationError instanceof Error ? creationError.message : String(creationError)}`,
+              });
+              return;
+            }
+            if (code === 0) {
+              const label =
+                "version" in target ? target.version : `commit ${target.commit.slice(0, 12)}`;
+              settle({ state: "installed", detail: `Installed ${label}; restarting.` });
+              return;
+            }
+            const summary = summarizeCommandFailure(errors) || summarizeCommandFailure(output);
             settle({
               state: "failed",
-              detail: `The update did not finish within ${limitMinutes} minutes and was stopped.`,
+              detail:
+                `\`${invocation.command} … update\` exited ${code ?? "with no code"}. ${summary}`.trimEnd(),
             });
-            return;
-          }
-          if (code === 0) {
-            const label =
-              "version" in target ? target.version : `commit ${target.commit.slice(0, 12)}`;
-            settle({ state: "installed", detail: `Installed ${label}; restarting.` });
-            return;
-          }
-          const summary = summarizeCommandFailure(errors) || summarizeCommandFailure(output);
-          settle({
-            state: "failed",
-            detail:
-              `\`${invocation.command} … update\` exited ${code ?? "with no code"}. ${summary}`.trimEnd(),
+          })().catch(() => {
+            settle({
+              state: "failed",
+              retainLock: true,
+              detail: "Update cleanup could not be verified. The host update lock remains held.",
+            });
           });
         });
       }),

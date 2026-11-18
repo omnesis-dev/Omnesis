@@ -303,7 +303,7 @@ test("portal offers no manual setup form; connected the relay's page is one plai
     "Account: linked",
     "New devices: automatic, 1 confirmed sign-ins, 1 on record",
   ])
-    expect(copied.split("\n")).toContain(line);
+    expect(copied.split(/\r?\n/)).toContain(line);
   expect(copied).toMatch(/\nGateway version: \d+\.\d+\.\d+/);
   expect(copied).not.toContain("fictional-credential");
   await page.screenshot({ path: "/tmp/omnesis-relay-problem-desktop.png", fullPage: true });

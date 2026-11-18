@@ -1,11 +1,15 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { mkdtempSync, readdirSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
-import { ensureInstallRootKey } from "./secret-store.js";
+import {
+  createSecretStore,
+  ensureInstallRootKey,
+  OMNESIS_INSTALL_ROOT_KEY,
+} from "./secret-store.js";
 import { resolveStorageEncryptionReadiness } from "./storage-readiness.js";
 import {
   inspectStorageKey,
@@ -82,18 +86,9 @@ describe("resolveStorageEncryptionReadiness", () => {
     const dir = tempConfigDir();
     await ensureInstallRootKey({ backend: "file", configDir: dir });
     await resolveStorageEncryptionReadiness(dir, ["whatsapp-store"]);
-    // The marker and the root key are gone; the wrapped key survives. The
-    // file store keeps its entries under keyring/dev.omnesis/, named by the
-    // base64url of the entry name.
+    // Remove the marker and root entry while preserving the wrapped storage key.
     rmSync(join(dir, "keyring", "storage-encryption-required"), { force: true });
-    const storeDir = join(dir, "keyring", "dev.omnesis");
-    const rootKeyEntry = readdirSync(storeDir).find((f) =>
-      Buffer.from(f.replace(/\.secret$/u, ""), "base64url")
-        .toString("utf8")
-        .includes("install-root-key"),
-    );
-    if (!rootKeyEntry) throw new Error("expected a root key entry in the file store");
-    rmSync(join(storeDir, rootKeyEntry));
+    await createSecretStore({ backend: "file", configDir: dir }).delete(OMNESIS_INSTALL_ROOT_KEY);
     await expect(resolveStorageEncryptionReadiness(dir, ["whatsapp-store"])).rejects.toThrow(
       /root key is unavailable/u,
     );

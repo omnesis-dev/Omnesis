@@ -13,19 +13,19 @@ import (
 	"time"
 )
 
-// Fallback loads the gateway's certificate and key from disk and reloads them
-// when the gateway rotates its certificate, so a device that pinned the
-// gateway's certificate keeps trusting the tailnet address.
+// Fallback serves the active gateway certificate supplied by its parent.
+// Standalone helpers can instead reload legacy PEM files from disk.
 type Fallback struct {
 	certPath, keyPath string
 
-	mu       sync.Mutex
-	cert     *tls.Certificate
-	certMod  time.Time
-	keyMod   time.Time
-	checked  time.Time
-	interval time.Duration
-	now      func() time.Time
+	mu            sync.Mutex
+	parentManaged bool
+	cert          *tls.Certificate
+	certMod       time.Time
+	keyMod        time.Time
+	checked       time.Time
+	interval      time.Duration
+	now           func() time.Time
 }
 
 // NewFallback returns a loader for the given PEM files.
@@ -33,11 +33,27 @@ func NewFallback(certPath, keyPath string) *Fallback {
 	return &Fallback{certPath: certPath, keyPath: keyPath, interval: 5 * time.Second, now: time.Now}
 }
 
+// SetPEM atomically installs a validated pair and stops reading legacy files.
+// A rejected update leaves the last good pair intact.
+func (f *Fallback) SetPEM(cert, key string) error {
+	if f == nil {
+		return errors.New("no gateway certificate configured")
+	}
+	pair, err := tls.X509KeyPair([]byte(cert), []byte(key))
+	if err != nil {
+		return errors.New("invalid gateway certificate pair")
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.cert, f.parentManaged = &pair, true
+	return nil
+}
+
 // Certificate returns the current certificate, reloading it when either file
 // has changed since the last load. A failed reload keeps serving the last
 // good certificate.
 func (f *Fallback) Certificate() (*tls.Certificate, error) {
-	if f == nil || f.certPath == "" || f.keyPath == "" {
+	if f == nil {
 		return nil, errors.New("no gateway certificate configured")
 	}
 	f.mu.Lock()

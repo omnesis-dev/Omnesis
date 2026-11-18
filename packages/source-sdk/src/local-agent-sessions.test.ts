@@ -4,9 +4,11 @@
 import {
   chmodSync,
   linkSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   renameSync,
+  realpathSync,
   appendFileSync,
   rmSync,
   symlinkSync,
@@ -30,6 +32,40 @@ import {
   type ParsedLocalAgentSession,
 } from "./local-agent-sessions.js";
 import { validateDocumentEventProfile } from "./structured-source.js";
+
+const deniedDirectories = vi.hoisted(() => new Set<string>());
+
+// A failed directory read leaves its entry metadata visible. Windows chmod
+// cannot deny traversal, so inject the same EACCES at the owned read boundary.
+vi.mock("node:fs", async (original) => {
+  const actual = await original<typeof import("node:fs")>();
+  return {
+    ...actual,
+    opendirSync: (...args: Parameters<typeof actual.opendirSync>) => {
+      if (
+        deniedDirectories.size &&
+        typeof args[0] === "string" &&
+        deniedDirectories.has(actual.realpathSync(args[0]))
+      )
+        throw Object.assign(new Error("Invented session directory read denied"), {
+          code: "EACCES",
+        });
+      return actual.opendirSync(...args);
+    },
+  };
+});
+
+function setDirectoryReadable(
+  path: string,
+  readable: boolean,
+  controlled = process.platform === "win32",
+): void {
+  if (controlled) {
+    const physical = realpathSync(path);
+    if (readable) deniedDirectories.delete(physical);
+    else deniedDirectories.add(physical);
+  } else chmodSync(path, readable ? 0o700 : 0o000);
+}
 
 const PROVIDER = ProviderId("fictional-agent:local");
 const SOURCE = SourceId("fictional-agent:local");
@@ -101,6 +137,7 @@ describe("createLocalAgentSessionSource", () => {
   });
 
   afterEach(() => {
+    deniedDirectories.clear();
     vi.doUnmock("node:fs");
     vi.resetModules();
     if (root) rmSync(root, { recursive: true, force: true });
@@ -1135,6 +1172,8 @@ describe("createLocalAgentSessionSource", () => {
 
   test("abandons a nested directory replaced during traversal", async () => {
     const realFs = await vi.importActual<typeof import("node:fs")>("node:fs");
+    const syntheticRoot = join(tmpdir(), "synthetic-root");
+    const syntheticChild = join(syntheticRoot, "swapped-child");
     let rootReads = 0;
     let childReads = 0;
     let childSwapped = false;
@@ -1145,10 +1184,10 @@ describe("createLocalAgentSessionSource", () => {
       existsSync: () => true,
       realpathSync: (path: string) => path,
       lstatSync: (path: string) => {
-        if (path === "/synthetic-root") {
+        if (path === syntheticRoot) {
           return { isDirectory: () => true, dev: 1, ino: 1 };
         }
-        if (path === "/synthetic-root/swapped-child") {
+        if (path === syntheticChild) {
           return childSwapped
             ? { isDirectory: () => false, dev: 1, ino: 3 }
             : { isDirectory: () => true, dev: 1, ino: 2 };
@@ -1164,7 +1203,7 @@ describe("createLocalAgentSessionSource", () => {
         };
       },
       opendirSync: (path: string) => {
-        if (path === "/synthetic-root") {
+        if (path === syntheticRoot) {
           return {
             readSync: () =>
               rootReads++ === 0
@@ -1202,7 +1241,7 @@ describe("createLocalAgentSessionSource", () => {
       adapter: {
         harnessId: "fictional-agent",
         agentName: "Nova",
-        roots: [{ path: "/synthetic-root" }],
+        roots: [{ path: syntheticRoot }],
         fileExtensions: [".jsonl"],
         parserVersion: 1,
         async parseSession(): Promise<ParsedLocalAgentSession> {
@@ -1214,6 +1253,8 @@ describe("createLocalAgentSessionSource", () => {
 
     const result = await instance.sync(null);
 
+    expect(rootReads).toBeGreaterThan(0);
+    expect(childReads).toBeGreaterThan(0);
     expect(childClosed).toBe(true);
     expect(parseCalls).toBe(0);
     expect(result.presentExternalIds).toBeUndefined();
@@ -1345,71 +1386,83 @@ describe("createLocalAgentSessionSource", () => {
     expect(JSON.stringify(result.cursor)).not.toContain(oversizedId);
   });
 
-  test("an unreadable root stops deletion detection in itself, not in its sibling", async () => {
-    // A harness that keeps its archive in a second root is the case this
-    // exists for. The archive directory becoming unreadable — a permission
-    // change, a mount that went away — used to withhold the whole account's
-    // snapshot, so a session deleted from the live root stayed indexed for as
-    // long as the archive stayed broken, which for a permission change is
-    // until somebody notices.
-    root = mkdtempSync(join(tmpdir(), "local-agent-sessions-"));
-    const live = join(root, "sessions");
-    const archive = join(root, "archived");
-    mkdirSync(live);
-    mkdirSync(archive);
-    writeFileSync(join(live, "a.jsonl"), "{}\n");
-    writeFileSync(join(archive, "b.jsonl"), "{}\n");
+  test.each(["platform permissions", "controlled boundary"] as const)(
+    "an unreadable root stops deletion detection in itself, not in its sibling (%s)",
+    async (denial) => {
+      // A harness that keeps its archive in a second root is the case this
+      // exists for. The archive directory becoming unreadable — a permission
+      // change, a mount that went away — used to withhold the whole account's
+      // snapshot, so a session deleted from the live root stayed indexed for as
+      // long as the archive stayed broken, which for a permission change is
+      // until somebody notices.
+      root = mkdtempSync(join(tmpdir(), "local-agent-sessions-"));
+      const live = join(root, "sessions");
+      const archive = join(root, "archived");
+      mkdirSync(live);
+      mkdirSync(archive);
+      writeFileSync(join(live, "a.jsonl"), "{}\n");
+      writeFileSync(join(archive, "b.jsonl"), "{}\n");
 
-    const sessionFor = (filePath: string): ParsedLocalAgentSession => ({
-      id: filePath.includes("archived") ? "session-archive" : "session-live",
-      messages: [
-        {
-          role: "user",
-          text: "Where did the parser go?",
-          atMs: Date.UTC(2026, 0, 2, 9, 0),
-        },
-      ],
-      complete: true,
-    });
-
-    const makeInstance = () =>
-      createLocalAgentSessionSource({
-        providerId: PROVIDER,
-        sourceId: SOURCE,
-        adapter: {
-          harnessId: "fictional-agent",
-          agentName: "Nova",
-          roots: [{ path: live }, { path: archive, optional: true }],
-          fileExtensions: [".jsonl"],
-          parserVersion: 1,
-          async parseSession(filePath): Promise<ParsedLocalAgentSession> {
-            return sessionFor(filePath);
+      const sessionFor = (filePath: string): ParsedLocalAgentSession => ({
+        id: filePath.includes("archived") ? "session-archive" : "session-live",
+        messages: [
+          {
+            role: "user",
+            text: "Where did the parser go?",
+            atMs: Date.UTC(2026, 0, 2, 9, 0),
           },
-        },
+        ],
+        complete: true,
       });
 
-    // Healthy: both roots read, so the whole source is vouched for — the only
-    // form that reaches a document stored before this source named its roots.
-    const healthy = await makeInstance().sync(null);
-    expect(healthy.presentExternalIds).toHaveLength(2);
-    expect(healthy.presentClaims).toBeUndefined();
-    expect(new Set(healthy.documents.map((d) => d.partitionKey))).toEqual(
-      new Set(["sessions", "archived"]),
-    );
+      const makeInstance = () =>
+        createLocalAgentSessionSource({
+          providerId: PROVIDER,
+          sourceId: SOURCE,
+          adapter: {
+            harnessId: "fictional-agent",
+            agentName: "Nova",
+            roots: [{ path: live }, { path: archive, optional: true }],
+            fileExtensions: [".jsonl"],
+            parserVersion: 1,
+            async parseSession(filePath): Promise<ParsedLocalAgentSession> {
+              return sessionFor(filePath);
+            },
+          },
+        });
 
-    // The archive becomes unreadable.
-    chmodSync(archive, 0o000);
-    try {
-      const degraded = await makeInstance().sync(null);
-      expect(degraded.presentExternalIds).toBeUndefined();
-      // The live root is still vouched for by name, so a session deleted there
-      // is still found this cycle.
-      expect(degraded.presentClaims?.map((claim) => claim.partition)).toEqual(["sessions"]);
-      expect(degraded.presentClaims?.[0]?.ids).toEqual(["cli:session-live:2026-01-02"]);
-    } finally {
-      chmodSync(archive, 0o700);
-    }
-  });
+      // Healthy: both roots read, so the whole source is vouched for — the only
+      // form that reaches a document stored before this source named its roots.
+      const healthy = await makeInstance().sync(null);
+      expect(healthy.presentExternalIds).toHaveLength(2);
+      expect(healthy.presentClaims).toBeUndefined();
+      expect(new Set(healthy.documents.map((d) => d.partitionKey))).toEqual(
+        new Set(["sessions", "archived"]),
+      );
+
+      // The archive becomes unreadable.
+      setDirectoryReadable(
+        archive,
+        false,
+        denial === "controlled boundary" || process.platform === "win32",
+      );
+      try {
+        expect(lstatSync(archive).isDirectory()).toBe(true);
+        const degraded = await makeInstance().sync(null);
+        expect(degraded.presentExternalIds).toBeUndefined();
+        // The live root is still vouched for by name, so a session deleted there
+        // is still found this cycle.
+        expect(degraded.presentClaims?.map((claim) => claim.partition)).toEqual(["sessions"]);
+        expect(degraded.presentClaims?.[0]?.ids).toEqual(["cli:session-live:2026-01-02"]);
+      } finally {
+        setDirectoryReadable(
+          archive,
+          true,
+          denial === "controlled boundary" || process.platform === "win32",
+        );
+      }
+    },
+  );
 
   test.each([false, true])(
     "legacy deleted entries are pruned only on a complete scan (incomplete=%s)",
@@ -1443,7 +1496,7 @@ describe("createLocalAgentSessionSource", () => {
       const legacy = JSON.parse(JSON.stringify(first.cursor)) as LocalAgentSessionCursor;
       for (const entry of Object.values(legacy.files ?? {})) delete entry.rootId;
       rmSync(file);
-      if (incomplete) chmodSync(archive, 0o000);
+      if (incomplete) setDirectoryReadable(archive, false);
       try {
         const next = await source.sync(legacy);
         expect(Object.keys((next.cursor as LocalAgentSessionCursor).files ?? {})).toHaveLength(
@@ -1452,7 +1505,7 @@ describe("createLocalAgentSessionSource", () => {
         if (incomplete) expect(next.presentExternalIds).toBeUndefined();
         else expect(next.presentExternalIds).toEqual([]);
       } finally {
-        chmodSync(archive, 0o700);
+        setDirectoryReadable(archive, true);
       }
     },
   );
@@ -1489,7 +1542,7 @@ describe("createLocalAgentSessionSource", () => {
     const first = await instance.sync(null);
     expect(first.presentExternalIds).toHaveLength(2);
 
-    chmodSync(archive, 0o000);
+    setDirectoryReadable(archive, false);
     try {
       const resumed = {
         ...(first.cursor as LocalAgentSessionCursor),
@@ -1501,7 +1554,7 @@ describe("createLocalAgentSessionSource", () => {
       expect(second.presentClaims?.map((claim) => claim.partition)).toEqual(["sessions"]);
       expect(second.issues?.[0]?.message).not.toContain("moved or disappeared");
     } finally {
-      chmodSync(archive, 0o700);
+      setDirectoryReadable(archive, true);
     }
   });
 
@@ -1545,7 +1598,7 @@ describe("createLocalAgentSessionSource", () => {
     const legacy = JSON.parse(JSON.stringify(first.cursor)) as LocalAgentSessionCursor;
     for (const state of Object.values(legacy.files ?? {})) delete state.rootId;
 
-    chmodSync(archive, 0o000);
+    setDirectoryReadable(archive, false);
     try {
       const second = await build().sync(legacy);
       expect(second.presentClaims?.map((claim) => claim.partition)).toEqual(["sessions"]);
@@ -1553,7 +1606,7 @@ describe("createLocalAgentSessionSource", () => {
       // for, even though this cycle did not re-read it.
       expect(second.presentClaims?.[0]?.ids).toEqual(["cli:session-a:2026-01-02"]);
     } finally {
-      chmodSync(archive, 0o700);
+      setDirectoryReadable(archive, true);
     }
   });
 
@@ -1806,7 +1859,7 @@ describe("createLocalAgentSessionSource", () => {
     // One session deleted from the healthy root; the archive becomes
     // unreadable in the same cycle.
     rmSync(join(live, "b.jsonl"));
-    chmodSync(archive, 0o000);
+    setDirectoryReadable(archive, false);
     try {
       const second = await build().sync(first.cursor);
       expect(second.presentClaims?.map((claim) => claim.partition)).toEqual(["sessions"]);
@@ -1814,7 +1867,7 @@ describe("createLocalAgentSessionSource", () => {
       // it would tell the gateway a document still exists that does not.
       expect(second.presentClaims?.[0]?.ids).toEqual(["cli:session-a:2026-01-02"]);
     } finally {
-      chmodSync(archive, 0o700);
+      setDirectoryReadable(archive, true);
     }
   });
 
@@ -1929,7 +1982,7 @@ describe("createLocalAgentSessionSource", () => {
     });
     const first = await source.sync(null);
     renameSync(join(live, "session.jsonl"), join(archive, "session.jsonl"));
-    chmodSync(archive, 0o000);
+    setDirectoryReadable(archive, false);
     let cursor = first.cursor;
     try {
       for (let cycle = 0; cycle < 3; cycle++) {
@@ -1940,7 +1993,7 @@ describe("createLocalAgentSessionSource", () => {
         cursor = page.cursor;
       }
     } finally {
-      chmodSync(archive, 0o700);
+      setDirectoryReadable(archive, true);
     }
     const recovered = await source.sync(cursor);
     expect(recovered.documents[0]).toMatchObject({

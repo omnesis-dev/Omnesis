@@ -48,7 +48,7 @@ let wantPublic = false;
 function status() {
   const base = {
     type: "status",
-    protocol: Number(process.env.OMNESIS_FAKE_TAILNET_PROTOCOL ?? 1),
+    protocol: Number(process.env.OMNESIS_FAKE_TAILNET_PROTOCOL ?? 2),
     certificate: { source: "gateway", reason: "pending" },
     public: { state: "off" },
   };

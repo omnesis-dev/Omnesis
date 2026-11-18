@@ -1544,6 +1544,115 @@ describe("evaluateDoctor — graceful degradation when endpoints are missing", (
 });
 
 describe("evaluateDoctor — local security posture", () => {
+  test("legacy Windows mode evidence cannot pass a native access-control check", () => {
+    const data = healthyData();
+    data.security = securityData({
+      diskEncryption: { platform: "win32", status: "unsupported", detail: "No disk probe" },
+      permissionEntries: [
+        {
+          path: "C:\\Example\\config",
+          relativePath: ".",
+          kind: "directory",
+          expectedMode: 0o700,
+          actualMode: 0o700,
+          ok: true,
+          fixed: true,
+        },
+      ],
+    });
+    const check = findCheck(evaluateDoctor(data).checks, "security.permissions");
+    expect(check?.status).toBe("fail");
+    expect(check?.message).toContain("were not verified");
+  });
+
+  test("Windows permission remedies name access controls rather than POSIX modes", () => {
+    const data = healthyData();
+    data.security = securityData({
+      permissionModel: "windows-acl",
+      diskEncryption: { platform: "win32", status: "unsupported", detail: "No disk probe" },
+      permissionEntries: [
+        {
+          path: "C:\\Example\\config",
+          relativePath: ".",
+          kind: "directory",
+          expectedMode: null,
+          actualMode: null,
+          ok: false,
+          fixed: false,
+        },
+      ],
+    });
+    const check = findCheck(evaluateDoctor(data).checks, "security.permissions");
+    expect(check?.status).toBe("fail");
+    expect(check?.hint).toContain("repair safe local access controls");
+    expect(check?.hint).not.toContain("local modes");
+  });
+  test("Windows permissions need positive ACL evidence", () => {
+    const data = healthyData();
+    data.security = securityData({ permissionModel: "windows-acl", permissionEntries: [] });
+    const check = findCheck(evaluateDoctor(data).checks, "security.permissions");
+    expect(check?.status).toBe("fail");
+    expect(check?.message).toContain("could not be verified");
+  });
+
+  test("an empty Windows finding list passes only with positive native scan evidence", () => {
+    const data = healthyData();
+    data.security = securityData({
+      permissionModel: "windows-acl",
+      permissionEntries: [],
+      permissionScanCount: 3,
+    });
+    expect(findCheck(evaluateDoctor(data).checks, "security.permissions")?.status).toBe("pass");
+  });
+
+  test.each([false, true])(
+    "reports Windows ACL evidence without POSIX mode claims (fixed=%s)",
+    (fixed) => {
+      const data = healthyData();
+      data.security = securityData({
+        permissionModel: "windows-acl",
+        permissionEntries: [
+          {
+            path: "C:\\Example\\config",
+            relativePath: ".",
+            kind: "directory",
+            expectedMode: null,
+            actualMode: null,
+            ok: true,
+            fixed,
+          },
+        ],
+      });
+      const check = findCheck(evaluateDoctor(data).checks, "security.permissions");
+      expect(check?.status).toBe("pass");
+      expect(check?.message).toContain("private Windows access controls");
+      expect(check?.message).not.toMatch(/0700|0600|mode/);
+      if (fixed) expect(check?.message).toContain("repaired 1 ACL");
+    },
+  );
+
+  test("unverified Windows ACL stays a failure despite owner-only mode bits", () => {
+    const data = healthyData();
+    data.security = securityData({
+      permissionModel: "windows-acl",
+      permissionEntries: [
+        {
+          path: "C:\\Example\\config\\token",
+          relativePath: "token",
+          kind: "file",
+          expectedMode: 0o600,
+          actualMode: 0o600,
+          ok: false,
+          fixed: false,
+          error: "Access control inspection failed",
+        },
+      ],
+    });
+    const check = findCheck(evaluateDoctor(data).checks, "security.permissions");
+    expect(check?.status).toBe("fail");
+    expect(check?.message).toContain("Access control inspection failed");
+    expect(check?.message).not.toContain("missing");
+  });
   test("security-only data does not emit gateway/auth checks", () => {
     const data = healthyData();
     data.operationalChecks = false;

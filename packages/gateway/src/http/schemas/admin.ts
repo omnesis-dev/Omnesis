@@ -9,6 +9,7 @@
  * "@omnesis/gateway/http/schemas/admin"` (or the package's barrel) rather
  * than redeclaring the shapes locally.
  */
+import { isAbsolute } from "node:path";
 import { z } from "zod";
 import { PERSON_ROLES, RESYNC_MODES } from "@omnesis/types";
 import { DOCUMENT_FIELD_SEMANTICS } from "@omnesis/source-sdk";
@@ -685,7 +686,7 @@ export const widgetRenderersBody = z.object({
           .string()
           .trim()
           .min(1)
-          .refine((p) => p.startsWith("/"), {
+          .refine(isAbsolute, {
             message: "must be an absolute filesystem path",
           })
           .refine((p) => p.endsWith(".js"), {

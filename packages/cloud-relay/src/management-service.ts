@@ -1,11 +1,14 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
-
 import { randomUUID, X509Certificate } from "node:crypto";
-import { existsSync } from "node:fs";
 import { readFile, access, rm } from "node:fs/promises";
 import { join } from "node:path";
-import { createLogger } from "@omnesis/core";
+import { createLogger, ownedProcessCleanupReceipt } from "@omnesis/core";
+import {
+  cleanupReceipt,
+  combinedCleanupErrors,
+  OwnedCleanupLifecycle,
+} from "./owned-cleanup-lifecycle.js";
 import { z } from "zod";
 import { GatewayCertificateMonitor } from "./gateway-certificate-monitor.js";
 import { gatewayRecoveryReceiptStatus } from "./gateway-recovery-status.js";
@@ -26,6 +29,7 @@ import { bindingOrigin } from "./gateway-binding.js";
 import { relayOrigin } from "./network.js";
 import { installationRelayUrl } from "./installation-relay.js";
 import { readPrivateJson, savePrivateJson } from "./google-credentials.js";
+import { readPrivateText, identityArtifactPresent } from "./private-inputs.js";
 import {
   GatewayUnregistered,
   prepareGatewayOwner,
@@ -57,9 +61,7 @@ import {
 } from "./management.js";
 import type { CertificateIncident } from "./certificate-monitor.js";
 import type { GatewaySignupAccess } from "./gateway-signup-contract.js";
-
 const log = createLogger("cloud-relay:management");
-
 const PROBE_RETRIES = 20;
 /** How long the relay's answer about who may sign up is kept, and how soon a failed read is retried. */
 const SIGNUP_ACCESS_TTL_MS = 10 * 60_000;
@@ -70,7 +72,6 @@ const SIGNUP_ACCESS_WAIT_MS = 1500;
 const ACCOUNT_REFRESH_MS = 15_000;
 /** How long one account read the portal asked for may take before it is given up. */
 const ACCOUNT_REFRESH_TIMEOUT_MS = 30_000;
-
 const settingsSchema = z
   .object({
     version: z.literal(1),
@@ -89,7 +90,10 @@ const LETS_ENCRYPT_DIRECTORY = "https://acme-v02.api.letsencrypt.org/directory";
 type AcmeController = NonNullable<Awaited<ReturnType<typeof createGatewayAcmeController>>>;
 type Tunnel = NonNullable<ReturnType<typeof startGatewayCloudTunnel>>;
 export interface CloudRelayManagerOptions {
-  certificateMonitor?: Pick<GatewayCertificateMonitor, "start" | "status" | "close">;
+  certificateMonitor?: Pick<
+    GatewayCertificateMonitor,
+    "start" | "status" | "close" | "cleanupFailure"
+  >;
   googleCallbackOrigins?(): import("./google-browser-callback.js").GoogleBrowserCallbackOrigins;
   /** Test seam: production always trusts the compiled-in official Google clients. */
   googleTrust?(): import("./google-browser-trust.js").GoogleBrowserTrust;
@@ -97,7 +101,11 @@ export interface CloudRelayManagerOptions {
   env: NodeJS.ProcessEnv;
   gatewayUrl(): string;
   activate(
-    material: { hostname: string; cert: string; key: string },
+    material: {
+      hostname: string;
+      cert: string;
+      key: string;
+    },
     signal: AbortSignal,
   ): Promise<void>;
   directIdentity(): CloudRelayNetworkIdentity;
@@ -127,9 +135,9 @@ export interface CloudRelayManagerOptions {
   /** Test seam: production reads CAA records from DNS. */
   caaLookup?: import("./acme-caa.js").CaaLookup;
 }
-
 /** Persistent gateway-local control plane. Constructing an unconfigured manager creates no files or jobs. */
 export class GatewayCloudRelayManagement implements CloudRelayManagement {
+  private readonly cleanup = new OwnedCleanupLifecycle(() => this.stopAdmission());
   private settings: Settings | undefined;
   private revision = 0;
   private busy = false;
@@ -141,7 +149,11 @@ export class GatewayCloudRelayManagement implements CloudRelayManagement {
   private spkiFingerprint: string | undefined;
   private lastRenewedAt: string | undefined;
   private controller: AcmeController | undefined;
+  private monitorClose: Promise<void> | undefined;
+  private readonly controllerClosures = new WeakMap<AcmeController, Promise<void>>();
   private tunnel: Tunnel | undefined;
+  private readonly tunnelClosures = new WeakMap<Tunnel, Promise<void>>();
+  private readonly stoppedTunnels = new WeakSet<Tunnel>();
   private pending: Promise<void> | undefined;
   private abort = new AbortController();
   private timer: ReturnType<typeof setTimeout> | undefined;
@@ -149,23 +161,37 @@ export class GatewayCloudRelayManagement implements CloudRelayManagement {
   private google: GatewayGoogleWeb | undefined;
   private account: GatewayAccountLink | undefined;
   private connection: NonNullable<CloudRelayManagementStatus["connect"]> = { state: "idle" };
-  private signup: { client: GatewaySignupClient; pending: GatewaySignupPending } | undefined;
+  private signup:
+    | {
+        client: GatewaySignupClient;
+        pending: GatewaySignupPending;
+      }
+    | undefined;
   private connectAbort = new AbortController();
   private notice: CloudRelayManagementStatus["notice"];
   private forgetting: Promise<void> | undefined;
   /** Whether any answer behind the leaving under way said the gateway was unlinked. */
   private forgetRemoved = false;
   private releasing: Promise<void> | undefined;
+  private readonly releaseAbort = new AbortController();
   private releaseTimer: ReturnType<typeof setTimeout> | undefined;
   private closed = false;
   private signupAccess:
-    { relayUrl: string; value: GatewaySignupAccess | undefined; until: number } | undefined;
+    | {
+        relayUrl: string;
+        value: GatewaySignupAccess | undefined;
+        until: number;
+      }
+    | undefined;
   private signupAccessRead: Promise<void> | undefined;
   /** When the last account read the portal asked for started, the read itself, and one queued. */
   private accountReadAt = 0;
   private accountRead: Promise<void> | undefined;
   private accountReadTimer: ReturnType<typeof setTimeout> | undefined;
-  private readonly monitor: Pick<GatewayCertificateMonitor, "start" | "status" | "close">;
+  private readonly monitor: Pick<
+    GatewayCertificateMonitor,
+    "start" | "status" | "close" | "cleanupFailure"
+  >;
   private readonly directory: string;
   private readonly file: string;
   private constructor(private readonly options: CloudRelayManagerOptions) {
@@ -196,6 +222,7 @@ export class GatewayCloudRelayManagement implements CloudRelayManagement {
     try {
       manager.settings = settingsSchema.parse(await readPrivateJson(manager.file));
     } catch (error) {
+      if (manager.cleanup.observe(error)) throw error;
       if (!(error && typeof error === "object" && "code" in error && error.code === "ENOENT"))
         throw error;
     }
@@ -269,7 +296,7 @@ export class GatewayCloudRelayManagement implements CloudRelayManagement {
         manager.requireSeparateHostname(manager.settings);
         const e = manager.environment(),
           cert = await readFile(publicGatewayCertificateFile(e), "utf8"),
-          key = await readFile(publicGatewayPrivateKeyFile(e), "utf8");
+          key = await readPrivateText(publicGatewayPrivateKeyFile(e));
         // Served whatever its dates: devices that pinned its key still reach the gateway at home
         // under this name, and nothing renews it while the gateway is not connected.
         const leaf = new X509Certificate(cert);
@@ -286,16 +313,120 @@ export class GatewayCloudRelayManagement implements CloudRelayManagement {
         );
         manager.fingerprint = leaf.fingerprint256.replaceAll(":", "").toLowerCase();
         manager.spkiFingerprint = (await import("./pinned-key.js")).tlsSpkiFingerprint(cert);
-      } catch {
+      } catch (error) {
+        if (manager.cleanup.observe(error)) throw error;
         manager.certificateError = "certificate-setup-failed";
       }
     }
     // The listener must be ready before a persisted enabled configuration starts.
     return manager;
   }
+  cleanupFailure(): unknown | undefined {
+    return cleanupReceipt(
+      this.cleanup.receipt(),
+      this.controller?.cleanupFailure(),
+      this.monitor.cleanupFailure(),
+      this.tunnel?.cleanupFailure(),
+    );
+  }
+  private assertAdmitting(cause?: unknown): void {
+    const receipt = cleanupReceipt(
+      this.controller?.cleanupFailure(),
+      this.monitor.cleanupFailure(),
+      this.tunnel?.cleanupFailure(),
+    );
+    if (receipt && !ownedProcessCleanupReceipt(receipt)?.pending) this.cleanup.observe(receipt);
+    if (this.closed && !this.cleanup.uncertain)
+      throw Object.assign(new CloudRelayManagementFailure(409, "configuration-invalid"), { cause });
+    this.cleanup.assertAdmitting();
+  }
+  private run<T>(work: () => Promise<T>): Promise<T> {
+    try {
+      this.assertAdmitting();
+    } catch (error) {
+      return Promise.reject(error);
+    }
+    return this.cleanup.run(work).catch((error: unknown) => {
+      if (this.cleanup.observe(error)) throw error;
+      this.assertAdmitting(error);
+      throw error;
+    });
+  }
+  private closeMonitor(): Promise<void> {
+    if (!this.monitorClose) {
+      try {
+        this.monitorClose = this.monitor.close();
+      } catch (error) {
+        this.monitorClose = Promise.reject(error);
+      }
+    }
+    return this.monitorClose;
+  }
+  private closeController(): Promise<void> {
+    const controller = this.controller;
+    if (!controller) return Promise.resolve();
+    let proof = this.controllerClosures.get(controller);
+    if (!proof) {
+      try {
+        proof = controller.close();
+      } catch (error) {
+        proof = Promise.reject(error);
+      }
+      this.controllerClosures.set(controller, proof);
+    }
+    return proof;
+  }
+  private async admitted<T>(operation: () => T): Promise<Awaited<T>> {
+    this.assertAdmitting();
+    const result = await operation();
+    this.assertAdmitting();
+    return result;
+  }
+  private stopTunnel(tunnel = this.tunnel): void {
+    if (!tunnel || this.stoppedTunnels.has(tunnel)) return;
+    this.stoppedTunnels.add(tunnel);
+    tunnel.stop();
+  }
+  private closeTunnel(): Promise<void> {
+    const tunnel = this.tunnel;
+    if (!tunnel) return Promise.resolve();
+    this.stopTunnel(tunnel);
+    let proof = this.tunnelClosures.get(tunnel);
+    if (!proof) {
+      try {
+        proof = tunnel.close();
+      } catch (error) {
+        proof = Promise.reject(error);
+      }
+      this.tunnelClosures.set(tunnel, proof);
+    }
+    return proof;
+  }
+  private stopAdmission(): void {
+    this.closed = true;
+    this.abort.abort();
+    this.connectAbort.abort();
+    this.releaseAbort.abort();
+    this.google?.cancel();
+    this.account?.cancel();
+    clearTimeout(this.timer);
+    clearTimeout(this.releaseTimer);
+    clearTimeout(this.accountReadTimer);
+    // Close proofs are retained by their actors; later manager.close joins the same proofs.
+    void this.closeMonitor().catch(() => {});
+    void this.closeController().catch(() => {});
+    this.stopTunnel();
+    void this.closeTunnel().catch(() => {});
+  }
   start(): void {
+    if (this.closed || this.cleanup.uncertain) return;
+    try {
+      this.assertAdmitting();
+    } catch {
+      return;
+    }
     this.monitor.start();
-    void this.release();
+    void this.release().catch(() => {});
     this.launch();
   }
   isExposing(): boolean {
@@ -372,7 +503,8 @@ export class GatewayCloudRelayManagement implements CloudRelayManagement {
       throw new CloudRelayManagementFailure(400, "hostname-conflict");
   }
   private async persist(): Promise<void> {
-    await savePrivateJson(this.file, this.settings);
+    this.assertAdmitting();
+    await this.admitted(() => savePrivateJson(this.file, this.settings));
     this.revision++;
   }
   private serviceError(): CloudRelayManagementStatus["serviceError"] {
@@ -382,104 +514,117 @@ export class GatewayCloudRelayManagement implements CloudRelayManagement {
     return undefined;
   }
   async configure(input: CloudRelayConfigureInput): Promise<CloudRelayManagementStatus> {
-    if (this.busy || this.settings?.enabled)
-      throw new CloudRelayManagementFailure(409, "operation-in-progress");
-    this.busy = true;
-    try {
-      const serviceError = this.serviceError();
-      if (serviceError)
-        throw new CloudRelayManagementFailure(
-          serviceError === "relay-service-mismatch" ? 400 : 503,
-          serviceError,
-        );
-      const relayUrl = installationRelayUrl(this.options.env, this.settings?.relayUrl)!;
-      let custom: string | undefined, acmeDirectoryUrl: string;
-      let broker: DnsBrokerSelection | undefined;
+    return this.run(async () => {
+      if (this.busy || this.settings?.enabled)
+        throw new CloudRelayManagementFailure(409, "operation-in-progress");
+      this.busy = true;
       try {
-        if (input.relayUrl !== undefined && relayOrigin(input.relayUrl).origin !== relayUrl)
-          throw new CloudRelayManagementFailure(400, "relay-service-mismatch");
-        custom = input.publicOrigin ? bindingOrigin(input.publicOrigin).origin : undefined;
-        const directory = new URL(input.acmeDirectoryUrl ?? this.defaultAcmeDirectoryUrl());
-        relayOrigin(directory.origin);
-        if (directory.username || directory.password || directory.hash || directory.search)
-          throw new Error();
-        acmeDirectoryUrl = directory.href;
-        // A custom domain and an environment-configured gateway have no name at the broker.
-        broker =
-          custom || this.settings?.legacyEnvironment
-            ? undefined
-            : dnsBrokerSelection(this.options.env, relayUrl);
-      } catch (error) {
-        if (error instanceof CloudRelayManagementFailure) throw error;
-        throw new CloudRelayManagementFailure(400, "configuration-invalid");
-      }
-      let gatewayId = this.settings?.gatewayId ?? randomUUID();
-      let metadata;
-      for (let attempt = 1; metadata === undefined; attempt++) {
-        // The name is claimed at the broker before the relay hears of this id, so the relay
-        // can never claim it first.
-        if (broker && (await this.claimHostedName(broker, relayUrl, gatewayId)) === "taken") {
-          if (this.settings || attempt === 5)
-            throw new CloudRelayManagementFailure(503, "relay-unreachable");
-          gatewayId = randomUUID();
-          continue;
-        }
-        try {
-          metadata = await (this.options.discover ?? relayPublicConfiguration)(
-            relayUrl,
-            gatewayId,
-            AbortSignal.timeout(5000),
-            this.options.fetch,
+        const serviceError = this.serviceError();
+        if (serviceError)
+          throw new CloudRelayManagementFailure(
+            serviceError === "relay-service-mismatch" ? 400 : 503,
+            serviceError,
           );
+        const relayUrl = installationRelayUrl(this.options.env, this.settings?.relayUrl)!;
+        let custom: string | undefined, acmeDirectoryUrl: string;
+        let broker: DnsBrokerSelection | undefined;
+        try {
+          if (input.relayUrl !== undefined && relayOrigin(input.relayUrl).origin !== relayUrl)
+            throw new CloudRelayManagementFailure(400, "relay-service-mismatch");
+          custom = input.publicOrigin ? bindingOrigin(input.publicOrigin).origin : undefined;
+          const directory = new URL(input.acmeDirectoryUrl ?? this.defaultAcmeDirectoryUrl());
+          relayOrigin(directory.origin);
+          if (directory.username || directory.password || directory.hash || directory.search)
+            throw new Error();
+          acmeDirectoryUrl = directory.href;
+          // A custom domain and an environment-configured gateway have no name at the broker.
+          broker =
+            custom || this.settings?.legacyEnvironment
+              ? undefined
+              : dnsBrokerSelection(this.options.env, relayUrl);
         } catch (error) {
-          // A new gateway's id is only a random draw, so a taken hosted name costs a redraw.
-          if (!(error instanceof HostedNameTaken) || this.settings || attempt === 5)
-            throw new CloudRelayManagementFailure(503, "relay-unreachable");
-          gatewayId = randomUUID();
+          if (error instanceof CloudRelayManagementFailure) throw error;
+          throw new CloudRelayManagementFailure(400, "configuration-invalid");
         }
-      }
-      const publicOrigin = custom ?? metadata.publicOrigin;
-      if (!publicOrigin) throw new CloudRelayManagementFailure(400, "hostname-required");
-      // Once a public identity exists, changing its network identity requires an explicit new installation.
-      if (
-        this.settings &&
-        (this.settings.relayUrl !== relayUrl || this.settings.publicOrigin !== publicOrigin)
-      )
-        throw new CloudRelayManagementFailure(409, "configuration-invalid");
-      const next: Settings = {
-        ...(this.settings?.legacyEnvironment
-          ? { legacyEnvironment: this.settings.legacyEnvironment }
-          : {}),
-        version: 1,
-        gatewayId,
-        relayUrl,
-        publicOrigin: bindingOrigin(publicOrigin).origin,
-        acmeDirectoryUrl,
-        termsAccepted: input.termsAccepted ?? false,
-        invitationRequired: metadata.invitationRequired,
-        enabled: false,
-      };
-      this.requireSeparateHostname(next);
-      if (!next.legacyEnvironment)
-        await (this.options.prepare ?? prepareGatewayOwner)({
+        const selection = broker;
+        let gatewayId = this.settings?.gatewayId ?? randomUUID();
+        let metadata;
+        for (let attempt = 1; metadata === undefined; attempt++) {
+          // The name is claimed before the relay learns the id, so the relay cannot claim it first.
+          if (
+            selection &&
+            (await this.admitted(() => this.claimHostedName(selection, relayUrl, gatewayId))) ===
+              "taken"
+          ) {
+            if (this.settings || attempt === 5)
+              throw new CloudRelayManagementFailure(503, "relay-unreachable");
+            gatewayId = randomUUID();
+            continue;
+          }
+          try {
+            metadata = await this.admitted(() =>
+              (this.options.discover ?? relayPublicConfiguration)(
+                relayUrl,
+                gatewayId,
+                AbortSignal.timeout(5000),
+                this.options.fetch,
+              ),
+            );
+          } catch (error) {
+            if (this.cleanup.observe(error)) throw error;
+            this.assertAdmitting(error);
+            // A new gateway's id is only a random draw, so a taken hosted name costs a redraw.
+            if (!(error instanceof HostedNameTaken) || this.settings || attempt === 5)
+              throw new CloudRelayManagementFailure(503, "relay-unreachable");
+            gatewayId = randomUUID();
+          }
+        }
+        const publicOrigin = custom ?? metadata.publicOrigin;
+        if (!publicOrigin) throw new CloudRelayManagementFailure(400, "hostname-required");
+        // Once a public identity exists, changing its network identity requires an explicit new installation.
+        if (
+          this.settings &&
+          (this.settings.relayUrl !== relayUrl || this.settings.publicOrigin !== publicOrigin)
+        )
+          throw new CloudRelayManagementFailure(409, "configuration-invalid");
+        const next: Settings = {
+          ...(this.settings?.legacyEnvironment
+            ? { legacyEnvironment: this.settings.legacyEnvironment }
+            : {}),
+          version: 1,
           gatewayId,
-          sessionFile: join(this.directory, "session.json"),
-          ownerKeyFile: join(this.directory, "owner.key"),
-          publicOrigin,
-        });
-      const previous = this.settings;
-      this.settings = next;
-      try {
-        await this.persist();
-      } catch (error) {
-        this.settings = previous;
-        throw error;
+          relayUrl,
+          publicOrigin: bindingOrigin(publicOrigin).origin,
+          acmeDirectoryUrl,
+          termsAccepted: input.termsAccepted ?? false,
+          invitationRequired: metadata.invitationRequired,
+          enabled: false,
+        };
+        this.requireSeparateHostname(next);
+        if (!next.legacyEnvironment)
+          await this.admitted(() =>
+            (this.options.prepare ?? prepareGatewayOwner)({
+              gatewayId,
+              sessionFile: join(this.directory, "session.json"),
+              ownerKeyFile: join(this.directory, "owner.key"),
+              publicOrigin,
+            }),
+          );
+        const previous = this.settings;
+        this.settings = next;
+        try {
+          await this.admitted(() => this.persist());
+        } catch (error) {
+          if (this.cleanup.observe(error)) throw error;
+          this.settings = previous;
+          throw error;
+        }
+        this.enrollment = { state: "pending" };
+      } finally {
+        this.busy = false;
       }
-      this.enrollment = { state: "pending" };
-    } finally {
-      this.busy = false;
-    }
-    return this.status();
+      return this.status();
+    });
   }
   /**
    * Binds the gateway's hosted name to its owner key at the DNS broker. Skipped while the broker
@@ -495,104 +640,130 @@ export class GatewayCloudRelayManagement implements CloudRelayManagement {
       brokerUrl: selection.url,
       relayUrl,
       gatewayId,
-      owner: () => readOrCreateGatewayOwnerKey(join(this.directory, "owner.key"), !this.settings),
+      owner: () =>
+        this.admitted(() =>
+          readOrCreateGatewayOwnerKey(join(this.directory, "owner.key"), !this.settings),
+        ),
       fetch: this.options.fetch,
     });
     const signal = AbortSignal.timeout(15_000);
     try {
-      if (!(await client.health(signal))) {
+      if (!(await this.admitted(() => client.health(signal)))) {
         if (!selection.required) return "skipped";
         throw new Error("The DNS broker is unavailable");
       }
-      await client.claim(signal);
+      await this.admitted(() => client.claim(signal));
       return "claimed";
     } catch (error) {
+      if (this.cleanup.observe(error)) throw error;
+      this.assertAdmitting(error);
       if (error instanceof DnsBrokerNameTaken) return "taken";
       throw new CloudRelayManagementFailure(503, "relay-unreachable");
     }
   }
-  async enable(input: { invitation?: string } = {}): Promise<CloudRelayManagementStatus> {
-    return this.control(async () => {
-      if (!this.settings) throw new CloudRelayManagementFailure(400, "configuration-invalid");
-      this.requireSeparateHostname(this.settings);
-      if (!this.settings.termsAccepted)
-        throw new CloudRelayManagementFailure(400, "ca-terms-required");
-      // The gateway keeps its id, so it must be out of its old account before it registers again.
-      await this.release();
-      if (existsSync(this.releaseFile))
-        throw new CloudRelayManagementFailure(503, "relay-unreachable");
-      if (input.invitation !== undefined) {
-        if (!input.invitation || input.invitation.length > 4096)
-          throw new CloudRelayManagementFailure(400, "configuration-invalid");
-        await savePrivateJson(
-          this.environment().OMNESIS_CLOUD_RELAY_ENROLLMENT_TOKEN_FILE ??
-            join(this.directory, "invitation.json"),
-          { enrollmentToken: input.invitation },
-        );
-      }
-      if (
-        this.settings.invitationRequired &&
-        !input.invitation &&
-        !this.settings.legacyEnvironment
-      ) {
-        try {
-          await access(this.environment().OMNESIS_CLOUD_RELAY_SESSION_FILE!);
-        } catch {
+  async enable(
+    input: {
+      invitation?: string;
+    } = {},
+  ): Promise<CloudRelayManagementStatus> {
+    return this.run(async () => {
+      return this.control(async () => {
+        if (!this.settings) throw new CloudRelayManagementFailure(400, "configuration-invalid");
+        this.requireSeparateHostname(this.settings);
+        if (!this.settings.termsAccepted)
+          throw new CloudRelayManagementFailure(400, "ca-terms-required");
+        // The gateway keeps its id, so it must be out of its old account before it registers again.
+        await this.admitted(() => this.release());
+        if (await this.admitted(() => identityArtifactPresent(this.releaseFile)))
+          throw new CloudRelayManagementFailure(503, "relay-unreachable");
+        if (input.invitation !== undefined) {
+          if (!input.invitation || input.invitation.length > 4096)
+            throw new CloudRelayManagementFailure(400, "configuration-invalid");
+          await this.admitted(() =>
+            savePrivateJson(
+              this.environment().OMNESIS_CLOUD_RELAY_ENROLLMENT_TOKEN_FILE ??
+                join(this.directory, "invitation.json"),
+              { enrollmentToken: input.invitation },
+            ),
+          );
+        }
+        if (
+          this.settings.invitationRequired &&
+          !input.invitation &&
+          !this.settings.legacyEnvironment
+        ) {
           try {
-            await access(this.environment().OMNESIS_CLOUD_RELAY_ENROLLMENT_TOKEN_FILE!);
+            await this.admitted(() => access(this.environment().OMNESIS_CLOUD_RELAY_SESSION_FILE!));
           } catch {
-            throw new CloudRelayManagementFailure(400, "invitation-required");
+            try {
+              await this.admitted(() =>
+                access(this.environment().OMNESIS_CLOUD_RELAY_ENROLLMENT_TOKEN_FILE!),
+              );
+            } catch {
+              throw new CloudRelayManagementFailure(400, "invitation-required");
+            }
           }
         }
-      }
-      const previouslyEnabled = this.settings.enabled;
-      this.settings.enabled = true;
-      try {
-        await this.persist();
-      } catch (error) {
-        this.settings.enabled = previouslyEnabled;
-        throw error;
-      }
-      this.launch();
+        const previouslyEnabled = this.settings.enabled;
+        this.settings.enabled = true;
+        try {
+          await this.admitted(() => this.persist());
+        } catch (error) {
+          if (this.cleanup.observe(error)) throw error;
+          this.settings.enabled = previouslyEnabled;
+          throw error;
+        }
+        this.launch();
+      });
     });
   }
   private launch(force = false): void {
-    if (this.pending || !this.settings?.enabled) return;
+    if (this.closed || this.pending || !this.settings?.enabled) return;
     clearTimeout(this.timer);
     // Ends a recheck still in flight, so it cannot write over what this launch finds.
     this.abort.abort();
     this.abort = new AbortController();
     const signal = AbortSignal.any([this.abort.signal, AbortSignal.timeout(150_000)]);
     this.notice = undefined;
-    this.pending = (async () => {
+    this.pending = this.run(async () => {
       let unregistered: GatewayUnregistered | undefined;
       this.enrollment = { state: "pending" };
       this.revision++;
       try {
         this.requireSeparateHostname(this.settings!);
-        await this.options.stopLegacy?.();
+        await this.admitted(() => this.options.stopLegacy?.());
         signal.throwIfAborted();
-        this.controller ??= await (this.options.controller ?? createGatewayAcmeController)(
-          this.environment(),
-          {
-            configDir: this.options.configDir,
-            activate: this.options.activate,
-            fetch: this.options.fetch,
-          },
-        );
+        if (!this.controller) {
+          this.assertAdmitting();
+          // Adopt the returned owner before checking admission again: close may have begun
+          // while its factory was awaiting initialization, and must still join that actor.
+          this.controller = await (this.options.controller ?? createGatewayAcmeController)(
+            this.environment(),
+            {
+              configDir: this.options.configDir,
+              activate: this.options.activate,
+              fetch: this.options.fetch,
+              signal,
+            },
+          );
+        }
+        this.assertAdmitting();
+        signal.throwIfAborted();
         this.monitor.start();
         if (!this.controller && !this.settings!.legacyEnvironment)
           throw new Error("Certificate controller unavailable");
         if (this.controller)
-          await (this.options.register ?? registerGatewayKey)(this.keyOptions(signal));
+          await this.admitted(() =>
+            (this.options.register ?? registerGatewayKey)(this.keyOptions(signal)),
+          );
         signal.throwIfAborted();
         this.enrollment = { state: "enrolled" };
         this.registrationRetries = 0;
         // A refusal the relay has since lifted must not keep the Relay page on the old failure.
         if (this.connection.state === "failed" && this.connection.error === "enrollment-refused")
           this.connection = { state: "idle" };
-        await this.google!.refreshManaged(signal);
-        await this.account!.refresh(signal);
+        await this.admitted(() => this.google!.refreshManaged(signal));
+        await this.admitted(() => this.account!.refresh(signal));
         signal.throwIfAborted();
         this.tunnel ??= (this.options.startTunnel ?? startGatewayCloudTunnel)(
           this.options.gatewayUrl(),
@@ -600,7 +771,8 @@ export class GatewayCloudRelayManagement implements CloudRelayManagement {
           (removed) => this.forgotten(removed),
         );
         if (force || !this.publicReady) {
-          if (await this.controller?.renew(signal)) this.lastRenewedAt = new Date().toISOString();
+          if (await this.admitted(() => this.controller?.renew(signal)))
+            this.lastRenewedAt = new Date().toISOString();
         }
         signal.throwIfAborted();
         this.certificateError = undefined;
@@ -611,10 +783,11 @@ export class GatewayCloudRelayManagement implements CloudRelayManagement {
           ?.online(AbortSignal.any([signal, AbortSignal.timeout(this.recheckMs())]))
           .catch(() => {});
         signal.throwIfAborted();
-        this.publicReady = await this.reachable(signal);
+        this.publicReady = await this.admitted(() => this.reachable(signal));
         // A first miss is not an error yet: the address is looked at again for a few minutes.
         if (this.publicReady) this.publicError = undefined;
       } catch (error) {
+        if (this.cleanup.observe(error)) throw error;
         if (!this.abort.signal.aborted) {
           if (error instanceof GatewayUnregistered) unregistered = error;
           // The page only shows a code; the reason has to be findable in the gateway log.
@@ -632,9 +805,11 @@ export class GatewayCloudRelayManagement implements CloudRelayManagement {
         this.pending = undefined;
         this.revision++;
         if (unregistered) this.forgotten(unregistered.removed);
-        else if (this.settings?.enabled && !this.abort.signal.aborted) this.scheduleNext(0);
+        else if (this.settings?.enabled && !this.abort.signal.aborted && !this.cleanup.uncertain)
+          this.scheduleNext(0);
       }
-    })();
+    });
+    void this.pending.catch(() => {});
   }
   /**
    * The first check can still miss a working address: the tunnel did not come online in time, or
@@ -642,6 +817,11 @@ export class GatewayCloudRelayManagement implements CloudRelayManagement {
    * unreachable for an hour.
    */
   private scheduleNext(attempt: number): void {
+    try {
+      this.assertAdmitting();
+    } catch {
+      return;
+    }
     const soon = this.recheckMs();
     if (this.enrollment.state !== "enrolled" && this.registrationRetries < PROBE_RETRIES) {
       // A registration that failed is tried again by itself: one hiccup must not cost an hour.
@@ -654,7 +834,9 @@ export class GatewayCloudRelayManagement implements CloudRelayManagement {
         this.revision++;
       }
       this.timer = recheck
-        ? setTimeout(() => void this.recheck(attempt + 1), soon)
+        ? setTimeout(() => {
+            void this.recheck(attempt + 1).catch(() => {});
+          }, soon)
         : setTimeout(() => this.launch(true), 60 * 60_000);
     }
     this.timer.unref();
@@ -664,20 +846,25 @@ export class GatewayCloudRelayManagement implements CloudRelayManagement {
   }
   private reachable(signal: AbortSignal): Promise<boolean> {
     return (this.options.probe ?? defaultPublicProbe)(this.settings!.publicOrigin, signal).catch(
-      () => false,
+      (error: unknown) => {
+        if (this.cleanup.observe(error)) throw error;
+        return false;
+      },
     );
   }
   private async recheck(attempt: number): Promise<void> {
-    const abort = this.abort;
-    const ready = await this.reachable(abort.signal);
-    // A stop or a newer launch owns the state from here.
-    if (abort.signal.aborted) return;
-    if (ready) {
-      this.publicReady = true;
-      this.publicError = undefined;
-      this.revision++;
-    }
-    this.scheduleNext(attempt);
+    return this.run(async () => {
+      const abort = this.abort;
+      const ready = await this.admitted(() => this.reachable(abort.signal));
+      // A stop or a newer launch owns the state from here.
+      if (abort.signal.aborted) return;
+      if (ready) {
+        this.publicReady = true;
+        this.publicError = undefined;
+        this.revision++;
+      }
+      this.scheduleNext(attempt);
+    });
   }
   private async stop(): Promise<void> {
     this.abort.abort();
@@ -685,15 +872,38 @@ export class GatewayCloudRelayManagement implements CloudRelayManagement {
     this.account?.cancel();
     clearTimeout(this.timer);
     this.timer = undefined;
-    this.tunnel?.stop();
-    this.tunnel = undefined;
-    await this.pending;
+    this.stopTunnel();
+    const errors: unknown[] = [];
+    try {
+      await this.pending;
+    } catch (error) {
+      this.cleanup.observe(error);
+      errors.push(error);
+    }
+    try {
+      await this.closeTunnel();
+      this.tunnel = undefined;
+    } catch (error) {
+      this.cleanup.observe(error);
+      errors.push(error);
+    }
     this.fingerprint = this.fingerprintSha256();
     this.spkiFingerprint = this.spkiFingerprintSha256();
-    await this.controller?.close();
-    this.controller = undefined;
+    try {
+      await this.closeController();
+      this.controller = undefined;
+    } catch (error) {
+      this.cleanup.observe(error);
+      errors.push(error);
+    }
     this.publicReady = false;
-    await this.options.stopLegacy?.();
+    try {
+      await this.options.stopLegacy?.();
+    } catch (error) {
+      this.cleanup.observe(error);
+      errors.push(error);
+    }
+    if (errors.length) throw combinedCleanupErrors(errors, "Cloud relay cleanup failed");
   }
   /**
    * The relay answered this gateway's own proven keys that it has no registration for it: its
@@ -710,24 +920,29 @@ export class GatewayCloudRelayManagement implements CloudRelayManagement {
     }
     this.forgetRemoved ||= removed;
     this.forgetting ??= this.forget()
-      .catch((error: unknown) => log.warn(`Leaving the account failed: ${String(error)}`))
+      .catch((error: unknown) => {
+        this.cleanup.observe(error);
+        log.warn(`Leaving the account failed: ${String(error)}`);
+      })
       .finally(() => {
         this.forgetting = undefined;
         this.forgetRemoved = false;
       });
   }
   private async forget(): Promise<void> {
-    // A late word from a tunnel that is already stopped changes nothing.
-    if (!this.settings!.enabled) return;
-    const removed = this.forgetRemoved;
-    log.warn(
-      removed
-        ? "The relay no longer has this gateway: it was unlinked on its Omnesis account page"
-        : "The relay no longer has this gateway: its Omnesis account was deleted",
-    );
-    await this.leave(false);
-    this.notice = this.forgetRemoved ? "gateway-removed" : "account-deleted";
-    this.revision++;
+    return this.run(async () => {
+      // A late word from a tunnel that is already stopped changes nothing.
+      if (!this.settings!.enabled) return;
+      const removed = this.forgetRemoved;
+      log.warn(
+        removed
+          ? "The relay no longer has this gateway: it was unlinked on its Omnesis account page"
+          : "The relay no longer has this gateway: its Omnesis account was deleted",
+      );
+      await this.admitted(() => this.leave(false));
+      this.notice = this.forgetRemoved ? "gateway-removed" : "account-deleted";
+      this.revision++;
+    });
   }
   private get releaseFile(): string {
     return join(this.directory, "release.json");
@@ -747,34 +962,37 @@ export class GatewayCloudRelayManagement implements CloudRelayManagement {
     const settings = this.settings!,
       options = this.keyOptions();
     // A gateway that never registered has nothing on the relay to drop.
-    const release = departing && existsSync(options.sessionFile);
+    const release =
+      departing && (await this.admitted(() => identityArtifactPresent(options.sessionFile)));
     this.connectAbort.abort();
     this.signup = undefined;
     this.connection = { state: "idle" };
-    await this.stop();
-    await this.account!.forget();
-    await this.google!.forget();
+    await this.admitted(() => this.stop());
+    await this.admitted(() => this.account!.forget());
+    await this.admitted(() => this.google!.forget());
     // The session proves this gateway to the relay one last time; otherwise it is dead there.
     if (release)
-      await savePrivateJson(this.releaseFile, {
-        version: 1,
-        relayUrl: options.relayUrl,
-        gatewayId: options.gatewayId,
-        publicOrigin: options.publicOrigin,
-        sessionFile: options.sessionFile,
-        ownerKeyFile: options.ownerKeyFile,
-        certificateFile: options.certificateFile,
-        privateKeyFile: options.privateKeyFile,
-        createdAt: Date.now(),
-      } satisfies GatewayRelease);
-    else await rm(options.sessionFile, { force: true });
+      await this.admitted(() =>
+        savePrivateJson(this.releaseFile, {
+          version: 1,
+          relayUrl: options.relayUrl,
+          gatewayId: options.gatewayId,
+          publicOrigin: options.publicOrigin,
+          sessionFile: options.sessionFile,
+          ownerKeyFile: options.ownerKeyFile,
+          certificateFile: options.certificateFile,
+          privateKeyFile: options.privateKeyFile,
+          createdAt: Date.now(),
+        } satisfies GatewayRelease),
+      );
+    else await this.admitted(() => rm(options.sessionFile, { force: true }));
     for (const spent of [
       options.enrollmentTokenFile ?? join(this.directory, "invitation.json"),
       options.recoveryReceiptFile ?? `${options.sessionFile}.recovery.json`,
     ])
-      await rm(spent, { force: true });
+      await this.admitted(() => rm(spent, { force: true }));
     settings.enabled = false;
-    await this.persist();
+    await this.admitted(() => this.persist());
     this.enrollment = { state: "unconfigured" };
     this.certificateError = this.publicError = this.lastRenewedAt = undefined;
     this.registrationRetries = 0;
@@ -784,74 +1002,94 @@ export class GatewayCloudRelayManagement implements CloudRelayManagement {
    * been out of reach when the owner did. A relay that never answers is given up after a month.
    */
   private release(): Promise<void> {
-    return (this.releasing ??= (async () => {
+    if (this.closed) return this.releasing ?? Promise.resolve();
+    return (this.releasing ??= this.run(async () => {
       clearTimeout(this.releaseTimer);
       let record: GatewayRelease;
       try {
-        record = gatewayReleaseSchema.parse(await readPrivateJson(this.releaseFile));
-      } catch {
-        // Nothing is waiting, or what waits cannot be read and so cannot be acted on.
-        await rm(this.releaseFile, { force: true });
+        record = gatewayReleaseSchema.parse(
+          await this.admitted(() => readPrivateJson(this.releaseFile)),
+        );
+      } catch (error) {
+        if (this.cleanup.observe(error)) throw error;
+        if (
+          !this.closed &&
+          !(error && typeof error === "object" && "code" in error && error.code === "ENOENT")
+        )
+          log.warn("The pending cloud relay release could not be read; it remains pending");
         return;
       }
       try {
+        this.releaseAbort.signal.throwIfAborted();
         if (record.createdAt > Date.now() - GATEWAY_RELEASE_DAYS * 86400_000)
-          await releaseGateway(record, {
-            register: this.options.register ?? registerGatewayKey,
-            fetch: this.options.fetch,
-            signal: AbortSignal.timeout(20_000),
-          });
-        await rm(record.sessionFile, { force: true });
-        await rm(this.releaseFile, { force: true });
+          await this.admitted(() =>
+            releaseGateway(record, {
+              register: this.options.register ?? registerGatewayKey,
+              fetch: this.options.fetch,
+              signal: AbortSignal.any([this.releaseAbort.signal, AbortSignal.timeout(20_000)]),
+            }),
+          );
+        this.releaseAbort.signal.throwIfAborted();
+        await this.admitted(() => rm(record.sessionFile, { force: true }));
+        await this.admitted(() => rm(this.releaseFile, { force: true }));
       } catch (error) {
-        log.warn(`The relay has not dropped the disconnected gateway yet: ${String(error)}`);
+        if (this.cleanup.observe(error)) throw error;
         if (this.closed) return;
+        log.warn(`The relay has not dropped the disconnected gateway yet: ${String(error)}`);
         this.releaseTimer = setTimeout(
-          () => void this.release(),
+          () => {
+            void this.release().catch(() => {});
+          },
           this.options.releaseRetryMs ?? 15 * 60_000,
         );
         this.releaseTimer.unref();
       }
-    })().finally(() => (this.releasing = undefined)));
+    }).finally(() => (this.releasing = undefined)));
   }
   private async control(action: () => Promise<void>): Promise<CloudRelayManagementStatus> {
     if (this.busy) throw new CloudRelayManagementFailure(409, "operation-in-progress");
     this.busy = true;
     try {
-      await action();
+      await this.admitted(() => action());
     } finally {
       this.busy = false;
     }
     return this.status();
   }
   async disable(): Promise<CloudRelayManagementStatus> {
-    return this.control(async () => {
-      this.abort.abort();
-      try {
-        if (this.settings) {
-          this.settings.enabled = false;
-          await this.persist();
+    return this.run(async () => {
+      return this.control(async () => {
+        this.abort.abort();
+        try {
+          if (this.settings) {
+            this.settings.enabled = false;
+            await this.admitted(() => this.persist());
+          }
+        } finally {
+          await this.admitted(() => this.stop());
         }
-      } finally {
-        await this.stop();
-      }
+      });
     });
   }
   async reconnect(): Promise<CloudRelayManagementStatus> {
-    return this.control(async () => {
-      if (!this.settings?.enabled)
-        throw new CloudRelayManagementFailure(409, "configuration-invalid");
-      await this.stop();
-      this.launch();
+    return this.run(async () => {
+      return this.control(async () => {
+        if (!this.settings?.enabled)
+          throw new CloudRelayManagementFailure(409, "configuration-invalid");
+        await this.admitted(() => this.stop());
+        this.launch();
+      });
     });
   }
   async renew(): Promise<CloudRelayManagementStatus> {
-    return this.control(async () => {
-      if (!this.settings?.enabled)
-        throw new CloudRelayManagementFailure(409, "configuration-invalid");
-      if (this.pending) throw new CloudRelayManagementFailure(409, "operation-in-progress");
-      clearTimeout(this.timer);
-      this.launch(true);
+    return this.run(async () => {
+      return this.control(async () => {
+        if (!this.settings?.enabled)
+          throw new CloudRelayManagementFailure(409, "configuration-invalid");
+        if (this.pending) throw new CloudRelayManagementFailure(409, "operation-in-progress");
+        clearTimeout(this.timer);
+        this.launch(true);
+      });
     });
   }
   /** The relay a person who is not connected yet would sign up with, when that is settled. */
@@ -865,158 +1103,170 @@ export class GatewayCloudRelayManagement implements CloudRelayManagement {
    * most every ten minutes. Never throws: a relay that does not answer keeps the last answer.
    */
   async refreshSignupAccess(): Promise<void> {
-    const relayUrl = this.signupRelayUrl();
-    if (this.closed || !relayUrl) return;
-    const known = this.signupAccess?.relayUrl === relayUrl ? this.signupAccess : undefined;
-    if (known && known.until > Date.now()) return;
-    this.signupAccessRead ??= (this.options.signupAccess ?? relaySignupAccess)(
-      relayUrl,
-      AbortSignal.timeout(5000),
-      this.options.fetch,
-    )
-      .then(
-        (value) => ({ value, until: Date.now() + SIGNUP_ACCESS_TTL_MS }),
-        (error: unknown) => {
-          log.debug(`Reading the relay's signup access failed: ${String(error)}`);
-          return { value: known?.value, until: Date.now() + SIGNUP_ACCESS_RETRY_MS };
-        },
+    return this.run(async () => {
+      const relayUrl = this.signupRelayUrl();
+      if (this.closed || !relayUrl) return;
+      const known = this.signupAccess?.relayUrl === relayUrl ? this.signupAccess : undefined;
+      if (known && known.until > Date.now()) return;
+      this.signupAccessRead ??= (this.options.signupAccess ?? relaySignupAccess)(
+        relayUrl,
+        AbortSignal.timeout(5000),
+        this.options.fetch,
       )
-      .then((answer) => {
-        this.signupAccess = { relayUrl, ...answer };
-      })
-      .finally(() => (this.signupAccessRead = undefined));
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    await Promise.race([
-      this.signupAccessRead,
-      new Promise<void>((resolve) => {
-        timer = setTimeout(resolve, SIGNUP_ACCESS_WAIT_MS);
-        timer.unref();
-      }),
-    ]);
-    clearTimeout(timer);
+        .then(
+          (value) => ({ value, until: Date.now() + SIGNUP_ACCESS_TTL_MS }),
+          (error: unknown) => {
+            if (this.cleanup.observe(error)) throw error;
+            log.debug(`Reading the relay's signup access failed: ${String(error)}`);
+            return { value: known?.value, until: Date.now() + SIGNUP_ACCESS_RETRY_MS };
+          },
+        )
+        .then((answer) => {
+          this.signupAccess = { relayUrl, ...answer };
+        })
+        .finally(() => (this.signupAccessRead = undefined));
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      await this.admitted(() =>
+        Promise.race([
+          this.signupAccessRead,
+          new Promise<void>((resolve) => {
+            timer = setTimeout(resolve, SIGNUP_ACCESS_WAIT_MS);
+            timer.unref();
+          }),
+        ]),
+      );
+      clearTimeout(timer);
+    });
   }
   async status(): Promise<CloudRelayManagementStatus> {
-    const s = this.settings,
-      direct = this.options.directIdentity();
-    const signupRelayUrl = this.signupRelayUrl();
-    const signup =
-      signupRelayUrl && this.signupAccess?.relayUrl === signupRelayUrl
-        ? this.signupAccess.value
-        : undefined;
-    let certificate: CloudRelayManagementStatus["certificate"] = { state: "unconfigured" };
-    if (s) {
-      try {
-        const cert = new X509Certificate(
-          await readFile(
-            this.environment().OMNESIS_ACME_CERT_FILE ??
-              this.environment().OMNESIS_TLS_CERT ??
-              join(this.directory, "public.pem"),
-          ),
-        );
-        const expiry = Date.parse(cert.validTo);
-        certificate = {
-          state:
-            expiry <= Date.now()
-              ? "expired"
-              : cert.checkIssued(cert)
-                ? "bootstrap"
-                : expiry - Date.now() < 30 * 86400_000
-                  ? "expiring"
-                  : "valid",
-          expiresAt: new Date(expiry).toISOString(),
-        };
-      } catch {
-        if (this.certificateError) certificate.state = "failed";
+    return this.run(async () => {
+      const s = this.settings,
+        direct = this.options.directIdentity();
+      const signupRelayUrl = this.signupRelayUrl();
+      const signup =
+        signupRelayUrl && this.signupAccess?.relayUrl === signupRelayUrl
+          ? this.signupAccess.value
+          : undefined;
+      let certificate: CloudRelayManagementStatus["certificate"] = { state: "unconfigured" };
+      if (s) {
+        try {
+          const cert = new X509Certificate(
+            await this.admitted(() =>
+              readFile(
+                this.environment().OMNESIS_ACME_CERT_FILE ??
+                  this.environment().OMNESIS_TLS_CERT ??
+                  join(this.directory, "public.pem"),
+              ),
+            ),
+          );
+          const expiry = Date.parse(cert.validTo);
+          certificate = {
+            state:
+              expiry <= Date.now()
+                ? "expired"
+                : cert.checkIssued(cert)
+                  ? "bootstrap"
+                  : expiry - Date.now() < 30 * 86400_000
+                    ? "expiring"
+                    : "valid",
+            expiresAt: new Date(expiry).toISOString(),
+          };
+        } catch {
+          if (this.certificateError) certificate.state = "failed";
+        }
       }
-    }
-    certificate.lastError = this.certificateError;
-    certificate.lastRenewedAt = this.lastRenewedAt;
-    const cloud: CloudRelayNetworkIdentity = {
-      id: "cloud",
-      names: s ? [new URL(s.publicOrigin).hostname] : [],
-      kind:
-        certificate.state === "unconfigured"
-          ? "unconfigured"
-          : certificate.state === "bootstrap"
-            ? "self-signed"
-            : "public-ca",
-      state: certificate.state === "bootstrap" ? "valid" : certificate.state,
-      expiresAt: certificate.expiresAt,
-      pinPolicy: "strict-key-pin-or-public-pki",
-    };
-    const tunnel = this.tunnel?.status();
-    const e = s ? this.environment() : undefined;
-    const recovery = s
-      ? await gatewayRecoveryReceiptStatus({
-          relayUrl: s.relayUrl,
-          gatewayId: s.gatewayId,
-          publicOrigin: s.publicOrigin,
-          sessionFile: e!.OMNESIS_CLOUD_RELAY_SESSION_FILE ?? join(this.directory, "session.json"),
-          ownerKeyFile: e!.OMNESIS_CLOUD_RELAY_OWNER_KEY_FILE,
-          recoveryReceiptFile: e!.OMNESIS_CLOUD_RELAY_RECOVERY_RECEIPT_FILE,
-        })
-      : undefined;
-    return {
-      certificateMonitor: this.monitor.status(),
-      ...(recovery ? { recovery } : {}),
-      revision: this.revision,
-      enabled: s?.enabled ?? false,
-      configured: Boolean(s),
-      serviceConfigured: !this.serviceError(),
-      serviceError: this.serviceError(),
-      gatewayId: s?.gatewayId,
-      hostname: s ? new URL(s.publicOrigin).hostname : undefined,
-      publicOrigin: s?.publicOrigin,
-      identities: [direct, cloud],
-      directCertificate: { state: direct.state, expiresAt: direct.expiresAt },
-      config: {
-        relayUrl: s?.relayUrl ?? installationRelayUrl(this.options.env),
+      certificate.lastError = this.certificateError;
+      certificate.lastRenewedAt = this.lastRenewedAt;
+      const cloud: CloudRelayNetworkIdentity = {
+        id: "cloud",
+        names: s ? [new URL(s.publicOrigin).hostname] : [],
+        kind:
+          certificate.state === "unconfigured"
+            ? "unconfigured"
+            : certificate.state === "bootstrap"
+              ? "self-signed"
+              : "public-ca",
+        state: certificate.state === "bootstrap" ? "valid" : certificate.state,
+        expiresAt: certificate.expiresAt,
+        pinPolicy: "strict-key-pin-or-public-pki",
+      };
+      const tunnel = this.tunnel?.status();
+      const e = s ? this.environment() : undefined;
+      const recovery = s
+        ? await this.admitted(() =>
+            gatewayRecoveryReceiptStatus({
+              relayUrl: s.relayUrl,
+              gatewayId: s.gatewayId,
+              publicOrigin: s.publicOrigin,
+              sessionFile:
+                e!.OMNESIS_CLOUD_RELAY_SESSION_FILE ?? join(this.directory, "session.json"),
+              ownerKeyFile: e!.OMNESIS_CLOUD_RELAY_OWNER_KEY_FILE,
+              recoveryReceiptFile: e!.OMNESIS_CLOUD_RELAY_RECOVERY_RECEIPT_FILE,
+            }),
+          )
+        : undefined;
+      return {
+        certificateMonitor: this.monitor.status(),
+        ...(recovery ? { recovery } : {}),
+        revision: this.revision,
+        enabled: s?.enabled ?? false,
+        configured: Boolean(s),
+        serviceConfigured: !this.serviceError(),
+        serviceError: this.serviceError(),
+        gatewayId: s?.gatewayId,
+        hostname: s ? new URL(s.publicOrigin).hostname : undefined,
         publicOrigin: s?.publicOrigin,
-        // Before the first connect, the directory a connect would use.
-        acmeDirectoryUrl: s?.acmeDirectoryUrl || (s ? undefined : this.defaultAcmeDirectoryUrl()),
-        // Terms are shown only for Let's Encrypt; another directory's operator states its own.
-        acmeTermsUrl:
-          (s ? s.acmeDirectoryUrl : this.defaultAcmeDirectoryUrl()) === LETS_ENCRYPT_DIRECTORY
-            ? "https://letsencrypt.org/repository/"
-            : undefined,
-        termsAccepted: s?.termsAccepted ?? false,
-        invitationRequired: s?.invitationRequired ?? true,
-      },
-      enrollment: { ...this.enrollment },
-      tunnel: tunnel ?? { state: s?.enabled ? "connecting" : "disabled" },
-      certificate,
-      publicMcp: {
-        lastError: this.publicError,
-        ready: this.publicReady && tunnel?.state === "online",
-        url: s ? `${s.publicOrigin}/mcp` : undefined,
-      },
-      google: {
-        ...this.google!.status(),
-        canLink:
-          !this.account!.accountModeActivated() &&
-          this.google!.status().configured &&
-          Boolean(s?.enabled && this.enrollment.state === "enrolled"),
-        canUnlink: this.google!.status().linked && Boolean(s),
-      },
-      account: {
-        ...this.account!.status(),
-        canLink:
-          this.account!.status().canLink &&
-          Boolean(s?.enabled && this.enrollment.state === "enrolled"),
-      },
-      ...(this.connection.state === "idle" ? {} : { connect: { ...this.connection } }),
-      deviceEnrollment: this.account!.enrollmentStatus(),
-      ...(this.account!.incidentHold() ? { incidentHold: this.account!.incidentHold() } : {}),
-      ...(this.notice ? { notice: this.notice } : {}),
-      ...(signup ? { signup: { ...signup } } : {}),
-      can: {
-        configure: !this.serviceError() && !this.busy && !s?.enabled,
-        enable: Boolean(s && !s.enabled),
-        disable: Boolean(s?.enabled),
-        reconnect: Boolean(s?.enabled && !this.pending),
-        renew: Boolean(s?.enabled && !this.pending),
-      },
-    };
+        identities: [direct, cloud],
+        directCertificate: { state: direct.state, expiresAt: direct.expiresAt },
+        config: {
+          relayUrl: s?.relayUrl ?? installationRelayUrl(this.options.env),
+          publicOrigin: s?.publicOrigin,
+          // Before the first connect, the directory a connect would use.
+          acmeDirectoryUrl: s?.acmeDirectoryUrl || (s ? undefined : this.defaultAcmeDirectoryUrl()),
+          // Terms are shown only for Let's Encrypt; another directory's operator states its own.
+          acmeTermsUrl:
+            (s ? s.acmeDirectoryUrl : this.defaultAcmeDirectoryUrl()) === LETS_ENCRYPT_DIRECTORY
+              ? "https://letsencrypt.org/repository/"
+              : undefined,
+          termsAccepted: s?.termsAccepted ?? false,
+          invitationRequired: s?.invitationRequired ?? true,
+        },
+        enrollment: { ...this.enrollment },
+        tunnel: tunnel ?? { state: s?.enabled ? "connecting" : "disabled" },
+        certificate,
+        publicMcp: {
+          lastError: this.publicError,
+          ready: this.publicReady && tunnel?.state === "online",
+          url: s ? `${s.publicOrigin}/mcp` : undefined,
+        },
+        google: {
+          ...this.google!.status(),
+          canLink:
+            !this.account!.accountModeActivated() &&
+            this.google!.status().configured &&
+            Boolean(s?.enabled && this.enrollment.state === "enrolled"),
+          canUnlink: this.google!.status().linked && Boolean(s),
+        },
+        account: {
+          ...this.account!.status(),
+          canLink:
+            this.account!.status().canLink &&
+            Boolean(s?.enabled && this.enrollment.state === "enrolled"),
+        },
+        ...(this.connection.state === "idle" ? {} : { connect: { ...this.connection } }),
+        deviceEnrollment: this.account!.enrollmentStatus(),
+        ...(this.account!.incidentHold() ? { incidentHold: this.account!.incidentHold() } : {}),
+        ...(this.notice ? { notice: this.notice } : {}),
+        ...(signup ? { signup: { ...signup } } : {}),
+        can: {
+          configure: !this.serviceError() && !this.busy && !s?.enabled,
+          enable: Boolean(s && !s.enabled),
+          disable: Boolean(s?.enabled),
+          reconnect: Boolean(s?.enabled && !this.pending),
+          renew: Boolean(s?.enabled && !this.pending),
+        },
+      };
+    });
   }
   managedGoogleBrowser() {
     return this.settings?.enabled && this.enrollment.state === "enrolled"
@@ -1042,114 +1292,140 @@ export class GatewayCloudRelayManagement implements CloudRelayManagement {
     termsAccepted: boolean;
     intent?: "create" | "existing";
   }): Promise<CloudRelayManagementStatus> {
-    if (!input.termsAccepted) throw new CloudRelayManagementFailure(400, "ca-terms-required");
-    if (["waiting", "registering", "linking"].includes(this.connection.state)) return this.status();
-    this.notice = undefined;
-    // A gateway named by its environment is already configured, by its operator.
-    if (!this.settings || !(this.settings.enabled || this.settings.legacyEnvironment))
-      await this.configure({ termsAccepted: true });
-    const env = this.environment();
-    const client = new GatewaySignupClient({
-      relayUrl: this.settings!.relayUrl,
-      gatewayId: this.settings!.gatewayId,
-      ownerKeyFile: env.OMNESIS_CLOUD_RELAY_OWNER_KEY_FILE!,
-      fetch: this.options.fetch,
+    return this.run(async () => {
+      if (!input.termsAccepted) throw new CloudRelayManagementFailure(400, "ca-terms-required");
+      if (["waiting", "registering", "linking"].includes(this.connection.state))
+        return this.status();
+      this.notice = undefined;
+      // A gateway named by its environment is already configured, by its operator.
+      if (!this.settings || !(this.settings.enabled || this.settings.legacyEnvironment))
+        await this.admitted(() => this.configure({ termsAccepted: true }));
+      const env = this.environment();
+      const client = new GatewaySignupClient({
+        relayUrl: this.settings!.relayUrl,
+        gatewayId: this.settings!.gatewayId,
+        ownerKeyFile: env.OMNESIS_CLOUD_RELAY_OWNER_KEY_FILE!,
+        fetch: this.options.fetch,
+      });
+      this.connectAbort = new AbortController();
+      let pending: GatewaySignupPending;
+      try {
+        pending = await this.admitted(() => client.start(this.connectAbort.signal, input.intent));
+      } catch (error) {
+        if (this.cleanup.observe(error)) throw error;
+        throw new CloudRelayManagementFailure(503, "relay-unreachable");
+      }
+      this.signup = { client, pending };
+      this.connection = {
+        state: "waiting",
+        authorizeUrl: pending.authorizeUrl,
+        connectUrl: pending.connectUrl,
+        ...(pending.connectShortUrl ? { connectShortUrl: pending.connectShortUrl } : {}),
+        code: pending.code,
+        expiresAt: pending.expiresAt,
+      };
+      this.revision++;
+      void this.finishConnect(client, pending, this.connectAbort.signal).catch(() => {});
+      return this.status();
     });
-    this.connectAbort = new AbortController();
-    let pending: GatewaySignupPending;
-    try {
-      pending = await client.start(this.connectAbort.signal, input.intent);
-    } catch {
-      throw new CloudRelayManagementFailure(503, "relay-unreachable");
-    }
-    this.signup = { client, pending };
-    this.connection = {
-      state: "waiting",
-      authorizeUrl: pending.authorizeUrl,
-      connectUrl: pending.connectUrl,
-      ...(pending.connectShortUrl ? { connectShortUrl: pending.connectShortUrl } : {}),
-      code: pending.code,
-      expiresAt: pending.expiresAt,
-    };
-    this.revision++;
-    void this.finishConnect(client, pending, this.connectAbort.signal);
-    return this.status();
   }
   private async finishConnect(
     client: GatewaySignupClient,
     pending: GatewaySignupPending,
     signal: AbortSignal,
   ): Promise<void> {
-    const fail = (error: NonNullable<CloudRelayManagementStatus["connect"]>["error"]) => {
-      if (signal.aborted) return;
-      this.connection = { state: "failed", error };
-      this.signup = undefined;
-      this.revision++;
-    };
-    let approved;
-    try {
-      for (;;) {
-        signal.throwIfAborted();
-        if (pending.expiresAt * 1000 <= Date.now()) return fail("expired");
-        const result = await client.poll(pending, signal).catch(() => undefined);
-        if (result?.status === "denied") return fail(result.reason);
-        if (result?.status === "approved") {
-          approved = result;
-          break;
+    return this.run(async () => {
+      const fail = (error: NonNullable<CloudRelayManagementStatus["connect"]>["error"]) => {
+        if (signal.aborted) return;
+        this.connection = { state: "failed", error };
+        this.signup = undefined;
+        this.revision++;
+      };
+      let approved: Extract<
+        Awaited<ReturnType<GatewaySignupClient["poll"]>>,
+        { status: "approved" }
+      >;
+      try {
+        for (;;) {
+          signal.throwIfAborted();
+          if (pending.expiresAt * 1000 <= Date.now()) return fail("expired");
+          const result = await this.admitted(() =>
+            client.poll(pending, signal).catch((error: unknown) => {
+              if (this.cleanup.observe(error)) throw error;
+              return undefined;
+            }),
+          );
+          if (result?.status === "denied") return fail(result.reason);
+          if (result?.status === "approved") {
+            approved = result;
+            break;
+          }
+          await this.admitted(() => new Promise((resolve) => setTimeout(resolve, 2000).unref()));
         }
-        await new Promise((resolve) => setTimeout(resolve, 2000).unref());
+        this.connection = { state: "registering" };
+        this.revision++;
+        if (!this.settings!.enabled || this.enrollment.state !== "enrolled") {
+          await this.admitted(() =>
+            savePrivateJson(this.environment().OMNESIS_CLOUD_RELAY_ENROLLMENT_TOKEN_FILE!, {
+              enrollmentToken: approved.enrollmentToken,
+            }),
+          );
+          // An earlier attempt may have left the relay turned on but never registered.
+          if (this.settings!.enabled) this.launch(true);
+          else await this.admitted(() => this.enable());
+        }
+        await this.admitted(() => this.pending);
+        signal.throwIfAborted();
+        if (this.enrollment.state !== "enrolled") return fail("enrollment-refused");
+        this.connection = { state: "linking" };
+        this.revision++;
+        const accountId = await this.admitted(() =>
+          client.link(
+            pending,
+            this.options.register ?? registerGatewayKey,
+            this.keyOptions(signal),
+          ),
+        );
+        if (accountId !== approved.accountId) return fail("account-link-failed");
+        await this.admitted(() =>
+          this.account!.completeSignup({
+            accountId,
+            nonce: pending.nonce,
+            proof: approved.signInProof,
+            ...(approved.credentialPublicKey
+              ? { credentialPublicKey: approved.credentialPublicKey }
+              : {}),
+            signal,
+          }),
+        );
+        await this.admitted(() => this.account!.refresh(signal));
+        this.connection = { state: "done" };
+        this.signup = undefined;
+        this.revision++;
+      } catch (error) {
+        if (this.cleanup.observe(error)) throw error;
+        fail(this.enrollment.state === "enrolled" ? "account-link-failed" : "enrollment-refused");
       }
-      this.connection = { state: "registering" };
-      this.revision++;
-      if (!this.settings!.enabled || this.enrollment.state !== "enrolled") {
-        await savePrivateJson(this.environment().OMNESIS_CLOUD_RELAY_ENROLLMENT_TOKEN_FILE!, {
-          enrollmentToken: approved.enrollmentToken,
-        });
-        // An earlier attempt may have left the relay turned on but never registered.
-        if (this.settings!.enabled) this.launch(true);
-        else await this.enable();
-      }
-      await this.pending;
-      signal.throwIfAborted();
-      if (this.enrollment.state !== "enrolled") return fail("enrollment-refused");
-      this.connection = { state: "linking" };
-      this.revision++;
-      const accountId = await client.link(
-        pending,
-        this.options.register ?? registerGatewayKey,
-        this.keyOptions(signal),
-      );
-      if (accountId !== approved.accountId) return fail("account-link-failed");
-      await this.account!.completeSignup({
-        accountId,
-        nonce: pending.nonce,
-        proof: approved.signInProof,
-        ...(approved.credentialPublicKey
-          ? { credentialPublicKey: approved.credentialPublicKey }
-          : {}),
-        signal,
-      });
-      await this.account!.refresh(signal);
-      this.connection = { state: "done" };
-      this.signup = undefined;
-      this.revision++;
-    } catch {
-      fail(this.enrollment.state === "enrolled" ? "account-link-failed" : "enrollment-refused");
-    }
+    });
   }
   async cancelConnect(): Promise<CloudRelayManagementStatus> {
-    this.connectAbort.abort();
-    const signup = this.signup;
-    this.signup = undefined;
-    if (signup && this.connection.state === "waiting") await signup.client.cancel(signup.pending);
-    this.connection = { state: "idle" };
-    this.revision++;
-    return this.status();
+    return this.run(async () => {
+      this.connectAbort.abort();
+      const signup = this.signup;
+      this.signup = undefined;
+      if (signup && this.connection.state === "waiting")
+        await this.admitted(() => signup.client.cancel(signup.pending));
+      this.connection = { state: "idle" };
+      this.revision++;
+      return this.status();
+    });
   }
   async setEnrollmentPolicy(policy: "automatic" | "ask"): Promise<CloudRelayManagementStatus> {
-    await this.account!.setEnrollmentPolicy(policy);
-    this.revision++;
-    return this.status();
+    return this.run(async () => {
+      await this.admitted(() => this.account!.setEnrollmentPolicy(policy));
+      this.revision++;
+      return this.status();
+    });
   }
   /** Saved before the monitor's journal records the incidents, so a crash can't lose the hold. */
   private holdForIncidents(incidents: CertificateIncident[]): Promise<void> {
@@ -1159,31 +1435,39 @@ export class GatewayCloudRelayManagement implements CloudRelayManagement {
     );
   }
   private async hold(evidence: string[], reason: string): Promise<void> {
-    const added = await this.account!.holdForCertificateIncident(evidence);
-    if (!added) return;
-    this.revision++;
-    log.warn(`${reason}: new devices now wait for approval`);
-    this.options.onIncidentHold?.();
+    return this.run(async () => {
+      const added = await this.admitted(() => this.account!.holdForCertificateIncident(evidence));
+      if (!added) return;
+      this.revision++;
+      log.warn(`${reason}: new devices now wait for approval`);
+      this.options.onIncidentHold?.();
+    });
   }
   /** The name and account the hosted name's CAA record must keep binding, once published. */
   private async expectedCaa(): Promise<{ hostname: string; accountUri: string } | undefined> {
-    const accountUri = await this.controller?.expectedCaa?.();
-    const origin = this.publicOrigin();
-    return accountUri && origin ? { hostname: new URL(origin).hostname, accountUri } : undefined;
+    return this.run(async () => {
+      const accountUri = await this.admitted(() => this.controller?.expectedCaa?.());
+      const origin = this.publicOrigin();
+      return accountUri && origin ? { hostname: new URL(origin).hostname, accountUri } : undefined;
+    });
   }
   /**
    * The owner looked into a certificate incident. Only callers that know the request didn't come
    * through the relay may call this: the gateway admin route and the local CLI.
    */
   async acknowledgeIncidentHold(): Promise<CloudRelayManagementStatus> {
-    await this.account!.acknowledgeIncidentHold();
-    this.revision++;
-    return this.status();
+    return this.run(async () => {
+      await this.admitted(() => this.account!.acknowledgeIncidentHold());
+      this.revision++;
+      return this.status();
+    });
   }
   async removeTrustedSignIn(id: string): Promise<CloudRelayManagementStatus> {
-    await this.account!.removeTrustedSignIn(id);
-    this.revision++;
-    return this.status();
+    return this.run(async () => {
+      await this.admitted(() => this.account!.removeTrustedSignIn(id));
+      this.revision++;
+      return this.status();
+    });
   }
   /**
    * The owner opened the Omnesis account page, or came back to it, perhaps from adding a passkey
@@ -1194,22 +1478,23 @@ export class GatewayCloudRelayManagement implements CloudRelayManagement {
    * soon after opening the page is still noticed. An unlinked gateway has nothing to read.
    */
   async refreshAccount(): Promise<CloudRelayManagementStatus> {
-    if (!this.accountRead && this.accountReadable()) {
-      const wait =
-        this.accountReadAt + (this.options.accountRefreshMs ?? ACCOUNT_REFRESH_MS) - Date.now();
-      if (wait <= 0) this.readAccount();
-      else
-        (this.accountReadTimer ??= setTimeout(() => {
-          this.accountReadTimer = undefined;
-          void this.refreshAccount();
-        }, wait)).unref();
-    }
-    await this.accountRead;
-    return this.status();
+    return this.run(async () => {
+      if (!this.accountRead && this.accountReadable()) {
+        const wait =
+          this.accountReadAt + (this.options.accountRefreshMs ?? ACCOUNT_REFRESH_MS) - Date.now();
+        if (wait <= 0) this.readAccount();
+        else
+          (this.accountReadTimer ??= setTimeout(() => {
+            this.accountReadTimer = undefined;
+            void this.refreshAccount().catch(() => {});
+          }, wait)).unref();
+      }
+      await this.accountRead;
+      return this.status();
+    });
   }
   private accountReadable(): boolean {
     return Boolean(
-      !this.closed &&
       this.settings?.enabled &&
       this.enrollment.state === "enrolled" &&
       this.account!.status().linked,
@@ -1229,61 +1514,90 @@ export class GatewayCloudRelayManagement implements CloudRelayManagement {
       .finally(() => (this.accountRead = undefined));
   }
   async passkeyConfirmation() {
-    return this.account!.passkeyConfirmationOptions();
+    return this.run(async () => {
+      return this.admitted(() => this.account!.passkeyConfirmationOptions());
+    });
   }
   async confirmPasskey(proof: unknown): Promise<CloudRelayManagementStatus> {
-    await this.account!.confirmPasskey(proof);
-    this.revision++;
-    return this.status();
+    return this.run(async () => {
+      await this.admitted(() => this.account!.confirmPasskey(proof));
+      this.revision++;
+      return this.status();
+    });
   }
   verifiedAccountId(): string | undefined {
     return this.account!.verifiedAccountId();
   }
   async accountLink(input: { requestOrigin: string }) {
-    if (!this.settings?.enabled || this.enrollment.state !== "enrolled")
-      throw new CloudRelayManagementFailure(409, "configuration-invalid");
-    return this.account!.start(input);
+    return this.run(async () => {
+      if (!this.settings?.enabled || this.enrollment.state !== "enrolled")
+        throw new CloudRelayManagementFailure(409, "configuration-invalid");
+      return this.account!.start(input);
+    });
   }
   async accountCallback(input: { url: string; cookie?: string }) {
-    return this.account!.callback(input);
+    return this.run(async () => {
+      return this.account!.callback(input);
+    });
   }
   /**
    * The owner disconnects this gateway: it leaves its account and can no longer be reached
    * through the relay, whether or not the relay can be told right now.
    */
   async accountUnlink(): Promise<CloudRelayManagementStatus> {
-    if (!this.settings) throw new CloudRelayManagementFailure(409, "configuration-invalid");
-    return this.control(async () => {
-      await this.leave(true);
-      await this.release();
-      this.revision++;
+    return this.run(async () => {
+      if (!this.settings) throw new CloudRelayManagementFailure(409, "configuration-invalid");
+      return this.control(async () => {
+        await this.admitted(() => this.leave(true));
+        await this.admitted(() => this.release());
+        this.revision++;
+      });
     });
   }
   verifiedGoogleOwnerAccountId(): string | undefined {
     return this.google?.verifiedOwnerAccountId();
   }
   async googleLink(input: { requestOrigin: string }) {
-    if (!this.settings?.enabled || this.account!.accountModeActivated())
-      throw new CloudRelayManagementFailure(409, "configuration-invalid");
-    return this.google!.start(input);
+    return this.run(async () => {
+      if (!this.settings?.enabled || this.account!.accountModeActivated())
+        throw new CloudRelayManagementFailure(409, "configuration-invalid");
+      return this.google!.start(input);
+    });
   }
   async googleCallback(input: { url: string; cookie?: string }) {
-    return this.google!.callback(input);
+    return this.run(async () => {
+      return this.google!.callback(input);
+    });
   }
   async googleUnlink(): Promise<CloudRelayManagementStatus> {
-    if (!this.settings) throw new CloudRelayManagementFailure(409, "configuration-invalid");
-    await this.google!.unlink();
-    this.revision++;
-    return this.status();
+    return this.run(async () => {
+      if (!this.settings) throw new CloudRelayManagementFailure(409, "configuration-invalid");
+      await this.admitted(() => this.google!.unlink());
+      this.revision++;
+      return this.status();
+    });
   }
-  async close(): Promise<void> {
-    this.closed = true;
-    clearTimeout(this.releaseTimer);
-    clearTimeout(this.accountReadTimer);
-    try {
-      await this.monitor.close();
-    } finally {
-      await this.stop();
-    }
+  close(): Promise<void> {
+    this.stopAdmission();
+    return this.cleanup.close(
+      async () => {
+        await this.stop();
+      },
+      async () => {
+        await this.closeMonitor();
+      },
+      async () => {
+        await this.releasing;
+      },
+      async () => {
+        await this.forgetting;
+      },
+      async () => {
+        await this.signupAccessRead;
+      },
+      async () => {
+        await this.accountRead;
+      },
+    );
   }
 }

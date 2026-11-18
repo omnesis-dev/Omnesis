@@ -18,6 +18,8 @@ import { IoTaskRunner } from "./scheduler/runners/io.js";
 import { ioGateFromScheduler, type IoGate } from "./scheduler/io-ops.js";
 import { SQLITE_CATALOG_TABLES, computeSqliteTableStats } from "./sqlite-catalog.js";
 import type Database from "better-sqlite3";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 const WORKER_URL = new URL("./workers/io-worker.ts", import.meta.url);
 const LOADER_URL = new URL("./workers/register-tsx.mjs", import.meta.url).href;
@@ -28,7 +30,7 @@ let scheduler: Scheduler;
 let io: IoGate;
 
 beforeEach(async () => {
-  dbPath = `/tmp/omnesis-test-${randomUUID()}.db`;
+  dbPath = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
   db = createDatabase(dbPath) as unknown as Database.Database;
   const insert = db.prepare(
     `INSERT INTO people (id, canonical_name, source, first_seen, last_seen, created_at, updated_at)

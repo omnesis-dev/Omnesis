@@ -5,7 +5,9 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
-import { afterEach, describe, expect, it } from "vitest";
+import DatabaseConstructor from "better-sqlite3";
+import { ensurePrivateDirSync } from "@omnesis/core/private-files";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   digestSecret,
@@ -26,6 +28,7 @@ const target: RelayTarget = {
 
 const dirs: string[] = [];
 afterEach(() => {
+  vi.restoreAllMocks();
   for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
 });
 
@@ -96,6 +99,7 @@ describe("RelayStore challenge and credential semantics", () => {
   it("retains recent activity across reopen without a schema migration or backfill", () => {
     const dir = mkdtempSync(join(tmpdir(), "omnesis-relay-recent-"));
     dirs.push(dir);
+    if (process.platform === "win32") ensurePrivateDirSync(dir);
     const path = join(dir, "relay.db");
     const store = new RelayStore(path);
     const { hash } = addCredential(store, "persisted", 100);
@@ -153,6 +157,7 @@ describe("RelayStore challenge and credential semantics", () => {
   it("shares the pending ceiling across store handles", () => {
     const dir = mkdtempSync(join(tmpdir(), "omnesis-relay-capacity-"));
     dirs.push(dir);
+    if (process.platform === "win32") ensurePrivateDirSync(dir);
     const path = join(dir, "relay.db");
     const first = new RelayStore(path);
     const second = new RelayStore(path);
@@ -311,6 +316,7 @@ describe("RelayStore challenge and credential semantics", () => {
   it("stores only credential digests, persists them, and revokes one credential independently", () => {
     const dir = mkdtempSync(join(tmpdir(), "omnesis-relay-store-"));
     dirs.push(dir);
+    if (process.platform === "win32") ensurePrivateDirSync(dir);
     const path = join(dir, "relay.db");
     const first = new RelayStore(path);
     const a = addCredential(first, "a");
@@ -362,4 +368,34 @@ describe("RelayStore rate limiting", () => {
     expect(store.consumeRateLimit(b, now).allowed).toBe(true);
     store.close();
   });
+});
+
+it("closes the actual SQLite handle if initialization fails, preserving the original error", () => {
+  const dir = mkdtempSync(join(tmpdir(), "relay-init-failure-"));
+  dirs.push(dir);
+  if (process.platform === "win32") ensurePrivateDirSync(dir);
+  const path = join(dir, "relay.db"),
+    failure = new Error("Invented relay initialization failure");
+  const opened: Array<InstanceType<typeof DatabaseConstructor>> = [];
+  vi.spyOn(DatabaseConstructor.prototype, "pragma").mockImplementationOnce(function (
+    this: InstanceType<typeof DatabaseConstructor>,
+  ) {
+    opened.push(this);
+    throw failure;
+  });
+  expect(() => new RelayStore(path)).toThrow(failure);
+  expect(opened).toHaveLength(1);
+  expect(opened[0]!.open).toBe(false);
+});
+it("preserves Buffer-backed and default in-memory storage", () => {
+  const first = new RelayStore();
+  let copy: RelayStore | undefined;
+  try {
+    addCredential(first, "buffer");
+    copy = new RelayStore(first.db.serialize());
+    expect(copy.db.prepare("SELECT count(*) AS n FROM relay_credentials").get()).toEqual({ n: 1 });
+  } finally {
+    copy?.close();
+    first.close();
+  }
 });

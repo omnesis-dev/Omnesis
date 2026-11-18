@@ -12,6 +12,8 @@ import { createPersonAnnotation, getPersonAnnotation } from "../storage/person-a
 import { VERIFIER_CALL_LIMIT_MS } from "../../inference/verifier-limits.js";
 import { buildAnnotationTools, type AnnotationToolDeps } from "./tools.js";
 import type Database from "better-sqlite3";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 const NOW = Date.parse("2026-06-01T12:00:00Z");
 const EARLIER = NOW - 86_400_000;
@@ -23,7 +25,7 @@ let db: Database.Database;
 let path: string;
 
 beforeEach(() => {
-  path = `/tmp/omnesis-test-${randomUUID()}.db`;
+  path = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
   db = createDatabase(path);
   db.prepare(
     `INSERT INTO people(id,canonical_name,source,first_seen,last_seen,created_at,updated_at)

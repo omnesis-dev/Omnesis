@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import { sep } from "node:path";
 import { computeContentHash, normalizeEmail } from "@omnesis/core";
 import { parse as parseYaml } from "yaml";
 import type {
@@ -78,9 +79,9 @@ export function extractInlineTags(content: string): string[] {
  * change to the emitted document must reach notes that have not changed on
  * disk; the next sync re-reads and re-emits each one once.
  *
- * 2: notes declare their vault path in `extra.linkKeys`.
+ * 3: vault paths use slash notation in links and document metadata.
  */
-export const OBSIDIAN_RENDER_VERSION = 2;
+export const OBSIDIAN_RENDER_VERSION = 3;
 
 /**
  * Extract wikilink targets from markdown content.
@@ -254,13 +255,14 @@ export function normalizeNote(
   const contentHash = computeContentHash(content);
 
   // Build obsidian:// deep link
-  const filePathWithoutExt = note.relativePath.replace(/\.md$/, "");
+  const relativePath = note.relativePath.split(sep).join("/");
+  const filePathWithoutExt = relativePath.replace(/\.md$/, "");
   const sourceUrl = `obsidian://open?vault=${encodeURIComponent(vaultName)}&file=${encodeURIComponent(filePathWithoutExt)}`;
 
   // Build extra metadata — include all frontmatter properties except tags (already in metadata.tags)
   const extra: Record<string, unknown> = {
     vaultPath,
-    relativePath: note.relativePath,
+    relativePath,
   };
 
   if (note.links.length > 0) {

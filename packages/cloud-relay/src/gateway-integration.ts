@@ -1,18 +1,30 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { readFile } from "node:fs/promises";
-import { existsSync } from "node:fs";
-import { cloudRelayEnabled } from "@omnesis/core";
+import { lstatSync } from "node:fs";
+import { cloudRelayEnabled, DEFAULT_CONFIG_DIR } from "@omnesis/core";
 import { z } from "zod";
+import { isJoinedPrivateFileError } from "./private-file-errors.js";
 import { gatewayKeySessionSource, GatewayUnregistered } from "./gateway-key-client.js";
 import { GatewayTunnel } from "./tunnel-client.js";
 import { readPrivateJson, googleRelaySessionSource } from "./google-credentials.js";
+import { readPrivateText, identityArtifactPresent } from "./private-inputs.js";
 
 const sessionFileSchema = z.object({ token: z.string().min(1).max(4096) });
 
 export async function readRelaySession(path: string): Promise<string> {
-  return sessionFileSchema.parse(JSON.parse(await readFile(path, "utf8"))).token;
+  return sessionFileSchema.parse(JSON.parse(await readPrivateText(path))).token;
+}
+
+function ownerEntryObserved(path: string): boolean {
+  try {
+    lstatSync(path);
+    return true;
+  } catch (error) {
+    if (error && typeof error === "object" && "code" in error && error.code === "ENOENT")
+      return false;
+    throw error;
+  }
 }
 
 /** Absent configuration leaves every existing gateway path untouched. */
@@ -46,6 +58,7 @@ export function startGatewayCloudTunnel(
   const keySource =
     publicCertificate && privateKey && publicOrigin
       ? gatewayKeySessionSource({
+          configDir: env.OMNESIS_CONFIG_DIR ?? DEFAULT_CONFIG_DIR,
           relayUrl: env.OMNESIS_CLOUD_RELAY_URL,
           sessionFile,
           gatewayId: env.OMNESIS_CLOUD_RELAY_GATEWAY_ID,
@@ -57,8 +70,11 @@ export function startGatewayCloudTunnel(
           recoveryReceiptFile: env.OMNESIS_CLOUD_RELAY_RECOVERY_RECEIPT_FILE,
         })
       : undefined;
+  const ownerKeyFile = env.OMNESIS_CLOUD_RELAY_OWNER_KEY_FILE ?? `${sessionFile}.owner-key`;
+  // This synchronous configuration hint preserves constructor validation. The held
+  // asynchronous metadata check below is authoritative before either transport is used.
   let ownerMode = Boolean(
-    env.OMNESIS_CLOUD_RELAY_OWNER_KEY_FILE || existsSync(`${sessionFile}.owner-key`),
+    env.OMNESIS_CLOUD_RELAY_OWNER_KEY_FILE || ownerEntryObserved(ownerKeyFile),
   );
   if (googleCredentials && !gatewayClientId && !ownerMode)
     throw new Error("Google routing refresh requires the gateway OAuth client ID");
@@ -73,9 +89,8 @@ export function startGatewayCloudTunnel(
         })
       : undefined;
   const session = async (signal?: AbortSignal) => {
-    ownerMode ||= Boolean(
-      env.OMNESIS_CLOUD_RELAY_OWNER_KEY_FILE || existsSync(`${sessionFile}.owner-key`),
-    );
+    const ownerPresent = await identityArtifactPresent(ownerKeyFile);
+    ownerMode ||= Boolean(env.OMNESIS_CLOUD_RELAY_OWNER_KEY_FILE || ownerPresent);
     try {
       const stored = await readPrivateJson(sessionFile);
       if (
@@ -86,13 +101,7 @@ export function startGatewayCloudTunnel(
       )
         ownerMode = true;
     } catch (error) {
-      if (!(
-        typeof error === "object" &&
-        error !== null &&
-        "code" in error &&
-        error.code === "ENOENT"
-      ))
-        throw error;
+      if (!isJoinedPrivateFileError(error, "ENOENT")) throw error;
       if (keySource && !googleSource) ownerMode = true;
     }
     if (ownerMode) {

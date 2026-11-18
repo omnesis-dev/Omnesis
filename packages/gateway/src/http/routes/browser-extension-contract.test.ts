@@ -36,6 +36,8 @@ import { createDatabase } from "../../db.js";
 import { resetOwnedWebDomains } from "../../owned-web-domains.js";
 import { createServer } from "../../server.js";
 import type Database from "better-sqlite3";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 type Db = Database.Database;
 
@@ -340,8 +342,8 @@ function recipeFor(route: ContractRoute): Recipe {
 
 beforeEach(async () => {
   vi.stubEnv("OMNESIS_EXPERIMENTAL", "1");
-  dbPath = `/tmp/omnesis-extension-contract-${randomUUID()}.db`;
-  analyticsPath = `/tmp/omnesis-extension-contract-${randomUUID()}.duckdb`;
+  dbPath = fixtureJoin(fixtureTmpdir(), `omnesis-extension-contract-${randomUUID()}.db`);
+  analyticsPath = fixtureJoin(fixtureTmpdir(), `omnesis-extension-contract-${randomUUID()}.duckdb`);
   db = createDatabase(dbPath);
   analyticsDb = new AnalyticsDb(analyticsPath);
   await analyticsDb.open();

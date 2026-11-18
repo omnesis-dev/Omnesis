@@ -3,6 +3,7 @@
 
 import { spawnSync } from "node:child_process";
 import { stripVTControlCharacters } from "node:util";
+import { resolveHarnessCommand } from "@omnesis/agent-integration";
 
 /**
  * The flag with which `openclaw plugins install` accepts a plugin's declared
@@ -35,7 +36,15 @@ export function openClawCapabilityConsentSupport(
   environment: NodeJS.ProcessEnv,
   run: typeof spawnSync = spawnSync,
 ): "supported" | "unsupported" | "unknown" {
-  const result = run("openclaw", ["plugins", "install", "--help"], {
+  let invocation;
+  try {
+    invocation = resolveHarnessCommand("openclaw", ["plugins", "install", "--help"], {
+      env: environment,
+    });
+  } catch {
+    return "unknown";
+  }
+  const result = run(invocation.command, invocation.args, {
     env: environment,
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"],

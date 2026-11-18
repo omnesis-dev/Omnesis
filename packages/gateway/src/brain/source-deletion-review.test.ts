@@ -51,6 +51,8 @@ import {
 } from "./storage/person-annotations.js";
 import type Database from "better-sqlite3";
 import type { DocumentInput } from "@omnesis/types";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 type Db = Database.Database;
 
@@ -63,7 +65,7 @@ let path: string;
 let db: Db;
 
 beforeEach(() => {
-  path = `/tmp/omnesis-test-${randomUUID()}.db`;
+  path = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
   db = createDatabase(path);
 });
 afterEach(() => {

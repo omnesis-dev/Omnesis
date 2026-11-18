@@ -25,6 +25,8 @@ import { EventService } from "./EventService.js";
 import type { AnalyticsTableSchema } from "@omnesis/source-sdk";
 import type { IndexWriteGate } from "../../indexer/index-write-gate.js";
 import type Database from "better-sqlite3";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 const schema: AnalyticsTableSchema = {
   tableName: "wipe_race_events",
@@ -99,8 +101,8 @@ describe("SourceDataRemovalService wipe barriers", () => {
   let analyticsPath: string;
 
   beforeEach(async () => {
-    sqlitePath = `/tmp/omnesis-wipe-race-${crypto.randomUUID()}.db`;
-    analyticsPath = `/tmp/omnesis-wipe-race-${crypto.randomUUID()}.duckdb`;
+    sqlitePath = fixtureJoin(fixtureTmpdir(), `omnesis-wipe-race-${crypto.randomUUID()}.db`);
+    analyticsPath = fixtureJoin(fixtureTmpdir(), `omnesis-wipe-race-${crypto.randomUUID()}.duckdb`);
     sqlite = createDatabase(sqlitePath);
     analytics = new AnalyticsDb(analyticsPath);
     await analytics.open();

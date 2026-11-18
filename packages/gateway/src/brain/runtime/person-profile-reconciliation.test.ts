@@ -11,6 +11,8 @@ import { createPersonAnnotation, getPersonAnnotation } from "../storage/person-a
 import { buildAnnotationTools, type AnnotationToolDeps } from "./tools.js";
 import type { CheckRecord } from "../record-check/check.js";
 import type Database from "better-sqlite3";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 let db: Database.Database;
 let path: string;
@@ -19,7 +21,7 @@ const CTX = { sessionId: "profile", messageId: "reconcile" };
 const role = "Maya coordinates the observatory outreach team.";
 const preference = "Maya prefers written questions before demonstrations.";
 beforeEach(() => {
-  path = `/tmp/omnesis-test-${randomUUID()}.db`;
+  path = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
   db = createDatabase(path);
   db.prepare(
     `INSERT INTO people(id,canonical_name,source,first_seen,last_seen,created_at,updated_at)

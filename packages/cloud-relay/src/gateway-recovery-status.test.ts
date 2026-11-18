@@ -5,6 +5,8 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
+import { markedFileError } from "../test/private-operation-fixture.js";
+import * as ownerClient from "./gateway-key-client.js";
 import { prepareGatewayOwner, prepareGatewayRecoveryRequest } from "./gateway-key-client.js";
 import { createRecoveryAuthority, signRecoveryReceipt } from "./recovery-authority.js";
 import { gatewayRecoveryReceiptStatus } from "./gateway-recovery-status.js";
@@ -110,3 +112,25 @@ test("identity mismatches, lost owner keys and malformed private artifacts produ
     expect(await gatewayRecoveryReceiptStatus(f.options)).toEqual({ receipt: "invalid" });
   }
 });
+
+test.each([
+  ["receipt", "own"],
+  ["receipt", "cause"],
+  ["identity", "own"],
+  ["identity", "cause"],
+] as const)(
+  "marked recovery status %s/%s stays visible to the owning manager",
+  async (phase, placement) => {
+    const f = await fixture(),
+      failure = markedFileError(phase === "receipt" ? "ENOENT" : "EPRIVATE", placement);
+    const read = vi.spyOn(credentials, "readPrivateJson");
+    const prepare = vi.spyOn(ownerClient, "prepareGatewayRecoveryRequest");
+    if (phase === "receipt") read.mockRejectedValueOnce(failure);
+    else {
+      read.mockResolvedValueOnce(f.receipt);
+      prepare.mockRejectedValueOnce(failure);
+    }
+    await expect(gatewayRecoveryReceiptStatus(f.options, f.now)).rejects.toBe(failure);
+    if (phase === "receipt") expect(prepare).not.toHaveBeenCalled();
+  },
+);

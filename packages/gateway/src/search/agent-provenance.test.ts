@@ -17,6 +17,8 @@ import { hiddenSourceIdsToExclude } from "./hidden-sources.js";
 import { enrichAgentSearch, type AgentSearchProvenanceOptions } from "./agent-provenance.js";
 import type { SearchResultItem } from "./types.js";
 import type Database from "better-sqlite3";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 const NOW = "2026-01-01T10:00:00.000Z";
 const BODY =
@@ -34,7 +36,7 @@ let db: Database.Database;
 let dbPath: string;
 
 beforeEach(() => {
-  dbPath = `/tmp/omnesis-test-${randomUUID()}.db`;
+  dbPath = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
   db = createDatabase(dbPath);
 });
 afterEach(() => {

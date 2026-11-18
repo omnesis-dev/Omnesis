@@ -1,16 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { chmodSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { setAppleFixtureReadable } from "./testing/apple-read-denial.test.fixture.js";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { appleFileReadAccess, probeAppleStoresReadAccess } from "./read-access.js";
 import { contactsDbFile } from "./paths.js";
-import {
-  canDenyReads,
-  makeAppleDbFixture,
-  type AppleDbFixture,
-} from "./testing/apple-db-fixtures.js";
+import { makeAppleDbFixture, type AppleDbFixture } from "./testing/apple-db-fixtures.js";
 import apple from "./index.js";
 
 describe("Apple fresh read-access probes", () => {
@@ -25,30 +22,27 @@ describe("Apple fresh read-access probes", () => {
     vi.restoreAllMocks();
   });
 
-  it.skipIf(!canDenyReads)(
-    "detects revoked access despite an existing sync handle, then recovery",
-    async () => {
-      await fixture.provider.authenticate();
-      const cached = fixture.provider.getNotesDb();
-      const definition = apple.sources.find((source) => source.id === "apple-notes")!;
-      const source = await definition.create(
-        { sourceId: "apple-notes:test", providerId: "apple:test" } as never,
-        { provider: fixture.provider } as never,
-      );
-      expect(await source.probeReadAccess!({ signal: signal() })).toEqual({ status: "readable" });
-      chmodSync(fixture.notesPath, 0o000);
-      const denied = await source.probeReadAccess!({ signal: signal() });
-      expect(denied).toMatchObject({
-        status: "denied",
-        remediation: { executable: "<collector-executable>" },
-      });
-      expect(JSON.stringify(denied)).not.toContain(fixture.dir);
-      expect(fixture.provider.getNotesDb()).toBe(cached);
-      expect(fixture.provider.getNotesOpenFailure()).toBeNull();
-      chmodSync(fixture.notesPath, 0o600);
-      expect(await source.probeReadAccess!({ signal: signal() })).toEqual({ status: "readable" });
-    },
-  );
+  it("detects revoked access despite an existing sync handle, then recovery", async () => {
+    await fixture.provider.authenticate();
+    const cached = fixture.provider.getNotesDb();
+    const definition = apple.sources.find((source) => source.id === "apple-notes")!;
+    const source = await definition.create(
+      { sourceId: "apple-notes:test", providerId: "apple:test" } as never,
+      { provider: fixture.provider } as never,
+    );
+    expect(await source.probeReadAccess!({ signal: signal() })).toEqual({ status: "readable" });
+    setAppleFixtureReadable(fixture.notesPath, false);
+    const denied = await source.probeReadAccess!({ signal: signal() });
+    expect(denied).toMatchObject({
+      status: "denied",
+      remediation: { executable: "<collector-executable>" },
+    });
+    expect(JSON.stringify(denied)).not.toContain(fixture.dir);
+    expect(fixture.provider.getNotesDb()).toBe(cached);
+    expect(fixture.provider.getNotesOpenFailure()).toBeNull();
+    setAppleFixtureReadable(fixture.notesPath, true);
+    expect(await source.probeReadAccess!({ signal: signal() })).toEqual({ status: "readable" });
+  });
 
   it("every Apple source has a probe, including temporarily absent stores", async () => {
     vi.spyOn(fixture.provider, "hasVoicemail", "get").mockReturnValue(true);
@@ -134,22 +128,19 @@ describe("Apple fresh read-access probes", () => {
     expect(getStores).not.toHaveBeenCalled();
   });
 
-  it.skipIf(!canDenyReads)(
-    "one denied Contacts store fails the source and voicemail does not prescribe FDA",
-    async () => {
-      const root = join(fixture.dir, "contacts");
-      for (const name of ["first", "second"]) {
-        mkdirSync(join(root, "Sources", name), { recursive: true });
-        writeFileSync(contactsDbFile(join(root, "Sources", name)), "");
-      }
-      chmodSync(contactsDbFile(join(root, "Sources", "second")), 0o000);
-      expect(await probeAppleStoresReadAccess(root, "contacts", signal())).toMatchObject({
-        status: "denied",
-      });
-      chmodSync(fixture.notesPath, 0o000);
-      expect(await appleFileReadAccess(fixture.notesPath, false)({ signal: signal() })).toEqual({
-        status: "denied",
-      });
-    },
-  );
+  it("one denied Contacts store fails the source and voicemail does not prescribe FDA", async () => {
+    const root = join(fixture.dir, "contacts");
+    for (const name of ["first", "second"]) {
+      mkdirSync(join(root, "Sources", name), { recursive: true });
+      writeFileSync(contactsDbFile(join(root, "Sources", name)), "");
+    }
+    setAppleFixtureReadable(contactsDbFile(join(root, "Sources", "second")), false);
+    expect(await probeAppleStoresReadAccess(root, "contacts", signal())).toMatchObject({
+      status: "denied",
+    });
+    setAppleFixtureReadable(fixture.notesPath, false);
+    expect(await appleFileReadAccess(fixture.notesPath, false)({ signal: signal() })).toEqual({
+      status: "denied",
+    });
+  });
 });

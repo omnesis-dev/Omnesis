@@ -42,7 +42,13 @@ import {
   type TurnInput,
   WatchPortError,
 } from "@omnesis/agent";
-import { type AgentEvent, type CapabilityRole, type ToolResult, type WsEvent } from "@omnesis/core";
+import {
+  ownedProcessCleanupReceipt,
+  type AgentEvent,
+  type CapabilityRole,
+  type ToolResult,
+  type WsEvent,
+} from "@omnesis/core";
 
 import { AgentService } from "./service.js";
 import { DEEP_RESEARCH_NO_EVIDENCE_MESSAGES } from "./deep-research.js";
@@ -50,6 +56,7 @@ import { FsConversationStore } from "./conversation-store.js";
 import type { ResolvedSpecialist } from "./subagent-service.js";
 
 const tempDirs: string[] = [];
+const services: Array<{ service: AgentService; releaseReaders(): void }> = [];
 
 // ── synthetic corpus (invented; never from a real corpus) ──────────────────
 
@@ -349,13 +356,13 @@ function makeService(
       concurrencyCap: 4,
     },
   });
+  services.push({ service, releaseReaders });
   return { service, captured, spawnedTasks, parent, dir, releaseReaders };
 }
 
 async function settle(): Promise<void> {
-  // setImmediate ticks drain microtasks + the orchestrator's promise chain; a
-  // couple of real timer waits let the async conversation-store fs writes
-  // (writeFile + rename on the libuv pool) actually land before we assert.
+  // Let in-memory orchestrator branches advance. Durability assertions await
+  // the public terminal event, which follows the conversation-store write.
   for (let i = 0; i < 30; i++) await new Promise((r) => setImmediate(r));
   for (let i = 0; i < 5; i++) await new Promise((r) => setTimeout(r, 10));
 }
@@ -381,14 +388,23 @@ function conversationFiles(dir: string): string[] {
 }
 
 describe("Deep Research loop — deterministic replay", () => {
-  afterEach(() => {
+  afterEach(async () => {
+    const owned = services.splice(0);
+    for (const fixture of owned) fixture.releaseReaders();
+    const results = await Promise.allSettled(owned.map(({ service }) => service.dispose()));
+    const failures = results.flatMap((result) =>
+      result.status === "rejected" ? [result.reason] : [],
+    );
+    if (failures.length) {
+      tempDirs.length = 0;
+      const marked = failures.find((error) => ownedProcessCleanupReceipt(error) !== undefined);
+      throw new AggregateError(failures, "Research fixture cleanup failed; scratch retained", {
+        cause: marked ?? failures[0],
+      });
+    }
     while (tempDirs.length) {
       const d = tempDirs.pop()!;
-      try {
-        rmSync(d, { recursive: true, force: true });
-      } catch {
-        /* ignore */
-      }
+      rmSync(d, { recursive: true, force: true });
     }
   });
 
@@ -548,18 +564,36 @@ describe("Deep Research loop — deterministic replay", () => {
 
     // WRITE-BACK: exactly ONE conversation document persisted (the report), and
     // ZERO intermediate sub-agent documents (children never persist).
+    await waitFor(
+      () =>
+        captured.some(
+          (event) =>
+            event.type === "agent.message.end" &&
+            (event.payload as { sessionId?: string }).sessionId === sessionId,
+        ),
+      "the persisted research terminal event",
+    );
     const files = conversationFiles(dir);
     expect(files).toEqual(["S_parent.json"]);
   });
 
   it("does not persist the private evidence prompt and retains the parent annotation on reload", async () => {
-    const { service, dir } = makeService();
+    const { service, dir, captured } = makeService();
     const { sessionId } = await service.createSession("device:A");
     service.sendMessage("device:A", sessionId, "Research the Q4 budget and marathon entry", {
       deepResearch: true,
     });
     await settle();
 
+    await waitFor(
+      () =>
+        captured.some(
+          (event) =>
+            event.type === "agent.message.end" &&
+            (event.payload as { sessionId?: string }).sessionId === sessionId,
+        ),
+      "the persisted research terminal event",
+    );
     const record = await new FsConversationStore(dir).load(sessionId);
     expect(record).not.toBeNull();
     const assistant = record!.messages.find((m) => m.role === "assistant");

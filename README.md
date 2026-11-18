@@ -70,7 +70,7 @@ On top sits a built-in **agent**, in the web portal and the iOS and Android apps
 
 ## Quick start
 
-Omnesis runs on **macOS** and **Linux**. Windows is not supported. Install it on the machine that will hold your data, usually an always-on computer:
+The installer supports **macOS** and **Linux**. The **Windows x64** runtime runs [manually from source](https://omnesis.dev/docs/install#windows-source); Windows installers and background-service management are outside that path, and Windows ARM support remains pending. Install Omnesis on the machine that will hold your data, usually an always-on computer:
 
 ```bash
 curl -fsSL https://omnesis.dev/install.sh | sh

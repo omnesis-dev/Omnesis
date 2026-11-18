@@ -14,6 +14,7 @@ import {
 import {
   createLogger,
   parseDuration,
+  ownedProcessCleanupReceipt,
   type HostNetwork,
   type WsRequestPayload,
 } from "@omnesis/core";
@@ -376,6 +377,8 @@ export function createServer(
     wsServer?: DeviceWsServer;
     /** Shared fleet-doctor coordinator. Production passes the WS lifecycle singleton. */
     deviceDoctorService?: DeviceDoctorService;
+    /** Transfers doctor cleanup ownership to the enclosing process shutdown fence. */
+    onDoctorCleanupOwner?: (owner: Pick<DoctorService, "cleanupFailure" | "close">) => void;
     /**
      * Each connected collector's source descriptors. Production passes the
      * instance the WS lifecycle prefetches into; without one, the routes fill
@@ -1727,6 +1730,7 @@ export function createServer(
         }
       : {}),
   });
+  opts?.onDoctorCleanupOwner?.(doctorService);
   const deviceDoctorService =
     opts?.deviceDoctorService ??
     new DeviceDoctorService({
@@ -2211,7 +2215,7 @@ export function createServer(
 
   // /admin/brain/* — the operator inspection surface the `omnesis
   // briefs` CLI drives (same live feature gate: 404 unless active).
-  mountBrainAdminRoutes(app, {
+  const brainAdmin = mountBrainAdminRoutes(app, {
     db,
     writeGate: w,
     getStatus: opts?.getBriefsStatus,
@@ -2245,7 +2249,7 @@ export function createServer(
   });
 
   // /sql, /analytics/*, /sqlite/*, /analytics/activity/:table.
-  mountAnalyticsRoutes(app, {
+  const analyticsRoutes = mountAnalyticsRoutes(app, {
     db,
     analyticsService,
     sourceService,
@@ -2272,5 +2276,29 @@ export function createServer(
     );
   }
 
-  return app;
+  let closePromise: Promise<void> | undefined;
+  return Object.assign(app, {
+    close: () =>
+      (closePromise ??= (async () => {
+        const results = await Promise.allSettled([
+          Promise.resolve().then(() => brainAdmin.close()),
+          Promise.resolve().then(() => analyticsRoutes.close()),
+          ...(opts?.onDoctorCleanupOwner
+            ? []
+            : [Promise.resolve().then(() => doctorService.close())]),
+        ]);
+        const failures = results.flatMap((result) =>
+          result.status === "rejected" ? [result.reason] : [],
+        );
+        if (failures.length) {
+          const marked = failures.find((error) => ownedProcessCleanupReceipt(error) !== undefined);
+          const error = new AggregateError(failures, "Gateway route cleanup failed", {
+            cause: marked ?? failures[0],
+          });
+          const receipt = ownedProcessCleanupReceipt(marked);
+          if (receipt) Object.assign(error, { cleanupFailure: receipt.failure });
+          throw error;
+        }
+      })()),
+  });
 }

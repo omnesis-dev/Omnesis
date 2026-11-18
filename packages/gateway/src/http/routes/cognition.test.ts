@@ -24,6 +24,8 @@ import { createObservation } from "../../brain/storage/observations.js";
 import { recordConsumptionEdges } from "../../brain/storage/consumption-edges.js";
 import type { FamilyCalibrationReport } from "../../brain/calibration.js";
 import type Database from "better-sqlite3";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 type Db = Database.Database;
 
@@ -49,7 +51,7 @@ function get(path: string, token = ADMIN_TOKEN) {
 }
 
 beforeEach(() => {
-  dbPath = `/tmp/omnesis-cognition-http-${randomUUID()}.db`;
+  dbPath = fixtureJoin(fixtureTmpdir(), `omnesis-cognition-http-${randomUUID()}.db`);
   db = createDatabase(dbPath);
   ADMIN_TOKEN = mintToken([SCOPE_ADMIN]);
   READ_TOKEN = mintToken([SCOPE_READ]);

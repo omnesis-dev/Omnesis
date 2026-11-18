@@ -8,6 +8,7 @@ import { join } from "node:path";
 import { createServer } from "node:net";
 import { once } from "node:events";
 import { beforeEach, afterEach, expect, test, vi } from "vitest";
+import { ensurePrivateDirs } from "@omnesis/core";
 import { tlsFiles } from "../test/support.js";
 import { runRelayCommand, startRelayDaemon } from "./runtime.js";
 import { AcmeDnsChallenges } from "./acme-dns.js";
@@ -19,6 +20,7 @@ import * as cloudflare from "./cloudflare-dns.js";
 let directory: string;
 beforeEach(async () => {
   directory = await mkdtemp(join(tmpdir(), "omnesis-runtime-acme-"));
+  if (process.platform === "win32") await ensurePrivateDirs([directory]);
 });
 afterEach(async () => {
   vi.restoreAllMocks();

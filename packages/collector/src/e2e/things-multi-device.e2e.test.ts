@@ -156,12 +156,26 @@ describe("Things replicas across real collectors", () => {
     }
   };
   const syncAndWait = async (collector: RealCollector): Promise<void> => {
+    const deadline = performance.now() + 30_000;
+    // A committed cursor can precede the run's final freshness/status work.
+    // Wait for that run to relinquish the source before requesting a new one.
+    await waitForCondition(
+      () =>
+        collector.engine.getStatuses().find((status) => status.sourceId === SOURCE_ID)?.state !==
+        "syncing",
+      Math.max(0, deadline - performance.now()),
+      `${collector.deviceId} finished its previous Things sync`,
+    );
     const before = cursorStamp(collector.deviceId);
+    expect(performance.now(), "The previous run consumed the sync observation budget").toBeLessThan(
+      deadline,
+    );
     const triggered = collector.engine.triggerSync(SOURCE_ID);
     expect(triggered.error).toBeUndefined();
+    expect(triggered.triggered, JSON.stringify(triggered)).toContain(SOURCE_ID);
     await waitForCondition(
       () => Promise.resolve(cursorStamp(collector.deviceId) !== before),
-      30_000,
+      Math.max(0, deadline - performance.now()),
       `${collector.deviceId} completed a Things sync`,
     );
   };

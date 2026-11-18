@@ -4,7 +4,7 @@
 import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, win32 } from "node:path";
 import { describe, test, expect } from "vitest";
 import { launchdPlistPath, systemdUnitPath } from "@omnesis/core";
 import {
@@ -25,6 +25,7 @@ import {
   dockerRestartSpec,
   formatCommandSpec,
   harnessNeedsAuthorization,
+  harnessIntegrationPath,
   harnessRefreshSpec,
   harnessRestartSpec,
   isUpToDate,
@@ -113,27 +114,36 @@ function fakeHostFs(files: Record<string, string>, dirs: string[] = []): HostSca
   };
 }
 
+/** Invented local host paths; strict fake filesystem keys keep native spelling and case. */
+function hostPath(path: string): string {
+  return join(tmpdir(), "omnesis-detect-fixture", ...path.split("/").filter(Boolean));
+}
+
 // ── detectInstallMethod ─────────────────────────────────────────────────
 
 describe("detectInstallMethod", () => {
   test("npm-global: bin shim resolving into node_modules/omnesis", () => {
     const fs = fakeFs({
       realpaths: {
-        "/usr/local/bin/omnesis": "/usr/local/lib/node_modules/omnesis/dist/index.js",
+        [hostPath("/usr/local/bin/omnesis")]: hostPath(
+          "/usr/local/lib/node_modules/omnesis/dist/index.js",
+        ),
       },
-      files: { "/usr/local/lib/node_modules/omnesis/dist/index.js": "" },
+      files: { [hostPath("/usr/local/lib/node_modules/omnesis/dist/index.js")]: "" },
     });
-    expect(detectInstallMethod("/usr/local/bin/omnesis", fs)).toEqual({ method: "npm-global" });
+    expect(detectInstallMethod(hostPath("/usr/local/bin/omnesis"), fs)).toEqual({
+      method: "npm-global",
+    });
   });
 
   test("npm-global wins even when a repo-like ancestor exists", () => {
-    const entry = "/repo/node_modules/omnesis/dist/index.js";
+    const entry = hostPath("/repo/node_modules/omnesis/dist/index.js");
     const fs = fakeFs({
       files: {
         [entry]: "",
-        "/repo/package.json": JSON.stringify({ name: "omnesis" }),
+        [hostPath("/repo/package.json")]: JSON.stringify({ name: "omnesis" }),
       },
-      dirs: ["/repo/.git"],
+      dirs: [hostPath("/repo/.git")],
     });
     expect(detectInstallMethod(entry, fs)).toEqual({ method: "npm-global" });
   });
@@ -141,61 +151,66 @@ describe("detectInstallMethod", () => {
   test("source: walks up past intermediate package.json files to the repo root", () => {
     const fs = fakeFs({
       realpaths: {
-        "/home/dev/omnesis/node_modules/.bin/omnesis":
+        [hostPath("/home/dev/omnesis/node_modules/.bin/omnesis")]: hostPath(
           "/home/dev/omnesis/packages/cli/src/index.ts",
+        ),
       },
       files: {
-        "/home/dev/omnesis/packages/cli/src/index.ts": "",
+        [hostPath("/home/dev/omnesis/packages/cli/src/index.ts")]: "",
         // The entry package shares the product name, but without .git it is
         // still only an intermediate package directory.
-        "/home/dev/omnesis/packages/cli/package.json": JSON.stringify({ name: "omnesis" }),
-        "/home/dev/omnesis/package.json": JSON.stringify({ name: "omnesis" }),
+        [hostPath("/home/dev/omnesis/packages/cli/package.json")]: JSON.stringify({
+          name: "omnesis",
+        }),
+        [hostPath("/home/dev/omnesis/package.json")]: JSON.stringify({ name: "omnesis" }),
       },
-      dirs: ["/home/dev/omnesis/.git"],
+      dirs: [hostPath("/home/dev/omnesis/.git")],
     });
-    expect(detectInstallMethod("/home/dev/omnesis/node_modules/.bin/omnesis", fs)).toEqual({
+    expect(
+      detectInstallMethod(hostPath("/home/dev/omnesis/node_modules/.bin/omnesis"), fs),
+    ).toEqual({
       method: "source",
-      rootDir: "/home/dev/omnesis",
+      rootDir: hostPath("/home/dev/omnesis"),
     });
   });
 
   test("source: .git as a file (git worktree) still counts", () => {
     const fs = fakeFs({
       files: {
-        "/wt/omnesis/packages/cli/src/index.ts": "",
-        "/wt/omnesis/package.json": JSON.stringify({ name: "omnesis" }),
-        "/wt/omnesis/.git": "gitdir: /repo/.git/worktrees/omnesis",
+        [hostPath("/wt/omnesis/packages/cli/src/index.ts")]: "",
+        [hostPath("/wt/omnesis/package.json")]: JSON.stringify({ name: "omnesis" }),
+        [hostPath("/wt/omnesis/.git")]: "gitdir: /repo/.git/worktrees/omnesis",
       },
     });
-    expect(detectInstallMethod("/wt/omnesis/packages/cli/src/index.ts", fs)).toEqual({
+    expect(detectInstallMethod(hostPath("/wt/omnesis/packages/cli/src/index.ts"), fs)).toEqual({
       method: "source",
-      rootDir: "/wt/omnesis",
+      rootDir: hostPath("/wt/omnesis"),
     });
   });
 
   test("source: malformed intermediate package.json is skipped, root still found", () => {
     const fs = fakeFs({
       files: {
-        "/repo/packages/cli/src/index.ts": "",
-        "/repo/packages/cli/package.json": "{not json",
-        "/repo/package.json": JSON.stringify({ name: "omnesis" }),
+        [hostPath("/repo/packages/cli/src/index.ts")]: "",
+        [hostPath("/repo/packages/cli/package.json")]: "{not json",
+        [hostPath("/repo/package.json")]: JSON.stringify({ name: "omnesis" }),
       },
-      dirs: ["/repo/.git"],
+      dirs: [hostPath("/repo/.git")],
     });
-    expect(detectInstallMethod("/repo/packages/cli/src/index.ts", fs)).toEqual({
+    expect(detectInstallMethod(hostPath("/repo/packages/cli/src/index.ts"), fs)).toEqual({
       method: "source",
-      rootDir: "/repo",
+      rootDir: hostPath("/repo"),
     });
   });
 
   test("unknown: omnesis package.json without a .git entry", () => {
     const fs = fakeFs({
       files: {
-        "/extracted/omnesis/bin/index.js": "",
-        "/extracted/omnesis/package.json": JSON.stringify({ name: "omnesis" }),
+        [hostPath("/extracted/omnesis/bin/index.js")]: "",
+        [hostPath("/extracted/omnesis/package.json")]: JSON.stringify({ name: "omnesis" }),
       },
     });
-    expect(detectInstallMethod("/extracted/omnesis/bin/index.js", fs)).toEqual({
+    expect(detectInstallMethod(hostPath("/extracted/omnesis/bin/index.js"), fs)).toEqual({
       method: "unknown",
     });
   });
@@ -203,16 +218,16 @@ describe("detectInstallMethod", () => {
   test("unknown: no matching ancestor at all", () => {
     const fs = fakeFs({
       files: {
-        "/opt/tools/run.js": "",
-        "/opt/tools/package.json": JSON.stringify({ name: "some-other-tool" }),
+        [hostPath("/opt/tools/run.js")]: "",
+        [hostPath("/opt/tools/package.json")]: JSON.stringify({ name: "some-other-tool" }),
       },
     });
-    expect(detectInstallMethod("/opt/tools/run.js", fs)).toEqual({ method: "unknown" });
+    expect(detectInstallMethod(hostPath("/opt/tools/run.js"), fs)).toEqual({ method: "unknown" });
   });
 
   test("unknown: entry path that can't be realpathed", () => {
     const fs = fakeFs({});
-    expect(detectInstallMethod("/does/not/exist", fs)).toEqual({ method: "unknown" });
+    expect(detectInstallMethod(hostPath("/does/not/exist"), fs)).toEqual({ method: "unknown" });
   });
 
   test("unknown: empty argv[1]", () => {
@@ -226,9 +241,9 @@ describe("detectInstallMethod", () => {
 // ── Docker installs ─────────────────────────────────────────────────────
 
 describe("detectDockerInstall", () => {
-  const CONFIG_DIR = "/home/maya/.config/omnesis";
-  const MARKER = `${CONFIG_DIR}/install-method`;
-  const COMPOSE = `${CONFIG_DIR}/docker-compose.yml`;
+  const CONFIG_DIR = hostPath("/home/fixture/.config/omnesis");
+  const MARKER = join(CONFIG_DIR, "install-method");
+  const COMPOSE = join(CONFIG_DIR, "docker-compose.yml");
   const PROJECT = "services:\n  gateway:\n    image: ghcr.io/example/gateway:0.4.2\n";
 
   test("a marker naming docker beside a compose project", () => {
@@ -905,7 +920,64 @@ describe("harnessNeedsAuthorization", () => {
   });
 });
 
+describe("harnessIntegrationPath", () => {
+  test.each(["linux", "darwin"] as const)(
+    "preserves literal backslashes in a %s target home",
+    (platform) => {
+      expect(harnessIntegrationPath("/home/invented\\archive", platform)).toBe(
+        "/home/invented\\archive/omnesis/integration.json",
+      );
+    },
+  );
+
+  test("defaults to the local host namespace for existing callers", () => {
+    const home = hostPath("/home/fixture");
+    expect(harnessIntegrationPath(home)).toBe(join(home, "omnesis", "integration.json"));
+  });
+});
+
 describe("detectHostRoles", () => {
+  test("reads an explicitly Windows layout with its own path namespace", () => {
+    const home = "C:\\Users\\InventedFixture";
+    const configDir = win32.join(home, "AppData", "Local", "Omnesis");
+    const harnessHome = win32.join(home, ".openclaw");
+    const fs = fakeHostFs(
+      {
+        [win32.join(harnessHome, "omnesis", "integration.json")]: LIVE_INTEGRATION,
+      },
+      [win32.join(configDir, "omnesis.db"), win32.join(configDir, "collector-pairing-state.json")],
+    );
+    expect(
+      detectHostRoles(
+        {
+          platform: "win32",
+          homeDir: home,
+          configDir,
+          harnessHomes: [{ harness: "openclaw", home: harnessHome }],
+        },
+        fs,
+      ),
+    ).toEqual({
+      gateway: { present: true, supervised: false, manualRestart: null },
+      collector: { present: true, supervised: false, manualRestart: null },
+      harnesses: [{ harness: "openclaw", home: harnessHome, needsAuthorization: false }],
+    });
+  });
+
+  test("does not fold case or rewrite strict filesystem lookup keys for a Windows layout", () => {
+    const home = "C:\\Users\\InventedFixture";
+    const configDir = win32.join(home, "AppData", "Local", "Omnesis");
+    const fs = fakeHostFs({}, [win32.join(configDir.toLowerCase(), "omnesis.db")]);
+    expect(
+      detectHostRoles({ platform: "win32", homeDir: home, configDir, harnessHomes: [] }, fs)
+        .gateway,
+    ).toEqual({
+      present: false,
+      supervised: false,
+      manualRestart: null,
+    });
+  });
+
   test("a gateway host: its store makes the role, its unit makes it restartable", () => {
     const fs = fakeHostFs({}, [`${CONFIG}/omnesis.db`, GATEWAY_UNIT]);
     const roles = detectHostRoles(layout(), fs);

@@ -64,6 +64,19 @@ notice. The data license is available at
 
 ---
 
+## SQLite Windows shared-memory recovery backport
+
+`patches/better-sqlite3-multiple-ciphers+13.0.3.patch` adapts SQLite's
+[Windows shared-memory recovery fix](https://sqlite.org/src/info/7c103a0b7d)
+to the encrypted binding's SQLite 3.53.4 amalgamation. The plain binding's
+SQLite 3.54.1 already includes the fix. The change resets the
+shared-memory header if an existing mapping prevents truncation while SQLite
+holds the exclusive initialization lock. This SQLite code remains in the
+[public domain](https://sqlite.org/copyright.html); it is not relicensed under
+Omnesis's AGPL. The dependency distributions retain their upstream notices.
+
+---
+
 ## Models.dev catalog snapshot
 
 `packages/gateway/models-dev/api.json` is a committed snapshot of the
@@ -478,6 +491,19 @@ makes its `RE2` constructor free the native memory it would otherwise leave on
 the module's fixed heap. Apache-2.0 §4(b) requires modified files to carry a
 notice of the change; the patch adds one.
 
+**`usearch@2.26.5`** (Apache-2.0): `patches/usearch+2.26.5.patch` adds
+Unicode Windows paths, delete-shared memory maps, 64-bit mapped file lengths,
+deterministic native reset, and atomic publication while readers retain an old
+map. The JavaScript wrapper checks the Windows binding capability. Windows
+source builds run `node scripts/ci/build-windows-usearch.mjs` after dependency
+installation to compile and prove the modified binding; other platforms keep
+their existing native binaries. Modified files retain their upstream notices
+and identify these changes.
+The patch also modifies the bundled NumKong ARM64 capability header to include
+`windows.h` before architecture-dependent SDK headers, and scopes MSVC x86
+capability detection to x86 targets. NumKong is Apache-2.0;
+its original copyright and license notices remain in the distribution.
+
 ### Copyleft and weak-copyleft dependencies (individual callout)
 
 The following distributed dependencies carry copyleft or weak-copyleft licenses
@@ -594,6 +620,7 @@ travels with its source in the Go module cache.
 | Module                                                                                         | License      |
 | ---------------------------------------------------------------------------------------------- | ------------ |
 | `tailscale.com` (tsnet and its client libraries)                                               | BSD-3-Clause |
+| `github.com/tailscale/go-winio` (Windows named-pipe transport)                                 | MIT          |
 | `github.com/tailscale/wireguard-go`                                                            | MIT          |
 | `github.com/tailscale/hujson`, `github.com/tailscale/peercred`                                 | BSD-3-Clause |
 | `github.com/tailscale/web-client-prebuilt`                                                     | BSD-3-Clause |
@@ -611,6 +638,12 @@ travels with its source in the Go module cache.
 
 `go version -m omnesis-tailnet` lists the exact module versions in a given
 binary.
+
+The local network test tools under `scripts/tailnet-test/control/` also build
+the pinned Tailscale SDK test coordinator and official CLI. Their dependencies
+are resolved separately in that directory's `go.mod` and `go.sum`; upstream
+sources and license notices remain in the Go module cache. These test tools are
+not included in the published Omnesis packages.
 
 ---
 

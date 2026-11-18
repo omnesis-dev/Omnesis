@@ -23,6 +23,9 @@ import { computeTranscriptionTimeoutMs } from "./deadline.js";
  */
 class FakeWorker implements WhisperWorkerProcess {
   killed = false;
+  private readonly closure = Promise.withResolvers<void>();
+  readonly joined = this.closure.promise;
+  joinedConfirmed = false;
   readonly requests: WhisperRequestHeader[] = [];
   private messageHandler: ((msg: WhisperWorkerMessage) => void) | null = null;
   private exitHandler:
@@ -39,10 +42,11 @@ class FakeWorker implements WhisperWorkerProcess {
     if (this.killed) return;
     this.decoder.push(frame);
   }
-  kill(): void {
+  kill(): Promise<void> {
     this.killed = true;
     // A real process emits `exit` after a kill; mirror that for the supervisor.
     this.emitExit({ code: null, signal: "SIGKILL" });
+    return this.joined;
   }
   onMessage(handler: (msg: WhisperWorkerMessage) => void): void {
     this.messageHandler = handler;
@@ -61,6 +65,8 @@ class FakeWorker implements WhisperWorkerProcess {
     this.emit({ type: "ready" });
   }
   emitExit(info: { code: number | null; signal: string | null; error?: Error }): void {
+    this.joinedConfirmed = true;
+    this.closure.resolve();
     this.exitHandler?.(info);
   }
 }

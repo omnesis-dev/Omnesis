@@ -1209,8 +1209,10 @@
           line with its URL and certificate fingerprint. Mint the pairing code it asks for with
           <code>omnesis devices pair --kind agent</code>, or in the portal under
           <strong>Settings → Devices</strong>. The role refuses a machine that does not already have
-          OpenClaw or Hermes; it never installs them for you. The portal writes this line for you:
-          under <strong>Settings → Access</strong>, open <strong>Connect an agent</strong>, choose
+          OpenClaw or Hermes; it never installs them for you. Windows Hermes also requires Node.js
+          24 or newer on PATH for private credential storage and refresh coordination; Linux and
+          macOS Hermes use Python directly. The portal writes this line for you: under
+          <strong>Settings → Access</strong>, open <strong>Connect an agent</strong>, choose
           OpenClaw or Hermes, and create a pairing code there. The command it shows carries the
           gateway's address, the code and, where the gateway serves that address itself, its
           certificate fingerprint.
@@ -1389,8 +1391,10 @@
           config and <code>.env</code>, leaving every other setting as it was. Add
           <code>--dir</code> for a harness home outside its default. Restart the harness afterwards
           so it stops loading the plugin, and revoke the agent device on the gateway host, as the
-          command reminds you, to end its pairing and sign-in there too. The rest of
-          <a href="install#uninstall">uninstalling</a> covers the other components.
+          command reminds you, to end its pairing and sign-in there too. On Windows, name one or
+          both integrations explicitly and omit <code>--purge</code>; removing Omnesis services, the
+          CLI, and its data is not supported. <a href="install#uninstall">Uninstalling</a> covers
+          the other components.
         </p>
 
         <h3 id="harness-access">Pairing and corpus access</h3>

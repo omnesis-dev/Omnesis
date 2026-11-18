@@ -110,7 +110,12 @@ export async function createTestPki(directory: string, label: string): Promise<T
         "-extfile",
         extensionsFile,
       ]);
-      await chmod(keyFile, 0o600);
+      if (process.platform === "win32") {
+        const { ensurePrivateFileSync } = await import("@omnesis/core");
+        ensurePrivateFileSync(keyFile);
+      } else {
+        await chmod(keyFile, 0o600);
+      }
       return { certFile, keyFile, cert: await readFile(certFile, "utf8") };
     },
   };

@@ -372,7 +372,7 @@ function noEmbedderRequest(): CandidateGenRequest {
 }
 
 test("candidate generation refreshes a completed model flip before comparing model ids", () => {
-  const dbPath = `/tmp/omnesis-refresh-before-model-${randomUUID()}.db`;
+  const dbPath = join(tmpdir(), `omnesis-refresh-before-model-${randomUUID()}.db`);
   const db = createIndexDatabase(dbPath);
   let activeModel = "fictional-embedder-a";
   let refreshes = 0;
@@ -404,7 +404,7 @@ test("candidate generation refreshes a completed model flip before comparing mod
 });
 
 test("candidate generation degrades safely when a native refresh fails", () => {
-  const dbPath = `/tmp/omnesis-refresh-failure-${randomUUID()}.db`;
+  const dbPath = join(tmpdir(), `omnesis-refresh-failure-${randomUUID()}.db`);
   const db = createIndexDatabase(dbPath);
   const request = noEmbedderRequest();
   request.embedderPresent = true;

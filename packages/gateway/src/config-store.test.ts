@@ -5,6 +5,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  readdirSync,
   rmSync,
   statSync,
   writeFileSync,
@@ -13,8 +14,22 @@ import {
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { describe, test, expect, beforeEach, afterEach, vi } from "vitest";
-import { LogLevel, setLogLevel } from "@omnesis/core";
+import { LogLevel, setLogLevel, inspectWindowsPrivatePathSync } from "@omnesis/core";
 import { ConfigBootError, ConfigStore } from "./config-store.js";
+
+const writing = vi.hoisted(() => ({
+  afterPublish: undefined as (() => Promise<void>) | undefined,
+}));
+vi.mock("@omnesis/core", async (importOriginal) => {
+  const core = await importOriginal<typeof import("@omnesis/core")>();
+  return {
+    ...core,
+    atomicWriteFile: async (...args: Parameters<typeof core.atomicWriteFile>) => {
+      await core.atomicWriteFile(...args);
+      await writing.afterPublish?.();
+    },
+  };
+});
 
 let dir: string;
 let path: string;
@@ -269,6 +284,62 @@ describe("ConfigStore — listeners + file watcher", () => {
     expect(count).toBe(1);
   });
 
+  test("a watcher waits for async publication to commit before considering its own write", async () => {
+    await writeExternalCycleInterval("5m");
+    const beforeVersion = store.getStatus().version;
+    let count = 0;
+    store.onChange(() => {
+      count += 1;
+    });
+    let published!: () => void;
+    let release!: () => void;
+    const publication = new Promise<void>((resolve) => {
+      published = resolve;
+    });
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    writing.afterPublish = async () => {
+      published();
+      await held;
+    };
+    const pending = store.patch({ indexer: { cycleInterval: "10m" } });
+    try {
+      await Promise.race([
+        publication,
+        pending.then(() => {
+          throw new Error("Missing publication rendezvous");
+        }),
+      ]);
+      await wait(120);
+      expect(store.get().indexer?.cycleInterval).toBe("5m");
+      expect(count).toBe(0);
+      release();
+      await pending;
+      await wait(120);
+      expect(store.get().indexer?.cycleInterval).toBe("10m");
+      expect(store.getStatus().version).toBe(beforeVersion + 1);
+      expect(count).toBe(1);
+    } finally {
+      writing.afterPublish = undefined;
+      release();
+      await pending;
+    }
+  });
+
+  test("failed publication keeps memory and the next mutation's mutex usable", async () => {
+    const before = store.get();
+    const beforeVersion = store.getStatus().version;
+    mkdirSync(path);
+    await expect(store.patch({ indexer: { cycleInterval: "10m" } })).rejects.toThrow();
+    expect(store.get()).toEqual(before);
+    expect(store.getStatus().version).toBe(beforeVersion);
+    expect(readdirSync(dir)).toEqual(["omnesis.json"]);
+    rmSync(path, { recursive: true });
+    expect((await store.patch({ indexer: { cycleInterval: "15m" } })).ok).toBe(true);
+    expect(store.get().indexer?.cycleInterval).toBe("15m");
+  });
+
   test("invalid external edit leaves config + sets lastError", async () => {
     await store.patch({ indexer: { cycleInterval: "30m" } });
     await writeExternalCycleInterval("45m");
@@ -367,7 +438,9 @@ describe("ConfigStore — settings kept across a downgrade", () => {
     };
     expect(store.get()).toMatchObject(expected);
     expect(JSON.parse(readFileSync(path, "utf-8"))).toEqual(expected);
-    expect(statSync(path).mode & 0o777).toBe(0o600);
+    if (process.platform === "win32")
+      expect(inspectWindowsPrivatePathSync(path, "file").private).toBe(true);
+    else expect(statSync(path).mode & 0o777).toBe(0o600);
     expect(existsSync(`${path}.newer-settings`)).toBe(false);
     expect(lines).toContain(
       "Restored 3 setting(s) an older release had dropped from omnesis.json: " +

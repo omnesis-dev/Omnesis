@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import { join } from "node:path";
+
 import { describe, test, expect } from "vitest";
 import { ProviderId, SourceId } from "@omnesis/types";
 import {
@@ -242,6 +244,37 @@ describe("normalizeNote", () => {
     expect(doc.contentHash).toBeDefined();
     expect(doc.metadata.documentType).toBe("note");
   });
+
+  test("uses slash-based link keys and deep links for native nested paths", () => {
+    const doc = normalizeNote(
+      { ...baseNote, relativePath: join("Projects", "Alpha", "kickoff.md") },
+      ProviderId("obsidian:MyVault"),
+      SourceId("obsidian-notes:MyVault"),
+      "MyVault",
+      "/path/to/vault",
+    );
+    expect(doc.metadata.extra?.linkKeys).toEqual(["Projects/Alpha/kickoff"]);
+    expect(new URL(doc.metadata.sourceUrl!).searchParams.get("file")).toBe(
+      "Projects/Alpha/kickoff",
+    );
+  });
+
+  test.skipIf(process.platform === "win32")(
+    "preserves a literal backslash in a Unix filename",
+    () => {
+      const doc = normalizeNote(
+        { ...baseNote, relativePath: "Projects/Alpha\\kickoff.md" },
+        ProviderId("obsidian:MyVault"),
+        SourceId("obsidian-notes:MyVault"),
+        "MyVault",
+        "/path/to/vault",
+      );
+      expect(doc.metadata.extra?.linkKeys).toEqual(["Projects/Alpha\\kickoff"]);
+      expect(new URL(doc.metadata.sourceUrl!).searchParams.get("file")).toBe(
+        "Projects/Alpha\\kickoff",
+      );
+    },
+  );
 
   test("sets correct metadata", () => {
     const doc = normalizeNote(

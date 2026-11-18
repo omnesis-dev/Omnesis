@@ -7,6 +7,8 @@ import { createIndexDatabase, setIndexedDocument } from "../indexer/db.js";
 import { dedupeByContentHash } from "./dedupe.js";
 import { closeTempDb } from "./test-utils.js";
 import type { SearchResultItem } from "./types.js";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 function makeResult(documentId: string, score: number): SearchResultItem {
   return {
@@ -24,7 +26,9 @@ describe("dedupeByContentHash", () => {
   const dbs: Array<ReturnType<typeof createIndexDatabase>> = [];
 
   function newDb() {
-    const db = createIndexDatabase(`/tmp/omnesis-dedupe-test-${randomUUID()}.db`);
+    const db = createIndexDatabase(
+      fixtureJoin(fixtureTmpdir(), `omnesis-dedupe-test-${randomUUID()}.db`),
+    );
     dbs.push(db);
     return db;
   }

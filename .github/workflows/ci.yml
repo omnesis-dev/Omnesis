@@ -256,6 +256,11 @@ jobs:
           go-version-file: packages/tailnet-helper/go.mod
           cache-dependency-path: packages/tailnet-helper/go.sum
 
+      - name: Verify real Go-to-Node private transport
+        env:
+          GOMAXPROCS: "2"
+        run: node --import tsx scripts/ci/tailnet-transport.mjs
+
       - name: lane [linux-unit]
         if: ${{ inputs.scope == 'full' || inputs.projects == 'all' }}
         run: exec node scripts/run-check.mjs unit-all
@@ -468,7 +473,9 @@ jobs:
     needs: privacy
     if: ${{ inputs.run_macos }}
     runs-on: macos-latest
-    timeout-minutes: 120
+    # Include dependency preparation and post-job cache saves around the full
+    # unit suite; individual test and command budgets remain unchanged.
+    timeout-minutes: 150
 
     steps:
       # A hosted Mac has 3 vCPUs. Left on, Spotlight indexes the fresh
@@ -496,6 +503,14 @@ jobs:
         with:
           node-version: "24"
           cache: npm
+
+      - name: Select OpenSSL 3 for certificate fixtures
+        # macOS also supplies LibreSSL, whose x509 command lacks the fixture's extension-copy flag.
+        run: |
+          openssl_bin="$(brew --prefix openssl@3)/bin"
+          test -x "$openssl_bin/openssl"
+          "$openssl_bin/openssl" version
+          echo "$openssl_bin" >> "$GITHUB_PATH"
 
       - name: Install dependencies
         run: scripts/ci/npm-ci.sh

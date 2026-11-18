@@ -6,7 +6,8 @@ import { join } from "node:path";
 import {
   DEFAULT_CONFIG_DIR,
   createLogger,
-  readStorageKeySync,
+  readStorageKey,
+  ownedProcessCleanupReceipt,
   resolveAttachmentConfig,
 } from "@omnesis/core";
 import { defineProvider } from "@omnesis/source-sdk";
@@ -166,19 +167,27 @@ interface AppleContext {
  * The transcript cache's state for the collector's health check: the cache
  * lives beside the config directory and opens with this host's
  * `imessage-transcripts` key. A root key that cannot be read leaves it
- * locked rather than failing the probe.
+ * locked after an ordinary joined failure. Explicit cleanup uncertainty is
+ * retained by the collector instead of being projected as a locked store.
  */
-function inspectIMessageTranscriptCache(configDir: string): LocalStoreProbeResult {
+async function inspectIMessageTranscriptCache(
+  configDir: string,
+  signal?: AbortSignal,
+): Promise<LocalStoreProbeResult> {
+  signal?.throwIfAborted();
   const keyName = "imessage-transcripts";
   const label = "iMessage transcript cache";
   const path = join(configDir, "apple-imessage", "transcripts.db");
   let key: Buffer | null;
   try {
-    key = readStorageKeySync(keyName, { configDir });
-  } catch {
+    key = await readStorageKey(keyName, { configDir });
+  } catch (error) {
+    if (ownedProcessCleanupReceipt(error)) throw error;
+    signal?.throwIfAborted();
     return { keyName, label, state: "locked", detail: "The install root key cannot be read." };
   }
   try {
+    signal?.throwIfAborted();
     const state = inspectTranscriptDatabase(path, key);
     if (state === "locked")
       return { keyName, label, state, detail: "No wrapped key exists for it." };
@@ -369,8 +378,8 @@ export default defineProvider<AppleContext>({
       documentEventProfile: appleIMessageDocumentProfile,
       async create({ sourceId, providerId, dataCutoff, sourceConfig, host }, ctx) {
         const probeReadAccess = appleFileReadAccess(ctx.provider.imessageDbFilePath);
-        const probeLocalStores = async () => [
-          inspectIMessageTranscriptCache(host?.configDir ?? DEFAULT_CONFIG_DIR),
+        const probeLocalStores = async ({ signal }: { signal: AbortSignal }) => [
+          await inspectIMessageTranscriptCache(host?.configDir ?? DEFAULT_CONFIG_DIR, signal),
         ];
         if (!ctx.provider.hasIMessage) {
           return storeUnavailable(probeReadAccess, { lastRowId: 0 }, probeLocalStores);

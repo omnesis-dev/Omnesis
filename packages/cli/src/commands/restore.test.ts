@@ -34,11 +34,20 @@ import {
   ensureStorageKey,
   generateRecoveryCode,
   isEncryptedArtifactFile,
+  inspectWindowsPrivatePathSync,
   readInstallRootKey,
   writeInstallRootKey,
 } from "@omnesis/core";
 import { takeOfflineGatewayBackup } from "../update/host-state.js";
 import { restore } from "./restore.js";
+
+function expectPrivatePath(path: string, kind: "file" | "directory"): void {
+  if (process.platform === "win32") {
+    expect(inspectWindowsPrivatePathSync(path, kind).private).toBe(true);
+  } else {
+    expect(statSync(path).mode & 0o777).toBe(kind === "directory" ? 0o700 : 0o600);
+  }
+}
 
 const dirs: string[] = [];
 function tmp(prefix: string): string {
@@ -182,9 +191,9 @@ describe("omnesis restore", () => {
     expect(existsSync(join(target, "backup-manifest.json"))).toBe(false);
     expect(existsSync(join(target, "backup-manifest.full.json"))).toBe(false);
     expect(allFilesUnder(target).some((f) => f.endsWith(".enc"))).toBe(false);
-    // Config dir + secret files carry owner-only modes.
-    expect(statSync(target).mode & 0o777).toBe(0o700);
-    expect(statSync(join(target, "token")).mode & 0o777).toBe(0o600);
+    // Config directory and secret files restrict access to trusted owners.
+    expectPrivatePath(target, "directory");
+    expectPrivatePath(join(target, "token"), "file");
   });
 
   test("a --force restore over an existing corpus replaces it atomically", async () => {
@@ -284,7 +293,7 @@ describe("omnesis restore", () => {
 
     expect(existsSync(join(target, "keyring.pass"))).toBe(true);
     expect(readFileSync(join(target, "keyring.pass"), "utf8")).toBe("a-passphrase\n");
-    expect(statSync(join(target, "keyring.pass")).mode & 0o777).toBe(0o600);
+    expectPrivatePath(join(target, "keyring.pass"), "file");
     expect(readSqliteValues(join(target, "omnesis.db"))).toEqual(["alpha", "beta"]);
   });
 
@@ -655,7 +664,7 @@ describe("what a restore replaces and what it keeps", () => {
     expect(env).not.toContain("macos-keychain");
     // A setting the backup does not carry is the backup's to drop.
     expect(env).not.toContain("OMNESIS_LOG_LEVEL");
-    expect(statSync(join(target, ".env")).mode & 0o777).toBe(0o600);
+    expectPrivatePath(join(target, ".env"), "file");
   });
 
   // A Docker install bind-mounts the config dir into the container, where its

@@ -4469,7 +4469,7 @@
         "packages/collector/src/e2e/device-roster.e2e.test.ts",
         "packages/collector/src/e2e/embed-readhandle-refresh.e2e.test.ts",
         "packages/collector/src/e2e/embed-swap.e2e.test.ts",
-        "packages/collector/src/e2e/embedder-swap.e2e.test.ts",
+        "packages/collector/src/e2e/embedder-swap-fixtures.ts",
         "packages/collector/src/e2e/fake-apns.test.ts",
         "packages/collector/src/e2e/fake-embedder.test.ts",
         "packages/collector/src/e2e/fake-loop-model.test.ts",
@@ -6141,7 +6141,11 @@
     },
     {
       "value": "Application Support",
-      "paths": ["packages/providers/screen-time/src/screen-time.test.ts"],
+      "paths": [
+        "packages/gateway/src/tls-lifecycle/agent-trust.test.ts",
+        "packages/providers/screen-time/src/screen-time.test.ts",
+        "packages/providers/browser-history/src/paths.test.ts"
+      ],
       "reason": "reviewed existing fixture"
     },
     {
@@ -6776,7 +6780,7 @@
     {
       "value": "Coastal Trip Plan",
       "paths": [
-        "packages/collector/src/e2e/embedder-swap.e2e.test.ts",
+        "packages/collector/src/e2e/embedder-swap-fixtures.ts",
         "packages/collector/src/e2e/search-quality.e2e.test.ts"
       ],
       "reason": "reviewed existing fixture"
@@ -7632,7 +7636,7 @@
     {
       "value": "Forecast Companion Note",
       "paths": [
-        "packages/collector/src/e2e/embedder-swap.e2e.test.ts",
+        "packages/collector/src/e2e/embedder-swap-fixtures.ts",
         "packages/collector/src/e2e/search-quality.e2e.test.ts"
       ],
       "reason": "reviewed existing fixture"
@@ -8676,7 +8680,9 @@
         "packages/providers/browser-history/src/readers/chromium-scratch.test.ts",
         "packages/providers/browser-history/src/read-access.test.ts",
         "packages/providers/chrome/src/provider.test.ts",
-        "packages/providers/chrome/src/setup.test.ts"
+        "packages/providers/chrome/src/setup.test.ts",
+        "packages/providers/browser-history/src/paths.test.ts",
+        "packages/providers/browser-history/src/arc-windows.test.ts"
       ],
       "reason": "Chromium profile metadata filename, not a person"
     },
@@ -10775,7 +10781,7 @@
     {
       "value": "Six String Setup",
       "paths": [
-        "packages/collector/src/e2e/embedder-swap.e2e.test.ts",
+        "packages/collector/src/e2e/embedder-swap-fixtures.ts",
         "packages/collector/src/e2e/search-quality.e2e.test.ts"
       ],
       "reason": "reviewed existing fixture"
@@ -10862,7 +10868,7 @@
     {
       "value": "Standup Recap",
       "paths": [
-        "packages/collector/src/e2e/embedder-swap.e2e.test.ts",
+        "packages/collector/src/e2e/embedder-swap-fixtures.ts",
         "packages/collector/src/e2e/search-quality.e2e.test.ts"
       ],
       "reason": "reviewed existing fixture"
@@ -11862,7 +11868,7 @@
     {
       "value": "Weeknight Pasta Idea",
       "paths": [
-        "packages/collector/src/e2e/embedder-swap.e2e.test.ts",
+        "packages/collector/src/e2e/embedder-swap-fixtures.ts",
         "packages/collector/src/e2e/search-quality.e2e.test.ts"
       ],
       "reason": "reviewed existing fixture"
@@ -11886,7 +11892,7 @@
     {
       "value": "Whiskers Nutrition Guide",
       "paths": [
-        "packages/collector/src/e2e/embedder-swap.e2e.test.ts",
+        "packages/collector/src/e2e/embedder-swap-fixtures.ts",
         "packages/collector/src/e2e/search-quality.e2e.test.ts"
       ],
       "reason": "reviewed existing fixture"
@@ -12910,6 +12916,90 @@
       "reason": "Invented correspondent in a fictional Maildir fixture for the resync suite."
     },
     {
+      "value": "App Data",
+      "paths": ["packages/providers/browser-history/src/paths.test.ts"],
+      "reason": "Invented fixture directory containing spaces, not a person"
+    },
+    {
+      "value": "User Data",
+      "paths": [
+        "packages/providers/browser-history/src/paths.test.ts",
+        "packages/providers/browser-history/src/arc-windows.test.ts"
+      ],
+      "reason": "Chromium browser profile directory name, not a person"
+    },
+    {
+      "value": "Microsoft Edge",
+      "paths": ["packages/providers/browser-history/src/paths.test.ts"],
+      "reason": "Public browser product and profile directory name"
+    },
+    {
+      "value": "Full Windows",
+      "paths": ["scripts/ci/windows-checks.test.mjs"],
+      "reason": "Public CI step label, not a person"
+    },
+    {
+      "value": "Local Files",
+      "paths": ["scripts/ci/windows-checks.test.mjs"],
+      "reason": "Public source product name, not a person"
+    },
+    {
+      "value": "Git Bash",
+      "paths": ["scripts/ci/test-shell.test.mjs"],
+      "reason": "Public Windows tool or standard installation directory name; not a person or corpus identifier."
+    },
+    {
+      "value": "Program Files",
+      "paths": ["scripts/ci/test-shell.test.mjs"],
+      "reason": "Public Windows tool or standard installation directory name; not a person or corpus identifier."
+    },
+    {
+      "value": "Windows Bash",
+      "paths": ["scripts/ci/test-shell.test.mjs"],
+      "reason": "Public Windows tool or standard installation directory name; not a person or corpus identifier."
+    },
+    {
+      "value": "Invalid Windows",
+      "paths": ["packages/platform/src/windows-process.test.ts"],
+      "reason": "Fixed Windows process error-message text, not a personal name"
+    },
+    {
+      "value": "Owned Windows",
+      "paths": ["packages/platform/src/windows-process.test.ts", "scripts/nx/checks.test.mjs"],
+      "reason": "Fixed Windows process error-message text, not a personal name"
+    },
+    {
+      "value": "Exercise Python",
+      "paths": ["packages/agent-integration/src/hermes-windows-bridge.test.ts"],
+      "reason": "Public platform/tool terminology in portability tests and comments; not a person or corpus identifier."
+    },
+    {
+      "value": "Enable Windows Developer",
+      "paths": [
+        "packages/agent/src/codex-private-state.windows.test.ts",
+        "packages/agent/src/codex-runtime-pool.test.ts"
+      ],
+      "reason": "Public platform/tool terminology in portability tests and comments; not a person or corpus identifier."
+    },
+    {
+      "value": "The Windows",
+      "paths": ["packages/agent/src/test-fixtures/fake-codex-app-server.mjs"],
+      "reason": "Public platform/tool terminology in portability tests and comments; not a person or corpus identifier."
+    },
+    {
+      "value": "Windows Temp",
+      "paths": ["packages/providers-synth/local-files/src/index.test.ts"],
+      "reason": "Public platform/tool terminology in portability tests and comments; not a person or corpus identifier."
+    },
+    {
+      "value": "Linux Docker",
+      "paths": [
+        "scripts/ci/prepare-hardened-runner.test.mjs",
+        "scripts/release/seeded-state-entrypoint.test.mjs"
+      ],
+      "reason": "Public platform/tool terminology in portability tests and comments; not a person or corpus identifier."
+    },
+    {
       "value": "Maya Reeves",
       "paths": [
         "packages/cli/src/commands/tailscale.test.ts",
@@ -12975,6 +13065,11 @@
       "path": "packages/cloud-relay/src/google-commands.test.ts",
       "kind": "private-key",
       "reason": "Synthetic PEM header with non-key placeholder text verifies rejection of mixed certificate/private-key input; contains no private key."
+    },
+    {
+      "path": "packages/cloud-relay/src/gateway-binding.test.ts",
+      "kind": "private-key",
+      "reason": "Synthetic PEM delimiters with invented non-key placeholder text verify rejection of mixed certificate and private-key input; contains no private key."
     }
   ]
 }

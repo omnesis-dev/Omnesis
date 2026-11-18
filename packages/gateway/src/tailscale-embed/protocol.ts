@@ -11,7 +11,7 @@
 import { z } from "zod";
 
 /** The protocol revision this gateway speaks; a helper reporting another is stopped. */
-export const HELPER_PROTOCOL_VERSION = 1;
+export const HELPER_PROTOCOL_VERSION = 2;
 
 export const helperBackendSchema = z.enum([
   "starting",
@@ -86,9 +86,25 @@ export const helperEventSchema = z.discriminatedUnion("type", [
 ]);
 export type HelperEvent = z.infer<typeof helperEventSchema>;
 
+/** Private parent-to-helper material; never persist or include it in status. */
+export const helperGatewayCertificateSchema = z
+  .object({
+    cert: z
+      .string()
+      .min(1)
+      .max(256 * 1024),
+    key: z
+      .string()
+      .min(1)
+      .max(64 * 1024),
+  })
+  .strict();
+export type HelperGatewayCertificate = z.infer<typeof helperGatewayCertificateSchema>;
+
 /** One command line for the helper. */
 export type HelperCommand =
   | { type: "configure"; public: { enabled: boolean; paths: readonly string[] } }
+  | { type: "gateway-certificate"; certificate: HelperGatewayCertificate }
   | { type: "login" }
   | { type: "logout" };
 
@@ -105,5 +121,12 @@ export function parseHelperEvent(line: string): HelperEvent | null {
 }
 
 export function encodeHelperCommand(command: HelperCommand): string {
-  return `${JSON.stringify(command)}\n`;
+  const validated =
+    command.type === "gateway-certificate"
+      ? {
+          type: command.type,
+          certificate: helperGatewayCertificateSchema.parse(command.certificate),
+        }
+      : command;
+  return `${JSON.stringify(validated)}\n`;
 }

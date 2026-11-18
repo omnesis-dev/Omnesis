@@ -13,24 +13,37 @@
 import { spawn, spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
-import { readFile, unlink } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { atomicWriteFile } from "./atomic-write.js";
 import {
   openStringEnvelope,
   openStringEnvelopeAsync,
-  parseSealedEnvelope,
   sealStringEnvelopeAsync,
   SealedEnvelopeInvalidError,
 } from "./sealed-envelope.js";
 import {
   SecretPathUnreadableError,
-  ensurePrivateDirSync,
+  ensurePrivateDirs,
   secretPathExists,
 } from "./security-files.js";
 import { DEFAULT_CONFIG_DIR } from "./utils.js";
+import { readPrivateSecretTextSync, verifyWindowsSecretFiles } from "./secret-store-files.js";
 
-export const OMNESIS_SECRET_SERVICE = "dev.omnesis";
+import {
+  DEFAULT_SECRET_STORE_SERVICE,
+  fileSecretDirectory,
+  fileSecretEntryPaths,
+  passphraseSecretEntryPaths,
+} from "./secret-store-paths.js";
+import {
+  readSecretEntryText,
+  readSecretEntryTextSync,
+  retireLegacySecretEntry,
+  deleteSecretEntry,
+} from "./secret-store-entry.js";
+
+export const OMNESIS_SECRET_SERVICE = DEFAULT_SECRET_STORE_SERVICE;
 export const OMNESIS_INSTALL_ROOT_KEY = "install-root-key-v1";
 const ROOT_KEY_PREFIX = "omn_root_v1_";
 const ROOT_KEY_BYTES = 32;
@@ -251,12 +264,16 @@ export function readInstallRootKeySync(opts: CreateSecretStoreOptions = {}): str
     // throws (fail loud) rather than degrading into "no key" — deliberately
     // outside the catch-all below.
     const path = passphraseEntryPath(configDir, OMNESIS_INSTALL_ROOT_KEY);
-    if (!secretPathExists(path)) return null;
+    const windowsValue =
+      process.platform === "win32"
+        ? readSecretEntryTextSync(passphraseSecretEntryPaths(configDir, OMNESIS_INSTALL_ROOT_KEY))
+        : null;
+    if (process.platform === "win32" ? windowsValue === null : !secretPathExists(path)) return null;
     const resolution = resolveKeyringPassphrase();
     if (!resolution || !("passphrase" in resolution)) return null;
     let parsed: unknown;
     try {
-      parsed = JSON.parse(readFileSync(path, "utf8"));
+      parsed = JSON.parse(windowsValue ?? readFileSync(path, "utf8"));
     } catch {
       throw new PassphraseMismatchError(OMNESIS_INSTALL_ROOT_KEY);
     }
@@ -276,15 +293,10 @@ export function readInstallRootKeySync(opts: CreateSecretStoreOptions = {}): str
 
   try {
     if (backend === "file") {
-      const path = join(
-        configDir,
-        "keyring",
-        service,
-        `${Buffer.from(OMNESIS_INSTALL_ROOT_KEY, "utf8").toString("base64url")}.secret`,
+      const value = readSecretEntryTextSync(
+        fileSecretEntryPaths(configDir, service, OMNESIS_INSTALL_ROOT_KEY),
       );
-      if (!secretPathExists(path)) return null;
-      const value = readFileSync(path, "utf8");
-      return isInstallRootKey(value) ? value : null;
+      return value !== null && isInstallRootKey(value) ? value : null;
     }
     if (backend === "secret-service") {
       const res = spawnSync("secret-tool", [
@@ -674,6 +686,7 @@ class FileSecretStore implements SecretStore {
   ) {}
 
   async status(): Promise<SecretStoreStatus> {
+    await verifyWindowsSecretFiles(this.configDir, this.service);
     return {
       requestedBackend: this.requestedBackend,
       backend: this.backend,
@@ -686,31 +699,25 @@ class FileSecretStore implements SecretStore {
   }
 
   async read(name: string): Promise<string | null> {
-    const path = this.pathFor(name);
-    if (!secretPathExists(path)) return null;
-    return readFile(path, "utf8");
+    return readSecretEntryText(fileSecretEntryPaths(this.configDir, this.service, name));
   }
 
   async write(name: string, value: string): Promise<void> {
     const path = this.pathFor(name);
-    ensurePrivateDirSync(join(this.configDir, "keyring"));
-    ensurePrivateDirSync(join(this.configDir, "keyring", this.service));
+    await ensurePrivateDirs([
+      join(this.configDir, "keyring"),
+      fileSecretDirectory(this.configDir, this.service),
+    ]);
     await atomicWriteFile(path, value, { mode: 0o600, ensureDir: true });
+    await retireLegacySecretEntry(fileSecretEntryPaths(this.configDir, this.service, name));
   }
 
   async delete(name: string): Promise<void> {
-    const path = this.pathFor(name);
-    if (!existsSync(path)) return;
-    await unlink(path);
+    await deleteSecretEntry(fileSecretEntryPaths(this.configDir, this.service, name));
   }
 
   private pathFor(name: string): string {
-    return join(
-      this.configDir,
-      "keyring",
-      this.service,
-      `${Buffer.from(name, "utf8").toString("base64url")}.secret`,
-    );
+    return fileSecretEntryPaths(this.configDir, this.service, name).path;
   }
 }
 
@@ -748,10 +755,16 @@ function resolveKeyringPassphrase(env: NodeJS.ProcessEnv = process.env): Passphr
   const fileVar = env[PASSPHRASE_FILE_ENV];
   if (fileVar) {
     try {
-      const value = stripFinalNewline(readFileSync(fileVar, "utf8"));
+      const raw =
+        process.platform === "win32"
+          ? readPrivateSecretTextSync(fileVar)
+          : readFileSync(fileVar, "utf8");
+      if (raw === null) return { error: `Passphrase file ${fileVar} is not readable.` };
+      const value = stripFinalNewline(raw);
       if (value) return { passphrase: value, source: fileVar };
       return { error: `Passphrase file ${fileVar} is empty.` };
     } catch (err) {
+      if (err instanceof SecretPathUnreadableError) throw err;
       return {
         error: `Passphrase file ${fileVar} is not readable: ${err instanceof Error ? err.message : String(err)}`,
       };
@@ -761,12 +774,18 @@ function resolveKeyringPassphrase(env: NodeJS.ProcessEnv = process.env): Passphr
   const credDir = env.CREDENTIALS_DIRECTORY;
   if (credDir) {
     const credPath = join(credDir, PASSPHRASE_CREDENTIAL_NAME);
-    if (existsSync(credPath)) {
+    if (process.platform === "win32" || existsSync(credPath)) {
       try {
-        const value = stripFinalNewline(readFileSync(credPath, "utf8"));
+        const raw =
+          process.platform === "win32"
+            ? readPrivateSecretTextSync(credPath)
+            : readFileSync(credPath, "utf8");
+        if (raw === null) return null;
+        const value = stripFinalNewline(raw);
         if (value)
           return { passphrase: value, source: `systemd credential ${PASSPHRASE_CREDENTIAL_NAME}` };
-      } catch {
+      } catch (err) {
+        if (err instanceof SecretPathUnreadableError) throw err;
         return { error: `systemd credential ${PASSPHRASE_CREDENTIAL_NAME} is not readable.` };
       }
     }
@@ -776,12 +795,7 @@ function resolveKeyringPassphrase(env: NodeJS.ProcessEnv = process.env): Passphr
 
 /** Sealed-entry path for the passphrase backend. */
 function passphraseEntryPath(configDir: string, name: string): string {
-  return join(
-    configDir,
-    "keyring",
-    "passphrase",
-    `${Buffer.from(name, "utf8").toString("base64url")}.json`,
-  );
+  return passphraseSecretEntryPaths(configDir, name).path;
 }
 
 /**
@@ -827,11 +841,15 @@ class PassphraseSecretStore implements SecretStore {
 
   async read(name: string): Promise<string | null> {
     const path = this.pathFor(name);
-    if (!secretPathExists(path)) return null;
+    const windowsValue =
+      process.platform === "win32"
+        ? await readSecretEntryText(passphraseSecretEntryPaths(this.configDir, name))
+        : null;
+    if (process.platform === "win32" ? windowsValue === null : !secretPathExists(path)) return null;
     const passphrase = this.requirePassphrase();
     let parsed: unknown;
     try {
-      parsed = JSON.parse(await readFile(path, "utf8"));
+      parsed = JSON.parse(windowsValue ?? (await readFile(path, "utf8")));
     } catch {
       throw new PassphraseMismatchError(name);
     }
@@ -852,18 +870,19 @@ class PassphraseSecretStore implements SecretStore {
       marker: PASSPHRASE_ENVELOPE_MARKER,
       aad: name,
     });
-    ensurePrivateDirSync(join(this.configDir, "keyring"));
-    ensurePrivateDirSync(join(this.configDir, "keyring", "passphrase"));
+    await ensurePrivateDirs([
+      join(this.configDir, "keyring"),
+      join(this.configDir, "keyring", "passphrase"),
+    ]);
     await atomicWriteFile(this.pathFor(name), `${JSON.stringify(envelope, null, 2)}\n`, {
       mode: 0o600,
       ensureDir: true,
     });
+    await retireLegacySecretEntry(passphraseSecretEntryPaths(this.configDir, name));
   }
 
   async delete(name: string): Promise<void> {
-    const path = this.pathFor(name);
-    if (!existsSync(path)) return;
-    await unlink(path);
+    await deleteSecretEntry(passphraseSecretEntryPaths(this.configDir, name));
   }
 
   private requirePassphrase(): string {

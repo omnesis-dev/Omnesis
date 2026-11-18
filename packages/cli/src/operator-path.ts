@@ -7,8 +7,8 @@
  * directory in, because the container's own name nothing the operator knows.
  */
 
-import { isAbsolute, join, resolve } from "node:path";
-import { hostHomeDir } from "@omnesis/source-sdk";
+import * as hostPath from "node:path";
+import { HOST_HOME_ENV, hostHomeDir } from "@omnesis/source-sdk";
 
 /** The directory the operator ran `omnesis` from on the host. */
 const HOST_CWD_ENV = "OMNESIS_HOST_CWD";
@@ -20,10 +20,14 @@ const HOST_CWD_ENV = "OMNESIS_HOST_CWD";
  */
 export function resolveOperatorPath(value: string, env: NodeJS.ProcessEnv = process.env): string {
   const trimmed = value.trim();
+  // The Docker launcher describes a Unix host path, independently of the
+  // platform on which this logic is being evaluated. Native paths stay native.
+  const hostHome = env[HOST_HOME_ENV];
+  const paths = hostHome && hostPath.posix.isAbsolute(hostHome) ? hostPath.posix : hostPath;
   if (trimmed === "~" || trimmed.startsWith("~/")) {
-    return join(hostHomeDir(env), trimmed.slice(1));
+    return paths.join(hostHomeDir(env), trimmed.slice(1));
   }
-  if (isAbsolute(trimmed)) return trimmed;
+  if (paths.isAbsolute(trimmed)) return trimmed;
   const cwd = env[HOST_CWD_ENV];
-  return cwd && isAbsolute(cwd) ? resolve(cwd, trimmed) : resolve(trimmed);
+  return cwd && paths.isAbsolute(cwd) ? paths.resolve(cwd, trimmed) : paths.resolve(trimmed);
 }

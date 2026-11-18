@@ -1,8 +1,83 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import { readFileSync, writeFileSync, statSync, existsSync, rmSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { inspectWindowsPrivatePaths } from "@omnesis/core";
 import { describe, test, expect } from "vitest";
-import { sniffImageKind, isDecodableRasterImage } from "./image-prep.js";
+import { processLauncher, setProcessLauncher } from "../process-launcher/index.js";
+import {
+  sniffImageKind,
+  isDecodableRasterImage,
+  rasterizePdfToImages,
+  transcodeHeicToPng,
+} from "./image-prep.js";
+
+test.each(["pdf", "heic"] as const)(
+  "%s inputs stay private and survive unconfirmed process cleanup",
+  async (kind) => {
+    const previous = processLauncher();
+    const cleanupFailure = new Error("Synthetic process join unconfirmed");
+    let input = "";
+    setProcessLauncher({
+      run: async (_command, args) => {
+        input = kind === "pdf" ? args.at(-2)! : args[0]!;
+        expect(existsSync(join(dirname(input), ".process-join-required"))).toBe(true);
+        expect(readFileSync(input, "utf8")).toBe("invented document bytes");
+        if (process.platform === "win32") {
+          const states = await inspectWindowsPrivatePaths(
+            [
+              { path: input, kind: "file" },
+              { path: dirname(input), kind: "directory" },
+            ],
+            { protect: false },
+          );
+          expect(states.every((state) => state.private)).toBe(true);
+        } else {
+          expect(statSync(dirname(input)).mode & 0o777).toBe(0o700);
+          expect(statSync(input).mode & 0o777).toBe(0o600);
+        }
+        return { exitCode: 0, signal: null, stdout: new Uint8Array(), stderr: "", cleanupFailure };
+      },
+    });
+    try {
+      const operation = kind === "pdf" ? rasterizePdfToImages : transcodeHeicToPng;
+      await expect(
+        operation(new TextEncoder().encode("invented document bytes")),
+      ).rejects.toMatchObject({ cleanupFailure });
+      expect(readFileSync(input, "utf8")).toBe("invented document bytes");
+    } finally {
+      setProcessLauncher(previous);
+      if (input) rmSync(dirname(input), { recursive: true, force: true });
+    }
+  },
+);
+
+test.each(["pdf", "heic"] as const)(
+  "%s conversion still returns output and removes joined scratch",
+  async (kind) => {
+    const previous = processLauncher();
+    let input = "";
+    setProcessLauncher({
+      run: (_command, args) => {
+        input = kind === "pdf" ? args.at(-2)! : args[0]!;
+        writeFileSync(kind === "pdf" ? `${args.at(-1)}-1.png` : args[1]!, "invented image output");
+        return Promise.resolve({ exitCode: 0, signal: null, stdout: new Uint8Array(), stderr: "" });
+      },
+    });
+    try {
+      const output =
+        kind === "pdf"
+          ? (await rasterizePdfToImages(new Uint8Array([1])))?.[0]
+          : await transcodeHeicToPng(new Uint8Array([1]));
+      expect(Buffer.from(output!).toString()).toBe("invented image output");
+      expect(existsSync(dirname(input))).toBe(false);
+    } finally {
+      setProcessLauncher(previous);
+      if (input) rmSync(dirname(input), { recursive: true, force: true });
+    }
+  },
+);
 
 const bytes = (...parts: Array<number[] | string>) =>
   new Uint8Array(

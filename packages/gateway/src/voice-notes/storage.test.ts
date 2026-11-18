@@ -13,6 +13,8 @@ import {
 } from "../sources/omnesis-notes/index.js";
 import { documentsAwaitingTranscription, insertPendingVoiceNote } from "./storage.js";
 import type Database from "better-sqlite3";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 const DAY = "2026-09-30";
 const AT = "2026-09-30T10:00:00.000Z";
@@ -68,7 +70,7 @@ function seedVoiceNote(day: string, queuedAt: string): void {
 }
 
 beforeEach(() => {
-  dbPath = `/tmp/omnesis-test-${randomUUID()}.db`;
+  dbPath = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
   db = createDatabase(dbPath);
 });
 

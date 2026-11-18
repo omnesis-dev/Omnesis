@@ -3,7 +3,7 @@
 // Copyright (c) 2026 Adrien Conrath
 
 import { execFileSync, spawn } from "node:child_process";
-import { mkdtempSync, readFileSync, realpathSync, rmSync, statSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
@@ -59,7 +59,51 @@ async function drainGroup(child) {
 }
 
 /** Own the whole session, including build descendants after their parent exits. */
-export async function runOwned(command, args, { cwd, env, timeoutMs, retire = drainGroup }) {
+export async function runOwned(
+  command,
+  args,
+  { cwd, env, timeoutMs, retire = drainGroup, signal },
+) {
+  if (signal?.aborted) return { code: null, signal: null, timedOut: false, interrupted: true };
+  if (process.platform === "win32" && retire === drainGroup) {
+    const started = Date.now();
+    const controller = new AbortController();
+    let interrupted = false;
+    const cancel = () => {
+      interrupted = true;
+      controller.abort();
+    };
+    process.on("SIGTERM", cancel);
+    process.on("SIGINT", cancel);
+    signal?.addEventListener("abort", cancel, { once: true });
+    if (signal?.aborted) cancel();
+    try {
+      // Source checkouts need the raw-Node loader; published packages already
+      // carry compiled platform exports and keep this installer helper standalone.
+      const bootstrap = new URL("./lib/bootstrap-platform.mjs", import.meta.url);
+      const { runWindowsJob } = existsSync(bootstrap)
+        ? await (await import(bootstrap.href)).bootstrapWindowsPlatform("windows-job.ts")
+        : await import("@omnesis/platform/windows-job");
+      const result = await runWindowsJob(command, args, {
+        cwd,
+        env,
+        timeoutMs: Math.max(0, timeoutMs - (Date.now() - started)),
+        completion: "root",
+        signal: controller.signal,
+        stdout: "ignore",
+      });
+      return {
+        code: result.failure === "spawn" ? 127 : result.exitCode,
+        signal: result.signal,
+        timedOut: result.failure === "timeout",
+        interrupted: interrupted || result.failure === "aborted",
+      };
+    } finally {
+      signal?.removeEventListener("abort", cancel);
+      process.off("SIGTERM", cancel);
+      process.off("SIGINT", cancel);
+    }
+  }
   let child;
   let timer;
   let timedOut = false;
@@ -80,6 +124,8 @@ export async function runOwned(command, args, { cwd, env, timeoutMs, retire = dr
   };
   process.on("SIGTERM", cancel);
   process.on("SIGINT", cancel);
+  signal?.addEventListener("abort", cancel, { once: true });
+  if (signal?.aborted) cancel();
   try {
     child = spawn(command, args, { cwd, env, detached: true, stdio: "ignore" });
     completed = new Promise((resolveResult) => {
@@ -126,6 +172,7 @@ export async function runOwned(command, args, { cwd, env, timeoutMs, retire = dr
       error.ownedCleanupFailed = true;
       primaryError = error;
     } finally {
+      signal?.removeEventListener("abort", cancel);
       process.off("SIGTERM", cancel);
       process.off("SIGINT", cancel);
     }

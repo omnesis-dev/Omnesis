@@ -15,18 +15,23 @@ import { randomBytes } from "node:crypto";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { createRequire } from "node:module";
 import { promisify } from "node:util";
-
+import { gatewayBootBudgetMs } from "../../../scripts/lib/boot-budget.mjs";
+import { bootstrapWindowsPlatform } from "../../../scripts/lib/bootstrap-platform.mjs";
+import { stopOwnedProbeHost } from "../../../scripts/lib/owned-probe-host.mjs";
 import { startFictionalGateway } from "./fictional-mcp-gateway.ts";
+import { listPublishablePackages, stagePackage } from "../../../scripts/release/stage-packages.mjs";
+
+const require = createRequire(import.meta.url);
+const { resolveNpmInvocation } = await import(
+  new URL("./node-command.ts", pathToFileURL(require.resolve("@omnesis/core"))).href
+);
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
-const openClawBin = join(
-  repositoryRoot,
-  "node_modules",
-  ".bin",
-  process.platform === "win32" ? "openclaw.cmd" : "openclaw",
-);
+// Execute the pinned package entry directly; Windows cannot exec a .cmd shim.
+const openClawEntry = join(repositoryRoot, "node_modules", "openclaw", "openclaw.mjs");
 
 function delay(milliseconds) {
   return new Promise((resolveDelay) => setTimeout(resolveDelay, milliseconds));
@@ -44,10 +49,13 @@ async function unusedPort() {
   return address.port;
 }
 
-async function waitForState(path, child, output, timeoutMs = 20_000) {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    if (existsSync(path)) return;
+async function waitForState(path, child, output, deadline, timeoutMs) {
+  while (performance.now() < deadline) {
+    if (existsSync(path)) {
+      const observed = performance.now();
+      if (observed <= deadline) return observed;
+      break;
+    }
     if (child.exitCode !== null) {
       throw new Error(`OpenClaw exited before starting Omnesis:\n${output()}`);
     }
@@ -56,7 +64,8 @@ async function waitForState(path, child, output, timeoutMs = 20_000) {
   throw new Error(`OpenClaw did not start Omnesis within ${timeoutMs}ms:\n${output()}`);
 }
 
-async function stop(child) {
+async function stop(child, joined) {
+  if (joined) return stopOwnedProbeHost(child, joined);
   if (child.exitCode !== null) return;
   const exited = new Promise((resolveExit) => child.once("exit", resolveExit));
   child.kill("SIGINT");
@@ -75,8 +84,29 @@ writeFileSync(inheritedConfigPath, inheritedConfig);
 const stateDir = join(probeRoot, "state");
 const configPath = join(stateDir, "openclaw.json");
 let gateway;
+let gatewayJoined;
+const gatewayErrors = [];
 let omnesis;
 let failure;
+let failed = false;
+let cleanupUncertain = false;
+function markedCleanup(error) {
+  return (
+    error !== null &&
+    (typeof error === "object" || typeof error === "function") &&
+    Object.hasOwn(error, "cleanupFailure")
+  );
+}
+function recordFailure(error, message) {
+  const marked = markedCleanup(error) ? error : markedCleanup(failure) ? failure : undefined;
+  if (failed) {
+    const aggregate = new AggregateError([failure, error], message, { cause: marked ?? error });
+    if (marked !== undefined) Object.assign(aggregate, { cleanupFailure: marked.cleanupFailure });
+    failure = aggregate;
+  } else failure = error;
+  failed = true;
+  if (marked !== undefined) cleanupUncertain = true;
+}
 
 const FICTIONAL_CAPTURE_ID = "3f0c9a52-6d1e-4b8a-9c77-2a5e1d4b8f10";
 const GATEWAY_TOKEN = randomBytes(24).toString("hex");
@@ -88,8 +118,9 @@ const GATEWAY_TOKEN = randomBytes(24).toString("hex");
 async function invokeTool(environment, port, name, args, deadline = Date.now() + 30_000) {
   for (;;) {
     const { stdout } = await promisify(execFile)(
-      openClawBin,
+      process.execPath,
       [
+        openClawEntry,
         "gateway",
         "call",
         "tools.invoke",
@@ -112,11 +143,32 @@ async function invokeTool(environment, port, name, args, deadline = Date.now() +
 }
 
 try {
+  // The standalone archive includes canonical private helpers rather than
+  // depending on an unpublished workspace package at plugin installation.
+  const compiler = join(repositoryRoot, "node_modules", "typescript", "bin", "tsc");
   execFileSync(
-    "npm",
-    ["pack", "./packages/agent-integration", "--pack-destination", probeRoot, "--silent"],
-    { cwd: repositoryRoot, stdio: "ignore" },
+    process.execPath,
+    [
+      compiler,
+      "--build",
+      join(repositoryRoot, "packages", "platform"),
+      join(repositoryRoot, "packages", "agent-integration"),
+    ],
+    { cwd: repositoryRoot, stdio: ["ignore", "pipe", "pipe"] },
   );
+  const integration = listPublishablePackages().find(
+    ({ pkg }) => pkg.name === "@omnesis/agent-integration",
+  );
+  if (!integration) throw new Error("Missing standalone integration package");
+  const stagedIntegration = stagePackage(integration, join(probeRoot, "staging"));
+  const npmPack = await resolveNpmInvocation([
+    "pack",
+    stagedIntegration,
+    "--pack-destination",
+    probeRoot,
+    "--silent",
+  ]);
+  execFileSync(npmPack.command, npmPack.args, { cwd: repositoryRoot, stdio: "ignore" });
   const archive = readdirSync(probeRoot).find((file) => file.endsWith(".tgz"));
   if (!archive) throw new Error("npm pack did not produce an OpenClaw plugin archive");
 
@@ -162,8 +214,9 @@ try {
   // The pinned OpenClaw gates plugin installs on capability consent, which
   // `omnesis connect` gives on the operator's behalf; the probe does the same.
   execFileSync(
-    openClawBin,
+    process.execPath,
     [
+      openClawEntry,
       "plugins",
       "install",
       "--force",
@@ -174,8 +227,8 @@ try {
   );
   const inspection = JSON.parse(
     execFileSync(
-      openClawBin,
-      ["plugins", "inspect", "omnesis-integration", "--runtime", "--json"],
+      process.execPath,
+      [openClawEntry, "plugins", "inspect", "omnesis-integration", "--runtime", "--json"],
       {
         cwd: repositoryRoot,
         env: environment,
@@ -253,9 +306,15 @@ try {
     chunks.push(chunk.toString());
     if (chunks.length > 200) chunks.splice(0, chunks.length - 200);
   };
-  gateway = spawn(
-    openClawBin,
-    [
+  const output = () => chunks.join("").slice(-20_000);
+  const bootBudgetMs = gatewayBootBudgetMs();
+  const bootStarted = performance.now();
+  const bootDeadline = bootStarted + bootBudgetMs;
+  let stateReady = false,
+    observedReady;
+  try {
+    const args = [
+      openClawEntry,
       "gateway",
       "run",
       "--port",
@@ -267,18 +326,55 @@ try {
       GATEWAY_TOKEN,
       "--bind",
       "loopback",
-    ],
-    {
-      cwd: repositoryRoot,
-      env: environment,
-      stdio: ["ignore", "pipe", "pipe"],
-    },
-  );
-  gateway.stdout.on("data", capture);
-  gateway.stderr.on("data", capture);
-  const output = () => chunks.join("").slice(-20_000);
-
-  await waitForState(join(integrationDir, "integration.sqlite"), gateway, output);
+    ];
+    const options = { cwd: repositoryRoot, env: environment };
+    if (process.platform === "win32") {
+      const { spawnWindowsJob } = await bootstrapWindowsPlatform();
+      if (performance.now() >= bootDeadline)
+        throw new Error("OpenClaw startup preparation exceeded the shared boot budget");
+      gateway = spawnWindowsJob(process.execPath, args, options);
+      const rawClosed = new Promise((resolveClose) => gateway.once("close", resolveClose));
+      gateway.on("error", (error) => gatewayErrors.push(error));
+      gatewayJoined = Promise.allSettled([rawClosed, gateway.jobClosed]).then((results) => {
+        const rejected = results.filter((result) => result.status === "rejected");
+        if (rejected.length) {
+          const errors = rejected.map((result) => result.reason);
+          const receipt = errors.find(markedCleanup);
+          throw Object.assign(
+            new AggregateError(errors, "OpenClaw raw close and kernel proof did not join", {
+              cause: receipt ?? errors[0],
+            }),
+            { cleanupFailure: receipt !== undefined ? receipt.cleanupFailure : errors[0] },
+          );
+        }
+      });
+      void gatewayJoined.catch(() => {});
+      gateway.stdin.on("error", () => {});
+      gateway.stdin.end();
+    } else {
+      gateway = spawn(process.execPath, args, { ...options, stdio: ["ignore", "pipe", "pipe"] });
+    }
+    gateway.stdout.on("data", capture);
+    gateway.stderr.on("data", capture);
+    if (process.platform === "win32") await gateway.jobReady;
+    observedReady = await waitForState(
+      join(integrationDir, "integration.sqlite"),
+      gateway,
+      output,
+      bootDeadline,
+      bootBudgetMs,
+    );
+    stateReady = true;
+  } finally {
+    process.stderr.write(
+      JSON.stringify({
+        phase: "openclaw-startup-observation",
+        ready: stateReady,
+        elapsedMs: Math.round((observedReady ?? performance.now()) - bootStarted),
+        budgetMs: bootBudgetMs,
+      }) + "\n",
+    );
+  }
   await delay(200);
   const startup = output();
   if (startup.includes("failed during register") || startup.includes("plugin service failed")) {
@@ -312,24 +408,42 @@ try {
   if (forwarded !== "list_tables,run_sql,add_note") {
     throw new Error(`the fictional gateway saw ${forwarded}`);
   }
-
-  process.stdout.write("OpenClaw managed-install runtime probe passed\n");
 } catch (error) {
-  failure = error;
+  recordFailure(error, "OpenClaw probe operations failed");
 } finally {
-  if (gateway) await stop(gateway);
-  if (omnesis) await omnesis.close();
-  const inheritedConfigAfter = existsSync(inheritedConfigPath)
-    ? readFileSync(inheritedConfigPath, "utf8")
-    : undefined;
-  rmSync(probeRoot, { recursive: true, force: true });
-  rmSync(inheritedRoot, { recursive: true, force: true });
-  if (inheritedConfigAfter !== inheritedConfig) {
-    failure = new Error(
-      "OpenClaw probe mutated an inherited config outside its temporary state",
-      failure === undefined ? undefined : { cause: failure },
-    );
+  if (gateway) {
+    try {
+      await stop(gateway, gatewayJoined);
+    } catch (cleanupError) {
+      recordFailure(cleanupError, "OpenClaw probe failed while stopping its host");
+    }
+  }
+  for (const error of gatewayErrors) {
+    if (!failed || failure !== error)
+      recordFailure(error, "OpenClaw host process reported an error");
+  }
+  if (omnesis) {
+    try {
+      await omnesis.close();
+    } catch (error) {
+      recordFailure(error, "Fictional gateway cleanup failed");
+    }
+  }
+  if (!cleanupUncertain) {
+    const inheritedConfigAfter = existsSync(inheritedConfigPath)
+      ? readFileSync(inheritedConfigPath, "utf8")
+      : undefined;
+    rmSync(probeRoot, { recursive: true, force: true });
+    rmSync(inheritedRoot, { recursive: true, force: true });
+    if (inheritedConfigAfter !== inheritedConfig) {
+      failure = new Error(
+        "OpenClaw probe mutated an inherited config outside its temporary state",
+        failed ? { cause: failure } : undefined,
+      );
+      failed = true;
+    }
   }
 }
 
-if (failure !== undefined) throw failure;
+if (failed) throw failure;
+process.stdout.write("OpenClaw managed-install runtime probe passed\n");

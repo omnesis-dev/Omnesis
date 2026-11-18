@@ -31,13 +31,15 @@ import { execFile, spawn } from "node:child_process";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { promisify } from "node:util";
+import { resolveNpmInvocation } from "../../packages/core/src/node-command.ts";
 
 const execFileAsync = promisify(execFile);
 
 /** Run npm for its effect, streaming its output; rejects on a non-zero exit. */
-function runNpm(args, options = {}) {
+async function runNpm(args, options = {}) {
+  const invocation = await resolveNpmInvocation(args, { env: options.env ?? process.env });
   return new Promise((resolve, reject) => {
-    const child = spawn("npm", args, { stdio: "inherit", ...options });
+    const child = spawn(invocation.command, invocation.args, { stdio: "inherit", ...options });
     child.on("error", reject);
     child.on("exit", (code, signal) => {
       if (code === 0) resolve();
@@ -108,9 +110,16 @@ export function parsePackReport(stdout) {
  */
 export async function packStagedPackage(stageDir, tarballDir) {
   mkdirSync(tarballDir, { recursive: true });
+  const invocation = await resolveNpmInvocation([
+    "pack",
+    "--json",
+    "--ignore-scripts",
+    "--pack-destination",
+    tarballDir,
+  ]);
   const { stdout } = await execFileAsync(
-    "npm",
-    ["pack", "--json", "--ignore-scripts", "--pack-destination", tarballDir],
+    invocation.command,
+    invocation.args,
     // The JSON lists every file in the tarball; the gateway's dist and
     // portal run to thousands, well past execFile's default buffer.
     { cwd: stageDir, encoding: "utf8", maxBuffer: 64 * 1024 * 1024 },
@@ -147,19 +156,18 @@ export function parsePublishedVersion(stdout) {
 export async function viewPublishedVersion(name, version, registry) {
   let output;
   try {
-    ({ stdout: output } = await execFileAsync(
-      "npm",
-      [
-        "view",
-        `${name}@${version}`,
-        "dist.integrity",
-        "dist-tags",
-        "--json",
-        "--registry",
-        registry,
-      ],
-      { encoding: "utf8" },
-    ));
+    const invocation = await resolveNpmInvocation([
+      "view",
+      `${name}@${version}`,
+      "dist.integrity",
+      "dist-tags",
+      "--json",
+      "--registry",
+      registry,
+    ]);
+    ({ stdout: output } = await execFileAsync(invocation.command, invocation.args, {
+      encoding: "utf8",
+    }));
   } catch (err) {
     const text = `${err.stdout ?? ""}\n${err.stderr ?? ""}`;
     if (/E404/u.test(text)) return null;

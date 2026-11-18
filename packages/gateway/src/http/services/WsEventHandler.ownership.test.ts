@@ -27,6 +27,8 @@ import { WsEventHandler } from "./WsEventHandler.js";
 import type { WsEvent } from "@omnesis/core";
 import type { WriteGate } from "../../write-gate.js";
 import type { DeviceConnection, DeviceWsServer } from "../../ws.js";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 let dbPath: string;
 let db: ReturnType<typeof createDatabase>;
@@ -34,7 +36,7 @@ let ownerDeviceId: DeviceId;
 let otherDeviceId: DeviceId;
 
 beforeEach(() => {
-  dbPath = `/tmp/omnesis-ws-ownership-${randomUUID()}.db`;
+  dbPath = fixtureJoin(fixtureTmpdir(), `omnesis-ws-ownership-${randomUUID()}.db`);
   db = createDatabase(dbPath);
   ownerDeviceId = createDevice(db, { name: "owner-collector", kind: "collector" }).id;
   otherDeviceId = createDevice(db, { name: "other-collector", kind: "collector" }).id;

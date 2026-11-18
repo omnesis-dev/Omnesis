@@ -18,13 +18,15 @@ import type { ToolHandle } from "@omnesis/agent";
 import type { ToolResult } from "@omnesis/core";
 import type { InterestEngine, RecordInterestInput } from "../interest/engine.js";
 import type Database from "better-sqlite3";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 const NOW = Date.parse("2026-03-10T09:00:00");
 let path: string;
 let db: Database.Database;
 
 beforeEach(() => {
-  path = `/tmp/omnesis-test-${randomUUID()}.db`;
+  path = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
   db = createDatabase(path);
   vi.stubEnv("OMNESIS_EXPERIMENTAL", "1");
   setLabFlag(db, "tasks", true);

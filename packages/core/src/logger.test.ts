@@ -82,15 +82,17 @@ describe("log levels", () => {
 });
 
 describe("file logging", () => {
-  const testLogFile = "/tmp/omnesis-logger-test.log";
+  let testLogFile: string;
+  let logRoot: string;
 
   beforeEach(() => {
-    if (existsSync(testLogFile)) unlinkSync(testLogFile);
+    logRoot = mkdtempSync(join(tmpdir(), "logger-text-"));
+    testLogFile = join(logRoot, "test.log");
   });
 
   afterEach(() => {
     setLogFile(null);
-    if (existsSync(testLogFile)) unlinkSync(testLogFile);
+    rmSync(logRoot, { recursive: true, force: true });
   });
 
   test("writes to file when log file is set", () => {
@@ -118,20 +120,22 @@ describe("file logging", () => {
 
 describe("JSON log format (OMNESIS_LOG_FORMAT=json)", () => {
   let stderrSpy: ReturnType<typeof vi.spyOn>;
-  const testLogFile = "/tmp/omnesis-logger-json-test.log";
+  let testLogFile: string;
+  let logRoot: string;
 
   beforeEach(() => {
     stderrSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
     setLogFormat("json");
     setLogLevel(LogLevel.INFO);
-    if (existsSync(testLogFile)) unlinkSync(testLogFile);
+    logRoot = mkdtempSync(join(tmpdir(), "logger-json-"));
+    testLogFile = join(logRoot, "test.log");
   });
 
   afterEach(() => {
     stderrSpy.mockRestore();
     setLogFormat("text");
     setLogFile(null);
-    if (existsSync(testLogFile)) unlinkSync(testLogFile);
+    rmSync(logRoot, { recursive: true, force: true });
   });
 
   test("emits one valid JSON object per line to stderr with the fixed fields", () => {
@@ -406,23 +410,20 @@ describe("log rotation", () => {
 
 describe("setLogFile directory creation", () => {
   test("creates directory if it does not exist", () => {
-    const nestedPath = `/tmp/omnesis-test-${Date.now()}/nested/dir/test.log`;
-    setLogFile(nestedPath);
-    setLogLevel(LogLevel.INFO);
-    const log = createLogger("dir-test");
-    // Suppress console output
+    const root = mkdtempSync(join(tmpdir(), "logger-directory-"));
+    const nestedPath = join(root, "nested", "dir", "test.log");
     const stderrSpy = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
     try {
+      setLogFile(nestedPath);
+      setLogLevel(LogLevel.INFO);
+      const log = createLogger("dir-test");
       log.info("directory creation test");
       const content = readFileSync(nestedPath, "utf-8");
       expect(content).toContain("directory creation test");
     } finally {
       stderrSpy.mockRestore();
       setLogFile(null);
-      // Clean up
-      try {
-        unlinkSync(nestedPath);
-      } catch {}
+      rmSync(root, { recursive: true, force: true });
     }
   });
 });

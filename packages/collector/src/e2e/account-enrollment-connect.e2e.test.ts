@@ -18,10 +18,11 @@
  * integration tests.
  */
 
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
+import { closeEnrollmentFixture } from "./enrollment-fixture-cleanup.js";
 import { authorizeAccountDesktop, pairAccountDevice } from "@omnesis/cloud-relay";
 import { localAcmeAuthority } from "../../../cloud-relay/test/acme-authority.js";
 import {
@@ -103,13 +104,11 @@ describe.skipIf(!browserReady)("connect a gateway by signing in", () => {
   }, gatewayBootBudgetMs() + 60_000);
 
   afterAll(async () => {
-    try {
-      await browser?.close();
-      for (const gateway of gateways) await gateway.close().catch(() => undefined);
-      await world?.close();
-    } finally {
-      if (directory) await rm(directory, { recursive: true, force: true });
-    }
+    await closeEnrollmentFixture(world ? directory : undefined, [
+      () => browser?.close(),
+      ...gateways.map((gateway) => () => gateway.close()),
+      () => world?.close(),
+    ]);
   }, 60_000);
 
   test(

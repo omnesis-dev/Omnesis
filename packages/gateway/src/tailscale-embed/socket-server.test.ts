@@ -4,11 +4,15 @@
 import { mkdirSync, mkdtempSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { request as httpRequest, type IncomingMessage } from "node:http";
 import { connect } from "node:net";
+import { connect as tlsConnect } from "node:tls";
+import { request as httpsRequest } from "node:https";
+import { generateSelfSigned } from "../tls.js";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, test, vi } from "vitest";
 import { tailnetCallerOf, type TailnetCaller } from "./caller.js";
 import {
+  TAILNET_TRANSPORT_HEADER,
   startTailnetSocketServer,
   tailnetSocketPath,
   type TailnetSocketServer,
@@ -27,6 +31,11 @@ const ownerCaller: TailnetCaller = {
   },
 };
 
+let tls: { cert: string; key: string };
+beforeAll(async () => {
+  tls = await generateSelfSigned();
+});
+let rawSeen: string[][];
 let dir: string;
 let server: TailnetSocketServer;
 let seen: Array<{ url: string; caller: TailnetCaller | null; header: unknown }>;
@@ -35,10 +44,13 @@ let upgrades: Array<{ url: string; caller: TailnetCaller | null }>;
 beforeEach(async () => {
   dir = mkdtempSync(join(tmpdir(), "ts-sock-"));
   seen = [];
+  rawSeen = [];
   upgrades = [];
   server = await startTailnetSocketServer({
-    path: join(dir, "tailscale", "gateway.sock"),
+    path: tailnetSocketPath(join(dir, "tailscale")),
+    ...(process.platform === "win32" ? { tls } : {}),
     listener: (req, res) => {
+      rawSeen.push(req.rawHeaders);
       seen.push({
         url: req.url ?? "",
         caller: tailnetCallerOf(req),
@@ -59,28 +71,45 @@ afterEach(async () => {
 
 function send(
   path: string,
-  headers: Record<string, string>,
+  headers: Record<string, string | string[]>,
+  token: string | null = server.transport?.token ?? null,
 ): Promise<{ status: number; body: string }> {
   return new Promise((resolve, reject) => {
-    const req = httpRequest({ socketPath: server.path, path, headers }, (res) => {
-      let body = "";
-      res.on("data", (d) => (body += d));
-      res.on("end", () => resolve({ status: res.statusCode ?? 0, body }));
-    });
+    const request = server.transport ? httpsRequest : httpRequest;
+    const req = request(
+      {
+        socketPath: server.path,
+        path,
+        ...(server.transport ? { ca: tls.cert, servername: "localhost" } : {}),
+        headers: { ...(token ? { [TAILNET_TRANSPORT_HEADER]: token } : {}), ...headers },
+      },
+      (res) => {
+        let body = "";
+        res.on("data", (d) => (body += d));
+        res.on("end", () => resolve({ status: res.statusCode ?? 0, body }));
+      },
+    );
     req.on("error", reject);
     req.end();
   });
 }
 
-function upgrade(path: string, caller: unknown): Promise<string> {
-  return new Promise((resolve) => {
-    const sock = connect(server.path, () => {
+function upgrade(path: string, caller: unknown, opened?: () => void): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const write = () => {
       sock.write(
-        `GET ${path} HTTP/1.1\r\nHost: omnesis.example-net.ts.net\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nX-Omnesis-Tailnet: ${encode(caller)}\r\n\r\n`,
+        `GET ${path} HTTP/1.1\r\nHost: omnesis.example-net.ts.net\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nX-Omnesis-Tailnet: ${encode(caller)}\r\n${server.transport ? `${TAILNET_TRANSPORT_HEADER}: ${server.transport.token}\r\n` : ""}\r\n`,
       );
-    });
+    };
+    const sock = server.transport
+      ? tlsConnect({ socket: connect(server.path), ca: tls.cert, servername: "localhost" }, write)
+      : connect(server.path, write);
+    sock.on("error", reject);
     let data = "";
-    sock.on("data", (d) => (data += d));
+    sock.on("data", (d) => {
+      data += d;
+      if (data.includes("\r\n")) opened?.();
+    });
     sock.on("close", () => resolve(data.split("\r\n")[0] ?? ""));
   });
 }
@@ -92,6 +121,9 @@ describe("admission", () => {
       "x-omnesis-tailnet": encode(ownerCaller),
     });
     expect(res).toEqual({ status: 200, body: "ok" });
+    expect(rawSeen[0]?.some((value) => value.toLowerCase().startsWith("x-omnesis-tailnet"))).toBe(
+      false,
+    );
     expect(seen).toEqual([
       {
         url: "https://omnesis.example-net.ts.net/portal/?a=1",
@@ -150,33 +182,39 @@ describe("admission", () => {
 });
 
 describe("the socket file", () => {
-  test("is private to this account", () => {
+  test.skipIf(process.platform === "win32")("is private to this account", () => {
     expect(statSync(server.path).mode & 0o777).toBe(0o600);
     expect(statSync(join(server.path, "..")).mode & 0o777).toBe(0o700);
   });
 
-  test("replaces a stale socket but never another file", async () => {
-    const path = server.path;
-    // Simulate a crash: the socket file is left behind.
-    await new Promise<void>((r) => server.server.close(() => r()));
-    const next = await startTailnetSocketServer({ path, listener: (_q, s) => s.end("again") });
-    await next.close();
-    const regular = join(dir, "not-a-socket");
-    writeFileSync(regular, "keep");
-    await expect(startTailnetSocketServer({ path: regular, listener: () => {} })).rejects.toThrow(
-      /not a socket/,
-    );
-  });
+  test.skipIf(process.platform === "win32")(
+    "replaces a stale socket but never another file",
+    async () => {
+      const path = server.path;
+      // Simulate a crash: the socket file is left behind.
+      await new Promise<void>((r) => server.server.close(() => r()));
+      const next = await startTailnetSocketServer({ path, listener: (_q, s) => s.end("again") });
+      await next.close();
+      const regular = join(dir, "not-a-socket");
+      writeFileSync(regular, "keep");
+      await expect(startTailnetSocketServer({ path: regular, listener: () => {} })).rejects.toThrow(
+        /not a socket/,
+      );
+    },
+  );
 
-  test("refuses a directory that is a link to somewhere else", async () => {
-    const elsewhere = join(dir, "elsewhere");
-    mkdirSync(elsewhere);
-    const link = join(dir, "linked");
-    symlinkSync(elsewhere, link);
-    await expect(
-      startTailnetSocketServer({ path: join(link, "gateway.sock"), listener: () => {} }),
-    ).rejects.toThrow(/not a directory owned by this account/);
-  });
+  test.skipIf(process.platform === "win32")(
+    "refuses a directory that is a link to somewhere else",
+    async () => {
+      const elsewhere = join(dir, "elsewhere");
+      mkdirSync(elsewhere);
+      const link = join(dir, "linked");
+      symlinkSync(elsewhere, link);
+      await expect(
+        startTailnetSocketServer({ path: join(link, "gateway.sock"), listener: () => {} }),
+      ).rejects.toThrow(/not a directory owned by this account/);
+    },
+  );
 
   test("keeps idle connections longer than the helper does", () => {
     expect(server.server.keepAliveTimeout).toBeGreaterThan(90_000);
@@ -185,18 +223,90 @@ describe("the socket file", () => {
 });
 
 describe("tailnetSocketPath", () => {
-  test("uses the feature directory when short, a per-config runtime directory otherwise", () => {
-    expect(tailnetSocketPath("/var/lib/omnesis/tailscale", {})).toBe(
-      "/var/lib/omnesis/tailscale/gateway.sock",
-    );
-    const long = `/home/someone/${"x".repeat(120)}/tailscale`;
-    const runtime = mkdtempSync(join(tmpdir(), "rt-"));
-    mkdirSync(runtime, { recursive: true });
-    const chosen = tailnetSocketPath(long, { XDG_RUNTIME_DIR: runtime });
-    expect(chosen.startsWith(runtime)).toBe(true);
-    expect(chosen).toBe(tailnetSocketPath(long, { XDG_RUNTIME_DIR: runtime }));
-    expect(chosen).not.toBe(tailnetSocketPath(`${long}2`, { XDG_RUNTIME_DIR: runtime }));
-    rmSync(runtime, { recursive: true, force: true });
-    vi.unstubAllEnvs();
+  test.skipIf(process.platform === "win32")(
+    "uses the feature directory when short, a per-config runtime directory otherwise",
+    () => {
+      expect(tailnetSocketPath("/var/lib/omnesis/tailscale", {})).toBe(
+        "/var/lib/omnesis/tailscale/gateway.sock",
+      );
+      const long = `/home/someone/${"x".repeat(120)}/tailscale`;
+      const runtime = mkdtempSync(join(tmpdir(), "rt-"));
+      mkdirSync(runtime, { recursive: true });
+      const chosen = tailnetSocketPath(long, { XDG_RUNTIME_DIR: runtime });
+      expect(chosen.startsWith(runtime)).toBe(true);
+      expect(chosen).toBe(tailnetSocketPath(long, { XDG_RUNTIME_DIR: runtime }));
+      expect(chosen).not.toBe(tailnetSocketPath(`${long}2`, { XDG_RUNTIME_DIR: runtime }));
+      rmSync(runtime, { recursive: true, force: true });
+      vi.unstubAllEnvs();
+    },
+  );
+});
+
+describe("authenticated local TLS", () => {
+  beforeEach(async () => {
+    if (server.transport) return;
+    await server.close();
+    server = await startTailnetSocketServer({
+      path: tailnetSocketPath(join(dir, "secure")),
+      tls,
+      listener: (req, res) => {
+        rawSeen.push(req.rawHeaders);
+        res.end("ok");
+      },
+    });
   });
+  test("requires the helper token and removes its parsed and raw transport headers", async () => {
+    const headers = { host: "omnesis", "x-omnesis-tailnet": encode(ownerCaller) };
+    expect((await send("/x", headers, null)).status).toBe(403);
+    expect((await send("/x", headers, "0".repeat(64))).status).toBe(403);
+    expect(
+      (
+        await send("/x", {
+          ...headers,
+          [TAILNET_TRANSPORT_HEADER]: [server.transport!.token, server.transport!.token],
+        })
+      ).status,
+    ).toBe(403);
+    expect((await send("/x", headers)).status).toBe(200);
+    expect(rawSeen).toHaveLength(1);
+    expect(rawSeen[0]?.some((value) => value.toLowerCase().startsWith("x-omnesis-tailnet"))).toBe(
+      false,
+    );
+  });
+  test.runIf(process.platform === "win32")(
+    "a Windows endpoint is a unique pipe and refuses unauthenticated startup",
+    async () => {
+      expect(server.path.startsWith(String.raw`\\.\pipe\omnesis-tailnet-`)).toBe(true);
+      expect(tailnetSocketPath(dir)).not.toBe(tailnetSocketPath(dir));
+      await expect(
+        startTailnetSocketServer({ path: tailnetSocketPath(dir), listener: () => {} }),
+      ).rejects.toThrow(/TLS-authenticated named pipe/);
+    },
+  );
+});
+
+test("shutdown cuts an upgraded connection and waits for its actual close", async () => {
+  await server.close();
+  const accepted = Promise.withResolvers<void>();
+  server = await startTailnetSocketServer({
+    path: tailnetSocketPath(join(dir, "upgrade-drain")),
+    ...(process.platform === "win32" ? { tls } : {}),
+    listener: (_req, res) => res.end(),
+    upgrade: (_req, socket) => {
+      socket.write(
+        "HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n",
+      );
+      accepted.resolve();
+    },
+  });
+  const delivered = Promise.withResolvers<void>();
+  const response = upgrade("/device/ws", ownerCaller, () => delivered.resolve());
+  await accepted.promise;
+  await delivered.promise;
+  const closing = server.close(10);
+  expect(server.close()).toBe(closing);
+  await closing;
+  expect(await response).toContain("101");
+  expect(server.server.listening).toBe(false);
+  expect(server.closedConfirmed).toBe(true);
 });

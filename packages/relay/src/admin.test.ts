@@ -1,9 +1,16 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { execFileSync } from "node:child_process";
+
+import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
+import {
+  atomicWriteFileSync,
+  ensurePrivateDirSync,
+  inspectWindowsPrivatePathSync,
+} from "@omnesis/core";
 
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -15,6 +22,13 @@ const dirs: string[] = [];
 afterEach(() => {
   for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
 });
+
+function writePrivateFixture(path: string, data: string, options: { mode: number }): void {
+  if (process.platform === "win32") {
+    ensurePrivateDirSync(dirname(path));
+    atomicWriteFileSync(path, data, { mode: 0o600 });
+  } else writeFileSync(path, data, options);
+}
 
 function fixture() {
   const dir = mkdtempSync(join(tmpdir(), "omnesis-relay-admin-"));
@@ -57,7 +71,7 @@ describe("relay offline administration", () => {
   it("revokes one credential from an owner-only secret file without carrier config", () => {
     const set = fixture();
     const secretPath = join(set.dir, "credential");
-    writeFileSync(secretPath, `${set.credential}\n`, { mode: 0o600 });
+    writePrivateFixture(secretPath, `${set.credential}\n`, { mode: 0o600 });
 
     expect(
       runRelayAdminCommand(["revoke", "--db", set.dbPath, "--secret-file", secretPath], set.io),
@@ -90,12 +104,29 @@ describe("relay offline administration", () => {
   it("rejects ambiguous input and a secret file readable by other users", () => {
     const set = fixture();
     const secretPath = join(set.dir, "credential");
-    writeFileSync(secretPath, set.credential, { mode: 0o600 });
-    chmodSync(secretPath, 0o644);
+    writePrivateFixture(secretPath, set.credential, { mode: 0o600 });
+    if (process.platform === "win32")
+      execFileSync(
+        join(process.env.SystemRoot!, "System32", "icacls.exe"),
+        [secretPath, "/grant", "*S-1-1-0:(R)"],
+        { windowsHide: true, timeout: 10_000 },
+      );
+    else chmodSync(secretPath, 0o644);
     expect(
       runRelayAdminCommand(["revoke", "--db", set.dbPath, "--secret-file", secretPath], set.io),
     ).toBe(1);
-    expect(set.stderr.at(-1)).toContain("must not be accessible");
+    expect(set.stderr.at(-1)).toContain(
+      process.platform === "win32" ? "trusted Windows owner and ACL" : "must not be accessible",
+    );
+    expect(readFileSync(secretPath, "utf8")).toBe(set.credential);
+    if (process.platform === "win32")
+      expect(inspectWindowsPrivatePathSync(secretPath, "file").private).toBe(false);
+    const unchanged = new RelayStore(set.dbPath);
+    try {
+      expect(unchanged.lookupCredential(set.hash)).not.toBeNull();
+    } finally {
+      unchanged.close();
+    }
 
     expect(
       runRelayAdminCommand(

@@ -35,8 +35,18 @@ import {
   parseCodexCliVersion,
   type CodexRuntimeCommandInfo,
 } from "@omnesis/agent";
-import { codexPaths, distrustingNodeOptions } from "@omnesis/core";
+import {
+  codexPaths,
+  atomicWriteFile,
+  ensurePrivateDirs,
+  inspectWindowsPrivatePaths,
+  execWindowsJob,
+  nodeCommandInvocation,
+  resolveNpmInvocation,
+} from "@omnesis/core";
 import { CODEX_RUNTIME_LOCK } from "./codex-runtime-lock.js";
+import { buildNpmEnv } from "./codex-npm.js";
+import { codexCleanupFailure, CodexGenerationCleanupError } from "./codex-runtime-cleanup.js";
 
 const execFileAsync = promisify(execFile);
 const require = createRequire(import.meta.url);
@@ -137,6 +147,7 @@ export class CodexRuntimeInstaller {
   private readonly now: () => Date;
   private readonly id: () => string;
   private readonly heldLocks = new Map<string, HeldLock>();
+  private cleanupFailure: CodexGenerationCleanupError | null = null;
 
   constructor(opts: CodexRuntimeInstallerOptions) {
     this.paths = codexPaths(opts.configDir);
@@ -152,12 +163,15 @@ export class CodexRuntimeInstaller {
 
   /** Resolve and revalidate the selected gateway-owned runtime. */
   async readActive(): Promise<InstalledCodexRuntime | null> {
+    this.assertCleanupConfirmed();
     await this.ensureStore();
     const maintenanceId = `read-${this.id()}`;
     try {
       await this.acquireLock(maintenanceId);
       return await this.recoverActive();
     } catch (err) {
+      this.rememberCleanupFailure(err);
+      if (this.cleanupFailure) throw this.cleanupFailure;
       if (!isAlreadyLocked(err)) throw err;
       return this.readActiveWithoutRecovery();
     } finally {
@@ -170,6 +184,7 @@ export class CodexRuntimeInstaller {
     signal?: AbortSignal,
     onPhase?: (phase: CodexRuntimePreparePhase) => void,
   ): Promise<PreparedCodexRuntime> {
+    this.assertCleanupConfirmed();
     signal?.throwIfAborted();
     await this.ensureStore();
     const id = this.id();
@@ -181,7 +196,7 @@ export class CodexRuntimeInstaller {
     try {
       await this.recoverActive();
       await mkdir(stagingDir, { recursive: false, mode: 0o700 });
-      await chmod(stagingDir, 0o700);
+      await ensurePrivateDirs([stagingDir]);
       await writeFile(
         join(stagingDir, "package.json"),
         `${JSON.stringify(
@@ -205,16 +220,17 @@ export class CodexRuntimeInstaller {
       const npmCache = join(stagingDir, ".npm-cache");
       await mkdir(npmHome, { mode: 0o700 });
       await mkdir(npmCache, { mode: 0o700 });
+      if (process.platform === "win32") await ensurePrivateDirs([npmHome, npmCache]);
       onPhase?.("downloading");
-      await this.runner(
-        this.npmCommand,
+      const npm = await resolveNpmInvocation(
         ["ci", "--prefix", stagingDir, "--ignore-scripts", "--omit=dev", "--no-audit", "--no-fund"],
-        {
-          env: buildNpmEnv(this.env, npmHome, npmCache),
-          timeoutMs: this.installTimeoutMs,
-          signal,
-        },
+        { command: this.npmCommand, env: this.env },
       );
+      await this.runOwned(npm.command, npm.args, {
+        env: buildNpmEnv(this.env, npmHome, npmCache),
+        timeoutMs: this.installTimeoutMs,
+        signal,
+      });
       await Promise.all([
         rm(npmHome, { recursive: true, force: true }),
         rm(npmCache, { recursive: true, force: true }),
@@ -240,11 +256,16 @@ export class CodexRuntimeInstaller {
           env: this.env,
           signal,
         });
+      } catch (error) {
+        throw this.rememberCleanupFailure(error);
       } finally {
-        await rm(probeRoot, { recursive: true, force: true }).catch(() => {});
+        if (!this.cleanupFailure)
+          await rm(probeRoot, { recursive: true, force: true }).catch(() => {});
       }
       return { id, version: CODEX_RUNTIME_COMPAT.testedVersion, stagingDir };
     } catch (err) {
+      this.rememberCleanupFailure(err);
+      if (this.cleanupFailure) throw this.cleanupFailure;
       await rm(stagingDir, { recursive: true, force: true }).catch(() => {});
       await this.releaseLock(id);
       throw err;
@@ -256,6 +277,7 @@ export class CodexRuntimeInstaller {
    * A same-version repair retains the prior generation as the rollback target.
    */
   async commit(prepared: PreparedCodexRuntime): Promise<InstalledCodexRuntime> {
+    this.assertCleanupConfirmed();
     this.assertPrepared(prepared);
     const generation = generationName(prepared.version, prepared.id);
     const finalDir = join(this.paths.runtimeVersions, generation);
@@ -283,6 +305,8 @@ export class CodexRuntimeInstaller {
       });
       return installed;
     } catch (err) {
+      this.rememberCleanupFailure(err);
+      if (this.cleanupFailure) throw this.cleanupFailure;
       // The pointer rename is the commit boundary. If only the following
       // directory durability barrier failed, adopt the generation selected by
       // every reader instead of recreating a live predecessor while the
@@ -290,7 +314,7 @@ export class CodexRuntimeInstaller {
       if (published) {
         const selected = await this.readPointerRef().catch(() => null);
         if (selected?.generation === generation) {
-          return this.verifyInstalled(finalDir, prepared.version);
+          return await this.verifyInstalled(finalDir, prepared.version);
         }
       }
       if (!published) await rm(finalDir, { recursive: true, force: true }).catch(() => {});
@@ -301,6 +325,7 @@ export class CodexRuntimeInstaller {
   }
 
   async discard(prepared: PreparedCodexRuntime): Promise<void> {
+    this.assertCleanupConfirmed();
     this.assertPrepared(prepared);
     try {
       this.assertHeld(prepared.id);
@@ -312,6 +337,7 @@ export class CodexRuntimeInstaller {
 
   /** Atomically repoint to the retained immutable predecessor. */
   async rollbackActivation(): Promise<void> {
+    this.assertCleanupConfirmed();
     await this.ensureStore();
     const id = `rollback-${this.id()}`;
     await this.acquireLock(id);
@@ -345,6 +371,7 @@ export class CodexRuntimeInstaller {
     expectedVersion: string,
     signal?: AbortSignal,
   ): Promise<InstalledCodexRuntime> {
+    this.assertCleanupConfirmed();
     await assertDirectoryWithin(this.paths.runtimeStore, installDir);
     const packageJsonPath = join(
       installDir,
@@ -372,7 +399,7 @@ export class CodexRuntimeInstaller {
     if (commandStat.isSymbolicLink() || !commandStat.isFile()) {
       throw new Error("Installed Codex command is not a regular file.");
     }
-    const probe = await this.runner(command, ["--version"], {
+    const probe = await this.runOwned(command, ["--version"], {
       env: buildCodexEnv(this.env, join(installDir, ".omnesis-version-probe")),
       timeoutMs: this.probeTimeoutMs,
       signal,
@@ -394,22 +421,24 @@ export class CodexRuntimeInstaller {
   }
 
   private async ensureStore(): Promise<void> {
-    for (const path of [
-      this.paths.runtimeStore,
-      this.paths.runtimeVersions,
-      this.paths.runtimeStaging,
-    ]) {
+    this.assertCleanupConfirmed();
+    const paths = [this.paths.runtimeStore, this.paths.runtimeVersions, this.paths.runtimeStaging];
+    for (const path of paths) {
       const before = await lstatOrNull(path);
       if (before?.isSymbolicLink())
         throw new Error(`Refusing symlinked Codex runtime path ${path}.`);
       if (before && !before.isDirectory())
         throw new Error(`Codex runtime path ${path} is not a directory.`);
-      await mkdir(path, { recursive: true, mode: 0o700 });
-      await chmod(path, 0o700);
+    }
+    try {
+      await ensurePrivateDirs(paths);
+    } catch (error) {
+      throw this.rememberCleanupFailure(error);
     }
   }
 
   private async acquireLock(id: string): Promise<void> {
+    this.assertCleanupConfirmed();
     let held: HeldLock | null = null;
     let release: (() => Promise<void>) | null = null;
     try {
@@ -423,10 +452,13 @@ export class CodexRuntimeInstaller {
           if (held) held.compromised = err;
         },
       });
-      await chmod(this.paths.runtimeUpdateLock, 0o700);
       held = { release, compromised: null };
       this.heldLocks.set(id, held);
+      await ensurePrivateDirs([this.paths.runtimeUpdateLock]);
     } catch (err) {
+      this.rememberCleanupFailure(err);
+      if (this.cleanupFailure) throw this.cleanupFailure;
+      this.heldLocks.delete(id);
       await release?.().catch(() => {});
       if (isAlreadyLocked(err)) {
         throw Object.assign(new Error("Another Codex runtime update is already in progress."), {
@@ -438,6 +470,7 @@ export class CodexRuntimeInstaller {
   }
 
   private assertHeld(id: string): void {
+    this.assertCleanupConfirmed();
     const held = this.heldLocks.get(id);
     if (!held) throw new Error("Prepared Codex runtime no longer owns the update lock.");
     if (held.compromised)
@@ -445,6 +478,7 @@ export class CodexRuntimeInstaller {
   }
 
   private async releaseLock(id: string): Promise<void> {
+    if (this.cleanupFailure) return;
     const held = this.heldLocks.get(id);
     if (!held) return;
     this.heldLocks.delete(id);
@@ -477,11 +511,26 @@ export class CodexRuntimeInstaller {
   }
 
   private async writePointer(pointer: RuntimePointer): Promise<void> {
+    this.assertCleanupConfirmed();
+    try {
+      await this.publishPointer(pointer);
+    } catch (error) {
+      throw this.rememberCleanupFailure(error);
+    }
+  }
+
+  private async publishPointer(pointer: RuntimePointer): Promise<void> {
     const current = await lstatOrNull(this.paths.runtimeCurrent);
     if (current?.isSymbolicLink()) throw new Error("Refusing symlinked Codex runtime pointer.");
     const pointerId = this.id();
     if (!isSafeOperationId(pointerId)) {
       throw new Error("Codex runtime pointer id contains unsafe path characters.");
+    }
+    if (process.platform === "win32") {
+      await atomicWriteFile(this.paths.runtimeCurrent, `${JSON.stringify(pointer, null, 2)}\n`, {
+        mode: 0o600,
+      });
+      return;
     }
     const temporary = join(this.paths.runtimeStore, `.current-${pointerId}.tmp`);
     const handle = await open(temporary, "wx", 0o600);
@@ -517,6 +566,7 @@ export class CodexRuntimeInstaller {
       try {
         active = await this.verifyRef(pointerRef(pointer));
       } catch (currentError) {
+        if (this.cleanupFailure) throw this.cleanupFailure;
         const previous = previousPointerRef(pointer);
         if (previous) {
           try {
@@ -529,6 +579,7 @@ export class CodexRuntimeInstaller {
             });
             pointer = await this.readPointer();
           } catch (previousError) {
+            if (this.cleanupFailure) throw this.cleanupFailure;
             throw new AggregateError(
               [currentError, previousError],
               "Neither the selected nor previous Codex runtime is usable.",
@@ -547,6 +598,28 @@ export class CodexRuntimeInstaller {
     // or in-progress runtime.
     return active;
   }
+
+  private assertCleanupConfirmed(): void {
+    if (this.cleanupFailure) throw this.cleanupFailure;
+  }
+
+  private rememberCleanupFailure(error: unknown): unknown {
+    this.cleanupFailure ??= codexCleanupFailure(error);
+    return this.cleanupFailure ?? error;
+  }
+
+  private async runOwned(
+    ...args: Parameters<CodexInstallCommandRunner>
+  ): Promise<CodexInstallCommandResult> {
+    this.assertCleanupConfirmed();
+    try {
+      const result = await this.runner(...args);
+      this.assertCleanupConfirmed();
+      return result;
+    } catch (error) {
+      throw this.rememberCleanupFailure(error);
+    }
+  }
 }
 
 async function runCommand(
@@ -554,54 +627,20 @@ async function runCommand(
   args: readonly string[],
   opts: { cwd?: string; env: NodeJS.ProcessEnv; timeoutMs: number; signal?: AbortSignal },
 ): Promise<CodexInstallCommandResult> {
-  const result = await execFileAsync(command, [...args], {
-    cwd: opts.cwd,
-    env: opts.env,
-    timeout: opts.timeoutMs,
-    maxBuffer: MAX_COMMAND_OUTPUT,
-    windowsHide: true,
-    signal: opts.signal,
-  });
+  const invocation = nodeCommandInvocation(command, args);
+  const result = await (process.platform === "win32" ? execWindowsJob : execFileAsync)(
+    invocation.command,
+    invocation.args,
+    {
+      cwd: opts.cwd,
+      env: opts.env,
+      timeout: opts.timeoutMs,
+      maxBuffer: MAX_COMMAND_OUTPUT,
+      windowsHide: true,
+      signal: opts.signal,
+    },
+  );
   return { stdout: String(result.stdout), stderr: String(result.stderr) };
-}
-
-function buildNpmEnv(
-  source: NodeJS.ProcessEnv,
-  npmHome: string,
-  npmCache: string,
-): NodeJS.ProcessEnv {
-  const env: NodeJS.ProcessEnv = {
-    HOME: npmHome,
-    USERPROFILE: npmHome,
-    npm_config_cache: npmCache,
-    npm_config_registry: "https://registry.npmjs.org/",
-    npm_config_userconfig: join(npmHome, "npmrc"),
-    npm_config_audit: "false",
-    npm_config_fund: "false",
-    NODE_OPTIONS: distrustingNodeOptions(""),
-  };
-  for (const key of [
-    "PATH",
-    "TMPDIR",
-    "TEMP",
-    "TMP",
-    "SystemRoot",
-    "WINDIR",
-    "PATHEXT",
-    "COMSPEC",
-    "SSL_CERT_FILE",
-    "SSL_CERT_DIR",
-    "NODE_EXTRA_CA_CERTS",
-    "HTTP_PROXY",
-    "HTTPS_PROXY",
-    "NO_PROXY",
-    "http_proxy",
-    "https_proxy",
-    "no_proxy",
-  ]) {
-    if (source[key] !== undefined) env[key] = source[key];
-  }
-  return env;
 }
 
 async function probeAppServerCompatibility(
@@ -623,16 +662,33 @@ async function probeAppServerCompatibility(
     startupTimeoutMs: opts.timeoutMs,
     requestTimeoutMs: opts.timeoutMs,
   });
-  const abort = () => void runtime.dispose();
+  const abort = () => void runtime.dispose().catch(() => {});
   opts.signal?.addEventListener("abort", abort, { once: true });
+  let failed = false;
+  let failure: unknown;
   try {
     // listModels forces process spawn, initialize, and a typed model/list
     // round-trip without starting an inference turn or reading shared auth.
     await runtime.listModels(opts.timeoutMs);
-  } finally {
-    opts.signal?.removeEventListener("abort", abort);
-    await runtime.dispose();
+  } catch (error) {
+    failed = true;
+    failure = error;
   }
+  opts.signal?.removeEventListener("abort", abort);
+  try {
+    await runtime.dispose();
+  } catch (error) {
+    throw new CodexGenerationCleanupError(
+      failed
+        ? new AggregateError(
+            [failure, error],
+            "Codex compatibility validation and process cleanup failed",
+            { cause: error },
+          )
+        : error,
+    );
+  }
+  if (failed) throw failure;
 }
 
 function parsePointer(text: string): RuntimePointer {
@@ -737,7 +793,11 @@ async function assertRealPathWithin(root: string, candidate: string): Promise<vo
   throw new Error(`Codex runtime path escapes its owner-only store: ${candidate}.`);
 }
 
-async function hardenRuntimeTree(root: string): Promise<void> {
+type RuntimePrivatePath = Parameters<typeof inspectWindowsPrivatePaths>[0][number];
+
+async function hardenRuntimeTree(root: string, windowsPaths?: RuntimePrivatePath[]): Promise<void> {
+  const paths = windowsPaths ?? [];
+  if (process.platform === "win32") paths.push({ path: root, kind: "directory" });
   const entries = await readdir(root, { withFileTypes: true });
   for (const entry of entries) {
     const path = join(root, entry.name);
@@ -745,15 +805,27 @@ async function hardenRuntimeTree(root: string): Promise<void> {
       throw new Error(`Installed Codex runtime contains an unexpected symlink: ${path}.`);
     }
     if (entry.isDirectory()) {
-      await chmod(path, 0o700);
-      await hardenRuntimeTree(path);
+      if (process.platform !== "win32") await chmod(path, 0o700);
+      await hardenRuntimeTree(path, paths);
       continue;
     }
     if (!entry.isFile()) {
       throw new Error(`Installed Codex runtime contains an unsupported filesystem entry: ${path}.`);
     }
-    const fileStat = await lstat(path);
-    await chmod(path, (fileStat.mode & 0o111) === 0 ? 0o600 : 0o700);
+    if (process.platform === "win32") paths.push({ path, kind: "file" });
+    else {
+      const fileStat = await lstat(path);
+      await chmod(path, (fileStat.mode & 0o111) === 0 ? 0o600 : 0o700);
+    }
   }
-  await chmod(root, 0o700);
+  if (process.platform !== "win32") await chmod(root, 0o700);
+  else if (windowsPaths === undefined) {
+    // The native inspector accepts bounded batches and pins each entry before repairing it.
+    for (let offset = 0; offset < paths.length; offset += 5000) {
+      const batch = paths.slice(offset, offset + 5000);
+      const results = await inspectWindowsPrivatePaths(batch, { repair: true, protect: true });
+      if (results.length !== batch.length || results.some((entry) => !entry.private))
+        throw new Error("Installed Codex runtime access controls are not private.");
+    }
+  }
 }

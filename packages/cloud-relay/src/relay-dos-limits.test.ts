@@ -29,8 +29,8 @@ afterEach(() => {
   vi.unstubAllEnvs();
 });
 
-/** These run on Linux, which alone routes all of 127/8 to loopback. */
-const onLinux = test.runIf(process.platform === "linux");
+/** Linux and Windows support these distinct physical loopback source addresses. */
+const onLoopbackHost = test.runIf(process.platform === "linux" || process.platform === "win32");
 const GATEWAY = "gateway.example.test";
 
 /** A TLS connection to the gateway's name through the data listener, or undefined if refused. */
@@ -103,7 +103,7 @@ function proxyHeader(source: string): Buffer {
   return Buffer.from(`PROXY ${family} ${source} ${destination} 50000 443\r\n`);
 }
 
-onLinux(
+onLoopbackHost(
   "F16: a sign-in flood from many clients does not stop a gateway renewing its session",
   async () => {
     const directory = await mkdtemp(join(tmpdir(), "omnesis-f16-renew-"));
@@ -166,7 +166,7 @@ onLinux(
   },
 );
 
-onLinux(
+onLoopbackHost(
   "F16: one client holding streams to a gateway name does not lock others out of it",
   async () => {
     const gateway = await echoGateway();
@@ -193,7 +193,7 @@ onLinux(
   },
 );
 
-onLinux("F16: one client cannot hold every data connection on the relay", async () => {
+onLoopbackHost("F16: one client cannot hold every data connection on the relay", async () => {
   const gateway = await echoGateway();
   const f = await fixture({
     limits: { ...DEFAULT_TUNNEL_LIMITS, maxStreams: 8, maxStreamsPerClient: 4 },
@@ -220,7 +220,7 @@ onLinux("F16: one client cannot hold every data connection on the relay", async 
   }
 });
 
-onLinux(
+onLoopbackHost(
   "F16: an idle routed connection is closed, and one that keeps talking stays open",
   async () => {
     const gateway = await echoGateway();
@@ -260,7 +260,7 @@ onLinux(
   },
 );
 
-onLinux("F16: two IPv6 addresses in the same /64 share one stream budget", async () => {
+onLoopbackHost("F16: two IPv6 addresses in the same /64 share one stream budget", async () => {
   const FRONT = "127.0.0.9";
   const gateway = await echoGateway();
   const f = await fixture({

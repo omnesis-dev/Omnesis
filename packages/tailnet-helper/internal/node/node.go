@@ -30,12 +30,14 @@ import (
 
 // Config is everything the node needs from the command line.
 type Config struct {
-	StateDir   string
-	Hostname   string
-	ControlURL string
-	SocketPath string
-	Fallback   *certs.Fallback
-	Logf       func(string, ...any)
+	StateDir                string
+	Hostname                string
+	ControlURL              string
+	SocketPath              string
+	SocketCertificateSHA256 string
+	SocketToken             string
+	Fallback                *certs.Fallback
+	Logf                    func(string, ...any)
 	// Emit receives every distinct status.
 	Emit func(protocol.Status)
 }
@@ -73,8 +75,11 @@ type Node struct {
 	kick           chan struct{}
 }
 
-// New prepares a node; Run starts it.
+// New prepares a node; Start brings up the backend and Run serves it.
 func New(cfg Config) *Node {
+	if cfg.Fallback == nil {
+		cfg.Fallback = certs.NewFallback("", "")
+	}
 	n := &Node{
 		cfg:       cfg,
 		backend:   protocol.BackendStarting,
@@ -93,7 +98,7 @@ func New(cfg Config) *Node {
 		Logf:     func(string, ...any) {},
 		UserLogf: func(string, ...any) {},
 	}
-	n.proxy = proxy.New(cfg.SocketPath, resolver{n}, cfg.Logf)
+	n.proxy = proxy.NewEndpoint(proxy.Endpoint{Path: cfg.SocketPath, CertificateSHA256: cfg.SocketCertificateSHA256, Token: cfg.SocketToken}, resolver{n}, cfg.Logf)
 	return n
 }
 
@@ -152,6 +157,11 @@ func (n *Node) Run(ctx context.Context) error {
 		n.reconcile(ctx)
 		n.emit()
 	}
+}
+
+// SetGatewayCertificate replaces only the fallback; Tailscale certificates stay independent.
+func (n *Node) SetGatewayCertificate(pair protocol.GatewayCertificate) error {
+	return n.cfg.Fallback.SetPEM(pair.Cert, pair.Key)
 }
 
 // Configure applies the gateway's wish for the public address.

@@ -26,6 +26,8 @@ import { mostRecentSweepBoundary } from "../sweeps/anchor.js";
 import { runSweepEnqueuePass } from "./sweep-enqueuer.js";
 import type { SweepDef } from "../sweeps/types.js";
 import type Database from "better-sqlite3";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 type Db = Database.Database;
 
@@ -39,7 +41,7 @@ function local(y: number, m: number, d: number, h = 0, min = 0): number {
 }
 
 function testDbPath(): string {
-  return `/tmp/omnesis-test-${randomUUID()}.db`;
+  return fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
 }
 function cleanupDb(path: string): void {
   for (const suffix of ["", "-wal", "-shm", "-journal"]) {

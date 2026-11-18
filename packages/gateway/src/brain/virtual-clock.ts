@@ -56,11 +56,20 @@ export function asMutableClock(clock: Clock | undefined): MutableClock | null {
 }
 
 /**
- * The boot-time opt-in: a `MutableClock` when the environment asks for
- * one, `null` otherwise (the seam then stays unset and every consumer
- * falls back to the wall clock — the production path, byte-identical to
- * before this module existed).
+ * Resolve the boot-time opt-in, seeding the virtual instant before consumers
+ * start when INITIAL_MS is supplied. Without the opt-in the seam stays unset
+ * and consumers use the wall clock.
  */
 export function resolveBriefsVirtualClock(env: NodeJS.ProcessEnv): MutableClock | null {
-  return env.OMNESIS_BRIEFS_VIRTUAL_CLOCK === "1" ? createMutableClock() : null;
+  if (env.OMNESIS_BRIEFS_VIRTUAL_CLOCK !== "1") return null;
+  const raw = env.OMNESIS_BRIEFS_VIRTUAL_CLOCK_INITIAL_MS;
+  if (raw === undefined) return createMutableClock();
+  const initialMs = Number(raw);
+  if (
+    raw.trim() === "" ||
+    !Number.isFinite(initialMs) ||
+    !Number.isFinite(new Date(initialMs).getTime())
+  )
+    throw new Error("OMNESIS_BRIEFS_VIRTUAL_CLOCK_INITIAL_MS must be a valid unix-ms instant");
+  return createMutableClock(initialMs);
 }

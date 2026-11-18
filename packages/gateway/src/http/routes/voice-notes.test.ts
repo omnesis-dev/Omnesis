@@ -26,6 +26,8 @@ import type { OmnesisConfig } from "@omnesis/config";
 import type { ResolvedAssignment } from "@omnesis/core";
 import type { OmnesisNotesRuntime } from "../../sources/omnesis-notes/index.js";
 import type Database from "better-sqlite3";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 let db: Database.Database;
 let dbPath: string;
@@ -80,7 +82,7 @@ function noteText(id: string): string | undefined {
 beforeEach(() => {
   priorExperimental = process.env.OMNESIS_EXPERIMENTAL;
   delete process.env.OMNESIS_EXPERIMENTAL;
-  dbPath = `/tmp/omnesis-test-${randomUUID()}.db`;
+  dbPath = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
   db = createDatabase(dbPath);
   ADMIN_TOKEN = mintToken([SCOPE_ADMIN, SCOPE_READ]);
   resolved = { role: "transcriber", kind: "replay" };

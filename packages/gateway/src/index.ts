@@ -33,6 +33,7 @@ import {
   cloudRelayEnabled,
   tailscaleEmbedEnabled,
   loadManifest,
+  installParentShutdownHandler,
   primeSecretFileKeyCache,
   resolveWorkerEntry,
   runningSourceCommit,
@@ -119,6 +120,9 @@ import { currentTlsMaterialPaths, partitionAddressedHosts } from "./tls-lifecycl
 import { isLoopbackIp, reverseProxyTrusted } from "./http/client-ip.js";
 import { createHostMinter } from "./tls-lifecycle/minters.js";
 import { TlsLifecycleService } from "./tls-lifecycle/service.js";
+import { OwnedProcessShutdownFence } from "./owned-process-shutdown-fence.js";
+import { ownedProcessCleanupReceipt } from "./owned-process-cleanup.js";
+import { closeOptionalServices, OptionalServiceCleanup } from "./optional-service-cleanup.js";
 import { createAcmeRenewalTask } from "./tls-lifecycle/acme-task.js";
 import { createTlsLifecycleTask } from "./tls-lifecycle/task.js";
 import { DEFAULT_MDNS_ENABLED, DEFAULT_MDNS_HOSTNAME, MdnsAdvertiser } from "./mdns-advertiser.js";
@@ -727,6 +731,11 @@ const getRelaySettings = (): { enabled: boolean; url: string; visible: boolean }
 };
 
 const wsServerRef: { current?: DeviceWsServer } = {};
+const ownedTranscriptStores = new Set<{ close(): Promise<void> }>();
+function ownTranscriptStore(store: FsCognitionTranscriptStore): FsCognitionTranscriptStore {
+  ownedTranscriptStores.add(store);
+  return store;
+}
 let watchV2EngineHandle: import("./watch/engine-task.js").WatchV2Engine | undefined;
 const pushBroadcaster = new PushBroadcaster({
   queue: writeGate,
@@ -844,6 +853,7 @@ const tailscaleJoinNotifier = new TailscaleJoinNotifier(
 const tailscaleEmbed = tailscaleEmbedEnabled()
   ? new TailscaleEmbedService({
       configDir,
+      servedMaterial: () => tlsLifecycle.servedMaterial(),
       tlsMaterial: () => {
         // The same files the gateway serves, including after a rotation.
         const paths = currentTlsMaterialPaths(configDir, process.env, dotEnvKeysAtBoot);
@@ -1143,6 +1153,7 @@ const getSourceDocCounts = (): readonly SourceDocCount[] => {
 
 const searchPipeline = new SearchPipeline({
   indexDb: searchIndexDb,
+  refreshIndexSnapshot: () => searchSnapshot.refresh(),
   searchConfig,
   embeddingModelId: embeddingModelIdForPipeline,
   queryEnricher: searchQueryEnricher,
@@ -1968,8 +1979,10 @@ const addressedHosts = () =>
     gatewayPort: PORT,
   });
 let acmeController: Awaited<ReturnType<typeof createGatewayAcmeController>>;
+const acmeCleanup = new OptionalServiceCleanup("Public ACME", () => acmeController);
 const publicSni = new GatewayPublicSni();
 let cloudTunnel: ReturnType<typeof startGatewayCloudTunnel>;
+const tunnelCleanup = new OptionalServiceCleanup("Cloud relay tunnel", () => cloudTunnel);
 let cloudListenPort = 0;
 const tlsLifecycle = new TlsLifecycleService({
   configDir,
@@ -1993,10 +2006,18 @@ const tlsLifecycle = new TlsLifecycleService({
   }),
   // Those tiers renew on the host.
   inContainer,
-  onRotation: (fingerprintSha256) => advertiser?.setFingerprint(fingerprintSha256),
+  onRotation: (fingerprintSha256) => {
+    advertiser?.setFingerprint(fingerprintSha256);
+    void tailscaleEmbed?.refreshGatewayCertificate().catch((error: unknown) => {
+      log.warn(
+        `Embedded Tailscale certificate refresh failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    });
+  },
 });
 
 let cloudRelayManagement: GatewayCloudRelayManagement | undefined;
+const relayCleanup = new OptionalServiceCleanup("Cloud relay", () => cloudRelayManagement);
 /** The Omnesis relay origin agents reach this gateway by, once it has one. */
 const relayPublicOrigin = (): string | undefined =>
   cloudRelayEnabled()
@@ -2047,9 +2068,8 @@ try {
           publicSni.activate(material);
         },
         stopLegacy: async () => {
-          cloudTunnel?.stop();
+          await closeOptionalServices([tunnelCleanup, acmeCleanup]);
           cloudTunnel = undefined;
-          await acmeController?.close();
           acmeController = undefined;
         },
         directIdentity: () => {
@@ -2080,11 +2100,14 @@ try {
         },
       })
     : undefined;
-} catch {
+} catch (error) {
   cloudRelayInitializationFailed = true;
-  log.warn(
-    "Optional cloud relay management configuration is invalid; direct gateway access remains available",
-  );
+  if (relayCleanup.captureFailure(error))
+    log.error("Cloud relay startup cleanup is unconfirmed; public relay startup is disabled");
+  else
+    log.warn(
+      "Optional cloud relay management configuration is invalid; direct gateway access remains available",
+    );
 }
 
 // Speech-to-text service. Lazily loads the assigned transcriber (a local
@@ -2457,7 +2480,9 @@ if (watchV2 && watchStores?.ok) {
   const compileReasoningTokens = watchTunables?.compileReasoningTokens;
   const watchCompileRecorder = new WatchCompileRecorder({
     writeGate,
-    transcripts: new FsCognitionTranscriptStore(cognitionTranscriptsDir(configDir)),
+    transcripts: ownTranscriptStore(
+      new FsCognitionTranscriptStore(cognitionTranscriptsDir(configDir)),
+    ),
     log: log.child("watch-v2:compile-runs"),
   });
   const authoring: AuthorWatchDeps = {
@@ -2697,8 +2722,13 @@ const taskEffects: TaskEffects = {
   interestEnabled: () => interestEngine.enabled(),
 };
 const taskService = new TaskService(db, writeGate, briefsVirtualClock ?? Date.now, taskEffects);
+let doctorCleanupOwner: { cleanupFailure(): unknown; close(): Promise<void> } | undefined;
+const doctorCleanup = new OptionalServiceCleanup("Host security audit", () => doctorCleanupOwner);
 const app = createServer(db, DB_PATH, {
   portalSignals,
+  onDoctorCleanupOwner: (owner) => {
+    doctorCleanupOwner = owner;
+  },
   interest: interestEngine,
   taskEffects,
   getDiskUsage: () => diskUsage.snapshot(),
@@ -3270,6 +3300,9 @@ await bootBriefs({
   writeGate,
   log,
   runQueue: {
+    onTranscriptStore: (store) => {
+      ownedTranscriptStores.add(store);
+    },
     db,
     scheduler,
     backgroundJobs,
@@ -3503,21 +3536,29 @@ if (!cloudRelayInitializationFailed && !cloudRelayManagement?.hasSavedConfigurat
         publicSni.activate(material);
       },
     });
-  } catch {
-    log.warn("Public ACME configuration is invalid; direct gateway TLS remains available");
+  } catch (error) {
+    if (acmeCleanup.captureFailure(error))
+      log.error("Public ACME startup cleanup is unconfirmed; relay startup is disabled");
+    else log.warn("Public ACME configuration is invalid; direct gateway TLS remains available");
   }
-  try {
-    cloudTunnel = startGatewayCloudTunnel(`https://localhost:${listenPort}`, {
-      ...process.env,
-      OMNESIS_CONFIG_DIR: configDir,
-    });
-  } catch {
-    log.warn(
-      "Cloud relay environment configuration is incomplete; direct gateway access remains available",
-    );
+  if (!acmeCleanup.hasTerminalFailure()) {
+    try {
+      cloudTunnel = startGatewayCloudTunnel(`https://localhost:${listenPort}`, {
+        ...process.env,
+        OMNESIS_CONFIG_DIR: configDir,
+      });
+    } catch (error) {
+      if (tunnelCleanup.captureFailure(error))
+        log.error("Cloud relay startup cleanup is unconfirmed; public relay startup is disabled");
+      else
+        log.warn(
+          "Cloud relay environment configuration is incomplete; direct gateway access remains available",
+        );
+    }
+    if (acmeController && !tunnelCleanup.hasTerminalFailure())
+      scheduler.schedule(createAcmeRenewalTask(acmeController));
   }
-  if (acmeController) scheduler.schedule(createAcmeRenewalTask(acmeController));
-} else cloudRelayManagement?.start();
+} else if (!relayCleanup.hasTerminalFailure()) cloudRelayManagement?.start();
 scheduleSearchCachePrewarm();
 // Warm-ups wait for the listening server: before it, they compete for the
 // cores the rest of boot needs, and nothing can search yet.
@@ -3769,7 +3810,9 @@ void pushWakeRetryHandle;
 // Disposable operational history is pruned by one bounded background unit per
 // tick. The task exists even when disabled (the default), so a live config edit
 // can enable or shorten retention without restarting the gateway.
-const retentionTranscripts = new FsCognitionTranscriptStore(cognitionTranscriptsDir(configDir));
+const retentionTranscripts = ownTranscriptStore(
+  new FsCognitionTranscriptStore(cognitionTranscriptsDir(configDir)),
+);
 // A migration that retires a class of runs can delete their rows but not their
 // transcript files — it has no filesystem. It leaves the ids behind; this is
 // where they are collected, now that the directory is in scope. Not awaited:
@@ -3984,15 +4027,14 @@ indexerLifecycle.startIndexer().catch((err) => {
 // writer worker in Phase 2+), then dispose the writer worker, then close
 // the main-thread DB handles.
 //
-// Wallclock cap: 60 seconds. If any of the awaited steps wedges (worker
-// in a native call ignoring shutdown messages, etc.) the supervisor
-// gets a guaranteed exit. Per-stage runners already apply their own
-// 5s fallback; this is the umbrella net. Sized to comfortably clear the
+// Wallclock cap: 60 seconds. A timeout records a failed stop; accepted owned
+// process proofs still settle before exit, and terminal cleanup uncertainty
+// retains the PID and lease for review. Per-stage runners apply their own
+// 5s fallback. The ordinary shutdown budget comfortably clears the
 // indexer flush-save (its own 20s budget — a large HNSW graph rewrites the
 // whole ~GB file) plus the backup/export/agent drains ahead of it and the
 // dispose + sidecar encrypt after it, so the clean-exit path wins over the
-// force-exit even on a big install; still well under the service manager's
-// stop timeout.
+// timeout even on a big install, within the service manager's stop timeout.
 const SHUTDOWN_TIMEOUT_MS = GATEWAY_SHUTDOWN_BUDGET_MS;
 
 /**
@@ -4006,32 +4048,91 @@ const SHUTDOWN_TIMEOUT_MS = GATEWAY_SHUTDOWN_BUDGET_MS;
  */
 const COMPILE_DRAIN_TIMEOUT_MS = 10_000;
 
+const tlsCleanup = {
+  receipt: () => tlsLifecycle.cleanupFailure(),
+  settle: () => tlsLifecycle.close(),
+};
+const codexCleanup = {
+  receipt: () => codexRuntimeService.cleanupFailure(),
+  settle: () => codexRuntimeService.dispose(),
+};
+const conversationCleanupOwner = {
+  cleanupFailure: (): unknown => {
+    // The shared store also retains failures from an earlier service instance.
+    const failures = [
+      conversationStore.cleanupFailure(),
+      agentLifecycle.routeDeps.agentService?.cleanupFailure(),
+    ];
+    return (
+      failures.find((failure) => {
+        const receipt = ownedProcessCleanupReceipt(failure);
+        return receipt !== undefined && !receipt.pending;
+      }) ?? failures.find((failure) => ownedProcessCleanupReceipt(failure) !== undefined)
+    );
+  },
+  close: async (): Promise<void> => {
+    // Aborted turns can still publish their last transcript. Drain their
+    // service before closing admission to the one store shared across swaps.
+    await agentLifecycle.shutdown();
+    await conversationStore.close();
+  },
+};
+const conversationCleanup = new OptionalServiceCleanup(
+  "Agent conversations",
+  () => conversationCleanupOwner,
+);
+const tailnetCleanup = new OptionalServiceCleanup("Embedded Tailscale", () => tailscaleEmbed);
+const transcriberCleanup = new OptionalServiceCleanup("Transcriber", () => transcribeService);
+const ownedProcessShutdown = new OwnedProcessShutdownFence(() => {
+  process.exitCode = 1;
+  log.error(
+    "Owned process cleanup is unconfirmed; the gateway PID and lock are retained for review",
+  );
+}, [
+  tlsCleanup,
+  codexCleanup,
+  acmeCleanup,
+  relayCleanup,
+  tunnelCleanup,
+  doctorCleanup,
+  conversationCleanup,
+  tailnetCleanup,
+  transcriberCleanup,
+]);
+
 const doShutdown = async (): Promise<void> => {
-  try {
-    await cloudRelayManagement?.close();
-  } catch {
-    log.warn("Optional relay cleanup deferred; direct gateway shutdown continues");
-  }
-  try {
-    await acmeController?.close();
-  } catch {
-    log.warn("ACME DNS cleanup deferred to the persisted challenge journal");
-  }
-  cloudTunnel?.stop();
+  const optionalCleanup = [
+    {
+      owner: relayCleanup,
+      warning: "Optional relay cleanup deferred; direct gateway shutdown continues",
+    },
+    { owner: acmeCleanup, warning: "ACME DNS cleanup deferred to the persisted challenge journal" },
+    { owner: tunnelCleanup, warning: "Cloud relay tunnel cleanup failed" },
+    { owner: doctorCleanup, warning: "Host security audit cleanup is unconfirmed" },
+    { owner: tailnetCleanup, warning: "Embedded Tailscale cleanup is unconfirmed" },
+    { owner: transcriberCleanup, warning: "Transcriber process cleanup is unconfirmed" },
+  ];
+  const optionalDrain = Promise.allSettled(
+    optionalCleanup.map(({ owner }) => ownedProcessShutdown.join(owner)),
+  );
   // Stop admitting HTTP requests and WebSocket frames while their services
   // still exist. This drain is bounded so a streaming client cannot consume
   // the entire shutdown budget before the indexer has persisted its graph.
   wsServer.stop();
   collectorDescriptors.close();
   const httpDrain = httpShutdown.close(server, 5_000);
-  // Tailnet requests drain alongside the main listener's; then closing the
-  // helper's input closes the public address before the gateway goes.
-  const [httpDrained] = await Promise.all([
-    httpDrain,
-    realtimeService.dispose(),
-    tailscaleEmbed?.shutdown(5_000),
-  ]);
+  // The optional Tailscale owner drains its listener and joins its helper
+  // alongside HTTP; its closure proof also participates in the shutdown fence.
+  const [httpDrained] = await Promise.all([httpDrain, realtimeService.dispose()]);
   if (!httpDrained) log.warn("HTTP shutdown drain timed out; remaining connections closed");
+  try {
+    await app.close();
+  } catch (error) {
+    log.error(
+      `Route resource cleanup failed: ${error instanceof Error ? (error.stack ?? error.message) : String(error)}`,
+    );
+  }
+  await ownedProcessShutdown.join(tlsCleanup);
   // A warm still scanning competes with the sidecar persist below for I/O and
   // the shutdown budget; its thread is throwaway, so stop it first — after the
   // lexical index service, because a settled warm starts the service's build.
@@ -4099,7 +4200,7 @@ const doShutdown = async (): Promise<void> => {
     );
   }
 
-  await agentLifecycle.shutdown();
+  await ownedProcessShutdown.join(conversationCleanup);
   // Voice notes: stop picking up queued notes. One being transcribed right now
   // is not awaited — it stays queued and is transcribed again after restart.
   voiceNoteService?.dispose();
@@ -4141,13 +4242,19 @@ const doShutdown = async (): Promise<void> => {
   }
   if (codexRuntimeService) {
     try {
-      await codexRuntimeService.dispose();
+      await ownedProcessShutdown.join(codexCleanup);
     } catch (err) {
       log.error(
         `codexRuntimeService.dispose threw: ${err instanceof Error ? (err.stack ?? err.message) : String(err)}`,
       );
     }
   }
+
+  // Optional-service callbacks can still need the writer. Join them after
+  // client and agent admission closes, before tearing down shared stores.
+  const optionalResults = await optionalDrain;
+  for (const [index, result] of optionalResults.entries())
+    if (result.status === "rejected") log.warn(optionalCleanup[index]!.warning);
 
   // Near-dup inbox: detach the subscriber so no further docs buffer and stop
   // the periodic flush so it can't drain concurrently, then drain what's
@@ -4254,6 +4361,15 @@ const doShutdown = async (): Promise<void> => {
       `scheduler.dispose threw: ${err instanceof Error ? (err.stack ?? err.message) : String(err)}`,
     );
   }
+  const transcriptClosures = await Promise.allSettled(
+    [...ownedTranscriptStores].map((store) => store.close()),
+  );
+  ownedTranscriptStores.clear();
+  for (const result of transcriptClosures)
+    if (result.status === "rejected")
+      log.error(
+        `Transcript cleanup failed: ${result.reason instanceof Error ? result.reason.message : String(result.reason)}`,
+      );
   processVitals.dispose();
   await stallMonitor.dispose();
   // DB handles last — by this point no scheduled writer task is in
@@ -4297,8 +4413,8 @@ const doShutdown = async (): Promise<void> => {
   }
   await inferenceRegistry.health.flush();
   processLauncherHost.dispose();
-  // Last: every store is closed, so a replacement gateway may take the dir.
-  gatewayLock.release();
+  // Unconfirmed owned processes retain their gateway's lease for explicit review.
+  ownedProcessShutdown.releaseLock(gatewayLock);
 };
 
 let shutdownStarted = false;
@@ -4314,24 +4430,33 @@ const shutdown = async (exitCode = 0): Promise<void> => {
     }, SHUTDOWN_TIMEOUT_MS);
     t.unref?.();
   });
-  await Promise.race([doShutdown(), timeoutPromise]);
-  if (timedOut) {
-    log.error(`shutdown exceeded ${SHUTDOWN_TIMEOUT_MS}ms wallclock cap; exiting with code 1`);
-    process.exit(1);
-  }
-  process.exit(exitCode);
+  await Promise.race([doShutdown(), timeoutPromise]).catch((error: unknown) =>
+    ownedProcessShutdown.finish(() => {
+      throw error;
+    }),
+  );
+  await ownedProcessShutdown.finish(() => {
+    if (timedOut) {
+      log.error(`shutdown exceeded ${SHUTDOWN_TIMEOUT_MS}ms wallclock cap; exiting with code 1`);
+      process.exit(1);
+    }
+    process.exit(exitCode);
+  });
 };
 coordinatedShutdown = shutdown;
 
 process.on("SIGINT", () => void shutdown());
 process.on("SIGTERM", () => void shutdown());
+installParentShutdownHandler(() => void shutdown());
 
 // Spawned by a harness or dev script? Then leave when the spawner does — see
 // parent-watchdog.ts for why nothing else can save us from orphaning. Inert
 // for a service-managed gateway, which sets no OMNESIS_PARENT_PID.
 startParentWatchdogFromEnv(process.env, () => {
+  if (shutdownStarted) return;
   log.warn(
     `Spawning process ${process.env.OMNESIS_PARENT_PID} is gone; exiting rather than orphan`,
   );
-  process.exit(0);
+  // Parent disappearance does not confirm an already uncertain owned process's cleanup.
+  void ownedProcessShutdown.finish(() => process.exit(0));
 });

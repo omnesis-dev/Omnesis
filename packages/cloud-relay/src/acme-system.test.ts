@@ -316,8 +316,11 @@ test("managed setup discovers hosted routing, enrolls without Google, obtains a 
       req.on("error", reject);
       req.end(JSON.stringify({ token: "invalid-isolated-login-token" }));
     });
+  let reenabling = false;
+  let reenableProbeAttempts = 0;
   manager = await GatewayCloudRelayManagement.open({
     configDir: directory,
+    probeRetryMs: 100,
     env: {
       OMNESIS_CLOUD_RELAY_ENABLED: "1",
       OMNESIS_CLOUD_RELAY_URL: relayUrl,
@@ -344,8 +347,9 @@ test("managed setup discovers hosted routing, enrolls without Google, obtains a 
             lookup: async (_host, digest) => [...records.values()].includes(digest),
           }),
       }),
-    probe: async (url, signal) =>
-      new Promise<boolean>((resolve, reject) => {
+    probe: async (url, signal) => {
+      if (reenabling && ++reenableProbeAttempts === 1) return false;
+      return new Promise<boolean>((resolve, reject) => {
         const target = new URL("/.well-known/oauth-protected-resource/mcp", url);
         const req = request(
           {
@@ -369,7 +373,8 @@ test("managed setup discovers hosted routing, enrolls without Google, obtains a 
         );
         req.on("error", reject);
         req.end();
-      }),
+      });
+    },
   });
   try {
     const configured = await manager!.configure({ relayUrl, termsAccepted: true });
@@ -445,10 +450,12 @@ test("managed setup discovers hosted routing, enrolls without Google, obtains a 
     expect(await peer(Number(new URL(gatewayUrl).port), "localhost", direct)).toBe(
       new X509Certificate(direct).fingerprint256,
     );
+    reenabling = true;
     await manager!.enable();
     await vi.waitFor(async () => expect((await manager!.status()).publicMcp.ready).toBe(true), {
       timeout: 5000,
     });
+    expect(reenableProbeAttempts).toBeGreaterThan(1);
     expect((await manager!.status()).gatewayId).toBe(first.gatewayId);
     expect(await readFile(join(directory, "cloud-relay/owner.key"))).toEqual(owner);
     expect(await readFile(join(directory, "cloud-relay/public.key"))).toEqual(publicKey);
@@ -462,6 +469,7 @@ test("managed setup discovers hosted routing, enrolls without Google, obtains a 
     accounts.close();
     await closeServer(server);
     await authority?.close();
+    await Promise.all([app.close(), directApp.close()]);
     db.close();
   }
 });

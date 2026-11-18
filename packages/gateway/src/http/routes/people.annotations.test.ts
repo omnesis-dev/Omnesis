@@ -10,7 +10,10 @@
  */
 
 import { randomUUID } from "node:crypto";
-import { existsSync, rmSync, unlinkSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, unlinkSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { ensurePrivateDirSync } from "@omnesis/core";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { SCOPE_ADMIN, SCOPE_READ, SCOPE_WRITE_ALL, type Scope } from "@omnesis/types";
 import { createDatabase } from "../../db.js";
@@ -69,7 +72,7 @@ function insertDoc(id: string): void {
 
 beforeEach(() => {
   process.env.OMNESIS_EXPERIMENTAL = "0";
-  dbPath = `/tmp/omnesis-people-annotations-test-${randomUUID()}.db`;
+  dbPath = join(tmpdir(), `omnesis-people-annotations-test-${randomUUID()}.db`);
   db = createDatabase(dbPath);
   token = mintToken([SCOPE_ADMIN, SCOPE_READ, SCOPE_WRITE_ALL]);
   sourceRuntimes = [];
@@ -88,6 +91,7 @@ afterEach(async () => {
   }
   if (originalExperimental === undefined) delete process.env.OMNESIS_EXPERIMENTAL;
   else process.env.OMNESIS_EXPERIMENTAL = originalExperimental;
+  await app.close();
   db.close();
   cleanupDb(dbPath);
 });
@@ -373,10 +377,12 @@ describe("GET /people/:id/annotations", () => {
       },
       1000,
     );
-    const configDir = `/tmp/omnesis-people-excluded-${randomUUID()}`;
-    const configStore = new ConfigStore({ filePath: `${configDir}/omnesis.json` });
-    await configStore.load();
+    const configDir = mkdtempSync(join(tmpdir(), "omnesis-people-excluded-"));
+    ensurePrivateDirSync(configDir);
+    const configStore = new ConfigStore({ filePath: join(configDir, "omnesis.json") });
     try {
+      await configStore.load();
+      await app.close();
       app = createServer(db, dbPath, { configStore });
       await configStore.put({ brain: { excludedSources: ["test"] } });
       const res = await req("/people/per_a/annotations");
@@ -386,6 +392,7 @@ describe("GET /people/:id/annotations", () => {
         notRechecked: "source_excluded",
       });
     } finally {
+      await app.close();
       configStore.stop();
       rmSync(configDir, { recursive: true, force: true });
     }

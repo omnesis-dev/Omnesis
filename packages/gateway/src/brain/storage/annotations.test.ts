@@ -54,6 +54,8 @@ import {
 import type Database from "better-sqlite3";
 import type { EntailCapability, ToolResult } from "@omnesis/core";
 import type { SearchPort, ToolHandle } from "@omnesis/agent";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 type Db = Database.Database;
 
@@ -62,7 +64,7 @@ const CTX = { sessionId: "S", messageId: "M" };
 const NOW = Date.parse("2026-07-02T10:00:00.000Z");
 
 function testDbPath(): string {
-  return `/tmp/omnesis-test-${randomUUID()}.db`;
+  return fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
 }
 function cleanupDb(path: string): void {
   for (const suffix of ["", "-wal", "-shm", "-journal"]) {

@@ -83,11 +83,18 @@ test("service outages back off with a bound and recovery resets the normal inter
 test("manual checks coalesce; stop aborts pending work and a late completion cannot reschedule", async () => {
   const f = fixture();
   let release!: (value: CertificateMonitorStatus) => void;
-  f.monitor.check.mockReturnValueOnce(new Promise((resolve) => (release = resolve)));
+  let entered!: () => void;
+  const started = new Promise<void>((resolve) => (entered = resolve));
+  const gate = new Promise<CertificateMonitorStatus>((resolve) => (release = resolve));
+  f.monitor.check.mockImplementationOnce(() => {
+    entered();
+    return gate;
+  });
   const poller = startCertificateMonitorPoller({ monitor: f.monitor, intervalMs: 60000 })!,
     first = poller.check(),
     second = poller.check();
   expect(first).toBe(second);
+  await started;
   const stop = poller.stop();
   expect(f.monitor.check.mock.calls[0][0]!.aborted).toBe(true);
   release(f.monitor.status());
@@ -111,6 +118,32 @@ test("unexpected adapter rejection is surfaced as unavailable without forwarding
   expect(poller.status().state).toBe("observing");
   await poller.stop();
 });
+
+test("an automatic check retains publication uncertainty and permanently stops rescheduling", async () => {
+  const f = fixture();
+  const marker = Object.assign(new Error("invented scheduled publication uncertainty"), {
+    cleanupFailure: undefined,
+  });
+  const poller = startCertificateMonitorPoller({ monitor: f.monitor, intervalMs: 60000 })!;
+  try {
+    await poller.check();
+    f.monitor.check.mockRejectedValueOnce(marker);
+    await vi.advanceTimersByTimeAsync(60000);
+    expect(f.monitor.check).toHaveBeenCalledTimes(2);
+    expect(poller.cleanupFailure()).toBe(marker);
+    expect(vi.getTimerCount()).toBe(0);
+    await vi.advanceTimersByTimeAsync(60000);
+    await expect(poller.check()).rejects.toBe(marker);
+    expect(f.monitor.check).toHaveBeenCalledTimes(2);
+    const stopping = poller.stop();
+    expect(poller.stop()).toBe(stopping);
+    await expect(stopping).rejects.toBe(marker);
+  } finally {
+    // The producer is mocked; no Native child exists, and the lifecycle timer is closed.
+    await poller.stop().catch(() => {});
+  }
+});
+
 test("F44: while a CT service is down the next check is at most an hour away, not six", async () => {
   const f = fixture();
   f.set({ state: "unavailable", lastError: "ct-provider-unavailable" });

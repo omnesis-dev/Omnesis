@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
-import { randomBytes, randomUUID } from "node:crypto";
+import { randomBytes, randomUUID, X509Certificate } from "node:crypto";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { request as httpsRequest } from "node:https";
@@ -335,14 +335,19 @@ for (const legacyRoutes of [false, true])
   test(`exact legacy TLS ownership migrates once ${legacyRoutes ? "without" : "only with"} an invitation, closes the legacy control and cannot be reclaimed with that TLS key`, async () => {
     const f = await setup({ legacyRoutes });
     const legacy = await f.sessions.issue(googleIdentity);
-    const certificate = await readFile(f.options.certificateFile, "utf8");
+    const certificate = (await readFile(f.options.certificateFile, "utf8")).replace(
+      /\r?\n/g,
+      "\r\n",
+    );
     try {
+      await writeFile(f.options.certificateFile, certificate);
       f.accounts.registerBinding(legacy.accountId, {
         gatewayId: f.options.gatewayId.toUpperCase(),
         publicOrigin: f.options.publicOrigin,
         certificate,
         identityToken: "old-Google-proof",
       });
+      expect(f.accounts.gatewayBinding(legacy.accountId)).toMatchObject({ certificate });
       const socket = new WebSocket(f.url.replace("http:", "ws:") + "/_relay/v1/tunnel", {
         headers: {
           authorization: `Bearer ${legacy.token}`,
@@ -368,7 +373,10 @@ for (const legacyRoutes of [false, true])
       await expect(
         registerGatewayKey({ ...f.options, sessionFile: join(directory, "attacker.json") }),
       ).rejects.toThrow("refused");
-      expect(f.accounts.gatewayBinding(owner.accountId)).toMatchObject({ certificate });
+      expect(f.accounts.gatewayBinding(owner.accountId)).toMatchObject({
+        certificate: new X509Certificate(certificate).toString(),
+      });
+      expect(await readFile(f.options.certificateFile, "utf8")).toBe(certificate);
       const { TunnelBroker } = await import("./tunnels.js");
       const broker = new TunnelBroker();
       broker.closeAccount("not-connected");

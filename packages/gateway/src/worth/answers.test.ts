@@ -11,13 +11,15 @@ import { deleteDocumentsByIds, upsertDocuments } from "../data/repositories/Docu
 import { findWorthAnswer, recordWorthAnswers, type WorthAnswer } from "./answers.js";
 import type { Db } from "../data/types.js";
 import type { DocumentInput } from "@omnesis/types";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 describe("worth answers", () => {
   let db: Db;
   let dbPath: string;
 
   beforeEach(() => {
-    dbPath = `/tmp/omnesis-test-${randomUUID()}.db`;
+    dbPath = fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
     db = createDatabase(dbPath);
   });
   afterEach(() => {

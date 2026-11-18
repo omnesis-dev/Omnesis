@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright (c) 2026 Adrien Conrath
 
+import { createHash } from "node:crypto";
 import { afterEach, describe, expect, test } from "vitest";
 import { resetWidgetOrigins, setWidgetOrigins } from "../../widget-origins.js";
-import { buildPortalCsp } from "./portal.js";
+import { buildPortalCsp, inlineScriptHashes } from "./portal.js";
 
 /**
  * The portal CSP must fold in the external widget-vendor origins a source
@@ -88,4 +89,24 @@ describe("portal CSP widget-origin aggregation", () => {
     expect(scriptSrc).toMatch(/https:\/\/a\.example\.test https:\/\/b\.example\.test/);
     expect(scriptSrc.match(/b\.example\.test/g)?.length).toBe(1);
   });
+});
+
+describe("portal inline-script browser text", () => {
+  test.each(["\n", "\r\n", "\r"])(
+    "hashes HTML-normalized script text for %j line endings",
+    (newline) => {
+      const script = '\n{ "imports": {} }\n';
+      const theme = '\nwindow.exampleTheme = "dark";\n';
+      const hash = (text: string) =>
+        `'sha256-${createHash("sha256").update(text).digest("base64")}'`;
+      const html = `<script type="importmap">${script}</script><script>${theme}</script>`;
+      expect(inlineScriptHashes(html.replaceAll("\n", newline))).toEqual([
+        hash(script),
+        hash(theme),
+      ]);
+      expect(inlineScriptHashes(html.replace("dark", "light"))).not.toEqual(
+        inlineScriptHashes(html),
+      );
+    },
+  );
 });

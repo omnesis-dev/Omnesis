@@ -21,7 +21,7 @@
  *   init → ready (after the model loads + a warmup embed)
  *   embed{id,texts} → embedResult{id,vectors} | embedError{id,error}
  *   embedQuery{id,text} → embedQueryResult{id,vector} | embedQueryError{id,error}
- *   shutdown → shutdownComplete (main side then terminates the worker)
+ *   shutdown → drain calls → dispose model → shutdownComplete → close port
  */
 
 import { parentPort } from "node:worker_threads";
@@ -46,6 +46,16 @@ function log(level: LogLevel, message: string): void {
 }
 
 let embedder: LlamaCppEmbedder | null = null;
+let shuttingDown = false;
+const active = new Set<Promise<void>>();
+
+function track(operation: Promise<void>): void {
+  active.add(operation);
+  void operation.then(
+    () => active.delete(operation),
+    () => active.delete(operation),
+  );
+}
 
 async function handleInit(init: BuildEmbedderInit): Promise<void> {
   if (embedder) {
@@ -61,14 +71,21 @@ async function handleInit(init: BuildEmbedderInit): Promise<void> {
       encoding: init.embedderEncoding,
       outputDim: init.embedDim,
     });
+    embedder = e;
     // Warmup forces the (slow) model load now so `ready` means "embeds will be
     // fast", and a load failure surfaces as initError instead of failing the
     // first build batch mid-pass.
     await e.embed(["warmup"]);
-    embedder = e;
+    if (shuttingDown) return;
     log("info", `build embedder ready: model=${init.modelPath} dim=${init.embedDim}`);
     post({ type: "ready" });
   } catch (err) {
+    try {
+      await embedder?.dispose();
+      embedder = null;
+    } catch {
+      /* Preserve the initialization failure after cleanup. */
+    }
     post({ type: "initError", error: err instanceof Error ? err.message : String(err) });
   }
 }
@@ -100,27 +117,37 @@ async function handleEmbedQuery(id: number, text: string): Promise<void> {
 }
 
 async function handleShutdown(): Promise<void> {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  await Promise.allSettled(active);
   if (embedder) {
     try {
       await embedder.dispose();
-    } catch {
-      /* best-effort */
+    } catch (error) {
+      log(
+        "error",
+        `native cleanup failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      // Without confirmed native disposal, terminating this thread is unsafe.
+      return;
     }
     embedder = null;
   }
   post({ type: "shutdownComplete" });
+  parentPort!.close();
 }
 
 parentPort.on("message", (msg: MainToBuildEmbedder) => {
+  if (shuttingDown) return;
   switch (msg.type) {
     case "init":
-      void handleInit(msg);
+      track(handleInit(msg));
       break;
     case "embed":
-      void handleEmbed(msg.id, msg.texts);
+      track(handleEmbed(msg.id, msg.texts));
       break;
     case "embedQuery":
-      void handleEmbedQuery(msg.id, msg.text);
+      track(handleEmbedQuery(msg.id, msg.text));
       break;
     case "shutdown":
       void handleShutdown();

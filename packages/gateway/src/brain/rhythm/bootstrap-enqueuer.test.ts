@@ -36,6 +36,8 @@ import {
 import type Database from "better-sqlite3";
 import type { Logger } from "@omnesis/core";
 import type { DocumentInput } from "@omnesis/types";
+import { join as fixtureJoin } from "node:path";
+import { tmpdir as fixtureTmpdir } from "node:os";
 
 type Db = Database.Database;
 
@@ -45,7 +47,7 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 const FUTURE = "2099-06-01";
 
 function testDbPath(): string {
-  return `/tmp/omnesis-test-${randomUUID()}.db`;
+  return fixtureJoin(fixtureTmpdir(), `omnesis-test-${randomUUID()}.db`);
 }
 function cleanupDb(path: string): void {
   for (const suffix of ["", "-wal", "-shm", "-journal"]) {

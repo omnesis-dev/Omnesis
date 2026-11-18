@@ -11,7 +11,7 @@
 
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { builtinModules } from "node:module";
-import { dirname, join, relative, resolve } from "node:path";
+import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import * as ts from "typescript";
 import { describe, expect, it } from "vitest";
@@ -71,7 +71,9 @@ function resolveSpecifier(specifier: string, from: string): Resolved {
   if (specifier.startsWith(".")) {
     const file = resolveFile(resolve(dirname(from), specifier));
     if (!file)
-      throw new Error(`${relative(REPO, from)} imports ${specifier}, which does not resolve`);
+      throw new Error(
+        `${relative(REPO, from).split(sep).join("/")} imports ${specifier}, which does not resolve`,
+      );
     return { file };
   }
   const parts = specifier.split("/");
@@ -139,11 +141,12 @@ function valueImports(file: string): string[] {
 }
 
 /** Every library an entry reaches through static value imports, with the path that reaches it. */
-function librariesReached(entry: string): Map<string, string[]> {
+function librariesReached(entry: string, visited?: Set<string>): Map<string, string[]> {
   const parent = new Map<string, string | null>([[entry, null]]);
   const libraries = new Map<string, string>();
   const queue = [entry];
   for (let file = queue.shift(); file; file = queue.shift()) {
+    visited?.add(file);
     for (const specifier of valueImports(file)) {
       const resolved = resolveSpecifier(specifier, file);
       if (!resolved) continue;
@@ -159,7 +162,7 @@ function librariesReached(entry: string): Map<string, string[]> {
   for (const [library, importer] of libraries) {
     const chain: string[] = [];
     for (let file: string | null | undefined = importer; file; file = parent.get(file)) {
-      chain.unshift(relative(REPO, file));
+      chain.unshift(relative(REPO, file).split(sep).join("/"));
     }
     paths.set(library, chain);
   }
@@ -197,7 +200,7 @@ describe("worker module graphs", () => {
   const entries = workerEntries();
 
   it("finds the worker entries", () => {
-    const names = entries.map((entry) => relative(REPO, entry));
+    const names = entries.map((entry) => relative(REPO, entry).split(sep).join("/"));
     for (const expected of [
       "packages/gateway/src/workers/io-worker.ts",
       "packages/gateway/src/workers/cpu-worker.ts",
@@ -211,7 +214,7 @@ describe("worker module graphs", () => {
     for (const entry of entries) expect(existsSync(entry), entry).toBe(true);
   });
 
-  it.each(entries.map((entry) => [relative(REPO, entry), entry]))(
+  it.each(entries.map((entry) => [relative(REPO, entry).split(sep).join("/"), entry]))(
     "%s reaches no deferred library statically",
     (_name, entry) => {
       const reached = librariesReached(entry);
@@ -224,6 +227,28 @@ describe("worker module graphs", () => {
       expect(offending).toEqual([]);
     },
   );
+
+  it("keeps private-file and stall-worker graphs builtin-only without broad gateway/agent barrels", () => {
+    const allowedCore = new Set([
+      "packages/core/src/subpath/private-files.ts",
+      "packages/core/src/atomic-write.ts",
+      "packages/core/src/security-files.ts",
+      "packages/core/src/windows-private-file.ts",
+    ]);
+    for (const entry of [
+      join(REPO, "packages/core/src/subpath/private-files.ts"),
+      join(GATEWAY_SRC, "workers/stall-watchdog-worker.ts"),
+    ]) {
+      const visited = new Set<string>();
+      expect([...librariesReached(entry, visited).keys()]).toEqual([]);
+      const paths = [...visited].map((file) => relative(REPO, file).split(sep).join("/"));
+      expect(
+        paths.filter((file) => file.startsWith("packages/core/") && !allowedCore.has(file)),
+      ).toEqual([]);
+      expect(paths.some((file) => file.startsWith("packages/agent/"))).toBe(false);
+      expect(paths).not.toContain("packages/gateway/src/server.ts");
+    }
+  });
 
   it("sees a static import of a deferred library", () => {
     // The graph reader itself: `recognizer.ts` defers the recognizer through
