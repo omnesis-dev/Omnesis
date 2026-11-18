@@ -792,7 +792,9 @@ describe("both", () => {
     expect(isChecked(way("host"))).toBe(true);
     expect(next().disabled).toBe(false);
     await toggle("#remote-access-way-host", false);
-    expect(text()).toContain(`Tailscale on this computer still serves this gateway at ${HOST_URL}, on your Tailscale network and to the Internet.`);
+    expect(text()).toContain(
+      `Tailscale on this computer still serves this gateway at ${HOST_URL}, on your Tailscale network and to the Internet. Stop serving it, or tick the option again.`,
+    );
     expect(next().disabled).toBe(true);
     expect(text()).toContain("Stop serving this gateway from Tailscale on this computer, or tick it again, to continue.");
     await click("Stop serving this gateway");
@@ -1043,7 +1045,7 @@ describe("the MCP server", () => {
     await startSetup();
     await click("Continue");
     expect(text()).toContain(`${HOST_URL}:10000/mcp`);
-    expect(text()).toContain(`Some agents, such as ChatGPT, connect only on port 443, so ${HOST_URL}:10000/mcp may not work with them.`);
+    expect(text()).toContain("Some agents, such as ChatGPT, connect only on port 443 and may not reach it.");
   });
 
   test("without an address away from home, says agents at home still connect", async () => {

@@ -81,7 +81,8 @@ export function McpChoice({ remote, setRemote }) {
         <span class="remote-access-option-text">
           <strong>${MCP_ADDRESS_LABELS[row.id] ?? row.id}</strong>
           ${endpoint(row.url) && html`<small><code>${endpoint(row.url)}</code></small>`}
-          ${hasPort(row.url) && html`<small><${PortCaveat} url=${row.url} /></small>`}
+          ${hasPort(row.url) &&
+          html`<small>Some agents, such as ChatGPT, connect only on port 443 and may not reach it.</small>`}
         </span>
       </label>`;
     })}

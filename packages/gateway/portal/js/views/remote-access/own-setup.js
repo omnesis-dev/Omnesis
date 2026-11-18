@@ -273,7 +273,7 @@ export function HostTailscale({ remote, setRemote, wanted = true, offerStop = fa
         ? html`<p class="remote-access-muted" role="status">
               Tailscale on this computer still serves this gateway at <${AddressLink} url=${host.url} />${host.publicGateway
                 ? ", on your Tailscale network and to the Internet."
-                : ", on your Tailscale network."}
+                : ", on your Tailscale network."}${" "}
               Stop serving it, or tick the option again.
             </p>
             <div class="remote-access-buttons">${stopButton}</div>`
